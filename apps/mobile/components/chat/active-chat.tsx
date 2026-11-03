@@ -62,6 +62,8 @@ function useActiveChatState() {
     activeChatId,
     detail,
     selection,
+    catalog,
+    recipeAutomatic: directBot,
     turnModes,
     projectId: selectedProjectId,
     attachmentKinds,

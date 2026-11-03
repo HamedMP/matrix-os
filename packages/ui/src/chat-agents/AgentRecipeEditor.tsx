@@ -37,7 +37,7 @@ function EmptyRecipe({ ids, removing, catalog, pending, loading, error, connecti
   </section>;
 }
 
-export function AgentRecipeEditor({ recipe, hadRecipe, catalog, connections, loading, error, connectionError, pending, onChange, onRetry }: {
+export function AgentRecipeEditor({ recipe, hadRecipe, catalog, connections, loading, error, connectionError, pending, outputError, onChange, onRetry }: {
   recipe: ChatAgentRecipe | null | undefined;
   hadRecipe: boolean;
   catalog: ChatAgentRecipeCatalog | null;
@@ -46,6 +46,7 @@ export function AgentRecipeEditor({ recipe, hadRecipe, catalog, connections, loa
   error: string;
   connectionError: string;
   pending: boolean;
+  outputError?: string;
   onChange(recipe: ChatAgentRecipe | null | undefined): void;
   onRetry(): void;
 }) {
@@ -81,9 +82,11 @@ export function AgentRecipeEditor({ recipe, hadRecipe, catalog, connections, loa
       disabled={pending} onChange={jevInboxLabeling => onChange({ ...recipe, jevInboxLabeling })} /> : null}
 
     <label className="grid gap-1 text-sm" htmlFor={`${ids}-output`}>Expected output
-      <textarea id={`${ids}-output`} className={`${input} min-h-24 resize-y`} value={recipe.output} maxLength={1000}
+      <textarea id={`${ids}-output`} aria-invalid={Boolean(outputError)} aria-describedby={outputError ? `${ids}-output-error` : `${ids}-output-help`} className={`${input} min-h-24 resize-y`} value={recipe.output} maxLength={1000}
         required disabled={pending} placeholder="Describe the result this Agent should produce."
         onChange={(event) => onChange({ ...recipe, output: event.target.value })} />
     </label>
+    <p id={`${ids}-output-help`} className="text-xs" style={muted}>Required when a recipe is added.</p>
+    {outputError ? <p id={`${ids}-output-error`} className="text-xs">{outputError}</p> : null}
   </section>;
 }

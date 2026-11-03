@@ -184,7 +184,7 @@ describe("the composer's add control", () => {
 
       fireEvent.press(row("Photos"));
 
-      await waitFor(() => expect(alert).toHaveBeenCalledWith("Not everything was attached", "2 items are larger than 5 MB."));
+      await waitFor(() => expect(alert).toHaveBeenCalledWith("Not everything was attached", "2 items exceed their attachment size limits."));
       expect(props.onAdd).toHaveBeenCalledWith([photo]);
     });
 

@@ -123,7 +123,7 @@ export async function createClaudeSteerStreamHarness() {
   registerCanonicalChatEventHttpRoute({ app, stream, getPrincipal: () => principal });
   const frames: CanonicalChatTransportFrame[] = [];
   const openStream = vi.fn(async ({ signal, cursor }: { signal: AbortSignal; cursor?: number }) => {
-    const response = await app.request(`/api/chats/events?messageVersion=2${cursor === undefined ? "" : `&cursor=${cursor}`}`, {
+    const response = await app.request(`/api/chats/events?messageVersion=2&assistantTextVersion=1${cursor === undefined ? "" : `&cursor=${cursor}`}`, {
       signal, headers: { accept: "text/event-stream", "x-matrix-chat-protocol": "2" },
     });
     const decoder = new TextDecoder();

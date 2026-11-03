@@ -70,13 +70,15 @@ export function useAgentThread({ agent, chatId }: { agent: ChatAgent | null; cha
   const { selection, turnModes } = agentTurnSetup({ agent, fromTemplate: Boolean(botChat.snapshot), detail, catalog });
   const attachmentKinds = supportedAttachmentKinds(catalog, selection);
   const {
-    draft, setDraft, attachments, addAttachments, removeAttachment, attachmentRoom, unreadableAttachments,
+    draft, setDraft, attachments, addAttachments, removeAttachment, attachmentRoom, unreadableAttachments, attachmentNotice,
     sentAttachments, canSend, send, isSending, optimisticMessages, retrySend, editUnsent,
   } = useChatComposer({
     scope: computer ? `${userId ?? ""}:${computer.handle}:${computer.runtimeSlot}` : null,
     activeChatId: chatId,
     detail,
     selection,
+    catalog,
+    recipeAutomatic: Boolean(botChat.snapshot || agent?.recipeRef),
     turnModes,
     projectId: null,
     attachmentKinds,
@@ -153,6 +155,7 @@ export function useAgentThread({ agent, chatId }: { agent: ChatAgent | null; cha
         attachments,
         room: attachmentRoom,
         unreadable: unreadableAttachments,
+        attachmentNotice,
         onAdd: addAttachments,
         onRemove: removeAttachment,
         draft,

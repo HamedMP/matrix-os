@@ -5,12 +5,13 @@ import type { SitesService } from '../../packages/platform/src/sites/service.js'
 const id = '11111111-1111-4111-8111-111111111111';
 const edgeSecret = 'verified-edge-proof-secret-1234567890';
 const paths = [`/${id}`, `/${id}/frame`, `/${id}/assets/${id}/assets/main.js`, `/${id}/forms/contact`];
-function fixture(secret?: string) {
+function fixture(secret?: string, previousSecret?: string) {
   const resolve = vi.fn();
   const asset = vi.fn(async () => ({ body: Buffer.from('app'), contentType: 'text/javascript' }));
   const admitted = vi.fn();
   const submit = vi.fn();
-  const app = createSitePublicRoutes({ service: { resolve, asset, admitted } as unknown as SitesService, edgeSecret: secret, submit });
+  const app = createSitePublicRoutes({ service: { resolve, asset, admitted } as unknown as SitesService,
+    edgeSecret: secret, edgePreviousSecret: previousSecret, submit });
   return { app, resolve, asset, admitted, submit };
 }
 function request(path: string, proof?: string) {
@@ -41,6 +42,17 @@ it('requires the verified edge proof before reads or form forwarding', async () 
   expect(response.status).toBe(200);
   expect(await response.text()).toBe('app');
   expect(asset).toHaveBeenCalledOnce();
+});
+it('accepts the pinned previous proof during a coordinated rotation and exposes a proof-sensitive health check', async () => {
+  const previous = 'previous-edge-proof-secret-1234567890';
+  const { app, resolve, asset, admitted, submit } = fixture(edgeSecret, previous);
+  for (const proof of [edgeSecret, previous]) {
+    const response = await app.request('/_edge-health', request('/_edge-health', proof));
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({ status: 'ok' });
+  }
+  expect((await app.request('/_edge-health', request('/_edge-health', 'incorrect-proof'))).status).toBe(404);
+  for (const dependency of [resolve, asset, admitted, submit]) expect(dependency).not.toHaveBeenCalled();
 });
 it('limits public form lookups to four in flight before invoking the service', async () => {
   const { app, admitted } = fixture(edgeSecret);

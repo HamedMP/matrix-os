@@ -3,14 +3,14 @@ import { createServer, type Server, type Socket } from "node:net";
 import { ScopeRuntimeRequestSchema, type ScopeRuntimeRequest, type ScopeRuntimeResponse } from "./protocol.js";
 
 const MAX_FRAME_BYTES = 128 * 1024;
-const MAX_CONNECTIONS = 64;
+/** 32 requests each for ordinary work, renewal, cancellation and hard Stop. */
+const MAX_CONNECTIONS = 128;
 const MAX_REQUEST_TIMEOUT_MS = 90_000;
 const DEFAULT_OPERATION_TIMEOUT_MS = 60_000;
-/** A bot turn holds its relay connection until the workload's 900 second lifetime ends. */
-const BOT_RUN_OPERATION_TIMEOUT_MS = 940_000;
+/** Busy bot turns are bounded by the supervisor-owned runtime lease. */
 
 interface ScopeRuntimeController {
-  handle(request: ScopeRuntimeRequest): Promise<ScopeRuntimeResponse>;
+  handle(request: ScopeRuntimeRequest, context?: { signal: AbortSignal }): Promise<ScopeRuntimeResponse>;
   close(): Promise<void> | void;
 }
 
@@ -58,29 +58,44 @@ export function createScopeRuntimeServer(options: {
       return;
     }
     sockets.add(socket);
+    const abort = new AbortController();
     let input = "";
     let oversized = false;
+    let dispatched = false;
     socket.setEncoding("utf8");
     socket.setTimeout(requestTimeoutMs, () => socket.destroy());
     socket.once("error", (error: unknown) => {
       console.warn("[scope-runtime] supervisor socket failed:",
         error instanceof Error ? error.name : "UnknownError");
     });
-    socket.once("close", () => sockets.delete(socket));
+    socket.once("close", () => { sockets.delete(socket); abort.abort(); });
     socket.on("data", (chunk) => {
       if (oversized) return;
+      if (dispatched) { socket.destroy(); return; }
       input += chunk;
       if (Buffer.byteLength(input, "utf8") > MAX_FRAME_BYTES) {
         oversized = true;
         input = "";
         socket.destroy();
+        return;
+      }
+      if (input.includes("\n")) {
+        try {
+          const request = ScopeRuntimeRequestSchema.parse(JSON.parse(input.trim()));
+          if (request.type === "runtime.bot" && request.command.kind === "bot.run") dispatch();
+        } catch (error: unknown) { socket.destroy(); }
       }
     });
     socket.once("end", () => {
-      if (oversized || closed) {
+      if (dispatched) { abort.abort(); socket.destroy(); return; }
+      dispatch();
+    });
+    function dispatch(): void {
+      if (oversized || closed || operations.size >= maxConnections) {
         socket.destroy();
         return;
       }
+      dispatched = true;
       socket.setTimeout(operationTimeoutMs, () => socket.destroy());
       const operation = (async () => {
         try {
@@ -91,9 +106,9 @@ export function createScopeRuntimeServer(options: {
           }
           const request = ScopeRuntimeRequestSchema.parse(JSON.parse(frames[0]!));
           if (request.type === "runtime.bot" && request.command.kind === "bot.run") {
-            socket.setTimeout(BOT_RUN_OPERATION_TIMEOUT_MS, () => socket.destroy());
+            socket.setTimeout(0);
           }
-          const response = await options.controller.handle(request);
+          const response = await options.controller.handle(request, { signal: abort.signal });
           if (!closed && !socket.destroyed) socket.end(`${JSON.stringify(response)}\n`);
           else socket.destroy();
         } catch (error: unknown) {
@@ -108,7 +123,7 @@ export function createScopeRuntimeServer(options: {
         console.warn("[scope-runtime] supervisor request cleanup failed:",
           error instanceof Error ? error.name : "UnknownError");
       });
-    });
+    }
   }
 
   return {

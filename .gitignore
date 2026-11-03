@@ -47,6 +47,7 @@ packages/platform/data/
 
 # Test artifacts
 /output/chat-dock-badge/
+/output/chat-large-transcript/
 /output/chat-subagent-activity/
 /output/chat-tool-details/
 /output/eng203/

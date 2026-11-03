@@ -23,6 +23,7 @@ export function boundedBody(
     push(chunk: Uint8Array): void;
     complete(): void | Promise<void>;
     ambiguous(): void | Promise<void>;
+    unconfirmed?(): void;
   },
   cancellationTimeoutMs = 10_000,
 ): ReadableStream<Uint8Array> {
@@ -54,6 +55,7 @@ export function boundedBody(
       const deadline = Promise.withResolvers<void>();
       const cleanupTimer = setTimeout(() => {
         // Local capacity can expire without proving that the provider body ended.
+        observer?.unconfirmed?.();
         settle();
         deadline.resolve();
       }, cancellationTimeoutMs);
@@ -61,6 +63,9 @@ export function boundedBody(
         clearTimeout(cleanupTimer);
         // The observer keeps its own bounded durable-receipt barrier after ACK.
         return reportAmbiguous();
+      }, (error: unknown) => {
+        observer?.unconfirmed?.();
+        throw error;
       }).finally(() => {
         clearTimeout(cleanupTimer);
         settle();

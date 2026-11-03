@@ -49,6 +49,7 @@ import { z } from "zod/v4";
 import type { PlatformDB } from "./db.js";
 import { AiFundedPolicyError } from "./ai-funded-policy-errors.js";
 import { readCheckoutFundingSnapshot } from "./ai-funded-checkout-snapshot.js";
+import { isBoundedPreviewProvisioningClass } from "./preview-runtime-access.js";
 import {
   fundingSourceAvailability,
   debitAttributedPromotionalGrants,
@@ -131,7 +132,8 @@ export function createAiFundedMeteringRepository(options: AiFundedMeteringReposi
       await sql`SELECT pg_advisory_xact_lock(hashtextextended(${`funded-ai-owner:${identity.ownerId}`}, 0))`.execute(trx.executor);
       await readUnknownUsageWaivers(trx.executor, identity.ownerId);
       const machine = await trx.executor.selectFrom("user_machines").select([
-        "clerk_user_id", "runtime_slot", "status", "activation_state", "deleted_at",
+        "clerk_user_id", "runtime_slot", "runtime_token_epoch", "provisioning_class",
+        "status", "activation_state", "deleted_at",
       ]).where("machine_id", "=", identity.machineId).forUpdate().executeTakeFirst();
       const runtime = await trx.executor.selectFrom("ai_funded_runtime_policies")
         .select([
@@ -147,6 +149,14 @@ export function createAiFundedMeteringRepository(options: AiFundedMeteringReposi
         || runtime.owner_id !== identity.ownerId || runtime.runtime_slot !== identity.runtimeSlot) {
         throw new AiFundedPolicyError("identity_mismatch");
       }
+      const preview = isBoundedPreviewProvisioningClass(machine.provisioning_class)
+        ? await trx.executor.selectFrom("preview_runtime_allocations").selectAll()
+          .where("machine_id", "=", identity.machineId).where("owner_id", "=", identity.ownerId)
+          .where("runtime_slot", "=", identity.runtimeSlot)
+          .where("runtime_token_epoch", "=", machine.runtime_token_epoch)
+          .where("expires_at", ">", checkedAt).executeTakeFirst()
+        : undefined;
+      if (machine.provisioning_class !== "customer" && !preview) throw new AiFundedPolicyError("access_disabled");
       await trx.executor.updateTable("ai_funded_runtime_balances").set({
         month_period_start: currentPeriod,
         month_spent_microusd: sql<number>`CASE WHEN month_period_start = ${currentPeriod} THEN month_spent_microusd ELSE 0 END`,
@@ -157,19 +167,35 @@ export function createAiFundedMeteringRepository(options: AiFundedMeteringReposi
         .where("runtime_slot", "=", identity.runtimeSlot).execute();
       const balance = await reconcileExpiredPromotionalCredit(trx.executor, identity, checkedAt);
       const monthlyBudgetMicrousd = exactInteger(runtime.monthly_budget_microusd);
-      const enabled = global.enabled && runtime.enabled
+      const previewRequestsAvailable = preview === undefined
+        || preview.ai_requests_used < preview.ai_request_limit;
+      const enabled = global.enabled && runtime.enabled && previewRequestsAvailable
         && (runtime.expires_at === null || Date.parse(runtime.expires_at) > checked.getTime());
       const allowedModelIds = enabled
         ? intersectModels(parseModels(global.allowed_model_ids), parseModels(runtime.allowed_model_ids))
         : [];
-      const funding = fundingSummary(balance, monthlyBudgetMicrousd, checkedAt);
+      const funding = {
+        ...fundingSummary(balance, monthlyBudgetMicrousd, checkedAt),
+        ...(preview ? { previewQuota: {
+          mode: "preview" as const,
+          requestLimit: preview.ai_request_limit,
+          requestsUsed: preview.ai_requests_used,
+          requestsRemaining: preview.ai_request_limit - preview.ai_requests_used,
+          maxConcurrency: 1 as const,
+          expiresAt: preview.expires_at,
+        } } : {}),
+      };
       const sources = projection.includeChatAvailability
         ? await fundingSourceAvailability(trx.executor, identity, balance, checkedAt) : undefined;
       const chatAvailability = sources ? FundedAiChatAvailabilitySchema.parse({
         contractVersion: 1, asOf: checkedAt,
-        eligibleBalanceMicrousd: Math.min(sources.ceilingMicrousd,
-          Math.max(0, funding.creditBalanceMicrousd - (funding.fundingShortfallMicrousd ?? 0))),
-        availableBalanceMicrousd: Math.min(sources.availableMicrousd, funding.remainingBalanceMicrousd),
+        eligibleBalanceMicrousd: previewRequestsAvailable
+          ? Math.min(sources.ceilingMicrousd,
+            Math.max(0, funding.creditBalanceMicrousd - (funding.fundingShortfallMicrousd ?? 0)))
+          : 0,
+        availableBalanceMicrousd: previewRequestsAvailable
+          ? Math.min(sources.availableMicrousd, funding.remainingBalanceMicrousd)
+          : 0,
       }) : undefined;
       return {
         funding,
@@ -408,11 +434,13 @@ export function createAiFundedMeteringRepository(options: AiFundedMeteringReposi
       .select([
         "credential.token_id", "credential.token_hash", "credential.owner_id", "credential.machine_id",
         "credential.runtime_slot", "credential.audience", "credential.scope", "credential.expires_at",
-        "credential.revoked_at", "runtime.owner_id as runtime_owner_id",
+        "credential.revoked_at", "credential.runtime_token_epoch as credential_runtime_token_epoch",
+        "runtime.owner_id as runtime_owner_id",
         "runtime.runtime_slot as policy_runtime_slot", "runtime.enabled as runtime_enabled",
         "runtime.expires_at as runtime_expires_at", "runtime.revision as runtime_revision",
         "runtime.allowed_model_ids as runtime_models", "runtime.monthly_budget_microusd",
-        "machine.clerk_user_id", "machine.runtime_slot as machine_runtime_slot", "machine.status",
+        "machine.clerk_user_id", "machine.runtime_slot as machine_runtime_slot",
+        "machine.runtime_token_epoch as machine_runtime_token_epoch", "machine.provisioning_class", "machine.status",
         "machine.activation_state", "machine.deleted_at", "global_policy.enabled as global_enabled",
         "global_policy.revision as global_revision", "global_policy.allowed_model_ids as global_models",
         "restriction.debt_microusd as funding_debt_microusd", "restriction.frozen as funding_frozen",
@@ -424,9 +452,20 @@ export function createAiFundedMeteringRepository(options: AiFundedMeteringReposi
       || row.revoked_at !== null || Date.parse(row.expires_at) <= checked.getTime()
       || row.audience !== FUNDED_AI_AUDIENCE || row.scope !== FUNDED_AI_SCOPE
       || row.clerk_user_id !== row.owner_id || row.machine_runtime_slot !== row.runtime_slot
+      || row.credential_runtime_token_epoch !== row.machine_runtime_token_epoch
       || row.status !== "running" || row.activation_state !== "authorized" || row.deleted_at !== null
       || row.runtime_owner_id !== row.owner_id || row.policy_runtime_slot !== row.runtime_slot) {
       throw new AiFundedPolicyError("unauthorized");
+    }
+    if (isBoundedPreviewProvisioningClass(row.provisioning_class)) {
+      const allocation = await options.db.executor.selectFrom("preview_runtime_allocations").select("machine_id")
+        .where("machine_id", "=", row.machine_id).where("owner_id", "=", row.owner_id)
+        .where("runtime_slot", "=", row.runtime_slot)
+        .where("runtime_token_epoch", "=", row.machine_runtime_token_epoch)
+        .where("expires_at", ">", checkedAt).executeTakeFirst();
+      if (!allocation) throw new AiFundedPolicyError("access_disabled");
+    } else if (row.provisioning_class !== "customer") {
+      throw new AiFundedPolicyError("access_disabled");
     }
     if (!row.global_enabled || !row.runtime_enabled
       || row.funding_frozen === true || exactInteger(row.funding_debt_microusd ?? 0) > 0

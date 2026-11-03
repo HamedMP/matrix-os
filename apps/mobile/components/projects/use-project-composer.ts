@@ -1,4 +1,4 @@
-import type { CanonicalChatModelSelection } from "@matrix-os/contracts";
+import type { CanonicalChatModelSelection, CanonicalProviderCatalog } from "@matrix-os/contracts";
 import { useRef, useState } from "react";
 
 import {
@@ -6,9 +6,11 @@ import {
   appendAttachments,
   sameAttachments,
   unreadableAttachments,
+  unreadableNotice,
   type ChatAttachmentKind,
   type ComposerAttachment,
 } from "@/lib/chat-attachments";
+import { chatAttachmentSubmissionError } from "@/lib/chat-attachment-policy";
 import { useSendChatMessage } from "@/lib/queries/use-send-chat-message";
 import { canonicalChatRequestId } from "@/lib/requests/canonical-chat";
 
@@ -28,6 +30,7 @@ interface ProjectComposerOptions {
   /** The project a sent message starts a chat in: its id, not its slug. */
   projectId: string | null;
   selection: CanonicalChatModelSelection | null;
+  catalog: CanonicalProviderCatalog | null;
   turnModes: { interactionMode: string; permissionMode: string } | null;
   /**
    * The kinds of attachment the selected model reads. A message is not sent
@@ -50,6 +53,7 @@ interface ProjectComposerOptions {
 export function useProjectComposer({
   projectId,
   selection,
+  catalog,
   turnModes,
   attachmentKinds,
   disabled = false,
@@ -63,9 +67,10 @@ export function useProjectComposer({
 
   const text = draft.trim();
   const unreadable = attachmentKinds ? unreadableAttachments(attachments, attachmentKinds) : [];
+  const attachmentNotice = unreadableNotice(unreadable) ?? chatAttachmentSubmissionError(catalog, selection, attachments);
   const canSend = !disabled && projectId !== null && (text !== "" || attachments.length > 0)
     // The computer would refuse the turn after the phone had uploaded the files.
-    && unreadable.length === 0
+    && attachmentNotice === null
     && selection !== null && turnModes !== null && !isSending;
 
   const addAttachments = (added: readonly ComposerAttachment[]) => {
@@ -129,6 +134,7 @@ export function useProjectComposer({
     canAddAttachments: !isSending,
     /** The waiting attachments the selected model does not read. Nothing is sent while there are any. */
     unreadableAttachments: unreadable,
+    attachmentNotice,
     canSend,
     send,
     isSending,

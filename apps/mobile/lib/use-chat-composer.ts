@@ -1,4 +1,4 @@
-import type { CanonicalChatDetailResponse, CanonicalChatModelSelection } from "@matrix-os/contracts";
+import type { CanonicalChatDetailResponse, CanonicalChatModelSelection, CanonicalProviderCatalog } from "@matrix-os/contracts";
 import { useCallback, useMemo, useState } from "react";
 
 import {
@@ -13,12 +13,14 @@ import {
   rememberSentAttachments,
   sameAttachments,
   unreadableAttachments,
+  unreadableNotice,
   writeAttachmentDraft,
   type ChatAttachmentDrafts,
   type ChatAttachmentKind,
   type ComposerAttachment,
   type SentAttachmentUris,
 } from "@/lib/chat-attachments";
+import { chatAttachmentSubmissionError } from "@/lib/chat-attachment-policy";
 import { chatDraftKey, moveChatDraft, writeChatDraft, type ChatDrafts } from "@/lib/chat-drafts";
 import { tapHaptic, warningHaptic } from "@/lib/haptics";
 import { useSendChatMessage } from "@/lib/queries/use-send-chat-message";
@@ -235,6 +237,9 @@ interface ChatComposerOptions {
   activeChatId: string | null;
   detail: CanonicalChatDetailResponse | null;
   selection: CanonicalChatModelSelection | null;
+  catalog: CanonicalProviderCatalog | null;
+  /** A recipe's fixed auto route represents its saved coordinator. */
+  recipeAutomatic?: boolean;
   turnModes: { interactionMode: string; permissionMode: string } | null;
   /** Only applied when the send creates the chat. */
   projectId: string | null;
@@ -268,6 +273,8 @@ export function useChatComposer({
   activeChatId,
   detail,
   selection,
+  catalog,
+  recipeAutomatic = false,
   turnModes,
   projectId,
   attachmentKinds,
@@ -294,6 +301,11 @@ export function useChatComposer({
   const unreadable = useMemo(() => (
     attachmentKinds ? unreadableAttachments(attachments, attachmentKinds) : NO_ATTACHMENTS
   ), [attachments, attachmentKinds]);
+  const attachmentErrorIn = useCallback((parts: readonly ComposerAttachment[]) => (
+    (attachmentKinds ? unreadableNotice(unreadableAttachments(parts, attachmentKinds)) : null)
+      ?? chatAttachmentSubmissionError(catalog, selection, parts, recipeAutomatic)
+  ), [attachmentKinds, catalog, selection, recipeAutomatic]);
+  const attachmentError = attachmentErrorIn(attachments);
   const addAttachments = useCallback((added: readonly ComposerAttachment[]) => {
     if (added.length === 0) return;
     setState((current) => {
@@ -329,7 +341,7 @@ export function useChatComposer({
   const sendHeldBack = disabled || !selection || !turnModes || isSending;
 
   const dispatch = useCallback((outgoing: Outgoing, fromComposer: boolean) => {
-    if (!selection || !turnModes) return;
+    if (!selection || !turnModes || attachmentErrorIn(outgoing.attachments)) return;
     // Felt as the message leaves, before anything has been heard back.
     tapHaptic();
     const { text, attachments: sent, chatRequestId, turnRequestId } = outgoing;
@@ -417,11 +429,11 @@ export function useChatComposer({
         });
       },
     });
-  }, [activeChatId, detail, draftKey, epoch, navigation, selection, turnModes, sendMessage]);
+  }, [activeChatId, detail, draftKey, epoch, navigation, selection, turnModes, sendMessage, attachmentErrorIn]);
 
   // The computer would refuse a turn whose attachments the model does not
   // read, after the phone had uploaded the files.
-  const canSend = !sendHeldBack && (draft.trim().length > 0 || attachments.length > 0) && unreadable.length === 0;
+  const canSend = !sendHeldBack && (draft.trim().length > 0 || attachments.length > 0) && attachmentError === null;
 
   const send = useCallback(() => {
     if (!canSend) return;
@@ -448,16 +460,15 @@ export function useChatComposer({
     }, true);
   }, [canSend, draft, attachments, activeChatId, projectId, state.failed, dispatch]);
 
-  /** A failed message's attachments that the selected model does not read: it cannot be sent again as it is. */
-  const unreadableIn = useCallback((message: PendingMessage) => (
-    attachmentKinds !== undefined
-      && unreadableAttachments(message.attachments ?? NO_ATTACHMENTS, attachmentKinds).length > 0
-  ), [attachmentKinds]);
+  /** Re-evaluate failures against the current selection, including its funding options. */
+  const retryErrorIn = useCallback((message: PendingMessage) => (
+    attachmentErrorIn(message.attachments ?? NO_ATTACHMENTS)
+  ), [attachmentErrorIn]);
 
   /** Sends a message that was not sent again, as the same send: same keys, same text and attachments. */
   const retrySend = useCallback((id: string) => {
     const message = state.pending.find((pending) => pending.id === id && pending.failed);
-    if (!message || message.chatId !== activeChatId || sendHeldBack || unreadableIn(message)) return;
+    if (!message || message.chatId !== activeChatId || sendHeldBack || retryErrorIn(message)) return;
     dispatch({
       text: message.text,
       attachments: message.attachments ?? NO_ATTACHMENTS,
@@ -465,7 +476,7 @@ export function useChatComposer({
       chatRequestId: message.chatRequestId,
       turnRequestId: message.turnRequestId,
     }, false);
-  }, [state.pending, activeChatId, sendHeldBack, unreadableIn, dispatch]);
+  }, [state.pending, activeChatId, sendHeldBack, retryErrorIn, dispatch]);
 
   /** Takes a message that was not sent out of the chat and back into the composer. */
   const editUnsent = useCallback((id: string) => {
@@ -482,8 +493,14 @@ export function useChatComposer({
       message.chatId === activeChatId && (message.chatId !== null || message.navigation === navigation)
     ))
     .map((message) => (
-      message.failed ? { ...message, retryBlocked: sendHeldBack || unreadableIn(message) } : message
-    )), [state.pending, activeChatId, navigation, sendHeldBack, unreadableIn]);
+      message.failed ? { ...message, retryBlocked: sendHeldBack || retryErrorIn(message) !== null } : message
+    )), [state.pending, activeChatId, navigation, sendHeldBack, retryErrorIn]);
+  // Keep a blocked retry actionable through the existing composer notice and
+  // Edit action, without moving or discarding its text and attachments.
+  const retryAttachmentError = optimisticMessages.filter((message) => message.failed).map(retryErrorIn).find(Boolean);
+  const attachmentNotice = attachmentError ?? (retryAttachmentError
+    ? `To retry a message: ${retryAttachmentError} Edit the message or choose another model.`
+    : null);
 
   return {
     draft,
@@ -497,6 +514,7 @@ export function useChatComposer({
     attachmentRoom,
     /** The waiting attachments the selected model does not read. Nothing is sent while there are any. */
     unreadableAttachments: unreadable,
+    attachmentNotice,
     /** Where attachments sent from here still are on the phone, by their place on the computer. */
     sentAttachments: state.sentAttachments,
     /**

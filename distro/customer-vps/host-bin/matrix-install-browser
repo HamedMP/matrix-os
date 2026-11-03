@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+set -euo pipefail
+# Installed independently of the owner-writable app tree.
+exec /usr/bin/python3 -I /usr/local/libexec/matrix-browser-runtime.py "$@"

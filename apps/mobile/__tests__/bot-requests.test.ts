@@ -12,7 +12,7 @@ it("returns owner-scoped bot status even when the agent library is unavailable",
   const fetchMock = jest.spyOn(global, "fetch").mockImplementation(async (input) => {
     const path = new URL(String(input)).pathname;
     const body = path.endsWith("/bot") ? { agentId: "bot_research1" }
-      : path.endsWith("/interactions") ? { interactions: [] }
+      : path.endsWith("/interactions") && new URL(String(input)).searchParams.get("includeRecovery") === "true" ? { interactions: [] }
         : path.endsWith("/bot-tasks") ? { tasks: [] }
           : path.endsWith("/authority") ? { agentId: "bot_research1", revision: 1,
             grants: [], connections: [], routines: [], pendingInteractions: [], memory: { items: [] } }
@@ -29,7 +29,7 @@ it("returns owner-scoped bot status even when the agent library is unavailable",
 it("sends a revision-bound answer and uses DELETE for grant revocation", async () => {
   const fetchMock = jest.spyOn(global, "fetch").mockImplementation(async (input) => ({
     ok: true,
-    json: async () => String(input).endsWith("/resolve")
+    json: async () => String(input).endsWith("/resolve?includeRecovery=true")
       ? { interaction: { interactionId: "in_abcdefgh", status: "resolved", revision: 2 } }
       : { grantId: "gr_abcdefgh", revokedAt: "2026-09-28T12:00:00.000Z" },
   } as Response));

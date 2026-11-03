@@ -104,6 +104,14 @@ if fail=='pgstop' and name=='pgmock' and args==['stop']:sys.exit(1)
   self.assertEqual(set(actual),set(expected));self.assertEqual(len(actual),len(expected))
   clipboard=next(c for c in groups if 'electron-clipboard.json' in ' '.join(c['args']));self.assertIn('--maxWorkers=1',clipboard['args'])
   self.assertEqual(sum(c['provider']=='1' for c in groups),1)
+ def test_account_picker_is_required_after_build_and_part_of_validated_receipt(self):
+  result,calls,_=self.invoke();self.assertEqual(result.returncode,0)
+  picker='tests/e2e/desktop/account-organization-picker.e2e.test.ts'
+  self.assertIn(picker,REPORT_FILES['electron-input'])
+  build=next(i for i,c in enumerate(calls) if c['cmd']=='bun' and c['args']==['run','build:desktop'])
+  runs=[(i,c) for i,c in enumerate(calls) if c['cmd']=='pnpm' and picker in c['args']]
+  self.assertEqual(len(runs),1)
+  self.assertGreater(runs[0][0],build);self.assertEqual(runs[0][1]['required'],'1')
  def test_brand_build_is_measured_before_every_lane(self):
   result,calls,times=self.invoke();self.assertEqual(result.returncode,0)
   brand=next(i for i,c in enumerate(calls) if c['cmd']=='pnpm' and c['args']==['--filter','@matrix-os/brand','build'])

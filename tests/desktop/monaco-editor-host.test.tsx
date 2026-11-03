@@ -15,7 +15,7 @@ const monacoMocks = vi.hoisted(() => ({
   createModel: vi.fn(() => ({ dispose: vi.fn() })),
 }));
 
-vi.mock("monaco-editor", () => ({
+vi.mock("../../desktop/node_modules/monaco-editor", () => ({
   editor: {
     create: monacoMocks.create,
     createModel: monacoMocks.createModel,
@@ -32,6 +32,49 @@ function makeApi() {
 }
 
 describe("MonacoEditorHost", () => {
+  it("edits the exact project worktree and saves against its current etag", async () => {
+    const api = makeApi(); useConnection.setState({ api: api as never });
+    const resource = { kind: "project" as const, projectId: "project-one", worktreeId: "wt_one", path: "guide.md" };
+    const invoke = vi.fn(async (channel: string) => channel === "runtime:get-file-content"
+      ? { metadata: { etag: "etag_1" }, content: "# Project guide", truncated: false }
+      : { metadata: { etag: "etag_2" } });
+    Object.defineProperty(window, "operator", { configurable: true, value: { invoke } });
+    render(<MonacoEditorHost path="guide.md" resource={resource} active onDirtyChange={vi.fn()} />);
+    const editor = await screen.findByRole("textbox", { name: "Edit guide.md" });
+    expect((editor as HTMLTextAreaElement).value).toBe("# Project guide");
+    fireEvent.change(editor, { target: { value: "# Updated guide" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save guide.md" }));
+    await waitFor(() => expect(invoke).toHaveBeenCalledWith("runtime:save-file-content", expect.objectContaining({ projectId: "project-one", worktreeId: "wt_one", path: "guide.md", baseEtag: "etag_1", content: "# Updated guide" })));
+    expect(api.putText).not.toHaveBeenCalled();
+  });
+  it("does not overwrite a changed project file and preserves the local buffer", async () => {
+    useConnection.setState({ api: makeApi() as never });
+    const resource = { kind: "project" as const, projectId: "project-one", worktreeId: "wt_one", path: "guide.md" };
+    const invoke = vi.fn().mockResolvedValueOnce({ metadata: { etag: "etag_1" }, content: "# First", truncated: false })
+      .mockResolvedValue({ metadata: { etag: "etag_2" }, content: "# Changed elsewhere", truncated: false });
+    Object.defineProperty(window, "operator", { configurable: true, value: { invoke } });
+    render(<MonacoEditorHost path="guide.md" resource={resource} active onDirtyChange={vi.fn()} />);
+    const editor = await screen.findByRole("textbox", { name: "Edit guide.md" });
+    fireEvent.change(editor, { target: { value: "# Local unsaved" } });
+    fireEvent.keyDown(window, { key: "s", metaKey: true });
+    await screen.findByText(/changed on your computer/i);
+    expect((editor as HTMLTextAreaElement).value).toBe("# Local unsaved");
+    expect(invoke.mock.calls.some(([channel]) => channel === "runtime:save-file-content")).toBe(false);
+  });
+  it("previews unsaved Markdown beside the editor without writing it", async () => {
+    const api = makeApi();
+    api.getText.mockResolvedValue("# Original\n");
+    useConnection.setState({ api: api as never });
+    render(<MonacoEditorHost path="notes/plan.md" active onDirtyChange={vi.fn()} />);
+    const editor = await screen.findByRole("textbox", { name: "Edit notes/plan.md" });
+    fireEvent.change(editor, { target: { value: "# Unsaved heading\n\n- First action" } });
+    fireEvent.click(screen.getByRole("button", { name: "Split Markdown view" }));
+    expect(await screen.findByRole("heading", { name: "Unsaved heading" })).toBeTruthy();
+    expect(screen.getByRole("textbox", { name: "Edit notes/plan.md" })).toBeTruthy();
+    expect(api.putText).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "Markdown source" }));
+    expect(screen.getByRole("textbox").getAttribute("value") ?? (screen.getByRole("textbox") as HTMLTextAreaElement).value).toContain("Unsaved heading");
+  });
   beforeEach(() => {
     useConnection.setState(useConnection.getInitialState(), true);
     useConnection.setState({ runtimeSlot: "primary", authGeneration: 1 });

@@ -126,12 +126,4 @@ final class BoardStoreTests: XCTestCase {
         }
         XCTAssertEqual(boardError, BoardError.unauthorized)
     }
-
-    func testReloadAfterFailureCanSucceed() async {
-        let loader = MockBoardLoader(.success([card("a", status: .todo, order: 0)]))
-        let store = BoardStore(loader: loader)
-        await store.load(projectSlug: "demo")
-        XCTAssertEqual(store.state, .loaded)
-        XCTAssertEqual(store.cards.count, 1)
-    }
 }

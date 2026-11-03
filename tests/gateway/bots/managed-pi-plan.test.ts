@@ -67,7 +67,7 @@ async function fixture(rootKind?: "project" | "worktree") {
     await hold;
     return { ok: true, reply: { runId: input.command.runId, status: "completed", toolActions: 0, sessionRevision: 1 } };
   });
-  const host = { available: true, client: { createRuntime, runBot, stopRuntime: vi.fn(async () => undefined) } } as unknown as ScopeRuntimeHost;
+  const host = { available: true, client: { createRuntime, runBot, renewRuntime: vi.fn(async () => undefined), stopRuntime: vi.fn(async () => undefined) } } as unknown as ScopeRuntimeHost;
   const admission = createManagedPiAdmission({ db, homePath: home, host, registry, chatgptPlan: peers, roots: executionRoots ?? { resolve: async () => { throw new Error("No project"); } } });
   const runtime = createManagedPiRuntime({ admission, host, providers, chatgptPlan: peers, lifetime: new AbortController().signal,
     forgetRun: () => undefined, cancelInference: current => registry.cancelInference(current) });

@@ -34,6 +34,10 @@ export interface OnboardingTaskDefinition {
   nextStep: string;
 }
 
+/** Spec 635: the code follow-up that ends in a pull request for review, never a merge. */
+export const ONBOARDING_FIX_TOP_ISSUE = "Fix the top issue on a branch";
+const CODE_CHANGE_RULES = "Work on a new branch, add or update tests, run them, and open a pull request for my review. Never push to the default branch or merge, and ask me before changing anything outside the repository, such as issues.";
+
 export const ONBOARDING_TASKS: readonly OnboardingTaskDefinition[] = [
   {
     id: "research",
@@ -96,7 +100,7 @@ export const ONBOARDING_TASKS: readonly OnboardingTaskDefinition[] = [
     readyLine: "Ready. What should I do?",
     readyBubble: "Your repo is ready",
     failedStep: "Couldn't open the repo",
-    followUp: { chips: ["Explain this repo", "Fix a bug", "Add a feature"] },
+    followUp: { chips: ["Explain this repo", ONBOARDING_FIX_TOP_ISSUE, "Add a feature"] },
     nextStep: "Pick what to work on",
   },
 ];
@@ -176,7 +180,7 @@ export function buildOnboardingPrompt({ taskId, answer, appConnected, simpler, c
     case "work-on-code":
       return simpler
         ? `Give me a short overview of the ${answer} repository.`
-        : `Clone the ${context ?? answer} repository into a project, read it, and tell me in three lines what it does. Then wait for my next instruction.`;
+        : `Clone the ${context ?? answer} repository into a project, read it, run its tests, and tell me in three lines what it does and how the tests went. Don't change anything yet. Then wait for my next instruction.`;
     case "custom":
       return answer;
   }
@@ -187,7 +191,10 @@ export function onboardingFollowUpPrompt(taskId: OnboardingTaskId, choice: strin
   switch (taskId) {
     case "research": return `Watch ${answer} for me and send me an updated brief every week.`;
     case "plan-week": return "Do this every Monday at 8:00.";
-    case "work-on-code": return `${choice} in the ${answer} repository.`;
+    case "work-on-code":
+      if (choice === ONBOARDING_FIX_TOP_ISSUE) return `Find the most important open issue for the ${answer} repository and fix it. ${CODE_CHANGE_RULES}`;
+      if (choice === "Explain this repo") return `Explain the ${answer} repository: its structure, how to run it, and where to start.`;
+      return `${choice} in the ${answer} repository. ${CODE_CHANGE_RULES}`;
     case "build-website":
     case "custom": return choice;
   }

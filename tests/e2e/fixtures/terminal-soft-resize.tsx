@@ -1,4 +1,5 @@
 import React from "react";
+import { TERMINAL_FIXTURE_REJECTION_PREFIX, ValidatedTerminalFixtureSocket, type TerminalFixtureClientFrame } from "./validated-terminal-socket";
 import { createRoot } from "react-dom/client";
 import { TerminalPane } from "../../../shell/src/components/terminal/TerminalPane";
 import TerminalView from "../../../desktop/src/renderer/src/features/terminal/TerminalView";
@@ -16,13 +17,14 @@ const proposals: unknown[] = [];
 const inputs: string[] = [];
 let latestSocket: FixtureSocket | undefined;
 let outputSequence = 1;
-class FixtureSocket {
+class FixtureSocket extends ValidatedTerminalFixtureSocket {
   static CONNECTING = 0; static OPEN = 1; static CLOSING = 2; static CLOSED = 3;
   readyState = 0;
   onopen: ((event: Event) => void) | null = null;
   onmessage: ((event: MessageEvent) => void) | null = null;
   onclose: (() => void) | null = null;
   constructor(readonly url: string) {
+    super(ref, () => console.error(TERMINAL_FIXTURE_REJECTION_PREFIX));
     latestSocket = this;
     setTimeout(() => {
       this.readyState = 1;
@@ -48,8 +50,7 @@ class FixtureSocket {
       : { terminalRef: ref, revision: 1 };
     this.onmessage?.(new MessageEvent("message", { data: JSON.stringify({ ...identity, ...frame }) }));
   }
-  send(raw: string) {
-    const frame = JSON.parse(raw);
+  protected onClientFrame(frame: TerminalFixtureClientFrame): void {
     if (frame.type === "scroll-query" || frame.type === "scroll-to") {
       if (scrollFrames.length < 100) scrollFrames.push(frame);
       if (frame.type === "scroll-to") nativeState = { ...nativeState, above: frame.line, below: 100 - frame.line };

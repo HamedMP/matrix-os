@@ -27,14 +27,16 @@ export class AppError extends Error {
   // string — only short slugs the gateway emits as { error: { code } }.
   readonly detail?: string;
   readonly httpStatus?: number;
+  readonly reason?: "prompt_too_large" | "unsupported_skill";
 
-  constructor(category: AppErrorCategory, options?: { cause?: unknown; detail?: string; httpStatus?: number }) {
+  constructor(category: AppErrorCategory, options?: { cause?: unknown; detail?: string; httpStatus?: number; reason?: "prompt_too_large" | "unsupported_skill" }) {
     // The message is always the generic copy — the cause stays internal.
     super(CATEGORY_MESSAGES[category], options);
     this.name = "AppError";
     this.category = category;
     if (options?.detail) this.detail = options.detail;
     if (options?.httpStatus !== undefined) this.httpStatus = options.httpStatus;
+    if (options?.reason !== undefined) this.reason = options.reason;
   }
 }
 

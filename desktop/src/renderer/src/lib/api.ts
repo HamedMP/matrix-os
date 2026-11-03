@@ -3,6 +3,7 @@
 // this module never sees the credential. Every call has a timeout.
 import { AppError, classifyHttpStatus, classifyTransportError, safeErrorDetail } from "../../../shared/app-error";
 import { chatFundingVersionUrl } from "@matrix-os/contracts";
+import { botCreationFailureReason, type BotCreationFailureReason } from "@matrix-os/ui";
 
 const API_TIMEOUT_MS = 10_000;
 
@@ -123,14 +124,17 @@ export function createApiClient(options: ApiClientOptions): ApiClient {
       // Extract the gateway's safe error CODE (e.g. invalid_session_request) so
       // callers can surface a specific reason instead of only the generic copy.
       let detail: string | undefined;
+      let reason: BotCreationFailureReason | undefined;
       try {
-        const body = (await response.clone().json()) as { error?: unknown };
-        const err = body.error;
+        const body = (await response.clone().json()) as { error?: unknown; code?: unknown };
+        const botPath = /^\/api\/chat-agents(?:[/?]|$)/.test(path);
+        const err = body.error ?? (botPath ? body : undefined);
         detail = safeErrorDetail(typeof err === "object" && err ? (err as { code?: unknown }).code : err);
-      } catch {
-        // Non-JSON / empty body — no detail to surface.
+        if (botPath) reason = botCreationFailureReason(body);
+      } catch (error: unknown) {
+        console.warn("[api] Error response metadata unavailable:", error instanceof Error ? error.name : "UnknownError");
       }
-      throw new AppError(classifyHttpStatus(response.status), { detail, httpStatus: response.status });
+      throw new AppError(classifyHttpStatus(response.status), { detail, reason, httpStatus: response.status });
     }
     return response;
   }

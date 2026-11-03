@@ -14,6 +14,7 @@ import { BotRouteError } from "../../../packages/gateway/src/bots/route-resolver
 import { BotRuntimeRegistry } from "../../../packages/gateway/src/bots/runtime-registry.js";
 import { MATRIX_BOT_SELECTION } from "../../../packages/gateway/src/bots/selection.js";
 import { createBotTaskOrchestrator } from "../../../packages/gateway/src/bots/task-orchestrator.js";
+import type { BotStateTransactions } from "../../../packages/gateway/src/bots/events.js";
 import { createBotExecutorReadiness } from "../../../packages/gateway/src/bots/executor-readiness.js";
 import { createBotStateTransactions } from "../../../packages/gateway/src/bots/events.js";
 import { createBotInteractionService } from "../../../packages/gateway/src/bots/interactions.js";
@@ -25,6 +26,11 @@ import { BOT, OWNER, createBotStateDatabase, insertChat } from "./bot-state-supp
 // Reset must release fixture closures instead of restoring an original implementation.
 const fixtureMock = <T extends (...args: never[]) => unknown>(implementation: T) => vi.fn<T>().mockImplementation(implementation);
 
+vi.mock("node:fs/promises", async importOriginal => {
+  const actual = await importOriginal<typeof import("node:fs/promises")>();
+  return { ...actual, realpath: vi.fn(actual.realpath), open: vi.fn(actual.open) };
+});
+
 const CHAT = "chat_botdirect1";
 const RUNTIME = `runtime_${"f".repeat(32)}`;
 const ROUTE: BotModelRoute = { api: "anthropic-messages", modelId: "claude-sonnet-5", input: ["text"], contextWindow: 200_000, maxOutputTokens: 8_192 };
@@ -34,7 +40,7 @@ const AGENT = {
   revision: 1, createdAt: "2026-09-27T12:00:00.000Z", updatedAt: "2026-09-27T12:00:00.000Z",
 };
 
-type RunBotInput = { runtimeHandle: string; executionGeneration: string; command: { kind: string; runId: string; text?: string } };
+type RunBotInput = { runtimeHandle: string; executionGeneration: string; command: { kind: string; runId: string; text?: string }; signal?: AbortSignal };
 
 let db: Kysely<OwnerBotDatabase>;
 let destroy: () => Promise<void>;
@@ -48,26 +54,40 @@ afterEach(async () => { vi.unstubAllEnvs(); try { await destroy(); } finally { v
 
 function setup(options: {
   homePath?: string;
+  inputHistory?: Parameters<typeof createBotTaskOrchestrator>[0]["inputHistory"];
+  resolveGroupRoute?: Parameters<typeof createBotTaskOrchestrator>[0]["resolveGroupRoute"];
   worker?: (input: RunBotInput, context: { publish(seq: number, event: Record<string, unknown>): Promise<void> }) => Promise<unknown>;
   resolveRoute?: (selection?: CanonicalChatModelSelection) => Promise<import("../../../packages/gateway/src/bots/route-resolver.js").ResolvedBotRoute>;
   admit?: () => Promise<never>;
   executorReady?: (ownerId: string, botId: string) => Promise<boolean>;
   cancelDelivered?: boolean;
-  activeDeadlineMs?: number;
+  steerReply?: Record<string, unknown>;
   cancelGraceMs?: number;
   agent?: Record<string, unknown> | null;
   resolveProcedure?: Parameters<typeof createBotTaskOrchestrator>[0]["resolveProcedure"];
   memory?: string[];
   admitted?: () => Promise<string[]>;
+  resolveGroupRun?: (input: { ownerId: string; chatId: string; runId: string }) => Promise<unknown>;
+  authorizeGroup?: import("../../../packages/gateway/src/bots/runtime-registry.js").GroupBotAuthorizer;
   answerWithMessage?: () => Promise<void>;
+  assertSource?: () => Promise<void>;
+  transact?: (base: BotStateTransactions) => BotStateTransactions;
 } = {}) {
   const registry = new BotRuntimeRegistry();
+  const lifecycle: string[] = [];
+  let renewalFailure: ((error: unknown) => void) | undefined;
+  const stopRenewal = fixtureMock(async () => { lifecycle.push("renewal.stop"); });
   const admission = {
     admit: fixtureMock(options.admit ?? (async (request: Parameters<typeof registry.bind>[0]) => {
-      registry.bind({ ...request, runtimeHandle: RUNTIME, executionGeneration: "3", rootFingerprint: "f".repeat(64) });
+      const { expectedRootFingerprint: _fingerprint, signal: _signal, ...runtimeRequest } = request as typeof request & { expectedRootFingerprint?: string; signal?: AbortSignal };
+      registry.bind({ ...runtimeRequest, ...(request.group ? { group: { scopeId: "scope-company", actorId: "user_member", authEpoch: 4, authorityGeneration: 1, authorityRuntimeId: "owner-runtime" } } : {}), runtimeHandle: RUNTIME, executionGeneration: "3", rootFingerprint: "f".repeat(64) });
       return { runtimeHandle: RUNTIME, executionGeneration: "3", rootFingerprint: "f".repeat(64) };
     }) as never),
-    release: fixtureMock(async (handle: string) => registry.release(handle)),
+    release: fixtureMock(async (handle: string) => { lifecycle.push("runtime.release"); registry.release(handle); }),
+    startRenewal: fixtureMock((binding: unknown, onFailure: (error: unknown) => void) => {
+      renewalFailure = onFailure;
+      return { stop: stopRenewal };
+    }),
   };
   let orchestrator: ReturnType<typeof createBotTaskOrchestrator>;
   const commands: RunBotInput["command"][] = [];
@@ -75,10 +95,11 @@ function setup(options: {
     commands.push(input.command);
     if (input.command.kind !== "bot.run") {
       if (input.command.kind === "bot.cancel") {
+        lifecycle.push("worker.cancel");
         const binding = registry.lookupRun({ ...input, runId: input.command.runId })!;
         expect(registry.inferenceSignal(binding)?.aborted).toBe(true);
       }
-      return { ok: options.cancelDelivered !== false, reply: {} };
+      return { ok: options.cancelDelivered !== false, reply: input.command.kind === "bot.steer" ? options.steerReply ?? { acknowledged: true } : {} };
     }
     const binding = registry.lookupRun({ ...input, runId: input.command.runId })!;
     const publish = (seq: number, event: Record<string, unknown>) => orchestrator.eventSink.publish(binding, { seq, event } as never);
@@ -87,10 +108,13 @@ function setup(options: {
       : { runId: input.command.runId, status: "completed", toolActions: 0, sessionRevision: 1 };
     return { ok: true as const, reply };
   });
-  const transact = createBotStateTransactions(new ChatRepository(db as unknown as Kysely<ChatDatabase>));
+  const baseTransact = createBotStateTransactions(new ChatRepository(db as unknown as Kysely<ChatDatabase>));
+  const transact = options.transact?.(baseTransact) ?? baseTransact;
   const interactions = createBotInteractionService({ transact });
   orchestrator = createBotTaskOrchestrator({
     homePath: options.homePath, expectedOwnerId: OWNER,
+    assertSource: options.assertSource,
+    inputHistory: options.inputHistory,
     bindings: createBotBindingsRepository(db),
     transact,
     interactions: options.answerWithMessage ? { answerWithMessage: options.answerWithMessage } : interactions,
@@ -98,17 +122,25 @@ function setup(options: {
     agents: { get: fixtureMock(async () => (options.agent === undefined ? AGENT : options.agent) as never) },
     recipes: createBotRecipeCatalog(),
     resolveProcedure: options.resolveProcedure,
+    resolveGroupRoute: options.resolveGroupRoute ?? (options.resolveGroupRun ? (async () => ({ route: ROUTE, accessSourceId: "matrix_included" as const })) : undefined),
     resolveRoute: options.resolveRoute ?? (async () => ({ route: ROUTE, accessSourceId: "matrix_included" as const })),
     executorReady: options.executorReady,
     admission,
+    resolveGroupRun: options.resolveGroupRun as never,
+    authorizeGroup: options.authorizeGroup,
     registry,
     client: { runBot: runBot as never },
-    ...(options.activeDeadlineMs ? { activeDeadlineMs: options.activeDeadlineMs } : {}),
     ...(options.cancelGraceMs ? { cancelGraceMs: options.cancelGraceMs } : {}),
   });
   const stopRuntime = fixtureMock(async () => undefined);
   const adapter = createMatrixBotChatProviderAdapter({ orchestrator, stopRuntime });
-  return { adapter, orchestrator, admission, registry, commands, stopRuntime, interactions };
+  return {
+    adapter, orchestrator, admission, registry, commands, stopRuntime, interactions, lifecycle, stopRenewal,
+    failRenewal(error: unknown = new Error("lease unavailable")) {
+      if (!renewalFailure) throw new Error("runtime renewal was not started");
+      renewalFailure(error);
+    },
+  };
 }
 
 function turn(signal = new AbortController().signal, runId = "run_turn1", text = "Tighten my intro.") {
@@ -116,6 +148,11 @@ function turn(signal = new AbortController().signal, runId = "run_turn1", text =
     owner: { type: "personal" as const, ownerId: OWNER }, chatId: CHAT, turnId: "cturn_1", runId, prompt: text,
     parts: [{ type: "text" as const, text }], selection: MATRIX_BOT_SELECTION, interactionMode: "default", permissionMode: "default", signal,
   };
+}
+
+function directTurn(orchestrator: ReturnType<typeof createBotTaskOrchestrator>, signal = new AbortController().signal) {
+  return orchestrator.start({ ownerId: OWNER, chatId: CHAT, runId: "run_turn1", text: "Tighten my intro.",
+    parts: turn().parts, selection: MATRIX_BOT_SELECTION, signal });
 }
 
 async function collect(events: AsyncIterable<CanonicalProviderRunEvent>): Promise<CanonicalProviderRunEvent[]> {
@@ -415,6 +452,298 @@ describe("bot turns through the matrix_bot adapter", () => {
     void stuck;
   });
 
+  it("ENG344 Stop fences a late completed Bot worker reply in adapter and durable task", async () => {
+    let finish: () => void = () => undefined;
+    const controller = new AbortController();
+    const { adapter, commands, orchestrator, registry } = setup({
+      worker: (input) => new Promise((resolve) => {
+        finish = () => resolve({ runId: input.command.runId, status: "completed", toolActions: 0, sessionRevision: 1 });
+      }),
+    });
+    const running = collect(adapter.start(turn(controller.signal)));
+    await vi.waitFor(() => expect(commands).toHaveLength(1));
+    const binding = registry.lookupRun({ runtimeHandle: RUNTIME, executionGeneration: "3", runId: "run_turn1" })!;
+    controller.abort();
+    await expect(orchestrator.eventSink.publish(binding, { seq: 0, event: { type: "assistant_delta", text: "Late" } } as never))
+      .rejects.toMatchObject({ code: "stale_generation" });
+    await vi.waitFor(() => expect(commands.map((command) => command.kind)).toEqual(["bot.run", "bot.cancel"]));
+    // The worker ignored Stop and reported success after cancellation was acknowledged.
+    finish();
+    expect.soft((await running).at(-1)).toEqual({ type: "run.completed", outcome: "aborted" });
+    expect.soft(await tasks()).toEqual([expect.objectContaining({ status: "cancelled", run_id: "run_turn1" })]);
+  });
+
+  it("reports Recipe Bot Stop immediately and bounds its checkpoint transport drain", async () => {
+    const transportAborted = vi.fn();
+    const x = setup({ cancelGraceMs: 30, worker: input => {
+      input.signal?.addEventListener("abort", transportAborted, { once: true });
+      return new Promise(() => undefined);
+    } });
+    const running = collect(x.adapter.start(turn()));
+    await vi.waitFor(() => expect(x.commands.map(command => command.kind)).toEqual(["bot.run"]));
+    await x.orchestrator.cancel("run_turn1");
+    expect((await running).at(-1)).toEqual({ type: "run.completed", outcome: "aborted" });
+    await expect(tasks()).resolves.toEqual([expect.objectContaining({ status: "cancelled" })]);
+    await vi.waitFor(() => expect(transportAborted).toHaveBeenCalledOnce());
+  });
+
+  it("renews the exact bound runtime and stops renewal before terminal release", async () => {
+    const x = setup();
+    await collect(x.adapter.start(turn()));
+    expect(x.admission.startRenewal).toHaveBeenCalledWith(
+      expect.objectContaining({ runtimeHandle: RUNTIME, executionGeneration: "3", runId: "run_turn1", ownerId: OWNER }),
+      expect.any(Function),
+    );
+    expect(x.lifecycle).toEqual(["renewal.stop", "runtime.release"]);
+  });
+
+  it("fails and releases a pending run if its lease cannot be renewed, fencing a late success", async () => {
+    let finish: () => void = () => undefined;
+    const x = setup({ worker: (input) => new Promise((resolve) => {
+      finish = () => resolve({ runId: input.command.runId, status: "completed", toolActions: 0, sessionRevision: 1 });
+    }) });
+    const running = collect(x.adapter.start(turn()));
+    await vi.waitFor(() => expect(x.commands.map((command) => command.kind)).toEqual(["bot.run"]));
+    x.failRenewal();
+    expect((await running).at(-1)).toMatchObject({ type: "run.completed", outcome: "failed" });
+    await expect(tasks()).resolves.toEqual([expect.objectContaining({ status: "failed", run_id: "run_turn1" })]);
+    expect(x.lifecycle.indexOf("renewal.stop")).toBeLessThan(x.lifecycle.indexOf("runtime.release"));
+    finish();
+    await Promise.resolve();
+    await expect(tasks()).resolves.toEqual([expect.objectContaining({ status: "failed", run_id: "run_turn1" })]);
+  }, 2_000);
+
+  it("settles a stalled source check when runtime renewal fails before the worker starts", async () => {
+    const x = setup({ assertSource: () => new Promise(() => undefined) });
+    const running = collect(x.adapter.start(turn()));
+    await vi.waitFor(() => expect(x.admission.startRenewal).toHaveBeenCalledTimes(1));
+    x.failRenewal();
+    expect((await running).at(-1)).toMatchObject({ type: "run.completed", outcome: "failed" });
+    await expect(tasks()).resolves.toEqual([expect.objectContaining({ status: "failed" })]);
+    expect(x.admission.release).toHaveBeenCalledTimes(1);
+  }, 2_000);
+
+  it("bounds a hung route setup step to 60 seconds before admitting a runtime", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "setInterval", "clearInterval", "Date"] });
+    let routeStarted: () => void = () => undefined;
+    const started = new Promise<void>((resolve) => { routeStarted = resolve; });
+    const x = setup({ resolveRoute: () => { routeStarted(); return new Promise(() => undefined); } });
+    try {
+      const handle = directTurn(x.orchestrator);
+      await started;
+      await vi.advanceTimersByTimeAsync(59_999);
+      expect(x.admission.admit).not.toHaveBeenCalled();
+      await vi.advanceTimersByTimeAsync(1);
+      await expect(handle.result).resolves.toMatchObject({ status: "failed" });
+      await expect(tasks()).resolves.toEqual([expect.objectContaining({ status: "failed" })]);
+      expect(x.admission.admit).not.toHaveBeenCalled();
+    } finally { vi.useRealTimers(); }
+  });
+
+  it("Stop interrupts hung route setup without waiting for its watchdog", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "setInterval", "clearInterval", "Date"] });
+    let routeStarted: () => void = () => undefined;
+    const started = new Promise<void>((resolve) => { routeStarted = resolve; });
+    const x = setup({ resolveRoute: () => { routeStarted(); return new Promise(() => undefined); } });
+    try {
+      const handle = directTurn(x.orchestrator);
+      await started;
+      await x.orchestrator.cancel("run_turn1");
+      await expect(handle.result).resolves.toMatchObject({ status: "cancelled" });
+      await expect(tasks()).resolves.toEqual([expect.objectContaining({ status: "cancelled" })]);
+      expect(x.admission.admit).not.toHaveBeenCalled();
+      expect(vi.getTimerCount()).toBe(0);
+    } finally { vi.useRealTimers(); }
+  });
+
+  it("catches a rejected late task cleanup after Stop", async () => {
+    let beginStarted: () => void = () => undefined;
+    const started = new Promise<void>((resolve) => { beginStarted = resolve; });
+    let finishBegin: () => void = () => undefined;
+    let failLateSettle = false;
+    const warnings: string[] = [];
+    const warn = vi.spyOn(console, "warn").mockImplementation((message: unknown) => {
+      if (message === "[bots] task state was not recorded:") throw new Error("log sink unavailable");
+      warnings.push(String(message));
+    });
+    try {
+      const x = setup({ transact: (base) => async (ownerId, work) => {
+        if (failLateSettle) throw new Error("state store unavailable");
+        const result = await base(ownerId, work);
+        if (result && typeof result === "object" && "task" in result && "continued" in result) {
+          beginStarted();
+          await new Promise<void>((resolve) => { finishBegin = resolve; });
+        }
+        return result;
+      } });
+      const handle = directTurn(x.orchestrator);
+      await started;
+      await x.orchestrator.cancel("run_turn1");
+      await expect(handle.result).resolves.toMatchObject({ status: "cancelled" });
+      failLateSettle = true;
+      finishBegin();
+      await vi.waitFor(() => expect(warnings).toContain("[bots] late setup cleanup failed:"));
+      expect(x.commands).toEqual([]);
+    } finally { warn.mockRestore(); }
+  }, 2_000);
+
+  it("times out hung admission and releases a runtime that appears afterward", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "setInterval", "clearInterval", "Date"] });
+    let admitStarted: () => void = () => undefined;
+    const started = new Promise<void>((resolve) => { admitStarted = resolve; });
+    let finishAdmit: () => void = () => undefined;
+    const x = setup({ admit: () => {
+      admitStarted();
+      return new Promise<never>((resolve) => { finishAdmit = () => {
+        x.registry.bind({ ownerId: OWNER, botId: BOT, chatId: CHAT, taskId: "task_late", runId: "run_turn1",
+          runtimeHandle: RUNTIME, executionGeneration: "3", rootFingerprint: "f".repeat(64), route: ROUTE,
+          accessSourceId: "matrix_included", capabilities: [], requestClass: "interactive" } as never);
+        resolve({ runtimeHandle: RUNTIME, executionGeneration: "3", rootFingerprint: "f".repeat(64) } as never);
+      }; });
+    } });
+    try {
+      const handle = directTurn(x.orchestrator);
+      await started;
+      await vi.advanceTimersByTimeAsync(60_000);
+      await expect(handle.result).resolves.toMatchObject({ status: "failed" });
+      finishAdmit();
+      await vi.waitFor(() => expect(x.admission.release).toHaveBeenCalledExactlyOnceWith(RUNTIME));
+      expect(x.commands).toEqual([]);
+      expect(x.admission.startRenewal).not.toHaveBeenCalled();
+      await expect(tasks()).resolves.toEqual([expect.objectContaining({ status: "failed" })]);
+    } finally { vi.useRealTimers(); }
+  });
+
+  it("Stop interrupts hung admission and releases its late runtime", async () => {
+    let admitStarted: () => void = () => undefined;
+    const started = new Promise<void>((resolve) => { admitStarted = resolve; });
+    let finishAdmit: () => void = () => undefined;
+    const x = setup({ admit: () => {
+      admitStarted();
+      return new Promise<never>((resolve) => { finishAdmit = () => resolve({ runtimeHandle: RUNTIME, executionGeneration: "3" } as never); });
+    } });
+    const handle = directTurn(x.orchestrator);
+    await started;
+    await x.orchestrator.cancel("run_turn1");
+    await expect(handle.result).resolves.toMatchObject({ status: "cancelled" });
+    finishAdmit();
+    await vi.waitFor(() => expect(x.admission.release).toHaveBeenCalledExactlyOnceWith(RUNTIME));
+    expect(x.commands).toEqual([]);
+    await expect(tasks()).resolves.toEqual([expect.objectContaining({ status: "cancelled" })]);
+  });
+
+  it("bounds a hung source check after admission and releases before worker launch", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "setInterval", "clearInterval", "Date"] });
+    let sourceStarted: () => void = () => undefined;
+    const started = new Promise<void>((resolve) => { sourceStarted = resolve; });
+    const x = setup({ assertSource: () => { sourceStarted(); return new Promise(() => undefined); } });
+    try {
+      const handle = directTurn(x.orchestrator);
+      await started;
+      await vi.advanceTimersByTimeAsync(60_000);
+      await expect(handle.result).resolves.toMatchObject({ status: "failed" });
+      expect(x.commands).toEqual([]);
+      expect(x.lifecycle).toEqual(["renewal.stop", "runtime.release"]);
+      await expect(tasks()).resolves.toEqual([expect.objectContaining({ status: "failed" })]);
+    } finally { vi.useRealTimers(); }
+  });
+
+  it("keeps Stop as the first cause if lease renewal fails while cancellation is in flight", async () => {
+    let finish: () => void = () => undefined;
+    const controller = new AbortController();
+    const x = setup({ worker: (input) => new Promise((resolve) => {
+      finish = () => resolve({ runId: input.command.runId, status: "completed", toolActions: 0, sessionRevision: 1 });
+    }) });
+    const running = collect(x.adapter.start(turn(controller.signal)));
+    await vi.waitFor(() => expect(x.commands.map((command) => command.kind)).toEqual(["bot.run"]));
+    controller.abort();
+    x.failRenewal();
+    finish();
+    expect((await running).at(-1)).toEqual({ type: "run.completed", outcome: "aborted" });
+    await expect(tasks()).resolves.toEqual([expect.objectContaining({ status: "cancelled", run_id: "run_turn1" })]);
+    expect(x.lifecycle.indexOf("renewal.stop")).toBeLessThan(x.lifecycle.indexOf("runtime.release"));
+    expect(x.lifecycle.indexOf("renewal.stop")).toBeLessThan(x.lifecycle.indexOf("worker.cancel"));
+  });
+
+  it("releases a runtime once when Stop's cancel cannot be delivered and its worker later finishes", async () => {
+    let finish: () => void = () => undefined;
+    const controller = new AbortController();
+    const x = setup({ cancelDelivered: false, worker: (input) => new Promise((resolve) => {
+      finish = () => resolve({ runId: input.command.runId, status: "completed", toolActions: 0, sessionRevision: 1 });
+    }) });
+    const running = collect(x.adapter.start(turn(controller.signal)));
+    await vi.waitFor(() => expect(x.commands.map((command) => command.kind)).toEqual(["bot.run"]));
+    controller.abort();
+    await vi.waitFor(() => expect(x.admission.release).toHaveBeenCalledWith(RUNTIME));
+    finish();
+    expect((await running).at(-1)).toEqual({ type: "run.completed", outcome: "aborted" });
+    expect(x.admission.release).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps an active Bot turn alive beyond the former ten-minute task cutoff", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "setInterval", "clearInterval", "Date"] });
+    vi.setSystemTime(new Date("2026-10-21T12:00:00.000Z"));
+    let started: () => void = () => undefined;
+    const workerStarted = new Promise<void>((resolve) => { started = resolve; });
+    let finish: () => void = () => undefined;
+    const x = setup({ worker: (input) => {
+      started();
+      return new Promise((resolve) => {
+        finish = () => resolve({ runId: input.command.runId, status: "completed", toolActions: 0, sessionRevision: 1 });
+      });
+    } });
+    try {
+      const running = collect(x.adapter.start(turn()));
+      await workerStarted;
+      await vi.advanceTimersByTimeAsync(10 * 60_000 + 1);
+      expect(x.commands.map((command) => command.kind)).toEqual(["bot.run"]);
+      finish();
+      expect((await running).at(-1)).toEqual({ type: "run.completed", outcome: "completed" });
+      await expect(tasks()).resolves.toEqual([expect.objectContaining({ status: "completed" })]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("keeps Stop as the first cause after a late blocked reply", async () => {
+    let finish: () => void = () => undefined;
+    let markStarted: () => void = () => undefined;
+    const started = new Promise<void>((resolve) => { markStarted = resolve; });
+    const controller = new AbortController();
+    const { adapter, commands } = setup({
+      worker: (input) => {
+        markStarted();
+        return new Promise((resolve) => {
+          finish = () => resolve({ runId: input.command.runId, status: "blocked", blockedReason: "tool_unavailable", toolActions: 0, sessionRevision: 1 });
+        });
+      },
+    });
+    const running = collect(adapter.start(turn(controller.signal)));
+    await started;
+    controller.abort();
+    await vi.waitFor(() => expect(commands.map((command) => command.kind)).toContain("bot.cancel"));
+    finish();
+    expect((await running).at(-1)).toEqual({ type: "run.completed", outcome: "aborted" });
+    await expect(tasks()).resolves.toEqual([expect.objectContaining({ status: "cancelled", run_id: "run_turn1" })]);
+  });
+
+  it("keeps lease loss as the first stop cause when Stop follows it", async () => {
+    let finish: () => void = () => undefined;
+    const controller = new AbortController();
+    const { adapter, commands, failRenewal } = setup({
+      worker: (input) => new Promise((resolve) => {
+        finish = () => resolve({ runId: input.command.runId, status: "completed", toolActions: 0, sessionRevision: 1 });
+      }),
+    });
+    const running = collect(adapter.start(turn(controller.signal)));
+    await vi.waitFor(() => expect(commands.map((command) => command.kind)).toEqual(["bot.run"]));
+    failRenewal();
+    controller.abort();
+    finish();
+    expect((await running).at(-1)).toMatchObject({ type: "run.completed", outcome: "failed", error: { code: "run_failed" } });
+    await expect(tasks()).resolves.toEqual([expect.objectContaining({ status: "failed", run_id: "run_turn1" })]);
+  });
+
   it("cancels the bot when Chat stops reading the turn early", async () => {
     let finish: (value: unknown) => void = () => undefined;
     const { adapter, commands } = setup({
@@ -426,24 +755,12 @@ describe("bot turns through the matrix_bot adapter", () => {
     const events = adapter.start(turn())[Symbol.asyncIterator]();
     await events.next();
     await events.next();
+    await vi.waitFor(() => expect(commands.map((command) => command.kind)).toContain("bot.run"));
     const stopping = events.return!(undefined);
     await vi.waitFor(() => expect(commands.map((command) => command.kind)).toEqual(["bot.run", "bot.cancel"]));
     finish(undefined);
     await stopping;
     await expect(tasks()).resolves.toEqual([expect.objectContaining({ status: "cancelled" })]);
-  });
-
-  it("stops a turn at the active-work deadline and blocks the task", async () => {
-    let finish: (value: unknown) => void = () => undefined;
-    const { adapter, commands } = setup({
-      activeDeadlineMs: 30,
-      worker: (input) => new Promise((resolve) => { finish = () => resolve({ runId: input.command.runId, status: "cancelled", toolActions: 3, sessionRevision: 1 }); }),
-    });
-    const running = collect(adapter.start(turn()));
-    await vi.waitFor(() => expect(commands.map((command) => command.kind)).toContain("bot.cancel"));
-    finish(undefined);
-    expect((await running).at(-1)).toMatchObject({ outcome: "failed", error: { code: "run_failed", safeMessage: expect.stringContaining("time limit") } });
-    await expect(tasks()).resolves.toEqual([expect.objectContaining({ status: "blocked", blocked_reason: "deadline_reached" })]);
   });
 
   it("stops a worker that took the cancel but did not end its run", async () => {
@@ -454,24 +771,9 @@ describe("bot turns through the matrix_bot adapter", () => {
     aborted.abort();
     await vi.waitFor(() => expect(commands.map((command) => command.kind)).toEqual(["bot.run", "bot.cancel"]));
     await vi.waitFor(() => expect(admission.release).toHaveBeenCalledWith(RUNTIME));
-    void running;
-  });
-
-  it("blocks a task whose run needs more time after the deadline, but keeps a reply that finished", async () => {
-    for (const [status, expected] of [["waiting_person", { status: "blocked", blocked_reason: "deadline_reached" }], ["completed", { status: "completed", blocked_reason: null }]] as const) {
-      await db.deleteFrom("bot_tasks").execute();
-      let finish: (value: unknown) => void = () => undefined;
-      const { adapter, commands } = setup({
-        activeDeadlineMs: 30,
-        worker: (input) => new Promise((resolve) => { finish = () => resolve({ runId: input.command.runId, status, toolActions: 1, sessionRevision: 1 }); }),
-      });
-      const running = collect(adapter.start(turn(undefined, `run_late_${status}`)));
-      await vi.waitFor(() => expect(commands.map((command) => command.kind)).toContain("bot.cancel"));
-      finish(undefined);
-      await running;
-      await expect(tasks()).resolves.toEqual([expect.objectContaining(expected)]);
-    }
-  });
+    expect((await running).at(-1)).toEqual({ type: "run.completed", outcome: "aborted" });
+    await expect(tasks()).resolves.toEqual([expect.objectContaining({ status: "cancelled" })]);
+  }, 2_000);
 
   it("keeps a chatty turn within Chat's activity budget while the reply still streams", async () => {
     const { adapter } = setup({
@@ -490,6 +792,19 @@ describe("bot turns through the matrix_bot adapter", () => {
     expect(activities).toHaveLength(MAX_BOT_ACTIVITY_EVENTS);
     expect(activities.at(-1)).toMatchObject({ type: "agent.activity", label: "More steps were not shown" });
     expect(events).toContainEqual({ type: "assistant.delta", delta: "Done." });
+  });
+
+  it.each([{ acknowledged: false }, {}])("rejects an unacknowledged steer even when its transport succeeds: %j", async steerReply => {
+    const gate = Promise.withResolvers<unknown>();
+    const { adapter, commands } = setup({ steerReply, worker: () => gate.promise });
+    const running = collect(adapter.start(turn()));
+    try {
+      await vi.waitFor(() => expect(commands).toHaveLength(1));
+      await expect(adapter.steer!({ ...turn(), clientRequestId: "req_undelivered" })).rejects.toThrow();
+    } finally {
+      gate.resolve({ runId: "run_turn1", status: "completed", toolActions: 0 });
+      await running;
+    }
   });
 
   it("relays steering to the running worker only", async () => {
@@ -568,7 +883,8 @@ it("forwards image/file-only recipe Bot turns through the real broker and image-
     context => { expect(JSON.stringify(context.messages.at(-1))).toContain("RECIPE_FILE_MARKER"); return fauxAssistantMessage(fauxText("RECIPE_FILE_MARKER")); },
   ]);
   let actions: ReturnType<typeof createBotBrokerActions>;
-  const x = setup({ homePath: home, resolveRoute: async () => ({ route, accessSourceId: "matrix_included" }), worker: async input => {
+  const inputHistory = vi.fn(async () => ({ references: [], assertCurrent: async () => undefined }));
+  const x = setup({ homePath: home, inputHistory, resolveRoute: async () => ({ route, accessSourceId: "matrix_included" }), worker: async input => {
     const call = async (body: Record<string, unknown>) => {
       const reply = await actions.handleFrame({ version: 1, requestId: crypto.randomUUID(), runtimeHandle: input.runtimeHandle, executionGeneration: input.executionGeneration, runId: input.command.runId, ...body });
       if (!reply?.ok) throw new BotBrokerError((reply?.code ?? "unavailable") as never); return reply.result;
@@ -597,5 +913,155 @@ it("forwards image/file-only recipe Bot turns through the real broker and image-
       expect(events).toContainEqual({ type: "assistant.delta", delta: "RECIPE_FILE_MARKER" });
     }
     expect(observed).toBe(2); expect(faux.state.callCount).toBe(4); expect(x.registry.size).toBe(0);
+    expect(inputHistory).toHaveBeenCalledTimes(2);
   } finally { await rm(home, { recursive: true, force: true }); }
+});
+
+describe("group Pi run isolation", () => {
+  it.each((["resolve", "authorize", "route"] as const).flatMap(stage => (["signal", "cancel", "deadline"] as const).map(stop => ({ stage, stop }))))("settles stalled group $stage on $stop before late authority", async ({ stage, stop }) => {
+    await insertChat(db, "chat_company1");
+    await db.insertInto("bot_chat_bindings").values({ owner_id: OWNER, bot_id: BOT, chat_id: "chat_company1", kind: "group", created_at: "2026-09-27T12:00:00.000Z", removed_at: null }).execute();
+    const group = { scopeId: "scope-company", actorId: "user_member", executionRoot: { kind: "project" as const, projectId: "project_company" }, executionRootFingerprint: "f".repeat(64), sessionGeneration: "1" };
+    const authority = { scopeId: "scope-company", actorId: "user_member", ownerId: OWNER, resourceId: "chat_company1", resourceKind: "chat" as const, organizationId: "org_company", membershipScopeId: "scope-company", authEpoch: 4, authorityGeneration: 1, authorityRuntimeId: "owner-runtime", capability: "request_ai" as const, role: "editor" as const };
+    const input = new AbortController(), deadline = new AbortController();
+    let release!: () => void;
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    const resolveGroupRun = vi.fn(async () => { if (stage === "resolve") await gate; return group; });
+    const authorizeGroup = vi.fn(async () => { if (stage === "authorize") await gate; return authority; });
+    const resolveGroupRoute = vi.fn(async () => { if (stage === "route") await gate; return { route: ROUTE, accessSourceId: "matrix_included" as const }; });
+    const service = setup({ resolveGroupRun, authorizeGroup, resolveGroupRoute });
+    const originalTimeout = AbortSignal.timeout;
+    const timeout = vi.spyOn(AbortSignal, "timeout").mockImplementation(ms => ms === 10_000 ? deadline.signal : originalTimeout(ms));
+    const runId = `run_prelaunch_${stage}_${stop}`;
+    const handle = service.orchestrator.start({ ownerId: OWNER, chatId: "chat_company1", runId, text: "Synthetic group turn", signal: input.signal });
+    const result = handle.result.then(value => ({ kind: "settled" as const, value }));
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let observed: Awaited<typeof result> | { kind: "still_waiting" };
+    let slotReleased = false;
+    try {
+      await vi.waitFor(() => expect(stage === "resolve" ? resolveGroupRun : stage === "authorize" ? authorizeGroup : resolveGroupRoute).toHaveBeenCalledOnce());
+      if (stop === "signal") input.abort();
+      else if (stop === "cancel") await service.orchestrator.cancel(runId);
+      else deadline.abort(new DOMException("Synthetic authorization deadline", "TimeoutError"));
+      observed = await Promise.race([result, new Promise<{ kind: "still_waiting" }>(resolve => { timer = setTimeout(() => resolve({ kind: "still_waiting" }), 750); })]);
+      if (observed.kind === "settled") {
+        const cancelled = new AbortController(); cancelled.abort();
+        const next = service.orchestrator.start({ ownerId: OWNER, chatId: "chat_company1", runId, text: "Already cancelled", signal: cancelled.signal });
+        slotReleased = true; await next.result;
+      }
+    } finally {
+      if (timer) clearTimeout(timer);
+      release(); await result; timeout.mockRestore();
+    }
+    expect(observed!, stop).toMatchObject({ kind: "settled", value: stop === "deadline" ? { status: "blocked", blockedReason: "deadline_reached" } : { status: "cancelled" } });
+    expect(slotReleased, stop).toBe(true);
+    expect(service.admission.admit, stop).not.toHaveBeenCalled();
+    expect(service.commands, stop).not.toContainEqual(expect.objectContaining({ kind: "bot.run" }));
+  });
+  it.each(["cancel", "deadline"] as const)("bounds group steering authorization on %s without a late command", async stop => {
+    await insertChat(db, "chat_company1");
+    await db.insertInto("bot_chat_bindings").values({ owner_id: OWNER, bot_id: BOT, chat_id: "chat_company1", kind: "group", created_at: "2026-09-27T12:00:00.000Z", removed_at: null }).execute();
+    let releaseAuthority!: () => void, finishWorker!: () => void;
+    const gate = new Promise<void>(resolve => { releaseAuthority = resolve; });
+    let calls = 0;
+    const service = setup({
+      resolveGroupRun: async () => ({ scopeId: "scope-company", actorId: "user_member", executionRoot: { kind: "project", projectId: "project_company" }, executionRootFingerprint: "f".repeat(64), sessionGeneration: "1" }),
+      authorizeGroup: async () => {
+        if (++calls === 2) await gate;
+        return { scopeId: "scope-company", actorId: "user_member", ownerId: OWNER, resourceId: "chat_company1", resourceKind: "chat", organizationId: "org_company", membershipScopeId: "scope-company", authEpoch: 4, authorityGeneration: 1, authorityRuntimeId: "owner-runtime", capability: "request_ai", role: "editor" };
+      },
+      worker: input => new Promise(resolve => { finishWorker = () => resolve({ runId: input.command.runId, status: "completed", toolActions: 0, sessionRevision: 1 }); }),
+    });
+    const deadline = new AbortController(), originalTimeout = AbortSignal.timeout;
+    const timeout = vi.spyOn(AbortSignal, "timeout").mockImplementation(ms => ms === 10_000 ? deadline.signal : originalTimeout(ms));
+    const runId = `run_steer_${stop}`;
+    const running = service.orchestrator.start({ ownerId: OWNER, chatId: "chat_company1", runId, text: "Synthetic group turn", signal: new AbortController().signal });
+    let pending: Promise<boolean> | undefined, timer: ReturnType<typeof setTimeout> | undefined;
+    let observed: boolean | "still_waiting";
+    try {
+      await vi.waitFor(() => expect(service.commands).toContainEqual(expect.objectContaining({ kind: "bot.run" })));
+      pending = service.orchestrator.steer(runId, "Synthetic steering");
+      await vi.waitFor(() => expect(calls).toBe(2));
+      if (stop === "cancel") await service.orchestrator.cancel(runId);
+      else deadline.abort(new DOMException("Synthetic authorization deadline", "TimeoutError"));
+      observed = await Promise.race([pending, new Promise<"still_waiting">(resolve => { timer = setTimeout(() => resolve("still_waiting"), 750); })]);
+    } finally {
+      if (timer) clearTimeout(timer);
+      releaseAuthority(); if (pending) await pending;
+      finishWorker?.(); await running.result; timeout.mockRestore();
+    }
+    expect(observed!).toBe(false);
+    expect(service.commands).not.toContainEqual(expect.objectContaining({ kind: "bot.steer" }));
+  });
+  it.each(["text", "image", "file"] as const)("never calls owner history or upload resolution for a group %s turn", async kind => {
+    const fs = await import("node:fs/promises");
+    const { join } = await import("node:path"); const { tmpdir } = await import("node:os");
+    const home = await fs.realpath(await fs.mkdtemp(join(tmpdir(), "group-input-boundary-")));
+    const inputHistory = vi.fn(async () => ({ references: [], assertCurrent: async () => undefined }));
+    const resolveRoute = vi.fn(); const admitted = vi.fn(async () => ["PRIVATE OWNER FACT"]);
+    const executorReady = vi.fn(async () => true);
+    const png = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aWQAAAABJRU5ErkJggg==", "base64");
+    const file = kind === "image" ? "photo.png" : "marker.txt";
+    try {
+      await fs.mkdir(join(home, "temporary/desktop-chat"), { recursive: true });
+      await fs.writeFile(join(home, "temporary/desktop-chat", file), kind === "image" ? png : "PRIVATE_OWNER_UPLOAD");
+      await insertChat(db, "chat_company1");
+      await db.insertInto("bot_chat_bindings").values({ owner_id: OWNER, bot_id: BOT, chat_id: "chat_company1", kind: "group", created_at: "2026-09-27T12:00:00.000Z", removed_at: null }).execute();
+      const service = setup({ homePath: home, inputHistory, admitted, executorReady, resolveRoute,
+        resolveGroupRoute: async () => ({ route: { ...ROUTE, input: ["text", "image"] }, accessSourceId: "matrix_included" }),
+        authorizeGroup: async () => ({ scopeId: "scope-company", actorId: "user_member", ownerId: OWNER, resourceId: "chat_company1", resourceKind: "chat", organizationId: "org_company", membershipScopeId: "scope-company", authEpoch: 4, authorityGeneration: 1, authorityRuntimeId: "owner-runtime", capability: "request_ai", role: "editor" }),
+        resolveGroupRun: async () => ({ scopeId: "scope-company", actorId: "user_member", executionRoot: { kind: "project", projectId: "project_company" }, executionRootFingerprint: "f".repeat(64), sessionGeneration: "1" }),
+      });
+      const beforeResolve = vi.mocked(fs.realpath).mock.calls.length;
+      const beforeOpen = vi.mocked(fs.open).mock.calls.length;
+      const parts: import("@matrix-os/contracts").CanonicalChatMessagePart[] = kind === "text" ? [{ type: "text", text: "Group request" }] : [{
+        type: "attachment_reference", attachmentId: `att_group_${kind}`, kind, mimeType: kind === "image" ? "image/png" : "text/plain",
+        label: file, ownerReference: `temporary/desktop-chat/${file}`,
+      }];
+      const result = await service.orchestrator.start({ ownerId: OWNER, chatId: "chat_company1", runId: `run_group_${kind}`, text: "Group request", parts, signal: new AbortController().signal }).result;
+      expect.soft(inputHistory).not.toHaveBeenCalled();
+      expect.soft(vi.mocked(fs.realpath).mock.calls.slice(beforeResolve).filter(args => args[0] === home)).toHaveLength(0);
+      expect.soft(vi.mocked(fs.open).mock.calls.slice(beforeOpen).filter(args => String(args[0]).startsWith(`${home}/temporary/desktop-chat/`))).toHaveLength(0);
+      expect.soft(resolveRoute).not.toHaveBeenCalled(); expect.soft(admitted).not.toHaveBeenCalled(); expect.soft(executorReady).not.toHaveBeenCalled();
+      if (kind === "text") expect.soft(result.status).toBe("completed");
+      else {
+        expect.soft(result).toMatchObject({ status: "blocked", blockedReason: "policy_denied" });
+        expect.soft(service.admission.admit).not.toHaveBeenCalled();
+      }
+    } finally { await fs.rm(home, { recursive: true, force: true }); }
+  });
+  it("uses an explicit group binding and omits all private context and capabilities", async () => {
+    await insertChat(db, "chat_company1");
+    await db.insertInto("bot_chat_bindings").values({ owner_id: OWNER, bot_id: BOT, chat_id: "chat_company1", kind: "group", created_at: "2026-09-27T12:00:00.000Z", removed_at: null }).execute();
+    const admitted = vi.fn(async () => ["PRIVATE OWNER FACT"]);
+    const executorReady = vi.fn(async () => true);
+    let orchestrator: ReturnType<typeof createBotTaskOrchestrator>;
+    const service = setup({ admitted, executorReady,
+      authorizeGroup: async () => ({ scopeId: "scope-company", actorId: "user_member", ownerId: OWNER, resourceId: "chat_company1", resourceKind: "chat", organizationId: "org_company", membershipScopeId: "scope-company", authEpoch: 4, authorityGeneration: 1, authorityRuntimeId: "owner-runtime", capability: "request_ai", role: "editor" }),
+      resolveGroupRun: async () => ({ scopeId: "scope-company", actorId: "user_member", executionRoot: { kind: "project", projectId: "project_company" }, executionRootFingerprint: "f".repeat(64), sessionGeneration: "1" }),
+      worker: async (input) => {
+        const binding = service.registry.lookupRun({ runtimeHandle: input.runtimeHandle, executionGeneration: input.executionGeneration, runId: input.command.runId });
+        expect(binding).toBeDefined();
+        const spec = await orchestrator.runSource.loadRunSpec(binding!);
+        expect(spec.systemPrompt).not.toContain("PRIVATE OWNER FACT");
+        expect(spec.systemPrompt).toContain("shared company thread");
+        expect(spec.capabilities).toEqual([]);
+        return { runId: input.command.runId, status: "completed", toolActions: 0, sessionRevision: 1 };
+      },
+    });
+    orchestrator = service.orchestrator;
+    const events = await collect(service.adapter.start({ ...turn(), chatId: "chat_company1" }));
+    expect(events.at(-1)).toMatchObject({ type: "run.completed", outcome: "completed" });
+    expect(admitted).not.toHaveBeenCalled();
+    expect(executorReady).not.toHaveBeenCalled();
+    expect(service.admission.admit).toHaveBeenCalledWith(expect.objectContaining({ chatId: "chat_company1", expectedRootFingerprint: "f".repeat(64), group: expect.objectContaining({ actorId: "user_member" }) }));
+  });
+  it("refuses a group Chat when no explicit resolver is wired, without private fallback", async () => {
+    await insertChat(db, "chat_company1");
+    await db.insertInto("bot_chat_bindings").values({ owner_id: OWNER, bot_id: BOT, chat_id: "chat_company1", kind: "group", created_at: "2026-09-27T12:00:00.000Z", removed_at: null }).execute();
+    const service = setup();
+    const events = await collect(service.adapter.start({ ...turn(), chatId: "chat_company1" }));
+    expect(events.at(-1)).toMatchObject({ type: "run.completed", outcome: "failed" });
+    expect(service.admission.admit).not.toHaveBeenCalled();
+  });
 });

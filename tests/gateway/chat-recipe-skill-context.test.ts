@@ -243,7 +243,7 @@ describe("server-only recipe source locations", () => {
           content: { record: value.detail.record as never, runs: [run], queuedTurns: [value.queuedTurn] } });
         return { onClose() {}, touch() {} };
       } }, setIntervalFn: vi.fn(() => 1), clearIntervalFn: vi.fn() });
-    const response = await app.request("/api/chats/events?messageVersion=2&inputVersion=1", {
+    const response = await app.request("/api/chats/events?messageVersion=2&inputVersion=1&assistantTextVersion=1", {
       headers: { accept: "text/event-stream", "x-matrix-chat-protocol": "2", "x-matrix-chat-metadata": metadata },
     });
     const reader = response.body!.getReader();

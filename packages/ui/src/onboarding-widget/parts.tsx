@@ -90,6 +90,17 @@ export function ResultCard({ title, subtitle, onOpen }: { title: string; subtitl
   );
 }
 
+/** A chip that stays selected, for multi-select questions. */
+/** A pressable chip; an emoji icon is decoration, so the chip's name stays its label. */
+export function ToggleChip({ label, pressed, onToggle, icon }: { label: string; pressed: boolean; onToggle(): void; icon?: string }) {
+  return (
+    <button type="button" className="mxo-chip" aria-pressed={pressed} onClick={onToggle}>
+      {icon ? <><span aria-hidden="true">{icon}</span>{" "}</> : null}
+      {label}
+    </button>
+  );
+}
+
 export function ButtonRow({ children }: { children: ReactNode }) {
   return <div className="mxo-btn-row">{children}</div>;
 }

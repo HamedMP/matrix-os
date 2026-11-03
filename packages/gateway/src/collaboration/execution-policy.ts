@@ -187,8 +187,15 @@ export async function resolveExecutionScope(
   scopeId: string,
   options: { lock?: boolean } = {},
 ): Promise<ExecutionScopeResolution | null> {
+  // Discover the expected parent without locking the Chat, then lock Project
+  // before Chat like assignment and Company Brain. Never discover a new parent
+  // after taking the child lock: reject concurrent reparenting instead.
+  const hint = options.lock ? await loadScope(db, scopeId, false) : null;
+  if (options.lock && !hint) return null;
+  const parentId = hint?.kind === "chat" ? hint.parent_scope_id : null;
+  const lockedParent = parentId !== null ? await loadScope(db, parentId, true) : null;
   const scope = await loadScope(db, scopeId, options.lock === true);
-  if (!scope) return null;
+  if (!scope || (hint && (scope.kind !== hint.kind || scope.parent_scope_id !== hint.parent_scope_id))) return null;
   if (scope.kind === "project") {
     return { ref: { kind: "project", scopeId: scope.id, projectId: scope.resource_id }, scope };
   }
@@ -196,7 +203,7 @@ export async function resolveExecutionScope(
   if (scope.parent_scope_id === null) {
     return { ref: { kind: "standalone_chat", scopeId: scope.id, chatId: scope.resource_id }, scope };
   }
-  const parent = await loadScope(db, scope.parent_scope_id, options.lock === true);
+  const parent = options.lock ? lockedParent : await loadScope(db, scope.parent_scope_id, false);
   if (!parent || parent.kind !== "project") return null;
   return { ref: { kind: "project", scopeId: parent.id, projectId: parent.resource_id }, scope: parent };
 }

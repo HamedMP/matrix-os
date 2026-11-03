@@ -34,7 +34,7 @@ export function createWhatsAppService(deps: {
   const { config, repository: repo, agent } = deps;
   const now = deps.now ?? Date.now;
   // Only internally admitted durable jobs reach send. A signed event may pair an
-  // allowlisted phone with its BSUID; retain that identity when the phone disappears.
+  // admitted phone with its BSUID; retain that identity when the phone disappears.
   const send = deps.send ?? ((sender, text) => sendWhatsAppText({ ...config, allowedSenders: [...config.allowedSenders, sender] }, sender, text));
   const react = deps.react ?? (async (sender, messageId, emoji) => {
     await sendWhatsAppReaction({ ...config, allowedSenders: [...config.allowedSenders, sender] }, sender, messageId, emoji);
@@ -49,10 +49,10 @@ export function createWhatsAppService(deps: {
     for (const message of messages) {
       if (message.type === 'reaction') continue;
       const connection = await repo.getConnectionBySender(message.sender);
-      const admitted = canAdmitWhatsAppMessage(config, message, now()) || (message.sender.includes('.') && connection !== null
+      const admitted = canAdmitWhatsAppMessage(config, message, now()) || (connection?.consentVersion === 'whatsapp-general-agent-v1'
         && isWhatsAppSenderEligible(message.sender) && isWhatsAppReplyWindowOpen(message.timestamp, now()));
       if (!admitted) continue;
-      // Only signed, explicitly allowlisted phone/account pairs may route replies.
+      // Only signed phone/account pairs admitted by the configured policy may route replies.
       const phone = message.phone && isWhatsAppSenderAllowed(config, message.phone) ? message.phone : undefined;
       const expiresAt = Math.min(now() + 86_400_000, message.timestamp * 1000 + 86_400_000);
       if (message.text?.trim().toUpperCase() === 'STOP' || message.text?.trim().toLowerCase() === '/disconnect') {
@@ -73,15 +73,24 @@ export function createWhatsAppService(deps: {
     return current?.owner === owner && current.id === id && current.consentVersion === 'whatsapp-general-agent-v1';
   }
 
+  function deliveryRecipient(sender: string, phone: string | undefined, verifiedConnection: boolean): string | null {
+    if (!isWhatsAppSenderEligible(sender)) return null;
+    if (!phone) return sender;
+    if (isWhatsAppSenderAllowed(config, phone)) return phone;
+    // Enrollment rollback does not revoke an already verified account. Use its
+    // canonical identity rather than a phone no longer admitted by the policy.
+    return verifiedConnection && isWhatsAppSenderEligible(phone) ? sender : null;
+  }
+
   async function processingReaction(job: Job, emoji: WhatsAppProcessingReaction): Promise<void> {
     // Cosmetic feedback must never fail a turn, replay a text response, or use
     // an association that was revoked while the agent was working.
     try {
       const { owner, connectionId, phone } = job.payload;
       if (job.expiresAt <= now() || typeof owner !== 'string' || typeof connectionId !== 'string'
-        || (typeof phone === 'string' && !isWhatsAppSenderAllowed(config, phone))
         || !await associationValid(job.sender, owner, connectionId)) return;
-      await react(typeof phone === 'string' ? phone : job.sender, job.id, emoji);
+      const recipient = deliveryRecipient(job.sender, typeof phone === 'string' ? phone : undefined, true);
+      if (recipient) await react(recipient, job.id, emoji);
     } catch (error) { log(error); }
   }
 
@@ -96,12 +105,12 @@ export function createWhatsAppService(deps: {
   }
 
   async function deliver(job: Job, payload: z.infer<typeof replySchema> | z.infer<typeof verificationSchema>) {
-    if (payload.phone && !isWhatsAppSenderAllowed(config, payload.phone)) {
-      await repo.finish(job.id, job.fence, 'failed'); return;
-    }
     if (payload.kind === 'verification' && !await repo.isChallengeActive(payload.tokenHash, payload.owner)) {
       await repo.finish(job.id, job.fence, 'failed'); return;
     }
+    const verifiedConnection = payload.kind === 'reply' && !!payload.owner && !!payload.connectionId;
+    const recipient = deliveryRecipient(job.sender, payload.phone, verifiedConnection);
+    if (!recipient) { await repo.finish(job.id, job.fence, 'failed'); return; }
     if (payload.kind === 'reply' && payload.owner && payload.connectionId
       && !await associationValid(job.sender, payload.owner, payload.connectionId)) {
       await repo.finish(job.id, job.fence, 'failed'); return;
@@ -109,7 +118,7 @@ export function createWhatsAppService(deps: {
     // Record uncertainty BEFORE the external side effect. Expired sends are never replayed.
     if (!await repo.markSending(job.id, job.fence)) return;
     try {
-      await send(payload.phone ?? job.sender, payload.text);
+      await send(recipient, payload.text);
       const finished = await repo.finish(job.id, job.fence, 'complete');
       if (finished && payload.kind === 'reply' && payload.reaction) await processingReaction(job, payload.reaction);
     } catch (error) {

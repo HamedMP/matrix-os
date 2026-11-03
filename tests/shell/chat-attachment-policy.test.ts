@@ -14,6 +14,7 @@ it("uses the selected Bot coordinator's attachment and vision policy", () => {
 it("keeps Automatic recipe input bounded while route suitability is checked on the server", () => {
   const policy = shellChatAttachmentPolicy(null, { instanceId: "matrix_bot_default", model: "auto" }, true);
   expect(policy.enabled).toBe(true);
-  expect(policy.error([{ type: "text/plain", size: 1024 * 1024 + 1 }])).toContain("1 MiB");
+  expect(policy.error([{ type: "text/plain", size: 10 * 1024 * 1024 }])).toBeNull();
+  expect(policy.error([{ type: "text/plain", size: 10 * 1024 * 1024 + 1 }])).toContain("10 MiB");
   expect(shellChatAttachmentPolicy(null, undefined).enabled).toBe(false);
 });

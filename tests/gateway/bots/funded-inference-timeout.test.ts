@@ -208,6 +208,24 @@ describe("Pi Matrix funded inference deadline", () => {
 
 
 describe("server-owned isolated ordinary Chat broker", () => {
+  it("awaits authorization after isolated request admission before sending", async () => {
+    const f = await fixture();
+    let allowed = true;
+    try {
+      await f.isolatedChat.claim(f.run);
+      const result = await forwardBotInference(f.frame, f.run,
+        async () => ({ ...authorization, allowed }), {
+          ...f.deps,
+          isolatedChat: { ...f.isolatedChat, consume: async candidate => {
+            const admitted = await f.isolatedChat.consume(candidate);
+            allowed = false;
+            return admitted;
+          } },
+        });
+      expect(result).toMatchObject({ ok: false, error: "action_denied" });
+      expect(f.fetchImpl).not.toHaveBeenCalled();
+    } finally { await f.destroy(); }
+  });
   async function fixture(real = false) {
     vi.useRealTimers(); vi.restoreAllMocks();
     const database = real ? await createRealBotStateDatabase() : await createBotStateDatabase();

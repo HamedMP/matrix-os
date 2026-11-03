@@ -5,6 +5,8 @@ export interface ProviderSnapshotReadOptions {
   admissionScope?: "managed_matrix" | "canonical_matrix";
   /** Trusted runtime-owner-only identity/allowance enrichment; never renderer input. */
   includeNativeAccountMetadata?: boolean;
+  /** Server-verified runtime owner only: repair an existing saved native selection. */
+  recoverNativeConnection?: boolean;
   /** Foreground login completion verifies identity independently of quota. */
   includeNativeAccountUsage?: boolean;
   signal?: AbortSignal;

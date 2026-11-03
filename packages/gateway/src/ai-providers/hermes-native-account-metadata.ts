@@ -1,3 +1,4 @@
+import { resolveHermesPython } from "../chat/hermes-python-environment.js";
 import { bindNativeAccountMetadata } from "./native-account-metadata-binding.js";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
@@ -5,7 +6,7 @@ import { join, resolve } from "node:path";
 import { buildAgentRuntimeEnvironment } from "../agent-launcher.js";
 import { normalizeCodexNativeAccountMetadata, type CodexNativeAccountMetadata } from "./codex-native-account-metadata.js";
 
-// Pinned Hermes native helpers (d337b736): read only the selected singleton,
+// Pinned Hermes native helpers (e06df9c2): read only the selected singleton,
 // falling back to its native pool selector. Never import Codex CLI credentials,
 // refresh tokens, clear quota cooldowns, or invoke a login from a Settings read.
 // Only approved identity/allowance and private binding evidence reach the helper pipe. Credentials remain in
@@ -19,16 +20,24 @@ logging.disable(logging.CRITICAL)
 try:
     with contextlib.redirect_stdout(Discard()), contextlib.redirect_stderr(Discard()):
         from hermes_cli.auth import AuthError, _read_codex_tokens
-        from hermes_cli.auth_codex import _pool_codex_access_token, _decode_jwt_claims
+        from hermes_cli.auth_codex import _pool_codex_credential, _decode_jwt_claims, _codex_base_url, _codex_pool_route_base_url
         from agent.codex_headers import codex_account_headers
         import httpx
     def selected():
         with contextlib.redirect_stdout(Discard()), contextlib.redirect_stderr(Discard()):
             try:
-                return (_read_codex_tokens(_lock=False).get("tokens") or {})
+                tokens = (_read_codex_tokens(_lock=False).get("tokens") or {})
+                base_url = _codex_base_url()
             except AuthError:
-                token = _pool_codex_access_token()
-                return {"access_token": token} if token else {}
+                token, base_url = _pool_codex_credential()
+                tokens = {"access_token": token} if token else {}
+            # Pool rows can keep the official URL while the selected profile
+            # routes through a proxy. Use upstream's read-only effective route,
+            # never the credential resolver (which may refresh/import grants).
+            base_url = _codex_pool_route_base_url(base_url)
+            if (base_url or "").rstrip("/") not in ("", "https://chatgpt.com/backend-api/codex"):
+                return {}
+            return tokens
     tokens = selected()
     token = tokens.get("access_token")
     if not token:
@@ -94,7 +103,7 @@ export function createHermesNativeAccountMetadataReader(input: { homePath: strin
     pending = (async () => {
       try {
         lastStartedAt = (input.now ?? (() => new Date()))().getTime();
-        const { stdout } = await promisify(input.execute ?? execFile)(join(installation, "venv/bin/python"), ["-c", HERMES_NATIVE_METADATA_SCRIPT], {
+        const { stdout } = await promisify(input.execute ?? execFile)(await resolveHermesPython(installation), ["-c", HERMES_NATIVE_METADATA_SCRIPT], {
           cwd: installation, env: { ...env, HERMES_HOME: join(homePath, ".hermes") }, timeout: 5000, killSignal: "SIGKILL", maxBuffer: 4096, windowsHide: true,
         });
         const raw = JSON.parse(String(stdout)) as { account?: unknown; limits?: unknown; binding?: unknown } | null;
@@ -105,7 +114,7 @@ export function createHermesNativeAccountMetadataReader(input: { homePath: strin
         return bindNativeAccountMetadata(value, async () => {
           if (pending) return false;
           if (!verification) verification = (async () => {
-            const { stdout: current } = await promisify(input.execute ?? execFile)(join(installation, "venv/bin/python"), ["-c", HERMES_NATIVE_METADATA_SCRIPT, "--verify-only"], {
+            const { stdout: current } = await promisify(input.execute ?? execFile)(await resolveHermesPython(installation), ["-c", HERMES_NATIVE_METADATA_SCRIPT, "--verify-only"], {
               cwd: installation, env: { ...env, HERMES_HOME: join(homePath, ".hermes") }, timeout: 2000, killSignal: "SIGKILL", maxBuffer: 4096, windowsHide: true,
             });
             const selected = JSON.parse(String(current)) as { binding?: unknown } | null;

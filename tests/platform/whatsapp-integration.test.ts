@@ -65,6 +65,51 @@ function call(path: string, payload: unknown, token = 'owner-token', requestOrig
 }
 
 describe('WhatsApp account linking and delivery', () => {
+  it.each(['SE.rollback', sender].flatMap((account) => [false, true].flatMap((revoked) =>
+    [false, true].map((afterRollback) => ({ account, revoked, afterRollback })))))(
+    'preserves verified access after enrollment rollback: $account, revoked=$revoked, new=$afterRollback', async ({ account, revoked, afterRollback }) => {
+    const production = { ...config, admissionMode: 'eea_selfserve' as const, allowedSenders: ['46709999999'] };
+    const { token } = await repo.startLink(account, 'rollback-link', now + 60_000, sender);
+    await repo.claim(token, owner);
+    const proof = await repo.lease();
+    const code = String(proof!.payload.text).match(/\b\d{6}\b/)![0];
+    await repo.finish(proof!.id, proof!.fence, 'complete');
+    await repo.confirm(token, owner, code, 'whatsapp-general-agent-v1');
+    const compose = (selected: typeof config) => createWhatsAppService({ config: selected, repository: repo, agent, now: () => now,
+      react: async (to, messageId, emoji) => { reactions.push({ to, messageId, emoji }); },
+      send: async (to, text) => { sends.push({ to, text }); return 'wamid.reply'; },
+    });
+    service = compose(production);
+    await service.tick(); // Finish connection acknowledgment before the test request.
+    if (!afterRollback) {
+      await service.ingest([{ id: 'wamid.rollback', sender: account, phone: sender, type: 'text', text: 'Who are you?', timestamp: now / 1000 }]);
+      await service.tick(); // Persist the admitted agent checkpoint with its proven phone.
+    }
+    sends = []; reactions = [];
+    await service.shutdown();
+    if (revoked) await repo.disconnect(owner);
+    service = compose({ ...production, admissionMode: 'allowlist' });
+    if (afterRollback) {
+      await service.ingest([{ id: 'wamid.rollback', sender: account, type: 'text', text: 'Who are you?', timestamp: now / 1000 }]);
+      await service.tick(); // New verified requests remain admitted after rollback.
+    }
+    await service.tick();
+    if (revoked) {
+      expect(sends).toEqual([]); expect(reactions).toEqual([]);
+    } else {
+      expect(sends).toEqual([{ to: account, text: 'Your Matrix agent is here.' }]);
+      expect(reactions).toEqual([
+        ...(afterRollback ? [{ to: account, messageId: 'wamid.rollback', emoji: '👀' }] : []),
+        { to: account, messageId: 'wamid.rollback', emoji: '✅' },
+      ]);
+      const previous = sends.length;
+      await service.ingest([{ id: 'wamid.rollback-new', sender: 'SE.unlinked', phone: sender, type: 'text', text: 'Hello', timestamp: now / 1000 }]);
+      await service.tick();
+      expect(sends).toHaveLength(previous);
+      await service.ingest([{ id: 'wamid.rollback-stop', sender: account, type: 'text', text: 'STOP', timestamp: now / 1000 }]);
+      expect(await repo.getConnectionBySender(account)).toBeNull();
+    }
+  });
   it('waits for lease recovery after a prepared snapshot commits but its response is lost', async () => {
     const { token } = await repo.startLink(sender, 'link-unknown-preparation');
     await repo.claim(token, owner);
@@ -194,18 +239,32 @@ describe('WhatsApp account linking and delivery', () => {
     await service.tick();
     expect(sends).toHaveLength(1);
   });
-  it('crosses signed webhook, durable linking proof, canonical agent and reply; deduplicates redelivery', async () => {
+  it.each(['allowlist', 'eea_selfserve'] as const)('crosses signed webhook, durable linking proof, canonical agent and reply in %s; deduplicates redelivery', async (admissionMode) => {
+    if (admissionMode === 'eea_selfserve') {
+      const production = { ...config, admissionMode, allowedSenders: ['46709999999'] };
+      service = createWhatsAppService({ config: production, repository: repo, agent, now: () => now,
+        react: async (to, messageId, emoji) => { reactions.push({ to, messageId, emoji }); },
+        send: async (to, text) => { sends.push({ to, text }); return 'wamid.reply'; },
+      });
+      routes = createWhatsAppRoutes({ config: production, repository: repo, service,
+        authenticate: async (token) => token === 'owner-token' ? owner : null,
+        publishableKey: 'pk_test_example', now: () => now,
+      });
+    }
     expect((await webhook('wamid.hello', 'Hey Matrix')).status).toBe(200);
     await service.tick();
     expect(sends[0]?.to).toBe(sender);
     const link = sends[0]!.text.match(/https:\/\/\S+/)![0];
     const token = new URL(link).searchParams.get('token')!;
     expect(agent.start).not.toHaveBeenCalled();
+    expect((await call('/api/whatsapp/claim', { token }, 'bad')).status).toBe(401);
     const claim = await call('/api/whatsapp/claim', { token });
     expect(claim.status).toBe(200);
     expect(await claim.json()).toEqual({ maskedSender: '••••4567' });
     await service.tick();
     const code = sends[1]!.text.match(/\b\d{6}\b/)![0];
+    expect((await call('/api/whatsapp/confirm', { token, code: code === '000000' ? '111111' : '000000', consentVersion: 'whatsapp-general-agent-v1' })).status).toBe(403);
+    expect(agent.start).not.toHaveBeenCalled();
     expect((await call('/api/whatsapp/confirm', { token, code, consentVersion: 'whatsapp-general-agent-v1' })).status).toBe(200);
     await service.tick();
     expect(sends[2]).toEqual({ to: sender, text: expect.stringContaining('connected to WhatsApp') });

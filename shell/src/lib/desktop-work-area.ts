@@ -6,10 +6,6 @@ export const WEB_DESKTOP_LAYOUT = {
   launchBarReservedHeight: 86,
 } as const;
 
-export function desktopLaunchBarInset(hasDesktopChrome: boolean): number {
-  return hasDesktopChrome ? WEB_DESKTOP_LAYOUT.launchBarReservedHeight : 0;
-}
-
 export function desktopWorkArea(
   viewport: { width: number; height: number },
   hasDesktopChrome: boolean,

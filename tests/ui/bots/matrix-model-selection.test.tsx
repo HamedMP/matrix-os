@@ -3,7 +3,7 @@ import React from "react";
 import "@testing-library/jest-dom/vitest";
 import { afterEach, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { MATRIX_BOT_SELECTION, type ChatAgent } from "@matrix-os/contracts";
+import { FUNDED_AI_READINESS_TIMEOUTS, MATRIX_BOT_SELECTION, type ChatAgent } from "@matrix-os/contracts";
 import { AgentEditor } from "../../../packages/ui/src/chat-agents/AgentEditor.js";
 import { AgentRecipesPanel } from "../../../packages/ui/src/chat-agents/AgentRecipesPanel.js";
 import type { CanonicalProviderChoice } from "../../../packages/ui/src/canonical-provider-choice.js";
@@ -140,7 +140,8 @@ it("offers an exact managed recipe model through the legacy catalog client witho
   render(<ChatAgentsPanel client={client} view="recipes" onClose={vi.fn()} onOpenBotChat={vi.fn()} />);
   fireEvent.click(await screen.findByRole("button", { name: "Use Writing Bot" }));
   const option = await screen.findByRole("option", { name: "Claude Sonnet 5 · Matrix AI" });
-  expect(request).toHaveBeenCalledWith("/api/chat-providers?includeConnectionLabels=true&includeConnectionState=true&includeFundingState=true&includeChatFunding=true", "GET");
+  expect(request).toHaveBeenCalledWith("/api/chat-providers?includeConnectionLabels=true&includeConnectionState=true&includeFundingState=true&includeChatFunding=true", "GET", undefined,
+    { timeoutMs: FUNDED_AI_READINESS_TIMEOUTS.rendererRequestMs });
   fireEvent.change(screen.getByRole("combobox", { name: "Bot model" }), { target: { value: (option as HTMLOptionElement).value } });
   fireEvent.click(await screen.findByRole("button", { name: "Create bot" }));
   await waitFor(() => expect(instantiate).toHaveBeenCalledWith(expect.objectContaining({

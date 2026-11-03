@@ -345,15 +345,15 @@ export function createHermesRuntimeSource(
           return row.success && row.data.slug === "anthropic";
         }) : [];
         const candidate = candidates.length === 1 ? HermesProviderSchema.safeParse(candidates[0]) : undefined;
-        if (raw.success && raw.data.provider === "anthropic" && candidate?.success
+        if (raw.success && candidate?.success
           && candidate.data.authenticated === true && candidate.data.is_user_defined === false
           && candidate.data.auth_type === undefined && options.readNativeCredentialKind) {
           const proof = await options.readNativeCredentialKind(signal);
           signal.throwIfAborted();
-          if (proof?.providerId === "anthropic" && proof.credentialKind === "api_key" && proof.modelId === raw.data.model
-            && candidate.data.models?.includes(proof.modelId)) {
+          if (proof?.providerId === "anthropic" && (proof.credentialKind === "api_key" || proof.credentialKind === "provider_profile")
+            && (raw.data.provider !== "anthropic" || proof.modelId === raw.data.model && candidate.data.models?.includes(proof.modelId))) {
             modelOptions = { ...raw.data, providers: raw.data.providers.map(value => value === candidates[0]
-              ? { ...(value as Record<string, unknown>), auth_type: "api_key" } : value) };
+              ? { ...(value as Record<string, unknown>), auth_type: proof.credentialKind === "api_key" ? "api_key" : "oauth" } : value) };
             observedAt = now();
           }
         }

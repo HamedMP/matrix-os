@@ -17,6 +17,7 @@ import {
   type BotToolCapability,
 } from "@matrix-os/contracts";
 import { z } from "zod/v4";
+import type { AuthorizedCollaborationContext } from "../collaboration/authority.js";
 import {
   BotCredentialAccessSourceIdSchema,
   type BotCredentialAccessSourceId,
@@ -24,11 +25,52 @@ import {
 import type { BotInferenceAuthorization } from "./credentials.js";
 
 export const BOT_RUNTIME_REGISTRY_CAPACITY = 64;
-/** A bot run holds its workload for at most the profile lifetime (900 s) plus margin. */
+/** One binding lease spans the 900 s supervisor lease plus a brief margin; live runs renew it. */
 const DEFAULT_TTL_MS = 16 * 60_000;
 const MAX_TTL_MS = 20 * 60_000;
 const GenerationSchema = z.string().regex(/^(0|[1-9][0-9]{0,19})$/);
 const ReferenceSchema = z.string().min(1).max(160).regex(/^[A-Za-z0-9][A-Za-z0-9_.:-]*$/);
+
+export interface GroupBotAuthority {
+  scopeId: string;
+  actorId: string;
+  authEpoch: number;
+  authorityGeneration: number;
+  authorityRuntimeId: string;
+  resourceAuthEpoch?: number;
+  membershipAuthEpoch?: number;
+  membershipEvidenceEpoch?: string;
+  sessionGeneration?: string;
+}
+
+/** Must consult the existing collaboration authority with request_ai on every call. */
+export type GroupBotAuthorizer = (input: { scopeId: string; actorId: string; runId?: string; ownerId?: string; chatId?: string }) => Promise<AuthorizedCollaborationContext>;
+
+/** Deny any change of membership/resource/runtime authority since admission. */
+export async function requireGroupBotAuthority(
+  input: { ownerId: string; chatId: string; runId?: string; group: Pick<GroupBotAuthority, "scopeId" | "actorId"> & Partial<GroupBotAuthority> },
+  authorize: GroupBotAuthorizer | undefined,
+): Promise<GroupBotAuthority> {
+  if (!authorize) throw new Error("Group bot authorization unavailable");
+  const current = await authorize({ scopeId: input.group.scopeId, actorId: input.group.actorId, ownerId: input.ownerId, chatId: input.chatId, ...(input.runId ? { runId: input.runId } : {}) });
+  if (current.capability !== "request_ai" || current.resourceKind !== "chat"
+    || current.scopeId !== input.group.scopeId || current.actorId !== input.group.actorId
+    || current.ownerId !== input.ownerId || current.resourceId !== input.chatId || !current.organizationId) {
+    throw new Error("Group bot authority mismatch");
+  }
+  const admitted: GroupBotAuthority = {
+    ...(input.group.sessionGeneration ? { sessionGeneration: input.group.sessionGeneration } : {}),
+    scopeId: current.scopeId, actorId: current.actorId, authEpoch: current.authEpoch,
+    authorityGeneration: current.authorityGeneration, authorityRuntimeId: current.authorityRuntimeId,
+    ...(current.resourceAuthEpoch !== undefined ? { resourceAuthEpoch: current.resourceAuthEpoch } : {}),
+    ...(current.membershipAuthEpoch !== undefined ? { membershipAuthEpoch: current.membershipAuthEpoch } : {}),
+    ...(current.membershipEvidenceEpoch !== undefined ? { membershipEvidenceEpoch: current.membershipEvidenceEpoch } : {}),
+  };
+  for (const key of ["authEpoch", "authorityGeneration", "authorityRuntimeId", "resourceAuthEpoch", "membershipAuthEpoch", "membershipEvidenceEpoch"] as const) {
+    if (input.group[key] !== undefined && input.group[key] !== admitted[key]) throw new Error("Group bot authority changed");
+  }
+  return GroupBotAuthoritySchema.parse(admitted);
+}
 
 export interface BotRuntimeBinding {
   runtimeHandle: string;
@@ -49,6 +91,8 @@ export interface BotRuntimeBinding {
   capabilities: readonly BotToolCapability[];
   /** Funded priority for this run: a person waiting in chat, or a routine. */
   requestClass: "interactive" | "background";
+  /** Absent only for private direct runs. Never supplied by the worker. */
+  group?: GroupBotAuthority;
 }
 
 export interface ManagedPiRuntimeBinding extends Omit<BotRuntimeBinding, "botId" | "taskId"> {
@@ -60,7 +104,8 @@ export function isManagedPiBinding(binding: PiRuntimeBinding): binding is Manage
   return "kind" in binding && binding.kind === "managed_chat";
 }
 export type PiInferenceIdentity = Pick<PiRuntimeBinding, "runtimeHandle" | "executionGeneration" | "runId" | "ownerId" | "chatId">;
-type StoredBinding = PiRuntimeBinding & { expiresAt: number; inference: AbortController };
+export type PiRuntimeRenewalIdentity = PiInferenceIdentity & Pick<PiRuntimeBinding, "rootFingerprint">;
+type StoredBinding = PiRuntimeBinding & { expiresAt: number; inference: AbortController; releaseTracking?: () => void };
 
 export class BotRuntimeRegistryError extends Error {
   constructor(readonly code: "capacity_exceeded" | "invalid_binding") {
@@ -68,6 +113,17 @@ export class BotRuntimeRegistryError extends Error {
     this.name = "BotRuntimeRegistryError";
   }
 }
+
+const GroupBotAuthoritySchema = z.object({
+  sessionGeneration: z.string().regex(/^[1-9][0-9]{0,18}$/).optional(),
+  scopeId: z.string().min(1).max(160), actorId: ReferenceSchema,
+  authEpoch: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
+  authorityGeneration: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
+  authorityRuntimeId: ReferenceSchema,
+  resourceAuthEpoch: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER).optional(),
+  membershipAuthEpoch: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER).optional(),
+  membershipEvidenceEpoch: z.string().regex(/^[0-9]{1,20}$/).optional(),
+}).strict();
 
 const BindingSchema = z.object({
   runtimeHandle: RuntimeHandleSchema,
@@ -86,6 +142,7 @@ const BindingSchema = z.object({
   anthropicApi: z.object({ connectionRevision: z.number().int().min(1).max(Number.MAX_SAFE_INTEGER), credentialGeneration: z.uuid() }).strict().optional(),
   capabilities: z.array(BotToolCapabilitySchema).max(16),
   requestClass: z.enum(["interactive", "background"]),
+  group: GroupBotAuthoritySchema.optional(),
 }).strict();
 
 const ManagedBindingSchema = BindingSchema.omit({ botId: true, taskId: true }).extend({
@@ -123,8 +180,15 @@ export class BotRuntimeRegistry {
     return this.entries.size;
   }
 
+  /** Recovery cannot change execution identity while any live workload still owns this Chat. */
+  hasChatRuntime(ownerId: string, chatId: string): boolean {
+    this.sweep();
+    for (const entry of this.entries.values()) if (entry.ownerId === ownerId && entry.chatId === chatId) return true;
+    return false;
+  }
+
   /** Expired bindings are swept before the capacity check, so stale runs never block admission. */
-  bind(input: PiRuntimeBinding): void {
+  bind(input: PiRuntimeBinding, releaseTracking?: () => void): void {
     const parsed = (isManagedPiBinding(input) ? ManagedBindingSchema : BindingSchema).safeParse(input);
     if (!parsed.success || (parsed.data.accessSourceId === "matrix_chatgpt_plan") !== Boolean(parsed.data.subscription)
       || parsed.data.subscription && parsed.data.route.api !== "openai-responses"
@@ -133,8 +197,8 @@ export class BotRuntimeRegistry {
     if (!this.entries.has(parsed.data.runtimeHandle) && this.entries.size >= this.capacity) {
       throw new BotRuntimeRegistryError("capacity_exceeded");
     }
-    this.entries.get(parsed.data.runtimeHandle)?.inference.abort();
-    this.entries.set(parsed.data.runtimeHandle, { ...parsed.data, expiresAt: this.now() + this.ttlMs, inference: new AbortController() });
+    this.release(parsed.data.runtimeHandle);
+    this.entries.set(parsed.data.runtimeHandle, { ...parsed.data, expiresAt: this.now() + this.ttlMs, inference: new AbortController(), ...(releaseTracking ? { releaseTracking } : {}) });
   }
 
   /** The binding for a frame's runtime and generation; a stale generation never matches. */
@@ -145,14 +209,28 @@ export class BotRuntimeRegistry {
     this.sweep();
     const entry = this.entries.get(runtimeHandle.data);
     if (!entry || entry.executionGeneration !== generation.data) return null;
-    const { expiresAt: _expiresAt, inference: _inference, ...binding } = entry;
-    return binding;
+    const { expiresAt: _expiresAt, inference: _inference, releaseTracking: _releaseTracking, ...binding } = entry;
+    return structuredClone(binding);
   }
 
   /** Bot frames must also name the bound run. */
   lookupRun(input: { runtimeHandle: string; executionGeneration: string; runId: string }): PiRuntimeBinding | null {
     const binding = this.lookup(input);
     return binding && binding.runId === input.runId ? binding : null;
+  }
+
+  /** Extend only the original live run. Renewal never changes authority or its cancellation signal. */
+  renew(input: PiRuntimeRenewalIdentity): boolean {
+    const runtimeHandle = RuntimeHandleSchema.safeParse(input.runtimeHandle);
+    const generation = GenerationSchema.safeParse(input.executionGeneration);
+    if (!runtimeHandle.success || !generation.success) return false;
+    this.sweep();
+    const entry = this.entries.get(runtimeHandle.data);
+    if (!entry || entry.inference.signal.aborted || entry.executionGeneration !== generation.data
+      || entry.ownerId !== input.ownerId || entry.chatId !== input.chatId || entry.runId !== input.runId
+      || entry.rootFingerprint !== input.rootFingerprint) return false;
+    entry.expiresAt = this.now() + this.ttlMs;
+    return true;
   }
 
   /** Private run lifetime; never exposed in serialized runtime bindings. */
@@ -196,22 +274,23 @@ export class BotRuntimeRegistry {
   release(runtimeHandleInput: string): void {
     const runtimeHandle = RuntimeHandleSchema.safeParse(runtimeHandleInput);
     if (runtimeHandle.success) {
-      this.entries.get(runtimeHandle.data)?.inference.abort();
+      const entry = this.entries.get(runtimeHandle.data);
       this.entries.delete(runtimeHandle.data);
+      entry?.inference.abort();
+      try { entry?.releaseTracking?.(); }
+      catch (error: unknown) { console.warn("[bots] runtime tracking release failed", error instanceof Error ? error.name : "UnknownError"); }
     }
   }
 
   shutdown(): void {
-    for (const entry of this.entries.values()) entry.inference.abort();
-    this.entries.clear();
+    for (const handle of [...this.entries.keys()]) this.release(handle);
   }
 
   private sweep(): void {
     const now = this.now();
     for (const [handle, entry] of this.entries) {
       if (entry.expiresAt <= now) {
-        entry.inference.abort();
-        this.entries.delete(handle);
+        this.release(handle);
       }
     }
   }

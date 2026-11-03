@@ -4,6 +4,7 @@ import { composePhaseCatalog } from "./chat/phase-catalog-composition.js";
 import { createCanonicalPhaseDiscovery } from "./server/canonical-phase-discovery.js";
 import { codexNativeEnvironment } from "./ai-providers/codex-native-environment.js";
 import { createNativeCodexRuntime } from "./server/native-codex-runtime.js";
+import { createCodexExecutionIdleProof } from "./coding-agents/codex-execution-observation.js";
 import { registerAppIntegrationCapabilities, registerAppAiCapabilities, createAppAiSubscriptionObservation, closeAppAiCapabilities } from "./server/app-capabilities.js";
 import { withMatrixAnthropicProviderInstances } from "./bots/matrix-anthropic-provider-instance.js";
 import { createMatrixAnthropicRuntime } from "./server/matrix-anthropic-runtime.js";
@@ -47,7 +48,7 @@ import { createJevGmailAccountLookup } from "./chat/jev-recipe-authority.js";
 import { createAgentSandbox } from "./agent-sandbox.js";
 import { createAgentSessionManager } from "./agent-session-manager.js";
 import { createAiGenerationRecorder } from "./ai-analytics.js";
-import { createAllowedOriginController } from "./allowed-origins.js";
+import { createGatewayAllowedOriginController } from "./server/browser-setup-origin.js";
 import type { AppRegistry } from "./app-db-registry.js";
 import type { AppDb } from "./app-db.js";
 import { listApps } from "./apps.js";
@@ -181,6 +182,8 @@ import { enableOwnerSharedAi } from "./startup/collaboration.js";
 import type { ScopeRuntimeHost } from "./scope-runtime-host/index.js";
 import { startScopeRuntimeHost } from "./startup/scope-runtime-host.js";
 import { startBots, type BotServices } from "./startup/bots.js";
+import { createCompanyBotSetup } from "./startup/slack-company.js";
+import { startOwnerSlack } from "./startup/slack-owner.js";
 import { withBotProviderInstance } from "./bots/provider-instance.js";
 import { createLocalIntegrationTransport, createPlatformIntegrationTransport } from "./bots/integration-client.js";
 import { createBotContinuationAdmitter } from "./bots/continuations.js";
@@ -233,13 +236,14 @@ import type { PlatformDb } from "./platform-db.js";
 import {
   createHookRunner,
   createPluginRegistry,
-  loadAllPlugins,
   type HookRunner,
   type LoadedPlugin,
   type PluginRegistry,
 } from "./plugins/index.js";
 import { createHermesRoutes } from "./routes/hermes.js";
 import { createSettingsRoutes } from "./routes/settings.js";
+import { startGatewayPlugins } from "./server/plugin-startup.js";
+import { registerSettingsRoutes } from "./server/settings-routes.js";
 import { bootstrapSocialSchema, createSocialRoutes, type SocialRoutes } from "./social.js";
 import { createGatewayHomeMirrorLifecycle } from "./sync/home-mirror-lifecycle.js";
 import { initializeSyncInfrastructure } from "./sync/infrastructure.js";
@@ -256,7 +260,6 @@ import { createMessagingRoutes } from "./messages/routes.js";
 import { wsConnectionsActive } from "./metrics.js";
 import { createOsViewAgentTools } from "./os-view-state/agent-tools.js";
 import type { OsViewStateRepository } from "./os-view-state/repository.js";
-import { createOsViewStateRoutes } from "./os-view-state/routes.js";
 import { registerBridgeDataRoutes } from "./server/bridge-routes.js";
 import { registerCanvasGatewayRoutes } from "./server/canvas-gateway-routes.js";
 import { registerCodingAgentThreadWebSocketRoutes } from "./server/coding-agent-thread-ws-routes.js";
@@ -318,16 +321,13 @@ export async function createGateway(config: GatewayConfig) {
     : undefined;
   const speechRuntime = createGatewaySpeechRuntime({
     env: process.env,
-    getOwnerId: (c) => requireRequestPrincipal(c).userId,
+    getPrincipal: (c) => requireRequestPrincipal(c),
   });
   const runningVersion = getVersion(
     config.runningVersion ? { version: config.runningVersion } : undefined,
   );
   let syncReportSent = false;
-  const allowedOriginController = createAllowedOriginController({
-    shellOrigin: process.env.SHELL_ORIGIN,
-    proxyOrigin: process.env.PROXY_ORIGIN,
-  });
+  const allowedOriginController = createGatewayAllowedOriginController(process.env);
 
   const app = new Hono();
   const matrixMcpCapabilities = createMatrixMcpCapabilityRegistry({
@@ -597,6 +597,8 @@ export async function createGateway(config: GatewayConfig) {
       ? createCodexEventBridge({
         homePath,
         codexExecutable,
+        isExecutionIdle: createCodexExecutionIdleProof({ sessions: () => codingAgentWorkspaceRuntime,
+          control: createCodexControlClient({ homePath }), backgroundRuntime: backgroundAgentRuntime }),
         isRuntimeAlive: (sessionId: string) => {
           const sessions = codingAgentWorkspaceRuntime;
           return sessions
@@ -610,6 +612,7 @@ export async function createGateway(config: GatewayConfig) {
       runtime: codingAgentWorkspaceRuntime,
       homePath,
       codexEvents: codexEventBridge,
+      backgroundRuntime: backgroundAgentRuntime,
       codexAdmission: nativeCodexRuntime.admission,
       codexControl: codexExecutable ? createCodexControlClient({ homePath }) : undefined,
       sharedBrowserEnabled: !!sharedBrowserRuntime && !!codexExecutable,
@@ -839,6 +842,8 @@ export async function createGateway(config: GatewayConfig) {
   let gatewayCollaboration: GatewayCollaborationRuntime | null = null;
   let scopeRuntimeHost: ScopeRuntimeHost | undefined;
   let botServices: BotServices | undefined;
+  let companyBotSetup: ReturnType<typeof createCompanyBotSetup>;
+  let slackRuntime: Awaited<ReturnType<typeof startOwnerSlack>> | undefined;
   let messagingRepository: MessagingKyselyRepository | null = null;
   // Collaboration wiring always constructs (S20): there is no release flag.
   // Incomplete configuration or a missing owner database registers the
@@ -1557,8 +1562,9 @@ export async function createGateway(config: GatewayConfig) {
   app.route("/",chatDriveContext.routes);
   app.route("/", await createChatDriveProjectRoutes({repository:chatRepository,drives:chatDriveContext.service,resolveOwner: c => ({type:"personal",ownerId:requireRequestPrincipal(c).userId})}));
   const {
-    catalog: baseCanonicalChatProviderCatalog, resolveClaudeCredentialLaunch,
+    catalog: baseCanonicalChatProviderCatalog, resolveClaudeCredentialLaunch, invalidateNativeLoginCatalog,
   } = createGatewayChatProviderCatalog({
+    canRecoverNativeConnection: principal => codingAgentOwnerIds.includes(principal.userId),
     observationScope: canonicalPhaseDiscovery.observationScope,
     homePath,
     codexExecutable,
@@ -1591,6 +1597,13 @@ export async function createGateway(config: GatewayConfig) {
     });
     const chatAgents = new ChatAgentStore({ homePath, db: chatRepository.kysely });
     await chatAgents.bootstrap();
+    if (gatewayCollaboration && collaborationConfig?.ownerId) {
+      companyBotSetup = createCompanyBotSetup({
+        homePath, ownerId: collaborationConfig.ownerId, repository: chatRepository,
+        collaboration: gatewayCollaboration, providers: aiProviderService,
+        getBots: () => botServices, modelId: process.env.MATRIX_COMPANY_BOT_MODEL?.trim(),
+      });
+    }
     botServices = await startBots({
       toolOutputKey, homePath, repository: chatRepository, agents: chatAgents, executionRoots: canonicalChatExecutionRoots,
       ...(sharedBrowserRuntime ? { sharedBrowser: sharedBrowserRuntime.broker } : {}),
@@ -1600,6 +1613,7 @@ export async function createGateway(config: GatewayConfig) {
       ...(jevInboxRuntime ? { jev: jevInboxRuntime.botWorkflow } : {}),
       managedMcp: managedPiMcpDependencies({ env: process.env, platformUrl: internalPlatformUrl, token: internalPlatformToken, handle: internalHandle,
         ownerId: process.env.MATRIX_USER_ID, clerkOwnerId: process.env.MATRIX_CLERK_USER_ID }),
+      ...(companyBotSetup ? { group: companyBotSetup } : {}),
       ...(internalIntegrationBaseUrl && internalPlatformToken
         ? { integrations: createPlatformIntegrationTransport({ baseUrl: internalIntegrationBaseUrl, machineToken: internalPlatformToken }) }
         : integrationRoutes ? { integrations: createLocalIntegrationTransport(integrationRoutes) } : {}),
@@ -1701,6 +1715,7 @@ export async function createGateway(config: GatewayConfig) {
         homePath,
         providerCatalog: canonicalChatProviderCatalog,
         codingProviders: codingAgentProviderRegistry,
+        ...(companyBotSetup ? { matrixBot: companyBotSetup.matrixBot } : {}),
         // S09: the canonical resolver is the S07 sandbox manifest source; without it
         // shared AI reports no eligibility instead of launching unmounted runs.
         ...(canonicalChatExecutionRoots ? { executionRoots: canonicalChatExecutionRoots } : {}),
@@ -1729,6 +1744,13 @@ export async function createGateway(config: GatewayConfig) {
       });
     }
   }
+  slackRuntime = await startOwnerSlack({
+    app, ownerId: process.env.MATRIX_USER_ID?.trim(), token: internalPlatformToken,
+    platformUrl: internalPlatformUrl, handle: internalHandle, repository: chatRepository,
+    orchestrator: canonicalChatOrchestrator, executionRoots: canonicalChatExecutionRoots,
+    collaboration: gatewayCollaboration, bots: botServices,
+  });
+  // Bind deletion and run tombstone recovery only after Chat dependencies are ready.
   const workspaceStartupRecoveryController = await registerWorkspaceLifecycle({
     app, shellRoutes: createShellRoutes(shellRouteDeps), chatRepository,
     orchestrator: canonicalChatOrchestrator, collaboration: gatewayCollaboration,
@@ -1765,6 +1787,7 @@ export async function createGateway(config: GatewayConfig) {
     ownerId: terminalRuntimeOwnerId ?? (!process.env.MATRIX_AUTH_TOKEN && process.env.NODE_ENV !== "production" ? "default" : null),
     getPrincipal: getOptionalRequestPrincipal,
     inventory: () => aiProviderService.getSnapshot(),
+    invalidateNativeLoginCatalog,
   });
   const lookupJevGmailAccounts = createJevGmailAccountLookup({ db: platformDb,
     internalBaseUrl: internalIntegrationBaseUrl, machineToken: internalPlatformToken });
@@ -1789,20 +1812,16 @@ export async function createGateway(config: GatewayConfig) {
     agentRuntimeController: agentRuntimeServices.controller,
     aiProviderService,
   });
-  app.route("/api/settings", settingsRoutes);
-  if (osViewStateRepository) {
-    app.route("/api/os-view-state", createOsViewStateRoutes({
+  registerSettingsRoutes({
+    app, homePath, settingsRoutes, botServices,
+    getStartedEnabled: process.env.MATRIX_GET_STARTED_ENABLED === "true",
+    getOwnerId: (c) => getOptionalRequestPrincipal(c)?.userId ?? null,
+    osViewState: osViewStateRepository ? {
       repository: osViewStateRepository,
       getOwnerId: (c) => requireRequestPrincipal(c).userId,
-      onChanged: (ownerId, state) => broadcastToOwner(ownerId, {
-        type: "os-view:changed",
-        revision: state.revision,
-        updatedAt: state.updatedAt,
-      }),
-    }));
-  } else {
-    app.all("/api/os-view-state", (c) => c.json({ error: "OS-view state is not configured" }, 503));
-  }
+      onChanged: (ownerId, state) => broadcastToOwner(ownerId, { type: "os-view:changed", revision: state.revision, updatedAt: state.updatedAt }),
+    } : null,
+  });
   app.route("/api/hermes", createHermesRoutes({ client: hermesClient }));
 
   if (messagingRepository) {
@@ -1855,43 +1874,7 @@ export async function createGateway(config: GatewayConfig) {
     upgradeBodyLimit, logUnexpectedJsonParseFailure,
   });
 
-  // Load plugins and mount their HTTP routes
-  async function initPlugins() {
-    try {
-      loadedPlugins = await loadAllPlugins({
-        homePath,
-        configPaths: pluginsConfig.list,
-        registry: pluginRegistry,
-        systemConfig: {},
-        pluginConfigs: pluginsConfig.configs,
-      });
-
-      // T944: Mount plugin HTTP routes
-      for (const route of pluginRegistry.getRoutes()) {
-        const fullPath = `/plugins/${route.pluginId}${route.path}`;
-        const method = route.method.toLowerCase() as "get" | "post" | "put" | "delete" | "patch";
-        app[method](fullPath, route.handler);
-      }
-
-      // T945: Start background services
-      for (const svc of pluginRegistry.getServices()) {
-        try {
-          await svc.start();
-        } catch (err) {
-          console.error(`[plugin:${svc.pluginId}] Service ${svc.name} failed to start: ${err}`);
-        }
-      }
-
-      // T939: Fire gateway_start hook
-      await hookRunner.fireVoidHook("gateway_start", { port });
-    } catch (err) {
-      console.error("[plugins] Failed to initialize plugins:", err);
-    }
-  }
-
-  await initPlugins().catch((err) => {
-    console.error("[plugins] Plugin init error:", err);
-  });
+  loadedPlugins = await startGatewayPlugins({ app, homePath, pluginsConfig, pluginRegistry, hookRunner, port });
 
   const server = serve({ fetch: app.fetch, hostname: process.env.MATRIX_BIND_HOST, port });
   injectWebSocket(server);
@@ -1964,12 +1947,15 @@ export async function createGateway(config: GatewayConfig) {
       await matrixAnthropicRuntime.close();
       await providerWorkflowLifecycle.close();
       await backgroundChatProjection.close();
+      await slackRuntime?.close();
+      slackRuntime = undefined;
       await canonicalChatOrchestrator?.close();
       canonicalChatOrchestrator = null;
       await botServices?.close();
       botServices = undefined;
       await sharedBrowserRuntime?.close();
       await supervisedBrowserRuntime?.close();
+      companyBotSetup?.close();
       await canonicalChatRuntime?.agents.close();
       canonicalChatRuntime = null;
       await gatewayCollaboration?.shutdown();

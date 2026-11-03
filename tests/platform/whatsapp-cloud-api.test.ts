@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { readWhatsAppConfig } from "../../packages/platform/src/whatsapp/config.js";
 import {
   canAdmitWhatsAppMessage,
+  isWhatsAppSenderAllowed,
   isWhatsAppReplyWindowOpen,
   isWhatsAppSenderEligible,
   parseWhatsAppMessages,
@@ -38,6 +39,24 @@ const signed = (raw: string) => `sha256=${createHmac("sha256", env.WHATSAPP_APP_
 afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 
 describe("WhatsApp pilot configuration", () => {
+  it("keeps allowlist admission by default and rejects unknown production modes", () => {
+    expect(config()).toMatchObject({ admissionMode: "allowlist" });
+    expect(isWhatsAppSenderAllowed(config(), "46709999999")).toBe(false);
+    for (const mode of ["", "all", "eea_selfserve ", "true"]) {
+      expect(() => readWhatsAppConfig({ ...env, WHATSAPP_ADMISSION_MODE: mode })).toThrow("WhatsApp configuration is invalid");
+    }
+  });
+  it("admits eligible new phone and BSUID users only with explicit EEA self-service", () => {
+    const production = readWhatsAppConfig({ ...env, WHATSAPP_ADMISSION_MODE: "eea_selfserve" })!;
+    for (const sender of ["46709999999", "SE.newuser", "NO.newuser"]) {
+      expect(isWhatsAppSenderAllowed(production, sender)).toBe(true);
+      expect(canAdmitWhatsAppMessage(production, { id: "wamid.production", sender, timestamp: now / 1000, type: "text", text: "hi" }, now)).toBe(true);
+      expect(canAdmitWhatsAppMessage(production, { id: "wamid.expired", sender, timestamp: now / 1000 - 86400, type: "text", text: "hi" }, now)).toBe(false);
+    }
+    for (const sender of ["15550000000", "447000000000", "390669800000", "47790000000", "US.newuser", "SE./bad"]) {
+      expect(isWhatsAppSenderAllowed(production, sender)).toBe(false);
+    }
+  });
   it("is disabled when absent and requires the full explicit configuration", () => {
     expect(readWhatsAppConfig({})).toBeUndefined();
     expect(() => readWhatsAppConfig({ WHATSAPP_APP_SECRET: "only-one" })).toThrow("WhatsApp configuration is invalid");

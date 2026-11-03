@@ -42,7 +42,9 @@ def validate_config(value):
     for key, pattern in [('handle', r'[a-z0-9][a-z0-9-]{1,62}'),
                          ('machineId', r'[A-Za-z0-9_-]{1,128}'), ('ownerId', r'[A-Za-z0-9_-]{1,128}')]:
         require(isinstance(identity[key], str) and re.fullmatch(pattern, identity[key]))
-    require(identity['runtimeSlot'] == 'primary' and type(identity['runtimeTokenEpoch']) is int
+    require(isinstance(identity['runtimeSlot'], str)
+            and re.fullmatch(r'[a-z0-9](?:[a-z0-9-]*[a-z0-9])?', identity['runtimeSlot'])
+            and len(identity['runtimeSlot']) <= 32 and type(identity['runtimeTokenEpoch']) is int
             and 1 <= identity['runtimeTokenEpoch'] <= 2147483647)
     require(isinstance(config, dict) and set(config) == {'enabled', 'platformOrigin', 'relayOrigin', 'runtimeToken'}
             and config['enabled'] is True and config['platformOrigin'] == 'https://app.matrix-os.com'

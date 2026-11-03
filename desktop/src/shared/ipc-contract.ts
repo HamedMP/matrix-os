@@ -8,6 +8,7 @@ import { NAVIGATION_CACHE_INVOKE } from "./navigation-cache-ipc";
 import { CHATGPT_PLAN_INVOKE } from "./chatgpt-plan-ipc";
 import { LOCAL_CHAT_IMPORT_INVOKE, LOCAL_CHAT_IMPORT_EVENTS } from "./local-chat-import-ipc";
 import { NativeAppOpenEventSchema } from "./native-app-open";
+import { NativeAppChatCancellationSchema, NativeAppChatCompletionSchema, NativeAppOpenChatEventSchema } from "./native-app-chat";
 import {
   AppGenerateEventSchema,
   OrganizationDriveUploadFolderSchema,
@@ -148,6 +149,7 @@ export const INVOKE_CHANNELS = {
   ...LOCAL_CHAT_IMPORT_INVOKE,
   "terminal:read-clipboard-files": { request: Empty, response: TerminalClipboardResultSchema },
   "analytics:flush-complete": { request: Empty, response: Ok },
+  "app:open-chat-complete": { request: NativeAppChatCompletionSchema, response: Ok },
   "auth:start-device-flow": {
     request: z.strictObject({ intent: z.enum(["sign-up", "sign-in"]).optional() }),
     response: z
@@ -509,6 +511,8 @@ export const EVENT_CHANNELS = {
   ...LOCAL_CHAT_IMPORT_EVENTS,
   "app:generate": AppGenerateEventSchema,
   "app:open": NativeAppOpenEventSchema,
+  "app:open-chat": NativeAppOpenChatEventSchema,
+  "app:open-chat-cancel": NativeAppChatCancellationSchema,
   "analytics:capture": DesktopAnalyticsDetailSchema,
   "analytics:flush-requested": Empty,
   "auth:changed": z

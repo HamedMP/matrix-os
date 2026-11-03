@@ -108,7 +108,7 @@ if(r.method==='account/login/cancel')send({id:r.id,result:{status:'canceled'}});
     setVersion: (value: string) => writeFile(join(home, 'version'), value) };
 }
 
-it.each(["0.156.1", "0.162.1", "0.163.0"])("runs qualified %s Settings login through production HTTP composition, real native account/source commit, and natural receipt readback", async version => {
+it.each(["0.156.1", "0.162.1", "0.163.0", "0.164.0"])("runs qualified %s Settings login through production HTTP composition, real native account/source commit, and natural receipt readback", async version => {
   const f = await fixture(version);
   const response = await f.app.request(`${route}/capabilities`);
   expect(response.status).toBe(200);
@@ -125,7 +125,7 @@ it.each(["0.156.1", "0.162.1", "0.163.0"])("runs qualified %s Settings login thr
 });
 
 
-it.each(["0.156.2", "0.163.1"])("keeps unqualified installed %s on Terminal without starting app-server login", async version => {
+it.each(["0.156.2", "0.163.1", "0.164.1"])("keeps unqualified installed %s on Terminal without starting app-server login", async version => {
   const f = await fixture(version);
   const capabilities = await (await f.app.request(`${route}/capabilities`)).json();
   expect(capabilities[0].loginMethods).toEqual(["terminal"]);
@@ -268,5 +268,22 @@ it("commits immediate native completion after a signed-out metadata preflight in
   await vi.waitFor(async()=>expect(await(await f.app.request(`${route}/${operation.id}`)).json()).toMatchObject({state:"succeeded",safeFailure:null}),{timeout:5000});
   const connected=await f.store.getSnapshot({includeNativeAccountMetadata:true,includeNativeAccountUsage:false});
   expect(connected.harnesses.find(row=>row.id===f.harness.id)).toMatchObject({configuredEnabled:true,enabled:true,accessSourceId:"owner_openai_profile",selectedAccountId:"owner_codex"});
+  expect(f.terminal.createTab).not.toHaveBeenCalled();
+});
+
+it('automatically repairs saved native bookkeeping through real app-server identity reads without starting login', async () => {
+  const f = await fixture();
+  await writeFile(join(f.home, '.codex/auth.json'), JSON.stringify({ auth_mode: 'chatgpt', tokens: { access_token: 'synthetic-existing-access', refresh_token: 'synthetic-existing-refresh' } }), { mode: 0o600 });
+  const before = JSON.parse(await readFile(f.store.configurationPath, 'utf8'));
+  Object.assign(before.harnesses.find((row: {id: string}) => row.id === f.harness.id), { enabled: true, accessSourceId: 'owner_openai_profile', selectedAccountId: 'owner_codex' });
+  await writeFile(f.store.configurationPath, JSON.stringify(before));
+  const authBefore = await readFile(join(f.home, '.codex/auth.json'), 'utf8');
+  const recovered = await f.store.getSnapshot({ includeNativeAccountMetadata: true, recoverNativeConnection: true });
+  expect(recovered.harnesses.find(row => row.id === f.harness.id)).toMatchObject({ enabled: true, authState: 'authenticated' });
+  expect(recovered.revision).toBe(before.revision + 1);
+  expect(await readFile(join(f.home, '.codex/auth.json'), 'utf8')).toBe(authBefore);
+  const requests = await readFile(join(f.home, 'requests'), 'utf8');
+  expect(requests).toContain('account/read'); expect(requests).toContain('config/read');
+  expect(requests).not.toContain('account/login/start');
   expect(f.terminal.createTab).not.toHaveBeenCalled();
 });

@@ -4,6 +4,7 @@ import { APP_GENERATE_CHANNEL, createAppGenerateClient, APP_AI_CHANNEL, APP_AI_R
 // FR-081). The credential never crosses this boundary.
 import { contextBridge, ipcRenderer } from "electron";
 import { NATIVE_APP_OPEN_CHANNEL, createNativeAppOpenClient } from "../shared/native-app-open";
+import { NATIVE_APP_OPEN_CHAT_CHANNEL, createNativeAppOpenChatClient } from "../shared/native-app-chat";
 import {
   EVENT_CHANNELS,
   INVOKE_CHANNELS,
@@ -61,6 +62,7 @@ if (process.argv.includes(NATIVE_APP_BRIDGE_ARG)) {
     db: database,
     ...createNativeAppCapabilityClient((input) => ipcRenderer.invoke(APP_CAPABILITY_CHANNEL, input)),
     openApp: createNativeAppOpenClient((request) => ipcRenderer.invoke(NATIVE_APP_OPEN_CHANNEL, request)),
+    openChat: createNativeAppOpenChatClient((request) => ipcRenderer.invoke(NATIVE_APP_OPEN_CHAT_CHANNEL, request)),
     generate: createAppGenerateClient((context) => ipcRenderer.invoke(APP_GENERATE_CHANNEL, context)),
     ai: createAppAiClient((input) => ipcRenderer.invoke(APP_AI_CHANNEL, input), () => ipcRenderer.invoke(APP_AI_ROUTES_CHANNEL, {})),
     // Advertise only capabilities this view can use. Other apps retain the
@@ -68,6 +70,7 @@ if (process.argv.includes(NATIVE_APP_BRIDGE_ARG)) {
     ...((process.argv.includes(NATIVE_APP_ACTIVITY_BRIDGE_ARG) || process.argv.includes(NATIVE_APP_GALLERY_BRIDGE_ARG) || process.argv.includes(NATIVE_APP_BROWSER_BRIDGE_ARG)) ? {
       gatewayFetch: createNativeAppGatewayFetch((request) => ipcRenderer.invoke(NATIVE_APP_GATEWAY_CHANNEL, request)),
     } : {}),
+    ...(process.argv.includes(NATIVE_APP_BROWSER_BRIDGE_ARG) ? { browserSetup: true } : {}),
     ...(process.argv.includes(NATIVE_APP_INTEGRATIONS_BRIDGE_ARG) ? {
       integrations: createNativeAppIntegrations((request) => ipcRenderer.invoke(NATIVE_APP_GATEWAY_CHANNEL, request)),
     } : {}),

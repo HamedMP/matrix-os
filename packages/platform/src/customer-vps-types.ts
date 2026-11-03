@@ -16,6 +16,7 @@ import { type CustomerVpsSpeechActivationTarget } from './customer-vps-speech-ac
 import { type SpeechFleetActivationPageResult } from './speech/fleet-activation.js';
 import { type BillingEntitlement } from './billing.js';
 import { type NewProvisioningJob } from './customer-vps-provisioning-jobs.js';
+import type { PreviewRuntimeAccessActivator } from './preview-runtime-activation.js';
 
 export interface ProvisionResponse {
   machineId: string;
@@ -79,6 +80,7 @@ export interface StatusResponse {
   clerkUserId: string;
   handle: string;
   runtimeSlot: string;
+  runtimeTokenEpoch: number;
   provisioningClass: UserMachineProvisioningClass;
   activationState: 'awaiting_billing' | 'authorized';
   status: CustomerVpsStatus;
@@ -150,4 +152,6 @@ export interface CustomerVpsServiceDeps {
     clerkUserId: string,
     runtimeSlot: string,
   ) => Promise<BillingEntitlement | null | undefined>;
+  /** Activates exact-machine bounded AI and speech for owner-only Private Previews after registration. */
+  activatePreviewRuntimeAccess?: PreviewRuntimeAccessActivator;
 }

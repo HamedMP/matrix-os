@@ -15,6 +15,7 @@ import { appKeys, type ApiAppEntry } from "../../shell/src/api/apps.js";
 
 vi.mock("@clerk/nextjs", () => ({
   useAuth: () => ({ userId: null }),
+  useUser: () => ({ user: null }),
   useOrganization: () => ({ organization: null }),
   useOrganizationList: () => ({ isLoaded: false, setActive: undefined }),
 }));

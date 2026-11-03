@@ -592,7 +592,9 @@ describe("ProviderSettingsStore", () => {
     expect(snapshot.harnesses).toContainEqual(expect.objectContaining({
       id: "harness_legacy_claude",
       harness: "claude",
-      enabled: true,
+      enabled: false,
+      configuredEnabled: true,
+      authState: "unknown",
       installState: "installed",
       loginMethods: ["terminal"],
       recommendedLoginMethod: "terminal",
@@ -608,7 +610,7 @@ describe("ProviderSettingsStore", () => {
     })).resolves.toMatchObject({
       kind: "login_attempt",
       snapshot: {
-        harnesses: [expect.objectContaining({ enabled: true, installState: "installed" })],
+        harnesses: [expect.objectContaining({ enabled: false, configuredEnabled: true, installState: "installed" })],
       },
     });
     expect(login.startLogin).toHaveBeenCalledWith(expect.objectContaining({
@@ -638,7 +640,7 @@ describe("ProviderSettingsStore", () => {
       enabled: true,
     })).resolves.toMatchObject({
       kind: "snapshot",
-      snapshot: { harnesses: [expect.objectContaining({ enabled: true })] },
+      snapshot: { harnesses: [expect.objectContaining({ enabled: false, configuredEnabled: true })] },
     });
   });
 
@@ -1229,6 +1231,8 @@ describe("ProviderSettingsStore", () => {
   });
 
   it("keeps logout distinct and blocks removal until exact dependencies are reassigned", async () => {
+    // Keep the selected model eligible for the explicit reassignment target.
+    canonical.instances.find(instance => instance.id === "kernel_owner")!.defaultModelId = "claude-sonnet-5";
     const store = createStore({ fundingSummary: authoritativeMatrixFunding() });
     let response = await store.mutate({
       type: "select_account",
@@ -1288,6 +1292,8 @@ describe("ProviderSettingsStore", () => {
   });
 
   it("recovers an idempotent account removal after owner-config persistence fails", async () => {
+    // This recovery case removes an unbound account, independent of defaults.
+    canonical.drivers = canonical.drivers.filter(driver => driver.id !== "claude_code");
     const store = createStore();
     await store.getSnapshot();
     const tempPath = join(dirname(store.configurationPath), ".settings.json.tmp");

@@ -2,6 +2,7 @@ import { serve } from "@hono/node-server";
 
 import { createFundedRelayService, requireFundedRelayServiceConfig } from "./funded-main-app.js";
 import { configureProxyServerTimeouts } from "./server-timeouts.js";
+import { RELAY_SHUTDOWN_FORCE_EXIT_MS, RELAY_SHUTDOWN_TIMEOUT_MS } from "./funded-relay-lifecycle.js";
 
 const DEFAULT_PORT = 8080;
 
@@ -29,15 +30,18 @@ async function shutdown(signal: NodeJS.Signals): Promise<void> {
   isShuttingDown = true;
   console.log(`[funded-ai-relay] Received ${signal}, shutting down`);
   server.close();
-  const forceExit = setTimeout(() => process.exit(1), 6_000);
+  const deadline = AbortSignal.timeout(RELAY_SHUTDOWN_TIMEOUT_MS);
+  const forceExit = setTimeout(() => process.exit(1), RELAY_SHUTDOWN_FORCE_EXIT_MS);
+  let completed = false;
   try {
-    await service.close();
+    completed = await service.close(deadline);
   } catch (error: unknown) {
     const errorName = error instanceof Error ? error.name : "UnknownError";
     console.warn("[funded-ai-relay] Failed during shutdown", { errorName });
   } finally {
     clearTimeout(forceExit);
-    process.exit(0);
+    if (!completed) console.warn("[funded-ai-relay] Shutdown incomplete");
+    process.exit(completed ? 0 : 1);
   }
 }
 

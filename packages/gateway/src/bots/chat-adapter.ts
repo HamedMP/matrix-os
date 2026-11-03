@@ -11,8 +11,7 @@ import { projectBotToolDisplay } from "./tool-event-display.js";
  * found afterwards is failed, its runtime stopped, and nothing is replayed.
  */
 import { createHash } from "node:crypto";
-import { assertTextOnlySteering } from "../chat/steer-delivery-error.js";
-import type { BotEvent } from "@matrix-os/contracts";
+import { BOT_ATTACHMENT_UNAVAILABLE_MESSAGE, type BotEvent } from "@matrix-os/contracts";
 import { z } from "zod/v4";
 import {
   CanonicalProviderRunEventSchema,
@@ -96,7 +95,7 @@ const FAILURES: Partial<Record<NonNullable<BotTurnResult["blockedReason"]>, { co
 function completion(result: BotTurnResult): CanonicalProviderRunEvent {
   if (result.status === "completed" || result.status === "waiting_person") return { type: "run.completed", outcome: "completed" };
   if (result.status === "cancelled") return { type: "run.completed", outcome: "aborted" };
-  const failure = result.inputUnavailable ? { code: "resource_unavailable" as const, message: "The attachments could not be read. Attach the files again, using PNG, JPEG or WebP images up to 2 MiB, or files up to 1 MiB." } : (result.blockedReason && FAILURES[result.blockedReason])
+  const failure = result.inputUnavailable ? { code: "resource_unavailable" as const, message: BOT_ATTACHMENT_UNAVAILABLE_MESSAGE } : (result.blockedReason && FAILURES[result.blockedReason])
     ?? { code: "run_failed" as const, message: "The bot could not finish this request." };
   return {
     type: "run.completed",
@@ -161,9 +160,8 @@ export function createMatrixBotChatProviderAdapter(options: {
       yield CanonicalProviderRunEventSchema.parse(completion(result));
     },
     async steer(input) {
-      assertTextOnlySteering(input.parts);
       const text = messageText(input.parts) || input.prompt;
-      if (!await options.orchestrator.steer(input.runId, text)) throw new Error("Bot run is not accepting messages");
+      if (!await options.orchestrator.steer(input.runId, text, input.parts)) throw new Error("Bot run is not accepting messages");
     },
     async cancel(input) {
       await options.orchestrator.cancel(input.runId);

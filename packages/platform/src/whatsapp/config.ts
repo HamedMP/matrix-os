@@ -9,12 +9,13 @@ export interface WhatsAppConfig {
   encryptionKey: string;
   publicUrl: string;
   allowedSenders: string[];
+  admissionMode: "allowlist" | "eea_selfserve";
 }
 
 const envNames = [
   "WHATSAPP_APP_SECRET", "WHATSAPP_VERIFY_TOKEN", "WHATSAPP_ACCESS_TOKEN",
   "WHATSAPP_PHONE_NUMBER_ID", "WHATSAPP_GRAPH_API_VERSION", "WHATSAPP_ENCRYPTION_KEY",
-  "WHATSAPP_PUBLIC_URL", "WHATSAPP_ALLOWED_SENDERS",
+  "WHATSAPP_PUBLIC_URL", "WHATSAPP_ALLOWED_SENDERS", "WHATSAPP_ADMISSION_MODE",
 ] as const;
 
 export const WhatsAppPhoneSchema = z.string().regex(/^[1-9]\d{6,14}$/);
@@ -34,9 +35,10 @@ const configSchema = z.object({
       && url.pathname === "/" && !url.search && !url.hash;
   }),
   allowedSenders: z.array(WhatsAppSenderSchema).min(1).max(100),
+  admissionMode: z.enum(["allowlist", "eea_selfserve"]),
 });
 
-// This pilot requires an explicit allowlist and an EEA calling or BSUID country code.
+// Both deployment modes require an EEA calling or BSUID country code.
 // Shared codes with known non-EEA territories are conservatively excluded below.
 const eeaCodes = ["30", "31", "32", "33", "34", "36", "39", "40", "43", "45", "46", "47", "48", "49",
   "351", "352", "353", "354", "356", "357", "358", "359", "370", "371", "372", "385", "386", "420", "421", "423"];
@@ -66,6 +68,7 @@ export function readWhatsAppConfig(env: NodeJS.ProcessEnv): WhatsAppConfig | und
     encryptionKey: env.WHATSAPP_ENCRYPTION_KEY,
     publicUrl: env.WHATSAPP_PUBLIC_URL,
     allowedSenders,
+    admissionMode: env.WHATSAPP_ADMISSION_MODE ?? "allowlist",
   });
   if (!parsed.success || allowedSenders.some((sender) => !isWhatsAppSenderEligible(sender))) {
     throw new Error("WhatsApp configuration is invalid");
@@ -73,6 +76,7 @@ export function readWhatsAppConfig(env: NodeJS.ProcessEnv): WhatsAppConfig | und
   return { ...parsed.data, publicUrl: new URL(parsed.data.publicUrl).origin };
 }
 
-export function isWhatsAppSenderAllowed(config: Pick<WhatsAppConfig, "allowedSenders">, sender: string): boolean {
-  return isWhatsAppSenderEligible(sender) && config.allowedSenders.includes(sender);
+export function isWhatsAppSenderAllowed(config: Pick<WhatsAppConfig, "allowedSenders" | "admissionMode">, sender: string): boolean {
+  return isWhatsAppSenderEligible(sender)
+    && (config.admissionMode === "eea_selfserve" || config.allowedSenders.includes(sender));
 }

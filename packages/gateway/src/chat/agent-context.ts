@@ -4,7 +4,7 @@ import { recipeCoordinatorSelection } from "../bots/coordinator-selection.js";
 import { BotRouteError } from "../bots/route-resolver.js";
 import { createHash } from "node:crypto";
 import {
-  CanonicalChatIdSchema, CanonicalCreateChatTurnRequestSchema, ChatRunContextSchema,
+  CanonicalChatIdSchema, CanonicalCreateChatTurnRequestSchema, ChatRunContextSchema, canonicalChatTurnRequestIdentity,
   type CanonicalChatMessage, type CanonicalCreateChatTurnRequest,
   type ChatContextSnapshot, type ChatRunContext,
   type ChatAgent, type OrganizationDriveContextReference,
@@ -39,10 +39,7 @@ export function hasChatMentions(parts: CanonicalCreateChatTurnRequest["parts"]):
 }
 
 export function chatContextRequestHash<T extends Pick<CanonicalCreateChatTurnRequest, "parts" | "selection" | "interactionMode" | "permissionMode" | "executionRoot">>(input: T): string {
-  return createHash("sha256").update(JSON.stringify({
-    parts: input.parts, selection: input.selection, interactionMode: input.interactionMode,
-    permissionMode: input.permissionMode, executionRoot: input.executionRoot ?? null,
-  })).digest("hex");
+  return createHash("sha256").update(canonicalChatTurnRequestIdentity(input)).digest("hex");
 }
 
 export function transcript(messages: CanonicalChatMessage[], limit: number): { text: string; truncated: boolean } {

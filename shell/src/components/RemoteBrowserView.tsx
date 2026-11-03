@@ -1,7 +1,7 @@
 "use client";
 
-import { useCallback } from "react";
-import { BrowserSurface, type BrowserSurfaceKind } from "@matrix-os/ui";
+import { useCallback, useMemo } from "react";
+import { BrowserSurface, createBrowserSetupTransport, type BrowserSurfaceKind } from "@matrix-os/ui";
 import { getGatewayUrl } from "@/lib/gateway";
 
 export function RemoteBrowserView({ surface, active = true, onOpenCloudDesktop, onOpenBrowser }: {
@@ -16,6 +16,7 @@ export function RemoteBrowserView({ surface, active = true, onOpenCloudDesktop, 
     await response.body?.cancel();
     if (!response.ok) throw new Error("Browser session unavailable");
   }, [gatewayUrl]);
+  const setup = useMemo(() => createBrowserSetupTransport(gatewayUrl), [gatewayUrl]);
   return <BrowserSurface key={`${gatewayUrl}:${surface}`} gatewayUrl={gatewayUrl} surface={surface} active={active}
-    ensureSession={ensureSession} onOpenCloudDesktop={onOpenCloudDesktop} onOpenBrowser={onOpenBrowser}/>;
+    ensureSession={ensureSession} setup={setup} onOpenCloudDesktop={onOpenCloudDesktop} onOpenBrowser={onOpenBrowser}/>;
 }

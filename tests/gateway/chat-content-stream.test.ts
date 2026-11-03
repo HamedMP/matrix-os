@@ -14,10 +14,10 @@ it("negotiates content explicitly while preserving the strict old SSE wire forma
   const app = new Hono();
   registerCanonicalChatEventHttpRoute({ app, stream, getPrincipal: () => ({ userId: "owner_a", source: "jwt" }) });
   const old = (await app.request("/api/chats/events", { headers: { accept: "text/event-stream" } })).body!.getReader();
-  const modern = (await app.request("/api/chats/events", { headers: {
+  const modern = (await app.request("/api/chats/events?assistantTextVersion=1", { headers: {
     accept: "text/event-stream", "x-matrix-chat-protocol": "2",
   } })).body!.getReader();
-  const aware = (await app.request("/api/chats/events?importSourceVersion=1", { headers: { accept: "text/event-stream", "x-matrix-chat-protocol": "2" } })).body!.getReader();
+  const aware = (await app.request("/api/chats/events?importSourceVersion=1&assistantTextVersion=1", { headers: { accept: "text/event-stream", "x-matrix-chat-protocol": "2" } })).body!.getReader();
   try {
     for (const reader of [old, modern, aware]) { await reader.read(); await reader.read(); }
     const event = { cursor: 1, chatId: "chat_test", revision: 0, eventType: "chat.created" as const,

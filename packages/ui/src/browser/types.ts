@@ -11,7 +11,13 @@ export interface BrowserStatus {
   humanControlAvailable: boolean;
   automation?: BrowserAutomationStatus;
 }
+export interface BrowserSetupTransport {
+  requiresDesktopUpdate?: boolean;
+  status(signal: AbortSignal): Promise<unknown>;
+  retry(signal: AbortSignal): Promise<unknown>;
+}
 export interface BrowserSurfaceProps {
+  setup?: BrowserSetupTransport;
   gatewayUrl: string;
   surface: BrowserSurfaceKind;
   active?: boolean;

@@ -5,7 +5,11 @@ import type { ChatRepository } from "../chat/repository.js";
 import type { OwnerCollaborationDatabase } from "./database.js";
 import { createProjectInheritanceResolver, ProjectInheritanceError } from "./project-inheritance.js";
 import { publishProjectChatRoutes } from "./project-chat-routes.js";
-import { appendMutationRecords, type ScopeRow } from "./repository-shared.js";
+import { appendMutationRecords, jsonb, type ScopeRow } from "./repository-shared.js";
+import type {
+  CollaborationChatScopeService,
+  SharedChatExecutionCapability,
+} from "./chat-scope.js";
 
 const MAX_BACKFILL_BATCH = 200;
 
@@ -56,6 +60,7 @@ export function createProjectChatAssignmentCoordinator(options: {
   createBindingId?: () => string;
   createScopeId?: () => string;
   onScopeEnded?: (scopeId: string) => void;
+  chatScope?: Pick<CollaborationChatScopeService, "withCurrentExecutionCapability">;
 }): ProjectChatAssignmentCoordinator {
   const now = options.now ?? (() => new Date());
   const shouldContinue = options.shouldContinue ?? (() => true);
@@ -150,6 +155,50 @@ export function createProjectChatAssignmentCoordinator(options: {
       bindingReadiness,
       scope,
     };
+  }
+
+  /**
+   * Shared Chat execution paths serialize Project -> Chat scope -> Chat row.
+   * Assignment operations must take those same rows before ChatRepository locks
+   * the Chat, otherwise an owner update can deadlock queue admission or claim.
+   */
+  async function lockAssignmentRows(
+    trx: CollaborationTransaction,
+    owner: ChatOwner,
+    chatId: string | undefined,
+    targetProjectId: string | null | undefined,
+  ): Promise<void> {
+    const current = chatId
+      ? await trx.selectFrom("chats").select("project_id")
+        .where("id", "=", chatId)
+        .where("owner_type", "=", owner.type)
+        .where("owner_id", "=", owner.ownerId)
+        .executeTakeFirst()
+      : undefined;
+    const projectIds = [...new Set([current?.project_id, targetProjectId]
+      .filter((projectId): projectId is string => typeof projectId === "string"))].sort();
+    if (projectIds.length > 0) {
+      await trx.selectFrom("collaboration_scopes").select("id")
+        .where("owner_type", "=", owner.type)
+        .where("owner_id", "=", owner.ownerId)
+        .where("kind", "=", "project")
+        .where("resource_id", "in", projectIds)
+        .where("deleted_at", "is", null)
+        .orderBy("id", "asc")
+        .forUpdate()
+        .execute();
+    }
+    if (chatId) {
+      await trx.selectFrom("collaboration_scopes").select("id")
+        .where("owner_type", "=", owner.type)
+        .where("owner_id", "=", owner.ownerId)
+        .where("kind", "=", "chat")
+        .where("resource_id", "=", chatId)
+        .where("deleted_at", "is", null)
+        .orderBy("id", "asc")
+        .forUpdate()
+        .execute();
+    }
   }
 
   function bindingMatchesProject(current: BoundChat, target: ScopeRow): boolean {
@@ -308,6 +357,7 @@ export function createProjectChatAssignmentCoordinator(options: {
     chatId: string,
     target: ScopeRow,
     at: Date,
+    executionCapability: SharedChatExecutionCapability | null,
   ): Promise<string | undefined> {
     const direct = await trx.selectFrom("collaboration_scopes").selectAll()
       .where("owner_type", "=", owner.type)
@@ -339,6 +389,8 @@ export function createProjectChatAssignmentCoordinator(options: {
       auth_epoch: Number(direct.auth_epoch) + 1,
       authority_runtime_id: target.authority_runtime_id,
       authority_generation: Number(target.authority_generation),
+      execution_generation: executionCapability?.executionGeneration ?? null,
+      execution_eligibility: executionCapability ? jsonb(executionCapability.eligibility) : null,
       updated_at: at,
     }).where("id", "=", direct.id)
       .where("membership_mode", "=", "direct")
@@ -369,6 +421,7 @@ export function createProjectChatAssignmentCoordinator(options: {
     trx: CollaborationTransaction,
     owner: ChatOwner,
     record: ChatRecord,
+    executionCapability: SharedChatExecutionCapability | null,
   ): Promise<ReconciliationEffects> {
     const effects: ReconciliationEffects = { chatEvents: [], scopeIdsToRevokeSessions: [] };
     const at = now();
@@ -388,7 +441,14 @@ export function createProjectChatAssignmentCoordinator(options: {
       ));
     }
     if (target && current?.projectScopeId !== target.id) {
-      const reparentedScopeId = await reparentDirectChatScope(trx, owner, record.chat.id, target, at);
+      const reparentedScopeId = await reparentDirectChatScope(
+        trx,
+        owner,
+        record.chat.id,
+        target,
+        at,
+        executionCapability,
+      );
       if (reparentedScopeId) effects.scopeIdsToRevokeSessions.push(reparentedScopeId);
       const result = await inheritance.bindOwnedResourceInTransaction(trx, {
         projectScopeId: target.id,
@@ -399,6 +459,7 @@ export function createProjectChatAssignmentCoordinator(options: {
         authorityGeneration: Number(target.authority_generation),
         revision: record.chat.revision,
         readiness: "ready",
+        executionCapability,
       });
       if (result.chatEvent) effects.chatEvents.push(result.chatEvent);
     }
@@ -424,25 +485,60 @@ export function createProjectChatAssignmentCoordinator(options: {
   ): Promise<ChatRecord> {
     try {
       let effects: ReconciliationEffects = { chatEvents: [], scopeIdsToRevokeSessions: [] };
-      const result = await options.chatRepository.withTransaction(async (repository) => {
-        let record: ChatRecord;
-        try {
-          record = await operation(repository);
-        } catch (error: unknown) {
-          throw new AssignmentOperationError(error);
-        }
-        effects = await reconcile(
-          repository.kysely as unknown as CollaborationTransaction,
-          owner,
-          record,
-        );
-        if (effects.chatEvents.some((event) => event.chatId === record.chat.id)) {
-          const refreshed = await repository.get(owner, record.chat.id);
-          if (!refreshed) throw new ProjectInheritanceError("conflict");
-          return refreshed;
-        }
-        return record;
-      });
+      const execute = (executionCapability: SharedChatExecutionCapability | null) =>
+        options.chatRepository.withTransaction(async (repository) => {
+          let record: ChatRecord;
+          try {
+            const orderedRepository: AssignmentRepository = {
+              create: async (operationOwner, input) => {
+                // Idempotent create may return a Chat that has since moved to a
+                // different Project. Resolve that Chat before taking any Project
+                // locks so the original and current Projects are locked together
+                // in the same canonical order.
+                const existing = await repository.kysely.selectFrom("chats")
+                  .select("id")
+                  .where("owner_type", "=", operationOwner.type)
+                  .where("owner_id", "=", operationOwner.ownerId)
+                  .where("create_request_id", "=", input.clientRequestId)
+                  .executeTakeFirst();
+                await lockAssignmentRows(
+                  repository.kysely as unknown as CollaborationTransaction,
+                  operationOwner,
+                  existing?.id,
+                  input.projectId,
+                );
+                return repository.create(operationOwner, input);
+              },
+              update: async (operationOwner, chatId, input) => {
+                await lockAssignmentRows(
+                  repository.kysely as unknown as CollaborationTransaction,
+                  operationOwner,
+                  chatId,
+                  input.projectId,
+                );
+                return repository.update(operationOwner, chatId, input);
+              },
+            };
+            record = await operation(orderedRepository);
+          } catch (error: unknown) {
+            throw new AssignmentOperationError(error);
+          }
+          effects = await reconcile(
+            repository.kysely as unknown as CollaborationTransaction,
+            owner,
+            record,
+            executionCapability,
+          );
+          if (effects.chatEvents.some((event) => event.chatId === record.chat.id)) {
+            const refreshed = await repository.get(owner, record.chat.id);
+            if (!refreshed) throw new ProjectInheritanceError("conflict");
+            return refreshed;
+          }
+          return record;
+        });
+      const result = options.chatScope
+        ? await options.chatScope.withCurrentExecutionCapability(execute)
+        : await execute(null);
       publishEffects(owner, effects);
       return result;
     } catch (error: unknown) {
@@ -492,40 +588,45 @@ export function createProjectChatAssignmentCoordinator(options: {
         if (!shouldContinue()) return reconciled;
         try {
           const owner: ChatOwner = { type: row.owner_type, ownerId: row.owner_id };
-          const repaired = await options.db.transaction().execute(async (trx) => {
-            const chat = await trx.selectFrom("chats")
-              .select(["id", "project_id", "revision"])
-              .where("id", "=", row.id)
-              .where("owner_type", "=", owner.type)
-              .where("owner_id", "=", owner.ownerId)
-              .forUpdate()
-              .executeTakeFirst();
-            if (!chat) return null;
-            const effects = await reconcile(trx, owner, {
-              chat: {
-                id: chat.id,
-                ownerScope: owner,
-                title: "Backfill",
-                lifecycle: "active",
-                attention: "none",
-                revision: Number(chat.revision),
-                messageCount: 0,
-                createdAt: now().toISOString(),
-                updatedAt: now().toISOString(),
-              },
-              ...(chat.project_id ? { projectId: chat.project_id } : {}),
+          const repair = (executionCapability: SharedChatExecutionCapability | null) =>
+            options.db.transaction().execute(async (trx) => {
+              await lockAssignmentRows(trx, owner, row.id, undefined);
+              const chat = await trx.selectFrom("chats")
+                .select(["id", "project_id", "revision"])
+                .where("id", "=", row.id)
+                .where("owner_type", "=", owner.type)
+                .where("owner_id", "=", owner.ownerId)
+                .forUpdate()
+                .executeTakeFirst();
+              if (!chat) return null;
+              const effects = await reconcile(trx, owner, {
+                chat: {
+                  id: chat.id,
+                  ownerScope: owner,
+                  title: "Backfill",
+                  lifecycle: "active",
+                  attention: "none",
+                  revision: Number(chat.revision),
+                  messageCount: 0,
+                  createdAt: now().toISOString(),
+                  updatedAt: now().toISOString(),
+                },
+                ...(chat.project_id ? { projectId: chat.project_id } : {}),
+              }, executionCapability);
+              const binding = await trx.selectFrom("collaboration_resource_bindings")
+                .select("id")
+                .where("resource_kind", "=", "chat")
+                .where("resource_id", "=", chat.id)
+                .executeTakeFirst();
+              return {
+                effects,
+                repaired: binding !== undefined
+                  && (effects.chatEvents.length > 0 || effects.scopeIdsToRevokeSessions.length > 0),
+              };
             });
-            const binding = await trx.selectFrom("collaboration_resource_bindings")
-              .select("id")
-              .where("resource_kind", "=", "chat")
-              .where("resource_id", "=", chat.id)
-              .executeTakeFirst();
-            return {
-              effects,
-              repaired: binding !== undefined
-                && (effects.chatEvents.length > 0 || effects.scopeIdsToRevokeSessions.length > 0),
-            };
-          });
+          const repaired = options.chatScope
+            ? await options.chatScope.withCurrentExecutionCapability(repair)
+            : await repair(null);
           if (repaired) {
             publishEffects(owner, repaired.effects);
             if (repaired.repaired) reconciled += 1;

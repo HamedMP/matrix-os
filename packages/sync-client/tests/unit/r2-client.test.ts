@@ -3,6 +3,8 @@ import { mkdtemp, readFile, readdir, rm, stat, writeFile } from "node:fs/promise
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createHash } from "node:crypto";
+import type { Readable } from "node:stream";
+import { text } from "node:stream/consumers";
 import {
     AuthRejectedError,
     commitFiles,
@@ -113,16 +115,19 @@ describe("daemon/r2-client", () => {
       if (href === "https://r2.example.test/part-1") {
         expect(init?.method).toBe("PUT");
         expect((init?.headers as Record<string, string>)["Content-Length"]).toBe("5");
+        expect(await text(init?.body as unknown as Readable)).toBe("hello");
         return new Response(null, { status: 200, headers: { ETag: '"etag-1"' } });
       }
       if (href === "https://r2.example.test/part-2") {
         expect(init?.method).toBe("PUT");
         expect((init?.headers as Record<string, string>)["Content-Length"]).toBe("5");
+        expect(await text(init?.body as unknown as Readable)).toBe(" worl");
         return new Response(null, { status: 200, headers: { ETag: '"etag-2"' } });
       }
       if (href === "https://r2.example.test/part-3") {
         expect(init?.method).toBe("PUT");
         expect((init?.headers as Record<string, string>)["Content-Length"]).toBe("1");
+        expect(await text(init?.body as unknown as Readable)).toBe("d");
         return new Response(null, { status: 200, headers: { ETag: '"etag-3"' } });
       }
       if (href === "https://app.matrix-os.com/api/sync/multipart/complete") {
@@ -173,12 +178,14 @@ describe("daemon/r2-client", () => {
   it("aborts multipart uploads when a part upload fails", async () => {
     const localPath = join(tempDir, "large.bin");
     await writeFile(localPath, "helloworld");
-    const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (url) => {
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (url, init) => {
       const href = String(url);
       if (href === "https://r2.example.test/part-1") {
+        expect(await text(init?.body as unknown as Readable)).toBe("hello");
         return new Response(null, { status: 200, headers: { ETag: '"etag-1"' } });
       }
       if (href === "https://r2.example.test/part-2") {
+        expect(await text(init?.body as unknown as Readable)).toBe("world");
         return new Response("failed", { status: 503 });
       }
       if (href === "https://app.matrix-os.com/api/sync/multipart/abort") {

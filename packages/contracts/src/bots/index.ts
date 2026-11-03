@@ -19,3 +19,4 @@ export * from "#bots/image-inference";
 export * from "#bots/owner-personality";
 
 export * from "#bots/tool-display";
+export * from "#bots/output-policy";

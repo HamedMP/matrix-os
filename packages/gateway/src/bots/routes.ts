@@ -4,7 +4,7 @@
  * Bodies are bounded and strictly validated, errors come from one mapper
  * with allowlisted codes and generic messages, and responses are private.
  */
-import { BotChatBindingResponseSchema, BotDirectChatResponseSchema, BotGrantIdSchema, BotInteractionIdSchema, BotMemoryItemIdSchema, BotRecipeListResponseSchema, BotTaskListResponseSchema, CanonicalChatIdSchema, ChatAgentIdSchema, type BotTaskSummary } from "@matrix-os/contracts";
+import { BotChatBindingResponseSchema, BotDirectChatResponseSchema, BotGrantIdSchema, BotInteractionIdSchema, BotMemoryItemIdSchema, BotRecipeListResponseSchema, BotTaskListResponseSchema, CanonicalChatIdSchema, ChatAgentIdSchema, RecoverManagedCustomBotRequestSchema, type BotTaskSummary } from "@matrix-os/contracts";
 import { BotEntryError } from "./custom-direct-chat.js";
 import type { Context } from "hono";
 import { Hono } from "hono";
@@ -23,8 +23,10 @@ import { createBotProviderConnectionRoutes } from './provider-connection-routes.
 import { createChatGptPlanPeerRoutes } from './chatgpt-plan-peer-routes.js';
 import type { ChatGptPlanPeers } from './chatgpt-plan-peers.js';
 import type { BotProviderConnectionsService } from './provider-connections.js';
+import { ManagedCustomRecoveryError, type ManagedCustomRecovery } from "./managed-custom-recovery.js";
 
 const MAX_BODY_BYTES = 64 * 1024;
+const includeRecoverySchema = z.enum(["true", "false"]).optional();
 const includeRunIdsSchema = z.enum(["true", "false"]).optional();
 
 type ErrorCode = "invalid_request" | "not_found" | "conflict" | "expired" | "rate_limited" | "unavailable";
@@ -47,6 +49,7 @@ export function createBotRoutes(options: {
   botChats?: BotChatLookup;
   tasks?: (ownerId: string, chatId: string) => Promise<BotTaskSummary[]>;
   instantiation?: Pick<BotInstantiation, "instantiate"> & Partial<Pick<BotInstantiation, "createCustom">>;
+  recovery?: ManagedCustomRecovery;
   interactions?: Pick<BotInteractionService, "listPending" | "resolve">;
   memory?: Pick<BotMemoryService, "forget" | "confirm">;
   grants?: Pick<BotGrantService, "revoke">;
@@ -75,7 +78,14 @@ export function createBotRoutes(options: {
       return context.json(mapped.body, mapped.status);
     }
     if (error instanceof SyntaxError) return errorResponse(context, "invalid_request");
-    if (error instanceof BotEntryError || error instanceof BotInstantiationError || error instanceof BotInteractionError || error instanceof BotMemoryError
+    if ((error instanceof BotInstantiationError || error instanceof ManagedCustomRecoveryError) && error.code === "invalid_request"
+      && (error.reason === "prompt_too_large" || error.reason === "unsupported_skill")) {
+      context.header("Cache-Control", "private, no-store");
+      const message = error.reason === "prompt_too_large" ? "Shorten the instructions or remove recipe skills, then try again."
+        : "Remove the unavailable skill before creating this Bot.";
+      return context.json({ code: "invalid_request", reason: error.reason, message }, 400);
+    }
+    if (error instanceof ManagedCustomRecoveryError || error instanceof BotEntryError || error instanceof BotInstantiationError || error instanceof BotInteractionError || error instanceof BotMemoryError
       || error instanceof BotGrantError || error instanceof BotAuthorityError) {
       return errorResponse(context, error.code);
     }
@@ -89,6 +99,17 @@ export function createBotRoutes(options: {
     const result = await options.instantiation.createCustom(principal.userId, await context.req.json());
     context.header("Cache-Control", "private, no-store");
     return context.json(result, result.operation === "created" ? 201 : 200);
+  });
+
+  routes.post("/api/chat-agents/:agentId/recover-managed-custom", limit, async context => {
+    const principal = options.getPrincipal(context);
+    if (!options.recovery) return errorResponse(context, "unavailable");
+    const agentId = ChatAgentIdSchema.safeParse(context.req.param("agentId"));
+    const body = RecoverManagedCustomBotRequestSchema.safeParse(await context.req.json());
+    if (!agentId.success || !body.success) return errorResponse(context, "invalid_request");
+    const result = await options.recovery.recover(principal.userId, agentId.data, body.data);
+    context.header("Cache-Control", "private, no-store");
+    return context.json(result, 200);
   });
 
   routes.post("/api/chat-agents/instantiate", limit, async (context) => {
@@ -161,7 +182,11 @@ export function createBotRoutes(options: {
     if (!options.interactions) return errorResponse(context, "unavailable");
     const chatId = CanonicalChatIdSchema.safeParse(context.req.param("chatId"));
     if (!chatId.success) return errorResponse(context, "invalid_request");
-    const interactions = await options.interactions.listPending(principal.userId, chatId.data);
+    const includeRecovery = includeRecoverySchema.safeParse(context.req.query("includeRecovery"));
+    if (!includeRecovery.success) return errorResponse(context, "invalid_request");
+    const interactions = includeRecovery.data === "true"
+      ? await options.interactions.listPending(principal.userId, chatId.data, { includeRecovery: true })
+      : await options.interactions.listPending(principal.userId, chatId.data);
     context.header("Cache-Control", "private, no-store");
     return context.json({ interactions });
   });
@@ -172,8 +197,11 @@ export function createBotRoutes(options: {
     const chatId = CanonicalChatIdSchema.safeParse(context.req.param("chatId"));
     const interactionId = BotInteractionIdSchema.safeParse(context.req.param("interactionId"));
     if (!chatId.success || !interactionId.success) return errorResponse(context, "invalid_request");
+    const includeRecovery = includeRecoverySchema.safeParse(context.req.query("includeRecovery"));
+    if (!includeRecovery.success) return errorResponse(context, "invalid_request");
+    const request = await context.req.json();
     const { response, continuation } = await options.interactions.resolve(
-      principal.userId, chatId.data, interactionId.data, await context.req.json(),
+      principal.userId, chatId.data, interactionId.data, request,
     );
     if (continuation) {
       // The answer is recorded either way; repeating this request retries the continuation.
@@ -181,6 +209,22 @@ export function createBotRoutes(options: {
         await options.admitContinuation(principal, continuation);
       } catch (error: unknown) {
         console.warn("[bots] answer continuation failed:", error instanceof Error ? error.name : "UnknownError");
+        if (includeRecovery.data === "true" && (request?.kind === "question" || request?.kind === "resume")) {
+          // A lost ACK may follow a committed admission. This branch only reads
+          // the saved answer and exact request hash; never repeat admission here.
+          try {
+            const confirmed = await options.interactions.resolve(principal.userId, chatId.data, interactionId.data,
+              { kind: "resume", baseRevision: response.interaction.revision });
+            if (!confirmed.continuation) {
+              context.header("Cache-Control", "private, no-store");
+              return context.json(confirmed.response);
+            }
+          } catch (readError: unknown) {
+            console.warn("[bots] continuation confirmation unavailable:", readError instanceof Error ? readError.name : "UnknownError");
+          }
+          context.header("Cache-Control", "private, no-store");
+          return context.json({ ...response, continuationPending: true });
+        }
         return errorResponse(context, "unavailable");
       }
     }

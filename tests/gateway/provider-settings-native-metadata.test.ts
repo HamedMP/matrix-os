@@ -29,9 +29,9 @@ describe('owner native account enrichment', () => {
     const response = await owner.request('/provider-settings');
     expect(response.status).toBe(200);
     expect(response.headers.get('Cache-Control')).toBe('private, no-store');
-    expect(getSnapshot).toHaveBeenLastCalledWith({ refresh: false, includeNativeAccountMetadata: true });
+    expect(getSnapshot).toHaveBeenLastCalledWith({ refresh: false, includeNativeAccountMetadata: true, recoverNativeConnection: true });
     const collaborator = createProviderSettingsRoutes({ store: { getSnapshot, mutate: vi.fn() }, getPrincipal: () => ({ userId: 'collaborator' }), canReadNativeAccountMetadata: () => false });
-    expect((await collaborator.request('/provider-settings?includeNativeAccountMetadata=true')).status).toBe(200);
+    expect((await collaborator.request('/provider-settings?includeNativeAccountMetadata=true&recoverNativeConnection=true')).status).toBe(200);
     expect(getSnapshot).toHaveBeenLastCalledWith({ refresh: false });
   });
   it('negotiates owner-only connection details without changing historical responses', async () => {

@@ -1,6 +1,6 @@
 import type { Cookie, Cookies, CookiesSetDetails } from "electron";
 import { parseSetCookieHeaders } from "./app-session";
-import { browserProductOrigin } from "./browser-product-bootstrap";
+import { BROWSER_CLOCK_SKEW_MS, browserProductOrigin } from "./browser-product-bootstrap";
 
 type CookieJar = Pick<Cookies, "set" | "remove"> & {
   get(filter: { url: string; name: string }): Promise<Array<Pick<Cookie, "name" | "value" | "path" | "domain">>>;
@@ -30,7 +30,7 @@ export async function installBrowserProductSessionCookie(
   try { payload = JSON.parse(Buffer.from(cookie.value.split(".")[0]!, "base64url").toString("utf8")); }
   catch (error) { if (!(error instanceof SyntaxError)) console.warn("[browser] Invalid session", error instanceof Error ? error.name : "unknown"); throw new Error("invalid browser session"); }
   if (!payload || payload.slug !== "browser-lab" || payload.principal !== "gateway-owner" || payload.scope !== "personal"
-    || typeof payload.exp !== "number" || payload.exp * 1000 <= Date.now() || payload.exp * 1000 > Date.now() + 601_000
+    || typeof payload.exp !== "number" || payload.exp * 1000 <= Date.now() || payload.exp * 1000 > Date.now() + 600_000 + BROWSER_CLOCK_SKEW_MS
     || !isCurrent()) throw new Error("invalid browser session");
   const url = `${base.origin}/apps/browser-lab/`;
   const expirationDate = Math.min(cookie.expires, payload.exp * 1000) / 1000;

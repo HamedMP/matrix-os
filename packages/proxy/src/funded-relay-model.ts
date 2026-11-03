@@ -93,9 +93,10 @@ export function mapFundedModel(modelId: string): FundedModelMapping {
   return { nativeModelId: NATIVE_SONNET_5, canonicalModelId: CANONICAL_SONNET_5 };
 }
 
-/** Provider-enforced ceiling, NOT a local tokenizer estimate. Usage admission
- * uses this to bound Matrix liability, never as the credit required from a user.
- * Keep it reviewed with the expiring price table. Sonnet 5 has a 1M context:
+/** Provider-enforced ceiling, NOT a local tokenizer estimate. Anthropic
+ * admission uses the provider-counted request size; Workers AI uses this
+ * conservative fallback until it exposes a trusted preflight count. Keep it
+ * reviewed with the expiring price table. Sonnet 5 has a 1M context:
  * https://platform.claude.com/docs/en/models/sonnet-5/whats-new-sonnet-5
  */
 export function maximumFundedInputTokens(canonicalModelId: string): number {

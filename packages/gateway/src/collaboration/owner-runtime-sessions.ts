@@ -55,6 +55,8 @@ export class OwnerRuntimeSessionService {
     verifier: DirectTicketVerifier;
     ownerId: string;
     runtimeId: string;
+    /** Current registration generation while control is fresh; null fails closed. Distinct from each scope's authority generation. */
+    runtimeGeneration(): number | null;
     organizationPrecondition: OrganizationPrecondition;
     now?: () => Date;
   }) {
@@ -69,7 +71,9 @@ export class OwnerRuntimeSessionService {
     this.options.verifier.requireClientOrigin(parsed.data.clientOrigin);
     this.options.verifier.verifyPossession({ ticket, proofPublicKey: parsed.data.proofPublicKey, possession: parsed.data.possession });
     if (ticket.actorId !== this.options.ownerId || ticket.runtime.runtimeId !== this.options.verifier.runtimeId()) throw denied();
+    this.requireRuntimeGeneration(ticket.runtime.authorityGeneration);
     const evidenceExpiresAt = await this.requireMembership(ticket.organizationId, ticket.actorId);
+    this.requireRuntimeGeneration(ticket.runtime.authorityGeneration);
     this.options.verifier.consume(ticket);
     this.sweep();
     if (this.sessions.size >= MAX_SESSIONS) throw new DirectAuthError("limit", "Too many owner runtime sessions");
@@ -111,7 +115,9 @@ export class OwnerRuntimeSessionService {
       || !verifyEd25519(record.proofPublicKey, requestSigningPayload(signature), input.proof)) throw invalidSignature();
     this.options.verifier.admitRequestNonce(record.session.id, signature.nonce, issuedAt + REQUEST_WINDOW_MS + SKEW_MS);
     try {
+      this.requireRuntimeGeneration(record.session.authorityGeneration);
       const evidenceExpiresAt = await this.requireMembership(record.session.organizationId, record.session.actorId);
+      this.requireRuntimeGeneration(record.session.authorityGeneration);
       record.session = { ...record.session, evidenceExpiresAt: new Date(Math.min(evidenceExpiresAt, Date.parse(record.session.expiresAt))).toISOString() };
     } catch (error: unknown) {
       this.sessions.delete(record.session.id);
@@ -137,6 +143,12 @@ export class OwnerRuntimeSessionService {
   }
 
   async shutdown(): Promise<void> { this.closed = true; this.sessions.clear(); }
+
+  private requireRuntimeGeneration(expected: number): void {
+    const current = this.options.runtimeGeneration();
+    if (typeof current !== "number" || !Number.isSafeInteger(current) || current < 1) throw unavailable();
+    if (current !== expected) throw new DirectAuthError("expired", "Session is not active");
+  }
 
   private async requireMembership(organizationId: string, actorId: string): Promise<number> {
     try {

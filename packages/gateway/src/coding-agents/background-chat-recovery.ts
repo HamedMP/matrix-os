@@ -22,6 +22,7 @@ export async function restoreBackgroundChatThread(options: {
     principal: { userId: thread.ownerId, source: "jwt" }, threadId: thread.id, sessionId,
     startOffset: Math.max(thread.providerEventOffset ?? 0, thread.providerResumeState.eventOffset ?? 0),
     checkpoint: true,
+    ...(thread.providerResumeState.eventGeneration ? { generation: thread.providerResumeState.eventGeneration } : {}),
   });
   return true;
 }

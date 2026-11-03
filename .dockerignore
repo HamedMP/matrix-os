@@ -12,6 +12,7 @@ dist/
 .next
 **/.next
 tests
+shell/e2e
 specs
 docs
 spike

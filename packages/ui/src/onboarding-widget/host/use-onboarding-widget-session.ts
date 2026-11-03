@@ -7,6 +7,9 @@ import {
   type ConnectedIntegration,
   type OnboardingWidgetEvent,
   type OnboardingWidgetState,
+  getStartedBuildSuggestion,
+  getStartedTaskOrder,
+  getStartedWidgetIntro,
 } from "@matrix-os/contracts";
 import { useCallback, useEffect, useMemo, useReducer, useState } from "react";
 import type { OnboardingWidgetActions, OnboardingWidgetPrefs, OnboardingWidgetProps, OnboardingWidgetRepo } from "../types.js";
@@ -15,8 +18,10 @@ import type { OnboardingChatPort } from "./chat-port.js";
 import { onboardingSessionInit, writeOnboardingPrefs, type OnboardingStoredPrefs } from "./prefs.js";
 import { loadOnboardingRepos, type OnboardingRepoSource } from "./repos.js";
 import { useOnboardingAiConnect, type OnboardingAiConnectPort } from "./use-onboarding-ai-connect.js";
+import { useOnboardingAutoBuild } from "./use-onboarding-auto-build.js";
 import { useOnboardingChatHandoff } from "./use-onboarding-chat-handoff.js";
 import { useOnboardingRun } from "./use-onboarding-run.js";
+import { useConsumeGetStartedFinishedNow, useGetStartedAnswers, useGetStartedFinishedNow } from "../../get-started/answers-context.js";
 
 export interface OnboardingAppConnect {
   connectingService: string | null;
@@ -132,11 +137,30 @@ export function useOnboardingWidgetSession(input: OnboardingWidgetSessionInput):
     changePrefs: setPrefs,
   }), [ai.cancelSignIn, ai.reopenSignIn, ai.startSignIn, ai.submitCode, ai.submitKey, appConnect.connectApp, dispatch, openNamedChat, openSettings, setPrefs, showChat]);
 
-  const userName = onboardingFirstName(input.displayName);
+  // Spec 635: the name and goals from Get started win over the account's display name.
+  const getStartedAnswers = useGetStartedAnswers();
+  const userName = onboardingFirstName(getStartedAnswers?.name ?? input.displayName);
+  const taskOrder = useMemo(() => (getStartedAnswers
+    ? getStartedTaskOrder(getStartedAnswers.goals, { tools: getStartedAnswers.tools, ...(getStartedAnswers.starter ? { starter: getStartedAnswers.starter } : {}) })
+    : undefined), [getStartedAnswers]);
+  const intro = getStartedAnswers ? getStartedWidgetIntro(getStartedAnswers.goals) : null;
+  const buildSuggestion = useMemo(() => (getStartedAnswers ? getStartedBuildSuggestion(getStartedAnswers) : null), [getStartedAnswers]);
+  useOnboardingAutoBuild({
+    suggestion: buildSuggestion,
+    finishedNow: useGetStartedFinishedNow(),
+    consumeFinishedNow: useConsumeGetStartedFinishedNow(),
+    aiReady: !loading && selection !== null && !creditsExhausted,
+    state,
+    dispatch,
+    openChat: showChat,
+  });
   return {
     state,
     actions,
     ...(userName ? { userName } : {}),
+    ...(taskOrder ? { taskOrder } : {}),
+    ...(intro ? { intro } : {}),
+    ...(buildSuggestion ? { buildSuggestion } : {}),
     apps,
     appsUnavailable: appConnect.appsUnavailable,
     repos,

@@ -59,6 +59,39 @@ to use the pinned image entrypoint, then independently checks that the actual
 candidate revision receives zero percent default traffic. Do not remove
 `--no-traffic` to make new-service deployment succeed.
 
+Both environments derive the candidate tag as `relay-<first 12 characters of
+GITHUB_SHA>` after validating the full 40-character source. No dispatch input
+can select an existing customer alias. Before building and immediately before
+deployment, the workflow requires an unused derived tag; an existing tag is
+left unchanged, including when its label has a different full SHA with the same
+prefix. Production can reuse an already accepted candidate through
+`promote=true`, which does not rebuild it.
+
+Construction pins a hash of effective default revision percentages and every
+existing tag's revision/URL. `LATEST` is resolved to the then-current ready
+revision, so Cloud Run pinning that old revision during `--no-traffic` is
+equivalent. After deployment the hash must still match when excluding only the
+new owned tag; candidate revision, image, full source label, Ready state and the
+exact URL derived from the service origin are checked separately. Unexpected
+route drift fails closed without restoring an old map over another writer.
+These readbacks are not a compare-and-swap lock: coordinate all service writers
+through construction and acceptance. Zero default traffic, a unique tag, and a
+separate service do not establish database, owner-account or ledger isolation.
+
+The legacy `candidate` alias and all other existing tags remain unchanged.
+Promotion changes only default traffic to the accepted revision. An older Host
+can retain a tagged Relay URL across upgrades and credential refreshes; moving
+those callers requires a separate reviewed compatibility/migration step. Default
+promotion alone does not establish that every Host uses the new Relay.
+
+Staging keeps its existing single-dispatch `promote=true` build/deploy/promotion
+behavior when the derived tag is unused. A later staging dispatch for the same
+source, including `promote=true`, stops at the occupied-tag preflight before any
+build, deployment or traffic write. This workflow does not provide a two-dispatch
+staging reuse path; do not delete or move the tag to force a retry. Review any
+needed staging reuse separately. Production's evidence-checked existing-candidate
+promotion remains supported.
+
 Production selects only `cloudflare-ai-gateway-token-production` and
 `cloudflare-workers-ai-token-production` for upstream credentials, with no
 fallback to Preview. Central `ai-relay-control-token` and
@@ -190,7 +223,8 @@ stage does not justify resetting budgets or renewing price timestamps.
 3. Dispatch **AI Relay Cloud Run**, production, `promote=false`, with the
    `stage=preview` packet. Configuration must exactly match the packet; separate
    production secrets and explicit price attestations are required. The image is
-   digest-pinned, labelled with source SHA, tagged `candidate`, and kept off
+   digest-pinned, labelled with the full source SHA, tagged with its derived
+   `relay-<source-prefix>` alias, and kept off
    default traffic. Record actual candidate image/revision and actual Platform
    provenance; latest-ready metadata is insufficient.
 4. Perform production-chain acceptance on that exact candidate using only the
@@ -200,7 +234,7 @@ stage does not justify resetting budgets or renewing price timestamps.
    Review and update the production run/receipt pins.
 5. Dispatch production `promote=true` from that same SHA. This path **reuses**
    the existing candidate rather than rebuilding/deploying. It independently
-   reads Cloud Run's candidate tag/revision and checks the exact digest, source
+   reads Cloud Run's source-owned tag/revision and checks the exact digest, source
    label, service account, Ready condition, funded configuration, price reviews
    and every numeric secret binding against the receipt. It also enforces the
    workflow's admission limits/betas, CPU 1, memory 512 MiB, concurrency 32,

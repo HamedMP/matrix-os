@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import React from "react";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { CanonicalCreateChatTurnRequestSchema } from "@matrix-os/contracts";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { ChatApp } from "../../shell/src/components/ChatApp.js";
 import { createCanonicalProviderCatalogFixture } from "../contracts/fixtures/canonical-chat";
@@ -52,9 +53,12 @@ it("refuses an Agent mention without Bot navigation and preserves the ordinary d
   await waitFor(() => expect(submit).toHaveBeenCalled());
   expect(submit.mock.calls[0]![2]).toMatchObject({ permissionMode: "supervised", instanceId: "codex_fixture" });
   expect(submit.mock.calls[0]![2]?.resources).toBeUndefined();
-  expect(submit.mock.calls[0]![2]?.clientRequestId).toBeUndefined();
+  expect(CanonicalCreateChatTurnRequestSchema.shape.clientRequestId.safeParse(submit.mock.calls[0]![2]?.clientRequestId).success).toBe(true);
+  expect(submit.mock.calls[0]![2]?.onAccepted).toEqual(expect.any(Function));
   expect((editor as HTMLTextAreaElement).value).toBe("Prepare the meeting");
   expect(screen.getByText("Original Chat text")).toBeTruthy();
+  act(() => { submit.mock.calls[0]![2]?.onAccepted?.(); });
+  expect((editor as HTMLTextAreaElement).value).toBe("");
 });
 it("preserves text and selected references across Chat switches", async () => {
   const submit = vi.fn(async () => true);
@@ -88,7 +92,7 @@ it("keeps a queued request visible when cancellation fails", async () => {
     parts: [{ type: "text", text: "Use the meeting notes" }], selection: { instanceId: "codex_fixture", model: "gpt-5.6-sol" },
     interactionMode: "default", permissionMode: "full_access", createdAt: "2026-09-10T00:00:00.000Z", updatedAt: "2026-09-10T00:00:00.000Z",
   }]} onCancelQueuedTurn={cancel} />);
-  fireEvent.click(screen.getByRole("button", { name: "Cancel queued request" }));
+  fireEvent.click(screen.getByRole("button", { name: "Cancel Use the meeting notes" }));
   await screen.findByText("Queued request could not be cancelled. Try again.");
   expect(screen.getByText("Use the meeting notes")).toBeTruthy();
 });

@@ -3,6 +3,7 @@ import {
   type ProviderManagedCreditObservation,
   type ProviderSettingsSnapshot,
 } from "@matrix-os/contracts";
+import { isManagedCreditTimestampCurrent } from "./managed-credit-freshness.js";
 
 export type ManagedCreditRefreshResult = "updated" | "retry" | "unsupported" | "aborted";
 
@@ -12,7 +13,7 @@ function mergeCredit(snapshot: ProviderSettingsSnapshot, observation: ProviderMa
   const asOf = Date.parse(observation.usage.asOf);
   if (observation.revision !== snapshot.revision
     || observation.gatewayPolicyAccessSourceId !== (snapshot.gatewayPolicy?.accessSourceId ?? null)
-    || observation.usage.state !== "current" || asOf > now || now - asOf > 300_000
+    || observation.usage.state !== "current" || !isManagedCreditTimestampCurrent(observation.usage.asOf, now)
     || Date.parse(observation.policy.staleAfter) <= now) return null;
   const managed = snapshot.accessSources.filter(source => source.kind === "matrix_gateway"
     && (source.fundingKind === "matrix_included" || source.fundingKind === "matrix_addon"));

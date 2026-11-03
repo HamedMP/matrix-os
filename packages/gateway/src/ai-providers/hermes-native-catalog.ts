@@ -30,8 +30,8 @@ export function projectHermesNativeCatalog(snapshot: AgentRuntimeSettingsSnapsho
     const providers = snapshot.providers.filter(provider => provider.runtime === "hermes" && provider.id === id);
     if (!selected && !providers.length && !observations.length) continue;
     const provider = providers.length === 1 ? providers[0] : undefined;
-    // Native Claude OAuth remains a separate legacy route, never a Pi/API credential.
-    if (id !== "openai-codex" && observed?.credentialKind !== "api_key") continue;
+    const credentialKind = id === "openai-codex" || id === "anthropic" && observed?.credentialKind === "provider_profile" ? "provider_profile" : "api_key";
+    if (id !== "openai-codex" && observed?.credentialKind !== "api_key" && !(id === "anthropic" && observed?.credentialKind === "provider_profile")) continue;
     const checked = Date.parse(observed?.localObservation.checkedAt ?? "");
     const expires = Date.parse(observed?.localObservation.staleAfter ?? "");
     if (snapshot.runtime.selected !== "hermes" || runtime?.installState !== "installed" || !["healthy", "degraded"].includes(runtime.health)
@@ -40,7 +40,7 @@ export function projectHermesNativeCatalog(snapshot: AgentRuntimeSettingsSnapsho
       || observed.localObservation.state !== "present_unverified" || observed.providerId !== id
       || (selected && runtime?.nativeRouteObservation?.modelId !== snapshot.messaging.model)
       || provider.models.some(model => model.id.startsWith(`${id}:`))
-      || observed.credentialKind !== (id === "openai-codex" ? "provider_profile" : "api_key")
+      || observed.credentialKind !== credentialKind
       || !Number.isFinite(checked) || !Number.isFinite(expires) || checked > +now || expires <= +now || expires <= checked || expires - checked > 5000) { failed = true; continue; }
     profiles.push({ harness: "hermes", providerId: id, providerDisplayName: provider.displayName,
       models: provider.models.filter(model => model.available).map(model => ({ id: `${id}:${model.id}`, displayName: model.displayName, enabled: true })),

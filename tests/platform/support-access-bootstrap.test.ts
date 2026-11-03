@@ -84,8 +84,9 @@ describe('support SSH key bootstrap validation', () => {
     expect(statSync(helper).mode & 0o111).not.toBe(0);
     const cloudInit = readFileSync(resolve(import.meta.dirname, '../../distro/customer-vps/cloud-init.yaml'), 'utf8');
     const updater = readFileSync(resolve(import.meta.dirname, '../../distro/customer-vps/host-bin/matrix-sync-agent'), 'utf8');
-    expect(cloudInit).toContain('/usr/local/libexec/matrix-support-access');
-    expect(cloudInit).toContain('chmod 0644 /opt/matrix/bin/matrix-support-access');
+    expect(cloudInit).toContain('matrix-support-access:0755');
+    expect(cloudInit).toContain('install -o root -g root -m "$mode" "/opt/matrix/bin/$name" "/usr/local/libexec/$name"');
+    expect(cloudInit).toContain('chmod 0644 "/opt/matrix/bin/$name"');
     expect(updater).toContain('record_update_file /usr/local/libexec/matrix-support-access support-helper');
     expect(updater).toContain('restore_update_file /usr/local/libexec/matrix-support-access support-helper');
     expect(updater).toContain('sudo chmod 0644 "$BIN_DIR/matrix-support-access"');

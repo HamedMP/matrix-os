@@ -30,8 +30,9 @@ export function orderRailItems<T extends Orderable>(items: readonly T[], mode: R
   const ranks = new Map(ids.slice(0,MAX_IDS).map((id,index)=>[id,index]));
   return [...items].sort((a,b)=> {
     if (mode === "lastUpdated") return (b.updatedAt ?? "").localeCompare(a.updatedAt ?? "") || a.id.localeCompare(b.id);
-    const rank = (ranks.get(a.id) ?? MAX_IDS) - (ranks.get(b.id) ?? MAX_IDS);
-    return rank || (a.createdAt ?? "").localeCompare(b.createdAt ?? "") || a.id.localeCompare(b.id);
+    // Items created after the manual order was saved lead, newest first, so a new Chat is never buried at the end.
+    const rank = (ranks.get(a.id) ?? -1) - (ranks.get(b.id) ?? -1);
+    return rank || (b.createdAt ?? "").localeCompare(a.createdAt ?? "") || a.id.localeCompare(b.id);
   });
 }
 export function moveRailItem(ids: readonly string[], source: string, target: string): string[] {

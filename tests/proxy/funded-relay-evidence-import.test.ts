@@ -135,6 +135,7 @@ with tempfile.TemporaryDirectory(prefix="matrix-evidence-boundary-") as temporar
                 output = pathlib.Path(os.environ["GITHUB_ENV"]).read_text()
                 assert "WORKERS_TOKEN_SECRET=cloudflare-workers-ai-token-production\n" in output
                 assert "WORKERS_TOKEN_VERSION=2\n" in output
+                assert "CANDIDATE_TAG=relay-aaaaaaaaaaaa\n" in output
                 assert "latest" not in output and token not in output
                 result["configured"] = True
             else:

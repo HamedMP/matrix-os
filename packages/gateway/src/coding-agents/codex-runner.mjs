@@ -22,7 +22,6 @@ const MAX_TRANSCRIPT_BYTES = 16 * 1024 * 1024;
 const MAX_PENDING_PROMPTS = 20;
 const MAX_PROMPT_BYTES = 64 * 1024;
 const MAX_FRAMED_PROMPT_BYTES = Math.ceil(MAX_PROMPT_BYTES * 4 / 3) + 4;
-const TURN_TIMEOUT_MS = 10 * 60 * 1000;
 const TURN_FRAME_PREFIX = "matrix-turn-v1:";
 const PROVIDER_THREAD_ID = /^[A-Za-z0-9][A-Za-z0-9_-]{0,511}$/;
 const RunnerInputSchema = z.object({
@@ -244,8 +243,6 @@ async function runCodex(args) {
     stdio: ["ignore", "pipe", "pipe"],
   });
   activeChild = child;
-  const timeout = setTimeout(() => child.kill("SIGTERM"), TURN_TIMEOUT_MS);
-  timeout.unref();
   try {
     const [exit, eventTypes] = await Promise.all([
       childExit(child),
@@ -262,7 +259,6 @@ async function runCodex(args) {
     if (fatalTransportFailure) stopping = true;
     return false;
   } finally {
-    clearTimeout(timeout);
     activeChild = undefined;
   }
 }

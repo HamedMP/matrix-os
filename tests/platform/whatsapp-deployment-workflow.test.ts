@@ -50,6 +50,18 @@ else if (args.includes('access')) {
 }
 
 describe('WhatsApp Cloud Run deployment contract', () => {
+  it('projects an explicit reviewed admission mode only when enabled', () => {
+    expect(run('env-bindings').stdout.trim()).toBe('');
+    expect(run('env-bindings', { WHATSAPP_ENABLED: 'true' }).stdout.trim()).toBe('|WHATSAPP_ADMISSION_MODE=allowlist');
+    expect(run('env-bindings', { WHATSAPP_ENABLED: 'true', WHATSAPP_ADMISSION_MODE: 'eea_selfserve' }).stdout.trim()).toBe('|WHATSAPP_ADMISSION_MODE=eea_selfserve');
+    expect(run('validate', { WHATSAPP_ADMISSION_MODE: 'all' }).status).not.toBe(0);
+  });
+  it('rejects a revision that broadens the reviewed admission mode', () => {
+    const env = bindings.map(([name, secret, key]) => ({ name, valueFrom: { secretKeyRef: { name: secret, key } } }));
+    const complete = { spec: { containers: [{ env: [...env, { name: 'WHATSAPP_ADMISSION_MODE', value: 'eea_selfserve' }] }] } };
+    expect(run('verify-revision', { WHATSAPP_ENABLED: 'true' }, complete).status).not.toBe(0);
+    expect(run('verify-revision', { WHATSAPP_ENABLED: 'true', WHATSAPP_ADMISSION_MODE: 'eea_selfserve' }, complete).status).toBe(0);
+  });
   it('defaults off with no secret bindings or secret-manager activity', () => {
     for (const mode of ['validate', 'secret-bindings', 'preflight-secrets']) {
       const result = run(mode, { WHATSAPP_ENABLED: undefined });
@@ -79,7 +91,7 @@ describe('WhatsApp Cloud Run deployment contract', () => {
   });
   it('verifies exact secret bindings and rejects a partially configured or disabled revision', () => {
     const env = bindings.map(([name, secret, key]) => ({ name, valueFrom: { secretKeyRef: { name: secret, key } } }));
-    const complete = { spec: { containers: [{ env }] } };
+    const complete = { spec: { containers: [{ env: [...env, { name: 'WHATSAPP_ADMISSION_MODE', value: 'allowlist' }] }] } };
     expect(run('verify-revision', { WHATSAPP_ENABLED: 'true' }, complete).status).toBe(0);
     expect(run('verify-revision', { WHATSAPP_ENABLED: 'true' }, { spec: { containers: [{ env: env.slice(1) }] } }).status).not.toBe(0);
     expect(run('verify-revision', {}, complete).status).not.toBe(0);
@@ -88,6 +100,9 @@ describe('WhatsApp Cloud Run deployment contract', () => {
   it('preserves the configuration across candidate, production, and CPU-backed worker revisions', () => {
     const workflow = readFileSync(join(root, '.github/workflows/platform-cloud-run.yml'), 'utf8');
     expect(workflow).toContain("WHATSAPP_ENABLED: ${{ vars.WHATSAPP_ENABLED || 'false' }}");
+    expect(workflow).toContain("WHATSAPP_ADMISSION_MODE: ${{ vars.WHATSAPP_ADMISSION_MODE || 'allowlist' }}");
+    expect(workflow).toContain('whatsapp_env_bindings="$(scripts/ci/platform-whatsapp-env.sh env-bindings)"');
+    expect(workflow).toContain('${speech_env_bindings}${whatsapp_env_bindings}');
     expect(workflow).toContain("WHATSAPP_ENCRYPTION_KEY_VERSION: ${{ vars.WHATSAPP_ENCRYPTION_KEY_VERSION || '1' }}");
     expect(workflow).toContain('scripts/ci/platform-whatsapp-env.sh validate');
     expect(workflow).toContain('scripts/ci/platform-whatsapp-env.sh preflight-secrets');

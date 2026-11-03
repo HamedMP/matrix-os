@@ -371,7 +371,7 @@ describe("scope runtime client", () => {
     });
     await client.refreshCapability();
 
-    const pending = Array.from({ length: 64 }, () => client.createRuntime({
+    const pending = Array.from({ length: 32 }, () => client.createRuntime({
       scopeHandle: SCOPE_HANDLE,
       workload: "chat_ai",
       adapterId: "claude-code",

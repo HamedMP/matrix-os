@@ -17,6 +17,17 @@ const emptySnapshot: AiProviderSnapshotV3 = {
 };
 
 describe("AI provider routes", () => {
+  it("keeps internal funded discovery out of historical strict V3 responses", async () => {
+    const internal = makeAiProviderSnapshot();
+    Object.assign(internal.accessSources[0]!, { discoverableModelIds: ["claude-sonnet-5"] });
+    const app = createAiProviderRoutes({ service: { getSnapshot: async () => internal }, getPrincipal: () => ({ userId: "owner_123" }) });
+    for (const query of ["", "?includeNativeProfiles=true&includeFundingState=true&includeChatFunding=true"]) {
+      const body = await (await app.request(`/providers${query}`)).json();
+      expect(body.accessSources[0]).not.toHaveProperty("discoverableModelIds");
+      expect(body.accessSources[0].eligibleModelIds).toEqual(["claude-sonnet-5"]);
+    }
+    expect(internal.accessSources[0]).toHaveProperty("discoverableModelIds");
+  });
   it.each([false, true])("negotiates rich funding reasons independently of native profiles: %s", async rich => {
     const held = makeAiProviderSnapshot();
     Object.assign(held.accessSources[0]!, { state: "unavailable", action: "retry", safeReason: "credit_reserved" });

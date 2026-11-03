@@ -12,6 +12,13 @@ afterEach(() => {
   vi.resetModules();
 });
 
+it.each([false, true])("advertises Browser setup only for a Browser-authorized native view: %s", async enabled => {
+  vi.spyOn(process, "argv", "get").mockReturnValue(["electron", "--matrix-app-bridge", ...(enabled ? ["--matrix-app-browser-bridge"] : [])]);
+  await import("../../desktop/src/preload/index.js");
+  const [, bridge] = electron.contextBridge.exposeInMainWorld.mock.calls[0];
+  expect(bridge.browserSetup).toBe(enabled ? true : undefined);
+});
+
 it("exposes shared app capabilities while reserving activity access for Resource Manager", async () => {
   vi.spyOn(process, "argv", "get").mockReturnValue(["electron", "--matrix-app-bridge"]);
   await import("../../desktop/src/preload/index.js");
@@ -77,6 +84,18 @@ it("exposes the one-way installed-app launch request in native app views", async
   });
   expect(() => bridge.openApp("Settings", "__settings__")).toThrow("Invalid app launch");
   expect(electron.ipcRenderer.invoke).toHaveBeenCalledTimes(1);
+});
+
+it("exposes acknowledged native Chat recipe navigation without widening openApp", async () => {
+  vi.spyOn(process, "argv", "get").mockReturnValue(["electron", "--matrix-app-bridge"]);
+  electron.ipcRenderer.invoke.mockResolvedValue({ ok: true });
+  await import("../../desktop/src/preload/index.js");
+  const [, bridge] = electron.contextBridge.exposeInMainWorld.mock.calls[0];
+  await expect(bridge.openChat({ view: "recipes", recipeId: "company-brain" })).resolves.toBeUndefined();
+  expect(electron.ipcRenderer.invoke).toHaveBeenCalledWith("native-app:open-chat", {
+    view: "recipes", recipeId: "company-brain",
+  });
+  expect(() => bridge.openApp("Chat", "__chat__")).toThrow("Invalid app launch");
 });
 
 it("advertises gallery discovery and owner integration inventory only when explicitly opted in", async () => {

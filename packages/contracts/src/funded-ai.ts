@@ -38,6 +38,18 @@ const UniqueModelIdsSchema = z.array(ProviderModelReferenceSchema).max(64)
   .refine((models) => new Set(models).size === models.length, "Model IDs must be unique");
 const TokenIdSchema = canonicalReferenceId(80);
 const MicrousdSchema = z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER);
+export const PreviewRequestQuotaSchema = z.object({
+  mode: z.literal("preview"),
+  requestLimit: z.number().int().min(1).max(100),
+  requestsUsed: z.number().int().nonnegative().max(100),
+  requestsRemaining: z.number().int().nonnegative().max(100),
+  maxConcurrency: z.literal(1),
+  expiresAt: IsoTimestampSchema,
+}).strict().superRefine((quota, ctx) => {
+  if (quota.requestsUsed + quota.requestsRemaining !== quota.requestLimit) {
+    ctx.addIssue({ code: "custom", path: ["requestsRemaining"], message: "Preview quota counters are inconsistent" });
+  }
+});
 const OpaqueCredentialSchema = z.string()
   .min(64)
   .max(256)
@@ -206,6 +218,7 @@ export const FundedAiFundingSummarySchema = z.object({
   fundingShortfallMicrousd: MicrousdSchema.optional(),
   remainingBalanceMicrousd: MicrousdSchema,
   remainingBudgetMicrousd: MicrousdSchema,
+  previewQuota: PreviewRequestQuotaSchema.optional(),
 }).strict().superRefine((value, ctx) => {
   const creditTotal = value.promotionalBalanceMicrousd + value.addonBalanceMicrousd;
   if (!Number.isSafeInteger(creditTotal) || value.creditBalanceMicrousd !== creditTotal) {

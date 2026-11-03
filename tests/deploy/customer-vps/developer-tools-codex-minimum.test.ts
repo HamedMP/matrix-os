@@ -42,7 +42,7 @@ function installFixture(output: string, exitCode = 0) {
     "set -euo pipefail", "STATE_DIR=\"$NODE_PREFIX\"", "FAILED_FILE=\"$STATE_DIR/failed-tools\"", "TOOLS=codex",
     ": > \"$FAILED_FILE\"", "log() { :; }", "link_tool() { touch \"$STATE_DIR/linked\"; }",
     "successful_tool_pack() { cp \"$NODE_PREFIX/prepared-codex\" \"$NODE_PREFIX/bin/codex\"; touch \"$STATE_DIR/pack-ran\"; }",
-    loop.replace("/opt/matrix/bin/matrix-install-tool-pack", "successful_tool_pack"), exitCheck,
+    loop.replaceAll("/opt/matrix/bin/matrix-install-tool-pack", "successful_tool_pack"), exitCheck,
   ].join("\n"));
   return { prefix, result };
 }

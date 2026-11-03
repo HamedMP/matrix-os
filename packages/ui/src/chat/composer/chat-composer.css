@@ -1,0 +1,51 @@
+/* Chat composer card shared by Web and Electron Desktop Chat.
+   `--composer-*` tokens let a host whose `--accent` is a hover tint (the Web
+   shell) give focus and Send its primary color; Electron uses the fallbacks. */
+.prompt-card {
+  border-color: var(--border-default);
+  box-shadow: var(--shadow-2);
+  transition:
+    border-color var(--duration-fast, 140ms) var(--ease-out, ease-out),
+    box-shadow var(--duration-fast, 140ms) var(--ease-out, ease-out);
+}
+.prompt-card:focus-within {
+  border-color: var(--composer-focus, var(--accent));
+  box-shadow:
+    0 0 0 3px var(--composer-focus-ring, var(--accent-muted)),
+    var(--shadow-2);
+}
+.prompt-card textarea:focus-visible,
+.prompt-card [data-slot="prompt-input-content"]:focus-visible {
+  box-shadow: none;
+}
+
+/* Electron Desktop's type scale and smoothing. Electron already defines both on
+   its root; the Web shell keeps Tailwind's larger defaults elsewhere, so the
+   composer and its portaled menus carry them here. */
+.matrix-chat-composer,
+.matrix-chat-composer-menu {
+  --text-xs: 11px;
+  --text-sm: 12px;
+  --text-base: 13px;
+  --text-md: 14px;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* Figma Chat geometry, scoped so legacy coding-agent composer presentation stays intact. */
+.matrix-chat-composer [data-slot="composer-context-row"]:empty { display: none; }
+.matrix-chat-composer .prompt-card { min-height: 114px; border-radius: 12px; }
+.matrix-chat-composer [data-slot="prompt-input-content"] { min-height: 64px; padding-top: 16px; padding-bottom: 12px; }
+.matrix-chat-composer [data-slot="prompt-input-placeholder"] { top: 16px; font-weight: 400; }
+.matrix-chat-composer [data-slot="prompt-input-toolbar"] { min-height: 48px; padding: 0 15px 16px; gap: 8px; }
+.matrix-chat-composer [data-slot="prompt-input-send"] { width: 32px; height: 28px; border-radius: 8px; border: 1px solid var(--border-subtle); }
+.matrix-chat-composer [data-slot="prompt-input-send"]:disabled { background: transparent !important; }
+.matrix-chat-composer .prompt-card[data-layout="narrow"] { min-height: 114px; }
+
+/* Touch screens (Web Mobile) get 44px targets; desktop pointers keep the compact Figma toolbar. */
+@media (pointer: coarse) {
+  .matrix-chat-composer [data-slot="prompt-input-toolbar"] button {
+    min-width: 44px;
+    min-height: 44px;
+  }
+}

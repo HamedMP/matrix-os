@@ -1,4 +1,5 @@
 import { registerBrowserApprovalRun } from "./browser-approval-registration.js";
+import { settleSteerCallbackFailure } from "./steering-delivery.js";
 import type { BrowserApprovalControl } from "./browser-approval-control.js";
 import { submitCanonicalApproval, type ApprovalProvenance } from "./approval-submission.js";
 import type { ExecutionAdmissionFence } from "../execution-admission-fence.js";
@@ -14,6 +15,8 @@ import { BackgroundProjectionDetached, recoverBackgroundRunControl } from "./bac
 import { activityPersistenceId } from "./activity-persistence.js";
 import { randomUUID } from "node:crypto";
 import { assistantMessageId } from "./assistant-credential-crypto.js";
+import { createBoundedAssistantPreview } from "./bounded-assistant-preview.js";
+import { createMatrixAssistantOutput } from "./matrix-assistant-output.js";
 import {
   CanonicalChatRunActivitySchema,
   CanonicalChatRunSteeringResponseSchema,
@@ -81,7 +84,6 @@ import {
 
 const MAX_ACTIVE_RUNS_GLOBAL = 64;
 const MAX_ACTIVE_RUNS_PER_OWNER = 8;
-const MAX_ASSISTANT_TEXT = 96 * 1024;
 const STEER_FINALIZE_ATTEMPTS = 2;
 
 export { CanonicalChatOrchestrationError, mapRepositoryError } from "./orchestration-errors.js";
@@ -562,7 +564,9 @@ export class CanonicalChatOrchestrator {
       };
       browserRegistration = registerBrowserApprovalRun(this.options.browserApprovals, input, run.driverKind,
         async event => { await this.persistActivities(owner, run, [CanonicalProviderRunEventSchema.parse(event)]); });
-      let text = "";
+      const preview = run.driverKind === "matrix_pi" || run.driverKind === "matrix_bot"
+        ? createMatrixAssistantOutput() : createBoundedAssistantPreview();
+      let responseCharacterCount = 0;
       let terminal: Extract<CanonicalProviderRunEvent, { type: "run.completed" }> | undefined;
       failureStage = "provider";
       const events = resumeState !== undefined && adapter.resume
@@ -588,18 +592,14 @@ export class CanonicalChatOrchestrator {
             state,
           });
         } else if (event.type === "assistant.delta") {
-          if (Buffer.byteLength(text + event.delta, "utf8") > MAX_ASSISTANT_TEXT) {
-            throw new Error("Provider assistant output exceeded the canonical limit");
-          }
-          text += event.delta;
-          const messageId = assistantMessageId(run.id, event.messageId);
+          responseCharacterCount = Math.min(Number.MAX_SAFE_INTEGER, responseCharacterCount + event.delta.length);
+          const retained = preview.append({ ...event, messageId: assistantMessageId(run.id, event.messageId) });
+          if (!retained) { failureStage = "provider"; continue; }
           failureStage = "persistence";
           await this.options.repository.appendAssistantDelta(owner, {
             chatId: run.chatId,
             runId: run.id,
-            messageId,
-            delta: event.delta,
-            ...(event.credentials ? { credentials: event.credentials } : {}),
+            ...retained,
             createdAt: (this.options.now ?? (() => new Date()))().toISOString(),
           });
           await this.sharedExecution.notify(sharedScopeId);
@@ -661,7 +661,7 @@ export class CanonicalChatOrchestrator {
           tokensOut: terminal.tokenUsage?.outputTokens,
           cachedInputTokens: terminal.tokenUsage?.cachedInputTokens,
           reasoningOutputTokens: terminal.tokenUsage?.reasoningOutputTokens,
-          responseCharacterCount: text.length,
+          responseCharacterCount,
           productEvent: "gateway_chat_response_completed",
           ...(terminal.outcome === "failed" ? { error: new Error("CanonicalProviderRunError") } : {}),
         });
@@ -897,23 +897,13 @@ export class CanonicalChatOrchestrator {
         "[chat/orchestrator] Provider steering callback failed:",
         error instanceof Error ? error.name : "UnknownError",
       );
-      try {
-        await this.options.repository.failSteer(owner, {
-          chatId,
-          runId,
-          clientRequestId: input.clientRequestId,
-          acceptedAt: (this.options.now ?? (() => new Date()))().toISOString(),
-        });
-      } catch (finishError: unknown) {
-        console.warn(
-          "[chat/orchestrator] Steering failure could not be persisted:",
-          finishError instanceof Error ? finishError.name : "UnknownError",
-        );
-      }
-      throw new CanonicalChatOrchestrationError(
-        safeError("run_unavailable", "The Run could not be steered. Try again.", true, ["retry"]),
-        503,
-      );
+      const failure = await settleSteerCallbackFailure(error, () => this.options.repository.failSteer(owner, {
+        chatId,
+        runId,
+        clientRequestId: input.clientRequestId,
+        acceptedAt: (this.options.now ?? (() => new Date()))().toISOString(),
+      }));
+      throw new CanonicalChatOrchestrationError(failure, 503);
     }
     let message;
     try {
@@ -1004,24 +994,14 @@ export class CanonicalChatOrchestrator {
         "[chat/orchestrator] Provider queued steering callback failed:",
         error instanceof Error ? error.name : "UnknownError",
       );
-      try {
-        await this.options.repository.failQueuedTurnSteer(owner, {
-          chatId,
-          runId,
-          queuedTurnId,
-          clientRequestId: input.clientRequestId,
-          acceptedAt: (this.options.now ?? (() => new Date()))().toISOString(),
-        });
-      } catch (finishError: unknown) {
-        console.warn(
-          "[chat/orchestrator] Queued steering failure could not be persisted:",
-          finishError instanceof Error ? finishError.name : "UnknownError",
-        );
-      }
-      throw new CanonicalChatOrchestrationError(
-        safeError("run_unavailable", "The Run could not be steered. Try again.", true, ["retry"]),
-        503,
-      );
+      const failure = await settleSteerCallbackFailure(error, () => this.options.repository.failQueuedTurnSteer(owner, {
+        chatId,
+        runId,
+        queuedTurnId,
+        clientRequestId: input.clientRequestId,
+        acceptedAt: (this.options.now ?? (() => new Date()))().toISOString(),
+      }), true);
+      throw new CanonicalChatOrchestrationError(failure, 503);
     }
     let message;
     try {

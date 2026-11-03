@@ -1,12 +1,35 @@
 import { describe, expect, it, vi } from "vitest";
 import { createChatAgentClient } from "../../packages/ui/src/chat-agents/client";
 import { createCanonicalProviderCatalogFixture } from "../contracts/fixtures/canonical-chat";
+import { AppError } from "../../desktop/src/shared/app-error.js";
+import { FUNDED_AI_READINESS_TIMEOUTS } from "@matrix-os/contracts";
 
 describe("Chat Agent recipe client", () => {
+  it("preserves the safe HTTP status from the desktop transport without leaking its cause", async () => {
+    const request = vi.fn().mockRejectedValue(new AppError("server", { httpStatus: 400, cause: new Error("private path") }));
+    await expect(createChatAgentClient(request).bots!.recoverManagedCustom!("bot_recover01", { baseRevision: 1 }))
+      .rejects.toMatchObject({ status: 400, message: "The request is invalid." });
+  });
+  it("recovers only the explicit saved Bot revision through the authenticated transport", async () => {
+    const response = { agent: { id: "bot_recover01", name: "Existing Bot", avatarSeed: "a".repeat(32), revision: 2, status: "active" },
+      chatId: "chat_recover01", operation: "replayed" };
+    const request = vi.fn(async () => response);
+    const client = createChatAgentClient(request);
+    await client.bots!.recoverManagedCustom!("bot_recover01", { baseRevision: 1 });
+    expect(request).toHaveBeenCalledExactlyOnceWith("/api/chat-agents/bot_recover01/recover-managed-custom", "POST", { baseRevision: 1 });
+    expect(() => client.bots!.recoverManagedCustom!("bot_recover01", { baseRevision: 0 })).toThrow();
+    expect(request).toHaveBeenCalledTimes(1);
+  });
+  it("preserves the bounded unfinished-recovery projection through library transport parsing", async () => {
+    const request = vi.fn(async () => ({ enabled: true, agents: [], managedCustomRecoveries: [{ agentId: "bot_recover01", baseRevision: 1 }] }));
+    expect(await createChatAgentClient(request).list()).toMatchObject({ managedCustomRecoveries: [{ agentId: "bot_recover01", baseRevision: 1 }] });
+    expect(request).toHaveBeenCalledExactlyOnceWith("/api/chat-agents?includeManagedCustomRecoveries=true", "GET");
+  });
   it("requests funding-aware model states through the existing shared transport", async () => {
     const request = vi.fn(async () => createCanonicalProviderCatalogFixture());
     await createChatAgentClient(request).catalog();
-    expect(request).toHaveBeenCalledExactlyOnceWith("/api/chat-providers?includeConnectionLabels=true&includeConnectionState=true&includeFundingState=true&includeChatFunding=true", "GET");
+    expect(request).toHaveBeenCalledExactlyOnceWith("/api/chat-providers?includeConnectionLabels=true&includeConnectionState=true&includeFundingState=true&includeChatFunding=true", "GET", undefined,
+      { timeoutMs: FUNDED_AI_READINESS_TIMEOUTS.rendererRequestMs });
   });
   it("loads recipe capabilities and keeps only bounded display metadata for connections", async () => {
     const request = vi.fn(async (path: string) => path === "/api/chat-agents/recipe-catalog"

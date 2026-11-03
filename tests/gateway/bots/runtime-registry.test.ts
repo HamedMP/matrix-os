@@ -1,5 +1,8 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { BOT_RUNTIME_REGISTRY_CAPACITY, BotRuntimeRegistry, BotRuntimeRegistryError, type BotRuntimeBinding } from "../../../packages/gateway/src/bots/runtime-registry.js";
+import { startRuntimeHeartbeat } from "../../../packages/gateway/src/bots/runtime-heartbeat.js";
+
+afterEach(() => vi.useRealTimers());
 
 const handle = (n: number) => `runtime_${n.toString(16).padStart(32, "0")}`;
 const binding = (overrides: Partial<BotRuntimeBinding> = {}): BotRuntimeBinding => ({
@@ -19,6 +22,31 @@ const binding = (overrides: Partial<BotRuntimeBinding> = {}): BotRuntimeBinding 
 });
 
 describe("bot runtime registry", () => {
+  it("blocks recovery only for the same owner and Chat until release or expiry", () => {
+    let now = 0;
+    const registry = new BotRuntimeRegistry({ now: () => now, ttlMs: 1000 });
+    const value = binding(); registry.bind(value);
+    expect(registry.hasChatRuntime(value.ownerId, value.chatId)).toBe(true);
+    expect(registry.hasChatRuntime("other-owner", value.chatId)).toBe(false);
+    expect(registry.hasChatRuntime(value.ownerId, "chat_other")).toBe(false);
+    registry.cancelInference(value);
+    expect(registry.hasChatRuntime(value.ownerId, value.chatId)).toBe(true);
+    registry.release(value.runtimeHandle);
+    expect(registry.hasChatRuntime(value.ownerId, value.chatId)).toBe(false);
+    registry.bind(value); now = 1001;
+    expect(registry.hasChatRuntime(value.ownerId, value.chatId)).toBe(false);
+  });
+
+  it.each(["release","replace","expire","shutdown"])("releases private tracking exactly once on %s without serializing callbacks", action => {
+    let now=1000;const registry=new BotRuntimeRegistry({now:()=>now,ttlMs:10});
+    const current=binding();const cleanup=vi.fn();registry.bind(current,cleanup);
+    expect(registry.lookupRun(current)).toEqual(current);
+    if(action==="release")registry.release(current.runtimeHandle);
+    if(action==="replace")registry.bind({...current,executionGeneration:"5"});
+    if(action==="expire"){now+=11;expect(registry.size).toBe(0);}
+    if(action==="shutdown")registry.shutdown();
+    expect(cleanup).toHaveBeenCalledOnce();registry.shutdown();expect(cleanup).toHaveBeenCalledOnce();
+  });
   it("cancels inference only for an exact owner/chat/run/generation and keeps graceful broker authority", () => {
     const registry = new BotRuntimeRegistry();
     const first = binding(); const sibling = binding({ runtimeHandle: handle(2), ownerId: "other_owner", runId: "run_two" });
@@ -55,6 +83,68 @@ describe("bot runtime registry", () => {
     registry.bind(replacement);
     const shutdown = registry.inferenceSignal(replacement)!;
     registry.shutdown(); expect(shutdown.aborted).toBe(true); expect(registry.size).toBe(0);
+  });
+
+  it("renews only an existing live binding without replacing its inference signal or capabilities", () => {
+    let now = 0;
+    const registry = new BotRuntimeRegistry({ now: () => now, ttlMs: 1_000 });
+    const first = binding();
+    registry.bind(first);
+    const signal = registry.inferenceSignal(first);
+    now = 900;
+    expect(registry.renew({ ...first, capabilities: ["artifact.read"] })).toBe(true);
+    expect(registry.inferenceSignal(first)).toBe(signal);
+    expect(registry.lookupRun(first)?.capabilities).toEqual(["artifact.write"]);
+    now = 1_100;
+    expect(registry.lookupRun(first)).toEqual(first);
+    now = 1_901;
+    expect(registry.renew(first)).toBe(false);
+    expect(signal?.aborted).toBe(true);
+    expect(registry.lookupRun(first)).toBeNull();
+  });
+
+  it("refuses stale, foreign, drifted, cancelled and released renewals", () => {
+    const registry = new BotRuntimeRegistry();
+    const first = binding(); registry.bind(first);
+    for (const mismatch of [
+      { runtimeHandle: handle(2) }, { executionGeneration: "5" }, { ownerId: "other_owner" },
+      { chatId: "chat_other" }, { runId: "run_other" }, { rootFingerprint: "0".repeat(64) },
+    ]) expect(registry.renew({ ...first, ...mismatch })).toBe(false);
+    registry.cancelInference(first);
+    expect(registry.renew(first)).toBe(false);
+    registry.release(first.runtimeHandle);
+    expect(registry.renew(first)).toBe(false);
+  });
+
+  it("does not expose mutable route or capability references through lookup", () => {
+    const registry = new BotRuntimeRegistry();
+    const first = binding(); registry.bind(first);
+    const viewed = registry.lookupRun(first)!;
+    viewed.route.modelId = "changed-model";
+    (viewed.capabilities as string[])[0] = "artifact.read";
+    expect(registry.lookupRun(first)?.route.modelId).toBe(first.route.modelId);
+    expect(registry.lookupRun(first)?.capabilities).toEqual(first.capabilities);
+  });
+
+  it("keeps the same inference signal across 31 minutes of renewal and fences it on Stop", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-10-21T00:00:00.000Z"));
+    const registry = new BotRuntimeRegistry();
+    const first = binding(); registry.bind(first);
+    const signal = registry.inferenceSignal(first);
+    const onFailure = vi.fn();
+    const heartbeat = startRuntimeHeartbeat(async (renewalSignal) => {
+      if (renewalSignal.aborted || !registry.renew(first)) throw new Error("renewal lost");
+    }, onFailure);
+    await vi.advanceTimersByTimeAsync(31 * 60_000);
+    expect(registry.inferenceSignal(first)).toBe(signal);
+    expect(signal?.aborted).toBe(false);
+    expect(onFailure).not.toHaveBeenCalled();
+    await heartbeat.stop();
+    registry.release(first.runtimeHandle);
+    expect(signal?.aborted).toBe(true);
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(registry.lookupRun(first)).toBeNull();
   });
 
   it("binds an owner Codex subscription only to its admitted Responses model and generation", () => {

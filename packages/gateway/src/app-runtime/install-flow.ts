@@ -17,7 +17,7 @@
  * before installVerifiedApp, or gated-tier apps will bypass the ack check.
  */
 
-import { readFile, mkdir, cp, rm, rename } from "node:fs/promises";
+import { readFile, writeFile, mkdir, cp, rm, rename } from "node:fs/promises";
 import { randomBytes } from "node:crypto";
 import { join, basename } from "node:path";
 import { existsSync } from "node:fs";
@@ -59,6 +59,21 @@ export interface TrustGateInput {
 }
 
 const TRUSTED_TIERS = new Set(["first_party", "verified_partner"]);
+
+async function stampImportedManifest(targetDir: string, slug: string): Promise<void> {
+  const manifestPath = join(targetDir, "matrix.json");
+  const parsed: unknown = JSON.parse(await readFile(manifestPath, "utf8"));
+  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+    throw new Error("installed manifest must be an object");
+  }
+  const stamped = {
+    ...parsed,
+    installed_from: { slug, installedAt: new Date().toISOString() },
+  };
+  const tempPath = join(targetDir, `.matrix.json.${randomBytes(8).toString("hex")}.tmp`);
+  await writeFile(tempPath, JSON.stringify(stamped, null, 2), { flag: "wx" });
+  await rename(tempPath, manifestPath);
+}
 
 /**
  * Install-time trust gate (spec Install Flow step 6).
@@ -204,6 +219,7 @@ export async function installApp(opts: InstallOptions): Promise<InstallResult> {
     // Copy source to target
     await mkdir(targetDir, { recursive: true });
     await cp(sourceDir, targetDir, { recursive: true });
+    await stampImportedManifest(targetDir, manifest.slug);
 
     // Build if needed
     if (manifest.runtime !== "static" && manifest.build) {
@@ -360,6 +376,7 @@ export async function installVerifiedApp(
     // Copy source to target
     await mkdir(targetDir, { recursive: true });
     await cp(sourceDir, targetDir, { recursive: true });
+    await stampImportedManifest(targetDir, manifest.slug);
 
     // Discard any shipped dist/ -- we rebuild from source for community tier
     const distDir = join(targetDir, manifest.build?.output ?? "dist");

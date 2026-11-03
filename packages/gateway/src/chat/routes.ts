@@ -10,6 +10,7 @@ import { CanonicalUpdateChatReadStateRequestSchema, type CanonicalUpdateChatRead
 import { ChatInputWireVersionSchema, ChatCommandPreviewWireVersionSchema } from "@matrix-os/contracts";
 import { CanonicalSubmitChatInputRequestSchema, CanonicalChatInputSubmissionResponseSchema, type CanonicalSubmitChatInputRequest, type CanonicalChatInputSubmissionResponse } from "@matrix-os/contracts";
 import {
+  ChatAssistantTextWireVersionSchema,
   ChatMessageWireVersionSchema,
   projectChatMessageResponse,
   CanonicalAcknowledgeChatCompletionRequestSchema,
@@ -20,6 +21,7 @@ import {
   CanonicalChatIdSchema,
   CanonicalChatListResponseSchema,
   CanonicalChatRecordSchema,
+  CanonicalChatRequestIdSchema,
   CanonicalChatApprovalSubmissionResponseSchema,
   CanonicalChatRunCancellationResponseSchema,
   CanonicalChatRunSteeringResponseSchema,
@@ -161,6 +163,9 @@ export interface CanonicalChatRouteService {
     limit: number;
     cursor?: string;
   }): Promise<CanonicalChatDetailResponse | null>;
+  getTurnAdmission?(
+    owner: ChatOwner, chatId: string, clientRequestId: string, requestHash: string,
+  ): Promise<CanonicalChatTurnAdmissionResponse | null>;
   admitTurn(
     principal: RequestPrincipal,
     owner: ChatOwner,
@@ -315,6 +320,8 @@ export function createCanonicalChatRoutes(options: {
     if (!ChatImportSourceVersionSchema.safeParse(context.req.query("importSourceVersion")).success
       || (context.req.queries("importSourceVersion")?.length ?? 0) > 1
       || !ChatMessageWireVersionSchema.safeParse(context.req.query("messageVersion")).success
+      || !ChatAssistantTextWireVersionSchema.safeParse(context.req.query("assistantTextVersion")).success
+      || (context.req.queries("assistantTextVersion")?.length ?? 0) > 1
       || !ChatInputWireVersionSchema.safeParse(context.req.query("inputVersion")).success
       || !ChatCommandPreviewWireVersionSchema.safeParse(context.req.query("commandPreviewVersion")).success
       || (context.req.queries("commandPreviewVersion")?.length ?? 0) > 1
@@ -549,6 +556,29 @@ export function createCanonicalChatRoutes(options: {
         ChatMessageWireVersionSchema.parse(context.req.query("messageVersion")),
         ChatInputWireVersionSchema.parse(context.req.query("inputVersion")),
         ChatCommandPreviewWireVersionSchema.parse(context.req.query("commandPreviewVersion")),
+        ChatAssistantTextWireVersionSchema.parse(context.req.query("assistantTextVersion")),
+      ));
+    } catch (error: unknown) {
+      return handleError(context, error);
+    }
+  });
+
+  routes.get("/api/chats/:chatId/turn-admissions/:clientRequestId", async (context) => {
+    try {
+      const chatId = CanonicalChatIdSchema.parse(context.req.param("chatId"));
+      const clientRequestId = CanonicalChatRequestIdSchema.parse(context.req.param("clientRequestId"));
+      const requestHash = z.string().regex(/^[a-f0-9]{64}$/).parse(context.req.query("requestHash"));
+      if (context.req.queries("requestHash")?.length !== 1) return validationError(context);
+      const owner = ownerFromPrincipal(options.getPrincipal(context));
+      if (!options.service.getTurnAdmission) throw new Error("Canonical Chat admission lookup unavailable");
+      const result = await options.service.getTurnAdmission(owner, chatId, clientRequestId, requestHash);
+      if (!result) return notFound(context);
+      return chatJson(context, projectChatMessageResponse(
+        CanonicalChatTurnAdmissionResponseSchema.parse(result),
+        ChatMessageWireVersionSchema.parse(context.req.query("messageVersion")),
+        ChatInputWireVersionSchema.parse(context.req.query("inputVersion")),
+        ChatCommandPreviewWireVersionSchema.parse(context.req.query("commandPreviewVersion")),
+        ChatAssistantTextWireVersionSchema.parse(context.req.query("assistantTextVersion")),
       ));
     } catch (error: unknown) {
       return handleError(context, error);
@@ -573,6 +603,7 @@ export function createCanonicalChatRoutes(options: {
         ChatMessageWireVersionSchema.parse(context.req.query("messageVersion")),
         ChatInputWireVersionSchema.parse(context.req.query("inputVersion")),
         ChatCommandPreviewWireVersionSchema.parse(context.req.query("commandPreviewVersion")),
+        ChatAssistantTextWireVersionSchema.parse(context.req.query("assistantTextVersion")),
       ), 202);
     } catch (error: unknown) {
       return handleError(context, error);
@@ -666,6 +697,7 @@ export function createCanonicalChatRoutes(options: {
         ChatMessageWireVersionSchema.parse(context.req.query("messageVersion")),
         ChatInputWireVersionSchema.parse(context.req.query("inputVersion")),
         ChatCommandPreviewWireVersionSchema.parse(context.req.query("commandPreviewVersion")),
+        ChatAssistantTextWireVersionSchema.parse(context.req.query("assistantTextVersion")),
       ));
     } catch (error: unknown) {
       return handleError(context, error);
@@ -694,6 +726,7 @@ export function createCanonicalChatRoutes(options: {
         ChatMessageWireVersionSchema.parse(context.req.query("messageVersion")),
         ChatInputWireVersionSchema.parse(context.req.query("inputVersion")),
         ChatCommandPreviewWireVersionSchema.parse(context.req.query("commandPreviewVersion")),
+        ChatAssistantTextWireVersionSchema.parse(context.req.query("assistantTextVersion")),
       ));
       } catch (error: unknown) {
         return handleError(context, error);
