@@ -100,10 +100,12 @@ afterEach(async () => {
 });
 
 describe('Preview VPS provisioning workflow', () => {
-  it('builds host bundles on the customer-compatible Ubuntu ABI', () => {
-    const workflow = YAML.parse(readFileSync(join(root, '.github/workflows/preview-vps.yml'), 'utf8'));
+  it('builds native preview modules on the customer-compatible release runner', () => {
+    const preview = YAML.parse(readFileSync(join(root, '.github/workflows/preview-vps.yml'), 'utf8'));
+    const release = YAML.parse(readFileSync(join(root, '.github/workflows/host-bundle-release.yml'), 'utf8'));
 
-    expect(workflow.jobs.build['runs-on']).toBe('ubuntu-24.04');
+    expect(preview.jobs.build['runs-on']).toBe('ubuntu-24.04');
+    expect(preview.jobs.build['runs-on']).toBe(release.jobs.build['runs-on']);
   });
 
   it('publishes no privileged runtime credential in the exact-head handoff artifact', () => {

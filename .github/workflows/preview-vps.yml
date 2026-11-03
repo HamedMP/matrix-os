@@ -332,7 +332,7 @@ jobs:
     name: Build preview bundle
     needs: [execution_origin, gate]
     if: needs.execution_origin.result == 'success' && needs.execution_origin.outputs.allowed == 'true' && (needs.gate.outputs.action == 'deploy' || needs.gate.outputs.action == 'bundle')
-    # Native modules must run on the Ubuntu 24.04 customer image (glibc 2.39).
+    # Match the Ubuntu 24.04 customer image (glibc 2.39), as release builds do.
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     env:

@@ -185,6 +185,9 @@ export { ChatAgentsEntry, ChatAgentsRailSection } from "./chat-agents/ChatAgents
 export { ChatSidebarAddAction } from "./chat-agents/ChatSidebarAddAction.js";
 export { ChatAgentsContent } from "./chat-agents/ChatAgentsContent.js";
 export { BotRunMessageBody, BotUnassignedMessageBody } from "./chat-agents/bots/BotMessageBody.js";
+export {RoutineMessageMeta, RoutineOccurrenceMessage, RoutineMessageReadNotice, useRoutineMessageState} from "./chat-agents/bots/RoutineMessage.js";
+export {routineMessageTimeline, routineRequestFireId, routineOccurrenceTime, routineOccurrenceOutcome} from "./chat-agents/bots/routine-transcript.js";
+export type {RoutineOccurrence} from "./chat-agents/bots/routine-transcript.js";
 export { BotChatPanel } from "./chat-agents/bots/BotChatPanel.js";
 export { ChatAgentsWorkspace, useChatAgentsNavigation, useCloseAgentsOnDraftRequest } from "./chat-agents/ChatAgentsNavigation.js";
 export type { AgentProviderCatalogSource } from "./chat-agents/use-agent-provider-catalog.js";

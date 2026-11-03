@@ -2,6 +2,8 @@ import { registerBrowserApprovalRun } from "./browser-approval-registration.js";
 import { settleSteerCallbackFailure } from "./steering-delivery.js";
 import type { BrowserApprovalControl } from "./browser-approval-control.js";
 import { submitCanonicalApproval, type ApprovalProvenance } from "./approval-submission.js";
+import { QueuedChatRecovery } from "./queue-recovery.js";
+import { BotEntryError } from "../bots/custom-direct-chat.js";
 import type { ExecutionAdmissionFence } from "../execution-admission-fence.js";
 import { contextForChatSession } from "./session-history.js";
 import { admitCanonicalRetry } from "./retry-admission.js";
@@ -158,6 +160,7 @@ export class CanonicalChatOrchestrator {
   private readonly reconciliation = new Map<string, Promise<number>>();
   private readonly shutdownDrainMs: number;
   private readonly sharedExecution: SharedChatExecutionCoordinator;
+  private readonly queuedRecovery = new QueuedChatRecovery();
   private closing = false;
   private readonly orderedControls = createOrderedRunControls();
 
@@ -448,6 +451,13 @@ export class CanonicalChatOrchestrator {
     this.queueDispatches.add(key);
     try {
       for (let offset = 0; offset < 20 && !this.closing && !this.atCapacity(owner); offset += 1) {
+        try {
+          await this.options.agentContext?.revalidate(owner, chatId);
+        } catch (error: unknown) {
+          // An unsupported thread must not block this owner's unrelated Chats.
+          if (error instanceof BotEntryError && error.code === "unavailable") return;
+          throw error;
+        }
         const timestamp = (this.options.now ?? (() => new Date()))().toISOString();
         const claimed = await this.options.repository.claimNextQueuedTurn(owner, {
           chatId,
@@ -1121,10 +1131,9 @@ export class CanonicalChatOrchestrator {
         if (!(reconcileError instanceof ChatRunNotActiveError)) throw reconcileError;
       }
     }
-    const queuedChatIds = await this.options.repository.listQueuedChatIds(owner, 20);
-    for (const chatId of queuedChatIds) {
-      await this.dispatchNextQueued(owner, chatId);
-    }
+    await this.queuedRecovery.recover(owner,
+      (scope, limit, cursor) => this.options.repository.listQueuedChatIds(scope, limit, cursor),
+      chatId => this.dispatchNextQueued(owner, chatId));
     return reconciled;
   }
 
@@ -1136,6 +1145,7 @@ export class CanonicalChatOrchestrator {
 
   async close(): Promise<void> {
     this.closing = true;
+    this.queuedRecovery.close();
     this.orderedControls.close();
     const active = [...this.active.values()];
     let timeout: ReturnType<typeof setTimeout> | undefined;
