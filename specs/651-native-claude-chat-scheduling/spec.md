@@ -20,6 +20,7 @@ The same native version supports replacing a named MCP server through mcp_set_se
 
 - A completed canonical phase revokes all of its MCP grants, routine source, approval/input controllers and browser handles. A retained native process is independently owned by a bounded pool; phase completion is not a simulated process exit.
 - Retention requires exact qualified native protocol, confirmed native jobs and an installed host scheduled-phase handler. Invalid proof, unsupported surfaces or full capacity deny CronCreate before its effect. Ordinary non-Cron Chat remains available.
+- Before selecting retained transport, qualify the exact resolved launch executable with a bounded version query in the selected environment. Only 2.1.317 enters the qualified path, which still requires actual hook/MCP ACKs. Unsupported or unknown versions use the existing ordinary per-turn transport with CronCreate added to existing tool denials. A cancelled query or unconfirmed child cleanup cannot fall through into a new launch. Never retry a submitted prompt.
 - Bind owner type/id, private Chat, instance, native session, execution root, exact selection/permission policy and freshly verified credential principal. Never derive Matrix identity from native prompt text or callback IDs.
 - Cap sessions globally and per owner; cap jobs at the native limit of 50. Do not silently evict a live retained session. Close idle children after the last confirmed job is removed. Apply an absolute session limit no greater than native recurring expiry; never refresh an existing funded/absolute deadline between phases.
 - Native timers alone decide when to submit due work. Matrix timers only bound control waits and resource cleanup; they never enqueue scheduled prompts.
@@ -32,6 +33,8 @@ A qualified native UserPromptSubmit must match an actual held session and a prev
 Admit the exact generic system input `Scheduled task triggered.` plus a fresh turn/run in one transaction, with outbox writes and a request identity derived from native session/prompt ID. Raw native prompt text stays private and is represented by a hash for request identity. The ordinary public turn endpoint continues to require a real user input. Start the new canonical projection against the held native prompt; never dispatch another copy of that prompt.
 
 Each phase uses new input/approval controllers and new run-scoped MCP capabilities. Reconnect MCP children with their fresh explicit scoped environment before releasing the held native prompt. Old tokens never regain validity. Preserve the existing routine hook and terminal-result/settlement revocation; a host registrar may translate only its opaque callback registration under the same actual session and current prompt/tool identities.
+
+The retained process starts without the initial `--mcp-config` pair. The first acknowledged `mcp_set_servers` supplies that phase's configuration, just as later replacement does; avoid launching children once through argv and immediately replacing them through control.
 
 ## Auth matrix
 

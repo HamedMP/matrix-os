@@ -1,6 +1,7 @@
 import type { ClaudeNativeSessionPool } from "./claude-native-session.js";
 import type { NativeScheduledPhaseRequest } from "./native-scheduled-admission.js";
 import { resolveClaudeSessionSource } from "./claude-session-source.js";
+import { ClaudeNativeProbeCleanupError, disallowNativeCronCreate, resolveClaudeNativeProtocol } from "./claude-native-protocol.js";
 import { createClaudeRoutineHook } from "./claude-routine-hook.js";
 import { createClaudeRoutineExecution, type NativeRoutineCliPort } from "./claude-routine-execution.js";
 import type { SharedBrowserBroker } from "../shared-browser/broker.js";
@@ -114,6 +115,7 @@ export function createClaudeChatProviderAdapter(options: {
   homePath: string;
   nativeSessions?: ClaudeNativeSessionPool;
   resolveSessionSource?: typeof resolveClaudeSessionSource;
+  resolveNativeProtocol?: typeof resolveClaudeNativeProtocol;
   routineCli?: NativeRoutineCliPort;
   credentialKey?: Buffer;
   spawnFn?: CanonicalCliSpawn;
@@ -699,14 +701,33 @@ export function createClaudeChatProviderAdapter(options: {
 
     const lines = createBoundedCliLines(MAX_FRAME_BYTES, parseLine);
     const runPhase = options.nativeSessions ? async (transport: Parameters<typeof runCanonicalCli>[0]) => {
-      let source;
+      const preparingAt = Date.now();
+      const remainingLifetime = () => {
+        if (transport.timeoutMs === undefined) return {};
+        const timeoutMs = transport.timeoutMs - (Date.now() - preparingAt);
+        if (timeoutMs <= 0) throw new CanonicalCliError("timeout");
+        return { timeoutMs };
+      };
       try {
-        source = await (options.resolveSessionSource ?? resolveClaudeSessionSource)({
-          homePath: options.homePath, command: launch.command, cwd: launch.cwd, args: launch.args, env: runEnv, input,
+        const protocol = await (options.resolveNativeProtocol ?? resolveClaudeNativeProtocol)({
+          command: transport.command, cwd: transport.cwd, env: transport.env, signal: transport.signal,
+          spawnFn: transport.spawnFn, timeoutMs: transport.timeoutMs,
         });
-      } catch (error: unknown) { await cancelScheduledSource(input); throw error; }
-      return options.nativeSessions!.runTurn({ ...transport, input, sourceFingerprint: source.fingerprint,
-        schedulingAllowed: source.schedulingAllowed });
+        transport.signal.throwIfAborted();
+        if (!protocol.qualified) {
+          if (input.nativeScheduled) throw new Error("Native scheduled protocol unavailable");
+          return await runCanonicalCli({ ...transport, command: protocol.command,
+            args: disallowNativeCronCreate(transport.args), ...remainingLifetime() });
+        }
+        const source = await (options.resolveSessionSource ?? resolveClaudeSessionSource)({
+          homePath: options.homePath, command: protocol.command, cwd: launch.cwd, args: launch.args, env: runEnv, input,
+        });
+        return await options.nativeSessions!.runTurn({ ...transport, command: protocol.command, ...remainingLifetime(),
+          input, sourceFingerprint: source.fingerprint, schedulingAllowed: source.schedulingAllowed });
+      } catch (error: unknown) {
+        if (error instanceof ClaudeNativeProbeCleanupError) input.onCleanupUnconfirmed?.();
+        await cancelScheduledSource(input); throw error;
+      }
     } : runCanonicalCli;
     void runPhase({
       command: launch.command,
