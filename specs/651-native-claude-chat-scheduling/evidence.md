@@ -90,8 +90,24 @@ No B branch is rewritten and no parallel routines hook/scheduler is introduced.
   and all-tool hooks preserve B's delegated-routines rejection. Final-source
   native Cron ran twice, 59.440 seconds apart, then deleted and exited zero;
   the bounded native/phase regression lane passed 99/99.
+- Frozen `ecbb1dd0933ceab3ea7d456f41fa7aa8b1761424` regression passed
+  **565/565**, 28 files, zero skips, including actual PostgreSQL. Full typecheck,
+  pattern gate and diff checks passed; Greptile scored **5/5**, all threads
+  resolved. Native probe source hashes match that committed runtime source.
+- Full CI run `41649600130` found a missing registration for the new native
+  PostgreSQL suite. The follow-up registers it in the existing collaboration
+  lane and asserts that assignment; it does not weaken inventory validation.
+  The remaining PostgreSQL inventory also reports 24 parent-stack routine CLI
+  suites. Both E2E lanes fail before product tests because Playwright 1.60
+  cannot install Chromium on the Ubuntu 26.04 runner. Current main already
+  pins those lanes to Ubuntu 24.04; the Schedule B base does not include that
+  fix. These parent/environment gates remain unqualified, not waived.
+- Register-only bundle `v2026.11.03-pr3108-41647634789-1-ecbb1dd` was built
+  and registered with exact `ecbb1dd` provenance. No channel was promoted and
+  this task has not installed it. The PR remains Draft.
 - Exact repaired-head installed Chat, real due-result readback, cancellation
-  across next deadline, screenshots and head-specific CI/Greptile: **pending**.
+  across next deadline and screenshots: **pending** official Dev CLI device
+  authentication. Offline native protocol qualification is not that acceptance.
 - No exact matching Linear issue confirmed; unrelated scheduling issues were
   not inferred to be this defect.
 - Companion public documentation: private site Draft PR
