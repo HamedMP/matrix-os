@@ -153,7 +153,7 @@ describe("bot services at gateway start", () => {
       const owner = { type: "personal" as const, ownerId: OWNER };
       await expect(services!.botChats.directChat!(owner, created.agent.id)).resolves.toBe(created.chatId);
       await expect(services!.botChats.directChat!({ type: "personal", ownerId: "other_owner" }, created.agent.id)).resolves.toBeNull();
-      await expect(services!.botChats.directChat!({ type: "org", ownerId: OWNER }, created.agent.id)).resolves.toBeNull();
+      await expect(services!.botChats.directChat!({ type: "organization", ownerId: OWNER }, created.agent.id)).resolves.toBeNull();
       await agents.update(owner, created.agent.id, { baseRevision: created.agent.revision, archived: true });
       await expect(services!.botChats.directChat!(owner, created.agent.id)).resolves.toBeNull();
     } finally { await services!.close(); }
@@ -174,4 +174,23 @@ describe("bot services at gateway start", () => {
     await closed.destroy();
     await expect(startBots({ ...base(), repository: { kysely: closed.db, withTransaction: vi.fn() } as never })).resolves.toBeUndefined();
   });
+});
+
+it("starts exactly one routine dispatcher after canonical composition and closes it before the host",async()=>{
+ const intervals=vi.spyOn(globalThis,"setInterval"),cleared=vi.spyOn(globalThis,"clearInterval");
+ const {host:runtimeHost}=host(),services=await startBots({...base(),host:runtimeHost as never});
+ const canonical={repository,orchestrator:{admitTurn:vi.fn(),enqueueQueuedTurn:vi.fn(),cancelRun:vi.fn()}};
+ try{
+  const before=intervals.mock.calls.filter(call=>call[1]===15000).length;
+  await services!.routines!.start(canonical as never);await services!.routines!.start(canonical as never);
+  expect(intervals.mock.calls.filter(call=>call[1]===15000)).toHaveLength(before+1);
+  const index=intervals.mock.calls.findLastIndex(call=>call[1]===15000),timer=intervals.mock.results[index].value;
+  await services!.close();expect(cleared).toHaveBeenCalledWith(timer);
+  expect(runtimeHost.client.runBot).not.toHaveBeenCalled();expect(canonical.orchestrator.admitTurn).not.toHaveBeenCalled();
+ }finally{await services?.close();intervals.mockRestore();cleared.mockRestore();}
+});
+it("does not start routine timers when the runtime host is unavailable",async()=>{
+ const {host:runtimeHost}=host(false),services=await startBots({...base(),host:runtimeHost as never}),intervals=vi.spyOn(globalThis,"setInterval");
+ try{await services!.routines!.start({repository,orchestrator:{}} as never);expect(intervals).not.toHaveBeenCalled();expect(runtimeHost.client.runBot).not.toHaveBeenCalled();}
+ finally{await services!.close();intervals.mockRestore();}
 });
