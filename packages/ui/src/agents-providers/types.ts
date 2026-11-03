@@ -6,6 +6,7 @@ import type {
   ProviderHarnessRoute,
   ProviderLoginMethod,
   ProviderSettingsSnapshot,
+  SpeechCapabilitiesResponse,
 } from "@matrix-os/contracts";
 
 export type ProviderSettingsMutationIntent =
@@ -64,6 +65,9 @@ export interface AgentsProvidersViewProps {
   matrixAnthropicClient?: import("./matrix-anthropic-connection-client.js").MatrixAnthropicConnectionClient;
   onOpenAuthorizationUrl?: (url: string) => void;
   onLoadUsageHistory?: (cursor: string | null, signal: AbortSignal) => Promise<import("@matrix-os/contracts").AiCreditHistoryResponse>;
+  speechClient?: {
+    capabilities(signal?: AbortSignal): Promise<SpeechCapabilitiesResponse>;
+  };
   onSetupHarness?: (harness: ProviderHarnessKind) => Promise<boolean>;
   onOpenTerminal: (terminalSessionId: string) => void;
   onOpenBrowser: (authorizationPath: string) => void;

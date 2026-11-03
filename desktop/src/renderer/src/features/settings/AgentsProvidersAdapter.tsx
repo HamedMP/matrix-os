@@ -3,6 +3,7 @@ import type { ProviderSettingsMutationIntent } from "@matrix-os/ui";
 import type { ProviderSettingsSnapshot } from "@matrix-os/contracts";
 import {
   AgentsProvidersView,
+  createBrowserSpeechClient,
   useProviderSettingsController,
 } from "@matrix-os/ui";
 import "@matrix-os/ui/agents-providers.css";
@@ -84,6 +85,7 @@ function ConnectedAgentsProvidersAdapter({
 }) {
   const runtimeApi = useMemo(() => api.forRuntime(runtimeSlot), [api, runtimeSlot]);
   const transport = useMemo(() => createDesktopProviderSettingsTransport(runtimeApi), [runtimeApi]);
+  const speechClient = useMemo(() => createBrowserSpeechClient({ baseUrl: platformHost, runtimeSlot }), [platformHost, runtimeSlot]);
   const onCatalogChanged = useCallback((intent?: ProviderSettingsMutationIntent, snapshot?: ProviderSettingsSnapshot) => {
     invalidateDesktopProviderCatalog(identityKey, intent, snapshot);
   }, [identityKey]);
@@ -217,6 +219,7 @@ function ConnectedAgentsProvidersAdapter({
         });
       }}
       onLoadUsageHistory={loadUsageHistory}
+      speechClient={speechClient}
       onAddCredit={addCredit}
     />
     <CreditDiagnosticDisclosure api={runtimeApi} snapshot={controller.snapshot}

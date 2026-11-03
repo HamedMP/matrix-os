@@ -165,7 +165,8 @@ For a workflow-provisioned `preview-vps` runtime or a newly registered Private
 Preview, also verify the following without printing credentials or private host
 configuration:
 
-- Matrix AI Settings shows a Preview Chat request allowance and expiry.
+- Matrix AI Settings shows distinct Preview Chat and Preview dictation request
+  allowances and expiry separately from dollar-denominated Chat credit.
 - Chat shows a Preview dictation request allowance; one real recording inserts
   an editable transcript and refreshes the remaining count.
 - One real funded Chat turn decrements the Preview request counter while the

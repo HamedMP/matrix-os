@@ -31,16 +31,25 @@ it("shows zero ordinary Chat credit with a positive speech-inclusive total", () 
   expect(screen.queryByText("$1.00")).toBeNull();
   expect(screen.queryByText(/voice credit/i)).toBeNull();
 });
-it("shows the exact local Preview expiry time and time zone", () => {
+it("separates Preview Chat and dictation allowances from dollar credit", () => {
   freeze(); const s = source(); if (s.usage.kind !== "managed_credit") throw new Error("fixture");
-  s.usage.previewQuota = { requestLimit: 25, requestsUsed: 1, requestsRemaining: 24,
+  s.usage.previewQuota = { mode: "preview", requestLimit: 25, requestsUsed: 2, requestsRemaining: 23, maxConcurrency: 1,
     expiresAt: "2026-10-20T16:45:00.000Z" };
   render(<GatewayPanel source={s} policy={null} provider={null} disabled={false} canSetBudget={false} canSetAllowlist={false}
-    canAddCredit={false} onMutate={vi.fn()} onAddCredit={vi.fn()} onRefresh={vi.fn()} />);
+    canAddCredit={false} onMutate={vi.fn()} onAddCredit={vi.fn()} onRefresh={vi.fn()}
+    speechPreviewQuota={{ mode: "preview", requestLimit: 25, requestsUsed: 1, requestsRemaining: 24, maxConcurrency: 1,
+      expiresAt: "2026-10-20T16:45:00.000Z" }} />);
   const expiry = localDateTimeWithZone("2026-10-20T16:45:00.000Z");
   expect(expiry).toMatch(/\d{1,2}:\d{2}/);
   expect(expiry).toMatch(/(?:GMT|UTC|[A-Z]{2,})/);
-  expect(screen.getByText(`Preview allowance: 24 of 25 Chat requests remaining until ${expiry}.`)).toBeVisible();
+  const allowances = screen.getByRole("group", { name: "Preview allowances" });
+  expect(allowances).toHaveTextContent("Preview Chat");
+  expect(allowances).toHaveTextContent("23 of 25 requests remaining");
+  expect(allowances).toHaveTextContent("Preview dictation");
+  expect(allowances).toHaveTextContent("24 of 25 requests remaining");
+  expect(allowances).toHaveTextContent(`Available until ${expiry}`);
+  expect(screen.getByText("Chat credit", { exact: true })).toBeVisible();
+  expect(screen.getByText("$0.00")).toBeVisible();
 });
 it.each([1, 4_999, 9_999, 10_000])("caps source credit by monthly budget and preserves precision: %s", amount => {
   freeze(); const s = source(); if (s.usage.kind !== "managed_credit") throw new Error("fixture");

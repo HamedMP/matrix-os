@@ -8,6 +8,7 @@ import type {
   ProviderGatewayPolicy,
   ProviderModelProvider,
   ProviderSettingsSnapshot,
+  SpeechCapabilitiesResponse,
 } from "@matrix-os/contracts";
 import type { ProviderSettingsMutationIntent } from "./types.js";
 import { gatewayChatAvailableMicrousd, gatewayCreditLines, gatewayCreditStaleAfter, gatewayPolicyAllowsModel, localDateTimeWithZone, money, shortDate, titleCase } from "./utils.js";
@@ -77,6 +78,7 @@ export function GatewayPanel({
   disabled,
   canSetBudget,
   modelInventory,
+  speechPreviewQuota,
   canSetAllowlist,
   canAddCredit,
   onMutate,
@@ -97,6 +99,7 @@ export function GatewayPanel({
   policy: ProviderGatewayPolicy | null;
   provider: ProviderModelProvider | null;
   modelInventory?: ProviderSettingsSnapshot["matrixModelInventory"];
+  speechPreviewQuota?: SpeechCapabilitiesResponse["previewQuota"];
   disabled: boolean;
   canSetBudget: boolean;
   canSetAllowlist: boolean;
@@ -249,11 +252,6 @@ export function GatewayPanel({
       </div>
 
       {creditReserved ? <p className="matrix-ap-help">Your credit is reserved while usage is confirmed.</p> : null}
-      {source?.usage.kind === "managed_credit" && source.usage.previewQuota ? (
-        <p className="matrix-ap-help">
-          Preview allowance: {source.usage.previewQuota.requestsRemaining} of {source.usage.previewQuota.requestLimit} Chat requests remaining until {localDateTimeWithZone(source.usage.previewQuota.expiresAt)}.
-        </p>
-      ) : null}
       {budgetExceeded ? <p className="matrix-ap-help">This computer has reached its Matrix AI monthly budget. Contact your workspace administrator or support.</p> : null}
       {source && policy && creditRequired ? (
         <p className="matrix-ap-help">{checkoutAvailable ? "Add credit to use Matrix AI." : "Matrix AI needs spendable credit."}</p>
@@ -297,6 +295,25 @@ export function GatewayPanel({
             </button>
         </div>
       </div>
+
+      {(source?.usage.kind === "managed_credit" && source.usage.previewQuota) || speechPreviewQuota ? (
+        <div className="matrix-ap-preview-allowances" role="group" aria-label="Preview allowances">
+          {source?.usage.kind === "managed_credit" && source.usage.previewQuota ? (
+            <div className="matrix-ap-preview-allowance">
+              <span>Preview Chat</span>
+              <strong>{source.usage.previewQuota.requestsRemaining} of {source.usage.previewQuota.requestLimit} requests remaining</strong>
+              <small>Available until {localDateTimeWithZone(source.usage.previewQuota.expiresAt)}</small>
+            </div>
+          ) : null}
+          {speechPreviewQuota ? (
+            <div className="matrix-ap-preview-allowance">
+              <span>Preview dictation</span>
+              <strong>{speechPreviewQuota.requestsRemaining} of {speechPreviewQuota.requestLimit} requests remaining</strong>
+              <small>Available until {localDateTimeWithZone(speechPreviewQuota.expiresAt)}</small>
+            </div>
+          ) : null}
+        </div>
+      ) : null}
 
       {policy && source ? (
         <div className="matrix-ap-model-inventory">

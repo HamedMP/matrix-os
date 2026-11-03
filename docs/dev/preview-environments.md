@@ -145,9 +145,11 @@ customer-primary balance. Speech uses a zero-charge Preview counter and never
 falls back to paid owner credit. Preview Chat cannot use top-ups or configured
 owner promotions. Shared users receive the same bounded machine capability but
 do not gain access to the owner's personal Integrations, Custom MCP accounts,
-or billing state. Private Preview routing remains owner-only. Matrix OS shows
-the remaining Preview Chat and dictation request counts; treat missing or
-exhausted quota as unavailable, not as a cue to edit the host.
+or billing state. Private Preview routing remains owner-only. Matrix AI
+Settings shows separate Preview Chat and Preview dictation request counters
+next to the dollar-denominated Chat credit; the dictation counter is also
+available at the composer. Treat missing or exhausted quota as unavailable,
+not as a cue to edit the host.
 
 Platform deployment configuration:
 
