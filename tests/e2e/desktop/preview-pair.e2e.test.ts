@@ -169,16 +169,28 @@ await import(${JSON.stringify(pathToFileURL(main).href)});`);
       }
     };
     await recordRenderer("before", false);
-    const crashSession = await restored.page.context().newCDPSession(restored.page);
-    // Crash the actual page's renderer IO thread, without Electron's native
-    // widget-view precondition. The target cannot acknowledge its own crash;
-    // its outstanding command is drained when our owned app context closes.
-    rendererCrashCommand = crashSession.send("Page.crash").catch((error: unknown) => {
-      if (error instanceof Error && (error.message.includes("Target crashed")
-        || error.message.includes("Target closed") || error.message.includes("Session closed")
-        || error.message.includes("Target page, context or browser has been closed"))) return;
-      throw error instanceof Error ? error : new Error("Native renderer crash request failed");
-    });
+    if (process.platform === "linux") {
+      // A core-producing crash can remain in CoreDumping on hosted Linux and
+      // never finish exiting. Kill only this owned window's verified renderer;
+      // the real native crashed-state and recovery assertions remain mandatory.
+      rendererCrashCommand = opened.owner.app.evaluate(({ BrowserWindow }, { id, pid }) => {
+        const contents = BrowserWindow.fromId(id)?.webContents;
+        if (!Number.isSafeInteger(pid) || pid <= 0 || contents?.getOSProcessId() !== pid) {
+          throw new Error("Owned renderer identity changed before failure injection");
+        }
+        process.kill(pid, "SIGKILL");
+      }, { id: ownerWindowId, pid: rendererPid });
+    } else {
+      const crashSession = await restored.page.context().newCDPSession(restored.page);
+      // A crashed target cannot acknowledge its command. Drain that command
+      // when our owned app context closes; unexpected protocol errors fail.
+      rendererCrashCommand = crashSession.send("Page.crash").catch((error: unknown) => {
+        if (error instanceof Error && (error.message.includes("Target crashed")
+          || error.message.includes("Target closed") || error.message.includes("Session closed")
+          || error.message.includes("Target page, context or browser has been closed"))) return;
+        throw error instanceof Error ? error : new Error("Native renderer crash request failed");
+      });
+    }
     let lastCrashState: boolean | null = null;
     const crashed = (async () => {
       try {
