@@ -54,7 +54,15 @@ export class NativeChild extends EventEmitter {
   }
 }
 const pools: ClaudeNativeSessionPool[] = [];
-afterEach(async () => { await Promise.allSettled(pools.splice(0).map(p => p.close())); vi.useRealTimers(); });
+function reportFixtureFailure(error: unknown): void {
+  if (!(error instanceof Error)) throw new TypeError("Native test fixture rejected with a non-Error value");
+  console.warn("[claude-native-session-test] Asynchronous fixture failure", error.name);
+}
+afterEach(async () => {
+  const results = await Promise.allSettled(pools.splice(0).map(p => p.close()));
+  for (const result of results) if (result.status === "rejected") reportFixtureFailure(result.reason);
+  vi.useRealTimers();
+});
 export function setup(options: Parameters<typeof createClaudeNativeSessionPool>[0] = {}) {
   const children: NativeChild[] = [];
   const spawnFn = vi.fn<CanonicalCliSpawn>(() => { const child = new NativeChild(); children.push(child); return child; });
@@ -63,16 +71,21 @@ export function setup(options: Parameters<typeof createClaudeNativeSessionPool>[
   function turn(i = input(), overrides: Record<string, unknown> = {}, routineCallback?: string, routineInitId = `routine_init_${i.runId}`) {
     const output: any[] = []; const settled = vi.fn(); let end: (() => void) | undefined;
     let writeFrame: ((raw: string) => Promise<void>) | undefined;
-    const user = () => { void writeFrame?.(`${JSON.stringify({ type: "user", session_id: "", message: { role: "user", content: i.prompt } })}\n`).catch(() => undefined); };
+    const user = () => {
+      if (!writeFrame) throw new Error("Native fixture input writer is unavailable");
+      void writeFrame(`${JSON.stringify({ type: "user", session_id: "", message: { role: "user", content: i.prompt } })}\n`).catch(reportFixtureFailure);
+    };
     const promise = pool.runTurn({ input: i, sourceFingerprint: "source_a", command: "claude", args: ["--print", "--mcp-config", JSON.stringify({ mcpServers: { "matrix-integrations": { command: "matrix-integrations-mcp", args: ["--require-scoped-capability"] } } })],
       cwd: "/safe", env: { HOME: "/owner", MATRIX_AGENT_INTEGRATIONS_TOKEN: i.runId }, replaceEnv: true,
       signal: i.signal, maxStdoutBytes: 1024 * 1024, spawnFn,
       onStart(write, finish) { end = finish; writeFrame = write; if (routineCallback) {
-        void write(`${JSON.stringify({ type: "control_request", request_id: routineInitId, request: { subtype: "initialize", hooks: { PreToolUse: [{ matcher: "Bash", hookCallbackIds: [routineCallback], timeout: 120 }] } } })}\n`).catch(() => undefined);
+        void write(`${JSON.stringify({ type: "control_request", request_id: routineInitId, request: { subtype: "initialize", hooks: { PreToolUse: [{ matcher: "Bash", hookCallbackIds: [routineCallback], timeout: 120 }] } } })}\n`).catch(reportFixtureFailure);
       } else user(); },
       onStdout(chunk) { const d = JSON.parse(chunk.toString()); output.push(d); if (d.response?.request_id === routineInitId) user(); if (d.type === "result") end?.(); },
       onSettled: settled, ...overrides });
-    void promise.catch(() => undefined);
+    // Some negative cases attach their assertion after advancing the native pump/timers.
+    // Report a safe error name immediately while retaining the original rejection for that assertion.
+    void promise.catch(reportFixtureFailure);
     return { promise, output, settled };
   }
   return { children, spawnFn, scheduled, pool, turn };

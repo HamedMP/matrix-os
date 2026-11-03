@@ -87,7 +87,8 @@ describe("Claude per-phase adapter wiring", () => {
     const adapter = createClaudeChatProviderAdapter({ homePath: "/owner", spawnFn: fallbackSpawn, nativeSessions,
       resolveNativeProtocol: async () => ({ command: "/unknown/claude", qualified: false }),
       resolveCredentialEnv: async () => ({ HOME: "/owner", ANTHROPIC_API_KEY: "key" }) });
-    await collect(adapter.resume!({ ...input, runId: "run_due", nativeScheduled: { sourceRunId: "run_a", sessionId: "session_a", promptId: "11111111-1111-4111-8111-111111111111" }, resumeState: { sessionId: "session_a" } })).catch(() => {});
+    const events = await collect(adapter.resume!({ ...input, runId: "run_due", nativeScheduled: { sourceRunId: "run_a", sessionId: "session_a", promptId: "11111111-1111-4111-8111-111111111111" }, resumeState: { sessionId: "session_a" } }));
+    expect(events.at(-1)).toMatchObject({ type: "run.completed", outcome: "failed", error: { code: "run_failed" } });
     expect(nativeSessions.cancel).toHaveBeenCalledExactlyOnceWith({ owner: input.owner, chatId: input.chatId, runId: "run_a" });
     expect(nativeSessions.runTurn).not.toHaveBeenCalled(); expect(fallbackSpawn).not.toHaveBeenCalled();
   });
@@ -132,12 +133,15 @@ describe("Claude per-phase adapter wiring", () => {
   });
   it.each(["credentials", "source"])("stops the exact held source on an early %s preparation failure", async stage => {
     const nativeSessions = pool();
+    const setupFailure = new Error(`${stage} setup unavailable`);
     const adapter = createClaudeChatProviderAdapter({ homePath: "/owner", spawnFn, nativeSessions, resolveNativeProtocol,
-      resolveCredentialEnv: async () => { if (stage === "credentials") throw new Error("setup unavailable"); return { HOME: "/owner", ANTHROPIC_API_KEY: "key" }; },
-      resolveSessionSource: async () => { throw new Error("source unavailable"); } });
+      resolveCredentialEnv: async () => { if (stage === "credentials") throw setupFailure; return { HOME: "/owner", ANTHROPIC_API_KEY: "key" }; },
+      resolveSessionSource: async () => { throw setupFailure; } });
     const due = { ...input, runId: "run_due", turnId: "cturn_due", resumeState: { sessionId: "session_a" },
       nativeScheduled: { sourceRunId: "run_a", sessionId: "session_a", promptId: "11111111-1111-4111-8111-111111111111" } };
-    await collect(adapter.resume!(due)).catch(() => {});
+    const completion = collect(adapter.resume!(due));
+    if (stage === "credentials") await expect(completion).rejects.toBe(setupFailure);
+    else expect((await completion).at(-1)).toMatchObject({ type: "run.completed", outcome: "failed", error: { code: "run_failed" } });
     expect(nativeSessions.runTurn).not.toHaveBeenCalled();
     expect(nativeSessions.cancel).toHaveBeenCalledExactlyOnceWith({ owner: input.owner, chatId: input.chatId, runId: "run_a" });
   });

@@ -117,8 +117,9 @@ it("keeps the original absolute child deadline across phase completion", async (
   await vi.advanceTimersByTimeAsync(1000); expect(children[0]!.kill).toHaveBeenCalledOnce();
 });
 it("aborts an active phase and stops the actual child", async () => {
-  const { children, turn } = setup(); const signal = new AbortController(); const phase = turn({ ...input(), signal: signal.signal }); await ready(); signal.abort();
-  await expect(phase.promise).rejects.toMatchObject({ kind: "aborted" }); expect(children[0]!.kill).toHaveBeenCalledOnce();
+  const { children, turn } = setup(); const signal = new AbortController(); const phase = turn({ ...input(), signal: signal.signal });
+  const rejected = expect(phase.promise).rejects.toMatchObject({ kind: "aborted" }); await ready(); signal.abort();
+  await rejected; expect(children[0]!.kill).toHaveBeenCalledOnce();
 });
 it("cancels an idle retained source only for the exact owner and Chat", async () => {
   const { children, turn, pool } = setup(); const first = turn(); await ready(); children[0]!.createJob(); children[0]!.result(); await first.promise;
@@ -156,16 +157,17 @@ it("denies a new native task at the owner/global cap without evicting an existin
 });
 it("does not release a phase after a missing MCP replacement ACK", async () => {
   vi.useFakeTimers(); const { children, turn } = setup({ controlTimeoutMs: 50 }); const phase = turn();
+  const rejected = expect(phase.promise).rejects.toMatchObject({ kind: "startup" });
   children[0]!.autoMcpAck = false; await ready(); await vi.advanceTimersByTimeAsync(50);
-  await expect(phase.promise).rejects.toMatchObject({ kind: "startup" });
+  await rejected;
   expect(children[0]!.frames.filter(f => f.type === "user")).toHaveLength(0); expect(children[0]!.kill).toHaveBeenCalledOnce();
 });
 it("reports cleanup uncertainty instead of pretending a retained child exited", async () => {
   vi.useFakeTimers(); const unconfirmed = vi.fn(), confirmed = vi.fn(); const { children, turn, pool } = setup();
   const phase = turn({ ...input(), onCleanupUnconfirmed: unconfirmed, onCleanupConfirmed: confirmed }); await ready();
   children[0]!.createJob(); children[0]!.result(); await phase.promise; children[0]!.kill.mockImplementation(() => undefined);
-  const close = pool.close(); const failure = close.catch(error => error); await vi.advanceTimersByTimeAsync(1250);
-  await expect(failure).resolves.toMatchObject({ message: "Native process cleanup unconfirmed" }); expect(unconfirmed).toHaveBeenCalledOnce(); expect(confirmed).not.toHaveBeenCalled();
+  const close = pool.close(); const rejected = expect(close).rejects.toThrow("Native process cleanup unconfirmed"); await vi.advanceTimersByTimeAsync(1250);
+  await rejected; expect(unconfirmed).toHaveBeenCalledOnce(); expect(confirmed).not.toHaveBeenCalled();
 });
 it("stops the exact held child when a scheduled source fingerprint changes", async () => {
   const { children, turn, pool } = setup(); const first = turn(); await ready(); children[0]!.createJob(); children[0]!.result(); await first.promise;
@@ -196,10 +198,11 @@ it("denies adjacent native versions before CronCreate while leaving ordinary Cha
   children[0]!.result(); await phase.promise; expect(children[0]!.ended).toBe(true);
 });
 it("fails closed after a native MCP replacement error and never writes the new prompt", async () => {
-  const { children, turn } = setup(); const phase = turn(); children[0]!.autoMcpAck = false; await ready();
+  const { children, turn } = setup(); const phase = turn(); const rejected = expect(phase.promise).rejects.toMatchObject({ kind: "startup" });
+  children[0]!.autoMcpAck = false; await ready();
   const request = children[0]!.frames.find(f => f.request?.subtype === "mcp_set_servers");
   children[0]!.emitFrame({ type: "control_response", response: { subtype: "success", request_id: request.request_id, response: { errors: { "matrix-integrations": "unavailable" } } } });
-  await expect(phase.promise).rejects.toMatchObject({ kind: "startup" }); expect(children[0]!.frames.filter(f => f.type === "user")).toHaveLength(0);
+  await rejected; expect(children[0]!.frames.filter(f => f.type === "user")).toHaveLength(0);
 });
 
 it("denies unexpected idle permission requests and stops the actual retained child", async () => {
@@ -230,10 +233,11 @@ it.each([
   { added: "matrix-integrations", removed: [], errors: {} },
   { added: [], removed: [], errors: [] },
 ])("never releases a user prompt on a malformed MCP replacement ACK: %j", async response => {
-  const { children, turn } = setup(); const phase = turn(); children[0]!.autoMcpAck = false; await ready();
+  const { children, turn } = setup(); const phase = turn(); const rejected = expect(phase.promise).rejects.toMatchObject({ kind: "startup" });
+  children[0]!.autoMcpAck = false; await ready();
   const request = children[0]!.frames.find(f => f.request?.subtype === "mcp_set_servers");
   children[0]!.emitFrame({ type: "control_response", response: { subtype: "success", request_id: request.request_id, response } });
-  await expect(phase.promise).rejects.toMatchObject({ kind: "startup" });
+  await rejected;
   expect(children[0]!.frames.filter(f => f.type === "user")).toHaveLength(0);
   expect(children[0]!.kill).toHaveBeenCalledOnce();
 });
