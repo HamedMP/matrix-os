@@ -29,7 +29,7 @@ export function createClaudeNativeSessionControl(options: {
   });
   const hooks = (bashId: string) => ({
     UserPromptSubmit: [{ hookCallbackIds: [promptCallbackId], timeout: 120 }],
-    PreToolUse: [{ matcher: "Bash", hookCallbackIds: [bashId], timeout: 120 }, { matcher: "CronCreate|CronList|CronDelete", hookCallbackIds: [cronCallbackId], timeout: 10 }],
+    PreToolUse: [{ matcher: "Bash", hookCallbackIds: [bashId], timeout: 120 }, { matcher: ".*", hookCallbackIds: [cronCallbackId], timeout: 10 }],
   });
   const ensure = async (requestId?: string) => {
     if (initializePromise) return initializePromise;
@@ -91,6 +91,10 @@ export function nativePhaseMcpServers(args: string[], env: Record<string, string
   if (!servers || Object.keys(servers).length > 16) throw new Error("Native MCP configuration unavailable");
   return Object.fromEntries(Object.entries(servers).map(([name, value]) => {
     const server = nativeRecord(value); if (!server) throw new Error("Native MCP configuration unavailable");
+    if (name === "matrix_shared_browser") return [name, { ...server, env: {
+      MATRIX_SHARED_BROWSER_TOKEN: env.MATRIX_SHARED_BROWSER_TOKEN ?? "",
+      MATRIX_SHARED_BROWSER_GATEWAY_PORT: env.MATRIX_SHARED_BROWSER_GATEWAY_PORT ?? "",
+    } }];
     return [name, name === "matrix-integrations" ? { ...server, env: { ...nativeRecord(server.env), MATRIX_AGENT_INTEGRATIONS_TOKEN: env.MATRIX_AGENT_INTEGRATIONS_TOKEN ?? "" } } : server];
   }));
 }
