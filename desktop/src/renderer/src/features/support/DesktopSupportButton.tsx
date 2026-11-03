@@ -8,8 +8,8 @@ export default function DesktopSupportButton() {
     <button
       type="button"
       aria-label="Support"
-      title="Support"
-      className="flex size-7 shrink-0 items-center justify-center rounded-md outline-none transition-colors hover:bg-[var(--bg-hover)] focus-visible:bg-[var(--bg-hover)]"
+      title="Support chat"
+      className="no-drag flex size-7 shrink-0 items-center justify-center rounded-md outline-none transition-colors hover:bg-[var(--bg-hover)] focus-visible:ring-2 focus-visible:ring-current"
       style={{ color: "var(--text-secondary)" }}
       onClick={() => {
         void openDesktopSupport();

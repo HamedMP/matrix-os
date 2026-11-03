@@ -5,6 +5,7 @@ import RuntimeComputerMenu from "../runtime/RuntimeComputerMenu";
 import DesktopUpdateButton from "../updates/DesktopUpdateButton";
 import GettingStartedPopover from "../onboarding/GettingStartedPopover";
 import { openDesktopSupport } from "../support/DesktopSupportWidget";
+import DesktopSupportButton from "../support/DesktopSupportButton";
 import discordIconUrl from "../../../../../../shell/public/system-app-icons/v3/discord.svg";
 import { invoke } from "../../lib/operator";
 import { openCodingAgentThread } from "../../lib/project-chat";
@@ -28,7 +29,10 @@ export default function DesktopModeControls() {
   return <div className="no-drag ml-auto flex h-full shrink-0 items-center border-l pl-3" style={{ borderColor: "var(--border-subtle)" }}>
     <DesktopTopBarActions onSearch={() => setPaletteOpen(true)}
       inbox={<DesktopActivityInbox overlay={menuOverlay} scope={`${generation}:${runtimeSlot}`} load={loadActivity} onOpenTask={id => { void openCodingAgentThread(id); }} />}
-      help={<GettingStartedPopover helpMenu={{ onSupport: () => { void openDesktopSupport(); }, discordIcon: <span aria-hidden="true" className="size-3.5 shrink-0 bg-current" style={{ mask: `url(${discordIconUrl}) center/contain no-repeat` }} /> }} />}
+      help={<>
+        <GettingStartedPopover helpMenu={{ onSupport: () => { void openDesktopSupport(); }, discordIcon: <span aria-hidden="true" className="size-3.5 shrink-0 bg-current" style={{ mask: `url(${discordIconUrl}) center/contain no-repeat` }} /> }} />
+        <DesktopSupportButton />
+      </>}
       computer={<RuntimeComputerMenu collapsed={false} />} update={<DesktopUpdateButton />} account={<AccountMenu collapsed compact />} />
   </div>;
 }

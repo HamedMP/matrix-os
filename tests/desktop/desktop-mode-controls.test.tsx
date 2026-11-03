@@ -48,6 +48,7 @@ describe("Desktop mode controls", () => {
       "Search",
       "Inbox",
       "Help",
+      "Support",
       "Main computer",
       "Update Matrix OS to 1.2.3",
       "Open account menu",

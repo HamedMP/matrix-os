@@ -408,7 +408,7 @@ describe("Desktop support widget", () => {
     }));
   });
 
-  it("opens support from beside the avatar without leaving the default launcher", async () => {
+  it("opens support from a visible title-bar button without leaving the default launcher", async () => {
     posthogClient.conversations.hide.mockImplementation(() => {
       document.getElementById("ph-conversations-widget-container")?.remove();
     });
@@ -435,6 +435,7 @@ describe("Desktop support widget", () => {
         "Search",
         "Inbox",
         "Help",
+        "Support",
         "Main computer",
         "Open account menu",
       ]);
@@ -447,7 +448,7 @@ describe("Desktop support widget", () => {
     fireEvent.click(screen.getByRole("button", { name: "Search" }));
     expect(useUi.getState().paletteOpen).toBe(true);
 
-    openSupportFromHelp();
+    fireEvent.click(screen.getByRole("button", { name: "Support", exact: true }));
 
     await waitFor(() => expect(posthogClient.conversations.show).toHaveBeenCalledTimes(1));
     expect(useUi.getState().rendererOverlayCount).toBe(1);
@@ -479,7 +480,7 @@ describe("Desktop support widget", () => {
     });
     expect(screen.queryByRole("button", { name: "Open chat" })).toBeNull();
 
-    openSupportFromHelp();
+    fireEvent.click(screen.getByRole("button", { name: "Support", exact: true }));
 
     await waitFor(() => expect(posthogClient.conversations.show).toHaveBeenCalledTimes(2));
     expect(useUi.getState().rendererOverlayCount).toBe(1);
