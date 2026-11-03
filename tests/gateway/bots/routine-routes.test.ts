@@ -33,6 +33,7 @@ function setup() {
     updatedAt: "2026-09-27T12:00:00.000Z"
   };
   const routines = {
+    center: vi.fn(async () => ({ items: [], pending: [], nextCursor: null })),
     list: vi.fn<BotRoutineExecution["list"]>(async () => [{
       routineId: RT,
       name: record.proposal.name,
@@ -65,6 +66,14 @@ it("reads durable routine status only in the principal's owner scope", async () 
   expect(response.status).toBe(200);
   expect(routines.list).toHaveBeenCalledWith(OWNER, BOT);
   expect(response.headers.get("cache-control")).toBe("private, no-store");
+});
+it("provides one owner-scoped schedule center and refuses caller-supplied owner or malformed cursors", async () => {
+  const { app, routines } = setup();
+  expect((await app.request("/api/bot-routines")).status).toBe(200);
+  expect(routines.center).toHaveBeenCalledWith(OWNER, {});
+  expect((await app.request("/api/bot-routines?ownerId=foreign")).status).toBe(400);
+  expect((await app.request("/api/bot-routines?before=invalid&beforeId=bad")).status).toBe(400);
+  expect(routines.center).toHaveBeenCalledTimes(1);
 });
 it("validates control IDs, revisions and owner injection before dispatch", async () => {
   const {

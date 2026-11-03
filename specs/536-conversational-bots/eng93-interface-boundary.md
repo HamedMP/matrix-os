@@ -4,6 +4,73 @@ Ticket: [ENG-93](https://linear.app/matrix-os/issue/ENG-93/enable-and-validate-r
 This is the backend handoff for the separate CLI entry-point work. It adds no
 CLI or MCP implementation and does not authorize cross-harness execution.
 
+## Current schedule experience follow-up (2026-11-01)
+
+This unmerged ENG-93 follow-up changes both Gateway and Electron Native; the
+historical baselines below are not published equivalents. The stable proposal
+and control tool names remain unchanged. B/C identity adapters must not change
+their pinned baseline automatically.
+
+- Scheduling no longer requires enabling a general background grant in Settings.
+  Native explicitly asks/receives `approvedRoutines: true` through the existing
+  capability handshake. Strict signed v1 snapshots remain unchanged. Old/new
+  peers retain interactive Chat; default scheduling requires both new sides.
+- `ChatGptPlanAuthority.resolve(..., "routine")` selects an existing enabled
+  account/Computer/model source; it grants nothing. Actual inference calls
+  `assertOccurrencePhase`, derives the exact owner/Bot/Chat/task/run/fire/approval
+  from current durable state, and only then sends the narrow proof to Native.
+  Changed grant/definition, inactive routine, expired lease, lost private target,
+  wrong account/Computer or cancellation still refuse execution.
+- New owner-principal HTTP read/management entry points are GET
+  `/api/bot-routines`, GET `/api/bot-routines/:routineId`, POST
+  `/api/bot-routines/:routineId/control`, and POST
+  `/api/bot-routines/:routineId/review`. Exact DTOs live in
+  `packages/contracts/src/bots/routine-management.ts`. List is bounded/keyset
+  paginated; history is capped at 20. No caller-supplied owner is accepted.
+- Review accepts only `baseRevision`, `name`, `prompt`, `schedule`; it does not
+  immediately edit. Existing owner interaction resolution approves the exact
+  target/source/definition/revision digest. Duplicate identical review requests
+  return the same pending interaction. Changed content/revision conflicts. Model
+  and effects are retained. Approval preserves paused status; archive is final
+  for execution but retains history. Running/uncertain occurrences must settle
+  before instructions change. No new scheduler, CLI or cross-harness executor.
+- Approval previews now project a display-only next-time estimate without
+  changing the stored approval or digest. Actual next time is recomputed on
+  approval. Ordinary personal Chat receives bounded persisted state and, for
+  its matching `req_answer_...` continuation, the resolved owner decision; this
+  is descriptive context only and never execution authority.
+
+See [schedule experience](eng93-schedule-experience.md) for route authority, UX,
+verification and the separate public-documentation follow-up. New matching live
+evidence remains required; older screenshots, CI and G5 do not cover this code.
+
+## Historical occurrence-only context follow-up
+
+The local follow-up to native-consent head `e43ca794` adds no public request,
+response, broker or worker schema. At `bot.run.load`, the private Bot orchestrator
+uses the server-injected routine service's `assertOccurrencePhase` to check the
+current running task, dispatched fire, unexpired lease, active routine, standing
+approval, definition and source revisions before appending an occurrence-phase
+section to the model's system prompt. It rechecks cancellation after the async
+lookup and refuses prompts exceeding the existing token budget. The checker
+performs a fresh joined durable snapshot after asynchronous source validation,
+and evaluates lease expiry after the database returns. Prompt construction reserves
+room for the fixed phase section before trimming low-priority confirmed memory;
+reservation does not expose that section before its delivery-time authority check.
+It holds no database lock
+across external I/O. Changes after this checked snapshot still meet the existing
+inference and effect revalidation; the phase is not a reusable authorization.
+
+The phase is information, not authority: inference/effect revalidation remains
+in place. It is never inferred from a user or model's activation text. Ordinary
+interactive/manual tasks, shared runs and managed Pi/harness paths receive no
+phase section. The saved conversation and current approved request are retained.
+This does not change the ordinary approval-continuation path. It addresses a
+confirmed context gap; it does not establish the cause or resolution of a live
+model's stale pending-approval answer. A matching backend build and bounded live
+retest are still needed. The existing Desktop protocol does not need rebuilding
+for this internal gateway change; existing artifacts do not include it.
+
 ## Baselines and ownership
 
 - Existing backend contract: `3db08492b9074606eac2213b9d86c0f58581d685`,

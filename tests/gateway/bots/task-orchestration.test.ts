@@ -1067,7 +1067,7 @@ describe("group Pi run isolation", () => {
   });
 });
 
-it("runs a scheduled turn on its claimed task with background inference admission",async()=>{
+it("selects the narrow routine source while retaining its claimed task and background inference admission",async()=>{
   const existing=await createBotTasksRepository(db).create({ownerId:OWNER,botId:BOT,chatId:CHAT,now:AGENT.createdAt});
   const selection={instanceId:"matrix_chatgpt_plan" as const,model:"fixture-scheduled",options:[{id:"accountId",value:"fixture-account"},{id:"grantRevision",value:"3"}]};
   const subscription={accountId:"fixture-account",computerId:"fixture-computer",grantRevision:3,peerId:"f2b7ba8f-009b-4603-8967-c3e6bdfb276e"};
@@ -1076,7 +1076,7 @@ it("runs a scheduled turn on its claimed task with background inference admissio
   const handle=orchestrator.start({ownerId:OWNER,chatId:CHAT,runId:"run_scheduled_fixture",text:"approved fixture",selection,signal:new AbortController().signal,backgroundTaskId:existing.taskId});
   expect(await handle.result).toEqual({status:"completed"});
   expect(await tasks()).toEqual([expect.objectContaining({run_id:"run_scheduled_fixture",status:"completed"})]);
-  expect(resolveRoute).toHaveBeenCalledWith(selection,"background");
+  expect(resolveRoute).toHaveBeenCalledWith(selection,"routine");
   expect(admission.admit).toHaveBeenCalledWith(expect.objectContaining({taskId:existing.taskId,requestClass:"background"}));
 });
 

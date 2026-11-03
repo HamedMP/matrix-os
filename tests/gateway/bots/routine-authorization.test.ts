@@ -38,7 +38,7 @@ it("only activates the exact proposal after the owner decides, once", async () =
       id: "grantRevision",
       value: "3"
     }]
-  }), OWNER, "background");
+  }), OWNER, "routine");
   const request = {
     kind: "approval",
     decision: "approve",
@@ -56,7 +56,7 @@ it("only activates the exact proposal after the owner decides, once", async () =
   });
   expect(await service.authorize(saved[0])).toBe(true);
 });
-it("refuses background-consent failure and never creates an approval or routine", async () => {
+it("refuses an unavailable scheduled source and never creates an approval or routine", async () => {
   const {
     service,
     resolve,
@@ -68,6 +68,17 @@ it("refuses background-consent failure and never creates an approval or routine"
   });
   expect(await repo.list(OWNER, BOT)).toEqual([]);
   expect(await data.db.selectFrom("bot_approvals").selectAll().execute()).toEqual([]);
+});
+it("does not activate an approval whose source was revoked after proposal, while still permitting denial", async () => {
+  const { service, interactions, resolve, repo } = setup();
+  const pending = await service.propose(binding, proposal);
+  resolve.mockRejectedValue(new Error("Source revision changed"));
+  await expect(interactions.resolve(OWNER, CHAT, pending.interactionId, {
+    kind: "approval", decision: "approve", baseRevision: 1,
+  })).rejects.toMatchObject({ code: "invalid_input" });
+  expect(await repo.list(OWNER, BOT)).toEqual([]);
+  await interactions.resolve(OWNER, CHAT, pending.interactionId, { kind: "approval", decision: "deny", baseRevision: 1 });
+  expect(await repo.list(OWNER, BOT)).toEqual([]);
 });
 it("refuses tampered timing or effects even when the approval ID is valid", async () => {
   const {
