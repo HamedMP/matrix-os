@@ -162,6 +162,48 @@ existing authenticated coverage still applies.
 
 ## Measuring Linux against hosted CI
 
+### Proposed hosted dependency-cache reuse
+
+The [ENG-240 cache follow-up](../../specs/605-priority-linux-ci/article-assessment.md)
+adds an independent main-only pnpm store seed on pushes and a daily schedule.
+It uses pinned pnpm, a frozen lockfile and disabled lifecycle scripts; a cache
+hit skips the seed install. It does not run or qualify tests.
+
+Hosted exact-source PR refreshes restore package-store bytes with setup-node's
+OS, Node architecture and lockfile key while retaining the ban on shared-cache
+writes. Every test/build lane still runs its frozen install, including native
+build scripts. Missing or evicted caches download normally. Before reporting a
+speedup, verify a main seed and refresh hit, then compare same-source setup
+durations including restore overhead and unchanged qualification.
+
+Merging starts the main seeder. Isolated refreshes execute the workflow in
+`ci-execution/<controller-sha>`, so enabling their new reads also requires the
+existing reviewed-controller upgrade: after green main, follow the operator
+procedure above to approve the controller on the host, create its tree-identical
+execution ref and advance `MATRIX_CI_CONTROLLER_SHA`. Until then, isolated
+refreshes retain their previous cache behavior. No routing flag changes are
+needed. The workflow owns its restore steps, so older source checkouts do not
+need a newly introduced local action.
+
+### Comparison protocol
+
+The combined ENG-240 follow-up also supplies a disposable PostgreSQL 16 service
+to each hosted unit shard. Only suites already using the native platform fixture
+opt in through `MATRIX_PLATFORM_FIXTURE_POSTGRES_URL`; other fixtures retain
+their previous path. `MATRIX_TEST_POSTGRES_URL` remains unset so the separate
+hosted race contracts keep their original collection gate. Every shard runs the
+native fixture's parity/isolation/cleanup contracts before its existing tests.
+Existing business assertions and test-file isolation are retained; worker
+limits stay unchanged. New workflow contracts cover the CI wiring.
+Isolated refreshes need the same controller upgrade described above to pick up
+the fixture service and E2E host pin as well as cache reads.
+
+An unchanged 410-assertion local sample measured about 18% lower median wall
+time across two runs per fixture backend. The assessment records the source,
+environment and limitations; this is not a full-CI speed claim. E2E is pinned
+to Ubuntu 24.04 because the pinned Playwright rejects Ubuntu 26.04 selected by
+`ubuntu-latest`.
+
 Compare the exact merge SHA, ordered parents and frozen lockfile, not unrelated
 successful PRs. Record the controller/harness/image pins, suite inventories,
 requesting/controller run IDs and attempts, and every failure or retry. Linux
