@@ -53,6 +53,8 @@ function rememberScanOffset(directory: string, offset: number): void {
 }
 
 const EFFECTS: Record<BotToolRequest["capability"], BotEffectClass> = {
+  "routine.propose":"write",
+  "routine.control":"write",
   "agent.task": "write",
   "browser.action": "write",
   "artifact.read": "read",
@@ -192,6 +194,7 @@ function textResult(text: string): BotToolResult {
 
 export function createBotToolDispatcher(deps: {
   homePath: string;
+  routines?: Pick<import("./routine-execution.js").BotRoutineExecution,"propose"|"list"|"control">;
   submittedArtifact?(binding: PiRuntimeBinding, args: Extract<BotToolRequest, { capability: "artifact.read" }>["args"]): Promise<string | undefined>;
   jev?: Pick<import("./jev-tools.js").BotJevTools, "call">;
   managedTools?: import("../chat/managed-pi-owner-tools.js").ManagedPiOwnerTools;
@@ -313,7 +316,7 @@ export function createBotToolDispatcher(deps: {
   }
 
   return {
-    effectClass: (request) => request.capability === "jev.inbox" && ["discover", "select", "batch_status"].includes(request.args.operation) ? "read" : request.capability === "integration.call" && getAction(request.args.service, request.args.action)?.risk === "read" ? "read" : EFFECTS[request.capability],
+    effectClass: (request) => request.capability === "routine.control" && request.args.operation === "list" ? "read" : request.capability === "jev.inbox" && ["discover", "select", "batch_status"].includes(request.args.operation) ? "read" : request.capability === "integration.call" && getAction(request.args.service, request.args.action)?.risk === "read" ? "read" : EFFECTS[request.capability],
     async prepare(binding, request, signal) {
       if (request.capability === 'agent.task') {
         if (!deps.nativeTask || isManagedPiBinding(binding)) throw new BotBrokerActionError('not_granted');
@@ -325,6 +328,13 @@ export function createBotToolDispatcher(deps: {
       }
     },
     async dispatch(binding, request, signal) {
+      if (request.capability === "routine.propose" || request.capability === "routine.control") {
+        if (!deps.routines || binding.group || isManagedPiBinding(binding) || binding.requestClass!=="interactive") throw new BotBrokerActionError("not_granted");
+        if(request.capability==="routine.propose") return {result:textResult(JSON.stringify(await deps.routines.propose(binding,request.args)))};
+        if(request.args.operation==="list") return {result:textResult(JSON.stringify(await deps.routines.list(binding.ownerId,binding.botId)))};
+        const {routineId,baseRevision,status}=request.args;
+        return {result:textResult(JSON.stringify(await deps.routines.control(binding.ownerId,binding.botId,routineId,{baseRevision,status})))};
+      }
       if (request.capability === 'agent.task') {
         if (!deps.nativeTask || isManagedPiBinding(binding)) throw new BotBrokerActionError('not_granted');
         return { result: await deps.nativeTask.execute(binding, request.args.prompt, await workspace(binding), signal) };

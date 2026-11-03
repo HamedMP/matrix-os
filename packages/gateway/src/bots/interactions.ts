@@ -119,6 +119,15 @@ export function createBotInteractionService(deps: { transact: BotStateTransactio
       const at = now();
       try {
         await deps.transact(binding.ownerId, async (tx) => {
+          if (binding.requestClass === "background") {
+            // Serialize late questions with scheduled task terminalization. Lock before
+            // the interaction owner-cap lock; NO KEY UPDATE preserves FK readers.
+            const task = await tx.db.selectFrom("bot_tasks").select(["status", "run_id"])
+              .where("owner_id", "=", binding.ownerId).where("task_id", "=", binding.taskId)
+              .where("bot_id", "=", binding.botId).where("chat_id", "=", binding.chatId)
+              .forNoKeyUpdate().executeTakeFirst();
+            if (!task || task.status !== "running" || task.run_id !== binding.runId) throw new BotStateError("not_found");
+          }
           const { interaction, expired } = await createBotInteractionsRepository(tx.db).create({
             ownerId: binding.ownerId, botId: binding.botId, chatId: binding.chatId, taskId: binding.taskId,
             kind: "question", payload: args.payload, responderActorId: binding.ownerId, blocking: args.blocking,
