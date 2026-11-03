@@ -1,5 +1,5 @@
 // REQUIRED offline gate executes before the actual bundled production router.
-import '/fixture/gate.mjs';
+import { nativeArtifactVersion } from '/fixture/gate.mjs';
 import { createClaudeRoutineHook } from '/fixture/router.mjs';
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
@@ -104,7 +104,7 @@ function handle(line) {
     state.ack = true; state.hooksApplied = value.response.response?.hooks_applied === true;
   }
   if (value.type === 'system' && value.subtype === 'init') {
-    assert.equal(value.claude_code_version, '2.1.280'); state.version = value.claude_code_version;
+    assert.equal(value.claude_code_version, nativeArtifactVersion); state.version = value.claude_code_version;
     state.bashAvailable = Array.isArray(value.tools) && value.tools.includes('Bash');
   }
   if (value.type === 'stream_event' && value.event?.type === 'content_block_start' && value.event.content_block?.type === 'tool_use') {
@@ -114,7 +114,7 @@ function handle(line) {
   if (value.type === 'control_request') {
     const request = value.request;
     assert.equal(request?.subtype, 'hook_callback'); assert.equal(state.callback, false);
-    assert.equal(state.partialBeforeCallback, true); assert.equal(state.version, '2.1.280'); assert.equal(state.bashAvailable, true);
+    assert.equal(state.partialBeforeCallback, true); assert.equal(state.version, nativeArtifactVersion); assert.equal(state.bashAvailable, true);
     assert.equal(request.callback_id, callbackId); assert.equal(request.tool_use_id, toolId);
     assert.equal(request.input?.hook_event_name, 'PreToolUse'); assert.equal(request.input.tool_name, 'Bash');
     assert.equal(request.input.tool_use_id, toolId); assert.equal(request.input.tool_input?.command, command);
@@ -195,7 +195,7 @@ try {
   clearTimeout(timer); clearTimeout(forceTimer);
   assert.equal(carry.trim(), ''); assert.equal(failed, false); assert.deepEqual(exit, { code: 0, signal: null });
   assert.equal(state.ack, true); assert.equal(state.hooksApplied, true); assert.equal(state.inputAfterAck, true);
-  assert.equal(state.version, '2.1.280'); assert.equal(state.bashAvailable, true); assert.equal(state.partialBeforeCallback, true);
+  assert.equal(state.version, nativeArtifactVersion); assert.equal(state.bashAvailable, true); assert.equal(state.partialBeforeCallback, true);
   assert.equal(state.callbackCorrelated, true); assert.equal(state.apiRequests, 2); assert.equal(state.nativeResult, true);
   assert.ok(state.nativeToolResult);
   if (state.executeCount === 0 && state.denyResponse && state.nativeToolResult.isError) failureKind = 'production_router_version_gate';
