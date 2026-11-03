@@ -34,6 +34,8 @@ Admit the exact generic system input `Scheduled task triggered.` plus a fresh tu
 
 Each phase uses new input/approval controllers and new run-scoped MCP capabilities. Reconnect MCP children with their fresh explicit scoped environment before releasing the held native prompt. Old tokens never regain validity. Preserve the existing routine hook and terminal-result/settlement revocation; a host registrar may translate only its opaque callback registration under the same actual session and current prompt/tool identities.
 
+A native background agent can outlive a terminal result and later carry the new foreground prompt ID. Prompt/session equality alone is insufficient. Record tools only after the current prompt is bound; require explicit native root metadata or a bounded, complete current-phase Agent/Task ancestry. Gate every PreToolUse, including auto-approved MCP tools, and raw permission requests before adapter parsing. Suppress output from foreign/unknown nested sources. These gates return no permission approval; ordinary native permissions and B's delegated-routines denial remain authoritative. Browser MCP replacement must receive the current token and port explicitly, rather than expanding the retained child's old environment.
+
 The retained process starts without the initial `--mcp-config` pair. The first acknowledged `mcp_set_servers` supplies that phase's configuration, just as later replacement does; avoid launching children once through argv and immediately replacing them through control.
 
 ## Auth matrix

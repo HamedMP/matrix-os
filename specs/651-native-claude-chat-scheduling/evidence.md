@@ -70,9 +70,9 @@ No B branch is rewritten and no parallel routines hook/scheduler is introduced.
   with no partial writes. The bounded task-owned container was removed.
 - Root shell lint failed in unchanged files: 50 errors / 97 warnings.
 - Real native offline control qualification: arm64 direct MCP replacement and
-  reinitialization negative scenario passed. See the reproducible fixture at
-  `tests/gateway/claude-native-cron/`. Live x64 diagnostic observed the same
-  control behavior. These are not final product acceptance.
+  reinitialization negative scenario passed. The reproducible offline probe
+  is retained in the task's evidence package. Live x64 diagnostic observed
+  the same control behavior. These are not final product acceptance.
 - Actual TypeScript pool plus official arm64 native timer completed creation,
   a real due callback/result, CronDelete and actual exit zero in one child.
   It initialized once and sent only create/delete user frames, never replaying
@@ -80,6 +80,16 @@ No B branch is rewritten and no parallel routines hook/scheduler is introduced.
   `command_lifecycle` started/completed notifications around the due hook;
   strict same-session command correlation now accepts those status frames
   without granting authority. Captured-frame regressions passed 49/49.
+- Native background-agent evidence confirmed that old work can survive a
+  terminal result and carry the next phase's prompt ID. Actual-source checks
+  now reject its auto-approved MCP call and suppress its output, while a
+  legitimate current-root call executes once using the new synthetic token.
+  This used a synthetic backend and does not qualify the real Matrix broker.
+- Browser MCP refresh and ordinary delegated Bash regressions identified in
+  the first review were reproduced and fixed. Complete current-phase ancestry
+  and all-tool hooks preserve B's delegated-routines rejection. Final-source
+  native Cron ran twice, 59.440 seconds apart, then deleted and exited zero;
+  the bounded native/phase regression lane passed 99/99.
 - Exact repaired-head installed Chat, real due-result readback, cancellation
   across next deadline, screenshots and head-specific CI/Greptile: **pending**.
 - No exact matching Linear issue confirmed; unrelated scheduling issues were
