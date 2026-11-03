@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, delimiter, dirname, join } from "node:path";
 import { afterEach, expect, it } from "vitest";
@@ -56,11 +56,92 @@ it("routes the real unsupported-host entry before deleting staging or installing
   const stage = join(f.root, "dist/host-bundle/stage"); mkdirSync(stage, { recursive: true });
   writeFileSync(join(stage, "canary"), "retain-on-builder-failure");
   const supported = process.platform === "linux" && process.arch === "x64" && process.report.getReport().header.glibcVersionRuntime === "2.39";
-  const result = f.run();
+  const result = f.run({ GITHUB_ACTIONS: "true" });
   expect(result.status, result.stderr).toBe(supported ? 91 : 83);
   expect(existsSync(join(f.root, "docker-called"))).toBe(!supported);
   expect(existsSync(join(f.root, "host-install"))).toBe(supported);
   expect(existsSync(join(stage, "canary"))).toBe(!supported);
+});
+
+function hostStore(f: ReturnType<typeof dockerFixture>, path: string) {
+  writeFileSync(join(f.root, "bin/pnpm"), `#!${process.execPath}\nconst fs=require('node:fs');const args=process.argv.slice(2);fs.appendFileSync(${JSON.stringify(join(f.root, "host-pnpm-log"))}, JSON.stringify(args)+'\\n');if(JSON.stringify(args)!==JSON.stringify(['store','path','--silent'])){fs.writeFileSync(${JSON.stringify(join(f.root, "host-install"))},'unexpected host pnpm command');process.exit(91);}console.log(${JSON.stringify(path)});\n`, { mode: 0o755 });
+}
+
+it("leaves an empty owned host store for the unchanged trusted post-cache action after a successful CI build", () => {
+  const f = dockerFixture();
+  const store = join(f.env.HOME, "setup-pnpm/node_modules/.bin/store/v10");
+  hostStore(f, store);
+  const result = f.helper({ GITHUB_ACTIONS: "true" });
+  expect(result.status, result.stderr).toBe(0);
+  // actions/setup-node's post-cache rejects a missing store path even when the build/upload passed.
+  expect(existsSync(store), "trusted post-cache store path must exist").toBe(true);
+  expect(readdirSync(store)).toEqual([]);
+  expect(statSync(store).mode & 0o777).toBe(0o700);
+  expect(readFileSync(join(f.root, "host-pnpm-log"), "utf8")).toBe('["store","path","--silent"]\n');
+  expect(existsSync(join(f.root, "host-install"))).toBe(false);
+  const args = JSON.parse(readFileSync(join(f.root, "create-args"), "utf8"));
+  expect(JSON.stringify(args)).not.toContain(store);
+  expect(args).not.toContain("GITHUB_ACTIONS=true");
+});
+
+it.each([0o755, 0o775])("preserves an existing owned host cache mode %o without importing it into the builder", mode => {
+  const f = dockerFixture(), store = join(f.env.HOME, "setup-pnpm/node_modules/.bin/store/v10");
+  mkdirSync(store, { recursive: true, mode }); chmodSync(store, mode); writeFileSync(join(store, "existing-cache"), "keep-host-cache-private");
+  hostStore(f, store);
+  const result = f.helper({ GITHUB_ACTIONS: "true" });
+  expect(result.status, result.stderr).toBe(0);
+  expect(readFileSync(join(store, "existing-cache"), "utf8")).toBe("keep-host-cache-private");
+  expect(statSync(store).mode & 0o777).toBe(mode);
+  expect(readFileSync(join(f.root, "host-pnpm-log"), "utf8")).toBe('["store","path","--silent"]\n');
+  expect(readFileSync(join(f.root, "create-args"), "utf8")).not.toContain(store);
+  expect(readFileSync(join(f.root, "dist/host-bundle/matrix-host-bundle.tar.gz"), "utf8")).not.toContain("keep-host-cache-private");
+});
+
+it("supports an owned runner temporary cache root without assuming the default pnpm store layout", () => {
+  const f = dockerFixture(), runnerTemp = join(f.root, "runner-temp"), store = join(runnerTemp, "pnpm-cache/store/v10");
+  mkdirSync(runnerTemp, { mode: 0o700 }); hostStore(f, store);
+  const result = f.helper({ GITHUB_ACTIONS: "true", RUNNER_TEMP: runnerTemp });
+  expect(result.status, result.stderr).toBe(0);
+  expect(readdirSync(store)).toEqual([]);
+  expect(statSync(store).mode & 0o777).toBe(0o700);
+});
+
+it.each(["outside", "relative", "traversal", "symlink", "file", "writable-directory", "anchor", "newline"])("rejects unsafe host-cache %s without following or modifying owner paths", kind => {
+  const f = dockerFixture();
+  let store = join(f.env.HOME, "cache/store/v10");
+  const outside = join(f.root, "owner-data"); mkdirSync(outside); writeFileSync(join(outside, "canary"), "keep-owner-data");
+  if (kind === "outside") store = join(outside, "store/v10");
+  if (kind === "relative") store = "cache/store/v10";
+  if (kind === "traversal") store = f.env.HOME + "/cache/../store/v10";
+  if (kind === "symlink") symlinkSync(outside, join(f.env.HOME, "cache"));
+  if (kind === "file") writeFileSync(join(f.env.HOME, "cache"), "retain-file");
+  if (kind === "writable-directory") { mkdirSync(join(f.env.HOME, "cache")); chmodSync(join(f.env.HOME, "cache"), 0o777); }
+  if (kind === "anchor") store = f.env.HOME;
+  if (kind === "newline") store += "\nwrong-output";
+  hostStore(f, store);
+  const result = f.helper({ GITHUB_ACTIONS: "true" });
+  expect(result.status, result.stderr).toBe(1);
+  expect(result.stderr).toMatch(/cache/);
+  expect(existsSync(join(outside, "store"))).toBe(false);
+  expect(readFileSync(join(outside, "canary"), "utf8")).toBe("keep-owner-data");
+  if (kind === "file") expect(readFileSync(join(f.env.HOME, "cache"), "utf8")).toBe("retain-file");
+  if (kind === "writable-directory") expect(statSync(join(f.env.HOME, "cache")).mode & 0o777).toBe(0o777);
+});
+
+it.each(["mismatchedMetadata", "cleanupFailure"] as const)("does not query or prepare the host cache after %s", kind => {
+  const f = dockerFixture({ [kind]: true }), store = join(f.env.HOME, "cache/store/v10"); hostStore(f, store);
+  const result = f.helper({ GITHUB_ACTIONS: "true" });
+  expect(result.status, result.stderr).toBe(1);
+  expect(existsSync(join(f.root, "host-pnpm-log"))).toBe(false);
+  expect(existsSync(store)).toBe(false);
+});
+
+it("does not query or prepare host caches outside GitHub Actions", () => {
+  const f = dockerFixture(), store = join(f.env.HOME, "cache/store/v10"); hostStore(f, store);
+  const result = f.helper({ GITHUB_ACTIONS: "false" });
+  expect(result.status, result.stderr).toBe(0);
+  expect(existsSync(join(f.root, "host-pnpm-log"))).toBe(false);
+  expect(existsSync(store)).toBe(false);
 });
 
 function dockerFixture(options: { mismatchedMetadata?: boolean; mismatchedRef?: boolean; symlinkArtifact?: boolean; symlinkDirectory?: boolean; zeroObject?: boolean; hang?: boolean; cleanupFailure?: boolean } = {}) {
