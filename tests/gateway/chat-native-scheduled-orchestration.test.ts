@@ -100,11 +100,11 @@ describe("native scheduled phase orchestration", () => {
       selection, interactionMode: "default", permissionMode: "supervised" });
     await vi.waitFor(() => expect(finishBlocked).toBe(true));
     const immediate = orchestrator.admitNativeScheduledPhase({ ...request, sourceRunId: foreground.run.id });
-    const outcome = immediate.catch(error => error);
+    const admitted = expect(immediate).resolves.toBeUndefined();
     expect((await repository.exportChat(owner, request.chatId))!.runs).toHaveLength(2);
     expect(resume).toHaveBeenCalledOnce();
     releaseSource!();
-    expect(await outcome).toBeUndefined();
+    await admitted;
     await vi.waitFor(() => expect(resume).toHaveBeenCalledTimes(2));
   });
   it("keeps secret-bearing native prompt text out of committed display, context and outbox", async () => {

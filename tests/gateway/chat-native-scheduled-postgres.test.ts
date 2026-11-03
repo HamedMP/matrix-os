@@ -103,7 +103,7 @@ realDescribe("native scheduled admission PostgreSQL concurrency", () => {
     });
     await locked;
     const attempted = repository.admitNativeScheduledTurn(owner, next(`locked_${drift}`), source);
-    void attempted.catch(() => undefined);
+    const rejected = expect(attempted).rejects.toBeInstanceOf(ChatConflictError);
     try {
       await expect.poll(async () => {
         const result = await sql<{ waiting: number }>`SELECT count(*)::int AS waiting FROM pg_stat_activity
@@ -112,7 +112,7 @@ realDescribe("native scheduled admission PostgreSQL concurrency", () => {
         return result.rows[0]!.waiting;
       }, { timeout: 1000, interval: 10 }).toBeGreaterThan(0);
     } finally { release(); await blocker; }
-    await expect(attempted).rejects.toBeInstanceOf(ChatConflictError);
+    await rejected;
     await assertWrites(0);
   });
 });
