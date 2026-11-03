@@ -237,3 +237,24 @@ Electron's actual `isCrashed()` state within ten seconds before starting recover
 This follows the [documented crash/state APIs](https://www.electronjs.org/docs/latest/api/web-contents#contentsforcefullycrashrenderer)
 and preserves the real-crash and subsequent recovery assertions. No production
 event handling, authorization, source verification or global test timeout changes.
+
+## Real page-targeted crash — 2026-11-03
+
+Hosted job `125990520451` returned from the crash command but failed the real
+`isCrashed()` assertion after ten seconds: Electron's helper caused no observed
+crash. Its [41.10.7 implementation](https://github.com/electron/electron/blob/v41.10.7/shell/browser/api/electron_api_web_contents.cc#L2687)
+can return without action when a widget view/host is absent. Which guard applied
+on this runner is not established, so the fixture does not rely on that helper.
+
+A disposable native spike verified [Chromium's `Page.crash`](https://chromedevtools.github.io/devtools-protocol/tot/Page/#method-crash)
+against the exact page: it emits the page crash event and Electron reports a real
+crashed renderer. Its command does not acknowledge after crashing its target;
+closing the owned app context settles it with the expected target-closed error.
+The fixture retains and drains that command with its owned app, reporting any
+unexpected protocol failure. Initial probe startup/detach failures are excluded.
+
+The fixture binds the reopened Page to its actual BrowserWindow ID, crashes that
+page once and requires both the bounded crash event and real Electron crashed
+state. All recovery, auth and sign-out checks use that same window ID. No native
+window-list ordering assumption, simulated crash state, product debug mode,
+production behavior change or global test-timeout increase is introduced.

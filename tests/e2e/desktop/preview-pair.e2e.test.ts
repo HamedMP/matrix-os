@@ -25,6 +25,7 @@ it("isolates sessions, recovers missing/crashed preview windows and preserves th
   await readFile(main); // Missing production build is a required-lane failure.
   const sha = execFileSync("git", ["rev-parse", "HEAD"], { cwd: root, encoding: "utf8", timeout: 10_000 }).trim();
   const home = await mkdtemp(join(tmpdir(), "eng418-native-pair-")), applications: ElectronApplication[] = [];
+  let rendererCrashCommand: Promise<void> | undefined;
   const secret = "local-test-source-secret".repeat(2), now = Date.now();
   const originalHome = process.env.HOME; process.env.HOME = home;
   const manifest: any = previewPairManifestFixture(); manifest.sourceSha = sha; manifest.platformSource.sha = sha;
@@ -141,15 +142,25 @@ await import(${JSON.stringify(pathToFileURL(main).href)});`);
     await stage("owner-window-restored");
     await restored.page.getByRole("status").filter({ hasText: "Collaboration preview · Owner" }).waitFor();
     expect(await restored.page.evaluate(() => window.operator.invoke("auth:status", {}))).toMatchObject({ signedIn: true, userId: manifest.members.owner.actorId });
+    const ownerWindow = await opened.owner.app.browserWindow(restored.page);
+    const ownerWindowId = await ownerWindow.evaluate(window => window.id);
+    await ownerWindow.dispose();
+    expect(ownerWindowId).toBeGreaterThan(0);
     await stage("owner-renderer-crash");
-    await opened.owner.app.evaluate(({ BrowserWindow }) => {
-      const contents = BrowserWindow.getAllWindows()[0].webContents;
-      contents.forcefullyCrashRenderer();
+    const crashSession = await restored.page.context().newCDPSession(restored.page);
+    const crashed = restored.page.waitForEvent("crash", { timeout: 10_000 });
+    // Crash the actual page's renderer IO thread, without Electron's native
+    // widget-view precondition. The target cannot acknowledge its own crash;
+    // its outstanding command is drained when our owned app context closes.
+    rendererCrashCommand = crashSession.send("Page.crash").catch((error: unknown) => {
+      if (error instanceof Error && (error.message.includes("Target crashed")
+        || error.message.includes("Target closed") || error.message.includes("Session closed")
+        || error.message.includes("Target page, context or browser has been closed"))) return;
+      throw error instanceof Error ? error : new Error("Native renderer crash request failed");
     });
-    // Let the native message loop deliver the crash outside the inspector RPC.
-    // Require the actual crashed state; a missing crash still fails this check.
-    await expect.poll(() => opened.owner.app.evaluate(({ BrowserWindow }) =>
-      BrowserWindow.getAllWindows()[0].webContents.isCrashed()), {
+    await Promise.race([crashed, rendererCrashCommand.then(() => crashed)]);
+    await expect.poll(() => opened.owner.app.evaluate(({ BrowserWindow }, id) =>
+      BrowserWindow.fromId(id)!.webContents.isCrashed(), ownerWindowId), {
       timeout: 10_000, message: "The owner renderer must actually crash before recovery",
     }).toBe(true);
     const afterCrash = issuePreviewPairLaunch({ manifest, role: "owner", platform: process.platform as "linux", arch: process.arch as "x64", sourceOrigin: "https://app.matrix-os.com" }, secret, Date.now());
@@ -157,38 +168,38 @@ await import(${JSON.stringify(pathToFileURL(main).href)});`);
     const recovered = await startPreviewDesktop({ executable: wrapper, proof: afterCrash, userData: paths.userData });
     expect(recovered.reused).toBe(true); await recovered.stop();
     await stage("owner-renderer-state");
-    expect(await opened.owner.app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].webContents.isCrashed()),
+    expect(await opened.owner.app.evaluate(({ BrowserWindow }, id) => BrowserWindow.fromId(id)!.webContents.isCrashed(), ownerWindowId),
       "Verified reopen must recover a crashed renderer before acknowledging success").toBe(false);
     // Playwright's old Page retains its crash marker. Inspect the actual reloaded
     // renderer through Electron instead; preload, normal IPC and AuthService stay real.
     await stage("owner-renderer-ready");
-    await expect.poll(async () => opened.owner.app.evaluate(async ({ BrowserWindow }) =>
-      BrowserWindow.getAllWindows()[0].webContents.executeJavaScript('document.body.textContent.includes("Collaboration preview")'))).toBe(true);
+    await expect.poll(async () => opened.owner.app.evaluate(async ({ BrowserWindow }, id) =>
+      BrowserWindow.fromId(id)!.webContents.executeJavaScript('document.body.textContent.includes("Collaboration preview")'), ownerWindowId)).toBe(true);
     await stage("owner-renderer-auth");
-    expect(await opened.owner.app.evaluate(async ({ BrowserWindow }) =>
-      BrowserWindow.getAllWindows()[0].webContents.executeJavaScript('window.operator.invoke("auth:status", {})')))
+    expect(await opened.owner.app.evaluate(async ({ BrowserWindow }, id) =>
+      BrowserWindow.fromId(id)!.webContents.executeJavaScript('window.operator.invoke("auth:status", {})'), ownerWindowId))
       .toMatchObject({ signedIn: true, userId: manifest.members.owner.actorId });
     await stage("owner-sign-out");
-    await opened.owner.app.evaluate(async ({ BrowserWindow }) =>
-      BrowserWindow.getAllWindows()[0].webContents.executeJavaScript('window.operator.invoke("auth:sign-out", {})'));
+    await opened.owner.app.evaluate(async ({ BrowserWindow }, id) =>
+      BrowserWindow.fromId(id)!.webContents.executeJavaScript('window.operator.invoke("auth:sign-out", {})'), ownerWindowId);
     await stage("member-session-preserved");
     expect(await opened.member.page.evaluate(() => window.operator.invoke("auth:status", {}))).toMatchObject({ signedIn: true, userId: manifest.members.member.actorId });
     await stage("normal-session-preserved");
     expect(await normalPage.evaluate(() => window.operator.invoke("auth:status", {}))).toMatchObject({ signedIn: true, userId: "user_normal_fixture", runtimeSlot: "primary" });
-    expect(await opened.owner.app.evaluate(async ({ BrowserWindow }) =>
-      BrowserWindow.getAllWindows()[0].webContents.executeJavaScript('window.operator.invoke("auth:status", {})'))).toMatchObject({ signedIn: false });
+    expect(await opened.owner.app.evaluate(async ({ BrowserWindow }, id) =>
+      BrowserWindow.fromId(id)!.webContents.executeJavaScript('window.operator.invoke("auth:status", {})'), ownerWindowId)).toMatchObject({ signedIn: false });
     await stage("all-assertions-passed");
     console.info("[preview-pair-e2e] journey assertions passed");
   } finally {
     await stage("fixture-teardown").catch((error: unknown) => {
       console.warn("[preview-pair-e2e] checkpoint unavailable", error instanceof Error ? error.name : "UnknownError");
     });
-    const closed = await Promise.allSettled(applications.reverse().map(async app => {
+    const closed = await Promise.allSettled([...applications.reverse().map(async app => {
       const pid = app.process().pid;
       console.info("[preview-pair-e2e] closing owned fixture", pid);
       await closeOwnedPreviewFixture(app);
       console.info("[preview-pair-e2e] closed owned fixture", pid);
-    }));
+    }), ...(rendererCrashCommand ? [rendererCrashCommand] : [])]);
     await new Promise<void>(resolve => server.close(() => resolve()));
     if (originalHome === undefined) delete process.env.HOME; else process.env.HOME = originalHome; await rm(home, { recursive: true, force: true });
     const failure = closed.find(result => result.status === "rejected");
