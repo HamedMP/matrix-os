@@ -11,6 +11,7 @@ import {
   CanonicalChatModelSelectionSchema,
   CanonicalChatSafeErrorSchema,
   CanonicalOwnerScopeSchema,
+  CanonicalChatRunIdSchema,
   type CanonicalChatMessagePart,
   type CanonicalChatApprovalDecision,
   type CanonicalChatModelSelection,
@@ -125,6 +126,13 @@ export type RecoveredControlActivity = z.infer<typeof RecoveredControlActivitySc
 
 export type CanonicalProviderRunEvent = z.infer<typeof CanonicalProviderRunEventSchema>;
 
+/** Host-admitted native occurrence; never accepted from public Chat request bodies. */
+export interface NativeScheduledPhaseIdentity {
+  sourceRunId: string;
+  sessionId: string;
+  promptId: string;
+}
+
 export interface CanonicalProviderRunInput<State = unknown> {
   owner: CanonicalOwnerScope;
   chatId: string;
@@ -145,6 +153,8 @@ export interface CanonicalProviderRunInput<State = unknown> {
   resumeState?: State;
   /** Unique native admission identity for a continuation of the same canonical Run. */
   continuationId?: string;
+  /** An already-held native prompt. The adapter must not submit it again. */
+  nativeScheduled?: NativeScheduledPhaseIdentity;
   signal: AbortSignal;
   /** Generator return() errors can be masked by a consumer throw; report unresolved cleanup explicitly. */
   onCleanupUnconfirmed?: () => void;
@@ -209,6 +219,8 @@ export interface CanonicalChatProviderAdapter<State = unknown> {
 export function parseCanonicalProviderRunInput<State>(
   input: CanonicalProviderRunInput<State>,
 ): CanonicalProviderRunInput<State> {
+  if (input.nativeScheduled) z.object({ sourceRunId: CanonicalChatRunIdSchema,
+    sessionId: z.string().min(1).max(512).regex(/^[A-Za-z0-9][A-Za-z0-9_-]*$/), promptId: z.uuid() }).strict().parse(input.nativeScheduled);
   CanonicalOwnerScopeSchema.parse(input.owner);
   CanonicalChatModelSelectionSchema.parse(input.selection);
   z.array(CanonicalChatMessagePartSchema).min(1).max(64).parse(input.parts);

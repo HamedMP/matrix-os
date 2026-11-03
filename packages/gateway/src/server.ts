@@ -58,13 +58,10 @@ import { authMiddleware } from "./auth.js";
 import { createBackgroundAgentRuntime } from "./background-agent-runtime.js";
 import { formatForChannel } from "./channels/format.js";
 import { withAsyncChatInput } from "./chat/async-input-adapter.js";
-import { createClaudeChatProviderAdapter } from "./chat/claude-provider-adapter.js";
+import { createGatewayChatAdapters, type GatewayNativeClaudeChatRuntime } from "./server/canonical-chat-adapters.js";
 import { managedPiMcpDependencies } from "./startup/managed-pi-tools.js";
-import { createCustomMcpApprovalClient } from "./chat/custom-mcp-approval-client.js";
-import { createCanonicalCodingChatProviderAdapter } from "./chat/coding-provider-adapter.js";
 import type { ChatExecutionRootResolver } from "./chat/execution-root.js";
 import type { createGatewayChatEventStream } from "./chat/gateway-event-stream.js";
-import { createInitialChatAdapters } from "./server/initial-chat-adapters.js";
 import { createSharedBrowserRuntime } from "./shared-browser/runtime.js";
 import { withCanonicalIdleChat } from "./chat/idle-runtime-admission.js";
 import { createMatrixMcpCapabilityRegistry } from "./chat/matrix-mcp-launch.js";
@@ -840,6 +837,7 @@ export async function createGateway(config: GatewayConfig) {
   let chatIdleReaper: ReturnType<typeof createChatIdleReaper> | null = null;
   let canonicalChatEventStream: ReturnType<typeof createGatewayChatEventStream> | null = null;
   let canonicalChatOrchestrator: CanonicalChatOrchestrator | null = null;
+  let nativeClaudeChatRuntime: GatewayNativeClaudeChatRuntime | null = null;
   let canonicalChatRuntime: Awaited<ReturnType<typeof createCanonicalChatRuntime>> | null = null;
   let canonicalChatExecutionRoots: ChatExecutionRootResolver | null = null;
   let canonicalChatCollaborationGuard: ReturnType<typeof createDiscussionOnlyChatExecutionGuard> | null = null;
@@ -1629,62 +1627,20 @@ export async function createGateway(config: GatewayConfig) {
         ? withChatGptPlanProviderInstance(sourceCatalog, botServices.chatgptPlanPeers,
           () => Boolean(botServices?.managedAdapter && scopeRuntimeHost?.available)) : sourceCatalog;
     });
-    const canonicalAdapters = createInitialChatAdapters({ homePath, dispatcher, toolOutputKey, rpc: openClawRpc,
-      ...(botServices?.routineCli ? { routineCli: { runtime: botServices.routineCli, ...routineCliTransport } } : {}),
-      ...(jevInboxRuntime ? { jev: jevInboxRuntime.launch } : {}),
-      ...(sharedBrowserRuntime ? { sharedBrowser: sharedBrowserRuntime.broker } : {}), gatewayPort: port });
-    if (codingAgentProviders.some((provider) => provider.providerId === "claude")) {
-      canonicalAdapters.push(createClaudeChatProviderAdapter({
+    const chatAdapters = createGatewayChatAdapters({
+      initial: { homePath, dispatcher, toolOutputKey, rpc: openClawRpc,
         ...(botServices?.routineCli ? { routineCli: { runtime: botServices.routineCli, ...routineCliTransport } } : {}),
-        ...(sharedBrowserRuntime ? { sharedBrowser: sharedBrowserRuntime.broker, sharedBrowserGatewayPort: port } : {}),
-        homePath,
-        credentialKey: toolOutputKey,
-        resolveCredentialLaunch: resolveClaudeCredentialLaunch,
-        matrixMcpCapabilityIssuer: matrixMcpCapabilities,
-        ...(previewDriveClient ? { previewDriveClient } : {}),
-        customMcpApprovalClient: internalPlatformUrl && internalPlatformToken && internalHandle
-          ? createCustomMcpApprovalClient({ platformUrl: internalPlatformUrl, token: internalPlatformToken, handle: internalHandle })
-          : undefined,
-      }));
-    }
-    if (codingAgentThreadStore) {
-      if (codingAgentProviders.some((provider) => provider.providerId === "codex")) {
-        canonicalAdapters.push(createCanonicalCodingChatProviderAdapter({
-          providerId: "codex",
-          ...(botServices?.routineCli ? { routineCli: { runtime: botServices.routineCli, ...routineCliTransport } } : {}),
-          ...(sharedBrowserRuntime ? { sharedBrowser: sharedBrowserRuntime.broker } : {}), gatewayPort: port,
-          threads: codingAgentThreadStore,
-          homePath,
-          toolOutputKey,
-          nativeInputProvider: codingAgentProviders.find(provider => provider.providerId === "codex"),
-        }));
-      }
-      if (codingAgentProviders.some((provider) => provider.providerId === "pi")) {
-        canonicalAdapters.push(createCanonicalCodingChatProviderAdapter({
-          providerId: "pi",
-          ...(botServices?.routineCli ? { routineCli: { runtime: botServices.routineCli, ...routineCliTransport } } : {}),
-          threads: codingAgentThreadStore,
-          homePath,
-          toolOutputKey,
-          nativeInputProvider: codingAgentProviders.find(provider => provider.providerId === "pi"),
-        }));
-      }
-      if (codingAgentProviders.some((provider) => provider.providerId === "opencode")) {
-        canonicalAdapters.push(createCanonicalCodingChatProviderAdapter({
-          providerId: "opencode",
-          ...(botServices?.routineCli ? { routineCli: { runtime: botServices.routineCli, ...routineCliTransport } } : {}),
-          threads: codingAgentThreadStore,
-          homePath,
-          toolOutputKey,
-          nativeInputProvider: codingAgentProviders.find(provider => provider.providerId === "opencode"),
-        }));
-      }
-    }
-    if (botServices?.adapter) canonicalAdapters.push(botServices.adapter);
-    if (botServices?.managedAdapter) {
-      canonicalAdapters.push(botServices.managedAdapter);
-      canonicalExecutableDriverKinds.push("matrix_pi");
-    }
+        ...(jevInboxRuntime ? { jev: jevInboxRuntime.launch } : {}),
+        ...(sharedBrowserRuntime ? { sharedBrowser: sharedBrowserRuntime.broker } : {}), gatewayPort: port },
+      providers: codingAgentProviders, threads: codingAgentThreadStore,
+      claude: { resolveCredentialLaunch: resolveClaudeCredentialLaunch, matrixMcpCapabilityIssuer: matrixMcpCapabilities,
+        ...(previewDriveClient ? { previewDriveClient } : {}) },
+      ...(internalPlatformUrl && internalPlatformToken && internalHandle
+        ? { customMcpApproval: { platformUrl: internalPlatformUrl, token: internalPlatformToken, handle: internalHandle } } : {}),
+      botAdapter: botServices?.adapter, managedBotAdapter: botServices?.managedAdapter,
+    });
+    nativeClaudeChatRuntime = chatAdapters.nativeClaude;
+    if (botServices?.managedAdapter) canonicalExecutableDriverKinds.push("matrix_pi");
     canonicalChatRuntime = await createCanonicalChatRuntime({
       homePath, browserApprovals: supervisedBrowserRuntime?.control, routineActions: botServices?.routineCli,
       executionAdmissionFence,
@@ -1694,7 +1650,7 @@ export async function createGateway(config: GatewayConfig) {
       catalog: botServices?.adapter ? withBotProviderInstance(canonicalChatProviderCatalog) : canonicalChatProviderCatalog,
       agents: chatAgents,
       ...(botServices ? { botChats: botServices.botChats } : {}),
-      adapters: new CanonicalChatProviderRegistry(canonicalAdapters.map(adapter => withAsyncChatInput(adapter))),
+      adapters: new CanonicalChatProviderRegistry(chatAdapters.adapters.map(adapter => withAsyncChatInput(adapter))),
       executionRoots: canonicalChatExecutionRoots,
       ...(canonicalChatCollaborationGuard ? { collaborationGuard: canonicalChatCollaborationGuard } : {}),
       ...(gatewayCollaboration ? {
@@ -1706,6 +1662,7 @@ export async function createGateway(config: GatewayConfig) {
     });
     botServices?.routineCli?.bindCanonical(canonicalChatRuntime.orchestrator);
     canonicalChatOrchestrator = canonicalChatRuntime.orchestrator;
+    nativeClaudeChatRuntime?.bind(() => canonicalChatOrchestrator);
     botServices?.startConnectionReconciler(createBotContinuationAdmitter({ repository: chatRepository, orchestrator: canonicalChatOrchestrator }));
     await botServices?.routines?.start({repository:chatRepository,orchestrator:canonicalChatOrchestrator});
     backgroundChatProjection.setReconciler(ownerId => canonicalChatOrchestrator?.reconcileActiveRuns({ type: "personal", ownerId }) ?? Promise.resolve());
@@ -1980,6 +1937,8 @@ export async function createGateway(config: GatewayConfig) {
       slackRuntime = undefined;
       await canonicalChatOrchestrator?.close();
       canonicalChatOrchestrator = null;
+      await nativeClaudeChatRuntime?.close();
+      nativeClaudeChatRuntime = null;
       await terminalLaunchRuntime.close();
       await botServices?.close();
       botServices = undefined;
