@@ -3,7 +3,7 @@ import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import { resolveProxyDatabasePath } from "../../packages/proxy/src/db.js";
 import { createLocalDevelopmentEnv, LOCAL_DEVELOPMENT_SERVICES, localInfrastructureCommands,
-  startLocalDevelopment, startLocalInfrastructure } from "../../scripts/dev-local.mjs";
+  startLocalDevelopment, startLocalInfrastructure, runLocalDevelopmentCommand } from "../../scripts/dev-local.mjs";
 const root = process.cwd();
 describe("source development lifecycle", () => {
   it("builds the gateway native addon before starting source services", async () => {
@@ -20,6 +20,39 @@ describe("source development lifecycle", () => {
     const native = events.indexOf("pnpm --filter @matrix-os/gateway build:native");
     expect(native).toBeGreaterThanOrEqual(0);
     expect(native).toBeLessThan(events.indexOf("start-services"));
+    const gateway = events.indexOf("pnpm --filter @matrix-os/gateway build");
+    expect(gateway).toBeGreaterThan(native);
+    expect(gateway).toBeLessThan(events.indexOf("start-services"));
+  });
+
+  it("bounds a stalled readiness child instead of waiting for its exit", async () => {
+    await expect(runLocalDevelopmentCommand(process.execPath,
+      ["-e", "setTimeout(() => {}, 300)"],
+      { timeoutMs: 30, stdio: "ignore" })).rejects.toThrow(/timed out/);
+  });
+
+  it("cancels an in-flight source prerequisite before services start", async () => {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(new Error("source startup cancelled")), 30);
+    try {
+      await expect(runLocalDevelopmentCommand(process.execPath,
+        ["-e", "setTimeout(() => {}, 300)"],
+        { signal: controller.signal, stdio: "ignore" })).rejects.toThrow("source startup cancelled");
+    } finally { clearTimeout(timer); }
+  });
+
+  it("passes the remaining readiness deadline to the real PostgreSQL probe child", async () => {
+    await expect(startLocalInfrastructure({
+      startupTimeoutMs: 40,
+      runCommand: async (_command: string, args: string[], options: object) => {
+        if (args.includes("pg_isready")) {
+          await runLocalDevelopmentCommand(process.execPath,
+            ["-e", "setTimeout(() => {}, 300)"], { ...options, stdio: "ignore" });
+        }
+      },
+      waitForHttp: async () => undefined,
+      log: () => {},
+    })).rejects.toThrow("PostgreSQL did not become healthy");
   });
 
   it("keeps source infrastructure and package filters explicit", () => {

@@ -5,6 +5,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { pathToFileURL } from "node:url";
+import { runCommand as run } from "./local-production-parity/commands.mjs";
 
 const COMPOSE = [
   "docker",
@@ -120,35 +121,24 @@ export function createLocalDevelopmentEnv(baseEnv = process.env) {
   };
 }
 
-function run(command, args, options = {}) {
-  return new Promise((resolve, reject) => {
-    const child = spawn(command, args, {
-      env: options.env,
-      stdio: options.stdio ?? "inherit",
-    });
-    child.once("error", reject);
-    child.once("exit", (code, signal) => {
-      if (code === 0) resolve();
-      else reject(new Error(`${command} exited with ${code ?? signal ?? "unknown status"}`));
-    });
-  });
-}
+export { run as runLocalDevelopmentCommand };
 
-async function commandSucceeds(command) {
+async function commandSucceeds(command, options) {
   try {
-    await run(command[0], command.slice(1), { stdio: "ignore" });
+    await options.runCommand(command[0], command.slice(1), { ...options, stdio: "ignore" });
     return true;
   } catch (error) {
+    options.signal?.throwIfAborted();
     if (!(error instanceof Error)) throw error;
     return false;
   }
 }
 
-async function isHttpHealthy(url, cancellationSignal) {
+async function isHttpHealthy(url, cancellationSignal, timeoutMs) {
   try {
     const response = await fetch(url, {
       redirect: "error",
-      signal: AbortSignal.any([cancellationSignal, AbortSignal.timeout(3_000)]),
+      signal: AbortSignal.any([cancellationSignal, AbortSignal.timeout(Math.min(3_000, timeoutMs))]),
     });
     return response.ok;
   } catch (error) {
@@ -158,41 +148,46 @@ async function isHttpHealthy(url, cancellationSignal) {
   }
 }
 
-async function waitUntilHealthy(name, check, cancellationSignal) {
-  const deadline = Date.now() + STARTUP_TIMEOUT_MS;
+async function waitUntilHealthy(name, check, cancellationSignal, timeoutMs = STARTUP_TIMEOUT_MS) {
+  const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     cancellationSignal.throwIfAborted();
-    if (await check()) return;
-    await delay(POLL_INTERVAL_MS, undefined, { signal: cancellationSignal });
+    if (await check({ signal: cancellationSignal, timeoutMs: Math.max(1, Math.min(5_000, deadline - Date.now())) })) return;
+    const remaining = deadline - Date.now();
+    if (remaining > 0) await delay(Math.min(POLL_INTERVAL_MS, remaining), undefined, { signal: cancellationSignal });
   }
-  throw new Error(`${name} did not become healthy within ${STARTUP_TIMEOUT_MS / 1_000} seconds`);
+  throw new Error(`${name} did not become healthy within ${timeoutMs / 1_000} seconds`);
 }
 
 async function waitForHttpChecks(checks, cancellationSignal) {
   await Promise.all(checks.map(([name, url]) => (
-    waitUntilHealthy(name, () => isHttpHealthy(url, cancellationSignal), cancellationSignal)
+    waitUntilHealthy(name, ({ timeoutMs }) => isHttpHealthy(url, cancellationSignal, timeoutMs), cancellationSignal)
   )));
 }
 
 export async function startLocalInfrastructure({
   cancellationSignal = new AbortController().signal,
   runCommand = run,
-  postgresReady = () => commandSucceeds(localInfrastructureCommands.verifyPostgres),
+  postgresReady = (options) => commandSucceeds(localInfrastructureCommands.verifyPostgres, { ...options, runCommand }),
+  startupTimeoutMs = STARTUP_TIMEOUT_MS,
   waitForHttp = waitForHttpChecks,
   log = console.log,
 } = {}) {
-  await runCommand(localInfrastructureCommands.start[0], localInfrastructureCommands.start.slice(1));
+  await runCommand(localInfrastructureCommands.start[0], localInfrastructureCommands.start.slice(1),
+    { signal: cancellationSignal, timeoutMs: startupTimeoutMs });
   await Promise.all([
     waitForHttp(infrastructureChecks, cancellationSignal),
-    waitUntilHealthy("PostgreSQL", postgresReady, cancellationSignal),
+    waitUntilHealthy("PostgreSQL", postgresReady, cancellationSignal, startupTimeoutMs),
   ]);
   await runCommand(
     localInfrastructureCommands.setObjectStoreAlias[0],
     localInfrastructureCommands.setObjectStoreAlias.slice(1),
+    { signal: cancellationSignal },
   );
   await runCommand(
     localInfrastructureCommands.configureObjectStore[0],
     localInfrastructureCommands.configureObjectStore.slice(1),
+    { signal: cancellationSignal },
   );
   log("Local infrastructure ready: PostgreSQL :5432, object storage :9100/:9101");
 }
@@ -267,30 +262,44 @@ export async function startLocalDevelopment({
   log = console.log,
 } = {}) {
   const signal = cancellationController.signal;
-  await startInfrastructure({ cancellationSignal: signal, log });
-  const env = createLocalDevelopmentEnv();
-  await runCommand(
-    localInfrastructureCommands.stopApplicationContainers[0],
-    localInfrastructureCommands.stopApplicationContainers.slice(1),
-  );
-  await runCommand("pnpm", ["--filter", "@matrix-os/gateway", "build:native"], { env });
-  await runCommand(buildCommand[0], buildCommand.slice(1), { env });
-  const services = startServices(env);
+  let services;
   let stoppedBySignal = false;
   const stop = (receivedSignal) => {
     stoppedBySignal = true;
     cancellationController.abort(new Error(`local development stopped by ${receivedSignal}`));
-    void services.stop(receivedSignal);
   };
   const signalHandlers = new Map([
     ["SIGINT", () => stop("SIGINT")],
     ["SIGTERM", () => stop("SIGTERM")],
   ]);
   for (const [name, handler] of signalHandlers) process.on(name, handler);
+  let onAbort;
+  const cancelled = new Promise((resolve) => {
+    onAbort = resolve;
+    if (signal.aborted) resolve();
+    else signal.addEventListener("abort", onAbort, { once: true });
+  });
 
   try {
+    signal.throwIfAborted();
+    await startInfrastructure({ cancellationSignal: signal, log });
+    const env = createLocalDevelopmentEnv();
+    const options = { env, signal, timeoutMs: 600_000 };
+    await runCommand(
+      localInfrastructureCommands.stopApplicationContainers[0],
+      localInfrastructureCommands.stopApplicationContainers.slice(1),
+      { signal },
+    );
+    await runCommand("pnpm", ["--filter", "@matrix-os/gateway", "build:native"], options);
+    await runCommand(buildCommand[0], buildCommand.slice(1), options);
+    // Configured platform integrations consume the emitted gateway modules.
+    await runCommand("pnpm", ["--filter", "@matrix-os/gateway", "build"], options);
+    signal.throwIfAborted();
+    services = startServices(env);
+    const interrupted = cancelled.then(() => { throw signal.reason; });
     await Promise.race([
       waitForHttp(serviceChecks, signal),
+      interrupted,
       services.exited.then((status) => {
         throw new Error(
           `${status.name} (pid ${status.pid ?? "unknown"}) stopped before local development became ready`,
@@ -298,28 +307,41 @@ export async function startLocalDevelopment({
       }),
     ]);
     log("Matrix OS ready: shell :3000, gateway :4000, proxy :8080, platform :9000");
-    const status = await services.exited;
+    const status = await Promise.race([services.exited, interrupted]);
     if (!stoppedBySignal) {
       throw new Error(`${status.name} (pid ${status.pid ?? "unknown"}) stopped unexpectedly`);
     }
   } catch (error) {
     if (!signal.aborted) cancellationController.abort(error);
-    await services.stop("SIGTERM");
+    await services?.stop("SIGTERM");
     if (stoppedBySignal) return;
     throw error;
   } finally {
+    signal.removeEventListener("abort", onAbort);
     for (const [name, handler] of signalHandlers) process.off(name, handler);
   }
+}
+
+async function withInfrastructureSignals(action) {
+  const controller = new AbortController();
+  const handlers = ["SIGINT", "SIGTERM"].map((signal) => [
+    signal, () => controller.abort(new Error(`local infrastructure stopped by ${signal}`)),
+  ]);
+  for (const [signal, handler] of handlers) process.on(signal, handler);
+  try { await action(controller.signal); }
+  finally { for (const [signal, handler] of handlers) process.off(signal, handler); }
 }
 
 async function main() {
   const mode = process.argv[2] ?? "full";
   if (mode === "infra") {
-    await startLocalInfrastructure();
+    await withInfrastructureSignals((signal) => startLocalInfrastructure({ cancellationSignal: signal }));
     return;
   }
   if (mode === "stop") {
-    await run(localInfrastructureCommands.stop[0], localInfrastructureCommands.stop.slice(1));
+    await withInfrastructureSignals((signal) => run(
+      localInfrastructureCommands.stop[0], localInfrastructureCommands.stop.slice(1), { signal },
+    ));
     return;
   }
   if (mode === "full") {
