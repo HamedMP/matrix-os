@@ -213,3 +213,13 @@ the stuck close is bounded and a separate peer remains alive: focused suites
 passed **14/14**. The native test keeps its original 90-second ceiling and all
 session/reopen/crash/sign-out assertions. This does not qualify graceful production
 shutdown, and production shutdown, launch flags and authorization are unchanged.
+
+## Hosted lifecycle diagnosis — 2026-11-03
+
+Final hosted job `125977123257` still timed out at 90 seconds before the
+`journey assertions passed` checkpoint. The separately reproduced shutdown
+fault is therefore not established as the cause of this remaining hosted stall.
+The test now records fixed lifecycle stage names in `native-lifecycle.txt` beside
+its uploaded recordings, including renderer crash, reopen, readiness and auth.
+This diagnostic changes no assertion, authorization path or timeout. Failure to
+write a teardown checkpoint cannot bypass owned fixture/server/home cleanup.
