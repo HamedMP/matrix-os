@@ -139,7 +139,7 @@ describe("local development contracts", () => {
     }
     expect(pkg.scripts["dev:shell"]).toContain("@matrix-os/brand");
     expect(pkg.scripts["dev:platform"]).toContain("@matrix-os/brand");
-    expect(shellPkg.scripts.dev).toBe("next dev -p ${PORT:-3000}");
+    expect(shellPkg.scripts.dev).toBe("next dev --webpack");
   });
 
   it("makes the production host topology the canonical full-development entry point", () => {
