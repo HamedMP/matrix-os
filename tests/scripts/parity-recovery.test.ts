@@ -105,9 +105,10 @@ function savedEnvironment() {
     interruptedRestart: () => { failRestart = true; } };
 }
 
-it("recovers only after the registration service's state marker exists", () => {
+it("recovers retained VMs with either the current or legacy registration marker", () => {
   expect(localParityStartServices).toContain("test -f /var/lib/matrix-vps-registration/register-complete");
-  expect(localParityStartServices).not.toContain("test -f /opt/matrix/register-complete");
+  expect(localParityStartServices).toContain("test -f /opt/matrix/register-complete");
+  expect(localParityStartServices).toMatch(/test -f \/var\/lib\/matrix-vps-registration\/register-complete.*\|\|.*test -f \/opt\/matrix\/register-complete/s);
 });
 
 it("resumes the same owner VM and credentials, and retry does not launch a duplicate VM", async () => {

@@ -65,7 +65,7 @@ wait_http() {
     sleep 5
   done
 }
-test -f /var/lib/matrix-vps-registration/register-complete
+(test -f /var/lib/matrix-vps-registration/register-complete || test -f /opt/matrix/register-complete)
 systemctl start nginx matrix-scope-runtime matrix-terminal-runtime matrix-gateway
 wait_http http://127.0.0.1:4000/health 420
 systemctl start matrix-shell
