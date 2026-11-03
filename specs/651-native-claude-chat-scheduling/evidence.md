@@ -73,6 +73,13 @@ No B branch is rewritten and no parallel routines hook/scheduler is introduced.
   reinitialization negative scenario passed. See the reproducible fixture at
   `tests/gateway/claude-native-cron/`. Live x64 diagnostic observed the same
   control behavior. These are not final product acceptance.
+- Actual TypeScript pool plus official arm64 native timer completed creation,
+  a real due callback/result, CronDelete and actual exit zero in one child.
+  It initialized once and sent only create/delete user frames, never replaying
+  the due prompt. Synthetic API/admission were used. The trace revealed native
+  `command_lifecycle` started/completed notifications around the due hook;
+  strict same-session command correlation now accepts those status frames
+  without granting authority. Captured-frame regressions passed 49/49.
 - Exact repaired-head installed Chat, real due-result readback, cancellation
   across next deadline, screenshots and head-specific CI/Greptile: **pending**.
 - No exact matching Linear issue confirmed; unrelated scheduling issues were

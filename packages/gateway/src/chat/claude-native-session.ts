@@ -43,6 +43,10 @@ const PromptInput = z.object({ hook_event_name: z.literal("UserPromptSubmit"), s
   prompt: z.string().min(1).max(128 * 1024), agent_id: z.undefined().optional() }).passthrough();
 const ToolInput = z.object({ hook_event_name: z.literal("PreToolUse"), session_id: nativeRef, prompt_id: nativeRef,
   tool_name: nativeRef, tool_use_id: nativeRef, tool_input: z.unknown(), agent_id: z.undefined().optional() }).passthrough();
+const ScheduledWakeupStatus = z.object({ type: z.literal("command_lifecycle"), command_uuid: z.uuid(),
+  state: z.literal("started"), wakeup_source: z.literal("schedule_wakeup"), uuid: z.uuid(), session_id: nativeRef }).strict();
+const ScheduledCompletionStatus = z.object({ type: z.literal("command_lifecycle"), command_uuid: z.uuid(),
+  state: z.literal("completed"), uuid: z.uuid(), session_id: nativeRef }).strict();
 function reportNativeSessionFailure(error: unknown) {
   console.warn("[claude-native] Native session operation unavailable", error instanceof Error ? error.name : "UnknownError");
 }
@@ -74,6 +78,7 @@ export function createClaudeNativeSessionPool(options: PoolOptions = {}) {
     lastInput: CanonicalProviderRunInput;
     private lastSchedulingAllowed: boolean;
     sessionId?: string;
+    private scheduledCommandId?: string; // One observed native wakeup, cleared on its completion; never authorizes a Run.
     initFrame?: NativeRecord;
     reserved = false;
     stopped = false;
@@ -226,6 +231,17 @@ export function createClaudeNativeSessionPool(options: PoolOptions = {}) {
         if (typeof frame.session_id !== "string" || this.sessionId && this.sessionId !== frame.session_id) throw new Error("Native session changed");
         this.sessionId = frame.session_id; this.initFrame = frame;
       }
+      if (frame.type === "command_lifecycle" && this.control.qualified) {
+        const started = ScheduledWakeupStatus.safeParse(frame);
+        if (!this.phase && !this.scheduledCommandId && started.success && started.data.session_id === this.sessionId) {
+          this.scheduledCommandId = started.data.command_uuid; return;
+        }
+        const completed = ScheduledCompletionStatus.safeParse(frame);
+        if (completed.success && completed.data.session_id === this.sessionId && completed.data.command_uuid === this.scheduledCommandId) {
+          this.scheduledCommandId = undefined;
+          if (!this.phase) return;
+        }
+      }
       const request = nativeRecord(frame.request);
       if (frame.type === "control_request" && request?.subtype === "hook_callback") {
         const id = nativeRef.safeParse(frame.request_id);
@@ -341,6 +357,12 @@ export function createClaudeNativeSessionPool(options: PoolOptions = {}) {
     async cancel(input: Pick<CanonicalProviderRunInput, "owner" | "chatId" | "runId">) {
       const session = sessions.get(sessionKey(input));
       if (session && (session.phase?.options.input.runId ?? session.lastInput.runId) === input.runId) await session.stop();
+    },
+    async retireIdle(input: Pick<CanonicalProviderRunInput, "owner" | "chatId">) {
+      if (closing) throw new Error("Native session pool closed");
+      const session = sessions.get(sessionKey(input));
+      if (session?.phase) throw new Error("Native session busy");
+      await session?.stop();
     },
     async close() {
       closing = true; const results = await Promise.allSettled([...sessions.values()].map(session => session.stop()));

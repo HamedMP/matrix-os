@@ -716,6 +716,8 @@ export function createClaudeChatProviderAdapter(options: {
         transport.signal.throwIfAborted();
         if (!protocol.qualified) {
           if (input.nativeScheduled) throw new Error("Native scheduled protocol unavailable");
+          await options.nativeSessions!.retireIdle(input);
+          if (transport.signal.aborted) throw new CanonicalCliError("aborted");
           return await runCanonicalCli({ ...transport, command: protocol.command,
             args: disallowNativeCronCreate(transport.args), ...remainingLifetime() });
         }
@@ -726,7 +728,8 @@ export function createClaudeChatProviderAdapter(options: {
           input, sourceFingerprint: source.fingerprint, schedulingAllowed: source.schedulingAllowed });
       } catch (error: unknown) {
         if (error instanceof ClaudeNativeProbeCleanupError) input.onCleanupUnconfirmed?.();
-        await cancelScheduledSource(input); throw error;
+        await cancelScheduledSource(input);
+        throw transport.signal.aborted ? new CanonicalCliError("aborted") : error;
       }
     } : runCanonicalCli;
     void runPhase({

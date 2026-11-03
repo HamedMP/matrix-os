@@ -1,6 +1,7 @@
 import { EventEmitter } from "node:events";
 import { afterEach, expect, it, vi } from "vitest";
 import { createClaudeNativeSessionPool, type ClaudeNativeSessionPool } from "../../packages/gateway/src/chat/claude-native-session.js";
+import { createClaudeChatProviderAdapter } from "../../packages/gateway/src/chat/claude-provider-adapter.js";
 import type { CanonicalCliSpawn } from "../../packages/gateway/src/chat/cli-process.js";
 import type { CanonicalProviderRunInput } from "../../packages/gateway/src/chat/provider-adapter.js";
 
@@ -90,6 +91,39 @@ it("supplies the first MCP configuration only through the qualified control chan
   expect(spawnFn.mock.calls[0]![1]).not.toContain("--mcp-config");
   expect(children[0]!.frames.filter(f => f.request?.subtype === "mcp_set_servers")).toHaveLength(1);
   expect(children[0]!.frames.find(f => f.request?.subtype === "mcp_set_servers").request.servers["matrix-integrations"].env.MATRIX_AGENT_INTEGRATIONS_TOKEN).toBe("run_1");
+  children[0]!.result(); await phase.promise;
+});
+it("stops an idle retained native child before an unqualified foreground Chat starts", async () => {
+  const { children, turn, pool } = setup(); const first = turn(); await ready();
+  children[0]!.createJob(); children[0]!.result(); await first.promise;
+  let closed = false; children[0]!.once("close", () => { closed = true; });
+  const spawnFn = vi.fn<CanonicalCliSpawn>(() => {
+    expect(closed).toBe(true);
+    const c = Object.assign(new EventEmitter(), { stdout: new EventEmitter(), stderr: new EventEmitter(), kill: vi.fn(),
+      stdin: { write: (_frame: string, cb?: (error?: Error) => void) => { cb?.(); return true; }, end: vi.fn() } });
+    queueMicrotask(() => { c.stdout.emit("data", Buffer.from(`${JSON.stringify({ type: "result", subtype: "success", result: "ordinary reply", session_id: "native_1" })}\n`)); c.emit("exit", 0, null); });
+    return c;
+  });
+  const adapter = createClaudeChatProviderAdapter({ homePath: "/owner", nativeSessions: pool, spawnFn,
+    resolveNativeProtocol: async () => ({ command: "/unqualified/claude", qualified: false }),
+    resolveCredentialEnv: async () => ({ HOME: "/owner", ANTHROPIC_API_KEY: "selected-key" }) });
+  const events = [];
+  for await (const event of adapter.resume!({ ...input("run_2"), resumeState: { sessionId: "native_1" } })) events.push(event);
+  expect(children[0]!.kill).toHaveBeenCalledOnce(); expect(spawnFn).toHaveBeenCalledOnce();
+  expect(events.at(-1)).toEqual({ type: "run.completed", outcome: "completed" });
+});
+it("refuses to retire an active phase without killing it or starting a fallback child", async () => {
+  const { children, turn, pool } = setup(); const phase = turn(); await ready();
+  await expect(pool.retireIdle({ ...input(), owner: { type: "personal", ownerId: "other" } })).resolves.toBeUndefined();
+  await expect(pool.retireIdle(input())).rejects.toThrow("Native session busy");
+  const spawnFn = vi.fn<CanonicalCliSpawn>();
+  const adapter = createClaudeChatProviderAdapter({ homePath: "/owner", nativeSessions: pool, spawnFn,
+    resolveNativeProtocol: async () => ({ command: "/unqualified/claude", qualified: false }),
+    resolveCredentialEnv: async () => ({ HOME: "/owner", ANTHROPIC_API_KEY: "selected-key" }) });
+  const events = [];
+  for await (const event of adapter.resume!({ ...input("run_2"), resumeState: { sessionId: "native_1" } })) events.push(event);
+  expect(events.at(-1)).toMatchObject({ type: "run.completed", outcome: "failed" }); expect(spawnFn).not.toHaveBeenCalled();
+  expect(children[0]!.kill).not.toHaveBeenCalled();
   children[0]!.result(); await phase.promise;
 });
 it("ends a canonical phase while retaining only a child with a confirmed native job", async () => {
@@ -307,4 +341,73 @@ it("reserves accepted CronCreate prompts until their native receipt settles", as
   children[0]!.toolHook("CronCreate", "pending_c", args); await ready();
   expect(response("pending_c")).toEqual({});
   children[0]!.result(); await phase.promise;
+});
+
+const scheduledWakeup = {
+  type: "command_lifecycle", command_uuid: "9293c357-94d1-4e5e-a038-12548cbe7125",
+  state: "started", wakeup_source: "schedule_wakeup", uuid: "4ab34771-aba6-4733-8aea-aae4d207fa34", session_id: "native_1",
+};
+it("keeps the captured native schedule wakeup status idle until UserPromptSubmit admits its phase", async () => {
+  const { children, turn, pool, scheduled } = setup(); const first = turn(); await ready();
+  children[0]!.createJob(); children[0]!.result(); await first.promise;
+  let tick: ReturnType<typeof turn> | undefined;
+  pool.setScheduledHandler(async request => {
+    scheduled(request);
+    tick = turn({ ...input("run_tick"), resumeState: { sessionId: request.sessionId },
+      nativeScheduled: { sourceRunId: request.sourceRunId, sessionId: request.sessionId, promptId: request.promptId } });
+  });
+  children[0]!.emitFrame(scheduledWakeup); await ready();
+  expect(children[0]!.kill).not.toHaveBeenCalled(); expect(scheduled).not.toHaveBeenCalled();
+  expect(children[0]!.frames.filter(f => f.type === "user")).toHaveLength(1);
+  children[0]!.prompt(); await ready(); expect(scheduled).toHaveBeenCalledOnce();
+  expect(children[0]!.frames.filter(f => f.type === "user")).toHaveLength(1);
+  children[0]!.result(); await tick!.promise;
+});
+it.each([
+  { session_id: "foreign_session" }, { command_uuid: "malformed" }, { uuid: "malformed" },
+  { state: "completed" }, { wakeup_source: "unknown" }, { unexpected: "field" },
+])("stops malformed or foreign idle command lifecycle status: %j", async override => {
+  const { children, turn, scheduled } = setup(); const first = turn(); await ready();
+  children[0]!.createJob(); children[0]!.result(); await first.promise;
+  children[0]!.emitFrame({ ...scheduledWakeup, ...override }); await ready();
+  expect(children[0]!.kill).toHaveBeenCalledOnce(); expect(scheduled).not.toHaveBeenCalled();
+});
+
+const scheduledCompletion = { type: "command_lifecycle", command_uuid: scheduledWakeup.command_uuid,
+  state: "completed", uuid: "cc66a12f-3eb5-4931-85c8-7aecaee4fd66", session_id: "native_1" };
+it("accepts the captured delayed completion only for its observed wakeup and admits the next native tick", async () => {
+  const { children, turn, pool, scheduled } = setup(); const first = turn(); await ready();
+  children[0]!.createJob(); children[0]!.result(); await first.promise;
+  let tick: ReturnType<typeof turn> | undefined; let tickNumber = 0;
+  pool.setScheduledHandler(async request => {
+    scheduled(request); tickNumber++;
+    tick = turn({ ...input(`run_tick_${tickNumber}`), resumeState: { sessionId: request.sessionId },
+      nativeScheduled: { sourceRunId: request.sourceRunId, sessionId: request.sessionId, promptId: request.promptId } });
+  });
+  children[0]!.emitFrame(scheduledWakeup); children[0]!.prompt(); await ready();
+  children[0]!.result(); await tick!.promise;
+  children[0]!.emitFrame(scheduledCompletion); await ready();
+  expect(children[0]!.kill).not.toHaveBeenCalled(); expect(scheduled).toHaveBeenCalledTimes(1);
+  children[0]!.emitFrame({ ...scheduledWakeup, command_uuid: "d573bab6-6e22-46bc-920b-596ef6bc053b" });
+  children[0]!.prompt("tick_2", "prompt_2"); await ready();
+  expect(scheduled).toHaveBeenCalledTimes(2);
+  expect(scheduled.mock.calls[1]![0].sourceRunId).toBe("run_tick_1");
+  expect(children[0]!.frames.filter(f => f.type === "user")).toHaveLength(1);
+  children[0]!.result(); await tick!.promise;
+});
+it.each([
+  { session_id: "foreign_session" }, { command_uuid: "d573bab6-6e22-46bc-920b-596ef6bc053b" },
+  { command_uuid: "malformed" }, { uuid: "malformed" }, { wakeup_source: "schedule_wakeup" },
+])("stops malformed or uncorrelated delayed completion: %j", async override => {
+  const { children, turn, scheduled } = setup(); const first = turn(); await ready();
+  children[0]!.createJob(); children[0]!.result(); await first.promise;
+  children[0]!.emitFrame(scheduledWakeup); children[0]!.emitFrame({ ...scheduledCompletion, ...override }); await ready();
+  expect(children[0]!.kill).toHaveBeenCalledOnce(); expect(scheduled).not.toHaveBeenCalled();
+});
+it("clears wakeup correlation when completion is observed during an admitted phase", async () => {
+  const { children, turn } = setup(); const first = turn(); await ready(); children[0]!.createJob(); children[0]!.result(); await first.promise;
+  children[0]!.emitFrame(scheduledWakeup);
+  const next = turn({ ...input("run_next"), resumeState: { sessionId: "native_1" } }); await ready();
+  children[0]!.emitFrame(scheduledCompletion); children[0]!.result(); await next.promise;
+  children[0]!.emitFrame(scheduledCompletion); await ready(); expect(children[0]!.kill).toHaveBeenCalledOnce();
 });
