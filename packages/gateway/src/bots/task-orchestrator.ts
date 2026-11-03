@@ -117,7 +117,7 @@ export function createBotTaskOrchestrator(deps: {
   interactions?: Pick<BotInteractionService, "answerWithMessage">;
   routineTools?: boolean;
   /** Server-owned durable checker; no request or model field can provide phase authority. */
-  routineExecution?: Pick<import("./routine-execution.js").BotRoutineExecution, "assertOccurrencePhase"> & Partial<Pick<import("./routine-execution.js").BotRoutineExecution, "describeChatPhase">>;
+  routineExecution?: Pick<import("./routine-execution.js").BotRoutineExecution, "assertOccurrencePhase"> & Partial<Pick<import("./routine-execution.js").BotRoutineExecution, "describeChatPhase" | "approvalReply">>;
   memory?: Pick<BotMemoryService, "admitted">;
   agents: Pick<ChatAgentStore, "get">;
   recipes: BotRecipeCatalog;
@@ -359,6 +359,21 @@ export function createBotTaskOrchestrator(deps: {
       return settle(task, interrupted(error) ? interruptedStatus() : "failed");
     }
     if (input.signal.aborted) return settle(task, "cancelled");
+
+    // A persisted schedule decision is a receipt, not another inference task.
+    if (continued && !group && !isolatedModel && !input.backgroundTaskId && deps.routineExecution?.approvalReply) {
+      try {
+        const reply = await setup(() => deps.routineExecution!.approvalReply!({ ownerId: input.ownerId, botId,
+          chatId: input.chatId, taskId: task.taskId, runId: input.runId }));
+        if (reply) {
+          run.queue.push({ kind: "event", event: { type: "assistant_delta", text: reply } });
+          return settle(task, "completed");
+        }
+      } catch (error: unknown) {
+        if (!interrupted(error)) console.warn("[bots] schedule approval receipt unavailable:", error instanceof Error ? error.name : "UnknownError");
+        return settle(task, interrupted(error) ? interruptedStatus() : "failed");
+      }
+    }
 
     let resolved: ResolvedBotRoute;
     try {

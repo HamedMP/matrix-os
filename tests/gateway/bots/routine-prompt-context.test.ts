@@ -8,9 +8,37 @@ import { createRoutinePromptHarness } from "./routine-prompt-context-support.js"
 import { withApprovedRoutineOccurrence } from "../../../packages/gateway/src/bots/routine-prompt-context.js";
 import { BotSystemPromptError, estimatePromptTokens } from "../../../packages/gateway/src/bots/system-prompt.js";
 import { activated, admitFixture, binding, CHAT, data, proposal, subscription } from "./routine-authorization-support.js";
+import { createBotInteractionsRepository } from "../../../packages/gateway/src/bots/repositories/interactions.js";
+import { createBotTasksRepository } from "../../../packages/gateway/src/bots/repositories/tasks.js";
+import { OWNER } from "./bot-state-support.js";
 
 const PHASE = "Current routine phase (verified by Matrix for this run):";
 const STALE = "The routine request is still pending approval.";
+
+it("acknowledges the actual persisted schedule decision without asking a model to reinterpret stale pending history", async () => {
+  const f = await activated();
+  const interaction = (await createBotInteractionsRepository(data.db).get({ ownerId: OWNER, interactionId: f.r.approvalId! }))!;
+  const task = (await createBotTasksRepository(data.db).get({ ownerId: OWNER, taskId: binding.taskId }))!;
+  await createBotTasksRepository(data.db).transition({ ownerId: OWNER, taskId: task.taskId, baseRevision: task.revision, to: "waiting_person", now: f.at });
+  const input = await admitFixture("unused", `req_answer_${interaction.interactionId}`);
+  const execution = createBotRoutineExecution({ db: data.db, approvals: f.service, now: () => new Date(f.at) });
+  const provider = fauxProvider({ models: [{ id: proposal.selection.model, input: ["text"], contextWindow: 128000, maxTokens: 4096 }] });
+  const contexts: unknown[] = [];
+  provider.setResponses([context => { contexts.push(context); return fauxAssistantMessage(fauxText(STALE)); }]);
+  const client = await createRoutinePromptHarness({ execution, input, f, provider, messages: [fauxAssistantMessage(fauxText(STALE))] });
+  const orchestrator = createBotTaskOrchestrator(client.dependencies);
+  client.connect(orchestrator);
+  const adapter = createMatrixBotChatProviderAdapter({ orchestrator, routines: execution, stopRuntime: async () => undefined });
+  const text = interaction.resolution!.continuation!;
+  const events = [];
+  for await (const event of adapter.start({ owner: input.owner, chatId: CHAT, turnId: "cturn_routine_fixture", runId: input.runId,
+    prompt: text, parts: [{ type: "text", text }], selection: { instanceId: "matrix_bot_default", model: "auto" },
+    interactionMode: "default", permissionMode: "default", signal: client.signal })) events.push(event);
+  expect(contexts).toEqual([]);
+  expect(events).toContainEqual({ type: "assistant.delta", delta: "Your schedule approval was recorded. Open Schedules to see its current status and next run." });
+  expect(events.at(-1)).toMatchObject({ type: "run.completed", outcome: "completed" });
+  expect((await createBotTasksRepository(data.db).get({ ownerId: OWNER, taskId: binding.taskId }))!.status).toBe("completed");
+});
 
 async function runFixture(options: { instructions?: string; memory?: string[]; interactive?: boolean; beforeLoad?: (f: Awaited<ReturnType<typeof activated>>) => Promise<void>; cancelDuringCheck?: boolean; expireDuringCheck?: boolean; foreignBinding?: "ownerId" | "chatId" | "botId" | "taskId" } = {}) {
   const f = await activated();
