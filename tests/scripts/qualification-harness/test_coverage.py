@@ -48,7 +48,9 @@ class RequiredExecution(unittest.TestCase):
    skipped=copy.deepcopy(value['testResults'][0]['assertionResults'][0]);skipped['status']='skipped'
    value['testResults'][0]['assertionResults'].append(skipped)
    value['numTotalTests']+=1;value['numPendingTests']+=1
-   self.assertEqual(validate.report_counts(value,phase,inv)['skipped'],1)
+   if phase=='electron-preview-pair':
+    with self.assertRaisesRegex(ValueError,'skipped assertions'):validate.report_counts(value,phase,inv)
+   else:self.assertEqual(validate.report_counts(value,phase,inv)['skipped'],1)
    self.assertEqual(coverage(value,paths,'grid' if phase=='grid' else 'electron')['skipped'],1)
 
  def test_full_unit_and_general_inventory_preserve_expected_inactive_files(self):
