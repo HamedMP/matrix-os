@@ -109,7 +109,12 @@ export function createCodexExecutionAdmission(options: CodexExecutionAdmissionOp
       // An old registration may still own a live child. Only completed
       // revocation or a retry of this exact renewal can advance it.
       if (prior && (prior.userId !== userId || prior.binding !== candidate.binding)) reject();
-      const stopped = await boundedOperation(proveStopped, 5_000).catch(() => false);
+      let stopped = false;
+      try {
+        stopped = await boundedOperation(proveStopped, 5_000);
+      } catch (error: unknown) {
+        console.warn("[native-codex] Stopped-session proof failed:", error instanceof Error ? error.name : "UnknownError");
+      }
       if (!stopped) reject();
       const latest = await current(userId);
       if (!latest) throw new Error(UNAVAILABLE);
