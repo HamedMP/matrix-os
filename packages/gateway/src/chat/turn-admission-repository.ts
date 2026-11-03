@@ -1,4 +1,5 @@
 import { assertPrivateRoutineRequest } from "./private-routine-authority.js";
+import { NATIVE_SCHEDULED_INPUT_TEXT, nativeScheduledRequestHash, nativeScheduledRequestId, NativeScheduledSourceSchema, readNativeScheduledSource, sameNativeScheduledRun, type NativeScheduledSource } from "./native-scheduled-source.js";
 import { associateAdmittedDriveChat } from "./drive-project-database.js";
 import { chatContextRequestHash } from "./agent-context.js";
 import {
@@ -26,7 +27,18 @@ export interface TurnAdmissionDependencies {
 }
 
 /** The Chat row lock, related writes and outbox share one transaction. */
-export async function admitChatTurn(deps: TurnAdmissionDependencies, ownerInput: ChatOwner, input: AdmitTurnInput): Promise<AdmittedTurn> {
+export function admitChatTurn(deps: TurnAdmissionDependencies, ownerInput: ChatOwner, input: AdmitTurnInput): Promise<AdmittedTurn> {
+  return admitOwnedChatTurn(deps, ownerInput, input);
+}
+
+/** Separate private entry: ordinary client admission can never enable the system input mode. */
+export function admitNativeScheduledChatTurn(deps: TurnAdmissionDependencies, ownerInput: ChatOwner,
+  input: AdmitTurnInput, source: NativeScheduledSource): Promise<AdmittedTurn> {
+  return admitOwnedChatTurn(deps, ownerInput, input, NativeScheduledSourceSchema.parse(source));
+}
+
+async function admitOwnedChatTurn(deps: TurnAdmissionDependencies, ownerInput: ChatOwner, input: AdmitTurnInput,
+  source?: NativeScheduledSource): Promise<AdmittedTurn> {
     const owner = CanonicalOwnerScopeSchema.parse(ownerInput);
     CanonicalChatIdSchema.parse(input.chatId);
     const message = CanonicalChatMessageSchema.parse(input.message);
@@ -34,7 +46,13 @@ export async function admitChatTurn(deps: TurnAdmissionDependencies, ownerInput:
     const run = CanonicalChatRunSchema.parse(input.run);
     if (message.chatId !== input.chatId || turn.chatId !== input.chatId || run.chatId !== input.chatId
       || turn.inputMessageId !== message.id || message.turnId !== turn.id || message.runId !== undefined
-      || message.role !== "user" || message.state !== "committed" || run.turnId !== turn.id) {
+      || (source ? message.role !== "system" || message.purpose !== "system" || message.actorId !== undefined
+        || message.parts.length !== 1 || message.parts[0]?.type !== "text" || message.parts[0].text !== NATIVE_SCHEDULED_INPUT_TEXT
+        : message.role !== "user") || message.state !== "committed" || run.turnId !== turn.id) {
+      throw new ChatConflictError(input.chatId, input.baseRevision);
+    }
+    if (source && (turn.clientRequestId !== nativeScheduledRequestId({ owner, chatId: input.chatId, ...source })
+      || input.requestHash !== nativeScheduledRequestHash({ owner, chatId: input.chatId, ...source }))) {
       throw new ChatConflictError(input.chatId, input.baseRevision);
     }
     if (turn.status !== "accepted" || run.status !== "accepted") throw new ChatConflictError(input.chatId, input.baseRevision);
@@ -47,6 +65,10 @@ export async function admitChatTurn(deps: TurnAdmissionDependencies, ownerInput:
     return deps.transact(async (trx) => {
       const current = await deps.selectOwnedChat(trx, owner, input.chatId, true);
       if (!current) throw new ChatNotFoundError(input.chatId);
+      if (source) {
+        const origin = await readNativeScheduledSource(trx, owner, current, source);
+        if (!sameNativeScheduledRun(origin.run, run)) throw new ChatConflictError(input.chatId, Number(current.revision));
+      }
       const queued = await trx.selectFrom("chat_queued_turns").select("id")
         .where("chat_id", "=", input.chatId).where("client_request_id", "=", turn.clientRequestId).executeTakeFirst();
       if (queued) throw new ChatConflictError(input.chatId, Number(current.revision));
