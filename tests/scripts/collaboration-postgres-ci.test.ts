@@ -43,6 +43,7 @@ describe("collaboration PostgreSQL CI inventory", () => {
     expect(files.length).toBeGreaterThanOrEqual(39);
     expect(files).toContain("tests/platform/collaboration-registration-recovery.test.ts");
     expect(files).toContain("tests/gateway/direct-resource-policy-postgres.test.ts");
+    expect(files).toContain("tests/gateway/chat-native-scheduled-postgres.test.ts");
     expect(files).toContain("tests/platform/platform-migration-revision-db.test.ts");
     expect(files).toEqual([...files].sort());
   });
