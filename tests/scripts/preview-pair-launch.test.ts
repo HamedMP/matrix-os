@@ -1,15 +1,26 @@
 import { createHash } from "node:crypto";
 import { chmod, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { c } from "tar";
 import { zipSync, strToU8 } from "fflate";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { createPreviewPairControlClient } from "../../scripts/preview-pair/control-client.js";
 import { preparePreviewDesktop } from "../../scripts/preview-pair/desktop-client.js";
 import { previewPairManifestFixture, PAIR_NOW } from "../platform/preview-pair-test-support.js";
+const cleanupFault = vi.hoisted(() => ({ sweepDownload: false }));
+vi.mock("../../scripts/preview-pair/desktop-archive.js", async importOriginal => {
+  const actual = await importOriginal<typeof import("../../scripts/preview-pair/desktop-archive.js")>();
+  return { ...actual, async extractPreviewDesktop(...args: Parameters<typeof actual.extractPreviewDesktop>) {
+    const app = await actual.extractPreviewDesktop(...args);
+    // Keep download, digest verification and extraction real. Simulate a sweep
+    // at the ownership-handoff boundary before the download's finally cleanup.
+    if (cleanupFault.sweepDownload) await rm(dirname(args[0]), { recursive: true });
+    return app;
+  } };
+});
 let parent: string;
-beforeEach(async () => { parent = await mkdtemp(join(tmpdir(), "eng418-launch-client-")); });
+beforeEach(async () => { cleanupFault.sweepDownload = false; parent = await mkdtemp(join(tmpdir(), "eng418-launch-client-")); });
 afterEach(async () => { await rm(parent, { recursive: true, force: true }); });
 async function fixture(fault?: string) {
   await writeFile(join(parent, "desktop"), "opaque native executable"); await chmod(join(parent, "desktop"), 0o755);
@@ -52,6 +63,12 @@ it("uses real canonical control, immutable GitHub receipt, authenticated ZIP and
   const f = await fixture(), app = await preparePreviewDesktop(f.options);
   expect(await readFile(app.executable, "utf8")).toBe("opaque native executable");
   await app.dispose(); expect((await readdir(parent)).some(name => name.startsWith("matrix-preview-"))).toBe(false);
+});
+it("disposes the extracted app when download cleanup fails before ownership reaches the caller", async () => {
+  const f = await fixture(), before = (await readdir(parent)).sort();
+  cleanupFault.sweepDownload = true;
+  await expect(preparePreviewDesktop(f.options)).rejects.toThrow();
+  expect((await readdir(parent)).sort()).toEqual(before);
 });
 it.each(["receipt", "workflow"])("refuses %s provenance before downloading executable bytes", async fault => {
   const f = await fixture(fault); await expect(preparePreviewDesktop(f.options)).rejects.toThrow("unavailable");
