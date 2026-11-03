@@ -8,6 +8,7 @@ import { resolve } from "node:path";
 import { spawn, spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { writeParityState } from "./local-production-parity/state.mjs";
+import { runCommand, runCommandSync } from "./local-production-parity/commands.mjs";
 import {
   root, stateDirectory, statePath, cloudInitPath, bundlePath, bundleChecksumPath,
   machineName, launcherLockPath, runtimeDirectory, runtimeDiskPath, runtimeSeedPath,
@@ -168,43 +169,23 @@ export function addLocalParityOperator(template, publicKey, storageCertificate) 
 }
 
 function run(command, args, options = {}) {
-  const result = spawnSync(command, args, { cwd: root, encoding: "utf8", stdio: options.capture ? "pipe" : "inherit", env: options.env ?? process.env });
-  if (result.status !== 0) {
-    const detail = options.capture ? `${result.stderr || result.stdout}`.trim() : "";
-    throw new Error(`${command} ${args.join(" ")} failed${detail ? `: ${detail}` : ""}`);
-  }
-  return options.capture ? result.stdout.trim() : "";
+  return runCommandSync(command, args, { cwd: root, ...options });
 }
 
+export { run as runLocalParityCommand };
+
 export function runAbortableCommand(command, args, options = {}) {
-  return new Promise((resolvePromise, rejectPromise) => {
-    options.signal?.throwIfAborted();
-    const child = spawn(command, args, {
-      cwd: root,
-      stdio: "inherit",
-      env: options.env ?? process.env,
-    });
-    const onAbort = () => child.kill("SIGTERM");
-    const settle = (callback) => {
-      options.signal?.removeEventListener("abort", onAbort);
-      callback();
-    };
-    options.signal?.addEventListener("abort", onAbort, { once: true });
-    child.once("error", (error) => settle(() => rejectPromise(error)));
-    child.once("close", (code, terminationSignal) => settle(() => {
-      if (options.signal?.aborted) {
-        rejectPromise(options.signal.reason);
-      } else if (code === 0) {
-        resolvePromise();
-      } else {
-        rejectPromise(new Error(`${command} ${args.join(" ")} failed (code ${code}, signal ${terminationSignal})`));
-      }
-    }));
-  });
+  return runCommand(command, args, { cwd: root, ...options });
+}
+
+function commandSucceeds(command, args) {
+  const result = spawnSync(command, args, { stdio: "ignore", timeout: 5_000, killSignal: "SIGKILL" });
+  if (result.error) throw result.error;
+  return result.status === 0;
 }
 
 function machineExists(name) {
-  return spawnSync("orb", ["info", name, "--format", "json"], { stdio: "ignore" }).status === 0;
+  return commandSucceeds("orb", ["info", name, "--format", "json"]);
 }
 
 export function assertLocalParityContainerOwnership(name, owner, expectedOwner = root) {
@@ -216,9 +197,7 @@ export function assertLocalParityContainerOwnership(name, owner, expectedOwner =
 export function assertLocalParityMachinesAvailable(options = {}) {
   const exists = options.machineExists ?? machineExists;
   const runtimeExists = options.runtimeExists ?? (() => runtimeProcessPids().length > 0);
-  const containerExists = options.containerExists ?? ((name) => (
-    spawnSync("docker", ["container", "inspect", name], { stdio: "ignore" }).status === 0
-  ));
+  const containerExists = options.containerExists ?? ((name) => commandSucceeds("docker", ["container", "inspect", name]));
   if (runtimeExists()) {
     throw new Error(`${machineName} QEMU runtime already exists; run dev:parity:down only if you own that environment`);
   }
@@ -305,11 +284,11 @@ export function assertOrbStackCapacity(
 
 function assertPrerequisites() {
   for (const command of ["docker", "hdiutil", "openssl", "orb", "pnpm", "qemu-img", "qemu-system-x86_64", "ssh", "ssh-keygen"]) {
-    if (spawnSync("which", [command], { stdio: "ignore" }).status !== 0) {
+    if (!commandSucceeds("which", [command])) {
       throw new Error(`${command} is required for production-parity development`);
     }
   }
-  if (process.arch === "arm64" && spawnSync("arch", ["-x86_64", "/usr/bin/true"], { stdio: "ignore" }).status !== 0) {
+  if (process.arch === "arm64" && !commandSucceeds("arch", ["-x86_64", "/usr/bin/true"])) {
     throw new Error("Rosetta 2 is required for the production x86_64 host bundle and OrbStack machine. Install it with: softwareupdate --install-rosetta --agree-to-license");
   }
   assertOrbStackCapacity();
@@ -327,7 +306,7 @@ function prepareStorageTlsCertificate() {
   ]);
 }
 
-function prepareBaseImage() {
+async function prepareBaseImage(signal) {
   if (existsSync(baseImagePath) && existsSync(baseImageChecksumPath)) {
     run("shasum", ["-a", "256", "-c", baseImageChecksumPath]);
     return;
@@ -335,9 +314,9 @@ function prepareBaseImage() {
   mkdirSync(stateDirectory, { recursive: true });
   const sumsPath = resolve(stateDirectory, "SHA256SUMS");
   if (!existsSync(baseImagePath)) {
-    run("curl", ["--fail", "--location", "--retry", "3", "--connect-timeout", "10", "--max-time", "1800", ubuntuImageUrl, "-o", baseImagePath]);
+    await runAbortableCommand("curl", ["--fail", "--location", "--retry", "3", "--connect-timeout", "10", "--max-time", "1800", ubuntuImageUrl, "-o", baseImagePath], { signal, timeoutMs: 30 * 60_000 });
   }
-  run("curl", ["--fail", "--location", "--retry", "3", "--connect-timeout", "10", "--max-time", "120", `${new URL(".", ubuntuImageUrl)}SHA256SUMS`, "-o", sumsPath]);
+  await runAbortableCommand("curl", ["--fail", "--location", "--retry", "3", "--connect-timeout", "10", "--max-time", "120", `${new URL(".", ubuntuImageUrl)}SHA256SUMS`, "-o", sumsPath], { signal, timeoutMs: 5 * 60_000 });
   const imageName = new URL(ubuntuImageUrl).pathname.split("/").at(-1);
   const checksumLine = readFileSync(sumsPath, "utf8").split("\n").find((line) => line.trim().endsWith(`*${imageName}`));
   if (!checksumLine) throw new Error(`Ubuntu checksum manifest did not contain ${imageName}`);
@@ -423,7 +402,7 @@ function stopPlatformTlsProxy() {
 }
 
 function containerExists(name) {
-  return spawnSync("docker", ["container", "inspect", name], { stdio: "ignore" }).status === 0;
+  return commandSucceeds("docker", ["container", "inspect", name]);
 }
 
 function stopOwnedContainer(name) {
@@ -651,9 +630,9 @@ export async function buildBundle(plan, options = {}) {
   if (reuseBundle) return;
   try {
     signal?.throwIfAborted();
-    await execute(plan.builderCreate[0], plan.builderCreate.slice(1), { signal });
+    await execute(plan.builderCreate[0], plan.builderCreate.slice(1), { signal, timeoutMs: 10 * 60_000 });
     signal?.throwIfAborted();
-    await execute("orb", ["-m", buildName, "-u", "root", "bash", "-lc", builderSetupScript()], { signal });
+    await execute("orb", ["-m", buildName, "-u", "root", "bash", "-lc", builderSetupScript()], { signal, timeoutMs: 30 * 60_000 });
     signal?.throwIfAborted();
     const env = { ...parseEnvFile(resolve(root, ".env")), ...process.env };
     const forwarded = [
@@ -664,6 +643,7 @@ export async function buildBundle(plan, options = {}) {
     const forwardedEnv = Object.fromEntries(forwarded.flatMap((key) => env[key] === undefined ? [] : [[key, env[key]]]));
     await execute("orb", ["-m", buildName, "-u", "root", "bash", "-lc", plan.buildCommand], {
       signal,
+      timeoutMs: 60 * 60_000,
       env: {
         ...process.env,
         ...forwardedEnv,
@@ -672,7 +652,7 @@ export async function buildBundle(plan, options = {}) {
     });
     signal?.throwIfAborted();
   } finally {
-    if (exists(buildName)) await execute("orb", ["delete", "--force", buildName]);
+    if (exists(buildName)) await execute("orb", ["delete", "--force", buildName], { timeoutMs: 120_000 });
   }
 }
 
@@ -843,8 +823,8 @@ async function up() {
     if (!clerkSecretIsConfigured(configuredEnv.CLERK_SECRET_KEY)) {
       console.warn("CLERK_SECRET_KEY is unavailable; browser auth will return a bounded unavailable response, while the production VM still starts");
     }
-    run("docker", platformImageBuildArguments(publicEnv));
-    prepareBaseImage();
+    await runAbortableCommand("docker", platformImageBuildArguments(publicEnv), { signal: shutdown.signal, timeoutMs: 30 * 60_000 });
+    await prepareBaseImage(shutdown.signal);
     prepareStorageTlsCertificate();
     state.bundleSha256 = readFileSync(bundleChecksumPath, "utf8").trim().split(/\s+/)[0];
     writeParityState(statePath, state);
@@ -857,13 +837,15 @@ async function up() {
     mkdirSync(stateDirectory, { recursive: true });
     writeFileSync(cloudInitPath, rendered, { mode: 0o600 });
     prepareRuntimeFiles(rendered, state.machineId);
-    run("docker", ["compose", "-f", "docker-compose.dev.yml", "up", "--detach", "postgres", "minio", "minio-alias", "minio-init"]);
+    await runAbortableCommand("docker", ["compose", "-f", "docker-compose.dev.yml", "up", "--detach", "postgres", "minio", "minio-alias", "minio-init"], { signal: shutdown.signal, timeoutMs: 5 * 60_000 });
     shutdown.signal.throwIfAborted();
     startFixtureRouter();
     await waitFor("http://127.0.0.1:9100/minio/health/live", 120_000, shutdown.signal);
     startStorageTlsProxy();
     const env = platformEnvironment(state, clerkJwtKey);
-    run("pnpm", ["exec", "tsx", "scripts/dev-production-parity-seed.ts"], {
+    await runAbortableCommand("pnpm", ["exec", "tsx", "scripts/dev-production-parity-seed.ts"], {
+      signal: shutdown.signal,
+      timeoutMs: 180_000,
       env: {
         ...process.env,
         ...env,
@@ -935,14 +917,14 @@ function status() {
     ["systemctl", "--no-pager", "status", "matrix-gateway.service", "matrix-shell.service", "matrix-terminal-runtime.service", "nginx"],
   ];
   for (const args of checks) {
-    const result = spawnSync("ssh", sshArguments(["sudo", ...args]), { cwd: root, encoding: "utf8", stdio: "inherit" });
+    const result = spawnSync("ssh", sshArguments(["sudo", ...args]), { cwd: root, encoding: "utf8", stdio: "inherit", timeout: 60_000, killSignal: "SIGKILL" });
     if (result.error) throw result.error;
   }
 }
 
 function logs() {
   if (!runtimeProcessIsOwned()) throw new Error(`${machineName} does not exist`);
-  if (spawnSync("docker", ["container", "inspect", platformContainerName], { stdio: "ignore" }).status === 0) {
+  if (commandSucceeds("docker", ["container", "inspect", platformContainerName])) {
     run("docker", ["logs", "--tail", "300", platformContainerName]);
   }
   if (existsSync(runtimeLogPath)) process.stdout.write(readFileSync(runtimeLogPath, "utf8"));

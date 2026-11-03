@@ -1,6 +1,6 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import { afterEach, expect, it } from "vitest";
-import { runInRuntimeAsync } from "../../scripts/dev-production-parity.mjs";
+import { runInRuntimeAsync, runAbortableCommand, runLocalParityCommand } from "../../scripts/dev-production-parity.mjs";
 
 const children: ChildProcess[] = [];
 afterEach(() => { for (const child of children.splice(0)) child.kill("SIGKILL"); });
@@ -10,6 +10,18 @@ function stalledSsh(_command: string, _args: string[], options: object) {
   children.push(child);
   return child;
 }
+
+it("bounds synchronous parity inspection commands", () => {
+  expect(() => runLocalParityCommand(process.execPath,
+    ["-e", "setTimeout(() => {}, 300)"],
+    { timeoutMs: 30, capture: true })).toThrow(/timed out/);
+});
+
+it("bounds asynchronous parity build commands", async () => {
+  await expect(runAbortableCommand(process.execPath,
+    ["-e", "setTimeout(() => {}, 300)"],
+    { timeoutMs: 30, stdio: "ignore" })).rejects.toThrow(/timed out/);
+});
 
 it("kills stalled cloud-init SSH at its deadline and rejects startup", async () => {
   const pending = runInRuntimeAsync(["sudo", "cloud-init", "status", "--wait"], undefined,
