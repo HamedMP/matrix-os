@@ -186,3 +186,30 @@ skips, under the same process-local namespace restriction (23.80s). This used a
 production build of `c752204a7348eda0e868733b48f3a4aec5eb3979` with only the
 working-tree fixture flag changed. A clean final-head build is checked separately.
 Captures remain outside Git in `/tmp/eng418-native-namespace-green/`.
+
+
+## Bounded native fixture shutdown — 2026-11-03
+
+After the launch-policy repair, hosted job `125961048816` passed the early
+launch boundary but the journey hit its 90-second timeout. Its recordings show
+initial and restored Owner windows closing while Member remains alive. Playwright
+1.60.0's custom Electron close handler calls `app.quit()` and awaits application
+exit without a bound; asynchronous before-quit drains can prevent that exit.
+The hosted log alone does not identify which drain was pending.
+
+With matching clean launcher provenance, a native Member before-quit handler
+that deliberately prevents exit reproduced the timeout **after every journey
+assertion passed**. Bounded fixture teardown then passed the same injected
+shutdown case **1/1** in 30.38s. The final concurrent teardown also passed **1/1, zero skips**, with both the
+blocked quit handler and namespace restriction. Phase output confirms every
+journey assertion passed before the blocked child alone required forced teardown.
+Fixture cleanup does not substitute for any journey assertion.
+
+Only fixture teardown changes: attempt ordinary close, then stop the child handle
+returned by that test's launch after five seconds. The existing bounded owned-child
+stop handles escalation. Close all owned fixtures even if one close fails, then
+clean the server/home and report cleanup errors. A real-child regression proves
+the stuck close is bounded and a separate peer remains alive: focused suites
+passed **14/14**. The native test keeps its original 90-second ceiling and all
+session/reopen/crash/sign-out assertions. This does not qualify graceful production
+shutdown, and production shutdown, launch flags and authorization are unchanged.

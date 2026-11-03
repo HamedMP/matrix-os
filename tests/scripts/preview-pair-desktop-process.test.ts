@@ -1,8 +1,11 @@
 import { chmod, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { spawn } from "node:child_process";
+import { once } from "node:events";
 import { afterEach, beforeEach, expect, it } from "vitest";
-import { startPreviewDesktop, previewDesktopEnvironment } from "../../scripts/preview-pair/desktop-process.js";
+import { startPreviewDesktop, previewDesktopEnvironment, stopOwnedPreviewChild } from "../../scripts/preview-pair/desktop-process.js";
+import { closeOwnedPreviewFixture } from "../e2e/desktop/preview-pair-fixture-cleanup.js";
 import { issuePreviewPairLaunch } from "../../packages/platform/src/preview-pair/launch-proof.js";
 import { previewPairManifestFixture, PAIR_NOW } from "../platform/preview-pair-test-support.js";
 let parent: string;
@@ -29,4 +32,15 @@ const s=net.connect({host:'127.0.0.1',port:Number(process.env.MATRIX_PREVIEW_PAI
 it("reports a real child failure promptly instead of pretending both apps opened", async () => {
   const path = await executable("process.exit(3)");
   await expect(startPreviewDesktop({ executable: path, proof: proof(), userData: parent, timeoutMs: 3000 })).rejects.toThrow("stopped before startup");
+});
+it("bounds a stuck fixture close using its owned child handle and preserves another process", async () => {
+  const owned = spawn(process.execPath, ["-e", "setInterval(()=>{},1000)"]), peer = spawn(process.execPath, ["-e", "setInterval(()=>{},1000)"]);
+  try {
+    await Promise.all([once(owned, "spawn"), once(peer, "spawn")]);
+    const closed = once(owned, "close");
+    await closeOwnedPreviewFixture({ process: () => owned, close: () => new Promise<void>(() => undefined) }, 20);
+    await closed;
+    expect(owned.signalCode).toBe("SIGTERM");
+    expect(() => process.kill(peer.pid!, 0)).not.toThrow();
+  } finally { await Promise.all([stopOwnedPreviewChild(owned), stopOwnedPreviewChild(peer)]); }
 });

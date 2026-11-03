@@ -12,6 +12,7 @@ import { previewPairManifestFixture } from "../../platform/preview-pair-test-sup
 import { createPreviewPairProfile } from "../../../desktop/src/main/preview-pair-profiles.js";
 import { startPreviewDesktop, previewDesktopEnvironment } from "../../../scripts/preview-pair/desktop-process.js";
 import { previewDesktopReady } from "../../../scripts/preview-pair/desktop-ready.js";
+import { closeOwnedPreviewFixture } from "./preview-pair-fixture-cleanup.js";
 
 const root = resolve(__dirname, "../../.."), main = join(root, "desktop/out/main/index.js");
 /** The general lane does not build or run Electron. In the explicit native
@@ -147,10 +148,18 @@ await import(${JSON.stringify(pathToFileURL(main).href)});`);
     expect(await normalPage.evaluate(() => window.operator.invoke("auth:status", {}))).toMatchObject({ signedIn: true, userId: "user_normal_fixture", runtimeSlot: "primary" });
     expect(await opened.owner.app.evaluate(async ({ BrowserWindow }) =>
       BrowserWindow.getAllWindows()[0].webContents.executeJavaScript('window.operator.invoke("auth:status", {})'))).toMatchObject({ signedIn: false });
+    console.info("[preview-pair-e2e] journey assertions passed");
   } finally {
-    for (const app of applications.reverse()) await app.close();
+    const closed = await Promise.allSettled(applications.reverse().map(async app => {
+      const pid = app.process().pid;
+      console.info("[preview-pair-e2e] closing owned fixture", pid);
+      await closeOwnedPreviewFixture(app);
+      console.info("[preview-pair-e2e] closed owned fixture", pid);
+    }));
     await new Promise<void>(resolve => server.close(() => resolve()));
     if (originalHome === undefined) delete process.env.HOME; else process.env.HOME = originalHome; await rm(home, { recursive: true, force: true });
+    const failure = closed.find(result => result.status === "rejected");
+    if (failure?.status === "rejected") throw failure.reason instanceof Error ? failure.reason : new Error("Native fixture cleanup failed");
   }
 }, 90_000);
 });
