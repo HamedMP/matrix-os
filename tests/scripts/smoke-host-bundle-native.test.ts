@@ -41,7 +41,52 @@ with tarfile.open(sys.argv[1], 'w:gz') as archive:
   return { work, archive };
 }
 
+async function guardFixture(kind: "duplicate" | "entry-limit" | "old-entry-capacity" | "file-size") {
+  const work = await mkdtemp(join(tmpdir(), "matrix-native-guard-test-")); temporary.push(work);
+  const archive = join(work, "bundle.tar.gz");
+  execFileSync("python3", ["-c", `
+import gzip,sys,tarfile
+kind=sys.argv[2]
+with gzip.open(sys.argv[1],'wb',compresslevel=1) as output:
+    if kind in ('entry-limit','old-entry-capacity'):
+        item=tarfile.TarInfo('entry');item.type=tarfile.DIRTYPE;item.mode=0o755
+        header=bytearray(item.tobuf(format=tarfile.USTAR_FORMAT))
+        for index in range(500001 if kind=='entry-limit' else 300001):
+            header[:100]=('private-entry-'+str(index)).encode().ljust(100,b'\\0')
+            header[148:156]=b' '*8
+            header[148:156]=('%06o' % sum(header)).encode()+b'\\0 '
+            output.write(header)
+    elif kind=='file-size':
+        item=tarfile.TarInfo('private-large-file');item.size=1024**3+1
+        output.write(item.tobuf(format=tarfile.USTAR_FORMAT))
+    else:
+        item=tarfile.TarInfo('private-duplicate-directory');item.type=tarfile.DIRTYPE
+        output.write(item.tobuf(format=tarfile.USTAR_FORMAT)*2)
+    output.write(b'\\0'*1024)
+`, archive, kind], { timeout: 30_000 });
+  return { work, archive };
+}
+
 describe("final host artifact native smoke orchestration (not native qualification)", () => {
+  it.each([
+    ["duplicate", "artifact_archive_duplicate_entry", { entriesSeen: 2, uniqueEntries: 1 }],
+    ["entry-limit", "artifact_archive_entry_limit", { entriesSeen: 500001, entryLimit: 500000 }],
+    ["old-entry-capacity", "artifact_payload_incomplete", { entries: 300001, expandedBytes: 0, maxFileBytes: 0 }],
+    ["file-size", "artifact_archive_file_size", { entriesSeen: 1, size: 1073741825, fileSizeLimit: 1073741824 }],
+  ] as const)("diagnoses %s from real tar metadata without exposing archive names", async (kind, code, facts) => {
+    const { work, archive } = await guardFixture(kind);
+    const result = spawnSync(process.execPath, [script, archive], {
+      env: { PATH: process.env.PATH, HOME: work, TMPDIR: work }, encoding: "utf8", timeout: 120_000,
+    });
+    expect(result.status).toBe(1);
+    const diagnostic = JSON.parse(result.stderr);
+    expect(diagnostic.code).toBe(code);
+    expect(diagnostic.archive).toMatchObject(facts);
+    expect(result.stderr).not.toContain("private-");
+    expect(result.stderr).not.toContain(work);
+    expect(await readdir(work)).toEqual(["bundle.tar.gz"]);
+  }, 150_000);
+
   it.each(["traversal", "absolute", "backslash", "nul", "link", "hardlink", "special", "setgid-file", "setuid-directory", "sticky-directory"])("refuses %s archive entries before running payload code and removes owned extraction", async (kind) => {
     const { work, archive } = await fixture(kind);
     const result = spawnSync(process.execPath, [script, archive], {
