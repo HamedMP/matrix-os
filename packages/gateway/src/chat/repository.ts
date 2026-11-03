@@ -1130,8 +1130,8 @@ export class ChatRepository {
     return this.queue.claimNext(owner, input);
   }
 
-  async listQueuedChatIds(owner: ChatOwner, limit?: number): Promise<string[]> {
-    return this.queue.listQueuedChatIds(owner, limit);
+  async listQueuedChatIds(owner: ChatOwner, limit?: number, afterChatId?: string): Promise<string[]> {
+    return this.queue.listQueuedChatIds(owner, limit, afterChatId);
   }
 
   async beginSteer(owner: ChatOwner, input: BeginSteerInput): Promise<BegunSteer> {
