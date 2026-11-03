@@ -1,6 +1,6 @@
 import { createServer } from "node:http";
 import { createRequire } from "node:module";
-import { chmod, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { appendFile, chmod, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -53,7 +53,16 @@ it("isolates sessions, recovers missing/crashed preview windows and preserves th
   const address = server.address(); if (!address || typeof address === "string") throw new Error("Fixture server unavailable");
   const base = `http://127.0.0.1:${address.port}`;
   const electron = createRequire(join(root, "desktop/package.json"))("electron") as string;
+  const stage = async (name: string) => {
+    console.info("[preview-pair-e2e] stage", name);
+    const directory = process.env.MATRIX_PREVIEW_PAIR_EVIDENCE_DIR;
+    if (directory) {
+      await mkdir(directory, { recursive: true, mode: 0o700 });
+      await appendFile(join(directory, "native-lifecycle.txt"), name + "\n", { mode: 0o600 });
+    }
+  };
   try {
+    await stage("bootstrap");
     // Test-only bootstrap changes transport, never production auth handlers or
     // credential stores. Exact Source signature verification remains real.
     const bootstrap = join(home, "fixture-bootstrap.mjs");
@@ -70,13 +79,16 @@ if(u.href===c.sourceOrigin+'/api/preview-pairs/launch/verify')return actualFetch
 if(u.origin===c.apiOrigin)return actualFetch(${JSON.stringify(base)}+'/'+c.role+u.pathname+u.search,init);
 return Promise.reject(new Error('Explicit native fixture endpoint unavailable'));};
 await import(${JSON.stringify(pathToFileURL(main).href)});`);
+    await stage("normal-launch");
     const normal = await _electron.launch({ executablePath: electron, args: [main], env: { HOME: home, PATH: process.env.PATH ?? "/usr/bin:/bin", DISPLAY: process.env.DISPLAY ?? "", XAUTHORITY: process.env.XAUTHORITY ?? "", OPERATOR_GATEWAY_URL: base, OPERATOR_USER_DATA_DIR: join(home, "normal") } }); applications.push(normal);
     const normalPage = await normal.firstWindow(); await normalPage.getByRole("button", { name: "Sign in", exact: true }).waitFor();
     expect(await normalPage.locator('[role="status"]').filter({ hasText: "Collaboration preview" }).count()).toBe(0);
+    await stage("normal-sign-in");
     await normalPage.evaluate(() => window.operator.invoke("auth:start-device-flow", { intent: "sign-in" }));
     await expect.poll(async () => normalPage.evaluate(() => window.operator.invoke("auth:status", {}))).toMatchObject({ signedIn: true, userId: "user_normal_fixture", runtimeSlot: "primary" });
     const opened: Record<string, { app: ElectronApplication; page: Awaited<ReturnType<ElectronApplication["firstWindow"]>> }> = {};
     for (const role of ["owner", "member"] as const) {
+      await stage(role + "-launch");
       const proof = issuePreviewPairLaunch({ manifest, role, platform: process.platform as "linux", arch: process.arch as "x64", sourceOrigin: "https://app.matrix-os.com" }, secret, Date.now());
       const paths = await createPreviewPairProfile(proof.context, home), ready = await previewDesktopReady(proof.context);
       try {
@@ -86,8 +98,10 @@ await import(${JSON.stringify(pathToFileURL(main).href)});`);
         expect(await ready.ready).toBe(app.process().pid);
         const actual = await app.evaluate(({ app }) => ({ userData: app.getPath("userData"), sessionData: app.getPath("sessionData") }));
         expect(actual).toEqual({ userData: paths.userData, sessionData: paths.sessionData });
+        await stage(role + "-sign-in");
         await page.evaluate(() => window.operator.invoke("auth:start-device-flow", { intent: "sign-in" }));
         await expect.poll(async () => page.evaluate(() => window.operator.invoke("auth:status", {}))).toMatchObject({ signedIn: true, userId: manifest.members[role].actorId, runtimeSlot: manifest.members[role].runtimeSlot });
+        await stage(role + "-organization");
         await page.getByRole("status").filter({ hasText: "Preview test organization" }).waitFor();
         opened[role] = { app, page };
         const evidence = process.env.MATRIX_PREVIEW_PAIR_EVIDENCE_DIR;
@@ -112,9 +126,11 @@ await import(${JSON.stringify(pathToFileURL(main).href)});`);
       // subscriber deliberately keeps the process alive, matching macOS policy.
       app.on("window-all-closed", () => undefined);
     });
+    await stage("owner-window-close");
     await opened.owner.page.close();
     const replacement = opened.owner.app.waitForEvent("window", { timeout: 10_000 })
       .then(page => ({ page }), () => ({ page: null }));
+    await stage("owner-window-reopen");
     const reused = await startPreviewDesktop({ executable: wrapper, proof: again, userData: paths.userData });
     expect(reused.reused).toBe(true); expect(reused.pid).toBe(opened.owner.app.process().pid);
     await reused.stop(); // Never kills the existing app or peer.
@@ -122,8 +138,10 @@ await import(${JSON.stringify(pathToFileURL(main).href)});`);
     expect(restored.page, "Verified reopen must create a missing preview window before acknowledging success").not.toBeNull();
     if (!restored.page) throw new Error("Preview window did not reopen");
     opened.owner.page = restored.page;
+    await stage("owner-window-restored");
     await restored.page.getByRole("status").filter({ hasText: "Collaboration preview · Owner" }).waitFor();
     expect(await restored.page.evaluate(() => window.operator.invoke("auth:status", {}))).toMatchObject({ signedIn: true, userId: manifest.members.owner.actorId });
+    await stage("owner-renderer-crash");
     expect(await opened.owner.app.evaluate(async ({ BrowserWindow }) => {
       const contents = BrowserWindow.getAllWindows()[0].webContents;
       const gone = new Promise<void>(resolve => contents.once("render-process-gone", () => resolve()));
@@ -131,25 +149,36 @@ await import(${JSON.stringify(pathToFileURL(main).href)});`);
       return contents.isCrashed();
     })).toBe(true);
     const afterCrash = issuePreviewPairLaunch({ manifest, role: "owner", platform: process.platform as "linux", arch: process.arch as "x64", sourceOrigin: "https://app.matrix-os.com" }, secret, Date.now());
+    await stage("owner-renderer-reopen");
     const recovered = await startPreviewDesktop({ executable: wrapper, proof: afterCrash, userData: paths.userData });
     expect(recovered.reused).toBe(true); await recovered.stop();
+    await stage("owner-renderer-state");
     expect(await opened.owner.app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].webContents.isCrashed()),
       "Verified reopen must recover a crashed renderer before acknowledging success").toBe(false);
     // Playwright's old Page retains its crash marker. Inspect the actual reloaded
     // renderer through Electron instead; preload, normal IPC and AuthService stay real.
+    await stage("owner-renderer-ready");
     await expect.poll(async () => opened.owner.app.evaluate(async ({ BrowserWindow }) =>
       BrowserWindow.getAllWindows()[0].webContents.executeJavaScript('document.body.textContent.includes("Collaboration preview")'))).toBe(true);
+    await stage("owner-renderer-auth");
     expect(await opened.owner.app.evaluate(async ({ BrowserWindow }) =>
       BrowserWindow.getAllWindows()[0].webContents.executeJavaScript('window.operator.invoke("auth:status", {})')))
       .toMatchObject({ signedIn: true, userId: manifest.members.owner.actorId });
+    await stage("owner-sign-out");
     await opened.owner.app.evaluate(async ({ BrowserWindow }) =>
       BrowserWindow.getAllWindows()[0].webContents.executeJavaScript('window.operator.invoke("auth:sign-out", {})'));
+    await stage("member-session-preserved");
     expect(await opened.member.page.evaluate(() => window.operator.invoke("auth:status", {}))).toMatchObject({ signedIn: true, userId: manifest.members.member.actorId });
+    await stage("normal-session-preserved");
     expect(await normalPage.evaluate(() => window.operator.invoke("auth:status", {}))).toMatchObject({ signedIn: true, userId: "user_normal_fixture", runtimeSlot: "primary" });
     expect(await opened.owner.app.evaluate(async ({ BrowserWindow }) =>
       BrowserWindow.getAllWindows()[0].webContents.executeJavaScript('window.operator.invoke("auth:status", {})'))).toMatchObject({ signedIn: false });
+    await stage("all-assertions-passed");
     console.info("[preview-pair-e2e] journey assertions passed");
   } finally {
+    await stage("fixture-teardown").catch((error: unknown) => {
+      console.warn("[preview-pair-e2e] checkpoint unavailable", error instanceof Error ? error.name : "UnknownError");
+    });
     const closed = await Promise.allSettled(applications.reverse().map(async app => {
       const pid = app.process().pid;
       console.info("[preview-pair-e2e] closing owned fixture", pid);
