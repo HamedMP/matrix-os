@@ -183,3 +183,32 @@ describe("bot provider instance", () => {
     expect((await again.getCatalog({ userId: OWNER } as never)).instances).toHaveLength(1);
   });
 });
+
+it("proposes routines and controls them through server-bound Bot identity",async()=>{
+ const proposal={name:"Fixture",prompt:"Read fixture",schedule:{kind:"interval",everyMs:60000},selection:{instanceId:"matrix_chatgpt_plan",model:"fixture-model"},authorizedEffects:["read"]};
+ const routines={propose:vi.fn(async()=>({interactionId:"in_fixture",status:"pending" as const})),list:vi.fn(async()=>[]),control:vi.fn(async()=>{throw new Error("Unexpected fixture control");})};
+ const tools=createBotToolDispatcher({homePath:home,routines});
+ const request=BotToolRequestSchema.parse({toolCallId:"routine_fixture",capability:"routine.propose",args:proposal});
+ expect((await tools.dispatch(binding,request,signal)).result.ok).toBe(true);expect(routines.propose).toHaveBeenCalledWith(binding,proposal);
+ const list=BotToolRequestSchema.parse({toolCallId:"routine_status_fixture",capability:"routine.control",args:{operation:"list"}});
+ await tools.dispatch(binding,list,signal);expect(routines.list).toHaveBeenCalledWith(binding.ownerId,binding.botId);
+ await expect(tools.dispatch({...binding,requestClass:"background"},request,signal)).rejects.toMatchObject({code:"not_granted"});
+ expect(BotToolRequestSchema.safeParse({...request,args:{...proposal,ownerId:"foreign"}}).success).toBe(false);
+});
+
+it.each(["routine.propose", "routine.control"] as const)("refuses %s on shared bindings before exposing or changing personal routines", async capability => {
+  const routines = { propose: vi.fn(async () => ({ interactionId: "in_fixture", status: "pending" as const })),
+    list: vi.fn(async () => []), control: vi.fn(async () => { throw new Error("Unexpected control"); }) };
+  const dispatcher = createBotToolDispatcher({ homePath: home, routines });
+  const group = { ...binding, group: { scopeId: "scope_company", actorId: "user_member", authEpoch: 1,
+    authorityGeneration: 1, authorityRuntimeId: "runtime_owner", sessionGeneration: "1" } };
+  const args = capability === "routine.propose"
+    ? { name: "Fixture", prompt: "Read fixture", schedule: { kind: "interval", everyMs: 60000 },
+      selection: { instanceId: "matrix_chatgpt_plan", model: "fixture-model" }, authorizedEffects: ["read"] }
+    : { operation: "list" };
+  const request = BotToolRequestSchema.parse({ toolCallId: "shared_routine_denied", capability, args });
+  await expect(dispatcher.dispatch(group, request, signal)).rejects.toEqual(new BotBrokerActionError("not_granted"));
+  expect(routines.propose).not.toHaveBeenCalled();
+  expect(routines.list).not.toHaveBeenCalled();
+  expect(routines.control).not.toHaveBeenCalled();
+});
