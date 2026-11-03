@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { execFileSync } from "node:child_process";
-import { expect, it } from "vitest";
+import { describe, expect, it } from "vitest";
 import { _electron, type ElectronApplication } from "playwright";
 import { issuePreviewPairLaunch, verifyPreviewPairLaunch } from "../../../packages/platform/src/preview-pair/launch-proof.js";
 import { previewPairManifestFixture } from "../../platform/preview-pair-test-support.js";
@@ -14,9 +14,12 @@ import { startPreviewDesktop, previewDesktopEnvironment } from "../../../scripts
 import { previewDesktopReady } from "../../../scripts/preview-pair/desktop-ready.js";
 
 const root = resolve(__dirname, "../../.."), main = join(root, "desktop/out/main/index.js");
-/** Required lane: never skip. Real Electron/main/preload/renderer/AuthService and
+/** The general lane does not build or run Electron. In the explicit native
+ * lane this suite is required: missing production artifacts must fail.
+ * Real Electron/main/preload/renderer/AuthService and
  * owned sessions, explicit synthetic Source/provider transport. No live Clerk,
  * provisioning, model call or real collaboration acceptance is implied. */
+describe.skipIf(process.env.MATRIX_DESKTOP_E2E_REQUIRED !== "1")("required preview-pair Electron journey", () => {
 it("isolates sessions, recovers missing/crashed preview windows and preserves the peer at sign-out", async () => {
   await readFile(main); // Missing production build is a required-lane failure.
   const sha = execFileSync("git", ["rev-parse", "HEAD"], { cwd: root, encoding: "utf8", timeout: 10_000 }).trim();
@@ -146,3 +149,4 @@ await import(${JSON.stringify(pathToFileURL(main).href)});`);
     if (originalHome === undefined) delete process.env.HOME; else process.env.HOME = originalHome; await rm(home, { recursive: true, force: true });
   }
 }, 90_000);
+});

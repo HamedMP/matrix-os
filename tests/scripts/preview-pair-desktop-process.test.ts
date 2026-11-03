@@ -15,7 +15,7 @@ it("does not inherit cloud/control tokens, development overrides or Node preload
   expect(value.HOME).toBe(parent); expect(value.XAUTHORITY).toBe("/owned/xauthority"); for (const key of ["GITHUB_TOKEN", "MATRIX_PLATFORM_SECRET", "NODE_OPTIONS", "OPERATOR_GATEWAY_URL", "ELECTRON_RENDERER_URL"]) expect(value).not.toHaveProperty(key);
 });
 async function executable(text: string) {
-  const path = join(parent, "fixture-app"); await writeFile(path, '#!/usr/bin/node\n' + text); await chmod(path, 0o755); return path;
+  const path = join(parent, "fixture-app"); await writeFile(path, '#!/usr/bin/env node\n' + text); await chmod(path, 0o755); return path;
 }
 it("starts and stops only its actual new child after the real loopback acknowledgement", async () => {
   const path = await executable(`const net=require('node:net'); const c=JSON.parse(process.env.MATRIX_PREVIEW_PAIR_CONTEXT).context;

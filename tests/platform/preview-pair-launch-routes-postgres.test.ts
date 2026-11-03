@@ -7,7 +7,8 @@ import { createPreviewPairService } from "../../packages/platform/src/preview-pa
 import { createPreviewPairRoutes } from "../../packages/platform/src/preview-pair/routes.js";
 import { requestPreviewPairStop } from "../../packages/platform/src/preview-pair/lifecycle.js";
 const secret = "s".repeat(40);
-describe("non-authorizing launch routes preserve actual Source ownership and revocation", () => {
+// Required by the real PostgreSQL collector; ordinary unit shards have no DB.
+describe.skipIf(!process.env.MATRIX_TEST_POSTGRES_URL)("non-authorizing launch routes preserve actual Source ownership and revocation", () => {
   let f: Awaited<ReturnType<typeof createSeededPreviewPair>>;
   beforeEach(async () => { f = await createSeededPreviewPair(); await readyPreviewPair(f); }, 30_000);
   afterEach(async () => { await f?.destroy(); });
