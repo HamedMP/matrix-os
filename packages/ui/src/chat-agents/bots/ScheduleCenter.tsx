@@ -2,18 +2,13 @@ import { useEffect, useRef, useState, type ReactNode } from "react";
 import type { BotRoutineCenterResponse, BotRoutineCenterQuery, BotRoutineDetailResponse, BotRoutineCenterItem } from "@matrix-os/contracts";
 import type { ChatAgentClient } from "../client.js";
 import { chatAgentButtonClass, chatAgentMutedStyle } from "../theme.js";
-import { InteractionCard } from "./InteractionCard.js";
-import { routineScheduleCopy, routineApprovalPreview, routineNextRun as nextRun, routineStatusLabel as statusLabel } from "./routine-presentation.js";
+import { routineScheduleCopy, routineNextRun as nextRun, routineStatusLabel as statusLabel } from "./routine-presentation.js";
 import { ScheduleEditForm } from "./ScheduleEditForm.js";
 
 const unavailable = "Schedules could not be loaded. Refresh and try again.";
-function timestamp(value: string | null) {
-  return value ? new Intl.DateTimeFormat("en", { dateStyle: "medium", timeStyle: "short" }).format(new Date(value)) : "None scheduled";
-}
-
 /** Owner-scoped API, same retained Chat navigation on every web/Electron shell. */
-export function ScheduleCenter({ client, onClose, onOpenBotChat, headerLeading }: {
-  client: ChatAgentClient; onClose(): void; onOpenBotChat?: (chatId: string) => void | Promise<void>; headerLeading?: ReactNode;
+export function ScheduleCenter({ client, onClose, onOpenBotChat, onNewSchedule, headerLeading }: {
+  client: ChatAgentClient; onClose(): void; onOpenBotChat?: (chatId: string) => void | Promise<void>; onNewSchedule?: (trigger: HTMLButtonElement) => void; headerLeading?: ReactNode;
 }) {
   const api = client.bots?.routines;
   const [data, setData] = useState<BotRoutineCenterResponse | null>(null);
@@ -134,11 +129,14 @@ export function ScheduleCenter({ client, onClose, onOpenBotChat, headerLeading }
   return <section aria-label="Schedules" className="flex min-h-0 min-w-0 flex-1 flex-col overflow-auto p-4 sm:p-6">
     <header className="flex flex-wrap items-start justify-between gap-3 border-b pb-4">
       <div className="flex min-w-0 items-start gap-2">{headerLeading}<div><h1 className="text-lg font-semibold">Schedules</h1><p className="text-sm" style={chatAgentMutedStyle}>Your tasks on this Computer. Times shown in {Intl.DateTimeFormat().resolvedOptions().timeZone}.</p></div></div>
-      <button type="button" className={chatAgentButtonClass} aria-label="Close schedules" onClick={onClose}>Close</button>
+      <div className="flex flex-wrap gap-2">
+        {onNewSchedule ? <button type="button" className={chatAgentButtonClass} disabled={pending} onClick={event => onNewSchedule(event.currentTarget)}>New schedule</button> : null}
+        <button type="button" className={chatAgentButtonClass} aria-label="Close schedules" onClick={onClose}>Close</button>
+      </div>
     </header>
     <div className="my-4 flex flex-wrap gap-2">
-      <button type="button" className={chatAgentButtonClass} aria-pressed={query.archived !== "true"} onClick={() => chooseFilter({})}>Current</button>
-      <button type="button" className={chatAgentButtonClass} aria-pressed={query.archived === "true"} onClick={() => chooseFilter({ archived: "true" })}>Archived</button>
+      <button type="button" className={chatAgentButtonClass} hidden={Boolean(detail)} aria-pressed={query.archived !== "true"} onClick={() => chooseFilter({})}>Current</button>
+      <button type="button" className={chatAgentButtonClass} hidden={Boolean(detail)} aria-pressed={query.archived === "true"} onClick={() => chooseFilter({ archived: "true" })}>Archived</button>
       <button type="button" className={chatAgentButtonClass} disabled={pending || loading} onClick={() => void act(refreshSelected, undefined, false)}>Refresh</button>
     </div>
     {error ? <p role="alert" className="mb-3 text-sm">{error}</p> : null}
@@ -149,31 +147,22 @@ export function ScheduleCenter({ client, onClose, onOpenBotChat, headerLeading }
         <button className={chatAgentButtonClass} type="button" disabled={pending} onClick={() => setArchiving(null)}>Keep schedule</button></div>
     </section> : null}
     {detail ? <section aria-label="Schedule details" className="mb-4 grid min-w-0 gap-3 rounded-xl border p-4">
-      <div className="flex flex-wrap justify-between gap-2"><h2 className="break-words font-semibold">{detail.routine.proposal.name}</h2><button type="button" className={chatAgentButtonClass} onClick={() => { detailIntent.current += 1; selectedRoutine.current = null; setDetail(null); setEditing(false); }}>Close details</button></div>
+      <div className="flex flex-wrap justify-between gap-2"><h2 className="break-words font-semibold">{detail.routine.proposal.name}</h2><button type="button" className={chatAgentButtonClass} onClick={() => { detailIntent.current += 1; selectedRoutine.current = null; setDetail(null); setEditing(false); }}>Back to schedules</button></div>
       <p className="whitespace-pre-wrap break-words text-sm">{detail.routine.proposal.prompt}</p>
-      <p className="text-sm">{statusLabel(detail.routine)} · Next run: {nextRun(detail.routine)}</p>
+      <dl className="grid min-w-0 gap-3 text-sm sm:grid-cols-2">
+        <div><dt style={chatAgentMutedStyle}>Status</dt><dd>{statusLabel(detail.routine)}</dd></div>
+        <div><dt style={chatAgentMutedStyle}>Next run</dt><dd className="break-words">{nextRun(detail.routine)}</dd></div>
+        <div><dt style={chatAgentMutedStyle}>Schedule</dt><dd>{routineScheduleCopy(detail.routine.proposal.schedule).frequency}</dd><dd>{routineScheduleCopy(detail.routine.proposal.schedule).timezone}</dd></div>
+        <div><dt style={chatAgentMutedStyle}>Runs in</dt><dd className="break-words">{onOpenBotChat?<button type="button" className="underline underline-offset-2" aria-label="Open task Chat" disabled={pending} onClick={()=>void act(async()=>{await onOpenBotChat(detail.routine.chatId);},onClose,false)}>{names[detail.routine.botId]??"Private Bot"}</button>:names[detail.routine.botId]??"Private Bot"} · {detail.routine.computerId ?? "Computer unavailable"}</dd></div>
+      </dl>
       {rowButtons(detail.routine)}
       <div className="flex flex-wrap gap-2">
-        {onOpenBotChat && detail.routine.targetAvailable ? <button className={chatAgentButtonClass} type="button" disabled={pending} onClick={() => void act(async () => { await onOpenBotChat(detail.routine.chatId); }, onClose, false)}>Open Bot Chat</button> : null}
         {detail.routine.status !== "archived" ? <button type="button" className={chatAgentButtonClass} disabled={pending || !detail.routine.targetAvailable || !detail.routine.sourceAvailable} onClick={() => setEditing(true)}>Edit schedule</button> : null}
       </div>
       {editing && api ? <ScheduleEditForm key={detail.routine.routineId} routine={detail.routine} api={api} botClient={client.bots!} agentName={names[detail.routine.botId]} pendingReadRevision={listRevision} getPendingReadSequence={() => reads.current} pendingInteractions={data?.pending ?? []} onRefreshRequired={refreshCommitted} onChanged={() => { detailIntent.current += 1; selectedRoutine.current = null; setEditing(false); setDetail(null); }}/>: null}
-      <h3 className="mt-2 font-semibold">Recent runs</h3>
-      {!detail.history.length ? <p className="text-sm">No runs yet.</p> : <ol className="grid gap-2">{detail.history.map(fire => <li key={fire.fireId} className="rounded-lg border p-3 text-sm">
-        <p>{timestamp(fire.scheduledFor)} · {fire.status} · {fire.attempts} attempt{fire.attempts === 1 ? "" : "s"}</p>
-        {fire.failureCode ? <p>Execution did not complete. Open Bot Chat for details.</p> : null}
-      </li>)}</ol>}
     </section> : null}
-    {data && !loading ? <>
-      {query.archived !== "true" && data.pending.length ? <section aria-label="Awaiting your approval" className="mb-4 grid gap-3"><h2 className="font-semibold">Awaiting your approval</h2>
-        {data.pending.map(item => {
-          const preview = item.payload?.kind === "approval" ? routineApprovalPreview(item.payload.preview) : null;
-          const target = preview?.source.routineId ? data.items.find(row => row.routineId === preview.source.routineId) : undefined;
-          const revision = preview?.source.routineId ? target?.targetAvailable && target.sourceAvailable && !target.requiresReview ? target.revision : null : undefined;
-          return <InteractionCard key={item.interactionId} interaction={item} agentName={names[item.agentId]} actionsAvailable={!pending} currentRoutineRevision={revision}
-            onResolve={input => client.bots!.resolve(item.chatId, item.interactionId, input)} onResolved={() => void load()}/>;
-        })}</section> : null}
-      {!data.items.length ? <div className="rounded-xl border p-6"><h2 className="font-semibold">{query.archived === "true" ? "No archived schedules" : "No schedules yet"}</h2><p className="mt-2 text-sm" style={chatAgentMutedStyle}>Ask a private Bot Chat to schedule a task, then review and approve it here or in Chat.</p></div> : <ul className="grid min-w-0 gap-3">
+    {data && !loading && !detail ? <>
+      {!data.items.length ? <div className="rounded-xl border p-6"><h2 className="font-semibold">{query.archived === "true" ? "No archived schedules" : "No schedules yet"}</h2><p className="mt-2 text-sm" style={chatAgentMutedStyle}>Ask a private Bot Chat to schedule a task, then review and approve it in Chat.</p></div> : <ul className="grid min-w-0 gap-3">
         {data.items.map(row => { const copy = routineScheduleCopy(row.proposal.schedule); return <li key={row.routineId} className="grid min-w-0 gap-3 rounded-xl border p-4">
           <div className="flex flex-wrap items-start justify-between gap-2"><button type="button" className="text-left font-semibold" aria-label={`View ${row.proposal.name}`} disabled={pending} onClick={() => void view(row)}>{row.proposal.name}</button><span className="rounded-full border px-2 py-1 text-xs">{statusLabel(row)}</span></div>
           <p className="whitespace-pre-wrap break-words text-sm">{row.proposal.prompt}</p>

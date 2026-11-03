@@ -1,4 +1,4 @@
-import { BotRoutineProposalSchema, type BotRoutineSchedule, type BotRoutineCenterItem } from "@matrix-os/contracts";
+import { BotRoutineProposalSchema, type BotRoutineSchedule, type BotRoutineCenterItem, type ChatAgent } from "@matrix-os/contracts";
 import { z } from "zod/v4";
 
 const source = z.object({ computerId: z.string().min(1).max(128), accountId: z.string().min(1).max(128),
@@ -68,4 +68,9 @@ export function routineScheduleCopy(schedule: BotRoutineSchedule): { frequency: 
     else if (/^\*\/[1-9]\d?$/.test(minute!) && 60 % Number(minute!.slice(2)) === 0) frequency = `Every ${Number(minute!.slice(2))} minutes`;
   }
   return { frequency, timezone: schedule.tz, next: "Next matching time after approval" };
+}
+
+/** Definition capability only; model/source/owner approval is still checked by the server. */
+export function isSchedulingBot(agent: Pick<ChatAgent, "archived" | "recipeRef">): boolean {
+  return !agent.archived && Boolean(agent.recipeRef);
 }
