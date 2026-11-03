@@ -81,7 +81,10 @@ it("keeps a newly signed-in role binding through the real local-store schema and
   const dir = await mkdtemp(join(tmpdir(), "eng418-auth-restart-"));
   try {
     const first = await fixture(false, undefined, dir);
-    await first.auth.init(); await first.auth.startDeviceFlow("sign-in"); await settle();
+    await first.auth.init(); await first.auth.startDeviceFlow("sign-in");
+    // Authorization completes after both credential and profile persistence.
+    // Observing in-memory sign-in after a fixed number of ticks can race disk I/O.
+    await vi.waitFor(() => expect(first.auth.poll()).toMatchObject({ status: "authorized" }));
     expect(first.auth.getStatus().signedIn).toBe(true);
     const second = await fixture(true, undefined, dir); await second.auth.init();
     expect(second.auth.getStatus()).toMatchObject({ signedIn: true, runtimeSlot: first.context.runtimeSlot });
