@@ -1,4 +1,5 @@
 import { z } from "zod/v4";
+import { canonicalEncodedByteLength } from "#canonical-chat-primitives";
 const text = (max: number) => z.string().trim().min(1).max(max);
 const timezone = text(80).refine(value => {
   try {
@@ -35,7 +36,8 @@ export const BotRoutineProposalSchema = z.object({
     model: text(128)
   }).strict(),
   authorizedEffects: z.array(z.enum(["read", "write", "send"])).min(1).max(3).refine(effects => new Set(effects).size === effects.length)
-}).strict();
+}).strict().refine(proposal => canonicalEncodedByteLength(JSON.stringify(proposal)) <= 20 * 1024,
+  { message: "Routine proposal exceeds the escaped approval payload budget" });
 export type BotRoutineProposal = z.infer<typeof BotRoutineProposalSchema>;
 export type BotRoutineSchedule = z.infer<typeof BotRoutineScheduleSchema>;
 export type BotRoutineStatus = "active" | "paused" | "archived";
