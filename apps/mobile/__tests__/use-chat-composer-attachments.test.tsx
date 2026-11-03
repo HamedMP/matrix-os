@@ -7,6 +7,7 @@ import { MAX_MESSAGE_ATTACHMENTS, type ComposerAttachment } from "../lib/chat-at
 import { useChatComposer } from "../lib/use-chat-composer";
 
 import { disposeTestQueryClient } from "./query-test-cleanup";
+import { catalogOf, engineInstance } from "./model-test-catalog";
 
 // These tests run the real send mutation against a real QueryClient; only the
 // network requests, auth, and the chat session's bind are replaced.
@@ -57,6 +58,7 @@ type ComposerProps = Parameters<typeof useChatComposer>[0];
 
 const newChat: ComposerProps = {
   scope: "user_1:amin:primary", activeChatId: null, detail: null, selection, turnModes, projectId: null,
+  catalog: catalogOf(engineInstance(selection.instanceId, "codex", "Test", [[selection.model, "Test"]])),
 };
 
 /** A well-formed attachment id for a test attachment, from its short name. */

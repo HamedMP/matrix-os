@@ -1,4 +1,5 @@
 import { readFile } from "node:fs/promises";
+import { createHash } from "node:crypto";
 import { Kysely, sql } from "kysely";
 import { KyselyPGlite } from "kysely-pglite";
 import { describe, expect, it } from "vitest";
@@ -8,6 +9,7 @@ import { createRealPlatformCollaborationTestDatabase } from "./collaboration-tes
 import { PLATFORM_MIGRATION_STEPS } from "../../packages/platform/src/database/migrate.js";
 import { PLATFORM_SCHEMA_REVISION } from "../../packages/platform/src/database/migration-revision.js";
 import { runPlatformStartupMigrations } from "../../packages/platform/src/database/run-migrations.js";
+import { bootstrapSlackDatabase, type SlackDatabase } from "../../packages/platform/src/slack/database.js";
 
 describe("versioned platform migration transaction", () => {
   it.each([
@@ -223,4 +225,77 @@ it.each([false, ...(process.env.MATRIX_TEST_POSTGRES_URL ? [true] : [])])("upgra
     if (real) await real.destroy();
     else await db.destroy();
   }
+});
+
+describe("Slack migration revision ownership", () => {
+  it("skips repeated Slack DDL on restart and retains the installed owner record", async () => {
+    const instance = await KyselyPGlite.create();
+    let slackDdl = 0;
+    const db = new Kysely<SlackDatabase>({
+      dialect: instance.dialect,
+      log: (event) => {
+        if (event.level === "query" && /^\s*(CREATE|ALTER)\b/i.test(event.query.sql) && event.query.sql.includes("slack_")) slackDdl++;
+      },
+    });
+    try {
+      await bootstrapSlackDatabase(db);
+      const initialDdl = slackDdl;
+      expect(initialDdl).toBeGreaterThan(0);
+      await db.insertInto("slack_installations").values({
+        app_id: "A_MIGRATION", team_id: "T_MIGRATION", organization_id: "org_migration",
+        installed_by: "user_migration", bot_user_id: "UBOT_MIGRATION",
+        encrypted_bot_token: "synthetic-encrypted-token", generation: 1,
+        state: "active", updated_at: new Date("2026-10-01T00:00:00Z"),
+      }).execute();
+      await bootstrapSlackDatabase(db);
+      expect(slackDdl).toBe(initialDdl);
+      expect(await db.selectFrom("slack_installations").select(["installed_by", "encrypted_bot_token"]).executeTakeFirstOrThrow())
+        .toEqual({ installed_by: "user_migration", encrypted_bot_token: "synthetic-encrypted-token" });
+    } finally { await db.destroy(); }
+  });
+
+  it("owns a source-pinned Slack revision independently of newer core and Slack generations", async () => {
+    const instance = await KyselyPGlite.create();
+    let slackDdl = 0;
+    const db = new Kysely<SlackDatabase>({
+      dialect: instance.dialect,
+      log: (event) => {
+        if (event.level === "query" && /^\s*(CREATE|ALTER)\b/i.test(event.query.sql) && event.query.sql.includes("slack_")) slackDdl++;
+      },
+    });
+    try {
+      const core = { generation: PLATFORM_SCHEMA_REVISION.generation + 1, fingerprint: "retained-newer-core" };
+      await runPlatformMigration(db, async () => undefined, { revision: core });
+      await bootstrapSlackDatabase(db);
+      const source = await readFile(new URL("../../packages/platform/src/slack/database.ts", import.meta.url), "utf8");
+      const callback = "  await runPlatformMigration(db, async (trx) => {";
+      const parts = source.split(callback);
+      expect(parts).toHaveLength(2);
+      const end = parts[1]!.lastIndexOf("\n  }");
+      expect(end).toBeGreaterThan(0);
+      const fingerprint = createHash("sha256").update(parts[1]!.slice(0, end)).digest("hex");
+      expect((await sql`SELECT scope, generation, fingerprint FROM platform_schema_revisions ORDER BY scope`.execute(db)).rows)
+        .toEqual([{ scope: "core", ...core }, { scope: "slack", generation: 1, fingerprint }]);
+      const initialDdl = slackDdl;
+      expect(initialDdl).toBeGreaterThan(0);
+      await sql`UPDATE platform_schema_revisions SET generation = 2, fingerprint = 'retained-newer-slack' WHERE scope = 'slack'`.execute(db);
+      await bootstrapSlackDatabase(db);
+      expect(slackDdl).toBe(initialDdl);
+      expect((await sql`SELECT scope, generation, fingerprint FROM platform_schema_revisions ORDER BY scope`.execute(db)).rows)
+        .toEqual([{ scope: "core", ...core }, { scope: "slack", generation: 2, fingerprint: "retained-newer-slack" }]);
+    } finally { await db.destroy(); }
+  });
+
+  it("rolls back failed Slack DDL without recording a completed revision", async () => {
+    const instance = await KyselyPGlite.create();
+    const db = new Kysely<SlackDatabase>({ dialect: instance.dialect });
+    try {
+      await runPlatformMigration(db, async () => undefined, { revision: { generation: 1, fingerprint: "existing-core" } });
+      await sql`CREATE TABLE slack_installations (app_id TEXT PRIMARY KEY)`.execute(db);
+      await expect(bootstrapSlackDatabase(db)).rejects.toThrow();
+      expect((await sql`SELECT scope FROM platform_schema_revisions WHERE scope = 'slack'`.execute(db)).rows).toEqual([]);
+      expect((await sql<{ name: string | null }>`SELECT to_regclass('slack_oauth_states')::text AS name`.execute(db)).rows[0]?.name).toBeNull();
+      expect((await sql<{ name: string | null }>`SELECT to_regclass('slack_installations')::text AS name`.execute(db)).rows[0]?.name).toBe("slack_installations");
+    } finally { await db.destroy(); }
+  });
 });

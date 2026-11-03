@@ -114,6 +114,13 @@ export const SpeechActivationRequestSchema = z.object({
   message: 'Specify either handle or continuation cursor',
 });
 
+export const PreviewRuntimeAccessActivationRequestSchema = z.object({
+  ownerId: ClerkUserIdSchema,
+  machineId: z.uuid(),
+  runtimeSlot: PreviewRuntimeSlotSchema,
+  expectedRuntimeTokenEpoch: z.number().int().min(1).max(2_147_483_647),
+}).strict();
+
 export type ProvisionRequest = z.infer<typeof ProvisionRequestSchema>;
 export type PreviewProvisionInput = z.input<typeof PreviewProvisionRequestSchema>;
 export type PreviewProvisionRequest = z.output<typeof PreviewProvisionRequestSchema>;
@@ -122,3 +129,4 @@ export type RecoverRequest = z.infer<typeof RecoverRequestSchema>;
 export type ResizeMachineRequest = z.infer<typeof ResizeMachineRequestSchema>;
 export type DeployRequest = z.infer<typeof DeployRequestSchema>;
 export type SpeechActivationRequest = z.infer<typeof SpeechActivationRequestSchema>;
+export type PreviewRuntimeAccessActivationRequest = z.infer<typeof PreviewRuntimeAccessActivationRequestSchema>;

@@ -194,6 +194,21 @@ describe("shared Chat durable controls", () => {
 
   it("projects only unresolved approvals from runs claimed by the selected shared scope", async () => {
     const run = await activeRunWithApproval("approval_shared_projection");
+    await fixture.db.insertInto("chat_run_events").values(Array.from({ length: 500 }, (_, index) => {
+      const sequence = index + 2;
+      const id = `activity_shared_projection_filler_${sequence}`;
+      return {
+        id,
+        chat_id: collaborationIds.chat,
+        run_id: run.id,
+        run_seq: sequence,
+        event: JSON.stringify({
+          id, chatId: collaborationIds.chat, runId: run.id, sequence,
+          type: "run.status", status: "running", occurredAt: now,
+        }),
+        occurred_at: now,
+      };
+    })).execute();
     await expect(repository.listSharedPendingApprovals(
       owner, collaborationIds.chat, collaborationIds.scope,
     )).resolves.toEqual([expect.objectContaining({
@@ -207,12 +222,12 @@ describe("shared Chat durable controls", () => {
       id: "activity_approval_shared_projection_resolved",
       chat_id: collaborationIds.chat,
       run_id: run.id,
-      run_seq: 2,
+      run_seq: 502,
       event: JSON.stringify({
         id: "activity_approval_shared_projection_resolved",
         chatId: collaborationIds.chat,
         runId: run.id,
-        sequence: 2,
+        sequence: 502,
         type: "approval.resolved",
         approvalId: "approval_shared_projection",
         decision: "approve",

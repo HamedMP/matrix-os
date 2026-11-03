@@ -193,11 +193,18 @@ function sourceForHarness(
     return candidates.find((source) => source.id === "owner_openai_profile") ?? null;
   }
   if (harness === "claude") {
-    return candidates.find((source) => source.id === canonical.active.accessSourceId
-      && source.vendor === "anthropic")
-      ?? candidates.find((source) => source.id === "owner_anthropic_profile")
-      ?? candidates.find((source) => source.id === "owner_anthropic_key")
-      ?? candidates.find((source) => source.fundingKind === "matrix_included" && source.vendor === "anthropic")
+    // Native Claude cannot execute Matrix-funded routes. Prefer its own CLI
+    // profile over the SDK profile, which can describe a different login.
+    const ownerCandidates = candidates.filter((source) => source.vendor === "anthropic"
+      && (source.fundingKind === "owner_account" || source.fundingKind === "owner_api_key"));
+    return ownerCandidates.find((source) => source.id === canonical.active.accessSourceId
+      && source.id !== "owner_anthropic_profile")
+      ?? ownerCandidates.find((source) => source.id === "owner_claude_profile"
+        && canonical.instances.some((instance) => instance.driverId === "claude_code"
+          && instance.accessSourceId === source.id && instance.accountId === "owner_claude_profile"))
+      ?? ownerCandidates.find((source) => source.id === canonical.active.accessSourceId)
+      ?? ownerCandidates.find((source) => source.id === "owner_anthropic_profile")
+      ?? ownerCandidates.find((source) => source.id === "owner_anthropic_key")
       ?? null;
   }
   const portableCandidates = harness === "pi" || harness === "opencode"

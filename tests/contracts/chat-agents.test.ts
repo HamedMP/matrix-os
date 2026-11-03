@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  ChatAgentListResponseSchema,
   CanonicalChatResourceReferenceSchema,
   CanonicalChatRunSchema,
   CanonicalCreateChatTurnRequestSchema,
@@ -74,4 +75,16 @@ describe("Chat Agent mention admission contracts", () => {
       parts: [{ type: "text", text: "Make it shorter" }],
     }).success).toBe(true);
   });
+});
+
+
+it("bounds server-only recovery projections and rejects client provenance in a status item", () => {
+  const item = { agentId: "bot_recover01", baseRevision: 1 };
+  const library = { enabled: true, agents: [], managedCustomRecoveries: [item] };
+  expect(ChatAgentListResponseSchema.parse(library)).toEqual(library);
+  for (const invalid of [{ ...item, baseRevision: 0 }, { ...item, baseRevision: Number.MAX_SAFE_INTEGER + 1 },
+    { ...item, payloadHash: "a".repeat(64) }, { ...item, ownerId: "foreign" }, { ...item, agentId: "../private" }]) {
+    expect(ChatAgentListResponseSchema.safeParse({ ...library, managedCustomRecoveries: [invalid] }).success).toBe(false);
+  }
+  expect(ChatAgentListResponseSchema.safeParse({ ...library, managedCustomRecoveries: Array(101).fill(item) }).success).toBe(false);
 });

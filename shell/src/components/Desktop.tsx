@@ -35,6 +35,8 @@ import { gatewayAssetUrl, getGatewayUrl } from "@/lib/gateway";
 import { RuntimeIdentityBanner } from "./RuntimeIdentityBanner";
 import { ShellNotificationStack } from "./ShellNotificationStack";
 import { DesktopOnboardingWidget } from "./onboarding-widget/DesktopOnboardingWidget";
+import { useGettingStartedDestination } from "./onboarding/use-getting-started-destination";
+import { ShellGetStartedGate } from "./get-started/ShellGetStartedGate";
 import { nameToSlug } from "@/lib/utils";
 import { iconUrlForSlug } from "@/lib/app-launch";
 import { versionedIconUrl } from "@/lib/icon-url";
@@ -825,9 +827,7 @@ export function Desktop({ launchAppPath, sharedTerminalScopeId, onOpenCommandPal
     setTaskBoardOpen(false);
   }, []);
 
-  const openGettingStartedWork = useCallback(() => {
-    openAppOrFocus("__chat__", "Chat");
-  }, [openAppOrFocus]);
+  const openGettingStartedWork = useGettingStartedDestination(chat, openAppOrFocus);
 
   const canvasToolbarChild = desktopMode === "canvas" ? (
     <CanvasToolbar
@@ -1365,7 +1365,9 @@ export function Desktop({ launchAppPath, sharedTerminalScopeId, onOpenCommandPal
         </div>
       </div>
 
-      <DesktopOnboardingWidget accountId={cacheScope?.userId ?? null} chat={chat} openApp={openAppOrFocus} onOpenSettings={openWebSettings} />
+      <ShellGetStartedGate>
+        <DesktopOnboardingWidget accountId={cacheScope?.userId ?? null} chat={chat} openApp={openAppOrFocus} onOpenSettings={openWebSettings} />
+      </ShellGetStartedGate>
       <Settings
         open={settingsOpen}
         onOpenChange={setSettingsOpen}

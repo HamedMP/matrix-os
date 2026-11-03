@@ -3,6 +3,8 @@ import { requestAppLaunchToken } from "./app-launch";
 import { resolveLaunchUrl } from "./origin-policy";
 
 const APP_PATH = "/apps/browser-lab/";
+// Host and Desktop clocks can differ; server-side one-use expiry remains authoritative.
+export const BROWSER_CLOCK_SKEW_MS = 5_000;
 const ROUTE_HANDLE = /^[a-z0-9][a-z0-9-]{1,62}$/;
 const CAPABILITY = /^(?:([a-z0-9][a-z0-9-]{1,62})\.)?[A-Za-z0-9_-]{43}$/;
 const unavailable = () => new Error("Browser session unavailable");
@@ -58,7 +60,7 @@ export async function renewBrowserProductSession(options: {
     });
     current();
     const resolved = resolveLaunchUrl(launch.launchUrl, base.origin);
-    if (!resolved || launch.expiresAt > Date.now() + 60_000) throw unavailable();
+    if (!resolved || launch.expiresAt > Date.now() + 60_000 + BROWSER_CLOCK_SKEW_MS) throw unavailable();
     const url = new URL(resolved), token = url.searchParams.get("session"), capability = token?.match(CAPABILITY);
     if (url.pathname !== APP_PATH || url.hash || url.searchParams.size !== 1 || !capability) throw unavailable();
     const response = await options.fetchFn(url.toString(), { method: "GET", redirect: "manual", credentials: "omit", signal });

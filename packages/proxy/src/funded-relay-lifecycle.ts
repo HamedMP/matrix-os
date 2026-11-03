@@ -1,9 +1,27 @@
 /** Bound acknowledgement and shutdown waits even when original cancellation
  * never confirms. A timeout never establishes terminal evidence. */
-export function waitForRelayWork(work: Promise<unknown>, timeoutMs: number): Promise<void> {
+export const RELAY_SHUTDOWN_TIMEOUT_MS = 9_000;
+export const RELAY_SHUTDOWN_FORCE_EXIT_MS = 9_500;
+
+export function waitForRelayWork(work: Promise<unknown>, limit: number | AbortSignal, shutdownSignal?: AbortSignal): Promise<boolean> {
   return new Promise((resolve) => {
-    const timer = setTimeout(resolve, timeoutMs);
-    void work.then(() => { clearTimeout(timer); resolve(); }, () => { clearTimeout(timer); resolve(); });
+    const signal = typeof limit === "number" ? shutdownSignal : limit;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let settled = false;
+    const finish = (completed: boolean) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      signal?.removeEventListener("abort", aborted);
+      resolve(completed && !signal?.aborted);
+    };
+    const aborted = () => finish(false);
+    void work.then((result) => finish(result !== false), () => finish(false));
+    if (signal?.aborted) finish(false);
+    else {
+      signal?.addEventListener("abort", aborted, { once: true });
+      if (typeof limit === "number") timer = setTimeout(() => finish(false), limit);
+    }
   });
 }
 
@@ -17,11 +35,12 @@ export function createRelayRequestDrain() {
       active.get(controller)?.resolve();
       return active.delete(controller);
     },
-    async close(timeoutMs: number) {
+    async close(timeoutMs: number, shutdownSignal?: AbortSignal): Promise<boolean> {
       const completions = [...active.values()].map((item) => item.promise);
       for (const controller of active.keys()) controller.abort("relay shutting down");
-      await waitForRelayWork(Promise.all(completions), timeoutMs);
+      const completed = await waitForRelayWork(Promise.all(completions), timeoutMs, shutdownSignal);
       active.clear();
+      return completed;
     },
   };
 }

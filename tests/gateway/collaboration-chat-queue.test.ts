@@ -94,6 +94,35 @@ describe("shared Chat canonical queue", () => {
       .execute()).toHaveLength(1);
   });
 
+  it("pins a shared project root through claim and rejects roots from another Chat project", async () => {
+    const executionRoot = { kind: "project" as const, projectId: "project_brain" };
+    const executionRootFingerprint = "a".repeat(64);
+    await fixture.db.updateTable("chats").set({ project_id: executionRoot.projectId }).where("id", "=", collaborationIds.chat).execute();
+    await expect(repository.enqueueSharedQueuedTurn(owner, {
+      ...request(92, collaborationActors.editor), executionRoot: { ...executionRoot, projectId: "project_private" }, executionRootFingerprint,
+    })).rejects.toMatchObject({ code: "unavailable" });
+    await expect(repository.enqueueSharedQueuedTurn(owner, {
+      ...request(93, collaborationActors.editor), executionRoot: { kind: "bot_workspace", botId: "bot_aaaaaaaa" }, executionRootFingerprint,
+    })).rejects.toMatchObject({ code: "unavailable" });
+    await repository.enqueueSharedQueuedTurn(owner, { ...request(94, collaborationActors.editor), executionRoot, executionRootFingerprint });
+    const claimed = await repository.claimNextQueuedTurn(owner, {
+      chatId: collaborationIds.chat, turnId: "cturn_root", runId: "run_root", messageId: "msg_root", claimedAt: now,
+    });
+    expect(claimed?.run).toMatchObject({ executionRoot, executionRootFingerprint });
+  });
+
+  it("terminalizes an accepted shared root when the Chat moves to a different Project", async () => {
+    await fixture.db.updateTable("chats").set({ project_id: "project_brain" }).where("id", "=", collaborationIds.chat).execute();
+    await repository.enqueueSharedQueuedTurn(owner, {
+      ...request(95, collaborationActors.editor), executionRoot: { kind: "project", projectId: "project_brain" }, executionRootFingerprint: "a".repeat(64),
+    });
+    await fixture.db.updateTable("chats").set({ project_id: "project_changed" }).where("id", "=", collaborationIds.chat).execute();
+    await expect(repository.claimNextQueuedTurn(owner, {
+      chatId: collaborationIds.chat, turnId: "cturn_changed_root", runId: "run_changed_root", messageId: "msg_changed_root", claimedAt: now,
+    })).resolves.toBeNull();
+    expect((await repository.listSharedQueuedTurns(owner, collaborationIds.chat))[0]?.state).toBe("unavailable");
+  });
+
   it("scopes request idempotency to the actor and rejects payload substitution", async () => {
     const first = await repository.enqueueSharedQueuedTurn(owner, request(10, collaborationActors.owner));
     const replay = await repository.enqueueSharedQueuedTurn(owner, request(10, collaborationActors.owner));

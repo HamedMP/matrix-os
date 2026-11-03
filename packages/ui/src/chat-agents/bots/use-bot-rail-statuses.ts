@@ -24,15 +24,16 @@ export function useBotRailVisibility(visible: boolean): boolean {
 /** Read-only, bounded projection for every Chat rail. The client fences owner/runtime;
  * scope fences refresh completions; same-Bot evidence survives navigation while
  * shared reads coalesce with existing attention summaries. */
-export function useBotRailStatuses(client: ChatAgentClient | undefined, agents: readonly ChatAgent[], scope?: string, active = true): Record<string, BotRailStatus> {
+export function useBotRailStatuses(client: ChatAgentClient | undefined, agents: readonly ChatAgent[], scope?: string, active = true): Partial<Record<string, BotRailStatus>> {
   const visible = useBotRailVisibility(active);
-  const key = JSON.stringify(agents.slice(0, MAX_AGENTS).map(agent => ({ id: agent.id, recipe: Boolean(agent.recipeRef), identity: recipeIdentity(agent) })));
+  const key = JSON.stringify(agents.slice(0, MAX_AGENTS).filter(agent => agent.recipeRef)
+    .map(agent => ({ id: agent.id, identity: recipeIdentity(agent) })));
   const [snapshot, setSnapshot] = useState<Snapshot | null>(null);
   const activation = useRef(0);
   useEffect(() => {
-    if (!client?.bots || !visible) return;
+    if (!client?.bots || !visible || key === "[]") return;
     const refreshToken = `rail-scope:${scope ?? ""}:activation:${++activation.current}`;
-    const entries = JSON.parse(key) as { id: string; recipe: boolean; identity: string }[];
+    const entries = JSON.parse(key) as { id: string; identity: string }[];
     const reads = botSummaryReads(client);
     let current = true;
     const isCurrent = () => current && documentVisible();
@@ -45,10 +46,7 @@ export function useBotRailStatuses(client: ChatAgentClient | undefined, agents: 
       try {
         await Promise.all(Array.from({length: Math.min(4, entries.length)}, async () => {
           while (isCurrent() && index < entries.length) {
-            const { id: agentId, recipe } = entries[index++]!;
-            // Custom Bots have dedicated Chats but no recipe task/interaction API.
-            // Keep their indicator neutral rather than inventing execution evidence.
-            if (!recipe) { statuses[agentId] = BOT_RAIL_UNAVAILABLE; continue; }
+            const { id: agentId } = entries[index++]!;
             try {
               const chatId = await reads.directChat(agentId, token);
               if (!isCurrent()) return;
@@ -74,10 +72,13 @@ export function useBotRailStatuses(client: ChatAgentClient | undefined, agents: 
     return () => { current = false; window.clearInterval(timer); window.removeEventListener("focus", focus); };
   }, [client, key, scope, visible]);
   const available = visible && client?.bots;
-  return Object.fromEntries(agents.map((agent, index) => {
-    if (index >= MAX_AGENTS) return [agent.id, BOT_RAIL_UNAVAILABLE];
+  return Object.fromEntries(agents.flatMap((agent, index) => {
+    // Custom Bots have dedicated Chats but no recipe task or interaction API.
+    // Omit status presentation instead of implying a request failed.
+    if (!agent.recipeRef) return [];
+    if (index >= MAX_AGENTS) return [[agent.id, BOT_RAIL_UNAVAILABLE] as const];
     const matching = available && snapshot?.client === client && snapshot.identities[agent.id] === recipeIdentity(agent);
-    return [agent.id, matching ? snapshot.statuses[agent.id] ?? BOT_RAIL_UNAVAILABLE
-      : available ? BOT_RAIL_LOADING : BOT_RAIL_UNAVAILABLE];
+    return [[agent.id, matching ? snapshot.statuses[agent.id] ?? BOT_RAIL_UNAVAILABLE
+      : available ? BOT_RAIL_LOADING : BOT_RAIL_UNAVAILABLE] as const];
   }));
 }

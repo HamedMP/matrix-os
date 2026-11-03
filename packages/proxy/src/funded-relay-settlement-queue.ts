@@ -1,4 +1,5 @@
 import type { FundedAiFinalizationRequest, FundedAiTerminalOutcomeRequest } from "@matrix-os/contracts";
+import { RELAY_SHUTDOWN_TIMEOUT_MS, waitForRelayWork } from "./funded-relay-lifecycle.js";
 
 interface PendingSettlement {
   task: FundedAiFinalizationRequest | FundedAiTerminalOutcomeRequest;
@@ -12,6 +13,11 @@ export class SettlementRetryQueue {
   private readonly timer: ReturnType<typeof setInterval>;
   private flushing: Promise<void> | null = null;
   private closing = false;
+  private closed = false;
+  private closeSignal?: AbortSignal;
+  private closeResult?: Promise<boolean>;
+  private shutdownWork?: Map<string, PendingSettlement>;
+  private shutdownOverflow = false;
 
   constructor(private readonly options: {
     capacity: number;
@@ -67,6 +73,14 @@ export class SettlementRetryQueue {
       acknowledged: Promise.withResolvers<boolean>(),
     };
     this.pending.set(task.reservationId, item);
+    if (this.shutdownWork) {
+      // Retain a closing-period rejection after it leaves pending, while letting
+      // a newer exact settlement supersede its terminal task. The extra window
+      // remains bounded by the existing queue capacity.
+      if (this.shutdownWork.has(task.reservationId) || this.shutdownWork.size < this.options.capacity) {
+        this.shutdownWork.set(task.reservationId, item);
+      } else this.shutdownOverflow = true;
+    }
     void this.flush();
     return item.acknowledged.promise;
   }
@@ -92,17 +106,38 @@ export class SettlementRetryQueue {
     }
   }
 
-  async close(): Promise<void> {
-    if (this.closing) return;
+  beginShutdown(signal: AbortSignal): void {
+    if (this.closeSignal) return;
+    this.closeSignal = signal;
+    this.shutdownWork = new Map(this.pending);
+  }
+
+  close(shutdownSignal?: AbortSignal): Promise<boolean> {
+    if (this.closeResult) return this.closeResult;
+    const signal = this.closeSignal ?? shutdownSignal ?? AbortSignal.timeout(RELAY_SHUTDOWN_TIMEOUT_MS);
+    this.beginShutdown(signal);
     this.closing = true;
     clearInterval(this.timer);
-    await this.flush();
-    if (this.pending.size > 0) await this.flush();
-    for (const item of this.pending.values()) item.acknowledged.resolve(false);
-    this.pending.clear();
+    const acknowledgements = [...this.shutdownWork!.values()].map((item) => item.acknowledged.promise);
+    this.closeResult = (async () => {
+      const drained = await waitForRelayWork((async () => {
+        await this.flush();
+        // Preserve the existing bounded prompt retry; immediate 5xx responses
+        // must not create a tight loop against the shared control plane.
+        if (this.pending.size > 0 && !signal.aborted) await this.flush();
+      })(), signal);
+      this.closed = true;
+      for (const item of this.pending.values()) item.acknowledged.resolve(false);
+      this.pending.clear();
+      this.shutdownWork!.clear();
+      const accepted = await Promise.all(acknowledgements);
+      return drained && !signal.aborted && !this.shutdownOverflow && accepted.every(Boolean);
+    })();
+    return this.closeResult;
   }
 
   private async flushOnce(): Promise<void> {
+    if (this.closed || this.closeSignal?.aborted) return;
     this.sweepExpired();
     const batchSize = this.options.batchSize ?? 16;
     const batch = [...this.pending].slice(0, batchSize);
@@ -112,8 +147,12 @@ export class SettlementRetryQueue {
           if (!this.options.terminal) throw new Error("Terminal outcome transport is missing");
           await this.options.terminal(item.task as FundedAiTerminalOutcomeRequest);
         } else await this.options.finalize(item.task as FundedAiFinalizationRequest);
-        if (this.pending.get(reservationId) === item) this.pending.delete(reservationId);
-        item.acknowledged.resolve(true);
+        if (this.closed || this.closeSignal?.aborted) return;
+        if (this.pending.get(reservationId) === item) {
+          this.pending.delete(reservationId);
+          if (this.shutdownWork?.get(reservationId) === item) this.shutdownWork.delete(reservationId);
+          item.acknowledged.resolve(true);
+        }
       } catch (error) {
         const status = typeof error === "object" && error !== null && "status" in error
           ? Number((error as { status: unknown }).status) : null;

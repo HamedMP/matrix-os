@@ -41,9 +41,15 @@ it.each(["missing", "stale", "future", "mismatch"])("never substitutes aggregate
   freeze(); const s = source(); if (s.usage.kind !== "managed_credit") throw new Error("fixture");
   if (state === "missing") delete s.usage.chatAvailability;
   else if (state === "stale") { s.usage.asOf = "2026-10-05T08:54:59.999Z"; s.usage.chatAvailability!.asOf = s.usage.asOf; }
-  else if (state === "future") { s.usage.asOf = "2026-10-05T09:00:00.001Z"; s.usage.chatAvailability!.asOf = s.usage.asOf; }
+  else if (state === "future") { s.usage.asOf = "2026-10-05T09:01:00.001Z"; s.usage.chatAvailability!.asOf = s.usage.asOf; }
   else s.usage.chatAvailability!.asOf = "2026-10-05T08:59:59.000Z";
   expect(gatewayCreditLines(s).primary).toBe("Chat credit unavailable");
+});
+it.each([2_650, 60_000])("preserves zero Chat credit within the future tolerance (%dms) without substituting aggregate credit", skewMs => {
+  freeze(); const s = source(); if (s.usage.kind !== "managed_credit") throw new Error("fixture");
+  s.usage.asOf = new Date(Date.parse(now) + skewMs).toISOString();
+  s.usage.chatAvailability!.asOf = s.usage.asOf;
+  expect(gatewayCreditLines(s)).toEqual({ primary: "$0.00", secondary: null, stale: false });
 });
 it.each(["missing", "stale", "zero", "budget_zero", "current"])("requires positive fresh Chat capacity before claiming Ready: %s", state => {
   freeze(); const s = source(); if (s.usage.kind !== "managed_credit") throw new Error("fixture");

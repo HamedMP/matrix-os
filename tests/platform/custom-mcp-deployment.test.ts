@@ -6,6 +6,7 @@ import { describe, expect, it } from 'vitest';
 const workflow = parse(readFileSync('.github/workflows/platform-cloud-run.yml', 'utf8'));
 const steps = workflow.jobs.deploy.steps as { name: string; run?: string }[];
 const step = (name: string) => steps.find((entry) => entry.name === name)!.run!;
+const sourceSha = '0123456789abcdef0123456789abcdef01234567';
 const baseEnv = Object.fromEntries([
   'GCP_PROJECT_ID', 'GCP_REGION', 'ARTIFACT_REPOSITORY', 'CLOUD_RUN_SERVICE',
   'CLOUD_RUN_SERVICE_ACCOUNT', 'PLATFORM_PUBLIC_URL', 'MATRIX_API_ORIGIN',
@@ -40,12 +41,16 @@ function deploy(enabled: boolean) {
   return spawnSync('bash', ['-c', `gcloud() { if [ "$2 $3" = "services describe" ]; then return 1; fi; printf '%s\\n' "$@"; }\n${script}\nprintf '%s\\n' "$deploy_json"`], {
     encoding: 'utf8', env: { PATH: process.env.PATH, ...Object.fromEntries(
       Object.keys(workflow.jobs.deploy.env).map((key) => [key, 'fixture'])),
+      GITHUB_SHA: sourceSha,
+      MATRIX_PUBLIC_SITES_ENABLED: 'false',
       DEPLOY_ENVIRONMENT: 'staging', IMAGE_DIGEST: 'image@sha256:fixture',
       MATRIX_CARD_TRIAL_DAYS: '3', MATRIX_STARTER_TRIAL_DAYS: '14',
       GOOGLE_TAG_MANAGER_ID: 'GTM-TEST123', GOOGLE_ANALYTICS_MEASUREMENT_ID: '',
       GOOGLE_ANALYTICS_API_SECRET_VERSION: '1',
       WHATSAPP_ENABLED: 'false', WHATSAPP_ENCRYPTION_KEY_VERSION: '1',
       ACCOUNT_DELETION_CONFIGURED: 'false', ACCOUNT_DELETION_ENABLED: 'false',
+      SLACK_ENABLED: 'false', SLACK_TOKEN_ENCRYPTION_KEY_VERSION: '1',
+      WHATSAPP_ADMISSION_MODE: 'allowlist',
       CUSTOM_MCP_ENABLED: String(enabled), MCP_OAUTH_CLIENT_ID: '', MCP_CREDENTIAL_ENCRYPTION_KEY_VERSION: '1',
       MCP_OAUTH_CALLBACK_URL: 'https://app.example.com/api/mcp-servers/oauth/callback' },
   });

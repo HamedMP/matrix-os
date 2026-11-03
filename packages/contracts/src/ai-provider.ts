@@ -102,11 +102,16 @@ export const AiAccessSourceViewSchema = AiProviderReadinessSchema.extend({
   vendor: AiProviderVendorSchema,
   accountLabel: canonicalSafeLabel(120, 480).nullable(),
   eligibleModelIds: z.array(ProviderModelReferenceSchema).max(64),
+  /** Fresh policy inventory for internal catalog projection; never execution authority. */
+  discoverableModelIds: z.array(ProviderModelReferenceSchema).max(64).optional(),
   policyVersion: AiPolicyVersionSchema,
   localObservation: AiProviderLocalObservationSchema.optional(),
 }).strict().superRefine((source, ctx) => {
   if (!unique(source.eligibleModelIds)) {
     ctx.addIssue({ code: "custom", path: ["eligibleModelIds"], message: "Duplicate eligible model" });
+  }
+  if (source.discoverableModelIds && !unique(source.discoverableModelIds)) {
+    ctx.addIssue({ code: "custom", path: ["discoverableModelIds"], message: "Duplicate discoverable model" });
   }
   if (source.fundingKind === "matrix_included" && source.accountLabel === null) {
     ctx.addIssue({ code: "custom", path: ["accountLabel"], message: "Included access requires a label" });

@@ -1,7 +1,7 @@
-import { BOT_INPUT_IMAGE_MAX_BYTES, BOT_INPUT_MAX_IMAGES, BOT_INPUT_TOTAL_MAX_BYTES, botNativeImageMime } from "#bots/input-policy";
+import { BOT_INPUT_IMAGE_MAX_BYTES, BOT_INPUT_MAX_IMAGES, BOT_INPUT_IMAGE_TOTAL_MAX_BYTES, botNativeImageMime } from "#bots/input-policy";
 /** Keep text limits unchanged; only recognized native image blocks receive extra budget. */
 export const BOT_INFERENCE_TEXT_MAX_BYTES = 256 * 1024;
-export const BOT_IMAGE_INFERENCE_MAX_BYTES = Math.ceil(BOT_INPUT_TOTAL_MAX_BYTES / 3) * 4 + BOT_INFERENCE_TEXT_MAX_BYTES + 4096;
+export const BOT_IMAGE_INFERENCE_MAX_BYTES = Math.ceil(BOT_INPUT_IMAGE_TOTAL_MAX_BYTES / 3) * 4 + BOT_INFERENCE_TEXT_MAX_BYTES + 4096;
 export const BOT_IMAGE_INFERENCE_FRAME_MAX_BYTES = BOT_IMAGE_INFERENCE_MAX_BYTES + BOT_INFERENCE_TEXT_MAX_BYTES + 4096;
 const encoder = new TextEncoder();
 const mimeTypes = ["image/png", "image/jpeg", "image/webp"];
@@ -22,7 +22,7 @@ export function validateBotImageInferenceBody(body: string, maximumTextBytes = B
       if (botNativeImageMime(Uint8Array.from(prefix, char => char.charCodeAt(0))) !== mime) throw new Error("Image MIME");
       const length = encoded.length / 4 * 3 - (encoded.endsWith("==") ? 2 : encoded.endsWith("=") ? 1 : 0);
       totalBytes += length; imageCharacters += encoded.length; imageCount++;
-      if (length > BOT_INPUT_IMAGE_MAX_BYTES || totalBytes > BOT_INPUT_TOTAL_MAX_BYTES || imageCount > BOT_INPUT_MAX_IMAGES) throw new Error("Image capacity");
+      if (length > BOT_INPUT_IMAGE_MAX_BYTES || totalBytes > BOT_INPUT_IMAGE_TOTAL_MAX_BYTES || imageCount > BOT_INPUT_MAX_IMAGES) throw new Error("Image capacity");
     };
     const messages = Array.isArray(value.input) ? value.input : Array.isArray(value.messages) ? value.messages : [];
     for (const message of messages) {

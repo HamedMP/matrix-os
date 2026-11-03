@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { TerminalTabClientFrameSchema } from "@matrix-os/contracts";
 import {
   bracketTerminalPaste,
   clipboardDataHasImage,
@@ -8,6 +9,15 @@ import {
   pasteClipboardIntoTerminal,
   terminalPasteImagePath,
 } from "../../shell/src/components/terminal/terminal-rich-paste.js";
+
+const TERMINAL_KEY = `tws_${"a".repeat(32)}:tt_${"b".repeat(32)}`;
+const TERMINAL_REF = { workspaceId: `tws_${"a".repeat(32)}`, tabId: `tt_${"b".repeat(32)}` };
+
+function acceptedFrame(raw: string): { type: string; terminalRef: unknown; data: string } {
+  const frame = JSON.parse(raw);
+  expect(TerminalTabClientFrameSchema.safeParse(frame).success).toBe(true);
+  return frame;
+}
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -54,6 +64,7 @@ describe("terminal rich clipboard paste", () => {
       clipboardData,
       gatewayUrl: "https://gateway.example",
       ws,
+      terminalKey: TERMINAL_KEY,
     })).resolves.toBe("image");
 
     expect(fetchMock).toHaveBeenCalledWith(
@@ -61,7 +72,7 @@ describe("terminal rich clipboard paste", () => {
       expect.objectContaining({ method: "PUT", body: blob, signal }),
     );
     expect(timeoutSpy).toHaveBeenCalledWith(30_000);
-    const sent = JSON.parse(ws.send.mock.calls[0]![0]);
+    const sent = acceptedFrame(ws.send.mock.calls[0]![0]);
     expect(sent.data).toContain("Screenshot attached at /home/matrix/home/data/terminal-paste/paste-");
     expect(sent.data).toContain("(also ~/data/terminal-paste/paste-");
     expect(sent.data).toContain("Please inspect it.");
@@ -99,6 +110,7 @@ describe("terminal rich clipboard paste", () => {
       clipboardData,
       gatewayUrl: "https://gateway.example",
       ws,
+      terminalKey: TERMINAL_KEY,
     })).resolves.toBe("image");
 
     expect(fetchMock).toHaveBeenCalledTimes(2);
@@ -112,7 +124,7 @@ describe("terminal rich clipboard paste", () => {
       expect.stringMatching(/^https:\/\/gateway\.example\/api\/files\/blob\?path=data%2Fterminal-paste%2Fpaste-/),
       expect.objectContaining({ body: secondBlob }),
     );
-    const sent = JSON.parse(ws.send.mock.calls[0]![0]);
+    const sent = acceptedFrame(ws.send.mock.calls[0]![0]);
     expect(sent.data).toContain("Screenshots attached:");
   });
 
@@ -136,6 +148,7 @@ describe("terminal rich clipboard paste", () => {
       clipboard,
       gatewayUrl: "https://gateway.example",
       ws,
+      terminalKey: TERMINAL_KEY,
     })).resolves.toBe("image");
 
     expect(fetchMock).toHaveBeenCalledWith(
@@ -143,8 +156,8 @@ describe("terminal rich clipboard paste", () => {
       expect.objectContaining({ method: "PUT", body: blob }),
     );
     expect(clipboard.readText).not.toHaveBeenCalled();
-    const sent = JSON.parse(ws.send.mock.calls[0]![0]);
-    expect(sent).toMatchObject({ type: "input" });
+    const sent = acceptedFrame(ws.send.mock.calls[0]![0]);
+    expect(sent).toMatchObject({ type: "input", terminalRef: TERMINAL_REF });
     expect(sent.data.startsWith("\x1b[200~Screenshot attached at /home/matrix/home/data/terminal-paste/paste-")).toBe(true);
     expect(sent.data.endsWith(". Please inspect it.\x1b[201~")).toBe(true);
   });
@@ -169,11 +182,13 @@ describe("terminal rich clipboard paste", () => {
       clipboardData,
       gatewayUrl: "https://gateway.example",
       ws,
+      terminalKey: TERMINAL_KEY,
       submit: true,
     })).resolves.toBe("image");
 
     expect(ws.send).toHaveBeenCalledTimes(2);
-    expect(JSON.parse(ws.send.mock.calls[1]![0])).toEqual({ type: "input", data: "\r" });
+    acceptedFrame(ws.send.mock.calls[0]![0]);
+    expect(acceptedFrame(ws.send.mock.calls[1]![0])).toEqual({ type: "input", terminalRef: TERMINAL_REF, data: "\r" });
   });
 
   it("keeps the native clipboard read method bound to the clipboard object", async () => {
@@ -200,10 +215,11 @@ describe("terminal rich clipboard paste", () => {
       clipboard,
       gatewayUrl: "https://gateway.example",
       ws,
+      terminalKey: TERMINAL_KEY,
     })).resolves.toBe("image");
 
     expect(clipboard.readText).not.toHaveBeenCalled();
-    const sent = JSON.parse(ws.send.mock.calls[0]![0]);
+    const sent = acceptedFrame(ws.send.mock.calls[0]![0]);
     expect(sent.data).toContain("~/data/terminal-paste/paste-");
   });
 
@@ -216,13 +232,38 @@ describe("terminal rich clipboard paste", () => {
       clipboard,
       gatewayUrl: "https://gateway.example",
       ws,
+      terminalKey: TERMINAL_KEY,
     })).resolves.toBe("text");
 
     expect(ws.send).toHaveBeenCalledOnce();
-    expect(JSON.parse(ws.send.mock.calls[0]![0])).toEqual({
+    expect(acceptedFrame(ws.send.mock.calls[0]![0])).toEqual({
       type: "input",
+      terminalRef: TERMINAL_REF,
       data: "\x1b[200~first row\nλ second row 👩🏽‍💻\x1b[201~",
     });
+  });
+
+  it("does not read or upload clipboard data for a pane without a terminal tab", async () => {
+    vi.stubGlobal("WebSocket", { OPEN: 1 });
+    const fetchMock = vi.fn(async () => ({ ok: true })) as unknown as typeof fetch;
+    vi.stubGlobal("fetch", fetchMock);
+    const clipboard = {
+      read: vi.fn(async () => []),
+      readText: vi.fn(async () => "not delivered"),
+    };
+    const ws = { readyState: 1, send: vi.fn() };
+
+    await expect(pasteClipboardIntoTerminal({
+      clipboard,
+      gatewayUrl: "https://gateway.example",
+      ws,
+      terminalKey: null,
+    })).resolves.toBe("failed");
+
+    expect(clipboard.read).not.toHaveBeenCalled();
+    expect(clipboard.readText).not.toHaveBeenCalled();
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(ws.send).not.toHaveBeenCalled();
   });
 
   it("reports empty and unavailable clipboard reads without sending", async () => {
@@ -233,11 +274,13 @@ describe("terminal rich clipboard paste", () => {
       clipboard: { readText: vi.fn(async () => "") },
       gatewayUrl: "https://gateway.example",
       ws,
+      terminalKey: TERMINAL_KEY,
     })).resolves.toBe("empty");
     await expect(pasteClipboardIntoTerminal({
       clipboard: undefined,
       gatewayUrl: "https://gateway.example",
       ws,
+      terminalKey: TERMINAL_KEY,
     })).resolves.toBe("unavailable");
 
     expect(ws.send).not.toHaveBeenCalled();
@@ -253,6 +296,7 @@ describe("terminal rich clipboard paste", () => {
       clipboard: { readText: vi.fn(async () => "not delivered") },
       gatewayUrl: "https://gateway.example",
       ws: disconnected,
+      terminalKey: TERMINAL_KEY,
     })).resolves.toBe("failed");
     await expect(pasteClipboardIntoTerminal({
       clipboard: {
@@ -263,6 +307,7 @@ describe("terminal rich clipboard paste", () => {
       },
       gatewayUrl: "https://gateway.example",
       ws: disconnected,
+      terminalKey: TERMINAL_KEY,
     })).resolves.toBe("failed");
 
     expect(disconnected.send).not.toHaveBeenCalled();
@@ -280,6 +325,7 @@ describe("terminal rich clipboard paste", () => {
       clipboard: { readText: vi.fn(() => read) },
       gatewayUrl: "https://gateway.example",
       ws,
+      terminalKey: TERMINAL_KEY,
       canCommit: () => current,
     });
 

@@ -63,7 +63,13 @@ export function createPlatformCollaborationDirectRoutes(options: {
     } catch (error: unknown) {
       if (error instanceof CollaborationRuntimeEndpointError) {
         if (error.code === "upgrade_required") return safeJson(c, "upgrade_required", 426);
-        if (error.code === "stale_generation") return safeJson(c, "Collaboration state changed", 409);
+        if (error.code === "stale_generation") {
+          c.header("Cache-Control", "no-store");
+          // Registration already verified enrollment, owner and handle before locking this row.
+          // The conflict supplies metadata only: no keys, ticket, liveness or writes survive.
+          return c.json({ error: "Collaboration state changed", protocolVersion: COLLABORATION_DIRECT_PROTOCOL_VERSION,
+            ...(error.currentRuntime ? { runtime: error.currentRuntime } : {}) }, 409);
+        }
         if (error.code === "invalid_registration" || error.code === "direct_origin_rejected") return safeJson(c, "Invalid request", 422);
         return safeJson(c, "Forbidden", 403);
       }

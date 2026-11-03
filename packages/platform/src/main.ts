@@ -5,6 +5,7 @@ import { createPreviewDriveRoutes, type PreviewDriveIntegration } from './previe
 import { createAccountDeletionRoutes } from './account-deletion/routes.js';
 import type { AccountDeletionRuntime } from './account-deletion/wiring.js';
 import { registerInternalIntegrationRoutes } from './internal-integration-route-registration.js';
+import { registerGetStartedBotNameRoutes } from './get-started-bot-names.js';
 import { Hono, type Context } from 'hono';
 import { bodyLimit } from 'hono/body-limit';
 import {
@@ -141,6 +142,7 @@ import {
   checkCustomerVpsPrimaryStorageEnv,
   checkHomeMirrorS3Env,
   checkHostBundleStorageEnv,
+  checkPublicSitesEnv,
   checkUnsafeDefaultSecrets,
   collectTenantPublicTelemetryEnv,
 } from './platform-startup-env.js';
@@ -153,6 +155,7 @@ export {
   checkCustomerVpsPrimaryStorageEnv,
   checkHomeMirrorS3Env,
   checkHostBundleStorageEnv,
+  checkPublicSitesEnv,
   checkUnsafeDefaultSecrets,
 } from './platform-startup-env.js';
 export {
@@ -279,8 +282,10 @@ export function createApp(deps: {
   fundedModelProbes?: import('./ai-funded-model-probes.js').FundedModelProbeService;
   collaboration?: PlatformCollaborationComposition;
   accountDeletion?: AccountDeletionRuntime;
+  slackRoutes?: Hono<any>;
   customerVpsService?: CustomerVpsService;
   activateManagedFeatures?: import('./managed-feature-activation.js').ManagedFeatureActivator;
+  activatePreviewRuntimeAccess?: import('./preview-runtime-activation.js').PreviewRuntimeAccessActivator;
   /** Overrides the collaboration organization projection for Private Preview membership. */
   privatePreviewMembership?: PrivatePreviewMembershipCheck;
   goldenSnapshotService?: GoldenSnapshotService;
@@ -289,6 +294,7 @@ export function createApp(deps: {
   hostBundleObjectStore?: CustomerVpsObjectStore;
   sitesObjectStore?: CustomerVpsObjectStore;
   assertPrimaryStorageReady?: (options?: { force?: boolean }) => Promise<void>;
+  assertSitesStorageReady?: (options?: { force?: boolean }) => Promise<void>;
   env?: NodeJS.ProcessEnv;
 }) {
   const { db, docker, orchestrator, clerkAuth, matrixProvisioner } = deps;
@@ -406,6 +412,10 @@ export function createApp(deps: {
 
   // Health check (unauthenticated)
   app.get('/health', (c) => c.json({ status: 'ok' }));
+
+  // Slack owns signature/runtime/account authentication. Employees may link
+  // without a personal computer, so these routes precede tenant routing.
+  if (deps.slackRoutes) app.route('/', deps.slackRoutes);
 
   const platformMetricsRoutes = createPlatformMetricsRoutes({
     db,
@@ -687,7 +697,8 @@ export function createApp(deps: {
   }
 
   registerSiteRoutes(app, { db, platformSecret, storage: deps.sitesObjectStore,
-    edgeSecret: appEnv.SITES_EDGE_SECRET, dispatcher: customerVpsProxyDispatcher, env: appEnv });
+    edgeSecret: appEnv.SITES_EDGE_SECRET, edgePreviousSecret: appEnv.SITES_EDGE_SECRET_PREVIOUS,
+    dispatcher: customerVpsProxyDispatcher, env: appEnv });
 
   // Sync object uploads authenticate with their own machine credential and
   // allow up to 100 MiB. Mount them before the generic 10 MiB session-proxy
@@ -742,6 +753,7 @@ export function createApp(deps: {
     internalIntegrationRoutes: deps.internalIntegrationRoutes,
     privatePreviewEligibility,
   });
+  registerGetStartedBotNameRoutes(app, { db, platformSecret, env: appEnv });
   app.get('/vps/releases', async (c) => {
     if (!platformSecret) {
       return c.json({ error: 'VPS tracking not configured' }, 503);
@@ -796,6 +808,7 @@ export function createApp(deps: {
     app.route('/vps', createCustomerVpsRoutes({
       service: deps.customerVpsService,
       activateManagedFeatures: deps.activateManagedFeatures,
+      activatePreviewRuntimeAccess: deps.activatePreviewRuntimeAccess,
       platformSecret,
       goldenSnapshotOperatorSecret,
       probeMachineHealth,
@@ -803,6 +816,7 @@ export function createApp(deps: {
       recordRuntimeMetrics: platformMetricsRoutes.recordRuntimeMetrics,
       captureEvent: captureFunnelEvent,
       assertPrimaryStorageReady: deps.assertPrimaryStorageReady,
+      assertSitesStorageReady: deps.assertSitesStorageReady,
     }));
   }
 
@@ -1005,6 +1019,7 @@ if (process.argv[1]?.endsWith('main.ts') || process.argv[1]?.endsWith('main.js')
     checkCustomerVpsPrimaryStorageEnv,
     checkHomeMirrorS3Env,
     checkHostBundleStorageEnv,
+    checkPublicSitesEnv,
     collectTenantPublicTelemetryEnv,
     stripeBillingEntitlementsEnabled,
     resolveEffectiveBillingEntitlement,

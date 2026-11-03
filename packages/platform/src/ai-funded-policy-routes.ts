@@ -37,6 +37,7 @@ import { FUNDED_PROBE_MODELS, type FundedModelProbeService } from "./ai-funded-m
 import { observeFundedModelRoutes } from "./ai-funded-route-observations.js";
 
 import { fundedReadinessPhase } from "./ai-funded-readiness-phase.js";
+import { isBoundedPreviewProvisioningClass, readActivePreviewRuntimeAccess } from "./preview-runtime-access.js";
 
 const RUNTIME_BODY_LIMIT = 1024;
 const RELAY_BODY_LIMIT = 4 * 1024;
@@ -135,21 +136,40 @@ function noStore(c: Context): void {
   c.header("Cloudflare-CDN-Cache-Control", "no-store");
 }
 
+function runtimeVerificationToken(options: {
+  platformSecret: string;
+  previewRuntimeSecret?: string;
+}, machine: NonNullable<Awaited<ReturnType<typeof getRunningUserMachineByHandle>>>): string {
+  const secret = isBoundedPreviewProvisioningClass(machine.provisioningClass)
+    ? options.previewRuntimeSecret
+    : options.platformSecret;
+  if (!secret) throw new Error("Runtime authentication is unavailable");
+  return buildPlatformRuntimeVerificationToken({
+    handle: machine.handle,
+    machineId: machine.machineId,
+    runtimeSlot: machine.runtimeSlot,
+  }, secret, machine.runtimeTokenEpoch);
+}
+
 async function authenticatedRuntimeMachine(
   c: Context,
-  options: { db: PlatformDB; platformSecret: string },
+  options: { db: PlatformDB; platformSecret: string; previewRuntimeSecret?: string; now?: () => Date },
   runtimeSlot: string,
 ): Promise<Awaited<ReturnType<typeof getRunningUserMachineByHandle>> | undefined> {
   const handle = HandleSchema.parse(c.req.param("handle"));
   const machine = await getRunningUserMachineByHandle(options.db, handle, runtimeSlot);
   if (!machine) return undefined;
+  let runtimeSecret = options.platformSecret;
+  if (isBoundedPreviewProvisioningClass(machine.provisioningClass)) {
+    const allocation = await readActivePreviewRuntimeAccess(options.db, {
+      ownerId: machine.clerkUserId, machineId: machine.machineId, runtimeSlot: machine.runtimeSlot,
+    }, (options.now ?? (() => new Date()))());
+    if (!allocation || !options.previewRuntimeSecret) return undefined;
+    runtimeSecret = options.previewRuntimeSecret;
+  }
   const authorization = c.req.header("authorization");
   const token = authorization?.startsWith("Bearer ") ? authorization.slice(7) : undefined;
-  const expected = buildPlatformRuntimeVerificationToken({
-    handle,
-    machineId: machine.machineId,
-    runtimeSlot: machine.runtimeSlot,
-  }, options.platformSecret, machine.runtimeTokenEpoch);
+  const expected = runtimeVerificationToken({ ...options, platformSecret: runtimeSecret }, machine);
   return timingSafeTokenEquals(token, expected) ? machine : undefined;
 }
 
@@ -213,6 +233,7 @@ async function readStrictJson(c: Context): Promise<unknown> {
 export function createAiFundedRuntimeRoutes(options: {
   db: PlatformDB;
   platformSecret: string;
+  previewRuntimeSecret?: string;
   repository: AiFundedPolicyRepository;
   topUpEnabled?: boolean;
   promotionalGrant?: AiFundedPromotionalGrantConfig;
@@ -222,6 +243,10 @@ export function createAiFundedRuntimeRoutes(options: {
 }) {
   if (!options.repository || !options.db) throw new Error("Funded AI runtime dependencies are missing");
   if (options.platformSecret.length < 32) throw new Error("Funded AI runtime authentication is misconfigured");
+  if (options.previewRuntimeSecret !== undefined
+    && (options.previewRuntimeSecret.length < 32 || options.previewRuntimeSecret === options.platformSecret)) {
+    throw new Error("Funded AI runtime authentication is misconfigured");
+  }
   const now = options.now ?? (() => new Date());
   const isolatedChat = options.isolatedChat ? IsolatedChatEnvelopeSchema.parse(options.isolatedChat) : undefined;
   const app = new Hono();
@@ -280,12 +305,11 @@ export function createAiFundedRuntimeRoutes(options: {
       // mint it more than once.
       const readOnly = fundedReadinessPhase({ phase: isolatedChat?.target?.kind === "canonical_bot" ? isolatedChat : undefined, identity,
         runtimeTokenEpoch: machine.runtimeTokenEpoch,
-        runtimeToken: buildPlatformRuntimeVerificationToken({ handle: machine.handle, machineId: machine.machineId,
-          runtimeSlot: machine.runtimeSlot }, options.platformSecret, machine.runtimeTokenEpoch),
+        runtimeToken: runtimeVerificationToken(options, machine),
         phaseHint: c.req.header("x-matrix-isolated-chat-phase"), configDigest: c.req.header("x-matrix-isolated-chat-config"), now: now() });
       let summary = readOnly ? await options.repository.getCheckoutFundingSummary(identity,
         Date.now() + 5000, { ...body.data, projectExpiredCredit: true }) : await options.repository.getRuntimeFundingSummary(identity, body.data);
-      if (!readOnly && options.promotionalGrant?.enabled
+      if (!readOnly && machine.provisioningClass === "customer" && options.promotionalGrant?.enabled
         && summary.policy.enabled
         && summary.policy.allowedModelIds.length > 0
         && options.promotionalGrant.expiresAt > now().toISOString()) {
@@ -296,7 +320,8 @@ export function createAiFundedRuntimeRoutes(options: {
         ? FundedAiRuntimeChatFundingSummaryResponseSchema : FundedAiRuntimeFundingSummaryResponseSchema;
       return c.json(schema.parse({
         contractVersion: 1,
-        funding: { ...summary.funding, topUpEnabled: options.topUpEnabled === true },
+        funding: { ...summary.funding,
+          topUpEnabled: machine.provisioningClass === "customer" && options.topUpEnabled === true },
         policy: summary.policy,
         ...(body.data.includeChatAvailability ? { chatAvailability: summary.chatAvailability } : {}),
       }), 200);
@@ -342,8 +367,7 @@ export function createAiFundedRuntimeRoutes(options: {
       };
       const phase = isolatedChat;
       const cacheOnly = fundedReadinessPhase({ phase, identity, runtimeTokenEpoch: machine.runtimeTokenEpoch,
-        runtimeToken: buildPlatformRuntimeVerificationToken({ handle: machine.handle,
-          machineId: machine.machineId, runtimeSlot: machine.runtimeSlot }, options.platformSecret, machine.runtimeTokenEpoch),
+        runtimeToken: runtimeVerificationToken(options, machine),
         modelId: body.data.modelId, phaseHint: c.req.header("x-matrix-isolated-chat-phase"),
         configDigest: c.req.header("x-matrix-isolated-chat-config"), now: now() });
       mode = cacheOnly ? "cache_only" : "probe";

@@ -1,5 +1,5 @@
 import type { FilePreviewDescriptor } from "@matrix-os/contracts";
-import { useEffect, useState } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 
 const MAX_TEXT_BYTES = 1024 * 1024;
 const MAX_BINARY_BYTES = 50 * 1024 * 1024;
@@ -15,6 +15,9 @@ export interface FilePreviewContentProps {
   retry?: () => void;
   /** A caller that supplies a bounded prefix rather than the complete text. */
   textPreviewBytes?: number;
+  /** Surface-owned Markdown/code renderer; loading and byte limits stay shared. */
+  renderText?: (text: string) => ReactNode;
+  renderPdf?: (blob: Blob) => ReactNode;
 }
 
 function parseDelimited(source: string, separator: "," | "\t"): string[][] {
@@ -58,7 +61,7 @@ function Failure({ retry }: { retry?: () => void }) {
   </div>;
 }
 
-function TextualPreview({ descriptor, contentUrl, loadText, retry, textPreviewBytes }: FilePreviewContentProps) {
+function TextualPreview({ descriptor, contentUrl, loadText, retry, textPreviewBytes, renderText }: FilePreviewContentProps) {
   const limit = textPreviewBytes === undefined ? MAX_TEXT_BYTES : Math.max(1, Math.min(MAX_TEXT_BYTES, textPreviewBytes));
   const [state, setState] = useState<{ status: "loading" } | { status: "ready"; text: string } | { status: "failed" }>({ status: "loading" });
   useEffect(() => {
@@ -88,12 +91,12 @@ function TextualPreview({ descriptor, contentUrl, loadText, retry, textPreviewBy
       title={`HTML preview: ${descriptor.name}`}
       sandbox=""
       srcDoc={`<!doctype html><meta http-equiv="Content-Security-Policy" content="${policy}">${state.text}`}
-      className="h-full min-h-96 w-full border-0 bg-white"
+      className="min-h-0 w-full flex-1 border-0 bg-white"
     />;
   }
-  return <div className="min-h-0 w-full overflow-auto">
-    <pre className="whitespace-pre-wrap break-words p-4 text-xs" data-selectable><code>{state.text}</code></pre>
-    {descriptor.sizeBytes > limit ? <p role="status" className="px-4 pb-4 text-xs">Preview truncated.</p> : null}
+  return <div className="flex min-h-0 min-w-0 w-full flex-1 flex-col overflow-hidden">
+    {renderText ? renderText(state.text) : <pre className="min-h-0 flex-1 overflow-auto whitespace-pre-wrap break-words p-4 text-xs" data-selectable><code>{state.text}</code></pre>}
+    {descriptor.sizeBytes > limit ? <p role="status" className="shrink-0 px-4 pb-4 text-xs">Preview truncated.</p> : null}
   </div>;
 }
 
@@ -107,8 +110,8 @@ function TablePreview({ name, rows }: { name: string; rows: string[][] }) {
   </div>;
 }
 
-function BinaryPreview({ descriptor, contentUrl, loadBlob, retry }: FilePreviewContentProps) {
-  const [state, setState] = useState<{ status: "loading" } | { status: "ready"; url: string } | { status: "failed" }>({ status: "loading" });
+function BinaryPreview({ descriptor, contentUrl, loadBlob, retry, renderPdf }: FilePreviewContentProps) {
+  const [state, setState] = useState<{ status: "loading" } | { status: "ready"; url: string; blob: Blob } | { status: "failed" }>({ status: "loading" });
   useEffect(() => {
     let active = true;
     let objectUrl: string | undefined;
@@ -120,7 +123,7 @@ function BinaryPreview({ descriptor, contentUrl, loadBlob, retry }: FilePreviewC
     void loadBlob(contentUrl, MAX_BINARY_BYTES).then((blob) => {
       if (!active) return;
       objectUrl = URL.createObjectURL(blob);
-      setState({ status: "ready", url: objectUrl });
+      setState({ status: "ready", url: objectUrl, blob });
     }).catch((error: unknown) => {
       console.warn("[file-preview] binary load failed", error instanceof Error ? error.name : "UnknownError");
       if (active) setState({ status: "failed" });
@@ -132,6 +135,7 @@ function BinaryPreview({ descriptor, contentUrl, loadBlob, retry }: FilePreviewC
   }, [contentUrl, descriptor.sizeBytes, loadBlob]);
   if (state.status === "loading") return <Loading />;
   if (state.status === "failed") return <Failure retry={retry} />;
+  if (descriptor.kind === "pdf" && renderPdf) return <>{renderPdf(state.blob)}</>;
   if (descriptor.kind === "image") return <img src={state.url} alt={descriptor.name} className="max-h-full max-w-full object-contain" />;
   if (descriptor.kind === "audio") return <audio controls preload="metadata" aria-label={`Audio preview: ${descriptor.name}`} src={state.url} className="w-full max-w-xl" />;
   if (descriptor.kind === "video") return <video controls preload="metadata" aria-label={`Video preview: ${descriptor.name}`} src={state.url} className="max-h-full max-w-full" />;

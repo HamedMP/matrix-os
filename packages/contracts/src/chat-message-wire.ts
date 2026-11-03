@@ -1,7 +1,13 @@
 import { z } from "zod/v4";
 import type { CanonicalChatMessage, CanonicalChatRunActivity } from "#canonical-chat";
 import type { CanonicalChatTransportFrame } from "#canonical-chat-content";
+import { projectLegacyAssistantMessage } from "#chat-legacy-assistant-text";
+export { projectLegacyAssistantMessage, projectLegacyAssistantTextParts } from "#chat-legacy-assistant-text";
 import { canonicalSafeLabel } from "#canonical-chat-primitives";
+
+/** Expanded stored assistant text requires independent explicit client support. */
+export const ChatAssistantTextWireVersionSchema = z.enum(["0", "1"]).default("0");
+export type ChatAssistantTextWireVersion = z.infer<typeof ChatAssistantTextWireVersionSchema>;
 
 /** Independent of SSE framing: protocol-2 clients shipped with message-v1 parsers. */
 export const ChatMessageWireVersionSchema = z.enum(["1", "2"]).default("1");
@@ -15,7 +21,7 @@ export type ChatCommandPreviewWireVersion = z.infer<typeof ChatCommandPreviewWir
 const LegacyToolPreviewSchema = canonicalSafeLabel(1_000, 4_000);
 
 export function chatMessageVersionUrl(path: string): string {
-  return `${path}${path.includes("?") ? "&" : "?"}messageVersion=2&inputVersion=1&commandPreviewVersion=1`;
+  return `${path}${path.includes("?") ? "&" : "?"}messageVersion=2&inputVersion=1&commandPreviewVersion=1&assistantTextVersion=1`;
 }
 
 function commandPreviewActivities(activities: CanonicalChatRunActivity[], version: ChatCommandPreviewWireVersion): CanonicalChatRunActivity[] {
@@ -61,12 +67,16 @@ export function projectChatMessageResponse<T extends {
   message?: CanonicalChatMessage;
   messages?: CanonicalChatMessage[];
   activities?: CanonicalChatRunActivity[];
-}>(response: T, version: ChatMessageWireVersion, inputVersion: ChatInputWireVersion = "0", commandPreviewVersion: ChatCommandPreviewWireVersion = "0"): T {
-  if (version === "2" && !response.activities) return response;
+}>(response: T, version: ChatMessageWireVersion, inputVersion: ChatInputWireVersion = "0", commandPreviewVersion: ChatCommandPreviewWireVersion = "0", assistantTextVersion: ChatAssistantTextWireVersion = "0"): T {
+  if (version === "2" && !response.activities && assistantTextVersion === "1") return response;
+  const message = (value: CanonicalChatMessage) => {
+    const projected = version === "1" ? legacyMessage(value) : value;
+    return assistantTextVersion === "1" ? projected : projectLegacyAssistantMessage(projected);
+  };
   return {
     ...response,
-    ...(version === "1" && response.message ? { message: legacyMessage(response.message) } : {}),
-    ...(version === "1" && response.messages ? { messages: response.messages.map(legacyMessage) } : {}),
+    ...(response.message ? { message: message(response.message) } : {}),
+    ...(response.messages ? { messages: response.messages.map(message) } : {}),
     ...(response.activities ? { activities: commandPreviewActivities(legacyInputActivities(response.activities, inputVersion), commandPreviewVersion) } : {}),
   };
 }
@@ -76,10 +86,13 @@ export function projectChatMessageFrame(
   version: ChatMessageWireVersion,
   inputVersion: ChatInputWireVersion = "0",
   commandPreviewVersion: ChatCommandPreviewWireVersion = "0",
+  assistantTextVersion: ChatAssistantTextWireVersion = "0",
 ): CanonicalChatTransportFrame {
   if (frame.type !== "chat.content") return frame;
+  // Legacy snapshots may regroup parts: raw delta indices would no longer match.
+  if (assistantTextVersion === "0") return { type: "chat.event", event: frame.event };
   return { ...frame, content: {
-    ...projectChatMessageResponse(frame.content, version, inputVersion, commandPreviewVersion),
+    ...projectChatMessageResponse(frame.content, version, inputVersion, commandPreviewVersion, assistantTextVersion),
     ...(version === "1" && frame.content.messageDelta ? { messageDelta: {
       ...frame.content.messageDelta,
       message: legacyMessage(frame.content.messageDelta.message),

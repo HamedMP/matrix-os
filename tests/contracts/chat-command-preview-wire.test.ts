@@ -32,8 +32,8 @@ it("retains existing safe single-line previews for legacy clients", () => {
 
 it("applies identical compatibility projection to content stream frames", () => {
   const frame = { type: "chat.content", content: { activities: [activity] } } as CanonicalChatTransportFrame;
-  const legacy = projectChatMessageFrame(frame, "2", "1");
+  const legacy = projectChatMessageFrame(frame, "2", "1", "0", "1");
   expect(legacy.type === "chat.content" && legacy.content.activities?.[0]).not.toHaveProperty("preview");
-  const current = projectChatMessageFrame(frame, "2", "1", "1");
+  const current = projectChatMessageFrame(frame, "2", "1", "1", "1");
   expect(current.type === "chat.content" && current.content.activities?.[0]).toHaveProperty("preview", activity.preview);
 });

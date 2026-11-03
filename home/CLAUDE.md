@@ -139,7 +139,13 @@ source. See `docs/dev/app-capabilities.md` in the source repository.
 Use the injected bridge on Web Canvas, Web Desktop, Electron Desktop, Web Mobile
 and Native Mobile. Discover `MatrixOS.capabilities()`, `integrations()` and
 `describeService(service)` on the running host. A connected service and an app grant
-are separate: the owner grants exact actions in `system/app-capabilities.json`.
+are separate. Visible personal apps created in place by Matrix with
+`listingTrust: "first_party"` receive connected integrations by default. Imported
+and forked apps are host-stamped with provenance and require an explicit grant;
+their separate launch trust remains unchanged. An owner entry in
+`system/app-capabilities.json` restricts that app to exact actions
+(and can revoke all access with empty services); folder and slug aliases share the
+same effective restriction.
 An app manifest cannot grant itself access, and builders must not expand grants
 without owner authorization.
 

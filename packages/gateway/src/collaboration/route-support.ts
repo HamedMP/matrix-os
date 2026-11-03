@@ -265,11 +265,12 @@ export async function authenticateOwnerProject(
     ...(conditional ? { conditionalHeadersDigest: digestDeleteConditions(conditional) } : {}),
   });
   const scope = await requireScope(options.repository, scopeId);
+  // The owner session is fenced against fresh runtime registration in its service.
+  // Each project's authority generation is independent and may legitimately differ.
   if (scope.kind !== "project" || scope.membershipMode !== "direct"
     || (scope.lifecycle !== "private" && scope.lifecycle !== "preparing")
     || scope.ownerId !== session.actorId || scope.organizationId !== session.organizationId
     || scope.authorityRuntimeId !== options.runtimeId
-    || scope.authorityGeneration !== session.authorityGeneration
     || session.runtimeId !== toLogicalRuntimeId(options.runtimeId)) {
     throw new DirectAuthError("denied", "Owner project setup is unavailable");
   }

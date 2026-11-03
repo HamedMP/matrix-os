@@ -43,6 +43,15 @@
   --shadow-1: var(--elevation-1);
   --shadow-2: var(--elevation-2);
   --shadow-3: var(--elevation-3);
+  /* Shared Chat composer (@matrix-os/ui/chat-composer.css). The shell's
+     --accent is a hover tint, so Send and focus use --primary here. */
+  --composer-send-bg: var(--primary);
+  --composer-send-fg: var(--primary-foreground);
+  --composer-idle-bg: var(--secondary);
+  --composer-stop-bg: color-mix(in srgb, var(--destructive) 12%, transparent);
+  /* Electron Desktop focuses the card with its dark accent and a light ring. */
+  --composer-focus: var(--primary);
+  --composer-focus-ring: var(--secondary);
 
   /* Brand palette (shared source of truth with the matrix-os.com landing).
      App iframes expose --ember as --matrix-accent for primary actions. */

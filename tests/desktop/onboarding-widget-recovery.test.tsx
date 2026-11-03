@@ -254,6 +254,34 @@ describe("onboarding app connect", () => {
     await flush(2_000);
     expect(dispatch).toHaveBeenCalledWith({ type: "connect.succeeded", service: "gmail" });
   });
+
+  it("keeps waiting on a new sign-in when an older one's sync finishes late", async () => {
+    const dispatch = vi.fn();
+    let finishOldSync: (result: string) => void = () => undefined;
+    const syncNow = vi.fn()
+      .mockImplementationOnce(() => new Promise((resolve) => { finishOldSync = resolve; }))
+      .mockImplementation(async () => {
+        useIntegrations.setState({ connections: [{ id: "conn_gmail", service: "gmail", status: "active" }] as never });
+        return "ok";
+      });
+    useIntegrations.setState({
+      status: "ready",
+      connections: [],
+      refresh: vi.fn(async () => undefined),
+      startConnect: vi.fn(async (service: string) => `https://connect.example.test/${service}`),
+      syncNow,
+    } as never);
+    const { result } = renderHook(() => useOnboardingAppConnect(api, dispatch));
+
+    act(() => result.current.connectApp("github"));
+    await flush(2_000);
+    expect(syncNow).toHaveBeenCalledTimes(1);
+    act(() => result.current.connectApp("gmail"));
+    await flush(0);
+    await act(async () => { finishOldSync("superseded"); });
+    await flush(10_000);
+    expect(dispatch).toHaveBeenCalledWith({ type: "connect.succeeded", service: "gmail" });
+  });
 });
 
 describe("onboarding AI sign-in", () => {

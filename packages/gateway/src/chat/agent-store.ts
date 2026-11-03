@@ -2,10 +2,11 @@ import { createHash, randomUUID } from "node:crypto";
 import { constants, type Dir } from "node:fs";
 import { link, lstat, mkdir, open, opendir, rename, unlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { sql, type Kysely } from "kysely";
+import { sql, type Kysely, type Transaction } from "kysely";
 import { z } from "zod/v4";
 import {
   CanonicalOwnerScopeSchema, ChatAgentIdSchema, ChatAgentSchema,
+  MANAGED_CUSTOM_BOT_RECIPE_REF, isManagedCustomBot,
   CreateChatAgentRequestSchema, UpdateChatAgentRequestSchema,
   type BotRecipeRef, type ChatAgent, type CreateChatAgentRequest, type UpdateChatAgentRequest, type StoredChatAgentRecipe,
 } from "@matrix-os/contracts";
@@ -150,6 +151,34 @@ export class ChatAgentStore {
     const directory = await this.directory([this.ownerKey(owner)]);
     const stored = directory ? await this.read(join(directory, `${id}.md`)) : null;
     return stored?.agent.id === id && stored.createHash === hash;
+  }
+
+  /** Internal recovery snapshot; never returned through the public definition API. */
+  async getCreationSnapshot(owner: ChatOwner, agentId: string): Promise<StoredAgent | null> {
+    const id = ChatAgentIdSchema.parse(agentId);
+    const directory = await this.directory([this.ownerKey(owner)]);
+    const stored = directory ? await this.read(join(directory, `${id}.md`)) : null;
+    if (stored && stored.agent.id !== id) throw new ChatAgentStoreError("agent_unavailable");
+    return stored;
+  }
+
+  /** Explicit server recovery only. The caller holds its Chat lock in this same transaction. */
+  async promoteManagedCustom(owner: ChatOwner, agentId: string, input: { baseRevision: number; createHash: string },
+    transaction: Transaction<ChatDatabase>): Promise<ChatAgent> {
+    if (!transaction.isTransaction) throw new ChatAgentStoreError("agent_unavailable");
+    await lockChatAgentOwner(transaction, owner);
+    const stored = await this.getCreationSnapshot(owner, agentId);
+    if (!stored) throw new ChatAgentStoreError("agent_not_found");
+    const current = stored.agent;
+    if (stored.createHash !== input.createHash || current.archived || current.selection.instanceId !== "matrix_pi_default"
+      || current.selection.options?.length) throw new ChatAgentStoreError("agent_conflict");
+    if (isManagedCustomBot(current) && current.revision === input.baseRevision + 1) return current;
+    if (current.recipeRef || current.revision !== input.baseRevision) throw new ChatAgentStoreError("agent_conflict");
+    const agent = ChatAgentSchema.parse({ ...current, recipeRef: MANAGED_CUSTOM_BOT_RECIPE_REF,
+      revision: current.revision + 1, updatedAt: (this.options.now?.() ?? new Date()).toISOString() });
+    const directory = (await this.directory([this.ownerKey(owner)]))!;
+    await this.write(directory, { agent, createHash: stored.createHash }, false);
+    return agent;
   }
 
   async list(owner: ChatOwner, includeArchived = false): Promise<ChatAgent[]> {

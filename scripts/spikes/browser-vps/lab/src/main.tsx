@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
-import { BrowserSurface, createHostedBrowserSession, createHostedBrowserVisibility, type BrowserSurfaceKind } from '../../../../../packages/ui/src/browser/index';
+import { BrowserSurface, createBrowserSetupTransport, createHostedBrowserSetupTransport, createHostedBrowserSession, createHostedBrowserVisibility, type BrowserSurfaceKind } from '../../../../../packages/ui/src/browser/index';
 import './style.css';
 import { BrowserLabFailure, reportBrowserFailure } from '../../safe-errors.mjs';
 
@@ -12,6 +12,7 @@ const vmPrefix = appIndex >= 0 ? location.pathname.slice(0, appIndex) : '';
 const appBase = `${vmPrefix}/apps/browser-lab`;
 
 type NativeBrowserBridge = {
+  browserSetup?: boolean;
   gatewayFetch?: (url: string, init: RequestInit, timeout: number) => Promise<unknown>;
   openApp?: (name: string, path: string) => void;
 };
@@ -42,9 +43,15 @@ function HostedBrowser({ surface }: { surface: BrowserSurfaceKind }) {
     setActive(browserVisibility.active());
     return browserVisibility.subscribe(setActive);
   }, []);
+  const [setup] = useState(() => {
+    if (!document.querySelector('meta[name="matrix-browser-product"]')) return undefined;
+    const bridge = browserBridge();
+    if (!bridge) return createBrowserSetupTransport(`${location.origin}${vmPrefix}`);
+    return createHostedBrowserSetupTransport(bridge);
+  });
   const bridge = browserBridge();
   return <div className="matrix-browser-native-host"><BrowserSurface gatewayUrl={`${location.origin}${vmPrefix}`} surface={surface}
-    active={active} ensureSession={ensureSession}
+    active={active} ensureSession={ensureSession} setup={setup}
     onOpenCloudDesktop={bridge?.openApp ? () => bridge.openApp?.('Cloud desktop', 'matrix-app:matrix-cloud-desktop') : undefined}
     onOpenBrowser={bridge?.openApp ? () => bridge.openApp?.('Browser', 'matrix-app:matrix-browser') : undefined}/></div>;
 }
@@ -158,7 +165,9 @@ function Fixture() {
   </main>;
 }
 
-const productSurface = new URLSearchParams(location.search).get('surface');
+const requestedSurface = new URLSearchParams(location.search).get('surface');
+const productSurface = requestedSurface === 'browser' || requestedSurface === 'desktop' ? requestedSurface
+  : document.querySelector<HTMLMetaElement>('meta[name="matrix-browser-product"]')?.content;
 const browserVisibility = productSurface === 'browser' || productSurface === 'desktop'
   ? createHostedBrowserVisibility(window, document, !!browserBridge()) : undefined;
 createRoot(document.getElementById('root')!).render(location.pathname === '/fixture' ? <Fixture/>

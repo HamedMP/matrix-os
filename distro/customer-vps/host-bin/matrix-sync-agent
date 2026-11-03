@@ -255,6 +255,11 @@ maybe_reconcile_hermes_release() {
 
 stop_runtime_services() {
   local service state
+  # Do not replace host code while a previous Browser reconciliation is running.
+  # Native Chrome/display services keep running; only the bounded installer waits.
+  if sudo systemctl cat matrix-browser-runtime.service >/dev/null 2>&1; then
+    sudo flock -w 1800 /run/matrix-browser-runtime.lock /usr/bin/systemctl stop matrix-browser-runtime.service || return 1
+  fi
   local runtime_services=(matrix-gateway matrix-shell)
   if sudo systemctl cat matrix-symphony.service >/dev/null 2>&1; then
     runtime_services+=(matrix-symphony)
@@ -367,6 +372,11 @@ restore_rollback_release_metadata() {
 funded_host_bootstrap() { return 1; }
 # END funded host bootstrap
 
+# BEGIN Browser host bootstrap
+# Build emits reviewed inline bootstrap with exact release and payload digests.
+reconcile_browser_host_bootstrap() { return 0; }
+# END Browser host bootstrap
+
 install_host_bin_payload() {
   local source_dir="$1" source name incoming destination protected_helper
   [ -d "$source_dir" ] && [ ! -L "$source_dir" ] || return 1
@@ -387,6 +397,36 @@ install_host_bin_payload() {
       return 1
     fi
   done < <(find "$source_dir" -mindepth 1 -maxdepth 1 -type f -print0)
+  # Hashed OS UI assets are release-owned, unlike arbitrary host-bin files.
+  # The transaction records obsolete prefixed bytes before this bounded prune.
+  if [ -f "$source_dir/matrix-browser-ui-index.html" ] && [ ! -L "$source_dir/matrix-browser-ui-index.html" ]; then
+    for destination in "$BIN_DIR"/matrix-browser-ui-*; do
+      [ -e "$destination" ] || [ -L "$destination" ] || continue
+      name="${destination##*/}"
+      [[ "$name" =~ ^matrix-browser-ui-[A-Za-z0-9][A-Za-z0-9._-]{0,103}$ ]] || return 1
+      [ -f "$destination" ] && [ ! -L "$destination" ] || return 1
+      if [ ! -f "$source_dir/$name" ] || [ -L "$source_dir/$name" ]; then
+        sudo rm -f -- "$destination" || return 1
+      fi
+    done
+  fi
+  protected_helper="$source_dir/matrix-browser-runtime.py"
+  if [ -f "$protected_helper" ] && [ ! -L "$protected_helper" ]; then
+    sudo install -d -o root -g root -m 0755 /usr/local/libexec || return 1
+    destination=/usr/local/libexec/matrix-browser-runtime.py
+    incoming="${destination}.incoming.$$"
+    if [ -L "$destination" ] || { [ -e "$destination" ] && [ ! -f "$destination" ]; }; then
+      log "ERROR: invalid protected Browser helper destination"
+      return 1
+    fi
+    sudo rm -f -- "$incoming" || return 1
+    if ! sudo install -o root -g root -m 0644 "$protected_helper" "$incoming" \
+      || ! sudo mv -Tf "$incoming" "$destination"; then
+      sudo rm -f -- "$incoming"
+      return 1
+    fi
+    sudo chmod 0644 "$BIN_DIR/matrix-browser-runtime.py" || return 1
+  fi
   protected_helper="$source_dir/matrix-postgres-start"
   if [ -f "$protected_helper" ] && [ ! -L "$protected_helper" ]; then
     sudo install -d -o root -g root -m 0755 /usr/local/libexec || return 1
@@ -466,6 +506,18 @@ record_update_payload_directory() {
       printf '%s:%s\n' "$name" "$activity" >>"$UPDATE_TRANSACTION_DIR/systemd.activity" || return 1
     fi
   done < <(find "$source_dir" -mindepth 1 -maxdepth 1 -type f -print0)
+  if [ "$label" = bin ] && [ -f "$source_dir/matrix-browser-ui-index.html" ] && [ ! -L "$source_dir/matrix-browser-ui-index.html" ]; then
+    for destination in "$destination_dir"/matrix-browser-ui-*; do
+      [ -e "$destination" ] || [ -L "$destination" ] || continue
+      name="${destination##*/}"
+      [[ "$name" =~ ^matrix-browser-ui-[A-Za-z0-9][A-Za-z0-9._-]{0,103}$ ]] || return 1
+      [ -f "$destination" ] && [ ! -L "$destination" ] || return 1
+      if [ ! -f "$source_dir/$name" ] || [ -L "$source_dir/$name" ]; then
+        sudo cp -a -- "$destination" "$UPDATE_TRANSACTION_DIR/$label/$name" || return 1
+        printf '%s\n' "$name" >>"$UPDATE_TRANSACTION_DIR/$label.present" || return 1
+      fi
+    done
+  fi
 }
 
 # The retirement bundle omits this unit, so the generic candidate-payload
@@ -562,6 +614,7 @@ prepare_update_transaction() {
   record_update_file "$RELEASE_ROLLBACK_FILE" rollback-release-metadata || return 1
   record_update_file /usr/local/libexec/matrix-postgres-start postgres-helper || return 1
   record_update_file /usr/local/libexec/matrix-support-access support-helper || return 1
+  record_update_file /usr/local/libexec/matrix-browser-runtime.py browser-helper || return 1
 
   if [ -L "$TERMINAL_RUNTIME_ROOT/current" ]; then
     current_target="$(readlink "$TERMINAL_RUNTIME_ROOT/current")" || return 1
@@ -669,6 +722,10 @@ restore_update_transaction() {
   fi
   if [ -f "$UPDATE_TRANSACTION_DIR/support-helper.present" ] || [ -f "$UPDATE_TRANSACTION_DIR/support-helper.missing" ]; then
     restore_update_file /usr/local/libexec/matrix-support-access support-helper || return 1
+  fi
+
+  if [ -f "$UPDATE_TRANSACTION_DIR/browser-helper.present" ] || [ -f "$UPDATE_TRANSACTION_DIR/browser-helper.missing" ]; then
+    restore_update_file /usr/local/libexec/matrix-browser-runtime.py browser-helper || return 1
   fi
 
   if [ -f "$UPDATE_TRANSACTION_DIR/terminal-current" ]; then
@@ -1628,6 +1685,14 @@ apply_update() {
   if [ "$healthy" = true ]; then
     if commit_release_metadata; then
       log "Updated release metadata"
+      # Browser lives outside app rollback. Schedule only after core health commits.
+      if [ -f /etc/systemd/system/matrix-browser-runtime.service ]; then
+        sudo systemctl reset-failed matrix-browser-runtime.service || true
+        if ! sudo systemctl enable matrix-browser-runtime.service \
+          || ! sudo systemctl restart --no-block matrix-browser-runtime.service; then
+          log "WARN: Browser reconciliation deferred; it remains retryable via systemd"
+        fi
+      fi
       if ! retire_legacy_symphony; then
         log "ERROR: legacy Symphony service could not be retired"
         write_update_error "symphony_retirement_failed" "The update completed, but the retired Symphony service could not be stopped safely." "$version"
@@ -1910,6 +1975,7 @@ if [[ "$funded_installed_version" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$ ]] && [ 
   # Startup installs independently verified bytes only; it never stops a runtime.
   funded_host_bootstrap install "$funded_installed_version" || log "WARN: funded host component installation deferred"
 fi
+reconcile_browser_host_bootstrap || log "WARN: Browser first-upgrade bootstrap deferred"
 reconcile_postgres_root_service || log "WARN: PostgreSQL root service reconciliation failed"
 maybe_retire_legacy_symphony || log "WARN: legacy Symphony retirement will retry"
 maybe_reconcile_hermes_release || log "WARN: Hermes release reconciliation retry failed"

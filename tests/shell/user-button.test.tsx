@@ -304,6 +304,47 @@ describe("UserButton", () => {
     expect(screen.getByRole("menuitem", { name: "Get another computer" }).getAttribute("href")).toBe("/?billing=setup&handoff=add-computer");
   });
 
+  it("restores the organization picker in the menubar and announces the active selection", async () => {
+    clerkState.organization = { id: "org_a" };
+    clerkState.memberships = [
+      { organization: { id: "org_a", name: "Finna" } },
+      { organization: { id: "org_b", name: "Matrix Main" } },
+    ];
+    const { UserButton } = await import("../../shell/src/components/UserButton.js");
+    const view = render(<UserButton variant="menubar" />);
+    fireEvent.pointerDown(screen.getByRole("button", { name: "Account menu for kongfupanda13" }), { button: 0, ctrlKey: false });
+    await screen.findByRole("menuitem", { name: "Log out" });
+    expect(screen.getByRole("menuitemradio", { name: "Finna" }).getAttribute("aria-checked")).toBe("true");
+    fireEvent.click(screen.getByRole("menuitemradio", { name: "Matrix Main" }));
+    await waitFor(() => expect(clerkState.setActive).toHaveBeenCalledWith({ organization: "org_b" }));
+    clerkState.organization = { id: "org_b" };
+    view.rerender(<UserButton variant="menubar" />);
+    expect(screen.getByRole("menuitemradio", { name: "Matrix Main" }).getAttribute("aria-checked")).toBe("true");
+  });
+
+  it("bounds a long menubar organization list and keeps account actions scrollable", async () => {
+    clerkState.memberships = Array.from({ length: 20 }, (_, index) => ({ organization: { id: `org_${index}`, name: `Organization ${index}` } }));
+    const { UserButton } = await import("../../shell/src/components/UserButton.js");
+    render(<UserButton variant="menubar" onOpenSettings={vi.fn()} />);
+    fireEvent.pointerDown(screen.getByRole("button", { name: "Account menu for kongfupanda13" }), { button: 0, ctrlKey: false });
+    await screen.findByRole("menuitem", { name: "Log out" });
+    const menu = screen.getByRole("menu");
+    expect(menu.style.maxHeight).toBe("var(--radix-dropdown-menu-content-available-height)");
+    expect(menu.style.overflowY).toBe("auto");
+    expect(screen.getAllByRole("menuitemradio")).toHaveLength(20);
+    expect(screen.getByRole("menuitem", { name: "Settings" })).toBeTruthy();
+    expect(screen.getByRole("menuitem", { name: "Log out" })).toBeTruthy();
+  });
+
+  it("omits the menubar organization section for a confirmed individual", async () => {
+    const { UserButton } = await import("../../shell/src/components/UserButton.js");
+    render(<UserButton variant="menubar" />);
+    fireEvent.pointerDown(screen.getByRole("button", { name: "Account menu for kongfupanda13" }), { button: 0, ctrlKey: false });
+    await screen.findByRole("menuitem", { name: "Log out" });
+    expect(screen.queryByText("Organization")).toBeNull();
+    expect(screen.queryByRole("menuitemradio")).toBeNull();
+  });
+
   it("matches the top-bar account menu and keeps billing functional", async () => {
     const onOpenSettings = vi.fn();
     const { UserButton } = await import("../../shell/src/components/UserButton.js");

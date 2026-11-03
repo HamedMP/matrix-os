@@ -32,6 +32,8 @@ import {
 } from "./ai-funded-metering-helpers.js";
 import { evaluateFundedPriority, findConflictingActiveReservation, type FundedBillingMode } from "./ai-funded-priority-claims.js";
 import { fundingSourceAvailability, reconcileExpiredPromotionalCredit, reserveFundingSources } from "./ai-funded-reservation-sources.js";
+import { previewRuntimeOperationBusy } from "./preview-runtime-admission.js";
+import { isBoundedPreviewProvisioningClass } from "./preview-runtime-access.js";
 
 type AuthorizeOutcome =
   | { kind: "authorized"; response: FundedAiAuthorizationResponse }
@@ -83,7 +85,8 @@ export function createFundedAuthorize(deps: FundedAuthorizeDependencies) {
       const runtime = await trx.executor.selectFrom("ai_funded_runtime_policies")
         .selectAll().where("machine_id", "=", credential.machine_id).forUpdate().executeTakeFirst();
       const machine = await trx.executor.selectFrom("user_machines").select([
-        "clerk_user_id", "runtime_slot", "status", "activation_state", "deleted_at",
+        "clerk_user_id", "runtime_slot", "runtime_token_epoch", "provisioning_class",
+        "status", "activation_state", "deleted_at",
       ]).where("machine_id", "=", credential.machine_id).executeTakeFirst();
       const global = await trx.executor.selectFrom("ai_funded_global_policy")
         .selectAll().where("policy_id", "=", "default").executeTakeFirstOrThrow();
@@ -93,6 +96,7 @@ export function createFundedAuthorize(deps: FundedAuthorizeDependencies) {
       if (!runtime || !machine || machine.clerk_user_id !== credential.owner_id
         || machine.runtime_slot !== credential.runtime_slot || machine.status !== "running"
         || machine.activation_state !== "authorized" || machine.deleted_at !== null
+        || credential.runtime_token_epoch !== machine.runtime_token_epoch
         || runtime.owner_id !== credential.owner_id || runtime.runtime_slot !== credential.runtime_slot) {
         throw new AiFundedPolicyError("unauthorized");
       }
@@ -129,6 +133,10 @@ export function createFundedAuthorize(deps: FundedAuthorizeDependencies) {
         return { kind: "authorized", response: FundedAiAuthorizationResponseSchema.parse(JSON.parse(existing.authorization_response)) };
       }
 
+      if (machine.provisioning_class !== "customer" && !isBoundedPreviewProvisioningClass(machine.provisioning_class)) {
+        throw new AiFundedPolicyError("access_disabled");
+      }
+
       const billingMode: FundedBillingMode = request.billingMode === "usage" ? "usage" : "hold";
       const monthlyBudget = exactInteger(runtime.monthly_budget_microusd);
       const balance = await trx.executor.selectFrom("ai_funded_runtime_balances")
@@ -157,6 +165,26 @@ export function createFundedAuthorize(deps: FundedAuthorizeDependencies) {
       if (await findConflictingActiveReservation(trx.executor, credential.owner_id, billingMode)) {
         // A capacity refusal before any reservation: the reason tells callers it is safe to retry.
         throw new AiFundedPolicyError("rate_limited", "slot_busy");
+      }
+      if (isBoundedPreviewProvisioningClass(machine.provisioning_class)) {
+        const previewBusy = await previewRuntimeOperationBusy(
+          trx.executor,
+          identity,
+          new Date(checked.getTime() - 2 * 60_000).toISOString(),
+        );
+        if (previewBusy) throw new AiFundedPolicyError("rate_limited", "slot_busy");
+        const allocation = await trx.executor.updateTable("preview_runtime_allocations").set({
+          ai_requests_used: sql<number>`ai_requests_used + 1`,
+          updated_at: checkedAt,
+        }).where("machine_id", "=", credential.machine_id)
+          .where("owner_id", "=", credential.owner_id)
+          .where("runtime_slot", "=", credential.runtime_slot)
+          .where("runtime_token_epoch", "=", machine.runtime_token_epoch)
+          .where("expires_at", ">", checkedAt)
+          .whereRef("ai_requests_used", "<", "ai_request_limit")
+          .where("max_concurrency", "=", 1)
+          .returning("machine_id").executeTakeFirst();
+        if (!allocation) throw new AiFundedPolicyError("access_disabled");
       }
       let holdMicrousd = request.maxCostMicrousd;
       if (billingMode === "usage") {

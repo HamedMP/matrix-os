@@ -10,10 +10,11 @@ import {
 } from "./funded-relay.js";
 import { FUNDED_SONNET, probeFundedModel } from "./funded-relay-readiness.js";
 import { fundedModelPriceValidThrough, isFundedModelPriceCurrent } from "./funded-relay-model.js";
+import { RELAY_SHUTDOWN_TIMEOUT_MS, waitForRelayWork } from "./funded-relay-lifecycle.js";
 
 export interface FundedRelayService {
   app: Hono;
-  close(): Promise<void>;
+  close(signal?: AbortSignal): Promise<boolean>;
 }
 
 export function requireFundedRelayServiceConfig(
@@ -56,12 +57,20 @@ export function createFundedRelayService(config: FundedRelayConfig, options: { f
     return c.json(ready ? { ready: true, priceValidThrough } : { ready: false }, ready ? 200 : 503);
   });
   relay.register(app);
+  let closing: Promise<boolean> | undefined;
 
   return {
     app,
-    async close() {
-      await relay.close();
-      await errorTracker.shutdown();
+    close(shutdownSignal?: AbortSignal) {
+      if (closing) return closing;
+      const signal = shutdownSignal ?? AbortSignal.timeout(RELAY_SHUTDOWN_TIMEOUT_MS);
+      closing = (async () => {
+        const drained = await relay.close(signal);
+        if (signal.aborted) return false;
+        const tracked = await waitForRelayWork(errorTracker.shutdown(), signal);
+        return drained && tracked && !signal.aborted;
+      })();
+      return closing;
     },
   };
 }

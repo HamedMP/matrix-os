@@ -31,7 +31,7 @@ describe("Codex runtime supervision", () => {
       await f.tick(61_000);
       expect(f.ingestProviderEvents).toHaveBeenCalledWith(expect.anything(), "thread_test", expect.objectContaining({
         events: expect.arrayContaining([expect.objectContaining({ outcome: "failed" })]),
-      }));
+      }), expect.objectContaining({ sessionId: "sess_test", checkpoint: false }));
     } finally { await f.close(); }
   });
 
@@ -52,7 +52,7 @@ describe("Codex runtime supervision", () => {
       await f.tick(610_000);
       expect(f.ingestProviderEvents).toHaveBeenCalledWith(expect.anything(), "thread_test", expect.objectContaining({
         events: expect.arrayContaining([expect.objectContaining({ outcome: "failed" })]),
-      }));
+      }), expect.objectContaining({ sessionId: "sess_test", checkpoint: false }));
     } finally { await f.close(); }
   });
 
@@ -97,7 +97,7 @@ describe("Codex runtime supervision", () => {
       await f.tick(1_000);
       expect(f.ingestProviderEvents).toHaveBeenCalledWith(expect.anything(), "thread_test", expect.objectContaining({
         events: expect.arrayContaining([expect.objectContaining({ type: "assistant.text.delta", delta: "Still deliver this" })]),
-      }));
+      }), expect.objectContaining({ sessionId: "sess_test", checkpoint: false }));
     } finally { await f.close(); }
   });
 
@@ -116,7 +116,7 @@ describe("Codex runtime supervision", () => {
       await bridge.drain();
       expect(ingestProviderEvents).toHaveBeenCalledWith(expect.anything(), "thread_test", expect.objectContaining({
         events: expect.arrayContaining([expect.objectContaining({ type: "thread.completed", outcome: "failed" })]),
-      }));
+      }), expect.objectContaining({ sessionId: "sess_test", checkpoint: false }));
       await bridge.drain();
       expect(ingestProviderEvents).toHaveBeenCalledTimes(1);
     } finally { await bridge.shutdown(); await rm(homePath, { recursive: true, force: true }); }

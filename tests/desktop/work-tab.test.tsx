@@ -2,8 +2,9 @@
 
 import React from "react";
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
-import { CanonicalChatNavigationResponseSchema, type CanonicalChatRecord } from "@matrix-os/contracts";
+import { CanonicalChatNavigationResponseSchema, FUNDED_AI_READINESS_TIMEOUTS, type CanonicalChatRecord } from "@matrix-os/contracts";
 import WorkTab from "@desktop/renderer/src/features/work/WorkTab";
+import { desktopProviderCatalogCache, stopDesktopProviderCatalogCoordinator } from "@desktop/renderer/src/features/chat/provider-catalog-coordinator";
 import { useChatComposerDrafts } from "@desktop/renderer/src/features/chat/use-chat-composer-drafts";
 import { BotHeaderBindingContext, SurfaceChromeContext, type BotHeaderBindingReport, type SurfaceChromeSpec } from "@desktop/renderer/src/features/desktop-shell/SurfaceChrome";
 import { CanonicalChatWorkspace } from "@desktop/renderer/src/features/chat/CanonicalChatWorkspace";
@@ -262,11 +263,11 @@ function activeWorkTab() {
 }
 
 describe("WorkTab rail integration", () => {
-  it("creates a recipe bot and navigates to its saved Chat from the real WorkTab", async () => {
+  it("creates a recipe bot from the warm catalog after its background refresh fails", async () => {
     const api = useConnection.getState().api!;
     const originalGet = api.get;
-    let finishDiscovery!: (catalog: typeof providerCatalog) => void;
-    const discovery = new Promise<typeof providerCatalog>(resolve => { finishDiscovery = resolve; });
+    let failDiscovery!: (error: Error) => void;
+    const discovery = new Promise<never>((_resolve, reject) => { failDiscovery = reject; });
     api.get = vi.fn(async (path: string) => {
       if (path === canonicalChatProviderCatalogPath()) return providerCatalog;
       if (path === canonicalChatProviderCatalogPath(true)) return discovery;
@@ -283,15 +284,13 @@ describe("WorkTab rail integration", () => {
     HTMLDialogElement.prototype.close = function() { this.removeAttribute("open"); };
     fireEvent.click(create);
     const model = screen.getByRole("combobox", { name: "Bot model" });
-    await waitFor(() => expect(api.get).toHaveBeenCalledWith(canonicalChatProviderCatalogPath(true)));
-    expect((model as HTMLSelectElement).disabled).toBe(true);
-    // Native selection/submission obey the same discovery barrier as visible controls.
-    fireEvent.change(model, { target: { value: "" } });
-    fireEvent.click(screen.getByRole("button", { name: "Create bot" }));
-    fireEvent.submit(model.closest("form")!);
-    expect(vi.mocked(api.post).mock.calls.filter(([path]) => path === "/api/chat-agents/instantiate")).toHaveLength(0);
-    await act(async () => finishDiscovery(providerCatalog));
-    await waitFor(() => expect((model as HTMLSelectElement).disabled).toBe(false));
+    await waitFor(() => expect(api.get).toHaveBeenCalledWith(canonicalChatProviderCatalogPath(true),
+      expect.objectContaining({ timeoutMs: FUNDED_AI_READINESS_TIMEOUTS.rendererRequestMs })));
+    // A routine refresh must not hide the last trusted model catalogue or block creation.
+    expect((model as HTMLSelectElement).disabled).toBe(false);
+    await act(async () => failDiscovery(new Error("catalog unavailable")));
+    await waitFor(() => expect(desktopProviderCatalogCache.getSnapshot().refreshError).not.toBeNull());
+    expect((model as HTMLSelectElement).disabled).toBe(false);
     fireEvent.change(model, { target: { value: "" } });
     expect((screen.getByRole("button", { name: "Create bot" }) as HTMLButtonElement).disabled).toBe(false);
     fireEvent.click(screen.getByRole("button", { name: "Create bot" }));
@@ -303,7 +302,71 @@ describe("WorkTab rail integration", () => {
     expect(vi.mocked(api.post).mock.calls.filter(([path]) => path === "/api/chat-agents/instantiate")).toHaveLength(1);
   });
 
+  it("keeps recipe Agent creation blocked when the first host catalog read fails", async () => {
+    const api = useConnection.getState().api!;
+    const originalGet = api.get;
+    let failDiscovery!: (error: Error) => void;
+    const discovery = new Promise<never>((_resolve, reject) => { failDiscovery = reject; });
+    api.get = vi.fn(async (path: string) => {
+      if (path === canonicalChatProviderCatalogPath()) return discovery;
+      if (path === "/api/chat-agents/bot-recipes") return { recipes: [{ recipeId: "competitor-watch", version: "1", name: "Competitor Watch", description: "Watch pages", output: "Change report" }] };
+      return originalGet(path);
+    }) as typeof api.get;
+    api.post = vi.fn(async () => ({ chatId: "chat_must_not_exist" })) as typeof api.post;
+
+    render(<WorkTab route="chat" active />);
+    fireEvent.click(await screen.findByRole("button", { name: "Add new agent" }));
+    const recipe = (await screen.findByText("Watch pages")).closest("article")!;
+    HTMLDialogElement.prototype.showModal = function() { this.setAttribute("open", ""); };
+    HTMLDialogElement.prototype.close = function() { this.removeAttribute("open"); };
+    fireEvent.click(within(recipe).getByRole("button", { name: "Use Competitor Watch" }));
+    const model = screen.getByRole("combobox", { name: "Bot model" });
+    await waitFor(() => expect(api.get).toHaveBeenCalledWith(canonicalChatProviderCatalogPath(),
+      expect.objectContaining({ timeoutMs: FUNDED_AI_READINESS_TIMEOUTS.rendererRequestMs })));
+    expect((model as HTMLSelectElement).disabled).toBe(true);
+    fireEvent.click(screen.getByRole("button", { name: "Create bot" }));
+    fireEvent.submit(model.closest("form")!);
+    expect(vi.mocked(api.post).mock.calls.filter(([path]) => path === "/api/chat-agents/instantiate")).toHaveLength(0);
+
+    await act(async () => failDiscovery(new Error("catalog unavailable")));
+    await waitFor(() => expect(desktopProviderCatalogCache.getSnapshot().refreshError).not.toBeNull());
+    expect((model as HTMLSelectElement).disabled).toBe(true);
+    fireEvent.click(screen.getByRole("button", { name: "Create bot" }));
+    fireEvent.submit(model.closest("form")!);
+    expect(vi.mocked(api.post).mock.calls.filter(([path]) => path === "/api/chat-agents/instantiate")).toHaveLength(0);
+  });
+
+  it("blocks recipe Agent creation as soon as provider settings suspend catalog trust", async () => {
+    const api = useConnection.getState().api!;
+    const originalGet = api.get;
+    const pendingRefresh = new Promise<never>(() => undefined);
+    api.get = vi.fn(async (path: string) => {
+      if (path === canonicalChatProviderCatalogPath()) return providerCatalog;
+      if (path === canonicalChatProviderCatalogPath(true)) return pendingRefresh;
+      if (path === "/api/chat-agents/bot-recipes") return { recipes: [{ recipeId: "competitor-watch", version: "1", name: "Competitor Watch", description: "Watch pages", output: "Change report" }] };
+      return originalGet(path);
+    }) as typeof api.get;
+    api.post = vi.fn(async () => ({ chatId: "chat_must_not_exist" })) as typeof api.post;
+
+    render(<WorkTab route="chat" active />);
+    fireEvent.click(await screen.findByRole("button", { name: "Add new agent" }));
+    const recipe = (await screen.findByText("Watch pages")).closest("article")!;
+    HTMLDialogElement.prototype.showModal = function() { this.setAttribute("open", ""); };
+    HTMLDialogElement.prototype.close = function() { this.removeAttribute("open"); };
+    fireEvent.click(within(recipe).getByRole("button", { name: "Use Competitor Watch" }));
+    const model = screen.getByRole("combobox", { name: "Bot model" });
+    await waitFor(() => expect((model as HTMLSelectElement).disabled).toBe(false));
+
+    act(() => useConnection.setState({ providerCatalogGeneration: 1 }));
+    await waitFor(() => expect(desktopProviderCatalogCache.getSnapshot().authoritySuspended).toBe(true));
+    expect((model as HTMLSelectElement).disabled).toBe(true);
+    fireEvent.click(screen.getByRole("button", { name: "Create bot" }));
+    fireEvent.submit(model.closest("form")!);
+    expect(vi.mocked(api.post).mock.calls.filter(([path]) => path === "/api/chat-agents/instantiate")).toHaveLength(0);
+  });
+
   beforeEach(() => {
+    stopDesktopProviderCatalogCoordinator();
     resizeObserverEntries.length = 0;
     inspectorProps.active = [];
     chatTabProps.tabIds = [];
@@ -349,7 +412,7 @@ describe("WorkTab rail integration", () => {
           }),
         });
       }
-      if (path === "/api/chat-agents") return { enabled: true, agents: [] };
+      if (path === "/api/chat-agents?includeManagedCustomRecoveries=true") return { enabled: true, agents: [], managedCustomRecoveries: [] };
       if (/^\/api\/chats\/[^/]+\/bot$/.test(path)) return { agentId: null };
       if (/^\/api\/chats\/(?:chat_global|chat_alpha)\?/.test(path)) return {
         record: path.startsWith("/api/chats/chat_alpha?") ? projectChat : globalChat,
@@ -402,6 +465,7 @@ describe("WorkTab rail integration", () => {
 
   afterEach(() => {
     cleanup();
+    stopDesktopProviderCatalogCoordinator();
     if (originalClientWidth) Object.defineProperty(HTMLElement.prototype, "clientWidth", originalClientWidth);
     HTMLElement.prototype.getBoundingClientRect = originalGetBoundingClientRect;
   });
@@ -862,18 +926,85 @@ describe("WorkTab rail integration", () => {
     expect(screen.getByRole("navigation", { name: "Chat navigation" })).toBeTruthy();
   });
 
-  it("replaces the generic title with a Bot identity target on the existing native toolbar after authenticated binding", async () => {
+  it.each([640, 900, 1400])("keeps one Bot identity and inspector chrome when a visible %ipx Chat loses focus", async (width) => {
+    initialWorkWidth = width;
     chatTabProps.contentClient = botContentClient(vi.fn(async () => saved.id));
-    function HostedBot() {
+    function HostedBot({ active }: { active: boolean }) {
       const [chrome, setChrome] = React.useState<SurfaceChromeSpec | null>(null);
-      const host = React.useMemo(() => ({setChrome}), []);
-      return <SurfaceChromeContext.Provider value={host}><header>{chrome?.title}{chrome?.rightActions}</header>
-        <WorkTab route="chat" active initialChatId="chat_global" initialChatView="conversation"/></SurfaceChromeContext.Provider>;
+      const host = React.useMemo(() => ({ setChrome }), []);
+      return <SurfaceChromeContext.Provider value={host}><header>{chrome?.title}{chrome?.rightActions}
+        <output data-testid="bot-inspector-width">{chrome?.rightPaneWidth}</output></header>
+        <WorkTab route="chat" active={active} visible initialChatId="chat_global" initialChatView="conversation" /></SurfaceChromeContext.Provider>;
     }
-    render(<HostedBot/>);
-    await waitFor(()=>expect(document.querySelector("header [data-slot='desktop-bot-header']")).toBeTruthy());
-    expect(screen.queryByRole("button", { name: "Rename Chat" })).toBeNull();
-    expect(within(document.querySelector("header")!).getByRole("button", { name: "Share", exact: true })).toBeTruthy();
+    const view = render(<HostedBot active />);
+    await waitFor(() => expect(screen.getByRole("button", { name: "Details" }).closest("header")).toBeTruthy());
+    const header = document.querySelector("header")!;
+    const identityHost = header.querySelector("[data-slot='desktop-bot-header']");
+    const identity = header.querySelector(".matrix-bot-identity-bar");
+    if (screen.queryByRole("button", { name: "Show inspector" })) fireEvent.click(screen.getByRole("button", { name: "Show inspector" }));
+    const inspectorWidth = screen.getByTestId("bot-inspector-width").textContent;
+
+    for (const active of [false, true, false, true]) {
+      view.rerender(<HostedBot active={active} />);
+      expect(header.querySelector("[data-slot='desktop-bot-header']")).toBe(identityHost);
+      expect(header.querySelector(".matrix-bot-identity-bar")).toBe(identity);
+      expect(document.querySelectorAll(".matrix-bot-identity-bar")).toHaveLength(1);
+      expect(within(header).getByRole("button", { name: "Details" })).toBeTruthy();
+      expect(within(header).getByRole("button", { name: "Share", exact: true })).toBeTruthy();
+      expect(within(header).getByRole("button", { name: "Hide inspector" })).toBeTruthy();
+      expect(screen.getByTestId("bot-inspector-width").textContent).toBe(inspectorWidth);
+      expect(screen.queryByRole("button", { name: "Rename Chat" })).toBeNull();
+    }
+  });
+
+  it("keeps a background inspector visible without activating its native browser or terminal", async () => {
+    function HostedChat({ active }: { active: boolean }) {
+      const [chrome, setChrome] = React.useState<SurfaceChromeSpec | null>(null);
+      const host = React.useMemo(() => ({ setChrome }), []);
+      return <SurfaceChromeContext.Provider value={host}><header>{chrome?.title}{chrome?.rightActions}</header>
+        <WorkTab route="chat" active={active} visible initialChatId="chat_global" initialChatView="conversation" />
+      </SurfaceChromeContext.Provider>;
+    }
+    const view = render(<HostedChat active />);
+    if (screen.queryByRole("button", { name: "Show inspector" })) fireEvent.click(screen.getByRole("button", { name: "Show inspector" }));
+    const inspector = await screen.findByRole("complementary", { name: "Chat inspector" });
+    expect(inspector.getAttribute("data-active")).toBe("true");
+
+    view.rerender(<HostedChat active={false} />);
+    expect(screen.getByRole("complementary", { name: "Chat inspector" })).toBe(inspector);
+    expect(inspector.getAttribute("data-active")).toBe("false");
+    expect(screen.getByRole("button", { name: "Hide inspector" })).toBeTruthy();
+
+    view.rerender(<HostedChat active />);
+    expect(screen.getByRole("complementary", { name: "Chat inspector" })).toBe(inspector);
+    expect(inspector.getAttribute("data-active")).toBe("true");
+  });
+
+  it("leaves foreground Escape and focus alone while a background medium Chat keeps its inspector", async () => {
+    initialWorkWidth = 900;
+    function HostedChat({ active }: { active: boolean }) {
+      const [chrome, setChrome] = React.useState<SurfaceChromeSpec | null>(null);
+      const host = React.useMemo(() => ({ setChrome }), []);
+      return <><input aria-label="Foreground Settings field" />
+        <SurfaceChromeContext.Provider value={host}><header>{chrome?.rightActions}</header>
+          <WorkTab route="chat" active={active} visible initialChatId="chat_global" initialChatView="conversation" />
+        </SurfaceChromeContext.Provider></>;
+    }
+    const view = render(<HostedChat active />);
+    fireEvent.click(await screen.findByRole("button", { name: "Show inspector" }));
+    view.rerender(<HostedChat active={false} />);
+    const foreground = screen.getByRole("textbox", { name: "Foreground Settings field" });
+    foreground.focus();
+    fireEvent.keyDown(foreground, { key: "Escape" });
+    expect(screen.getByRole("button", { name: "Hide inspector" })).toBeTruthy();
+    expect(screen.getByRole("complementary", { name: "Chat inspector" })).toBeTruthy();
+    expect(document.activeElement).toBe(foreground);
+
+    view.rerender(<HostedChat active />);
+    screen.getByRole("button", { name: "Inspector action" }).focus();
+    fireEvent.keyDown(window, { key: "Escape" });
+    expect(screen.queryByRole("complementary", { name: "Chat inspector" })).toBeNull();
+    expect(document.activeElement).toBe(screen.getByRole("button", { name: "Show inspector" }));
   });
 
   it("recovers the same toolbar when its Bot query failed and content resolves identity after Retry", async () => {

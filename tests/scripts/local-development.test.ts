@@ -674,6 +674,7 @@ describe("local development contracts", () => {
     expect(rendered).toContain("NODE_EXTRA_CA_CERTS=/opt/matrix/local-parity-storage-ca.pem");
     expect(rendered).toContain("COLLABORATION_RELAY_ORIGIN=https://app.localhost:9445");
     expect(rendered).toContain("MATRIX_COLLABORATION_CLIENT_ORIGINS=https://app.localhost:9445");
+    expect(rendered).toContain("MATRIX_GET_STARTED_ENABLED=true");
     expect(rendered).not.toContain("growpart:\n  mode: off\nresize_rootfs: false");
     expect(rendered).not.toMatch(/\{\{[a-zA-Z0-9_]+\}\}/);
     expect(rendered).not.toContain("MATRIX_LEGACY_CONTAINER_ROUTING_ENABLED");

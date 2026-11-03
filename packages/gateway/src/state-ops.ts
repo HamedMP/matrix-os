@@ -76,8 +76,16 @@ async function pathExists(path: string): Promise<boolean> {
 export async function atomicWriteJson(path: string, value: unknown): Promise<void> {
   await mkdir(dirname(path), { recursive: true });
   const tmpPath = join(dirname(path), `.${randomUUID()}.tmp`);
-  await writeFile(tmpPath, `${JSON.stringify(value, null, 2)}\n`, { flag: "wx" });
-  await rename(tmpPath, path);
+  try {
+    await writeFile(tmpPath, `${JSON.stringify(value, null, 2)}\n`, { flag: "wx" });
+    await rename(tmpPath, path);
+  } catch (err) {
+    // A partial temp file (ENOSPC, failed rename) must not accumulate next to owner state.
+    await rm(tmpPath, { force: true }).catch((cleanupErr: unknown) => {
+      console.warn("[state-ops] Failed to remove temp file:", cleanupErr instanceof Error ? cleanupErr.name : "UnknownError");
+    });
+    throw err;
+  }
 }
 
 // Publish a fully written JSON file without replacing an existing file. The

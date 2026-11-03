@@ -87,7 +87,7 @@ describe("shared chat platform speech input", () => {
   it("appends transcription to the current editable draft and requires manual Send", async () => {
     const onSubmit = vi.fn();
     render(<TestComposer onSubmit={onSubmit} />);
-    const textarea = screen.getByPlaceholderText("Ask anything...");
+    const textarea = screen.getByPlaceholderText("Reply to chat…");
     fireEvent.change(textarea, { target: { value: "Typed first" } });
     fireEvent.click(await screen.findByRole("button", { name: "Start voice input" }));
     await screen.findByRole("button", { name: "Stop recording" });
@@ -108,7 +108,7 @@ describe("shared chat platform speech input", () => {
     const onSubmit = vi.fn();
     const client = speechClient();
     const view = render(<TestComposer onSubmit={onSubmit} client={client} />);
-    const textarea = screen.getByPlaceholderText("Ask anything...");
+    const textarea = screen.getByPlaceholderText("Reply to chat…");
     fireEvent.change(textarea, { target: { value: "Keep this draft" } });
     fireEvent.click(await screen.findByRole("button", { name: "Start voice input" }));
     const stop = await screen.findByRole("button", { name: "Stop recording" });
@@ -182,7 +182,7 @@ describe("shared chat platform speech input", () => {
     const onSubmit = vi.fn();
     render(<TestComposer onSubmit={onSubmit} adapter={pendingCapture} />);
 
-    const textarea = screen.getByPlaceholderText("Ask anything...");
+    const textarea = screen.getByPlaceholderText("Reply to chat…");
     fireEvent.change(textarea, { target: { value: "Keep the pending draft" } });
     fireEvent.click(await screen.findByRole("button", { name: "Start voice input" }));
     const cancel = await screen.findByRole("button", { name: "Cancel microphone request" });

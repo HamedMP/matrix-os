@@ -10,6 +10,8 @@ export const DESKTOP_Z_INDEX = {
   nativeDesktopLaunchpad: 44,
   nativeDesktopTaskbar: 45,
   dialog: 50,
+  // Get started wizard (spec 635): covers windows, taskbar and dialogs until finished or skipped.
+  getStarted: 60,
   chrome: 2,
   popover: 100,
 } as const;

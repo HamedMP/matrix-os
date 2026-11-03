@@ -1,6 +1,7 @@
 import type { AiProviderSnapshotV3 } from "@matrix-os/contracts";
 import { describe, expect, it } from "vitest";
 import { BotRouteError, resolveBotRoute, resolveManagedPiRoute } from "../../../packages/gateway/src/bots/route-resolver.js";
+import { resolveBotRouteForAccessSource } from "../../../packages/gateway/src/bots/route-resolver.js";
 
 const NOW = Date.parse("2026-09-28T12:00:00.000Z");
 const ready = { state: "ready", checkedAt: null, staleAfter: null, action: "none", safeReason: null };
@@ -127,5 +128,17 @@ describe("explicit managed Pi route", () => {
     for (const selection of [{ instanceId: "kernel_matrix_included", model: SONNET }, { instanceId: "matrix_pi_default", model: "gpt-forged" }]) {
       expect(() => resolveManagedPiRoute(value(), selection, NOW)).toThrow(BotRouteError);
     }
+  });
+});
+
+describe("explicit shared access source route", () => {
+  it("never falls back to active personal choices when the scoped source is unavailable", () => {
+    const value = snapshot({ active: { accessSourceId: "matrix_cloudflare", modelId: GLM },
+      sources: [{ id: "matrix_cloudflare", models: [GLM] }, { id: "owner_anthropic_key", state: "disabled", models: [SONNET] }],
+      models: [{ id: GLM, vendor: "cloudflare", sources: ["matrix_cloudflare"] }, { id: SONNET, vendor: "anthropic", sources: ["owner_anthropic_key"] }] });
+    expect(() => resolveBotRouteForAccessSource(value, "owner_anthropic_key", SONNET, NOW)).toThrow(BotRouteError);
+    expect(() => resolveBotRouteForAccessSource(value, "missing_source", SONNET, NOW)).toThrow(BotRouteError);
+    value.accessSources.find((source) => source.id === "owner_anthropic_key")!.state = "ready";
+    expect(resolveBotRouteForAccessSource(value, "owner_anthropic_key", SONNET, NOW)).toMatchObject({ accessSourceId: "owner_anthropic_key", route: { modelId: SONNET } });
   });
 });

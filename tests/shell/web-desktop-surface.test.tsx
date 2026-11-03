@@ -240,6 +240,20 @@ describe("WebDesktopSurface", () => {
       .toBe(true);
   });
 
+  it("hides the launch bar and desktop icons while an app is maximized, like Electron Desktop", () => {
+    const props = {
+      apps, windows, launcherOpen: false, onOpenApp: vi.fn(), onOpenLauncher: vi.fn(), onOpenSettings: vi.fn(),
+      onActivateWindow: vi.fn(), onCloseWindow: vi.fn(), onShowDesktop: vi.fn(), onToggleFullscreen: vi.fn(),
+    };
+    const view = render(<WebDesktopSurface {...props} fullscreenWindowId="terminal-window" />);
+    expect(screen.queryByRole("navigation", { name: "Running apps" })).toBeNull();
+    expect(screen.queryByRole("navigation", { name: "Desktop apps" })).toBeNull();
+
+    view.rerender(<WebDesktopSurface {...props} fullscreenWindowId={null} />);
+    expect(screen.getByRole("navigation", { name: "Running apps" })).toBeTruthy();
+    expect(screen.getByRole("navigation", { name: "Desktop apps" })).toBeTruthy();
+  });
+
   it("keeps minimized apps in the taskbar as restore targets", () => {
     const onActivateWindow = vi.fn();
     render(
@@ -349,7 +363,8 @@ describe("WebDesktopSurface", () => {
     );
 
     expect(screen.getByRole("tab", { name: "Terminal" })).toBeTruthy();
-    expect(screen.getByRole("button", { name: "Focus Terminal" })).toBeTruthy();
+    // The launch bar hides while the app is maximized; the header tab takes its place.
+    expect(screen.queryByRole("button", { name: "Focus Terminal" })).toBeNull();
 
     fireEvent.doubleClick(screen.getByRole("tab", { name: "Terminal" }));
     expect(onToggleFullscreen).toHaveBeenCalledWith("terminal-window");

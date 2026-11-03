@@ -8,6 +8,7 @@ import {
   type ProviderSettingsMutation,
   type ProviderSettingsSnapshot,
   type ProviderHarnessKind,
+  type ProviderWorkflow,
 } from "@matrix-os/contracts";
 import { ManagedCreditRefresh } from "./managed-credit-refresh.js";
 import { useManagedCreditRefresh } from "./use-managed-credit-refresh.js";
@@ -61,7 +62,7 @@ export interface ProviderSettingsControllerOptions {
   automaticCreditRefreshEnabled?: boolean;
   transport: ProviderSettingsTransport;
   /** Called only after an explicit refresh or mutation snapshot is accepted. */
-  onCatalogChanged?: (intent?: ProviderSettingsMutationIntent, previousSnapshot?: ProviderSettingsSnapshot) => void;
+  onCatalogChanged?: (intent?: ProviderSettingsMutationIntent, previousSnapshot?: ProviderSettingsSnapshot, loginReceipt?: ProviderWorkflow) => void;
 }
 
 export interface ProviderSettingsMutationOptions {
@@ -159,10 +160,19 @@ export class ProviderSettingsController {
     if (!this.disposed) await this.runRefresh(options.refresh ?? true);
   };
 
-  refreshForConnection = async (): Promise<ProviderSettingsSnapshot | null> => {
+  refreshForConnection = async (loginReceipt?: ProviderWorkflow): Promise<ProviderSettingsSnapshot | null> => {
     if (this.disposed) return null;
     if (this.pendingMutations > 0) await this.mutationTail;
-    if (this.disposed || !await this.runRefresh(true) || this.disposed) return null;
+    if (this.disposed) return null;
+    if (loginReceipt) {
+      if (loginReceipt.kind !== "login" || loginReceipt.state !== "succeeded"
+        || !this.state.snapshot?.harnesses.some(harness => harness.id === loginReceipt.harnessInstanceId)) return null;
+      // The workflow already confirmed its source. Wake open Chat consumers
+      // before waiting for the advisory Settings projection, without a second
+      // forced renewal of every provider.
+      this.options.onCatalogChanged?.(undefined, this.state.snapshot, loginReceipt);
+    }
+    if (!await this.runRefresh(!loginReceipt) || this.disposed) return null;
     return this.state.snapshot;
   };
 
@@ -361,7 +371,7 @@ export class ProviderSettingsController {
 export interface UseProviderSettingsControllerResult extends ProviderSettingsControllerState {
   onSelectHarness: (harnessInstanceId: string) => void;
   refresh: (options?: { refresh?: boolean }) => Promise<void>;
-  refreshForConnection: () => Promise<ProviderSettingsSnapshot | null>;
+  refreshForConnection: (loginReceipt?: ProviderWorkflow) => Promise<ProviderSettingsSnapshot | null>;
   mutate: (intent: ProviderSettingsMutationIntent, options?: ProviderSettingsMutationOptions) => Promise<boolean>;
 }
 

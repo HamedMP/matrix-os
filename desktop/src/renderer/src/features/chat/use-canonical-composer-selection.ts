@@ -129,9 +129,9 @@ export function useCanonicalComposerSelection({
           permissionMode: boundModes?.permissionMode ?? "supervised",
         };
       }
-      // A remembered personal model is explicit intent too. Restore its exact
+      // A remembered funded or personal model is explicit intent too. Restore its exact
       // binding as unavailable instead of selecting a newly observed default.
-      if (!chatId && lastComposerInstanceId && [MATRIX_PI_CHATGPT_PLAN_INSTANCE_ID, MATRIX_PI_ANTHROPIC_API_INSTANCE_ID].includes(lastComposerInstanceId)
+      if (!chatId && lastComposerInstanceId && ["matrix_pi_default", MATRIX_PI_CHATGPT_PLAN_INSTANCE_ID, MATRIX_PI_ANTHROPIC_API_INSTANCE_ID].includes(lastComposerInstanceId)
         && (!boundInstanceId || boundInstanceId === lastComposerInstanceId)) {
         const remembered = useProviderPreferences.getState().composerSelections[lastComposerInstanceId];
         if (!remembered?.model) return null;

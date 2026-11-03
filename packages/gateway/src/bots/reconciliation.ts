@@ -37,7 +37,7 @@ export function createBotOperationReconciler(deps: {
 
   async function tick(): Promise<void> {
     const olderThan = new Date(now().getTime() - (deps.staleAfterMs ?? DEFAULT_STALE_AFTER_MS)).toISOString();
-    const unfinished = await deps.operations.listUnfinished({ olderThan, limit: BATCH, maxAttempts: MAX_ATTEMPTS });
+    const unfinished = await deps.operations.listUnfinished({ olderThan, limit: BATCH, maxAttempts: MAX_ATTEMPTS, excludeRecovery: true });
     for (const operation of unfinished) {
       if (stopped) return;
       await reconcile(operation);

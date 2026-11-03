@@ -736,6 +736,35 @@ describe("platform/internal-sync-routes", () => {
     );
   });
 
+  it("retains Get started bot-name registration alongside the sync routes", async () => {
+    const app = createApp({
+      db,
+      orchestrator: stubOrchestrator(),
+      platformSecret: "platform-secret-123",
+      env: {},
+      internalSyncRoutes: createInternalSyncRoutes({
+        db,
+        r2,
+        platformSecret: "platform-secret-123",
+        r2PrefixRoot: "matrixos-sync",
+      }),
+    });
+    const request = () => ({
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${bearerFor("alice", "platform-secret-123")}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({ goals: ["code"], personality: "calm-mentor", exclude: [] }),
+    });
+    const response = await app.request(
+      "/internal/containers/alice/get-started/bot-names",
+      request(),
+    );
+    expect(response.status).toBe(503);
+    expect(await response.json()).toEqual({ error: "Name suggestions are unavailable" });
+  });
+
   it("allows sync object uploads above the generic session-proxy body limit", async () => {
     r2.putObject.mockResolvedValue({ etag: '"etag-large"' });
     const app = createTestApp();

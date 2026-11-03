@@ -1,5 +1,6 @@
 import { z } from "zod/v4";
 import { IsoTimestampSchema } from "#contract-primitives";
+import { PreviewRequestQuotaSchema } from "#funded-ai";
 
 export const SPEECH_CONTRACT_VERSION = 1 as const;
 export const SPEECH_MAX_TRANSCRIPT_CHARS = 32_000;
@@ -67,6 +68,7 @@ const SpeechFileTranscriptionUnavailableSchema = z.object({
 
 export const SpeechCapabilitiesResponseSchema = z.object({
   contractVersion: z.literal(SPEECH_CONTRACT_VERSION),
+  previewQuota: PreviewRequestQuotaSchema.optional(),
   fileTranscription: z.union([
     SpeechFileTranscriptionPolicySchema,
     SpeechFileTranscriptionUnavailableSchema,

@@ -1,10 +1,10 @@
-import { canonicalChatApprovals, canonicalChatInputs } from "@matrix-os/contracts";
+import { canonicalChatApprovals, canonicalChatInputs, canonicalAssistantOutputMessages, canonicalAssistantOutputRootId } from "@matrix-os/contracts";
 import type { CanonicalChatMessage, CanonicalChatRun, CanonicalChatRunActivity, CanonicalChatTurn } from "@matrix-os/contracts";
 import { chatAgentAttribution } from "@matrix-os/ui";
 import type { ConversationTurnPresentation, ConversationWorkPresentation } from "../../components/conversation/presentation";
 import { historicalChatPresentation } from "./historical-chat-presentation";
 import { messagePresentation, messageWork, hasDisplayableMessageContent, promotedAssistantArtifacts, withoutAttachmentReferences } from "./canonical-chat-message-presentation";
-import { isActiveRun, runPresentation, activeModelStatus, replaceThinkingPlaceholders } from "./canonical-chat-run-presentation";
+import { isActiveRun, runPresentation, activeModelStatus, replaceThinkingPlaceholders, groupAdjacentToolCalls } from "./canonical-chat-run-presentation";
 const MAX_STREAMED_MESSAGE_PROJECTIONS = 200;
 export function canonicalChatPresentation(input: {
   messages: CanonicalChatMessage[];
@@ -13,8 +13,9 @@ export function canonicalChatPresentation(input: {
   activities: CanonicalChatRunActivity[];
   streamedMessageIds?: readonly string[];
 }): ConversationTurnPresentation[] {
+  input = { ...input, messages: canonicalAssistantOutputMessages(input.messages) };
   const streamedMessageIds = new Set(
-    input.streamedMessageIds?.slice(-MAX_STREAMED_MESSAGE_PROJECTIONS) ?? [],
+    input.streamedMessageIds?.slice(-MAX_STREAMED_MESSAGE_PROJECTIONS).map(canonicalAssistantOutputRootId) ?? [],
   ); // Per-detail projection, explicitly capped with the message window.
   const approvalViews = canonicalChatApprovals(input);
   const inputViews = canonicalChatInputs(input);
@@ -103,7 +104,7 @@ export function canonicalChatPresentation(input: {
       }
     }
     const seenApprovals = new Set<string>(); // Per-turn, bounded by snapshot activities/parts.
-    const work = replaceThinkingPlaceholders(orderedWork, isActiveRun(run)).flatMap((item): ConversationWorkPresentation[] => {
+    const work = groupAdjacentToolCalls(replaceThinkingPlaceholders(orderedWork, isActiveRun(run))).flatMap((item): ConversationWorkPresentation[] => {
       if (item.kind !== "request") return [item];
       if (item.requestKind === "input") {
         const input = inputViews.find(view => view.runId === run?.id && view.requestId === item.requestId);
@@ -165,7 +166,7 @@ export function canonicalChatPresentation(input: {
                     ],
                   }
                 : {}),
-              ...(streamedMessageIds.has(finalMessage.id) ? { wasStreamed: true } : {}),
+              ...(streamedMessageIds.has(canonicalAssistantOutputRootId(finalMessage.id)) ? { wasStreamed: true } : {}),
             },
           }
         : live.streamingFinal

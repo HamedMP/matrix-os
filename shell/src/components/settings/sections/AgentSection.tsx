@@ -75,9 +75,9 @@ export function AgentSection({
         error={controller.error}
         onSelectHarness={controller.onSelectHarness}
         onRefresh={() => { void controller.refresh(); }}
-        onRefreshForConnection={async () => {
+        onRefreshForConnection={async (receipt) => {
           if (getGatewayUrl() !== identityKey) return null;
-          const snapshot = await controller.refreshForConnection();
+          const snapshot = await controller.refreshForConnection(receipt);
           return getGatewayUrl() === identityKey ? snapshot : null;
         }}
         onMutate={(intent) => controller.mutate(intent, {

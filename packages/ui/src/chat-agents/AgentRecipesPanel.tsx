@@ -18,6 +18,7 @@ import { chatAgentButtonClass, chatAgentInputClass, chatAgentMutedStyle } from "
 import type { BotRecipeRef, BotRecipeSummary } from "@matrix-os/contracts";
 import { useRef } from "react";
 import { Plus } from "lucide-react";
+import { WorkflowLoadingSpinner } from "../agents-providers/WorkflowLoadingSpinner.js";
 
 
 const jevRecipe = {
@@ -29,9 +30,11 @@ export const AGENT_RECIPE_COUNT = agentInspirations.length + 1;
 export const BOT_RECIPE_COUNT = agentInspirations.filter((recipe) => !isLaunchBotRecipeId(recipe.id)).length + LAUNCH_BOT_RECIPE_IDS.length;
 const EMPTY_BOT_RECIPES: BotRecipeSummary[] = [];
 
-export function AgentRecipesPanel({ onStartFromScratch, scratchDisabled = false, onRefreshCatalog, onSetup, botClient, onStartChat, onCreateJev, connections = [], jevUnavailable = "", jevPending = false, jevError = "",
+export function AgentRecipesPanel({ requestedRecipeId, onRequestedRecipeResult, onStartFromScratch, scratchDisabled = false, scratchRetryDisabled = scratchDisabled, catalogError = "", onRefreshCatalog, onSetup, botClient, onStartChat, onCreateJev, connections = [], jevUnavailable = "", jevPending = false, jevError = "",
   botRecipes = EMPTY_BOT_RECIPES, botRecipeStatus, onRetryBotRecipes, matrixModels = [], catalog, catalogLoading = false, onInstantiateBot, onOpenBotChat }: {
-  onStartFromScratch?: (trigger: HTMLButtonElement) => void; scratchDisabled?: boolean;
+  requestedRecipeId?: string;
+  onRequestedRecipeResult?: (result: { ok: true } | { ok: false; error: "recipe_unavailable" | "navigation_unavailable" }) => void;
+  onStartFromScratch?: (trigger: HTMLButtonElement) => void; scratchDisabled?: boolean; scratchRetryDisabled?: boolean; catalogError?: string;
   onRefreshCatalog?:()=>void; onSetup?:()=>void; botClient?: BotClient; onStartChat?: StartAgentChat; onCreateJev?: (accountLabel: string, labeling: boolean) => Promise<void>;
   connections?: ChatAgentIntegrationConnection[]; jevUnavailable?: string; jevPending?: boolean; jevError?: string;
   botRecipes?: BotRecipeSummary[]; matrixModels?: readonly CanonicalProviderChoice[];
@@ -41,6 +44,8 @@ export function AgentRecipesPanel({ onStartFromScratch, scratchDisabled = false,
   onOpenBotChat?: (chatId: string) => void;
 }) {
   const [setupRecipe, setSetupRecipe] = useState<BotRecipeSummary | null>(null);
+  const [requestedRecipeError, setRequestedRecipeError] = useState("");
+  const handledRequestedRecipe = useRef<string | null>(null);
   const [showAll, setShowAll] = useState(false);
   const [category, setCategory] = useState("All");
   const [query, setQuery] = useState("");
@@ -63,7 +68,8 @@ export function AgentRecipesPanel({ onStartFromScratch, scratchDisabled = false,
   }
   const botSelection = chosenBotSelection ?? null;
   const nativeCatalogBlocked = Boolean(botRecipeStatus && botRecipeStatus !== "ready");
-  const botModelAvailable = Boolean(botSelection && (isAutomaticBotSelection(botSelection) || selectableModels.some((choice) =>
+  const catalogUnavailable = Boolean(catalogError && !catalog);
+  const botModelAvailable = Boolean(!catalogUnavailable && botSelection && (isAutomaticBotSelection(botSelection) || selectableModels.some((choice) =>
     botModelChoiceMatchesSelection(choice, botSelection))));
   const createBot = async (recipe: BotRecipeSummary, name = recipe.name, executor:BotExecutorSelection | null = null) => {
     if (!onInstantiateBot || !onOpenBotChat || botPending || !botSelection || !botModelAvailable || catalogLoading || nativeCatalogBlocked) return;
@@ -106,6 +112,25 @@ export function AgentRecipesPanel({ onStartFromScratch, scratchDisabled = false,
   const launchIds = useMemo(() => Object.fromEntries(botRecipes.map((recipe) => [recipe.recipeId, true] as const)), [botRecipes]);
   const visibleBotRecipes = nativeCatalogBlocked ? [] : botRecipes.filter((recipe) => (category === "All" || agentInspirations.some(idea => idea.id === recipe.recipeId && fitsCategory(idea))) && (!normalized || [recipe.name, recipe.description, recipe.output]
     .some((value) => value.toLocaleLowerCase().includes(normalized))));
+  useEffect(() => {
+    if (!requestedRecipeId || handledRequestedRecipe.current === requestedRecipeId || botRecipeStatus === "loading") return;
+    handledRequestedRecipe.current = requestedRecipeId;
+    const requested = botRecipeStatus === "ready"
+      ? botRecipes.find((candidate) => candidate.recipeId === requestedRecipeId)
+      : undefined;
+    if (!requested) {
+      setRequestedRecipeError("That recipe is unavailable. Choose another recipe.");
+      onRequestedRecipeResult?.({ ok: false, error: "recipe_unavailable" });
+      return;
+    }
+    botAttempt.current = null;
+    setBotSelection(undefined);
+    setBotError("");
+    setRequestedRecipeError("");
+    onRefreshCatalog?.();
+    setSetupRecipe(requested);
+    onRequestedRecipeResult?.({ ok: true });
+  }, [botRecipeStatus, botRecipes, onRefreshCatalog, onRequestedRecipeResult, requestedRecipeId]);
   const showJev = !botMode && !Object.hasOwn(launchIds, jevRecipe.id) && (!normalized || [jevRecipe.name, jevRecipe.description, jevRecipe.category,
     ...jevRecipe.skills, ...jevRecipe.integrations].some((value) => value.toLocaleLowerCase().includes(normalized)));
   const matches = useMemo(() => normalized ? agentInspirations.filter((recipe) =>
@@ -128,19 +153,24 @@ export function AgentRecipesPanel({ onStartFromScratch, scratchDisabled = false,
       <p role="alert" className="text-sm">Bot recipes are temporarily unavailable.</p>
       {onRetryBotRecipes ? <button type="button" className={chatAgentButtonClass} onClick={onRetryBotRecipes}>Retry bot recipes</button> : null}
     </div> : null}
+    {requestedRecipeError ? <p role="alert" className="text-sm">{requestedRecipeError}</p> : null}
     <label className="matrix-template-search">
       <span className="sr-only">Search recipes</span>
       <svg aria-hidden="true" width="15" height="15" viewBox="0 0 24 24" fill="none"><circle cx="10.5" cy="10.5" r="6.5" stroke="currentColor" strokeWidth="1.5"/><path d="m16 16 4.5 4.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/></svg>
       <input className={chatAgentInputClass} type="search" value={query} onChange={(event) => setQuery(event.currentTarget.value)} placeholder="Search templates" aria-label="Search recipes" />
     </label>
     <div className="matrix-template-categories flex flex-wrap" role="group" aria-label="Template categories">{categories.map(value => <button type="button" key={value} aria-pressed={category === value} className="matrix-chat-agent-category rounded-full border px-3 py-1 text-xs" onClick={() => setCategory(value)}>{value}</button>)}</div>
-    {setupRecipe && !nativeCatalogBlocked ? <BotRecipeSetup onRefreshCatalog={onRefreshCatalog} onSetup={onSetup} botClient={botClient} creationRetained={!!botAttempt.current?.chatId} key={setupRecipe.recipeId} recipe={setupRecipe} selection={botSelection} models={matrixModels} catalog={catalog} pending={!!botPending} createDisabled={!botModelAvailable || catalogLoading} catalogLoading={catalogLoading} error={botError} onSelectionChange={selection => { setBotSelection(selection); setBotError(""); }} onCreate={(name,executor) => { void createBot(setupRecipe, name,executor); }} onClose={() => { setSetupRecipe(null); setBotError(""); }}/> : null}
+    {setupRecipe && !nativeCatalogBlocked ? <BotRecipeSetup onRefreshCatalog={onRefreshCatalog} onSetup={onSetup} botClient={botClient} creationRetained={!!botAttempt.current?.chatId} key={setupRecipe.recipeId} recipe={setupRecipe} selection={botSelection} models={matrixModels} catalog={catalog} pending={!!botPending} createDisabled={!botModelAvailable || catalogLoading} catalogLoading={catalogLoading} catalogUnavailable={catalogUnavailable} error={botError} onSelectionChange={selection => { setBotSelection(selection); setBotError(""); }} onCreate={(name,executor) => { void createBot(setupRecipe, name,executor); }} onClose={() => { setSetupRecipe(null); setBotError(""); }}/> : null}
     {botError && !setupRecipe ? <p role="alert" className="text-xs">{botError}</p> : null}
     {onStartFromScratch || showJev || matches.length || visibleBotRecipes.length ? <div className="matrix-chat-agent-recipes__grid grid gap-3">
-      {onStartFromScratch ? <button type="button" aria-label="Start from scratch" disabled={scratchDisabled || !!botPending || jevPending || !!setupRecipe}
+      {onStartFromScratch ? <button type="button" aria-label={catalogUnavailable ? "Retry models" : "Start from scratch"} aria-busy={catalogLoading}
+        disabled={catalogLoading || (catalogUnavailable ? !onRefreshCatalog || scratchRetryDisabled : scratchDisabled) || !!botPending || jevPending || !!setupRecipe}
         className={`${chatAgentButtonClass} matrix-chat-agent-card matrix-chat-agent-recipe-card flex min-w-0 flex-col rounded-xl border p-3 text-left`}
-        onClick={event => onStartFromScratch(event.currentTarget)}>
-        <span aria-hidden="true" className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-[var(--bg-hover,var(--matrix-secondary,var(--secondary)))]"><Plus size={18} strokeWidth={1.5}/></span>
+        onClick={event => { if (catalogUnavailable) { onRefreshCatalog?.(); return; } onStartFromScratch(event.currentTarget); }}>
+        <span className="flex h-8 items-center gap-2">
+          <span aria-hidden="true" className="matrix-chat-agent-scratch-icon flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-[var(--bg-hover,var(--matrix-secondary,var(--secondary)))]">{catalogLoading ? <WorkflowLoadingSpinner/> : <Plus size={18} strokeWidth={1.5}/>}</span>
+          {catalogLoading ? <span role="status" className="sr-only">Loading models…</span> : catalogUnavailable ? <span role="alert" className="text-xs leading-4" style={chatAgentMutedStyle}>Models unavailable. Retry models.</span> : null}
+        </span>
         <span className="text-sm font-medium">Start from scratch</span>
         <span className="matrix-template-description text-xs leading-5" style={chatAgentMutedStyle}>Describe it in your own words</span>
       </button> : null}

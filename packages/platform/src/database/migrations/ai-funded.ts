@@ -64,6 +64,25 @@ export async function migrateAiFunded(db: PlatformMigrationExecutor): Promise<vo
     )
   `.execute(db);
   await sql`CREATE INDEX IF NOT EXISTS idx_ai_runtime_credentials_machine_issued ON ai_runtime_credentials(machine_id, issued_at DESC)`.execute(db);
+  await sql`ALTER TABLE ai_runtime_credentials ADD COLUMN IF NOT EXISTS runtime_token_epoch INTEGER NOT NULL DEFAULT 1 CHECK (runtime_token_epoch >= 1)`.execute(db);
+  await sql`
+    CREATE TABLE IF NOT EXISTS preview_runtime_allocations (
+      machine_id TEXT PRIMARY KEY REFERENCES user_machines(machine_id) ON UPDATE CASCADE ON DELETE CASCADE,
+      owner_id TEXT NOT NULL,
+      runtime_slot TEXT NOT NULL,
+      runtime_token_epoch INTEGER NOT NULL CHECK (runtime_token_epoch >= 1),
+      ai_budget_microusd BIGINT NOT NULL CHECK (ai_budget_microusd > 0),
+      ai_request_limit INTEGER NOT NULL CHECK (ai_request_limit BETWEEN 1 AND 100),
+      ai_requests_used INTEGER NOT NULL DEFAULT 0 CHECK (ai_requests_used >= 0 AND ai_requests_used <= ai_request_limit),
+      speech_request_limit INTEGER NOT NULL CHECK (speech_request_limit BETWEEN 1 AND 100),
+      speech_requests_used INTEGER NOT NULL DEFAULT 0 CHECK (speech_requests_used >= 0 AND speech_requests_used <= speech_request_limit),
+      max_concurrency INTEGER NOT NULL CHECK (max_concurrency = 1),
+      expires_at TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    )
+  `.execute(db);
+  await sql`CREATE INDEX IF NOT EXISTS idx_preview_runtime_allocations_expiry ON preview_runtime_allocations(expires_at, machine_id)`.execute(db);
   await sql`
     CREATE TABLE IF NOT EXISTS ai_funded_runtime_balances (
       machine_id TEXT PRIMARY KEY REFERENCES user_machines(machine_id) ON UPDATE CASCADE ON DELETE CASCADE,

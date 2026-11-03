@@ -72,6 +72,8 @@ export type OnboardingWidgetEvent =
   | { type: "task.selected"; taskId: OnboardingStarterTaskId; connectedServices: readonly OnboardingRequiredService[]; appsUnavailable?: boolean }
   | { type: "answer.submitted"; text: string; context?: string }
   | { type: "freeform.submitted"; text: string }
+  /** Spec 635: build the owner's first app with App Gallery's own build request. */
+  | { type: "build.requested"; title: string; prompt: string }
   | { type: "connect.started" }
   | { type: "connect.succeeded"; service: string }
   | { type: "connect.failed"; service: string }
@@ -245,6 +247,12 @@ export function reduceOnboardingWidget(state: OnboardingWidgetState, event: Onbo
       const answer = boundedText(event.text);
       if (!answer || onboardingRunInFlight(state)) return state;
       return startTask(state, { taskId: "custom", answer, appConnected: false, simpler: false }, { echo: answer, notice: null });
+    }
+    case "build.requested": {
+      const prompt = boundedText(event.prompt);
+      const title = boundedText(event.title);
+      if (!prompt || !title || onboardingRunInFlight(state)) return state;
+      return startTask(state, { taskId: "custom", answer: prompt, appConnected: false, simpler: false, title: `Build: ${title}` }, { echo: `Build ${title}`, notice: null });
     }
     case "connect.started":
       return screen.kind === "connect" && screen.status !== "unavailable" ? { ...state, screen: { ...screen, status: "connecting" } } : state;

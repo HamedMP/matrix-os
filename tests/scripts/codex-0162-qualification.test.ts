@@ -28,10 +28,17 @@ describe("published Codex 0.162.0 and 0.162.1 qualification", () => {
       );
     }
     for (const runtimeTarget of ["darwin-arm64", "linux-x64"]) {
+      const historicalDigests = Object.fromEntries(
+        [...appServerContract.requiredServerMethods, ...appServerContract.requiredServerNotifications].map(method => [
+          method, codexProtocolMethodDigest(schema,
+            appServerContract.requiredServerMethods.includes(method) ? "ServerRequest" : "ServerNotification", method),
+        ]),
+      );
       // Reconstruct this historical qualification; the live gate admits only the latest reviewed release.
       expect(() => verifyCodexProviderContracts({ version: "0.162.1",
         execContract: { ...execContract, latestVerifiedVersion: "0.162.1" },
-        appServerContract: { ...appServerContract, latestVerifiedVersion: "0.162.1" },
+        appServerContract: { ...appServerContract, latestVerifiedVersion: "0.162.1",
+          requiredServerProtocolSchemaDigests: historicalDigests },
         execSchemaBytes, appServerSchemaBytes, runtimeTarget })).not.toThrow();
     }
   });

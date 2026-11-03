@@ -1,6 +1,7 @@
 import {BotUseAuthorizationPanel} from "./BotUseAuthorizationPanel.js";
 import type { ProviderWorkflowUICapability } from "./types.js";
 import { HarnessWorkflowPanel } from "./HarnessWorkflowPanel.js";
+import { ReadOnlyNotice } from "./ReadOnlyNotice.js";
 import { ProviderWorkflowClientError } from "./provider-workflow-client.js";
 import { hasConfiguredConnection, hasStaleHermesConnection, resolveHarnessConnection, isNativeAccountSource } from "./harness-connection.js";
 import { updateWorkflowRowStatus } from "./workflow-row-status.js";
@@ -26,7 +27,7 @@ import { HarnessRail } from "./HarnessRail.js";
 import { ConnectionChoices } from "./ConnectionChoices.js";
 import { settingsErrorPresentation } from "./settings-error-presentation.js";
 import type { AgentsProvidersViewProps, ProviderSettingsMutationIntent } from "./types.js";
-import { selectedHarness, titleCase } from "./utils.js";
+import { selectedHarness } from "./utils.js";
 
 export type { AgentsProvidersViewProps, ProviderSettingsMutationIntent } from "./types.js";
 
@@ -52,6 +53,7 @@ export function AgentsProvidersView({
   onSetupHarness,
   workflowClient,
   localChatgptClient,
+  onLocalChatgptChanged,
   matrixAnthropicClient,
   onOpenAuthorizationUrl,
   onLoadUsageHistory,
@@ -159,12 +161,7 @@ export function AgentsProvidersView({
         </div>
       </header>
 
-      {snapshot.access.mode === "read_only" ? (
-        <div className="matrix-ap-notice" data-tone="neutral" role="status">
-          <strong>Read only</strong>
-          <span>{snapshot.access.reason === "remote_policy" ? "Your organization controls these settings." : `Changes are unavailable: ${titleCase(snapshot.access.reason).toLowerCase()}.`}</span>
-        </div>
-      ) : null}
+      {snapshot.access.mode === "read_only" ? <ReadOnlyNotice access={snapshot.access} /> : null}
       {visibleError || gatewayError ? (
         <div className="matrix-ap-notice" data-tone="danger" role="alert">
           <strong>{errorPresentation.title}</strong>
@@ -191,7 +188,7 @@ export function AgentsProvidersView({
           onChooseAgent={(id) => { setExpandedRowId(id); setExpandedRowKind(snapshot.harnesses.find(item => item.id === id)?.harness ?? null); onSelectHarness(id); }}
           onUseGateway={useGateway}
           subscriptions={<YourSubscriptions snapshot={snapshot} capabilities={workflowCapabilities} client={workflowClient}
-            localChatgptClient={localChatgptClient} localChatgptRefreshRevision={localChatgptRefreshRevision}
+            localChatgptClient={localChatgptClient} localChatgptRefreshRevision={localChatgptRefreshRevision} onLocalChatgptChanged={onLocalChatgptChanged}
             matrixAnthropicClient={matrixAnthropicClient}
             operationIds={operationIds} workflowStatus={workflowStatus} forbidden={workflowPermission === "forbidden"}
             disabled={busy || gatewayPending || enablement.pending} onRefresh={refreshSettings}
@@ -361,9 +358,9 @@ export function AgentsProvidersView({
                     disabled={mutationsDisabled}
                     onSetupHarness={onSetupHarness}
                     onRefresh={refreshSettings}
-                    onRefreshAfterLogin={async () => {
+                    onRefreshAfterLogin={async (receipt) => {
                       if (!onRefreshForConnection) { refreshSettings(); return; }
-                      const refreshed = await onRefreshForConnection();
+                      const refreshed = await onRefreshForConnection(receipt);
                       if (!refreshed) throw new Error("connection refresh unavailable");
                     }}
                     onOpenTerminal={onOpenTerminal}

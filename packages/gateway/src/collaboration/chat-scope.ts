@@ -27,6 +27,11 @@ export type CollaborationChatScopeErrorCode =
   | "invalid_confirmation"
   | "shared_execution_disabled";
 
+export interface SharedChatExecutionCapability {
+  executionGeneration: number;
+  eligibility: ReturnType<typeof parseCollaborationAiEligibility>;
+}
+
 export class CollaborationChatScopeError extends Error {
   constructor(
     public readonly code: CollaborationChatScopeErrorCode,
@@ -40,10 +45,7 @@ export class CollaborationChatScopeError extends Error {
 export class CollaborationChatScopeService {
   private readonly now: () => Date;
   private readonly createScopeId: () => string;
-  private executionCapability: {
-    executionGeneration: number;
-    eligibility: ReturnType<typeof parseCollaborationAiEligibility>;
-  } | null = null;
+  private executionCapability: SharedChatExecutionCapability | null = null;
   private capabilityTransition: Promise<void> = Promise.resolve();
 
   constructor(
@@ -352,10 +354,16 @@ export class CollaborationChatScopeService {
       && eligibilityMatches(scope.executionEligibility, this.executionCapability.eligibility);
   }
 
-  private async reconcileExecutionEligibilityUnlocked(capability: {
-    executionGeneration: number;
-    eligibility: ReturnType<typeof parseCollaborationAiEligibility>;
-  } | null): Promise<{ updated: number }> {
+  /** Enter this gate before taking scope/Chat locks so new shared scopes cannot miss a capability transition. */
+  async withCurrentExecutionCapability<T>(
+    operation: (capability: SharedChatExecutionCapability | null) => Promise<T>,
+  ): Promise<T> {
+    return this.withCapabilityTransition(() => operation(this.executionCapability));
+  }
+
+  private async reconcileExecutionEligibilityUnlocked(
+    capability: SharedChatExecutionCapability | null,
+  ): Promise<{ updated: number }> {
     const candidates = await this.db.selectFrom("collaboration_scopes")
       .select("id")
       .where("authority_runtime_id", "=", this.options.runtimeId)

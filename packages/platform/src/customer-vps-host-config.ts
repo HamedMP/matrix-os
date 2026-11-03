@@ -33,6 +33,7 @@ export const DEFAULT_CLOUD_INIT_TEMPLATE = [
   '      PLATFORM_INTERNAL_URL={{platformInternalUrl}}',
   '      {{updateManifestBaseUrlEnv}}',
   '      {{collaborationDisabledEnv}}',
+  '      {{previewRuntimeEnv}}',
   '      UPGRADE_TOKEN={{platformVerificationToken}}',
   '      MATRIX_AUTH_TOKEN={{platformVerificationToken}}',
   '      MATRIX_SYNC_RUNTIME_TOKEN={{syncRuntimeToken}}',
@@ -43,6 +44,7 @@ export const DEFAULT_CLOUD_INIT_TEMPLATE = [
   '      MATRIX_CODE_PROXY_TOKEN={{platformVerificationToken}}',
   '      MATRIX_FUNDED_AI_ENABLED={{fundedAiEnabled}}',
   '      MATRIX_FUNDED_AI_RELAY_URL={{fundedAiRelayUrl}}',
+  '      MATRIX_GET_STARTED_ENABLED={{getStartedEnabled}}',
   '      POSTHOG_TOKEN={{posthogToken}}',
   '      POSTHOG_PROJECT_TOKEN={{posthogProjectToken}}',
   '      POSTHOG_HOST={{posthogHost}}',
@@ -113,9 +115,13 @@ export function buildHostConfig(
     posthogApiHost: config.posthogApiHost,
     fundedAiEnabled: config.fundedAiEnabled ? 'true' : 'false',
     fundedAiRelayUrl: config.fundedAiRelayUrl,
+    getStartedEnabled: config.getStartedEnabled ? 'true' : 'false',
     updateManifestBaseUrlEnv: privatePreview
       ? `MATRIX_UPDATE_MANIFEST_BASE_URL=${platformInternalUrl}/private-preview-updates/${input.handle}`
       : '',
     collaborationDisabledEnv: privatePreview ? 'MATRIX_COLLABORATION_DISABLED=1' : '',
+    previewRuntimeEnv: input.provisioningClass === 'preview' || input.provisioningClass === 'private-preview'
+      ? 'MATRIX_PREVIEW_RUNTIME=true'
+      : '',
   };
 }

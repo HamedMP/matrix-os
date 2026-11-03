@@ -1,0 +1,17 @@
+# Explicitly approved legacy Slack pilot only; NOT the spec 530 Preview rollout.
+# Remove this exact DNS record and route after the pilot; expiry fails closed first.
+name = "matrix-slack-pilot-pr2079"
+main = "src/slack-pilot.ts"
+compatibility_date = "2026-06-06"
+workers_dev = false
+preview_urls = false
+
+routes = [{ pattern = "pr-2079-preview.matrix-os.com/*", zone_name = "matrix-os.com" }]
+
+[vars]
+SLACK_PILOT_PUBLIC_ORIGIN = "https://pr-2079-preview.matrix-os.com"
+SLACK_PILOT_UPSTREAM_ORIGIN = "https://pr-2079---matrix-platform-preview-jqxkjdhtkq-ey.a.run.app"
+SLACK_PILOT_NOT_AFTER = "2026-10-02T22:05:00Z"
+
+[observability]
+enabled = false

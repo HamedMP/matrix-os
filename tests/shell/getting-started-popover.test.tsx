@@ -1,8 +1,24 @@
 // @vitest-environment jsdom
 
 import { GettingStartedVisibilityProvider, useGettingStartedAutoOpenSuppression } from "../../packages/ui/src/getting-started-visibility";
+import { GetStartedAnswersProvider, GetStartedGate, type GetStartedPort } from "../../packages/ui/src/get-started/index.js";
+
+// The real hook opens the gateway socket; these tests drive connections through this stand-in.
+const connections = vi.hoisted(() => ({
+  connectApp: vi.fn(),
+  connectingService: null as string | null,
+  failedServices: new Set<string>() as ReadonlySet<string>,
+  appsUnavailable: false,
+  onChanged: null as (() => void) | null,
+}));
+vi.mock("../../shell/src/components/onboarding/use-getting-started-connections.js", () => ({
+  useGettingStartedConnections: (onChanged: () => void) => {
+    connections.onChanged = onChanged;
+    return connections;
+  },
+}));
 import React from "react";
-import { act, cleanup, fireEvent, render as rtlRender, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render as rtlRender, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   DESKTOP_APP_DOWNLOAD_URL,
@@ -185,8 +201,9 @@ describe("web getting started status", () => {
     fireEvent.pointerDown(screen.getByRole("button", { name: "Outside" }), { button: 0, ctrlKey: false });
     expect(screen.getByRole("dialog", { name: "Getting started" })).toBeTruthy();
 
-    fireEvent.click(screen.getByRole("button", { name: "Connect email & calendar" }));
-    expect(onOpenSettings).toHaveBeenCalledWith("integrations");
+    // A finished step without a try action still opens its Settings page, and the checklist stays open.
+    fireEvent.click(screen.getByRole("button", { name: "Log in to Codex / Claude" }));
+    expect(onOpenSettings).toHaveBeenCalledWith("agents-providers");
     expect(screen.getByRole("dialog", { name: "Getting started" })).toBeTruthy();
 
     fireEvent.click(trigger);
@@ -210,6 +227,208 @@ describe("web getting started status", () => {
 
     expect(await screen.findByRole("dialog", { name: "Getting started" })).toBeTruthy();
     expect(window.localStorage.getItem(webGettingStartedAutoOpenKey("/"))).toBe("1");
+  });
+
+  describe("closing the loop (customer feedback)", () => {
+    function installFetch(integrations: unknown[]) {
+      return vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+        const url = String(input);
+        const body = url.endsWith("/api/integrations") ? integrations
+          : url.endsWith("/api/agents/credentials/status") ? { agents: [] }
+            : url.endsWith("/api/workspace/projects") ? { projects: [] }
+              : url.endsWith("/api/chats?limit=1") ? { items: [] }
+                : url.includes("/billing/status") ? { access: { runtimeProxyAllowed: true } }
+                  : { authenticated: false };
+        return new Response(JSON.stringify(body), { status: 200 });
+      });
+    }
+
+    async function openPopover(onOpenFirstWork = vi.fn(), onOpenSettings = vi.fn()) {
+      render(<GettingStartedPopover onOpenSettings={onOpenSettings} onOpenFirstWork={onOpenFirstWork} />);
+      fireEvent.click(await screen.findByRole("button", { name: /^Getting started — / }));
+      return screen.findByRole("dialog", { name: "Getting started" });
+    }
+
+    beforeEach(() => {
+      vi.stubGlobal("PointerEvent", MouseEvent);
+      window.localStorage.setItem(webGettingStartedAutoOpenKey("/"), "1");
+      connections.connectApp.mockReset();
+    });
+
+    it("starts GitHub's own sign-in and reloads the moment a connection changes", async () => {
+      const fetcher = installFetch([]);
+      const onOpenSettings = vi.fn();
+      const dialog = await openPopover(vi.fn(), onOpenSettings);
+      fireEvent.click(await within(dialog).findByRole("button", { name: "Connect GitHub" }));
+      expect(connections.connectApp).toHaveBeenCalledWith("github");
+      expect(onOpenSettings).not.toHaveBeenCalled();
+      const reads = () => fetcher.mock.calls.filter(([input]) => String(input).endsWith("/api/integrations")).length;
+      const before = reads();
+      act(() => connections.onChanged?.());
+      await waitFor(() => expect(reads()).toBeGreaterThan(before));
+    });
+
+    it("says when a sign-in did not finish", async () => {
+      installFetch([]);
+      connections.failedServices = new Set(["github"]);
+      try {
+        const dialog = await openPopover();
+        expect(await within(dialog).findByText("Sign-in didn't finish. Click to try again.")).toBeTruthy();
+      } finally {
+        connections.failedServices = new Set();
+      }
+    });
+
+    it("shows email & calendar as half done and connects the missing app", async () => {
+      installFetch([{ id: CONNECTION_ID, service: "gmail", status: "active" }]);
+      const dialog = await openPopover();
+      fireEvent.click(await within(dialog).findByRole("button", { name: /Connect Google Calendar \(1 of 2\)/ }));
+      expect(connections.connectApp).toHaveBeenCalledWith("google_calendar");
+    });
+
+    it("turns finished email into a ready prompt in a new chat, unsent", async () => {
+      installFetch([
+        { id: CONNECTION_ID, service: "gmail", status: "active" },
+        { id: "22222222-2222-4222-8222-222222222222", service: "google_calendar", status: "active" },
+      ]);
+      const onOpenFirstWork = vi.fn();
+      const dialog = await openPopover(onOpenFirstWork);
+      fireEvent.click(await within(dialog).findByRole("button", { name: /Find emails that need a reply/ }));
+      expect(onOpenFirstWork).toHaveBeenCalledWith({ kind: "chat", prompt: expect.stringMatching(/still need a reply from me.*Don't send anything\./) });
+    });
+
+    it("says the coding agent is signed in on the Matrix computer", async () => {
+      installFetch([]);
+      const dialog = await openPopover();
+      expect(await within(dialog).findByText("On your Matrix computer, where your AI runs")).toBeTruthy();
+    });
+  });
+
+  describe("after Get started", () => {
+    function installIncompleteFetch() {
+      vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+        const url = String(input);
+        const body = url.endsWith("/api/integrations") ? []
+          : url.endsWith("/api/agents/credentials/status") ? { agents: [] }
+            : url.endsWith("/api/workspace/projects") ? { projects: [] }
+              : url.endsWith("/api/chats?limit=1") ? { items: [] }
+                : url.includes("/billing/status") ? { access: { runtimeProxyAllowed: false } }
+                  : { authenticated: false };
+        return new Response(JSON.stringify(body), { status: 200 });
+      });
+    }
+
+    function ended(state: unknown): GetStartedPort {
+      return { load: vi.fn(async () => state), save: vi.fn() };
+    }
+
+    function renderAfter(state: unknown) {
+      render(
+        <GetStartedAnswersProvider scope="test">
+          <GetStartedGate port={ended(state)} zIndex={1} />
+          <GettingStartedPopover onOpenSettings={() => {}} onOpenFirstWork={() => {}} />
+        </GetStartedAnswersProvider>,
+      );
+    }
+
+    beforeEach(() => {
+      vi.stubGlobal("PointerEvent", MouseEvent);
+      installIncompleteFetch();
+      // Opened on an earlier load already.
+      window.localStorage.setItem(webGettingStartedAutoOpenKey("/"), "1");
+    });
+
+    it("reopens on every load until done when setup was skipped", async () => {
+      renderAfter({ status: "skipped", skippedAt: "2026-10-22T10:00:00.000Z" });
+      expect(await screen.findByRole("dialog", { name: "Getting started" })).toBeTruthy();
+    });
+
+    it("adds rows for picked tools and added bots, and opens the right place", async () => {
+      vi.restoreAllMocks();
+      const BOT_CHAT = "chat_writer0001";
+      vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+        const url = String(input);
+        const body = url.endsWith("/api/chat-agents") ? {
+          enabled: true,
+          agents: [{ id: "bot_write001", archived: false, createdAt: "2026-10-22T10:00:00.000Z", recipeRef: { recipeId: "writing-bot", version: 1 } }],
+        }
+          : url.endsWith("/api/chat-agents/bot_write001/direct-chat") ? { chatId: init?.method === "POST" ? BOT_CHAT : null }
+          : url.endsWith("/api/settings/get-started/bots") ? { bots: { "writing-bot": { status: "created", agentId: "bot_write001" } } }
+            : url.endsWith("/api/integrations") ? []
+              : url.endsWith("/api/agents/credentials/status") ? { agents: [] }
+                : url.endsWith("/api/workspace/projects") ? { projects: [] }
+                  : url.endsWith("/api/chats?limit=1") ? { items: [] }
+                    : url.includes("/billing/status") ? { access: { runtimeProxyAllowed: false } }
+                      : { authenticated: false };
+        return new Response(JSON.stringify(body), { status: 200 });
+      });
+      const onOpenSettings = vi.fn();
+      const onOpenFirstWork = vi.fn();
+      render(
+        <GetStartedAnswersProvider scope="test">
+          <GetStartedGate port={ended({ status: "completed", completedAt: "2026-10-22T10:00:00.000Z", answers: { goals: ["code"], tools: ["codex", "linear"], bots: ["writing-bot"] } })} zIndex={1} />
+          <GettingStartedPopover onOpenSettings={onOpenSettings} onOpenFirstWork={onOpenFirstWork} />
+        </GetStartedAnswersProvider>,
+      );
+      const dialog = await screen.findByRole("dialog", { name: "Getting started" });
+      fireEvent.click(await within(dialog).findByRole("button", { name: "Connect Linear" }));
+      expect(connections.connectApp).toHaveBeenCalledWith("linear");
+      fireEvent.click(await within(dialog).findByRole("button", { name: "Chat with Writing Bot" }));
+      await waitFor(() => expect(onOpenFirstWork).toHaveBeenCalledWith({ kind: "chat", chatId: BOT_CHAT }));
+      expect(within(dialog).getByTestId("getting-started-counter").textContent).toBe("0 of 7");
+      fireEvent.click(within(dialog).getByTestId("getting-started-app-gallery"));
+      expect(onOpenFirstWork).toHaveBeenLastCalledWith({ kind: "app-gallery" });
+    });
+
+    it("offers to create a chosen bot whose creation failed, and retries it", async () => {
+      vi.restoreAllMocks();
+      let created = false;
+      const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+        const url = String(input);
+        if (url.endsWith("/api/settings/get-started/bots") && init?.method === "POST") {
+          created = true;
+          return new Response(JSON.stringify({ bots: { "writing-bot": "ready" } }), { status: 200 });
+        }
+        if (url.endsWith("/api/settings/get-started/bots")) {
+          return new Response(JSON.stringify({ bots: { "writing-bot": created ? { status: "created", agentId: "bot_write001" } : { status: "pending" } } }), { status: 200 });
+        }
+        const body = url.endsWith("/api/chat-agents") ? {
+          enabled: true,
+          agents: created ? [{ id: "bot_write001", archived: false, createdAt: "2026-10-22T10:00:00.000Z", recipeRef: { recipeId: "writing-bot", version: 1 } }] : [],
+        }
+          : url.endsWith("/api/chat-agents/bot_write001/direct-chat") ? { chatId: null }
+            : url.endsWith("/api/integrations") ? []
+              : url.endsWith("/api/agents/credentials/status") ? { agents: [] }
+                : url.endsWith("/api/workspace/projects") ? { projects: [] }
+                  : url.endsWith("/api/chats?limit=1") ? { items: [] }
+                    : url.includes("/billing/status") ? { access: { runtimeProxyAllowed: false } }
+                      : { authenticated: false };
+        return new Response(JSON.stringify(body), { status: 200 });
+      });
+      render(
+        <GetStartedAnswersProvider scope="test">
+          <GetStartedGate port={ended({ status: "completed", completedAt: "2026-10-22T10:00:00.000Z", answers: { goals: [], tools: [], bots: ["writing-bot"] } })} zIndex={1} />
+          <GettingStartedPopover onOpenSettings={vi.fn()} onOpenFirstWork={vi.fn()} />
+        </GetStartedAnswersProvider>,
+      );
+      const dialog = await screen.findByRole("dialog", { name: "Getting started" });
+      fireEvent.click(await within(dialog).findByRole("button", { name: "Create Writing Bot" }));
+      await waitFor(() => expect(fetchMock.mock.calls.some(([input, init]) => String(input).endsWith("/api/settings/get-started/bots") && init?.method === "POST")).toBe(true));
+      expect(await within(dialog).findByRole("button", { name: "Chat with Writing Bot" })).toBeTruthy();
+    });
+
+    it("leads with the owner's answers and shows an icon on every step", async () => {
+      renderAfter({ status: "completed", completedAt: "2026-10-22T10:00:00.000Z", answers: { goals: ["code"], tools: ["codex"] } });
+      const dialog = await screen.findByRole("dialog", { name: "Getting started" });
+      const rows = await waitFor(() => {
+        const buttons = within(dialog).getAllByRole("button").filter((button) => button.dataset.testid !== "getting-started-app-gallery");
+        expect(buttons[0].textContent).toContain("Log in to Codex");
+        return buttons;
+      });
+      expect(rows).toHaveLength(5);
+      for (const row of rows) expect(row.querySelector("svg")).not.toBeNull();
+      expect(within(dialog).getByTestId("getting-started-app-gallery").textContent).toContain("Build your first app in App Gallery");
+    });
   });
 
   it("stays closed while the onboarding widget is showing, but still opens from its button", async () => {

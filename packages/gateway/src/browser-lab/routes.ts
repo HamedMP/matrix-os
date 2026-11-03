@@ -6,6 +6,7 @@ import { z } from "zod/v4";
 import { verifyAppSession, type AppSessionPayloadType } from "../app-runtime/app-session.js";
 import { hasPlatformAssetAuthorization } from "../app-runtime/platform-asset-authorization.js";
 import { createViewerSockets } from "./viewer-sockets.js";
+import { serveStaticFileWithin } from "../app-runtime/serve-static.js";
 import { VIEWER_BRIDGE_SCRIPT, injectViewerBridge } from "./viewer-bridge.js";
 import { SHARED_BROWSER_ACTION_DEADLINE_MS, SHARED_BROWSER_ACTION_MAX_BYTES, SharedBrowserActionSchema, SharedBrowserControlSchema } from "@matrix-os/contracts";
 import { SharedBrowserError, type SharedBrowserBroker } from "../shared-browser/broker.js";
@@ -27,6 +28,10 @@ const PRODUCT_STATUS = z.object({ available: z.boolean(), chrome: z.object({ pre
 
 export interface BrowserLabOptions {
   enabled: boolean;
+  /** Trusted host composition only; never a request-supplied path. */
+  productUiPath?: string;
+  /** Owner-bound primary production setup composition; native APIs remain enabled-gated. */
+  setupOwnerId?: string;
   viewerAuthorization?: string;
   deriveKey: (slug: string) => Buffer;
   isAllowedOrigin: (origin: string) => boolean;
@@ -59,7 +64,8 @@ export function registerBrowserLabRoutes(app: Hono, options: BrowserLabOptions):
     return binding ? { token: header.slice(7), binding } : null;
   };
   app.use(`${PREFIX}/*`, async (c, next) => {
-    if (!options.enabled || closed) return c.json({ error: "not_found" }, 404);
+    const setupStatic = options.setupOwnerId && (c.req.path === `${PREFIX}/` || c.req.path === `${PREFIX}/index.html` || c.req.path.startsWith(`${PREFIX}/assets/`));
+    if ((!options.enabled && !setupStatic) || closed) return c.json({ error: "not_found" }, 404);
     if (c.req.path === agentPath) {
       if (c.req.method !== "POST" || !agentGrant(c)) return c.json({ error: "Unauthorized" }, 401);
       await next(); return;
@@ -303,5 +309,27 @@ export function registerBrowserLabRoutes(app: Hono, options: BrowserLabOptions):
     return proxy(c, `http://127.0.0.1:6901/${parsed.data}${query}`);
   });
   app.all(`${PREFIX}/api/*`, bodyLimit({ maxSize: 4096 }), (c) => c.json({ error: "not_found" }, 404));
+  if (options.sharedBrowser || options.setupOwnerId) {
+    // OS-owned bundle payload. OS Browser must never fall through to a
+    // same-named owner app, including for unrecognized static paths.
+    app.all(`${PREFIX}/*`, bodyLimit({ maxSize: 4096 }), async c => {
+      if (c.req.method !== "GET" && c.req.method !== "HEAD") return c.json({ error: "Method not allowed" }, 405);
+      const path = c.req.path.slice(`${PREFIX}/`.length);
+      if (!PATH.safeParse(path).success || new URL(c.req.url).search.length > 2048) return c.json({ error: "Invalid browser path" }, 400);
+      const entry = path === "" || path === "index.html";
+      if (!entry && !/^assets\/[A-Za-z0-9][A-Za-z0-9._-]{0,255}$/.test(path)) return c.json({ error: "not_found" }, 404);
+      const flatSetupUi = Boolean(options.setupOwnerId);
+      const file = flatSetupUi ? `matrix-browser-ui-${entry ? "index.html" : path.slice("assets/".length)}` : path;
+      const response = await serveStaticFileWithin(options.productUiPath ?? (flatSetupUi ? "/opt/matrix/bin" : "/opt/matrix-browser-lab/app/lab/dist"), file, c, { spaFallback: false });
+      if (entry && response.status === 404) return unavailable(c);
+      response.headers.set("Cache-Control", "no-store");
+      response.headers.set("X-Content-Type-Options", "nosniff");
+      if (c.req.method === "HEAD") {
+        await response.body?.cancel();
+        return new Response(null, { status: response.status, headers: response.headers });
+      }
+      return response;
+    });
+  }
   return { close() { closed = true; productClaim = undefined; if (ticketTimer) clearInterval(ticketTimer); tickets.clear(); sockets?.close(); } };
 }

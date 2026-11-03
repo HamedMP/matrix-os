@@ -18,6 +18,7 @@ export function projectManagedCreditUsage(fundingSummary: FundedAiFundingSummary
     resetsAt: nextUtcMonth(fundingSummary.periodStart),
     asOf: fundingSummary.asOf,
     ...(chatAvailability ? { chatAvailability } : {}),
+    ...(fundingSummary.previewQuota ? { previewQuota: fundingSummary.previewQuota } : {}),
     credit: {
       promotionalBalanceMicrousd: fundingSummary.promotionalBalanceMicrousd,
       addonBalanceMicrousd: fundingSummary.addonBalanceMicrousd,

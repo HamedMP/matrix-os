@@ -13,6 +13,7 @@ import { bootstrapCollaborationDatabase } from "../../packages/gateway/src/colla
 import { CollaborationRepository } from "../../packages/gateway/src/collaboration/repository.js";
 import { createGatewayProjectInventorySource } from "../../packages/gateway/src/collaboration/project-inventory-source.js";
 import { createProjectInventoryService } from "../../packages/gateway/src/collaboration/project-inventory.js";
+import { CollaborationProjectScopeService } from "../../packages/gateway/src/collaboration/project-scope.js";
 import {
   createCollaborationTestDatabase,
   createRealCollaborationTestDatabase,
@@ -111,6 +112,25 @@ describe("share-time project Chat root inventory", () => {
   afterEach(async () => {
     await fixture?.destroy();
     if (homePath) await rm(homePath, { recursive: true, force: true });
+  });
+
+  it.each(["private", "shared"] as const)("keeps an existing %s project's organization binding when another organization is selected", async (lifecycle) => {
+    await bootstrapCollaborationDatabase(fixture.db);
+    const repository = new CollaborationRepository(fixture.db, { now: () => new Date(NOW) });
+    await repository.createDirectScope({ scopeId: SCOPE_ID, organizationId: "org_inventory_team", ownerId: OWNER,
+      kind: "project", resourceId: PROJECT, authorityRuntimeId: "vps:inventory_owner" });
+    await fixture.db.updateTable("collaboration_scopes").set({ lifecycle }).where("id", "=", SCOPE_ID).execute();
+    const before = await repository.getScope(SCOPE_ID);
+    const service = new CollaborationProjectScopeService(fixture.db, {
+      runtimeId: "vps:inventory_owner", preflightSecret: "organization-bound-project-preflight-secret",
+      source: { getProject: async (ownerId, id) => ownerId === OWNER && id === PROJECT ? { id, ownerId, revision: 1 } : null },
+    });
+
+    await expect(service.preflight({ ownerId: OWNER, projectId: PROJECT, organizationId: "org_other_selected" }))
+      .resolves.toEqual({ eligible: false, reason: "organization_mismatch", projectRevision: 1 });
+    await expect(repository.getScope(SCOPE_ID)).resolves.toEqual(before);
+    await expect(fixture.db.selectFrom("collaboration_directory_outbox").selectAll().execute()).resolves.toEqual([]);
+    await expect(fixture.db.selectFrom("collaboration_grants").selectAll().execute()).resolves.toEqual([]);
   });
 
   function inventory() {

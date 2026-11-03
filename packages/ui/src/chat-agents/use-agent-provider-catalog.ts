@@ -3,8 +3,15 @@ import type { CanonicalProviderCatalog } from "@matrix-os/contracts";
 import type { ChatAgentClient } from "./client.js";
 
 type DiscoveryScope = { active: boolean; generation: number; forced: boolean; queuedForce: boolean; pending?: Promise<void> };
+export type AgentProviderCatalogSource = Readonly<{
+  catalog: CanonicalProviderCatalog | null;
+  loading: boolean;
+  error: string;
+  refresh(): void;
+}>;
 /** Event-driven, owner/client-scoped discovery. Refresh never changes an editor draft. */
-export function useAgentProviderCatalog(client: ChatAgentClient) {
+export function useAgentProviderCatalog(client: ChatAgentClient, source?: AgentProviderCatalogSource) {
+  const hasSource = source !== undefined;
   const scope = useMemo<DiscoveryScope>(() => ({ active: false, generation: 0, forced: false, queuedForce: false }), [client]);
   const [result, setResult] = useState<{ scope: DiscoveryScope; catalog: CanonicalProviderCatalog | null; loading: boolean; error: string } | null>(null);
   const load = useCallback(function discover(force: boolean): Promise<void> {
@@ -32,11 +39,14 @@ export function useAgentProviderCatalog(client: ChatAgentClient) {
     return pending;
   }, [client, scope]);
   useEffect(() => {
+    if (hasSource) return;
     scope.active = true;
     void load(false);
     return () => { scope.active = false; scope.generation += 1; scope.pending = undefined; scope.queuedForce = false; };
-  }, [scope, load]);
+  }, [scope, load, hasSource]);
   const current = result?.scope === scope ? result : null;
-  const refresh = useCallback(() => { void load(true); }, [load]);
+  const sourceRefresh = source?.refresh;
+  const refresh = useCallback(() => { if (sourceRefresh) sourceRefresh(); else void load(true); }, [load, sourceRefresh]);
+  if (source) return { catalog: source.catalog, loading: source.loading, error: source.error, refresh };
   return { catalog: current?.catalog ?? null, loading: current?.loading ?? true, error: current?.error ?? "", refresh };
 }

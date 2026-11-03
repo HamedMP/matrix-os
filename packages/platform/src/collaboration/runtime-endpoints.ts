@@ -80,7 +80,10 @@ export type CollaborationRuntimeEndpointErrorCode =
   | "direct_origin_rejected";
 
 export class CollaborationRuntimeEndpointError extends Error {
-  constructor(public readonly code: CollaborationRuntimeEndpointErrorCode, message: string) {
+  constructor(
+    public readonly code: CollaborationRuntimeEndpointErrorCode, message: string,
+    public readonly currentRuntime?: { runtimeId: string; authorityGeneration: number },
+  ) {
     super(message);
     this.name = "CollaborationRuntimeEndpointError";
   }
@@ -199,7 +202,8 @@ export class CollaborationRuntimeEndpointRegistry {
       const locked = await trx.selectFrom("collaboration_runtime_endpoints")
         .selectAll().where("runtime_id", "=", logical).forUpdate().executeTakeFirstOrThrow();
       if (Number(locked.authority_generation) > parsed.authorityGeneration) {
-        throw new CollaborationRuntimeEndpointError("stale_generation", "Registration generation is older than the recorded generation");
+        throw new CollaborationRuntimeEndpointError("stale_generation", "Registration generation is older than the recorded generation",
+          { runtimeId: logical, authorityGeneration: Number(locked.authority_generation) });
       }
       const publicKeys = mergeKeys(parseStoredKeys(locked.public_keys), parsed.publicKeys, current, keyOverlapMs);
       await trx.updateTable("collaboration_runtime_endpoints").set({

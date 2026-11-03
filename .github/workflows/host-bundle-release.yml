@@ -196,7 +196,8 @@ jobs:
     name: Build host bundle
     needs: [dev-bundle-gate, ci-gate]
     if: needs.dev-bundle-gate.outputs.should_build == 'true'
-    runs-on: ubuntu-latest
+    # Native modules must run on the Ubuntu 24.04 customer image (glibc 2.39).
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
     env:
       NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: ${{ secrets.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY }}

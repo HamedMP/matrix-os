@@ -38,7 +38,9 @@ export function createAiProviderRoutes(options: {
       const snapshot = {
         ...baseSnapshot,
         ...(query.data.includeMatrixAnthropicConnection === "true" && options.canReadMatrixConnections?.(context) === true && matrixAnthropicConnection ? { matrixAnthropicConnection: projectConnectionModelInputs(matrixAnthropicConnection) } : {}),
-        accessSources: internalSnapshot.accessSources.map(legacyReadiness),
+        // Internal policy inventory is projected through the canonical Chat
+        // catalog. Historical V3 clients reject unknown source fields.
+        accessSources: internalSnapshot.accessSources.map(({ discoverableModelIds: _discovery, ...source }) => legacyReadiness(source)),
         accounts: internalSnapshot.accounts.map(legacyReadiness),
         instances: internalSnapshot.instances.map(instance => ({ ...instance, readiness: legacyReadiness(instance.readiness) })),
       };

@@ -7,6 +7,8 @@ import { migratePlatformSchema } from '../../packages/platform/src/database/migr
 import { bootstrapPlatformCollaborationDatabase } from '../../packages/platform/src/collaboration/database.js';
 import { bootstrapPlatformOrganizationDatabase } from '../../packages/platform/src/organizations/database.js';
 import { assertDeletionOwnershipSafe, eraseOwnerPlatformData } from '../../packages/platform/src/account-deletion/cleanup-data.js';
+import { bootstrapSlackDatabase, type SlackDatabase } from '../../packages/platform/src/slack/database.js';
+import { SlackRepository } from '../../packages/platform/src/slack/repository.js';
 
 async function fixture() {
   const instance = await createTestPGlite();
@@ -70,6 +72,54 @@ describe('account deletion personal database cleanup', () => {
       expect(await db.executor.selectFrom('users').selectAll().execute()).toEqual([]);
       expect(await db.executor.selectFrom('social_posts').select(['content','likes_count','comments_count']).execute())
         .toEqual([{ content: 'retained', likes_count: 0, comments_count: 0 }]);
+    } finally { await db.destroy(); }
+  });
+});
+
+
+describe('account deletion Slack identity cleanup', () => {
+  async function slackFixture() {
+    const db = await fixture();
+    const slack = db.kysely as unknown as Kysely<SlackDatabase>;
+    await bootstrapSlackDatabase(slack);
+    const repository = new SlackRepository(slack);
+    await repository.saveInstallation({ appId: 'A_ERASURE', teamId: 'T_ERASURE', organizationId: 'org_company',
+      installedBy: 'user_admin', botUserId: 'UBOT', encryptedBotToken: 'encrypted_synthetic' });
+    for (const [hash, slackUserId, actorId] of [['owner-link', 'U_OWNER', 'user_owner'], ['other-link', 'U_OTHER', 'user_other']]) {
+      await repository.createChallenge({ hash, appId: 'A_ERASURE', teamId: 'T_ERASURE', slackUserId });
+      await repository.completeLink({ hash, actorId, organizationId: 'org_company' });
+    }
+    return { db, repository, slack };
+  }
+  it('erases only the deleted actor Slack links without uninstalling the shared app', async () => {
+    const { db, repository } = await slackFixture();
+    try {
+      await eraseOwnerPlatformData(db, 'user_owner');
+      expect(await repository.getLink('A_ERASURE', 'T_ERASURE', 'U_OWNER')).toBeNull();
+      expect(await repository.getLink('A_ERASURE', 'T_ERASURE', 'U_OTHER')).toMatchObject({ actorId: 'user_other' });
+      expect(await repository.getInstallation('A_ERASURE', 'T_ERASURE')).toMatchObject({ state: 'active', encryptedBotToken: 'encrypted_synthetic' });
+      await expect(eraseOwnerPlatformData(db, 'user_owner')).resolves.toBeUndefined();
+    } finally { await db.destroy(); }
+  });
+  it('allows the same Slack sender to link to a replacement account after erasure', async () => {
+    const { db, repository } = await slackFixture();
+    try {
+      await eraseOwnerPlatformData(db, 'user_owner');
+      await repository.createChallenge({ hash: 'replacement-link', appId: 'A_ERASURE', teamId: 'T_ERASURE', slackUserId: 'U_OWNER' });
+      await expect(repository.completeLink({ hash: 'replacement-link', actorId: 'user_replacement', organizationId: 'org_company' })).resolves.toBeUndefined();
+      expect(await repository.getLink('A_ERASURE', 'T_ERASURE', 'U_OWNER')).toMatchObject({ actorId: 'user_replacement' });
+      expect(await repository.getLink('A_ERASURE', 'T_ERASURE', 'U_OTHER')).toMatchObject({ actorId: 'user_other' });
+    } finally { await db.destroy(); }
+  });
+  it('retains the Slack link if the account erasure transaction rolls back', async () => {
+    const { db, repository } = await slackFixture();
+    try {
+      const failing: PlatformDB = { ...db, transaction: fn => db.transaction(async trx => {
+        await fn(trx); throw new Error('synthetic_erasure_rollback');
+      }) };
+      await expect(eraseOwnerPlatformData(failing, 'user_owner')).rejects.toThrow('synthetic_erasure_rollback');
+      expect(await repository.getLink('A_ERASURE', 'T_ERASURE', 'U_OWNER')).toMatchObject({ actorId: 'user_owner' });
+      expect(await repository.getLink('A_ERASURE', 'T_ERASURE', 'U_OTHER')).toMatchObject({ actorId: 'user_other' });
     } finally { await db.destroy(); }
   });
 });

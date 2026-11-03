@@ -9,9 +9,9 @@ import { AgentAvatar } from '../AgentAvatar.js';
 import { chatAgentButtonClass, chatAgentPrimaryButtonClass, chatAgentInputClass, chatAgentMutedStyle, chatAgentSurfaceStyle } from '../theme.js';
 import { MatrixBotModelField } from './MatrixBotModelField.js';
 
-export function BotRecipeSetup({ onRefreshCatalog, botClient, creationRetained = false, onSetup, recipe, pending, createDisabled, error, selection, models, catalog, catalogLoading, onSelectionChange, onCreate, onClose }: {
+export function BotRecipeSetup({ onRefreshCatalog, botClient, creationRetained = false, onSetup, recipe, pending, createDisabled, error, selection, models, catalog, catalogLoading, catalogUnavailable = false, onSelectionChange, onCreate, onClose }: {
   onRefreshCatalog?:()=>void; onSetup?:()=>void; botClient?: BotClient; creationRetained?: boolean; recipe: BotRecipeSummary; pending: boolean; createDisabled?: boolean; error: string; selection: CanonicalChatModelSelection | null;
-  models: readonly CanonicalProviderChoice[]; catalog?: CanonicalProviderCatalog | null; catalogLoading?: boolean;
+  models: readonly CanonicalProviderChoice[]; catalog?: CanonicalProviderCatalog | null; catalogLoading?: boolean; catalogUnavailable?: boolean;
   onSelectionChange(selection: CanonicalChatModelSelection | null): void;
   onCreate(name: string, executor?:BotExecutorSelection | null): void; onClose(): void;
 }) {
@@ -30,7 +30,7 @@ export function BotRecipeSetup({ onRefreshCatalog, botClient, creationRetained =
     <form className='mt-5 grid gap-4' onSubmit={event=>{event.preventDefault(); if(!pending && !createDisabled && !executorIncomplete && selection && name.trim()) onCreate(name.trim(), executor);}}>
       <label className='grid gap-1.5 text-sm'>Name<input className={chatAgentInputClass} value={name} maxLength={80} required disabled={pending || creationRetained} onChange={event=>setName(event.target.value)}/></label>
       <section className='grid gap-1 text-xs'><h3 className='font-semibold'>Apps</h3><p style={chatAgentMutedStyle}>App connections and permissions are requested in the bot’s Chat when needed.</p></section>
-      <MatrixBotModelField botClient={botClient} label='Bot model' selection={selection} models={models} catalog={catalog} catalogLoading={catalogLoading} onRefreshCatalog={onRefreshCatalog} onSetup={setup} pending={pending || creationRetained} requireSelection onChange={onSelectionChange}/>
+      <MatrixBotModelField botClient={botClient} label='Bot model' selection={selection} models={models} catalog={catalog} catalogLoading={catalogLoading} catalogUnavailable={catalogUnavailable} onRefreshCatalog={onRefreshCatalog} onSetup={setup} pending={pending || creationRetained} requireSelection onChange={onSelectionChange}/>
       {botClient?.connections ? <BotTaskExecutorField connections={connections.connections} value={executor} pending={pending} onSetup={setup} onRefresh={connections.refresh} onIncompleteChange={setExecutorIncomplete} onChange={setExecutor}/> : null}
       {creationRetained ? <p role='status' className='text-xs'>Your bot was created. Retry task executor setup or finish without a task executor.</p> : null}
       <div className='grid gap-1 text-xs'><span style={chatAgentMutedStyle}>Runs</span><span>When you ask</span></div>

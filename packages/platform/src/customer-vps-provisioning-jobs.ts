@@ -9,6 +9,18 @@ const PAYLOAD_VERSION = 1;
 export const MAX_PROVISIONING_JOB_ATTEMPTS = 100;
 
 const ProvisioningJobStatusSchema = z.enum(['queued', 'running', 'completed', 'failed']);
+const ProvisioningActivationStepSchema = z.enum([
+  'selecting',
+  'creating',
+  'created',
+  'activating',
+  'registered',
+  'cleanup_pending',
+  'fallback_pending',
+  'preview_access_pending',
+  'preview_access_activating',
+  'preview_access_ready',
+]);
 const MachineIdSchema = z.string().min(1).max(128).regex(/^[A-Za-z0-9_-]+$/);
 const ProvisioningPayloadSchema = z.object({
   registrationToken: z.string().min(8).max(512),
@@ -57,7 +69,7 @@ const ProvisioningJobRowSchema = z.object({
   snapshot_id: z.uuid().nullable(),
   snapshot_lease_id: z.uuid().nullable(),
   snapshot_create_intent_id: z.uuid().nullable(),
-  activation_step: z.enum(['selecting', 'creating', 'created', 'activating', 'registered', 'cleanup_pending', 'fallback_pending']),
+  activation_step: ProvisioningActivationStepSchema,
   provider_create_action_id: z.coerce.number().int().positive().nullable(),
   fallback_reason: z.string().min(1).max(64).nullable(),
   authorization_basis: z.enum(['billing_entitlement', 'prebilling_intent']),
@@ -83,7 +95,7 @@ export interface ProvisioningJobRecord {
   snapshotId: string | null;
   snapshotLeaseId: string | null;
   snapshotCreateIntentId: string | null;
-  activationStep: 'selecting' | 'creating' | 'created' | 'activating' | 'registered' | 'cleanup_pending' | 'fallback_pending';
+  activationStep: z.infer<typeof ProvisioningActivationStepSchema>;
   providerCreateActionId: number | null;
   fallbackReason: string | null;
   authorizationBasis: 'billing_entitlement' | 'prebilling_intent';
@@ -273,6 +285,111 @@ export async function listProvisioningJobs(db: PlatformDB, limit: number): Promi
     .limit(boundedLimit)
     .execute();
   return rows.map(mapProvisioningJob);
+}
+
+/** Lists only server-authoritative, running Private Preview jobs that need bounded access activation. */
+export async function listPrivatePreviewRuntimeAccessActivationMachineIds(
+  db: PlatformDB,
+  staleBefore: string,
+  limit: number,
+): Promise<string[]> {
+  await db.ready;
+  const boundedLimit = Math.max(1, Math.min(MAX_PROVISIONING_JOBS, Math.trunc(limit)));
+  const rows = await db.executor
+    .selectFrom('provisioning_jobs')
+    .innerJoin('user_machines', 'user_machines.machine_id', 'provisioning_jobs.machine_id')
+    .select('provisioning_jobs.machine_id')
+    .where('provisioning_jobs.status', '=', 'completed')
+    .where('user_machines.provisioning_class', '=', 'private-preview')
+    .where('user_machines.status', '=', 'running')
+    .where('user_machines.activation_state', '=', 'authorized')
+    .where('user_machines.deleted_at', 'is', null)
+    .where((eb) => eb.or([
+      eb('provisioning_jobs.activation_step', '=', 'preview_access_pending'),
+      eb.and([
+        eb('provisioning_jobs.activation_step', '=', 'preview_access_activating'),
+        eb('provisioning_jobs.claimed_at', '<=', staleBefore),
+      ]),
+    ]))
+    .orderBy('provisioning_jobs.updated_at', 'asc')
+    .limit(boundedLimit)
+    .execute();
+  return rows.map((row) => row.machine_id);
+}
+
+/** Atomically leases one pending or stale Private Preview access activation. */
+export async function claimPrivatePreviewRuntimeAccessActivation(
+  db: PlatformDB,
+  machineId: string,
+  claimedAt: string,
+  staleBefore: string,
+): Promise<boolean> {
+  await db.ready;
+  const row = await db.executor
+    .updateTable('provisioning_jobs')
+    .set({
+      activation_step: 'preview_access_activating',
+      claimed_at: claimedAt,
+      updated_at: claimedAt,
+    })
+    .where('machine_id', '=', machineId)
+    .where('status', '=', 'completed')
+    .where((eb) => eb.or([
+      eb('activation_step', '=', 'preview_access_pending'),
+      eb.and([
+        eb('activation_step', '=', 'preview_access_activating'),
+        eb('claimed_at', '<=', staleBefore),
+      ]),
+    ]))
+    .returning('job_id')
+    .executeTakeFirst();
+  return Boolean(row);
+}
+
+export async function completePrivatePreviewRuntimeAccessActivation(
+  db: PlatformDB,
+  machineId: string,
+  claimedAt: string,
+  completedAt: string,
+): Promise<boolean> {
+  await db.ready;
+  const row = await db.executor
+    .updateTable('provisioning_jobs')
+    .set({
+      activation_step: 'preview_access_ready',
+      claimed_at: null,
+      updated_at: completedAt,
+    })
+    .where('machine_id', '=', machineId)
+    .where('status', '=', 'completed')
+    .where('activation_step', '=', 'preview_access_activating')
+    .where('claimed_at', '=', claimedAt)
+    .returning('job_id')
+    .executeTakeFirst();
+  return Boolean(row);
+}
+
+export async function retryPrivatePreviewRuntimeAccessActivation(
+  db: PlatformDB,
+  machineId: string,
+  claimedAt: string,
+  retryAt: string,
+): Promise<boolean> {
+  await db.ready;
+  const row = await db.executor
+    .updateTable('provisioning_jobs')
+    .set({
+      activation_step: 'preview_access_pending',
+      claimed_at: null,
+      updated_at: retryAt,
+    })
+    .where('machine_id', '=', machineId)
+    .where('status', '=', 'completed')
+    .where('activation_step', '=', 'preview_access_activating')
+    .where('claimed_at', '=', claimedAt)
+    .returning('job_id')
+    .executeTakeFirst();
+  return Boolean(row);
 }
 
 export async function listDispatchableProvisioningJobs(

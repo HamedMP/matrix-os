@@ -1,4 +1,6 @@
 import { useCallback, useLayoutEffect, useRef, useState, type SetStateAction } from "react";
+import { mergeTrySuggestion, type TrySuggestionDraft } from "@matrix-os/contracts";
+import { useCloseAgentsOnDraftRequest } from "@matrix-os/ui";
 import { useRetainedComposerDrafts, MAX_COMPOSER_DRAFTS, type ComposerDraft, type ComposerDrafts } from "./retained-composer-drafts";
 import { useConnection } from "../../stores/connection";
 import { desktopProviderIdentityKey } from "../../lib/provider-settings-identity";
@@ -35,6 +37,26 @@ function rememberDraft(
   const scopes = Object.keys(next);
   if (scopes.length > MAX_COMPOSER_DRAFTS) delete next[scopes[0]!];
   return next;
+}
+
+// The last seeded draft, to tell an untouched suggestion from the owner's own words.
+let lastSeededDraft: TrySuggestionDraft | null = null;
+
+/**
+ * Puts a ready prompt in a new Chat's composer without sending it. The owner's own unsent text
+ * stays, with the prompt below it; an earlier suggestion they have not touched is swapped.
+ */
+export function seedNewChatDraft(text: string): void {
+  const identity = desktopComposerDraftIdentity(useConnection.getState());
+  const scope = newChatDraftScope(null);
+  const retained = useRetainedComposerDrafts.getState();
+  const existing = retained.identity === identity ? retained.drafts[scope] : undefined;
+  lastSeededDraft = mergeTrySuggestion(existing?.text ?? "", lastSeededDraft, text);
+  const next = lastSeededDraft.text;
+  retained.update(identity, (current, revision) => rememberDraft(current, scope, {
+    // The owner's references and chosen project stay with their draft.
+    text: next, referenceTokens: current[scope]?.referenceTokens ?? [], projectId: current[scope]?.projectId ?? null, requestIdentity: revision,
+  }, null, revision));
 }
 
 export function useChatComposerDrafts({
@@ -76,6 +98,8 @@ export function useChatComposerDrafts({
   const draftsRef = useRef(drafts);
   useLayoutEffect(() => { draftsRef.current = drafts; }, [drafts]);
   const draft = drafts[scope];
+  // A newly requested draft (Getting started's Try, Create app, New chat) closes Agents so its composer shows.
+  useCloseAgentsOnDraftRequest(draft?.requestIdentity);
 
   const updateScope = useCallback((targetScope: string, patch: Partial<ComposerDraft>) => {
     setDrafts((current, revision) => rememberDraft(current, targetScope, patch, projectId, revision));

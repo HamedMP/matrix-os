@@ -5,6 +5,7 @@ import {
   readdirSync,
   statSync,
   copyFileSync,
+  rmSync,
 } from "node:fs";
 import * as fs from "node:fs";
 import { join } from "node:path";
@@ -48,7 +49,9 @@ export function forkApp(options: ForkOptions): ForkResult {
       manifest.forked_from = { author, slug, version };
       writeFileNow(manifestPath, JSON.stringify(manifest, null, 2));
     } catch (err: unknown) {
-      console.warn("[app-fork] Could not update fork metadata:", err instanceof Error ? err.message : String(err));
+      rmSync(targetDir, { recursive: true, force: true });
+      console.warn("[app-fork] Could not secure fork metadata:", err instanceof Error ? err.message : String(err));
+      return { success: false, error: "Could not secure fork metadata" };
     }
   }
 
@@ -82,7 +85,9 @@ export function installApp(options: InstallOptions): ForkResult {
       manifest.installed_from = { slug, installedAt: new Date().toISOString() };
       writeFileNow(manifestPath, JSON.stringify(manifest, null, 2));
     } catch (err: unknown) {
-      console.warn("[app-fork] Could not update install metadata:", err instanceof Error ? err.message : String(err));
+      rmSync(targetDir, { recursive: true, force: true });
+      console.warn("[app-fork] Could not secure install metadata:", err instanceof Error ? err.message : String(err));
+      return { success: false, error: "Could not secure install metadata" };
     }
   }
 

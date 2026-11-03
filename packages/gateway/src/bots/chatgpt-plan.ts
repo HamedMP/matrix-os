@@ -21,4 +21,10 @@ export interface ChatGptPlanAuthority {
         headers: Record<string, string>;
         body: string;
     }>;
+    /** Bounded chunks under the same owner/run authority, without aggregate buffering. */
+    inferStream?(binding: PiRuntimeBinding, body: string, signal: AbortSignal): Promise<{
+        status: number;
+        headers: Record<string, string>;
+        body: AsyncIterable<string>;
+    }>;
 }

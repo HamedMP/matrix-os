@@ -210,3 +210,91 @@ it.each(["chat_explicit", undefined])("preserves explicit selection %s through e
   await act(async () => hook.rerender({ scope: "another/runtime/review", generation: "session_3" }));
   expect(hook.result.current.sessionId).toBe("chat_same");
 });
+it.each(["steer", "cancel"] as const)("does not reload the previous Chat when a queued-turn %s settles after switching Chats", async operation => {
+  const running = detail();
+  running.record.activeRun = { runId: "run_same", turnId: "cturn_same", status: "running" };
+  running.runs = [{ id: "run_same", turnId: "cturn_same", capabilitySnapshot: { steering: "same_run" } }] as unknown as CanonicalChatDetailResponse["runs"];
+  const other = detail("Other transcript");
+  other.record.chat.id = "chat_other";
+  other.messages = other.messages.map(message => ({ ...message, chatId: "chat_other" }));
+  const otherLoad = deferred<CanonicalChatDetailResponse>();
+  vi.mocked(state.client.detail).mockImplementation(async (chatId: string) => chatId === "chat_other" ? otherLoad.promise : running);
+  const action = deferred<never>();
+  state.client.steerQueuedTurn = vi.fn(() => action.promise);
+  state.client.cancelQueuedTurn = vi.fn(() => action.promise);
+  const hook = mount();
+  await waitFor(() => expect(hook.result.current.activeRunId).toBe("run_same"));
+  let result!: Promise<boolean>;
+  act(() => {
+    result = operation === "steer" ? hook.result.current.steerQueuedTurn!("queued_same") : hook.result.current.cancelQueuedTurn!("queued_same");
+  });
+  await act(async () => hook.result.current.switchConversation("chat_other"));
+  const sameLoads = () => vi.mocked(state.client.detail).mock.calls.filter(([chatId]) => chatId === "chat_same").length;
+  const loadsBeforeSettle = sameLoads();
+  await act(async () => { action.resolve(undefined as never); expect(await result).toBe(false); });
+  expect(sameLoads()).toBe(loadsBeforeSettle);
+  await act(async () => otherLoad.resolve(other));
+  await waitFor(() => expect(hook.result.current.messages[0]?.content).toBe("Other transcript"));
+});
+it("creates a new Chat in the project picked from the composer, and forgets it for the next new Chat", async () => {
+  const hook = mount();
+  await act(async () => hook.result.current.newChat());
+  await act(async () => hook.result.current.setChatProject!("proj_first"));
+  expect(hook.result.current.chatProjectId).toBe("proj_first");
+  expect(state.client.updateProject).toBeUndefined();
+  const pending = deferred<ReturnType<typeof detail>["record"]>();
+  vi.mocked(state.client.create).mockImplementationOnce(() => pending.promise);
+  act(() => { void hook.result.current.submitMessage("hello", undefined, options); });
+  await waitFor(() => expect(state.client.create).toHaveBeenCalledWith(expect.objectContaining({ projectId: "proj_first" })));
+  await act(async () => hook.result.current.newChat());
+  expect(hook.result.current.chatProjectId).toBeUndefined();
+});
+it("moves the open Chat to a project with its revision and shows the saved project", async () => {
+  const moved = detail().record;
+  state.client.updateProject = vi.fn(async () => ({ ...moved, chat: { ...moved.chat, revision: 1 }, projectId: "proj_first" }));
+  const hook = mount();
+  await waitFor(() => expect(hook.result.current.messages[0]?.content).toBe("Old transcript"));
+  let saved!: boolean;
+  await act(async () => { saved = await hook.result.current.setChatProject!("proj_first"); });
+  expect(saved).toBe(true);
+  expect(state.client.updateProject).toHaveBeenCalledWith("chat_same", { baseRevision: 0, projectId: "proj_first" });
+  expect(hook.result.current.chatProjectId).toBe("proj_first");
+});
+it("ignores a project move that settles after switching Chats", async () => {
+  const move = deferred<ReturnType<typeof detail>["record"]>();
+  state.client.updateProject = vi.fn(() => move.promise);
+  const other = detail("Other transcript");
+  other.record.chat.id = "chat_other";
+  vi.mocked(state.client.detail).mockImplementation(async (chatId: string) => chatId === "chat_other" ? other : detail());
+  const hook = mount();
+  await waitFor(() => expect(hook.result.current.messages[0]?.content).toBe("Old transcript"));
+  let result!: Promise<boolean>;
+  act(() => { result = hook.result.current.setChatProject!("proj_first"); });
+  await act(async () => hook.result.current.switchConversation("chat_other"));
+  await act(async () => { move.resolve({ ...detail().record, projectId: "proj_first" }); expect(await result).toBe(false); });
+  expect(hook.result.current.chatProjectId).toBeUndefined();
+});
+it("does not carry a new Chat's project to another computer or owner", async () => {
+  const hook = renderHook(({ scope }) => useCanonicalChatState({ navigationScope: scope, navigationGeneration: "same_session" }),
+    { initialProps: { scope: "owner/runtime/main" } });
+  await act(async () => hook.result.current.newChat());
+  await act(async () => hook.result.current.setChatProject!("proj_first"));
+  expect(hook.result.current.chatProjectId).toBe("proj_first");
+  await act(async () => hook.rerender({ scope: "owner/runtime/review" }));
+  expect(hook.result.current.chatProjectId).toBeUndefined();
+});
+it("keeps the newer project when an older move response arrives late", async () => {
+  const base = detail().record;
+  const slow = deferred<typeof base>();
+  state.client.updateProject = vi.fn()
+    .mockImplementationOnce(() => slow.promise)
+    .mockImplementationOnce(async () => ({ ...base, chat: { ...base.chat, revision: 2 }, projectId: "proj_new" }));
+  const hook = mount();
+  await waitFor(() => expect(hook.result.current.messages[0]?.content).toBe("Old transcript"));
+  let first!: Promise<boolean>;
+  act(() => { first = hook.result.current.setChatProject!("proj_old"); });
+  await act(async () => { await hook.result.current.setChatProject!("proj_new"); });
+  expect(hook.result.current.chatProjectId).toBe("proj_new");
+  await act(async () => { slow.resolve({ ...base, chat: { ...base.chat, revision: 1 }, projectId: "proj_old" }); await first; });
+  expect(hook.result.current.chatProjectId).toBe("proj_new");
+});

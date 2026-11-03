@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   AiProviderSnapshotV3Schema,
   AiNativeHarnessCatalogSchema,
+  AiAccessSourceViewSchema,
   type AiProviderSnapshotV3,
 } from "@matrix-os/contracts";
 
@@ -100,6 +101,12 @@ function snapshotFixture(): AiProviderSnapshotV3 {
 }
 
 describe("AI provider snapshot V3", () => {
+  it("keeps bounded policy discovery separate from execution eligibility", () => {
+    const source = { ...snapshotFixture().accessSources[0]!, discoverableModelIds: ["claude-sonnet-5", "claude-opus-4.6"] };
+    expect(AiAccessSourceViewSchema.parse(source)).toMatchObject({ eligibleModelIds: ["claude-sonnet-5"], discoverableModelIds: source.discoverableModelIds });
+    expect(AiAccessSourceViewSchema.safeParse({ ...source, discoverableModelIds: ["same", "same"] }).success).toBe(false);
+    expect(AiAccessSourceViewSchema.safeParse({ ...source, discoverableModelIds: Array.from({ length: 65 }, (_, i) => `model-${i}`) }).success).toBe(false);
+  });
   it("keeps Matrix-funded readiness separate from owner account connection state", () => {
     const parsed = AiProviderSnapshotV3Schema.parse(snapshotFixture());
 

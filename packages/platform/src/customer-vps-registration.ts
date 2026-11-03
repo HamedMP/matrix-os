@@ -18,6 +18,7 @@ import {
 } from './golden-snapshot-repository.js';
 import type { RegisterResponse } from './customer-vps-types.js';
 import type { CustomerVpsContext } from './customer-vps-context.js';
+import { activatePendingPrivatePreviewRuntimeAccess } from './customer-vps-preview-access-reconciliation.js';
 
 /** Accepts a provisioned server's registration and marks its machine running. */
 export function createCustomerVpsRegistration(context: CustomerVpsContext) {
@@ -217,7 +218,10 @@ export function createCustomerVpsRegistration(context: CustomerVpsContext) {
         if (!completed) throw new Error('Provisioning job registration completion lost its lease');
       }
       await trx.executor.updateTable('provisioning_jobs').set({
-        activation_step: 'registered', updated_at: lastSeenAt,
+        activation_step: row.provisioningClass === 'private-preview'
+          ? 'preview_access_pending'
+          : 'registered',
+        updated_at: lastSeenAt,
       }).where('machine_id', '=', input.machineId).where('status', '=', 'completed').execute();
       await initializeCustomerFundedStarterPolicy(trx, input.machineId, { now: lastSeenAt });
       return registered;
@@ -229,6 +233,31 @@ export function createCustomerVpsRegistration(context: CustomerVpsContext) {
     } catch (err: unknown) {
       logCustomerVpsError('write vps-meta failed', err);
       warnings.push('vps_meta_persistence_failed');
+    }
+    if (updated.provisioningClass === 'private-preview') {
+      if (!deps.activatePreviewRuntimeAccess) {
+        warnings.push('preview_runtime_activation_failed');
+      } else {
+        const activationNow = now();
+        const result = await activatePendingPrivatePreviewRuntimeAccess({
+          db: deps.db,
+          machineId: updated.machineId,
+          activate: deps.activatePreviewRuntimeAccess,
+          now: activationNow,
+          staleBefore: new Date(
+            activationNow.getTime() - deps.config.reconciliationStaleAfterMs,
+          ).toISOString(),
+        });
+        if (result.status !== 'ready') {
+          if (result.status === 'failed') {
+            logCustomerVpsError(
+              `private preview funded runtime activation failed machineId=${updated.machineId}`,
+              result.error,
+            );
+          }
+          warnings.push('preview_runtime_activation_failed');
+        }
+      }
     }
 
     return warnings.length > 0

@@ -66,9 +66,10 @@ export class CollaborationProjectScopeService {
   }
 
   async preflight(input: { ownerId: string; organizationId: string; projectId: string }): Promise<{
-    eligible: true;
+    eligible: boolean;
+    reason?: "organization_mismatch";
     projectRevision: number;
-    confirmationToken: string;
+    confirmationToken?: string;
     existingScopeId?: string;
     existingLifecycle?: CollaborationScopeRecord["lifecycle"];
   }> {
@@ -76,6 +77,10 @@ export class CollaborationProjectScopeService {
     const organizationId = z.string().min(5).max(128).regex(/^org_[A-Za-z0-9_-]+$/).parse(input.organizationId);
     const projectId = ProjectIdSchema.parse(input.projectId);
     const project = await this.readProject(ownerId, projectId);
+    const existing = await findProjectScope(this.db, ownerId, projectId);
+    if (existing && existing.organization_id !== organizationId) {
+      return { eligible: false, reason: "organization_mismatch", projectRevision: project.revision };
+    }
     const payload = PreflightPayloadSchema.parse({
       version: 1,
       ownerId,
@@ -84,7 +89,6 @@ export class CollaborationProjectScopeService {
       projectRevision: project.revision,
       expiresAt: new Date(this.now().getTime() + PREFLIGHT_LIFETIME_MS).toISOString(),
     });
-    const existing = await findProjectScope(this.db, ownerId, projectId);
     return {
       eligible: true,
       projectRevision: project.revision,

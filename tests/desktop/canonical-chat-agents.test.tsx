@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import React from "react";
-import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { beforeEach, afterEach, it, vi, expect } from "vitest";
 import { CanonicalChatWorkspace } from "@desktop/renderer/src/features/chat/CanonicalChatWorkspace";
 import { canonicalChatPresentation } from "@desktop/renderer/src/features/chat/canonical-chat-presentation";
@@ -12,6 +12,11 @@ import type { CanonicalChatInvalidation, CanonicalChatEventSource } from "@deskt
 import type { ChatAgentClient } from "../../packages/ui/src/chat-agents/client";
 import { createBotClient } from "../../packages/ui/src/chat-agents/bots/client";
 import { clientFixture, saved } from "./chat-agents-fixture";
+import { ChatAgentsWorkspace } from "../../packages/ui/src/chat-agents/ChatAgentsNavigation";
+import { ChatAgentsContent } from "../../packages/ui/src/chat-agents/ChatAgentsContent";
+import { ChatAgentsEntry as AgentsLauncher } from "../../packages/ui/src/chat-agents/ChatAgentsEntry";
+import { seedNewChatDraft } from "@desktop/renderer/src/features/chat/use-chat-composer-drafts";
+import { useRetainedComposerDrafts } from "@desktop/renderer/src/features/chat/retained-composer-drafts";
 const agent = { kind: "agent" as const, id: "bot_meeting01", label: "Meeting helper" };
 const contextChat = { kind: "chat" as const, id: "chat_notes", label: "Meeting notes" };
 beforeEach(() => {
@@ -197,4 +202,24 @@ it.each([false, true])("retries a mentioned draft through its original operation
   await waitFor(() => expect(original).toHaveBeenCalledTimes(2));
   expect(other).not.toHaveBeenCalled();
   expect(vi.mocked(original).mock.calls[1]![1].clientRequestId).toBe(vi.mocked(original).mock.calls[0]![1].clientRequestId);
+});
+
+it("closes Agents so Getting started's Try shows its prompt in the new chat", async () => {
+  useRetainedComposerDrafts.setState(useRetainedComposerDrafts.getInitialState(), true);
+  useConnection.setState({ status: "signed-in", userId: "user_1" } as never);
+  const client = createCanonicalChatWorkspaceClient();
+  vi.mocked(client.list).mockResolvedValue({ items: [] });
+  const agents = clientFixture({ matrix: true });
+  render(<ChatAgentsWorkspace>
+    <aside aria-label="Launcher"><AgentsLauncher client={agents} /></aside>
+    <main><ChatAgentsContent client={agents} scopeKey="chat:draft">
+      <CanonicalChatWorkspace client={client} projectId={null} initialView="draft" active catalog={providerCatalog} />
+    </ChatAgentsContent></main>
+  </ChatAgentsWorkspace>);
+  await screen.findByRole("textbox", { name: "Start a chat" });
+  fireEvent.click(within(screen.getByRole("complementary", { name: "Launcher" })).getByRole("button", { name: "Agents" }));
+  await screen.findByRole("button", { name: "New Agent" });
+  act(() => seedNewChatDraft("List my GitHub repos."));
+  await waitFor(() => expect(screen.queryByRole("region", { name: "Agents" })).toBeNull());
+  await waitFor(() => expect(screen.getByRole("textbox", { name: "Start a chat" }).textContent).toBe("List my GitHub repos."));
 });

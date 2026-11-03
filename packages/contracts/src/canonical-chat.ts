@@ -346,6 +346,16 @@ export const CanonicalChatMessagePartSchema = z.discriminatedUnion("type", [
   }).strict(),
 ]);
 
+/** Assistant output may cross a storage/part boundary on whitespace. Input
+ * parts retain their original nonblank schema at every user boundary. */
+export const CanonicalChatAssistantTextPartSchema = z.object({
+  type: z.literal("text"),
+  text: z.string().min(1).max(32_000).refine(text => textEncoder.encode(text).byteLength <= 96 * 1024),
+}).strict();
+export const CanonicalChatStoredMessagePartSchema = z.union([
+  CanonicalChatMessagePartSchema, CanonicalChatAssistantTextPartSchema,
+]);
+
 export const CanonicalChatMessageSchema = z.object({
   id: CanonicalChatMessageIdSchema,
   chatId: CanonicalChatIdSchema,
@@ -356,13 +366,18 @@ export const CanonicalChatMessageSchema = z.object({
   purpose: z.enum(["discussion", "ai_request", "assistant", "system"]).optional(),
   turnId: CanonicalChatTurnIdSchema.optional(),
   runId: CanonicalChatRunIdSchema.optional(),
-  parts: z.array(CanonicalChatMessagePartSchema).min(1).max(64),
+  parts: z.array(CanonicalChatStoredMessagePartSchema).min(1).max(64),
   createdAt: IsoTimestampSchema,
 }).strict().superRefine((message, ctx) => {
   if (canonicalEncodedByteLength(message) > 128 * 1024) {
     ctx.addIssue({ code: "custom", path: ["parts"], message: "Message exceeds encoded byte limit" });
   }
   if (message.role === "user") {
+    message.parts.forEach((part, index) => {
+      if (!CanonicalChatMessagePartSchema.safeParse(part).success) {
+        ctx.addIssue({ code: "custom", path: ["parts", index], message: "Invalid user message part" });
+      }
+    });
     if (message.state !== "committed") {
       ctx.addIssue({ code: "custom", path: ["state"], message: "Canonical user messages must be committed" });
     }

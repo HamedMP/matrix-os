@@ -1,4 +1,7 @@
+import { CODING_PREPARATION_TIMEOUT_MS, createCodingRunLifetime, explicitCodingRunTimeout } from "./coding-run-lifetime.js";
 import { assertCodingAgentProviderEnabled } from "./codex-harness-admission.js";
+import { applyProviderTranscriptRecovery, providerTranscriptUnavailable, prepareProviderObservation, retainedProviderSessions, type ProviderIdleObservation, type ProviderObservationResume } from "./provider-transcript-recovery.js";
+import { boundedOperation } from "../bounded-operation.js";
 import { deleteProjectThreadState } from "./project-thread-deletion.js";
 import { isFailedCodexBootstrap } from "./codex-failed-bootstrap.js";
 import { applyBackgroundThreadStop, withBackgroundResumeState, BackgroundThreadStopSchema, type BackgroundThreadStop } from "./background-thread-stop.js";
@@ -100,13 +103,13 @@ const MAX_INPUT_ANSWER_REQUEST_IDS = 50;
 const MAX_STORED_TURNS = 100;
 const MAX_TURNS_PER_THREAD = 50;
 const MAX_INITIAL_RUNS = 100;
-const DEFAULT_INITIAL_RUN_TIMEOUT_MS = 10 * 60_000;
 
 const OwnerIdSchema = z.string().min(1).max(160).regex(/^[A-Za-z0-9_.:@-]+$/);
 const WorkspaceSessionIdSchema = z.string().min(1).max(160).regex(/^sess_[A-Za-z0-9_-]+$/);
 const StoredThreadSchema = AgentThreadSummarySchema.extend({
   ownerId: OwnerIdSchema,
   clientRequestId: RequestIdSchema,
+  latestTurnClientRequestId: RequestIdSchema.optional(),
   abortClientRequestIds: z.array(RequestIdSchema).max(MAX_ABORT_REQUEST_IDS).default([]),
   approvalDecisionClientRequestIds: z.array(RequestIdSchema).max(MAX_APPROVAL_DECISION_REQUEST_IDS).default([]),
   inputAnswerClientRequestIds: z.array(RequestIdSchema).max(MAX_INPUT_ANSWER_REQUEST_IDS).default([]),
@@ -185,6 +188,7 @@ export interface CodingAgentThreadStoreOptions {
   relationValidator?: CodingAgentThreadRelationValidator;
   projectionPublisher?: CodingAgentThreadProjectionPublisher;
   maxTurnDispatches?: number;
+  /** Optional trusted caller timebox; omitted for ordinary owner turns. */
   turnDispatchTimeoutMs?: number;
   restoreProviderThread?: (thread: StoredThread) => Promise<boolean>;
 }
@@ -220,11 +224,18 @@ export interface CodingAgentThreadStore {
     validTaskIds: readonly string[],
   ): Promise<CodingAgentProjectThreadProjection>;
   getThread(principal: RequestPrincipal, threadId: string, cursor?: string): Promise<AgentThreadSnapshot>;
+  /** Owner-scoped proof that a retained tail still belongs to the requested latest turn. */
+  latestTurnRequestId(principal: RequestPrincipal, threadId: string): Promise<string | undefined>;
+  retainedProviderSessions(): Promise<string[]>;
+  removeUnreferencedProviderTranscript(sessionId: string, remove: () => Promise<boolean>): Promise<boolean>;
+  prepareProviderObservation(principal: RequestPrincipal, threadId: string, sessionId: string, resume: ProviderObservationResume): Promise<{ offset: number; generation: string } | undefined>;
+  recoverProviderTranscript(principal: RequestPrincipal, threadId: string, cursor: { sessionId: string; expectedOffset: number; generation?: string },
+    proveIdle: (observation: ProviderIdleObservation) => Promise<boolean>): Promise<boolean>;
   ingestProviderEvents(
     principal: RequestPrincipal,
     threadId: string,
     batch: CodingAgentProviderEventBatch,
-    cursor?: { sessionId: string; offset: number },
+    cursor?: { sessionId: string; offset: number; generation?: string; checkpoint?: false },
   ): Promise<AgentThreadSnapshot>;
   abortThread(principal: RequestPrincipal, threadId: string, clientRequestId: string, scope?: CodingAbortScope): Promise<AgentThreadSnapshot>;
   steerTurn(
@@ -272,7 +283,10 @@ export class CodingAgentThreadError extends Error {
 }
 
 export class CodingAgentTurnError extends Error {
-  constructor(readonly code: "thread_busy" | "thread_not_found" | "thread_not_resumable" | "turn_unavailable") {
+  constructor(
+    readonly code: "thread_busy" | "thread_not_found" | "thread_not_resumable" | "turn_unavailable",
+    readonly reason?: "history_unavailable",
+  ) {
     super(code);
     this.name = "CodingAgentTurnError";
   }
@@ -359,7 +373,7 @@ function statePath(homePath: string): string {
   return join(homePath, ...THREAD_STORE_RELATIVE_PATH);
 }
 
-async function readState(homePath: string): Promise<StoredThreadState> {
+async function readState(homePath: string, missingIsEmpty = true): Promise<StoredThreadState> {
   try {
     const raw = await readFile(statePath(homePath), "utf-8");
     const parsed = StoredThreadStateSchema.parse(JSON.parse(raw));
@@ -368,7 +382,7 @@ async function readState(homePath: string): Promise<StoredThreadState> {
       threads: parsed.threads.map(normalizeThreadAttention),
     };
   } catch (err: unknown) {
-    if (err instanceof Error && "code" in err && (err as NodeJS.ErrnoException).code === "ENOENT") {
+    if (missingIsEmpty && err instanceof Error && "code" in err && (err as NodeJS.ErrnoException).code === "ENOENT") {
       return emptyState();
     }
     throw err;
@@ -447,6 +461,7 @@ function stripOwner(thread: StoredThread): AgentThreadSummary {
   const {
     ownerId: _ownerId,
     clientRequestId: _clientRequestId,
+    latestTurnClientRequestId: _latestTurnClientRequestId,
     abortClientRequestIds: _abortClientRequestIds,
     approvalDecisionClientRequestIds: _approvalDecisionClientRequestIds,
     inputAnswerClientRequestIds: _inputAnswerClientRequestIds,
@@ -666,10 +681,7 @@ export function createCodingAgentThreadStore(
   const eventSinks: ThreadEventSink[] = [];
   const activeInitialRuns = new Map<string, { controller: AbortController; promise: Promise<void> }>();
   const maxInitialRuns = Math.max(1, Math.min(options.maxTurnDispatches ?? MAX_INITIAL_RUNS, MAX_INITIAL_RUNS));
-  const initialRunTimeoutMs = Math.max(1, Math.min(
-    options.turnDispatchTimeoutMs ?? DEFAULT_INITIAL_RUN_TIMEOUT_MS,
-    10 * 60_000,
-  ));
+  const initialRunTimeoutMs = explicitCodingRunTimeout(options.turnDispatchTimeoutMs);
   let queue = Promise.resolve();
 
   async function mutate<T>(fn: (state: StoredThreadState) => Promise<{ state: StoredThreadState; result: T }>): Promise<T> {
@@ -693,8 +705,8 @@ export function createCodingAgentThreadStore(
     return run;
   }
 
-  async function inspect<T>(fn: (state: StoredThreadState) => T): Promise<T> {
-    const run = queue.then(async () => fn(await readState(options.homePath)));
+  async function inspect<T>(fn: (state: StoredThreadState) => T | Promise<T>, missingIsEmpty = true): Promise<T> {
+    const run = queue.then(async () => fn(await readState(options.homePath, missingIsEmpty)));
     queue = run.then(() => undefined, () => undefined);
     return run;
   }
@@ -728,7 +740,7 @@ export function createCodingAgentThreadStore(
     threadId: string;
     turnId?: string;
     batch: CodingAgentProviderEventBatch;
-  }): Promise<void> {
+  }): Promise<boolean> {
     const parsed = parseCodingAgentProviderEventBatch(input.batch, input.threadId);
     if (parsed.events.some((event) =>
       event.type === "thread.error" ||
@@ -737,14 +749,14 @@ export function createCodingAgentThreadStore(
     )) {
       throw new Error("Provider streamed a terminal event");
     }
-    const result = await mutate(async (state) => {
+    const result = await mutate<AgentThreadEvent[] | null>(async (state) => {
       const thread = state.threads.find((candidate) =>
         candidate.ownerId === input.ownerId &&
         candidate.id === input.threadId &&
         (input.turnId === undefined || candidate.activeTurnId === input.turnId)
       );
       if (!thread || terminalThread(thread)) {
-        return { state, result: [] as AgentThreadEvent[] };
+        return { state, result: null };
       }
       const existingEventIds = new Set(
         state.events
@@ -784,7 +796,9 @@ export function createCodingAgentThreadStore(
         result: events,
       };
     });
+    if (result === null) return false;
     publish(input.ownerId, input.threadId, result);
+    return true;
   }
 
   function turnStatusEvent(
@@ -877,6 +891,9 @@ export function createCodingAgentThreadStore(
         candidate.activeTurnId === input.turnId
       );
       if (!thread) return { state, result: [] as AgentThreadEvent[] };
+      if (input.resumeState && thread.providerResumeState?.eventGeneration !== input.resumeState.eventGeneration) {
+        return { state, result: [] as AgentThreadEvent[] };
+      }
       if (input.providerEvents.some((event) =>
         event.type === "turn.accepted" ||
         event.type === "turn.status" ||
@@ -1047,22 +1064,12 @@ export function createCodingAgentThreadStore(
       return;
     }
     const controller = new AbortController();
-    const deadlineSignal = AbortSignal.timeout(initialRunTimeoutMs);
+    const lifetime = createCodingRunLifetime(controller.signal, initialRunTimeoutMs);
+    const combinedSignal = lifetime.signal;
     let terminationSource: "explicit_abort" | "deadline" | undefined;
-    const captureExplicitAbort = () => {
-      terminationSource ??= "explicit_abort";
-    };
-    const captureDeadline = () => {
-      terminationSource ??= "deadline";
-    };
-    controller.signal.addEventListener("abort", captureExplicitAbort, { once: true });
-    deadlineSignal.addEventListener("abort", captureDeadline, { once: true });
-    if (controller.signal.aborted) captureExplicitAbort();
-    else if (deadlineSignal.aborted) captureDeadline();
-    const combinedSignal = AbortSignal.any([
-      controller.signal,
-      deadlineSignal,
-    ]);
+    const captureTermination = () => { terminationSource ??= lifetime.timedOut() ? "deadline" : "explicit_abort"; };
+    combinedSignal.addEventListener("abort", captureTermination, { once: true });
+    if (combinedSignal.aborted) captureTermination();
     const providerPromise = Promise.resolve().then(() => input.provider.startThread({
       principal: input.principal,
       thread: stripOwner(input.thread),
@@ -1115,8 +1122,8 @@ export function createCodingAgentThreadStore(
       }
     })().catch((err: unknown) => logCodingAgentWarning("initial run finalization failed", err))
       .finally(() => {
-        controller.signal.removeEventListener("abort", captureExplicitAbort);
-        deadlineSignal.removeEventListener("abort", captureDeadline);
+        combinedSignal.removeEventListener("abort", captureTermination);
+        lifetime.dispose();
         activeInitialRuns.delete(input.thread.id);
       });
     activeInitialRuns.set(input.thread.id, { controller, promise });
@@ -1150,6 +1157,7 @@ export function createCodingAgentThreadStore(
         id: nextThreadId(),
         ownerId: principal.userId,
         clientRequestId: request.clientRequestId,
+        latestTurnClientRequestId: request.clientRequestId,
         abortClientRequestIds: [],
         approvalDecisionClientRequestIds: [],
         inputAnswerClientRequestIds: [],
@@ -1186,12 +1194,13 @@ export function createCodingAgentThreadStore(
       if (background) {
         providerEvents = [];
       } else {
+        const dispatch = createCodingRunLifetime(new AbortController().signal, initialRunTimeoutMs ?? CODING_PREPARATION_TIMEOUT_MS);
         try {
           const providerResult = parseCodingAgentProviderRunResult(await provider.startThread({
             principal,
             thread: stripOwner(thread),
             request,
-            signal: AbortSignal.timeout(initialRunTimeoutMs),
+            signal: dispatch.signal,
             now,
             nextEventId,
           }), thread.id);
@@ -1200,7 +1209,7 @@ export function createCodingAgentThreadStore(
         } catch (err: unknown) {
           logCodingAgentWarning("provider start failed", err);
           providerEvents = safeProviderRunFailureEvents(thread.id, now, nextEventId);
-        }
+        } finally { dispatch.dispose(); }
       }
       const events = [createdEvent, userMessageEvent, ...providerEvents];
       for (const event of events.slice(1)) {
@@ -1346,9 +1355,16 @@ export function createCodingAgentThreadStore(
           const provider = providerFor(thread.providerId);
           await assertCodingAgentProviderEnabled(options.providerAdmission, thread.providerId,
             () => new CodingAgentTurnError("turn_unavailable"));
+          const interrupted = providerTranscriptUnavailable(thread, state.events);
           if (!provider.resumeTurn || !thread.providerResumeState
+            || (interrupted && !provider.prepareHistoryResume)
             || isFailedCodexBootstrap({ ownerId: principal.userId, thread, events: state.events, turns: state.turns })) {
-            throw new CodingAgentTurnError("thread_not_resumable");
+            throw new CodingAgentTurnError("thread_not_resumable",
+              providerTranscriptUnavailable(thread, state.events) ? "history_unavailable" : undefined);
+          }
+          if (interrupted) {
+            try { await boundedOperation(signal => provider.prepareHistoryResume!({ principal, thread: stripOwner(thread), resumeState: thread.providerResumeState!, signal }), 5_000); }
+            catch (error) { logCodingAgentWarning("native conversation resume preparation unavailable", error); throw new CodingAgentTurnError("thread_not_resumable", "history_unavailable"); }
           }
           const acceptedAt = now().toISOString();
           const turnId = AgentTurnIdSchema.parse(`turn_${randomUUID()}`);
@@ -1375,6 +1391,8 @@ export function createCodingAgentThreadStore(
           const acceptedEvents = [acceptedEvent, userMessageEvent];
           const nextThread: StoredThread = {
             ...thread,
+            latestTurnClientRequestId: request.clientRequestId,
+            ...(interrupted ? { providerResumeState: { ...thread.providerResumeState!, eventStreamInterrupted: true } } : {}),
             activeTurnId: turnId,
             deliveredTurnId: undefined,
             status: "running",
@@ -1565,6 +1583,29 @@ export function createCodingAgentThreadStore(
       if (!thread) throw new CodingAgentThreadError("thread_not_found", "Thread not found");
       return snapshotFor(thread, state.events, cursor);
     },
+    async latestTurnRequestId(principal, threadId) {
+      return inspect((state) => {
+        const thread = state.threads.find((candidate) => candidate.ownerId === principal.userId && candidate.id === threadId);
+        if (!thread) throw new CodingAgentThreadError("thread_not_found", "Thread not found");
+        return thread.latestTurnClientRequestId
+          ?? state.turns.findLast((turn) => turn.ownerId === principal.userId && turn.threadId === threadId)?.clientRequestId;
+      });
+    },
+    async retainedProviderSessions() { return retainedProviderSessions(await readState(options.homePath)); },
+    async removeUnreferencedProviderTranscript(sessionId, remove) {
+      WorkspaceSessionIdSchema.parse(sessionId);
+      return inspect(async state => !retainedProviderSessions(state).includes(sessionId) && await remove(), false);
+    },
+    async prepareProviderObservation(principal, threadId, sessionId, resume) {
+      return mutate(state => prepareProviderObservation(state, { homePath: options.homePath, ownerId: principal.userId, threadId, sessionId, resume }));
+    },
+    async recoverProviderTranscript(principal, threadId, cursor, proveIdle) {
+      const events = await mutate(state => applyProviderTranscriptRecovery(state, {
+        ownerId: principal.userId, threadId, cursor, proveIdle, now, nextEventId,
+      }));
+      publish(principal.userId, threadId, events);
+      return events.length > 0;
+    },
     async ingestProviderEvents(principal, threadId, batch, cursor) {
       const parsed = parseCodingAgentProviderEventBatch(batch, threadId);
       if (parsed.resumeState) {
@@ -1579,7 +1620,8 @@ export function createCodingAgentThreadStore(
           WorkspaceSessionIdSchema.parse(cursor.sessionId);
           z.number().int().min(0).max(16 * 1024 * 1024).parse(cursor.offset);
           if (thread.providerResumeState?.conversationId !== cursor.sessionId) throw new Error("Provider cursor identity mismatch");
-          if ((thread.providerEventOffset ?? -1) >= cursor.offset) return { state, result: { snapshot: snapshotFor(thread, state.events), eventsToPublish: [] as AgentThreadEvent[] } };
+          if (thread.providerResumeState.eventGeneration !== cursor.generation) throw new Error("Provider observation generation changed");
+          if (cursor.checkpoint !== false && (thread.providerEventOffset ?? -1) >= cursor.offset) return { state, result: { snapshot: snapshotFor(thread, state.events), eventsToPublish: [] as AgentThreadEvent[] } };
         }
         const existingEventIds = new Set(
           state.events
@@ -1607,7 +1649,7 @@ export function createCodingAgentThreadStore(
             },
           };
         }
-        if (cursor) nextThread = { ...nextThread, providerEventOffset: cursor.offset };
+        if (cursor && cursor.checkpoint !== false) nextThread = { ...nextThread, providerEventOffset: cursor.offset };
         const nextState = {
           ...state,
           threads: state.threads.map((candidate) => candidate === thread ? nextThread : candidate),

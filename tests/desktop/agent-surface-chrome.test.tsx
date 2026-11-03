@@ -3,6 +3,7 @@ import React from "react";
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import DesktopSurfaceFrame from "@desktop/renderer/src/features/desktop-shell/DesktopSurfaceFrame";
+import { stopDesktopProviderCatalogCoordinator } from "@desktop/renderer/src/features/chat/provider-catalog-coordinator";
 import WorkTab from "@desktop/renderer/src/features/work/WorkTab";
 import { ChatAgentsWorkspace } from "@matrix-os/ui";
 import { useConnection } from "@desktop/renderer/src/stores/connection";
@@ -10,6 +11,7 @@ import { useBoard } from "@desktop/renderer/src/stores/board";
 import { useTabs } from "@desktop/renderer/src/stores/tabs";
 import { useUi } from "@desktop/renderer/src/stores/ui";
 import { clientFixture, saved } from "./chat-agents-fixture";
+import { createCanonicalProviderCatalogFixture } from "../contracts/fixtures/canonical-chat";
 import type { CanonicalChatClient } from "@desktop/renderer/src/lib/canonical-chat-client";
 import type { Tab } from "@desktop/renderer/src/stores/tabs";
 
@@ -27,10 +29,22 @@ vi.mock("@desktop/renderer/src/features/chat/ChatTab", () => ({ default: () => <
 vi.mock("@desktop/renderer/src/features/work/WorkInspector", () => ({ WorkInspector: () => null }));
 
 beforeEach(() => {
+  stopDesktopProviderCatalogCoordinator();
   const agents = clientFixture({ matrix: true });
   agents.list.mockResolvedValue({ enabled: true, agents: [saved] });
   runtime.client = { agents, list: vi.fn(async () => ({ items: [] })) } as unknown as CanonicalChatClient;
-  useConnection.setState(useConnection.getInitialState(), true);
+  const providerCatalog = createCanonicalProviderCatalogFixture();
+  useConnection.setState({
+    ...useConnection.getInitialState(),
+    status: "signed-in",
+    authGeneration: 1,
+    api: {
+      get: vi.fn(async (path: string) => {
+        if (path.startsWith("/api/chat-providers")) return providerCatalog;
+        throw new Error("Unexpected agent surface chrome request");
+      }),
+    } as never,
+  }, true);
   useBoard.setState({ projects: [], loadProjects: vi.fn(async () => undefined) });
   useTabs.setState(useTabs.getInitialState(), true);
   useUi.setState(useUi.getInitialState(), true);
@@ -39,7 +53,7 @@ beforeEach(() => {
   HTMLDialogElement.prototype.showModal = function () { this.setAttribute("open", ""); };
   HTMLDialogElement.prototype.close = function () { this.removeAttribute("open"); };
 });
-afterEach(() => { cleanup(); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
+afterEach(() => { cleanup(); stopDesktopProviderCatalogCoordinator(); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 
 it.each(["window", "tab"] as const)("shows Agents titles on the sole real native toolbar in %s mode", async mode => {
   render(<DesktopSurfaceFrame tab={{ id: "work", kind: "work", title: "Chat", workRoute: "chat", chatView: "draft", closable: false }}

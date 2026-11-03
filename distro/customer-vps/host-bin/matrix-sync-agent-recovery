@@ -12,7 +12,20 @@ resume_update_transaction_services() {
     [[ "$name" =~ ^[A-Za-z0-9][A-Za-z0-9._@-]{0,127}$ ]] || return 1
     update_payload_name_was_added "$name" && continue
     case "$state" in
-      active) [ "$name" = matrix-sync-agent.service ] || sudo systemctl start "$name" >/dev/null || return 1 ;;
+      active)
+        if [ "$name" = matrix-sync-agent.service ]; then
+          continue
+        elif [[ "$name" = matrix-hermes.service \
+          || "$name" = matrix-hermes-dashboard.service \
+          || "$name" = matrix-integrations-agents.service ]]; then
+          # The dashboard and integration agent wait for Hermes. Queue the
+          # optional chain without delaying core rollback or transaction proof.
+          sudo systemctl start --no-block "$name" >/dev/null \
+            || log "WARN: optional $name could not be queued after rollback"
+        else
+          sudo systemctl start "$name" >/dev/null || return 1
+        fi
+        ;;
       inactive) ;;
       *) return 1 ;;
     esac
@@ -278,6 +291,14 @@ do_rollback() {
   if [ "$healthy" = true ]; then
     clear_retired_symphony_rollback_after_rollback || return 1
     finish_confirmed_update_transaction || return 1
+    # Converge native code to the restored payload only after core rollback
+    # passes health; Chrome/profile remain live until bounded reconciliation.
+    if [ -f /etc/systemd/system/matrix-browser-runtime.service ] \
+      && [ -f /usr/local/libexec/matrix-browser-runtime.py ]; then
+      sudo systemctl reset-failed matrix-browser-runtime.service || true
+      sudo systemctl restart --no-block matrix-browser-runtime.service \
+        || log "WARN: Browser rollback reconciliation remains pending"
+    fi
     log "Rollback complete (now at $(current_version))"
   else
     log "ERROR: rollback health check failed — services may be down"

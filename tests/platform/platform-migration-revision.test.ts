@@ -18,8 +18,9 @@ describe("platform schema revision", () => {
     for (const file of files) {
       digest.update(file).update("\0").update(await readFile(`${base}/${file}`)).update("\0");
     }
-    // The union must supersede both deployed Preview generation 17 and main 18.
-    expect(PLATFORM_SCHEMA_REVISION.generation).toBeGreaterThan(18);
+    // Production already recorded a different generation-22 fingerprint before
+    // this composed Preview schema landed. Reusing 22 must remain fail-closed.
+    expect(PLATFORM_SCHEMA_REVISION.generation).toBeGreaterThan(22);
     expect(PLATFORM_SCHEMA_REVISION.fingerprint).toBe(digest.digest("hex"));
   });
 });

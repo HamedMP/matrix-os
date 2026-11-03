@@ -23,7 +23,7 @@ it("keeps strict older clients compatible even when they opt into message v2", (
 it("preserves full structured requests for input-aware snapshots and live frames", () => {
   expect(projectChatMessageResponse({ activities }, "2", "1").activities).toEqual(activities);
   const frame = { type: "chat.content", event: { cursor: 1 }, content: { activities } } as CanonicalChatTransportFrame;
-  expect(projectChatMessageFrame(frame, "2", "1")).toEqual(frame);
-  expect(projectChatMessageFrame(frame, "2", "0")).toMatchObject({ content: { activities: [expect.not.objectContaining({ type: "input.submitted" }), expect.anything()] } });
-  expect(chatMessageVersionUrl("/api/chats/chat_wire?limit=20")).toBe("/api/chats/chat_wire?limit=20&messageVersion=2&inputVersion=1&commandPreviewVersion=1");
+  expect(projectChatMessageFrame(frame, "2", "1", "0", "1")).toEqual(frame);
+  expect(projectChatMessageFrame(frame, "2", "0", "0", "1")).toMatchObject({ content: { activities: [expect.not.objectContaining({ type: "input.submitted" }), expect.anything()] } });
+  expect(chatMessageVersionUrl("/api/chats/chat_wire?limit=20")).toBe("/api/chats/chat_wire?limit=20&messageVersion=2&inputVersion=1&commandPreviewVersion=1&assistantTextVersion=1");
 });

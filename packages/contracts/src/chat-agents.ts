@@ -38,6 +38,11 @@ export const ChatAgentSchema = ChatAgentFieldsSchema.extend({
 export const ChatAgentListResponseSchema = z.object({
   enabled: z.boolean(),
   agents: z.array(ChatAgentSchema).max(100),
+  /** Read-only server projection of an unfinished owned recovery; never editable Bot provenance. */
+  managedCustomRecoveries: z.array(z.object({
+    agentId: ChatAgentIdSchema,
+    baseRevision: z.number().int().min(1).max(Number.MAX_SAFE_INTEGER),
+  }).strict()).max(100).optional(),
 }).strict();
 export type ChatAgent = z.infer<typeof ChatAgentSchema>;
 export type CreateChatAgentRequest = z.infer<typeof CreateChatAgentRequestSchema>;

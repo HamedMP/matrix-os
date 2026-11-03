@@ -169,7 +169,7 @@ it("disconnect requires explicit confirmation and keeps optional uninstall unche
   await waitFor(() => expect(disconnect).toHaveBeenCalledOnce());
   expect(api.start).not.toHaveBeenCalled();
 });
-it("resumes the same operation handle after an accordion reopens", async () => {
+it("resumes the same operation handle and cancels without refreshing login catalogs", async () => {
   const api = client();
   const operation = {
     id: "wf_saved",
@@ -185,15 +185,18 @@ it("resumes the same operation handle after an accordion reopens", async () => {
   api.get = vi.fn().mockResolvedValue(operation);
   api.cancel = vi.fn().mockResolvedValue({ ...operation, state: "cancelled" });
   const refresh = vi.fn();
+  const refreshAfterLogin = vi.fn().mockResolvedValue(undefined);
+  const onOperationId = vi.fn();
   render(
     <HarnessWorkflowPanel
       harness={claudeHarness}
       capability={claudeCapability}
       client={api}
       operationId="wf_saved"
-      onOperationId={vi.fn()}
+      onOperationId={onOperationId}
       disabled={false}
       onRefresh={refresh}
+      onRefreshAfterLogin={refreshAfterLogin}
       onOpenTerminal={vi.fn()}
       onOpenAuthorizationUrl={vi.fn()}
     />,
@@ -202,7 +205,12 @@ it("resumes the same operation handle after an accordion reopens", async () => {
   expect(api.get).toHaveBeenCalledWith("wf_saved", expect.any(AbortSignal));
   expect(api.start).not.toHaveBeenCalled();
   fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
-  await waitFor(() => expect(refresh).toHaveBeenCalled());
+  await waitFor(() => expect(onOperationId).toHaveBeenCalledWith(null));
+  expect(api.cancel).toHaveBeenCalledOnce();
+  expect(api.cancel).toHaveBeenCalledWith("wf_saved", expect.any(AbortSignal));
+  expect(screen.queryByRole("button", { name: "Cancel" })).not.toBeInTheDocument();
+  expect(refresh).not.toHaveBeenCalled();
+  expect(refreshAfterLogin).not.toHaveBeenCalled();
 });
 it("clears secret and transient form state when the client identity changes", async () => {
   const api = client();

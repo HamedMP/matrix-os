@@ -82,7 +82,7 @@ it("keeps the real expanded Settings view usable and capabilities stable for 60 
   const view = render(<Settings api={api} client={client} />);
   await act(async () => {});
   const refresh = view.getByRole("button", { name: "Refresh provider status" });
-  const row = view.getByRole("button", { name: /^Hermes.*Connected/ });
+  const row = view.getByRole("button", { name: /^Hermes.*Configured/ });
   fireEvent.click(row);
   expect(row).toHaveAttribute("aria-expanded", "true");
   await advance(1700);

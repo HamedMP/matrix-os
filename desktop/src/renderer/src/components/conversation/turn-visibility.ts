@@ -17,5 +17,9 @@ export function conversationTurnVisibility(turn: ConversationTurnPresentation, e
     item.kind === "request" && item.input && !item.input.resolved && (item.input.pending || item.input.submitted)
       ? [item.requestId] : []
   ));
-  return { showWork, visibleWork, visibleTimeline, pendingRequestIds };
+  // A failed/stopped turn has a notice instead of a final reply. Its last
+  // retained assistant message still needs Copy, even if a tool came after it.
+  const partialCopyMessageId = terminalPartial?.kind === "message" && terminalPartial.role === "assistant"
+    ? terminalPartial.id : undefined;
+  return { showWork, visibleWork, visibleTimeline, pendingRequestIds, partialCopyMessageId };
 }

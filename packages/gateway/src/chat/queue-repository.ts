@@ -1,4 +1,5 @@
 import {associateAdmittedDriveChat} from "./drive-project-database.js";
+import { releaseTerminalQueuedSteer } from "./queued-steer-cleanup.js";
 import {admittedContextReferenceParts} from "./context-reference-parts.js";
 import { chatContextRequestHash } from "./agent-context.js";
 import { queuedRunContext, validateQueuedAgentDriver } from "./queued-context.js";
@@ -6,6 +7,7 @@ import { randomUUID } from "node:crypto";
 import {
   ChatRunContextSchema,
   CanonicalChatIdSchema,
+  CanonicalChatExecutionRootRefSchema,
   CanonicalChatMessageSchema,
   CanonicalChatModelSelectionSchema,
   CanonicalChatQueuedTurnIdSchema,
@@ -30,6 +32,7 @@ import type { CollaborationScopesTable, OwnerCollaborationDatabase } from "../co
 import { CollaborationAuthorizationError } from "../collaboration/authority.js";
 import {
   fenceSharedChatAuthority,
+  lockSharedChatMembershipScope,
   type SharedChatAuthorizer,
 } from "../collaboration/shared-chat-authority.js";
 import {
@@ -298,6 +301,7 @@ export class ChatQueueRepository {
 
     return this.transact(async (executor) => {
       const trx = executor as unknown as Transaction<OwnerCollaborationDatabase>;
+      await lockSharedChatMembershipScope(trx, authority);
       const scope = await trx.selectFrom("collaboration_scopes").selectAll()
         .where("id", "=", scopeId)
         .forUpdate()
@@ -342,6 +346,15 @@ export class ChatQueueRepository {
         canonicalProviderAuthority: input.canonicalProviderAuthority,
       });
       if (provider.capability.status !== "available" || !provider.execution) {
+        throw new SharedChatQueueError("unavailable");
+      }
+      const executionRoot = input.executionRoot === undefined ? null
+        : CanonicalChatExecutionRootRefSchema.parse(input.executionRoot);
+      const executionRootFingerprint = input.executionRootFingerprint ?? null;
+      if ((executionRoot === null) !== (executionRootFingerprint === null)
+        || (executionRootFingerprint !== null && !/^[a-f0-9]{64}$/.test(executionRootFingerprint))
+        || (executionRoot && (executionRoot.kind === "bot_workspace" || executionRoot.projectId !== chat.project_id))
+        || (provider.execution.driverKind === "matrix_bot" && !executionRoot)) {
         throw new SharedChatQueueError("unavailable");
       }
       const duplicate = await trx.selectFrom("chat_queued_turns").selectAll()
@@ -401,8 +414,8 @@ export class ChatQueueRepository {
         selection: jsonb(provider.execution.selection),
         interaction_mode: input.interactionMode,
         permission_mode: input.permissionMode,
-        execution_root: null,
-        execution_root_fingerprint: null,
+        execution_root: executionRoot ? jsonb(executionRoot) : null,
+        execution_root_fingerprint: executionRootFingerprint,
         capability_snapshot: jsonb(capabilitySnapshot),
         claimed_turn_id: null,
         claimed_run_id: null,
@@ -640,11 +653,7 @@ export class ChatQueueRepository {
         .forUpdate()
         .executeTakeFirst();
       if (!queued) throw new ChatNotFoundError(chatId);
-      const pendingSteer = await trx.selectFrom("chat_run_steers").select("id")
-        .where("queued_turn_id", "=", queuedTurnId)
-        .where("status", "=", "pending")
-        .executeTakeFirst();
-      if (pendingSteer) throw new ChatConflictError(chatId, Number(chat.revision));
+      await releaseTerminalQueuedSteer(trx, { chatId, queuedTurnId, revision: Number(chat.revision), cancelledAt });
       if (queued.status === "cancelled") {
         return {
           queuedTurnId,
@@ -862,6 +871,7 @@ export class ChatQueueRepository {
       let sharedAdmission: "allowed" | "unauthorized" | "unavailable" = "allowed";
       if (candidateScope?.collaboration_scope_id) {
         const sharedTrx = trx as unknown as Transaction<OwnerCollaborationDatabase>;
+        await lockSharedChatMembershipScope(sharedTrx, freshAuthority);
         sharedScope = await sharedTrx.selectFrom("collaboration_scopes")
           .selectAll()
           .where("id", "=", candidateScope.collaboration_scope_id)
@@ -962,6 +972,14 @@ export class ChatQueueRepository {
           || !sameSelection(candidateSelection.data, provider.execution.selection)) {
           sharedAdmission = "unavailable";
         }
+      }
+      if (candidate.collaboration_scope_id && sharedAdmission === "allowed") {
+        const root = candidate.execution_root === null ? null
+          : CanonicalChatExecutionRootRefSchema.safeParse(safelyParseSharedJson(candidate.execution_root));
+        if ((root === null) !== (candidate.execution_root_fingerprint === null)
+          || (root && (!root.success || root.data.kind === "bot_workspace" || root.data.projectId !== chat.project_id))
+          || (candidate.execution_root_fingerprint !== null && !/^[a-f0-9]{64}$/.test(candidate.execution_root_fingerprint))
+          || (candidate.driver_kind === "matrix_bot" && root === null)) sharedAdmission = "unavailable";
       }
       if (candidate.collaboration_scope_id && sharedAdmission !== "allowed") {
         await this.terminalizeSharedCandidate(

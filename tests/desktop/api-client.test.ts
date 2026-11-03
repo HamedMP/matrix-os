@@ -9,6 +9,11 @@ function jsonResponse(status: number, body: unknown): Response {
 }
 
 describe("buildGatewayUrl", () => {
+  it("does not propagate Bot creation reasons on unrelated API paths", async () => {
+    const api = createApiClient({ baseUrl: "https://matrix.test", getRuntimeSlot: () => "primary",
+      fetchFn: vi.fn(async () => jsonResponse(400, { code: "invalid_request", reason: "prompt_too_large", message: "private" })) });
+    await expect(api.post("/api/other", {})).rejects.toMatchObject({ httpStatus: 400, reason: undefined });
+  });
   it("joins base and path", () => {
     expect(buildGatewayUrl("https://app.matrix-os.com", "/api/workspace/projects", "primary")).toBe(
       "https://app.matrix-os.com/api/workspace/projects",

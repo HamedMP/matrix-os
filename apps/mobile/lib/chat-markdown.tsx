@@ -188,7 +188,7 @@ function codeBlock(
  * `fades` marks the chunks of a streaming reply that are still fading in (see
  * `useStreamedTextReveal`); a settled message passes none.
  */
-export function renderChatMarkdown(text: string, theme: ChatMarkdownTheme, fades: TextFade[] = []): ReactNode[] {
+export function renderChatMarkdown(text: string, theme: ChatMarkdownTheme, fades: TextFade[] = [], renderDiagram?: (source: string, key: string) => ReactNode): ReactNode[] {
   const lines = text.split("\n");
   // Where each line starts in `text`, to translate positions back to message offsets.
   const lineOffsets: number[] = [];
@@ -200,6 +200,7 @@ export function renderChatMarkdown(text: string, theme: ChatMarkdownTheme, fades
   const blocks: ReactNode[] = [];
   let index = 0;
   let blockKey = 0;
+  let diagramCount = 0;
 
   while (index < lines.length) {
     const line = lines[index]!;
@@ -217,8 +218,13 @@ export function renderChatMarkdown(text: string, theme: ChatMarkdownTheme, fades
         codeLines.push(lines[index]!);
         index += 1;
       }
-      if (index < lines.length) index += 1; // consume closing fence
-      blocks.push(codeBlock(codeLines, `code-${blockKey++}`, theme, codeOffset, fades));
+      const closed = index < lines.length;
+      if (closed) index += 1; // consume closing fence
+      const key = `code-${blockKey++}`;
+      if (closed && fence[2]?.toLowerCase() === "mermaid" && renderDiagram && diagramCount < 10) {
+        diagramCount += 1;
+        blocks.push(renderDiagram(codeLines.join("\n"), key));
+      } else blocks.push(codeBlock(codeLines, key, theme, codeOffset, fades));
       continue;
     }
 

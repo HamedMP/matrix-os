@@ -133,6 +133,7 @@ describe("owner session through the HTTP route on a production home", () => {
     });
     const ownerRuntimeSessions = new OwnerRuntimeSessionService({
       verifier, ownerId, runtimeId, now: () => clock,
+      runtimeGeneration: () => 1,
       organizationPrecondition: createOrganizationPrecondition({
         source: { assertMembership: async () => ({ member: true, expiresAt: new Date(clock.getTime() + 20_000).toISOString() }) },
         now: () => clock,

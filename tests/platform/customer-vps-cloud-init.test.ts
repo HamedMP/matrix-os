@@ -73,6 +73,7 @@ describe('platform/customer-vps-cloud-init', () => {
     posthogApiHost: '/relay',
     fundedAiEnabled: 'true',
     fundedAiRelayUrl: 'https://relay.matrix-os.com',
+    getStartedEnabled: 'true',
     platformSpeechEnabled: 'true',
     platformSpeechOrigin: 'https://platform.example',
     platformSpeechRuntimeToken: 'speech-runtime-verification-secret',
@@ -254,6 +255,7 @@ exit 99
     expect(rendered).not.toContain('MATRIX_FUNDED_AI_RUNTIME_TOKEN=\n');
     expect(rendered).not.toContain('PLATFORM_INTERNAL_URL=\n');
     expect(rendered).toContain('MATRIX_FUNDED_AI_ENABLED=true');
+    expect(rendered).toContain('MATRIX_GET_STARTED_ENABLED=true');
     expect(rendered).toContain('MATRIX_FUNDED_AI_RELAY_URL=https://relay.matrix-os.com');
     expect(rendered).not.toContain('AI_RELAY_CONTROL_TOKEN');
     expect(rendered).not.toContain('CF_AIG_AUTHORIZATION');
@@ -420,6 +422,7 @@ exit 99
     expect(cloudInit).toContain('MATRIX_FUNDED_AI_RUNTIME_TOKEN={{fundedAiRuntimeToken}}');
     expect(cloudInit).toContain('MATRIX_RUNTIME_TOKEN_EPOCH={{runtimeTokenEpoch}}');
     expect(cloudInit).toContain('MATRIX_PLATFORM_SPEECH_ENABLED={{platformSpeechEnabled}}');
+    expect(cloudInit).toContain('MATRIX_GET_STARTED_ENABLED={{getStartedEnabled}}');
     expect(cloudInit).toContain('MATRIX_PLATFORM_SPEECH_ORIGIN={{platformSpeechOrigin}}');
     expect(cloudInit).toContain('MATRIX_PLATFORM_SPEECH_RUNTIME_TOKEN={{platformSpeechRuntimeToken}}');
     expect(cloudInit).toContain('PLATFORM_INTERNAL_URL={{platformInternalUrl}}');
@@ -598,7 +601,7 @@ exit 99
     expect(toolPackInstaller).toContain('install_codex_package()');
     expect(toolPackInstaller).toContain('install_opencode_package()');
     expect(toolPackInstaller).toContain('install_pi_package()');
-    expect(toolPackInstaller).toMatch(/install_coding_agents\(\) \{\n  log "installing coding agent CLIs"\n  install_claude_code_package\n  install_codex_package\n  install_opencode_package\n  install_pi_package\n  finish_agent_install\n  log "coding agent CLIs installed"\n\}/);
+    expect(toolPackInstaller).toMatch(/install_coding_agents\(\) \{\n  log "installing coding agent CLIs"\n  install_claude_code_package\n  install_codex_package\n  install_opencode_package\n  install_pi_package\n  reconcile_agent_npm_prefix\n  finish_agent_install\n  log "coding agent CLIs installed"\n\}/);
     expect(toolPackInstaller).toContain('claude-code|codex|opencode|pi|coding-agents|code-server|hermes|linux-tools|all');
     expect(toolPackInstaller).toContain('claude-code) with_pack_lock "$pack" install_claude_code ;;');
     expect(toolPackInstaller).toContain('codex) with_pack_lock "$pack" install_codex ;;');

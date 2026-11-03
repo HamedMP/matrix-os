@@ -355,4 +355,8 @@ export const BOT_MIGRATIONS: readonly BotMigration[] = [
   { version: 6, name: "bot_chatgpt_plan_devices", up: migrateChatGptPlanDevices },
   { version: 7, name: "jev_label_grant", up: migrateJevLabelGrantV7 },
   { version: 8, name: "isolated_chat_phases", up: migrateIsolatedChatPhasesV8 },
+  { version: 9, name: "question_source_run", up: async trx => {
+    await sql`ALTER TABLE bot_interactions ADD COLUMN source_run_id TEXT
+      CHECK (source_run_id IS NULL OR source_run_id ~ '^run_[A-Za-z0-9_-]{1,128}$')`.execute(trx);
+  } },
 ];

@@ -35,7 +35,9 @@ UV_INSTALLER_URL="${HOST_BUNDLE_UV_INSTALLER_URL:-https://astral.sh/uv/install.s
 rm -rf "$DIST_DIR"
 mkdir -p "$STAGE_DIR/bin" "$STAGE_DIR/app" "$STAGE_DIR/runtime" "$STAGE_DIR/systemd" "$STAGE_DIR/user-systemd"
 
-pnpm install --frozen-lockfile
+# Runtime dependencies must resolve inside the copied app payload, even when
+# the calling environment is a developer shell with the shared store enabled.
+pnpm install --frozen-lockfile --config.enableGlobalVirtualStore=false
 pnpm rebuild node-pty
 pnpm --filter '@matrix-os/observability' build
 pnpm --filter '@matrix-os/brand' build
@@ -124,11 +126,12 @@ chmod -R g+rwX "$STAGE_DIR/runtime/node/lib/node_modules" "$STAGE_DIR/runtime/no
 find "$STAGE_DIR/runtime/node/lib/node_modules" "$STAGE_DIR/runtime/node/bin" -type d -exec chmod g+s {} +
 
 cp -a "$ROOT_DIR/distro/customer-vps/host-bin/." "$STAGE_DIR/bin/"
-# The Browser spike requires native services outside app/. Ship an explicit,
-# guarded operator setup command and prebuilt viewer, without enabling it on customers.
+# Native Browser services live outside app/. Stage separate guarded Preview and
+# customer lifecycle payloads; customer setup is scheduled after core readiness.
 pnpm exec vite build "$ROOT_DIR/scripts/spikes/browser-vps/lab" --config "$ROOT_DIR/scripts/spikes/browser-vps/lab/vite.config.ts"
 node "$ROOT_DIR/scripts/stage-browser-preview.mjs" "$ROOT_DIR/scripts/spikes/browser-vps" "$STAGE_DIR/bin"
-chmod 0755 "$STAGE_DIR/bin/matrix-install-browser-preview"
+chmod 0755 "$STAGE_DIR/bin/matrix-install-browser-preview" "$STAGE_DIR/bin/matrix-install-browser"
+chmod 0644 "$STAGE_DIR/bin/matrix-browser-runtime.py"
 node "$ROOT_DIR/scripts/prepare-funded-host-component.mjs" \
   "$STAGE_DIR/bin/matrix-sync-agent" "$STAGE_DIR/funded-host-config"
 chmod 0755 "$STAGE_DIR/bin/matrix-postgres-start"
@@ -150,13 +153,18 @@ cp -a "$ROOT_DIR/node_modules" "$STAGE_DIR/app/node_modules"
 install -m 0755 "$DIST_DIR/$GH_DIST/bin/gh" "$STAGE_DIR/app/node_modules/.bin/gh"
 cp -a "$ROOT_DIR/packages" "$STAGE_DIR/app/packages"
 test -f "$STAGE_DIR/app/packages/gateway/dist/collaboration/filesystem-identity.node"
+# Check the copied native bytes against the customer ABI, then load the exact
+# staged dependency with the Node version shipped in this bundle.
+node "$ROOT_DIR/scripts/verify-host-native-abi.mjs" "$STAGE_DIR/app" "$STAGE_DIR/runtime/node/bin/node"
 cp -a "$ROOT_DIR/shell" "$STAGE_DIR/app/shell"
-cp -a "$ROOT_DIR/home" "$STAGE_DIR/app/home"
+bash "$ROOT_DIR/scripts/copy-host-runtime-home.sh" "$ROOT_DIR/home" "$STAGE_DIR/app/home"
 mkdir -p "$STAGE_DIR/app/scripts"
 cp -a "$ROOT_DIR/scripts/build-default-apps.mjs" "$STAGE_DIR/app/scripts/build-default-apps.mjs"
 cp -a "$ROOT_DIR/scripts/reset-shipped-icons.mjs" "$STAGE_DIR/app/scripts/reset-shipped-icons.mjs"
 cp -a "$ROOT_DIR/scripts/install-hermes-matrix-skills.sh" "$STAGE_DIR/app/scripts/install-hermes-matrix-skills.sh"
 cp -a "$ROOT_DIR/scripts/configure-hermes-matrix-defaults.mjs" "$STAGE_DIR/app/scripts/configure-hermes-matrix-defaults.mjs"
+cp -a "$ROOT_DIR/scripts/reconcile-agent-npm-prefix.mjs" "$STAGE_DIR/app/scripts/reconcile-agent-npm-prefix.mjs"
+cp -a "$ROOT_DIR/scripts/publish-hermes-runtime.py" "$STAGE_DIR/app/scripts/publish-hermes-runtime.py"
 cp -a "$ROOT_DIR/scripts/sync-matrix-agent-skills.sh" "$STAGE_DIR/app/scripts/sync-matrix-agent-skills.sh"
 cp -a "$ROOT_DIR/skills" "$STAGE_DIR/app/skills"
 cp -a "$ROOT_DIR/package.json" "$ROOT_DIR/pnpm-workspace.yaml" "$ROOT_DIR/pnpm-lock.yaml" "$STAGE_DIR/app/"
@@ -183,6 +191,8 @@ find "$STAGE_DIR/app/home" -type d -name node_modules -prune -exec rm -rf {} +
 # Writes release.json plus the incremental app manifest before packaging, then
 # writes the bundle manifest beside the tarball.
 node "$ROOT_DIR/scripts/host-bundle-release.mjs" write-release
+# Bind first-upgrade repair to the final committed build metadata and exact payload.
+node "$ROOT_DIR/scripts/prepare-browser-host-bootstrap.mjs" "$STAGE_DIR"
 HOST_BUNDLE_INCREMENTAL_EXCLUDE_PREFIXES="${HOST_BUNDLE_INCREMENTAL_EXCLUDE_PREFIXES:-node_modules/}" \
   node "$ROOT_DIR/scripts/host-bundle-incremental-manifest.mjs" "$STAGE_DIR/app" "$STAGE_DIR/incremental-manifest.json" "$DIST_DIR/objects"
 cp -a "$STAGE_DIR/incremental-manifest.json" "$DIST_DIR/incremental-manifest.json"

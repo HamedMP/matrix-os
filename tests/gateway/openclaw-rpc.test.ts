@@ -1,6 +1,7 @@
 import { EventEmitter } from "node:events";
 import { describe, expect, it, vi } from "vitest";
 import { createOpenClawRpcClient } from "../../packages/gateway/src/agent-config/openclaw-rpc.js";
+import { createOpenClawChatProviderAdapter } from "../../packages/gateway/src/chat/openclaw-provider-adapter.js";
 
 class FakeSocket extends EventEmitter {
   readonly sent: string[] = [];
@@ -64,6 +65,35 @@ async function beginCall(options: {
 }
 
 describe("OpenClaw gateway RPC", () => {
+  it("binds an accepted run synchronously before its first same-batch event", async () => {
+    const active = await beginCall();
+    active.socket.receive({ type: "res", id: active.request.id, ok: true, payload: { ok: true } });
+    await active.call;
+    const adapter = createOpenClawChatProviderAdapter({ rpc: active.client, homePath: "/home/matrix/home" });
+    const events: unknown[] = [];
+    const result = (async () => {
+      for await (const event of adapter.start({ owner: { type: "personal", ownerId: "owner" },
+        chatId: "chat", turnId: "cturn", runId: "canonical_run", prompt: "hello", parts: [{ type: "text", text: "hello" }],
+        selection: { instanceId: "openclaw_default", model: "openai:gpt-5.4" }, interactionMode: "default",
+        permissionMode: "full_access", signal: new AbortController().signal })) events.push(event);
+    })();
+    await vi.waitFor(() => expect(active.socket.sent).toHaveLength(3));
+    const request = JSON.parse(active.socket.sent[2]!);
+    expect(request.params.timeout).toBe(0);
+    active.socket.receive({ type: "res", id: request.id, ok: true,
+      payload: { runId: "remote_run", status: "accepted", sessionKey: "session" } });
+    active.socket.receive({ type: "event", event: "agent", payload: {
+      runId: "remote_run", sessionKey: "session", seq: 1, stream: "assistant", ts: 1, data: { delta: "first event kept" },
+    } });
+    await vi.waitFor(() => expect(active.socket.sent).toHaveLength(4));
+    const wait = JSON.parse(active.socket.sent[3]!);
+    expect(wait.method).toBe("agent.wait");
+    active.socket.receive({ type: "res", id: wait.id, ok: true, payload: { runId: "remote_run", status: "ok" } });
+    await result;
+    expect(events).toContainEqual({ type: "assistant.delta", delta: "first event kept" });
+    expect(events.at(-1)).toEqual({ type: "run.completed", outcome: "completed" });
+    await active.client.close();
+  });
   it("performs the protocol-v4 backend handshake without device pairing", async () => {
     const { client, socket, call, connect, request } = await beginCall();
 

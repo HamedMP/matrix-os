@@ -236,11 +236,19 @@ def emit_env(values):
             output.write(key + "=" + value + "\n")
 
 
+def candidate_tag():
+    source = os.environ["GITHUB_SHA"]
+    require(matches(r"[a-f0-9]{40}", source), "Exact candidate source required")
+    return "relay-" + source[:12]
+
+
 def configuration():
     environment = os.environ["DEPLOY_ENVIRONMENT"]
+    tag = candidate_tag()
     if environment == "staging":
         emit_env({"GATEWAY_TOKEN_SECRET": "cloudflare-ai-gateway-token", "WORKERS_TOKEN_SECRET": "cloudflare-workers-ai-token-preview",
                   "CONTROL_TOKEN_SECRET": "ai-relay-control-token", "METADATA_SECRET_SECRET": "ai-relay-metadata-secret",
+                  "CANDIDATE_TAG": tag,
                   **{prefix + "_VERSION": "latest" for prefix, _ in SECRETS.values()}})
         return
     require(environment == "production" and os.environ["GITHUB_REF"] == "refs/heads/main", "Production requires reviewed main source")
@@ -249,7 +257,7 @@ def configuration():
     config = receipt["configuration"]
     require(all(os.environ.get(key) == config[field] for field, key in CONFIG_ENV.items()) and
             pricing_environment_matches(config["pricing"]), "Reviewed deployment configuration mismatch")
-    values = {}
+    values = {"CANDIDATE_TAG": tag}
     for key, (prefix, secret) in SECRETS.items():
         values[prefix + "_SECRET"] = secret
         values[prefix + "_VERSION"] = config["secretVersions"][key]
@@ -266,26 +274,70 @@ def cloud_json(kind, name):
 
 
 def deployment_preflight():
-    require(os.environ["DEPLOY_ENVIRONMENT"] == "production" and os.environ["GITHUB_REF"] == "refs/heads/main", "Production main required")
+    environment = os.environ["DEPLOY_ENVIRONMENT"]
+    require(environment in {"production", "staging"}, "Known Relay environment required")
+    require(environment != "production" or os.environ["GITHUB_REF"] == "refs/heads/main", "Production main required")
+    tag = candidate_tag()
     service = cloud_json("services", os.environ["AI_RELAY_CLOUD_RUN_SERVICE"])
     # gcloud rejects --no-traffic on service creation. A separately prepared
     # inert baseline is necessary; never bootstrap an enabled first revision.
-    require(service.get("status", {}).get("latestReadyRevisionName"), "Existing safe production baseline required")
+    require(service.get("status", {}).get("latestReadyRevisionName"), "Existing safe Relay baseline required")
+    require(not any(row.get("tag") == tag for row in service["status"].get("traffic", [])),
+            "Candidate tag already exists; leave it unchanged and review reuse separately")
+    fingerprint = traffic_fingerprint(service)
+    previous = os.environ.get("CANDIDATE_BASELINE_TRAFFIC_SHA256")
+    require(previous is None or previous == fingerprint, "Existing Relay routes changed during candidate construction")
+    emit_env({"CANDIDATE_BASELINE_TRAFFIC_SHA256": fingerprint})
+
+
+def traffic_fingerprint(service, exclude_tag=None):
+    status = service["status"]
+    traffic, tags = {}, {}
+    for target in status["traffic"]:
+        revision = status.get("latestReadyRevisionName") if target.get("latestRevision") else target.get("revisionName")
+        require(matches(r"[a-z][a-z0-9-]{0,62}", revision), "Unresolved Relay route")
+        percent = target.get("percent", 0)
+        require(type(percent) is int and 0 <= percent <= 100, "Invalid Relay traffic percentage")
+        if percent:
+            traffic[revision] = traffic.get(revision, 0) + percent
+        tag = target.get("tag")
+        if tag and tag != exclude_tag:
+            require(tag not in tags, "Duplicate Relay tag")
+            tags[tag] = {"revision": revision, "url": target.get("url")}
+    require(sum(traffic.values()) == 100, "Complete default Relay traffic required")
+    snapshot = json.dumps({"traffic": traffic, "tags": tags}, sort_keys=True, separators=(",", ":")).encode()
+    return hashlib.sha256(snapshot).hexdigest()
+
+
+def candidate_target(service):
+    tag = candidate_tag()
+    status = service["status"]
+    targets = [target for target in status["traffic"] if target.get("tag") == tag]
+    require(len(targets) == 1, "Unique source-owned candidate tag required")
+    origin = status.get("url")
+    require(matches(r"https://[a-z0-9-]+\.a\.run\.app", origin), "Invalid Relay service URL")
+    require(targets[0].get("url") == "https://" + tag + "---" + origin[8:], "Invalid candidate URL")
+    return targets[0]
 
 
 def candidate_isolation():
     service = cloud_json("services", os.environ["AI_RELAY_CLOUD_RUN_SERVICE"])
     status = service["status"]
-    targets = [target for target in status["traffic"] if target.get("tag") == "candidate"]
-    require(len(targets) == 1 and targets[0].get("revisionName") == os.environ["CANDIDATE_REVISION"], "Candidate tag mismatch")
-    revision_name = targets[0]["revisionName"]
+    target = candidate_target(service)
+    require(target.get("revisionName") == os.environ["CANDIDATE_REVISION"], "Candidate tag mismatch")
+    revision_name = target["revisionName"]
     for target in status["traffic"]:
         resolved = status.get("latestReadyRevisionName") if target.get("latestRevision") else target.get("revisionName")
         require(resolved != revision_name or target.get("percent", 0) == 0, "Candidate receives default traffic")
     revision = cloud_json("revisions", revision_name)
     container, = revision["spec"]["containers"]
     require(container["image"] == os.environ["IMAGE_DIGEST"] and
-            revision["metadata"]["labels"].get("matrix-source-sha") == os.environ["GITHUB_SHA"], "Candidate provenance mismatch")
+            revision["metadata"]["labels"].get("matrix-source-sha") == os.environ["GITHUB_SHA"] and
+            any(item["type"] == "Ready" and item["status"] == "True" for item in revision["status"]["conditions"]),
+            "Candidate provenance/readiness mismatch")
+    previous = os.environ["CANDIDATE_BASELINE_TRAFFIC_SHA256"]
+    require(matches(r"[a-f0-9]{64}", previous) and traffic_fingerprint(service, candidate_tag()) == previous,
+            "Existing Relay routes changed during candidate construction")
 
 
 def promotion():
@@ -295,9 +347,7 @@ def promotion():
     require(all(os.environ.get(key) == config[field] for field, key in CONFIG_ENV.items()) and
             pricing_environment_matches(config["pricing"]), "Reviewed deployment configuration mismatch")
     service = cloud_json("services", config["relayService"])
-    targets = [target for target in service["status"]["traffic"] if target.get("tag") == "candidate"]
-    require(len(targets) == 1, "Unique candidate tag required")
-    target = targets[0]
+    target = candidate_target(service)
     revision = cloud_json("revisions", target["revisionName"])
     container, = revision["spec"]["containers"]
     require(not container.get("command") and not container.get("args") and
@@ -327,7 +377,6 @@ def promotion():
                 {"name": secret, "key": config["secretVersions"][key]}, "Candidate secret mismatch")
     require(set(env) == set(expected) | {"CLOUDFLARE_AI_GATEWAY_TOKEN", "CLOUDFLARE_WORKERS_AI_TOKEN",
                                         "AI_RELAY_CONTROL_TOKEN", "AI_RELAY_METADATA_SECRET"}, "Unreviewed candidate environment")
-    require(matches(r"https://candidate---[a-z0-9-]+\.a\.run\.app", target["url"]), "Invalid candidate URL")
     emit_env({"CANDIDATE_URL": target["url"], "CANDIDATE_REVISION": target["revisionName"]})
 
 

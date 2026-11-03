@@ -655,7 +655,7 @@ describe("provider-neutral conversation transcript", () => {
     }
   });
 
-  it("preserves mount animation for a distinct final after streamed commentary", () => {
+  it("reveals a distinct completed final immediately after streamed commentary", () => {
     vi.useFakeTimers();
     const finalText = `${"distinct_final_output_".repeat(100)}done`;
     const activeTurn: ConversationTurnPresentation = {
@@ -700,7 +700,7 @@ describe("provider-neutral conversation transcript", () => {
         />,
       );
 
-      expect(container.querySelector('[data-selectable]')?.textContent).not.toBe(finalText);
+      expect(container.querySelector('[data-selectable]')?.textContent).toBe(finalText);
     } finally {
       vi.useRealTimers();
     }
@@ -761,9 +761,9 @@ describe("provider-neutral conversation transcript", () => {
     }
   });
 
-  it("reveals a live response progressively when polling first sees it as completed", () => {
+  it("reveals the full response immediately when polling first sees it as completed", () => {
     vi.useFakeTimers();
-    const text = "A completed polling frame should still arrive smoothly.";
+    const text = "A completed polling frame should be visible immediately.";
     const activeTurn: ConversationTurnPresentation = {
       id: "turn-fast-completion",
       startedAt: 1_000,
@@ -799,15 +799,8 @@ describe("provider-neutral conversation transcript", () => {
       const response = container.querySelector(
         '[data-slot="message"][data-align="start"] [data-selectable]',
       );
-      expect(response?.textContent).toBe("");
-
+      expect(response?.textContent).toBe(text);
       act(() => vi.advanceTimersByTime(32));
-      expect(response?.textContent?.length).toBeGreaterThan(0);
-      expect(response?.textContent?.length).toBeLessThan(text.length);
-
-      for (let frame = 0; frame < 120; frame += 1) {
-        act(() => vi.advanceTimersByTime(16));
-      }
       expect(response?.textContent).toBe(text);
     } finally {
       vi.useRealTimers();
