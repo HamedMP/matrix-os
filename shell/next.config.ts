@@ -6,6 +6,7 @@ const gatewayUrl = process.env.GATEWAY_URL ?? "http://localhost:4000";
 const platformShellAssetPrefix = process.env.MATRIX_PLATFORM_AUTH_SHELL === "1"
   ? "/__platform-shell"
   : undefined;
+const localParityBuild = process.env.MATRIX_LOCAL_PARITY_BUILD === "1";
 
 const nextConfig: NextConfig = {
   assetPrefix: platformShellAssetPrefix,
@@ -21,6 +22,16 @@ const nextConfig: NextConfig = {
     parallelServerBuildTraces: true,
     // Avoid traversing thousands of unused icon re-exports in both bundles.
     optimizePackageImports: ["@hugeicons/core-free-icons"],
+    ...(localParityBuild
+      ? {
+          // The amd64 parity builder runs under Rosetta on developer Macs. Keep
+          // the emitted production bundle unchanged while bounding peak build
+          // memory using the controls recommended by Next.js.
+          webpackMemoryOptimizations: true,
+          staticGenerationMaxConcurrency: 1,
+          staticGenerationMinPagesPerWorker: 100,
+        }
+      : {}),
   },
   transpilePackages: ["@matrix-os/contracts", "@matrix-os/observability", "@matrix-os/ui"],
   // Allow HMR websockets when the dev shell is reached through a tunnel
@@ -41,11 +52,9 @@ const nextConfig: NextConfig = {
   turbopack: {
     root: resolve(__dirname, ".."),
   },
-  // Workspace packages (e.g. @matrix-os/contracts) are consumed as TS source
-  // and use nodenext module resolution, so their relative imports carry .js
-  // extensions ("./agent-profile.js" -> agent-profile.ts). Turbopack maps
-  // that natively; webpack needs extensionAlias or the production build
-  // fails with "Module not found: Can't resolve './agent-profile.js'".
+  // Production builds still use webpack. Some NodeNext workspace packages are
+  // consumed as TS source with emitted .js specifiers, so webpack needs this
+  // alias while Turbopack development consumes bundler-style source imports.
   webpack: (config) => {
     config.resolve.extensionAlias = {
       ...config.resolve.extensionAlias,
