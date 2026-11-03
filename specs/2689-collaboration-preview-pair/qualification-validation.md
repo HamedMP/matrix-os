@@ -96,3 +96,41 @@ path was introduced.
 No merge, deployment, paid cloud activation or customer permission change has
 occurred. Recommend collaboration/platform, Electron/UI and developer-docs owner
 review. No fixture or ready infrastructure report establishes live acceptance.
+
+## CI repair — 2026-11-03
+
+The nine failing stack layers exposed test setup defects, rather than a new
+diagnosis of the original customer sharing failure:
+
+- Startup wiring still searched for an inline `db.destroy()` after primary-pool
+  ownership moved to `closePrimaryDb()`. The corrected test verifies the helper
+  closes that pool and that managed-feature workers drain before it is called.
+  The original assertion failed locally; all three wiring checks now pass.
+- Bundle-boundary and launch-route suites unconditionally opened real Postgres
+  in ordinary unit shards without `MATRIX_TEST_POSTGRES_URL`. They now follow the
+  other real-server suites' unit-lane guard. Both remain in the required
+  collector, which rejects missing URLs and skipped assertions. Disposable
+  Postgres qualification passed 41 bundle/release and 15 launch/proof assertions,
+  with zero skips. Their unit/collector checks passed 27 and 36 assertions.
+- Three real child-process fixtures hardcoded `/usr/bin/node`; CI reported
+  `ENOENT` or startup failure. They now use the Node selected in the runner's
+  `PATH`, preserving real startup, cancellation and owned-child cleanup checks.
+- The legacy update UI's catch-all IPC mock returned invalid preview metadata.
+  Its normal-app `app:get-preview` response is now explicitly `null`. Both
+  original UI failures were reproduced before correcting the fixture.
+- General E2E collected the native pair journey without an Electron production
+  build. A required Electron-lane step now runs it after that build under Xvfb
+  and retains fixture captures as an Actions artifact. General E2E excludes this
+  journey; explicit required execution still fails if its build is missing.
+
+The six focused Electron suites passed 11 assertions; four workflow/collector
+suites passed 92. All eight typechecks passed. Pattern checks reported zero
+violations and five inherited warnings; the changed-scope React audit reported
+zero errors or warnings. Native fixture execution requires
+`MATRIX_DESKTOP_E2E_REQUIRED=1` after `bun run build:desktop`.
+
+Fixes stay in their owning layers and propagate through ordinary parent merges,
+preserving published ancestry. No rebase or update from main was performed.
+Remote current-head review and full CI must pass before this repair is declared
+complete. T029/T041 live acceptance remains separate; no Slack post, cloud
+activation, customer modification, merge or deployment is part of this repair.
