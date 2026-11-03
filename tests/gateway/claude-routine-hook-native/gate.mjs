@@ -6,8 +6,14 @@ import { createHash } from 'node:crypto';
 
 assert.equal(process.platform, 'linux');
 const artifacts = Object.freeze({
-  arm64: '92f2b4fd05d0bdcf7b9a0d4e0ecef4a1e4b368b290cd8fd07cff9a50013f45a2',
-  x64: '1e08503dbdf3c2cb0d706d32f3408277388d1c76ef108673e8fe42c1b322925b',
+  arm64: Object.freeze({
+    '2.1.280': '92f2b4fd05d0bdcf7b9a0d4e0ecef4a1e4b368b290cd8fd07cff9a50013f45a2',
+    '2.1.317': '563a0d60ad0c223d9415768210997acb0f7134ea51dc3c238e88bc2e18ddeefa',
+  }),
+  x64: Object.freeze({
+    '2.1.280': '1e08503dbdf3c2cb0d706d32f3408277388d1c76ef108673e8fe42c1b322925b',
+    '2.1.317': 'eb224419e344575faa4a1f39b290b649425a10cd5ee2ef1d003480cd9ae57eb0',
+  }),
 });
 assert.ok(Object.hasOwn(artifacts, process.arch), 'qualified Linux native architecture required');
 assert.equal(process.getuid(), 65534);
@@ -22,7 +28,8 @@ await assert.rejects(writeFile('/var/tmp/owned-rootfs-canary', 'synthetic'), err
 const hasher = createHash('sha256');
 for await (const chunk of createReadStream('/fixture/claude', { highWaterMark: 65536 })) hasher.update(chunk);
 const digest = hasher.digest('hex');
-assert.equal(digest, artifacts[process.arch]);
+export const nativeArtifactVersion = Object.entries(artifacts[process.arch]).find(([, sha256]) => sha256 === digest)?.[0];
+assert.ok(nativeArtifactVersion, 'qualified native artifact hash required');
 await mkdir('/tmp/owned/home', { recursive: true });
 await mkdir('/tmp/owned/config', { recursive: true });
 const env = { HOME: '/tmp/owned/home', CLAUDE_CONFIG_DIR: '/tmp/owned/config', TMPDIR: '/tmp/owned',
@@ -42,8 +49,8 @@ const result = await new Promise((resolve, reject) => {
   child.once('close', (code, signal) => resolve({ code, signal }));
 }).finally(() => clearTimeout(timer));
 assert.equal(result.code, 0, stderr.slice(0, 1000));
-assert.equal(stdout.trim(), '2.1.280 (Claude Code)');
+assert.equal(stdout.trim(), `${nativeArtifactVersion} (Claude Code)`);
 console.log(JSON.stringify({ isolation: { nonroot: true, capabilitiesZero: true, noNewPrivileges: true,
   onlyLoopbackInterface: true, noRoutes: true, noDockerSocket: true, rootfsWriteDenied: true },
-  native: { package: `@anthropic-ai/claude-code-linux-${process.arch}`, packageVersion: '2.1.280', reportedVersion: stdout.trim(), sha256: digest, exit: result.code },
+  native: { package: `@anthropic-ai/claude-code-linux-${process.arch}`, packageVersion: nativeArtifactVersion, reportedVersion: stdout.trim(), sha256: digest, exit: result.code },
   externalRequestsAttempted: 0, realAccountUsed: false, hookQualified: false }));
