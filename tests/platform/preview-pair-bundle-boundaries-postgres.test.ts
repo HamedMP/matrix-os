@@ -13,7 +13,9 @@ import { getHostBundleChannel, getHostBundleRelease, getLatestHostBundleReleaseF
 
 const pairVersion = `v0.0.0-collabpair-11111111-1111-4111-8111-111111111111-g1-${"a".repeat(40)}`;
 const ordinaryVersion = "v2026.10.31-pr3022-ordinary";
-describe("pair test-login bundles stay outside ordinary preview/release selection", () => {
+// Ordinary unit shards have no server. The required PostgreSQL collector
+// supplies the URL and rejects absent prerequisites or skipped assertions.
+describe.skipIf(!process.env.MATRIX_TEST_POSTGRES_URL)("pair test-login bundles stay outside ordinary preview/release selection", () => {
   let f: Awaited<ReturnType<typeof createPreviewPairPostgresFixture>>;
   beforeEach(async () => { f = await createPreviewPairPostgresFixture(); }, 30_000);
   afterEach(async () => { await f?.destroy(); });
