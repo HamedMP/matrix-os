@@ -9,28 +9,38 @@ describe('start-platform-cloud-run.sh', () => {
     const fixture = mkdtempSync(join(tmpdir(), 'matrix-production-startup-'));
     const bin = join(fixture, 'bin');
     const log = join(fixture, 'children.jsonl');
+    const ready = join(fixture, 'auth-ready');
     mkdirSync(bin);
     try {
       writeFileSync(join(bin, 'node'), `#!${process.execPath}
 const fs = require('node:fs');
 const authShell = process.argv.includes('node_modules/next/dist/bin/next');
-fs.appendFileSync(process.env.FIXTURE_LOG, JSON.stringify({
-  child: authShell ? 'auth-shell' : 'platform',
-  secret: process.env.CLERK_SECRET_KEY,
-  jwtKey: process.env.CLERK_JWT_KEY ?? null,
-  bindHost: process.env.MATRIX_BIND_HOST ?? null,
-  parityBuild: process.env.MATRIX_LOCAL_PARITY_BUILD ?? null,
-}) + '\\n');
-if (authShell) setInterval(() => {}, 1000);
-else process.exit(7);
+const record = () => {
+  fs.appendFileSync(process.env.FIXTURE_LOG, JSON.stringify({
+    child: authShell ? 'auth-shell' : 'platform',
+    secret: process.env.CLERK_SECRET_KEY,
+    jwtKey: process.env.CLERK_JWT_KEY ?? null,
+    bindHost: process.env.MATRIX_BIND_HOST ?? null,
+    parityBuild: process.env.MATRIX_LOCAL_PARITY_BUILD ?? null,
+  }) + '\\n');
+  if (authShell) {
+    fs.writeFileSync(process.env.FIXTURE_READY, 'ready', { flag: 'wx' });
+    setInterval(() => {}, 1000);
+  } else process.exit(7);
+};
+// Exercise asynchronous auth-shell initialization instead of relying on which
+// child process the scheduler happens to run first.
+if (authShell) setTimeout(record, 200);
+else record();
 `);
-      writeFileSync(join(bin, 'curl'), '#!/bin/sh\nexit 0\n');
+      // The probe must observe initialization, not merely that a child was forked.
+      writeFileSync(join(bin, 'curl'), '#!/bin/sh\n[ -f "$FIXTURE_READY" ]\n');
       chmodSync(join(bin, 'node'), 0o755);
       chmodSync(join(bin, 'curl'), 0o755);
       const result = spawnSync('sh', [join(process.cwd(), 'scripts/start-platform-cloud-run.sh')], {
         encoding: 'utf8', timeout: 10_000,
         env: {
-          ...process.env, PATH: `${bin}:${process.env.PATH}`, FIXTURE_LOG: log,
+          ...process.env, PATH: `${bin}:${process.env.PATH}`, FIXTURE_LOG: log, FIXTURE_READY: ready,
           CLERK_SECRET_KEY: 'fixture-production-key', AUTH_SHELL_ENABLED: 'true',
           AUTH_SHELL_CLERK_SECRET_KEY: undefined, CLERK_JWT_KEY: undefined,
           MATRIX_BIND_HOST: undefined, MATRIX_LOCAL_PARITY_BUILD: undefined,
