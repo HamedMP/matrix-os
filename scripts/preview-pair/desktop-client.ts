@@ -13,9 +13,18 @@ export async function preparePreviewDesktop(options: { control: ReturnType<typeo
   const downloaded = await downloadPreviewPairArtifact({ expected: { artifactId: artifact.artifactId, runId: artifact.runId, artifactName: artifact.artifactName,
     sha256: artifact.sha256, sizeBytes: artifact.sizeBytes }, token: options.token,
     allowFile: name => name === "preview-pair-app.tar.gz", fetchImpl: options.fetchImpl, temporaryParent: options.temporaryParent });
+  let app: Awaited<ReturnType<typeof extractPreviewDesktop>> | undefined;
   try {
     if (downloaded.files.length !== 1) throw new Error("Preview desktop artifact is unavailable");
-    const app = await extractPreviewDesktop(`${downloaded.directory}/preview-pair-app.tar.gz`, artifact.executableRelativePath, options.temporaryParent);
+    app = await extractPreviewDesktop(`${downloaded.directory}/preview-pair-app.tar.gz`, artifact.executableRelativePath, options.temporaryParent);
     return { ...app, manifest, artifact };
-  } finally { await downloaded.dispose(); }
+  } finally {
+    try { await downloaded.dispose(); }
+    catch (error: unknown) {
+      // Ownership reaches the caller only after this finally block succeeds.
+      // A failed download cleanup must not orphan the already-extracted app.
+      await app?.dispose();
+      throw error instanceof Error ? error : new Error("Preview desktop preparation failed");
+    }
+  }
 }
