@@ -1,6 +1,7 @@
 import { isSessionStartClean, isSessionStopConfirmed } from "./session-start-cleanup-proof.js";
 import { nativeCodexConfigurationFingerprint } from "./native-codex-configuration-fingerprint.mjs";
 import { createCodexExecutionSessions } from "./codex-execution-sessions.js";
+import { boundedOperation } from "../bounded-operation.js";
 import { createHash } from "node:crypto";
 import { join, resolve } from "node:path";
 import { readSavedProviderSettingsConfiguration } from "../ai-providers/provider-settings-persistence.js";
@@ -10,6 +11,8 @@ import type { CodexNativeAccountMetadata } from "../ai-providers/codex-native-ac
 export interface CodexExecutionAdmission {
   start(userId: string, sessionId?: string): Promise<string | undefined>;
   validate(userId: string, binding?: string, sessionId?: string): Promise<void>;
+  renewStoppedSession(userId: string, previousBinding: string, sessionId: string,
+    proveStopped: (signal: AbortSignal) => Promise<boolean>): Promise<string>;
   validateLaunch(userId: string, sessionId: string): Promise<{
     expectedPrincipalFingerprint: string; expectedConsentRevision: number; expectedConfigurationFingerprint: string;
     expectedHarnessInstanceId: string; expectedAccountId: string;
@@ -97,6 +100,23 @@ export function createCodexExecutionAdmission(options: CodexExecutionAdmissionOp
   }
   return {
     prepareRevocation: sessions.prepareRevocation,
+    async renewStoppedSession(userId, previousBinding, sessionId, proveStopped) {
+      if (!/^[a-f0-9]{64}$/.test(previousBinding)) reject();
+      const candidate = await current(userId);
+      if (!candidate) throw new Error(UNAVAILABLE);
+      if (candidate.binding === previousBinding) reject();
+      const prior = await sessions.get(sessionId);
+      // An old registration may still own a live child. Only completed
+      // revocation or a retry of this exact renewal can advance it.
+      if (prior && (prior.userId !== userId || prior.binding !== candidate.binding)) reject();
+      const stopped = await boundedOperation(proveStopped, 5_000).catch(() => false);
+      if (!stopped) reject();
+      const latest = await current(userId);
+      if (!latest) throw new Error(UNAVAILABLE);
+      if (latest.binding !== candidate.binding) reject();
+      await sessions.register(userId, sessionId, latest.binding);
+      return latest.binding;
+    },
     async releaseStoppedSession(userId, sessionId, proof) {
       if (!isSessionStopConfirmed(proof, userId, sessionId)) return;
       await sessions.releaseCleanFailure(userId, sessionId);

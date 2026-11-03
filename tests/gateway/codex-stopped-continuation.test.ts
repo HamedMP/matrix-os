@@ -9,16 +9,16 @@ import { bindNativeAccountMetadata } from "../../packages/gateway/src/ai-provide
 import { createWorkspaceCodingAgentProvider } from "../../packages/gateway/src/coding-agents/workspace-provider.js";
 import { markSessionStopConfirmed } from "../../packages/gateway/src/coding-agents/session-start-cleanup-proof.js";
 import { createCodingAgentThreadStore } from "../../packages/gateway/src/coding-agents/thread-store.js";
-import { recoverLegacyCodexContinuation } from "../../packages/gateway/src/coding-agents/codex-legacy-continuation.js";
+import { recoverStoppedCodexContinuation } from "../../packages/gateway/src/coding-agents/codex-stopped-continuation.js";
 import { withNativeBrowserExecution } from "../../packages/gateway/src/chat/native-browser-execution-context.js";
 
 const homes: string[] = [];
 afterEach(async () => { await Promise.all(homes.splice(0).map(home => rm(home, { recursive: true, force: true }))); });
 
 async function fixture() {
-  const homePath = await mkdtemp(join(tmpdir(), "codex-legacy-continuation-")); homes.push(homePath);
+  const homePath = await mkdtemp(join(tmpdir(), "codex-stopped-continuation-")); homes.push(homePath);
   const settingsPath = join(homePath, "system/ai-providers/settings.json");
-  const principal = "private-account-A";
+  let principal = "private-account-A";
   let authenticated = true;
   let revision = 1;
   await mkdir(join(homePath, "system/ai-providers"), { recursive: true });
@@ -72,10 +72,18 @@ async function fixture() {
       settings.harnesses[0].route.modelId = modelId;
       await writeFile(settingsPath, JSON.stringify(settings));
     },
+    switchAccount: async () => {
+      principal = "private-account-B";
+      const settings = JSON.parse(await readFile(settingsPath, "utf8"));
+      settings.revision = ++revision;
+      settings.harnesses[0].nativeAccountConsentRevision = revision;
+      settings.harnesses[0].nativeAccountGeneration = createHash("sha256").update(principal).digest("hex");
+      await writeFile(settingsPath, JSON.stringify(settings));
+    },
     revoke: () => { authenticated = false; } };
 }
 
-describe("old Codex Chat continuation", () => {
+describe("stopped Codex Chat continuation", () => {
   it("reauthorizes a stopped legacy process and resumes the same native conversation with only the new prompt", async () => {
     const f = await fixture();
     const result = await f.resume();
@@ -95,6 +103,36 @@ describe("old Codex Chat continuation", () => {
     expect(index).toEqual([expect.objectContaining({ sessionId: "sess_legacy", binding: result.resumeState!.nativeAccountBinding })]);
   });
 
+  it("continues the same Chat after an idle Codex account switch and committed revocation", async () => {
+    const f = await fixture();
+    const oldBinding = await f.admission.start("owner", "sess_legacy");
+    const release = await f.admission.prepareRevocation();
+    await release();
+    await f.switchAccount();
+    const result = await f.resume({ resumeState: { ...f.context.resumeState, nativeAccountBinding: oldBinding } });
+    expect(result).toMatchObject({ outcome: "delivered", resumeState: {
+      nativeAccountBinding: expect.any(String), providerThreadId: "native_legacy", conversationId: "sess_legacy",
+    } });
+    expect(result.resumeState!.nativeAccountBinding).not.toBe(oldBinding);
+    expect(f.startSession).toHaveBeenCalledWith(expect.objectContaining({ request: expect.objectContaining({
+      providerThreadId: "native_legacy", prompt: "Continue the old conversation",
+    }) }));
+    expect(f.publishEvents.mock.invocationCallOrder[0]).toBeLessThan(f.startSession.mock.invocationCallOrder[0]!);
+    expect(f.control.hibernate).toBeUndefined();
+  });
+
+  it("does not move a bound Chat while its old process is still live", async () => {
+    const f = await fixture();
+    const oldBinding = await f.admission.start("owner");
+    await f.switchAccount();
+    f.confirmStoppedSession.mockResolvedValueOnce(undefined as never);
+    f.control.hibernate = vi.fn(async () => undefined);
+    await expect(f.resume({ resumeState: { ...f.context.resumeState, nativeAccountBinding: oldBinding } })).rejects.toThrow("recovery");
+    expect(f.control.hibernate).not.toHaveBeenCalled();
+    expect(f.startSession).not.toHaveBeenCalled();
+    expect(f.publishEvents).not.toHaveBeenCalled();
+  });
+
   it.each(["alive", "unknown", "foreign-proof"])("does not authorize or dispatch a legacy process with %s stop evidence", async mode => {
     const f = await fixture();
     if (mode === "unknown") f.confirmStoppedSession.mockRejectedValueOnce(new Error("probe failed"));
@@ -103,10 +141,11 @@ describe("old Codex Chat continuation", () => {
     expect(f.startSession).not.toHaveBeenCalled(); expect(f.submitTurn).not.toHaveBeenCalled(); expect(f.publishEvents).not.toHaveBeenCalled();
   });
 
-  it("does not replace an existing mismatched binding", async () => {
+  it("does not replace an existing mismatched binding without stopped-process proof", async () => {
     const f = await fixture();
+    f.confirmStoppedSession.mockResolvedValueOnce(undefined as never);
     await expect(f.resume({ resumeState: { ...f.context.resumeState, nativeAccountBinding: "f".repeat(64) } })).rejects.toThrow("unavailable");
-    expect(f.confirmStoppedSession).not.toHaveBeenCalled(); expect(f.startSession).not.toHaveBeenCalled();
+    expect(f.startSession).not.toHaveBeenCalled();
   });
 
   it("rechecks account authority after observing the stopped process", async () => {
@@ -157,8 +196,9 @@ describe("old Codex Chat continuation", () => {
     const f = await fixture();
     if (mode === "api-key") vi.spyOn(f.admission, "start").mockResolvedValueOnce(undefined);
     const options = { ...f.options, ...(mode === "other-harness" ? { agent: "claude" } : {}), ...(mode === "no-admission" ? { codexAdmission: undefined } : {}) };
-    const context = { ...f.context, ...(mode === "existing-binding" ? { resumeState: { ...f.context.resumeState, nativeAccountBinding: "a".repeat(64) } } : {}) };
-    expect(await recoverLegacyCodexContinuation(options as never, context as never, "sess_legacy", "new prompt")).toBeUndefined();
+    const existingBinding = mode === "existing-binding" ? await f.admission.start("owner") : undefined;
+    const context = { ...f.context, ...(existingBinding ? { resumeState: { ...f.context.resumeState, nativeAccountBinding: existingBinding } } : {}) };
+    expect(await recoverStoppedCodexContinuation(options as never, context as never, "sess_legacy", "new prompt")).toBeUndefined();
     expect(f.startSession).not.toHaveBeenCalled(); expect(f.confirmStoppedSession).not.toHaveBeenCalled();
   });
 
@@ -169,7 +209,7 @@ describe("old Codex Chat continuation", () => {
       ...(mode === "events" ? { codexEvents: undefined } : {}), ...(mode === "control" ? { codexControl: undefined } : {}) };
     const context = { ...f.context, ...(mode === "publisher" ? { publishEvents: undefined } : {}), resumeState: { ...f.context.resumeState,
       ...(mode === "native-id" ? { providerThreadId: undefined } : {}), ...(mode === "background-ref" ? { backgroundRef: undefined } : {}) } };
-    await expect(recoverLegacyCodexContinuation(options as never, context as never, "sess_legacy", "new prompt")).rejects.toThrow("recovery");
+    await expect(recoverStoppedCodexContinuation(options as never, context as never, "sess_legacy", "new prompt")).rejects.toThrow("recovery");
     expect(f.startSession).not.toHaveBeenCalled();
   });
 
@@ -288,6 +328,35 @@ describe("old Codex Chat continuation", () => {
       expect(f.confirmStoppedSession).toHaveBeenCalledTimes(1);
       expect(f.startSession).toHaveBeenCalledTimes(1);
       expect(f.stopSession).toHaveBeenCalledWith("sess_legacy");
+    } finally { await store.shutdownTurns(); }
+  });
+
+  it("persists a switched account in the existing Chat thread before its next provider launch", async () => {
+    const f = await fixture();
+    const oldBinding = await f.admission.start("owner", "sess_legacy");
+    const release = await f.admission.prepareRevocation();
+    await release();
+    await f.switchAccount();
+    const statePath = join(f.homePath, "system/coding-agents/threads.json");
+    await mkdir(join(f.homePath, "system/coding-agents"), { recursive: true });
+    await writeFile(statePath, JSON.stringify({ version: 1, threads: [{ ...f.context.thread, status: "completed", ownerId: "owner",
+      clientRequestId: "req_original", providerResumeState: { ...f.context.resumeState, nativeAccountBinding: oldBinding } }],
+      turns: [], pendingTerminalStops: [], events: [{ type: "assistant.text.delta", eventId: "evt_original",
+        threadId: "thread_legacy", occurredAt: "2026-01-01T00:00:00.000Z", messageId: "msg_original", delta: "Original context" }] }));
+    const store = createCodingAgentThreadStore({ homePath: f.homePath, providers: [f.makeProvider()],
+      relationValidator: { validateCreate: async () => undefined, validateThread: async () => undefined } });
+    try {
+      const request = { message: "Continue after switching account", clientRequestId: "req_after_switch" };
+      const accepted = await store.acceptTurn(f.context.principal, "thread_legacy", request);
+      await vi.waitFor(async () => {
+        const state = JSON.parse(await readFile(statePath, "utf8"));
+        expect(state.turns.find((turn: { turnId: string }) => turn.turnId === accepted.turnId)?.status).toBe("completed");
+        expect(state.threads[0].providerResumeState.nativeAccountBinding).not.toBe(oldBinding);
+        expect(state.events).toContainEqual(expect.objectContaining({ eventId: "evt_original", delta: "Original context" }));
+      });
+      expect(f.startSession).toHaveBeenCalledOnce();
+      expect((await store.acceptTurn(f.context.principal, "thread_legacy", request)).status).toBe("already_accepted");
+      expect(f.startSession).toHaveBeenCalledOnce();
     } finally { await store.shutdownTurns(); }
   });
 });
