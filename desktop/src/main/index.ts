@@ -80,20 +80,17 @@ import { createNativeAppCapabilityRequester, createNativeAppAiRoutesRequester } 
 import { createNativeAppOpenResolver } from "./embeds/native-app-open";
 import { installBrowserProductSessionCookie } from "./embeds/browser-product-session";
 import { createNativeAppChatNavigationBroker, registerNativeAppChatCompletionIpc } from "./embeds/native-app-chat-navigation";
+import { configureDesktopIdentity } from "./desktop-identity";
 
 const DEFAULT_PLATFORM_HOST = "https://app.matrix-os.com";
-const DESKTOP_APP_NAME = "Matrix OS";
 const desktopRendererUrl = resolveDesktopRendererUrl(process.env.ELECTRON_RENDERER_URL);
 
-app.setName(DESKTOP_APP_NAME);
+configureDesktopIdentity(app, {
+  qaIdentity: process.env.MATRIX_DESKTOP_QA_IDENTITY,
+  userDataDir: process.env.OPERATOR_USER_DATA_DIR,
+});
 if (desktopRendererUrl && desktopRendererUrl !== process.env.ELECTRON_RENDERER_URL) {
   app.commandLine.appendSwitch("host-resolver-rules", desktopDevHostResolverRules());
-}
-
-// Test isolation: e2e runs point userData at a temp dir so they never touch
-// the real profile or credential.
-if (process.env.OPERATOR_USER_DATA_DIR) {
-  app.setPath("userData", process.env.OPERATOR_USER_DATA_DIR);
 }
 
 let mainWindow: BrowserWindow | null = null;
