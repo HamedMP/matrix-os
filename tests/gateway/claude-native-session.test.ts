@@ -85,6 +85,13 @@ it("finishes an ordinary turn only after the actual child closes", async () => {
   children[0]!.result(); await expect(phase.promise).resolves.toBeUndefined();
   expect(children[0]!.ended).toBe(true); expect(phase.settled).toHaveBeenCalledOnce();
 });
+it("supplies the first MCP configuration only through the qualified control channel", async () => {
+  const { children, turn, spawnFn } = setup(); const phase = turn(); await ready();
+  expect(spawnFn.mock.calls[0]![1]).not.toContain("--mcp-config");
+  expect(children[0]!.frames.filter(f => f.request?.subtype === "mcp_set_servers")).toHaveLength(1);
+  expect(children[0]!.frames.find(f => f.request?.subtype === "mcp_set_servers").request.servers["matrix-integrations"].env.MATRIX_AGENT_INTEGRATIONS_TOKEN).toBe("run_1");
+  children[0]!.result(); await phase.promise;
+});
 it("ends a canonical phase while retaining only a child with a confirmed native job", async () => {
   const { children, turn, pool } = setup(); const phase = turn(); await ready();
   children[0]!.createJob(); children[0]!.result(); await phase.promise;

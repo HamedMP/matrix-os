@@ -95,7 +95,8 @@ export function createClaudeNativeSessionPool(options: PoolOptions = {}) {
       this.deadline = Date.now() + Math.min(lifetime, initial.timeoutMs ?? lifetime);
       this.closed = new Promise<void>((resolve, reject) => { this.resolveClosed = resolve; this.rejectClosed = reject; });
       void this.closed.catch(reportNativeSessionFailure);
-      this.child = (initial.spawnFn ?? ((command, args, spawnOptions) => spawnIsolatedProviderProcess(command, args, spawnOptions)))(initial.command, initial.args, {
+      const spawnArgs = initial.args.filter((_arg, index, args) => args[index] !== "--mcp-config" && args[index - 1] !== "--mcp-config");
+      this.child = (initial.spawnFn ?? ((command, args, spawnOptions) => spawnIsolatedProviderProcess(command, args, spawnOptions)))(initial.command, spawnArgs, {
         cwd: initial.cwd, env: initial.replaceEnv ? initial.env : { ...process.env, ...initial.env } as Record<string, string>, stdio: ["pipe", "pipe", "pipe"],
       });
       this.control = createClaudeNativeSessionControl({ send: frame => this.send(frame), emit: frame => this.deliver(frame), timeoutMs: controlMs });
