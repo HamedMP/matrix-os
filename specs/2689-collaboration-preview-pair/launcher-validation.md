@@ -254,7 +254,18 @@ The fixture retains and drains that command with its owned app, reporting any
 unexpected protocol failure. Initial probe startup/detach failures are excluded.
 
 The fixture binds the reopened Page to its actual BrowserWindow ID, crashes that
-page once and requires both the bounded crash event and real Electron crashed
-state. All recovery, auth and sign-out checks use that same window ID. No native
+page once and requires real Electron crashed state within ten seconds. All
+recovery, auth and sign-out checks use that same window ID. No native
 window-list ordering assumption, simulated crash state, product debug mode,
 production behavior change or global test-timeout increase is introduced.
+
+Hosted job `126002358548` timed out waiting for Playwright's page-crash event
+before checking Electron's state. That does not establish whether the renderer
+actually crashed. The auxiliary event wait is removed; the original native
+`isCrashed()` requirement remains mandatory. Linux evidence now records only the
+owned renderer's process state, core-dump flag, tracer, memory, thread count,
+seccomp mode and core limit before the command and after the native assertion.
+This distinguishes an automation notification failure from a renderer that has
+not exited without exposing credentials or private content. A separate local
+run with an unlimited core limit passed; that limit alone is not a reproduced
+cause, and no host-wide or CI core-dump setting is changed.
