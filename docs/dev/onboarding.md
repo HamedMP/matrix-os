@@ -217,7 +217,7 @@ continues in Docker and can be stopped with `bun run dev:infra:stop`.
 Use `bun run dev:infra` when you only need ready PostgreSQL and object storage.
 The narrower `bun run dev` command still starts exactly three source processes:
 gateway, proxy, and shell; it assumes any required infrastructure is already
-running. The shell uses Next.js's default Turbopack development server. pnpm's
+running. The shell uses webpack for development. pnpm's
 dependency-graph-addressed virtual store remains shared across host worktrees.
 Docker dependency installs explicitly disable the global virtual store so their
 native addons stay isolated from host projects.
