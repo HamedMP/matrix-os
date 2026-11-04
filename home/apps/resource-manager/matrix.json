@@ -16,6 +16,7 @@
     "timeout": 180,
     "sourceGlobs": [
       "src/**",
+      "../../../packages/contracts/src/cpu-capacity.ts",
       "../_shared/**",
       "../../_shared/**",
       "index.html",

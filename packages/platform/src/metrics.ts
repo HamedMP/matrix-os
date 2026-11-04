@@ -143,7 +143,7 @@ export const vpsLoad1 = new Gauge({
 
 export const vpsCpuCount = new Gauge({
   name: 'matrix_vps_cpu_count',
-  help: 'VPS CPU count reported by the gateway',
+  help: 'Visible logical CPU count reported by the gateway (not effective capacity)',
   labelNames: ['handle'] as const,
   registers: [metricsRegistry],
 });

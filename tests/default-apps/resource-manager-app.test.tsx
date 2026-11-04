@@ -125,7 +125,7 @@ describe("Resource Manager app", () => {
     expect(document.querySelector(".mark")?.textContent).not.toBe("RM");
     expect(screen.getByText("healthy")).toBeTruthy();
     expect(screen.getByText("Release 267")).toBeTruthy();
-    expect(screen.getByText("4 cores")).toBeTruthy();
+    expect(screen.getByText(/4 visible logical CPUs/)).toBeTruthy();
     expect(screen.getByText("3 GB / 8 GB")).toBeTruthy();
     expect(screen.getByText("matrix-code")).toBeTruthy();
     expect(screen.getByText("failed")).toBeTruthy();

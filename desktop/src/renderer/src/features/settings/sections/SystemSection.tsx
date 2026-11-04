@@ -1,3 +1,4 @@
+import { presentCpuCapacity, type CpuCapacity } from "@matrix-os/contracts";
 import { OwnerManagedUpdateNotice } from "@matrix-os/ui";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { readSystemVersionIdentity } from "../../../lib/system-version";
@@ -25,7 +26,7 @@ interface SystemInfo {
   runningVersion?: unknown;
   updateChannel?: string;
   runtime?: { handle?: string; runtimeSlot?: string; machineId?: string };
-  resources?: { cpuCount?: number; memoryTotal?: number; memoryFree?: number; diskTotal?: number; diskFree?: number };
+  resources?: { cpuCapacity?: CpuCapacity; cpuCount?: number; memoryTotal?: number; memoryFree?: number; diskTotal?: number; diskFree?: number };
   release?: { version?: string; channel?: string; gitCommit?: string; buildTime?: string };
 }
 
@@ -219,6 +220,7 @@ export default function SystemSection() {
     installedVersion && runningVersion && installedVersion !== runningVersion,
   );
 
+  const cpu = presentCpuCapacity(state.info?.resources?.cpuCapacity, state.info?.resources?.cpuCount);
   return (
     <>
       <SettingsSectionHeader title="System" description="Your cloud computer at a glance." />
@@ -234,7 +236,7 @@ export default function SystemSection() {
             ) : null}
             <Row label="Release channel" value={state.info?.release?.channel ?? "–"} />
             <Row label="Machine" value={state.info?.runtime?.machineId ?? state.info?.runtime?.handle ?? "–"} />
-            <Row label="CPU cores" value={state.info?.resources?.cpuCount ?? "–"} />
+            <Row label="CPU capacity" value={state.info ? cpu.summary : "–"} />
             <Row label="Memory free" value={`${gb(state.info?.resources?.memoryFree)} of ${gb(state.info?.resources?.memoryTotal)}`} />
             <Row label="Disk free" value={`${gb(state.info?.resources?.diskFree)} of ${gb(state.info?.resources?.diskTotal)}`} />
           </>

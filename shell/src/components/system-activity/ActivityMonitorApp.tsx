@@ -1,5 +1,7 @@
 "use client";
 
+import { presentCpuCapacity } from "@matrix-os/contracts";
+
 import { useEffect, type ReactNode } from "react";
 import {
   Activity,
@@ -120,10 +122,10 @@ export function ActivityMonitorApp() {
 function ResourceStrip({ snapshot }: { snapshot: ActivitySnapshot }) {
   const memoryPercent = percent(snapshot.resources.memory.usedBytes, snapshot.resources.memory.totalBytes);
   const disk = snapshot.resources.disk[0];
-  const cpuPressure = Math.min(100, Math.round((snapshot.resources.cpu.load1 / Math.max(1, snapshot.resources.cpu.cores)) * 100));
+  const cpu = presentCpuCapacity(snapshot.resources.cpu.capacity, snapshot.resources.cpu.cores, snapshot.resources.cpu.load1);
   return (
     <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-      <Metric icon={<Cpu className="size-4" />} label="CPU" value={`${cpuPressure}%`} detail={`${snapshot.resources.cpu.cores} cores / load ${snapshot.resources.cpu.load1.toFixed(2)}`} tone="blue" percent={cpuPressure} />
+      <Metric icon={<Cpu className="size-4" />} label="CPU" value={cpu.loadPercent === null ? "Unknown" : `${cpu.loadPercent}%`} detail={`${cpu.summary} / load ${snapshot.resources.cpu.load1.toFixed(2)}`} tone="blue" percent={cpu.loadPercent} />
       <Metric icon={<MemoryStick className="size-4" />} label="Memory" value={`${memoryPercent}%`} detail={`${formatBytes(snapshot.resources.memory.availableBytes)} available`} tone="emerald" percent={memoryPercent} />
       <Metric icon={<HardDrive className="size-4" />} label="Disk" value={disk ? `${disk.usedPercent}%` : "-"} detail={disk ? `${formatBytes(disk.usedBytes)} of ${formatBytes(disk.totalBytes)}` : "Unavailable"} tone="amber" percent={disk?.usedPercent ?? 0} />
       <Metric icon={<Zap className="size-4" />} label="Processes" value={String(snapshot.processes.length)} detail={`${formatBytes(snapshot.resources.memory.processRssBytes)} RSS total`} tone="violet" percent={Math.min(100, snapshot.processes.length * 4)} />
@@ -131,7 +133,7 @@ function ResourceStrip({ snapshot }: { snapshot: ActivitySnapshot }) {
   );
 }
 
-function Metric(props: { icon: ReactNode; label: string; value: string; detail: string; tone: "blue" | "emerald" | "amber" | "violet"; percent: number }) {
+function Metric(props: { icon: ReactNode; label: string; value: string; detail: string; tone: "blue" | "emerald" | "amber" | "violet"; percent: number | null }) {
   const tone = {
     blue: "bg-sky-500",
     emerald: "bg-emerald-500",
@@ -147,10 +149,10 @@ function Metric(props: { icon: ReactNode; label: string; value: string; detail: 
         </div>
         <span className="text-2xl font-semibold tabular-nums">{props.value}</span>
       </div>
-      <div className="h-2 overflow-hidden rounded-full bg-black/10 dark:bg-white/10">
+      {props.percent !== null && <div className="h-2 overflow-hidden rounded-full bg-black/10 dark:bg-white/10">
         <div className={`h-full rounded-full ${tone}`} style={{ width: `${Math.max(2, Math.min(100, props.percent))}%` }} />
-      </div>
-      <p className="truncate text-xs text-[#687082] dark:text-[#98a1b2]">{props.detail}</p>
+      </div>}
+      <p className="break-words text-xs text-[#687082] dark:text-[#98a1b2]">{props.detail}</p>
     </div>
   );
 }
@@ -202,7 +204,7 @@ function ProcessTable({ processes }: { processes: ActivitySnapshot["processes"] 
         <div key={process.processRef} className="grid min-h-10 grid-cols-[minmax(140px,1fr)_72px_86px_74px] items-center border-t border-black/10 px-3 py-2 text-sm dark:border-white/10">
           <div className="min-w-0">
             <p className="truncate font-medium">{process.displayName}</p>
-            <p className="truncate text-xs text-[#687082] dark:text-[#98a1b2]">{process.ownerClass} / {process.classification}</p>
+            <p className="break-words text-xs text-[#687082] dark:text-[#98a1b2]">{process.ownerClass} / {process.classification}</p>
           </div>
           <span className="text-right tabular-nums">{process.cpuPercent.toFixed(1)}%</span>
           <span className="text-right tabular-nums">{formatBytes(process.rssBytes)}</span>

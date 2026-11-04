@@ -52,7 +52,7 @@ describe("RuntimeIdentityBanner", () => {
       expect(screen.getByText("STAGING VM")).toBeTruthy();
       expect(screen.getByText("hamedmp-staging")).toBeTruthy();
       expect(screen.getByText("staging")).toBeTruthy();
-      expect(screen.getByText("2 CPU")).toBeTruthy();
+      expect(screen.getByText(/2 visible logical CPUs/)).toBeTruthy();
       expect(screen.getByText("4.0 GB RAM")).toBeTruthy();
       expect(screen.getByText("v082-test")).toBeTruthy();
       expect(screen.getByRole("button", { name: /reset onboarding/i })).toBeTruthy();

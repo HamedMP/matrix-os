@@ -1,5 +1,7 @@
 "use client";
 
+import { presentCpuCapacity, type CpuCapacity } from "@matrix-os/contracts";
+
 import { useEffect, useState } from "react";
 import { AlertTriangleIcon, CpuIcon, HardDriveIcon, RefreshCcwIcon, ServerIcon, XIcon } from "@/lib/hugeicons";
 import { getGatewayUrl } from "@/lib/gateway";
@@ -19,6 +21,7 @@ interface RuntimeInfo {
     channel?: string | null;
   };
   resources?: {
+    cpuCapacity?: CpuCapacity;
     cpuCount?: number;
     memoryTotalBytes?: number;
     diskTotalBytes?: number | null;
@@ -104,7 +107,7 @@ export function RuntimeIdentityBanner() {
       shortId: shortMachineId(machineId),
       version: runtime?.release?.version ?? "version pending",
       channel,
-      cpu: runtime?.resources?.cpuCount ? `${runtime.resources.cpuCount} CPU` : null,
+      cpu: runtime?.resources ? presentCpuCapacity(runtime.resources.cpuCapacity, runtime.resources.cpuCount).summary : null,
       memory: formatBytes(runtime?.resources?.memoryTotalBytes),
       disk: formatBytes(runtime?.resources?.diskTotalBytes),
       isStaging,

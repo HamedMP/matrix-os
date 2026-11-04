@@ -1,4 +1,5 @@
-import { COLLABORATION_DIRECT_PROTOCOL_VERSION, RUNNING_RUNTIME_COMPATIBILITY, type RuntimeCompatibility } from "@matrix-os/contracts";
+import { readCpuObservations } from "./cpu-capacity.js";
+import { deriveCpuCapacity, type CpuCapacity, COLLABORATION_DIRECT_PROTOCOL_VERSION, RUNNING_RUNTIME_COMPATIBILITY, type RuntimeCompatibility } from "@matrix-os/contracts";
 import { describeGatewayCollaborationConfiguration } from "./collaboration/config.js";
 import {
   closeSync,
@@ -10,7 +11,7 @@ import {
   statfsSync,
 } from "node:fs";
 import { join, resolve } from "node:path";
-import { cpus, freemem, loadavg, totalmem } from "node:os";
+import { freemem, loadavg, totalmem } from "node:os";
 import { loadSkills, resolveKernelConfigFile } from "@matrix-os/kernel";
 import type { HostBundleRelease } from "./system-update.js";
 
@@ -193,6 +194,7 @@ export interface SystemInfo {
   startedAt: string;
   resources: {
     cpuCount: number;
+    cpuCapacity: CpuCapacity;
     loadAverage: [number, number, number];
     memoryTotalBytes: number;
     memoryFreeBytes: number;
@@ -403,6 +405,7 @@ export function getSystemInfo(
     logSystemInfoReadFailure("Failed to read installed version", err);
   }
 
+  const cpuCapacity = deriveCpuCapacity(readCpuObservations());
   const rootDisk = readDiskUsage("/");
   const homeDisk = readDiskUsage(homePath);
   const [load1 = 0, load5 = 0, load15 = 0] = loadavg();
@@ -450,7 +453,8 @@ export function getSystemInfo(
     installedVersion,
     startedAt,
     resources: {
-      cpuCount: cpus().length,
+      cpuCount: cpuCapacity.visibleLogicalCpuCount,
+      cpuCapacity,
       loadAverage: [load1, load5, load15],
       memoryTotalBytes: totalmem(),
       memoryFreeBytes: freemem(),

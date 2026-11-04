@@ -1,3 +1,4 @@
+import { presentCpuCapacity, type CpuCapacity } from "../../../../packages/contracts/src/cpu-capacity.js";
 import { useCallback, useEffect, useMemo, useState } from "react";
 
 const resourceArtwork = new URL("../../../system/icons/v3-resource-manager.png", import.meta.url).href;
@@ -20,7 +21,7 @@ interface ActivitySnapshot {
     uptimeSeconds: number;
   };
   resources: {
-    cpu: { cores: number; load1: number; load5: number; load15: number };
+    cpu: { capacity?: CpuCapacity; cores: number; load1: number; load5: number; load15: number };
     memory: {
       totalBytes: number;
       usedBytes: number;
@@ -149,6 +150,7 @@ export default function App() {
     void refresh();
   }, [refresh]);
 
+  const cpu = presentCpuCapacity(snapshot?.resources.cpu.capacity, snapshot?.resources.cpu.cores, snapshot?.resources.cpu.load1);
   const topProcesses = useMemo(
     () => (snapshot?.processes ?? []).slice().sort((a, b) => b.cpuPercent - a.cpuPercent).slice(0, 8),
     [snapshot?.processes],
@@ -198,8 +200,8 @@ export default function App() {
         <MetricCard
           label="CPU"
           value={snapshot ? `${snapshot.resources.cpu.load1.toFixed(2)} load` : "Loading"}
-          detail={snapshot ? `${snapshot.resources.cpu.cores} cores` : "Waiting for data"}
-          bar={snapshot ? percent(snapshot.resources.cpu.load1, snapshot.resources.cpu.cores) : 0}
+          detail={snapshot ? cpu.summary : "Waiting for data"}
+          bar={snapshot ? cpu.loadPercent ?? undefined : undefined}
         />
         <MetricCard
           label="Memory"

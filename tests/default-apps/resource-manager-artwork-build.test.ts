@@ -16,3 +16,14 @@ it("ships Resource Manager's canonical icon inside its JavaScript, without a sep
   const icon = await readFile("home/system/icons/v3-resource-manager.png");
   expect(javascript).toContain(`data:image/png;base64,${icon.toString("base64")}`);
 }, 20_000);
+
+
+it("includes shared CPU presentation in incremental build inputs", async () => {
+  const manifest = JSON.parse(await readFile("home/apps/resource-manager/matrix.json", "utf8"));
+  const { glob } = await import("node:fs/promises");
+  const inputs: string[] = [];
+  for (const pattern of manifest.build.sourceGlobs) {
+    for await (const path of glob(pattern, { cwd: resolve("home/apps/resource-manager") })) inputs.push(resolve("home/apps/resource-manager", path));
+  }
+  expect(inputs).toContain(resolve("packages/contracts/src/cpu-capacity.ts"));
+});
