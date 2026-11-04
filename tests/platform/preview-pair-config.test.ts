@@ -13,6 +13,16 @@ describe("Preview pair activation configuration", () => {
       maxQueued: 32, maxLifetimeMs: 72 * 60 * 60 * 1_000, fixtures: [{ id: "fixture-a" }] });
   });
 
+  it("retains the reviewed maintenance profile when new admissions are switched off", () => {
+    expect(loadPreviewPairConfig({ ...configured(), MATRIX_PREVIEW_PAIR_ENABLED: "false", MATRIX_PREVIEW_PAIR_MAINTENANCE_ENABLED: "true" }))
+      .toMatchObject({ enabled: true, admissionEnabled: false, fixtures: [{ id: "fixture-a" }] });
+  });
+
+  it("does not accept an unvalidated fixture profile or ambiguous maintenance switch", () => {
+    expect(() => loadPreviewPairConfig({ MATRIX_PREVIEW_PAIR_ENABLED: "false", MATRIX_PREVIEW_PAIR_MAINTENANCE_ENABLED: "true" })).toThrow();
+    expect(() => loadPreviewPairConfig({ ...configured(), MATRIX_PREVIEW_PAIR_MAINTENANCE_ENABLED: "maybe" })).toThrow();
+  });
+
   it.each([
     ["unknown flag", { MATRIX_PREVIEW_PAIR_ENABLED: "maybe" }],
     ["untrusted control origin", { MATRIX_PREVIEW_PAIR_CONTROL_ORIGIN: "https://untrusted.example" }],

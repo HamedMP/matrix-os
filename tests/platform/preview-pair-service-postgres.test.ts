@@ -4,12 +4,15 @@ import { readyPreviewPair, previewPairReadinessAdapters } from "./preview-pair-r
 import { previewPairProvenanceFixture } from "./preview-pair-provenance-fixture.js";
 import { PAIR_NOW } from "./preview-pair-test-support.js";
 import { createPreviewPairService } from "../../packages/platform/src/preview-pair/service.js";
+import { createApp } from "../../packages/platform/src/main.js";
+import { shutdownPlatformApp } from "../../packages/platform/src/shutdown-platform-app.js";
+import { stubOrchestrator } from "./proxy-routing-test-utils.js";
 
 describe.skipIf(!process.env.MATRIX_TEST_POSTGRES_URL)("pair API service keeps controller authority and reader effects separate", () => {
   let fixture: Awaited<ReturnType<typeof createSeededPreviewPair>>;
   beforeEach(async () => { fixture = await createSeededPreviewPair(); }, 30_000);
   afterEach(async () => { await fixture?.destroy(); });
-  function setup() {
+  function setup(admissionEnabled = true) {
     const provenance = previewPairProvenanceFixture();
     provenance.input.hostBundleSha256 = fixture.candidate.hostBundleSha256;
     provenance.release.sha256 = fixture.candidate.hostBundleSha256;
@@ -17,7 +20,7 @@ describe.skipIf(!process.env.MATRIX_TEST_POSTGRES_URL)("pair API service keeps c
       pairId: fixture.pair.pair_id, pr: fixture.pair.pr, generation: 1, sourceSha: fixture.pair.source_sha };
     const resolveController = vi.fn(async () => controller);
     const verifyFixtures = vi.fn(async () => true), activate = vi.fn(async () => false);
-    const service = createPreviewPairService({ db: fixture.db, config: fixture.config, source: provenance.source,
+    const service = createPreviewPairService({ db: fixture.db, config: { ...fixture.config, admissionEnabled }, source: provenance.source,
       prepare: fixture.prepare, resolveController, verifyFixtures, activate,
       inspectRequest: async () => ({ open: true, requested: true, sourceSha: fixture.pair.source_sha }),
       isMaintainer: async actor => ["user_requester", "user_maintainer"].includes(actor),
@@ -29,6 +32,34 @@ describe.skipIf(!process.env.MATRIX_TEST_POSTGRES_URL)("pair API service keeps c
     return { service, controller, resolveController, verifyFixtures, activate, request, provenance };
   }
   const reader = { kind: "control" as const, actorId: "user_requester", expiresAt: PAIR_NOW + 60_000 };
+  it("maintenance denies new admissions and generation updates before controller or provider calls", async () => {
+    const { service, request, resolveController, verifyFixtures } = setup(false);
+    await expect(service.start(request)).rejects.toMatchObject({ status: 503 });
+    await expect(service.action(fixture.pair.pair_id, { type: "update", generation: 1, revision: 1,
+      dataPolicy: "reset", controllerRunId: 42, candidate: request.candidate })).rejects.toMatchObject({ status: 503 });
+    expect(resolveController).not.toHaveBeenCalled(); expect(verifyFixtures).not.toHaveBeenCalled();
+    expect(fixture.hetzner.createServer).not.toHaveBeenCalled();
+  });
+  it("maintenance retains authenticated inspection and stop actions", async () => {
+    const { service } = setup(false);
+    expect(await service.report(fixture.pair.pair_id, reader)).toMatchObject({ pairId: fixture.pair.pair_id });
+    expect(await service.action(fixture.pair.pair_id, { type: "stop", generation: 1, revision: 1 }))
+      .toMatchObject({ state: "cleanup_pending" });
+  });
+  it("mounts real authenticated report routes when only maintenance is enabled", async () => {
+    const { service, activate } = setup(false);
+    const app = createApp({ db: fixture.db, orchestrator: stubOrchestrator(), platformSecret: "fixture-host-secret",
+      env: { MATRIX_PREVIEW_PAIR_ENABLED: "false", MATRIX_PREVIEW_PAIR_MAINTENANCE_ENABLED: "true" },
+      previewPairs: { enabled: true, service, operatorSecret: "o".repeat(40), now: () => PAIR_NOW,
+        authenticateReader: async request => request.headers.get("authorization") === "Bearer fixture-reader" ? reader : null } });
+    try {
+      const response = await app.request(`/api/preview-pairs/${fixture.pair.pair_id}`, { headers: { authorization: "Bearer fixture-reader" } });
+      expect(response.status).toBe(200);
+      expect(await response.json()).toMatchObject({ pairId: fixture.pair.pair_id });
+      expect((await app.request(`/api/preview-pairs/${fixture.pair.pair_id}`)).status).toBe(401);
+      expect(activate).not.toHaveBeenCalled();
+    } finally { await shutdownPlatformApp(app); }
+  });
   it("verifies the controller and canonical candidate before converging without provider effects", async () => {
     const { service, request, resolveController, verifyFixtures, activate } = setup();
     expect(await service.start(request)).toMatchObject({ pairId: fixture.pair.pair_id, state: "preparing" });

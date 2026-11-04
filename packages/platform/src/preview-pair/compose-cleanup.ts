@@ -12,14 +12,19 @@ import { PreviewPairUpstreamError } from "./http.js";
  * boundary confirms retirement and the established provider proof succeeds. */
 export function createPreviewPairCleanup(options: { db: PlatformDB; target: PlatformDB; provider: HetznerClient;
   retireCloud(member: PreviewPairCleanupMember, claim: PreviewPairClaim, signal: AbortSignal): Promise<boolean>;
+  drainProvider?(member: PreviewPairCleanupMember, claim: PreviewPairClaim, signal: AbortSignal): Promise<void>;
   now: () => number;
 }): PreviewPairCleanupAdapters {
   if (typeof options.retireCloud !== "function") throw new PreviewPairConflictError();
-  const provider = createPreviewPairProviderCleanup(options.db, options.provider, options.now);
+  const provider = (signal: AbortSignal) => createPreviewPairProviderCleanup(options.db,
+    options.provider.withSignal?.(signal) ?? options.provider, options.now);
   return {
     async retire(member, claim) {
       const attempts = await Promise.allSettled([
-        provider.retire(member, claim),
+        previewPairOperation(async signal => {
+          await provider(signal).retire(member, claim);
+          await options.drainProvider?.(member, claim, signal);
+        }),
         retirePreviewPairProjection(options.db, options.target, member, claim, options.now),
         previewPairOperation(signal => options.retireCloud(member, claim, signal)),
       ]);
@@ -32,6 +37,6 @@ export function createPreviewPairCleanup(options: { db: PlatformDB; target: Plat
       }
       if (pending) throw new PreviewPairUpstreamError();
     },
-    proveAbsent: provider.proveAbsent,
+    proveAbsent: (member, claim) => previewPairOperation(signal => provider(signal).proveAbsent(member, claim)),
   };
 }

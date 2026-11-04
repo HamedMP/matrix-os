@@ -43,6 +43,7 @@ export function createPreviewPairService(deps: PreviewPairServiceDeps) {
   }
   return {
     async start(raw: unknown) {
+      if (!config.admissionEnabled) throw new PreviewPairAccessError(503);
       const input = PreviewPairStartSchema.parse(raw);
       const requesterId = await controller({ runId: input.controllerRunId, pairId: input.pairId,
         pr: input.pr, generation: 1, sourceSha: input.sourceSha });
@@ -61,6 +62,7 @@ export function createPreviewPairService(deps: PreviewPairServiceDeps) {
       if (input.type === "stop") return previewPairSummary(await requestPreviewPairStop(db, pairId, input.generation, input.revision, now()));
       if (pair.revision !== input.revision) throw new PreviewPairConflictError();
       if (input.type === "reconcile") return previewPairSummary(await reconciler.run(pairId, input.generation, input.revision));
+      if (!config.admissionEnabled) throw new PreviewPairAccessError(503);
       await controller({ runId: input.controllerRunId, pairId, pr: pair.pr, generation: input.generation + 1, sourceSha: input.candidate.sourceSha });
       if (!await previewPairOperation(signal => deps.verifyFixtures(signal))) throw new PreviewPairAccessError(503);
       const candidate = await verifyPreviewPairCandidate(input.candidate, { pairId, generation: input.generation + 1,
