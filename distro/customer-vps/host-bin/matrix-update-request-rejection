@@ -170,3 +170,12 @@ schedule_current_funded_retry() {
   sudo rm -f -- "$claimed" || return 1
   funded_host_bootstrap retry "$version" || log "WARN: funded host retry deferred"
 }
+
+schedule_prepared_current_funded_retry() {
+  local expected
+  # Preparation atomically refreshes .update-available.json, which is part of
+  # the guarded request fingerprint. Claim the complete post-prepare identity
+  # so a trusted manifest refresh cannot restore an otherwise consumed trigger.
+  expected="$(update_request_identity)" || return 1
+  schedule_current_funded_retry "$expected"
+}

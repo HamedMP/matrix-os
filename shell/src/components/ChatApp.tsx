@@ -43,7 +43,8 @@ import type {
   CanonicalProviderInstanceDescriptor,
   CanonicalProviderSetupAction,
 } from "@matrix-os/contracts";
-import { botTranscriptPlacement, BotTranscriptRunState, BotTranscriptFallback } from "./BotTranscriptState";
+import { botTranscriptPlacement, BotTranscriptRunState, BotTranscriptFallback, BotTranscriptMessages, BotTranscriptLayout, BotScheduledInputText } from "./BotTranscriptState";
+import {RoutineMessageMeta,RoutineMessageReadNotice} from "@matrix-os/ui";
 import { type ChatMessage, groupMessages } from "@/lib/chat";
 import {
   Conversation,
@@ -699,8 +700,8 @@ function ChatAppContent({
           onModelChanged={() => setBotModelRevision(value => value + 1)} catalog={providerState.catalog} catalogLoading={providerState.loading} onSetup={openProviderSettings} onRefreshCatalog={providerState.refresh} refreshKey={(botEventRevision ?? 0) + botModelRevision}>
         {botDraftNavigation.recovery ? <BotDraftRecoveryPanel onReturn={botDraftNavigation.returnToOriginalDraft}/> : null}
         {/* Empty state or conversation */}
-        {isEmpty ? (
-          <><div className="mx-auto w-full max-w-[720px] px-4"><BotTranscriptFallback placement={botTranscript}/></div><EmptyState
+        <BotTranscriptLayout empty={isEmpty}>{showEmpty=>showEmpty ? (
+          <><div className="mx-auto w-full max-w-[720px] px-4"><BotTranscriptFallback placement={botTranscript}/><RoutineMessageReadNotice/></div><EmptyState
             composerProps={{ leadingControls: projectControl, toolbarControls: composerToolbar, queue: queuePanel, attachmentPolicy: attachmentPolicy.error, slashInstance, slashCatalogLoading, botControls: botComposerControls, botContext: Boolean(directBotId), composer, agentClient, onOpenBotMention: botDraftNavigation.openBotMention, scope: composerScope, driveContextEnabled: !directBotId && providerState.selected?.supportsCompanyDriveContext === true, botConsentResources: botExecution.consentResources, botRequiresFullAccess: botPresentation?.requiresFullAccess, permissionMode: directBotId ? botPresentation?.permissionMode ?? "default" : providerState.selected?.permissionMode ?? "supervised" }}
             onSubmit={submitWithHermesSetup}
             connected={connected}
@@ -716,7 +717,7 @@ function ChatAppContent({
             <div className="contents">
             <Conversation>
               <ConversationContent className="gap-5 px-4 py-5 md:px-0 mx-auto w-full max-w-[720px]">
-                {grouped.map((group, groupIndex) => {
+                <BotTranscriptMessages groups={grouped}>{(group, groupIndex, scheduled) => {
                   if (group.type === "tool_group") {
                     return <div key={`tg-${group.messages[0].id}`}><ToolCallGroup tools={group.messages} /><BotTranscriptRunState placement={botTranscript} index={groupIndex}/></div>;
                   }
@@ -725,9 +726,10 @@ function ChatAppContent({
                     <div key={msg.id}>
                       {msg.role === "user" ? (
                         <Message from="user">
+                          {scheduled?<RoutineMessageMeta occurrence={scheduled}/>:null}
                           {msg.attachments?.length ? <ChatAttachments attachments={msg.attachments} open={openMessageFile} loadImage={loadShellChatImage} /> : null}
                           {msg.content.trim() ? <MessageContent className="group-[.is-user]:rounded-2xl leading-relaxed">
-                            <span className="whitespace-pre-wrap">{msg.content}</span>
+                            <BotScheduledInputText text={msg.content} scheduled={Boolean(scheduled)}/>
                           </MessageContent> : null}
                         </Message>
                       ) : msg.metadata?.canonicalInput ? (
@@ -773,7 +775,7 @@ function ChatAppContent({
                     <BotTranscriptRunState placement={botTranscript} index={groupIndex}/>
                     </div>
                   );
-                })}
+                }}</BotTranscriptMessages>
 
                 <BotTranscriptFallback placement={botTranscript}/>
                 {busy && (
@@ -834,7 +836,7 @@ function ChatAppContent({
               />
             </div>
           </div>
-        )}
+        )}</BotTranscriptLayout>
         </BotChatPanel>
         </>}
       </main>
