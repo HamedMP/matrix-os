@@ -10,7 +10,7 @@ describe.skipIf(!process.env.MATRIX_TEST_POSTGRES_URL)("canonical pair Cloud Run
   let f: Awaited<ReturnType<typeof createSeededPreviewPair>>;
   beforeEach(async () => { f = await createSeededPreviewPair(); }, 30_000);
   afterEach(async () => { await f?.destroy(); });
-  async function setup() {
+  async function setup(profileFingerprint?: string) {
     const pending = await requestPreviewPairStop(f.db, f.pair.pair_id, 1, f.pair.revision, PAIR_NOW);
     const claim = await claimPreviewPair(f.db, pending.pair_id, 1, pending.revision, PAIR_NOW);
     const m = await f.db.executor.selectFrom("preview_pair_members").selectAll().where("role", "=", "owner").executeTakeFirstOrThrow();
@@ -51,10 +51,24 @@ describe.skipIf(!process.env.MATRIX_TEST_POSTGRES_URL)("canonical pair Cloud Run
       return absent ? new Response(null, { status: 404 }) : Response.json(rev);
     });
     const retire = createPreviewPairCloudCleanup({ db: f.db, project: "pair-test", region: "europe-west1",
-      service: "matrix-platform-preview", accessToken: async () => "iam-fixture", fetchImpl, now: () => PAIR_NOW });
+      service: "matrix-platform-preview", profileFingerprint, accessToken: async () => "iam-fixture", fetchImpl, now: () => PAIR_NOW });
     const signal = new AbortController().signal;
     return { claim, member, retire, fetchImpl, service, env, revision, base, other, signal, conflict: () => { conflict = true; } };
   }
+  it.each(["missing", "changed"])("never treats another configured profile's404 as proof of absence (%s)", async fault => {
+    const s = await setup("a".repeat(64));
+    if (fault === "changed") await f.db.executor.updateTable("preview_pair_generations").set({
+      candidate: JSON.stringify({ ...f.candidate, sourceProfileFingerprint: "b".repeat(64) }) }).execute();
+    s.fetchImpl.mockResolvedValue(new Response(null, { status: 404 }));
+    await expect(s.retire(s.member, s.claim, s.signal)).rejects.toThrow("unavailable");
+    expect(s.fetchImpl).not.toHaveBeenCalled();
+  });
+  it("accepts observed absence for the generation's exact pinned profile", async () => {
+    const s = await setup("a".repeat(64));
+    await f.db.executor.updateTable("preview_pair_generations").set({ candidate: JSON.stringify({ ...f.candidate, sourceProfileFingerprint: "a".repeat(64) }) }).execute();
+    s.fetchImpl.mockResolvedValue(new Response(null, { status: 404 }));
+    expect(await s.retire(s.member, s.claim, s.signal)).toBe(true);
+  });
   it("removes only exact zero-traffic tags, waits for observed removal, then confirms revision absence", async () => {
     const s = await setup();
     expect(await s.retire(s.member, s.claim, s.signal)).toBe(false);

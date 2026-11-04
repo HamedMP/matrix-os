@@ -11,6 +11,16 @@ describe("pair candidate source is checked against independent canonical records
     expect(f.source.buildSource).toHaveBeenCalledWith(123, 456);
   });
 
+  it("requires the configured source profile fingerprint before any provider reads", async () => {
+    const f = fixture(), config = { ...f.config, sourceProfileFingerprint: "a".repeat(64) };
+    await expect(verifyPreviewPairCandidate(f.input, f.expected, f.source, config, PAIR_NOW)).rejects.toThrow("unavailable");
+    expect(f.source.authority).not.toHaveBeenCalled();
+  });
+  it("accepts the matching independently configured source profile fingerprint", async () => {
+    const f = fixture(), sourceProfileFingerprint = "a".repeat(64), candidate = { ...f.input, sourceProfileFingerprint };
+    await expect(verifyPreviewPairCandidate(candidate, f.expected, f.source, { ...f.config, sourceProfileFingerprint }, PAIR_NOW))
+      .resolves.toMatchObject(candidate);
+  });
   it("allows isolated execution with a different SHA from the reviewed controller", async () => {
     const f = fixture();
     f.build.head_sha = "2".repeat(40);
