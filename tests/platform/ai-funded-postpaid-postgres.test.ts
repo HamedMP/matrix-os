@@ -380,10 +380,22 @@ describe.skipIf(!databaseUrl)("postpaid credit on independent PostgreSQL connect
   });
 
   it("runs bounded read-only inventory pages without starting migrations or changing customer finances", async () => {
+    // The subprocess uses wall time. Issue this fixture's credential on that same
+    // clock rather than reusing the fixed-noon credential after its expiry.
     clock = new Date(Date.now() - 120_000);
+    const inventoryIdentity = { ...identity, ownerId: "inventory_owner", machineId: "inventory_machine" };
+    await insertUserMachine(db, { machineId: inventoryIdentity.machineId, clerkUserId: inventoryIdentity.ownerId,
+      handle: inventoryIdentity.machineId, runtimeSlot: inventoryIdentity.runtimeSlot, status: "running", imageVersion: "test",
+      provisionedAt: clock.toISOString(), activationState: "authorized" });
+    await first.setRuntimePolicy({ identity: inventoryIdentity, expectedRevision: 0, enabled: true, allowedModelIds: [modelId],
+      monthlyBudgetMicrousd: 1_000_000, expiresAt: null });
+    await first.grantCredit({ entryId: "inventory_grant", identity: inventoryIdentity, kind: "addon_grant",
+      amountMicrousd: 1_000_000, sourceReference: "inventory-test" });
+    const inventoryCredential = (await first.issueRuntimeCredential(inventoryIdentity)).credential;
     const { billingPolicy: _policy, ...legacy } = request("inventory_first");
-    await first.authorize({ ...legacy, maxCostMicrousd: 100_000, billingMode: undefined });
-    await first.authorize({ ...legacy, requestId: "inventory_second", maxCostMicrousd: 100_000, billingMode: undefined });
+    const inventoryRequest = { ...legacy, credential: inventoryCredential.token, maxCostMicrousd: 100_000, billingMode: undefined };
+    await first.authorize(inventoryRequest);
+    await first.authorize({ ...inventoryRequest, requestId: "inventory_second" });
     clock = new Date(clock.getTime() + 31_000);
     const before = await db.executor.selectFrom("ai_funded_runtime_balances").selectAll().execute();
     const url = new URL(databaseUrl!);
