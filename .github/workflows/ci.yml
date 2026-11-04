@@ -950,8 +950,9 @@ jobs:
     needs: changes
     if: always() && !cancelled() && needs.changes.result == 'success' && (needs.changes.outputs.should_run == 'true')
     runs-on: ubuntu-latest
-    # Measured run 41180668331 finished 49 files at 9m45s; allow evidence upload/cleanup without changing test commands or concurrency.
-    timeout-minutes: 12
+    # The expanded preview-pair inventory exceeded the old 10m budget;
+    # retain qualification, evidence-upload and cleanup margin.
+    timeout-minutes: 30
     services:
       postgres:
         # ECR Public anonymous pulls hit "toomanyrequests: Data limit exceeded" on shared runner IPs,

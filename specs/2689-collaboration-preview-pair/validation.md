@@ -32,3 +32,19 @@ per-surface capture results must be recorded as they execute. Missing isolation,
 fixture identities, funding or OS access is a blocker, never a passing or skipped
 required assertion. New screenshots/recordings belong outside Git and are attached
 or linked to the review record.
+
+### Foundation implementation (T005–T009)
+
+- Contract baseline:16 intended assertions failed;17 pass after implementation.
+- Config baseline:8 intended assertions failed;9 pass after implementation.
+- Provenance baseline:13 intended assertions failed;13 pass after implementation.
+- Actual Platform startup migration:2 intended assertions failed;2 pass.
+- Combined foundation:41/41 pass, no skips. Provider records use production-shaped
+  fixtures; authenticated live provider adapters are still pending.
+- Dedicated local PostgreSQL16: simultaneous independent backend connections and
+  actual Platform migrations pass1/1. Test owns a random schema, cleans pools and
+  schema, and required CI inventory includes it. No VPS or customer data touched.
+- Greptile corrections: legacy SPECIFY_FEATURE override and dangling metadata
+  symlink reproduced2 failing assertions, then12/12 real Git/Bash cases pass.
+  Spec invitation discovery now explicitly permits acceptance before content access.
+- No live pair, native desktop, funding or visual qualification is claimed.

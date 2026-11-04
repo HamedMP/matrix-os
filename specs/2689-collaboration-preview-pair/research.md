@@ -155,3 +155,18 @@ Clerk, VPS routing or live model execution. No required lane silently skips.
 All research questions have decisions. Live isolation, account fixtures, funding
 and macOS/device access remain explicit activation/qualification prerequisites,
 not unanswered architecture questions or inferred live readiness.
+
+## Implementation refinement: immutable UI and API authorities
+
+The current computer-selection route rejects an API hostname classified in
+`MATRIX_APP_DOMAIN_HOSTS`. Existing single-PR preview aliases also move when a PR
+head changes. Pair generations therefore use separate immutable Cloud Run tags
+`cp-<pair8>-g<generation>-ui` and `cp-<pair8>-g<generation>-api`, bound to one
+verified candidate revision. Only the UI hostname belongs in the app-host list.
+Electron retains the UI gateway origin and uses the separate API authority for
+normal device authentication; a runtime exchange must never fall back to primary.
+
+Activation also pins `MATRIX_PREVIEW_PAIR_CONTROLLER_SHA`. Independent authenticated
+readers verify the controller execution/workflow provenance, current open same-repo
+PR, unpromoted host release, exact desktop artifact bytes and observed test-only
+authority bindings. Input syntax or an enabled flag alone proves none of these.

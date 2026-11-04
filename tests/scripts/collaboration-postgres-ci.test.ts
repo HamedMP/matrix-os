@@ -167,7 +167,11 @@ describe("required collaboration PostgreSQL workflow", () => {
     expect(collaboration).toBeDefined();
     expect(collaboration.needs).toBe("changes");
     expect(collaboration.if).toBe(job.if);
-    expect(collaboration["timeout-minutes"]).toBe(12);
+    // Run41112133779 completed67 selected files at9m55, then hit the10m
+    // job limit before completion/upload. Keep margin above observed runtime;
+    // the collaboration budget must not be frozen to the shorter funded lane.
+    const observedQualificationSeconds = 9 * 60 + 55;
+    expect(collaboration["timeout-minutes"] * 60).toBeGreaterThan(observedQualificationSeconds + 120);
     expect(collaboration.services).toEqual(job.services);
     expect(collaboration.env).toEqual(job.env);
     expect(collaboration.steps.slice(0, 6)).toEqual(job.steps.slice(0, 6));

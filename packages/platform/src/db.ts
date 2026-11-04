@@ -827,6 +827,10 @@ export interface AccountDeletionJobsTable {
 import type { GooglePurchaseTable, GoogleCheckoutAttributionTable } from './billing/google-tracking-migration.js';
 
 export interface PlatformDatabase {
+  preview_pairs: import('./preview-pair/types.js').PreviewPairsTable;
+  preview_pair_fixtures: import('./preview-pair/types.js').PreviewPairFixturesTable;
+  preview_pair_generations: import('./preview-pair/types.js').PreviewPairGenerationsTable;
+  preview_pair_members: import('./preview-pair/types.js').PreviewPairMembersTable;
   billing_google_purchases: GooglePurchaseTable;
   billing_google_checkout_attribution: GoogleCheckoutAttributionTable;
   preview_drive_grants: PreviewDriveGrantsTable;
