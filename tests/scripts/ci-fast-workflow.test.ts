@@ -187,6 +187,10 @@ describe('Docker image export runner capacity', () => {
     expect(docker.steps[cleanup].run).toContain('sudo rm -rf ');
     expect(docker.steps[cleanup].run).not.toMatch(/\/tmp\/matrix-os|hostedtoolcache\/node|docker system prune/);
     expect(docker.steps[build].with.outputs).toBe('type=docker,dest=/tmp/matrix-os-dev-ci.tar');
+    expect(docker.steps[build].with['cache-to']).toContain('type=gha,mode=max');
+    const prune = docker.steps[save].run.indexOf('docker buildx prune --all --force');
+    expect(prune).toBeGreaterThanOrEqual(0);
+    expect(prune).toBeLessThan(docker.steps[save].run.indexOf('gzip -1 <'));
     expect(docker.steps[save].run).toContain('gzip -t /tmp/matrix-os-dev-ci.tar.gz');
     expect(docker.steps[save].run).toContain('test "$(stat -c%s /tmp/matrix-os-dev-ci.tar.gz)" -gt 1000000');
   });
