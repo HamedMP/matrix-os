@@ -41,7 +41,11 @@ expired challenge. Revocation, source death, mode/policy change, call cancellati
 disconnect and shutdown discard pending authority; late capability delivery is
 fenced. There is no database transaction held during a human or Platform wait.
 Human approval events continue to pause only the run's idle clock; funded-run
-ceilings, source abort and shutdown remain effective.
+ceilings, source abort and shutdown remain effective. The prepared producer's
+fixed resolution publisher is retained only to resolve the original challenge
+once if its registry entry expires or is revoked first. It cannot publish a new
+request or issue, renew or revive authority. Terminal sources still emit no
+synthetic Chat event. Publication failures remain isolated and logged.
 
 A timeout or lost response for a mutation returns the original request UUID with
 `unknown` and reconciliation required. It does not mean absence, cancellation of

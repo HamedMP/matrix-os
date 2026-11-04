@@ -1,3 +1,5 @@
+import { createCanonicalCliHumanWait } from "../../../packages/gateway/src/chat/cli-human-wait.js";
+import type { CanonicalProviderRunEvent } from "../../../packages/gateway/src/chat/provider-adapter.js";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Kysely } from "kysely";
 import type { OwnerBotDatabase } from "../../../packages/gateway/src/bots/database.js";
@@ -264,4 +266,32 @@ it("full-access consumed authorization without an owner card does not extend que
   current = clock + 120_001;
   expect(registry.read(source.source)).not.toBeNull();
   await expect(validate()).rejects.toMatchObject({ code: "permission_denied" });
+});
+
+it.each(["source expiry", "source revoke", "controller close"] as const)("settles canonical human wait and resumes idle after %s without late authority", async boundary => {
+  let current = clock; vi.spyOn(Date, "now").mockImplementation(() => current);
+  const events: CanonicalProviderRunEvent[] = [], idle = { pause: vi.fn(), resume: vi.fn() };
+  const humanWait = createCanonicalCliHumanWait(event => { events.push(event); }); humanWait.attach(idle);
+  try {
+    const source = await controller.register({ source: { ...context("human_wait_cleanup"), issuedAt: new Date(clock).toISOString(), expiresAt: new Date(clock + 1_800_000).toISOString() },
+      signal: sourceAbort.signal, readPolicy: () => policy, validateWithin: async () => true, publish: humanWait.emit });
+    const operation = propose(133), id = invocation(34), signal = new AbortController().signal;
+    const pending = source.authorize({ operation, invocationId: id, signal });
+    await waitFor(() => events.some(event => event.type === "approval.requested"));
+    const requested = events.find(event => event.type === "approval.requested")!, view = controller.get(f.principal, requested.approvalId);
+    expect(idle.pause).toHaveBeenCalledOnce(); expect(idle.resume).not.toHaveBeenCalled();
+    if (boundary === "source expiry") { current = clock + 1_800_000; expect(registry.read(source.source)).toBeNull(); }
+    else if (boundary === "source revoke") await source.revoke();
+    else controller.close();
+    expect(await pending).toBe(false); expect(sourceAbort.signal.aborted).toBe(false);
+    await expect(source.issue({ operation, invocationId: id, signal })).rejects.toMatchObject({ code: "permission_denied" });
+    expect(await db.selectFrom("routine_cli_capabilities").selectAll().execute()).toEqual([]);
+    expect(await db.selectFrom("routine_cli_requests").selectAll().execute()).toEqual([]);
+    await expect(answer(view)).rejects.toHaveProperty("code", "not_found");
+    controller.close(); registry.close(); // Repeated drains cannot publish or resume twice.
+    expect.soft(events.filter(event => event.type === "approval.resolved")).toMatchObject([
+      { type: "approval.resolved", approvalId: requested.approvalId, decision: "cancel" },
+    ]);
+    expect.soft(idle.resume).toHaveBeenCalledOnce();
+  } finally { humanWait.close(); }
 });
