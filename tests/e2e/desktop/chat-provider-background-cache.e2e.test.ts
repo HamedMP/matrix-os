@@ -259,15 +259,20 @@ suite("Electron Desktop application-owned provider background cache", () => {
       expect(await send().isEnabled()).toBe(true);
       catalog.instances[nativeIndex] = { ...healthy, availability: "unavailable", unavailabilityReason: "runtime_unavailable",
         observationState: "checking", defaultSelection: undefined,
+        setupActions: [{ id: "codex_settings", kind: "open_settings", label: "Agents & providers" }],
         models: healthy.models.map(model => ({ ...model, availability: "unavailable" as const })) };
       await page.clock.fastForward(freshnessMs + 1_000);
-      await expect.poll(() => picker().innerText()).toContain("Checking Codex access…");
+      await expect.poll(() => picker().getAttribute("title")).toContain("Checking Codex access…");
       expect(await picker().getAttribute("data-model")).toBe("gpt-5.6-sol");
       expect(await send().isEnabled()).toBe(false);
       expect(await draft().innerText()).toBe("Keep this Codex draft during access checking");
       await picker().click();
       await choices.getByRole("button", { name: /Codex agent/ }).click();
-      expect(await choices.getByRole("option", { name: /gpt-5.6-sol via Codex/i }).isDisabled()).toBe(true);
+      const checkingModel = choices.getByRole("option", { name: /gpt-5.6-sol via Codex/i });
+      expect(await checkingModel.isVisible()).toBe(true);
+      expect(await checkingModel.isDisabled()).toBe(true);
+      expect(await checkingModel.innerText()).toContain("Checking Codex access…");
+      expect(await choices.getByRole("button", { name: "Agents & providers", exact: true }).isVisible()).toBe(true);
       await page.screenshot({ path: join(output, "codex-checking-access.png") });
       await page.keyboard.press("Escape");
       catalog.instances[nativeIndex] = healthy;
