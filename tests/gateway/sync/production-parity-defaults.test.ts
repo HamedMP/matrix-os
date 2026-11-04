@@ -1,11 +1,11 @@
-import { EventEmitter } from "node:events";
+import { mkdtemp, mkdir, rm, symlink, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { afterEach, expect, it, vi } from "vitest";
-import { watch } from "chokidar";
 import { isHardExcluded } from "../../../packages/gateway/src/sync/home-mirror-ignore.js";
 import { HomeMirrorWatcher } from "../../../packages/gateway/src/sync/home-mirror-watcher.js";
 
-vi.mock("chokidar", () => ({ watch: vi.fn() }));
-afterEach(() => { vi.unstubAllEnvs(); vi.clearAllMocks(); });
+afterEach(() => { vi.unstubAllEnvs(); });
 
 it("preserves main's sync inclusion policy with local parity disabled", () => {
   vi.stubEnv("MATRIX_LOCAL_PARITY_BUILD", undefined);
@@ -16,19 +16,23 @@ it("preserves main's sync inclusion policy with local parity disabled", () => {
 
 it("preserves main's watcher defaults with local parity disabled", async () => {
   vi.stubEnv("MATRIX_LOCAL_PARITY_BUILD", undefined);
-  const target = Object.assign(new EventEmitter(), { close: vi.fn(async () => {}) });
-  vi.mocked(watch).mockReturnValue(target as unknown as ReturnType<typeof watch>);
+  const root = await mkdtemp(join(tmpdir(), "matrix-parity-watcher-"));
+  const home = join(root, "home"), target = join(root, "target");
+  const onEvent = vi.fn(), onError = vi.fn();
   const watcher = new HomeMirrorWatcher({
-    homeRoot: "/owner/home", pruned: () => false, onEvent: vi.fn(),
-    onError: vi.fn(), isCurrent: () => true,
+    homeRoot: home, pruned: () => false, onEvent, onError, isCurrent: () => true,
   });
-  const ready = watcher.replace(1);
-  target.emit("ready");
-  await ready;
   try {
-    const options = vi.mocked(watch).mock.calls[0][1];
-    // Chokidar follows directory links by default on main. Local tooling
-    // must not silently change that owner-home policy in deployed bundles.
-    expect(options?.followSymlinks ?? true).toBe(true);
-  } finally { await watcher.close(); }
+    await Promise.all([mkdir(home), mkdir(target)]);
+    await symlink(target, join(home, "linked"), process.platform === "win32" ? "junction" : "dir");
+    await watcher.replace(1);
+    // Exercise the gateway's real dependency: a root-level chokidar mock can
+    // resolve to a different workspace version and never intercept this watcher.
+    await writeFile(join(target, "note.md"), "owner contents");
+    await vi.waitFor(() => expect(onEvent).toHaveBeenCalledWith("push", join("linked", "note.md")), { timeout: 5000 });
+    expect(onError).not.toHaveBeenCalled();
+  } finally {
+    try { await watcher.close(); }
+    finally { await rm(root, { recursive: true, force: true }); }
+  }
 });
