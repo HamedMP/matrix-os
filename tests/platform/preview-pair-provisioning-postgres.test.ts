@@ -29,6 +29,20 @@ describe.skipIf(!process.env.MATRIX_TEST_POSTGRES_URL)("narrow Preview-pair dura
   expect(f.hetzner.createServer).toHaveBeenCalledTimes(2);
   for(const call of f.hetzner.createServer.mock.calls)expect(call[0].userData).toContain(apiOrigin);
  });
+ it("boots candidate collaboration with funding disabled until the scoped allowance is configured",async()=>{
+  const {claim,input,activate}=await setup(true,{fundedAiRelayUrl:"",fundedAiEnabled:false});
+  await activate(input,claim,new AbortController().signal);
+  expect(f.hetzner.createServer).toHaveBeenCalledTimes(1);
+  const boot=f.hetzner.createServer.mock.calls[0][0].userData;
+  expect(boot).toContain(apiOrigin);
+  expect(boot).toContain("MATRIX_FUNDED_AI_ENABLED=false");
+  expect(boot).not.toContain("control-"+"c".repeat(40));
+ });
+ it("refuses pre-enabled bootstrap funding before consuming a provider job",async()=>{
+  const {claim,input,activate}=await setup(true,{fundedAiEnabled:true});
+  await expect(activate(input,claim,new AbortController().signal)).rejects.toThrow("unavailable");
+  expect(f.hetzner.createServer).not.toHaveBeenCalled();
+ });
  it("polls a creating server once, releases its exact job, and adopts it on the next pass",async()=>{
   const servers:HetznerServer[]=[];
   vi.mocked(f.hetzner.createServer).mockImplementation(async request=>{

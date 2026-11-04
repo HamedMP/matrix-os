@@ -201,3 +201,17 @@ No constitutional exception requested. Reusing the transaction-aware provisioner
 existing job queue and account stores avoids parallel implementations. Separate
 pair records are required to represent two-owner admission and physically verified
 cleanup, which a single `user_machines` row cannot express.
+
+## Runtime composition extraction
+
+`packages/platform/src/main.ts` starts at1030 lines. This layer extracts the
+complete bundle/update route family into `host-bundle-composition.ts` before
+mounting the pair metadata policy, containing rather than growing the entrypoint.
+Pair behavior stays in focused modules. Subsequent controller startup remains a
+small composition call with its own shutdown ownership; unrelated route families
+are left to later focused extraction rather than moving them with feature logic.
+
+The2057-line sync agent's passive polling function is extracted unchanged into
+the existing focused `matrix-update-manifest` library before adding paired-host
+policy there. Explicit update preparation/apply remain in their current paths;
+retained Bash trust tests exercise them after the extraction.
