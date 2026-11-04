@@ -1,7 +1,14 @@
 # Collaboration preview pair: implementation and qualification guide
 
-Tracking: ENG-418. Control/workflow components are implemented in the native stack;
-protected activation and the two-app launcher are not qualified yet. Spec PR #3022 is the bottom native stack layer.
+Tracking: ENG-418. Control, workflow and two-app launcher code are implemented in
+the native stack. Protected activation and a real two-VPS collaboration journey
+remain unfinished. Spec PR #3022 is the bottom native stack layer.
+
+First-use check: the existing normal cloud profile's setup request currently
+returns 404; the protected pair workflow, execution ref and configuration have
+not been installed. An isolated Clerk development instance and reviewed Source/
+controller bootstrap are required before creating a usable pair. Two ordinary
+Private Previews cannot substitute: those runtimes exclude collaboration.
 
 ## Prerequisites
 
@@ -27,12 +34,12 @@ activation require the reviewed workflow's normal operator/environment gates.
    verify the16-item requirements checklist, then implement with tests first.
 3. Commit each complete phase to its native layer and publish through `gh stack
    submit --auto`. Every PR includes ENG-418, stack/spec and truthful validation.
-4. The proposed `preview-collaboration-pair` request produces one canonical pair
+4. After completing protected bootstrap, `preview:pair:create` produces one canonical pair
    report/manifest. Confirm both real owners/members, exact running candidate,
    fresh control registrations, source-pinned platform and supported desktop bytes.
-5. On the local machine, run the proposed `bun run preview:pair:open -- --pair <id>
-   --profile <trusted-control-profile>`. This command is available only after the
-   launcher layer ships; do not represent these proposed commands as working today.
+5. On the local machine, run `bun run preview:pair:open -- --pair <id>
+   --profile <trusted-control-profile>`. The launcher is implemented; its live
+   operation still depends on the protected bootstrap and actual target artifact.
 6. Sign in normally as the expected owner and member, using separate browser
    sessions if needed. Verify visible role/computer/organization/source in each
    app. A wrong account must fail closed; do not force headers or inject sessions.
@@ -57,7 +64,7 @@ canonical admitted pair. Use `--help` without login/network effects. No command
 merges code or updates customer computers.
 
 The [implementation validation](control-workflow-validation.md) records setup
-requirements and limitations. The launcher layer adds `preview:pair:open`; see
+requirements and limitations. The launcher provides `preview:pair:open`; see
 [the command guide](../../docs/dev/collaboration-preview-pairs.md). Actual runtime and surface acceptance remains
 required after protected setup, not established by local fixtures.
 
@@ -77,7 +84,7 @@ required after protected setup, not established by local fixtures.
 Capture Electron Desktop and Web Desktop separately, with exact artifact/source,
 run/generation, real versus simulated boundaries and any not-run case. Attach or
 link screenshots and recordings in PR evidence; keep them out of the repository.
-Use the approved review-channel workflow for the applicable Slack permalink.
+Share evidence only through review channels explicitly authorized by the requester.
 
 ## Diagnosis and updates
 

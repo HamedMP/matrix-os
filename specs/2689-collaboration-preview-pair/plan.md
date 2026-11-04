@@ -294,3 +294,26 @@ reruns cannot invalidate the original reproduction. See
 [control-workflow-validation.md](control-workflow-validation.md) for actual fault
 assertions, fixture boundaries, source-of-truth rules and the required one-time
 protected setup. Electron launch and live acceptance are not complete yet.
+
+
+### Qualification exports
+
+The guided qualification entry reads its initial manifest and final generation
+through the existing normal authenticated Source client. Humans perform actual
+product actions through normal test-account UIs; the tool never creates a grant,
+impersonates a peer or changes cloud state. Bounded observations become private,
+exclusive, atomic owner-controlled JSON exports outside Git. They are portable
+reports, not new application persistence or an authorization/readiness source.
+Fixture successes never count toward live acceptance; every human report stays
+unreviewed. Clean capture URLs carry no bearer/signed query. A reset/source/PR
+change rejects the export. Stopped-pair cleanup can be recorded using the initial
+verified in-memory provenance and final same-generation Source report.
+
+Deterministic journey qualification reuses retained first-party sharing,
+real-relay/private-owner routing, owner-generation, inherited authorization and
+Electron creation/share component suites rather than duplicating them. The
+separate fixture command requires a clean exact checkout, an explicitly selected
+disposable loopback Postgres and complete actual Vitest assertions. Candidate
+tests inherit no control/cloud/GitHub/provider credential. Its receipt is always
+fixture-only; missing, skipped or incomplete collection fails. Real two-VPS,
+normal-Clerk, model and target-native acceptance remain separate T041 gates.

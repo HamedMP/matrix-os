@@ -76,3 +76,23 @@ Provider cleanup never deletes baseline test actors/organizations or customer da
 
 See the [spec and qualification](../../specs/2689-collaboration-preview-pair/quickstart.md)
 for setup gates, scope, fixture limitations and required live acceptance.
+
+## Qualification exports
+
+Run `bun run preview:pair:qualify -- --pair <uuid> --results <new-private-file>
+--output <new-private-report> --profile <control-profile>` from a terminal after
+opening a healthy pair. Choose files in a private directory outside Git. The
+command creates a16-case template (eight journeys on two surfaces) and waits
+while you perform the normal-account UI actions. Edit observed steps/captures,
+leave missing cases `not_run`, then continue to export. Both screenshot and
+recording links are required for a claimed live pass; use clean HTTPS links
+without credentials, signed query or fragments. Every result remains unreviewed.
+The command reads Source only and never shares a project or changes cloud state.
+
+For deterministic first-party fixture coverage, use
+`bun run preview:pair:qualify:fixtures -- --expected-sha <full-clean-head>
+--output <new-private-report>` with `MATRIX_TEST_POSTGRES_URL` explicitly pointing
+to your disposable loopback database. Install the frozen lockfile and build normal
+workspace prerequisites first. All eight selected suites must execute assertions,
+without skips. The resulting receipt always says `fixture` and live product
+acceptance stays `not_run`; no fixture can satisfy the protected acceptance gate.

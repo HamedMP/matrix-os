@@ -64,9 +64,9 @@ member activation, inherited prompt persistence and outsider denial on exact bui
 A broken candidate records the failed product step while its healthy pair remains
 available. No auth or private-directory shortcut may substitute for the real path.
 
-- [ ] T026 [US3] Add strict scenario-result and build-binding cases in `tests/platform/preview-pair-evidence.test.ts`, then implement bounded evidence/report handling in `packages/platform/src/preview-pair/evidence.ts`.
-- [ ] T027 [US3] Add deterministic first-party journey coverage and required scenario collection in `tests/e2e/desktop/preview-pair-collaboration.e2e.test.ts`, preserving real client/relay/owner routing and marking synthetic provider boundaries.
-- [ ] T028 [US3] Implement the protected normal-login live acceptance entry in `scripts/preview-pair/qualify.ts`, covering fresh creation opt-in, separate first later Share, member Chat prompt/reopen and outsider denial; no generated peer sessions.
+- [x] T026 [US3] Add strict scenario-result and build-binding cases in `tests/platform/preview-pair-evidence.test.ts`, then implement bounded evidence/report handling in `packages/platform/src/preview-pair/evidence.ts`.
+- [x] T027 [US3] Collect the eight retained first-party component/client/relay/owner authorization suites through `scripts/preview-pair/qualify-fixtures.ts` and its collector tests, including inherited Chat prompt execution; explicitly mark fixture boundaries.
+- [x] T028 [US3] Implement the protected normal-login live acceptance entry in `scripts/preview-pair/qualify.ts`, covering fresh creation opt-in, separate first later Share, member Chat prompt/reopen and outsider denial; no generated peer sessions.
 - [ ] T029 [US3] Capture equivalent Web Desktop and Electron Desktop observations using `specs/2689-collaboration-preview-pair/quickstart.md`; attach exact-build captures outside Git and record failed/not-run cases truthfully.
 
 ## Phase 6: US4 — Update, diagnose and retire pairs (P2)
@@ -85,12 +85,12 @@ retains leases and capacity until exact provider absence is proved.
 ## Phase 7: Qualification, documentation and review
 
 - [x] T036 Run focused real-boundary and independent Postgres qualification for `tests/platform/preview-pair-*.test.ts`; record exact results, rollback/race faults and every actual/synthetic boundary in `specs/2689-collaboration-preview-pair/validation.md`.
-- [ ] T037 Run applicable full typecheck, patterns, production shell, Electron production build/E2E and React audit; retain ordinary provisioning/auth/collaboration coverage and record results in `specs/2689-collaboration-preview-pair/validation.md`.
+- [x] T037 Run applicable full typecheck, patterns, production shell, Electron production build/E2E and React audit; retain ordinary provisioning/auth/collaboration coverage and record results in `specs/2689-collaboration-preview-pair/validation.md`.
 - [x] T038 [P] Update `docs/dev/collaboration-preview-pairs.md` and links from `docs/dev/preview-environments.md` with implemented commands, setup gates, login, reset, diagnosis, expiry and cleanup.
-- [ ] T039 Prepare and validate the separate `FinnaAI/matrix-os-site/content/docs/` documentation PR sharing ENG-418 and the native stack reference; do not publish private identities or committed captures.
+- [x] T039 Prepare and validate the separate `FinnaAI/matrix-os-site/content/docs/` documentation PR sharing ENG-418 and the native stack reference; do not publish private identities or committed captures.
 - [ ] T040 Publish native stack layers, refresh their concise descriptions, request current-head Greptile once, resolve findings and monitor applicable CI through `docs/dev/stacked-prs.md`; do not merge.
 - [ ] T041 Perform the reviewed scoped live pair/actual-target acceptance from `specs/2689-collaboration-preview-pair/quickstart.md` when approved isolation/fixtures/funding and local OS access exist; missing prerequisites remain explicit blockers, never completed tasks.
-- [ ] T042 Update ENG-418 with linked native stack, exact component results/evidence, recommended owner review and residual limitations recorded in `specs/2689-collaboration-preview-pair/validation.md`; keep it In Progress until delivery/acceptance completes.
+- [x] T042 Update ENG-418 with linked native stack, exact component results/evidence, recommended owner review and residual limitations recorded in `specs/2689-collaboration-preview-pair/validation.md`; keep it In Progress until delivery/acceptance completes.
 
 ## Dependencies and execution order
 
@@ -110,7 +110,9 @@ edits to the same composition, schema or tasks file.
 
 ## GitHub Stack Plan
 
-All layers share ENG-418 and the native GitHub stack rooted at spec PR #3022.
+All layers share ENG-418 and [native stack #3112](https://github.com/HamedMP/matrix-os/stack/3112), rooted at spec PR #3022.
+The requester approved recreating metadata to insert helper #3107; all 26 PR
+numbers and published commits were preserved without rebasing or updating main.
 Use official `gh stack init/add/rebase/submit`; never hand-retarget or flatten.
 
 | Layer | Scope | Suggested branch | Dependency |
@@ -138,7 +140,8 @@ Use official `gh stack init/add/rebase/submit`; never hand-retarget or flatten.
 | 3l4a | Authenticated control transport, existing-pair reuse, fenced adoption/stop, controller completion recovery and bounded artifact reader (part of T016/T033) | `codex/eng-418-preview-pair-control` | Layer3l3 |
 | 3l4b | Pair-only host bundle namespace, protected build/publish workflow and user command (complete T016/T033) | `codex/eng-418-preview-pair-control-workflow` | Layer3l4a |
 | 4a | Source-verified Electron startup, owned profiles, account/runtime pinning and callback/OTA isolation (T018–T020; startup portion T025) | `codex/eng-418-preview-pair-desktop` | Layer3l4b |
-| 4b | Artifact launcher, process reuse/cleanup and visible role (T021–T025, T035) | `codex/eng-418-preview-pair-launcher` | Layer4a |
+| 4b | Reviewed artifact extraction/client and owned profile/retirement primitives (parts of T021–T022) | `codex/eng-418-preview-pair-local-artifacts` | Layer4a |
+| 4c | Artifact launcher, process reuse/cleanup, visible role and required hosted/dedicated native CI (T021–T025, T035) | `codex/eng-418-preview-pair-launcher` | Layer4b |
 | 5 if needed | Evidence runner, acceptance and internal docs (T026–T029, T036–T042) | `codex/eng-418-preview-pair-qualification` | Layer4 |
 
 Target <1000 additions/<20 files where practical; split a layer before exceeding
@@ -165,11 +168,17 @@ checks, documentation and review work first.
 - No cloud setup, deployment, user grant/membership mutation or external Slack post
   occurred during planning/task generation.
 
-- Protected control workflow (T016/T033): implemented in the control-workflow
-  layer with named red/green assertions, immutable first-attempt provenance,
-  pair-only bundle boundaries and Source-owned recovery. See
-  `control-workflow-validation.md`. Actual protected activation/live acceptance
-  remains T041; Electron launch remains T018–T025. Full gateway typecheck timed out
-  without a diagnostic; seven other repository projects passed and T037 stays open.
-
-Launcher implementation checkpoint: T021–T024/T035 code and focused tests are present; see `launcher-validation.md`. T025 passed its actual Linux three-process fixture lane (production build8e0fd84fb0); protected real-provider and native macOS acceptance remain T041. Public docs PR, protected live collaboration and review gates are separate open deliverables.
+- Protected control workflow T016/T033 and Electron T018–T025 are implemented;
+  their focused validation notes describe real and synthetic boundaries.
+- Qualification exports and actual fixture collection passed: 24 focused tests
+  across three suites, plus 70 assertions across eight retained suites. The
+  exact-checkout receipt remains fixture/productAcceptance:not_run.
+- All eight official typechecks, canonical production shell build, parent
+  Electron production build/native fixture journey and React audit passed.
+- Public docs #322 passed hosted tests and 375/768/1280 responsive checks at
+  `0a005b282c02cd1e4c6feedd0b7eb9370a9df224`; captures remain outside Git.
+- ENG-418 is verified, assigned to Nima and updated with the final PR links.
+  It remains In Progress.
+- See `qualification-validation.md` for exact results, builds and limitations.
+  Remaining T029/T040/T041 require live collaboration/evidence and review; no
+  fixture result implies real-Clerk/two-VPS/model or native macOS acceptance.
