@@ -52,36 +52,24 @@ No B branch is rewritten and no parallel routines hook/scheduler is introduced.
 
 ## Verification status
 
-- Runtime behavior originated at `0a681b1d460`. A later diagnostic correction
-  logs fixed operation/error-class labels before generic failure mapping, with
-  no raw error names, messages, stacks or provider output. It preserves native
-  scheduling, permissions, session bounds and physical cleanup; **217/217**
-  regressions pass, including a callback-thrown Proxy fallback. The live
-  `954de6a` acceptance below predates this logging-only delta and is not a
-  current-head real-account retest. Frozen `ecbb1dd0933` passed **565/565**, 28 files,
+- Runtime behavior originated at `0a681b1d460`. Later corrections log only fixed
+  operation/error-class labels and preserve the original native shutdown failure
+  after remaining Gateway cleanup. Neither changes scheduling, authority or bounds.
+  Live `954de6a` acceptance below predates both corrections and is not a new-head
+  real-account retest. Frozen `ecbb1dd0933` passed **565/565**, 28 files,
   zero skips, including real PostgreSQL duplicate/admission/source-drift races.
 - Actual-source native control fired twice, 59.440 seconds apart, then deleted
   and exited zero. One initialize, acknowledged MCP replacement, no replay,
   old-agent rejection/output suppression and fresh root capability were checked.
   Those protocol probes used synthetic model/backend/admission dependencies.
-- CI follow-up independently passes **134/134**, 14 files, full typecheck,
-  pattern gate and diff checks. Root lint remains unchanged: 50 errors and
-  97 warnings. The earlier bounded 600-second broad run is incomplete, not a pass.
-- Full hosted CI `41699095598` on `954de6a` passes this PR's corrected shutdown
-  and OpenClaw fixtures but fails inherited gates. Exact B reproduces stale
-  Terminal source predicates and Ubuntu 26.04's uutils KILL representation
-  (`137/null` versus GNU `null/SIGKILL`). Corrected tests preserve actual install
-  commands, real deadlines, no outer kill and physical child absence; actual
-  Ubuntu 24.04 and 26.04 checks pass without changing production helpers.
-- The 24 B routine integration suites require their dedicated Vitest config
-  and explicit `MATRIX_ROUTINE_CLI_TEST_POSTGRES_URL` mapping. CI now selects
-  the complete bounded cohort; inventory rejects missing config/URL/bounds and
-  unrelated selections. Real cohort qualification and budget evidence are
-  separate from parser-contract passes; current hosted results belong in the PR.
-- Browser E2E adopts main's Ubuntu 24.04 pin because Playwright 1.60 rejects
-  Chromium installation on 26.04. Product E2E had not started in the failed run.
-  New-head full CI/Greptile remain separate gates; older reviews are not current
-  merely because runtime bytes are unchanged.
+- [CI prerequisite #3116](https://github.com/HamedMP/matrix-os/pull/3116)
+  records inherited integration inventory/configuration, browser/native-module
+  preparation and fixture corrections, including real-PG early-ACK regression.
+  Native diagnostic regressions independently pass **217/217**, 14 files;
+  shutdown/lifecycle checks pass **152/152**, 10 files, including both failure modes.
+  Current-head CI/Greptile remain separate gates; older reviews, parser checks,
+  partial execution and skipped Draft jobs do not qualify a new head.
+  Root lint remains unchanged: 50 errors and 97 warnings.
 - No matching Linear issue confirmed. Companion site Draft PR
   [#327](https://github.com/FinnaAI/matrix-os-site/pull/327) at `b4f19013a59ff25a`
   passed 532 tests; neither the code nor docs PR has been merged.
