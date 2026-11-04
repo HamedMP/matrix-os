@@ -52,67 +52,52 @@ No B branch is rewritten and no parallel routines hook/scheduler is introduced.
 
 ## Verification status
 
-- Independent integrated regression: **491/491 passed**, 21 files, no skips.
-  Covers native pool, source identity, admission, ordinary/framed/streamed
-  Claude, input/approval/Steer/cancel, B hooks/commands and Pi/OpenCode paths.
-- Full typecheck and pattern gate passed; diff whitespace check passed.
-- Compatibility follow-up: **126/126 passed** across eight related files;
-  full typecheck passed after the exact-version transport gate and single
-  initial MCP configuration changes. Unknown-version behavior is simulated;
-  no real unsupported CLI version was qualified.
-- Broad canonical suite was bounded to 600 seconds and exited 124 without
-  final Vitest counts. It is **incomplete**, not a pass. Git failure output
-  matched intentional negative remote/rebase fixtures; no standalone assertion
-  failure summary was emitted. No broad rerun was substituted for that result.
-- Real PostgreSQL 16: **5/5 passed**, two files, no skips. Concurrent duplicate
-  occurrences commit one input/run/outbox; an ordinary-turn race has one winner;
-  selection/checkpoint drift is rejected after an observed database lock wait
-  with no partial writes. The bounded task-owned container was removed.
-- Root shell lint failed in unchanged files: 50 errors / 97 warnings.
-- Real native offline control qualification: arm64 direct MCP replacement and
-  reinitialization negative scenario passed. The reproducible offline probe
-  is retained in the task's evidence package. Live x64 diagnostic observed
-  the same control behavior. These are not final product acceptance.
-- Actual TypeScript pool plus official arm64 native timer completed creation,
-  a real due callback/result, CronDelete and actual exit zero in one child.
-  It initialized once and sent only create/delete user frames, never replaying
-  the due prompt. Synthetic API/admission were used. The trace revealed native
-  `command_lifecycle` started/completed notifications around the due hook;
-  strict same-session command correlation now accepts those status frames
-  without granting authority. Captured-frame regressions passed 49/49.
-- Native background-agent evidence confirmed that old work can survive a
-  terminal result and carry the next phase's prompt ID. Actual-source checks
-  now reject its auto-approved MCP call and suppress its output, while a
-  legitimate current-root call executes once using the new synthetic token.
-  This used a synthetic backend and does not qualify the real Matrix broker.
-- Browser MCP refresh and ordinary delegated Bash regressions identified in
-  the first review were reproduced and fixed. Complete current-phase ancestry
-  and all-tool hooks preserve B's delegated-routines rejection. Final-source
-  native Cron ran twice, 59.440 seconds apart, then deleted and exited zero;
-  the bounded native/phase regression lane passed 99/99.
-- Frozen `ecbb1dd0933ceab3ea7d456f41fa7aa8b1761424` regression passed
-  **565/565**, 28 files, zero skips, including actual PostgreSQL. Full typecheck,
-  pattern gate and diff checks passed; Greptile scored **5/5**, all threads
-  resolved. Native probe source hashes match that committed runtime source.
-- Full CI run `41649600130` found a missing registration for the new native
-  PostgreSQL suite. The follow-up registers it in the existing collaboration
-  lane and asserts that assignment; it does not weaken inventory validation.
-  The remaining PostgreSQL inventory also reports 24 parent-stack routine CLI
-  suites. Both E2E lanes fail before product tests because Playwright 1.60
-  cannot install Chromium on the Ubuntu 26.04 runner. Current main already
-  pins those lanes to Ubuntu 24.04; the Schedule B base does not include that
-  fix. These parent/environment gates remain unqualified, not waived.
-- Register-only bundle `v2026.11.03-pr3108-41647634789-1-ecbb1dd` was built
-  and registered with exact `ecbb1dd` provenance. No channel was promoted and
-  this task has not installed it. The PR remains Draft.
-- Exact repaired-head installed Chat, real due-result readback, cancellation
-  across next deadline and screenshots: **pending** official Dev CLI device
-  authentication. Offline native protocol qualification is not that acceptance.
-- No exact matching Linear issue confirmed; unrelated scheduling issues were
-  not inferred to be this defect.
-- Companion public documentation: private site Draft PR
-  [#327](https://github.com/FinnaAI/matrix-os-site/pull/327), documentation
-  commit `b4f19013a59ff25a408f04ddd14268c1020b9188`; 532 site tests passed.
+- Runtime implementation is `0a681b1d460`; later changes are test/CI/evidence
+  corrections. Frozen `ecbb1dd0933` regression passed **565/565**, 28 files,
+  zero skips, including real PostgreSQL duplicate/admission/source-drift races.
+- Actual-source native control fired twice, 59.440 seconds apart, then deleted
+  and exited zero. One initialize, acknowledged MCP replacement, no replay,
+  old-agent rejection/output suppression and fresh root capability were checked.
+  Those protocol probes used synthetic model/backend/admission dependencies.
+- CI follow-up independently passes **134/134**, 14 files, full typecheck,
+  pattern gate and diff checks. Root lint remains unchanged: 50 errors and
+  97 warnings. The earlier bounded 600-second broad run is incomplete, not a pass.
+- Full hosted CI `41699095598` on `954de6a` passes this PR's corrected shutdown
+  and OpenClaw fixtures but fails inherited gates. Exact B reproduces stale
+  Terminal source predicates and Ubuntu 26.04's uutils KILL representation
+  (`137/null` versus GNU `null/SIGKILL`). Corrected tests preserve actual install
+  commands, real deadlines, no outer kill and physical child absence; actual
+  Ubuntu 24.04 and 26.04 checks pass without changing production helpers.
+- The 24 B routine integration suites require their dedicated Vitest config
+  and explicit `MATRIX_ROUTINE_CLI_TEST_POSTGRES_URL` mapping. CI now selects
+  the complete bounded cohort; inventory rejects missing config/URL/bounds and
+  unrelated selections. Real cohort qualification and budget evidence are
+  separate from parser-contract passes; current hosted results belong in the PR.
+- Browser E2E adopts main's Ubuntu 24.04 pin because Playwright 1.60 rejects
+  Chromium installation on 26.04. Product E2E had not started in the failed run.
+  New-head full CI/Greptile remain separate gates; older reviews are not current
+  merely because runtime bytes are unchanged.
+- No matching Linear issue confirmed. Companion site Draft PR
+  [#327](https://github.com/FinnaAI/matrix-os-site/pull/327) at `b4f19013a59ff25a`
+  passed 532 tests; neither the code nor docs PR has been merged.
+
+## Authenticated Electron Desktop acceptance
+
+Exact installed source `954de6a9216be65b5f626ae06377a42dbc7aff63`, native
+Claude 2.1.317 and Electron Desktop `0.1.19-dev.20261027.41cf5371` were verified.
+Real subscription/model, Supervised permissions and Matrix backend were used.
+One ordinary private Chat received seven actual native scheduled results.
+A second recorded Chat closed at 19:27:11.226 UTC; its next result persisted at
+19:28:08.818 while closed and displayed in that same Chat after reopening.
+Native Delete/List-empty receipts at 19:29:32.709/.752, physical child exit by
+19:29:34.637 and no further messages through 19:31:46 prove bounded cancellation.
+Untimestamped replay copies were excluded from native execution counts.
+
+The original immutable B bundle/source `9b03416` was restored after testing;
+authenticated system/instance APIs confirmed its new startup and health.
+No channel promotion, fleet/Main deployment, B branch rewrite or merge occurred.
+A 60-second silent real-window film retains source times and labels accelerated
+waiting; uncut footage and receipts remain in the private evidence package.
 
 ## Independent display/lifecycle limits
 
@@ -124,6 +109,7 @@ issue is evidence of a scheduler failure or an authoritative execution clock.
 Closing a terminal/browser, ending a native process, restarting Gateway and
 rebooting a machine are distinct actions. The control above proves an owned
 native process can fire after its initial interaction completes and stops after
-explicit cancellation/EOF. Final repaired Chat closure, process-kill, service
-restart and machine-reboot acceptance remain unverified. No automatic recovery
-is promised from transcript persistence alone.
+explicit cancellation/EOF. Repaired Chat-view closure and later display are verified above. Process-kill,
+explicit Gateway restart and machine-reboot recovery remain unverified. Package
+update restarts do not qualify active-job recovery. No automatic recovery is
+promised from transcript persistence alone.
