@@ -30,3 +30,31 @@ export async function runPlatformStartupWithCleanup(
     cleanups.length = 0;
   }
 }
+
+interface StartupWorker {
+  stop(): void;
+  drain(): Promise<void>;
+}
+
+/** Stop all producers before awaiting any provider pass or closing dependencies. */
+export function createPlatformStartupWorkerCleanup(
+  readWorkers: () => readonly (StartupWorker | undefined)[],
+): StartupCleanup {
+  let closing: Promise<void> | undefined;
+  return () => closing ??= (async () => {
+    const workers = readWorkers().filter((worker): worker is StartupWorker => worker !== undefined);
+    let failed = false;
+    for (const worker of workers) {
+      try { worker.stop(); } catch (error: unknown) {
+        failed = true;
+        console.warn('[platform] Startup worker stop failed:', error instanceof Error ? 'error' : 'unknown failure');
+      }
+    }
+    // A rejected drain must not release the pool while another pass can still
+    // journal a provider effect. Async wrappers also capture synchronous throws.
+    const drains = await Promise.allSettled(workers.map(async worker => { await worker.drain(); }));
+    if (failed || drains.some(result => result.status === 'rejected')) {
+      throw new Error('Platform startup worker cleanup failed');
+    }
+  })();
+}

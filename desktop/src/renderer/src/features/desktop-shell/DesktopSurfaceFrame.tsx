@@ -137,7 +137,7 @@ export default function DesktopSurfaceFrame({
     || tab.kind === "settings"
     || tab.kind === "notes";
   const requestedSettingsSection = useUi((state) => state.requestedSettingsSection);
-  const [settingsSection, setSettingsSection] = useState<SettingsSectionId>("account");
+  const [settingsSection, setSettingsSection] = useState<SettingsSectionId>("agents-providers");
   useEffect(() => {
     if (tab.kind !== "settings" || !requestedSettingsSection) return;
     if (isSettingsSectionId(requestedSettingsSection)) setSettingsSection(requestedSettingsSection);

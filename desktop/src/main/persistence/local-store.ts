@@ -1,3 +1,4 @@
+import { PreviewPairProfileBindingSchema } from "@matrix-os/contracts/preview-pair-launch";
 // Local UI state (FR-084): only recreatable data lives here — profile pointer,
 // window bounds, panel layouts, appearance. Atomic writes (tmp + rename),
 // schema-validated keys, bounded panel-layout retention.
@@ -72,6 +73,7 @@ const RecentsSchema = z.array(z.string().max(512)).max(50);
 
 const ProfileSchema = z
   .object({
+    previewPair: PreviewPairProfileBindingSchema.optional(),
     handle: z.string().min(1).max(64),
     userId: z.string().min(1).max(128),
     platformHost: z.string().min(1).max(256),

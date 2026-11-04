@@ -1,5 +1,6 @@
 import { canonicalChatToolActivities, canonicalReviewedAgentFailure, canonicalAssistantOutputMessages, type CanonicalToolActivity } from "@matrix-os/contracts";
 import type {RoutineOccurrence} from "@matrix-os/ui/bot-routine-transcript";
+import { nativeScheduledMessage, type ScheduledMessagePresentation } from "@matrix-os/ui/chat-scheduled-message";
 import { canonicalChatInputs, type CanonicalChatInputView, canonicalChatApprovals, canonicalChatTerminalNotices, type CanonicalChatApprovalView } from "@matrix-os/contracts";
 import type {
   CanonicalChatDetailResponse,
@@ -36,6 +37,7 @@ export interface TranscriptNotice {
 }
 
 export interface TranscriptMessage {
+  scheduledMessage?: ScheduledMessagePresentation;
   /** Read-only durable schedule metadata, bound to this input by its canonical request. */
   scheduled?: RoutineOccurrence;
   scheduleEvent?: boolean;
@@ -175,12 +177,14 @@ export function buildTranscript(detail: CanonicalChatDetailResponse | null): Tra
   }
 
   const transcript = ordered.map((message): TranscriptMessage => {
+    const scheduledMessage = nativeScheduledMessage(message, { chatId: detail.record?.chat.id, turns: detail.turns, runs: detail.runs });
     const run = message.runId ? runsById.get(message.runId) : undefined;
     const isRunsLastAssistantMessage = message.runId !== undefined
       && lastAssistantSeqByRun.get(message.runId) === message.seq;
     const attachments = messageAttachments(message);
     return {
       id: message.id,
+      ...(scheduledMessage ? { scheduledMessage } : {}),
       role: message.role,
       text: messageText(message),
       ...(attachments.length > 0 ? { attachments } : {}),

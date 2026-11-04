@@ -73,3 +73,63 @@ print(json.dumps(payload, separators=(",", ":")))
   fi
 }
 
+# Paired Preview hosts have no channel feed. Explicit version requests still use
+# the existing verified metadata path and are never suppressed by this policy.
+pair_updates_are_controller_managed() {
+  local pair_handle="${MATRIX_HANDLE:-}"
+  [ "${MATRIX_PREVIEW_RUNTIME:-}" = "true" ] && [ "${MATRIX_RUNTIME_SLOT:-}" = "$pair_handle" ] || return 1
+  [[ "$pair_handle" =~ ^cp-([1-9][0-9]{0,8})-([a-f0-9]{8})-([1-9][0-9]{0,2})-([ab])$ ]] || return 1
+  local pair_key="${BASH_REMATCH[2]}" pair_generation="${BASH_REMATCH[3]}"
+  local pair_base_pattern="^https://cp-${pair_key}-g${pair_generation}-api---matrix-platform-preview-[a-z0-9.-]+\\.run\\.app/preview-pair-updates/${pair_handle}/?$"
+  [[ "${MATRIX_UPDATE_MANIFEST_BASE_URL:-}" =~ $pair_base_pattern ]]
+}
+
+# Passive channel polling; sourced by the sync agent with the verified metadata helpers.
+check_for_update() {
+  # Explicit requests take priority until verified, applied, or replaced.
+  if [ -e "$UPDATE_TRIGGER" ] || [ -L "$UPDATE_TRIGGER" ]; then return 0; fi
+  if pair_updates_are_controller_managed; then return 0; fi
+  local url manifest remote_version cur
+  url="$(manifest_url)"
+  if ! manifest="$(curl --fail --silent --show-error --max-time 15 "$url" 2>&1)"; then
+    log "WARN: failed to fetch manifest from $url"; return 1
+  fi
+  remote_version="$(json_field "$manifest" version)"
+  if [ -z "$remote_version" ]; then
+    log "WARN: manifest missing 'version' field"; return 1
+  fi
+  cur="$(current_version)"
+  if [ "$remote_version" = "$cur" ]; then
+    rm -f "$UPDATE_MARKER"
+    return 0
+  fi
+
+  local version_comparison
+  version_comparison="$(compare_host_bundle_versions "$remote_version" "$cur")"
+  if [ "$version_comparison" = "older" ]; then
+    log "Ignoring older channel release: $remote_version (current: $cur)"
+    rm -f "$UPDATE_MARKER" "$UPDATE_ERROR_MARKER"
+    return 0
+  fi
+
+  local severity update_type
+  severity="$(json_field "$manifest" severity)"
+  update_type="$(json_field "$manifest" updateType)"
+
+  log "Update available: $remote_version (current: $cur, severity: ${severity:-normal})"
+  write_prepared_update_marker "$manifest" || return 1
+
+  if [ "$severity" = "security" ] || [ "$update_type" = "auto" ]; then
+    if [ -f "$AUTO_APPLY_FAILED_MARKER" ] && [ "$(cat "$AUTO_APPLY_FAILED_MARKER" 2>/dev/null)" = "$remote_version" ]; then
+      log "Skipping auto-apply for $remote_version — previous attempt failed (use .update-now to retry)"
+    else
+      log "Auto-apply update $remote_version (severity=${severity:-normal}, updateType=${update_type:-manual})"
+      if ! run_apply_update; then
+        echo "$remote_version" > "$AUTO_APPLY_FAILED_MARKER"
+        log "Auto-apply failed — will not retry automatically (use .update-now to force)"
+      else
+        rm -f "$AUTO_APPLY_FAILED_MARKER"
+      fi
+    fi
+  fi
+}

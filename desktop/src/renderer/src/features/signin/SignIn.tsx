@@ -7,7 +7,7 @@ import "./signin.css";
 import { invoke } from "../../lib/operator";
 import { useConnection } from "../../stores/connection";
 
-type Phase = "idle" | "starting" | "waiting" | "expired" | "error";
+type Phase = "idle" | "starting" | "waiting" | "expired" | "error" | "wrong-account";
 type AuthIntent = "sign-up" | "sign-in";
 
 const POLL_INTERVAL_MS = 2000;
@@ -67,15 +67,17 @@ export default function SignIn() {
               });
             } else if (result.status === "expired") {
               stopPolling();
-              setPhase("expired");
+              setPhase(result.reason === "preview_account_mismatch" ? "wrong-account" : "expired");
             }
           })
-          .catch(() => {
+          .catch((error: unknown) => {
+            console.warn("[signin] poll failed", error instanceof Error ? error.name : "UnknownError");
             stopPolling();
             setPhase("error");
           });
       }, POLL_INTERVAL_MS);
-    } catch {
+    } catch (error: unknown) {
+      console.warn("[signin] request failed", error instanceof Error ? error.name : "UnknownError");
       setPhase("error");
     }
   }, [openBrowser, refresh, stopPolling]);
@@ -146,6 +148,7 @@ export default function SignIn() {
                   {phase === "starting" && intent === "sign-in" ? "Opening browser…" : "Sign in"}
                 </button>
               </div>
+              {phase === "wrong-account" ? <p role="alert" className="signin-error">Use the test account shown in the preview banner and select its preview computer, then sign in again.</p> : null}
               {phase === "expired" ? <p role="alert" className="signin-error">This sign-in request expired. Choose Create account or Sign in to try again.</p> : null}
               {phase === "error" ? <p role="alert" className="signin-error">Couldn't connect. Check your connection and try again.</p> : null}
               <div className="signin-browser-note">

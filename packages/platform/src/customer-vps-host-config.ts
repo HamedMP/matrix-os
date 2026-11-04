@@ -1,3 +1,5 @@
+import {PAIR_PREVIEW_HANDLE_PATTERN} from "@matrix-os/clerk-sync";
+import {previewPairHostBinding} from "./preview-pair/host-binding.js";
 import type { CustomerVpsConfig } from './customer-vps-config.js';
 import type { ProvisionRequest } from './customer-vps-schema.js';
 import type { HostBundleRef } from './customer-vps-host-bundle.js';
@@ -34,6 +36,7 @@ export const DEFAULT_CLOUD_INIT_TEMPLATE = [
   '      {{updateManifestBaseUrlEnv}}',
   '      {{collaborationDisabledEnv}}',
   '      {{previewRuntimeEnv}}',
+  '      {{collaborationPairEnv}}',
   '      UPGRADE_TOKEN={{platformVerificationToken}}',
   '      MATRIX_AUTH_TOKEN={{platformVerificationToken}}',
   '      MATRIX_SYNC_RUNTIME_TOKEN={{syncRuntimeToken}}',
@@ -76,12 +79,15 @@ export function buildHostConfig(
   postgresPassword: string,
   bundleRef: HostBundleRef,
   runtimeTokenEpoch = 1,
+  pairBinding?: {browserOrigin:string},
 ): CustomerHostConfig {
   const platformInternalUrl = new URL(config.platformRegisterUrl).origin;
   // Spec 537: a Private Preview's updater may fetch only its owner-confirmed
   // release, and its gateway never joins collaboration. Other classes get no
   // line at all, since an empty assignment would override the updater fallback.
   const privatePreview = input.provisioningClass === 'private-preview';
+  const pair = input.provisioningClass === 'preview' && PAIR_PREVIEW_HANDLE_PATTERN.test(input.handle)
+    ? previewPairHostBinding(input.handle,input.runtimeSlot??'primary',platformInternalUrl,pairBinding?.browserOrigin) : undefined;
   const runtimeIdentity = {
     handle: input.handle,
     machineId,
@@ -116,9 +122,10 @@ export function buildHostConfig(
     fundedAiEnabled: config.fundedAiEnabled ? 'true' : 'false',
     fundedAiRelayUrl: config.fundedAiRelayUrl,
     getStartedEnabled: config.getStartedEnabled ? 'true' : 'false',
-    updateManifestBaseUrlEnv: privatePreview
+    updateManifestBaseUrlEnv: pair?.updateManifestBaseUrlEnv ?? (privatePreview
       ? `MATRIX_UPDATE_MANIFEST_BASE_URL=${platformInternalUrl}/private-preview-updates/${input.handle}`
-      : '',
+      : ''),
+    collaborationPairEnv: pair?.collaborationPairEnv ?? '',
     collaborationDisabledEnv: privatePreview ? 'MATRIX_COLLABORATION_DISABLED=1' : '',
     previewRuntimeEnv: input.provisioningClass === 'preview' || input.provisioningClass === 'private-preview'
       ? 'MATRIX_PREVIEW_RUNTIME=true'
