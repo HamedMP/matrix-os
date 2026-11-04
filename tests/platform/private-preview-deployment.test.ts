@@ -92,6 +92,18 @@ describe("Private Preview organization deployment contract", () => {
     }
   });
 
+  it("passes one duplicate-free environment replacement to the Preview deployment", () => {
+    const result = deploy(preview, org);
+    expect(result.status, result.stderr).toBe(0);
+    const args = result.stdout.trim().split("\n");
+    expect(args.filter((arg) => arg === "--set-env-vars")).toHaveLength(1);
+    const env = args[args.indexOf("--set-env-vars") + 1];
+    const names = env.slice(3).split("|")
+      .filter((binding) => binding.includes("="))
+      .map((binding) => binding.slice(0, binding.indexOf("=")));
+    expect(new Set(names).size).toBe(names.length);
+  });
+
   it("checks production candidate and promoted revision values", () => {
     expect(run(production, "Verify deployed provisioning contract")).toContain("MATRIX_INTERNAL_CLERK_ORG_ID\n");
     expect(run(production, "Verify production provisioning contract")).toContain('"MATRIX_INTERNAL_CLERK_ORG_ID=${MATRIX_INTERNAL_CLERK_ORG_ID}"');

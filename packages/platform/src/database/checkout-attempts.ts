@@ -8,6 +8,7 @@ import type {
   PlatformDB,
 } from '../db.js';
 import type { MatrixBillingInterval, MatrixBillingPlanSlug } from '../billing.js';
+import type { CheckoutRequest } from '../billing/checkout-schemas.js';
 import {
   DEFAULT_DEVELOPER_TOOLS,
   parseDeveloperToolsJson,
@@ -21,6 +22,17 @@ import { mapCheckoutAttempt } from './billing-records.js';
 const CHECKOUT_IDEMPOTENCY_RETRY_WINDOW_MS = 23 * 60 * 60 * 1000;
 
 const CHECKOUT_SESSION_MAX_LIFETIME_MS = 24 * 60 * 60 * 1000;
+
+export function canRetryCreatingCheckoutAttempt(
+  attempt: Pick<BillingCheckoutAttemptRecord, 'status' | 'createdAt'>,
+  now: string,
+): boolean {
+  const ageMs = Date.parse(now) - Date.parse(attempt.createdAt);
+  return attempt.status === 'creating'
+    && Number.isFinite(ageMs)
+    && ageMs >= 0
+    && ageMs <= CHECKOUT_IDEMPOTENCY_RETRY_WINDOW_MS;
+}
 
 function isExpiredLegacyCheckoutAttempt(
   attempt: BillingCheckoutAttemptRecord,
@@ -59,6 +71,7 @@ export async function insertCheckoutAttempt(
       clerk_user_id: record.clerkUserId,
       stripe_session_id: record.stripeSessionId,
       checkout_url: null,
+      request_payload: null,
       runtime_slot: record.runtimeSlot ?? 'primary',
       plan_slug: record.planSlug ?? null,
       billing_interval: record.billingInterval ?? null,
@@ -85,6 +98,7 @@ export interface BillingCheckoutClaimInput {
   trialPeriodDays?: number | null;
   developerTools?: DeveloperToolId[];
   createdAt: string;
+  checkoutRequest?: CheckoutRequest;
 }
 
 export async function claimCheckoutAttempt(
@@ -101,6 +115,7 @@ export async function claimCheckoutAttempt(
     clerk_user_id: record.clerkUserId,
     stripe_session_id: null,
     checkout_url: null,
+    request_payload: record.checkoutRequest ? JSON.stringify(record.checkoutRequest) : null,
     runtime_slot: record.runtimeSlot,
     plan_slug: record.planSlug,
     billing_interval: record.billingInterval,
@@ -178,11 +193,7 @@ export async function claimCheckoutAttempt(
     && activeRow.trial_period_days === (record.trialPeriodDays ?? null)
     && activeRow.developer_tools
       === serializeDeveloperTools(record.developerTools ?? DEFAULT_DEVELOPER_TOOLS);
-  const retryAgeMs = Date.parse(record.createdAt) - Date.parse(activeRow.created_at);
-  const withinIdempotencyWindow = Number.isFinite(retryAgeMs)
-    && retryAgeMs >= 0
-    && retryAgeMs <= CHECKOUT_IDEMPOTENCY_RETRY_WINDOW_MS;
-  if (activeRow.status === 'creating' && sameSelection && withinIdempotencyWindow) {
+  if (sameSelection && canRetryCreatingCheckoutAttempt(mapCheckoutAttempt(activeRow), record.createdAt)) {
     // A previous Stripe response may have timed out after creating the
     // provider session. Re-run with this persisted attempt id so Stripe's
     // idempotency key reconciles the ambiguous result instead of creating a
@@ -395,7 +406,7 @@ export async function getActiveCheckoutAttempt(
 
 /**
  * The attempt that governs payment settling: a confirmed `paid` attempt always
- * wins over a newer still-`open` one, so a paying user who opens a second
+ * wins over a newer still-`open`/`creating` one, so a paying user who opens a second
  * checkout before activation is never bounced back to plan selection. Terminal
  * (`expired`/`abandoned`) attempts never sustain settling and are excluded.
  */
@@ -410,7 +421,7 @@ export async function getSettlingCheckoutAttempt(
     .selectFrom('billing_checkout_attempts')
     .selectAll()
     .where('clerk_user_id', '=', clerkUserId)
-    .where('status', 'in', ['paid', 'open']);
+    .where('status', 'in', ['paid', 'creating', 'open']);
   if (runtimeSlot) query = query.where('runtime_slot', '=', runtimeSlot);
   const row = await query
     .orderBy(sql`CASE status WHEN 'paid' THEN 0 ELSE 1 END`)

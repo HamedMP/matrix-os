@@ -136,7 +136,7 @@ describe('reviewed expired trial cleanup', () => {
   it('refuses a purchase that is in flight before its subscription webhook arrives', async () => {
     const dryRun = await prepare();
     await db.executor.insertInto('billing_checkout_attempts').values({ id: 'attempt_pending', clerk_user_id: ownerId,
-      runtime_slot: 'primary', stripe_session_id: 'cs_pending', checkout_url: null, plan_slug: 'matrix_starter',
+      runtime_slot: 'primary', stripe_session_id: 'cs_pending', checkout_url: null, request_payload: null, plan_slug: 'matrix_starter',
       billing_interval: 'monthly', region_slug: null, server_type: null, trial_period_days: null, developer_tools: '[]',
       status: 'open', created_at: now().toISOString(), resolved_at: null }).execute();
     await expect(prepare(review, { apply: true, reviewedFingerprint: dryRun.fingerprint })).rejects.toThrow(/refused/);

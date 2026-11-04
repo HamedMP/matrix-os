@@ -41,6 +41,7 @@ export default defineConfig({
   resolve: {
     conditions: ["node"],
     alias: {
+      "@clerk/nextjs": path.resolve(__dirname, "shell/node_modules/@clerk/nextjs"),
       "@matrix-os/brand/themes": path.resolve(__dirname, "packages/brand/src/themes"),
       "@matrix-os/ui/appearance": path.resolve(__dirname, "packages/ui/src/appearance/index.ts"),
       "@matrix-os/brand/boot-screen": path.resolve(__dirname, "packages/brand/src/boot-screen.ts"),

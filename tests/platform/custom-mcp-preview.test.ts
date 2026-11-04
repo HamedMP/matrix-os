@@ -10,7 +10,7 @@ describe('Custom MCP isolated platform preview', () => {
   it.each([true, false])('binds only the preview key when enabled=%s', (enabled) => {
     expect(workflow.on.workflow_dispatch.inputs.custom_mcp.default).toBe(false);
     const script = deploy.split('service_base_url=')[0];
-    const result = spawnSync('bash', ['-c', `gcloud() { printf '%s\\n' "$@"; }\n${script}\nservice_base_url=https://preview-service.run.app\ndeploy_preview https://pr-42---preview.example.com`], {
+    const result = spawnSync('bash', ['-c', `gcloud() { printf '%s\\n' "$@"; }\ndate() { printf '%s\\n' '2026-10-13T00:00:00.000Z'; }\n${script}\nservice_base_url=https://preview-service.run.app\ndeploy_preview https://pr-42---preview.example.com`], {
       encoding: 'utf8', env: { PATH: process.env.PATH, GCP_PROJECT_ID: 'fixture', GCP_REGION: 'region',
         CLOUD_RUN_PREVIEW_SERVICE: 'preview', CLOUD_RUN_SERVICE_ACCOUNT: 'preview-sa', IMAGE: 'image',
         PR_NUMBER: '42', PREVIEW_PUBLIC_URL: 'https://preview.example.com', MATRIX_CARD_TRIALS_ENABLED: 'true',

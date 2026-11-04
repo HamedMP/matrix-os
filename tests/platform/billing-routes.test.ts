@@ -345,6 +345,42 @@ describe('platform billing routes', () => {
     });
   });
 
+  it('keeps a pre-migration creating attempt unresolved instead of abandoning it', async () => {
+    await claimCheckoutAttempt(db, {
+      id: '76edda9c-1431-4777-bd55-ebfa73fa938e',
+      clerkUserId: 'user_123',
+      runtimeSlot: 'studio',
+      planSlug: 'matrix_builder',
+      billingInterval: 'monthly',
+      regionSlug: 'region_fsn1',
+      serverType: 'cpx42',
+      createdAt: '2026-05-30T00:00:00.000Z',
+    });
+    const app = createApp();
+
+    const response = await app.request('/billing/checkout', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        planSlug: 'matrix_builder',
+        interval: 'monthly',
+        regionSlug: 'region_fsn1',
+        runtimeSlot: 'studio',
+      }),
+    });
+
+    expect(response.status).toBe(409);
+    await expect(response.json()).resolves.toEqual({
+      error: 'Checkout is already starting',
+      code: 'checkout_pending',
+    });
+    expect(stripe.createCheckoutSession).not.toHaveBeenCalled();
+    await expect(getLatestCheckoutAttempt(db, 'user_123')).resolves.toMatchObject({
+      id: '76edda9c-1431-4777-bd55-ebfa73fa938e',
+      status: 'creating',
+    });
+  });
+
   it('captures checkout growth funnel events with low-cardinality properties', async () => {
     const captureEvent = vi.fn();
     const app = createApp('user_123', env, captureEvent);

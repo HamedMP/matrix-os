@@ -45,15 +45,19 @@ export const MarketingAttributionSchema = z.object({
 
 export type MarketingAttribution = z.infer<typeof MarketingAttributionSchema>;
 
-export const GoogleAnalyticsAttributionSchema = z.object({
+const StoredGoogleAnalyticsAttributionSchema = z.object({
   clientId: z.string().regex(/^[A-Za-z0-9._-]{1,128}$/),
   analyticsConsent: z.literal('granted'),
   adUserData: z.enum(['granted', 'denied']).default('denied'),
   adPersonalization: z.enum(['granted', 'denied']).default('denied'),
+  expiresAt: z.number().int().positive(),
+}).strict();
+
+export const GoogleAnalyticsAttributionSchema = StoredGoogleAnalyticsAttributionSchema.extend({
   expiresAt: z.number().int().positive().refine(
     value => value > Date.now() && value <= Date.now() + 180 * 86400000,
   ),
-}).strict();
+});
 export type GoogleAnalyticsAttribution = z.infer<typeof GoogleAnalyticsAttributionSchema>;
 
 export const CheckoutRequestSchema = z.object({
@@ -71,6 +75,11 @@ export const CheckoutRequestSchema = z.object({
     (value) => value === undefined || resolveReturnPath(value) === value,
     { message: 'Invalid return path' },
   ),
+});
+
+/** Re-validates a server-persisted request without repeating time-based admission. */
+export const StoredCheckoutRequestSchema = CheckoutRequestSchema.extend({
+  googleAnalytics: StoredGoogleAnalyticsAttributionSchema.optional(),
 });
 
 export type CheckoutRequest = z.infer<typeof CheckoutRequestSchema>;

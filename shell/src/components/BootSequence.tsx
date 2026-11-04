@@ -14,6 +14,7 @@ import {
 import { useJourney, type JourneyState } from "@/hooks/useJourney";
 import { MatrixBootMark } from "@/components/MatrixBootMark";
 import { MatrixLoadingScreen } from "@/components/MatrixLoadingScreen";
+import { CheckoutActivation } from "@/components/CheckoutActivation";
 import {
   PROVISIONING_RETRY_ERROR,
   isAcceptedProvisionResponse,
@@ -22,6 +23,7 @@ import {
 import type { DeveloperToolId } from "@/components/onboarding/developer-tools";
 import { Settings } from "@/components/Settings";
 import { navigateForOnboarding } from "@/lib/onboarding-navigation";
+import { normalizeDeviceReturnPath } from "@/lib/device-onboarding";
 
 // Phases where the shell (Desktop) takes over — first-run UI is owned by Desktop,
 // ready is the running shell. BootSequence only renders the billing/build steps.
@@ -298,10 +300,11 @@ function BootSequenceInner({
   const { isLoaded, isSignedIn, getToken } = useAuth();
   const [provisioningOutcomeAmbiguous, setProvisioningOutcomeAmbiguous] = useState(false);
   const [sessionHandoffRequired, setSessionHandoffRequired] = useState(false);
-  const { state, status, refreshJourney } = useJourney({
+  const { state, status, refreshJourney, checking } = useJourney({
     enabled: isLoaded && isSignedIn,
     keepPolling: provisioningOutcomeAmbiguous || passivePostCheckout,
     runtimeSlot,
+    reconcileCheckout: true,
   });
   const [working, setWorking] = useState(false);
   const [installError, setInstallError] = useState<string | null>(null);
@@ -312,8 +315,18 @@ function BootSequenceInner({
     if (billingGateActive || !isLoaded || !isSignedIn || status !== "ready" || state?.phase !== "plan_required") return;
     // The plans entrypoint opens BillingGate directly. Replace this entry so
     // Back cannot return to an extra step before billing.
-    navigateForOnboarding(state.nextAction.url || "/?plans=1");
-  }, [billingGateActive, isLoaded, isSignedIn, status, state?.phase, state?.nextAction.url]);
+    let destination = state.nextAction.url || "/?plans=1";
+    if (runtimeSlot || completionRedirect) {
+      const url = new URL(destination, window.location.origin);
+      if (runtimeSlot) url.searchParams.set('runtime', runtimeSlot);
+      const deviceReturn = normalizeDeviceReturnPath(
+        new URL(completionRedirect ?? '/', window.location.origin).searchParams.get('device_return'),
+      );
+      if (deviceReturn) url.searchParams.set('device_return', deviceReturn);
+      destination = url.toString();
+    }
+    navigateForOnboarding(destination);
+  }, [billingGateActive, isLoaded, isSignedIn, status, state?.phase, state?.nextAction.url, runtimeSlot, completionRedirect]);
 
   useEffect(() => {
     if (!provisioningOutcomeAmbiguous) return;
@@ -450,18 +463,7 @@ function BootSequenceInner({
     case "payment_settling":
       return (
         <BootShell activeStep="billing">
-          {state.settling?.delayed ? (
-            <AlertCircleIcon className="size-6 text-ember" aria-hidden="true" />
-          ) : (
-            <Spinner />
-          )}
-          <h1 className="text-lg font-medium text-forest">
-            {state.settling?.delayed ? "Taking longer than expected" : "Activating your subscription"}
-          </h1>
-          <p className="max-w-sm text-sm">{state.detail}</p>
-          {state.settling?.delayed ? (
-            <a href="mailto:support@matrix-os.com" className="text-sm underline">Contact support</a>
-          ) : null}
+          <CheckoutActivation state={state} checking={checking} onCheckAgain={refreshJourney} />
         </BootShell>
       );
     case "install_choices_required":

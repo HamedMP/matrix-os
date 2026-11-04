@@ -107,7 +107,10 @@ export function createPrebillingProvisioningCoordinator(options: {
       }
       return {
         intentId: result.intent.id,
-        expiresAt: new Date(Date.parse(input.now) + options.config.leaseMs).toISOString(),
+        // Stripe requires idempotent retries to repeat the original parameters.
+        // Anchor the Checkout expiry to the persisted intent creation time so
+        // recovering an ambiguous create never sends a later expiry.
+        expiresAt: new Date(Date.parse(result.intent.createdAt) + options.config.leaseMs).toISOString(),
       };
     },
 

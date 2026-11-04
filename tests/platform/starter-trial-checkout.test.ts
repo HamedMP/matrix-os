@@ -96,6 +96,10 @@ describe('Starter-only trial checkout', () => {
       id: 'attempt_legacy', clerkUserId: 'user_trial', runtimeSlot: 'primary',
       planSlug: 'matrix_builder', billingInterval: 'monthly', regionSlug: 'region_fsn1',
       serverType: 'cpx42', developerTools: ['codex', 'claude-code', 'opencode', 'pi'],
+      checkoutRequest: {
+        planSlug: 'matrix_builder', interval: 'monthly', regionSlug: 'region_fsn1',
+        runtimeSlot: 'primary', developerTools: ['codex', 'claude-code', 'opencode', 'pi'],
+      },
       createdAt: '2026-10-18T09:59:59.000Z',
     }, 3);
     const application = app({ MATRIX_CARD_TRIALS_ENABLED: 'false' });
@@ -112,6 +116,10 @@ describe('Starter-only trial checkout', () => {
       id: 'attempt_unlinked', clerkUserId: 'user_trial', runtimeSlot: 'primary',
       planSlug: 'matrix_starter', billingInterval: 'monthly', regionSlug: 'region_fsn1',
       serverType: 'cpx22', developerTools: ['codex'], trialPeriodDays: duration,
+      checkoutRequest: {
+        planSlug: 'matrix_starter', interval: 'monthly', regionSlug: 'region_fsn1',
+        runtimeSlot: 'primary', developerTools: ['codex'],
+      },
       createdAt: '2026-10-18T09:59:59.000Z',
     });
     expect((await checkout(app(), 'matrix_starter')).status).toBe(200);
