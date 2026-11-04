@@ -5,8 +5,8 @@ import { runPlatformStartupMigrations } from "../../packages/platform/src/databa
 import { createRealPlatformCollaborationTestDatabase } from "./collaboration-test-support.js";
 
 /** Owned random schema on the dedicated test server; never an application database. */
-export async function createPreviewPairPostgresFixture() {
-  const fixture = await createRealPlatformCollaborationTestDatabase();
+export async function createPreviewPairPostgresFixture(connectionString?: string) {
+  const fixture = await createRealPlatformCollaborationTestDatabase(connectionString);
   const root = fixture.collaborationDb as unknown as Kysely<PlatformDatabase>;
   try {
     await runPlatformStartupMigrations(root);
