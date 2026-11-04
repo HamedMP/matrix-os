@@ -1,11 +1,11 @@
 #!/usr/bin/env node
 
-import { spawn } from "node:child_process";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { pathToFileURL } from "node:url";
 import { runCommand as run } from "./local-production-parity/commands.mjs";
+import { spawnServices } from "./source-processes.mjs";
 
 const COMPOSE = [
   "docker",
@@ -15,7 +15,6 @@ const COMPOSE = [
 ];
 const STARTUP_TIMEOUT_MS = 180_000;
 const POLL_INTERVAL_MS = 1_000;
-const SHUTDOWN_TIMEOUT_MS = 5_000;
 
 export const LOCAL_DEVELOPMENT_SERVICES = [
   "@matrix-os/gateway",
@@ -25,6 +24,16 @@ export const LOCAL_DEVELOPMENT_SERVICES = [
 ];
 
 export const localServiceProcesses = [
+  {
+    name: "kernel-build",
+    cwd: "packages/kernel",
+    args: [
+      "../../node_modules/tsx/dist/cli.mjs", "watch", "--clear-screen=false",
+      "--include", "src/**/*", "--include", "tsconfig.json", "--include", "../../tsconfig.json",
+      "--exclude", "dist/**",
+      "../../scripts/build-typescript.mjs",
+    ],
+  },
   { name: "gateway", args: ["node_modules/tsx/dist/cli.mjs", "watch", "--clear-screen=false", "packages/gateway/src/main.ts"] },
   { name: "proxy", args: ["node_modules/tsx/dist/cli.mjs", "watch", "--clear-screen=false", "packages/proxy/src/main.ts"] },
   { name: "platform", args: ["node_modules/tsx/dist/cli.mjs", "watch", "--clear-screen=false", "packages/platform/src/main.ts"] },
@@ -193,72 +202,11 @@ export async function startLocalInfrastructure({
   log("Local infrastructure ready: PostgreSQL :5432, object storage :9100/:9101");
 }
 
-function spawnServices(env) {
-  const children = localServiceProcesses.map((service) => ({
-    name: service.name,
-    child: spawn(process.execPath, service.args, {
-      detached: process.platform !== "win32",
-      env,
-      stdio: "inherit",
-    }),
-  }));
-  const completions = children.map(({ name, child }) => new Promise((resolve) => {
-    child.once("error", (error) => resolve({ name, pid: child.pid, error }));
-    child.once("exit", (code, signal) => resolve({ name, pid: child.pid, code, signal }));
-  }));
-  const signalChildren = (signal) => {
-    for (const { child } of children) {
-      if (child.pid === undefined) continue;
-      if (process.platform === "win32") {
-        if (child.exitCode === null && !child.killed) child.kill(signal);
-        continue;
-      }
-      try {
-        process.kill(-child.pid, signal);
-      } catch (error) {
-        if (!(error instanceof Error && "code" in error && error.code === "ESRCH")) {
-          console.warn(`[local-dev] failed to stop process group ${child.pid}:`, error);
-        }
-      }
-    }
-  };
-  const allExited = Promise.all(completions);
-  const exited = Promise.race(completions).then((status) => {
-    if ("error" in status) {
-      throw new Error(`${status.name} failed to start${status.pid ? ` (pid ${status.pid})` : ""}: ${status.error.message}`);
-    }
-    if (status.code === 0 || status.signal === "SIGINT" || status.signal === "SIGTERM") return status;
-    throw new Error(
-      `${status.name} (pid ${status.pid ?? "unknown"}) exited with ${status.code ?? status.signal ?? "unknown status"}`,
-    );
-  });
-  let stopPromise;
-  const stop = (signal) => {
-    stopPromise ??= (async () => {
-      signalChildren(signal);
-      const stopped = await Promise.race([
-        allExited.then(() => true),
-        delay(SHUTDOWN_TIMEOUT_MS).then(() => false),
-      ]);
-      if (stopped) return;
-
-      signalChildren("SIGKILL");
-      const killed = await Promise.race([
-        allExited.then(() => true),
-        delay(1_000).then(() => false),
-      ]);
-      if (!killed) throw new Error("local services did not stop after SIGKILL");
-    })();
-    return stopPromise;
-  };
-  return { exited, stop };
-}
-
 export async function startLocalDevelopment({
   cancellationController = new AbortController(),
   startInfrastructure = startLocalInfrastructure,
   runCommand = run,
-  startServices = spawnServices,
+  startServices = (env) => spawnServices(localServiceProcesses, env),
   waitForHttp = waitForHttpChecks,
   log = console.log,
 } = {}) {

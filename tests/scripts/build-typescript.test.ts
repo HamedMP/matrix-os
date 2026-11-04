@@ -1,4 +1,4 @@
-import { lstat, mkdtemp, mkdir, readFile, readdir, rm, symlink, truncate, utimes, writeFile } from "node:fs/promises";
+import { chmod, lstat, mkdtemp, mkdir, readFile, readdir, rm, symlink, truncate, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { createRequire } from "node:module";
 import { spawn } from "node:child_process";
@@ -151,6 +151,24 @@ describe("incremental shared TypeScript builds", () => {
         return 0;
       })).toBe(0);
     } finally { process.umask(previous); }
+  });
+
+  it.skipIf(process.getuid?.() === 0)("builds with a read-only source parent and pre-provisioned writable generated directories", async () => {
+    const directory = await fixture();
+    const output = join(directory, ".matrix-build-output");
+    await mkdir(output, { mode: 0o700 });
+    await mkdir(join(directory, ".matrix-build-cache"), { mode: 0o700 });
+    await chmod(directory, 0o500);
+    try {
+      for (let revision = 2; revision <= 3; revision++) {
+        expect(await buildTypescript(directory, async (args: string[]) => {
+          await writeFile(join(args[args.indexOf("--outDir") + 1], "index.js"), `export const value = ${revision};\n`);
+          return 0;
+        })).toBe(0);
+        expect(await readFile(join(directory, "dist/index.js"), "utf8")).toContain(`value = ${revision}`);
+        expect(await readdir(output)).toEqual([]);
+      }
+    } finally { await chmod(directory, 0o700); }
   });
 
   it("serializes competing builds of the same package", async () => {
