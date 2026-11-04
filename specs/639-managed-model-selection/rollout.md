@@ -1,15 +1,16 @@
 # Postpaid Gateway rollout and verification
 
-This is a review checklist for a separately authorized deployment. Building or merging this PR does not change live accounts. Use an isolated candidate and disposable PostgreSQL before production rollout; no customer Chat replay is required for these checks.
+This is a review checklist for a separately authorized deployment and the authorized release of existing customer holds. Publishing this PR does not change live accounts. Merging Platform changes to `main` can trigger the production Platform workflow, so merge/promotion is an accounting transition as well as a code release. Use an isolated candidate and disposable PostgreSQL before rollout; no customer Chat replay is required for these checks.
 
 ## Compatibility and order
 
-1. Deploy the new Platform and schema generation 24 together. It accepts both immutable positive legacy captures and explicitly negotiated postpaid usage captures. Its cleanup worker changes expired AI requests to audited customer-charge releases; it must never conservatively charge a later batch of expired AI requests. Speech keeps its separate allowance rules.
-2. Verify the actual running Platform source, schema revision, worker configuration and health. Read the bounded inventory before and after a cleanup cycle, preserving private accounting evidence outside the public repository.
+1. Prepare the compatible Platform candidate and schema generation 24. It accepts immutable positive legacy captures, negotiated AI postpaid captures and internally captured Speech postpaid requests. Upgrade and verify the dedicated worker before promoting the Platform route; the production workflow deploys/verifies the worker before default-traffic promotion. Its cleanup must release expired AI and Speech customer holds with audits, never conservatively charge a later batch. Speech monthly usage limits remain separate from wallet credit.
+2. Verify actual Platform and worker source, schema revision, active routes and health. Drain older Speech handlers/workers before introducing new captures. Strict postpaid Speech state/receipt checks must also reject old writers rather than allowing a zero reservation to become invented actual zero. Read bounded inventory before/after a cleanup cycle, including suspended/non-primary legacy Speech records; preserve private evidence outside the public repository.
 3. Deploy the new Relay. New ordinary managed AI and Jev requests explicitly request `billingMode: "usage"` and `billingPolicy: "postpaid"`. A compatible Platform returns zero reserved credit and the exact requested provider liability ceiling. The Relay rejects mismatches and unsupported Platform responses before inference.
 4. Verify one isolated request chain through authorization, start and exact settlement with a deterministic local provider. New authorization must not change credit, monthly reserves or promotional allocations. Successful actual usage is charged once against eligible funds and the completion month's budget. Failure/unknown usage must retain its Matrix-expense disposition and not debit a subsequent top-up.
+5. Verify Speech through a deterministic local adapter and real operation/funding transaction. Wallet/source reservations remain zero; only its separately captured allowance lease may be occupied. Successful service cost follows validated audio duration and captured pricing. Timeout/cancellation/invalid response keeps unknown expense null and releases the matching allowance lease. Lost completion acknowledgement must replay the durable result without another debit or a contradictory waiver. Preview request limits remain enforced.
 
-An old Relay never requests the postpaid marker, so the upgraded Platform does not silently return zero to a legacy caller. Deploying the new Relay first produces a safe refusal against the old Platform and is not the intended rollout order.
+An old Relay never requests the postpaid marker, so the upgraded Platform does not silently return zero to a legacy AI caller. Deploying the new Relay first produces a safe refusal against the old Platform and is not the intended rollout order. Speech policy is captured internally by Platform; no public Gateway/client billing-policy field is introduced.
 
 ## Read-only inventory
 
@@ -21,7 +22,7 @@ bun scripts/inventory-expired-customer-credit.ts 100
 
 The tool requires verified TLS for remote databases, requires the postpaid-aware schema, does not run migrations and has no apply mode. Results include a bounded page, `hasMore` and a continuation cursor. Pass the returned cursor as the second argument to inspect the next page. It identifies captured holds and maximum unknown provider liability; releasing a hold does not establish zero provider expense or guarantee that expired promotional funding becomes spendable.
 
-The deployed cleanup worker and negotiated postpaid admission perform the audited policy transition. Do not replace that transition with direct balance updates, invented actual usage, deleted history or a bulk status patch.
+The compatible deployed cleanup worker and postpaid admission perform the audited policy transition. Include every supported expired AI/Speech variant and preserve original-period allowance disposition. A legacy individually reviewed waiver may refuse these records because of its narrower machine/deletion/other-request guards; do not bypass that refusal with raw balance resets. Do not invent actual usage, delete history, reactivate a suspended machine or mint replacement credit.
 
 ## Completion and rollback boundaries
 

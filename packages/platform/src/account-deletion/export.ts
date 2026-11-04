@@ -63,6 +63,7 @@ export async function exportOwnerPlatformData(db: PlatformDB, owner: string) {
     const aiRequests = await trx.executor.selectFrom('ai_funded_usage_reservations').select([
       'reservation_id','request_id','machine_id','runtime_slot','model_id','status','reserved_microusd','actual_microusd',
       'created_at','started_at','settled_at','released_at','customer_charge_release','settlement_response',
+      sql<number>`COALESCE((authorization_response::jsonb #>> '{reservation,maxCostMicrousd}')::bigint, reserved_microusd)`.as('maximum_liability_microusd'),
     ]).where('owner_id','=',owner).orderBy('reservation_id').limit(10001).execute();
     const registry = await sql<{present:boolean}>`SELECT to_regclass('public_sites') IS NOT NULL AS present`.execute(trx.executor);
     const sites = registry.rows[0]?.present ? await trx.executor.selectFrom('public_sites').select([

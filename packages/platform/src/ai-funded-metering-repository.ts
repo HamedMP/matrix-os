@@ -1,3 +1,4 @@
+import { isSpeechAuthorization } from "./speech/reservation-policy.js";
 import { readUsageWaiverAudit } from "./ai-funded-usage-waiver-audit.js";
 import { cleanupExpiredCustomerCharges, inventoryExpiredCustomerCharges } from "./ai-funded-customer-credit-cleanup.js";
 import { isPostpaidAuthorization, readCustomerChargeRelease, releaseCustomerCharge } from "./ai-funded-customer-charge-release.js";
@@ -527,7 +528,7 @@ export function createAiFundedMeteringRepository(options: AiFundedMeteringReposi
       const reservation = await trx.executor.selectFrom("ai_funded_usage_reservations")
         .selectAll().where("reservation_id", "=", request.reservationId)
         .where("token_id", "=", request.tokenId).forUpdate().executeTakeFirst();
-      if (!reservation) throw new AiFundedPolicyError("unauthorized");
+      if (!reservation || isSpeechAuthorization(reservation.authorization_response)) throw new AiFundedPolicyError("unauthorized");
       if (reservation.terminal_outcome !== null || reservation.execution_admission_release !== null || reservation.charge_waiver !== null || reservation.customer_charge_release !== null) throw new AiFundedPolicyError("reservation_closed");
       if (reservation.status === "in_flight") {
         if (reservation.start_response === null) throw new Error("In-flight reservation is missing its response");
@@ -605,9 +606,9 @@ export function createAiFundedMeteringRepository(options: AiFundedMeteringReposi
     await options.db.ready;
     const result = await options.db.transaction(async (trx) => {
       const locator = await trx.executor.selectFrom("ai_funded_usage_reservations")
-        .select(["machine_id", "owner_id"]).where("reservation_id", "=", request.reservationId)
+        .select(["machine_id", "owner_id", "authorization_response"]).where("reservation_id", "=", request.reservationId)
         .where("token_id", "=", request.tokenId).executeTakeFirst();
-      if (!locator) throw new AiFundedPolicyError("unauthorized");
+      if (!locator || isSpeechAuthorization(locator.authorization_response)) throw new AiFundedPolicyError("unauthorized");
       // Serialize with audited waiver/admission before locking the reservation.
       // Machine FK checks during ledger insertion must not invert waiver's machine/row locks.
       await sql`SELECT pg_advisory_xact_lock(hashtextextended(${`funded-ai-owner:${locator.owner_id}`}, 0))`.execute(trx.executor);
@@ -626,6 +627,7 @@ export function createAiFundedMeteringRepository(options: AiFundedMeteringReposi
       // owner lock. Wait for them before making any time-sensitive decisions.
       await trx.executor.selectFrom("ai_funded_runtime_balances").select("machine_id")
         .where("machine_id", "=", locator.machine_id).forUpdate().executeTakeFirstOrThrow();
+      if (isSpeechAuthorization(reservation.authorization_response)) throw new AiFundedPolicyError("unauthorized");
       // Lock waits may cross request/grant expiry or the UTC billing month.
       // All settlement decisions and audit timestamps use this locked instant.
       const checked = options.now();
@@ -885,15 +887,16 @@ export function createAiFundedMeteringRepository(options: AiFundedMeteringReposi
     await options.db.ready;
     return options.db.transaction(async (trx) => {
       const locator = await trx.executor.selectFrom("ai_funded_usage_reservations")
-        .select("machine_id").where("reservation_id", "=", request.reservationId)
+        .select(["machine_id", "authorization_response"]).where("reservation_id", "=", request.reservationId)
         .where("token_id", "=", request.tokenId).executeTakeFirst();
-      if (!locator) throw new AiFundedPolicyError("unauthorized");
+      if (!locator || isSpeechAuthorization(locator.authorization_response)) throw new AiFundedPolicyError("unauthorized");
       const runtime = await trx.executor.selectFrom("ai_funded_runtime_policies")
         .select("monthly_budget_microusd").where("machine_id", "=", locator.machine_id)
         .executeTakeFirstOrThrow();
       const reservation = await trx.executor.selectFrom("ai_funded_usage_reservations")
         .selectAll().where("reservation_id", "=", request.reservationId)
         .where("token_id", "=", request.tokenId).forUpdate().executeTakeFirstOrThrow();
+      if (isSpeechAuthorization(reservation.authorization_response)) throw new AiFundedPolicyError("unauthorized");
       if (reservation.status === "released") {
         if (reservation.release_reason !== request.reason || reservation.release_response === null) {
           throw new AiFundedPolicyError("idempotency_conflict");

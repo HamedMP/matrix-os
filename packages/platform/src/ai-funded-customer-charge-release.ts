@@ -1,3 +1,4 @@
+import { isSpeechAuthorization, readSpeechAuthorization, SpeechSettlementReceiptSchema } from "./speech/reservation-policy.js";
 import { createHash } from "node:crypto";
 import { FundedAiAuthorizationResponseSchema, FundedAiSettlementResponseSchema, IsoTimestampSchema } from "@matrix-os/contracts";
 import { sql, type Selectable } from "kysely";
@@ -10,7 +11,7 @@ import { reconcileExpiredPromotionalCredit } from "./ai-funded-reservation-sourc
 type Row = Selectable<AiFundedUsageReservationsTable>;
 type Executor = PlatformDB["executor"];
 const Money = z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER);
-const AuditSchema = z.object({
+const BaseAuditSchema = z.object({
   policy: z.literal("matrix-customer-credit-2026-11-04"),
   reservationId: z.string(), tokenId: z.string(), ownerId: z.string(), machineId: z.string(), runtimeSlot: z.string(),
   authorizationSha256: z.string().regex(/^[a-f0-9]{64}$/),
@@ -19,6 +20,19 @@ const AuditSchema = z.object({
   reason: z.enum(["gateway_failure", "usage_unknown", "expired_request", "legacy_expired_hold"]),
   releasedAt: IsoTimestampSchema,
 }).strict();
+const AuditSchema = z.union([
+  BaseAuditSchema.extend({ fundingKind: z.literal("ai").optional() }).strict(),
+  BaseAuditSchema.extend({ fundingKind: z.literal("speech"), allowanceReservedMicrousd: Money,
+    allowancePeriodStart: IsoTimestampSchema.nullable(), allowanceReleasedMicrousd: Money,
+    allowanceDisposition: z.enum(["released", "past-period", "no-lease"]) }).strict(),
+]);
+export function readCustomerFundingCapture(row: Row) {
+  if (isSpeechAuthorization(row.authorization_response)) return readSpeechAuthorization(row);
+  const captured = capturedAiAuthorization(row);
+  return { kind: "ai" as const, captured, postpaid: captured.reservation.billingPolicy === "postpaid",
+    maximumCostMicrousd: captured.reservation.maxCostMicrousd ?? captured.reservation.reservedMicrousd,
+    monthly: false, allowanceReservedMicrousd: 0, allowancePeriodStart: null };
+}
 export type CustomerChargeReleaseReason = z.infer<typeof AuditSchema>["reason"];
 
 /** Used by the write constraint and bounded corruption probes before index exclusions. */
@@ -38,6 +52,25 @@ export function customerChargeReleaseBindingSql() {
     AND (customer_charge_release::jsonb ->> 'maximumLiabilityMicrousd')::bigint =
       COALESCE((authorization_response::jsonb #>> '{reservation,maxCostMicrousd}')::bigint, reserved_microusd)
     AND customer_charge_release::jsonb ->> 'reason' IN ('gateway_failure', 'usage_unknown', 'expired_request', 'legacy_expired_hold')
+    AND (CASE WHEN authorization_response::jsonb ->> 'capability' = 'speech:transcribe' THEN
+      customer_charge_release::jsonb ->> 'fundingKind' = 'speech'
+      AND (customer_charge_release::jsonb ->> 'allowanceReservedMicrousd')::bigint =
+        CASE WHEN authorization_response::jsonb ->> 'fundingPolicy' = 'speech_monthly_v1'
+          THEN COALESCE((authorization_response::jsonb ->> 'allowanceReservedMicrousd')::bigint, reserved_microusd) ELSE 0 END
+      AND customer_charge_release::jsonb ->> 'allowancePeriodStart' IS NOT DISTINCT FROM
+        CASE WHEN authorization_response::jsonb ->> 'fundingPolicy' = 'speech_monthly_v1'
+          THEN COALESCE(authorization_response::jsonb ->> 'allowancePeriodStart', period_start) ELSE NULL END
+      AND ((customer_charge_release::jsonb ->> 'allowanceDisposition' = 'released'
+          AND (customer_charge_release::jsonb ->> 'allowanceReservedMicrousd')::bigint > 0
+          AND (customer_charge_release::jsonb ->> 'allowanceReleasedMicrousd')::bigint = (customer_charge_release::jsonb ->> 'allowanceReservedMicrousd')::bigint)
+        OR (customer_charge_release::jsonb ->> 'allowanceDisposition' = 'past-period'
+          AND (customer_charge_release::jsonb ->> 'allowanceReservedMicrousd')::bigint > 0
+          AND (customer_charge_release::jsonb ->> 'allowanceReleasedMicrousd')::bigint = 0)
+        OR (customer_charge_release::jsonb ->> 'allowanceDisposition' = 'no-lease'
+          AND (customer_charge_release::jsonb ->> 'allowanceReservedMicrousd')::bigint = 0
+          AND customer_charge_release::jsonb ->> 'allowancePeriodStart' IS NULL
+          AND (customer_charge_release::jsonb ->> 'allowanceReleasedMicrousd')::bigint = 0))
+      ELSE customer_charge_release::jsonb ->> 'fundingKind' IS NULL OR customer_charge_release::jsonb ->> 'fundingKind' = 'ai' END)
     AND customer_charge_release::jsonb ->> 'releasedAt' = released_at
     AND ((status = 'expired' AND actual_microusd IS NULL AND settlement_response IS NULL)
       OR (status = 'settled' AND actual_microusd IS NOT NULL
@@ -83,26 +116,38 @@ export function isPostpaidAuthorization(row: Row): boolean {
 export function readCustomerChargeRelease(row: Row) {
   try {
     const audit = AuditSchema.parse(JSON.parse(row.customer_charge_release!));
-    const captured = capturedAiAuthorization(row);
+    const capture = readCustomerFundingCapture(row);
     if (audit.reservationId !== row.reservation_id || audit.tokenId !== row.token_id
       || audit.ownerId !== row.owner_id || audit.machineId !== row.machine_id || audit.runtimeSlot !== row.runtime_slot
       || audit.authorizationSha256 !== createHash("sha256").update(row.authorization_response).digest("hex")
       || audit.reservedMicrousd !== exactInteger(row.reserved_microusd)
       || audit.promotionalReservedMicrousd !== (row.promotional_reserved_microusd === null ? null : exactInteger(row.promotional_reserved_microusd))
       || audit.addonReservedMicrousd !== (row.addon_reserved_microusd === null ? null : exactInteger(row.addon_reserved_microusd))
-      || audit.maximumLiabilityMicrousd !== (captured.reservation.maxCostMicrousd ?? captured.reservation.reservedMicrousd)
+      || audit.maximumLiabilityMicrousd !== capture.maximumCostMicrousd
       || audit.releasedMicrousd !== audit.reservedMicrousd || audit.releasedAt !== row.released_at
       || !["expired", "settled"].includes(row.status)) {
       throw new AiFundedPolicyError("idempotency_conflict");
     }
     if (row.status === "expired" && (row.actual_microusd !== null || row.settlement_response !== null)) throw new AiFundedPolicyError("idempotency_conflict");
     if (row.status === "settled") {
-      const settlement = FundedAiSettlementResponseSchema.parse(JSON.parse(row.settlement_response!));
+      const settlement = (capture.kind === "speech" ? SpeechSettlementReceiptSchema : FundedAiSettlementResponseSchema).parse(JSON.parse(row.settlement_response!));
       if (row.actual_microusd === null || settlement.actualCostMicrousd !== exactInteger(row.actual_microusd)
-        || settlement.chargedCostMicrousd !== 0 || settlement.matrixAbsorbedMicrousd !== settlement.actualCostMicrousd) {
+        || settlement.chargedCostMicrousd !== 0 || settlement.matrixAbsorbedMicrousd !== settlement.actualCostMicrousd
+        || settlement.reservationId !== row.reservation_id || settlement.requestId !== row.request_id || settlement.tokenId !== row.token_id
+        || settlement.settledAt !== row.settled_at || row.finalization_mode !== "exact"
+        || settlement.actualCostMicrousd > capture.maximumCostMicrousd) {
         throw new AiFundedPolicyError("idempotency_conflict");
       }
     }
+    if (capture.kind === "speech" && (!("fundingKind" in audit) || audit.fundingKind !== "speech"
+      || audit.allowanceReservedMicrousd !== capture.allowanceReservedMicrousd
+      || audit.allowancePeriodStart !== capture.allowancePeriodStart
+      || audit.allowanceReleasedMicrousd !== (audit.allowanceDisposition === "released" ? capture.allowanceReservedMicrousd : 0)
+      || (audit.allowanceDisposition === "no-lease" ? capture.allowanceReservedMicrousd !== 0 || capture.allowancePeriodStart !== null
+        : capture.allowanceReservedMicrousd <= 0 || capture.allowancePeriodStart === null))) {
+      throw new AiFundedPolicyError("idempotency_conflict");
+    }
+    if (capture.kind === "ai" && audit.fundingKind === "speech") throw new AiFundedPolicyError("idempotency_conflict");
     return audit;
   } catch (error) {
     if (error instanceof SyntaxError || error instanceof z.ZodError) throw new AiFundedPolicyError("idempotency_conflict");
@@ -116,24 +161,27 @@ export async function releaseCustomerCharge(executor: Executor, row: Row, reason
   if (!["reserved", "starting", "in_flight"].includes(row.status) || row.actual_microusd !== null || row.charge_waiver !== null) {
     throw new AiFundedPolicyError("reservation_closed");
   }
-  const captured = capturedAiAuthorization(row);
+  const capture = readCustomerFundingCapture(row);
   const reserved = exactInteger(row.reserved_microusd);
-  const audit = AuditSchema.parse({ policy: "matrix-customer-credit-2026-11-04",
+  await executor.selectFrom("ai_funded_runtime_balances").select("machine_id")
+    .where("machine_id", "=", row.machine_id).forUpdate().executeTakeFirstOrThrow();
+  const quota = capture.kind === "speech" ? await releaseSpeechAllowance(executor, row, capture, checkedAt) : undefined;
+  const audit = AuditSchema.parse({ ...(quota ? { fundingKind: "speech", ...quota } : {}), policy: "matrix-customer-credit-2026-11-04",
     reservationId: row.reservation_id, tokenId: row.token_id, ownerId: row.owner_id,
     machineId: row.machine_id, runtimeSlot: row.runtime_slot,
     authorizationSha256: createHash("sha256").update(row.authorization_response).digest("hex"),
     reservedMicrousd: reserved,
     promotionalReservedMicrousd: row.promotional_reserved_microusd === null ? null : exactInteger(row.promotional_reserved_microusd),
     addonReservedMicrousd: row.addon_reserved_microusd === null ? null : exactInteger(row.addon_reserved_microusd),
-    maximumLiabilityMicrousd: captured.reservation.maxCostMicrousd ?? reserved,
+    maximumLiabilityMicrousd: capture.maximumCostMicrousd,
     releasedMicrousd: reserved, reason, releasedAt: checkedAt });
   const released = await executor.updateTable("ai_funded_runtime_balances").set({
     reserved_microusd: sql<number>`reserved_microusd - ${reserved}`,
-    month_reserved_microusd: sql<number>`CASE WHEN month_period_start = ${row.period_start}
+    month_reserved_microusd: sql<number>`CASE WHEN ${capture.kind === "speech" && capture.monthly} THEN month_reserved_microusd WHEN month_period_start = ${row.period_start}
       THEN month_reserved_microusd - ${reserved} ELSE month_reserved_microusd END`, updated_at: checkedAt,
   }).where("machine_id", "=", row.machine_id).where("owner_id", "=", row.owner_id)
     .where(sql<boolean>`reserved_microusd >= ${reserved}`)
-    .where(sql<boolean>`month_period_start <> ${row.period_start} OR month_reserved_microusd >= ${reserved}`)
+    .where(sql<boolean>`(${capture.kind === "speech" && capture.monthly} OR month_period_start <> ${row.period_start} OR month_reserved_microusd >= ${reserved})`)
     .returning("machine_id").executeTakeFirst();
   if (!released) throw new Error("Funded AI balance invariant violated");
   await executor.updateTable("ai_funded_usage_reservations").set({ status: "expired", released_at: checkedAt,
@@ -143,4 +191,25 @@ export async function releaseCustomerCharge(executor: Executor, row: Row, reason
   // Closing the request first removes its old grant protection; normal expiry applies.
   await reconcileExpiredPromotionalCredit(executor, { ownerId: row.owner_id, machineId: row.machine_id, runtimeSlot: row.runtime_slot }, checkedAt);
   return audit;
+}
+
+/** Only the original allowance lease is released; never provision or renew here. */
+export async function releaseSpeechAllowance(executor: Executor, row: Row,
+  capture: ReturnType<typeof readSpeechAuthorization>, checkedAt: string) {
+  const amount = capture.allowanceReservedMicrousd;
+  let allowanceDisposition: "released" | "past-period" | "no-lease" = "no-lease";
+  if (amount > 0) {
+    const allowance = await executor.selectFrom("speech_runtime_allowances").selectAll()
+      .where("machine_id", "=", row.machine_id).where("owner_id", "=", row.owner_id)
+      .where("runtime_slot", "=", row.runtime_slot).forUpdate().executeTakeFirstOrThrow();
+    if (allowance.period_start !== capture.allowancePeriodStart) allowanceDisposition = "past-period";
+    else {
+      await executor.updateTable("speech_runtime_allowances").set({ period_reserved_microusd: sql<number>`period_reserved_microusd - ${amount}`,
+        updated_at: checkedAt }).where("machine_id", "=", row.machine_id).where("period_start", "=", capture.allowancePeriodStart!)
+        .where("period_reserved_microusd", ">=", amount).returning("machine_id").executeTakeFirstOrThrow();
+      allowanceDisposition = "released";
+    }
+  }
+  return { allowanceReservedMicrousd: amount, allowancePeriodStart: capture.allowancePeriodStart,
+    allowanceDisposition, allowanceReleasedMicrousd: allowanceDisposition === "released" ? amount : 0 };
 }

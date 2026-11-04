@@ -2,7 +2,7 @@
 
 Platform and gateway contract (research R10; technical design "Owner Funded-Admission Authority"). Schemas are in `packages/contracts/src/funded-ai.ts`.
 
-Credit-policy extension (2026-11-04): [postpaid managed AI](../../639-managed-model-selection/spec.md#customer-credit-policy-2026-11-04-scope-extension) keeps authenticated owner priority, idempotency, dispatch fencing and execution admission, but removes customer monetary holds for new negotiated requests. Failed/unknown requests and audited releases of stale legacy AI holds retain Matrix liability without preventing future customer Chat through the older recovered-unknown inventory caps. Speech allowance and legacy operator-recovery protocols retain their separate contracts.
+Credit-policy extension (2026-11-04): [postpaid managed AI](../../639-managed-model-selection/spec.md#customer-credit-policy-2026-11-04-scope-extension) keeps authenticated owner priority, idempotency, dispatch fencing and execution admission, but removes customer monetary holds for new negotiated requests. Failed/unknown requests and audited releases of stale legacy AI holds retain Matrix liability without preventing future customer Chat through the older recovered-unknown inventory caps. The later explicit Speech extension also removes Speech wallet holds while preserving its separate monthly usage limits; new Speech captures retain an independent liability ceiling. Legacy operator-recovery protocols retain their separate contracts.
 
 ## Credential issuance
 

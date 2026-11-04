@@ -95,7 +95,7 @@ describe("speech allowance owner isolation", () => {
       .where("machine_id", "=", first.machineId).executeTakeFirstOrThrow();
     expect(Number(target.period_reserved_microusd)).toBe(0);
     expect(Number(target.period_spent_microusd)).toBe(
-      operation === "settle" ? 40 : operation === "expire_in_flight" ? 80 : 0,
+      0,
     );
     expect(target.updated_at).toBe(clock.toISOString());
   });

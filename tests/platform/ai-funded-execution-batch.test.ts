@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { createHash, createHmac } from "node:crypto";
 import { Hono } from "hono";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createAiFundedPolicyRepository } from "../../packages/platform/src/ai-funded-policy-repository.js";
@@ -29,6 +29,34 @@ describe("atomic mixed GLM and speech execution recovery", () => {
       localRunId: `local-${row.request_id}`, localRunState: "failed", localRunEndedAt: row.expires_at })) });
   const send = (body: unknown, token = secret) => app.request("/execution-recovery/batch", { method: "POST",
     headers: { authorization: `Bearer ${token}`, "content-type": "application/json" }, body: JSON.stringify(body) });
+  // Persist the actual pre-policy producer shape. Today's zero-hold reserve is not historical evidence.
+  const legacySpeech = (owner: typeof identity, reservationId: string, requestId: string) => db.transaction(async trx => {
+    const tokenId = `speech_${createHmac("sha256", "s".repeat(32))
+      .update(`${owner.ownerId}\0${owner.machineId}\0${owner.runtimeSlot}`).digest("hex").slice(0, 48)}`;
+    const checkedAt = clock.toISOString();
+    await trx.executor.insertInto("ai_runtime_credentials").values({ token_id: tokenId,
+      token_hash: createHmac("sha256", "s".repeat(32)).update(`${tokenId}\0${owner.ownerId}\0${owner.machineId}\0${owner.runtimeSlot}`).digest("hex"),
+      owner_id: owner.ownerId, machine_id: owner.machineId, runtime_slot: owner.runtimeSlot,
+      audience: "matrix-platform-speech", scope: "speech:transcribe", issued_at: checkedAt,
+      expires_at: new Date(clock.getTime() + 86_400_000).toISOString(), revoked_at: null,
+    }).onConflict(c => c.column("token_id").doNothing()).execute();
+    await trx.executor.insertInto("ai_funded_usage_reservations").values({ reservation_id: reservationId, request_id: requestId,
+      payload_hash: createHash("sha256").update(JSON.stringify({ identity: owner, requestId, policyRevision: "speech-v1",
+        modelId: "speech-model", maximumCostMicrousd: 6_000 })).digest("hex"),
+      authorization_response: JSON.stringify({ capability: "speech:transcribe", policyRevision: "speech-v1" }),
+      token_id: tokenId, owner_id: owner.ownerId, machine_id: owner.machineId, runtime_slot: owner.runtimeSlot,
+      model_id: "speech-model", reserved_microusd: 6_000, promotional_reserved_microusd: 0, addon_reserved_microusd: 6_000,
+      period_start: "2026-09-01T00:00:00.000Z", status: "in_flight", created_at: checkedAt, started_at: checkedAt,
+      expires_at: new Date(clock.getTime() + 60_000).toISOString(),
+      start_response: JSON.stringify({ capability: "speech:transcribe", startedAt: checkedAt }),
+      actual_microusd: null, settlement_response: null, finalization_mode: null, settled_at: null, released_at: null,
+      release_response: null, release_reason: null, resolved_model: null, pricing_version: null,
+      manual_review_evidence_ref: null, manual_review_actor: null, manual_reviewed_at: null,
+    }).execute();
+    await trx.executor.updateTable("ai_funded_runtime_balances").set({
+      reserved_microusd: sql<number>`reserved_microusd + 6000`, month_reserved_microusd: sql<number>`month_reserved_microusd + 6000`,
+    }).where("machine_id", "=", owner.machineId).execute();
+  });
   beforeEach(async () => {
     ({ db } = await createTestPlatformDb()); clock = new Date("2026-09-10T12:00:00.000Z");
     repo = createAiFundedPolicyRepository({ db, credentialHashSecret: "h".repeat(32), now: () => new Date(clock), credentialTtlMs: 3_600_000, inFlightTtlMs: 60_000 });
@@ -42,10 +70,8 @@ describe("atomic mixed GLM and speech execution recovery", () => {
     await repo.startReservation({ reservationId: glm.reservation.reservationId, tokenId: credential.tokenId });
     let speechSequence = 0;
     speech = createAiFundedSpeechFundingPort({ allowedSources: ["addon"], credentialHashSecret: "s".repeat(32),
-      reservationIdFactory: () => ++speechSequence === 1 ? "speech-reservation" : `speech-reservation-${speechSequence}`, now: () => new Date(clock), inFlightTtlMs: 60_000 });
-    await db.transaction(async (trx) => { const executor = trx.executor as Transaction<PlatformDatabase>;
-      const r = await speech.reserve(executor, { identity, requestId: "speech-old", policyRevision: "speech-v1", modelId: "speech-model", maximumCostMicrousd: 6_000 });
-      await speech.start(executor, r.reservationId); });
+      reservationIdFactory: () => `speech-reservation-${++speechSequence}`, now: () => new Date(clock), inFlightTtlMs: 60_000 });
+    await legacySpeech(identity, "speech-reservation", "speech-old");
     clock = new Date(clock.getTime() + 20 * 60_000);
     app = createAiFundedOperatorRoutes({ db, operatorSecret: secret, repository: repo, promotionalGrant: { enabled: false }, now: () => new Date(clock) });
   });
@@ -66,14 +92,31 @@ describe("atomic mixed GLM and speech execution recovery", () => {
       .rejects.toMatchObject({ code: "rate_limited" });
     expect(oldRows.every((r) => r.actual_microusd === null)).toBe(true);
   });
-  it("retains recovered speech's unknown financial hold on a delayed conservative failure", async () => {
+  it("audits release of recovered speech's hold on unknown failure and absorbs late expense", async () => {
     expect((await send(await request())).status).toBe(200);
     const before = await finance(); const beforeRows = await rows();
-    await expect(db.transaction((trx) => speech.settle(trx.executor as Transaction<PlatformDatabase>, "speech-reservation", { mode: "conservative" })))
-      .rejects.toThrow();
-    expect(await finance()).toEqual(before); expect(await rows()).toEqual(beforeRows);
+    await db.transaction((trx) => speech.settle(trx.executor as Transaction<PlatformDatabase>, "speech-reservation", { mode: "conservative" }));
+    const released = (await rows()).find(r => r.reservation_id === "speech-reservation")!;
+    expect(released).toMatchObject({ status: "expired", actual_microusd: null, settlement_response: null,
+      authorization_response: beforeRows.find(r => r.reservation_id === "speech-reservation")!.authorization_response,
+      execution_admission_release: beforeRows.find(r => r.reservation_id === "speech-reservation")!.execution_admission_release });
+    expect(JSON.parse(released.customer_charge_release!)).toMatchObject({ fundingKind: "speech", reservedMicrousd: 6_000,
+      addonReservedMicrousd: 6_000, releasedMicrousd: 6_000, maximumLiabilityMicrousd: 6_000,
+      reason: "usage_unknown", allowanceDisposition: "no-lease" });
+    const after = await finance();
+    expect(after.ledger).toEqual(before.ledger); expect(after.grants).toEqual(before.grants);
+    expect(after.allocations).toEqual(before.allocations); expect(after.allowances).toEqual(before.allowances);
+    expect(Number(after.balances[0].credit_balance_microusd)).toBe(Number(before.balances[0].credit_balance_microusd));
+    expect(Number(after.balances[0].reserved_microusd)).toBe(Number(before.balances[0].reserved_microusd) - 6_000);
+    expect(Number(after.balances[0].month_reserved_microusd)).toBe(Number(before.balances[0].month_reserved_microusd) - 6_000);
+    await db.transaction((trx) => speech.settle(trx.executor as Transaction<PlatformDatabase>, "speech-reservation", { mode: "conservative" }));
+    expect(await finance()).toEqual(after);
     await db.transaction((trx) => speech.settle(trx.executor as Transaction<PlatformDatabase>, "speech-reservation", { mode: "exact", actualCostMicrousd: 1_000 }));
-    expect((await rows()).find(r => r.reservation_id === "speech-reservation")).toMatchObject({ status: "settled", actual_microusd: 1_000 });
+    const settled = (await rows()).find(r => r.reservation_id === "speech-reservation")!;
+    expect(settled).toMatchObject({ status: "settled", actual_microusd: 1_000, customer_charge_release: released.customer_charge_release });
+    expect(JSON.parse(settled.settlement_response!)).toMatchObject({ actualCostMicrousd: 1_000,
+      chargedCostMicrousd: 0, matrixAbsorbedMicrousd: 1_000 });
+    expect(await finance()).toEqual(after);
   });
   it.each(["liability", "identity", "hash", "kind", "early", "future", "outside-live"])("rolls back every row and financial byte for invalid %s", async (kind) => {
     const body = await request();
@@ -95,11 +138,7 @@ describe("atomic mixed GLM and speech execution recovery", () => {
       status: "running", imageVersion: "test", provisionedAt: clock.toISOString(), activationState: "authorized" });
     await repo.setRuntimePolicy({ identity: peer, expectedRevision: 0, enabled: true, allowedModelIds: [modelId], monthlyBudgetMicrousd: 10_000, expiresAt: null });
     await repo.grantCredit({ entryId: "batch-peer-credit", identity: peer, kind: "addon_grant", amountMicrousd: 10_000, sourceReference: "fixture" });
-    await db.transaction(async (trx) => {
-      const reserved = await speech.reserve(trx.executor as Transaction<PlatformDatabase>, { identity: peer, requestId: "speech-peer-old",
-        policyRevision: "speech-v1", modelId: "speech-model", maximumCostMicrousd: 6_000 });
-      await speech.start(trx.executor as Transaction<PlatformDatabase>, reserved.reservationId);
-    });
+    await legacySpeech(peer, "speech-reservation-peer", "speech-peer-old");
     clock = new Date(clock.getTime() + 20 * 60_000); const before = await finance(); const body = await request();
     expect(new Set(body.reservations.map((r) => r.machineId)).size).toBe(2);
     expect((await send(body)).status).toBe(200); expect(await finance()).toEqual(before);
@@ -131,19 +170,26 @@ describe("atomic mixed GLM and speech execution recovery", () => {
       .rejects.toMatchObject({ code: "idempotency_conflict" });
   });
 
-  it("cleanup releases the AI customer hold while preserving the recovered speech obligation", async () => {
+  it("cleanup audits release of both recovered customer holds and retains unknown liabilities", async () => {
     expect((await send(await request())).status).toBe(200);
     const beforeRows = await rows(); const before = await finance();
-    expect(await repo.cleanupExpiredReservations({ limit: 100 })).toBe(1);
+    expect(await repo.cleanupExpiredReservations({ limit: 100 })).toBe(2);
     const afterRows = await rows(); const after = await finance();
-    expect(afterRows.find(row => row.reservation_id === "speech-reservation"))
-      .toEqual(beforeRows.find(row => row.reservation_id === "speech-reservation"));
-    expect(afterRows.find(row => row.request_id === "glm-old"))
-      .toMatchObject({ status: "expired", actual_microusd: null, customer_charge_release: expect.any(String) });
+    for (const row of afterRows) {
+      const original = beforeRows.find(old => old.reservation_id === row.reservation_id)!;
+      expect(row).toMatchObject({ status: "expired", actual_microusd: null, settlement_response: null,
+        authorization_response: original.authorization_response, execution_admission_release: original.execution_admission_release });
+      expect(JSON.parse(row.customer_charge_release!)).toMatchObject({ reservedMicrousd: Number(original.reserved_microusd),
+        releasedMicrousd: Number(original.reserved_microusd), maximumLiabilityMicrousd: Number(original.reserved_microusd),
+        reason: "legacy_expired_hold" });
+    }
     expect(after.ledger).toEqual(before.ledger); expect(after.grants).toEqual(before.grants);
     expect(after.allocations).toEqual(before.allocations); expect(after.allowances).toEqual(before.allowances);
     expect(Number(after.balances[0].credit_balance_microusd)).toBe(Number(before.balances[0].credit_balance_microusd));
-    expect(Number(after.balances[0].reserved_microusd)).toBe(6_000);
+    expect(Number(after.balances[0].reserved_microusd)).toBe(0);
+    expect(Number(after.balances[0].month_reserved_microusd)).toBe(0);
+    expect(await repo.cleanupExpiredReservations({ limit: 100 })).toBe(0);
+    expect(await rows()).toEqual(afterRows); expect(await finance()).toEqual(after);
   });
 
   it.each(["usage", "speech", "speech-corrupt-audit"] as const)("handles a previously recovered speech operation after late %s settlement", async (settledKind) => {

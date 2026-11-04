@@ -1,4 +1,4 @@
-import { createHash, randomUUID } from "node:crypto";
+import { createHash, createHmac, randomUUID } from "node:crypto";
 import { sql, type Transaction } from "kysely";
 import pg from "pg";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
@@ -53,7 +53,35 @@ describe.skipIf(!url)("funded terminal owner lock with independent PostgreSQL po
   });
   afterAll(async () => { await b?.destroy(); await a?.destroy(); if (admin) { await admin.query(`DROP SCHEMA IF EXISTS "${schema}" CASCADE`); await admin.end(); } });
   async function oldMixed() {
-    const r = await reserveSpeech(a, "old-speech"); await a.transaction((trx) => speech.start(trx.executor as Transaction<PlatformDatabase>, r.reservationId));
+    // Seed the former compact capture and its positive add-on/general-month hold directly.
+    // Current Speech reserve intentionally produces zero monetary holds and is not a legacy fixture.
+    await a.transaction(async trx => {
+      const tokenId = `speech_${createHmac("sha256", "s".repeat(32))
+        .update(`${identity.ownerId}\0${identity.machineId}\0${identity.runtimeSlot}`).digest("hex").slice(0, 48)}`;
+      const checkedAt = clock.toISOString();
+      await trx.executor.insertInto("ai_runtime_credentials").values({ token_id: tokenId,
+        token_hash: createHmac("sha256", "s".repeat(32)).update(`${tokenId}\0${identity.ownerId}\0${identity.machineId}\0${identity.runtimeSlot}`).digest("hex"),
+        owner_id: identity.ownerId, machine_id: identity.machineId, runtime_slot: identity.runtimeSlot,
+        audience: "matrix-platform-speech", scope: "speech:transcribe", issued_at: checkedAt,
+        expires_at: new Date(clock.getTime() + 86_400_000).toISOString(), revoked_at: null,
+      }).execute();
+      await trx.executor.insertInto("ai_funded_usage_reservations").values({ reservation_id: "speech-legacy-race", request_id: "old-speech",
+        payload_hash: createHash("sha256").update(JSON.stringify({ identity, requestId: "old-speech", policyRevision: "speech-v1",
+          modelId: "speech-model", maximumCostMicrousd: 100 })).digest("hex"),
+        authorization_response: JSON.stringify({ capability: "speech:transcribe", policyRevision: "speech-v1" }),
+        token_id: tokenId, owner_id: identity.ownerId, machine_id: identity.machineId, runtime_slot: identity.runtimeSlot,
+        model_id: "speech-model", reserved_microusd: 100, promotional_reserved_microusd: 0, addon_reserved_microusd: 100,
+        period_start: "2026-09-01T00:00:00.000Z", status: "in_flight", created_at: checkedAt, started_at: checkedAt,
+        expires_at: new Date(clock.getTime() + 60_000).toISOString(),
+        start_response: JSON.stringify({ capability: "speech:transcribe", startedAt: checkedAt }),
+        actual_microusd: null, settlement_response: null, finalization_mode: null, settled_at: null, released_at: null,
+        release_response: null, release_reason: null, resolved_model: null, pricing_version: null,
+        manual_review_evidence_ref: null, manual_review_actor: null, manual_reviewed_at: null,
+      }).execute();
+      await trx.executor.updateTable("ai_funded_runtime_balances").set({
+        reserved_microusd: sql<number>`reserved_microusd + 100`, month_reserved_microusd: sql<number>`month_reserved_microusd + 100`,
+      }).where("machine_id", "=", identity.machineId).execute();
+    });
     clock = new Date(clock.getTime() + 20 * 60_000); return batch();
   }
   async function strongStart(requestId: string) {
@@ -175,7 +203,9 @@ describe.skipIf(!url)("funded terminal owner lock with independent PostgreSQL po
     expect(result[1].status).toBe("fulfilled");
     const released = (await rows()).filter((r) => r.execution_admission_release !== null);
     expect(released).toHaveLength(result[0].status === "fulfilled" ? 2 : 0);
-    expect(Number((await financial()).balances[0].reserved_microusd)).toBe(300);
+    expect(Number((await financial()).balances[0].reserved_microusd)).toBe(200);
+    const fresh = (await rows()).find(row => row.request_id === "new-speech")!;
+    expect([fresh.reserved_microusd, fresh.promotional_reserved_microusd, fresh.addon_reserved_microusd].map(Number)).toEqual([0, 0, 0]);
   });
   it("speech start waits for the same owner lock before taking its reservation lock", async () => {
     const r = await reserveSpeech(a, "waiting-speech"); const locked = Promise.withResolvers<void>(); const release = Promise.withResolvers<void>();
@@ -210,7 +240,10 @@ describe.skipIf(!url)("funded terminal owner lock with independent PostgreSQL po
     });
     await locked.promise;
     const mutation = action === "complete"
-      ? opsB.complete(identity, requestId, { executionState: "succeeded", outcomeCode: "transcript", actualCostMicrousd: 10 }, (trx, id, actual) => speech.settle(trx, id, { mode: "exact", actualCostMicrousd: actual }))
+      ? opsB.complete(identity, requestId, { executionState: "succeeded", outcomeCode: "transcript", actualCostMicrousd: 10 }, (trx, id, actual) => {
+          if (actual === null) throw new Error("Successful Speech completion requires known actual cost");
+          return speech.settle(trx, id, { mode: "exact", actualCostMicrousd: actual });
+        })
       : opsB.cancel(identity, requestId, (trx, id) => speech.release(trx, id));
     let rowUnlocked = true;
     try {

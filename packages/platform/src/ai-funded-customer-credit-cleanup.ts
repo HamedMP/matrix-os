@@ -1,7 +1,7 @@
 import { NoResultError, sql, type Selectable } from "kysely";
 import { z } from "zod/v4";
 import type { AiFundedUsageReservationsTable, PlatformDB } from "./db.js";
-import { capturedAiAuthorization, readCustomerChargeRelease, releaseCustomerCharge } from "./ai-funded-customer-charge-release.js";
+import { readCustomerFundingCapture, readCustomerChargeRelease, releaseCustomerCharge } from "./ai-funded-customer-charge-release.js";
 import { readFundedRecoveryAudit } from "./ai-funded-recovery-audit.js";
 import { AiFundedPolicyError } from "./ai-funded-policy-errors.js";
 import { FundedReferenceSchema } from "./ai-funded-metering-helpers.js";
@@ -18,12 +18,11 @@ function expiredCustomerRequests(executor: Executor, checkedAt: string) {
     .where("status", "in", [...ACTIVE]).where("expires_at", "<=", checkedAt)
     .where("customer_charge_release", "is", null).where("charge_waiver", "is", null)
     .where("actual_microusd", "is", null)
-    // Speech owns a separate monthly allowance and is never adopted here.
-    .where(sql<boolean>`authorization_response::jsonb ->> 'capability' IS DISTINCT FROM 'speech:transcribe'`);
+;
 }
 
 function validateLegacyCandidate(row: Selectable<AiFundedUsageReservationsTable>) {
-  const captured = capturedAiAuthorization(row);
+  const captured = readCustomerFundingCapture(row);
   if (row.execution_admission_release !== null) readFundedRecoveryAudit(row);
   return captured;
 }
@@ -47,9 +46,9 @@ export async function inventoryExpiredCustomerCharges(options: { db: PlatformDB;
     items: rows.slice(0, limit).map(row => {
       const captured = validateLegacyCandidate(row);
       return { reservationId: row.reservation_id, ownerId: row.owner_id, machineId: row.machine_id,
-        runtimeSlot: row.runtime_slot, startedAt: row.started_at, expiresAt: row.expires_at,
+        runtimeSlot: row.runtime_slot, fundingKind: captured.kind, allowanceReservedMicrousd: captured.allowanceReservedMicrousd, startedAt: row.started_at, expiresAt: row.expires_at,
         releaseMicrousd: Number(row.reserved_microusd), providerUsageKnown: false,
-        maximumLiabilityMicrousd: captured.reservation.maxCostMicrousd ?? captured.reservation.reservedMicrousd };
+        maximumLiabilityMicrousd: captured.maximumCostMicrousd };
     }) };
 }
 
@@ -68,7 +67,7 @@ export async function cleanupOwnerCustomerCharges(executor: Executor, ownerId: s
       if (row.customer_charge_release !== null) { readCustomerChargeRelease(row); continue; }
       if (!ACTIVE.includes(row.status as typeof ACTIVE[number]) || row.actual_microusd !== null || row.expires_at > checkedAt || row.charge_waiver !== null) continue;
       const captured = validateLegacyCandidate(row);
-      await releaseCustomerCharge(executor, row, captured.reservation.billingPolicy === "postpaid" ? "expired_request" : "legacy_expired_hold", checkedAt);
+      await releaseCustomerCharge(executor, row, captured.postpaid ? "expired_request" : "legacy_expired_hold", checkedAt);
       cleaned++;
     } catch (error) {
       await sql`ROLLBACK TO SAVEPOINT customer_credit_candidate`.execute(executor);

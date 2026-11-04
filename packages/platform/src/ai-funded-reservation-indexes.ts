@@ -31,7 +31,7 @@ export async function ensureFundedReservationIndexes(db: Kysely<PlatformDatabase
     GROUP BY owner_id
     HAVING COUNT(*) > ${FUNDED_EXECUTION_RECOVERY_MAX_UNKNOWN}
       OR SUM(CASE WHEN authorization_response::jsonb ->> 'capability' = 'speech:transcribe'
-        THEN reserved_microusd ELSE (authorization_response::jsonb #>> '{reservation,maxCostMicrousd}')::bigint END)
+        THEN COALESCE((authorization_response::jsonb #>> '{reservation,maxCostMicrousd}')::bigint, reserved_microusd) ELSE (authorization_response::jsonb #>> '{reservation,maxCostMicrousd}')::bigint END)
         > ${FUNDED_EXECUTION_RECOVERY_MAX_LIABILITY_MICROUSD}
     LIMIT 1
   `.execute(db);
@@ -59,6 +59,7 @@ export async function ensureFundedReservationIndexes(db: Kysely<PlatformDatabase
       ON ai_funded_usage_reservations(owner_id)
       WHERE status IN ('reserved', 'starting', 'in_flight', 'settling')
         AND authorization_response::jsonb #>> '{reservation,billingMode}' = 'usage'
+        AND authorization_response::jsonb ->> 'capability' IS DISTINCT FROM 'speech:transcribe'
         AND execution_admission_release IS NULL;
     END $$
   `.execute(db);
