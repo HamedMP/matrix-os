@@ -102,6 +102,7 @@ export const chatReload = jest.fn();
 /** What the mocked hooks answer with. `reset` puts it back before each test. */
 export const state = {
   agentId: "bot_research1",
+  scheduleParams: undefined as {scheduleChatId: string; scheduleScope: string} | undefined,
   agents: [] as unknown[],
   statuses: {} as Record<string, unknown>,
   ensure: { isError: false } as { data?: string; variables?: string; isError: boolean },
@@ -127,6 +128,7 @@ export function reset() {
   router.canDismiss.mockReturnValue(true);
   router.canGoBack.mockReturnValue(true);
   state.agentId = "bot_research1";
+  state.scheduleParams = undefined;
   state.agents = [research, custom];
   state.statuses = {
     bot_research1: { state: "attention", label: "Approval requested", chatId: "chat_research", lastActivityAt: null },
@@ -162,7 +164,8 @@ export function sheetModule() {
 
 export function expoRouterModule() {
   return {
-    useLocalSearchParams: () => ({ agentId: state.agentId }),
+    useIsFocused:()=>true,
+    useLocalSearchParams: () => ({ agentId: state.agentId, ...state.scheduleParams }),
     useRouter: () => router,
   };
 }

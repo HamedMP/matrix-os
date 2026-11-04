@@ -5,6 +5,7 @@ import { act, cleanup, fireEvent, render, screen } from "@testing-library/react"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { useConnection } from "../../desktop/src/renderer/src/stores/connection";
 import type { MatrixAnthropicConnectionClient } from "../../packages/ui/src/agents-providers/matrix-anthropic-connection-client.js";
+import type { BrowserSpeechClient } from "../../packages/ui/src/speech/browser-client.js";
 
 const mocks = vi.hoisted(() => ({
   controller: vi.fn(),
@@ -16,6 +17,7 @@ const mocks = vi.hoisted(() => ({
 vi.mock("@matrix-os/ui", async () => ({
   ...await import("../../packages/ui/src/agents-providers/provider-workflow-client.js"),
   ...await import("../../packages/ui/src/agents-providers/matrix-anthropic-connection-client.js"),
+  ...await import("../../packages/ui/src/speech/browser-client.js"),
   AgentsProvidersView: mocks.view,
   useProviderSettingsController: mocks.controller,
 }));
@@ -54,6 +56,29 @@ describe("desktop shared agents and providers adapter", () => {
     vi.restoreAllMocks();
     vi.unstubAllGlobals();
     useConnection.setState(useConnection.getInitialState(), true);
+  });
+
+  it("binds the Settings dictation allowance read to the selected Electron runtime", async () => {
+    const capabilities = {
+      contractVersion: 1,
+      previewQuota: { mode: "preview", requestLimit: 25, requestsUsed: 1, requestsRemaining: 24,
+        maxConcurrency: 1, expiresAt: "2026-10-20T16:45:00.000Z" },
+      fileTranscription: { status: "ready", dictation: { enabled: true, maxBytes: 1_024,
+        maxDurationMs: 120_000, maxTranscriptChars: 32_000, supportedMediaTypes: ["audio/wav"], languageHints: false },
+        ownerAudio: { enabled: false } },
+    };
+    const fetcher = vi.fn<typeof fetch>().mockResolvedValue(Response.json(capabilities));
+    vi.stubGlobal("fetch", fetcher);
+    render(<AgentsProvidersAdapter />);
+    const props = mocks.view.mock.calls.at(-1)![0] as unknown as { speechClient: BrowserSpeechClient };
+
+    await expect(props.speechClient.capabilities()).resolves.toMatchObject({
+      previewQuota: { requestsRemaining: 24 },
+    });
+    expect(fetcher).toHaveBeenCalledWith(
+      "https://app.matrix-os.com/api/speech/capabilities?runtime=vm-2",
+      expect.objectContaining({ method: "GET", credentials: "include", redirect: "error" }),
+    );
   });
 
   it.each(["runtime", "owner", "user ID", "credential", "unmount"])(
