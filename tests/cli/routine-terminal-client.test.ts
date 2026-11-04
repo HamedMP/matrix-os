@@ -7,7 +7,7 @@ import { join } from "node:path";
 import { createServer } from "node:net";
 import { executeTerminalRoutineOperation, validateTerminalBrokerLocation } from "../../packages/sync-client/src/cli/routine-terminal-client.js";
 const cleanup: (() => Promise<unknown>)[] = [];
-afterEach(async () => { for (const close of cleanup.splice(0).reverse()) await close(); });
+afterEach(async () => { vi.useRealTimers(); for (const close of cleanup.splice(0).reverse()) await close(); });
 describe("ordinary CLI Terminal broker discovery is a location only", () => {
   it.each(['http://localhost/x', '/tmp/routine.sock', 'unix:///tmp/x', '/tmp/matrix-terminal-' + 'a'.repeat(32) + '/../routine.sock', '/tmp/matrix-terminal-' + 'a'.repeat(32) + '/routine.sock?owner=me'])('rejects invalid location %s', value => {
     expect(() => validateTerminalBrokerLocation(value)).toThrow();
@@ -56,6 +56,24 @@ describe("Terminal mutation uncertainty", () => {
     await expect(executeTerminalRoutineOperation(operation, controller.signal, b.path)).resolves.toEqual({ kind: "unknown", requestId, disposition: "unknown", reconcile: true });
     await vi.waitFor(() => expect(b.cancelled()).toBe(1));
     expect(b.connections()).toBe(1); expect(b.requests.map(value => JSON.parse(value))).toEqual([operation]);
+  });
+  it.each(["list", "pause"] as const)("real socket %s keeps only its applicable bounded wait", async kind => {
+    let reached!: () => void; const entered = new Promise<void>(resolve => { reached = resolve; });
+    const b = await broker(() => reached()), controller = new AbortController(), requestId = randomUUID();
+    const operation = kind === "list" ? { operation: "list" as const }
+      : { operation: "pause" as const, routineId: "rt_" + "a".repeat(24), baseRevision: 1, requestId };
+    vi.useFakeTimers();
+    const result = executeTerminalRoutineOperation(operation, controller.signal, b.path);
+    let settled = false; void result.then(() => { settled = true; }, () => { settled = true; });
+    try {
+      await entered;
+      await vi.advanceTimersByTimeAsync(kind === "list" ? 9_999 : 1_800_000);
+      expect(settled).toBe(false); expect(b.requests).toHaveLength(1);
+      await vi.advanceTimersByTimeAsync(kind === "list" ? 1 : 30_000);
+      if (kind === "list") await expect(result).rejects.toHaveProperty("code", "unavailable");
+      else expect(await result).toEqual({ kind: "unknown", requestId, disposition: "unknown", reconcile: true });
+      expect(b.requests).toHaveLength(1);
+    } finally { controller.abort(); vi.useRealTimers(); await Promise.allSettled([result]); }
   });
   it("does not connect to broker when private IPC is present but disconnected", async () => {
     const b = await broker(() => { throw new Error("Unexpected fallback"); });

@@ -1,3 +1,4 @@
+import { ROUTINE_CLI_INVOCATION_TIMEOUT_MS } from "@matrix-os/contracts/routine-cli";
 import { boundedOperation } from "../bounded-operation.js";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { randomUUID } from "node:crypto";
@@ -61,7 +62,7 @@ export function createCodexRoutineSources(port: NativeRoutineCliPort | undefined
           const source = await boundedOperation(() => registration!, 10_000, actionSignal);
           if (!live() || actionSignal.aborted) return;
           invoker ??= createFixedNativeRoutineCliInvoker({ binPath: port!.binPath, endpoint: port!.endpoint, cwd: homePath, homePath,
-            authorize: source.authorize, issue: source.issue, cancel: source.cancel, timeoutMs: 120_000 });
+            authorize: source.authorize, issue: source.issue, cancel: source.cancel, timeoutMs: ROUTINE_CLI_INVOCATION_TIMEOUT_MS });
           const result = RoutineCliEnvelopeSchema.parse(await invoker.invoke({ ...intent.data, signal: actionSignal }));
           if (live() && binding && frame.turnId === binding.turnId && frame.nativeGeneration === binding.nativeGeneration) channel?.send({ type: "host.result", admissionId, actionId: frame.actionId, result: JSON.stringify(result) });
         } catch (error) {

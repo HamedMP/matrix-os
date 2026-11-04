@@ -1,5 +1,5 @@
 import { ROUTINE_CLI_SAFE_ERRORS } from "@matrix-os/contracts/routine-cli";
-import { afterEach, expect, it } from "vitest";
+import { afterEach, expect, it, vi } from "vitest";
 import { readFile, readdir, symlink, mkdtemp, rm, mkdir, writeFile, utimes, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
@@ -152,4 +152,24 @@ it("initialization timeout sends one original prompt and ignores a late successf
   const hook = createClaudeRoutineHook({ signal: new AbortController().signal, initTimeoutMs: 1, write: async frame => { frames.push(JSON.parse(frame)); }, startInput: async () => { prompts++; }, fail: () => {}, execute: async () => "unused" });
   closers.push(hook.close); await hook.start(); await new Promise(resolve => setTimeout(resolve, 5)); expect(prompts).toBe(1);
   hook.handle(init(frames[0].request_id)); await Promise.resolve(); expect(prompts).toBe(1);
+});
+
+it("keeps the original native callback pending beyond two minutes and cleans up on source abort", async () => {
+  vi.useFakeTimers();
+  // Native AbortSignal.timeout uses an internal real clock. Bridge it to this
+  // isolated clock while retaining the production hook's actual timeout value.
+  vi.spyOn(AbortSignal, "timeout").mockImplementation(ms => { const abort = new AbortController(); setTimeout(() => abort.abort(), ms); return abort.signal; });
+  const source = new AbortController(), frames: WrittenFrame[] = []; let release!: (value: string) => void, activeSignal!: AbortSignal;
+  const hook = createClaudeRoutineHook({ signal: source.signal, write: async text => { frames.push(JSON.parse(text)); }, startInput: async () => {}, fail: () => {},
+    execute: async (_command, signal) => { activeSignal = signal; return new Promise(resolve => { release = resolve; }); } });
+  try {
+    await hook.start(); const initialize = frames[0]!, cb = initialize.request.hooks.PreToolUse[0]!.hookCallbackIds[0]!;
+    expect(initialize.request.hooks.PreToolUse[0]).toMatchObject({ timeout: 1830 });
+    hook.handle(init(initialize.request_id)); hook.handle({ ...system, claude_code_version: "2.1.317" }); hook.handle(partial());
+    hook.handle(callback(cb, "long-owner-wait", "tool-one", "matrix routines pause rt_aaaaaaaaaaaaaaaaaaaaaaaa --revision 1 --request-id de000000-0000-4000-8000-000000000100"));
+    await vi.advanceTimersByTimeAsync(1_800_000);
+    expect(activeSignal.aborted).toBe(false); expect(frames).toHaveLength(1);
+    source.abort(); expect(activeSignal.aborted).toBe(true); await hook.close();
+    release("/bin/cat -- '/tmp/display'"); await vi.advanceTimersByTimeAsync(0); expect(frames).toHaveLength(1);
+  } finally { source.abort(); release?.("/bin/cat -- '/tmp/display'"); await hook.close(); vi.restoreAllMocks(); vi.useRealTimers(); }
 });
