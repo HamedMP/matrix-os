@@ -1,6 +1,7 @@
 import { getActiveUserMachineByHandle, type PlatformDB, type UserMachineRecord } from './db.js';
 import { CustomerVpsError } from './customer-vps-errors.js';
 import { PREVIEW_RUNTIME_SLOT_PATTERN, PRIVATE_PREVIEW_HANDLE_PATTERN } from './customer-vps-schema.js';
+import { PAIR_PREVIEW_HANDLE_PATTERN } from '@matrix-os/clerk-sync';
 
 const PR_PREVIEW_HOST_PATTERN = /^pr-([1-9][0-9]{0,8})\.preview\.matrix-os\.com$/;
 
@@ -26,8 +27,9 @@ export function isPreviewMachine(
   machine: Pick<UserMachineRecord, 'handle' | 'runtimeSlot' | 'provisioningClass'>,
 ): boolean {
   return machine.provisioningClass === 'preview'
-    && PREVIEW_RUNTIME_SLOT_PATTERN.test(machine.handle)
-    && (machine.runtimeSlot === machine.handle || machine.runtimeSlot === 'preview');
+    && ((PREVIEW_RUNTIME_SLOT_PATTERN.test(machine.handle)
+      && (machine.runtimeSlot === machine.handle || machine.runtimeSlot === 'preview'))
+      || (PAIR_PREVIEW_HANDLE_PATTERN.test(machine.handle) && machine.runtimeSlot === machine.handle));
 }
 
 /** Find a preview even when a customer primary machine shares its handle. */
@@ -35,7 +37,7 @@ export async function getActivePreviewMachineByHandle(
   db: PlatformDB,
   handle: string,
 ): Promise<UserMachineRecord | undefined> {
-  if (!PREVIEW_RUNTIME_SLOT_PATTERN.test(handle)) return undefined;
+  if (!PREVIEW_RUNTIME_SLOT_PATTERN.test(handle) && !PAIR_PREVIEW_HANDLE_PATTERN.test(handle)) return undefined;
   for (const runtimeSlot of [handle, 'preview']) {
     const machine = await getActiveUserMachineByHandle(db, handle, runtimeSlot);
     if (machine && isPreviewMachine(machine)) return machine;
@@ -81,7 +83,8 @@ export function canClerkUserAccessMachine(
   clerkUserId: string,
 ): boolean {
   if (machine.clerkUserId === clerkUserId) return true;
-  return isPreviewMachine(machine) && machine.accessClerkUserIds.includes(clerkUserId);
+  return PREVIEW_RUNTIME_SLOT_PATTERN.test(machine.handle)
+    && isPreviewMachine(machine) && machine.accessClerkUserIds.includes(clerkUserId);
 }
 
 export function assertPreviewProvisioningCapacity(

@@ -109,3 +109,12 @@ remain occupied while cleanup is pending or provider absence is unknown.
   retention; never persist raw user prompts or secrets for lifecycle diagnosis.
 - Related writes are transactional. Only root-owned DB wrappers destroy pools;
   transaction/injected wrappers never close shared resources.
+
+### Pinned update target and currency
+
+During `updating`, `requested_source_sha` is the immutable source selected for
+the next generation. A later observed head only changes `outdated`; it cannot
+replace that target. Completing reset preserves this target-currency flag. Outside
+an update, the field records a newer observed head; identical observations are
+no-ops and a return to the pinned running source clears it. Explicit update starts
+with a newly verified current candidate and clears the prior currency warning.
