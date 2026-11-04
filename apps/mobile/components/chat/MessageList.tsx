@@ -73,7 +73,7 @@ function Message({
 }: Pick<MessageListProps, "chatId" | "renderResults" | "renderComputerPhoto"> & { message: TranscriptMessage }) {
   // A message that was not sent offers what the chat it is shown in can do about it.
   const unsent = useUnsentMessageActions();
-  if (message.role === "user") {
+  if (message.role === "user" || message.scheduledMessage) {
     const failed = message.delivery === "failed" && unsent !== null;
     return (
       <UserMessage
@@ -83,6 +83,7 @@ function Message({
         renderComputerPhoto={renderComputerPhoto}
         delivery={message.delivery}
         scheduled={message.scheduled}
+        scheduledMessage={message.scheduledMessage}
         scheduleEvent={message.scheduleEvent}
         onRetry={failed ? () => unsent.onRetry(message.id) : undefined}
         onEdit={failed ? () => unsent.onEdit(message.id) : undefined}

@@ -1,6 +1,7 @@
 import { canonicalChatToolActivities, canonicalChatInputs, canonicalChatApprovals, canonicalChatTerminalNotices, canonicalAssistantOutputMessages, type CanonicalChatDetailResponse } from "@matrix-os/contracts";
 import type { ChatMessage } from "./chat";
 import { projectCanonicalMessages } from "./canonical-chat-client";
+import { nativeScheduledMessage } from "@matrix-os/ui/chat-scheduled-message";
 
 /** Keep terminal outcomes attached to their turn, using only safe fixed copy. */
 export function projectCanonicalTranscript(detail: CanonicalChatDetailResponse): ChatMessage[] {
@@ -10,6 +11,8 @@ export function projectCanonicalTranscript(detail: CanonicalChatDetailResponse):
   const sourceById = Object.fromEntries(detail.messages.map((message) => [message.id, message]));
   for (const message of messages) {
     const source = sourceById[message.id];
+    const scheduled = source && nativeScheduledMessage(source, { chatId: detail.record?.chat.id, turns: detail.turns, runs: detail.runs });
+    if (scheduled) message.scheduledMessage = scheduled;
     const context = source?.turnId ? contextsByTurn[source.turnId] : undefined;
     if (source?.role === "user" && context) message.metadata = { ...message.metadata, chatRunContext: context };
     const turn=detail.turns.find(turn=>turn.inputMessageId===source?.id&&turn.chatId===source.chatId);

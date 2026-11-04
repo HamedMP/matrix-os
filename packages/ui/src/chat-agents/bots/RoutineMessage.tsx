@@ -1,6 +1,7 @@
 import {createContext,useContext,type ReactNode} from "react";
 import type {RoutineOccurrence} from "./routine-transcript.js";
-import {routineOccurrenceTime,routineOccurrenceOutcome} from "./routine-transcript.js";
+import {routineOccurrenceOutcome} from "./routine-transcript.js";
+import {ScheduledMessageMeta} from "../../chat/ScheduledMessageMeta.js";
 import type {useRoutineMessages} from "./use-routine-messages.js";
 import {chatAgentMutedStyle} from "../theme.js";
 
@@ -10,11 +11,7 @@ export const useRoutineMessageState=()=>useContext(RoutineMessageContext);
 
 /** The annotation belongs to the input bubble, never a Chat header/history panel. */
 export function RoutineMessageMeta({occurrence,sent=true}:{occurrence:RoutineOccurrence;sent?:boolean}){
-  return <div data-scheduled-message className="flex min-w-0 flex-wrap items-center justify-end gap-x-2 gap-y-1 text-xs" style={chatAgentMutedStyle}>
-    <svg aria-hidden="true" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l-3 2"/></svg>
-    <span>{sent?"Sent by scheduled task":"Scheduled task"}</span>
-    <time dateTime={occurrence.fire.scheduledFor}>{routineOccurrenceTime(occurrence)}</time>
-  </div>;
+  return <ScheduledMessageMeta timestamp={occurrence.fire.scheduledFor} sent={sent}/>;
 }
 
 /** Standalone saved failures still occupy their own chronological transcript position. */

@@ -1,4 +1,5 @@
 import type {BotRoutineCenterItem, BotRoutineDetailResponse} from "@matrix-os/contracts";
+import { scheduledMessageTime } from "@matrix-os/ui/chat-scheduled-message";
 
 export type RoutineOccurrence = {
   routine: BotRoutineCenterItem;
@@ -31,7 +32,7 @@ export function routineMessageTimeline<T>(messages: readonly T[], occurrences: r
 
 export function routineOccurrenceTime(occurrence:RoutineOccurrence): string {
   // Match the reader's Chat timestamps; today's edited definition is not historical timezone data.
-  return new Intl.DateTimeFormat(undefined,{month:"short",day:"numeric",hour:"numeric",minute:"2-digit"}).format(new Date(occurrence.fire.scheduledFor));
+  return scheduledMessageTime(occurrence.fire.scheduledFor);
 }
 
 export function routineOccurrenceOutcome({fire}:RoutineOccurrence): string {

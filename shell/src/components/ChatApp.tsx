@@ -44,7 +44,7 @@ import type {
   CanonicalProviderSetupAction,
 } from "@matrix-os/contracts";
 import { botTranscriptPlacement, BotTranscriptRunState, BotTranscriptFallback, BotTranscriptMessages, BotTranscriptLayout, BotScheduledInputText } from "./BotTranscriptState";
-import {RoutineMessageMeta,RoutineMessageReadNotice} from "@matrix-os/ui";
+import {RoutineMessageMeta,RoutineMessageReadNotice,ScheduledMessageMeta} from "@matrix-os/ui";
 import { type ChatMessage, groupMessages } from "@/lib/chat";
 import {
   Conversation,
@@ -724,12 +724,12 @@ function ChatAppContent({
                   const msg = group.message;
                   return (
                     <div key={msg.id}>
-                      {msg.role === "user" ? (
+                      {msg.role === "user" || msg.scheduledMessage ? (
                         <Message from="user">
-                          {scheduled?<RoutineMessageMeta occurrence={scheduled}/>:null}
+                          {scheduled?<RoutineMessageMeta occurrence={scheduled}/>:msg.scheduledMessage?<ScheduledMessageMeta {...msg.scheduledMessage}/>:null}
                           {msg.attachments?.length ? <ChatAttachments attachments={msg.attachments} open={openMessageFile} loadImage={loadShellChatImage} /> : null}
                           {msg.content.trim() ? <MessageContent className="group-[.is-user]:rounded-2xl leading-relaxed">
-                            <BotScheduledInputText text={msg.content} scheduled={Boolean(scheduled)}/>
+                            <BotScheduledInputText text={msg.content} scheduled={Boolean(scheduled || msg.scheduledMessage)}/>
                           </MessageContent> : null}
                         </Message>
                       ) : msg.metadata?.canonicalInput ? (
