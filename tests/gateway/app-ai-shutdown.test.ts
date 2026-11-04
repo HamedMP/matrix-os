@@ -80,6 +80,32 @@ it("continues the actual gateway shutdown after app AI cleanup rejects", async (
   expect(shutdown.calls.slice(0, 2)).toEqual(["managed feature restart.close", "GitHub developer setup.close"]);
 });
 
+it.each(["rejects", "throws"])("finishes gateway teardown when native Claude cleanup %s without hiding failure", async mode => {
+  const failure = new Error("uncertain native Claude drain");
+  const shutdown = await shutdownFixture({ close: vi.fn(async () => {}) });
+  let release = () => {};
+  shutdown.nativeClaudeChatRuntime.close.mockImplementationOnce(() => {
+    shutdown.calls.push("native Claude.close");
+    if (mode === "throws") throw failure;
+    return new Promise<void>((_resolve, reject) => { release = () => reject(failure); });
+  });
+  const closing = expect(shutdown.close()).rejects.toBe(failure);
+  try {
+    if (mode === "rejects") {
+      await vi.waitFor(() => expect(shutdown.nativeClaudeChatRuntime.close).toHaveBeenCalledOnce());
+      expect(shutdown.terminalLaunchRuntime.close).not.toHaveBeenCalled();
+      release();
+    }
+    await closing;
+    expect(shutdown.calls).toEqual(expect.arrayContaining([
+      "terminal launch.close", "shared browser.close", "collaboration.shutdown", "Chat database.release",
+      "app database.destroy", "platform database.destroy", "telemetry.shutdown", "HTTP.close",
+    ]));
+    expect(shutdown.calls.indexOf("native Claude.close")).toBeLessThan(shutdown.calls.indexOf("terminal launch.close"));
+    expect(shutdown.calls.at(-1)).toBe("HTTP.close");
+  } finally { release(); await closing; }
+});
+
 it("continues shutdown while retaining the real Pi writer fence after forced worker termination", async () => {
   const home = await mkdtemp(join(tmpdir(), "app-ai-shutdown-"));
   const marker = join(home, "refresh-started.json");
