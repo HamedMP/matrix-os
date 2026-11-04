@@ -163,6 +163,14 @@ export class ChatSteeringRepository {
         .forUpdate()
         .executeTakeFirst();
       if (!chat) throw new ChatNotFoundError(chatId);
+      const source = await trx.selectFrom("chat_queued_turns").select("client_request_id")
+        .where("id", "=", queuedTurnId).where("chat_id", "=", chatId).executeTakeFirst();
+      if (!source) throw new ChatConflictError(chatId, Number(chat.revision));
+      // A schedule must keep its own task/source/effect authority and fire settlement.
+      // Do not deliver its queued input through another active Run's steering adapter.
+      if (source.client_request_id.startsWith("req_routine_")) {
+        throw new ChatConflictError(chatId, Number(chat.revision));
+      }
       const duplicate = await trx.selectFrom("chat_run_steers").selectAll()
         .where("chat_id", "=", chatId)
         .where("client_request_id", "=", clientRequestId)
@@ -327,6 +335,15 @@ export class ChatSteeringRepository {
         .forUpdate()
         .executeTakeFirst();
       if (!chat) throw new ChatNotFoundError(chatId);
+      if (input.queuedTurnId && input.outcome === "accepted") {
+        const source = await trx.selectFrom("chat_queued_turns").select("client_request_id")
+          .where("id", "=", input.queuedTurnId).where("chat_id", "=", chatId).executeTakeFirst();
+        if (!source) throw new ChatConflictError(chatId, Number(chat.revision));
+        // Fence historical pending delivery as well as new steering requests.
+        if (source.client_request_id.startsWith("req_routine_")) {
+          throw new ChatConflictError(chatId, Number(chat.revision));
+        }
+      }
       const steer = await trx.selectFrom("chat_run_steers").selectAll()
         .where("chat_id", "=", chatId)
         .where("run_id", "=", runId)
