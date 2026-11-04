@@ -40,7 +40,7 @@ is unchanged. Candidate sharing may still fail and must remain diagnosable.
 - [x] T014 [US1] Add failing stale control/wrong running build/missing membership/funding cases in `tests/platform/preview-pair-readiness-postgres.test.ts`, then implement canonical readiness and report derivation in `packages/platform/src/preview-pair/readiness.ts`.
 - [ ] T015 [US1] Wire durable post-commit dispatch, trusted guarded host binding, reserved pair handles and Preview-sensitive guards through `packages/platform/src/preview-pair/service.ts`, `wiring.ts`, `customer-vps-preview.ts`, `customer-vps-schema.ts` and `packages/clerk-sync/src/index.ts`; test personal-account/customer boundary preservation.
 - [ ] T016 [US1] Write tests executing real controller helpers in `tests/platform/preview-pair-workflow.test.ts`, then implement the protected request/report path in `.github/workflows/preview-collaboration-pair.yml` and `scripts/preview-pair/control.ts` with immutable execution-origin proof and no candidate operator secrets.
-- [ ] T017 [US1] Protect exact candidate desktop checkout/source validation with failing producer/consumer tests, then extend `.github/workflows/desktop-build.yml`, `scripts/release/build-source.mjs` and `desktop/electron.vite.config.ts` without changing normal release behavior.
+- [x] T017 [US1] Protect exact candidate desktop checkout/source validation with failing producer/consumer tests, then extend `.github/workflows/desktop-build.yml`, `scripts/release/build-source.mjs` and `desktop/electron.vite.config.ts` without changing normal release behavior.
 
 ## Phase 4: US2 — Open two independent Electron apps (P1)
 
@@ -120,8 +120,9 @@ Use official `gh stack init/add/rebase/submit`; never hand-retarget or flatten.
 | 2a | Shared contracts, activation config, schema, provenance and real Postgres fixture (T005–T009) | `codex/eng-418-preview-pair-platform` | Layer1 |
 | 2b | Atomic pair admission, guarded preparation and lifecycle/provider cleanup (T010–T012, T030–T032) | `codex/eng-418-preview-pair-lifecycle` | Layer2a |
 | 2c | Operator/session API, readiness, reports and reconciliation (T013–T014, T034; production adapters from T015 remain in Layer3) | `codex/eng-418-preview-pair-api` | Layer2b |
-| 3 | Trusted adapters/controller, exact-source packaging and reaper (T016–T017, T033–T034) | `codex/eng-418-preview-pair-workflow` | Layer2c |
-| 4 | Electron pinning, local launcher and badge (T018–T025, T035) | `codex/eng-418-preview-pair-desktop` | Layer3 |
+| 3a | Protected unsigned exact-source packaging (T017) | `codex/eng-418-preview-pair-workflow` | Layer2c |
+| 3b | Trusted adapters/controller and reaper (T015–T016, T033) | `codex/eng-418-preview-pair-controller` | Layer3a |
+| 4 | Electron pinning, local launcher and badge (T018–T025, T035) | `codex/eng-418-preview-pair-desktop` | Layer3b |
 | 5 if needed | Evidence runner, acceptance and internal docs (T026–T029, T036–T042) | `codex/eng-418-preview-pair-qualification` | Layer4 |
 
 Target <1000 additions/<20 files where practical; split a layer before exceeding

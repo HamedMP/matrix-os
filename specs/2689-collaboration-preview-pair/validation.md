@@ -146,3 +146,46 @@ releases the fenced claim and schedules a15s continuation without claiming
 readiness or discarding durable jobs. Non-timeout activation errors retain their
 failure path. All **8/8 orchestration cases pass**, zero skipped; provider polling
 and cancellation are qualified separately in the dependent dispatcher layer.
+### Protected desktop packaging
+
+The unsigned pair path in the existing desktop build workflow validates the
+reviewed controller SHA and same-repository open PR head before candidate checkout.
+Three portable targets (macOS arm64/x64, Linux x64) build with read-only repository
+authority and no signing/operator secrets. Source and target receipt ship beside
+the archive. Normal signing and release paths retain their tests.
+
+Real Git checkout/source tests and actual workflow/helper checks: **55/55 passed
+across4 files**. The initial sandbox Git EPERM and missing-module collection failures
+are not regression red evidence. New build-context tests first rejected candidate
+execution; the retained real-Git producer now embeds the actual checkout while
+keeping controller execution separate. No native artifact build or workflow dispatch
+was performed, and no packaged launch is claimed.
+
+### Packaging review correction
+
+Greptile found that a candidate build could overwrite the sibling controller
+checkout before its later verifier ran. The intended runner-boundary assertion
+failed first. Admission, candidate build and provenance now run in separate jobs;
+the fresh provenance runner checks out only the reviewed controller, never downloads
+or executes candidate artifacts, and reads immutable artifact IDs/digests from the
+GitHub API before publishing separate small source receipts. Candidate outputs are
+data only across that boundary. This is provenance of a selected candidate build,
+not a reproducible/hermetic build attestation.
+
+**62/62 assertions pass across4 files**, including wrong/expired/duplicate/missing
+artifact rejection and the retained release tests. No native workflow dispatch or
+live artifact launch is claimed. Artifact signing and operator secrets remain absent
+from candidate execution.
+
+Packaging CI found TS2724: the new JavaScript build-source function was missing
+from its existing .d.mts export declaration. The actual Electron node typecheck
+reproduced it before the declaration was added. The classic focused Electron node check then exhausted its512MiB heap;
+it did not complete. The broad local pipeline built its dependencies but timed
+out at the native gateway compiler under host pressure; a resource-bounded rerun is
+recorded separately. No broad typecheck pass is claimed from the interrupted run.
+
+The resource-bounded native rerun completed successfully for all8 configured
+projects, including Electron renderer and node configs (GOMEMLIMIT=1GiB,
+GOMAXPROCS=2). Dependency builds completed in the earlier pipeline stage. This
+qualifies the declaration correction; the failed classic512MiB attempt remains
+recorded above.

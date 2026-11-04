@@ -5,7 +5,7 @@ import { realpathSync } from "node:fs";
 import { resolve } from "node:path";
 import { searchForWorkspaceRoot } from "vite";
 import { DESKTOP_DEV_RENDERER_HOST } from "./src/main/renderer-url";
-import { readBuildSource } from "../scripts/release/build-source.mjs";
+import { readDesktopBuildSource } from "../scripts/release/build-source.mjs";
 
 // pnpm's global virtual store links packages from outside the checkout, and
 // the dev server refuses to serve files there. Allow only the renderer's font
@@ -43,7 +43,7 @@ export default defineConfig((): UserConfig => ({
     // source. Bundle them so Electron never loads raw TypeScript at runtime.
     plugins: [externalizeDepsPlugin({ exclude: ["zod", "@matrix-os/contracts", "@matrix-os/ui", "@finnaai/matrix"] })],
     define: {
-      __MATRIX_DESKTOP_BUILD_SOURCE__: JSON.stringify(readBuildSource(resolve(__dirname, ".."), process.env.GITHUB_SHA)),
+      __MATRIX_DESKTOP_BUILD_SOURCE__: JSON.stringify(readDesktopBuildSource(resolve(__dirname, ".."), process.env)),
       __MATRIX_DESKTOP_UPDATE_CHANNEL__: JSON.stringify(desktopUpdateChannel),
       __CODING_AGENTS_DESKTOP_WORKSPACE__: JSON.stringify(codingAgentsDesktopWorkspace),
     },
