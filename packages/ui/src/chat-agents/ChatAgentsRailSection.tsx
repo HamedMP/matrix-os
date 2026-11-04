@@ -1,4 +1,4 @@
-import { ChevronRight, Plus, Sparkle } from "lucide-react";
+import { ChevronRight, Clock, Plus, Sparkle } from "lucide-react";
 import type { StartAgentChat } from "./client.js";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { ChatAgent } from "@matrix-os/contracts";
@@ -99,6 +99,9 @@ export function ChatAgentsRailSection({ activeChatId, client, summaryClient, isC
     }
   };
   return <section className="matrix-chat-agents-rail mb-1 flex shrink-0 flex-col gap-0.5">
+    {client.bots?.routines ? <div data-slot="chat-sidebar-section-heading" className="matrix-chat-agents-group-heading">
+      <button type="button" className="matrix-chat-agents-heading w-full" aria-label="Schedules" aria-pressed={navigation.opened?.client === client && navigation.opened?.view === "schedules"} onClick={event => { if (!(isCurrentAuthority?.() ?? true)) return; onSelectionIntent?.(); navigation.open({ client, onSetup, onStartChat: start, view: "schedules" }, event.currentTarget); onOpen?.(); }}><Clock aria-hidden="true" size={15} strokeWidth={1.5}/><span>Schedules</span></button>
+    </div> : null}
     <div data-slot="chat-sidebar-section-heading" className="matrix-chat-agents-group-heading">
       <button type="button" aria-label="Agents" aria-pressed={navigation.opened?.client === client && navigation.opened.view === "library"} className="matrix-chat-agents-heading" onClick={event => { if (!(isCurrentAuthority?.() ?? true)) return; onSelectionIntent?.(); navigation.open({ client, onSetup, onStartChat: start, view: "library" }, event.currentTarget); onOpen?.(); }}><Sparkle aria-hidden="true" size={15} strokeWidth={1.5}/><span>Agents</span></button>
       <button type="button" aria-label={expanded ? "Collapse agents" : "Expand agents"} aria-expanded={expanded} className="matrix-chat-agents-disclosure" onClick={toggleExpanded}><ChevronRight aria-hidden="true" size={12} strokeWidth={1.5} className={`transition-transform duration-200 motion-reduce:transition-none ${expanded ? "rotate-90" : ""}`}/></button>
