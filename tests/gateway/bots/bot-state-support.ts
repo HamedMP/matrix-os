@@ -1,3 +1,4 @@
+import { bootstrapCollaborationDatabase } from "../../../packages/gateway/src/collaboration/database.js";
 import { randomUUID } from "node:crypto";
 import { Kysely, PostgresDialect, sql } from "kysely";
 import { createTestPGlite } from "../../helpers/pglite-test-helper.js";
@@ -15,11 +16,12 @@ export function at(offsetMs: number): string {
 }
 
 /** A real Postgres (PGlite) with the chat and bot schemas applied. */
-export async function createBotStateDatabase(options: { migrate?: boolean } = {}) {
+export async function createBotStateDatabase(options: { migrate?: boolean; routineAuthority?: boolean } = {}) {
   const instance = await createTestPGlite();
   const db = new Kysely<OwnerBotDatabase>({ dialect: instance.dialect });
   await bootstrapChatDatabase(db);
   if (options.migrate !== false) await bootstrapBotDatabase(db);
+  if (options.routineAuthority) await bootstrapCollaborationDatabase(db as never);
   return { db, destroy: () => db.destroy() };
 }
 

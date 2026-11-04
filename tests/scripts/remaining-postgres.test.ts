@@ -132,12 +132,30 @@ describe("remaining real PostgreSQL qualification", () => {
     expect(runRemainingPostgres(second.root, env, failed, join(second.root, "output"), [remaining])).toBe(1);
   });
 
+  it("finishes all seventeen required suites within observed hosted runtime while bounding every child", () => {
+    const files = Array.from({ length: 17 }, (_, index) => `tests/gateway/hosted-${String(index).padStart(2, "0")}.test.ts`);
+    const { root } = fixture({ [remaining]: "// no real database needed", ...Object.fromEntries(files.map(file => [file, "process.env.MATRIX_TEST_POSTGRES_URL;"])) });
+    let clock = 0;
+    const writeReport = executor(root);
+    const execute = vi.fn((command: string, args: string[], _options: { timeout: number }) => { const result = writeReport(command, args); clock += 31_000; return result; });
+    const output = join(root, "output");
+    expect(runRemainingPostgres(root, env, execute, output, files, () => clock)).toBe(0);
+    expect(execute).toHaveBeenCalledTimes(5);
+    for (const call of execute.mock.calls) {
+      const options = call[2];
+      expect(options.timeout).toBeGreaterThan(0);
+      expect(options.timeout).toBeLessThanOrEqual(60_000);
+    }
+    expect(JSON.parse(readFileSync(join(output, "inventory.json"), "utf8")))
+      .toMatchObject({ qualified: true, verifiedPassedAssertions: 17 });
+  });
+
   it("enforces one total deadline and records unexecuted batches as failed", () => {
     const files = Array.from({ length: 5 }, (_, index) => `tests/gateway/budget-${index}.test.ts`);
     const { root } = fixture({ [remaining]: "// no real database needed", ...Object.fromEntries(files.map(file => [file, "process.env.MATRIX_TEST_POSTGRES_URL;"])) });
     let clock = 0;
     const writeReport = executor(root);
-    const execute = vi.fn((...args: Parameters<typeof writeReport>) => { const result = writeReport(...args); clock = 120_001; return result; });
+    const execute = vi.fn((...args: Parameters<typeof writeReport>) => { const result = writeReport(...args); clock = 180_001; return result; });
     const output = join(root, "output");
     expect(runRemainingPostgres(root, env, execute, output, files, () => clock)).toBe(1);
     expect(execute).toHaveBeenCalledTimes(1);
@@ -145,4 +163,8 @@ describe("remaining real PostgreSQL qualification", () => {
     expect(report.qualified).toBe(false);
     expect(report.batches[1].error).toMatch(/total.*budget/i);
   });
+});
+
+it("assigns the current checkout's real PostgreSQL suites to executable hosted lanes", () => {
+  expect(() => remainingPostgresInventory(process.cwd())).not.toThrow();
 });
