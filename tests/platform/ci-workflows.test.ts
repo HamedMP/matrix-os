@@ -590,13 +590,13 @@ describe('CI workflows', () => {
     expect(workflow).toContain('name: Download Docker image artifact');
     expect(workflow).toMatch(/^\s+uses: actions\/download-artifact@v[78]\s*$/m);
     expect(workflow).not.toMatch(/uses: actions\/download-artifact@v[123](?:\s|$)/);
-    expect(workflow).toContain('outputs: type=docker,dest=/tmp/matrix-os-dev-ci.tar');
-    expect(workflow).toContain('gzip -1 < /tmp/matrix-os-dev-ci.tar > /tmp/matrix-os-dev-ci.tar.gz');
-    expect(workflow).toContain('rm /tmp/matrix-os-dev-ci.tar');
-    expect(workflow).toContain('test "$(stat -c%s /tmp/matrix-os-dev-ci.tar.gz)" -gt 1000000');
-    expect(workflow).toContain('gzip -t /tmp/matrix-os-dev-ci.tar.gz');
-    expect(workflow).toContain('gzip -t /tmp/docker-image/matrix-os-dev-ci.tar.gz');
-    expect(workflow).toContain('gzip -dc /tmp/docker-image/matrix-os-dev-ci.tar.gz | docker load');
+    expect(workflow).toContain('outputs: type=docker,dest=${{ runner.temp }}/matrix-os-dev-ci.tar');
+    expect(workflow).toContain('gzip -1 < "$RUNNER_TEMP/matrix-os-dev-ci.tar" > "$RUNNER_TEMP/matrix-os-dev-ci.tar.gz"');
+    expect(workflow).toContain('rm "$RUNNER_TEMP/matrix-os-dev-ci.tar"');
+    expect(workflow).toContain('test "$(stat -c%s "$RUNNER_TEMP/matrix-os-dev-ci.tar.gz")" -gt 1000000');
+    expect(workflow).toContain('gzip -t "$RUNNER_TEMP/matrix-os-dev-ci.tar.gz"');
+    expect(workflow).toContain('gzip -t "$RUNNER_TEMP/matrix-docker-image/matrix-os-dev-ci.tar.gz"');
+    expect(workflow).toContain('gzip -dc "$RUNNER_TEMP/matrix-docker-image/matrix-os-dev-ci.tar.gz" | docker load');
     expect(workflow).not.toContain('docker save matrix-os-dev:ci | gzip -1');
 
     const dockerBuildActionUses = workflow.match(/uses: docker\/build-push-action@v7/g) ?? [];
