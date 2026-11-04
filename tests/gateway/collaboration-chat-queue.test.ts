@@ -1,4 +1,8 @@
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { sql, type Kysely } from "kysely";
+import { MATRIX_BOT_SELECTION } from "@matrix-os/contracts";
+import { bootstrapBotDatabase, type OwnerBotDatabase } from "../../packages/gateway/src/bots/database.js";
+import { createBotSessionsRepository } from "../../packages/gateway/src/bots/repositories/sessions.js";
 import { ChatRepository } from "../../packages/gateway/src/chat/repository.js";
 import { bootstrapCollaborationDatabase } from "../../packages/gateway/src/collaboration/database.js";
 import {
@@ -595,6 +599,71 @@ realDescribe("shared Chat queue real PostgreSQL ordering", () => {
 
   afterEach(async () => {
     await fixture.destroy();
+  });
+
+  it.each(["activity", "session", "completion acknowledgement"] as const)("locks the collaboration scope before Chat during %s persistence", async kind => {
+    await repository.enqueueSharedQueuedTurn(owner, request(80, collaborationActors.editor));
+    const runId = "run_scope_lock_order";
+    await repository.claimNextQueuedTurn(owner, { chatId: collaborationIds.chat, collaborationScopeId: collaborationIds.scope,
+      turnId: "cturn_scope_lock_order", runId, messageId: "msg_scope_lock_order", claimedAt: now });
+    if (kind === "session") {
+      await bootstrapBotDatabase(fixture.db as unknown as Kysely<OwnerBotDatabase>);
+      await fixture.db.updateTable("chat_runs").set({ driver_kind: "matrix_bot", instance_id: MATRIX_BOT_SELECTION.instanceId })
+        .where("id", "=", runId).execute();
+    }
+    if (kind === "completion acknowledgement") {
+      await repository.finishRun(owner, { chatId: collaborationIds.chat, runId, outcome: "completed", completedAt: now });
+    }
+    const scopeLocked = Promise.withResolvers<number>();
+    const releaseScope = Promise.withResolvers<void>();
+    const releaseWorker = Promise.withResolvers<void>();
+    const workerPid = Promise.withResolvers<number>();
+    let completed = false;
+    // This is the same scope -> Chat order used by real shared-turn admission.
+    const admission = fixture.db.transaction().execute(async trx => {
+      await trx.selectFrom("collaboration_scopes").select("id").where("id", "=", collaborationIds.scope).forUpdate().execute();
+      scopeLocked.resolve((await sql<{ pid: number }>`SELECT pg_backend_pid() AS pid`.execute(trx)).rows[0]!.pid);
+      await releaseScope.promise;
+      const chat = await trx.selectFrom("chats").select("revision").where("id", "=", collaborationIds.chat).executeTakeFirstOrThrow();
+      await new ChatRepository(trx, true).enqueueSharedQueuedTurn(owner, request(81, collaborationActors.editor, Number(chat.revision)));
+    });
+    await scopeLocked.promise;
+    const persistence = fixture.db.transaction().execute(async trx => {
+      workerPid.resolve((await sql<{ pid: number }>`SELECT pg_backend_pid() AS pid`.execute(trx)).rows[0]!.pid);
+      if (kind === "session") {
+        await createBotSessionsRepository(trx as unknown as Kysely<OwnerBotDatabase>).load({ ownerId: owner.ownerId,
+          botId: "bot_0123456789abcdef", chatId: collaborationIds.chat, contextRunId: runId, contextGeneration: "a".repeat(64) });
+      } else if (kind === "completion acknowledgement") {
+        await new ChatRepository(trx, true).acknowledgeCompletion(owner, collaborationIds.chat, runId);
+      } else {
+        await new ChatRepository(trx, true).appendRunActivities(owner, collaborationIds.chat, runId, [{ id: "activity_scope_lock_order",
+          chatId: collaborationIds.chat, runId, type: "run.status", status: "running", occurredAt: now }]);
+      }
+      completed = true;
+      await releaseWorker.promise;
+    });
+    // Attach rejection handlers immediately while inspecting the real lock graph.
+    const settled = Promise.allSettled([admission, persistence]);
+    try {
+      const pid = await workerPid.promise;
+      const blockingPid = await scopeLocked.promise;
+      await vi.waitFor(async () => {
+        const row = (await sql<{ waiting: boolean }>`SELECT ${blockingPid} = ANY(pg_blocking_pids(${pid})) AS waiting`
+          .execute(fixture.db)).rows[0]!;
+        expect(row.waiting || completed).toBe(true);
+      }, { timeout: 3000 });
+      // Persistence must wait at the scope, without holding the Chat hostage.
+      await fixture.db.transaction().execute(async trx => {
+        await sql`SELECT id FROM chats WHERE id=${collaborationIds.chat} FOR UPDATE NOWAIT`.execute(trx);
+      });
+    } finally {
+      releaseScope.resolve(); releaseWorker.resolve();
+      const results = await settled;
+      for (const result of results) if (result.status === "rejected") throw result.reason;
+    }
+    expect(completed).toBe(true);
+    const queued = await repository.listSharedQueuedTurns(owner, collaborationIds.chat);
+    expect(queued.map(row => row.id)).toContain(request(81, collaborationActors.editor).queuedTurnId);
   });
 
   it("claims claude_code_default without rewriting the immutable binding or selection", async () => {
