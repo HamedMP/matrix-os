@@ -14,6 +14,7 @@ export const ClientErrorReportSchema = z.object({
   path: z.string().max(512).optional(),
   userAgent: z.string().max(512).optional(),
   buildSha: z.string().max(128).optional(),
+  staleBundleFingerprint: z.string().max(128).optional(),
 }).strict();
 
 export type ClientErrorReport = z.infer<typeof ClientErrorReportSchema>;
@@ -82,6 +83,7 @@ export function forwardClientErrorToPostHog(
           errorId: report.errorId,
           path: stripQuery(report.path),
           build_sha: report.buildSha,
+          stale_bundle_fingerprint: report.staleBundleFingerprint,
           user_agent: report.userAgent,
         },
       })

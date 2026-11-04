@@ -46,6 +46,7 @@ export function createNativePollDelivery(deps: {
   post(path: string, body: unknown, signal: AbortSignal, limit?: number): Promise<unknown>;
 }) {
   let handled = 0, failures = 0;
+  let approvedRoutines = false;
   const verify = () => {
     deps.signal.throwIfAborted();
     if (!deps.current()) throw new PlanFailure('peer_poll', 'stale_source');
@@ -57,8 +58,10 @@ export function createNativePollDelivery(deps: {
         sessionId: deps.sessionId }, deps.signal, 512));
       verify();
       if (!capability.success || capability.data.sessionId !== deps.sessionId) throw new PlanFailure('peer_capabilities', 'invalid_schema');
+      approvedRoutines = capability.data.approvedRoutines === true;
       return capability.data.replyDeliveryVersion === 2;
     },
+    supportsApprovedRoutines: () => approvedRoutines,
     async poll() {
       while (true) {
         verify();

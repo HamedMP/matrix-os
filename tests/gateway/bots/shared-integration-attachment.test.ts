@@ -3,7 +3,7 @@ import { mkdir, mkdtemp, readdir, readFile, realpath, rm, writeFile } from "node
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Kysely } from "kysely";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from "vitest";
 import { BotToolResultSchema } from "@matrix-os/contracts";
 import { createBotWorkspace } from "../../../packages/gateway/src/chat/bot-workspace-root.js";
 import { createChatExecutionRootResolver } from "../../../packages/gateway/src/chat/execution-root.js";
@@ -17,6 +17,8 @@ import { createBotIntegrationTools } from "../../../packages/gateway/src/bots/in
 import { createBotRecipeCatalog } from "../../../packages/gateway/src/bots/recipe-catalog.js";
 import { createBotGrantsRepository } from "../../../packages/gateway/src/bots/repositories/grants.js";
 import { createBotTasksRepository } from "../../../packages/gateway/src/bots/repositories/tasks.js";
+import type { BotIntegrationClient } from "../../../packages/gateway/src/bots/integration-client.js";
+import type { BotExecutor } from "../../../packages/gateway/src/bots/repositories/shared.js";
 import type { BotRuntimeBinding } from "../../../packages/gateway/src/bots/runtime-registry.js";
 import { BOT, OWNER, NOW, createBotStateDatabase, insertChat } from "./bot-state-support.js";
 
@@ -31,10 +33,10 @@ let project: string;
 let privateRoot: string;
 let binding: BotRuntimeBinding;
 let bytes: Buffer;
-let assertSource: ReturnType<typeof vi.fn>;
-let assertSharedAttachmentSource: ReturnType<typeof vi.fn>;
-let call: ReturnType<typeof vi.fn>;
-let resolveGroupRun: ReturnType<typeof vi.fn>;
+let assertSource: Mock<(binding: BotRuntimeBinding, signal?: AbortSignal, executor?: BotExecutor) => Promise<void>>;
+let assertSharedAttachmentSource: Mock<(binding: BotRuntimeBinding, signal: AbortSignal) => Promise<void>>;
+let call: Mock<BotIntegrationClient["call"]>;
+let resolveGroupRun: Mock<(input: { ownerId: string; chatId: string; runId: string }) => Promise<GroupBotRunRequest>>;
 let canonical: GroupBotRunRequest;
 let projectRecord: { id: string; slug: string; localPath: string };
 
@@ -71,7 +73,11 @@ beforeEach(async () => {
 afterEach(async () => { await state.destroy(); await rm(home, { recursive: true, force: true }); });
 
 function tools(overrides: Record<string, unknown> = {}) {
-  return createBotIntegrationTools({ client: { inventory: async () => [connection], call }, homePath: home,
+  return createBotIntegrationTools({ client: { inventory: async () => [connection], call,
+      describe: async () => [], connect: async () => { throw new Error("Unexpected fixture connection"); }, sync: async () => undefined,
+      callImportRead: async () => { throw new Error("Unexpected fixture import"); },
+      callAppAction: async () => { throw new Error("Unexpected fixture app action"); },
+    }, homePath: home,
     transact: createBotStateTransactions(new ChatRepository(state.db as unknown as Kysely<ChatDatabase>)),
     recipes: createBotRecipeCatalog(), agents: { get: async () => ({ id: BOT, recipeRef: { recipeId: "company-brain", version: "2026-09-30.1" } }) as never },
     now: () => new Date(NOW), assertSource, assertSharedAttachmentSource, ...overrides });
@@ -93,6 +99,11 @@ describe("exact-Chat shared Gmail attachment reads", () => {
     expect(await readdir(privateRoot)).toEqual(["private.txt"]);
     expect(await readFile(join(privateRoot, "private.txt"), "utf8")).toBe("Private owner context");
     expect(binding.capabilities).not.toContain("artifact.read");
+    // Both before transport and before exposing bytes: source checks share the locked executor.
+    expect(assertSource.mock.calls).toHaveLength(4);
+    const executors = assertSource.mock.calls.map(([, , executor]) => executor);
+    expect(executors.map(executor => executor?.isTransaction ?? false)).toEqual([false, true, false, true]);
+
   });
 
   it("reconstructs the entire 1MiB attachment through bounded existing integration calls", async () => {
