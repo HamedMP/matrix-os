@@ -1,3 +1,4 @@
+import { lockRunCollaborationScope } from "./run-scope-lock.js";
 import { assertPrivateRoutineTurn } from "./private-routine-authority.js";
 import { readChatImportSource } from "./import-source.js";
 import { listChats, updateChat, renameChat } from "./metadata-repository.js";
@@ -958,6 +959,7 @@ export class ChatRepository {
     const parsedRunId = CanonicalChatRunIdSchema.parse(runId);
 
     return this.transact(async (trx) => {
+      await lockRunCollaborationScope(trx, owner, chatId, parsedRunId);
       const chat = await selectOwnedChat(trx, owner, chatId, true);
       if (!chat) throw new ChatNotFoundError(chatId);
       const completedRun = await trx.selectFrom("chat_runs")
