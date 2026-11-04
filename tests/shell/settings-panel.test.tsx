@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import React from "react";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { SHELL_Z_INDEX } from "../../shell/src/lib/shell-layering.js";
 
@@ -88,7 +88,12 @@ describe("Settings panel", () => {
     expect(screen.queryByRole("button", { name: "Channels" })).toBeNull();
     expect(screen.queryByRole("button", { name: "Skills" })).toBeNull();
     expect(screen.queryByRole("button", { name: "Agent" })).toBeNull();
-    fireEvent.click(screen.getByRole("button", { name: "Agents & providers" }));
+    const nav = screen.getByRole("navigation", { name: "Settings sections" });
+    expect(within(nav).getAllByRole("button").map((button) => button.textContent)).toEqual([
+      "Agents & providers", "Connect Apps", "Import chats", "Appearance", "Organization",
+      "Identity & personality", "Billing", "System",
+    ]);
+    expect(screen.getByRole("button", { name: "Agents & providers" }).getAttribute("aria-current")).toBe("page");
     expect(screen.getByText("Agents and providers settings").isConnected).toBe(true);
     fireEvent.click(screen.getByRole("button", { name: "Identity & personality" }));
     expect(screen.getByText("Identity and personality settings").isConnected).toBe(true);

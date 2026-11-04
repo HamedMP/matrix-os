@@ -362,7 +362,7 @@ export function WebDesktopSurface({
             selected={selectedPath === app.path}
             onSelect={() => setSelectedPath(app.path)}
             onOpen={() => {
-              if (app.path === "__settings__") onOpenSettings("appearance");
+              if (app.path === "__settings__") onOpenSettings("agents-providers");
               else if (app.path === "__plugins__") onOpenSettings("integrations");
               else onOpenApp(app.path, app.name);
             }}

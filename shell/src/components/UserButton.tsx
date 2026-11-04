@@ -37,7 +37,7 @@ import {
 } from "@/lib/sign-out";
 
 type UserButtonVariant = "dock" | "menubar" | "settings";
-type AccountSettingsSection = "appearance" | "billing";
+type AccountSettingsSection = "appearance" | "billing" | "agents-providers";
 const e2eBypass = process.env.NEXT_PUBLIC_E2E_TEST_BYPASS === "1";
 
 function Placeholder({ variant = "dock" }: { variant?: UserButtonVariant }) {
@@ -271,7 +271,7 @@ function LegacyAccountContent({ avatarUrl, displayName, secondary, signingOut, o
               <DropdownMenuPrimitive.Item
                 className={itemClass}
                 onSelect={() => {
-                  onOpenSettings("appearance");
+                  onOpenSettings("agents-providers");
                 }}
               >
                 <SettingsIcon className="size-4 text-muted-foreground" aria-hidden="true" />
@@ -368,7 +368,7 @@ function TopBarAccountContent({ label, signingOut, onSignOut, onOpenSettings }: 
     <div className="px-2 pb-2 pt-1 text-[11px] text-muted-foreground"><p className="mb-1 tracking-wider">PERSONAL ACCOUNT</p><p className="truncate">{label}</p></div>
     <OrganizationMenuItems itemClass={row} />
     {onOpenSettings ? <>
-      <DropdownMenuPrimitive.Item className={row} onSelect={() => onOpenSettings("appearance")}><SettingsIcon className="size-3.5" aria-hidden="true" />Settings</DropdownMenuPrimitive.Item>
+      <DropdownMenuPrimitive.Item className={row} onSelect={() => onOpenSettings("agents-providers")}><SettingsIcon className="size-3.5" aria-hidden="true" />Settings</DropdownMenuPrimitive.Item>
       <DropdownMenuPrimitive.Item className={row} onSelect={() => onOpenSettings("billing")}><CreditCardIcon className="size-3.5" aria-hidden="true" />View plans</DropdownMenuPrimitive.Item>
     </> : null}
     <DropdownMenuPrimitive.Separator className="my-0.5 h-px bg-border" />

@@ -35,6 +35,7 @@ const activeBilling = {
 function makeApi(statusResponse: unknown) {
   return {
     baseUrl: "https://app.matrix-os.com",
+    forRuntime(_runtimeSlot: string) { return this; },
     get: vi.fn(async () => statusResponse),
     getText: vi.fn(),
     post: vi.fn(async (path: string) => ({
@@ -77,9 +78,11 @@ describe("desktop billing settings", () => {
     vi.restoreAllMocks();
   });
 
-  it("shows billing in desktop settings navigation", () => {
+  it("opens billing from the agent-first settings navigation", async () => {
     render(<SettingsView />);
-    expect(screen.getByRole("button", { name: "Billing" })).not.toBeNull();
+    expect(screen.getByRole("heading", { name: "Agents & providers" })).not.toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Billing" }));
+    await waitFor(() => expect(screen.getByText("Billing active")).not.toBeNull());
   });
 
   it("loads native billing status through the desktop API client", async () => {

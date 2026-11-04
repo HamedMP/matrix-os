@@ -358,7 +358,7 @@ describe("native desktop shell", () => {
 
     fireEvent.doubleClick(screen.getByRole("button", { name: "Settings" }));
     expect(useTabs.getState().tabs.find((tab) => tab.kind === "settings")?.title).toBe("Settings");
-    expect(screen.getByText("Settings content").getAttribute("data-settings-section")).toBe("account");
+    expect(screen.getByText("Settings content").getAttribute("data-settings-section")).toBe("agents-providers");
 
     fireEvent.doubleClick(screen.getByRole("button", { name: "Notes" }));
     fireEvent.doubleClick(screen.getByRole("button", { name: "Whiteboard" }));

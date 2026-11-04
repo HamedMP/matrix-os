@@ -106,7 +106,7 @@ describe('customer VPS host bundle', () => {
     expect(script).toContain('matrix-code');
     expect(script).toContain('matrix-sync-agent');
     expect(script).toContain('sha256sum');
-    expect(script).toContain('pnpm rebuild node-pty');
+    expect(script).toContain("pnpm --filter '@matrix-os/gateway' rebuild node-pty");
     expect(script).toContain('scripts/build-default-apps.mjs');
     expect(script).toContain('generateTemplateManifest');
     expect(script).toContain('home/.template-manifest.json');
