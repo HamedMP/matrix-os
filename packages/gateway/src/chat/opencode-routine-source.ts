@@ -1,3 +1,4 @@
+import { ROUTINE_CLI_INVOCATION_TIMEOUT_MS, ROUTINE_CLI_NATIVE_TIMEOUT_MS } from "@matrix-os/contracts/routine-cli";
 import { AsyncLocalStorage } from "node:async_hooks";
 import type { Duplex } from "node:stream";
 import { z } from "zod/v4";
@@ -90,7 +91,7 @@ function createOpenCodeRoutineSource(options: NativeRoutineCliPort & { input: Ca
     if (actions.size >= 8) { send(frame.id, native, routineUnknownResult(frame.intent)); return; }
     const action = { controller: new AbortController(), key, wake: undefined as (() => void) | undefined };
     const actionSignal = AbortSignal.any([signal, action.controller.signal]); actions.set(frame.id, action);
-    const deadline = setTimeout(() => action.controller.abort(), 120_000); deadline.unref();
+    const deadline = setTimeout(() => action.controller.abort(), ROUTINE_CLI_NATIVE_TIMEOUT_MS); deadline.unref();
     let invoker: ReturnType<typeof createFixedNativeRoutineCliInvoker> | undefined;
     try {
       // SSE and the retained FD are independent. Wait for both exact observations, with no source authority meanwhile.
@@ -121,7 +122,7 @@ function createOpenCodeRoutineSource(options: NativeRoutineCliPort & { input: Ca
           invocations.set(call.invocationId, { key, signal: actionSignal, digest: routineActionHash(call.operation) });
           return current({ sourceId: sourceId!, invocationId: call.invocationId, operationDigest: routineActionHash(call.operation) })
             ? registered.authorize(call) : Promise.resolve(false);
-        }, issue: registered.issue, cancel: registered.cancel, timeoutMs: 120_000 });
+        }, issue: registered.issue, cancel: registered.cancel, timeoutMs: ROUTINE_CLI_INVOCATION_TIMEOUT_MS });
       invokers.add(invoker);
       const result = RoutineCliEnvelopeSchema.parse(await invoker.invoke({ ...frame.intent, signal: actionSignal }));
       send(frame.id, native, actionSignal.aborted ? routineUnknownResult(frame.intent) : JSON.stringify(result));

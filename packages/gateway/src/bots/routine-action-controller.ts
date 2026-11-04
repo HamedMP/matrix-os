@@ -1,3 +1,4 @@
+import { ROUTINE_CLI_OWNER_WAIT_MS } from "@matrix-os/contracts/routine-cli";
 import { CanonicalProviderRunEventSchema } from "../chat/provider-adapter.js";
 import { randomBytes } from "node:crypto";
 import type { Kysely, Transaction } from "kysely";
@@ -34,9 +35,9 @@ export function createRoutineCliActionController(options: {
   platform: { handle: string; machineId: string; runtimeSlot: string; verify(tuple: RoutineActionTuple, proof: string, signal?: AbortSignal): Promise<RoutineActionProof> };
   canAccessTarget: NonNullable<RoutineCliTargetDependencies["canAccessTarget"]>; now?: () => number; ttlMs?: number;
 }) {
-  const scope = RoutineCliScopeSchema.parse(options.scope), now = options.now ?? Date.now, ttl = options.ttlMs ?? 120_000;
+  const scope = RoutineCliScopeSchema.parse(options.scope), now = options.now ?? Date.now, ttl = options.ttlMs ?? ROUTINE_CLI_OWNER_WAIT_MS;
   if (!options.db?.transaction || !options.registry?.validateWithin || !options.platform?.verify || !options.canAccessTarget
-    || !options.agents?.get || !Number.isInteger(ttl) || ttl < 1 || ttl > 120_000) throw new Error("Routine action dependencies unavailable");
+    || !options.agents?.get || !Number.isInteger(ttl) || ttl < 1 || ttl > ROUTINE_CLI_OWNER_WAIT_MS) throw new Error("Routine action dependencies unavailable");
   const entries = new Map<string, Entry>(); // <=128 total, <=16/source; TTL/source-close/shutdown eviction.
   let closed = false;
   const ledger = createRoutineCliRequestsRepository(options.db);
@@ -129,7 +130,10 @@ export function createRoutineCliActionController(options: {
     if (call.signal.aborted || !options.registry.has(handle) || options.registry.read(handle.source)?.fingerprint !== registered.fingerprint
       || entries.has(invocationId) || entries.size >= 128 || [...entries.values()].filter(entry => entry.handle === handle).length >= 16) throw new RoutineCliError("permission_denied");
     let settle!: (value: boolean) => void; const waiting = new Promise<boolean>(resolve => { settle = resolve; });
-    const expiresAt = Math.min(now() + ttl, Date.parse(handle.source.expiresAt));
+    // Only an actual human wait receives the longer challenge lifetime. Reads
+    // and full-access decisions retain their original accepted-claim fence.
+    const decisionTtl = mode === "ask" ? ttl : Math.min(ttl, 120_000);
+    const expiresAt = Math.min(now() + decisionTtl, Date.parse(handle.source.expiresAt));
     const challengeId = `rcact_${randomBytes(16).toString("hex")}`;
     const entry: Entry = { handle, reference, invocationId, operation, boundTarget, operationDigest: routineActionHash(operation), ...prepared,
       fingerprint: registered.fingerprint, mode, expiresAt, challengeId, actionDigest: routineActionHash({ purpose: "routine_cli_owner_action:v1",

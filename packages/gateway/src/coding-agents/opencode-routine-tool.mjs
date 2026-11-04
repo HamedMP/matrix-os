@@ -55,7 +55,7 @@ export default {
     const id = randomUUID();
     return await new Promise(resolve => {
       const abort = () => { send({ type: "cancel", id }); finish(unknown(intent)); };
-      const timer = setTimeout(abort, 120000); timer.unref?.();
+      const timer = setTimeout(abort, ["propose", "pause", "resume", "archive"].includes(intent?.args?.[0]) ? 1_830_000 : 10_000); timer.unref?.();
       const finish = result => { clearTimeout(timer); native.abort.removeEventListener("abort", abort); pending.delete(id); completed.add(id); resolve(result); };
       pending.set(id, { context, intent, finish }); native.abort.addEventListener("abort", abort, { once: true });
       if (native.abort.aborted) abort(); else if (!send({ type: "call", id, context, intent })) finish(unknown(intent));
