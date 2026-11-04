@@ -121,6 +121,29 @@ describe("stopped Codex Chat continuation", () => {
     expect(f.control.hibernate).toBeUndefined();
   });
 
+  it("retains transcript generation when restarting a switched Chat so replies remain observable", async () => {
+    const f = await fixture();
+    const oldBinding = await f.admission.start("owner", "sess_legacy");
+    const release = await f.admission.prepareRevocation();
+    await release();
+    await f.switchAccount();
+    const generation = "11111111-1111-4111-8111-111111111111";
+    const result = await f.resume({ resumeState: {
+      ...f.context.resumeState, nativeAccountBinding: oldBinding, eventGeneration: generation, eventOffset: 17,
+    } });
+    expect(f.events.watch).toHaveBeenCalledWith(expect.objectContaining({
+      generation,
+      resume: expect.objectContaining({
+        turnId: "turn_followup",
+        resumeState: expect.objectContaining({ eventGeneration: generation, nativeAccountBinding: expect.any(String) }),
+        proveStopped: expect.any(Function),
+      }),
+    }));
+    expect(f.publishEvents.mock.invocationCallOrder[0]).toBeLessThan(f.events.watch.mock.invocationCallOrder[0]!);
+    expect(result.resumeState).toMatchObject({ eventGeneration: generation, eventOffset: 42 });
+    expect(f.startSession).toHaveBeenCalledOnce();
+  });
+
   it("does not move a bound Chat while its old process is still live", async () => {
     const f = await fixture();
     const oldBinding = await f.admission.start("owner");
@@ -176,7 +199,7 @@ describe("stopped Codex Chat continuation", () => {
     const f = await fixture();
     f.publishEvents.mockRejectedValueOnce(new Error("persistence unavailable"));
     await expect(f.resume()).rejects.toThrow("persistence unavailable");
-    expect(f.startSession).not.toHaveBeenCalled(); expect(f.events.unwatch).toHaveBeenCalledWith("sess_legacy");
+    expect(f.startSession).not.toHaveBeenCalled(); expect(f.events.watch).not.toHaveBeenCalled();
   });
 
   it("does not dispatch if the accepted turn ended before binding persistence", async () => {

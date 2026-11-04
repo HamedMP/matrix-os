@@ -55,28 +55,39 @@ export async function recoverStoppedCodexContinuation(
     if (!isSessionStopConfirmed(proof, principal.userId, sessionId)) throw new Error("Codex conversation recovery is unavailable");
     signal.throwIfAborted();
     // Recheck fresh identity/consent after the asynchronous liveness proof.
+    const proveStopped = async (proofSignal: AbortSignal) => {
+      proofSignal.throwIfAborted();
+      const current = await runtime.confirmStoppedSession!(principal.userId, sessionId, resumeState.backgroundRef!);
+      proofSignal.throwIfAborted();
+      return isSessionStopConfirmed(current, principal.userId, sessionId);
+    };
     const binding = changedAccount
-      ? await admission.renewStoppedSession(principal.userId, resumeState.nativeAccountBinding!, sessionId,
-        async proofSignal => {
-          proofSignal.throwIfAborted();
-          const current = await runtime.confirmStoppedSession!(principal.userId, sessionId, resumeState.backgroundRef!);
-          proofSignal.throwIfAborted();
-          return isSessionStopConfirmed(current, principal.userId, sessionId);
-        })
+      ? await admission.renewStoppedSession(principal.userId, resumeState.nativeAccountBinding!, sessionId, proveStopped)
       : expectedBinding;
     if (binding !== expectedBinding) throw new Error("Selected Codex account is unavailable");
     await admission.validate(principal.userId, binding, sessionId);
-    const recoveredState = { ...resumeState, nativeAccountBinding: binding };
+    let recoveredState = { ...resumeState, nativeAccountBinding: binding };
     const browser = nativeBrowserExecution(principal.userId);
     if (browser && !control.prepareBrowser) throw new Error("Browser startup unavailable");
-    const observation = await events.watch({ principal, threadId: context.thread.id, sessionId, startAtEnd: true, checkpoint: true });
     const startup = browser ? beginNativeBrowserBootstrap(principal.userId) : undefined;
     const recoverySignal = startup ? AbortSignal.any([signal, startup.signal]) : signal;
+    let observation: Awaited<ReturnType<typeof events.watch>> | undefined;
     try {
-      // Persist authorization before dispatch, so a restart never needs to guess.
+      // Persist authorization before observation and dispatch, so transcript
+      // recovery validates the newly authorized binding instead of the stale one.
       if (await publishEvents({ events: [], resumeState: recoveredState }) !== true) {
         throw new Error("Codex conversation binding persistence is unavailable");
       }
+      observation = await events.watch({
+        principal, threadId: context.thread.id, sessionId, startAtEnd: true, checkpoint: true,
+        ...(recoveredState.eventGeneration ? { generation: recoveredState.eventGeneration } : {}),
+        resume: { turnId: context.turn.turnId, resumeState: recoveredState, proveStopped },
+      });
+      recoveredState = {
+        ...recoveredState,
+        ...(observation.generation ? { eventGeneration: observation.generation, eventStreamInterrupted: false } : {}),
+        ...(observation.offset !== undefined ? { eventOffset: observation.offset } : {}),
+      };
       recoverySignal.throwIfAborted();
       await admission.validate(principal.userId, binding, sessionId);
       const session = await recoverCodexWorkspace({ ...runtime, startSession: scope.startSession },
@@ -86,10 +97,9 @@ export async function recoverStoppedCodexContinuation(
       if (browser) await prepareCodexBrowser({ ownerId: principal.userId, sessionId, browser, control, runtime, signal: recoverySignal });
       return { events: [], outcome: "delivered", resumeState: { ...recoveredState,
         backgroundRef: session.backgroundRef,
-        ...(observation.offset !== undefined ? { eventOffset: observation.offset } : {}),
       } };
     } catch (error: unknown) {
-      events.unwatch(sessionId);
+      if (observation?.watchId) events.unwatch(sessionId, observation.watchId);
       throw error;
     } finally { startup?.finish(); }
   });
