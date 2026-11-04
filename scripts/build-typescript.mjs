@@ -8,6 +8,7 @@ import { join, resolve } from "node:path";
 import { spawn } from "node:child_process";
 import { pathToFileURL } from "node:url";
 import { setTimeout as delay } from "node:timers/promises";
+import { assertOutputDirectory, prepareBuildOutput, publishBuildOutput, stagedOutputDirectory } from "./typescript-build-output.mjs";
 
 const STATE = ".matrix.tsbuildinfo";
 const STAMP = ".matrix-build.json";
@@ -259,11 +260,15 @@ export async function buildTypescript(packageDirectory, compile) {
   const stamp = join(cache, STAMP);
   try {
     await sweep(cache);
+    await assertOutputDirectory(directory);
+    const previous = await outputs(directory);
     await discardInvalidState(state);
     if (!await intact(directory, stamp)) await rm(state, { force: true });
     // TypeScript tracks inputs, imports, options and compiler version itself.
     // Always run it: an output fingerprint alone cannot prove source freshness.
-    const status = await compile(["--project", "tsconfig.json", "--incremental", "--tsBuildInfoFile", state], { lock: join(cache, LOCK) });
+    const output = await prepareBuildOutput(packageDirectory, previous);
+    const status = await compile(["--project", "tsconfig.json", "--incremental", "--tsBuildInfoFile", state,
+      "--outDir", output, "--noEmitOnError"], { lock: join(cache, LOCK) });
     if (status !== 0) {
       await rm(state, { force: true });
       await rm(stamp, { force: true });
@@ -274,9 +279,12 @@ export async function buildTypescript(packageDirectory, compile) {
     await discardInvalidState(state);
     const temporary = `${stamp}.${randomUUID()}.tmp`;
     try {
-      const manifest = JSON.stringify({ version: 1, files: await outputs(directory) });
+      await assertOutputDirectory(output);
+      const next = await outputs(output);
+      const manifest = JSON.stringify({ version: 1, files: next });
       if (Buffer.byteLength(manifest) > MAX_MANIFEST_BYTES) throw new Error("Build output manifest exceeds byte bounds");
       await writeFile(temporary, manifest, { flag: "wx" });
+      await publishBuildOutput(packageDirectory, previous, next);
       await rename(temporary, stamp);
     } finally { await rm(temporary, { force: true }); }
     return 0;
@@ -284,7 +292,10 @@ export async function buildTypescript(packageDirectory, compile) {
     await rm(state, { force: true });
     await rm(stamp, { force: true });
     throw error;
-  } finally { await release(); }
+  } finally {
+    try { await rm(stagedOutputDirectory(packageDirectory), { recursive: true, force: true }); }
+    finally { await release(); }
+  }
 }
 
 function superviseCompiler(directory, compiler, args) {

@@ -79,14 +79,20 @@ describe('incremental compiler cancellation and delivery', () => {
 
   it('keeps ownership until the real compiler stops after wrapper cancellation', async () => {
     const directory = await compilerFixture();
+    await mkdir(join(directory, 'dist'));
+    const lastGood = 'exports.value = 42;';
+    await writeFile(join(directory, 'dist/index.js'), lastGood);
     const wrapper = start(directory);
     const lock = join(directory, '.matrix-build-cache/.matrix-build.lock');
     await waitFor(() => exists(join(directory, 'compiler-writes')));
+    expect(await readFile(join(directory, 'dist/index.js'), 'utf8')).toBe(lastGood);
     compilerPids.push(Number(await readFile(join(directory, 'compiler-pid'), 'utf8')));
     wrapper.kill('SIGTERM');
     await new Promise(accept => setTimeout(accept, 50));
     expect(await readFile(join(lock, 'owner'), 'utf8')).toBe(String(wrapper.pid));
     expect(await exited(wrapper)).toEqual({ code: 143, signal: null });
+    expect(await readFile(join(directory, 'dist/index.js'), 'utf8')).toBe(lastGood);
+    expect((await readdir(directory))).not.toContain('.matrix-build-output');
     const writes = await readFile(join(directory, 'compiler-writes'), 'utf8');
     await new Promise(accept => setTimeout(accept, 100));
     expect(await readFile(join(directory, 'compiler-writes'), 'utf8')).toBe(writes);
