@@ -47,12 +47,14 @@ export async function isCurrentPreviewPairLaunch(db: PlatformDB, config: Enabled
         || now() - Date.parse(value.observedAt) > 30_000 || Date.parse(value.observedAt) > now() + 5000
         || now() - Date.parse(value.lastControlAt) > 60_000 || Date.parse(value.lastControlAt) > now() + 5000
         || value.funding.machineId !== member.machine_id || value.funding.actorId !== member.actor_id
-        || value.authorityGeneration !== member.runtime_token_epoch || value.funding.tokenEpoch !== member.runtime_token_epoch
+        || value.funding.tokenEpoch !== member.runtime_token_epoch
         || Date.parse(value.funding.expiresAt) <= now()) return null;
     }
     const selected = rows.find(item => item.role === context.role);
     if (!selected || selected.machine_id !== context.machineId || selected.actor_id !== context.actorId || selected.handle !== context.handle
-      || selected.runtime_slot !== context.runtimeSlot || selected.runtime_token_epoch !== context.authorityGeneration) return null;
+      || selected.runtime_slot !== context.runtimeSlot) return null;
+    const selectedObservation = PersistedPreviewPairObservationSchema.safeParse(selected.observation);
+    if (!selectedObservation.success || selectedObservation.data.authorityGeneration !== context.authorityGeneration) return null;
     return { owner: row.owner_actor_id, member: row.member_actor_id, outsider: row.outsider_actor_id, organization: row.organization_id };
   }
   const before = await snapshot(); if (!before) return false;
