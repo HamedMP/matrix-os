@@ -38,6 +38,13 @@ if ! node "$ROOT_DIR/scripts/host-bundle-baseline-builder.mjs" --check; then
   exec node "$ROOT_DIR/scripts/host-bundle-baseline-builder.mjs"
 fi
 
+# The diagnostic CLI samples only the isolated /work sandbox. Its bounded probes
+# are best effort; retain the original build exit and let the owner clean up.
+if [[ "$ROOT_DIR" == "/work" ]]; then
+  node "$ROOT_DIR/scripts/host-bundle-storage-diagnostics.mjs" inner before "$ROOT_DIR" 2>/dev/null || true
+  trap 'build_status=$?; node "$ROOT_DIR/scripts/host-bundle-storage-diagnostics.mjs" inner failure "$ROOT_DIR" 2>/dev/null || true; exit "$build_status"' ERR
+fi
+
 rm -rf "$DIST_DIR"
 mkdir -p "$STAGE_DIR/bin" "$STAGE_DIR/app" "$STAGE_DIR/runtime" "$STAGE_DIR/systemd" "$STAGE_DIR/user-systemd"
 
