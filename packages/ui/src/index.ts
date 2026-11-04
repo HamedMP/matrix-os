@@ -188,6 +188,9 @@ export { BotRunMessageBody, BotUnassignedMessageBody } from "./chat-agents/bots/
 export {RoutineMessageMeta, RoutineOccurrenceMessage, RoutineMessageReadNotice, useRoutineMessageState} from "./chat-agents/bots/RoutineMessage.js";
 export {routineMessageTimeline, routineRequestFireId, routineOccurrenceTime, routineOccurrenceOutcome} from "./chat-agents/bots/routine-transcript.js";
 export type {RoutineOccurrence} from "./chat-agents/bots/routine-transcript.js";
+export { ScheduledMessageMeta } from "./chat/ScheduledMessageMeta.js";
+export { nativeScheduledMessage, scheduledMessageTime } from "./chat/scheduled-message.js";
+export type { ScheduledMessagePresentation } from "./chat/scheduled-message.js";
 export { BotChatPanel } from "./chat-agents/bots/BotChatPanel.js";
 export { ChatAgentsWorkspace, useChatAgentsNavigation, useCloseAgentsOnDraftRequest } from "./chat-agents/ChatAgentsNavigation.js";
 export type { AgentProviderCatalogSource } from "./chat-agents/use-agent-provider-catalog.js";

@@ -1,4 +1,4 @@
-import {cleanup,render,screen} from "@testing-library/react-native";
+import {cleanup,fireEvent,render,screen} from "@testing-library/react-native";
 import {FlatList} from "react-native";
 import * as mockContextMenu from "./context-menu-test-utils";
 import {MessageList} from "../components/chat/MessageList";
@@ -21,4 +21,25 @@ it("renders the durable unadmitted failure as a read-only message, not a success
   expect(screen.getByText("Scheduled task did not run")).toBeTruthy();
   expect(screen.queryByText("Sent by scheduled task")).toBeNull();
   expect(screen.queryByText("background_not_authorized")).toBeNull();
+});
+it("attaches native system-input metadata once without changing safe text or adding a history row",()=>{
+  render(<MessageList messages={[{...message,role:"system",text:"Scheduled task triggered.",scheduled:undefined,
+    scheduledMessage:{timestamp:occurrence.fire.scheduledFor}}]} chatId="chat_owner"/>);
+  expect(screen.getAllByText("Sent by scheduled task")).toHaveLength(1);
+  expect(screen.getAllByText("Scheduled task triggered.")).toHaveLength(1);
+  expect(screen.UNSAFE_getByType(FlatList).props.ListHeaderComponent).toBeNull();
+});
+it("keeps manual same-text input plain",()=>{
+  render(<MessageList messages={[{...message,text:"Scheduled task triggered.",scheduled:undefined}]} chatId="chat_owner"/>);
+  expect(screen.queryByText("Sent by scheduled task")).toBeNull();
+  expect(screen.getByText("Scheduled task triggered.")).toBeTruthy();
+});
+it("expands a long safe saved native input in its own bubble",()=>{
+  const text="Only the safe stored message is available. ".repeat(10);
+  render(<MessageList messages={[{...message,role:"system",text,scheduled:undefined,
+    scheduledMessage:{timestamp:occurrence.fire.scheduledFor}}]} chatId="chat_owner"/>);
+  expect(screen.getByText(text).props.numberOfLines).toBe(3);
+  fireEvent.press(screen.getByRole("button",{name:"Show more"}));
+  expect(screen.getByText(text).props.numberOfLines).toBeUndefined();
+  expect(screen.getAllByText("Sent by scheduled task")).toHaveLength(1);
 });

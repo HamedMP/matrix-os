@@ -1,12 +1,14 @@
 import { canonicalChatApprovals, canonicalChatInputs, canonicalAssistantOutputMessages, canonicalAssistantOutputRootId } from "@matrix-os/contracts";
 import type { CanonicalChatMessage, CanonicalChatRun, CanonicalChatRunActivity, CanonicalChatTurn } from "@matrix-os/contracts";
 import { chatAgentAttribution } from "@matrix-os/ui";
+import { nativeScheduledMessage } from "@matrix-os/ui/chat-scheduled-message";
 import type { ConversationTurnPresentation, ConversationWorkPresentation } from "../../components/conversation/presentation";
 import { historicalChatPresentation } from "./historical-chat-presentation";
 import { messagePresentation, messageWork, hasDisplayableMessageContent, promotedAssistantArtifacts, withoutAttachmentReferences } from "./canonical-chat-message-presentation";
 import { isActiveRun, runPresentation, activeModelStatus, replaceThinkingPlaceholders, groupAdjacentToolCalls } from "./canonical-chat-run-presentation";
 const MAX_STREAMED_MESSAGE_PROJECTIONS = 200;
 export function canonicalChatPresentation(input: {
+  record?: { chat: { id: string } };
   messages: CanonicalChatMessage[];
   turns: CanonicalChatTurn[];
   runs: CanonicalChatRun[];
@@ -33,6 +35,7 @@ export function canonicalChatPresentation(input: {
       return historicalChatPresentation(historical, turn.id, turn.inputMessageId);
     }
     const userMessage = input.messages.find((message) => message.id === turn.inputMessageId);
+    const scheduledMessage = userMessage && nativeScheduledMessage(userMessage, { chatId: input.record?.chat.id, turns: input.turns, runs: input.runs });
     const userFollowups = input.messages.filter((message) => (
       message.turnId === turn.id
       && message.role === "user"
@@ -148,7 +151,7 @@ export function canonicalChatPresentation(input: {
       startedAt,
       endedAt,
       active: isActiveRun(run),
-      ...(userMessage ? { user: messagePresentation(userMessage, "commentary") } : {}),
+      ...(userMessage ? { user: { ...messagePresentation(userMessage, "commentary"), ...(scheduledMessage ? { scheduledMessage } : {}) } } : {}),
       ...(userFollowups.length > 0
         ? { userFollowups: userFollowups.map((message) => messagePresentation(message, "commentary")) }
         : {}),

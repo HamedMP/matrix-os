@@ -13,7 +13,7 @@ jest.mock("micromark-extension-gfm", () => ({ gfm: jest.fn(), gfmHtml: jest.fn()
 
 const mockFetch = streamingFetch as unknown as jest.Mock;
 const GATEWAY_URL = "https://example.test/vm/alice?runtime=primary";
-const STREAM_URL = "https://example.test/vm/alice/api/chats/events?runtime=primary&fundingVersion=1&commandPreviewVersion=1&assistantTextVersion=1";
+const STREAM_URL = "https://example.test/vm/alice/api/chats/events?runtime=primary&fundingVersion=1&messageVersion=2&commandPreviewVersion=1&assistantTextVersion=1";
 const createdAt = "2026-09-06T00:00:00.000Z";
 
 const chat = {
@@ -129,6 +129,7 @@ describe("createCanonicalChatEventSource", () => {
     const { source, events } = connectedSource();
     await settle();
     expect(mockFetch.mock.calls[0]![0]).toContain("assistantTextVersion=1");
+    expect(mockFetch.mock.calls[0]![0]).toContain("messageVersion=2");
     const frame = {
       type: "chat.content", event,
       content: {
@@ -159,6 +160,22 @@ describe("createCanonicalChatEventSource", () => {
 
     expect(events).toEqual([{ type: "chat.changed", chatId: chat.id, cursor: 7, eventType: "chat.deleted" }]);
     source.disconnect();
+  });
+
+  it("retains the negotiated system input purpose in streamed native admissions", async () => {
+    const stream = streamingResponse();
+    mockFetch.mockResolvedValue(stream.response);
+    const { source, events } = connectedSource();
+    try {
+      await settle();
+      const frame = { type: "chat.content", event, content: { record: { chat }, messages: [{
+        ...contentFrame.content.messageDelta.message, role: "system", purpose: "system", state: "committed",
+        parts: [{ type: "text", text: "Scheduled task triggered." }],
+      }] } };
+      stream.emit(sse(frame));
+      await settle();
+      expect(events[0]).toMatchObject({ content: { content: { messages: [{ role: "system", purpose: "system" }] } } });
+    } finally { source.disconnect(); stream.close(); }
   });
 
   it("collapses the events replayed on connect into one full refresh", async () => {
