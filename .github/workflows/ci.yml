@@ -721,11 +721,11 @@ jobs:
     needs: [changes, ci-backend]
     if: always() && needs.changes.result == 'success' && needs.changes.outputs.should_run == 'true' && (needs.changes.outputs.dedicated_eligible != 'true' || needs.ci-backend.outputs.provider == 'hosted')
     runs-on: ubuntu-latest
-    # Shard 4 has outgrown the previous ceilings: run 35911423904 hit 20 minutes,
-    # and main run 37587908679 hit 30 minutes without a failing assertion. Keep a
-    # bounded 40-minute window for runner variance and cleanup; split the shards if
-    # normal runs approach this ceiling too.
-    timeout-minutes: 40
+    # Full-source runs 41831133861/41831147916/41831159991/41831164971
+    # exhausted 40m on shard 1 while assertions kept passing. Allow collection,
+    # runner variance and cleanup within a bounded 55m window; test deadlines
+    # and required shards stay unchanged. Rebalance if normal runs approach it.
+    timeout-minutes: 55
     strategy:
       fail-fast: false
       matrix:
@@ -841,8 +841,9 @@ jobs:
     needs: changes
     if: always() && !cancelled() && needs.changes.result == 'success' && (needs.changes.outputs.should_run == 'true')
     runs-on: ubuntu-latest
-    # Measured run 41180668331 reached remaining PG at 9m29s; retain its 120s runner budget plus artifact/cleanup margin.
-    timeout-minutes: 14
+    # Run 41831154874 finished every PG batch but exhausted 14m during cache
+    # cleanup. Keep the 120s runner budget and allow bounded job-level headroom.
+    timeout-minutes: 20
     services:
       postgres:
         # ECR Public anonymous pulls hit "toomanyrequests: Data limit exceeded" on shared runner IPs,
