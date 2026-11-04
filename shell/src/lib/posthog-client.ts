@@ -11,10 +11,11 @@ import {
   type SupportChatProperties,
 } from "@matrix-os/contracts";
 import { subscribePostHogFlag, type FeatureFlagSource } from "@matrix-os/ui/feature-flags";
+import { buildClientErrorReport, type ClientErrorProperties } from "./client-error-report";
 import { getGatewayUrl } from "./gateway";
 import { getMarketingAttributionProperties } from "./marketing-attribution";
 
-type ClientProperties = Record<string, string | number | boolean | undefined>;
+type ClientProperties = ClientErrorProperties;
 type PostHogInitOptions = Parameters<typeof posthog.init>[1];
 type PostHogLogLevel = "trace" | "debug" | "info" | "warn" | "error" | "fatal";
 type PostHogWithLogger = typeof posthog & {
@@ -62,17 +63,11 @@ export function reportClientError(error: unknown, properties: ClientProperties =
   if (typeof window === "undefined") return;
 
   try {
-    const payload = {
-      errorId: typeof properties.errorId === "string" ? properties.errorId : undefined,
-      source: typeof properties.source === "string" ? properties.source : undefined,
-      digest: typeof properties.digest === "string" ? properties.digest : undefined,
-      name: error instanceof Error ? error.name : typeof error,
-      message: (error instanceof Error ? error.message : String(error)).slice(0, 1_000),
-      stack: error instanceof Error ? error.stack?.slice(0, 4_000) : undefined,
-      path: `${window.location.pathname}${window.location.search}`.slice(0, 512),
-      userAgent: window.navigator.userAgent.slice(0, 512),
+    const payload = buildClientErrorReport(error, properties, {
+      path: `${window.location.pathname}${window.location.search}`,
+      userAgent: window.navigator.userAgent,
       buildSha: process.env.NEXT_PUBLIC_MATRIX_BUILD_SHA,
-    };
+    });
 
     if (!payload.errorId) return;
 

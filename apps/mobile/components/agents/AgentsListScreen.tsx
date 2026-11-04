@@ -22,6 +22,8 @@ import { withRefreshTap } from "@/lib/haptics";
 import type { AgentListRow } from "./agent-rows";
 
 export interface AgentsListScreenProps {
+  title?: "Agents" | "New schedule";
+  notice?: string;
   /** "unavailable": the list could not be read, or agents are switched off on this computer. */
   state: "loading" | "unavailable" | "ready";
   rows: readonly AgentListRow[];
@@ -29,6 +31,7 @@ export interface AgentsListScreenProps {
   onRefresh: () => void;
   onRetry: () => void;
   onNewAgent: () => void;
+  onOpenSchedules?: () => void;
   onOpenAgent: (agentId: string) => void;
   /** Archive from a long press on the agent's row. */
   onArchiveAgent?: (agentId: string) => void;
@@ -36,12 +39,14 @@ export interface AgentsListScreenProps {
 
 /** The Agents tab's first screen: every agent with what it is doing. */
 export function AgentsListScreen({
+  title = "Agents", notice,
   state,
   rows,
   refreshing,
   onRefresh,
   onRetry,
   onNewAgent,
+  onOpenSchedules,
   onOpenAgent,
   onArchiveAgent,
 }: AgentsListScreenProps) {
@@ -53,9 +58,11 @@ export function AgentsListScreen({
   return (
     <TabScreen testID="agents-screen">
       <View testID="agents-header" style={styles.header}>
-        <Text accessibilityRole="header" style={styles.title}>Agents</Text>
+        <Text accessibilityRole="header" style={styles.title}>{title}</Text>
         <Button testID="agents-new" variant="secondary" icon={AddIcon} label="New agent" onPress={onNewAgent} />
       </View>
+      {notice ? <View style={styles.inset}><Text style={styles.noticeText}>{notice}</Text></View> : null}
+      {onOpenSchedules ? <View style={styles.inset}><Button label="Schedules" variant="outline" fullWidth onPress={onOpenSchedules} /></View> : null}
       {state === "loading" ? (
         <View testID="agents-loading" style={styles.inset}>
           <ItemRowSkeletons testID="agents-skeleton-row" leadingSize={36} leadingShape="round" />

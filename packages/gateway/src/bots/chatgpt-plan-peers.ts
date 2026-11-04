@@ -2,12 +2,14 @@ import { createHash, createPublicKey, randomBytes, randomUUID, timingSafeEqual, 
 import { CHATGPT_PLAN_PEER_MAX_SEQUENCE, CHATGPT_PLAN_PEER_REQUEST_LIFETIME_MS, chatGptPlanPeerRequestId, ChatGptPlanPeerConnectSchema, ChatGptPlanPeerReplySchema, ChatGptPlanPeerSessionSchema, ChatGptPlanPeerPollV2RequestSchema, chatGptPlanPeerProof, type ChatGptPlanPeerRequest, type ChatGptPlanPeerSnapshot, type BotProviderConnection, type CanonicalChatModelSelection } from '@matrix-os/contracts';
 import type { BotExecutor } from './repositories/shared.js';
 import type { PiRuntimeBinding } from './runtime-registry.js';
+import { isManagedPiBinding } from './runtime-registry.js';
 import { BotRouteError } from './route-resolver.js';
 import type { ChatGptPlanAuthority } from './chatgpt-plan.js';
 import { createChunkReceipt, createPeerReplyReceipts } from './chatgpt-plan-reply-receipts.js';
 import { createPeerPollDelivery } from './chatgpt-plan-poll-delivery.js';
 import { ChatGptPlanPeerError } from './chatgpt-plan-peer-error.js';
 import { inferenceChunks } from './inference-stream.js';
+import { ChatGptPlanApprovedRoutineSchema, type ChatGptPlanApprovedRoutine } from '@matrix-os/contracts';
 export { ChatGptPlanPeerError } from './chatgpt-plan-peer-error.js';
 type InferenceReply = {
     status: number;
@@ -37,6 +39,7 @@ type Peer = {
     mode?: 1 | 2;
     delivery?: ReturnType<typeof createPeerPollDelivery>;
     inferenceStream?: true;
+    approvedRoutines?: true;
 };
 /** Owner-authenticated local device, pinned public key, and one explicit source.
  * Holds no OAuth token and never contacts OpenAI from the managed gateway. */
@@ -45,6 +48,8 @@ export function createChatGptPlanPeers(deps: {
     ownerId: string;
     computerId: string;
     now?: () => number;
+    /** Must check current durable approval, private target, definition/source and execution lease. */
+    authorizeRoutine?(binding: PiRuntimeBinding, signal: AbortSignal): Promise<ChatGptPlanApprovedRoutine>;
 }) {
     const now = deps.now ?? Date.now;
     const compatible = (model: ChatGptPlanPeerSnapshot['models'][number]) => model.contextWindow >= 8192 && model.maxOutputTokens >= 256;
@@ -106,27 +111,52 @@ export function createChatGptPlanPeers(deps: {
             p.wake?.();
         }
     };
-    const command = (p: Peer, binding: PiRuntimeBinding, body: string, stream = false) => {
+    const authorize = async (binding: PiRuntimeBinding, signal: AbortSignal) => {
+        const selected = current();
+        const matches = () => {
+            const s = selected?.snapshot, b = binding.subscription;
+            return !closed && !signal.aborted && selected !== undefined && current() === selected && binding.ownerId === deps.ownerId
+                && b?.computerId === deps.computerId && b.peerId === selected.sessionId
+                && Boolean(s?.enabled && s.accountId === b?.accountId && s.grantRevision === b?.grantRevision
+                    && s.models.some(m => m.id === binding.route.modelId));
+        };
+        if (!matches()) throw new ChatGptPlanPeerError('unavailable');
+        let approvedRoutine: ChatGptPlanApprovedRoutine | undefined;
+        if (binding.requestClass === 'background' && !selected!.snapshot.background) {
+            if (isManagedPiBinding(binding) || !selected!.approvedRoutines || !deps.authorizeRoutine) throw new ChatGptPlanPeerError('unavailable');
+            approvedRoutine = ChatGptPlanApprovedRoutineSchema.parse(await deps.authorizeRoutine(binding, signal));
+            if (approvedRoutine.ownerId !== binding.ownerId || approvedRoutine.botId !== binding.botId
+                || approvedRoutine.chatId !== binding.chatId || approvedRoutine.taskId !== binding.taskId || approvedRoutine.runId !== binding.runId)
+                throw new ChatGptPlanPeerError('unavailable');
+        }
+        // A database wait cannot lend old approval to a replacement/revoked peer.
+        if (!matches()) throw new ChatGptPlanPeerError('unavailable');
+        return { peer: selected!, approvedRoutine };
+    };
+    const command = (p: Peer, binding: PiRuntimeBinding, body: string, stream = false, approvedRoutine?: ChatGptPlanApprovedRoutine) => {
         const sequence = p.sequence + 1;
         const request: Extract<ChatGptPlanPeerRequest, { action: 'infer' }> = { version: 1, action: 'infer',
             id: chatGptPlanPeerRequestId(p.sessionId, sequence), sequence, expiresAt: new Date(now() + CHATGPT_PLAN_PEER_REQUEST_LIFETIME_MS).toISOString(),
             accountId: binding.subscription!.accountId, grantRevision: binding.subscription!.grantRevision, computerId: deps.computerId,
-            requestClass: binding.requestClass, runId: binding.runId, model: binding.route.modelId, body, ...(stream ? { responseMode: 'stream' } : {}) };
+            requestClass: binding.requestClass, runId: binding.runId, model: binding.route.modelId, body, ...(stream ? { responseMode: 'stream' } : {}),
+            ...(approvedRoutine ? { approvedRoutine } : {}) };
         if (p.delivery && !p.delivery.canAdmit(request)) throw new ChatGptPlanPeerError('unavailable');
         p.sequence = sequence;
         return request;
     };
     const service = {
         authorizeReply(owner: string) { scope(owner); },
-        capabilities(owner: string, input: unknown, includeReplyDeliveryV2 = false, includeInferenceStream = false) {
+        capabilities(owner: string, input: unknown, includeReplyDeliveryV2 = false, includeInferenceStream = false, includeApprovedRoutines = false) {
             const p = session(owner, input, false);
             if (includeReplyDeliveryV2 && !p.replyReceipts) {
                 if (p.mode !== undefined) throw new ChatGptPlanPeerError('conflict');
                 p.replyReceipts = createPeerReplyReceipts(now);
             }
             if (includeInferenceStream) p.inferenceStream = true;
+            if (includeApprovedRoutines && deps.authorizeRoutine) p.approvedRoutines = true;
             return { version: 1 as const, sessionId: p.sessionId, pollDeliveryVersion: 2 as const,
                 ...(includeInferenceStream ? { inferenceStream: true as const } : {}),
+                ...(includeApprovedRoutines && p.approvedRoutines ? { approvedRoutines: true as const } : {}),
                 ...(includeReplyDeliveryV2 ? { replyDeliveryVersion: 2 as const } : {}) };
         },
         challenge(owner: string) {
@@ -297,7 +327,7 @@ export function createChatGptPlanPeers(deps: {
                 models: saved?.accountId ? saved.models.filter(compatible).map(m => ({ id: m.id, displayName: m.displayName, input: m.input })) : [],
                 authorization: { revision: saved?.grantRevision ?? 0, enabled: !reason, background: !reason && Boolean(saved?.background) }, coordinatorFunding: 'subscription' };
         },
-        async resolve(selection: CanonicalChatModelSelection, owner: string, requestClass: 'interactive' | 'background') {
+        async resolve(selection: CanonicalChatModelSelection, owner: string, requestClass: 'interactive' | 'background' | 'routine') {
             scope(owner);
             const selected = current();
             const saved = selected?.snapshot;
@@ -305,26 +335,26 @@ export function createChatGptPlanPeers(deps: {
             const model = saved?.models.find(m => m.id === selection.model && compatible(m));
             if (selection.instanceId !== 'matrix_chatgpt_plan' || !selected || !saved?.enabled || !saved.accountId || !model || opts.size !== 2 || selection.options?.length !== 2
                 || opts.get('accountId') !== saved.accountId || opts.get('grantRevision') !== String(saved.grantRevision)
-                || requestClass === 'background' && !saved.background)
+                || requestClass === 'background' && !saved.background
+                || requestClass === 'routine' && !saved.background && !selected.approvedRoutines)
                 throw new BotRouteError('model_unavailable');
             return { route: { api: 'openai-responses' as const, modelId: model.id, input: model.input, contextWindow: model.contextWindow, maxOutputTokens: Math.min(16384, model.maxOutputTokens) },
                 accessSourceId: 'matrix_chatgpt_plan' as const, subscription: { accountId: saved.accountId, computerId: deps.computerId, grantRevision: saved.grantRevision, peerId: selected.sessionId } };
         },
         async revalidate(binding: PiRuntimeBinding, signal: AbortSignal) {
-            const selected = current();
-            const s = selected?.snapshot;
-            const b = binding.subscription;
-            return !closed && !signal.aborted && binding.ownerId === deps.ownerId && b?.computerId === deps.computerId && b.peerId === selected?.sessionId
-                && Boolean(s?.enabled && s.accountId === b?.accountId && s.grantRevision === b?.grantRevision && s.models.some(m => m.id === binding.route.modelId)
-                    && (binding.requestClass === 'interactive' || s.background));
+            try { await authorize(binding, signal); return true; }
+            catch (error: unknown) {
+                if (!(error instanceof ChatGptPlanPeerError)) console.warn('[chatgpt-plan] Occurrence unavailable', error instanceof Error ? error.name : 'UnknownError');
+                return false;
+            }
         },
         async infer(binding: PiRuntimeBinding, body: string, signal: AbortSignal): Promise<InferenceReply> {
             if (!await service.revalidate(binding, signal) || signal.aborted)
                 throw new ChatGptPlanPeerError('unavailable');
-            const p = current()!;
+            const { peer: p, approvedRoutine } = await authorize(binding, signal);
             if (p.pending.size >= 4 || p.requests.length >= 32 || p.sequence >= CHATGPT_PLAN_PEER_MAX_SEQUENCE)
                 throw new ChatGptPlanPeerError('unavailable');
-            const request = command(p, binding, body);
+            const request = command(p, binding, body, false, approvedRoutine);
             const { id } = request;
             return new Promise<InferenceReply>((resolve, reject) => {
                 const abort = () => {
@@ -350,7 +380,7 @@ export function createChatGptPlanPeers(deps: {
         async inferStream(binding: PiRuntimeBinding, body: string, signal: AbortSignal): Promise<Omit<InferenceReply, 'body'> & { body: AsyncIterableIterator<string> }> {
             if (!await service.revalidate(binding, signal) || signal.aborted)
                 throw new ChatGptPlanPeerError('unavailable');
-            const p = current();
+            const { peer: p, approvedRoutine } = await authorize(binding, signal);
             if (!p || p.sessionId !== binding.subscription?.peerId)
                 throw new ChatGptPlanPeerError('unavailable');
             // Released native peers have strict schemas. Select their bounded
@@ -366,7 +396,7 @@ export function createChatGptPlanPeers(deps: {
             }
             if (p.pending.size >= 4 || p.requests.length >= 32 || p.sequence >= CHATGPT_PLAN_PEER_MAX_SEQUENCE)
                 throw new ChatGptPlanPeerError('unavailable');
-            const request = command(p, binding, body, true);
+            const request = command(p, binding, body, true, approvedRoutine);
             const { id } = request;
             type Read = { resolve(value: IteratorResult<string>): void; reject(error: unknown): void };
             type Chunk = { value: string; acknowledge(): void; reject(error: unknown): void };

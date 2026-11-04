@@ -6,7 +6,7 @@ import { ProviderWorkflowClientError } from "./provider-workflow-client.js";
 import { hasConfiguredConnection, hasStaleHermesConnection, resolveHarnessConnection, isNativeAccountSource } from "./harness-connection.js";
 import { updateWorkflowRowStatus } from "./workflow-row-status.js";
 import { useEffect, useRef, useState, type ReactNode } from "react";
-import { type ProviderSettingsSnapshot } from "@matrix-os/contracts";
+import { type ProviderSettingsSnapshot, type SpeechCapabilitiesResponse } from "@matrix-os/contracts";
 import { RetainedHarnessAction } from "./RetainedHarnessAction.js";
 import { AccountsPanel } from "./AccountsPanel.js";
 import { AccountLifecycleActions } from "./AccountLifecycleActions.js";
@@ -57,6 +57,7 @@ export function AgentsProvidersView({
   matrixAnthropicClient,
   onOpenAuthorizationUrl,
   onLoadUsageHistory,
+  speechClient,
 }: AgentsProvidersViewProps) {
   const root = useRef<HTMLDivElement>(null);
   const [localChatgptRefreshRevision, setLocalChatgptRefreshRevision] = useState(0);
@@ -67,6 +68,22 @@ export function AgentsProvidersView({
   const [workflowStatus, setWorkflowStatus] = useState<Record<string, string>>({});
   const [workflowPermission, setWorkflowPermission] = useState<"unknown" | "available" | "forbidden">("unknown");
   const [stateClient, setStateClient] = useState(workflowClient);
+  const [speechPreviewQuota, setSpeechPreviewQuota] = useState<SpeechCapabilitiesResponse["previewQuota"]>();
+  const [speechRefreshRevision, setSpeechRefreshRevision] = useState(0);
+  useEffect(() => {
+    if (!speechClient) return;
+    const controller = new AbortController();
+    setSpeechPreviewQuota(undefined);
+    void speechClient.capabilities(controller.signal).then((capabilities) => {
+      if (!controller.signal.aborted) setSpeechPreviewQuota(capabilities.previewQuota);
+    }).catch((caught: unknown) => {
+      if (!controller.signal.aborted) {
+        console.warn("[provider-settings] Speech capabilities unavailable:", caught instanceof Error ? caught.name : typeof caught);
+        setSpeechPreviewQuota(undefined);
+      }
+    });
+    return () => controller.abort();
+  }, [speechClient, speechRefreshRevision]);
   useEffect(() => {
     if (!workflowClient) return;
     const controller = new AbortController();
@@ -140,7 +157,12 @@ export function AgentsProvidersView({
       selectedId, disabled: busy || readOnly, supports, onMutate});
   const enablement = useHarnessEnablement({ snapshot, refresh: onRefreshForConnection, mutate: onMutate, scope: workflowClient });
   const visibleError = error ?? enablement.error;
-  const refreshSettings = () => { enablement.clearError(); setLocalChatgptRefreshRevision(value => value + 1); onRefresh(); };
+  const refreshSettings = () => {
+    enablement.clearError();
+    setLocalChatgptRefreshRevision(value => value + 1);
+    setSpeechRefreshRevision(value => value + 1);
+    onRefresh();
+  };
   const mutationsDisabled = busy || readOnly || gatewayPending || enablement.pending;
   const errorPresentation = settingsErrorPresentation(gatewayError ? null : visibleError);
 
@@ -175,6 +197,7 @@ export function AgentsProvidersView({
           key={gatewaySource?.id ?? "matrix-ai-unconfigured"}
           source={gatewaySource} policy={snapshot.gatewayPolicy} provider={gatewayProvider}
           modelInventory={snapshot.matrixModelInventory}
+          speechPreviewQuota={speechClient ? speechPreviewQuota : undefined}
           onUsageHistory={onLoadUsageHistory ? () => setHistoryLoader(() => onLoadUsageHistory) : undefined}
           disabled={mutationsDisabled} canSetBudget={supports("set_gateway_budget")}
           canSetAllowlist={supports("set_gateway_allowlist")} canAddCredit={supports("add_credit")}
