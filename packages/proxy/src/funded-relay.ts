@@ -487,8 +487,12 @@ export function createFundedRelay(dependencies: FundedRelayDependencies | null):
 
     let inputTokens: number;
     try {
-      if (config.reservationMode === "usage" && c.req.path !== COUNT_TOKENS_PATH) {
-        inputTokens = isBedrock ? config.bedrockRoute!.maxInputTokens : maximumFundedInputTokens(model.canonicalModelId);
+      if (isBedrock) {
+        inputTokens = config.bedrockRoute!.maxInputTokens;
+      } else if (isOpenAi) {
+        // Workers AI does not expose a trusted preflight token-count endpoint.
+        // Keep its admission conservative until the provider offers one.
+        inputTokens = maximumFundedInputTokens(model.canonicalModelId);
       } else {
         const counted = await countTokens({
           requestBody: serializeCountTokensRequest(parsedBody as FundedRequest),
