@@ -40,3 +40,15 @@ priority in this chat; this recommendation adds no approval gate.
   Settings opening directly to Agents & providers.
 - Link the verified ENG ticket, implementation PR, exact tested head/build,
   per-surface evidence, and Slack #tech evidence permalink before readiness.
+
+## CI failure repairs
+
+- The agent-first default exposed a billing navigation fixture that bypassed the
+  ApiClient contract and omitted `forRuntime`. The fixture now supports scoped
+  clients, and the test opens Billing from the actual default Settings view.
+- The Host build attempted `pnpm rebuild node-pty` at the root even though
+  `node-pty` belongs to the gateway workspace. A real-pnpm regression fixture
+  proves the old command exits successfully without running the dependency
+  lifecycle. Rebuild in the gateway workspace before gateway import checks.
+- Native compilation and ABI qualification remain the real Linux preview build's
+  responsibility; the local regression only verifies workspace lifecycle scope.
