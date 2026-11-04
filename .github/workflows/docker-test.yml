@@ -114,6 +114,8 @@ jobs:
         with:
           context: .
           file: Dockerfile.dev
+          secrets: |
+            github_token=${{ github.token }}
           tags: matrix-os-dev:ci
           outputs: type=docker,dest=/tmp/matrix-os-dev-ci.tar
           cache-from: type=gha,scope=dev-image

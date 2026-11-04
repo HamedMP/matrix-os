@@ -99,6 +99,7 @@ export function renderLocalParityCloudInit(template, input) {
     snapshotSourceVersion: "",
     updateManifestBaseUrlEnv: "",
     collaborationDisabledEnv: "",
+    collaborationPairEnv: "",
     previewRuntimeEnv: "",
     hostBundleUrl: input.hostBundleUrl,
     platformRegisterUrl: `${input.platformUrl}/vps/register`,
