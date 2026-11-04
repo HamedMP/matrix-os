@@ -700,6 +700,13 @@ export function createApp(deps: {
     edgeSecret: appEnv.SITES_EDGE_SECRET, edgePreviousSecret: appEnv.SITES_EDGE_SECRET_PREVIOUS,
     dispatcher: customerVpsProxyDispatcher, env: appEnv });
 
+  // Sync object uploads authenticate with their own machine credential and
+  // allow up to 100 MiB. Mount them before the generic 10 MiB session-proxy
+  // guard so the route-specific limits remain authoritative.
+  if (deps.internalSyncRoutes) {
+    app.route('/internal/containers/:handle/sync', deps.internalSyncRoutes);
+  }
+
   // Session-based routing:
   // - app.matrix-os.com -> Clerk session -> Matrix OS shell/gateway
   // - code.matrix-os.com -> Clerk session -> code-server on the user's VPS
@@ -747,10 +754,6 @@ export function createApp(deps: {
     privatePreviewEligibility,
   });
   registerGetStartedBotNameRoutes(app, { db, platformSecret, env: appEnv });
-
-  if (deps.internalSyncRoutes) {
-    app.route('/internal/containers/:handle/sync', deps.internalSyncRoutes);
-  }
   app.get('/vps/releases', async (c) => {
     if (!platformSecret) {
       return c.json({ error: 'VPS tracking not configured' }, 503);
