@@ -1,3 +1,4 @@
+import type { VerifiedDesktopPreviewContext } from "./preview-pair-context";
 // Auto-update (FR-091): packaged builds download in the background. Once the
 // update is ready, the renderer offers the explicit restart-and-install action.
 import { app } from "electron";
@@ -117,7 +118,7 @@ function readRelease(info: unknown, version: string): DesktopReleaseNotes {
   return { version, notes: releaseNotesText(candidate.releaseNotes) };
 }
 
-export function createUpdater(events: UpdateEvents): Updater {
+export function createUpdater(events: UpdateEvents, options: { previewContext?: VerifiedDesktopPreviewContext } = {}): Updater {
   let current: DesktopUpdateSnapshot = { status: "disabled" };
   let activeAutoUpdater: ElectronAutoUpdater | null = null;
   let pendingReleaseSave: Promise<void> | null = null;
@@ -125,7 +126,7 @@ export function createUpdater(events: UpdateEvents): Updater {
   let installPending = false;
   let checkInFlight = false;
   let verifiedVersion: string | null = null;
-  const feed = resolveUpdateFeedConfig(process.env, app.isPackaged);
+  const feed = options.previewContext ? { enabled: false as const } : resolveUpdateFeedConfig(process.env, app.isPackaged);
 
   const setSnapshot = (next: DesktopUpdateSnapshot): void => {
     current = next;

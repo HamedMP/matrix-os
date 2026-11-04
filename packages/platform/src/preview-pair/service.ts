@@ -1,3 +1,4 @@
+import { isCurrentPreviewPairLaunch } from "./launch-current.js";
 import { z } from "zod/v4";
 import { sql, type Selectable } from "kysely";
 import { PreviewPairActorSchema, PreviewPairIdSchema, PreviewPairPrSchema, PreviewPairShaSchema, PreviewPairGenerationSchema } from "@matrix-os/contracts/preview-pair";
@@ -75,6 +76,7 @@ export function createPreviewPairService(deps: PreviewPairServiceDeps) {
     return { checked, failed };
   }
   return {
+    launchOrigin: config.controlOrigin,
     async setup(rawReader: PreviewPairReader) {
       const reader = verifiedPreviewPairReader(rawReader, now());
       if (reader.kind !== "control" || !await maintainer(reader.actorId)) throw new PreviewPairAccessError(403);
@@ -219,6 +221,9 @@ export function createPreviewPairService(deps: PreviewPairServiceDeps) {
     },
     async requestReport(pairId: string, generation: number, reader: PreviewPairReader) {
       return readPreviewPairRequestReport(db, pairId, generation, reader, maintainer, now());
+    },
+    async launchCurrent(context: import("@matrix-os/contracts/preview-pair-launch").PreviewPairLaunchContext) {
+      return isCurrentPreviewPairLaunch(db, config, context, deps.readiness.membership, now);
     },
     async manifest(pairId: string, reader: PreviewPairReader) {
       let pair = await authorizePreviewPairReader(db, pairId, reader, maintainer, now());

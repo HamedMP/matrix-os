@@ -48,9 +48,9 @@ is unchanged. Candidate sharing may still fail and must remain diagnosable.
 alongside a normal third app. Each binds its expected actor/computer/org/source;
 sign-out/relaunch/callback handling does not affect the other two sessions.
 
-- [ ] T018 [P] [US2] Add failing real AuthService cached/new wrong-actor, wrong-origin/slot and forbidden primary-fallback cases in `tests/desktop/preview-pair-auth.test.ts`.
-- [ ] T019 [US2] Implement expected pair context and auth binding in `desktop/src/main/preview-pair-context.ts`, `auth/preview-pair-binding.ts` and minimal `auth/auth-service.ts` wiring; preserve ordinary auth behavior.
-- [ ] T020 [P] [US2] Add failing candidate OTA/protocol ownership cases in `tests/desktop/preview-pair-startup.test.ts`, then disable updater and global protocol changes only for verified pair mode in the focused desktop startup/update helpers.
+- [x] T018 [P] [US2] Add failing real AuthService cached/new wrong-actor, wrong-origin/slot and forbidden primary-fallback cases in `tests/desktop/preview-pair-auth.test.ts`.
+- [x] T019 [US2] Implement expected pair context and auth binding in `desktop/src/main/preview-pair-context.ts`, `auth/preview-pair-binding.ts` and minimal `auth/auth-service.ts` wiring; preserve ordinary auth behavior.
+- [x] T020 [P] [US2] Add failing candidate OTA/protocol ownership cases in `tests/desktop/preview-pair-startup.test.ts`, then disable updater and global protocol changes only for verified pair mode in the focused desktop startup/update helpers.
 - [ ] T021 [US2] Write canonical-lookup/artifact/source/expiry rejection tests in `tests/scripts/preview-pair-launch.test.ts`, then implement trusted control reads and artifact verification in `scripts/preview-pair/client.ts` and `artifact.ts`.
 - [ ] T022 [US2] Add failing traversal/symlink, repeated launch, partial startup and safe child-cleanup cases in `tests/scripts/preview-pair-profiles.test.ts`; implement owned profiles/processes in `scripts/preview-pair/profiles.ts` and `processes.ts`.
 - [ ] T023 [US2] Implement the thin dual-app command in `scripts/preview-pair/launch.ts` and the `preview:pair:open` package script using existing normal profile authentication; no token persistence or arbitrary target fallback.
@@ -137,7 +137,8 @@ Use official `gh stack init/add/rebase/submit`; never hand-retarget or flatten.
 | 3l3 | Source-owned single-effect publisher and safe pre-admission reports (part of T016/T033) | `codex/eng-418-preview-pair-publisher` | Layer3l2 |
 | 3l4a | Authenticated control transport, existing-pair reuse, fenced adoption/stop, controller completion recovery and bounded artifact reader (part of T016/T033) | `codex/eng-418-preview-pair-control` | Layer3l3 |
 | 3l4b | Pair-only host bundle namespace, protected build/publish workflow and user command (complete T016/T033) | `codex/eng-418-preview-pair-control-workflow` | Layer3l4a |
-| 4 | Electron pinning, local launcher and badge (T018–T025, T035) | `codex/eng-418-preview-pair-desktop` | Layer3l4b |
+| 4a | Source-verified Electron startup, owned profiles, account/runtime pinning and callback/OTA isolation (T018–T020; startup portion T025) | `codex/eng-418-preview-pair-desktop` | Layer3l4b |
+| 4b | Artifact launcher, process reuse/cleanup and visible role (T021–T025, T035) | `codex/eng-418-preview-pair-launcher` | Layer4a |
 | 5 if needed | Evidence runner, acceptance and internal docs (T026–T029, T036–T042) | `codex/eng-418-preview-pair-qualification` | Layer4 |
 
 Target <1000 additions/<20 files where practical; split a layer before exceeding

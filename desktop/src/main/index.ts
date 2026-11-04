@@ -1,3 +1,4 @@
+import { initializeDesktopPreview } from "./preview-pair-startup";
 import { app, BrowserWindow, clipboard, dialog, ipcMain, Notification, safeStorage, screen, session, shell, webContents, type IpcMainInvokeEvent } from "electron";
 import { join } from "node:path";
 import { createFileDownloadService } from "./files/file-download-service";
@@ -92,6 +93,15 @@ configureDesktopIdentity(app, {
 if (desktopRendererUrl && desktopRendererUrl !== process.env.ELECTRON_RENDERER_URL) {
   app.commandLine.appendSwitch("host-resolver-rules", desktopDevHostResolverRules());
 }
+
+// ESM top-level await is required: sessionData and the singleton lock must be
+// selected before Electron emits ready. Normal startup does not add an await.
+const previewContext = process.env.MATRIX_PREVIEW_PAIR_CONTEXT === undefined ? null
+  : await initializeDesktopPreview(app, process.env, { buildSource: readDesktopBuildSource() }).catch((error: unknown) => {
+    console.warn("[preview-pair] startup unavailable", error instanceof Error ? error.name : "UnknownError");
+    app.exit(1);
+    throw new Error("Preview startup is unavailable");
+  });
 
 let mainWindow: BrowserWindow | null = null;
 let navigationCache: ReturnType<typeof createNavigationCache> | null = null;
@@ -223,7 +233,7 @@ if (!gotLock) {
   void app
     .whenReady()
     .then(async () => {
-      const failedProtocolRegistrations = registerWindowsProtocolClients(app);
+      const failedProtocolRegistrations = registerWindowsProtocolClients(app, process.platform, previewContext ?? undefined);
       if (failedProtocolRegistrations.length > 0) {
         console.warn(
           `[main] could not register Windows URL schemes: ${failedProtocolRegistrations.join(", ")}`,
@@ -247,12 +257,13 @@ if (!gotLock) {
       const store = createLocalStore({ dir: userData });
       const credentialStore = createCredentialStore({ dir: userData, safeStorage });
 
-      const platformHost = process.env.OPERATOR_GATEWAY_URL ?? DEFAULT_PLATFORM_HOST;
-      const runtimeSelectionOrigin = process.env.MATRIX_API_ORIGIN
+      const platformHost = previewContext?.apiOrigin ?? process.env.OPERATOR_GATEWAY_URL ?? DEFAULT_PLATFORM_HOST;
+      const runtimeSelectionOrigin = previewContext?.apiOrigin ?? process.env.MATRIX_API_ORIGIN
         ?? (platformHost === DEFAULT_PLATFORM_HOST ? "https://api.matrix-os.com" : platformHost);
 
       let invalidateAppCapabilities: (() => void) | undefined;
       const auth = new AuthService({
+        ...(previewContext ? { previewContext } : {}),
         credentialStore,
         platformHost,
         runtimeSelectionOrigin,
@@ -434,7 +445,7 @@ if (!gotLock) {
             silent: false,
           }).show();
         },
-      });
+      }, { previewContext: previewContext ?? undefined });
       handleUpdateBeforeQuit = createUpdateAwareBeforeQuit({
         status: () => updater.status(),
         isInstallStarted: () => updater.isInstallStarted(),
