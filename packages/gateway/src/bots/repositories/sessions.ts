@@ -1,3 +1,6 @@
+import { lockRunCollaborationScope } from "../../chat/run-scope-lock.js";
+import type { Kysely } from "kysely";
+import type { ChatDatabase } from "../../chat/database.js";
 /**
  * Pi transcripts per bot and chat (`bot_agent_sessions`). The gateway treats
  * messages as opaque JSON; the bot runtime owns their structure. Every save
@@ -41,6 +44,8 @@ export function assertRuntimeVersions(versions: Record<string, string>): void {
 
 async function requireCurrentSharedRun(executor: BotExecutor, key: BotSessionKey): Promise<void> {
   if (!key.contextRunId || !/^run_[A-Za-z0-9_.:-]{1,123}$/.test(key.contextRunId)) throw new BotStateError("invalid_input");
+  await lockRunCollaborationScope(executor as unknown as Kysely<ChatDatabase>,
+    { type: "personal", ownerId: key.ownerId }, key.chatId, key.contextRunId);
   // Admission/claim/completion use this same Chat lock. The active-run unique index
   // makes a completed older run ineligible even if its broker authorization began earlier.
   const chat = await executor.selectFrom("chats").select("id").where("id", "=", key.chatId)
