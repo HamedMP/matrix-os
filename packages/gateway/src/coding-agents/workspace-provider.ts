@@ -26,7 +26,7 @@ import type { CodingAgentProviderAdapter } from "./thread-store.js";
 import type { CodexEventBridge } from "./codex-event-bridge.js";
 import type { CodexControlClient } from "./codex-control-client.js";
 import { recoverCodexWorkspace } from "./codex-workspace-recovery.js";
-import { recoverLegacyCodexContinuation } from "./codex-legacy-continuation.js";
+import { recoverStoppedCodexContinuation } from "./codex-stopped-continuation.js";
 import { proveCodexResumeStopped } from "./provider-transcript-recovery.js";
 import type { BackgroundAgentRuntime } from "../background-agent-runtime.js";
 
@@ -368,9 +368,15 @@ export function createWorkspaceCodingAgentProvider(
         throw new Error("Workspace provider conversation mismatch");
       }
       signal.throwIfAborted();
-      const recovered = await recoverLegacyCodexContinuation(options, context, sessionId, workspaceTurnPrompt(turn.message, turn.attachments));
-      if (recovered) return recovered;
-      if (agent === "codex") await options.codexAdmission?.validate(principal.userId, resumeState.nativeAccountBinding, sessionId);
+      if (agent === "codex") {
+        try {
+          await options.codexAdmission?.validate(principal.userId, resumeState.nativeAccountBinding, sessionId);
+        } catch (error: unknown) {
+          const recovered = await recoverStoppedCodexContinuation(options, context, sessionId, workspaceTurnPrompt(turn.message, turn.attachments));
+          if (recovered) return recovered;
+          throw error;
+        }
+      }
       if (agent === "codex" && options.codexControl) {
         if (!options.codexEvents) {
           throw new Error("Codex structured events are unavailable");
