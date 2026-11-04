@@ -125,6 +125,20 @@ describe("T800: Clerk JWT verification on subdomain proxy", () => {
     });
   });
 
+  it("preserves the verified token expiry for both owner-session verification entry points", async () => {
+    const exp = Math.floor(Date.now() / 1000) + 120;
+    auth = createClerkAuth({ verifyToken: async () => ({ sub: "user_owner", sid: "sess_owner", exp }) });
+    const expected = { authenticated: true, userId: "user_owner", sessionId: "sess_owner", tokenExpiresAt: exp };
+    expect(await auth.verify("fixture-token")).toEqual(expected);
+    expect(await auth.verifyAndMatchOwner("fixture-token", "user_owner")).toEqual(expected);
+    expect(await auth.verifyAndMatchOwner("fixture-token", "user_foreign")).toEqual({ authenticated: false, error: "User mismatch" });
+  });
+
+  it.each([undefined, 0, -1, 1.5, NaN, Infinity, "not-an-epoch"])("does not invent an expiry for malformed verified exp %s", async exp => {
+    auth = createClerkAuth({ verifyToken: async () => ({ sub: "user_owner", sid: "sess_owner", exp }) });
+    expect(await auth.verify("fixture-token")).toEqual({ authenticated: true, userId: "user_owner", sessionId: "sess_owner" });
+  });
+
   it("revokes Clerk sessions with a bounded direct Backend API fetch", async () => {
     const signal = AbortSignal.abort();
     const timeoutSpy = vi.spyOn(AbortSignal, "timeout").mockReturnValue(signal);
