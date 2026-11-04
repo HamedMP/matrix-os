@@ -5,6 +5,7 @@
 @source "../../../packages/ui/src/organization-drive";
 @source "../../../packages/ui/src/chat";
 @source "../../../packages/ui/src/chat-agents";
+@source "../../../packages/ui/src/routine-action";
 @source "../../../packages/ui/src/collaboration";
 @import "tw-animate-css";
 @import "shadcn/tailwind.css";
