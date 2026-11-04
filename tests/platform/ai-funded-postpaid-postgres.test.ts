@@ -53,6 +53,32 @@ describe.skipIf(!databaseUrl)("postpaid credit on independent PostgreSQL connect
   const request = (id = "postpaid_request") => ({ credential: token, requestId: id, modelId,
     maxCostMicrousd: 2_000_000, billingMode: "usage" as const, billingPolicy: "postpaid" as const });
 
+  it.each(["postpaid", "legacy"])("keeps %s execution exclusive across replicas after releasing uncertain customer cost", async mode => {
+    const { billingPolicy, ...legacy } = request();
+    const admitted = await first.authorize(mode === "postpaid" ? { ...legacy, billingPolicy } : legacy);
+    const key = { reservationId: admitted.reservation.reservationId, tokenId };
+    const start = await first.startReservation({ ...key, executionId: "uncertain_execution" });
+    await expect(first.finalizeReservation({ ...key, mode: "conservative" })).rejects.toMatchObject({ code: "unavailable" });
+    expect(await second.getFundingSummary(identity)).toMatchObject({ reservedMicrousd: 0,
+      reservedThisMonthMicrousd: 0, remainingBalanceMicrousd: 1_000_000 });
+    const beforeExpiry = await Promise.allSettled([
+      first.authorize(request("early_first")), second.authorize(request("early_second")),
+    ]);
+    expect(beforeExpiry).toMatchObject([{ status: "rejected", reason: { code: "rate_limited" } },
+      { status: "rejected", reason: { code: "rate_limited" } }]);
+    clock = new Date(start.expiresAt);
+    const atExpiry = await Promise.allSettled([
+      first.authorize(request("after_first")), second.authorize(request("after_second")),
+    ]);
+    expect(atExpiry.filter(result => result.status === "fulfilled")).toHaveLength(1);
+    expect(atExpiry.filter(result => result.status === "rejected")).toMatchObject([
+      { reason: { code: "rate_limited" } },
+    ]);
+    const retained = await db.executor.selectFrom("ai_funded_usage_reservations").selectAll()
+      .where("reservation_id", "=", key.reservationId).executeTakeFirstOrThrow();
+    expect(retained).toMatchObject({ status: "expired", actual_microusd: null, settlement_response: null });
+  });
+
   async function settleAfterLockWait(key: { reservationId: string; tokenId: string }, actualCostMicrousd: number, afterWait: Date, lock: "owner" | "balance") {
     const locked = Promise.withResolvers<void>(), release = Promise.withResolvers<void>();
     const blocker = db.transaction(async trx => {

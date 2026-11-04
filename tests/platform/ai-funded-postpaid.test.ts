@@ -64,6 +64,22 @@ describe("postpaid funded AI customer credit", () => {
     expect(await repo.getFundingSummary(identity)).toMatchObject({ remainingBalanceMicrousd: 1_500_000 });
   });
 
+  it.each(["postpaid", "legacy"])("retains the bounded execution lease after releasing unknown %s customer cost", async mode => {
+    const { billingPolicy, ...legacy } = request();
+    const auth = await repo.authorize(mode === "postpaid" ? { ...legacy, billingPolicy } : legacy);
+    const key = { reservationId: auth.reservation.reservationId, tokenId: credential.tokenId };
+    const start = await repo.startReservation({ ...key, executionId: "unknown_execution" });
+    await expect(repo.finalizeReservation({ ...key, mode: "conservative" }))
+      .rejects.toMatchObject({ code: "unavailable" });
+    expect(await repo.getFundingSummary(identity)).toMatchObject({ reservedMicrousd: 0,
+      reservedThisMonthMicrousd: 0, remainingBalanceMicrousd: 1_000_000 });
+    await expect(repo.authorize(request("too_soon"))).rejects.toMatchObject({ code: "rate_limited" });
+    clock = new Date(Date.parse(start.expiresAt) - 1);
+    await expect(repo.authorize(request("still_live"))).rejects.toMatchObject({ code: "rate_limited" });
+    clock = new Date(start.expiresAt);
+    await expect(repo.authorize(request("after_lease"))).resolves.toMatchObject({ authorized: true });
+  });
+
   it("releases unknown failed usage immediately, retains unknown expense, and accepts exact late usage without debit", async () => {
     const auth = await repo.authorize(request());
     const key = { reservationId: auth.reservation.reservationId, tokenId: credential.tokenId };

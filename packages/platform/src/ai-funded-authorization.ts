@@ -178,7 +178,7 @@ export function createFundedAuthorize(deps: FundedAuthorizeDependencies) {
       });
       // A priority rejection may have written a claim; return it so the claim commits.
       if (priority.kind === "rejected") return { kind: "rejected", reason: priority.reason };
-      if (await findConflictingActiveReservation(trx.executor, credential.owner_id, billingMode)) {
+      if (await findConflictingActiveReservation(trx.executor, credential.owner_id, billingMode, checked)) {
         // A capacity refusal before any reservation: the reason tells callers it is safe to retry.
         throw new AiFundedPolicyError("rate_limited", "slot_busy");
       }
