@@ -79,6 +79,7 @@ Colleagues understand that the app and its data are served by the creator's Matr
 - A successful write whose response is lost can be checked and retried without duplicating a record.
 - Offline participants retain unsaved input; offline writes are never claimed as saved.
 - A shared app cannot silently use the creator's connected accounts, credentials, or AI spending authority.
+- Current organization management permits a creator who is not the final admin to leave the selected organization while their app is shared. V1 must define whether departure is blocked until sharing stops or the share continues on the creator's host; the existing last-admin rule does not decide this.
 
 ## Requirements *(mandatory)*
 
@@ -115,6 +116,7 @@ Colleagues understand that the app and its data are served by the creator's Matr
 - The first implementation must prove that owner and recipient launch against the same owner app and database. Existing asset routes alone are insufficient evidence.
 - V1 targets Web Canvas, Web Desktop, Electron desktop, and web mobile where owner-built apps already launch. Native Mobile parity is a separate planning decision.
 - A later skill may teach builders this contract. Public links, external guests, marketplace distribution, arbitrary custom app servers, cross-organization sharing of one owner database, and creator-departure transfer are outside V1.
+- **Open lifecycle decision**: What happens when the creator leaves the organization that has their app share? Current organization membership rules permit this except for the final admin; no app-share-specific departure guard exists yet.
 - Implementation must use test-first coverage at real identity, authorization, and persistence boundaries and live owner/member/outsider journeys on every affected surface. The implementation plan must include a separate public documentation PR in FinnaAI/matrix-os-site.
 
 ## Success Criteria *(mandatory)*
