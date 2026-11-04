@@ -278,6 +278,51 @@ curl --fail http://localhost:8080/health
 
 Docker and source-HMR modes are convenience loops, not production topology.
 
+### Connected DevStack identity
+
+For real Clerk and Pipedream checks, use an explicitly owned local runtime and
+an independent platform database. The bootstrap below does not start services
+or inherit the auth bypasses in `dev:source`. Configure real Clerk verification
+and Pipedream credentials on the local Platform separately; keep server secrets
+out of source projections and the browser.
+
+Create an empty database named `matrixos_devstack_local` in your local Postgres
+first. Set `PLATFORM_DATABASE_URL` to its literal-loopback connection URL, without
+query parameters, and supply a verified Clerk test user's identity. Check that
+the container name and ports refer to the runtime you own, then run:
+
+```bash
+export PLATFORM_RUNTIME_MODE=local
+pnpm exec tsx scripts/devstack-bootstrap.ts \
+  --instance local \
+  --clerk-user-id "$DEVSTACK_CLERK_USER_ID" \
+  --handle devstack-local \
+  --email "$DEVSTACK_EMAIL" \
+  --container-id matrixos-devstack-local \
+  --gateway-port 4000 --shell-port 3000
+```
+
+For another instance, use another database: `matrixos_devstack_<instance>`, with
+hyphens replaced by underscores. Initialization commits the local user and
+legacy-container route together. Repeating the exact command keeps the user ID
+and existing Pipedream mapping; it refuses to adopt foreign rows or change a
+retained route. The command prints a targeted receipt, never the database URL.
+It does not create VPS records, change paid entitlements, or grant AI credit.
+
+After normal sign-in to the local Platform, use its existing
+`POST /api/integrations/connect` route. That route persists the local user's
+Pipedream external ID before creating a Connect session. Complete normal OAuth
+consent, then use `POST /api/integrations/sync` to reconcile accounts when
+production Pipedream webhooks cannot reach the local environment. Browser
+connections use the existing popup/SDK completion flow; the route's explicit
+`redirectUri` currently supports only the native mobile integration deep link.
+Do not replace the shared production webhook configuration for a local test.
+
+Validate sign-in, one read, revocation, and restart recovery separately. Bootstrap
+success alone does not qualify a provider connection, native runtime, funded AI,
+or complete Preview parity. The broader architecture is tracked in
+[the DevStack specification](https://github.com/HamedMP/matrix-os/pull/3023).
+
 ## Project Structure
 
 | Directory | What it is |
