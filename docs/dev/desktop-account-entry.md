@@ -50,3 +50,26 @@ the authenticated browser; their account routing and hosted setup are unchanged.
 Run the desktop build before the end-to-end suite. Use
 `MATRIX_DESKTOP_E2E_REQUIRED=1` to fail when that build is missing. These fixtures
 never create a hosted account or approve a real connection.
+
+## Native credential isolation during development QA
+
+An independent `OPERATOR_USER_DATA_DIR` separates local files, but does not by
+itself separate the macOS Keychain service used by Electron Safe Storage. A
+locally signed test app using the product name can prompt for the existing
+`Matrix OS Safe Storage` item. Do not approve that prompt, copy credentials,
+change Keychain access lists, or disable native encryption to continue a test.
+
+For an **unpackaged development build**, explicitly set
+`MATRIX_DESKTOP_QA_IDENTITY=isolated` together with an existing absolute QA
+profile directory in `OPERATOR_USER_DATA_DIR`. Startup derives a stable
+`Matrix OS QA <digest>` app name from that directory's canonical path before
+Electron readiness. Packaged builds, unknown QA values, missing directories,
+and profiles overlapping the production directory are rejected. The normal
+product name and existing profile behavior stay unchanged without the flag.
+
+Use a new empty QA profile for its first login and retain the same path for
+restarts. The QA build uses real OS encryption in its own namespace. It does
+not migrate an account or its permissions: authenticate normally, select the
+intended test Computer before approval, and handle a device conflict through
+the existing explicit owner flow. An unexpected OS access prompt remains a
+reason to stop; this configuration cannot guarantee that macOS never prompts.

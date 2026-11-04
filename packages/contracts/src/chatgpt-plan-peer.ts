@@ -16,6 +16,12 @@ export function chatGptPlanPeerRequestId(sessionId: string, sequence: number): s
     return `${sessionId.slice(0, 24)}${sequence.toString(16).padStart(12, '0')}`;
 }
 const reference = z.string().min(1).max(160).regex(/^[A-Za-z0-9][A-Za-z0-9_.:-]*$/).refine(v => !v.includes('..'));
+/** Only the Gateway's durable occurrence authorizer constructs this projection. */
+export const ChatGptPlanApprovedRoutineSchema = z.object({
+    ownerId: reference, botId: reference, chatId: reference, taskId: reference, runId: reference,
+    routineId: reference, fireId: reference, approvalId: reference,
+}).strict();
+export type ChatGptPlanApprovedRoutine = z.infer<typeof ChatGptPlanApprovedRoutineSchema>;
 export const ChatGptPlanPeerModelSchema = z.object({ id: reference, displayName: z.string().min(1).max(160),
     input: z.array(z.enum(['text', 'image'])).min(1).max(2).refine(input => input.includes('text') && new Set(input).size === input.length), contextWindow: z.number().int().min(1024).max(2000000), maxOutputTokens: z.number().int().min(16).max(128000) }).strict();
 export const ChatGptPlanPeerSnapshotSchema = z.object({ deviceId: z.string().regex(/^[a-f0-9]{64}$/), accountId: reference.nullable(),
@@ -31,7 +37,9 @@ export const ChatGptPlanPeerConnectSchema = z.object({ version: z.literal(1), ch
 export const ChatGptPlanPeerSessionSchema = z.object({ version: z.literal(1), sessionId: z.uuid() }).strict();
 export const ChatGptPlanPeerRequestSchema = z.discriminatedUnion('action', [
     z.object({ version: z.literal(1), action: z.literal('infer'), id: z.uuid(), sequence: z.number().int().min(1).max(CHATGPT_PLAN_PEER_MAX_SEQUENCE), expiresAt: z.string().datetime(), accountId: reference, grantRevision: z.number().int().min(1).max(Number.MAX_SAFE_INTEGER),
-        computerId: reference, requestClass: z.enum(['interactive', 'background']), runId: reference, model: reference, body: z.string().max(BOT_IMAGE_INFERENCE_MAX_BYTES).refine(body => validateBotImageInferenceBody(body, 512000).valid), responseMode: z.literal('stream').optional() }).strict(),
+        computerId: reference, requestClass: z.enum(['interactive', 'background']), runId: reference, model: reference, body: z.string().max(BOT_IMAGE_INFERENCE_MAX_BYTES).refine(body => validateBotImageInferenceBody(body, 512000).valid), responseMode: z.literal('stream').optional(),
+        approvedRoutine: ChatGptPlanApprovedRoutineSchema.optional() }).strict().refine(request => !request.approvedRoutine
+            || request.requestClass === 'background' && request.approvedRoutine.runId === request.runId),
     z.object({ version: z.literal(1), action: z.literal('cancel'), id: z.uuid() }).strict(),
 ]);
 export const ChatGptPlanPeerReplySchema = z.union([
