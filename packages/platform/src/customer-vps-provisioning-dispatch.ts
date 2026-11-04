@@ -664,6 +664,7 @@ export function createCustomerVpsProvisioningDispatcher(context: CustomerVpsCont
       deps.db,
       now().toISOString(),
       deps.config.reconciliationBatchSize,
+      { ordinaryOnly: !pair },
     );
     let completed = 0;
     let failed = 0;
