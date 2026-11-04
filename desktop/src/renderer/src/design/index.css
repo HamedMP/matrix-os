@@ -5,6 +5,7 @@
 @source "../../../../../packages/ui/src/organization-drive";
 @source "../../../../../packages/ui/src/chat";
 @source "../../../../../packages/ui/src/chat-agents";
+@source "../../../../../packages/ui/src/routine-action";
 @source "../../../../../packages/ui/src/collaboration";
 @import "@fontsource/inter/400.css";
 @import "@fontsource/inter/500.css";
