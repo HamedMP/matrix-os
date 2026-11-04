@@ -73,3 +73,23 @@ export async function migratePreviewPairController(db: PlatformMigrationExecutor
   await sql`ALTER TABLE preview_pair_generations ADD COLUMN IF NOT EXISTS controller_run_id BIGINT
     CHECK (controller_run_id BETWEEN 1 AND 9007199254740991)`.execute(db);
 }
+
+export async function migratePreviewPairCloudIntents(db: PlatformMigrationExecutor): Promise<void> {
+  await migratePreviewPairController(db);
+  await sql`CREATE TABLE IF NOT EXISTS preview_pair_cloud_intents (
+    pair_id TEXT NOT NULL CHECK (pair_id ~* '^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$'),
+    generation INTEGER NOT NULL CHECK (generation BETWEEN 1 AND 999),
+    pr INTEGER NOT NULL CHECK (pr BETWEEN 1 AND 999999999),
+    requester_id TEXT NOT NULL,
+    source_sha TEXT NOT NULL CHECK (source_sha ~ '^[a-f0-9]{40}$'),
+    controller_run_id BIGINT NOT NULL CHECK (controller_run_id BETWEEN 1 AND 9007199254740991),
+    profile_fingerprint TEXT NOT NULL CHECK (profile_fingerprint ~ '^[a-f0-9]{64}$'),
+    state TEXT NOT NULL DEFAULT 'prepared' CHECK (state IN ('prepared','adopted','cleanup_pending','stopped')),
+    revision INTEGER NOT NULL DEFAULT 1 CHECK (revision > 0),
+    created_at TEXT NOT NULL, expires_at TEXT NOT NULL CHECK (expires_at > created_at), stopped_at TEXT,
+    PRIMARY KEY (pair_id, generation),
+    CHECK ((state = 'stopped') = (stopped_at IS NOT NULL))
+  )`.execute(db);
+  await sql`CREATE INDEX IF NOT EXISTS preview_pair_cloud_intents_reconcile
+    ON preview_pair_cloud_intents(state, expires_at)`.execute(db);
+}

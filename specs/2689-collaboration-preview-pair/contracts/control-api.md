@@ -9,6 +9,8 @@ Use existing Hono auth, strict Zod4 boundary schemas and generic error mapping.
 | Route | Authentication/authorization | Public? |
 | --- | --- | --- |
 | POST `/vps/preview-pairs` | Existing timing-safe operator bearer; trusted workflow evidence resolves requester/eligible open PR; fixture IDs derive from approved server config | No |
+| POST `/vps/preview-pairs/requests` | Same operator; current reviewed-controller receipt, current maintainer/test membership, actual target isolation and requested same-repo head; profile derives only from source config | No |
+| POST `/vps/preview-pairs/requests/:pairId/actions` | Same operator; strict stop action and exact recorded controller run/generation; cannot stop an adopted pair | No |
 | POST `/vps/preview-pairs/:pairId/actions` | Same operator authority; expected generation/revision; discriminated update/stop/reconcile payload | No |
 | POST `/vps/preview-pairs/reconcile` | Same operator authority; bounded claim count and worker lifetime | No |
 | GET `/api/preview-pairs/:pairId` | Real first-party Clerk session; requester, configured maintainer or actual leased fixture actor; current pair binding | No |
@@ -22,6 +24,27 @@ strict action schemas at the boundary. Do not trust client identity headers,
 caller-selected owners, provider types, addresses, origins or class flags.
 
 ## Start
+
+Before publication, the reviewed controller records a source-owned request using
+`repository`, `pairId`, `generation`, `pr`, `sourceSha`, and `controllerRunId`.
+No requester, issuer, secret reference, profile or arbitrary URL is accepted.
+The server independently resolves the controller actor and verifies the requested
+PR head, fixture identity and target database isolation before recording it.
+The reply contains the safe request state, expiry and public profile fingerprint.
+Preparation itself creates no fixture lease, machine, job or cloud resource.
+
+At most32 unadopted requests may exist; cancelled requests still consume this
+capacity until exact retirement is proved. Preparation expires after two hours,
+capped by the existing pair's hard expiry for updates. Replays do not extend it.
+The same UUID/generation cannot switch actor, controller run, source or profile.
+Actual configured admission/update adopts that exact request in the transaction
+that writes the canonical generation. Cancelling before adoption prevents a late
+admission. Cancelling after adoption returns `adopted`; it does not grant authority
+to retire the canonical pair. Normal generation-fenced stop remains separate.
+
+Durable cleanup scheduling, exact cloud retirement and protected publication are
+completed in the following automation layer; recording an intent alone is not
+proof that a cancelled cloud revision has been retired.
 
 Input: fixed repository, positive PR number, full selected SHA, trusted source/run
 and artifact identifiers, and the requester resolved by the reviewed controller.

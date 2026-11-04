@@ -1,7 +1,9 @@
 import { z } from "zod/v4";
 import { sql, type Selectable } from "kysely";
 import { PreviewPairActorSchema, PreviewPairIdSchema, PreviewPairPrSchema, PreviewPairShaSchema, PreviewPairGenerationSchema } from "@matrix-os/contracts/preview-pair";
-import { PreviewPairActionSchema, PreviewPairListSchema, PreviewPairReconcileSchema, PreviewPairStartSchema } from "./api-contracts.js";
+import { PreviewPairActionSchema, PreviewPairListSchema, PreviewPairReconcileSchema, PreviewPairStartSchema,
+  PreviewPairPrepareRequestSchema, PreviewPairRequestStopSchema } from "./api-contracts.js";
+import { preparePreviewPairCloudIntent, stopPreviewPairCloudIntent } from "./cloud-intents.js";
 import { PreviewPairConflictError, readPreviewPair, recordPreviewPairCurrency } from "./repository.js";
 import { admitPreviewPair } from "./admission.js";
 import { verifyPreviewPairCandidate, type PreviewPairProvenanceSource } from "./provenance.js";
@@ -42,6 +44,28 @@ export function createPreviewPairService(deps: PreviewPairServiceDeps) {
     return proof.data.requesterId;
   }
   return {
+    async prepareRequest(raw: unknown) {
+      if (!config.admissionEnabled || !config.sourceProfileFingerprint) throw new PreviewPairAccessError(503);
+      const input = PreviewPairPrepareRequestSchema.parse(raw);
+      const requesterId = await controller({ runId: input.controllerRunId, pairId: input.pairId,
+        pr: input.pr, generation: input.generation, sourceSha: input.sourceSha });
+      // Current membership and actual target isolation are required before a
+      // trusted publisher binds test credentials to any unmerged code.
+      if (!await previewPairOperation(signal => deps.verifyFixtures(signal))) throw new PreviewPairAccessError(503);
+      const current = z.strictObject({ open: z.boolean(), requested: z.boolean(), sourceSha: PreviewPairShaSchema })
+        .parse(await previewPairOperation(signal => deps.inspectRequest(input, signal)));
+      if (!current.open || !current.requested || current.sourceSha !== input.sourceSha) throw new PreviewPairConflictError();
+      const row = await preparePreviewPairCloudIntent(db, config, { pairId: input.pairId, generation: input.generation,
+        pr: input.pr, requesterId, sourceSha: input.sourceSha, controllerRunId: input.controllerRunId,
+        profileFingerprint: config.sourceProfileFingerprint }, now());
+      return { pairId: row.pair_id, generation: row.generation, state: row.state, expiresAt: row.expires_at,
+        profileFingerprint: row.profile_fingerprint };
+    },
+    async stopRequest(pairId: string, raw: unknown) {
+      const input = PreviewPairRequestStopSchema.parse(raw);
+      const row = await stopPreviewPairCloudIntent(db, pairId, input.generation, input.controllerRunId, now());
+      return { pairId: row.pair_id, generation: row.generation, state: row.state, expiresAt: row.expires_at };
+    },
     async start(raw: unknown) {
       if (!config.admissionEnabled) throw new PreviewPairAccessError(503);
       const input = PreviewPairStartSchema.parse(raw);
@@ -63,11 +87,11 @@ export function createPreviewPairService(deps: PreviewPairServiceDeps) {
       if (pair.revision !== input.revision) throw new PreviewPairConflictError();
       if (input.type === "reconcile") return previewPairSummary(await reconciler.run(pairId, input.generation, input.revision));
       if (!config.admissionEnabled) throw new PreviewPairAccessError(503);
-      await controller({ runId: input.controllerRunId, pairId, pr: pair.pr, generation: input.generation + 1, sourceSha: input.candidate.sourceSha });
+      const requesterId = await controller({ runId: input.controllerRunId, pairId, pr: pair.pr, generation: input.generation + 1, sourceSha: input.candidate.sourceSha });
       if (!await previewPairOperation(signal => deps.verifyFixtures(signal))) throw new PreviewPairAccessError(503);
       const candidate = await verifyPreviewPairCandidate(input.candidate, { pairId, generation: input.generation + 1,
         pr: pair.pr, sourceSha: input.candidate.sourceSha }, deps.source, config, now());
-      return previewPairSummary(await requestPreviewPairUpdate(db, pairId, input.generation, input.revision, candidate, now(), input.controllerRunId));
+      return previewPairSummary(await requestPreviewPairUpdate(db, pairId, input.generation, input.revision, candidate, now(), input.controllerRunId, requesterId));
     },
     async report(pairId: string, reader: PreviewPairReader) {
       return readPreviewPairReport(db, pairId, reader, maintainer, now());
