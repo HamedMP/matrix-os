@@ -53,7 +53,7 @@ export async function inventoryExpiredCustomerCharges(options: { db: PlatformDB;
 }
 
 /** Caller holds the owner lock before machine/request/balance locks. */
-export async function cleanupOwnerCustomerCharges(executor: Executor, ownerId: string, checkedAt: string, limit = 100, candidateIds?: string[]) {
+export async function cleanupOwnerCustomerCharges(executor: Executor, ownerId: string, checkedAt: string, now: () => Date, limit = 100, candidateIds?: string[]) {
   let query = expiredCustomerRequests(executor, checkedAt).where("owner_id", "=", ownerId);
   if (candidateIds) query = query.where("reservation_id", "in", candidateIds);
   const candidates = await query.orderBy("expires_at").orderBy("reservation_id").limit(limit).execute();
@@ -67,7 +67,7 @@ export async function cleanupOwnerCustomerCharges(executor: Executor, ownerId: s
       if (row.customer_charge_release !== null) { readCustomerChargeRelease(row); continue; }
       if (!ACTIVE.includes(row.status as typeof ACTIVE[number]) || row.actual_microusd !== null || row.expires_at > checkedAt || row.charge_waiver !== null) continue;
       const captured = validateLegacyCandidate(row);
-      await releaseCustomerCharge(executor, row, captured.postpaid ? "expired_request" : "legacy_expired_hold", checkedAt);
+      await releaseCustomerCharge(executor, row, captured.postpaid ? "expired_request" : "legacy_expired_hold", checkedAt, now);
       cleaned++;
     } catch (error) {
       await sql`ROLLBACK TO SAVEPOINT customer_credit_candidate`.execute(executor);
@@ -99,7 +99,7 @@ export async function cleanupExpiredCustomerCharges(options: { db: PlatformDB; n
     try {
       cleaned += await options.db.transaction(async trx => {
         await sql`SELECT pg_advisory_xact_lock(hashtextextended(${`funded-ai-owner:${owner}`}, 0))`.execute(trx.executor);
-        return cleanupOwnerCustomerCharges(trx.executor, owner, checkedAt, limit - cleaned,
+        return cleanupOwnerCustomerCharges(trx.executor, owner, checkedAt, options.now, limit - cleaned,
           rows.filter(row => row.owner_id === owner).map(row => row.reservation_id));
       });
     } catch (error) {

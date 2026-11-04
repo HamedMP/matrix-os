@@ -186,10 +186,10 @@ describe.skipIf(!databaseUrl)("conservative settlement fence on actual PostgreSQ
   it("installs its independent scope even when a newer core marker skips core DDL", async () => {
     await sql`DELETE FROM platform_schema_revisions WHERE scope='funded-conservative-fence'`.execute(a.executor);
     await sql`DROP TRIGGER ai_funded_conservative_settlement_fence ON ai_funded_usage_reservations`.execute(a.executor);
-    await sql`UPDATE platform_schema_revisions SET generation=25, fingerprint='newer-preview-core' WHERE scope='core'`.execute(a.executor);
+    await sql`UPDATE platform_schema_revisions SET generation=26, fingerprint='newer-preview-core' WHERE scope='core'`.execute(a.executor);
     await runPlatformStartupMigrations(a.executor);
     expect((await sql`SELECT generation, fingerprint FROM platform_schema_revisions WHERE scope='core'`.execute(a.executor)).rows)
-      .toEqual([{ generation: 25, fingerprint: "newer-preview-core" }]);
+      .toEqual([{ generation: 26, fingerprint: "newer-preview-core" }]);
     const key = await legacyCapture("AI");
     await expect(legacySettle(key, "AI")).rejects.toMatchObject({ code: "23514", constraint });
   });

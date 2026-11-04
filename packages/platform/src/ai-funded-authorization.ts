@@ -83,7 +83,7 @@ export function createFundedAuthorize(deps: FundedAuthorizeDependencies) {
       // locks to match policy updates. Later validation rolls this back on refusal.
       // A receipt can commit while admission waits for this owner lock; recovery
       // must compare its chronology against the locked time, not the entry snapshot.
-      if (request.billingPolicy === "postpaid") await cleanupOwnerCustomerCharges(trx.executor, credential.owner_id, deps.now().toISOString());
+      if (request.billingPolicy === "postpaid") await cleanupOwnerCustomerCharges(trx.executor, credential.owner_id, deps.now().toISOString(), deps.now);
       await recoverTerminalOutcomes(trx.executor, credential.owner_id, deps.now());
       // Recovery can have no candidates after the customer charge was released.
       // Still lock the dispatch target before policy rows: policy updates hold

@@ -3,6 +3,7 @@ import { eraseOwnerPlatformData } from "../../packages/platform/src/account-dele
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { sql } from "kysely";
 import { assertFundedConservativeFence, migrateFundedConservativeFence } from "../../packages/platform/src/database/funded-conservative-fence.js";
+import { readCustomerChargeRelease } from "../../packages/platform/src/ai-funded-customer-charge-release.js";
 import { ensureSpeechMonthlyAllowance } from "../../packages/platform/src/speech/allowance.js";
 import { createAiFundedPolicyRepository } from "../../packages/platform/src/ai-funded-policy-repository.js";
 import { createAiFundedSpeechFundingPort } from "../../packages/platform/src/speech/funding.js";
@@ -162,6 +163,40 @@ describe("postpaid speech credit and independent allowance", () => {
     const tombstone = await db.executor.selectFrom("account_deletion_jobs").select("accounting_summary").executeTakeFirstOrThrow();
     expect(tombstone.accounting_summary).toMatchObject({ postpaid_platform_expense: { entryCount: 1, amountMicrousd: 40 } });
     expect(JSON.stringify(tombstone.accounting_summary)).not.toContain(identity.ownerId);
+  });
+
+  it("keeps missing-lease legacy recovery portable and retains unknown Matrix liability until exact expense", async () => {
+    const auth = await reserve("legacy_unreserved", 80);
+    const legacy = JSON.stringify({ capability: "speech:transcribe", policyRevision: "speech-price-1", fundingPolicy: "speech_monthly_v1" });
+    await db.executor.updateTable("ai_funded_usage_reservations").set({ authorization_response: legacy, reserved_microusd: 80,
+      promotional_reserved_microusd: 0, addon_reserved_microusd: 80 }).where("reservation_id", "=", auth.reservationId).execute();
+    await db.executor.updateTable("ai_funded_runtime_balances").set({ reserved_microusd: 80 }).where("machine_id", "=", identity.machineId).execute();
+    await db.transaction(trx => funding.start(trx.executor, auth.reservationId));
+    await db.executor.updateTable("ai_funded_usage_reservations").set({ expires_at: new Date(clock.getTime() + 10_000).toISOString() })
+      .where("reservation_id", "=", auth.reservationId).execute();
+    await db.executor.updateTable("speech_runtime_allowances").set({ period_reserved_microusd: 0 }).where("machine_id", "=", identity.machineId).execute();
+    const quota = await allowance(); clock = new Date(clock.getTime() + 11_000);
+    expect(await repo.cleanupExpiredCustomerCharges({ limit: 1 })).toBe(1);
+    const saved = await row(auth.reservationId);
+    expect(saved).toMatchObject({ actual_microusd: null, status: "expired", reserved_microusd: 80, authorization_response: legacy });
+    expect(readCustomerChargeRelease(saved)).toMatchObject({ allowanceDisposition: "unreserved", allowanceReservedBeforeMicrousd: 0,
+      allowanceReservedMicrousd: 80, allowanceReleasedMicrousd: 0 });
+    expect(await allowance()).toEqual(quota);
+    expect(await balance()).toMatchObject({ credit_balance_microusd: 1_000, reserved_microusd: 0 });
+    const exported = await exportOwnerPlatformData(db, identity.ownerId);
+    expect(exported.aiGatewayCredit.requests).toMatchObject([{ actual_microusd: null, maximum_liability_microusd: 80,
+      customer_charge_release: saved.customer_charge_release }]);
+    await expect(eraseOwnerPlatformData(db, identity.ownerId)).rejects.toThrow("accounting_reconciliation_required");
+    expect(await repo.cleanupExpiredCustomerCharges({ limit: 1 })).toBe(0);
+    await db.transaction(trx => funding.settle(trx.executor, auth.reservationId, { mode: "exact", actualCostMicrousd: 40 }));
+    expect(await allowance()).toEqual(quota);
+    expect(JSON.parse((await row(auth.reservationId)).settlement_response!)).toMatchObject({ chargedCostMicrousd: 0, matrixAbsorbedMicrousd: 40 });
+    await db.executor.updateTable("user_machines").set({ status: "deleted", deleted_at: clock.toISOString() }).where("machine_id", "=", identity.machineId).execute();
+    await sql`INSERT INTO account_deletion_jobs(owner_hash,status,due_at,next_attempt_at,created_at,updated_at)
+      VALUES ('unreserved-deletion','processing',${clock.toISOString()},${clock.toISOString()},${clock.toISOString()},${clock.toISOString()})`.execute(db.executor);
+    await eraseOwnerPlatformData(db, identity.ownerId, () => "unreserved-deletion");
+    const tombstone = await db.executor.selectFrom("account_deletion_jobs").select("accounting_summary").executeTakeFirstOrThrow();
+    expect(tombstone.accounting_summary).toMatchObject({ postpaid_platform_expense: { entryCount: 1, amountMicrousd: 40 } });
   });
 
   it("rejects external AI start, finalize and release APIs for an internal Speech capture", async () => {

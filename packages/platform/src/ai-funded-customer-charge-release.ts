@@ -20,11 +20,12 @@ const BaseAuditSchema = z.object({
   reason: z.enum(["gateway_failure", "usage_unknown", "expired_request", "legacy_expired_hold"]),
   releasedAt: IsoTimestampSchema,
 }).strict();
+const SpeechAuditSchema = BaseAuditSchema.extend({ fundingKind: z.literal("speech"), allowanceReservedMicrousd: Money,
+  allowancePeriodStart: IsoTimestampSchema.nullable(), allowanceReleasedMicrousd: Money });
 const AuditSchema = z.union([
   BaseAuditSchema.extend({ fundingKind: z.literal("ai").optional() }).strict(),
-  BaseAuditSchema.extend({ fundingKind: z.literal("speech"), allowanceReservedMicrousd: Money,
-    allowancePeriodStart: IsoTimestampSchema.nullable(), allowanceReleasedMicrousd: Money,
-    allowanceDisposition: z.enum(["released", "past-period", "no-lease"]) }).strict(),
+  SpeechAuditSchema.extend({ allowanceDisposition: z.enum(["released", "past-period", "no-lease"]) }).strict(),
+  SpeechAuditSchema.extend({ allowanceDisposition: z.literal("unreserved"), allowanceReservedBeforeMicrousd: z.literal(0) }).strict(),
 ]);
 export function readCustomerFundingCapture(row: Row) {
   if (isSpeechAuthorization(row.authorization_response)) return readSpeechAuthorization(row);
@@ -34,6 +35,13 @@ export function readCustomerFundingCapture(row: Row) {
     monthly: false, allowanceReservedMicrousd: 0, allowancePeriodStart: null };
 }
 export type CustomerChargeReleaseReason = z.infer<typeof AuditSchema>["reason"];
+
+function permitsUnreservedLegacyAllowance(row: Row, capture: ReturnType<typeof readSpeechAuthorization>,
+  reason: CustomerChargeReleaseReason | undefined, checkedAt: string): boolean {
+  return !capture.postpaid && capture.monthly && exactInteger(row.reserved_microusd) > 0
+    && capture.allowanceReservedMicrousd > 0 && reason === "legacy_expired_hold"
+    && Date.parse(row.expires_at) <= Date.parse(checkedAt);
+}
 
 /** Used by the write constraint and bounded corruption probes before index exclusions. */
 export function customerChargeReleaseBindingSql() {
@@ -52,6 +60,9 @@ export function customerChargeReleaseBindingSql() {
     AND (customer_charge_release::jsonb ->> 'maximumLiabilityMicrousd')::bigint =
       COALESCE((authorization_response::jsonb #>> '{reservation,maxCostMicrousd}')::bigint, reserved_microusd)
     AND customer_charge_release::jsonb ->> 'reason' IN ('gateway_failure', 'usage_unknown', 'expired_request', 'legacy_expired_hold')
+    AND (authorization_response::jsonb ->> 'capability' = 'speech:transcribe'
+      OR (customer_charge_release::jsonb ->> 'allowanceDisposition' IS DISTINCT FROM 'unreserved'
+        AND NOT (customer_charge_release::jsonb ? 'allowanceReservedBeforeMicrousd')))
     AND (CASE WHEN authorization_response::jsonb ->> 'capability' = 'speech:transcribe' THEN
       customer_charge_release::jsonb ->> 'fundingKind' = 'speech'
       AND (customer_charge_release::jsonb ->> 'allowanceReservedMicrousd')::bigint =
@@ -69,7 +80,21 @@ export function customerChargeReleaseBindingSql() {
         OR (customer_charge_release::jsonb ->> 'allowanceDisposition' = 'no-lease'
           AND (customer_charge_release::jsonb ->> 'allowanceReservedMicrousd')::bigint = 0
           AND customer_charge_release::jsonb ->> 'allowancePeriodStart' IS NULL
-          AND (customer_charge_release::jsonb ->> 'allowanceReleasedMicrousd')::bigint = 0))
+          AND (customer_charge_release::jsonb ->> 'allowanceReleasedMicrousd')::bigint = 0)
+        OR (customer_charge_release::jsonb ->> 'allowanceDisposition' = 'unreserved'
+          AND customer_charge_release::jsonb -> 'allowanceReservedBeforeMicrousd' = '0'::jsonb
+          AND (customer_charge_release::jsonb ->> 'allowanceReleasedMicrousd')::bigint = 0
+          AND (customer_charge_release::jsonb ->> 'allowanceReservedMicrousd')::bigint > 0
+          AND customer_charge_release::jsonb ->> 'allowancePeriodStart' IS NOT NULL
+          AND reserved_microusd > 0 AND authorization_response::jsonb -> 'reservation' IS NULL
+          AND authorization_response::jsonb - ARRAY['capability', 'policyRevision', 'fundingPolicy'] = '{}'::jsonb
+          AND jsonb_typeof(authorization_response::jsonb -> 'policyRevision') = 'string'
+          AND length(authorization_response::jsonb ->> 'policyRevision') BETWEEN 1 AND 160
+          AND authorization_response::jsonb ->> 'fundingPolicy' = 'speech_monthly_v1'
+          AND customer_charge_release::jsonb ->> 'reason' = 'legacy_expired_hold'
+          AND expires_at::timestamptz <= (customer_charge_release::jsonb ->> 'releasedAt')::timestamptz))
+      AND (customer_charge_release::jsonb ->> 'allowanceDisposition' = 'unreserved'
+        OR NOT (customer_charge_release::jsonb ? 'allowanceReservedBeforeMicrousd'))
       ELSE customer_charge_release::jsonb ->> 'fundingKind' IS NULL OR customer_charge_release::jsonb ->> 'fundingKind' = 'ai' END)
     AND customer_charge_release::jsonb ->> 'releasedAt' = released_at
     AND ((status = 'expired' AND actual_microusd IS NULL AND settlement_response IS NULL)
@@ -147,6 +172,10 @@ export function readCustomerChargeRelease(row: Row) {
         : capture.allowanceReservedMicrousd <= 0 || capture.allowancePeriodStart === null))) {
       throw new AiFundedPolicyError("idempotency_conflict");
     }
+    if (capture.kind === "speech" && audit.fundingKind === "speech" && audit.allowanceDisposition === "unreserved"
+      && !permitsUnreservedLegacyAllowance(row, capture, audit.reason, audit.releasedAt)) {
+      throw new AiFundedPolicyError("idempotency_conflict");
+    }
     if (capture.kind === "ai" && audit.fundingKind === "speech") throw new AiFundedPolicyError("idempotency_conflict");
     return audit;
   } catch (error) {
@@ -156,7 +185,8 @@ export function readCustomerChargeRelease(row: Row) {
 }
 
 /** Caller owns the funded-owner lock and locked request; no actual usage is invented. */
-export async function releaseCustomerCharge(executor: Executor, row: Row, reason: CustomerChargeReleaseReason, checkedAt: string) {
+export async function releaseCustomerCharge(executor: Executor, row: Row, reason: CustomerChargeReleaseReason, checkedAt: string,
+  now?: () => Date) {
   if (row.customer_charge_release !== null) return readCustomerChargeRelease(row);
   if (!["reserved", "starting", "in_flight"].includes(row.status) || row.actual_microusd !== null || row.charge_waiver !== null) {
     throw new AiFundedPolicyError("reservation_closed");
@@ -165,8 +195,13 @@ export async function releaseCustomerCharge(executor: Executor, row: Row, reason
   const reserved = exactInteger(row.reserved_microusd);
   await executor.selectFrom("ai_funded_runtime_balances").select("machine_id")
     .where("machine_id", "=", row.machine_id).forUpdate().executeTakeFirstOrThrow();
-  const quota = capture.kind === "speech" ? await releaseSpeechAllowance(executor, row, capture, checkedAt) : undefined;
-  const audit = AuditSchema.parse({ ...(quota ? { fundingKind: "speech", ...quota } : {}), policy: "matrix-customer-credit-2026-11-04",
+  // Observe policy time after every financial lock, including a quota wait.
+  // Never serialize this internal timestamp into the strict audit payload.
+  const { observedAt, ...quota } = capture.kind === "speech"
+    ? await releaseSpeechAllowance(executor, row, capture, checkedAt, reason, now)
+    : { observedAt: now?.().toISOString() ?? checkedAt };
+  checkedAt = observedAt;
+  const audit = AuditSchema.parse({ ...(capture.kind === "speech" ? { fundingKind: "speech", ...quota } : {}), policy: "matrix-customer-credit-2026-11-04",
     reservationId: row.reservation_id, tokenId: row.token_id, ownerId: row.owner_id,
     machineId: row.machine_id, runtimeSlot: row.runtime_slot,
     authorizationSha256: createHash("sha256").update(row.authorization_response).digest("hex"),
@@ -195,21 +230,30 @@ export async function releaseCustomerCharge(executor: Executor, row: Row, reason
 
 /** Only the original allowance lease is released; never provision or renew here. */
 export async function releaseSpeechAllowance(executor: Executor, row: Row,
-  capture: ReturnType<typeof readSpeechAuthorization>, checkedAt: string) {
+  capture: ReturnType<typeof readSpeechAuthorization>, checkedAt: string, reason?: CustomerChargeReleaseReason,
+  now?: () => Date) {
   const amount = capture.allowanceReservedMicrousd;
   let allowanceDisposition: "released" | "past-period" | "no-lease" = "no-lease";
   if (amount > 0) {
     const allowance = await executor.selectFrom("speech_runtime_allowances").selectAll()
       .where("machine_id", "=", row.machine_id).where("owner_id", "=", row.owner_id)
       .where("runtime_slot", "=", row.runtime_slot).forUpdate().executeTakeFirstOrThrow();
+    checkedAt = now?.().toISOString() ?? checkedAt;
     if (allowance.period_start !== capture.allowancePeriodStart) allowanceDisposition = "past-period";
-    else {
+    else if (now && exactInteger(allowance.period_reserved_microusd) === 0 && permitsUnreservedLegacyAllowance(row, capture, reason, checkedAt)) {
+      // This is an observed missing lease, not evidence of a prior release.
+      // Preserve quota/budget/spend and the original capture; only release money.
+      return { allowanceReservedMicrousd: amount, allowancePeriodStart: capture.allowancePeriodStart,
+        allowanceDisposition: "unreserved" as const, allowanceReservedBeforeMicrousd: 0 as const, allowanceReleasedMicrousd: 0, observedAt: checkedAt };
+    } else {
       await executor.updateTable("speech_runtime_allowances").set({ period_reserved_microusd: sql<number>`period_reserved_microusd - ${amount}`,
         updated_at: checkedAt }).where("machine_id", "=", row.machine_id).where("period_start", "=", capture.allowancePeriodStart!)
         .where("period_reserved_microusd", ">=", amount).returning("machine_id").executeTakeFirstOrThrow();
       allowanceDisposition = "released";
     }
+  } else {
+    checkedAt = now?.().toISOString() ?? checkedAt;
   }
   return { allowanceReservedMicrousd: amount, allowancePeriodStart: capture.allowancePeriodStart,
-    allowanceDisposition, allowanceReleasedMicrousd: allowanceDisposition === "released" ? amount : 0 };
+    allowanceDisposition, allowanceReleasedMicrousd: allowanceDisposition === "released" ? amount : 0, observedAt: checkedAt };
 }
