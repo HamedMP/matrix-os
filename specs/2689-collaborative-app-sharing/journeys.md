@@ -22,4 +22,3 @@ The owner sees a technical readiness blocker before sharing if the app has brows
 1. **Share entry — confirmed**: Share app is a direct app action. No project membership, binding, creation, or share is required.
 2. **Data and host — confirmed**: The recipient uses the creator-hosted app and sees its existing database. V1 has no per-recipient record filtering or copy.
 3. **Access — confirmed**: Once the owner chooses the organization, every current member can use the full app. There are no further app roles, individual grants, acceptance steps, or record restrictions in V1. Membership and the active organization share still establish who can reach the owner-hosted app.
-4. **Creator leaves the organization — open**: Matrix currently permits the creator to leave unless they are the final admin. Decide whether V1 requires stopping the share before departure or lets the creator keep hosting it for remaining members.

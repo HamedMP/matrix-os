@@ -79,7 +79,6 @@ Colleagues understand that the app and its data are served by the creator's Matr
 - A successful write whose response is lost can be checked and retried without duplicating a record.
 - Offline participants retain unsaved input; offline writes are never claimed as saved.
 - A shared app cannot silently use the creator's connected accounts, credentials, or AI spending authority.
-- Current organization management permits a creator who is not the final admin to leave the selected organization while their app is shared. V1 must define whether departure is blocked until sharing stops or the share continues on the creator's host; the existing last-admin rule does not decide this.
 
 ## Requirements *(mandatory)*
 
@@ -115,8 +114,7 @@ Colleagues understand that the app and its data are served by the creator's Matr
 - This feature reuses Matrix organizations, current membership, **Shared with me**, and the owner app catalog. It creates no second login or app permission vocabulary.
 - The first implementation must prove that owner and recipient launch against the same owner app and database. Existing asset routes alone are insufficient evidence.
 - V1 targets Web Canvas, Web Desktop, Electron desktop, and web mobile where owner-built apps already launch. Native Mobile parity is a separate planning decision.
-- A later skill may teach builders this contract. Public links, external guests, marketplace distribution, arbitrary custom app servers, cross-organization sharing of one owner database, and creator-departure transfer are outside V1.
-- **Open lifecycle decision**: What happens when the creator leaves the organization that has their app share? Current organization membership rules permit this except for the final admin; no app-share-specific departure guard exists yet.
+- A later skill may teach builders this contract. Public links, external guests, marketplace distribution, arbitrary custom app servers, cross-organization sharing of one owner database, creator departure while sharing, and Native Mobile parity are outside V1.
 - Implementation must use test-first coverage at real identity, authorization, and persistence boundaries and live owner/member/outsider journeys on every affected surface. The implementation plan must include a separate public documentation PR in FinnaAI/matrix-os-site.
 
 ## Success Criteria *(mandatory)*
