@@ -9,7 +9,7 @@
 
 ### User Story 1 - Share and use one live app (Priority: P1)
 
-A member builds a team tracker, chooses **Share app**, selects an organization and audience, and sees exactly what will be shared. A colleague finds it in **Shared with me**, opens the same instance, adds a task, and both see the task. Colleagues do not install copies.
+A member builds a team tracker, chooses **Share app** from that app, selects an organization and audience, and sees exactly what will be shared. A colleague finds it in **Shared with me**, opens the same instance, adds a task, and both see the task. Neither person has to create or join a project, and colleagues do not install copies.
 
 **Why this priority**: This is the first complete outcome that makes an app useful to a team.
 
@@ -86,7 +86,7 @@ The organization keeps using its shared app and data when its creator leaves. An
 
 - **FR-001**: Matrix MUST define a collaborative app as an exact app version that passes an owner-visible readiness check for authenticated participants, one shared instance, isolated shared storage, enforced roles, safe concurrent writes, and update propagation. A declaration is necessary but insufficient.
 - **FR-002**: Readiness MUST name each missing capability, bind to the exact app identity and version, and become invalid after a relevant app or runtime change.
-- **FR-003**: An eligible owner MUST be able to share the app directly, select one current organization, and grant current members or the organization audience using existing Viewer and Editor roles.
+- **FR-003**: An eligible owner MUST be able to share the app directly from the app, select one current organization, and grant current members or the organization audience using existing Viewer and Editor roles. Creating, joining, or sharing a project MUST NOT be required.
 - **FR-004**: A recipient MUST be able to discover an accepted share in **Shared with me** and open the same instance without installing a copy or receiving the creator's personal app session.
 - **FR-005**: New shared instances MUST start with a distinct data space. Existing personal records MUST stay private; any later import requires a separate explicit review.
 - **FR-006**: Every launch, asset, data read, data write, and update MUST enforce current organization membership and effective app grant at the service boundary. Organization administrator status alone MUST NOT confer private app access.
@@ -110,7 +110,8 @@ The organization keeps using its shared app and data when its creator leaves. An
 
 ### Assumptions and Dependencies
 
-- **Product assumptions for review**: V1 permits direct app sharing as a deliberate exception to the current project-only rule; shared data starts empty; the organization owns the instance and retains it after creator departure. These are the three open discovery decisions.
+- **Confirmed product decision**: Collaborative apps are shared directly and independently of projects. This deliberately changes the current project-only live-share rule for eligible apps.
+- **Product assumptions for review**: Shared data starts empty; the organization owns the instance and retains it after creator departure. These two decisions remain open.
 - This feature reuses Matrix organizations, current membership, Viewer/Editor grants, **Shared with me**, and owner app catalog. It creates no second login or permission vocabulary.
 - The first implementation must prove that owner and recipient launch the same shared context. Existing personal app launch and the current scoped app adapter are insufficient evidence by themselves.
 - V1 targets Web Canvas, Web Desktop, Electron desktop, and web mobile where owner-built apps already launch. Native Mobile parity is a separate planning decision.

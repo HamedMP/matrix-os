@@ -1,6 +1,6 @@
 # Collaborative app journeys
 
-These journeys describe one live organization app instance. Publishing an app to the Gallery, installing a personal copy, and publishing a public site are separate products.
+These journeys describe one live organization app instance. Sharing starts from the app and needs no project. Publishing an app to the Gallery, installing a personal copy, and publishing a public site are separate products.
 
 | Moment | Builder or share manager | Colleague | Expected state |
 | --- | --- | --- | --- |
@@ -18,6 +18,6 @@ The share manager sees a readiness blocker before publishing if the app has brow
 
 ## Product decision points
 
-1. **Share entry**: The draft assumes direct Share app, reopening the project-only creation boundary for this eligible resource kind.
-2. **Initial data**: The draft assumes an empty shared instance; a later import flow may let an owner review and copy selected personal records.
-3. **Ownership**: The draft assumes organization ownership and a steward after creator departure. This requires a durable host or transfer path beyond the current owner-hosted share.
+1. **Share entry — confirmed**: Share app is a direct app action. No project membership, binding, creation, or share is required.
+2. **Initial data — open**: The draft assumes an empty shared instance; a later import flow may let an owner review and copy selected personal records.
+3. **Ownership — open**: The draft assumes organization ownership and a steward after creator departure. This requires a durable host or transfer path beyond the current owner-hosted share.
