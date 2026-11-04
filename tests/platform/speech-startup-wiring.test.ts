@@ -38,9 +38,11 @@ describe("platform speech process wiring", () => {
     expect(setup).toContain("previewRuntimeSecret: previewRuntimeAccess.runtimeSecret");
     expect(setup).toMatch(/if \(backgroundWorkersEnabled\)\s*\{\s*managedFeatureReconciliationWorker = startCustomerVpsReconciliationWorker/);
     expect(setup).toContain("runPass: reconcileManagedFeatures");
-    expect(setup).toContain("registerCustomMcpStartupCleanup(async () => {");
-    expect(setup).toContain("managedFeatureReconciliationWorker?.stop()");
-    expect(setup).toContain("await managedFeatureReconciliationWorker?.drain()");
+    const workerCleanupStart = source.indexOf("registerCustomMcpStartupCleanup(createPlatformStartupWorkerCleanup(");
+    expect(workerCleanupStart).toBeGreaterThan(0);
+    expect(workerCleanupStart).toBeLessThan(source.indexOf("managedFeatureReconciliationWorker = startCustomerVpsReconciliationWorker"));
+    const workerCleanup = source.slice(workerCleanupStart, source.indexOf("let billingRuntimeCaptureEvent", workerCleanupStart));
+    expect(workerCleanup).toContain("managedFeatureReconciliationWorker,");
     const shutdown = source.slice(source.indexOf("const shutdown = (signal:"));
     expect(shutdown).toContain("managedFeatureReconciliationWorker?.stop()");
     expect(shutdown).toContain("await managedFeatureReconciliationWorker?.drain()");
