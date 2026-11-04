@@ -1,6 +1,10 @@
+import { claimPreviewProfile } from "./preview-pair-profile-lease";
+import { createPreviewStartupAcknowledgement } from "./preview-pair-startup-ack";
+import { acknowledgeReopenedPreview } from "./preview-pair-reopen";
+import { createPreviewWindowReopener } from "./preview-pair-window";
 import { initializeDesktopPreview } from "./preview-pair-startup";
 import { app, BrowserWindow, clipboard, dialog, ipcMain, Notification, safeStorage, screen, session, shell, webContents, type IpcMainInvokeEvent } from "electron";
-import { join } from "node:path";
+import { join, dirname } from "node:path";
 import { createFileDownloadService } from "./files/file-download-service";
 import { createOrganizationDriveTransferService } from "./files/organization-drive-transfer";
 import { readDriveUploadFile, saveDriveDownloadFile } from "./files/organization-drive-file-io";
@@ -103,7 +107,13 @@ const previewContext = process.env.MATRIX_PREVIEW_PAIR_CONTEXT === undefined ? n
     throw new Error("Preview startup is unavailable");
   });
 
+const bindPreviewStartupAcknowledgement = createPreviewStartupAcknowledgement(previewContext,
+  process.env.MATRIX_PREVIEW_PAIR_READY_PORT, (error: unknown) => {
+    logMainError("preview launcher acknowledgement failed", error); app.quit();
+  });
+
 let mainWindow: BrowserWindow | null = null;
+let reopenPreviewWindow: (() => Promise<void>) | undefined;
 let navigationCache: ReturnType<typeof createNavigationCache> | null = null;
 let chatgptPlan: ReturnType<typeof createNativeChatgptPlanService> | null = null;
 let navigationCacheDrained = false;
@@ -131,8 +141,9 @@ function isMatrixOsDeepLink(value: string): boolean {
   try {
     const url = new URL(value);
     return url.protocol === "matrixos:" || url.protocol === "matrix-os:";
-  } catch {
-    return false;
+  } catch (error: unknown) {
+    if (error instanceof TypeError) return false;
+    throw error;
   }
 }
 
@@ -183,6 +194,7 @@ function createWindow(bounds: FittedWindowBounds): BrowserWindow {
   installMainRendererMediaPermissions(win.webContents.session, win.webContents, trustedRendererUrl);
 
   win.once("ready-to-show", () => win.show());
+  bindPreviewStartupAcknowledgement(win.webContents);
 
   // window.open / target=_blank from the renderer goes to the system browser only.
   win.webContents.setWindowOpenHandler(({ url }) => {
@@ -212,11 +224,26 @@ function logMainError(label: string, err: unknown): void {
 }
 
 // Single instance: second launches focus the existing window (FR-092).
-const gotLock = app.requestSingleInstanceLock();
+const gotLock = app.requestSingleInstanceLock(previewContext ? {
+  previewPair: { proof: process.env.MATRIX_PREVIEW_PAIR_CONTEXT, port: process.env.MATRIX_PREVIEW_PAIR_READY_PORT },
+} : undefined);
+const previewLease = previewContext && gotLock ? await claimPreviewProfile(dirname(app.getPath("userData"))).catch((error: unknown) => {
+  logMainError("preview profile unavailable", error); app.exit(1); throw new Error("Preview profile is unavailable");
+}) : null;
+if (previewLease) app.once("will-quit", () => { void previewLease.release().catch((error: unknown) => logMainError("preview profile release failed", error)); });
 if (!gotLock) {
   app.quit();
 } else {
-  app.on("second-instance", (_event, argv) => {
+  app.on("second-instance", (_event, argv, _workingDirectory, additionalData) => {
+    if (previewContext) {
+      void acknowledgeReopenedPreview(previewContext,
+        additionalData && typeof additionalData === "object" && "previewPair" in additionalData ? additionalData.previewPair : null,
+        readDesktopBuildSource(), async () => {
+          if (!reopenPreviewWindow) throw new Error("Preview window is unavailable");
+          await reopenPreviewWindow();
+        }).catch((error: unknown) => logMainError("preview reopen refused", error));
+      return;
+    }
     const deepLink = argv.find(isMatrixOsDeepLink);
     if (deepLink) {
       handleDeepLink(deepLink);
@@ -588,6 +615,8 @@ if (!gotLock) {
           if (version !== app.getVersion()) return;
           await store.acknowledgeDesktopUpdateRelease(version);
         },
+        getPreviewContext: () => previewContext ? { role: previewContext.role, pr: previewContext.pr,
+          sourceSha: previewContext.sourceSha, handle: previewContext.handle, organizationId: previewContext.organizationId } : null,
         getAppVersion: () => app.getVersion(),
         buildSource: readDesktopBuildSource(),
         completeAnalyticsFlush: () => {
@@ -670,6 +699,9 @@ if (!gotLock) {
       };
 
       await openMainWindow();
+      if (previewContext) reopenPreviewWindow = createPreviewWindowReopener({
+        current: () => mainWindow, open: openMainWindow, focus: focusMainWindow,
+      });
       installAppMenu(
         () => mainWindow,
         () => {
@@ -685,7 +717,8 @@ if (!gotLock) {
 
       app.on("activate", () => {
         if (BrowserWindow.getAllWindows().length === 0) {
-          void openMainWindow();
+          void (reopenPreviewWindow ? reopenPreviewWindow() : openMainWindow())
+            .catch((error: unknown) => logMainError("window restore failed", error));
         }
       });
     })

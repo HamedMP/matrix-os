@@ -38,6 +38,7 @@ export interface HandlerContext {
     shouldOpen: boolean;
   }>;
   acknowledgeWhatsNew: (version: string) => Promise<void>;
+  getPreviewContext?: () => InvokeResponse<"app:get-preview">;
   getAppVersion: () => string;
   buildSource: BuildSource | null;
   completeAnalyticsFlush: () => void;
@@ -230,6 +231,7 @@ export function registerIpcHandlers(ipcMain: IpcMainLike, ctx: HandlerContext): 
   });
   handle("support:get-identity", () => ctx.fetchSupportIdentity());
 
+  handle("app:get-preview", () => ctx.getPreviewContext?.() ?? null);
   handle("app:get-version", () => ({ version: ctx.getAppVersion(), source: buildSource }));
 
   handle("runtime:list-computers", () => ctx.auth.listRuntimeComputers());

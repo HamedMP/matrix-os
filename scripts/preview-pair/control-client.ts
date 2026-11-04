@@ -1,3 +1,4 @@
+import { PreviewPairLaunchAttestationSchema, PreviewPairLaunchRequestSchema } from "../../packages/contracts/src/preview-pair-launch.js";
 import { PreviewPairIdSchema, parseLivePreviewPairManifest } from "../../packages/contracts/src/preview-pair.js";
 import { PreviewPairControlOriginSchema, PreviewPairSetupSchema, PreviewPairPreparedSchema, PreviewPairAdmissionResultSchema,
   PreviewPairControllerStatusResultSchema, PreviewPairReportSelectionSchema, PreviewPairRequestReportSchema,
@@ -95,6 +96,13 @@ export function createPreviewPairControlClient(options: { origin: string; token:
     async stop(pairId: string, generation: number, revision: number) {
       const body = PreviewPairReaderStopSchema.parse({ generation, revision });
       return json(`/api/preview-pairs/${id(pairId)}/stop`, body);
+    },
+    async launch(pairId: string, request: unknown) {
+      const input = PreviewPairLaunchRequestSchema.parse(request);
+      const result = observed(PreviewPairLaunchAttestationSchema, await json(`/api/preview-pairs/${id(pairId)}/launch`, input, 30_000));
+      if (result.context.pairId !== pairId || result.context.sourceOrigin !== origin.data || result.context.role !== input.role
+        || result.context.platform !== input.platform || result.context.arch !== input.arch) throw new PreviewPairControlUnavailable();
+      return result;
     },
     async manifest(pairId: string) {
       const result = parseLivePreviewPairManifest(await json(`/api/preview-pairs/${id(pairId)}/manifest`, undefined, 30_000), options.now?.());

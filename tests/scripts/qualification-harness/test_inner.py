@@ -98,7 +98,7 @@ if fail=='pgstop' and name=='pgmock' and args==['stop']:sys.exit(1)
   build=next(i for i,c in enumerate(calls) if c['cmd']=='bun' and c['args']==['run','build:desktop'])
   self.assertLess(general,grid);self.assertLess(grid,build)
   groups=[c for c in calls if c['cmd']=='pnpm' and '--config' in c['args'] and c['required']=='1']
-  self.assertEqual(len(groups),10)
+  self.assertEqual(len(groups),11)
   actual=[arg for c in groups for arg in c['args'] if arg.startswith('tests/')]
   expected=[path for name,paths in REPORT_FILES.items() if name!='grid' for path in paths]
   self.assertEqual(set(actual),set(expected));self.assertEqual(len(actual),len(expected))
@@ -112,6 +112,17 @@ if fail=='pgstop' and name=='pgmock' and args==['stop']:sys.exit(1)
   runs=[(i,c) for i,c in enumerate(calls) if c['cmd']=='pnpm' and picker in c['args']]
   self.assertEqual(len(runs),1)
   self.assertGreater(runs[0][0],build);self.assertEqual(runs[0][1]['required'],'1')
+ def test_preview_pair_runs_after_build_in_its_own_required_native_phase(self):
+  result,calls,times=self.invoke();self.assertEqual(result.returncode,0,result.stderr)
+  preview='tests/e2e/desktop/preview-pair.e2e.test.ts'
+  self.assertEqual(REPORT_FILES.get('electron-preview-pair'),[preview])
+  build=next(i for i,c in enumerate(calls) if c['cmd']=='bun' and c['args']==['run','build:desktop'])
+  runs=[(i,c) for i,c in enumerate(calls) if c['cmd']=='pnpm' and preview in c['args']]
+  self.assertEqual(len(runs),1)
+  self.assertGreater(runs[0][0],build);self.assertEqual(runs[0][1]['required'],'1')
+  self.assertIn('--maxWorkers=1',runs[0][1]['args'])
+  self.assertTrue(any(arg.endswith('/results/electron-preview-pair.json') for arg in runs[0][1]['args']))
+  self.assertEqual(times['timing-e2e.tsv']['electron-preview-pair'],0)
  def test_brand_build_is_measured_before_every_lane(self):
   result,calls,times=self.invoke();self.assertEqual(result.returncode,0)
   brand=next(i for i,c in enumerate(calls) if c['cmd']=='pnpm' and c['args']==['--filter','@matrix-os/brand','build'])

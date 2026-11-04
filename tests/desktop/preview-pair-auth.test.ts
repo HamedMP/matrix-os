@@ -58,6 +58,7 @@ describe("real AuthService enforces expected preview account and immutable runti
     const f = await fixture(false, fault); await f.auth.init(); await f.auth.startDeviceFlow("sign-in"); await settle();
     expect(f.auth.getToken()).toBeNull(); expect(f.store.save).not.toHaveBeenCalled(); expect(f.saveProfile).not.toHaveBeenCalled();
     expect(f.auth.getStatus().runtimeSlot).toBe(f.context.runtimeSlot);
+    if (fault !== "exchange failed") expect(f.auth.poll()).toMatchObject({ status: "expired", reason: "preview_account_mismatch" });
   });
   it("exchanges an unselected normal login only for its expected slot and persists the immutable role binding", async () => {
     const f = await fixture(false, "unselected"); await f.auth.init(); await f.auth.startDeviceFlow("sign-in"); await settle();
