@@ -1,10 +1,10 @@
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { mkdtempSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { defaultServingRevision, validateCompatibilityManifest, verifyPlatformSourceCompatibility, verifyServingPlatformSource } from "../../scripts/ci/platform-source-compatibility.mjs";
+import { defaultServingRevision, formatCompatibilityError, runPlatformSourceCompatibility, validateCompatibilityManifest, verifyPlatformSourceCompatibility, verifyServingPlatformSource } from "../../scripts/ci/platform-source-compatibility.mjs";
 
 const roots: string[] = [];
 afterEach(() => { for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }); });
@@ -215,6 +215,93 @@ describe("platform serving-source compatibility", () => {
     expect(verify()).toMatchObject({ mode: "reviewed-content" });
     target.metadata.annotations[key] = after;
     expect(() => verify()).toThrow(`Runtime configuration differs at metadata.annotations[${key}]`);
+  });
+
+  it("reports a safe typed JSON failure from the actual CLI", () => {
+    const f = fixture(); f.put("specs/639-managed-model-selection/current-runtime-compatibility.json", '{"private-content":');
+    const result = spawnSync(process.execPath, [resolve("scripts/ci/platform-source-compatibility.mjs")], { encoding: "utf8",
+      env: { ...process.env, GITHUB_WORKSPACE: f.root, GITHUB_SHA: f.lost, CLOUD_RUN_SERVICE: "platform", GCP_PROJECT_ID: "test-project", GCP_REGION: "europe-west3" } });
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("Invalid compatibility JSON");
+    expect(result.stderr).toContain("kind=syntax code=JSON_PARSE");
+    expect(result.stderr).not.toContain("private-content");
+    expect(result.stderr).not.toContain(f.root);
+  });
+
+  it("reports a safe typed filesystem failure from the actual CLI", () => {
+    const f = fixture(); const absent = join(f.root, "private-absent-workspace");
+    const result = spawnSync(process.execPath, [resolve("scripts/ci/platform-source-compatibility.mjs")], { encoding: "utf8",
+      env: { ...process.env, GITHUB_WORKSPACE: absent, GITHUB_SHA: f.lost, CLOUD_RUN_SERVICE: "platform", GCP_PROJECT_ID: "test-project", GCP_REGION: "europe-west3" } });
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("kind=system code=ENOENT");
+    expect(result.stderr).not.toContain(absent);
+  });
+
+  it("preserves useful Git process classifications", () => {
+    const f = fixture(); const nonGitRoot = mkdtempSync(join(tmpdir(), "private-nongit-")); roots.push(nonGitRoot);
+    let gitFailure: unknown;
+    try { f.verify(undefined, { root: nonGitRoot }); } catch (error) { gitFailure = error; }
+    expect(gitFailure).toMatchObject({ message: "Candidate Git source could not be verified",
+      diagnostic: { kind: "process", code: "EXIT_NONZERO", status: 128 } });
+  });
+
+  it("preserves injected gcloud timeout classifications without private fields", () => {
+    const f = fixture();
+    f.put("specs/639-managed-model-selection/current-runtime-compatibility.json", JSON.stringify(manifestFor(f.live)));
+    const injected = Object.assign(new Error("private-message-token"), { code: "ETIMEDOUT", name: "private-error-name",
+      stdout: "private-stdout-json", stderr: "private-stderr-secret" });
+    let cloudFailure: unknown;
+    try { verifyServingPlatformSource({ GITHUB_WORKSPACE: f.root, GITHUB_SHA: f.lost, CLOUD_RUN_SERVICE: "platform", GCP_PROJECT_ID: "test-project", GCP_REGION: "europe-west3" }, () => { throw injected; }); }
+    catch (error) { cloudFailure = error; }
+    expect(cloudFailure).toMatchObject({ message: "Cloud Run services provenance describe failed", diagnostic: { kind: "timeout", code: "ETIMEDOUT" } });
+    expect(JSON.stringify(cloudFailure)).not.toContain("private-");
+  });
+
+  it("logs allowlisted injected CLI diagnostics and never raw error fields", () => {
+    const f = fixture();
+    f.put("specs/639-managed-model-selection/current-runtime-compatibility.json", JSON.stringify(manifestFor(f.live)));
+    const env = { GITHUB_WORKSPACE: f.root, GITHUB_SHA: f.lost, CLOUD_RUN_SERVICE: "platform", GCP_PROJECT_ID: "test-project", GCP_REGION: "europe-west3" };
+    const failures = [
+      [Object.assign(new Error("private-message-token"), { code: "ETIMEDOUT", name: "private-error-name", stdout: "private-stdout-json", stderr: "private-stderr-secret" }), "kind=timeout code=ETIMEDOUT"],
+      [Object.assign(new Error("private-message-token"), { code: "private-code", name: "private-name", status: 7, stderr: "private-stderr-secret" }), "kind=process code=EXIT_NONZERO status=7"],
+      [Object.assign(new Error("private-message-token"), { code: "private-code", name: "private-name", status: 9999 }), "kind=error code=UNCLASSIFIED"],
+      [{ name: "SyntaxError", code: "ENOENT", message: "private-message-token" }, "kind=unknown code=UNCLASSIFIED"],
+      [undefined, "kind=unknown code=UNCLASSIFIED"],
+    ] as const;
+    for (const [failure, diagnostic] of failures) {
+      let stdout = ""; let stderr = "";
+      expect(runPlatformSourceCompatibility({ env, execute: () => { throw failure; },
+        stdout: { write: (value: string) => { stdout += value; } }, stderr: { write: (value: string) => { stderr += value; } } })).toBe(1);
+      expect(stdout).toBe("");
+      expect(stderr).toContain(`Cloud Run services provenance describe failed [${diagnostic}]`);
+      expect(stderr).not.toContain("private-");
+      expect(stderr.length).toBeLessThan(700);
+    }
+  });
+
+  it("distinguishes real serialization errors and retains Git failures without command text", () => {
+    const cycle: Record<string, unknown> = {}; cycle.self = cycle;
+    let failure: unknown;
+    try { validateCompatibilityManifest(cycle); } catch (error) { failure = error; }
+    expect(formatCompatibilityError(failure)).toContain("Invalid compatibility JSON [kind=type code=INVALID_TYPE]");
+    const f = fixture(); const nonGitRoot = mkdtempSync(join(tmpdir(), "private-nongit-")); roots.push(nonGitRoot);
+    try { f.verify(undefined, { root: nonGitRoot }); } catch (error) { failure = error; }
+    const report = formatCompatibilityError(failure);
+    expect(report).toContain("Candidate Git source could not be verified [kind=process code=EXIT_NONZERO status=128]");
+    expect(report).not.toContain(nonGitRoot);
+    expect(report).not.toContain("git -C");
+  });
+
+  it("retains malformed gcloud JSON type while suppressing the entire response", () => {
+    const f = fixture();
+    f.put("specs/639-managed-model-selection/current-runtime-compatibility.json", JSON.stringify(manifestFor(f.live)));
+    let stderr = "";
+    const status = runPlatformSourceCompatibility({ env: { GITHUB_WORKSPACE: f.root, GITHUB_SHA: f.lost,
+      CLOUD_RUN_SERVICE: "platform", GCP_PROJECT_ID: "test-project", GCP_REGION: "europe-west3" },
+      execute: () => '{"private-response-token":', stdout: { write: () => undefined }, stderr: { write: (value: string) => { stderr += value; } } });
+    expect(status).toBe(1);
+    expect(stderr).toContain("Cloud Run services provenance describe failed [kind=syntax code=JSON_PARSE]");
+    expect(stderr).not.toContain("private-response-token");
   });
 
   it("keeps the reviewed production manifest bounded and source-only", () => {

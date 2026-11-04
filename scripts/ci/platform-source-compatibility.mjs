@@ -16,16 +16,46 @@ const NAME = /^[a-z][a-z0-9-]{0,62}$/;
 const MANIFEST = "specs/639-managed-model-selection/current-runtime-compatibility.json";
 const gitOptions = { encoding: "utf8", timeout: 10_000, maxBuffer: MAX_FILE_BYTES, stdio: ["ignore", "pipe", "pipe"] };
 
-class CompatibilityError extends Error {}
-function fail(message) { throw new CompatibilityError(message); }
+const systemErrorCodes = ["ENOENT", "EACCES", "EPERM", "ENOTDIR", "EISDIR", "ELOOP", "EIO", "ENOSPC", "EMFILE", "ENFILE", "ECONNRESET", "ECONNREFUSED", "ENOTFOUND", "EAI_AGAIN"];
+function failureDiagnostic(error) {
+  if (error instanceof CompatibilityError) return error.diagnostic;
+  if (error instanceof SyntaxError) return { kind: "syntax", code: "JSON_PARSE" };
+  if (error instanceof TypeError) return { kind: "type", code: "INVALID_TYPE" };
+  if (error instanceof RangeError) return { kind: "range", code: "OUT_OF_RANGE" };
+  if (error instanceof Error) {
+    if (error.code === "ETIMEDOUT") return { kind: "timeout", code: "ETIMEDOUT" };
+    if (error.code === "ERR_CHILD_PROCESS_STDIO_MAXBUFFER") return { kind: "resource", code: "OUTPUT_LIMIT" };
+    if (systemErrorCodes.includes(error.code)) return { kind: "system", code: error.code };
+    if (Number.isInteger(error.status) && error.status >= 1 && error.status <= 255) {
+      return { kind: "process", code: "EXIT_NONZERO", status: error.status };
+    }
+    return { kind: "error", code: "UNCLASSIFIED" };
+  }
+  return { kind: "unknown", code: "UNCLASSIFIED" };
+}
+class CompatibilityError extends Error {
+  constructor(message, ...causes) {
+    super(message);
+    // Keep only a frozen, allowlisted classification, never raw causes/stdout/stderr.
+    Object.defineProperty(this, "diagnostic", { value: Object.freeze(causes.length === 0
+      ? { kind: "validation", code: "GUARD_REJECTED" } : failureDiagnostic(causes[0])), enumerable: true });
+  }
+}
+function fail(message, ...causes) { throw new CompatibilityError(message, ...causes); }
+export function formatCompatibilityError(error) {
+  const diagnostic = failureDiagnostic(error);
+  const stage = error instanceof CompatibilityError ? error.message.slice(0, 512) : "verification failed";
+  const status = diagnostic.status === undefined ? "" : ` status=${diagnostic.status}`;
+  return `Platform source compatibility gate failed: ${stage} [kind=${diagnostic.kind} code=${diagnostic.code}${status}]`;
+}
 function record(value) { return value !== null && typeof value === "object" && !Array.isArray(value); }
 function boundedJson(value) {
   let text;
   try { text = typeof value === "string" ? value : JSON.stringify(value); }
-  catch { fail("Invalid compatibility JSON"); }
+  catch (error) { fail("Invalid compatibility JSON", error); }
   if (typeof text !== "string" || Buffer.byteLength(text) > MAX_JSON_BYTES) fail("Compatibility JSON exceeds size limit");
   try { return JSON.parse(text); }
-  catch { fail("Invalid compatibility JSON"); }
+  catch (error) { fail("Invalid compatibility JSON", error); }
 }
 function keys(value, allowed) {
   return record(value) && Object.keys(value).every((key) => allowed.includes(key));
@@ -76,7 +106,7 @@ export function defaultServingRevision(input) {
 }
 function git(root, args) {
   try { return execFileSync("git", ["-C", root, ...args], gitOptions).trim(); }
-  catch { fail("Candidate Git source could not be verified"); }
+  catch (error) { fail("Candidate Git source could not be verified", error); }
 }
 function hash(buffer) { return createHash("sha256").update(buffer).digest("hex"); }
 function preserveFile(root, candidateSha, file) {
@@ -94,7 +124,7 @@ function preserveFile(root, candidateSha, file) {
   if (!/^100(?:644|755) blob [a-f0-9]{40}\t/.test(tree)) fail("Preserved source must be a tracked regular file");
   let blob;
   try { blob = execFileSync("git", ["-C", root, "show", `${candidateSha}:${file.path}`], { ...gitOptions, encoding: "buffer" }); }
-  catch { fail("Preserved source blob could not be verified"); }
+  catch (error) { fail("Preserved source blob could not be verified", error); }
   if (hash(blob) !== file.sha256 || hash(readFileSync(path)) !== file.sha256) fail("Candidate does not preserve reviewed live source files");
 }
 function canonicalConfiguration(spec) {
@@ -192,15 +222,16 @@ export function verifyPlatformSourceCompatibility({ root, candidateSha, manifest
   root = realpathSync(root);
   if (!SHA.test(candidateSha ?? "") || git(root, ["rev-parse", "HEAD"]) !== candidateSha) fail("Candidate checkout does not match deployment SHA");
   const clean = spawnSync("git", ["-C", root, "diff", "--quiet", "HEAD", "--"], gitOptions);
-  if (clean.status !== 0 || clean.error) fail("Candidate checkout has unverified tracked changes");
+  if (clean.error instanceof Error) fail("Candidate checkout has unverified tracked changes", clean.error);
+  if (clean.status !== 0) fail("Candidate checkout has unverified tracked changes", Object.assign(new Error(), { status: clean.status }));
   const pinned = reviewed.exceptions.find((entry) => entry.sourceSha === sourceSha);
   if (pinned) {
     if (pinned.imageDigest !== imageDigest) fail("Default-serving image differs from reviewed compatibility exception");
     for (const file of pinned.preservedFiles) {
       try { preserveFile(root, candidateSha, file); }
       catch (error) {
-        if (error instanceof Error && error.message.startsWith("Candidate does not preserve")) throw error;
-        fail("Preserved source file verification failed");
+        if (error instanceof CompatibilityError && error.message.startsWith("Candidate does not preserve")) throw error;
+        fail("Preserved source file verification failed", error);
       }
     }
     if (pinned.preserveRuntimeConfiguration && requireRuntimeConfiguration) {
@@ -209,7 +240,8 @@ export function verifyPlatformSourceCompatibility({ root, candidateSha, manifest
     return { mode: "reviewed-content", revisionName, sourceSha };
   }
   const ancestry = spawnSync("git", ["-C", root, "merge-base", "--is-ancestor", sourceSha, candidateSha], gitOptions);
-  if (ancestry.status !== 0 || ancestry.error) fail("Default-serving source is not an ancestor or reviewed compatibility exception");
+  if (ancestry.error instanceof Error) fail("Default-serving source is not an ancestor or reviewed compatibility exception", ancestry.error);
+  if (ancestry.status !== 0) fail("Default-serving source is not an ancestor or reviewed compatibility exception", Object.assign(new Error(), { status: ancestry.status }));
   return { mode: "ancestor", revisionName, sourceSha };
 }
 export function verifyServingPlatformSource(env = process.env, execute = execFileSync) {
@@ -234,7 +266,7 @@ export function verifyServingPlatformSource(env = process.env, execute = execFil
         "--region", env.GCP_REGION, "--quiet", `--format=${projection}`], {
         encoding: "utf8", timeout: 60_000, maxBuffer: MAX_JSON_BYTES, stdio: ["ignore", "pipe", "pipe"],
       }));
-    } catch { fail(`Cloud Run ${kind} provenance describe failed`); }
+    } catch (error) { fail(`Cloud Run ${kind} provenance describe failed`, error); }
   };
   const service = describe("services", env.CLOUD_RUN_SERVICE, "json(status.traffic)");
   const revisionName = defaultServingRevision(service);
@@ -249,11 +281,15 @@ export function verifyServingPlatformSource(env = process.env, execute = execFil
   return verifyPlatformSourceCompatibility({ root, candidateSha: env.GITHUB_SHA, manifest, service, revision,
     requireRuntimeConfiguration, productionRevision, productionRevisionName: env.PRODUCTION_REVISION });
 }
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
-  try { process.stdout.write(`${JSON.stringify(verifyServingPlatformSource())}\n`); }
+export function runPlatformSourceCompatibility({ env = process.env, execute = execFileSync, stdout = process.stdout, stderr = process.stderr } = {}) {
+  try { stdout.write(`${JSON.stringify(verifyServingPlatformSource(env, execute))}\n`); }
   catch (error) {
-    // Never dump Cloud Run documents, CLI stderr, or local paths into workflow output.
-    process.stderr.write(`Platform source compatibility gate failed: ${error instanceof CompatibilityError ? error.message : "verification failed"}\n`);
-    process.exitCode = 1;
+    // One boundary emits only a fixed stage and typed allowlisted diagnostics.
+    stderr.write(`${formatCompatibilityError(error)}\n`);
+    return 1;
   }
+  return 0;
+}
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  process.exitCode = runPlatformSourceCompatibility();
 }
