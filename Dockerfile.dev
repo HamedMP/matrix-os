@@ -8,7 +8,9 @@ RUN apk add --no-cache alpine-sdk bash krb5-dev libc6-compat libstdc++ python3
 
 ARG CODE_SERVER_VERSION=4.116.0
 WORKDIR /opt/code-server-app
-RUN npm init -y >/dev/null && \
+# Optional in local builds; CI mounts its read-only token for GitHub release downloads.
+RUN --mount=type=secret,id=github_token,env=GITHUB_TOKEN \
+    npm init -y >/dev/null && \
     npm_config_update_notifier=false \
     npm_config_cache=/tmp/npm-cache \
     npm install --unsafe-perm --foreground-scripts code-server@${CODE_SERVER_VERSION} && \
