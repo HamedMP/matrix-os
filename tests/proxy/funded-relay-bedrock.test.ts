@@ -48,8 +48,19 @@ function platform() {
         modelId: input.modelId, reservedMicrousd: Math.min(1_000, input.maxCostMicrousd),
         maxCostMicrousd: input.maxCostMicrousd, billingMode: "usage" },
     })),
-    start: vi.fn(async () => ({ reservationId: "reservation_1", requestId: "request_1", tokenId: IDENTITY.tokenId })),
-    release: vi.fn(), finalize: vi.fn(async () => ({})),
+    start: vi.fn(async (input: { executionId?: string }) => ({
+      contractVersion: 1 as const,
+      reservationId: "reservation_1",
+      requestId: "request_1",
+      tokenId: IDENTITY.tokenId,
+      startedAt: NOW.toISOString(),
+      expiresAt: "2026-10-13T10:15:00.000Z",
+      status: "in_flight" as const,
+      executionId: input.executionId,
+    })),
+    release: vi.fn(),
+    finalize: vi.fn(async () => ({})),
+    terminal: vi.fn(async () => ({})),
   };
 }
 
@@ -103,9 +114,19 @@ describe("funded Bedrock relay", () => {
         modelId: input.modelId, reservedMicrousd: 1_000, maxCostMicrousd: input.maxCostMicrousd,
         billingMode: "usage" as const },
     }; });
-    control.start.mockImplementation(async () => { order.push("start"); return {
-      reservationId: "reservation_1", requestId: "request_1", tokenId: IDENTITY.tokenId,
-    }; });
+    control.start.mockImplementation(async (input) => {
+      order.push("start");
+      return {
+        contractVersion: 1 as const,
+        reservationId: "reservation_1",
+        requestId: "request_1",
+        tokenId: IDENTITY.tokenId,
+        startedAt: NOW.toISOString(),
+        expiresAt: "2026-10-13T10:15:00.000Z",
+        status: "in_flight" as const,
+        executionId: input.executionId,
+      };
+    });
     const bedrockUpstream: FundedGenerationUpstream = {
       dispatch: vi.fn(async () => { order.push("dispatch"); return { response: response(), provenance: {
         upstream: "aws_bedrock", routeId: ROUTE.routeId, resolvedModel: ROUTE.resolvedModel,
@@ -223,7 +244,7 @@ describe("funded Bedrock relay", () => {
     const result = await app.fetch(request());
     expect(result.status).toBe(200);
     await expect(result.text()).rejects.toThrow("AI response stream failed");
-    await vi.waitFor(() => expect(control.finalize).toHaveBeenCalled());
+    await vi.waitFor(() => expect(control.terminal).toHaveBeenCalled());
     expect(control.finalize).not.toHaveBeenCalledWith(expect.objectContaining({ mode: "exact" }), expect.anything());
     expect(fetchMock).not.toHaveBeenCalled();
     await relay.close();
