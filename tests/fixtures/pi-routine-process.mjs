@@ -14,6 +14,10 @@ let outputEnded = false;
 const emit = value => { if (!outputEnded) process.stdout.write(JSON.stringify(value) + "\n"); };
 const record = value => appendFile(config.records, JSON.stringify(value) + "\n");
 let controller, call, releaseObservation, prompted = false;
+// Arm before execute can write its FD callback: the ACK may arrive during record().
+const observation = new Promise(resolve => { releaseObservation = resolve; });
+let acknowledgeObservation;
+const observationAcknowledged = new Promise(resolve => { acknowledgeObservation = resolve; });
 const execute = async () => {
   const tool = tools.get("matrix_routines");
   if (!tool) { await record({ missingTool: true }); emit({ type: "agent_end", messages: [] }); emit({ type: "agent_settled" }); return; }
@@ -25,8 +29,9 @@ const execute = async () => {
   call = tool.execute(config.callId ?? "call_owned", config.operation, controller.signal, () => {}, { sessionManager: { getSessionId: () => config.sessionId ?? sessionId } });
   if (config.order === "fd-first") {
     // Child writes the callback before the parent sends this explicit observation barrier.
-    await record({ fdStarted: true });
-    await new Promise(resolve => { releaseObservation = resolve; }); observe();
+    if (config.ackBeforeObservationWait) await observationAcknowledged;
+    await record({ fdStarted: true, ...(config.ackBeforeObservationWait ? { observationAcknowledged: true } : {}) });
+    await observation; observe();
   }
   const result = await call; await record({ result: result.content[0].text });
   emit({ type: "tool_execution_end", toolName: "matrix_routines", toolCallId: "call_owned", isError: false, result });
@@ -37,7 +42,7 @@ for await (const line of frames) {
   const frame = JSON.parse(line);
   if (frame.type === "get_state") emit({ type: "response", id: frame.id, command: "get_state", success: true, data: { sessionId } });
   if (frame.type === "prompt") { if (prompted) throw new Error("Duplicate prompt"); prompted = true; await record({ prompt: true, tools: args[args.indexOf("--tools") + 1] }); emit({ type: "agent_start" }); emit({ type: "turn_start" }); void execute(); }
-  if (frame.type === "fixture_observe") releaseObservation?.();
+  if (frame.type === "fixture_observe") { acknowledgeObservation(); releaseObservation?.(); }
   if (frame.type === "fixture_terminal") emit({ type: "tool_execution_end", toolName: "matrix_routines", toolCallId: "call_owned", result: {}, isError: frame.isError });
   if (frame.type === "fixture_cancel") controller?.abort();
   if (frame.type === "fixture_end") { emit({ type: "agent_end", messages: [] }); if (!config.holdDrain) emit({ type: "agent_settled" }); }
