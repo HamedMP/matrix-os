@@ -18,7 +18,8 @@ export function createCustomBotChats(options: {
   agents: Pick<ChatAgentStore, "get">;
   bindDirect?: BotBindingsRepository["bindDirect"];
 }): BotChatLookup & { ensureDirectChat(owner: ChatOwner, agentId: string): Promise<string> } {
-  const bindings = createBotBindingsRepository(ownerBotExecutor(options.chats.kysely));
+  const db = ownerBotExecutor(options.chats.kysely);
+  const bindings = createBotBindingsRepository(db);
   const personal = (owner: ChatOwner) => {
     const parsed = CanonicalOwnerScopeSchema.parse(owner);
     if (parsed.type !== "personal") throw new BotEntryError("not_found");
@@ -43,6 +44,11 @@ export function createCustomBotChats(options: {
     },
     async directBot(owner, chatId) {
       if (owner.type !== "personal") return null;
+      // Filter before LIMIT: the bounded binding list cannot prove thread absence.
+      const thread = await db.selectFrom("bot_chat_bindings").select("chat_id")
+        .where("owner_id", "=", owner.ownerId).where("chat_id", "=", chatId)
+        .where("kind", "=", "thread").where("removed_at", "is", null).limit(1).executeTakeFirst();
+      if (thread) throw new BotEntryError("unavailable");
       const bound = await bindings.forChat({ ownerId: owner.ownerId, chatId });
       return bound.find(binding => binding.kind === "direct")?.botId ?? null;
     },

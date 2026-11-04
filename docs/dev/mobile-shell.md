@@ -145,8 +145,14 @@ attached there never leaves the phone.
 
 - The model sheet shows the Matrix credit balance and no control to buy
   credit. See [Store Purchase Policy](#store-purchase-policy).
-- Agents have no schedule, pause, "always allow" or edit controls, because the
-  server has nothing behind them.
+- Private Bot schedules use the existing owner-scoped routine service. The Agents
+  tab has a Schedules entry for the selected Computer, with history, pause/resume,
+  edit review and confirmed archive. Each new or changed task requires explicit
+  owner approval. A matching Gateway and connected Electron Desktop with approved
+  routine capability are required; Native Mobile renders the controls and does
+  not become a background inference peer. Old Computers show unavailable state
+  rather than silently granting authority. There is no general "always allow"
+  permission or Settings schedule prerequisite.
 - Projects and agents can be archived, not deleted.
 
 ## Local Dev Build
@@ -225,16 +231,16 @@ the Mac on LAN, retry Metro with `--host tunnel`.
 
 ## Workspace Gotchas (read before debugging tooling)
 
-`pnpm-workspace.yaml` sets `enableGlobalVirtualStore: true`, so packages are
-linked from `~/Library/pnpm/store/v10/links/...` — **outside the repo**. Any
-package that `require()`s a dependency it never declared cannot resolve it.
-Three separate failures come from this, and all of them look like broken code
-until you recognise the pattern.
+Normal host checkouts share pnpm's dependency-graph-addressed virtual store
+(`enableGlobalVirtualStore: true`). Metro explicitly watches that shared store.
+Docker and parity installs disable it explicitly to isolate their native
+build outputs. pnpm still enforces declared dependency edges: a package that
+`require()`s a dependency it never declared cannot resolve it.
 
 **`packageExtensions` only work in the root `package.json`.** pnpm silently
-ignores the `packageExtensions:` block in `pnpm-workspace.yaml` in this
-configuration. An entry there has no effect on the installed tree. Add
-extensions under `pnpm.packageExtensions` in the root `package.json` instead;
+ignores the `packageExtensions:` block in `pnpm-workspace.yaml`. An entry there
+has no effect on the installed tree. Add extensions under
+`pnpm.packageExtensions` in the root `package.json` instead;
 `apps/mobile/__tests__/mobile-app-config.test.ts` asserts the workspace file
 stays free of them. This is what broke `eas build` (see below).
 
@@ -250,14 +256,6 @@ expo/bin/cli config --json exited with non-zero code: 1
 Fix by declaring the missing edge in root `package.json` `pnpm.packageExtensions`,
 keyed with `@*` so a later upgrade of the plugin package does not silently
 un-match and reintroduce the failure.
-
-**Metro's dev server cannot bundle** — it rejects modules whose realpath sits
-outside `projectRoot`/`watchFolders`, so the app shows
-`Unable to resolve module ./apps/mobile/node_modules/expo-router/entry`. For
-local device work only, add the store to `watchFolders` in
-`apps/mobile/metro.config.js`; **do not commit it**. Production bundling
-(`expo export`, and therefore EAS builds) is unaffected, so a green EAS build
-does not prove the dev server works, and vice versa.
 
 **Jest needs the `modulePaths` fallback.** `apps/mobile/jest.config.js` adds the
 hoisted root `node_modules` as a resolution root, and the root `package.json`
