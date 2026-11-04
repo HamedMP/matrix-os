@@ -39,12 +39,8 @@ import { Hono } from "hono";
 import { bodyLimit } from "hono/body-limit";
 import { cors } from "hono/cors";
 import { existsSync, readFileSync } from "node:fs";
-import {
-  appendFile as appendFileAsync,
-  mkdir as mkdirAsync,
-  writeFile as writeFileAsync,
-} from "node:fs/promises";
-import { dirname, join, resolve } from "node:path";
+import { appendFile as appendFileAsync } from "node:fs/promises";
+import { join, resolve } from "node:path";
 import { createAgentLauncher } from "./agent-launcher.js";
 import { createJevGmailAccountLookup } from "./chat/jev-recipe-authority.js";
 import { createAgentSandbox } from "./agent-sandbox.js";
@@ -298,10 +294,7 @@ export {
   type TerminalSessionRouteRegistry,
 } from "./terminal-session-routes.js";
 
-export async function resetVolatilePtySessionList(persistPath: string): Promise<void> {
-  await mkdirAsync(dirname(persistPath), { recursive: true });
-  await writeFileAsync(persistPath, "[]\n");
-}
+export { resetVolatilePtySessionList } from "./server/volatile-pty-session-list.js";
 
 const MAX_MAIN_WS_CLIENTS = 100;
 
@@ -1937,7 +1930,7 @@ export async function createGateway(config: GatewayConfig) {
       slackRuntime = undefined;
       await canonicalChatOrchestrator?.close();
       canonicalChatOrchestrator = null;
-      await nativeClaudeChatRuntime?.close();
+      const [nativeClose] = await Promise.allSettled([Promise.resolve().then(() => nativeClaudeChatRuntime?.close())]);
       nativeClaudeChatRuntime = null;
       await terminalLaunchRuntime.close();
       await botServices?.close();
@@ -1998,6 +1991,7 @@ export async function createGateway(config: GatewayConfig) {
       await platformDb?.destroy();
       await posthogErrorTracker.shutdown();
       server.close();
+      if (nativeClose.status === "rejected") throw nativeClose.reason;
     },
   };
 }
