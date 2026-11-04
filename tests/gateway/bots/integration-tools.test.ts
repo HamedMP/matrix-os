@@ -1,3 +1,5 @@
+import type { BotIntegrationClient } from "../../../packages/gateway/src/bots/integration-client.js";
+import type { BotToolResult } from "@matrix-os/contracts";
 import { mkdtemp, readdir, readFile, rename, mkdir, rm, symlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -75,9 +77,21 @@ function fixtureTransactions(beforeTransaction?: (number: number) => Promise<voi
   return transact;
 }
 
-function setup(call = vi.fn(async () => ({ data: { threads: [{ id: "t1", subject: "Hello" }] }, summary: "1 thread" })), beforeTransaction?: (number: number) => Promise<void>, assertSource?: (binding: BotRuntimeBinding, signal?: AbortSignal) => Promise<void>, homePath?: string, recipe = RECIPE) {
+function successful(result: BotToolResult): Extract<BotToolResult, { ok: true }> {
+  expect(result.ok).toBe(true);
+  if (!result.ok) throw new Error("Expected successful tool result");
+  return result;
+}
+
+function setup(call: import("vitest").Mock<BotIntegrationClient["call"]> = vi.fn<BotIntegrationClient["call"]>(async () => ({ data: { threads: [{ id: "t1", subject: "Hello" }] }, summary: "1 thread" })), beforeTransaction?: (number: number) => Promise<void>, assertSource?: (binding: BotRuntimeBinding, signal?: AbortSignal) => Promise<void>, homePath?: string, recipe = RECIPE) {
   const transact = fixtureTransactions(beforeTransaction);
-  const client = { inventory: vi.fn(async () => connected), call };
+  const client = { inventory: vi.fn(async () => connected), call,
+    describe: vi.fn<BotIntegrationClient["describe"]>(async () => []),
+    connect: vi.fn<BotIntegrationClient["connect"]>(async () => { throw new Error("Unexpected fixture connection"); }),
+    sync: vi.fn<BotIntegrationClient["sync"]>(async () => undefined),
+    callImportRead: vi.fn<BotIntegrationClient["callImportRead"]>(async () => { throw new Error("Unexpected import transport"); }),
+    callAppAction: vi.fn<BotIntegrationClient["callAppAction"]>(async () => { throw new Error("Unexpected app transport"); }),
+  };
   const tools = createBotIntegrationTools({
     client, transact, ...(homePath ? { homePath } : {}), recipes: createBotRecipeCatalog([recipe]), assertSource,
     agents: { get: vi.fn(async () => ({ id: BOT, recipeRef: { recipeId: "mail-helper", version: "1" } }) as never) },
@@ -199,7 +213,7 @@ describe("bot integration tools", () => {
     await interactions.resolve(OWNER, CHAT, choice!.interaction_id, {
       kind: "account_choice", baseRevision: 1, connectionId: HOME.connectionId,
     });
-    expect((await tools.inventory(binding, {})).content[0]?.text).toContain("connection conn_home, allowed: read");
+    expect(successful(await tools.inventory(binding, {})).content[0]?.text).toContain("connection conn_home, allowed: read");
     await tools.call(binding, { ...read, connectionId: HOME.connectionId });
     expect(call).toHaveBeenCalledWith(OWNER, expect.objectContaining({ connectionId: HOME.connectionId, read: true }), undefined);
     await expect(tools.call(binding, { ...send, connectionId: HOME.connectionId })).rejects.toMatchObject({ code: "denied" });
@@ -232,10 +246,10 @@ describe("bot integration tools", () => {
       { service: "gmail", effects: ["read"] as const, required: true },
     ] };
     const { tools, interactions } = setup(undefined, undefined, undefined, undefined, recipe);
-    expect((await tools.inventory(binding, {})).content[0]?.text).toContain("asked to connect Google Calendar");
+    expect(successful(await tools.inventory(binding, {})).content[0]?.text).toContain("asked to connect Google Calendar");
     const [calendar] = await pending();
     await interactions.resolve(OWNER, CHAT, calendar!.interaction_id, { kind: "connect_request", baseRevision: 1, action: "decline" });
-    const result = (await tools.inventory(binding, {})).content[0]?.text;
+    const result = successful(await tools.inventory(binding, {})).content[0]?.text;
     if (gmailAccess === "granted") {
       expect(result).toContain('Gmail (gmail): account "Work", connection conn_work, allowed: read');
       expect(await pending()).toHaveLength(1);
@@ -243,7 +257,7 @@ describe("bot integration tools", () => {
       expect(result).toContain("asked which Gmail account");
       expect((await pending())[1]).toMatchObject({ kind: "account_choice", payload: { service: "gmail" } });
     }
-    expect((await tools.inventory(binding, { service: "google_calendar" })).content[0]?.text).toContain("do not ask again");
+    expect(successful(await tools.inventory(binding, { service: "google_calendar" })).content[0]?.text).toContain("do not ask again");
   });
 
   it("replaces an expired inventory choice instead of waiting forever", async () => {
@@ -300,7 +314,7 @@ describe("bot integration tools", () => {
     await grant(WORK);
     const { tools } = setup();
     const general = await tools.inventory(binding, {});
-    expect(general.content.map(part => part.text).join("\n")).toContain("Google Calendar (google_calendar): not connected");
+    expect(successful(general).content.map(part => part.text).join("\n")).toContain("Google Calendar (google_calendar): not connected");
     expect(await pending()).toEqual([]);
     await tools.inventory(binding, { service: "google_calendar" });
     expect(await pending()).toEqual([expect.objectContaining({
@@ -391,7 +405,7 @@ describe("bot integration tools", () => {
     const sent = vi.fn(createBotIntegrationClient(transport).call);
     const { tools } = setup(sent as never, undefined, undefined, home);
     const result = await tools.call(binding, attachment);
-    const shown = result.content.map(part => part.text).join("");
+    const shown = successful(result).content.map(part => part.text).join("");
     expect(shown.length).toBeLessThan(2048);
     const reference = JSON.parse(shown);
     expect(reference).toMatchObject({ kind: "workspace_attachment", size, sha256: createHash("sha256").update(bytes).digest("hex"), untrusted: true });

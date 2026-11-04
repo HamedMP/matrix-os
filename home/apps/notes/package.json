@@ -10,17 +10,17 @@
     "preview": "vite preview --host 0.0.0.0"
   },
   "dependencies": {
-    "@tiptap/react": "^3.22.4",
-    "@tiptap/starter-kit": "^3.22.4",
+    "@tiptap/react": "^3.30.5",
+    "@tiptap/starter-kit": "^3.30.5",
     "lucide-react": "^0.563.0",
-    "react": "^19.1.0",
-    "react-dom": "^19.1.0"
+    "react": "19.2.6",
+    "react-dom": "19.2.6"
   },
   "devDependencies": {
-    "@types/react": "^19.1.2",
-    "@types/react-dom": "^19.1.2",
-    "@vitejs/plugin-react": "^4.4.1",
+    "@types/react": "19.2.7",
+    "@types/react-dom": "19.2.3",
+    "@vitejs/plugin-react": "^4.7.0",
     "typescript": "~5.8.3",
-    "vite": "^6.3.2"
+    "vite": "^6.4.4"
   }
 }

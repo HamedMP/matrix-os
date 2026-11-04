@@ -1,4 +1,4 @@
-import { BrowserPermissionCard } from "@matrix-os/ui";
+import { BrowserPermissionCard, useRoutineMessageState, routineMessageTimeline, RoutineOccurrenceMessage, RoutineMessageReadNotice, type RoutineOccurrence } from "@matrix-os/ui";
 import { ConversationNotice } from "./notice";
 import { BotRunMessageBody, BotUnassignedMessageBody, ChatContextReceipt, CanonicalChatInputForm, SupervisedToolApprovalCard } from "@matrix-os/ui";
 import { UserMessage } from "./user-message";
@@ -22,6 +22,7 @@ import type {
   ConversationRequestPresentation,
   ConversationTurnPresentation,
   ConversationWorkPresentation,
+  ConversationTurnTimelinePresentation,
 } from "./presentation";
 import { supervisedToolApproval, type SupervisedToolApproval } from "@matrix-os/contracts";
 import { offeredApprovalAction, offeredBrowserApprovalAction } from "./approval-actions";
@@ -295,12 +296,16 @@ function ConversationTurn({
   initialFinalIds,
   visibility,
   onToggle,
+  scheduled,
+  scheduledEvents=[],
 }: {
   turn: ConversationTurnPresentation;
   callbacks: ConversationPresentationCallbacks;
   initialFinalIds: ReadonlySet<string>;
   visibility: ReturnType<typeof conversationTurnVisibility>;
   onToggle: () => void;
+  scheduled?: RoutineOccurrence;
+  scheduledEvents?:RoutineOccurrence[];
 }) {
   const rootKind = turn.executionRoot?.kind;
   const rootProjectId = turn.executionRoot && turn.executionRoot.kind !== "bot_workspace" ? turn.executionRoot.projectId : undefined;
@@ -326,7 +331,7 @@ function ConversationTurn({
   const timeline = turn.timeline;
   return (
     <>
-      {turn.user ? <UserMessage message={turn.user} callbacks={scopedCallbacks} /> : null}
+      {turn.user ? <UserMessage message={turn.user} callbacks={scopedCallbacks} scheduled={scheduled}/> : null}
       <ChatContextReceipt context={turn.runContext} />
       <div data-agent-message-body={turn.id} className="min-w-0">
       {hasWork || turn.final || turn.active ? (
@@ -339,7 +344,7 @@ function ConversationTurn({
           onToggle={onToggle}
         />
       ) : null}
-      {timeline ? (
+      {scheduledEvents.length?<ScheduledTurnContent turn={turn} callbacks={scopedCallbacks} visibility={visibility} occurrences={scheduledEvents} initialFinalIds={initialFinalIds}/>:<>{timeline ? (
         visibleTimeline && visibleTimeline.length > 0 ? (
           <div data-turn-timeline className="flex min-w-0 flex-col gap-0.5">
             {visibleTimeline.map((entry) => entry.kind === "user-followup"
@@ -370,11 +375,27 @@ function ConversationTurn({
             && !(turn.final.kind === "message" && turn.final.wasStreamed)
           }
         />
-      ) : null}
+      ) : null}</>}
       <BotRunMessageBody runIds={turn.runIds ?? []} requestIds={pendingRequestIds}/>
       </div>
     </>
   );
+}
+
+/** Interleave neutral saved events within a long turn without changing its ordinary rendering path. */
+function ScheduledTurnContent({turn,callbacks,visibility,occurrences,initialFinalIds}:{turn:ConversationTurnPresentation;callbacks:ConversationPresentationCallbacks;visibility:ReturnType<typeof conversationTurnVisibility>;occurrences:RoutineOccurrence[];initialFinalIds:ReadonlySet<string>}){
+  const {visibleWork,visibleTimeline,partialCopyMessageId}=visibility;
+  const body:Array<ConversationTurnTimelinePresentation&{final?:boolean}>=turn.timeline?visibleTimeline??[]:[
+    ...visibleWork.map(item=>({kind:"work" as const,item})),...(turn.userFollowups??[]).map(message=>({kind:"user-followup" as const,message})),
+  ];
+  const flow=[...body,...(turn.final?[{kind:"work" as const,item:turn.final,final:true}]:[])];
+  return <>{routineMessageTimeline(flow,occurrences,()=>undefined,row=>row.kind==="user-followup"?row.message.timestamp:row.item.timestamp??turn.startedAt).map(row=>{
+    if(row.kind==="occurrence")return <RoutineOccurrenceMessage key={`scheduled:${row.occurrence.fire.fireId}`} occurrence={row.occurrence}/>;
+    const entry=row.value;
+    return entry.kind==="user-followup"?<UserMessage key={entry.message.id} message={entry.message} callbacks={callbacks}/>
+      :<PresentationItem key={entry.item.id} item={entry.item} callbacks={callbacks} showMetadata={entry.final?!turn.active:entry.item.id===partialCopyMessageId}
+        streaming={entry.final&&turn.active} animateOnMount={Boolean(entry.final&&turn.active&&!initialFinalIds.has(entry.item.id)&&!(entry.item.kind==="message"&&entry.item.wasStreamed))}/>;
+  })}</>;
 }
 
 export function ConversationTranscript({
@@ -384,6 +405,7 @@ export function ConversationTranscript({
   turns: ConversationTurnPresentation[];
   callbacks: ConversationPresentationCallbacks;
 }) {
+  const routines=useRoutineMessageState();
   const [initialFinalIds] = useState(() => new Set(
     turns.flatMap((turn) => turn.final ? [turn.final.id] : []),
   ));
@@ -399,21 +421,32 @@ export function ConversationTranscript({
     // Evict removed turns on interaction so expansion state stays bounded by this transcript.
     return [turn.id, turn.id === turnId ? !expanded : expanded];
   })));
+  const nested:RoutineOccurrence[][]=visibleTurns.map(()=>[]);
+  const rows=routineMessageTimeline(visibleTurns,routines?.occurrences??[],row=>row.turn.user?row.turn.routineRequestId:undefined,row=>row.turn.user?.timestamp??row.turn.startedAt).filter(row=>{
+    if(row.kind!=="occurrence")return true;
+    const at=Date.parse(row.occurrence.fire.scheduledFor);
+    const index=visibleTurns.findIndex(({turn})=>(turn.user?.timestamp??turn.startedAt)<=at&&at<=(turn.active?Date.now():turn.endedAt));
+    if(index<0)return true;
+    nested[index]!.push(row.occurrence);return false;
+  });
   return (
     <Conversation>
       <ConversationContent className="justify-start pt-8 sm:pt-12">
-        {visibleTurns.map(({ turn, visibility }) => (
+        {rows.map(row => row.kind==="occurrence" ? <RoutineOccurrenceMessage key={`scheduled:${row.occurrence.fire.fireId}`} occurrence={row.occurrence}/> : (
           <ConversationTurn
-            key={turn.id}
-            turn={turn}
+            key={row.value.turn.id}
+            turn={row.value.turn}
             callbacks={callbacks}
             initialFinalIds={initialFinalIds}
-            visibility={visibility}
-            onToggle={() => toggleTurn(turn.id)}
+            visibility={row.value.visibility}
+            scheduled={row.occurrence}
+            scheduledEvents={nested[visibleTurns.indexOf(row.value)]}
+            onToggle={() => toggleTurn(row.value.turn.id)}
           />
         ))}
         <BotUnassignedMessageBody runIds={turns.flatMap(turn => turn.runIds ?? [])}
           requestIds={visibleTurns.flatMap(({ visibility }) => visibility.pendingRequestIds)}/>
+        <RoutineMessageReadNotice/>
       </ConversationContent>
     </Conversation>
   );
