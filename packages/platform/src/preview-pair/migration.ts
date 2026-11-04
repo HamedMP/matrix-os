@@ -67,3 +67,9 @@ export async function migratePreviewPairs(db: PlatformMigrationExecutor): Promis
     CHECK (provider_absent_at IS NULL OR retired_at IS NOT NULL)
   )`.execute(db);
 }
+
+export async function migratePreviewPairController(db: PlatformMigrationExecutor): Promise<void> {
+  await migratePreviewPairs(db);
+  await sql`ALTER TABLE preview_pair_generations ADD COLUMN IF NOT EXISTS controller_run_id BIGINT
+    CHECK (controller_run_id BETWEEN 1 AND 9007199254740991)`.execute(db);
+}

@@ -36,6 +36,7 @@ export interface PreviewPairFixturesTable {
 }
 
 export interface PreviewPairGenerationsTable {
+  controller_run_id: Generated<string | null>;
   pair_id: string;
   generation: number;
   source_sha: string;

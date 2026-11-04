@@ -189,3 +189,88 @@ projects, including Electron renderer and node configs (GOMEMLIMIT=1GiB,
 GOMAXPROCS=2). Dependency builds completed in the earlier pipeline stage. This
 qualifies the declaration correction; the failed classic512MiB attempt remains
 recorded above.
+
+### Controller second review: retry allowance and mounted data
+
+Five intended assertions failed first: progress at the final retry slot, two
+mounted-secret revisions, and two definitive rejection outcomes. Normal pending
+pair passes now restore their retry allowance under the exact job lease; successful
+adoption remains possible at the last failure slot. Typed definitive provider
+rejection clears only that leased creation intent inside the failure transaction;
+ambiguous outcomes keep their intent and capacity. Unsupported volumes/mounts are
+rejected even if a mounted secret's name also appears on the environment allowlist.
+Shapes follow the [Cloud Run Volume](https://docs.cloud.google.com/run/docs/reference/rest/v2/Volume)
+and [Container](https://docs.cloud.google.com/run/docs/reference/rest/v2/Container) API contracts.
+Final focused verification: **24/24 pass across3 files**, zero skipped; real
+Postgres for dispatcher/cleanup, provider HTTP and Cloud Run responses are fixtures.
+Focused Platform native TypeScript passes.
+
+### Verified controller adapters and guarded dispatch
+
+- Existing Clerk wrapper now retains cryptographically verified issuer/expiry.
+  Three real signed-session assertions failed first; existing login tests remain
+  green. Existing Matrix user-session provenance is required; runtime tokens do
+  not become human principals. Control and Preview key domains must differ.
+- Actual GitHub/Clerk/Cloud Run HTTP readers have bounded bodies, deadlines and
+  fixed provider origins. Only a reviewed controller run with a verified linked
+  GitHub requester can supply admission identity. Current maintainer membership
+  remains an independent service gate. Public source receipts are bound to actual
+  artifact IDs/digests; archive redirect requests do not receive GitHub credentials.
+- Cloud inspection reads immutable revision data and both generation tags. Wrong
+  service account, data/secrets, sidecars, API host classification, mutable secret
+  references and failed Ready state are rejected. Three signing/readiness faults
+  failed first before the checks were added. These responses are provider-shaped
+  fixtures, not live cloud configuration or IAM qualification.
+- Final reader/controller/auth run: **47/47 passed across5 files**, zero skipped.
+- Controller run ownership is persisted with admission/update in independent schema
+  revision2; replay cannot transfer it. The strict catalog baseline adds only one
+  column and its constraint, retaining every earlier schema entry. The actual
+  Postgres generation18 upgrade assertion failed before capture and passes after;
+  its focused filter excluded9 other cases, so this is not a full-lane result.
+- The narrow dispatcher uses existing durable jobs only after canonical claim,
+  ownership, approved test context and projection checks. Its positive assertion
+  failed with the ordinary worker's default denial before the permit was added.
+  Ordinary workers still skip pair jobs; pair workers refuse ordinary jobs.
+  Pair provider creation runs outside DB transactions; existing compensation and
+  cleanup proof handle ambiguous creations or lost claims.
+- Final real-Postgres controller/service/update/dispatch run: **26/26 passed across5
+  files**, zero skipped. Cloud/provider/mirror observations are fixtures in that run;
+  no real VPS was created or configuration changed.
+- Source readers and dispatch guards are not production bootstrap wiring. Dedicated
+  data projection, full access/tag retirement, safe host binding/observation, actual
+  protected controller workflow, default-off maintenance, launcher and evidence
+  still belong to dependent layers. T015/T016 remain unchecked until those exist.
+- Added the existing fflate0.8.3 package explicitly for bounded in-memory receipt
+  ZIP parsing. Root pnpm install refreshed only that importer edge in the lockfile;
+  no package version was upgraded. Offline metadata was missing, so installation
+  used the normal registry with existing package safety settings.
+
+Current controller layer: all8 configured native typecheck projects pass with GOMEMLIMIT=1GiB/GOMAXPROCS=2; pattern scan reports0 violations and5 existing warnings.
+
+Read-only live Google API shape checks (no secret-manager access or mutation)
+confirmed omitted false reconciling fields, short revision.service, full resource
+names and immutable image digests on the existing Preview service. The corresponding
+positive reader fixture failed before adapting those shapes; the fix still requires
+Ready success and rejects explicit reconciling=true. Final reader/controller/auth
+run:48/48 across5 files. This verifies API response fidelity only; that existing
+service is not claimed as an approved isolated pair or live journey evidence.
+
+Focused Platform TypeScript passes after the final Cloud Run response-shape correction.
+
+### Provider progress within the activation budget
+
+Greptile identified a30s provider-poll loop inside the10s pair activation budget.
+Three dispatcher assertions failed first (one job per pass, one action observation,
+and immediate recovery of an interrupted job lease); the actual HTTP-client signal
+assertion also failed because parent cancellation was ignored. After the fix,
+**17/17 cases pass across3 files**, zero skipped, including retained provider-client
+coverage. Pair dispatch polls once, releases only its exact job lease, preserves a
+pre-POST creation intent and adopts a later exact-label result without another POST.
+Unknown creation outcomes remain pending and retain capacity. Ordinary dispatch
+keeps its existing poll policy; HTTP requests still have their own10s deadline.
+The database/dispatcher/client are real; provider responses and projection remain
+fixtures. No server creation or pair-readiness claim is made.
+
+Focused ordinary Preview regression checks: **2/2 selected cases pass** (7 other
+cases excluded by filter), exercising continuing create-action polling and
+expired-lease provider adoption. Focused Platform native TypeScript passes.

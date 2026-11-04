@@ -121,8 +121,9 @@ Use official `gh stack init/add/rebase/submit`; never hand-retarget or flatten.
 | 2b | Atomic pair admission, guarded preparation and lifecycle/provider cleanup (T010–T012, T030–T032) | `codex/eng-418-preview-pair-lifecycle` | Layer2a |
 | 2c | Operator/session API, readiness, reports and reconciliation (T013–T014, T034; production adapters from T015 remain in Layer3) | `codex/eng-418-preview-pair-api` | Layer2b |
 | 3a | Protected unsigned exact-source packaging (T017) | `codex/eng-418-preview-pair-workflow` | Layer2c |
-| 3b | Trusted adapters/controller and reaper (T015–T016, T033) | `codex/eng-418-preview-pair-controller` | Layer3a |
-| 4 | Electron pinning, local launcher and badge (T018–T025, T035) | `codex/eng-418-preview-pair-desktop` | Layer3b |
+| 3b | Verified identity/provider readers, controller receipt ownership and guarded dispatcher (parts of T015–T016) | `codex/eng-418-preview-pair-controller` | Layer3a |
+| 3c | Concrete runtime projection/binding, protected workflow and maintenance/reaper (complete T015–T016, T033) | `codex/eng-418-preview-pair-runtime` | Layer3b |
+| 4 | Electron pinning, local launcher and badge (T018–T025, T035) | `codex/eng-418-preview-pair-desktop` | Layer3c |
 | 5 if needed | Evidence runner, acceptance and internal docs (T026–T029, T036–T042) | `codex/eng-418-preview-pair-qualification` | Layer4 |
 
 Target <1000 additions/<20 files where practical; split a layer before exceeding
