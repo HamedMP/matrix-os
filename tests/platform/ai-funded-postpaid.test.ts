@@ -6,6 +6,7 @@ import { sql } from "kysely";
 import { eraseOwnerPlatformData } from "../../packages/platform/src/account-deletion/cleanup-data.js";
 import { exportOwnerPlatformData } from "../../packages/platform/src/account-deletion/export.js";
 import { JEV_MODEL_ID } from "@matrix-os/contracts";
+import { assertFundedConservativeFence, migrateFundedConservativeFence } from "../../packages/platform/src/database/funded-conservative-fence.js";
 
 const modelId = "anthropic/claude-sonnet-5";
 const identity = { ownerId: "user_postpaid_owner", machineId: "postpaid_machine", runtimeSlot: "primary" };
@@ -177,10 +178,16 @@ describe("postpaid funded AI customer credit", () => {
     const key = { reservationId: auth.reservation.reservationId, tokenId: credential.tokenId };
     await repo.startReservation(key);
     const receipt = await repo.settleReservation({ ...key, actualCostMicrousd: 100_000 });
-    // The predecessor's conservative settlement stored the same full-hold
-    // financial receipt, with its original finalization mode retained separately.
-    await db.executor.updateTable("ai_funded_usage_reservations").set({ finalization_mode: storedMode })
-      .where("reservation_id", "=", key.reservationId).execute();
+    // Explicitly seed the predecessor's pre-fence receipt, then restore and
+    // verify enforcement before exercising historical replay.
+    if (storedMode === "conservative") await sql`DROP TRIGGER ai_funded_conservative_settlement_fence ON ai_funded_usage_reservations`.execute(db.executor);
+    try {
+      await db.executor.updateTable("ai_funded_usage_reservations").set({ finalization_mode: storedMode })
+        .where("reservation_id", "=", key.reservationId).execute();
+    } finally {
+      if (storedMode === "conservative") await db.transaction(trx => migrateFundedConservativeFence(trx.executor));
+    }
+    await assertFundedConservativeFence(db.executor);
     const snapshot = async () => ({
       request: await db.executor.selectFrom("ai_funded_usage_reservations").selectAll()
         .where("reservation_id", "=", key.reservationId).executeTakeFirstOrThrow(),
