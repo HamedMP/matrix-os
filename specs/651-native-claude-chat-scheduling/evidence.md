@@ -52,8 +52,13 @@ No B branch is rewritten and no parallel routines hook/scheduler is introduced.
 
 ## Verification status
 
-- Runtime implementation is `0a681b1d460`; later changes are test/CI/evidence
-  corrections. Frozen `ecbb1dd0933` regression passed **565/565**, 28 files,
+- Runtime behavior originated at `0a681b1d460`. A later diagnostic correction
+  logs fixed operation/error-class labels before generic failure mapping, with
+  no raw error names, messages, stacks or provider output. It preserves native
+  scheduling, permissions, session bounds and physical cleanup; **217/217**
+  regressions pass, including a callback-thrown Proxy fallback. The live
+  `954de6a` acceptance below predates this logging-only delta and is not a
+  current-head real-account retest. Frozen `ecbb1dd0933` passed **565/565**, 28 files,
   zero skips, including real PostgreSQL duplicate/admission/source-drift races.
 - Actual-source native control fired twice, 59.440 seconds apart, then deleted
   and exited zero. One initialize, acknowledged MCP replacement, no replay,
