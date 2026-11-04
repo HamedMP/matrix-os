@@ -24,31 +24,34 @@ export async function cleanupPreviewPair(db: PlatformDB, claim: PreviewPairClaim
   const members = await withPreviewPairClaim(db, claim, now(), async trx => {
     const pair = await trx.executor.selectFrom("preview_pairs").selectAll().where("pair_id", "=", claim.pairId).executeTakeFirstOrThrow();
     if (pair.state !== "cleanup_pending" && pair.state !== "updating") throw new PreviewPairConflictError();
-    return trx.executor.selectFrom("preview_pair_members as member").innerJoin("user_machines as machine", "machine.machine_id", "member.machine_id")
+    const rows = await trx.executor.selectFrom("preview_pair_members as member").innerJoin("user_machines as machine", "machine.machine_id", "member.machine_id")
       .select(["member.pair_id", "member.generation", "member.machine_id", "member.job_id", "member.handle", "member.actor_id",
         "member.provider_absent_at", "machine.hetzner_server_id", "machine.clerk_user_id", "machine.runtime_slot", "machine.provisioning_class"])
       .where("member.pair_id", "=", claim.pairId).where("member.provider_absent_at", "is", null)
       .orderBy("member.generation").orderBy("member.role").execute();
-  });
-  if (members.length > 2) throw new PreviewPairConflictError();
-  try {
-    for (const row of members) {
+    if (rows.length > 2) throw new PreviewPairConflictError();
+    // Retire the whole pair atomically before any unavailable external system can
+    // delay the other member's access revocation or physical deletion attempt.
+    for (const row of rows) {
       if (row.generation > claim.generation || row.clerk_user_id !== row.actor_id || row.runtime_slot !== row.handle
         || row.provisioning_class !== "preview") throw new PreviewPairConflictError();
+      await trx.executor.updateTable("user_machines").set({ status: "deleted", deleted_at: new Date(now()).toISOString(),
+        runtime_token_epoch: sql`runtime_token_epoch + 1` }).where("machine_id", "=", row.machine_id)
+        .where("clerk_user_id", "=", row.actor_id).where("handle", "=", row.handle)
+        .where("runtime_slot", "=", row.handle).where("provisioning_class", "=", "preview").where("deleted_at", "is", null).execute();
+      await trx.executor.updateTable("provisioning_jobs").set({ status: "failed", last_error_code: "pair_retired",
+        encrypted_payload: null, updated_at: new Date(now()).toISOString() }).where("job_id", "=", row.job_id)
+        .where("machine_id", "=", row.machine_id).where("status", "in", ["queued", "running"]).execute();
+      await trx.executor.updateTable("preview_pair_members").set({ retired_at: new Date(now()).toISOString() })
+        .where("machine_id", "=", row.machine_id).where("retired_at", "is", null).execute();
+    }
+    return rows;
+  });
+  try {
+    const attempts = await Promise.allSettled(members.map(async row => {
       const member: PreviewPairCleanupMember = { pairId: row.pair_id, generation: row.generation,
         machineId: row.machine_id, jobId: row.job_id, handle: row.handle, actorId: row.actor_id,
         providerServerId: row.hetzner_server_id === null ? null : Number(row.hetzner_server_id) };
-      await withPreviewPairClaim(db, claim, now(), async trx => {
-        // Invalidate machine routing and future job claims atomically before host effects.
-        await trx.executor.updateTable("user_machines").set({ status: "deleted", deleted_at: new Date(now()).toISOString(),
-          runtime_token_epoch: sql`runtime_token_epoch + 1` }).where("machine_id", "=", member.machineId)
-          .where("clerk_user_id", "=", member.actorId).where("handle", "=", member.handle).where("deleted_at", "is", null).execute();
-        await trx.executor.updateTable("provisioning_jobs").set({ status: "failed", last_error_code: "pair_retired",
-          encrypted_payload: null, updated_at: new Date(now()).toISOString() }).where("job_id", "=", member.jobId)
-          .where("machine_id", "=", member.machineId).where("status", "in", ["queued", "running"]).execute();
-        await trx.executor.updateTable("preview_pair_members").set({ retired_at: new Date(now()).toISOString() })
-          .where("machine_id", "=", member.machineId).where("retired_at", "is", null).execute();
-      });
       await withPreviewPairClaim(db, claim, now(), async () => undefined);
       await adapters.retire(member, claim);
       await withPreviewPairClaim(db, claim, now(), async () => undefined);
@@ -63,6 +66,10 @@ export async function cleanupPreviewPair(db: PlatformDB, claim: PreviewPairClaim
         await trx.executor.updateTable("preview_pair_members").set({ provider_absent_at: new Date(now()).toISOString() })
           .where("machine_id", "=", member.machineId).where("provider_absent_at", "is", null).execute();
       });
+    }));
+    for (const attempt of attempts) if (attempt.status === "rejected") {
+      if (attempt.reason instanceof PreviewPairConflictError) throw attempt.reason;
+      throw new Error("Preview retirement remains pending");
     }
     await withPreviewPairClaim(db, claim, now(), async trx => {
       const remaining = await trx.executor.selectFrom("preview_pair_members").select("machine_id")
