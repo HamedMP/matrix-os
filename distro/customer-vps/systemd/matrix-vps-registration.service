@@ -3,7 +3,7 @@ Description=Register Matrix OS customer VPS with the platform
 After=network-online.target matrix-gateway.service
 Wants=network-online.target
 ConditionPathExists=/opt/matrix/bin/matrix-register-vps
-ConditionPathExists=!/opt/matrix/register-complete
+ConditionPathExists=!/var/lib/matrix-vps-registration/register-complete
 # The registration token deadline enforced by matrix-register-vps is the
 # lifetime bound. Disable systemd's independent start limiter so it cannot
 # suppress a recoverable retry while that token is still valid.
@@ -13,6 +13,10 @@ StartLimitIntervalSec=0
 Type=oneshot
 User=matrix
 Group=matrix
+StateDirectory=matrix-vps-registration
+StateDirectoryMode=0750
+Environment=MATRIX_REGISTER_FLAG=/var/lib/matrix-vps-registration/register-complete
+Environment=MATRIX_REGISTER_LOCK=/var/lib/matrix-vps-registration/register-complete.lock
 EnvironmentFile=/opt/matrix/env/host.env
 EnvironmentFile=/opt/matrix/env/registration.env
 ExecStart=/opt/matrix/bin/matrix-register-vps

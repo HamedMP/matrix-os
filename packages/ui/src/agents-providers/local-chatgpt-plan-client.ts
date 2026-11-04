@@ -5,10 +5,15 @@ export interface LocalChatgptPlanStatus {
   account?: { id: string; label: string };
   models: Array<{ id: string; displayName: string }>;
   grant: { revision: number; enabled: boolean; background: boolean };
+  grantSaveUnconfirmed?: boolean;
   bridgeConnected: boolean;
   bridgeFailure?: "device_conflict";
   revocation: "none" | "confirmed" | "unconfirmed";
 }
+
+export type LocalChatgptGrantUpdate =
+  | { enabled: boolean; background: false; accountId?: string; baseRevision?: number }
+  | { enabled: true; background: boolean; accountId: string; baseRevision: number };
 
 export interface LocalChatgptPlanClient {
   status(signal: AbortSignal): Promise<LocalChatgptPlanStatus>;
@@ -17,5 +22,5 @@ export interface LocalChatgptPlanClient {
   cancel(signal: AbortSignal): Promise<LocalChatgptPlanStatus>;
   disconnect(signal: AbortSignal): Promise<LocalChatgptPlanStatus>;
   refreshModels(signal: AbortSignal): Promise<LocalChatgptPlanStatus>;
-  setGrant(input: { enabled: boolean; background: false }, signal: AbortSignal): Promise<LocalChatgptPlanStatus>;
+  setGrant(input: LocalChatgptGrantUpdate, signal: AbortSignal): Promise<LocalChatgptPlanStatus>;
 }

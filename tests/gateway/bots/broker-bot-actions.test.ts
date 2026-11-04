@@ -99,6 +99,38 @@ const tool = (overrides: Partial<BotToolRequest> = {}) => frame({
 });
 
 describe("bot broker actions", () => {
+  it("fences a background session after asynchronous validation releases its runtime", async () => {
+    binding = { ...binding, requestClass: "background" };
+    let enter!: () => void, resume!: (value: boolean) => void;
+    const entered = new Promise<void>(resolve => { enter = resolve; });
+    const validation = new Promise<boolean>(resolve => { resume = resolve; });
+    const { actions, registry } = setup({ revalidateBinding: () => { enter(); return validation; } });
+    const pending = actions.handleFrame(frame({ action: "bot.session.save", session: { baseRevision: 0, messages: [] } }));
+    try { await entered; registry.release(RUNTIME); resume(true);
+      await expect(pending).resolves.toMatchObject({ ok: false, code: "stale_generation" });
+      expect(await db.selectFrom("bot_agent_sessions").selectAll().execute()).toEqual([]);
+    } finally { resume(false); await pending; }
+  });
+  it("allows final background session settlement after inference cancellation while authority stays valid", async () => {
+    binding = { ...binding, requestClass: "background" };
+    const { actions, registry } = setup({ revalidateBinding: async () => true });
+    registry.cancelInference(binding);
+    await expect(actions.handleFrame(frame({ action: "bot.session.save", session: { baseRevision: 0, messages: [] } })))
+      .resolves.toMatchObject({ ok: true });
+  });
+  it.each([
+    { action: "bot.session.load" },
+    { action: "bot.session.save", session: { baseRevision: 0, messages: [] } },
+    { action: "bot.event", event: { seq: 0, event: { type: "assistant_delta", text: "private output" } } },
+  ])("revalidates background authority before $action, including final delivery", async request => {
+    binding = { ...binding, requestClass: "background" };
+    const revalidateBinding = vi.fn(async () => false);
+    const { actions, events } = setup({ revalidateBinding });
+    await expect(actions.handleFrame(frame(request))).resolves.toMatchObject({ ok: false, code: "not_granted" });
+    expect(revalidateBinding).toHaveBeenCalledOnce();
+    expect(events.publish).not.toHaveBeenCalled();
+    expect(await db.selectFrom("bot_agent_sessions").selectAll().execute()).toEqual([]);
+  });
   it("gives only browser actions a bounded human pause deadline", async () => {
     binding.capabilities = ["browser.action"];
     const timeouts = vi.spyOn(AbortSignal, "timeout");

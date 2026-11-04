@@ -736,6 +736,61 @@ describe("platform/internal-sync-routes", () => {
     );
   });
 
+  it("retains Get started bot-name registration alongside the sync routes", async () => {
+    const app = createApp({
+      db,
+      orchestrator: stubOrchestrator(),
+      platformSecret: "platform-secret-123",
+      env: {},
+      internalSyncRoutes: createInternalSyncRoutes({
+        db,
+        r2,
+        platformSecret: "platform-secret-123",
+        r2PrefixRoot: "matrixos-sync",
+      }),
+    });
+    const request = () => ({
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${bearerFor("alice", "platform-secret-123")}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({ goals: ["code"], personality: "calm-mentor", exclude: [] }),
+    });
+    const response = await app.request(
+      "/internal/containers/alice/get-started/bot-names",
+      request(),
+    );
+    expect(response.status).toBe(503);
+    expect(await response.json()).toEqual({ error: "Name suggestions are unavailable" });
+  });
+
+  it("allows sync object uploads above the generic session-proxy body limit", async () => {
+    r2.putObject.mockResolvedValue({ etag: '"etag-large"' });
+    const app = createTestApp();
+    const contentLength = 11 * 1024 * 1024;
+
+    const res = await app.request(
+      "/internal/containers/alice/sync/object?key=matrixos-sync%2Fuser_alice%2Fmanifest.json",
+      {
+        method: "PUT",
+        headers: {
+          authorization: `Bearer ${bearerFor("alice", "platform-secret-123")}`,
+          "content-type": "application/octet-stream",
+          "content-length": String(contentLength),
+        },
+        body: "x".repeat(contentLength),
+      },
+    );
+
+    expect(res.status).toBe(200);
+    expect(r2.putObject).toHaveBeenCalledWith(
+      "matrixos-sync/user_alice/manifest.json",
+      expect.objectContaining({ getReader: expect.any(Function) }),
+      { contentLength },
+    );
+  });
+
   it("buffers chunked object uploads so storage receives a known length", async () => {
     r2.putObject.mockResolvedValue({ etag: '"etag-2"' });
     const app = createTestApp();

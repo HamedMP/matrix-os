@@ -165,7 +165,7 @@ describe("GetStartedGate", () => {
     const { port, saves } = makePort({ status: "pending" });
     renderGate(port);
     const name = await screen.findByPlaceholderText("Your first name");
-    expect(name).toHaveFocus();
+    await waitFor(() => expect(name).toHaveFocus());
     fireEvent.change(name, { target: { value: "Sam" } });
     // Enter that confirms an IME composition (Chinese, Japanese) must not leave the step.
     fireEvent.keyDown(name, { key: "Enter", isComposing: true });
