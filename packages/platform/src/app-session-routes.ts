@@ -16,7 +16,7 @@ import {
 } from './db.js';
 import type { BillingEntitlement } from './billing.js';
 import { getRuntimeAccessDecision } from './billing.js';
-import type { ClerkAuth } from './clerk-auth.js';
+import { hasVerifiedClerkBrowserSession, type ClerkAuth } from './clerk-auth.js';
 import type { CustomerVpsService } from './customer-vps.js';
 import { CustomerVpsError } from './customer-vps-errors.js';
 import { HetznerLocationSchema, HetznerServerTypeSchema, RuntimeSlotSchema } from './customer-vps-schema.js';
@@ -398,14 +398,17 @@ export function createAppSessionRoutes(opts: {
       return c.json({ error: 'Matrix computer unavailable', code: 'no_runtime' }, 404);
     }
 
+    const issuedAt = Math.floor(Date.now() / 1000);
     const issued = await issueSyncJwt({
       secret: opts.platformJwtSecret,
       clerkUserId: result.userId,
       sessionProvenance: 'clerk-browser',
+      verifiedHumanBrowser: hasVerifiedClerkBrowserSession(result, result.userId, issuedAt) ? true : undefined,
       handle,
       gatewayUrl: opts.getGatewayUrlForHandle(handle),
       runtimeSlot: machine?.runtimeSlot,
       expiresInSec: CODE_SESSION_EXPIRES_IN_SEC,
+      now: issuedAt,
     });
     opts.applyNoStoreHeaders(c);
     c.header('Set-Cookie', buildAppSessionCookie(issued.token), { append: true });
