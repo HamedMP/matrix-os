@@ -1,4 +1,4 @@
-import { migratePreviewPairPublication } from "../preview-pair/migration.js";
+import { migratePreviewPairPublisher } from "../preview-pair/migration.js";
 import { GOOGLE_TRACKING_REVISION } from '../billing/google-tracking-revision.js';
 import { migrateGooglePurchases } from '../billing/google-tracking-migration.js';
 import type { Kysely } from 'kysely';
@@ -23,8 +23,8 @@ export async function runPlatformStartupMigrations(db: Kysely<PlatformDatabase>)
   await runPlatformMigration(db, migrateSites, {
     scope: 'sites', revision: { generation: 1, fingerprint: 'public-app-sites-v1' }, deadlockAttempts: 12,
   });
-  await runPlatformMigration(db, migratePreviewPairPublication, {
-    scope: 'preview-pairs', revision: { generation: 4, fingerprint: 'collaboration-preview-pair-publication-v4' }, deadlockAttempts: 12,
+  await runPlatformMigration(db, migratePreviewPairPublisher, {
+    scope: 'preview-pairs', revision: { generation: 5, fingerprint: 'collaboration-preview-pair-publisher-v5' }, deadlockAttempts: 12,
   });
   // A preview may have recorded a newer core generation without this channel.
   // Keep its core marker intact while independently ensuring our channel schema.

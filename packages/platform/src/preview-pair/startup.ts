@@ -18,6 +18,7 @@ import { createPreviewPairGitHub } from "./github.js";
 import { createPreviewPairCloudAuthority } from "./cloud.js";
 import { createPreviewPairCloudCleanup } from "./cleanup-cloud.js";
 import { createPreviewPairIntentCloudCleanup } from "./intent-cloud.js";
+import { createPreviewPairPublisher } from "./publication.js";
 import { createPreviewPairSourceAuthority } from "./source-authority.js";
 import { startCustomerVpsReconciliationWorker, type CustomerVpsReconciliationWorker } from "../customer-vps-reconciliation-worker.js";
 export interface ConfiguredPreviewPairRuntimeOptions {
@@ -65,7 +66,9 @@ export async function createConfiguredPreviewPairRuntime(options: ConfiguredPrev
       systemStore: createCustomerVpsSystemStore({ r2: options.objectStore, r2PrefixRoot: profile.r2Prefix }) });
     const { service } = createPreviewPairRuntime({ db: options.db, target, config, context: privateContext,
       controlSecret: options.env.PLATFORM_SECRET ?? "", hostSecret: credentials.PLATFORM_SECRET, dispatcher: options.dispatcher,
-      funding: options.funding, fetchImpl, now, authority: { ...authority,
+      funding: options.funding, fetchImpl, now,
+      publication: createPreviewPairPublisher({ db: options.db, config, profile, accessToken: google.accessToken, fetchImpl, now }),
+      authority: { ...authority,
         verifyFixtures: async signal => { signal.throwIfAborted(); await assertPreviewPairTargetPrepared(options.db, target); return authority.verifyFixtures(signal); },
         authority: async (candidate, signal) => { signal.throwIfAborted(); await assertPreviewPairTargetPrepared(options.db, target); return authority.authority(candidate, signal); } },
       retireCloudIntent: createPreviewPairIntentCloudCleanup({ db: options.db, profileFingerprint: config.sourceProfileFingerprint,

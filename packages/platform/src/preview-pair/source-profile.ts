@@ -13,6 +13,7 @@ const Profile = z.strictObject({ project: z.string().max(80).regex(/^[a-z][a-z0-
   bindings: z.strictObject({ CLERK_SECRET_KEY: Binding, PLATFORM_DATABASE_URL: Binding,
     MATRIX_COLLABORATION_TICKET_KEYS: Binding, PLATFORM_SECRET: Binding,
     PLATFORM_JWT_SECRET: Binding, EDGE_ROUTER_SECRET: Binding }),
+  imageRepository: z.string().max(63).regex(/^[a-z][a-z0-9-]+$/).refine(value => value.includes("preview")).optional(),
 });
 export type PreviewPairSourceProfile = z.infer<typeof Profile> & { operatorSecret: string };
 export { Binding as PreviewPairSecretBindingSchema };
