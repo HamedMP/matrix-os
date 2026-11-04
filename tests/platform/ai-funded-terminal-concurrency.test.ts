@@ -93,7 +93,8 @@ describe.skipIf(!url)("funded terminal owner lock with independent PostgreSQL po
     clock = new Date(clock.getTime() + 30_000); release.resolve(); await blocker;
     expect((await received)[0]).toMatchObject({ status: "fulfilled", value: { receivedAt: clock.toISOString() } });
     const saved = (await rows()).find(row => row.reservation_id === started.reservationId)!;
-    expect(JSON.parse(saved.execution_admission_release!).response.releasedAt).toBe(clock.toISOString());
+    expect(saved).toMatchObject({ status: "expired", actual_microusd: null, execution_admission_release: null });
+    expect(JSON.parse(saved.customer_charge_release!)).toMatchObject({ releasedAt: clock.toISOString(), releasedMicrousd: 100 });
     const admissions = await Promise.allSettled([authorize(repoA, "immediate-b"), authorize(repoB, "competing-b")]);
     expect(admissions.filter(result => result.status === "fulfilled")).toHaveLength(1);
     const admitted = admissions.find(result => result.status === "fulfilled")!;
@@ -106,6 +107,8 @@ describe.skipIf(!url)("funded terminal owner lock with independent PostgreSQL po
     ]);
     expect(races[0]).toMatchObject({ status: "rejected", reason: { code: "reservation_closed" } });
     expect(races.slice(1).every(result => result.status === "fulfilled")).toBe(true);
+    expect(races[2]).toMatchObject({ status: "fulfilled", value: { actualCostMicrousd: 10,
+      chargedCostMicrousd: 0, matrixAbsorbedMicrousd: 10 } });
     expect((await rows()).find(row => row.reservation_id === bStart.reservationId)).toMatchObject({ status: "in_flight", execution_admission_release: null, actual_microusd: null });
   });
   it("takes machine lock before the terminal reservation lock while policy mutation waits", async () => {
@@ -127,7 +130,7 @@ describe.skipIf(!url)("funded terminal owner lock with independent PostgreSQL po
     } finally { release.resolve(); }
     expect((await results).every(result => result.status === "fulfilled")).toBe(true);
   });
-  it("serializes cap-blocked receipt replay, exact settlement and future admission across pools", async () => {
+  it("serializes policy-released receipt replay, Matrix expense and future admission across pools", async () => {
     const attempts = [];
     for (let index = 0; index < 3; index++) {
       const start = await strongStart(`cap-${index}`); clock = new Date(clock.getTime() + 30_000);
@@ -135,14 +138,17 @@ describe.skipIf(!url)("funded terminal owner lock with independent PostgreSQL po
     }
     const third = attempts[2];
     expect((await rows()).find(row => row.reservation_id === third.start.reservationId)!.execution_admission_release).toBeNull();
+    expect((await rows()).find(row => row.reservation_id === third.start.reservationId)!.customer_charge_release).not.toBeNull();
     const settlement = { reservationId: attempts[0].start.reservationId, tokenId: credential.tokenId, mode: "exact" as const, actualCostMicrousd: 10 };
     const outcomes = await Promise.allSettled([repoA.finalizeReservation(settlement), repoB.recordTerminalOutcome(third.terminal), authorize(repoB, "cap-future")]);
-    expect(outcomes[0].status).toBe("fulfilled"); expect(outcomes[1].status).toBe("fulfilled");
+    expect(outcomes.every(result => result.status === "fulfilled")).toBe(true);
     const saved = await rows();
-    expect(saved.find(row => row.reservation_id === third.start.reservationId)!.execution_admission_release).not.toBeNull();
-    const unknown = saved.filter(row => row.execution_admission_release !== null && row.actual_microusd === null);
-    expect(unknown.map(row => row.execution_recovery_slot).sort()).toEqual([0, 1]);
-    expect(await repoA.finalizeReservation(settlement)).toMatchObject({ actualCostMicrousd: 10 });
+    expect(saved.find(row => row.reservation_id === third.start.reservationId)).toMatchObject({ status: "expired",
+      actual_microusd: null, execution_admission_release: null });
+    const unknown = saved.filter(row => row.customer_charge_release !== null && row.actual_microusd === null);
+    expect(unknown.map(row => row.request_id).sort()).toEqual(["cap-1", "cap-2"]);
+    expect(await repoA.finalizeReservation(settlement)).toMatchObject({ actualCostMicrousd: 10,
+      chargedCostMicrousd: 0, matrixAbsorbedMicrousd: 10 });
     const next = await authorize(repoB, "cap-future"); expect(next.authorized).toBe(true);
   });
   it("serializes two automatic admissions into one new dispatch slot", async () => {
@@ -153,9 +159,10 @@ describe.skipIf(!url)("funded terminal owner lock with independent PostgreSQL po
     const result = await Promise.allSettled([authorize(repoA, "next-a"), authorize(repoB, "next-b")]);
     expect(result.filter((r) => r.status === "fulfilled")).toHaveLength(1);
     expect(result.filter((r) => r.status === "rejected")).toHaveLength(1);
-    expect((await rows()).filter((r) => r.execution_admission_release !== null)).toHaveLength(1);
+    expect((await rows()).filter((r) => r.customer_charge_release !== null && r.status === "expired")).toHaveLength(1);
+    expect((await rows()).filter((r) => r.execution_admission_release !== null)).toHaveLength(0);
     expect((await rows()).filter((r) => r.execution_admission_release === null && r.status === "reserved")).toHaveLength(1);
-    expect(Number((await financial()).balances[0].reserved_microusd)).toBe(200);
+    expect(Number((await financial()).balances[0].reserved_microusd)).toBe(100);
   });
   it("concurrent identical mixed batches return one immutable result without money changes", async () => {
     const request = await oldMixed(); const before = await financial();

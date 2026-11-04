@@ -1,3 +1,4 @@
+import { assertReleasedRecoveryCharges } from "./ai-funded-customer-charge-release.js";
 import { FUNDED_EXECUTION_RECOVERY_MAX_UNKNOWN, FUNDED_EXECUTION_RECOVERY_MAX_LIABILITY_MICROUSD, FUNDED_EXECUTION_RECOVERY_MIN_AGE_MS, FundedAiExecutionRecoveryResponseSchema } from "@matrix-os/contracts";
 import { sql, type Selectable } from "kysely";
 import type { AiFundedUsageReservationsTable, PlatformDB } from "./db.js";
@@ -28,8 +29,9 @@ export async function assertRecoveryMachine(executor: Executor, row: {
 /** Caller holds funded owner lock. Validate every unresolved audit before using the exclusion predicate. */
 export async function readRecoveredUnknowns(executor: Executor, ownerId: string) {
   await readUnknownUsageWaivers(executor, ownerId);
+  await assertReleasedRecoveryCharges(executor, ownerId);
   const rows = await executor.selectFrom("ai_funded_usage_reservations").selectAll().where("owner_id", "=", ownerId)
-    .where("execution_admission_release", "is not", null).where("charge_waiver", "is", null).where("actual_microusd", "is", null)
+    .where("execution_admission_release", "is not", null).where("charge_waiver", "is", null).where("customer_charge_release", "is", null).where("actual_microusd", "is", null)
     .limit(FUNDED_EXECUTION_RECOVERY_MAX_UNKNOWN + 1).execute();
   const occupied: number[] = [];
   let liability = 0;

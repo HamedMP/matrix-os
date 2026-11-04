@@ -1,3 +1,7 @@
+import { readUsageWaiverAudit } from "./ai-funded-usage-waiver-audit.js";
+import { cleanupExpiredCustomerCharges, inventoryExpiredCustomerCharges } from "./ai-funded-customer-credit-cleanup.js";
+import { isPostpaidAuthorization, readCustomerChargeRelease, releaseCustomerCharge } from "./ai-funded-customer-charge-release.js";
+import { settlePostpaidUsage } from "./ai-funded-postpaid-settlement.js";
 import { readFundedRecoveryAudit } from "./ai-funded-recovery-audit.js";
 import { reconcileFundedTerminalAfterSettlement } from "./ai-funded-terminal-reconciliation.js";
 import { withAccountDeletionOwnerLock } from './account-deletion/admission.js';
@@ -523,7 +527,7 @@ export function createAiFundedMeteringRepository(options: AiFundedMeteringReposi
         .selectAll().where("reservation_id", "=", request.reservationId)
         .where("token_id", "=", request.tokenId).forUpdate().executeTakeFirst();
       if (!reservation) throw new AiFundedPolicyError("unauthorized");
-      if (reservation.terminal_outcome !== null || reservation.execution_admission_release !== null || reservation.charge_waiver !== null) throw new AiFundedPolicyError("reservation_closed");
+      if (reservation.terminal_outcome !== null || reservation.execution_admission_release !== null || reservation.charge_waiver !== null || reservation.customer_charge_release !== null) throw new AiFundedPolicyError("reservation_closed");
       if (reservation.status === "in_flight") {
         if (reservation.start_response === null) throw new Error("In-flight reservation is missing its response");
         const saved = FundedAiStartResponseSchema.parse(JSON.parse(reservation.start_response));
@@ -589,6 +593,7 @@ export function createAiFundedMeteringRepository(options: AiFundedMeteringReposi
     reservationId: string;
     tokenId: string;
     actualCostMicrousd: number | null;
+    customerCharge?: "waived";
     jevProvenance?: z.infer<typeof JevProvenanceSchema>;
     manualReview?: { expectedRequestId: string; evidenceRef: string; reviewer: string };
     notDispatched?: JevNoDispatchAttestation;
@@ -607,13 +612,17 @@ export function createAiFundedMeteringRepository(options: AiFundedMeteringReposi
       // Serialize with audited waiver/admission before locking the reservation.
       // Machine FK checks during ledger insertion must not invert waiver's machine/row locks.
       await sql`SELECT pg_advisory_xact_lock(hashtextextended(${`funded-ai-owner:${locator.owner_id}`}, 0))`.execute(trx.executor);
+      // Add-on grants hold the machine before touching its balance. Acquire it
+      // before request/balance locks so the ledger's FK check cannot invert them.
+      await trx.executor.selectFrom("user_machines").select("machine_id")
+        .where("machine_id", "=", locator.machine_id).forUpdate().executeTakeFirstOrThrow();
       const runtime = await trx.executor.selectFrom("ai_funded_runtime_policies")
         .select(["monthly_budget_microusd"]).where("machine_id", "=", locator.machine_id)
         .executeTakeFirstOrThrow();
       const reservation = await trx.executor.selectFrom("ai_funded_usage_reservations")
         .selectAll().where("reservation_id", "=", request.reservationId)
         .where("token_id", "=", request.tokenId).forUpdate().executeTakeFirstOrThrow();
-      if (reservation.execution_admission_release !== null) readFundedRecoveryAudit(reservation);
+      if (reservation.execution_admission_release !== null && reservation.customer_charge_release === null) readFundedRecoveryAudit(reservation);
       const reserved = exactInteger(reservation.reserved_microusd);
       const usageLimit = usageReservationLimit(reservation.authorization_response);
       const storedJevPricingVersion = reservation.model_id === JEV_MODEL_ID
@@ -650,10 +659,23 @@ export function createAiFundedMeteringRepository(options: AiFundedMeteringReposi
           throw new AiFundedPolicyError("rate_limited");
         }
       }
-      if (usageLimit !== null && finalizationMode === "conservative") {
-        // Unknown provider usage is not evidence of a charge. Keep the hold and
-        // owner admission barrier until an exact response can reconcile it.
-        throw new AiFundedPolicyError("unavailable");
+      const postpaid = isPostpaidAuthorization(reservation);
+      if (request.customerCharge && !postpaid) throw new AiFundedPolicyError("idempotency_conflict");
+      if ((postpaid || reservation.customer_charge_release !== null) && finalizationMode === "exact") {
+        const response = await settlePostpaidUsage(trx.executor, reservation, request.actualCostMicrousd!,
+          exactInteger(runtime.monthly_budget_microusd), checkedAt, request);
+        return { response, finalizationMode: "exact" } as const;
+      }
+      if (finalizationMode === "conservative") {
+        if (reservation.customer_charge_release !== null) readCustomerChargeRelease(reservation);
+        else if (reservation.charge_waiver !== null) readUsageWaiverAudit(reservation);
+        else {
+          if (reservation.status !== "in_flight" || reservation.actual_microusd !== null) throw new AiFundedPolicyError("reservation_closed");
+          await releaseCustomerCharge(trx.executor, reservation, "usage_unknown", checkedAt);
+        }
+        // Commit the customer release while explicitly retaining unknown provider cost.
+        // The legacy finalization wire cannot truthfully return an exact amount here.
+        return { usageUnknown: true } as const;
       }
       const actualCostMicrousd = request.actualCostMicrousd ?? reserved;
       if (reservation.charge_waiver !== null) {
@@ -810,6 +832,7 @@ export function createAiFundedMeteringRepository(options: AiFundedMeteringReposi
         .where("reservation_id", "=", reservation.reservation_id).execute();
       return { response, finalizationMode } as const;
     });
+    if ("usageUnknown" in result) throw new AiFundedPolicyError("unavailable");
     if (finalizationMode === "exact") await reconcileFundedTerminalAfterSettlement(options.db, request, options.now);
     return result;
   }
@@ -825,6 +848,7 @@ export function createAiFundedMeteringRepository(options: AiFundedMeteringReposi
       ...(request.mode === "not_dispatched" ? { notDispatched: {
         expectedRequestId: request.expectedRequestId, jevPricingVersion: request.jevPricingVersion,
       } } : {}),
+      ...(request.mode === "exact" && request.customerCharge ? { customerCharge: request.customerCharge } : {}),
       ...(request.mode === "exact" && request.jevProvenance
         ? { jevProvenance: request.jevProvenance } : {}),
     }, request.mode === "not_dispatched" ? "exact" : request.mode);
@@ -953,6 +977,8 @@ export function createAiFundedMeteringRepository(options: AiFundedMeteringReposi
     reconcileUnknownJevUsage,
     releaseReservation,
     cleanupExpiredReservations,
+    cleanupExpiredCustomerCharges: (input: { limit: number }) => cleanupExpiredCustomerCharges(options, input),
+    inventoryExpiredCustomerCharges: (input: Parameters<typeof inventoryExpiredCustomerCharges>[1]) => inventoryExpiredCustomerCharges(options, input),
     grantCredit,
     grantCreditInTransaction,
   };

@@ -131,11 +131,19 @@ describe("atomic mixed GLM and speech execution recovery", () => {
       .rejects.toMatchObject({ code: "idempotency_conflict" });
   });
 
-  it("cleanup preserves both recovered unknown obligations and every financial byte", async () => {
+  it("cleanup releases the AI customer hold while preserving the recovered speech obligation", async () => {
     expect((await send(await request())).status).toBe(200);
     const beforeRows = await rows(); const before = await finance();
-    expect(await repo.cleanupExpiredReservations({ limit: 100 })).toBe(0);
-    expect(await rows()).toEqual(beforeRows); expect(await finance()).toEqual(before);
+    expect(await repo.cleanupExpiredReservations({ limit: 100 })).toBe(1);
+    const afterRows = await rows(); const after = await finance();
+    expect(afterRows.find(row => row.reservation_id === "speech-reservation"))
+      .toEqual(beforeRows.find(row => row.reservation_id === "speech-reservation"));
+    expect(afterRows.find(row => row.request_id === "glm-old"))
+      .toMatchObject({ status: "expired", actual_microusd: null, customer_charge_release: expect.any(String) });
+    expect(after.ledger).toEqual(before.ledger); expect(after.grants).toEqual(before.grants);
+    expect(after.allocations).toEqual(before.allocations); expect(after.allowances).toEqual(before.allowances);
+    expect(Number(after.balances[0].credit_balance_microusd)).toBe(Number(before.balances[0].credit_balance_microusd));
+    expect(Number(after.balances[0].reserved_microusd)).toBe(6_000);
   });
 
   it.each(["usage", "speech", "speech-corrupt-audit"] as const)("handles a previously recovered speech operation after late %s settlement", async (settledKind) => {

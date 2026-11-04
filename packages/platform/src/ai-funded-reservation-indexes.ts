@@ -16,7 +16,7 @@ export async function ensureFundedReservationIndexes(db: Kysely<PlatformDatabase
   for (;;) {
     const batch = await db.selectFrom("ai_funded_usage_reservations").selectAll()
       .where("execution_admission_release", "is not", null).where("actual_microusd", "is", null)
-      .where("charge_waiver", "is", null)
+      .where("charge_waiver", "is", null).where("customer_charge_release", "is", null)
       .where("reservation_id", ">", cursor).orderBy("reservation_id").limit(100).execute();
     for (const row of batch) {
       readFundedRecoveryAudit(row);
@@ -27,7 +27,7 @@ export async function ensureFundedReservationIndexes(db: Kysely<PlatformDatabase
   }
   const excessive = await sql`
     SELECT owner_id FROM ai_funded_usage_reservations
-    WHERE execution_admission_release IS NOT NULL AND actual_microusd IS NULL AND charge_waiver IS NULL
+    WHERE execution_admission_release IS NOT NULL AND actual_microusd IS NULL AND charge_waiver IS NULL AND customer_charge_release IS NULL
     GROUP BY owner_id
     HAVING COUNT(*) > ${FUNDED_EXECUTION_RECOVERY_MAX_UNKNOWN}
       OR SUM(CASE WHEN authorization_response::jsonb ->> 'capability' = 'speech:transcribe'
@@ -67,7 +67,7 @@ export async function ensureFundedReservationIndexes(db: Kysely<PlatformDatabase
       DROP INDEX IF EXISTS idx_ai_funded_unknown_admission_owner;
       CREATE UNIQUE INDEX idx_ai_funded_unknown_admission_owner
       ON ai_funded_usage_reservations(owner_id, execution_recovery_slot)
-      WHERE execution_admission_release IS NOT NULL AND actual_microusd IS NULL AND charge_waiver IS NULL;
+      WHERE execution_admission_release IS NOT NULL AND actual_microusd IS NULL AND charge_waiver IS NULL AND customer_charge_release IS NULL;
     END $$
   `.execute(db);
 }

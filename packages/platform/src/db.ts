@@ -169,6 +169,7 @@ export interface AiFundedPriorityClaimsTable {
 export interface AiFundedUsageReservationsTable {
   terminal_outcome: Generated<string | null>;
   charge_waiver: Generated<string | null>;
+  customer_charge_release: Generated<string | null>;
   execution_admission_release: Generated<string | null>;
   execution_recovery_slot: Generated<0 | 1>;
   reservation_id: string;

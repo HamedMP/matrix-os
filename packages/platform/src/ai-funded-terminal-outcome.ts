@@ -1,3 +1,4 @@
+import { readCustomerChargeRelease, releaseCustomerCharge } from "./ai-funded-customer-charge-release.js";
 import { FundedAiStartResponseSchema, FundedAiTerminalOutcomeRequestSchema, FundedAiTerminalOutcomeResponseSchema, type FundedAiTerminalOutcomeRequest } from "@matrix-os/contracts";
 import { sql, type Selectable } from "kysely";
 import { z } from "zod/v4";
@@ -78,10 +79,16 @@ export function createFundedTerminalOutcome(options: {
       const response = FundedAiTerminalOutcomeResponseSchema.parse({ contractVersion: 1, outcomeAccepted: true, usageKnown: false, receivedAt: checkedAt });
       // Exact settlement wins monotonically, including when it preceded the unknown outcome.
       const settled = row.status === "settled" && row.actual_microusd !== null;
-      if (!settled && (row.status !== "in_flight" || row.actual_microusd !== null || row.charge_waiver !== null))
+      const customerReleased = row.customer_charge_release !== null;
+      if (customerReleased) readCustomerChargeRelease(row);
+      if (!settled && !customerReleased && (row.status !== "in_flight" || row.actual_microusd !== null || row.charge_waiver !== null))
         throw new AiFundedPolicyError("reservation_closed");
       await trx.executor.updateTable("ai_funded_usage_reservations").set({ terminal_outcome: JSON.stringify({ request, response }) })
         .where("reservation_id", "=", row.reservation_id).where("terminal_outcome", "is", null).executeTakeFirstOrThrow();
+      if (!settled && !customerReleased) {
+        await releaseCustomerCharge(trx.executor, row,
+          request.terminalState === "completed" ? "usage_unknown" : "gateway_failure", checkedAt);
+      }
       await recoverFundedTerminalReceipt(trx.executor, request.ownerId, checked);
       return response;
     });

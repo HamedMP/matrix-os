@@ -1,3 +1,4 @@
+import { cleanupOwnerCustomerCharges } from "./ai-funded-customer-credit-cleanup.js";
 import { withAccountDeletionOwnerLock } from './account-deletion/admission.js';
 /**
  * Funded AI authorization: the single owner-wide admission point before a
@@ -60,6 +61,7 @@ export function createFundedAuthorize(deps: FundedAuthorizeDependencies) {
       tokenId: tokenMatch[1], requestId: request.requestId,
       modelId: request.modelId, maxCostMicrousd: request.maxCostMicrousd,
       ...(request.billingMode ? { billingMode: request.billingMode } : {}),
+      ...(request.billingPolicy ? { billingPolicy: request.billingPolicy } : {}),
       ...(request.jevPricingVersion ? { jevPricingVersion: request.jevPricingVersion } : {}),
     })).digest("hex");
     await deps.db.ready;
@@ -81,13 +83,17 @@ export function createFundedAuthorize(deps: FundedAuthorizeDependencies) {
       // locks to match policy updates. Later validation rolls this back on refusal.
       // A receipt can commit while admission waits for this owner lock; recovery
       // must compare its chronology against the locked time, not the entry snapshot.
+      if (request.billingPolicy === "postpaid") await cleanupOwnerCustomerCharges(trx.executor, credential.owner_id, deps.now().toISOString());
       await recoverTerminalOutcomes(trx.executor, credential.owner_id, deps.now());
-      const runtime = await trx.executor.selectFrom("ai_funded_runtime_policies")
-        .selectAll().where("machine_id", "=", credential.machine_id).forUpdate().executeTakeFirst();
+      // Recovery can have no candidates after the customer charge was released.
+      // Still lock the dispatch target before policy rows: policy updates hold
+      // that machine first, and a later reservation INSERT needs its FK lock.
       const machine = await trx.executor.selectFrom("user_machines").select([
         "clerk_user_id", "runtime_slot", "runtime_token_epoch", "provisioning_class",
         "status", "activation_state", "deleted_at",
-      ]).where("machine_id", "=", credential.machine_id).executeTakeFirst();
+      ]).where("machine_id", "=", credential.machine_id).forUpdate().executeTakeFirst();
+      const runtime = await trx.executor.selectFrom("ai_funded_runtime_policies")
+        .selectAll().where("machine_id", "=", credential.machine_id).forUpdate().executeTakeFirst();
       const global = await trx.executor.selectFrom("ai_funded_global_policy")
         .selectAll().where("policy_id", "=", "default").executeTakeFirstOrThrow();
       const restriction = await trx.executor.selectFrom("ai_funded_credit_restrictions")
@@ -124,11 +130,11 @@ export function createFundedAuthorize(deps: FundedAuthorizeDependencies) {
       if (!reset) throw new AiFundedPolicyError("access_disabled");
 
       const existing = await trx.executor.selectFrom("ai_funded_usage_reservations")
-        .select(["payload_hash", "authorization_response", "terminal_outcome", "execution_admission_release", "charge_waiver"])
+        .select(["payload_hash", "authorization_response", "terminal_outcome", "execution_admission_release", "charge_waiver", "customer_charge_release"])
         .where("token_id", "=", credential.token_id).where("request_id", "=", request.requestId)
         .executeTakeFirst();
       if (existing) {
-        if (existing.terminal_outcome !== null || existing.execution_admission_release !== null || existing.charge_waiver !== null) throw new AiFundedPolicyError("reservation_closed");
+        if (existing.terminal_outcome !== null || existing.execution_admission_release !== null || existing.charge_waiver !== null || existing.customer_charge_release !== null) throw new AiFundedPolicyError("reservation_closed");
         if (existing.payload_hash !== payloadHash) throw new AiFundedPolicyError("idempotency_conflict");
         return { kind: "authorized", response: FundedAiAuthorizationResponseSchema.parse(JSON.parse(existing.authorization_response)) };
       }
@@ -150,6 +156,16 @@ export function createFundedAuthorize(deps: FundedAuthorizeDependencies) {
       const ceilingHold = billingMode === "usage" ? 1 : request.maxCostMicrousd;
       if (ceilingHold > budgetCeiling) throw new AiFundedPolicyError("budget_exceeded");
       if (ceilingHold > creditCeiling) throw new AiFundedPolicyError("insufficient_credit");
+
+      if (request.billingPolicy === "postpaid") {
+        const availableCredit = Math.min(sourceAvailability.availableMicrousd,
+          exactInteger(balance.credit_balance_microusd) - exactInteger(balance.reserved_microusd)
+            - exactInteger(balance.funding_shortfall_microusd));
+        const availableBudget = monthlyBudget - exactInteger(balance.month_spent_microusd)
+          - exactInteger(balance.month_reserved_microusd);
+        if (availableCredit <= 0) throw new AiFundedPolicyError("insufficient_credit");
+        if (availableBudget <= 0) throw new AiFundedPolicyError("budget_exceeded");
+      }
 
       const priority = await evaluateFundedPriority(trx.executor, {
         ownerId: credential.owner_id,
@@ -186,8 +202,9 @@ export function createFundedAuthorize(deps: FundedAuthorizeDependencies) {
           .returning("machine_id").executeTakeFirst();
         if (!allocation) throw new AiFundedPolicyError("access_disabled");
       }
-      let holdMicrousd = request.maxCostMicrousd;
-      if (billingMode === "usage") {
+      const postpaid = request.billingPolicy === "postpaid";
+      let holdMicrousd = postpaid ? 0 : request.maxCostMicrousd;
+      if (billingMode === "usage" && !postpaid) {
         const credit = Math.min(sourceAvailability.availableMicrousd,
           exactInteger(balance.credit_balance_microusd) - exactInteger(balance.reserved_microusd)
             - exactInteger(balance.funding_shortfall_microusd));
@@ -261,6 +278,7 @@ export function createFundedAuthorize(deps: FundedAuthorizeDependencies) {
           modelId: request.modelId,
           reservedMicrousd: holdMicrousd,
           ...(request.billingMode ? { billingMode: request.billingMode, maxCostMicrousd: request.maxCostMicrousd } : {}),
+          ...(request.billingPolicy ? { billingPolicy: request.billingPolicy } : {}),
           ...(request.jevPricingVersion ? { jevPricingVersion: request.jevPricingVersion } : {}),
           remainingBalanceMicrousd: remainingBalance,
           remainingBudgetMicrousd: remainingBudget,

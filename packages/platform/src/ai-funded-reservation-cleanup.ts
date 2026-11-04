@@ -1,3 +1,4 @@
+import { cleanupExpiredCustomerCharges } from "./ai-funded-customer-credit-cleanup.js";
 import { readFundedRecoveryAudit } from "./ai-funded-recovery-audit.js";
 import { FundedAiSettlementResponseSchema } from "@matrix-os/contracts";
 import { NoResultError, sql } from "kysely";
@@ -42,6 +43,12 @@ export async function cleanupExpiredReservations(options: AiFundedReservationCle
   const checkedAt = checked.toISOString();
   const currentPeriod = utcMonthStart(checked);
   await options.db.ready;
+  const customerCleaned = await cleanupExpiredCustomerCharges(options, { limit });
+  const speechLimit = limit - customerCleaned;
+  if (speechLimit === 0) {
+    await deleteExpiredPriorityClaims(options.db.executor, checkedAt, MAX_EXPIRED_CLAIM_DELETES);
+    return customerCleaned;
+  }
   const selectCandidates = (
     after: CleanupCursor | undefined,
     candidateLimit: number,
@@ -51,6 +58,7 @@ export async function cleanupExpiredReservations(options: AiFundedReservationCle
       .select(["reservation_id", "expires_at", "owner_id"])
       .where("status", "in", ["reserved", "in_flight"]).where("expires_at", "<=", checkedAt)
       .where("execution_admission_release", "is", null)
+      .where(sql<boolean>`authorization_response::jsonb ->> 'capability' = 'speech:transcribe'`)
       // Exact provider usage is the only safe release signal after a usage-mode
       // request starts. Never-started reservations have no provider liability,
       // so their bounded authorization hold can expire normally.
@@ -64,9 +72,9 @@ export async function cleanupExpiredReservations(options: AiFundedReservationCle
     return query.orderBy("expires_at").orderBy("reservation_id").limit(candidateLimit).execute();
   };
   const cursor = cleanupCursors.get(options.db);
-  const candidates = await selectCandidates(cursor, limit);
-  if (cursor && candidates.length < limit) {
-    candidates.push(...await selectCandidates(undefined, limit - candidates.length, cursor));
+  const candidates = await selectCandidates(cursor, speechLimit);
+  if (cursor && candidates.length < speechLimit) {
+    candidates.push(...await selectCandidates(undefined, speechLimit - candidates.length, cursor));
   }
 
   let cleaned = 0;
@@ -268,5 +276,5 @@ export async function cleanupExpiredReservations(options: AiFundedReservationCle
   }
   // Expired priority claims hold nothing; remove them in bounded batches.
   await deleteExpiredPriorityClaims(options.db.executor, checkedAt, MAX_EXPIRED_CLAIM_DELETES);
-  return cleaned;
+  return cleaned + customerCleaned;
 }
