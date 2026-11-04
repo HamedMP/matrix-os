@@ -240,6 +240,48 @@ suite("Electron Desktop application-owned provider background cache", () => {
     expect(reads.length).toBe(baseline + 1);
   }, 40_000);
 
+  it("retains disabled Codex models and recovers the same selection after a short access-check retry", async () => {
+    const nativeIndex = catalog.instances.findIndex(instance => instance.driverKind === "codex");
+    const original = catalog.instances[nativeIndex]!;
+    const healthy = { ...original, availability: "available" as const, unavailabilityReason: undefined,
+      models: matrixBase.models.map(model => ({ ...model, availability: "available" as const })),
+      defaultSelection: { instanceId: original.id, model: "gpt-5.6-sol" } };
+    const baseline = reads.length;
+    try {
+      catalog.instances[nativeIndex] = healthy;
+      await page.clock.fastForward(freshnessMs + 1_000);
+      await expect.poll(() => reads.length).toBe(baseline + 1);
+      await picker().click();
+      const choices = page.locator('[data-slot="provider-model-picker"]');
+      await choices.getByRole("button", { name: /Codex agent/ }).click();
+      await choices.getByRole("option", { name: /gpt-5.6-sol via Codex/i }).click();
+      await draft().fill("Keep this Codex draft during access checking");
+      expect(await send().isEnabled()).toBe(true);
+      catalog.instances[nativeIndex] = { ...healthy, availability: "unavailable", unavailabilityReason: "runtime_unavailable",
+        observationState: "checking", defaultSelection: undefined,
+        models: healthy.models.map(model => ({ ...model, availability: "unavailable" as const })) };
+      await page.clock.fastForward(freshnessMs + 1_000);
+      await expect.poll(() => picker().innerText()).toContain("Checking Codex access…");
+      expect(await picker().getAttribute("data-model")).toBe("gpt-5.6-sol");
+      expect(await send().isEnabled()).toBe(false);
+      expect(await draft().innerText()).toBe("Keep this Codex draft during access checking");
+      await picker().click();
+      await choices.getByRole("button", { name: /Codex agent/ }).click();
+      expect(await choices.getByRole("option", { name: /gpt-5.6-sol via Codex/i }).isDisabled()).toBe(true);
+      await page.screenshot({ path: join(output, "codex-checking-access.png") });
+      await page.keyboard.press("Escape");
+      catalog.instances[nativeIndex] = healthy;
+      const beforeRetry = reads.length;
+      await page.clock.fastForward(5_000);
+      await expect.poll(() => reads.length).toBe(beforeRetry + 1);
+      await expect.poll(() => send().isEnabled()).toBe(true);
+      expect(await picker().getAttribute("data-model")).toBe("gpt-5.6-sol");
+      expect(await draft().innerText()).toBe("Keep this Codex draft during access checking");
+      await page.screenshot({ path: join(output, "codex-access-recovered.png") });
+      expect(reads.at(-1)?.query).toContain("includeObservationState=true");
+    } finally { catalog.instances[nativeIndex] = original; }
+  }, 40_000);
+
   it("opens native Agents from the warm catalog and keeps its model control usable during refresh", async () => {
     const baseline = reads.length;
     await chat().getByRole("button", { name: "Add new agent", exact: true }).click({ force: true });

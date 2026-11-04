@@ -147,6 +147,8 @@ export const CanonicalProviderInstanceDescriptorSchema = z.object({
   connectionLabel: canonicalSafeLabel(160, 640).optional(),
   availability: z.enum(["available", "setup_required", "auth_required", "unavailable"]),
   localObservation: AiProviderLocalObservationSchema.optional(),
+  /** Negotiated display-only state; never an admission or identity receipt. */
+  observationState: z.literal("checking").optional(),
   unavailabilityReason: z.enum([
     "disabled_in_settings",
     "settings_unavailable",
@@ -168,6 +170,10 @@ export const CanonicalProviderInstanceDescriptorSchema = z.object({
   supports: CanonicalProviderSupportSchema,
   defaultSelection: CanonicalChatModelSelectionSchema.optional(),
 }).strict().superRefine((instance, ctx) => {
+  if (instance.observationState && (instance.driverKind !== "codex" || instance.availability !== "unavailable"
+    || instance.unavailabilityReason !== "runtime_unavailable" || instance.models.some(model => model.availability !== "unavailable"))) {
+    ctx.addIssue({ code: "custom", path: ["observationState"], message: "Checking is a nonadmitted Codex observation" });
+  }
   if (instance.availability === "available" && instance.unavailabilityReason !== undefined) {
     ctx.addIssue({ code: "custom", path: ["unavailabilityReason"], message: "Available Instance cannot have an unavailable reason" });
   }

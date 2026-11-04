@@ -132,6 +132,7 @@ export function canonicalProviderFundingState(
 export function canonicalProviderAvailabilityReasonLabel(
   instance: CanonicalProviderInstanceDescriptor,
 ): string {
+  if (instance.observationState === "checking") return "Checking Codex access…";
   const fundingState = canonicalProviderFundingState(instance);
   if (fundingState === "credit_required") return "Matrix AI credit required";
   if (fundingState === "credit_reserved") return "Matrix AI credit reserved";

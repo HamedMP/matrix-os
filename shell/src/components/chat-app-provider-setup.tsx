@@ -1,5 +1,7 @@
 "use client";
 
+import { providerCatalogObservationRetryDelay } from "@matrix-os/ui";
+
 import { useCallback, useEffect, useRef, useState } from "react";
 import { rabbitMarkSvg } from "@matrix-os/brand/marks";
 import {
@@ -122,15 +124,21 @@ export function useChatProviderState(
     let authoritySuspended = false;
     let pending = false;
     let forcePending = false;
-    const refresh = async (force = false) => {
+    let observationRetries = 0;
+    let observationTimer: ReturnType<typeof setTimeout> | undefined;
+    const isOnline = () => navigator.onLine !== false;
+    async function refresh(force = false) {
+      if (cancelled) return;
       forcePending = forcePending || force;
+      if (!isOnline()) return;
       if (refreshing) {
         // Focus/visibility belong to the read already in progress. Only an
         // explicit post-change refresh must queue a newer observation.
-        pending = pending || force;
+        pending = pending || forcePending;
         return;
       }
       refreshing = true;
+      clearTimeout(observationTimer);
       if (!cancelled && !hasCatalog) setLoading(true);
       do {
         pending = false;
@@ -147,9 +155,13 @@ export function useChatProviderState(
           });
           if (!response.ok) throw new Error("ProviderCatalogUnavailable");
           const value = CanonicalProviderCatalogSchema.parse(await response.json());
-          if (!cancelled) {
+          if (!cancelled && requestAuthorityGeneration === authorityGeneration) {
+            clearTimeout(observationTimer);
             hasCatalog = true;
             setCatalog(value);
+            const delay = providerCatalogObservationRetryDelay(value, observationRetries);
+            observationRetries = value.instances.some(instance => instance.observationState === "checking") ? Math.min(3, observationRetries + 1) : 0;
+            if (delay !== null && document.visibilityState === "visible" && isOnline()) observationTimer = setTimeout(() => { if (document.visibilityState === "visible" && isOnline()) void refresh(); }, delay);
             setUnavailable(false);
             setLoading(false);
             if (requestAuthorityGeneration === authorityGeneration && (!authoritySuspended || forceRefresh)) {
@@ -161,29 +173,38 @@ export function useChatProviderState(
           console.warn("[chat] Canonical Provider catalog unavailable:", error instanceof Error ? error.name : "UnknownError");
           if (!cancelled) setUnavailable(true);
         }
-      } while (!cancelled && pending);
+      } while (!cancelled && pending && isOnline());
       refreshing = false;
       if (!cancelled) setLoading(false);
-    };
+    }
     const onVisibilityChange = () => {
       if (document.visibilityState === "visible") refresh();
+      else clearTimeout(observationTimer);
     };
     const onFocus = () => { void refresh(); };
+    const onOffline = () => { clearTimeout(observationTimer); };
+    const onOnline = () => { if (document.visibilityState === "visible") void refresh(); };
     const onSettingsChange = () => {
+      observationRetries = 0;
       authorityGeneration += 1;
       authoritySuspended = true;
       setHasTrustedCatalog(false);
       void refresh(true);
     };
-    refreshRef.current = () => { void refresh(true); };
+    refreshRef.current = () => { observationRetries = 0; void refresh(true); };
     void refresh();
     window.addEventListener("focus", onFocus);
+    window.addEventListener("offline", onOffline);
+    window.addEventListener("online", onOnline);
     window.addEventListener(PROVIDER_SETTINGS_CHANGED_EVENT, onSettingsChange);
     document.addEventListener("visibilitychange", onVisibilityChange);
     return () => {
       cancelled = true;
+      clearTimeout(observationTimer);
       refreshRef.current = () => undefined;
       window.removeEventListener("focus", onFocus);
+      window.removeEventListener("offline", onOffline);
+      window.removeEventListener("online", onOnline);
       window.removeEventListener(PROVIDER_SETTINGS_CHANGED_EVENT, onSettingsChange);
       document.removeEventListener("visibilitychange", onVisibilityChange);
     };
@@ -205,12 +226,15 @@ export function useChatProviderState(
     .find(instanceId => effectiveSaved.key.startsWith(`${instanceId}:`));
   const personalIntent = personalInstanceId
     ? { instanceId: personalInstanceId, modelId: effectiveSaved.key.slice(personalInstanceId.length + 1) } : null;
+  const checkingInstance = catalog?.instances.find(instance => instance.observationState === "checking" && effectiveSaved.key.startsWith(`${instance.id}:`));
+  const retainedIntent = personalIntent ?? (checkingInstance
+    ? { instanceId: checkingInstance.id, modelId: effectiveSaved.key.slice(checkingInstance.id.length + 1) } : null);
   const rememberedChoice = choices.find(choice => (!boundInstanceId || choice.instanceId === boundInstanceId) && choiceKey(choice) === effectiveSaved.key);
   const chatChoice = choices.find((choice) => (!boundInstanceId || choice.instanceId === boundInstanceId)
     && choiceKey(choice) === effectiveSaved.key)
     ?? choices.find((choice) => choice.instanceId === currentSelection?.instanceId
       && choice.modelId === currentSelection.model);
-  const selectedBase = personalIntent
+  const selectedBase = retainedIntent
     ? rememberedChoice ?? null
     : currentSelection
     ? chatChoice ?? null
@@ -284,7 +308,7 @@ export function useChatProviderState(
   };
 
   const displaySelection = selected ? { instanceId: selected.instanceId, modelId: selected.modelId }
-    : personalIntent ?? (currentSelection ? { instanceId: currentSelection.instanceId, modelId: currentSelection.model } : null);
+    : retainedIntent ?? (currentSelection ? { instanceId: currentSelection.instanceId, modelId: currentSelection.model } : null);
   const activeInstance = catalog?.instances.find((instance) => instance.id === displaySelection?.instanceId) ?? null;
   const displayModelLabel = selected?.modelLabel
     ?? activeInstance?.models.find(model => model.id === displaySelection?.modelId)?.displayName

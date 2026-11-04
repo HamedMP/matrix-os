@@ -70,7 +70,8 @@ export function deriveChatPickerModelRows(
     const personal = isChatgptPlanChatRoute({ instanceId: instance.id, driverKind: instance.driverKind });
     const apiPaid = isMatrixAnthropicChatRoute({ instanceId: instance.id, driverKind: instance.driverKind });
     // Retain prior executable-only discovery for other harnesses.
-    if (!choice && !managed && !apiPaid && instance.id !== MATRIX_PI_CHATGPT_PLAN_INSTANCE_ID) return [];
+    if (!choice && !managed && !apiPaid && instance.id !== MATRIX_PI_CHATGPT_PLAN_INSTANCE_ID
+      && instance.observationState !== "checking") return [];
     return [{
       instanceId: instance.id, modelId: model.id, modelLabel: model.displayName, modelAvailability: model.availability,
       harnessLabel: managed || personal || apiPaid ? "Matrix AI" : choice?.harnessLabel ?? instance.displayName,

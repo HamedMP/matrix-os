@@ -317,7 +317,7 @@ export function fetchChatProviderCatalog(
   let url: string;
   try {
     url = buildGatewayRequestUrl(computerGatewayUrl, "/api/chat-providers", {
-      includeConnectionLabels: "true", includeConnectionState: "true", includeFundingState: "true", includeChatFunding: "true",
+      includeConnectionLabels: "true", includeConnectionState: "true", includeFundingState: "true", includeChatFunding: "true", includeObservationState: "true",
     });
   } catch {
     return Promise.reject(new Error(PROVIDER_CATALOG_ERROR));

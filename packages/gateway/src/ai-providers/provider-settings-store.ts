@@ -1,3 +1,4 @@
+import { markCodexCatalogObservation, observeCodexNativeAccount } from "./codex-native-observation.js";
 import { createCodexNativeConnectionRecovery } from "./codex-native-connection-recovery.js";
 import { readManagedCreditObservation } from "./provider-managed-credit-observation.js";
 import { assertCodexNativeLoginSelection } from "./codex-native-login-completion.js";
@@ -8,7 +9,7 @@ import { readVerifiedClaudeNativeSignedOut, type ClaudeNativeSignedOut } from ".
 import type { ClaudeNativeAccountMetadata, ClaudeNativeAccountMetadataReader } from "./claude-native-account-metadata.js";
 import { renewProviderSettingsNativeObservation } from "./provider-settings-native-renewal.js";
 import { nativeAccountPrincipalFingerprint, verifyNativeAccountMetadata, type NativeAccountCompletionProof } from "./native-account-metadata-binding.js";
-import type { CodexNativeAccountMetadata, CodexNativeAccountMetadataReader } from "./codex-native-account-metadata.js";
+import type { CodexNativeAccountMetadata, CodexNativeAccountMetadataReader, CodexNativeObservationState } from "./codex-native-account-metadata.js";
 import type { ProviderSnapshotReadOptions } from "./snapshot-read-options.js";
 import { createProviderRuntimeRecoveryReader } from "./provider-runtime-recovery-reader.js";
 import { randomUUID } from "node:crypto";
@@ -369,20 +370,23 @@ export class ProviderSettingsStore implements ProviderSettingsStoreWriter {
           && row.nativeAccountGeneration === repairedPrincipal && row.nativeAccountConsentRevision !== undefined);
       let metadata: CodexNativeAccountMetadata | null = canRetainCodex ? await verifyNativeAccountMetadata(retryMetadata) : null;
       let hermesMetadata: CodexNativeAccountMetadata | null = null;
+      let nativeObservationState: CodexNativeObservationState | undefined;
       if (options.includeNativeAccountMetadata && attempt === 0) {
         const installed = (id: string) => captured.canonical.drivers.some(driver => driver.id === id && driver.installState === "installed");
         const [codex, hermes, claude] = await Promise.all([
-          installed("codex") ? this.#nativeAccountMetadata?.() : undefined,
+          installed("codex") ? observeCodexNativeAccount(this.#nativeAccountMetadata, options.includeNativeAccountUsage !== false) : undefined,
           installed("hermes") ? this.#hermesAccountMetadata?.() : undefined,
           installed("claude_code") ? this.#claudeAccountMetadata?.(options.includeNativeAccountUsage !== false) : undefined,
         ]);
+        nativeObservationState = codex?.state;
         // Null/cooldown is already unavailable; do not run another full probe.
-        if (codex || hermes || claude) {
+        if (codex?.metadata || hermes || claude) {
           captured = await read();
           [metadata, hermesMetadata, claudeMetadata] = await Promise.all([
-            verifyNativeAccountMetadata(codex), verifyNativeAccountMetadata(hermes),
+            verifyNativeAccountMetadata(codex?.metadata), verifyNativeAccountMetadata(hermes),
             verifyNativeAccountMetadata(claude) as Promise<ClaudeNativeAccountMetadata | null>,
           ]);
+          if (codex?.metadata && !metadata) nativeObservationState = this.#nativeAccountMetadata?.identityFailureState?.(codex.metadata) ?? "unavailable";
           retryMetadata = metadata;
           config = await this.#serialize(async () => generation === this.#mutationGeneration
             ? this.#configuration(captured.canonical, captured.enrichment) : null);
@@ -445,7 +449,7 @@ export class ProviderSettingsStore implements ProviderSettingsStoreWriter {
             throw error;
           }
         }
-        return snapshot;
+        return markCodexCatalogObservation(snapshot, config, nativeObservationState);
       }
     }
     throw new ProviderSettingsStoreError("projection_unavailable", 503);

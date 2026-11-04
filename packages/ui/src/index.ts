@@ -320,3 +320,5 @@ export { ChatProjectContextPicker, type ChatProjectListStatus, type ChatProjectO
 export { QueuedTurnsPanel, type QueuedTurnAction } from "./chat/composer/QueuedTurnsPanel.js";
 export { ChatSpeechInputButton } from "./speech/ChatSpeechInputButton.js";
 export { ChatNewChatContent, ChatStarterCards, ChatComposerColumn } from "./chat/new-chat/ChatNewChatContent.js";
+
+export { providerCatalogObservationRetryDelay } from "./provider-observation.js";
