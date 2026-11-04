@@ -2,6 +2,7 @@ import { exportOwnerPlatformData } from "../../packages/platform/src/account-del
 import { eraseOwnerPlatformData } from "../../packages/platform/src/account-deletion/cleanup-data.js";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { sql } from "kysely";
+import { assertFundedConservativeFence, migrateFundedConservativeFence } from "../../packages/platform/src/database/funded-conservative-fence.js";
 import { ensureSpeechMonthlyAllowance } from "../../packages/platform/src/speech/allowance.js";
 import { createAiFundedPolicyRepository } from "../../packages/platform/src/ai-funded-policy-repository.js";
 import { createAiFundedSpeechFundingPort } from "../../packages/platform/src/speech/funding.js";
@@ -182,9 +183,17 @@ describe("postpaid speech credit and independent allowance", () => {
     await db.executor.updateTable("ai_funded_runtime_balances").set({ reserved_microusd: 120 }).where("machine_id", "=", identity.machineId).execute();
     await db.transaction(trx => funding.start(trx.executor, auth.reservationId));
     const actual = mode === "exact" ? 40 : 120;
-    await db.transaction(trx => funding.settle(trx.executor, auth.reservationId, { mode: "exact", actualCostMicrousd: actual }));
-    if (mode === "conservative") await db.executor.updateTable("ai_funded_usage_reservations").set({ finalization_mode: "conservative" })
-      .where("reservation_id", "=", auth.reservationId).execute();
+    // Historical conservative receipts predate the fence; seed that old state
+    // explicitly, then restore/verify the real fence before exercising replay.
+    if (mode === "conservative") await sql`DROP TRIGGER ai_funded_conservative_settlement_fence ON ai_funded_usage_reservations`.execute(db.executor);
+    try {
+      await db.transaction(trx => funding.settle(trx.executor, auth.reservationId, { mode: "exact", actualCostMicrousd: actual }));
+      if (mode === "conservative") await db.executor.updateTable("ai_funded_usage_reservations").set({ finalization_mode: "conservative" })
+        .where("reservation_id", "=", auth.reservationId).execute();
+    } finally {
+      if (mode === "conservative") await db.transaction(trx => migrateFundedConservativeFence(trx.executor));
+    }
+    await assertFundedConservativeFence(db.executor);
     const state = async () => ({ row: await row(auth.reservationId), balance: await balance(), quota: await allowance(),
       sources: await db.executor.selectFrom("ai_funded_promotional_grant_balances").selectAll().execute(),
       allocations: await db.executor.selectFrom("ai_funded_reservation_promotional_allocations").selectAll().execute(),

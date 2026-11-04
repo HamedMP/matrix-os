@@ -77,7 +77,8 @@ describe.skipIf(!databaseUrl)("Speech postpaid actual PostgreSQL boundaries", ()
     const action = stage === "start" ? opsB.claimDispatch(identity, key.requestId, legacy)
       : stage === "release" ? opsB.cancel(identity, key.requestId, legacy)
       : opsB.complete(identity, key.requestId, { executionState: "uncertain", outcomeCode: "provider_failure", actualCostMicrousd: null }, legacy);
-    await expect(action).rejects.toThrow(/ai_funded_speech_postpaid_state_check/);
+    await expect(action).rejects.toMatchObject({ code: "23514", constraint: stage === "settle"
+      ? "ai_funded_conservative_settlement_check" : "ai_funded_speech_postpaid_state_check" });
     expect(await snapshot()).toEqual(before);
   });
 
