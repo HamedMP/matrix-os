@@ -125,6 +125,9 @@ jobs:
         if: needs.changes.outputs.should_run == 'true'
         run: |
           set -euo pipefail
+          # The image tar and remote cache are exported; reclaim this job's build cache.
+          docker buildx prune --all --force
+          df -h /tmp
           gzip -1 < /tmp/matrix-os-dev-ci.tar > /tmp/matrix-os-dev-ci.tar.gz
           rm /tmp/matrix-os-dev-ci.tar
           gzip -t /tmp/matrix-os-dev-ci.tar.gz
