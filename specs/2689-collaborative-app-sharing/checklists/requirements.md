@@ -13,7 +13,7 @@
 
 ## Requirement Completeness
 
-- [x] No clarification markers remain; the two open product choices are explicit assumptions
+- [x] No clarification markers remain; the remaining access question is explicit
 - [x] Requirements are testable and unambiguous under those assumptions
 - [x] Success criteria are measurable
 - [x] Success criteria are technology-agnostic
@@ -31,4 +31,4 @@
 
 ## Notes
 
-Direct app sharing without a project is confirmed. Initial data and long-term ownership remain open for requester review. This is a draft specification, not implementation approval. The readiness companion contains technical gates, known runtime gaps, and an operation-level authorization matrix.
+Direct app sharing without a project, use of the creator's existing app data, and creator hosting are confirmed. The precise access boundary for opening the app remains open. This is a draft specification, not implementation approval. The readiness companion contains technical gates, known runtime gaps, and an operation-level authorization matrix.
