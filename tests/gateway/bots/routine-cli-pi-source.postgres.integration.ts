@@ -5,7 +5,7 @@ let f: Awaited<ReturnType<typeof piFixture>> | undefined;
 afterEach(async () => { await f?.close(); f = undefined; vi.unstubAllGlobals(); });
 it.each(["event-first", "fd-first"] as const)("%s actual Pi source/owned extension invokes published CLI and canonical target after exact owner decision", async order => {
   const requestId = "de000000-0000-4000-8000-000000000901", chatId = "chat_pi_actual_" + order;
-  f = await piFixture({ operation: { operation: "propose", requestId, proposal }, order });
+  f = await piFixture({ operation: { operation: "propose", requestId, proposal }, order, ackBeforeObservationWait: order === "fd-first" });
   const admitted = await f.start(chatId);
   await expect.poll(() => f!.sourceEvents.find(event => event.type === "approval.requested"), { timeout: 5000 }).toMatchObject({ type: "approval.requested" });
   const decision = f.sourceEvents.find(event => event.type === "approval.requested")!;
@@ -20,6 +20,7 @@ it.each(["event-first", "fd-first"] as const)("%s actual Pi source/owned extensi
   expect(source.source_context).toMatchObject({ harness: "pi", identity: { kind: "chat_run", chatId, runId: admitted.run.id, route: "native" } });
   expect(source.revoked_at).not.toBeNull();
   const frames = await f.frames(); expect(frames.filter(frame => frame.prompt)).toHaveLength(1);
+  if (order === "fd-first") expect(frames.find(frame => frame.fdStarted)).toMatchObject({ observationAcknowledged: true });
   expect(frames.find(frame => frame.prompt).tools).toBe("read,ask_user,matrix_routines");
   expect(JSON.stringify(frames)).not.toMatch(/rcli_|fixture-owner-credential|native_[a-f0-9]{48}/);
 }, 15000);
