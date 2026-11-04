@@ -22,6 +22,18 @@ it.each(["claude", "codex", "hermes", "opencode", "pi"] as const)("canonical %s 
 
 it.each(["pending", "issued"])("Terminal caller cancellation at %s keeps root I/O alive and tombstones any unused capability", async phase => {
   f = await terminalFixture(); const tab = await f.launch(), requestId = crypto.randomUUID(), caller = new AbortController();
+  let preflightEntered!: () => void, releasePreflight!: () => void;
+  const enteringPreflight = new Promise<void>(done => { preflightEntered = done; });
+  const preflightGate = new Promise<void>(done => { releasePreflight = done; });
+  const verifyCurrent = f.startup.verifyCurrent;
+  f.startup.verifyCurrent = async () => { preflightEntered(); await preflightGate; return verifyCurrent(); };
+  let authorizeEntered!: () => void;
+  const enteringAuthorization = new Promise<void>(done => { authorizeEntered = done; });
+  const register = f.routines.register;
+  f.routines.register = async producer => {
+    const port = await register(producer);
+    return { ...port, authorize: input => { const waiting = port.authorize(input); authorizeEntered(); return waiting; } };
+  };
   let continueConsume!: () => void;
   const consumeGate = new Promise<void>(done => { continueConsume = done; });
   if (phase === "issued") {
@@ -29,17 +41,23 @@ it.each(["pending", "issued"])("Terminal caller cancellation at %s keeps root I/
     f.routines.execute = async input => { await consumeGate; return execute(input); };
   }
   const pending = f.port().invoke({ operation: "propose", requestId, proposal }, f.writer, caller.signal);
-  await expect.poll(() => f!.routines.list(f!.f.principal).length).toBe(1);
-  if (phase === "issued") { await f.approve(); await expect.poll(() => f!.httpCalls(), { timeout: 5000 }).toBe(1); }
-  caller.abort();
   try {
+    // Source verification and the real published CLI must reach authorization
+    // before the owner challenge has any reason to exist.
+    await enteringPreflight;
+    expect(f.routines.list(f.f.principal)).toEqual([]);
+    releasePreflight();
+    await Promise.race([enteringAuthorization, pending.then(() => { throw new Error("Terminal invocation ended before authorization"); })]);
+    await expect.poll(() => f!.routines.list(f!.f.principal).length).toBe(1);
+    if (phase === "issued") { await f.approve(); await expect.poll(() => f!.httpCalls(), { timeout: 5000 }).toBe(1); }
+    caller.abort();
     expect(await pending).toMatchObject({ ok: true, data: { kind: "unknown", requestId, reconcile: true } });
     if (phase === "issued") await expect.poll(async () => (await f!.data.db.selectFrom("routine_cli_capabilities").select("token_hash").execute())[0]?.token_hash).toBeNull();
     expect(await f.coordinator.available({ workspaceId: tab.workspaceId, tabId: tab.id })).toBe(true);
     expect(await f.data.db.selectFrom("routine_cli_requests").selectAll().execute()).toEqual([]);
     expect(await f.data.db.selectFrom("bot_approvals").selectAll().execute()).toEqual([]);
     expect((await f.data.db.selectFrom("routine_cli_sources").select("revoked_at").execute())[0]!.revoked_at).toBeNull();
-  } finally { continueConsume(); }
+  } finally { caller.abort(); releasePreflight(); continueConsume(); }
 }, 20_000);
 
 it.each(["root end", "held proof loss", "canonical stop fence", "target collaboration", "target owner"])("current %s after exact owner wait denies actual consume", async reason => {
