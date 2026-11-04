@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useFocusEffect, useRouter } from "expo-router";
+import { useFocusEffect, useLocalSearchParams, useRouter } from "expo-router";
 
+import { isSchedulingBot } from "@matrix-os/ui/bot-routine-presentation";
 import { AgentsListScreen } from "@/components/agents/AgentsListScreen";
 import { confirmArchiveAgent, reportArchiveAgentFailure } from "@/components/agents/agent-archive";
 import { agentListRows } from "@/components/agents/agent-rows";
@@ -13,16 +14,18 @@ import { showToast } from "@/lib/toast";
 export default function AgentsScreen() {
   const router = useRouter();
   const library = useAgents();
+  const scheduleMode = useLocalSearchParams<{schedule?: string}>().schedule === "1";
+  const visibleAgents = useMemo(() => scheduleMode ? library.agents.filter(isSchedulingBot) : library.agents, [library.agents, scheduleMode]);
   const archive = useArchiveAgent();
-  const { statuses, refetch: refetchStatuses } = useAgentStatuses(library.agents);
+  const { statuses, refetch: refetchStatuses } = useAgentStatuses(visibleAgents);
   const { chats } = useCanonicalChats();
   const [refreshing, setRefreshing] = useState(false);
   const opening = useRef(false);
   const shownBefore = useRef(false);
 
   const rows = useMemo(
-    () => agentListRows(library.agents, statuses, chats),
-    [library.agents, statuses, chats],
+    () => agentListRows(visibleAgents, statuses, chats),
+    [visibleAgents, statuses, chats],
   );
 
   const reload = async () => {
@@ -85,12 +88,15 @@ export default function AgentsScreen() {
 
   return (
     <AgentsListScreen
+      title={scheduleMode ? "New schedule" : "Agents"}
+      notice={scheduleMode ? "Choose a Bot that supports schedules, then describe the task and timing in its Chat and review the proposal." : undefined}
       state={library.isPending ? "loading" : unavailable ? "unavailable" : "ready"}
       rows={rows}
       refreshing={refreshing}
       onRefresh={() => void refresh()}
       onRetry={() => void reload()}
       onNewAgent={() => router.push("/agents/new" as never)}
+      onOpenSchedules={() => router.push("/agents/schedules" as never)}
       onOpenAgent={openAgent}
       onArchiveAgent={archiveAgent}
     />

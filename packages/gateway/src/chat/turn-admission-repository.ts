@@ -1,3 +1,4 @@
+import { assertPrivateRoutineRequest } from "./private-routine-authority.js";
 import { associateAdmittedDriveChat } from "./drive-project-database.js";
 import { chatContextRequestHash } from "./agent-context.js";
 import {
@@ -67,6 +68,7 @@ export async function admitChatTurn(deps: TurnAdmissionDependencies, ownerInput:
       if (current.lifecycle !== "active") {
         throw new ChatConflictError(input.chatId, Number(current.revision));
       }
+      await assertPrivateRoutineRequest(trx, owner, input.chatId, turn.clientRequestId);
       if (current.collaboration !== null) {
         throw new ChatConflictError(input.chatId, Number(current.revision));
       }
