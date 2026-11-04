@@ -96,6 +96,14 @@ jobs:
       - uses: actions/checkout@v6
         if: needs.changes.outputs.should_run == 'true'
 
+      - name: Free runner disk before Docker build
+        if: needs.changes.outputs.should_run == 'true'
+        run: |
+          set -euo pipefail
+          df -h
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
+          df -h
+
       - name: Set up Docker Buildx
         if: needs.changes.outputs.should_run == 'true'
         uses: docker/setup-buildx-action@v4

@@ -12,6 +12,8 @@ export function projectCanonicalTranscript(detail: CanonicalChatDetailResponse):
     const source = sourceById[message.id];
     const context = source?.turnId ? contextsByTurn[source.turnId] : undefined;
     if (source?.role === "user" && context) message.metadata = { ...message.metadata, chatRunContext: context };
+    const turn=detail.turns.find(turn=>turn.inputMessageId===source?.id&&turn.chatId===source.chatId);
+    if(source?.role==="user"&&turn)message.metadata={...message.metadata,routineRequestId:turn.clientRequestId};
   }
   for (const run of detail.runs) {
     const anchors = runActivityAnchors(run.id, detail.activities);

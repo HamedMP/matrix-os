@@ -140,6 +140,7 @@ export function canonicalChatPresentation(input: {
     const endedAt = Date.parse(run?.completedAt ?? run?.updatedAt ?? turn.updatedAt);
     return {
       id: turn.id,
+      routineRequestId: turn.clientRequestId,
       runIds: runs.map(run => run.id),
       ...(run?.context ? { runContext: run.context } : {}),
       ...(run?.executionRoot ? { executionRoot: run.executionRoot } : {}),
