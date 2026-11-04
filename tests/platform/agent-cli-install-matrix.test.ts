@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { AGENT_INSTALLS, PACKAGE_MANAGER_INSTALLS, terminalNpmInstallCommand } from "./agent-install-matrix";
 import { CODEX_VERIFIED_NPM_PACKAGE } from "../../packages/contracts/src/index.js";
+import { TERMINAL_AGENT_OPTIONS, terminalAgentCreateOptions, terminalTabLaunchFields } from "../../shell/src/components/terminal/terminal-agent-options.js";
 
 const root = process.cwd();
 
@@ -17,16 +18,22 @@ describe("agent CLI install matrix", () => {
     const mobileTerminalControls = readFileSync(join(root, "shell/src/components/terminal/MobileTerminalControls.tsx"), "utf8");
     const terminalAgentOptions = readFileSync(join(root, "shell/src/components/terminal/terminal-agent-options.ts"), "utf8");
 
-    expect(terminalSidebar).toContain("terminalAgentVisibleInstallCommand");
-    expect(mobileTerminalControls).toContain("terminalAgentVisibleInstallCommand");
-    expect(terminalAgentOptions).toContain('export MATRIX_NODE_PREFIX="${MATRIX_NODE_PREFIX:-/opt/matrix/runtime/node}"');
+    expect(terminalSidebar).toContain("terminalAgentCreateOptions(option, action)");
+    expect(mobileTerminalControls).toContain("terminalAgentCreateOptions(option, action)");
+    expect(terminalAgentOptions).toContain('export * from "@matrix-os/ui/terminal-launch"');
 
     for (const agent of AGENT_INSTALLS) {
-      if (agent.id === "codex") {
-        expect(terminalAgentOptions).toContain("installPackage: CODEX_VERIFIED_NPM_PACKAGE");
-      } else {
-        expect(terminalAgentOptions).toContain(`installPackage: "${agent.npmPackage}"`);
-      }
+      const option = TERMINAL_AGENT_OPTIONS.find((candidate) => candidate.id === agent.id)!;
+      expect(option.installPackage).toBe(agent.npmPackage);
+      const install = terminalAgentCreateOptions(option, "install");
+      expect(install).toEqual({ cmd: expect.any(String) });
+      if (!("cmd" in install)) throw new Error("Install must create a visible command");
+      expect(install.cmd).toContain('export MATRIX_NODE_PREFIX="${MATRIX_NODE_PREFIX:-/opt/matrix/runtime/node}"');
+      expect(install.cmd).toContain('export PATH="$MATRIX_NODE_PREFIX/bin:$PATH"');
+      expect(install.cmd).toMatch(/^sh -lc .*printf /);
+      expect(install.cmd).toContain(PACKAGE_MANAGER_INSTALLS[0].commandFor(agent));
+      expect(install.cmd).not.toContain("matrix-install-tool-pack");
+      expect(terminalTabLaunchFields(install)).toEqual({ command: ["sh", "-lc", install.cmd] });
       expect(terminalNpmInstallCommand(agent)).toContain(`--prefix "$MATRIX_NODE_PREFIX" ${agent.npmPackage}`);
       if (agent.ignoreScripts) {
         expect(terminalNpmInstallCommand(agent)).toContain("npm install -g --ignore-scripts --prefix");
