@@ -93,3 +93,28 @@ export async function migratePreviewPairCloudIntents(db: PlatformMigrationExecut
   await sql`CREATE INDEX IF NOT EXISTS preview_pair_cloud_intents_reconcile
     ON preview_pair_cloud_intents(state, expires_at)`.execute(db);
 }
+
+export async function migratePreviewPairPublication(db: PlatformMigrationExecutor): Promise<void> {
+  await migratePreviewPairCloudIntents(db);
+  await sql`ALTER TABLE preview_pair_cloud_intents
+    ADD COLUMN IF NOT EXISTS claim_id TEXT,
+    ADD COLUMN IF NOT EXISTS claim_expires_at TEXT,
+    ADD COLUMN IF NOT EXISTS next_attempt_at TEXT,
+    ADD COLUMN IF NOT EXISTS attempt INTEGER NOT NULL DEFAULT 0 CHECK (attempt >= 0),
+    ADD COLUMN IF NOT EXISTS failure_code TEXT,
+    ADD COLUMN IF NOT EXISTS publication_id TEXT,
+    ADD COLUMN IF NOT EXISTS publication_state TEXT NOT NULL DEFAULT 'unissued'
+      CHECK (publication_state IN ('unissued','issuing','accepted','rejected')),
+    ADD COLUMN IF NOT EXISTS operation_name TEXT CHECK (char_length(operation_name) <= 256)`.execute(db);
+  await sql`DO $$ BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'preview_pair_intent_claim_pair'
+      AND conrelid = 'preview_pair_cloud_intents'::regclass) THEN
+      ALTER TABLE preview_pair_cloud_intents ADD CONSTRAINT preview_pair_intent_claim_pair
+        CHECK ((claim_id IS NULL) = (claim_expires_at IS NULL));
+      ALTER TABLE preview_pair_cloud_intents ADD CONSTRAINT preview_pair_intent_publication_shape CHECK (
+        (publication_state = 'unissued' AND publication_id IS NULL AND operation_name IS NULL) OR
+        (publication_state IN ('issuing','rejected') AND publication_id IS NOT NULL AND operation_name IS NULL) OR
+        (publication_state = 'accepted' AND publication_id IS NOT NULL AND operation_name IS NOT NULL));
+    END IF;
+  END $$`.execute(db);
+}

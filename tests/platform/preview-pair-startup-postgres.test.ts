@@ -11,6 +11,9 @@ import { createCustomerVpsContext } from "../../packages/platform/src/customer-v
 import * as targetDatabase from "../../packages/platform/src/preview-pair/target-database.js";
 import { createClerkAuth } from "../../packages/platform/src/clerk-auth.js";
 import { createConfiguredPreviewPairRuntime, type ConfiguredPreviewPairRuntime } from "../../packages/platform/src/preview-pair/startup.js";
+import { loadPreviewPairConfig } from "../../packages/platform/src/preview-pair/config.js";
+import { loadPreviewPairSourceProfile, previewPairSourceFingerprint } from "../../packages/platform/src/preview-pair/source-profile.js";
+import { preparePreviewPairCloudIntent, stopPreviewPairCloudIntent } from "../../packages/platform/src/preview-pair/cloud-intents.js";
 
 describe.skipIf(!process.env.MATRIX_TEST_POSTGRES_URL)("configured source runtime lifetime", () => {
   let f: Awaited<ReturnType<typeof createSeededPreviewPair>>;
@@ -95,6 +98,38 @@ describe.skipIf(!process.env.MATRIX_TEST_POSTGRES_URL)("configured source runtim
     expect(provider.deleteServer).toHaveBeenCalledExactlyOnceWith(801);
     const retained = await f.db.executor.selectFrom("preview_pair_fixtures").select("active_pair_id").executeTakeFirstOrThrow();
     expect(retained.active_pair_id).toBe(f.pair.pair_id);
+    expect(f.hetzner.createServer).not.toHaveBeenCalled();
+  });
+  it("retires a cancelled published request with the test bank disabled and target offline", async () => {
+    const url = new URL(target.databaseUrl); url.port = "1";
+    const s = options(url.toString()), loaded = loadPreviewPairConfig(s.env);
+    if (!loaded.enabled) throw new Error("Enabled fixture required");
+    const profile = loadPreviewPairSourceProfile(s.env, loaded)!;
+    const config = { ...loaded, sourceProfileFingerprint: previewPairSourceFingerprint(profile, loaded) };
+    const pairId = "44444444-4444-4444-8444-444444444444", now = Date.now();
+    await preparePreviewPairCloudIntent(f.db, config, { pairId, generation: 1, pr: 3023,
+      requesterId: "user_requester", sourceSha: f.pair.source_sha, controllerRunId: 42,
+      profileFingerprint: config.sourceProfileFingerprint }, now);
+    const operation = `projects/${profile.project}/locations/${profile.region}/operations/pair-publication`;
+    await f.db.executor.updateTable("preview_pair_cloud_intents").set({ publication_id: "55555555-5555-4555-8555-555555555555",
+      publication_state: "accepted", operation_name: operation }).where("pair_id", "=", pairId).execute();
+    await stopPreviewPairCloudIntent(f.db, pairId, 1, 42, now);
+    const fetched: string[] = [];
+    s.options.fetchImpl.mockImplementation(async (input, init) => {
+      const url = new URL(String(input)); fetched.push(url.pathname);
+      expect(url.origin).toBe("https://run.googleapis.com");
+      expect(new Headers(init?.headers).get("authorization")).toBe("Bearer fixture-google-token");
+      expect(init?.redirect).toBe("error"); expect(init?.signal).toBeInstanceOf(AbortSignal);
+      if (url.pathname === `/v2/${operation}`) return Response.json({ name: operation, done: true });
+      expect(url.pathname).toBe(`/v2/projects/${profile.project}/locations/${profile.region}/services/${profile.service}`);
+      return new Response(null, { status: 404 });
+    });
+    runtime = await createConfiguredPreviewPairRuntime(s.options);
+    await runtime!.routes.service!.reconcile({ limit: 1 });
+    const saved = await f.db.executor.selectFrom("preview_pair_cloud_intents").selectAll().where("pair_id", "=", pairId).executeTakeFirstOrThrow();
+    expect(saved.state).toBe("stopped");
+    expect(fetched).toHaveLength(2);
+    expect(await f.db.executor.selectFrom("user_machines").selectAll().execute()).toHaveLength(2);
     expect(f.hetzner.createServer).not.toHaveBeenCalled();
   });
 });

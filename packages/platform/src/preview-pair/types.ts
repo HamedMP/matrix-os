@@ -74,4 +74,12 @@ export interface PreviewPairCloudIntentsTable {
   created_at: string;
   expires_at: string;
   stopped_at: Generated<string | null>;
+  claim_id: Generated<string | null>;
+  claim_expires_at: Generated<string | null>;
+  next_attempt_at: Generated<string | null>;
+  attempt: Generated<number>;
+  failure_code: Generated<string | null>;
+  publication_id: Generated<string | null>;
+  publication_state: Generated<"unissued" | "issuing" | "accepted" | "rejected">;
+  operation_name: Generated<string | null>;
 }
