@@ -16,7 +16,7 @@ import type { Agent } from 'undici';
 import { shouldEnablePlatformBackgroundWorkers } from './platform-worker-mode.js';
 import { resolvePlatformObjectStorage } from './object-storage-config.js';
 import { resolveSitesObjectStorage } from './sites/storage-config.js';
-import { runPlatformStartupWithCleanup } from './platform-startup-cleanup.js';
+import { createPlatformStartupWorkerCleanup, runPlatformStartupWithCleanup } from './platform-startup-cleanup.js';
 import { randomBytes } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import {
@@ -828,6 +828,15 @@ async function startPlatformServerWithCleanup(
   let managedFeatureReconciliationWorker: CustomerVpsReconciliationWorker | undefined;
   let goldenSnapshotInterval: ReturnType<typeof setInterval> | undefined;
   let goldenSnapshotPromise: Promise<void> | undefined;
+  let goldenSnapshotStopped = false;
+  registerCustomMcpStartupCleanup(createPlatformStartupWorkerCleanup(() => [
+    customerVpsReconciliationWorker,
+    managedFeatureReconciliationWorker,
+    {
+      stop() { goldenSnapshotStopped = true; if (goldenSnapshotInterval) clearInterval(goldenSnapshotInterval); },
+      drain: () => goldenSnapshotPromise ?? Promise.resolve(),
+    },
+  ]));
   let billingRuntimeCaptureEvent: ((
     event: 'matrix_vps_suspended' | 'matrix_vps_resumed',
     options: { properties: Record<string, string | number | boolean | undefined> },
@@ -893,10 +902,6 @@ async function startPlatformServerWithCleanup(
     const reconcileManagedFeatures = createManagedFeatureReconciliationPass(activateManagedFeatures);
     if (backgroundWorkersEnabled) {
       managedFeatureReconciliationWorker = startCustomerVpsReconciliationWorker({ intervalMs: 60_000, runPass: reconcileManagedFeatures });
-      registerCustomMcpStartupCleanup(async () => {
-        managedFeatureReconciliationWorker?.stop();
-        await managedFeatureReconciliationWorker?.drain();
-      });
     }
     goldenSnapshotConfig = customerVpsConfig.goldenSnapshots;
     {
@@ -931,7 +936,7 @@ async function startPlatformServerWithCleanup(
         tokenFactory: () => randomBytes(32).toString('base64url'),
       });
       const runGoldenSnapshotWorker = async () => {
-        if (goldenSnapshotPromise || !goldenSnapshotService || !goldenSnapshotConfig) return;
+        if (goldenSnapshotStopped || goldenSnapshotPromise || !goldenSnapshotService || !goldenSnapshotConfig) return;
         goldenSnapshotPromise = (async () => {
           try {
             const workerNow = new Date().toISOString();
