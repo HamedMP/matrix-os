@@ -27,6 +27,7 @@ export function hydrateMessages(messages: PersistedMessage[]): ChatMessage[] {
 }
 
 export interface ChatMessage {
+  scheduledMessage?: import("@matrix-os/ui/chat-scheduled-message").ScheduledMessagePresentation;
   id: string;
   role: "user" | "assistant" | "system";
   content: string;

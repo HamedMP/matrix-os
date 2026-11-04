@@ -9,7 +9,8 @@ import type { TranscriptAttachment } from "@/lib/chat-attachments";
 
 import { MessageAttachments, type MessageAttachmentsProps } from "./MessageAttachments";
 import { Spinner } from "./Spinner";
-import {NativeRoutineMessageMeta} from "@/components/agents/schedules/RoutineMessage";
+import {NativeRoutineMessageMeta,NativeScheduledMessageMeta} from "@/components/agents/schedules/RoutineMessage";
+import type {ScheduledMessagePresentation} from "@matrix-os/ui/chat-scheduled-message";
 import {routineOccurrenceOutcome,type RoutineOccurrence} from "@matrix-os/ui/bot-routine-transcript";
 
 // A send that is in by then says nothing, so a quick one never flickers a note.
@@ -20,6 +21,7 @@ const SENDING_SPINNER_SIZE = 12;
 const ACTION_HIT_SLOP = { top: 12, bottom: 12, left: 8, right: 8 } as const;
 
 export interface UserMessageProps extends Pick<MessageAttachmentsProps, "renderComputerPhoto"> {
+  scheduledMessage?: ScheduledMessagePresentation;
   scheduled?:RoutineOccurrence;
   scheduleEvent?:boolean;
   text: string;
@@ -53,18 +55,19 @@ export function UserMessage({
   retryDisabled = false,
   scheduled,
   scheduleEvent,
+  scheduledMessage,
 }: UserMessageProps) {
   const displayText=scheduled&&scheduleEvent?routineOccurrenceOutcome(scheduled):text;
-  const content = !attachments || attachments.length === 0 ? <Bubble text={displayText} chatId={chatId} collapsible={Boolean(scheduled)}/> : (
+  const content = !attachments || attachments.length === 0 ? <Bubble text={displayText} chatId={chatId} collapsible={Boolean(scheduled || scheduledMessage)}/> : (
     <View testID="user-message-with-attachments" style={styles.group}>
       <MessageAttachments attachments={attachments} renderComputerPhoto={renderComputerPhoto} />
       {text ? <Bubble text={text} chatId={chatId} /> : null}
     </View>
   );
-  if (!delivery&&!scheduled) return content;
+  if (!delivery&&!scheduled&&!scheduledMessage) return content;
   return (
     <View style={styles.group}>
-      {scheduled?<NativeRoutineMessageMeta occurrence={scheduled} sent={!scheduleEvent}/>:null}
+      {scheduled?<NativeRoutineMessageMeta occurrence={scheduled} sent={!scheduleEvent}/>:scheduledMessage?<NativeScheduledMessageMeta {...scheduledMessage}/>:null}
       {content}
       {delivery === "failed"
         ? <UnsentStatus onRetry={onRetry} onEdit={onEdit} retryDisabled={retryDisabled} />

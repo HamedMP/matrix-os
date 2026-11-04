@@ -17,6 +17,7 @@ export type ConversationMessageContentPresentation =
   | { kind: "image"; id: string; label: string; src: string; path?: string; importAsset?: ImportedChatAssetRef };
 
 export interface ConversationMessagePresentation {
+  scheduledMessage?: import("@matrix-os/ui/chat-scheduled-message").ScheduledMessagePresentation;
   kind: "message";
   id: string;
   role: ConversationMessageRole;
