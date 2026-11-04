@@ -48,6 +48,8 @@ import { BotRouteError, type ResolvedBotRoute } from "./route-resolver.js";
 import { requireGroupBotAuthority, type GroupBotAuthorizer, BOT_RUNTIME_REGISTRY_CAPACITY, isManagedPiBinding, type BotRuntimeRegistry } from "./runtime-registry.js";
 import { readOwnerSoul, OwnerPersonalityError, type OwnerPersonalityConfig } from "./owner-personality.js";
 import { buildBotSystemPrompt, BotSystemPromptError } from "./system-prompt.js";
+import { ROUTINE_OCCURRENCE_CONTEXT_SUFFIX, withApprovedRoutineOccurrence } from "./routine-prompt-context.js";
+import { ROUTINE_CHAT_CONTEXT_RESERVATION } from "./routine-chat-context.js";
 import { BotSetupStepError, runBotSetupStep } from "./setup-step.js";
 
 /** How long a worker that took the cancel has to end its run before its runtime is stopped. */
@@ -73,6 +75,8 @@ export interface BotTurnResult {
   status: BotRunStatus;
   blockedReason?: BotBlockedReason;
   inputUnavailable?: boolean;
+  /** Server proof: admission refused capacity before a worker was started. */
+  retryableBeforeDispatch?: true;
 }
 
 export interface BotTurnHandle {
@@ -111,11 +115,14 @@ export function createBotTaskOrchestrator(deps: {
   /** Task writes and their `bot.task.updated` events commit together. */
   transact: BotStateTransactions;
   interactions?: Pick<BotInteractionService, "answerWithMessage">;
+  routineTools?: boolean;
+  /** Server-owned durable checker; no request or model field can provide phase authority. */
+  routineExecution?: Pick<import("./routine-execution.js").BotRoutineExecution, "assertOccurrencePhase"> & Partial<Pick<import("./routine-execution.js").BotRoutineExecution, "describeChatPhase" | "approvalReply">>;
   memory?: Pick<BotMemoryService, "admitted">;
   agents: Pick<ChatAgentStore, "get">;
   recipes: BotRecipeCatalog;
   resolveProcedure?(ownerId: string, agent: ChatAgent): Promise<import("./recipe-catalog.js").BotRecipe>;
-  resolveRoute(selection?: import("@matrix-os/contracts").CanonicalChatModelSelection): Promise<ResolvedBotRoute>;
+  resolveRoute(selection?: import("@matrix-os/contracts").CanonicalChatModelSelection, requestClass?: "interactive" | "background" | "routine"): Promise<ResolvedBotRoute>;
   executorReady?(ownerId: string, botId: string): Promise<boolean>;
   /** Exact run-bound owner policy route; groups never consult the personal default resolver. */
   resolveGroupRoute?(input: { ownerId: string; chatId: string; runId: string; group: GroupBotRunRequest }): Promise<ResolvedBotRoute>;
@@ -154,7 +161,7 @@ export function createBotTaskOrchestrator(deps: {
    * Starts the run's task: the bot's task waiting for the owner continues
    * with this message; otherwise a new task begins.
    */
-  async function begin(input: { ownerId: string; botId: string; chatId: string; runId: string; text: string }): Promise<{ task: BotTask; continued: boolean }> {
+  async function begin(input: { ownerId: string; botId: string; chatId: string; runId: string; text: string; backgroundTaskId?: string }): Promise<{ task: BotTask; continued: boolean }> {
     return deps.transact(input.ownerId, tx => beginBotTask(tx, { ...input, now: now() }));
   }
 
@@ -261,7 +268,7 @@ export function createBotTaskOrchestrator(deps: {
     return { status: "failed" };
   }
 
-  async function execute(input: { ownerId: string; chatId: string; runId: string; text: string; parts?: readonly import("@matrix-os/contracts").CanonicalChatMessagePart[]; selection?: import("@matrix-os/contracts").CanonicalChatModelSelection; signal: AbortSignal }, run: ActiveRun): Promise<BotTurnResult> {
+  async function execute(input: { ownerId: string; chatId: string; runId: string; text: string; parts?: readonly import("@matrix-os/contracts").CanonicalChatMessagePart[]; selection?: import("@matrix-os/contracts").CanonicalChatModelSelection; signal: AbortSignal; backgroundTaskId?: string }, run: ActiveRun): Promise<BotTurnResult> {
     const owner = { type: "personal" as const, ownerId: input.ownerId };
     const setup = <T>(operation: () => Promise<T>, onLateSuccess?: (value: T) => void | Promise<void>) =>
       runBotSetupStep(operation, run.setupAbort.signal, onLateSuccess);
@@ -280,6 +287,8 @@ export function createBotTaskOrchestrator(deps: {
     // Ambiguous direct/group bindings never get an authority fallback.
     if (bindings.length !== 1) return { status: "failed" };
     const chatBinding = bindings[0]!;
+    // Personal routines cannot borrow shared authority or mutate a group task.
+    if (input.backgroundTaskId && chatBinding.kind !== "direct") return { status: "failed" };
     let group: GroupBotRunRequest | undefined;
     if (chatBinding.kind === "group") {
       if (run.signal.aborted) return { status: "cancelled" };
@@ -333,7 +342,7 @@ export function createBotTaskOrchestrator(deps: {
     let continued: boolean;
     try {
       ({ task, continued } = await setup(
-        () => begin({ ownerId: input.ownerId, botId, chatId: input.chatId, runId: input.runId, text: input.text }),
+        () => begin({ ownerId: input.ownerId, botId, chatId: input.chatId, runId: input.runId, text: input.text, ...(input.backgroundTaskId ? {backgroundTaskId:input.backgroundTaskId}: {}) }),
         ({ task: lateTask }) => settle(lateTask, interruptedStatus()).then(() => undefined),
       ));
     } catch (error: unknown) {
@@ -351,13 +360,31 @@ export function createBotTaskOrchestrator(deps: {
     }
     if (input.signal.aborted) return settle(task, "cancelled");
 
+    // A persisted schedule decision is a receipt, not another inference task.
+    if (continued && !group && !isolatedModel && !input.backgroundTaskId && deps.routineExecution?.approvalReply) {
+      try {
+        const reply = await setup(() => deps.routineExecution!.approvalReply!({ ownerId: input.ownerId, botId,
+          chatId: input.chatId, taskId: task.taskId, runId: input.runId }));
+        if (reply) {
+          run.queue.push({ kind: "event", event: { type: "assistant_delta", text: reply } });
+          return settle(task, "completed");
+        }
+      } catch (error: unknown) {
+        if (!interrupted(error)) console.warn("[bots] schedule approval receipt unavailable:", error instanceof Error ? error.name : "UnknownError");
+        return settle(task, interrupted(error) ? interruptedStatus() : "failed");
+      }
+    }
+
     let resolved: ResolvedBotRoute;
     try {
       if (group) {
         if (!deps.resolveGroupRoute) throw new BotRouteError("model_unavailable");
         resolved = await groupWait(run, () => deps.resolveGroupRoute!({ ownerId: input.ownerId, chatId: input.chatId, runId: input.runId, group: group! }));
       } else {
-        resolved = await setup(() => deps.resolveRoute(isolatedModel ? selection : recipeCoordinatorSelection(input.selection, agent.selection)));
+        const requested = isolatedModel ? selection : recipeCoordinatorSelection(input.selection, agent.selection);
+        if (input.backgroundTaskId && (isolatedModel || requested?.instanceId !== "matrix_chatgpt_plan")) throw new BotRouteError("model_unavailable");
+        resolved = await setup(() => input.backgroundTaskId ? deps.resolveRoute(requested, "routine") : deps.resolveRoute(requested));
+        if (input.backgroundTaskId && (resolved.accessSourceId !== "matrix_chatgpt_plan" || !resolved.subscription)) throw new BotRouteError("model_unavailable");
         if (isolatedModel) {
           if (resolved.accessSourceId !== "matrix_included" || resolved.subscription || resolved.anthropicApi
             || !isolatedChatModelMatches(isolatedModel, resolved.route.modelId)) throw new BotRouteError("model_unavailable");
@@ -386,8 +413,9 @@ export function createBotTaskOrchestrator(deps: {
     }
     const capabilities = isolatedModel ? [] : recipe.capabilities.filter((capability) => SERVED_CAPABILITIES.includes(capability)
       && (!group || ["integration.inventory", "integration.call"].includes(capability)));
+    if (!isolatedModel && !group && !input.backgroundTaskId && deps.routineTools) capabilities.push("routine.propose", "routine.control");
     if (run.inputs.fileAliases.length && !capabilities.includes("artifact.read")) return settle(task, "blocked", "policy_denied");
-    try { if (!isolatedModel && !group && await setup(async () => await deps.executorReady?.(input.ownerId, botId))) capabilities.push('agent.task'); }
+    try { if (!isolatedModel && !group && !input.backgroundTaskId && await setup(async () => await deps.executorReady?.(input.ownerId, botId))) capabilities.push('agent.task'); }
     catch (error) { console.warn('[bots] Saved task executor unavailable:', error instanceof Error ? error.name : 'UnknownError'); return interrupted(error) ? settle(task, interruptedStatus()) : settle(task, 'blocked', 'policy_denied'); }
     let memory: string[];
     try {
@@ -406,7 +434,7 @@ export function createBotTaskOrchestrator(deps: {
       }
       run.spec = BotRunSpecSchema.parse({
         route: resolved.route,
-        systemPrompt: buildBotSystemPrompt({ botName: agent.name, instructions: isManagedCustomBot(agent) ? recipe.instructions : agent.instructions, recipe, memory, ownerSoul, audience: group ? "group" : "personal", now: new Date(now()) }),
+        systemPrompt: buildBotSystemPrompt({ botName: agent.name, instructions: isManagedCustomBot(agent) ? recipe.instructions : agent.instructions, recipe, memory, ownerSoul, reservedSuffix: !group && deps.routineExecution ? input.backgroundTaskId ? ROUTINE_OCCURRENCE_CONTEXT_SUFFIX : deps.routineExecution.describeChatPhase ? ROUTINE_CHAT_CONTEXT_RESERVATION : undefined : undefined, audience: group ? "group" : "personal", now: new Date(now()) }),
         capabilities,
         limits: isolatedModel ? { maxToolActions: 1, maxInferenceCalls: 1 } : limits,
         turn: { kind: "prompt", text: run.inputs.prompt(input.text), ...(run.inputs.imageCount ? { imageCount: run.inputs.imageCount } : {}) },
@@ -425,14 +453,15 @@ export function createBotTaskOrchestrator(deps: {
         ownerId: input.ownerId, botId, chatId: input.chatId, taskId: task.taskId, runId: input.runId,
         ...(isolatedModel ? { recipeRef: agent.recipeRef } : {}),
         ...(isManagedCustomBot(agent) ? { managedDefinitionRevision: agent.revision } : {}),
-        route: resolved.route, accessSourceId: resolved.accessSourceId, ...(resolved.subscription ? { subscription: resolved.subscription } : {}), ...(resolved.anthropicApi ? { anthropicApi: resolved.anthropicApi } : {}), capabilities, requestClass: "interactive",
+        route: resolved.route, accessSourceId: resolved.accessSourceId, ...(resolved.subscription ? { subscription: resolved.subscription } : {}), ...(resolved.anthropicApi ? { anthropicApi: resolved.anthropicApi } : {}), capabilities, requestClass: input.backgroundTaskId ? "background" : "interactive",
         ...(group ? { group, expectedRootFingerprint: group.executionRootFingerprint, signal: run.signal } : {}),
       }), (lateRuntime) => deps.admission.release(lateRuntime.runtimeHandle));
     } catch (error: unknown) {
       if (interrupted(error)) return settle(task, interruptedStatus());
       if (!(error instanceof BotAdmissionError)) throw error;
       if (group && run.signal.aborted) return settle(task, "cancelled");
-      return settle(task, "blocked", error.code === "capacity_exceeded" ? "capacity_unavailable" : "root_unavailable");
+      const result = await settle(task, "blocked", error.code === "capacity_exceeded" ? "capacity_unavailable" : "root_unavailable");
+      return !group && error.code === "capacity_exceeded" ? { ...result, retryableBeforeDispatch: true } : result;
     }
     const binding = deps.registry.lookupRun({ runtimeHandle: runtime.runtimeHandle, executionGeneration: runtime.executionGeneration, runId: input.runId });
     if (!binding || isManagedPiBinding(binding)) { await deps.admission.release(runtime.runtimeHandle); return settle(task, "failed"); }
@@ -499,6 +528,17 @@ export function createBotTaskOrchestrator(deps: {
       const spec = run?.spec;
       if (!spec || run.stopping || run.finished || run.ownerId !== binding.ownerId || run.chatId !== binding.chatId
         || run.runtime?.runtimeHandle !== binding.runtimeHandle || run.runtime.executionGeneration !== binding.executionGeneration) throw new BotBrokerActionError("stale_generation");
+      if (!isManagedPiBinding(binding) && !binding.group && binding.requestClass === "background" && deps.routineExecution) {
+        // Recheck at delivery, rather than caching a phase from prepareRun before queue/admission.
+        await runBotSetupStep(() => deps.routineExecution!.assertOccurrencePhase(binding), run.signal);
+        if (run.stopping || run.finished || run.signal.aborted || active.get(binding.runId) !== run) throw new BotBrokerActionError("stale_generation");
+        return { ...spec, systemPrompt: withApprovedRoutineOccurrence(spec.systemPrompt) };
+      }
+      if (!isManagedPiBinding(binding) && !binding.group && binding.requestClass === "interactive" && deps.routineExecution?.describeChatPhase) {
+        const phase = await runBotSetupStep(() => deps.routineExecution!.describeChatPhase!(binding), run.signal);
+        if (run.stopping || run.finished || run.signal.aborted || active.get(binding.runId) !== run) throw new BotBrokerActionError("stale_generation");
+        if (phase) return { ...spec, systemPrompt: spec.systemPrompt + phase };
+      }
       return spec;
     },
     async readImageChunk(binding, request) {
@@ -520,6 +560,10 @@ export function createBotTaskOrchestrator(deps: {
         || run.runtime?.runtimeHandle !== binding.runtimeHandle || run.runtime.executionGeneration !== binding.executionGeneration) {
         throw new BotBrokerActionError("stale_generation");
       }
+      if (binding.requestClass === "background") {
+        await deps.assertSource?.(binding, run.signal);
+        if (active.get(binding.runId) !== run || run.stopping || run.finished) throw new BotBrokerActionError("stale_generation");
+      }
       run.queue.push({ kind: "event", event: event.event });
     },
   };
@@ -539,7 +583,7 @@ export function createBotTaskOrchestrator(deps: {
       return result;
     },
     /** Starts one turn. Events stream until the run's outcome is known. */
-    start(input: { ownerId: string; chatId: string; runId: string; text: string; parts?: readonly import("@matrix-os/contracts").CanonicalChatMessagePart[]; selection?: import("@matrix-os/contracts").CanonicalChatModelSelection; signal: AbortSignal }): BotTurnHandle {
+    start(input: { ownerId: string; chatId: string; runId: string; text: string; parts?: readonly import("@matrix-os/contracts").CanonicalChatMessagePart[]; selection?: import("@matrix-os/contracts").CanonicalChatModelSelection; signal: AbortSignal; backgroundTaskId?: string }): BotTurnHandle {
       if (!input.text.trim() && !input.parts?.some(part => part.type === "attachment_reference")) throw new BotTurnError("invalid_request");
       if (active.has(input.runId) || active.size >= BOT_RUNTIME_REGISTRY_CAPACITY) throw new BotTurnError("capacity_exceeded");
       const prelaunch = new AbortController();

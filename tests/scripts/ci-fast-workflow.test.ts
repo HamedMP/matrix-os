@@ -11,6 +11,17 @@ const scripts = JSON.parse(readFileSync(join(process.cwd(), 'package.json'), 'ut
 const runs = (job: Job) => job.steps.map(step => step.run ?? '').join('\n');
 
 describe('fast CI preserves validation while removing serialized work', () => {
+  it('installs browsers on a pinned Ubuntu release supported by the locked Playwright toolchain', () => {
+    // Playwright 1.60.0 rejects Ubuntu 26.04 during dependency installation.
+    // Keep both real browser-install steps and the full E2E matrix on a stable
+    // supported image instead of allowing ubuntu-latest to change underneath it.
+    const browserJobs = Object.values(workflow.jobs).filter(job =>
+      job.steps.some(step => step.run?.includes('playwright install')),
+    );
+    expect(browserJobs).toContain(workflow.jobs.e2e);
+    for (const job of browserJobs) expect(['ubuntu-22.04', 'ubuntu-24.04']).toContain(job['runs-on']);
+  });
+
   it('bootstraps every Bun lane with the exact qualified version without API tag discovery', () => {
     const setups = Object.values(workflow.jobs).flatMap(job =>
       job.steps.filter(step => step.uses?.startsWith('oven-sh/setup-bun@')),
@@ -90,6 +101,29 @@ describe('fast CI preserves validation while removing serialized work', () => {
     expect(workflow.jobs.e2e['timeout-minutes']).toBe(30);
   });
 
+  it('keeps Playwright E2E on a supported hosted Ubuntu image', () => {
+    // Playwright 1.60 rejects Chromium installation on the Ubuntu 26.04 image
+    // currently selected by ubuntu-latest, so this lane must remain explicit.
+    expect(workflow.jobs.e2e['runs-on']).toBe('ubuntu-24.04');
+  });
+
+  it('builds node-pty from source before E2E prerequisites', () => {
+    const steps = workflow.jobs.e2e.steps;
+    const install = steps.findIndex(step => step.run === 'pnpm install --frozen-lockfile');
+    const rebuild = steps.findIndex(step => step.run === 'node scripts/build-node-pty.mjs');
+    const prepare = steps.findIndex(step => step.run === 'bun run test:prepare');
+
+    expect(rebuild).toBeGreaterThan(install);
+    expect(rebuild).toBeLessThan(prepare);
+
+    const builder = readFileSync(join(process.cwd(), 'scripts/build-node-pty.mjs'), 'utf8');
+    expect(builder).toContain("require.resolve('node-gyp/bin/node-gyp.js'");
+    expect(builder).toContain("join(nodePtyRoot, 'build', 'Release', 'pty.node')");
+    expect(builder).toContain("require('node-pty')");
+    expect(builder).toContain('} catch (error) {');
+    expect(builder).toContain('error instanceof Error ? error.stack ?? error.message : error');
+  });
+
   it('retains frozen installs and keyed Next and browser caches', () => {
     expect(source).not.toContain('runs-on: ${{');
     expect(workflow.jobs['funded-postgres']['runs-on']).toBe('ubuntu-latest');
@@ -137,5 +171,23 @@ describe('fast CI preserves validation while removing serialized work', () => {
     expect(upload?.if).toContain('always()');
     expect(upload?.with?.name).toBe('unit-profile-${{ matrix.shard }}');
     expect(upload?.with?.['retention-days']).toBe(7);
+  });
+});
+
+describe('Docker image export runner capacity', () => {
+  it('frees unused hosted tools before building the image and retains artifact integrity checks', () => {
+    const docker = parse(readFileSync('.github/workflows/docker-test.yml', 'utf8')).jobs['docker-build'];
+    const cleanup = docker.steps.findIndex((step: {name?: string}) => step.name === 'Free runner disk before Docker build');
+    const build = docker.steps.findIndex((step: {uses?: string}) => step.uses?.startsWith('docker/build-push-action@'));
+    const save = docker.steps.findIndex((step: {name?: string}) => step.name === 'Save Docker image artifact');
+    expect(cleanup).toBeGreaterThanOrEqual(0);
+    expect(cleanup).toBeLessThan(build);
+    expect(build).toBeLessThan(save);
+    expect(docker.steps[cleanup].if).toBe(docker.if);
+    expect(docker.steps[cleanup].run).toContain('sudo rm -rf ');
+    expect(docker.steps[cleanup].run).not.toMatch(/\/tmp\/matrix-os|hostedtoolcache\/node|docker system prune/);
+    expect(docker.steps[build].with.outputs).toBe('type=docker,dest=/tmp/matrix-os-dev-ci.tar');
+    expect(docker.steps[save].run).toContain('gzip -t /tmp/matrix-os-dev-ci.tar.gz');
+    expect(docker.steps[save].run).toContain('test "$(stat -c%s /tmp/matrix-os-dev-ci.tar.gz)" -gt 1000000');
   });
 });

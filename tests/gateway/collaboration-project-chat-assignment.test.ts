@@ -6,15 +6,19 @@ import { ChatConflictError, ChatNotFoundError } from "../../packages/gateway/src
 import { CollaborationAuthority } from "../../packages/gateway/src/collaboration/authority.js";
 import { CollaborationCapabilityRepository } from "../../packages/gateway/src/collaboration/capability-repository.js";
 import { CollaborationChatAdapter } from "../../packages/gateway/src/collaboration/chat-adapter.js";
+import { CollaborationChatScopeService } from "../../packages/gateway/src/collaboration/chat-scope.js";
 import { bootstrapCollaborationDatabase } from "../../packages/gateway/src/collaboration/database.js";
 import { CollaborationRepository } from "../../packages/gateway/src/collaboration/repository.js";
+import { scopeProjection } from "../../packages/gateway/src/collaboration/route-support.js";
 import { createProjectChatAssignmentCoordinator } from "../../packages/gateway/src/collaboration/project-chat-assignment.js";
 import { PROJECT_CHAT_ROUTE_EVENT, readProjectOverview } from "../../packages/gateway/src/collaboration/project-chat-routes.js";
 import {
   allowAllOrganizationPrecondition,
+  collaborationExecutionEligibility,
   createCollaborationTestDatabase,
   type CollaborationTestDatabase,
 } from "./collaboration-test-support.js";
+import { createQueryResultPause } from "./collaboration-capability-race-support.js";
 
 const OWNER_ID = "user_project_owner";
 const MEMBER_ID = "user_project_member";
@@ -30,6 +34,7 @@ const NOW = new Date("2026-10-05T15:00:00.000Z");
 describe("shared project Chat assignment", () => {
   let fixture: CollaborationTestDatabase;
   let repository: ChatRepository;
+  let chatScope: CollaborationChatScopeService;
   let sequence: number;
   let endedScopes: string[];
 
@@ -38,6 +43,15 @@ describe("shared project Chat assignment", () => {
     repository = new ChatRepository(fixture.db);
     await repository.bootstrap();
     await bootstrapCollaborationDatabase(fixture.db);
+    chatScope = new CollaborationChatScopeService(fixture.db, {
+      runtimeId: RUNTIME_ID,
+      preflightSecret: "0123456789abcdef0123456789abcdef",
+      now: () => NOW,
+    });
+    await chatScope.reconcileExecutionEligibility({
+      executionGeneration: 9,
+      eligibility: collaborationExecutionEligibility(),
+    });
     await fixture.db.insertInto("collaboration_scopes").values({
       id: PROJECT_SCOPE, owner_type: "personal", owner_id: OWNER_ID, organization_id: ORGANIZATION_ID,
       kind: "project", resource_id: PROJECT_ID, parent_scope_id: null, membership_mode: "direct",
@@ -66,7 +80,7 @@ describe("shared project Chat assignment", () => {
     await fixture.destroy();
   });
 
-  function coordinator() {
+  function coordinator(scope = chatScope) {
     return createProjectChatAssignmentCoordinator({
       db: fixture.db,
       chatRepository: repository,
@@ -75,6 +89,7 @@ describe("shared project Chat assignment", () => {
       createBindingId: () => `30000000-0000-4000-8000-${String(sequence++).padStart(12, "0")}`,
       createScopeId: () => `40000000-0000-4000-8000-${String(sequence++).padStart(12, "0")}`,
       onScopeEnded: (scopeId) => { endedScopes.push(scopeId); },
+      chatScope: scope,
     });
   }
 
@@ -95,7 +110,8 @@ describe("shared project Chat assignment", () => {
       now: () => NOW,
       createId: () => "70000000-0000-4000-8000-000000000a71",
     });
-    const authority = new CollaborationAuthority(new CollaborationRepository(fixture.db, { now: () => NOW }), {
+    const collaborationRepository = new CollaborationRepository(fixture.db, { now: () => NOW });
+    const authority = new CollaborationAuthority(collaborationRepository, {
       now: () => NOW,
       organizationPrecondition: allowAllOrganizationPrecondition,
       capabilities,
@@ -107,28 +123,66 @@ describe("shared project Chat assignment", () => {
       createId: () => "50000000-0000-4000-8000-000000000a72",
       resolveParticipant: async (actorId) => ({ actorId, displayName: actorId === MEMBER_ID ? "Project member" : "Project owner" }),
     });
-    return { authority, adapter };
+    return { authority, adapter, collaborationRepository };
   }
 
-  it("atomically binds and routes a Chat created in an already-shared project", async () => {
-    const created = await service().create(OWNER, {
+  it("serializes Chat assignment with capability reconciliation before binding and routing", async () => {
+    const queryPause = createQueryResultPause();
+    const racingChatScope = new CollaborationChatScopeService(fixture.db.withPlugin(queryPause.plugin), {
+      runtimeId: RUNTIME_ID,
+      preflightSecret: "0123456789abcdef0123456789abcdef",
+      now: () => NOW,
+    });
+    await racingChatScope.reconcileExecutionEligibility({
+      executionGeneration: 9,
+      eligibility: collaborationExecutionEligibility(),
+    });
+    const overlap = queryPause.arm();
+    const nextEligibility = collaborationExecutionEligibility({ adapters: ["claude-code", "codex"] });
+    const reconciling = racingChatScope.reconcileExecutionEligibility({
+      executionGeneration: 10,
+      eligibility: nextEligibility,
+    });
+    await overlap.paused;
+    const creating = service(coordinator(racingChatScope)).create(OWNER, {
       clientRequestId: "req_shared_project_create",
       title: "Release plan",
       projectId: PROJECT_ID,
     });
+    overlap.release();
+    const [, created] = await Promise.all([reconciling, creating]);
 
     const binding = await fixture.db.selectFrom("collaboration_resource_bindings as binding")
       .innerJoin("collaboration_scopes as child", "child.id", "binding.resource_scope_id")
-      .select(["binding.project_scope_id", "binding.resource_id", "child.id as scope_id", "child.lifecycle"])
+      .select([
+        "binding.project_scope_id",
+        "binding.resource_id",
+        "child.id as scope_id",
+        "child.lifecycle",
+        "child.execution_generation",
+        "child.execution_eligibility",
+      ])
       .where("binding.resource_kind", "=", "chat").where("binding.resource_id", "=", created.chat.id)
       .executeTakeFirstOrThrow();
-    expect(binding).toMatchObject({ project_scope_id: PROJECT_SCOPE, resource_id: created.chat.id, lifecycle: "shared" });
+    expect(binding).toMatchObject({
+      project_scope_id: PROJECT_SCOPE,
+      resource_id: created.chat.id,
+      lifecycle: "shared",
+      execution_generation: 10,
+      execution_eligibility: nextEligibility,
+    });
     expect(await fixture.db.selectFrom("collaboration_events").select("event_type")
       .where("scope_id", "=", binding.scope_id).where("event_type", "=", PROJECT_CHAT_ROUTE_EVENT).execute())
       .toHaveLength(1);
     await expect(readProjectOverview(fixture.db, { scopeId: PROJECT_SCOPE, projectName: async () => "Alpha" }))
       .resolves.toMatchObject({ chats: [expect.objectContaining({ chatId: created.chat.id, title: "Release plan" })] });
     expect((await repository.get(OWNER, created.chat.id))?.chat.revision).toBe(created.chat.revision);
+    const { authority, collaborationRepository } = collaborationAccess();
+    const context = await authority.authorize({ scopeId: binding.scope_id, actorId: MEMBER_ID, action: "read" });
+    const scope = await collaborationRepository.getScope(binding.scope_id);
+    expect(scope).not.toBeNull();
+    await expect(scopeProjection(scope!, context, authority, racingChatScope))
+      .resolves.toMatchObject({ capabilities: { requestAi: true } });
   });
 
   it("lets an accepted project member read and write the canonical inherited Chat", async () => {
