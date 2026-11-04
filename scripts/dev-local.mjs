@@ -24,10 +24,10 @@ export const LOCAL_DEVELOPMENT_SERVICES = [
   "./shell",
 ];
 
-const localServiceProcesses = [
-  { name: "gateway", args: ["--import=tsx", "--watch", "packages/gateway/src/main.ts"] },
-  { name: "proxy", args: ["--import=tsx", "--watch", "packages/proxy/src/main.ts"] },
-  { name: "platform", args: ["--import=tsx", "--watch", "packages/platform/src/main.ts"] },
+export const localServiceProcesses = [
+  { name: "gateway", args: ["node_modules/tsx/dist/cli.mjs", "watch", "--clear-screen=false", "packages/gateway/src/main.ts"] },
+  { name: "proxy", args: ["node_modules/tsx/dist/cli.mjs", "watch", "--clear-screen=false", "packages/proxy/src/main.ts"] },
+  { name: "platform", args: ["node_modules/tsx/dist/cli.mjs", "watch", "--clear-screen=false", "packages/platform/src/main.ts"] },
   {
     name: "shell",
     args: [

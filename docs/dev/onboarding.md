@@ -214,6 +214,16 @@ secret key or interactive sign-in. The gateway native addon is built before
 services start. Press Ctrl-C to stop the source processes; infrastructure
 continues in Docker and can be stopped with `bun run dev:infra:stop`.
 
+Gateway, proxy, and platform use `tsx watch`, including when source files are
+replaced atomically by a sync tool. Kernel consumers load `packages/kernel/dist`,
+so Kernel edits still require `pnpm --filter @matrix-os/kernel build`; `dev:kernel`
+does not update that directory. Shared TypeScript builds compile into a private
+`.matrix-build-output` directory and publish changed files only after a successful
+compile. Compiler errors leave the last successful runtime files untouched.
+Successful publication uses atomic replacement per file, not an atomic
+whole-package deployment. This does not add an automatic Kernel build/restart
+loop; restart the source Gateway after a successful build if needed.
+
 Use `bun run dev:infra` when you only need ready PostgreSQL and object storage.
 The narrower `bun run dev` command still starts exactly three source processes:
 gateway, proxy, and shell; it assumes any required infrastructure is already
