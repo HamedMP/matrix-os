@@ -585,6 +585,8 @@ Read these on demand, not every session:
 - No new storage; reads existing owner-scoped Matrix CLI profile/auth files and Matrix computer data (120-remote-computer-mcp)
 - TypeScript 5.9 strict ES modules on Node.js 24 + `@earendil-works/pi-agent-core`/`pi-ai` 1.0.0 pinned exactly (bot runtime inside a no-network scope-runtime bot profile), Hono, Zod 4, Kysely/Postgres, scope-runtime loopback inference bridge (536-conversational-bots)
 - Owner Postgres bot tables via versioned `bot_schema_migrations`; bot definition files via `agent-store.ts`; bot workspaces under `~/bots/<botId>/`; platform `ai_funded_priority_claims` and credential `request_class` (536-conversational-bots)
+- TypeScript 5.9 strict on Node 24; Bash/Python 3 for existing Spec Kit helpers; native workflow YAML. + Existing Hono, Zod 4, Kysely, pg, jose, Electron 41, official GitHub Actions and `github/gh-stack`; no new persistence engine or credential store. (codex/eng-418-preview-pair-foundation)
+- Platform Postgres for pair/generation/fixture leases; owner Postgres remains collaboration authority; credential-free local context/profile files use the existing Electron stores. (codex/eng-418-preview-pair-foundation)
 
 - TypeScript 5.5+ strict, ES modules + node-pty (backend), @xterm/xterm + addon-webgl + addon-search + addon-serialize + addon-fit (frontend), Hono WebSocket (gateway), Zod 4 (validation) (056-terminal-upgrade)
 - Files — `~/system/terminal-sessions.json` (session metadata), `~/system/terminal-layout.json` (layout with sessionId) (056-terminal-upgrade)
@@ -642,5 +644,5 @@ Five canonical roles using default label names. See `docs/agents/triage-labels.m
 Single-context: `CONTEXT.md` + `docs/adr/` at repo root. See `docs/agents/domain.md`.
 
 <!-- SPECKIT START -->
-Current feature plan: specs/536-conversational-bots/plan.md
+Current feature plan: specs/2689-collaboration-preview-pair/plan.md
 <!-- SPECKIT END -->
