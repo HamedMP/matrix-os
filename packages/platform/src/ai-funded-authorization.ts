@@ -91,7 +91,7 @@ export function createFundedAuthorize(deps: FundedAuthorizeDependencies) {
       const machine = await trx.executor.selectFrom("user_machines").select([
         "clerk_user_id", "runtime_slot", "runtime_token_epoch", "provisioning_class",
         "status", "activation_state", "deleted_at",
-      ]).where("machine_id", "=", credential.machine_id).forUpdate().executeTakeFirst();
+      ]).where("machine_id", "=", credential.machine_id).forNoKeyUpdate().executeTakeFirst();
       const runtime = await trx.executor.selectFrom("ai_funded_runtime_policies")
         .selectAll().where("machine_id", "=", credential.machine_id).forUpdate().executeTakeFirst();
       const global = await trx.executor.selectFrom("ai_funded_global_policy")

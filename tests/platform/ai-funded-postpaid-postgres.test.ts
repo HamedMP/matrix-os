@@ -7,6 +7,8 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { createAiFundedPolicyRepository } from "../../packages/platform/src/ai-funded-policy-repository.js";
 import { createPlatformDb, insertUserMachine, type PlatformDB } from "../../packages/platform/src/db.js";
 import { runPlatformStartupMigrations } from "../../packages/platform/src/database/run-migrations.js";
+import { finalizeAiCreditCheckoutClaim, getClaimByPaymentReference, prepareAiCreditCheckoutClaim } from "../../packages/platform/src/ai-credit-checkout-store.js";
+import { processAiCreditWebhookEvent } from "../../packages/platform/src/ai-credit-checkout-webhook.js";
 
 const databaseUrl = process.env.MATRIX_TEST_POSTGRES_URL;
 const identity = { ownerId: "postpaid_owner", machineId: "postpaid_machine", runtimeSlot: "primary" };
@@ -22,6 +24,7 @@ describe.skipIf(!databaseUrl)("postpaid credit on independent PostgreSQL connect
     await admin.query(`CREATE SCHEMA "${schema}"`);
     const url = new URL(databaseUrl!);
     url.searchParams.set("options", `-c search_path=${schema}`);
+    url.searchParams.set("application_name", `${schema}_first`);
     db = createPlatformDb(url.toString());
     await db.ready;
     url.searchParams.set("application_name", `${schema}_second`);
@@ -49,6 +52,183 @@ describe.skipIf(!databaseUrl)("postpaid credit on independent PostgreSQL connect
   });
   const request = (id = "postpaid_request") => ({ credential: token, requestId: id, modelId,
     maxCostMicrousd: 2_000_000, billingMode: "usage" as const, billingPolicy: "postpaid" as const });
+
+  async function settleAfterLockWait(key: { reservationId: string; tokenId: string }, actualCostMicrousd: number, afterWait: Date, lock: "owner" | "balance") {
+    const locked = Promise.withResolvers<void>(), release = Promise.withResolvers<void>();
+    const blocker = db.transaction(async trx => {
+      if (lock === "owner") await sql`SELECT pg_advisory_xact_lock(hashtextextended(${`funded-ai-owner:${identity.ownerId}`}, 0))`.execute(trx.executor);
+      else await trx.executor.selectFrom("ai_funded_runtime_balances").select("machine_id")
+        .where("machine_id", "=", identity.machineId).forUpdate().executeTakeFirstOrThrow();
+      locked.resolve(); await release.promise;
+    });
+    await locked.promise;
+    const result = Promise.allSettled([second.finalizeReservation({ ...key, mode: "exact", actualCostMicrousd })]);
+    try {
+      let waiting = false; const deadline = Date.now() + 2_000;
+      while (!waiting && Date.now() < deadline) {
+        waiting = Boolean((await admin.query("SELECT EXISTS (SELECT 1 FROM pg_stat_activity WHERE application_name=$1 AND wait_event_type='Lock') AS waiting",
+          [`${schema}_second`])).rows[0].waiting);
+        if (!waiting) await new Promise(resolve => setTimeout(resolve, 10));
+      }
+      expect(waiting).toBe(true);
+      clock = afterWait;
+    } finally { release.resolve(); await blocker; }
+    const outcome = (await result)[0];
+    if (outcome.status === "rejected") throw outcome.reason;
+    return outcome.value;
+  }
+
+  it.each(["owner", "balance"] as const)("refreshes settlement time after a %s-lock wait across promotional grant expiry", async (lock) => {
+    const drain = await first.authorize(request("drain_credit"));
+    const drainKey = { reservationId: drain.reservation.reservationId, tokenId };
+    await first.startReservation(drainKey);
+    await first.finalizeReservation({ ...drainKey, mode: "exact", actualCostMicrousd: 1_000_000 });
+    await first.setRuntimePolicy({ identity, expectedRevision: 1, enabled: true, allowedModelIds: [modelId],
+      monthlyBudgetMicrousd: 2_000_000, expiresAt: null });
+    await first.grantCredit({ entryId: "expires_while_waiting", identity, kind: "promotional_grant", amountMicrousd: 100_000,
+      sourceReference: "test", expiresAt: new Date(clock.getTime() + 5_000).toISOString() });
+    const auth = await first.authorize(request("grant_expiry_wait"));
+    const key = { reservationId: auth.reservation.reservationId, tokenId };
+    await first.startReservation(key);
+    const afterWait = new Date(clock.getTime() + 6_000);
+    expect(await settleAfterLockWait(key, 50_000, afterWait, lock)).toMatchObject({ settledAt: afterWait.toISOString(),
+      chargedCostMicrousd: 0, matrixAbsorbedMicrousd: 50_000,
+      funding: { remainingBalanceMicrousd: 0, fundingShortfallMicrousd: 0 } });
+  });
+
+  it.each(["owner", "balance"] as const)("uses the completion month after a %s-lock wait across the UTC month boundary", async (lock) => {
+    const earlier = await first.authorize(request("old_month_usage"));
+    const earlierKey = { reservationId: earlier.reservation.reservationId, tokenId };
+    await first.startReservation(earlierKey);
+    await first.finalizeReservation({ ...earlierKey, mode: "exact", actualCostMicrousd: 900_000 });
+    clock = new Date("2026-11-30T23:59:50.000Z");
+    const issued = await first.issueRuntimeCredential(identity);
+    token = issued.credential.token; tokenId = issued.credential.tokenId;
+    const auth = await first.authorize(request("month_boundary_wait"));
+    const key = { reservationId: auth.reservation.reservationId, tokenId };
+    await first.startReservation(key);
+    const afterWait = new Date("2026-12-01T00:00:01.000Z");
+    expect(await settleAfterLockWait(key, 50_000, afterWait, lock)).toMatchObject({ settledAt: afterWait.toISOString(),
+      chargedCostMicrousd: 50_000, matrixAbsorbedMicrousd: 0,
+      funding: { periodStart: "2026-12-01T00:00:00.000Z", settledThisMonthMicrousd: 50_000 } });
+  });
+
+  it.each(["owner", "balance"] as const)("permanently releases customer charges when the request expires during a %s-lock wait", async (lock) => {
+    const auth = await first.authorize(request("request_expiry_wait"));
+    const key = { reservationId: auth.reservation.reservationId, tokenId };
+    await first.startReservation(key);
+    const afterWait = new Date(clock.getTime() + 61_000);
+    expect(await settleAfterLockWait(key, 100_000, afterWait, lock)).toMatchObject({ settledAt: afterWait.toISOString(),
+      chargedCostMicrousd: 0, matrixAbsorbedMicrousd: 100_000 });
+    const row = await db.executor.selectFrom("ai_funded_usage_reservations").select("customer_charge_release")
+      .where("reservation_id", "=", key.reservationId).executeTakeFirstOrThrow();
+    expect(JSON.parse(row.customer_charge_release!)).toMatchObject({ reason: "expired_request", releasedAt: afterWait.toISOString() });
+  });
+
+  async function purchaseCheckoutCredit() {
+    const claimId = randomUUID(), suffix = claimId.replaceAll("-", ""), sessionId = `cs_${suffix}`, paymentId = `pi_${suffix}`;
+    await prepareAiCreditCheckoutClaim(db, { requestId: claimId, ...identity, packageId: "usd_5", priceId: "price_five",
+      amountMicrousd: 5_000_000, amountCents: 500, currency: "usd", automaticTax: false, idempotencyKey: claimId }, clock);
+    await finalizeAiCreditCheckoutClaim(db, claimId, { id: sessionId, url: "https://checkout.stripe.com/test" }, clock.toISOString());
+    await db.transaction(trx => processAiCreditWebhookEvent({ trx, repository: first, at: clock.toISOString(), event: {
+      id: `evt_${claimId}`, type: "checkout.session.completed", created: clock.getTime() / 1000,
+      data: { object: { id: sessionId, mode: "payment", status: "complete", payment_status: "paid", payment_intent: paymentId,
+        amount_subtotal: 500, amount_total: 500, currency: "usd", client_reference_id: identity.ownerId,
+        metadata: { matrix_checkout_kind: "ai_credit_addon", matrix_owner_id: identity.ownerId,
+          matrix_machine_id: identity.machineId, matrix_runtime_slot: identity.runtimeSlot,
+          matrix_ai_credit_package_id: "usd_5", matrix_ai_credit_request_id: claimId,
+          matrix_ai_credit_price_id: "price_five", matrix_ai_credit_microusd: "5000000" } } },
+    } }));
+    return { claimId, paymentId };
+  }
+
+  it.each(["settlement", "authorization", "cleanup", "terminal"] as const)("serializes %s with an actual checkout refund without a machine-FK deadlock", async (operation) => {
+    const { claimId, paymentId } = await purchaseCheckoutCredit();
+    const auth = operation === "authorization" ? null : await first.authorize(request("refund_race"));
+    const key = auth ? { reservationId: auth.reservation.reservationId, tokenId } : null;
+    const start = key ? await first.startReservation({ ...key, executionId: "refund-race-attempt" }) : null;
+    if (operation === "cleanup") clock = new Date(clock.getTime() + 61_000);
+    const locked = Promise.withResolvers<void>(), release = Promise.withResolvers<void>();
+    const refund = db.transaction(async trx => {
+      await getClaimByPaymentReference(trx, paymentId, null);
+      await trx.executor.selectFrom("ai_funded_runtime_balances").select("machine_id")
+        .where("machine_id", "=", identity.machineId).forUpdate().executeTakeFirstOrThrow();
+      locked.resolve(); await release.promise;
+      return processAiCreditWebhookEvent({ trx, at: clock.toISOString(), event: {
+        id: `refund_${claimId}`, type: "charge.refunded", created: clock.getTime() / 1000,
+        data: { object: { id: `ch_${claimId}`, payment_intent: paymentId, amount_refunded: 500, currency: "usd" } },
+      } });
+    });
+    await locked.promise;
+    const competing = operation === "authorization" ? second.authorize(request("after_refund"))
+      : operation === "cleanup" ? second.cleanupExpiredCustomerCharges({ limit: 1 })
+      : operation === "settlement" ? second.finalizeReservation({ ...key!, mode: "exact", actualCostMicrousd: 100_000 })
+      : second.recordTerminalOutcome({ contractVersion: 1, ...identity, ...key!, requestId: "refund_race",
+        startedAt: start!.startedAt, expiresAt: start!.expiresAt, executionId: "refund-race-attempt",
+        terminalState: "failed", terminalAt: clock.toISOString(), outcome: "usage_unknown" });
+    const results = Promise.allSettled([refund, competing]);
+    try {
+      let waiting = false; const deadline = Date.now() + 2_000;
+      while (!waiting && Date.now() < deadline) {
+        waiting = Boolean((await admin.query("SELECT EXISTS (SELECT 1 FROM pg_stat_activity WHERE application_name=$1 AND wait_event_type='Lock') AS waiting",
+          [`${schema}_second`])).rows[0].waiting);
+        if (!waiting) await new Promise(resolve => setTimeout(resolve, 10));
+      }
+      expect(waiting).toBe(true);
+    } finally { release.resolve(); }
+    for (const outcome of await results) if (outcome.status === "rejected") throw outcome.reason;
+    expect(await first.getFundingSummary(identity)).toMatchObject({ reservedMicrousd: 0,
+      creditBalanceMicrousd: operation === "settlement" ? 900_000 : 1_000_000, fundingShortfallMicrousd: 0 });
+    const reversals = await db.executor.selectFrom("ai_funded_credit_ledger").select("amount_microusd")
+      .where("kind", "=", "addon_reversal").execute();
+    expect(reversals.map(row => Number(row.amount_microusd))).toEqual([-5_000_000]);
+  });
+
+  it("keeps the balance exclusive when settlement reaches the debit before an actual checkout refund", async () => {
+    const { claimId, paymentId } = await purchaseCheckoutCredit();
+    const auth = await first.authorize(request("settlement_before_refund"));
+    const key = { reservationId: auth.reservation.reservationId, tokenId };
+    await first.startReservation(key);
+    const gate = `settlement-ledger:${schema}`;
+    await sql`CREATE FUNCTION pause_customer_debit() RETURNS trigger LANGUAGE plpgsql AS $$
+      BEGIN PERFORM pg_advisory_xact_lock(hashtextextended(TG_ARGV[0], 0)); RETURN NEW; END $$`.execute(db.executor);
+    await sql`CREATE TRIGGER pause_customer_debit BEFORE INSERT ON ai_funded_credit_ledger
+      FOR EACH ROW WHEN (NEW.kind = 'addon_debit') EXECUTE FUNCTION pause_customer_debit(${sql.lit(gate)})`.execute(db.executor);
+    await admin.query("SELECT pg_advisory_lock(hashtextextended($1,0))", [gate]);
+    const phases: Array<Promise<PromiseSettledResult<unknown>[]>> = [
+      Promise.allSettled([first.finalizeReservation({ ...key, mode: "exact", actualCostMicrousd: 100_000 })]),
+    ];
+    const waitForLock = async (replica: "first" | "second") => {
+      let waiting = false; const deadline = Date.now() + 2_000;
+      while (!waiting && Date.now() < deadline) {
+        waiting = Boolean((await admin.query("SELECT EXISTS (SELECT 1 FROM pg_stat_activity WHERE application_name=$1 AND wait_event_type='Lock') AS waiting",
+          [`${schema}_${replica}`])).rows[0].waiting);
+        if (!waiting) await new Promise(resolve => setTimeout(resolve, 10));
+      }
+      expect(waiting).toBe(true);
+    };
+    try {
+      await waitForLock("first");
+      phases.push(Promise.allSettled([secondDb.transaction(trx => processAiCreditWebhookEvent({ trx, at: clock.toISOString(), event: {
+        id: `refund_${claimId}`, type: "charge.refunded", created: clock.getTime() / 1000,
+        data: { object: { id: `ch_${claimId}`, payment_intent: paymentId, amount_refunded: 500, currency: "usd" } },
+      } }))]));
+      await waitForLock("second");
+      let balanceLocked = false;
+      try { await admin.query(`SELECT machine_id FROM "${schema}".ai_funded_runtime_balances FOR UPDATE NOWAIT`); }
+      catch (error) { if ((error as { code?: string }).code === "55P03") balanceLocked = true; else throw error; }
+      expect(balanceLocked).toBe(true);
+    } finally {
+      await admin.query("SELECT pg_advisory_unlock(hashtextextended($1,0))", [gate]);
+      await Promise.all(phases);
+    }
+    for (const outcome of (await Promise.all(phases)).flat()) if (outcome.status === "rejected") throw outcome.reason;
+    expect(await first.getFundingSummary(identity)).toMatchObject({ creditBalanceMicrousd: 900_000,
+      reservedMicrousd: 0, fundingShortfallMicrousd: 0 });
+    const ledger = await db.executor.selectFrom("ai_funded_credit_ledger").select("amount_microusd")
+      .where("kind", "in", ["addon_reversal", "addon_debit"]).execute();
+    expect(ledger.map(row => Number(row.amount_microusd)).sort((a, b) => a - b)).toEqual([-5_000_000, -100_000]);
+  });
 
   it("serializes duplicate admission and settlement without a hold or duplicate debit", async () => {
     const authorizations = await Promise.all([first.authorize(request()), second.authorize(request())]);

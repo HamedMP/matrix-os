@@ -155,6 +155,32 @@ describe("postpaid funded AI customer credit", () => {
     expect(await repo.getFundingSummary(identity)).toMatchObject({ remainingBalanceMicrousd: 880_000 });
   });
 
+  it.each(["conservative", "exact"] as const)("replays a historical strict %s receipt without charging or changing it", async (storedMode) => {
+    const auth = await repo.authorize({ ...request("historical_strict"), billingMode: undefined,
+      billingPolicy: undefined, maxCostMicrousd: 100_000 });
+    const key = { reservationId: auth.reservation.reservationId, tokenId: credential.tokenId };
+    await repo.startReservation(key);
+    const receipt = await repo.settleReservation({ ...key, actualCostMicrousd: 100_000 });
+    // The predecessor's conservative settlement stored the same full-hold
+    // financial receipt, with its original finalization mode retained separately.
+    await db.executor.updateTable("ai_funded_usage_reservations").set({ finalization_mode: storedMode })
+      .where("reservation_id", "=", key.reservationId).execute();
+    const snapshot = async () => ({
+      request: await db.executor.selectFrom("ai_funded_usage_reservations").selectAll()
+        .where("reservation_id", "=", key.reservationId).executeTakeFirstOrThrow(),
+      balances: await db.executor.selectFrom("ai_funded_runtime_balances").selectAll().execute(),
+      ledger: await db.executor.selectFrom("ai_funded_credit_ledger").selectAll().execute(),
+    });
+    const before = await snapshot();
+    const expected = { ...receipt, finalizationMode: storedMode };
+    await expect(repo.finalizeReservation({ ...key, mode: "conservative" })).resolves.toEqual(expected);
+    await expect(repo.finalizeReservation({ ...key, mode: "conservative" })).resolves.toEqual(expected);
+    await expect(repo.finalizeReservation({ ...key, mode: "exact", actualCostMicrousd: 100_000 })).resolves.toEqual(expected);
+    await expect(repo.finalizeReservation({ ...key, mode: "exact", actualCostMicrousd: 100_001 }))
+      .rejects.toMatchObject({ code: "idempotency_conflict" });
+    expect(await snapshot()).toEqual(before);
+  });
+
   it("exports unknown platform liability and prevents its erasure until an authentic actual arrives", async () => {
     const auth = await repo.authorize(request());
     const key = { reservationId: auth.reservation.reservationId, tokenId: credential.tokenId };

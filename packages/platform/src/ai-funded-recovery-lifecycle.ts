@@ -19,9 +19,10 @@ export async function assertRecoveryMachine(executor: Executor, row: {
   owner_id: string;
   machine_id: string;
   runtime_slot: string;
-}) {
-  const machine = await executor.selectFrom("user_machines").select(["clerk_user_id", "runtime_slot", "status", "activation_state", "deleted_at"])
-    .where("machine_id", "=", row.machine_id).forUpdate().executeTakeFirst();
+}, lock: "update" | "no-key-update" = "update") {
+  const query = executor.selectFrom("user_machines").select(["clerk_user_id", "runtime_slot", "status", "activation_state", "deleted_at"])
+    .where("machine_id", "=", row.machine_id);
+  const machine = await (lock === "no-key-update" ? query.forNoKeyUpdate() : query.forUpdate()).executeTakeFirst();
   if (!machine || machine.clerk_user_id !== row.owner_id || machine.runtime_slot !== row.runtime_slot
     || machine.status !== "running" || machine.activation_state !== "authorized" || machine.deleted_at !== null)
     throw new AiFundedPolicyError("identity_mismatch");

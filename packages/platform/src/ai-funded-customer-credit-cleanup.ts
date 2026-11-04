@@ -62,7 +62,7 @@ export async function cleanupOwnerCustomerCharges(executor: Executor, ownerId: s
   for (const candidate of candidates) {
     await sql`SAVEPOINT customer_credit_candidate`.execute(executor);
     try {
-      await executor.selectFrom("user_machines").select("machine_id").where("machine_id", "=", candidate.machine_id).forUpdate().executeTakeFirstOrThrow();
+      await executor.selectFrom("user_machines").select("machine_id").where("machine_id", "=", candidate.machine_id).forNoKeyUpdate().executeTakeFirstOrThrow();
       const row = await executor.selectFrom("ai_funded_usage_reservations").selectAll()
         .where("reservation_id", "=", candidate.reservation_id).forUpdate().executeTakeFirstOrThrow();
       if (row.customer_charge_release !== null) { readCustomerChargeRelease(row); continue; }

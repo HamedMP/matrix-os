@@ -7,5 +7,5 @@
  * Dependent branches must rebase and allocate a new generation after landing. */
 export const PLATFORM_SCHEMA_REVISION = {
   generation: 24,
-  fingerprint: "f62e47187cd070474354e5af3fc90ef29a9e1666b31df906bb504cb8cb1c6196",
+  fingerprint: "cbedad7449497030c4f276722a186d1d346444a5e13ecca2ab054dc1bbd61633",
 } as const;

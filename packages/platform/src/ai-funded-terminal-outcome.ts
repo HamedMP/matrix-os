@@ -59,7 +59,7 @@ export function createFundedTerminalOutcome(options: {
     return options.db.transaction(async (trx) => {
       await sql`SELECT pg_advisory_xact_lock(hashtextextended(${`funded-ai-owner:${request.ownerId}`}, 0))`.execute(trx.executor);
       // Policy updates lock the machine before reservations. Do not invert that order.
-      await assertRecoveryMachine(trx.executor, { owner_id: request.ownerId, machine_id: request.machineId, runtime_slot: request.runtimeSlot });
+      await assertRecoveryMachine(trx.executor, { owner_id: request.ownerId, machine_id: request.machineId, runtime_slot: request.runtimeSlot }, "no-key-update");
       const row = await trx.executor.selectFrom("ai_funded_usage_reservations").selectAll()
         .where("reservation_id", "=", request.reservationId).where("token_id", "=", request.tokenId).forUpdate().executeTakeFirst();
       if (!row)
