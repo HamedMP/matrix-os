@@ -47,7 +47,12 @@ describe("T404: Provisioner", () => {
   beforeEach(() => {
     homePath = makeHomePath();
   });
-  afterEach(() => rmSync(homePath, { recursive: true, force: true }));
+  afterEach(() => rmSync(homePath, {
+    recursive: true,
+    force: true,
+    maxRetries: 5,
+    retryDelay: 50,
+  }));
 
   it("ignores plan with non-pending status", async () => {
     const spawn = vi.fn<SpawnFn>(async function* () { yield resultEvent("s"); });
