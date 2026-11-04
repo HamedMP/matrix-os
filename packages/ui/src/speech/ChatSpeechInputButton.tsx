@@ -2,10 +2,15 @@ import { CancelCircleIcon, CircleStop, LoaderIcon, MicIcon } from "@hugeicons/co
 import { HugeiconsIcon, type IconSvgElement } from "@hugeicons/react";
 
 import { SpeechInputWaveform } from "./SpeechInputWaveform.js";
-import type { usePlatformSpeechDraft } from "./use-platform-speech-draft.js";
+import {
+  platformSpeechControlState,
+  platformSpeechPreviewQuotaLabel,
+  type usePlatformSpeechDraft,
+} from "./use-platform-speech-draft.js";
 
 type SpeechDraft = Pick<ReturnType<typeof usePlatformSpeechDraft>,
-  "phase" | "error" | "isSupported" | "elapsedMs" | "inputLevel" | "inputLevelSequence" | "start" | "stop" | "cancel">;
+  "phase" | "error" | "isSupported" | "previewQuota" | "capabilitiesStale" | "elapsedMs" | "inputLevel"
+  | "inputLevelSequence" | "start" | "stop" | "cancel" | "retryCapabilities">;
 
 // What the mic button says and shows in each speech phase; other phases start recording.
 const ACTIVE_PHASES: Partial<Record<SpeechDraft["phase"], { label: string; icon: IconSvgElement; spin?: boolean }>> = {
@@ -22,16 +27,24 @@ const IDLE = { label: "Start voice input", icon: MicIcon, spin: false };
  */
 export function ChatSpeechInputButton({ speech, disabled }: { speech: SpeechDraft; disabled: boolean }) {
   const phase = ACTIVE_PHASES[speech.phase];
-  const active = phase !== undefined;
-  if (!speech.isSupported && !active && !speech.error) return null;
-  const { label, icon, spin } = phase ?? IDLE;
+  const control = platformSpeechControlState(speech);
+  const active = control.active;
+  if (!control.visible && !speech.error) return null;
+  const { icon, spin } = phase ?? IDLE;
   const activate = () => {
-    if (speech.phase === "recording") speech.stop();
+    if (speech.capabilitiesStale) void speech.retryCapabilities();
+    else if (speech.phase === "recording") speech.stop();
     else if (active) speech.cancel();
     else void speech.start();
   };
   return (
     <div className="relative flex items-center gap-1">
+      {speech.previewQuota ? (
+        <span role="status" className="text-xs" style={{ color: "var(--text-tertiary)" }}>
+          {platformSpeechPreviewQuotaLabel(speech.previewQuota)}
+          {speech.capabilitiesStale ? " Last known quota; refresh required." : null}
+        </span>
+      ) : null}
       {speech.error ? (
         <span
           role="alert"
@@ -55,9 +68,9 @@ export function ChatSpeechInputButton({ speech, disabled }: { speech: SpeechDraf
       ) : null}
       <button
         type="button"
-        aria-label={label}
-        title={label}
-        disabled={disabled && !active}
+        aria-label={control.label}
+        title={control.label}
+        disabled={(disabled || control.disabled) && !active}
         onClick={activate}
         className="flex h-9 w-9 items-center justify-center rounded-full outline-none hover:bg-[var(--bg-hover)] focus-visible:ring-2 focus-visible:ring-[var(--composer-focus,var(--accent))] disabled:opacity-40"
         style={{ color: speech.phase === "recording" ? "var(--danger)" : "var(--text-secondary)" }}

@@ -7,29 +7,35 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { AgentSection } from "../../shell/src/components/settings/sections/AgentSection.js";
 import { IdentityPersonalitySection } from "../../shell/src/components/settings/sections/IdentityPersonalitySection.js";
 import * as checkoutActions from "../../shell/src/lib/ai-credit-checkout.js";
+import type { BrowserSpeechClient } from "../../packages/ui/src/speech/browser-client.js";
 
 const providerControllerState = vi.hoisted(() => ({
   snapshot: {} as unknown,
   error: null as string | null,
   mutate: vi.fn(),
   addCredit: null as null | ((source: string, packageId: "usd_5", requestId: string) => Promise<void>),
+  speechClient: null as BrowserSpeechClient | null,
 }));
 
 vi.mock("@matrix-os/ui", async () => ({
   ...await import("../../packages/ui/src/agents-providers/provider-workflow-client.js"),
   ...await import("../../packages/ui/src/agents-providers/matrix-anthropic-connection-client.js"),
+  ...await import("../../packages/ui/src/speech/browser-client.js"),
   AgentsProvidersView: ({
     onOpenTerminal,
     onOpenBrowser,
     onMutate,
     onAddCredit,
+    speechClient,
   }: {
     onOpenTerminal: (sessionId: string) => void;
     onOpenBrowser: (path: string) => void;
     onMutate: (intent: unknown) => Promise<boolean>;
     onAddCredit: (source: string, packageId: "usd_5", requestId: string) => Promise<void>;
+    speechClient: BrowserSpeechClient;
   }) => {
     providerControllerState.addCredit = onAddCredit;
+    providerControllerState.speechClient = speechClient;
     return (
     <div>
       <h2>Agents &amp; providers</h2>
@@ -64,12 +70,36 @@ afterEach(() => {
   providerControllerState.error = null;
   providerControllerState.mutate.mockReset();
   providerControllerState.addCredit = null;
+  providerControllerState.speechClient = null;
   window.history.replaceState({}, "", "/");
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
 });
 
 describe("Canvas settings sections", () => {
+  it("binds the Settings dictation allowance read to the explicit Preview computer", async () => {
+    window.history.replaceState({}, "", "/vm/alice?runtime=studio");
+    const capabilities = {
+      contractVersion: 1,
+      previewQuota: { mode: "preview", requestLimit: 25, requestsUsed: 1, requestsRemaining: 24,
+        maxConcurrency: 1, expiresAt: "2026-10-20T16:45:00.000Z" },
+      fileTranscription: { status: "ready", dictation: { enabled: true, maxBytes: 1_024,
+        maxDurationMs: 120_000, maxTranscriptChars: 32_000, supportedMediaTypes: ["audio/wav"], languageHints: false },
+        ownerAudio: { enabled: false } },
+    };
+    const fetcher = vi.fn<typeof fetch>().mockResolvedValue(Response.json(capabilities));
+    vi.stubGlobal("fetch", fetcher);
+    render(<AgentSection />);
+
+    await expect(providerControllerState.speechClient!.capabilities()).resolves.toMatchObject({
+      previewQuota: { requestsRemaining: 24 },
+    });
+    expect(fetcher).toHaveBeenCalledWith(
+      `${window.location.origin}/vm/alice/~runtime/studio/api/speech/capabilities`,
+      expect.objectContaining({ method: "GET", credentials: "include", redirect: "error" }),
+    );
+  });
+
   it("preserves the active checkout callback and settlement across ordinary snapshot rerenders", async () => {
     window.history.replaceState({}, "", "/vm/alice?runtime=studio");
     let release!: (response: Response) => void;
