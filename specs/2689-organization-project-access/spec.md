@@ -4,7 +4,7 @@
 **Created**: 2026-11-04
 **Status**: Draft
 **Tracking**: [ENG-29](https://linear.app/matrix-os/issue/ENG-29/ship-secure-collaboration-and-sharing-across-matrix-os)
-**Input**: Simplify Matrix OS V1 collaboration so sharing a project with an organization gives every current and future organization member full project work access, including shared Chats, AI, tools, terminals, and project content. The owner alone manages sharing, whole-project deletion, AI accounts and billing, and organization membership. Shared AI follows the owner's current global AI Settings with request-time verification and no fallback.
+**Input**: Simplify Matrix OS V1 collaboration so sharing a project with an organization gives every current and future organization member full project work access, including shared Chats, AI, tools, terminals, and project content. The owner alone manages sharing, whole-project deletion, and their AI accounts and billing; organization membership remains governed by organization policy. Shared AI follows the owner's current global AI Settings with request-time verification and no fallback.
 
 ## Product Decision
 
@@ -14,7 +14,7 @@ Matrix OS V1 has one collaboration action and one organization-member experience
 
 There are no Editor or Viewer roles, direct member invitations, per-capability grants, project-level AI policies, model allowlists, provider acknowledgements, or project-to-account reconfirmation flows for new project sharing. The share action itself is the owner's acknowledgement that organization members may use the owner's currently configured AI connection for project work.
 
-“Full working access” covers work inside the project. It does not transfer ownership or administrative authority. Only the project owner may share or unshare the project, delete the whole project, manage AI accounts or billing, or manage organization membership.
+“Full working access” covers work inside the project. It does not transfer ownership or administrative authority. Only the project owner may share or unshare the project, delete the whole project, or manage the owner's AI accounts and billing. Organization membership is administered only by actors authorized under organization policy; project ownership alone grants no organization-administration power.
 
 ## User Scenarios & Testing
 
@@ -102,9 +102,9 @@ As a project owner or organization administrator, I can remove access through th
 - **FR-001**: The system MUST let a project owner share the whole project with exactly one organization through one explicit confirmation.
 - **FR-002**: Sharing MUST grant every active current and future member of that organization the same full project working access without individual invitations, roles, grants, or capability configuration.
 - **FR-003**: Full project working access MUST include current and future project Chats and history, project content, available project-scoped tools and apps, project terminals, and AI requests.
-- **FR-004**: Organization-wide project access MUST NOT grant ownership or permission to share or unshare the project, delete the whole project, manage the owner's AI accounts or billing, or manage organization membership.
+- **FR-004**: Organization-wide project access MUST NOT grant ownership or permission to share or unshare the project, delete the whole project, manage the owner's AI accounts or billing, or administer organization membership; organization administration MUST remain governed by organization policy independently of project ownership.
 - **FR-005**: The project owner MUST retain uninterrupted access to the project after sharing, unsharing, organization-member revocation, or an unavailable organization-membership service.
-- **FR-006**: Access MUST be derived from the project's shared organization and current active organization membership; client state, organization administration roles alone, historical invitations, and stale direct grants MUST NOT independently authorize project access.
+- **FR-006**: Non-owner access MUST be derived from the project's shared organization, the project owner's current active membership in that organization, and the requesting actor's current active membership; client state, organization administration roles alone, historical invitations, and stale direct grants MUST NOT independently authorize project access.
 - **FR-007**: New project sharing MUST NOT expose Editor, Viewer, direct-member, per-capability, project AI-source, model-allowlist, or provider-acknowledgement controls.
 - **FR-008**: Shared-project AI requests MUST use the owner's current ready global AI connection at request admission time.
 - **FR-009**: Changing the owner's global AI selection MUST apply to later shared-project requests without project-level reconfirmation.
@@ -112,7 +112,7 @@ As a project owner or organization administrator, I can remove access through th
 - **FR-011**: The system MUST NOT fall back to Matrix credit, another provider, another account, another model source, or a collaborator-supplied credential when the owner's current connection is unavailable.
 - **FR-012**: Provider credentials, tokens, credential paths, billing details, and raw provider errors MUST remain unavailable to collaborators, project sandboxes, public responses, logs, and model context.
 - **FR-013**: Member work MUST remain inside the shared project boundary and MUST NOT provide general access to the owner's home, unrelated projects, system configuration, or private credentials.
-- **FR-014**: Unsharing or loss of active organization membership MUST deny new reads, writes, AI requests, terminal input, and tool actions and MUST stop affected active project sessions through the established revocation boundary.
+- **FR-014**: Unsharing, loss of the requesting actor's active membership, or loss of the project owner's active membership in the selected organization MUST deny new non-owner reads, writes, AI requests, terminal input, and tool actions and MUST stop affected active project sessions through the established revocation boundary. The project owner retains private owner access.
 - **FR-015**: Owner AI logout, account replacement, or disabling AI MUST fence new shared AI requests and stop or drain affected active work before the change becomes usable for later requests.
 - **FR-016**: Shared prompts, responses, discussion, tool output, and project mutations MUST persist in the canonical project state and remain consistent after reload and reconnect.
 - **FR-017**: Web Canvas, Web Desktop, and Electron Desktop MUST present the same organization-wide access rule and observable collaboration behavior.
@@ -156,7 +156,8 @@ As a project owner or organization administrator, I can remove access through th
 - External guests who are not active organization members.
 - Cross-organization sharing or sharing one project with multiple organizations.
 - Member access to unrelated owner resources or provider credentials.
-- Member control of project sharing, whole-project deletion, organization membership, provider accounts, or billing.
+- Organization-administration power derived from project access or project ownership; organization policy remains authoritative.
+- Member control of project sharing, whole-project deletion, the owner's provider accounts, or the owner's billing.
 - New standalone live Chat, terminal, file, folder, or app shares.
 - Fine-grained roles, per-member grants, per-capability controls, project-specific AI sources, and project-specific model policies.
 

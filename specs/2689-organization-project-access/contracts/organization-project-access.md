@@ -47,14 +47,15 @@ type ProjectWorkAccess = {
 };
 ```
 
-An active organization member receives the complete contributor work actions. An archived project receives the existing read-only lifecycle narrowing. Denied responses carry no actions and one safe reason.
+An active organization member receives the complete contributor work actions only while both that actor and the project owner have current active membership in the selected organization. If the owner loses membership, all non-owner access is revoked until the owner explicitly shares with an eligible organization; the owner retains private owner access. An archived project receives the existing read-only lifecycle narrowing. Denied responses carry no actions and one safe reason.
 
 Owner-only administrative actions are intentionally absent from `CollaborationCapabilityAction` and are checked by dedicated owner authorization:
 
 - share/unshare project
 - delete whole project
 - change Provider Settings or billing
-- add/remove organization members
+
+Adding or removing organization members is not a project-owner action. It is authorized independently by organization policy (for example, `org:admin`); project ownership neither grants nor denies that organization authority.
 
 ## HTTP behavior
 
@@ -80,7 +81,7 @@ Every mutating route keeps Hono `bodyLimit`, Zod boundary validation, typed erro
 
 At request admission and dispatch:
 
-1. Verify live project scope and current organization membership.
+1. Verify the live project scope, the owner's current active membership in the selected organization, and the requesting actor's current active membership. Owner-private access is evaluated separately.
 2. Read the scope owner's Provider Settings V3 snapshot.
 3. Require non-null `active.providerInstanceId`, `active.accessSourceId`, and `active.modelId`.
 4. Verify the exact tuple is ready and belongs to the owner.
@@ -105,6 +106,7 @@ If any step fails, return/queue the existing safe unavailable or unauthorized ou
 ## Event and realtime behavior
 
 - Membership removal and unshare advance existing authority/fence state and drain affected sessions.
+- Loss of the project owner's membership revokes and drains every non-owner project session while preserving private owner access.
 - Organization membership addition makes the project discoverable without an acceptance event.
 - REST mutations affecting realtime project documents continue to notify subscribers after commit.
 - Per-subscriber send failures remain isolated and dead subscribers are evicted.

@@ -2,7 +2,7 @@
 
 ## Decision 1: Organization membership is the only project work grant
 
-**Decision**: For a live shared project, `collaboration_scopes.organization_id` plus fresh active membership is sufficient for the full contributor work action set. No project grant, activation, role, or invitation is consulted.
+**Decision**: For a live shared project, `collaboration_scopes.organization_id` plus fresh active membership for both the project owner and requesting actor is sufficient for the full contributor work action set. The owner keeps private owner access independently. No project grant, activation, role, or invitation is consulted.
 
 **Rationale**: The project is already explicitly attached to one organization, and every request already has a bounded organization precondition. Reusing those facts makes future members automatic, removes competing policy state, and preserves a fail-closed boundary.
 
@@ -14,7 +14,7 @@
 
 ## Decision 2: Full access is a bounded work capability set, not administration
 
-**Decision**: Members receive the current contributor actions for project content and tools. Share/unshare, whole-project deletion, Provider Settings/billing, and organization membership remain explicit owner/admin checks outside that set.
+**Decision**: Members receive the current contributor actions for project content and tools. Share/unshare, whole-project deletion, and Provider Settings/billing remain explicit project-owner checks outside that set. Organization membership administration remains a separate organization-policy check and is never inferred from project ownership.
 
 **Rationale**: This delivers the user's "everyone can work" intent without transferring ownership, financial authority, credentials, or organization control.
 

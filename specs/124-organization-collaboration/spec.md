@@ -15,8 +15,9 @@ Full working access is not ownership. Only the project owner may:
 
 - share or unshare the whole project;
 - delete the whole project;
-- manage the owner's AI connections or billing; and
-- exercise organization-management powers otherwise granted by the organization system.
+- manage the owner's AI connections or billing.
+
+Organization membership remains governed by organization policy. Project ownership neither grants nor denies organization-administration authority.
 
 Members may create, modify, and delete content inside the project. They may not access unrelated projects, the owner's general home, credentials, billing data, or system configuration.
 
@@ -35,7 +36,7 @@ project access = project is shared with organization
 
 Organization administration status does not grant access to a private project before it is shared. After sharing, every active member receives the same working access regardless of organization administration role. Pending, expired, suspended, or removed identities receive no access. When membership cannot be verified, member access fails closed.
 
-The owner is immutable and always retains access. Removing a member from the organization or unsharing the project ends member access without individual grant cleanup. Revocation stops affected active project sessions and denies later operations.
+The owner is immutable and always retains private access. Removing a member from the organization or unsharing the project ends affected member access without individual grant cleanup. If the project owner loses active membership in the selected organization, all non-owner access ends until the owner explicitly shares with an eligible organization. Revocation stops affected active project sessions and denies later operations.
 
 ## Unified Share dialog
 
@@ -70,7 +71,7 @@ Credentials remain server-side and unavailable to collaborators, sandboxes, publ
 | Operation | Authentication | Required authority | Result |
 | --- | --- | --- | --- |
 | Project share/unshare | Owner runtime session | project owner and current membership in selected organization | revision-bound whole-project mutation |
-| Shared project read/write | Direct owner-home session | current active membership in project's organization | full project working access |
+| Shared project read/write | Direct owner-home session | current active membership for both project owner and requesting actor in project's organization | full project working access |
 | Shared Chat discussion/AI | Direct owner-home session | shared project access; AI additionally requires current ready owner connection | canonical shared timeline |
 | Project tool/app/terminal use | Direct owner-home session | shared project access and operational project capability | project-scoped execution only |
 | Whole-project deletion | Owner runtime session | project owner | allowed |
@@ -96,7 +97,7 @@ Release evidence must prove:
 - one-confirmation organization sharing with no role, member, capability, provider, model, or acknowledgement setup;
 - immediate equivalent access for current and newly activated organization members;
 - member use of existing and future project Chats, AI, project content, tools, apps, and terminals;
-- owner-only sharing, whole-project deletion, AI/billing, and organization administration;
+- owner-only sharing, whole-project deletion, and owner AI/billing, plus organization administration governed independently by organization policy;
 - member denial outside the shared project and complete outsider denial;
 - automatic use of the owner's current global AI Settings for later requests;
 - no provider, account, model-source, collaborator-credential, or Matrix-credit fallback;

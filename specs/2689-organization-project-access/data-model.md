@@ -132,9 +132,10 @@ ready route A → ready route B: later requests use B; A-bound active work is fe
 ## Invariants
 
 1. A non-owner cannot gain project work access without current active membership in the project's organization.
-2. A member cannot exercise owner-only administration through the contributor action set.
-3. A project AI request never selects a route absent from the owner's current global Provider Settings projection.
-4. Credentials and raw provider errors never cross the owner/runtime boundary.
-5. Legacy project grants and policies cannot narrow or expand project access after cutover.
-6. Standalone resource shares retain their existing grant semantics until explicitly migrated.
-7. Revocation and unshare fail closed and fence stale authority.
+2. A non-owner cannot retain project work access after the project owner loses active membership in the selected organization; the owner retains private owner access.
+3. A member cannot exercise owner-only administration through the contributor action set, and project ownership does not imply organization-administration authority.
+4. A project AI request never selects a route absent from the owner's current global Provider Settings projection.
+5. Credentials and raw provider errors never cross the owner/runtime boundary.
+6. Legacy project grants and policies cannot narrow or expand project access after cutover.
+7. Standalone resource shares retain their existing grant semantics until explicitly migrated.
+8. Revocation and unshare fail closed and fence stale authority.
