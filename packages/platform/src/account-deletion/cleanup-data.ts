@@ -5,6 +5,7 @@ import { AccountDeletionOwnershipError } from './types.js';
 import { lockAccountDeletionOwner } from './repository.js';
 import { ownerHandlesQuery } from './owner-handles.js';
 import type { PlatformDB } from '../db.js';
+import { eraseRetiredPreviewPairBindings } from './cleanup-preview-pairs.js';
 import { readUsageWaiverAudit } from '../ai-funded-usage-waiver-audit.js';
 
 export async function hasTable(db: PlatformDB, name: string): Promise<boolean> {
@@ -70,6 +71,7 @@ export async function eraseOwnerPlatformData(db: PlatformDB, owner: string, owne
     const pending = await trx.executor.selectFrom('provider_deletion_queue').select('id')
       .where('machine_id','in',machineIds).where('completed_at','is',null).limit(1).execute();
     if (pending.length) throw new Error('runtime_cleanup_pending');
+    if (await hasTable(trx, 'preview_pair_members')) await eraseRetiredPreviewPairBindings(trx, owner);
     await trx.executor.deleteFrom('billing_runtime_actions').where('machine_id','in',machineIds).execute();
     await trx.executor.deleteFrom('provisioning_jobs').where('machine_id','in',machineIds).execute();
     await trx.executor.deleteFrom('provider_deletion_queue').where('machine_id','in',machineIds).execute();
