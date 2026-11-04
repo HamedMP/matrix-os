@@ -1,8 +1,11 @@
 import { z } from "zod/v4";
+import { AppChatRequestSchema, MAX_APP_CHAT_REQUEST_BYTES, createAppChatClient } from "#app-chats";
 
 export const APP_CAPABILITY_CHANNEL = "native-app:capability";
 export const APP_CAPABILITY_TIMEOUT_MS = 35_000;
-export const MAX_APP_CAPABILITY_BYTES = 65_536;
+/** Largest request any capability may carry. Non-Chat kinds keep the smaller limit below. */
+export const MAX_APP_CAPABILITY_BYTES = MAX_APP_CHAT_REQUEST_BYTES;
+const MAX_APP_INTEGRATION_REQUEST_BYTES = 65_536;
 /** Matches the bounded connected-account inventory accepted by the gateway. */
 export const MAX_APP_CONNECTED_SERVICES = 256;
 export const MAX_APP_BRIDGE_REPLY_BYTES = 256 * 1024;
@@ -21,6 +24,7 @@ export function appIntegrationReplyBytes(service: string, action: string): numbe
   return MAX_APP_BRIDGE_REPLY_BYTES;
 }
 export function appCapabilityReplyBytes(input?: AppCapabilityInput): number {
+  if (input?.kind === "chats") return MAX_APP_DATABASE_REPLY_BYTES;
   return input?.kind === "integrations.call" ? appIntegrationReplyBytes(input.service, input.action) : MAX_APP_BRIDGE_REPLY_BYTES;
 }
 export const AppIdentitySchema = z.string().min(1).max(256).regex(/^[a-z0-9][a-z0-9_-]*(?:\/[a-z0-9][a-z0-9_-]*)*$/);
@@ -39,12 +43,12 @@ const Call = z.strictObject({
   params: z.record(z.string().max(128), z.json()).optional(),
   label: z.string().trim().min(1).max(100).optional(),
 });
-function boundedUtf8(value: string): boolean {
+function boundedUtf8(value: string, maximum: number): boolean {
   let bytes = 0;
   for (const character of value) {
     const point = character.codePointAt(0)!;
     bytes += point <= 0x7f ? 1 : point <= 0x7ff ? 2 : point <= 0xffff ? 3 : 4;
-    if (bytes > MAX_APP_CAPABILITY_BYTES - 512) return false;
+    if (bytes > maximum - 512) return false;
   }
   return true;
 }
@@ -54,7 +58,8 @@ export const AppCapabilityInputSchema = z.discriminatedUnion("kind", [
   z.strictObject({ kind: z.literal("integrations.list") }),
   z.strictObject({ kind: z.literal("integrations.describe"), service: Name }),
   Call,
-]).refine((value) => boundedUtf8(JSON.stringify(value)));
+  z.strictObject({ kind: z.literal("chats"), request: AppChatRequestSchema }),
+]).refine((value) => boundedUtf8(JSON.stringify(value), value.kind === "chats" ? MAX_APP_CAPABILITY_BYTES : MAX_APP_INTEGRATION_REQUEST_BYTES));
 export type AppCapabilityInput = z.infer<typeof AppCapabilityInputSchema>;
 export const AppCapabilityRequestSchema = z.strictObject({ app: AppIdentitySchema, input: AppCapabilityInputSchema });
 export const AppConnectedServiceSchema = z.object({
@@ -93,6 +98,8 @@ export function createAppCapabilityClient(invoke: (input: AppCapabilityInput) =>
     }
   }
   return Object.freeze({
+    // Chat outcomes are enveloped so apps can react to stale revisions and denials.
+    chats: createAppChatClient(input => request(input)),
     capabilities: async (): Promise<AppCapabilities> => AppCapabilitiesSchema.parse(await request({ kind: "capabilities" })),
     integrations: async () => z.object({ services: z.array(AppConnectedServiceSchema).max(MAX_APP_CONNECTED_SERVICES) }).parse(await request({ kind: "integrations.list" })).services,
     describeService: async (service: string): Promise<AppServiceDescription> => AppServiceDescriptionSchema.parse(await request({ kind: "integrations.describe", service })),

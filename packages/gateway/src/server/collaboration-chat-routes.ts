@@ -39,6 +39,9 @@ import type { GatewayCollaborationConfigurationFailure, GatewayCollaborationRunt
 import { requireRequestPrincipal } from "../request-principal.js";
 import { registerOwnerCollaborationRoutes } from "../startup/collaboration.js";
 
+import { createAppChatRuntime, type AppChatRuntime } from "../app-capabilities/chats.js";
+import type { RequestPrincipal } from "../request-principal.js";
+
 export interface CollaborationChatRouteOptions {
   app: Hono;
   browserApprovals?: BrowserApprovalControl;
@@ -62,6 +65,8 @@ export interface CollaborationChatRouteOptions {
   runtimeOwnerIds: readonly string[];
   listGmailAccounts?: (ownerId: string) => Promise<readonly GmailAccountRow[]>;
   botServices?: BotServices;
+  listProjectsForApp: (principal: RequestPrincipal) => Promise<unknown>;
+  onAppChatRuntime: (runtime: AppChatRuntime | null) => void;
 }
 
 export function registerCollaborationChatRoutes(options: CollaborationChatRouteOptions): { close(): Promise<void> } {
@@ -97,21 +102,29 @@ export function registerCollaborationChatRoutes(options: CollaborationChatRouteO
   const localImports = registerLocalChatImports({ app, repository: chatRepository, storage: options.syncR2,
     runtimeOwnerId: options.runtimeOwnerId, runtimeSlot: options.runtimeSlot, getPrincipal: c => requireRequestPrincipal(c) });
   app.route("/", createBrowserGrantRoutes({ control: options.browserApprovals, getPrincipal: c => requireRequestPrincipal(c) }));
+  const canonicalChatService = chatRepository
+    ? createCanonicalChatService(chatRepository, {
+      ...(botServices ? { navigation: createChatNavigationRepository(chatRepository.kysely) } : {}),
+      projectOwnerToolOutput,
+      ...(canonicalChatOrchestrator ? { orchestrator: canonicalChatOrchestrator } : {}),
+      ...(canonicalChatExecutionRoots ? { executionRoots: canonicalChatExecutionRoots } : {}),
+      ...(canonicalChatCollaborationGuard ? { collaborationGuard: canonicalChatCollaborationGuard } : {}),
+      ...(gatewayCollaboration?.projectChatAssignments
+        ? { projectAssignments: gatewayCollaboration.projectChatAssignments }
+        : {}),
+    })
+    : createUnavailableCanonicalChatService();
   app.route("/", createCanonicalChatRoutes({
-    service: chatRepository
-        ? createCanonicalChatService(chatRepository, {
-          ...(botServices ? { navigation: createChatNavigationRepository(chatRepository.kysely) } : {}),
-          projectOwnerToolOutput,
-          ...(canonicalChatOrchestrator ? { orchestrator: canonicalChatOrchestrator } : {}),
-          ...(canonicalChatExecutionRoots ? { executionRoots: canonicalChatExecutionRoots } : {}),
-          ...(canonicalChatCollaborationGuard ? { collaborationGuard: canonicalChatCollaborationGuard } : {}),
-          ...(gatewayCollaboration?.projectChatAssignments
-            ? { projectAssignments: gatewayCollaboration.projectChatAssignments }
-            : {}),
-        })
-      : createUnavailableCanonicalChatService(),
+    service: canonicalChatService,
     getPrincipal: (c) => requireRequestPrincipal(c),
   }));
+  const appChatRuntime = chatRepository ? createAppChatRuntime({
+    service: canonicalChatService,
+    catalog: canonicalChatProviderCatalog,
+    projects: { list: options.listProjectsForApp },
+    events: chatRepository,
+  }) : null;
+  options.onAppChatRuntime(appChatRuntime);
   app.route("/", createBotRoutes({
     ...(botServices ? {
       recipes: botServices.recipes,
@@ -160,5 +173,11 @@ export function registerCollaborationChatRoutes(options: CollaborationChatRouteO
     canReadNativeAccountMetadata: (c) => Boolean(options.runtimeOwnerId) && requireRequestPrincipal(c).userId === options.runtimeOwnerId,
     getPrincipal: (c) => requireRequestPrincipal(c),
   }));
-  return localImports;
+  return {
+    async close() {
+      options.onAppChatRuntime(null);
+      appChatRuntime?.close();
+      await localImports.close();
+    },
+  };
 }

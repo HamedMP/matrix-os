@@ -1,4 +1,5 @@
 import { z } from "zod/v4";
+import { CanonicalChatIdSchema } from "@matrix-os/contracts";
 
 export const NATIVE_APP_OPEN_CHAT_CHANNEL = "native-app:open-chat";
 export const NATIVE_APP_CHAT_COMPLETION_CHANNEL = "app:open-chat-complete";
@@ -6,18 +7,21 @@ export const NATIVE_APP_CHAT_COMPLETION_CHANNEL = "app:open-chat-complete";
 const RecipeId = z.string().min(1).max(128).regex(/^[a-z0-9][a-z0-9-]{0,127}$/);
 const RequestId = z.string().min(1).max(128).regex(/^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/);
 
-export const NativeAppOpenChatRequestSchema = z.strictObject({
-  view: z.literal("recipes"),
-  recipeId: RecipeId.optional(),
-});
+const RecipesTarget = z.strictObject({ view: z.literal("recipes"), recipeId: RecipeId.optional() });
+const ChatTarget = z.strictObject({ view: z.literal("chat"), chatId: CanonicalChatIdSchema });
+export const NativeAppOpenChatRequestSchema = z.discriminatedUnion("view", [RecipesTarget, ChatTarget]);
 export type NativeAppOpenChatRequest = z.infer<typeof NativeAppOpenChatRequestSchema>;
 
-export const NativeAppOpenChatEventSchema = NativeAppOpenChatRequestSchema.extend({
+const EventIdentity = {
   requestId: RequestId,
   runtimeSlot: z.string().min(1).max(64),
   authGeneration: z.number().int().min(0),
-}).strict();
+};
+export const NativeAppOpenChatEventSchema = z.discriminatedUnion("view", [
+  RecipesTarget.extend(EventIdentity), ChatTarget.extend(EventIdentity),
+]);
 export type NativeAppOpenChatEvent = z.infer<typeof NativeAppOpenChatEventSchema>;
+export type NativeAppOpenRecipesEvent = Extract<NativeAppOpenChatEvent, { view: "recipes" }>;
 
 export const NativeAppChatCancellationSchema = z.strictObject({ requestId: RequestId });
 export type NativeAppChatCancellation = z.infer<typeof NativeAppChatCancellationSchema>;

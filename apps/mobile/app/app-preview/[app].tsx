@@ -1,9 +1,11 @@
+import { useCallback } from "react";
 import { ActivityIndicator, Text, View } from "react-native";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
-import { Stack, useLocalSearchParams } from "expo-router";
+import { Stack, useLocalSearchParams, useRouter } from "expo-router";
 
 import AppRuntimeFrame from "@/components/AppRuntimeFrame";
 import { Spacer } from "@/components/ui";
+import { useCanonicalChatSession } from "@/lib/canonical-chat-session-context";
 import { useComputerAppSession } from "@/lib/queries/use-computer-apps";
 
 export default function AppPreviewScreen() {
@@ -18,6 +20,12 @@ export default function AppPreviewScreen() {
   const title = name || app || "App";
   const { launchUrl, isPending, isError, requestAppBridge, appIdentity, runtimeSlug } = useComputerAppSession(app ?? "", runtimeSlugHint);
   const { theme } = useUnistyles();
+  const { selectChat } = useCanonicalChatSession();
+  const router = useRouter();
+  const openChat = useCallback((chatId: string) => {
+    selectChat(chatId);
+    router.navigate("/");
+  }, [router, selectChat]);
 
   return (
     <View testID="app-preview-runtime" style={styles.screen}>
@@ -27,7 +35,7 @@ export default function AppPreviewScreen() {
           <ActivityIndicator color={theme.v2.appColors.ink} />
         </View>
       ) : launchUrl ? (
-        <AppRuntimeFrame url={launchUrl} title={title} app={appIdentity} runtimeSlug={runtimeSlug} requestAppBridge={requestAppBridge} />
+        <AppRuntimeFrame url={launchUrl} title={title} app={appIdentity} runtimeSlug={runtimeSlug} requestAppBridge={requestAppBridge} openChat={openChat} />
       ) : (
         <View style={styles.centered}>
           <Text style={styles.title}>{isError ? "App session unavailable" : "App unavailable"}</Text>

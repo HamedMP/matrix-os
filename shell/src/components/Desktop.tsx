@@ -1,5 +1,7 @@
 "use client";
 
+import { useAppOpenChat } from "@/lib/app-open-chat";
+
 import { useState, useCallback, useEffect, useMemo, useRef, type ReactNode } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { appKeys, appsQueryOptions, hydrateAppIconUrls, type ApiAppEntry } from "@/api/apps";
@@ -406,6 +408,10 @@ export function Desktop({ launchAppPath, sharedTerminalScopeId, onOpenCommandPal
     }
     focusOrOpen(name ?? apps.find((app) => app.path === path)?.name ?? "App", path);
   }, [apps, focusOrOpen]);
+  useAppOpenChat((chatId) => {
+    chat?.switchConversation(chatId);
+    openAppOrFocus("__chat__", "Chat");
+  });
 
   const focusTerminalForHandoff = useCallback((handoff: (targetId?: string) => void) => {
     const windows = useWindowManager.getState().windows;

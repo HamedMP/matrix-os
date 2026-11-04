@@ -1,7 +1,7 @@
 import { lstat } from "node:fs/promises";
 import { join } from "node:path";
 import { z } from "zod/v4";
-import { AppIdentitySchema } from "@matrix-os/contracts";
+import { APP_CHAT_SCOPES, AppChatScopeSchema, AppIdentitySchema, type AppChatScope } from "@matrix-os/contracts";
 import { readBoundedJsonFileWithIdentity } from "../bounded-json-file.js";
 import { listUniqueAppManifests, MAX_APP_MANIFEST_BYTES } from "../app-runtime/app-index.js";
 import { AppManifestSchema, type AppManifest } from "../app-runtime/manifest-schema.js";
@@ -9,7 +9,9 @@ import { AppManifestSchema, type AppManifest } from "../app-runtime/manifest-sch
 const Name = z.string().min(1).max(128).regex(/^[a-z][a-z0-9_-]*$/);
 export const AppCapabilityPolicySchema = z.strictObject({
   apps: z.record(AppIdentitySchema, z.strictObject({
-    services: z.record(Name, z.array(Name).min(1).max(128)).refine(value => Object.keys(value).length <= 100),
+    services: z.record(Name, z.array(Name).min(1).max(128)).refine(value => Object.keys(value).length <= 100).default({}),
+    /** Absent means none: a policy entry restricts an app instead of expanding it. */
+    chats: z.array(AppChatScopeSchema).max(APP_CHAT_SCOPES.length).optional(),
   })).refine(value => Object.keys(value).length <= 100),
 });
 export type AppCapabilityGrant = z.infer<typeof AppCapabilityPolicySchema>["apps"][string];
@@ -32,12 +34,13 @@ async function readAppCapabilityPolicy(homePath: string): Promise<z.infer<typeof
 
 function intersectGrants(grants: AppCapabilityGrant[]): AppCapabilityGrant {
   const [first, ...rest] = grants;
-  if (!first) return { services: {} };
+  if (!first) return { services: {}, chats: [] };
   const services = Object.fromEntries(Object.entries(first.services).flatMap(([service, actions]) => {
     const common = actions.filter(action => rest.every(grant => grant.services[service]?.includes(action)));
     return common.length > 0 ? [[service, common]] : [];
   }));
-  return { services };
+  const chats = (first.chats ?? []).filter(scope => rest.every(grant => grant.chats?.includes(scope)));
+  return { services, chats };
 }
 
 function hasImportedProvenance(value: unknown): boolean {
@@ -97,4 +100,11 @@ export function appCapabilityActionAllowed(access: AppCapabilityAccess | null, s
 
 export function appCapabilityIntegrationsAvailable(access: AppCapabilityAccess | null): boolean {
   return access?.kind === "trusted-default" || Boolean(access && Object.keys(access.grant.services).length);
+}
+
+/** Trusted owner-built apps hold every Chat scope; a policy entry states exact scopes. */
+export function appChatScopes(access: AppCapabilityAccess | null): readonly AppChatScope[] {
+  if (access?.kind === "trusted-default") return APP_CHAT_SCOPES;
+  const granted = access?.grant.chats ?? [];
+  return APP_CHAT_SCOPES.filter(scope => granted.includes(scope));
 }

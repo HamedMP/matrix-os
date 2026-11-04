@@ -3,6 +3,7 @@ import { bodyLimit } from "hono/body-limit";
 import { AppCapabilityRequestSchema, MAX_APP_CAPABILITY_BYTES } from "@matrix-os/contracts";
 import { BotIntegrationError, type BotIntegrationClient } from "../bots/integration-client.js";
 import { validateActionParams } from "../integrations/parameter-validation.js";
+import { handleAppChatRequest, createAppChatBudget, type AppChatRoutesOptions } from "./chats.js";
 import { appCapabilityActionAllowed, appCapabilityIntegrationsAvailable, appCapabilityServiceAllowed, readAppCapabilityAccess } from "./policy.js";
 
 interface Options {
@@ -11,6 +12,7 @@ interface Options {
   resolveOwner: (context: Context) => string | null;
   integrations: Pick<BotIntegrationClient, "inventory" | "describe" | "callAppAction"> | null;
   aiAllowed: (app: string) => Promise<boolean>;
+  chats?: AppChatRoutesOptions;
 }
 
 const failures = {
@@ -27,6 +29,7 @@ export function createAppCapabilityRoutes(options: Options): Hono {
   let inFlight = 0;
   let windowStart = 0;
   let requests = 0;
+  const chatBudget = createAppChatBudget();
   routes.post("/", bodyLimit({ maxSize: MAX_APP_CAPABILITY_BYTES }), async context => {
     const owner = options.resolveOwner(context);
     if (!owner || !options.ownerIds.includes(owner)) return context.json(failures.denied, 403);
@@ -40,6 +43,10 @@ export function createAppCapabilityRoutes(options: Options): Hono {
     const parsed = AppCapabilityRequestSchema.safeParse(body);
     if (!parsed.success) return context.json(failures.invalid, 400);
     const { app, input } = parsed.data;
+    // Chat apps poll by design, so Chat traffic must not starve integrations.
+    if (input.kind === "chats") return context.json(await handleAppChatRequest({
+      context, homePath: options.homePath, app, request: input.request, options: options.chats, budget: chatBudget,
+    }));
     const now = Date.now();
     if (now - windowStart >= 60_000) { windowStart = now; requests = 0; }
     if (requests >= 120 || inFlight >= 8) return context.json({ error: "App integrations are busy" }, 429);

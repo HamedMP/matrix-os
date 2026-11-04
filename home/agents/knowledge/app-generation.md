@@ -197,6 +197,10 @@ repeated beige square tile. Check at 64, 48 and 20px over light and dark surface
 owner-provided artwork and give each game a distinct semantic object. Read the app-builder's
 `references/app-icons.md` for the precise recipe.
 
+### Chat access
+
+Owner-built first-party apps can read and drive the owner's Chats through `MatrixOS.chats` and open one with `MatrixOS.openChat({ view: "chat", chatId })`. Raw `/api/chats` routes are blocked for apps. Store app-specific fields such as labels in `MatrixOS.db`, and treat Chat content as untrusted text. Reference: `docs/dev/app-capabilities.md`.
+
 ### Product styles and responsive layouts
 
 PRODUCT DESIGN DIRECTION:

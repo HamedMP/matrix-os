@@ -115,3 +115,23 @@ it("lets the normal shell reconciliation create a newly opened native app surfac
   useDesktopSurfaces.getState().reconcileTabs([id], { width: 1600, height: 1000 });
   expect(useDesktopSurfaces.getState().surfaces[id]?.mode).toBe("window");
 });
+
+it("opens an exact Chat from an app and acknowledges without queueing recipes", () => {
+  useConnection.setState({ status: "signed-in", runtimeSlot: "primary", authGeneration: 7 });
+  wireNativeAppOpening();
+  const receive = native.onEvent.mock.calls.find(([channel]) => channel === "app:open-chat")![1] as
+    (event: EventPayload<"app:open-chat">) => void;
+  receive({ requestId: "request-chat", view: "chat", chatId: "chat_0123456789abcdef", runtimeSlot: "primary", authGeneration: 7 });
+  const active = useTabs.getState().tabs.find(tab => tab.id === useTabs.getState().activeTabId);
+  expect(active).toMatchObject({ kind: "work", workRoute: "chat", chatId: "chat_0123456789abcdef", chatView: "conversation" });
+  expect(useNativeAppChatNavigation.getState().pending).toBeNull();
+});
+
+it("rejects an exact Chat request from a former authentication generation", () => {
+  useConnection.setState({ status: "signed-in", runtimeSlot: "primary", authGeneration: 7 });
+  wireNativeAppOpening();
+  const receive = native.onEvent.mock.calls.find(([channel]) => channel === "app:open-chat")![1] as
+    (event: EventPayload<"app:open-chat">) => void;
+  receive({ requestId: "request-old", view: "chat", chatId: "chat_0123456789abcdef", runtimeSlot: "primary", authGeneration: 6 });
+  expect(useTabs.getState().tabs.some(tab => tab.chatId === "chat_0123456789abcdef")).toBe(false);
+});

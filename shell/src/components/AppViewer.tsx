@@ -5,6 +5,7 @@ import { remoteBrowserSurfaceForPath } from "@matrix-os/contracts";
 import { BrowserLabView } from "./BrowserLabView";
 import { resolveAppBridgeLaunch } from "@/lib/app-bridge-launch";
 import { prepareBridgeFetchRequest, resolveBridgeFetchUrl } from "./app-viewer-bridge-request";
+import { openChatFromApp } from "@/lib/app-open-chat";
 import { readAppBridgeResponse, appBridgeTimeoutMs } from "./app-capability-request";
 import { AppSiteButton } from "./app-sites/AppSiteButton";
 
@@ -209,6 +210,9 @@ function SandboxedAppViewer({ path, sessionId, onOpenApp, visible = true }: AppV
           .then(target => { if (!controller.signal.aborted) onOpenApp(target.name, target.path); })
           .catch((error: unknown) => console.warn("[app-viewer] App launch unavailable", error instanceof Error ? error.name : "UnknownError"))
           .finally(() => launches.delete(controller));
+      },
+      openChat(chatId) {
+        return openChatFromApp(appName, chatId, getGatewayUrl());
       },
     };
 

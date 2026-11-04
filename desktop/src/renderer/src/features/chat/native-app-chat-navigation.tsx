@@ -5,15 +5,15 @@ import { invoke } from "../../lib/operator";
 import { useChatAgentsNavigation, type StartAgentChat } from "@matrix-os/ui";
 import type {
   NativeAppChatNavigationResult,
-  NativeAppOpenChatEvent,
+  NativeAppOpenRecipesEvent,
 } from "../../../../shared/native-app-chat";
 
-type TargetedNativeAppOpenChatEvent = NativeAppOpenChatEvent & { targetTabId: string };
+type TargetedNativeAppOpenChatEvent = NativeAppOpenRecipesEvent & { targetTabId: string };
 
 type State = {
   pending: TargetedNativeAppOpenChatEvent | null;
   canceledRequest: { requestId: string; targetTabId: string } | null;
-  queue(request: NativeAppOpenChatEvent, targetTabId: string): void;
+  queue(request: NativeAppOpenRecipesEvent, targetTabId: string): void;
   cancel(requestId: string): void;
   consumeCancellation(requestId: string): void;
   complete(requestId: string, result: NativeAppChatNavigationResult): Promise<void>;

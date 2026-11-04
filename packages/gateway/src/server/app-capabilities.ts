@@ -1,5 +1,6 @@
 import type { Hono } from "hono";
 import { createAppCapabilityRoutes } from "../app-capabilities/routes.js";
+import type { AppChatRuntime } from "../app-capabilities/chats.js";
 import { createRuntimeAppAiRoutes, isAppAiAllowed } from "../app-ai/runtime.js";
 import { createPiSdkAppCompletion } from "../app-ai/pi-sdk-completion.js";
 import { createHermesAppCompletion } from "../app-ai/hermes-completion.js";
@@ -22,6 +23,8 @@ export function registerAppIntegrationCapabilities(app: Hono, options: {
   homePath: string;
   ownerIds: readonly string[];
   integrationTransport: BotIntegrationTransport | null;
+  /** Chat starts after this route is registered, so it resolves per request. */
+  appChatRuntime: () => AppChatRuntime | null;
 }): void {
   app.route("/api/bridge/capabilities", createAppCapabilityRoutes({
     homePath: options.homePath,
@@ -29,6 +32,7 @@ export function registerAppIntegrationCapabilities(app: Hono, options: {
     resolveOwner: context => requireRequestPrincipal(context).userId,
     integrations: options.integrationTransport ? createBotIntegrationClient(options.integrationTransport) : null,
     aiAllowed: identity => isAppAiAllowed(options.homePath, identity),
+    chats: { runtime: options.appChatRuntime, resolvePrincipal: context => requireRequestPrincipal(context) },
   }));
 }
 
