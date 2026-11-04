@@ -56,6 +56,8 @@ export interface PlanPeerBinding {
 interface PeerDependencies {
     /** Trusted composition selects v2; absence retains the strict v1 adapter. */
     deliveryVersion?: 2;
+    /** Protocol support only. Each occurrence still requires durable owner approval at Gateway admission. */
+    approvedRoutines?: true;
     fetchFn: typeof fetch;
     current(binding: PlanPeerBinding): boolean;
     infer(request: Extract<ChatGptPlanPeerRequest, {
@@ -83,6 +85,7 @@ export function createPlanNativePeer(deps: PeerDependencies) {
         const url = new URL(`/api/chatgpt-plan/device/${path}`, binding.origin);
         if (path === 'capabilities' && deps.deliveryVersion === 2) url.searchParams.set('includeReplyDeliveryV2', 'true');
         if (path === 'capabilities' && deps.inferStream) url.searchParams.set('includeInferenceStream', 'true');
+        if (path === 'capabilities' && deps.approvedRoutines) url.searchParams.set('includeApprovedRoutines', 'true');
         if (binding.runtimeSlot !== 'primary')
             url.searchParams.set('runtime', binding.runtimeSlot);
         if (url.protocol !== 'https:' && !(url.protocol === 'http:' && ['127.0.0.1', 'localhost'].includes(url.hostname)))
@@ -195,6 +198,7 @@ export function createPlanNativePeer(deps: PeerDependencies) {
         let replyDeliveryV2 = false;
         try { replyDeliveryV2 = await delivery?.negotiate() ?? false; }
         catch (error: unknown) { controller.abort(); if (connection === value) { connection = null; deps.connected(false); } throw error; }
+        const approvedRoutines = deps.approvedRoutines && delivery?.supportsApprovedRoutines();
         deps.connected(true);
         let lastSequence = 0; // Session-scoped high-water mark, never evicted.
         let consecutivePollFailures = 0;
@@ -231,7 +235,8 @@ export function createPlanNativePeer(deps: PeerDependencies) {
                         if (!fresh) { poll.receipt?.(); continue; }
                         lastSequence = request.sequence;
                         if (poll.canceled?.has(request.id)) { poll.receipt?.(); continue; }
-                        if (remaining <= 0 || remaining > CHATGPT_PLAN_PEER_REQUEST_LIFETIME_MS + CHATGPT_PLAN_PEER_CLOCK_SKEW_MS || calls.size >= 4) {
+                        if (remaining <= 0 || remaining > CHATGPT_PLAN_PEER_REQUEST_LIFETIME_MS + CHATGPT_PLAN_PEER_CLOCK_SKEW_MS || calls.size >= 4
+                            || request.approvedRoutine && (!approvedRoutines || request.approvedRoutine.ownerId !== binding.ownerId)) {
                             // Refuse this request without terminating unrelated admitted work.
                             const ack = await post(binding, 'reply', { ...session, id: request.id, ok: false, error: 'unavailable' }, controller.signal);
                             if (delivery && ack !== POST_CONFLICT && !z.object({ version: z.literal(1), ok: z.literal(true) }).strict().safeParse(ack).success) {

@@ -84,11 +84,16 @@ export { createCanonicalChatAdmissionTracker, ChatAdmissionUnconfirmed, CHAT_ADM
 export { recoverCanonicalChatAdmission, type CanonicalChatClientAdmission } from "./canonical-chat-admission-recovery.js";
 export { useCanonicalChatStopRecovery } from "./use-canonical-chat-stop-recovery.js";
 export { applyCanonicalChatContent } from "./canonical-chat-content.js";
-export { usePlatformSpeechDraft } from "./speech/use-platform-speech-draft.js";
+export {
+  platformSpeechControlState,
+  platformSpeechPreviewQuotaLabel,
+  usePlatformSpeechDraft,
+} from "./speech/use-platform-speech-draft.js";
 export { SpeechInputWaveform } from "./speech/SpeechInputWaveform.js";
 export type {
   PlatformSpeechCapture,
   PlatformSpeechCaptureAdapter,
+  PlatformSpeechControlState,
   PlatformSpeechDraftClient,
   PlatformSpeechDraftPhase,
   PlatformSpeechRecording,
@@ -180,6 +185,9 @@ export { ChatAgentsEntry, ChatAgentsRailSection } from "./chat-agents/ChatAgents
 export { ChatSidebarAddAction } from "./chat-agents/ChatSidebarAddAction.js";
 export { ChatAgentsContent } from "./chat-agents/ChatAgentsContent.js";
 export { BotRunMessageBody, BotUnassignedMessageBody } from "./chat-agents/bots/BotMessageBody.js";
+export {RoutineMessageMeta, RoutineOccurrenceMessage, RoutineMessageReadNotice, useRoutineMessageState} from "./chat-agents/bots/RoutineMessage.js";
+export {routineMessageTimeline, routineRequestFireId, routineOccurrenceTime, routineOccurrenceOutcome} from "./chat-agents/bots/routine-transcript.js";
+export type {RoutineOccurrence} from "./chat-agents/bots/routine-transcript.js";
 export { BotChatPanel } from "./chat-agents/bots/BotChatPanel.js";
 export { ChatAgentsWorkspace, useChatAgentsNavigation, useCloseAgentsOnDraftRequest } from "./chat-agents/ChatAgentsNavigation.js";
 export type { AgentProviderCatalogSource } from "./chat-agents/use-agent-provider-catalog.js";

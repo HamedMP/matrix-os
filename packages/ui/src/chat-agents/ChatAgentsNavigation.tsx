@@ -7,8 +7,8 @@ export type OpenAgents = {
   requestId?: string;
   onSetup?: () => void;
   onStartChat?: StartAgentChat;
-  view?: "library" | "recipes";
-  title?: "Your AI team" | "New agent" | "Edit agent";
+  view?: "library" | "recipes" | "schedules";
+  title?: "Your AI team" | "New agent" | "Edit agent" | "Schedules";
   requestedRecipeId?: string;
   onRequestedRecipeResult?: (result: { ok: true } | { ok: false; error: "recipe_unavailable" | "navigation_unavailable" }) => void;
 };
@@ -48,7 +48,7 @@ function LocalWorkspace({ children }: { children: ReactNode }) {
     generationRef.current += 1; setGeneration(generationRef.current);
     setDetailsRequest(null);
     trigger.current = element ?? null;
-    const next = { ...value, title: value.view === "recipes" ? "New agent" as const : "Your AI team" as const };
+    const next = { ...value, title: value.view === "schedules" ? "Schedules" as const : value.view === "recipes" ? "New agent" as const : "Your AI team" as const };
     openedRef.current = next;
     setOpened(next);
   }, []);
