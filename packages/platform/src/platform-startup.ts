@@ -16,7 +16,7 @@ import type { Agent } from 'undici';
 import { shouldEnablePlatformBackgroundWorkers } from './platform-worker-mode.js';
 import { resolvePlatformObjectStorage } from './object-storage-config.js';
 import { resolveSitesObjectStorage } from './sites/storage-config.js';
-import { runPlatformStartupWithCleanup } from './platform-startup-cleanup.js';
+import { createPlatformStartupWorkerCleanup, runPlatformStartupWithCleanup } from './platform-startup-cleanup.js';
 import { randomBytes } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import {
@@ -39,6 +39,10 @@ import {
 } from './clerk-auth.js';
 import type { MatrixProvisioner } from './matrix-provisioning.js';
 import type { CustomerVpsService } from './customer-vps.js';
+import type { CustomerVpsServiceDeps } from './customer-vps-types.js';
+import { createCustomerVpsStartupDependencies } from './customer-vps-startup-deps.js';
+import { createConfiguredPreviewPairRuntime } from './preview-pair/startup.js';
+import type { PreviewPairRoutesDeps } from './preview-pair/routes.js';
 import type { GoldenSnapshotService } from './golden-snapshot-service.js';
 import type { GoldenSnapshotRuntimeConfig } from './golden-snapshot-schema.js';
 import type { CustomerVpsObjectStore } from './customer-vps-r2.js';
@@ -253,6 +257,7 @@ type CreatePlatformApp = (deps: {
   collaboration?: PlatformCollaborationComposition;
   slackRoutes?: Hono<any>;
   customerVpsService?: CustomerVpsService;
+  previewPairs?: PreviewPairRoutesDeps;
   activateManagedFeatures?: ManagedFeatureActivator;
   activatePreviewRuntimeAccess?: PreviewRuntimeAccessActivator;
   goldenSnapshotService?: GoldenSnapshotService;
@@ -356,6 +361,9 @@ async function startPlatformServerWithCleanup(
 
   const atsDatabaseUrl = resolveAtsDatabaseUrl(process.env);
   const db = createPlatformDb(runtimeConfig.platformDatabaseUrl);
+  let primaryDbClosing: Promise<void> | undefined;
+  const closePrimaryDb = () => primaryDbClosing ??= db.destroy();
+  registerCustomMcpStartupCleanup(closePrimaryDb);
   await db.ready;
   const fundedAiConfig = loadAiFundedControlPlaneConfig({
     ...process.env,
@@ -810,6 +818,7 @@ async function startPlatformServerWithCleanup(
 
   // Runtime-only candidates reuse registration/status without provider clients,
   // paid lifecycle workers, or a second machine/organization source of truth.
+  let customerVpsDependencies: CustomerVpsServiceDeps | undefined;
   let customerVpsService: CustomerVpsService | undefined = createPreviewPairRuntimeOnlyService({ db, env: process.env });
   let activateManagedFeatures: ManagedFeatureActivator | undefined;
   let activatePreviewRuntimeAccess: PreviewRuntimeAccessActivator | undefined;
@@ -819,6 +828,15 @@ async function startPlatformServerWithCleanup(
   let managedFeatureReconciliationWorker: CustomerVpsReconciliationWorker | undefined;
   let goldenSnapshotInterval: ReturnType<typeof setInterval> | undefined;
   let goldenSnapshotPromise: Promise<void> | undefined;
+  let goldenSnapshotStopped = false;
+  registerCustomMcpStartupCleanup(createPlatformStartupWorkerCleanup(() => [
+    customerVpsReconciliationWorker,
+    managedFeatureReconciliationWorker,
+    {
+      stop() { goldenSnapshotStopped = true; if (goldenSnapshotInterval) clearInterval(goldenSnapshotInterval); },
+      drain: () => goldenSnapshotPromise ?? Promise.resolve(),
+    },
+  ]));
   let billingRuntimeCaptureEvent: ((
     event: 'matrix_vps_suspended' | 'matrix_vps_resumed',
     options: { properties: Record<string, string | number | boolean | undefined> },
@@ -828,13 +846,11 @@ async function startPlatformServerWithCleanup(
       { createCustomerVpsService },
       { loadCustomerVpsConfig },
       { createHetznerClient },
-      { createCustomerVpsSystemStore, createNoopCustomerVpsSystemStore },
       { loadCustomerVpsCloudInitTemplate },
     ] = await Promise.all([
       import('./customer-vps.js'),
       import('./customer-vps-config.js'),
       import('./customer-vps-hetzner.js'),
-      import('./customer-vps-r2.js'),
       import('./customer-vps-cloud-init.js'),
     ]);
     const customerVpsConfig = loadCustomerVpsConfig();
@@ -854,16 +870,11 @@ async function startPlatformServerWithCleanup(
         fetchDispatcher: customerVpsProxyDispatcher,
       });
     }
-    customerVpsService = createCustomerVpsService({
+    customerVpsDependencies = createCustomerVpsStartupDependencies({
       db,
       config: customerVpsConfig,
       hetzner,
-      systemStore: customerVpsObjectStore
-        ? createCustomerVpsSystemStore({
-            r2: customerVpsObjectStore,
-            r2PrefixRoot: customerVpsConfig.r2PrefixRoot,
-          })
-        : createNoopCustomerVpsSystemStore(),
+      objectStore: customerVpsObjectStore,
       cloudInitTemplate,
       fetchDispatcher: customerVpsProxyDispatcher,
       resolveBillingEntitlement: stripeBillingEntitlementsEnabled(process.env)
@@ -877,6 +888,7 @@ async function startPlatformServerWithCleanup(
         : undefined,
       ...(activatePreviewRuntimeAccess ? { activatePreviewRuntimeAccess } : {}),
     });
+    customerVpsService = createCustomerVpsService(customerVpsDependencies);
     activateManagedFeatures = createManagedFeatureActivator({ db, platformSecret: customerVpsConfig.platformSecret,
       relayOrigin: customerVpsConfig.fundedAiRelayUrl, fundedAiEnabled: customerVpsConfig.fundedAiEnabled,
       speechEnabled: customerVpsConfig.platformSpeechEnabled, activateSpeech: target => customerVpsService!.activateSpeech(target),
@@ -890,10 +902,6 @@ async function startPlatformServerWithCleanup(
     const reconcileManagedFeatures = createManagedFeatureReconciliationPass(activateManagedFeatures);
     if (backgroundWorkersEnabled) {
       managedFeatureReconciliationWorker = startCustomerVpsReconciliationWorker({ intervalMs: 60_000, runPass: reconcileManagedFeatures });
-      registerCustomMcpStartupCleanup(async () => {
-        managedFeatureReconciliationWorker?.stop();
-        await managedFeatureReconciliationWorker?.drain();
-      });
     }
     goldenSnapshotConfig = customerVpsConfig.goldenSnapshots;
     {
@@ -928,7 +936,7 @@ async function startPlatformServerWithCleanup(
         tokenFactory: () => randomBytes(32).toString('base64url'),
       });
       const runGoldenSnapshotWorker = async () => {
-        if (goldenSnapshotPromise || !goldenSnapshotService || !goldenSnapshotConfig) return;
+        if (goldenSnapshotStopped || goldenSnapshotPromise || !goldenSnapshotService || !goldenSnapshotConfig) return;
         goldenSnapshotPromise = (async () => {
           try {
             const workerNow = new Date().toISOString();
@@ -1055,6 +1063,10 @@ async function startPlatformServerWithCleanup(
     }
   }
 
+  const previewPairRuntime = await createConfiguredPreviewPairRuntime({ env: process.env, db, clerkAuth,
+    customerVps: customerVpsDependencies, objectStore: customerVpsObjectStore, dispatcher: customerVpsProxyDispatcher,
+    funding: { config: previewRuntimeAccess, repository: fundedAiRepository,
+      relayOrigin: customerVpsDependencies?.config.fundedAiRelayUrl ?? "" }, registerCleanup: registerCustomMcpStartupCleanup });
   const fundedReservationCleanupWorker = backgroundWorkersEnabled
     ? createAiFundedReservationCleanupWorker({
         cleanupExpiredReservations: (input) => cleanupExpiredReservations({
@@ -1110,6 +1122,7 @@ async function startPlatformServerWithCleanup(
     collaboration,
     slackRoutes: slack.routes,
     customerVpsService,
+    previewPairs: previewPairRuntime?.routes,
     activateManagedFeatures,
     activatePreviewRuntimeAccess,
     goldenSnapshotService,
@@ -1135,7 +1148,7 @@ async function startPlatformServerWithCleanup(
   const server = serve({ fetch: app.fetch, hostname: process.env.MATRIX_BIND_HOST, port }, () => {
     console.log(`Platform listening on :${port}`);
   });
-  if (backgroundWorkersEnabled) whatsappRuntime?.start();
+  if (backgroundWorkersEnabled) { whatsappRuntime?.start(); previewPairRuntime?.start(); }
 
   let shuttingDown = false;
   const shutdown = (signal: NodeJS.Signals): void => {
@@ -1144,6 +1157,7 @@ async function startPlatformServerWithCleanup(
     console.log(`[platform] Received ${signal}, shutting down`);
     accountDeletion?.stop();
     customerVpsReconciliationWorker?.stop();
+    previewPairRuntime?.stop();
     managedFeatureReconciliationWorker?.stop();
     if (goldenSnapshotInterval) clearInterval(goldenSnapshotInterval);
     if (customMcpSweepInterval) clearInterval(customMcpSweepInterval);
@@ -1165,6 +1179,7 @@ async function startPlatformServerWithCleanup(
         accountDeletion?.close();
         await atsBackgroundWorker?.shutdown();
         await customerVpsReconciliationWorker?.drain();
+        await previewPairRuntime?.close();
         await managedFeatureReconciliationWorker?.drain();
         if (goldenSnapshotPromise) await goldenSnapshotPromise;
         await Promise.allSettled([
@@ -1182,7 +1197,7 @@ async function startPlatformServerWithCleanup(
         await shutdownPlatformApp(app);
         await processPosthogErrorTracker.shutdown();
         sitesObjectStore?.destroy();
-        await Promise.all([db.destroy(), atsDb?.destroy()]);
+        await Promise.all([closePrimaryDb(), atsDb?.destroy()]);
       })()
         .catch((destroyErr: unknown) => {
           exitCode = 1;
