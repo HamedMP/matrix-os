@@ -25,3 +25,7 @@ spike
 !home/**/*.md
 !packages/**/*.md
 !shell/**/*.md
+
+# Private compiler state and staged emit are local build inputs
+**/.matrix-build-cache
+**/.matrix-build-output
