@@ -35,6 +35,14 @@ it.each([waitForRuntimeSsh, waitForRuntimeReadiness])("bounds each readiness pro
   expect(probe.mock.calls[0][1].timeoutMs).toBeLessThanOrEqual(100);
 });
 
+it("waits for the registration marker owned by the registration service", async () => {
+  const probe = vi.fn(async () => true);
+  mocks.spawnSync.mockReturnValue({ status: 0 });
+  await waitForRuntimeReadiness(100, undefined, { probe });
+  expect(probe.mock.calls[0][0]).toContain("/var/lib/matrix-vps-registration/register-complete");
+  expect(probe.mock.calls[0][0]).not.toContain("/opt/matrix/register-complete");
+});
+
 it("terminates a stalled SSH child on timeout and cancellation", async () => {
   const execute = (_command: string, _args: string[], options: object) => promisify(execFile)(process.execPath, ["-e", "setInterval(() => {}, 1000)"], options);
   await expect(runRuntimeSshProbe(["true"], { timeoutMs: 30, execute })).resolves.toBe(false);

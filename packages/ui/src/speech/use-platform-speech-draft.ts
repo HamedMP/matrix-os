@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import type { SpeechCapabilitiesResponse, SpeechMediaType } from "@matrix-os/contracts";
+import { localDateTimeWithZone } from "../agents-providers/utils.js";
 
 export type PlatformSpeechDraftPhase =
   | "loading"
@@ -16,6 +17,8 @@ export interface UsePlatformSpeechDraftResult {
   phase: PlatformSpeechDraftPhase;
   error: string | null;
   isSupported: boolean;
+  previewQuota: SpeechCapabilitiesResponse["previewQuota"];
+  capabilitiesStale: boolean;
   elapsedMs: number;
   /** Current microphone energy, normalized to the inclusive range 0..1. */
   inputLevel: number;
@@ -24,6 +27,51 @@ export interface UsePlatformSpeechDraftResult {
   start(): Promise<void>;
   stop(): void;
   cancel(): void;
+  retryCapabilities(): Promise<void>;
+}
+
+export interface PlatformSpeechControlState {
+  active: boolean;
+  disabled: boolean;
+  label: string;
+  visible: boolean;
+}
+
+export function platformSpeechPreviewQuotaLabel(
+  quota: NonNullable<SpeechCapabilitiesResponse["previewQuota"]>,
+): string {
+  return `Preview dictation: ${quota.requestsRemaining} of ${quota.requestLimit} requests remaining until ${localDateTimeWithZone(quota.expiresAt)}.`;
+}
+
+export function platformSpeechControlState(
+  speech: Pick<UsePlatformSpeechDraftResult,
+    "phase" | "isSupported" | "previewQuota" | "capabilitiesStale">,
+): PlatformSpeechControlState {
+  const active = ["requesting_permission", "recording", "transcribing"].includes(speech.phase);
+  const quotaExhausted = speech.previewQuota?.requestsRemaining === 0;
+  const retrying = speech.capabilitiesStale && speech.phase === "loading";
+  const unavailable = !speech.isSupported && !active;
+  const label = quotaExhausted
+    ? "Preview dictation allowance exhausted"
+    : retrying
+      ? "Checking speech availability"
+      : speech.capabilitiesStale
+        ? "Retry speech availability"
+        : speech.phase === "requesting_permission"
+          ? "Cancel microphone request"
+          : speech.phase === "recording"
+            ? "Stop recording"
+            : speech.phase === "transcribing"
+              ? "Cancel transcription"
+              : unavailable
+                ? "Speech is unavailable"
+                : "Start voice input";
+  return {
+    active,
+    disabled: quotaExhausted || retrying || (unavailable && !speech.capabilitiesStale),
+    label,
+    visible: speech.isSupported || speech.capabilitiesStale || Boolean(speech.previewQuota),
+  };
 }
 
 export interface PlatformSpeechRecording {
@@ -89,6 +137,7 @@ function supportedMediaType<TRecording extends PlatformSpeechRecording>(
   if (!capabilities) return undefined;
   if (capabilities.fileTranscription.status !== "ready"
     || !capabilities.fileTranscription.dictation.enabled
+    || capabilities.previewQuota?.requestsRemaining === 0
     || !captureAdapter.isSupported()) {
     return undefined;
   }
@@ -119,21 +168,25 @@ export function usePlatformSpeechDraft<TRecording extends PlatformSpeechRecordin
   const [elapsedMs, setElapsedMs] = useState(0);
   const [inputMeter, setInputMeter] = useState({ level: 0, sequence: 0 });
   const [capabilities, setCapabilities] = useState<SpeechCapabilitiesResponse | null>(null);
+  const [capabilitiesStale, setCapabilitiesStale] = useState(false);
   const generationRef = useRef(0);
   const recordingRef = useRef<ActiveRecording<TRecording> | null>(null);
   const requestRef = useRef<ActiveRequest | null>(null);
   const captureStartRef = useRef<AbortController | null>(null);
+  const quotaRefreshRef = useRef<AbortController | null>(null);
 
-  const cancelRemote = (requestId: string) => {
-    void client.cancel(requestId).catch((caught: unknown) => {
+  const cancelRemote = async (requestId: string): Promise<void> => {
+    await client.cancel(requestId).catch((caught: unknown) => {
       console.warn("[speech-draft] cancellation failed", caught instanceof Error ? caught.name : "UnknownError");
     });
   };
 
-  const disposeActive = (notifyRemote: boolean) => {
+  const disposeActive = (notifyRemote: boolean): Promise<void> | null => {
     setInputMeter({ level: 0, sequence: 0 });
     captureStartRef.current?.abort();
     captureStartRef.current = null;
+    quotaRefreshRef.current?.abort();
+    quotaRefreshRef.current = null;
     const recording = recordingRef.current;
     recordingRef.current = null;
     if (recording) {
@@ -145,14 +198,16 @@ export function usePlatformSpeechDraft<TRecording extends PlatformSpeechRecordin
     requestRef.current = null;
     if (request) {
       request.controller.abort();
-      if (notifyRemote) cancelRemote(request.requestId);
+      if (notifyRemote) return cancelRemote(request.requestId);
     }
+    return null;
   };
 
   useEffect(() => {
     const generation = ++generationRef.current;
     const controller = new AbortController();
     setCapabilities(null);
+    setCapabilitiesStale(false);
     setError(null);
     if (!options.captureAdapter.isSupported()) {
       setPhase("unavailable");
@@ -166,6 +221,7 @@ export function usePlatformSpeechDraft<TRecording extends PlatformSpeechRecordin
     void client.capabilities(controller.signal).then((value) => {
       if (generationRef.current !== generation) return;
       setCapabilities(value);
+      setCapabilitiesStale(false);
       setPhase(supportedMediaType(value, options.captureAdapter) ? "idle" : "unavailable");
     }).catch((caught: unknown) => {
       if (generationRef.current !== generation || controller.signal.aborted) return;
@@ -216,6 +272,7 @@ export function usePlatformSpeechDraft<TRecording extends PlatformSpeechRecordin
     requestRef.current = { requestId, controller, generation: active.generation };
     setError(null);
     setPhase("transcribing");
+    let transcriptionCompleted = false;
     try {
       const result = await client.transcribe({
         requestId,
@@ -224,7 +281,7 @@ export function usePlatformSpeechDraft<TRecording extends PlatformSpeechRecordin
       });
       if (generationRef.current !== active.generation) return;
       if (result.outcome === "transcript") options.onDraft(result.text);
-      setPhase("idle");
+      transcriptionCompleted = true;
     } catch (caught: unknown) {
       if (generationRef.current !== active.generation || controller.signal.aborted) return;
       const safeMessage = options.safeErrorMessage?.(caught);
@@ -236,12 +293,38 @@ export function usePlatformSpeechDraft<TRecording extends PlatformSpeechRecordin
       setPhase("error");
     } finally {
       if (requestRef.current?.generation === active.generation) requestRef.current = null;
+      if (!controller.signal.aborted) {
+        quotaRefreshRef.current?.abort();
+        const quotaController = new AbortController();
+        quotaRefreshRef.current = quotaController;
+        if (transcriptionCompleted) setPhase("loading");
+        void client.capabilities(quotaController.signal).then((value) => {
+          if (generationRef.current === active.generation) {
+            setCapabilities(value);
+            setCapabilitiesStale(false);
+            const supported = supportedMediaType(value, options.captureAdapter) !== undefined;
+            if (transcriptionCompleted) {
+              setPhase(supported ? "idle" : "unavailable");
+            } else if (!supported) {
+              setPhase("unavailable");
+            }
+          }
+        }).catch((caught: unknown) => {
+          if (!quotaController.signal.aborted && generationRef.current === active.generation) {
+            console.warn("[speech-draft] quota refresh failed", caught instanceof Error ? caught.name : "UnknownError");
+            setCapabilitiesStale(true);
+            setPhase("unavailable");
+          }
+        }).finally(() => {
+          if (quotaRefreshRef.current === quotaController) quotaRefreshRef.current = null;
+        });
+      }
     }
   };
 
   async function start(): Promise<void> {
     if (!capabilities || !["idle", "error"].includes(phase)
-      || captureStartRef.current || recordingRef.current || requestRef.current) return;
+      || captureStartRef.current || recordingRef.current || requestRef.current || quotaRefreshRef.current) return;
     const mediaType = supportedMediaType(capabilities, options.captureAdapter);
     if (!mediaType || capabilities.fileTranscription.status !== "ready") return;
     const generation = ++generationRef.current;
@@ -300,12 +383,56 @@ export function usePlatformSpeechDraft<TRecording extends PlatformSpeechRecordin
   }
 
   function cancel(): void {
-    generationRef.current += 1;
-    disposeActive(true);
+    const cancelledRequest = requestRef.current !== null;
+    const generation = ++generationRef.current;
+    const cancellation = disposeActive(true);
     setError(null);
     setElapsedMs(0);
     setInputMeter({ level: 0, sequence: 0 });
+    if (cancelledRequest && cancellation) {
+      const controller = new AbortController();
+      quotaRefreshRef.current = controller;
+      setPhase("loading");
+      void cancellation.then(() => client.capabilities(controller.signal)).then((value) => {
+        if (controller.signal.aborted || generationRef.current !== generation) return;
+        setCapabilities(value);
+        setCapabilitiesStale(false);
+        setPhase(supportedMediaType(value, options.captureAdapter) ? "idle" : "unavailable");
+      }).catch((caught: unknown) => {
+        if (controller.signal.aborted || generationRef.current !== generation) return;
+        console.warn("[speech-draft] quota refresh failed", caught instanceof Error ? caught.name : "UnknownError");
+        setCapabilitiesStale(true);
+        setPhase("unavailable");
+      }).finally(() => {
+        if (quotaRefreshRef.current === controller) quotaRefreshRef.current = null;
+      });
+      return;
+    }
     setPhase(supportedMediaType(capabilities, options.captureAdapter) ? "idle" : "unavailable");
+  }
+
+  async function retryCapabilities(): Promise<void> {
+    if (captureStartRef.current || recordingRef.current || requestRef.current) return;
+    const generation = generationRef.current;
+    quotaRefreshRef.current?.abort();
+    const controller = new AbortController();
+    quotaRefreshRef.current = controller;
+    setError(null);
+    setPhase("loading");
+    try {
+      const value = await client.capabilities(controller.signal);
+      if (controller.signal.aborted || generationRef.current !== generation) return;
+      setCapabilities(value);
+      setCapabilitiesStale(false);
+      setPhase(supportedMediaType(value, options.captureAdapter) ? "idle" : "unavailable");
+    } catch (caught: unknown) {
+      if (controller.signal.aborted || generationRef.current !== generation) return;
+      console.warn("[speech-draft] capability retry failed", caught instanceof Error ? caught.name : "UnknownError");
+      setCapabilitiesStale(true);
+      setPhase("unavailable");
+    } finally {
+      if (quotaRefreshRef.current === controller) quotaRefreshRef.current = null;
+    }
   }
 
   return {
@@ -314,11 +441,14 @@ export function usePlatformSpeechDraft<TRecording extends PlatformSpeechRecordin
     isSupported: phase !== "loading"
       && phase !== "unavailable"
       && supportedMediaType(capabilities, options.captureAdapter) !== undefined,
+    previewQuota: capabilities?.previewQuota,
+    capabilitiesStale,
     elapsedMs,
     inputLevel: inputMeter.level,
     inputLevelSequence: inputMeter.sequence,
     start,
     stop,
     cancel,
+    retryCapabilities,
   };
 }

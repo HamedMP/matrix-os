@@ -3,7 +3,7 @@ import { generateKeyPairSync } from "node:crypto";
 import { tmpdir } from "node:os";
 import { resolve, dirname } from "node:path";
 import { afterEach, expect, it, vi } from "vitest";
-import { recoverLocalParity } from "../../scripts/local-production-parity/recovery.mjs";
+import { localParityStartServices, recoverLocalParity } from "../../scripts/local-production-parity/recovery.mjs";
 import { resolveParityStateDirectory } from "../../scripts/local-production-parity/config.mjs";
 import { loadState } from "../../scripts/dev-production-parity.mjs";
 
@@ -104,6 +104,12 @@ function savedEnvironment() {
     duplicateVm: () => { processes = `10 qemu-system-x86_64 -drive file=${saved}/runtime/disk.qcow2\n11 qemu-system-x86_64 -drive file=${saved}/runtime/disk.qcow2`; },
     interruptedRestart: () => { failRestart = true; } };
 }
+
+it("recovers retained VMs with either the current or legacy registration marker", () => {
+  expect(localParityStartServices).toContain("test -f /var/lib/matrix-vps-registration/register-complete");
+  expect(localParityStartServices).toContain("test -f /opt/matrix/register-complete");
+  expect(localParityStartServices).toMatch(/test -f \/var\/lib\/matrix-vps-registration\/register-complete.*\|\|.*test -f \/opt\/matrix\/register-complete/s);
+});
 
 it("resumes the same owner VM and credentials, and retry does not launch a duplicate VM", async () => {
   const env = savedEnvironment();
