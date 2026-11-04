@@ -1,3 +1,4 @@
+import { ROUTINE_CLI_NATIVE_TIMEOUT_MS, ROUTINE_CLI_REQUEST_TIMEOUT_MS } from "@matrix-os/contracts/routine-cli";
 /** Explicit native Pi extension asset. Builtins only, including from an owned temp directory.
  * JSON schema is rendered from the shared authoritative Zod operation schema by the host. */
 export const PI_ROUTINE_EXTENSION = String.raw`import { Socket } from "node:net";
@@ -59,7 +60,7 @@ export default function (pi) {
         let settled = false;
         const finish = text => { if (settled) return; settled = true; clearTimeout(timer); signal.removeEventListener("abort", abort); pending.delete(id); completed.add(id); resolve(text); };
         const abort = () => { send({ type: "cancel", id }); finish(unknown(operation)); };
-        const timer = setTimeout(abort, 120000); timer.unref?.();
+        const timer = setTimeout(abort, ["propose", "pause", "resume", "archive"].includes(operation.operation) ? ${ROUTINE_CLI_NATIVE_TIMEOUT_MS} : ${ROUTINE_CLI_REQUEST_TIMEOUT_MS}); timer.unref?.();
         pending.set(id, { context, operation, finish }); signal.addEventListener("abort", abort, { once: true });
         if (signal.aborted) abort(); else if (!send({ type: "call", id, context, operation })) finish(unknown(operation));
       }));

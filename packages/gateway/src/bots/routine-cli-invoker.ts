@@ -3,7 +3,7 @@ import { randomUUID } from "node:crypto";
 import { isAbsolute, basename } from "node:path";
 import { statSync } from "node:fs";
 import { routineCliResultMatchesOperation, RoutineCliChildFrameSchema, RoutineCliOperationSchema, RoutineCliEnvelopeSchema, RoutineCliEndpointSchema, RoutineCliTokenSchema,
-  ROUTINE_CLI_FRAME_BYTES, ROUTINE_CLI_INPUT_BYTES, ROUTINE_CLI_OUTPUT_BYTES, ROUTINE_CLI_SAFE_ERRORS,
+  ROUTINE_CLI_REQUEST_TIMEOUT_MS, ROUTINE_CLI_INVOCATION_TIMEOUT_MS, ROUTINE_CLI_FRAME_BYTES, ROUTINE_CLI_INPUT_BYTES, ROUTINE_CLI_OUTPUT_BYTES, ROUTINE_CLI_SAFE_ERRORS,
   type RoutineCliEnvelope, type RoutineCliOperation, RoutineCliErrorCodeSchema } from "@matrix-os/contracts/routine-cli";
 export interface FixedNativeRoutineCliDependencies {
   binPath: string; endpoint: string;
@@ -34,7 +34,7 @@ export function createFixedNativeRoutineCliInvoker(deps: FixedNativeRoutineCliDe
   if (homePath !== undefined && !isAbsolute(homePath)) throw new Error("Routine CLI home directory unavailable");
   const binPath = deps.binPath, authorize = deps.authorize, issue = deps.issue, cancel = deps.cancel;
   const timeoutMs = deps.timeoutMs ?? 15000;
-  if (!Number.isInteger(timeoutMs) || timeoutMs < 100 || timeoutMs > 120000) throw new Error("Routine CLI timeout invalid");
+  if (!Number.isInteger(timeoutMs) || timeoutMs < 100 || timeoutMs > ROUTINE_CLI_INVOCATION_TIMEOUT_MS) throw new Error("Routine CLI timeout invalid");
   let closed = false;
   const active = new Set<{ stop(reason: Reason): void; done: Promise<RoutineCliEnvelope> }>(); // Max8, per-child timeout, exit cleanup and explicit close drain.
   const invoke = (input: Input): Promise<RoutineCliEnvelope> => {
@@ -54,7 +54,7 @@ export function createFixedNativeRoutineCliInvoker(deps: FixedNativeRoutineCliDe
       const child = spawn(process.execPath, [binPath, "routines", ...args], { cwd, stdio: ["pipe", "pipe", "pipe", "ipc"], serialization: "json",
         env: { PATH: process.env.PATH, HOME: homePath, TMPDIR: process.env.TMPDIR, TZ: process.env.TZ, MATRIX_NO_TELEMETRY: "1" } });
       let termTimer: ReturnType<typeof setTimeout> | undefined, killTimer: ReturnType<typeof setTimeout> | undefined;
-      const deadline = setTimeout(() => stop("timeout"), timeoutMs);
+      const deadline = setTimeout(() => stop("timeout"), operation && !mutating(operation) ? Math.min(timeoutMs, ROUTINE_CLI_REQUEST_TIMEOUT_MS) : timeoutMs);
       const aborted = () => stop("aborted"); input.signal?.addEventListener("abort", aborted, { once: true });
       const fallback = (): RoutineCliEnvelope => mutating(operation) ? { v: 1, ok: true, data: { kind: "unknown", requestId: operation.requestId, disposition: "unknown", reconcile: true } } : failure("unavailable");
       stop = why => {
