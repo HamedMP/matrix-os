@@ -6,6 +6,8 @@ import { previewPairProvenanceFixture } from "./preview-pair-provenance-fixture.
 import { createPreviewPairService } from "../../packages/platform/src/preview-pair/service.js";
 import { createPreviewPairRoutes } from "../../packages/platform/src/preview-pair/routes.js";
 import type { PreviewPairPublisher } from "../../packages/platform/src/preview-pair/publication-contract.js";
+import { claimPreviewPair } from "../../packages/platform/src/preview-pair/lifecycle.js";
+import { createPreviewPairControlClient } from "../../scripts/preview-pair/control-client.js";
 
 describe.skipIf(!process.env.MATRIX_TEST_POSTGRES_URL)("trusted pre-publication request routes", () => {
   let f: Awaited<ReturnType<typeof createSeededPreviewPair>>;
@@ -43,7 +45,7 @@ describe.skipIf(!process.env.MATRIX_TEST_POSTGRES_URL)("trusted pre-publication 
     const post = (path = "/vps/preview-pairs/requests", value: unknown = input, token = "o".repeat(40)) =>
       app.request(path, { method: "POST", headers: { authorization: `Bearer ${token}`, "content-type": "application/json" }, body: JSON.stringify(value) });
     const get = (path: string, token = "reader-requester") => app.request(path, { headers: { authorization: `Bearer ${token}` } });
-    return { config, input, receipt, request, post, get, publication, resolveController, verifyFixtures, isMaintainer, inspectRequest, provenance };
+    return { config, input, receipt, request, post, get, app, publication, resolveController, verifyFixtures, isMaintainer, inspectRequest, provenance };
   }
   it("persists a verified intent before any candidate or VPS provider read", async () => {
     const s = setup(), response = await s.post();
@@ -53,6 +55,94 @@ describe.skipIf(!process.env.MATRIX_TEST_POSTGRES_URL)("trusted pre-publication 
     expect(s.provenance.source.authority).not.toHaveBeenCalled(); expect(f.hetzner.createServer).not.toHaveBeenCalled();
     expect(await f.db.executor.selectFrom("preview_pair_cloud_intents").selectAll().execute()).toHaveLength(1);
     expect(await f.db.executor.selectFrom("user_machines").selectAll().execute()).toHaveLength(2);
+  });
+  it("gives the real control maintainer only the approved controller and their verified requester identity", async () => {
+    const s = setup(), response = await s.get("/api/preview-pairs/setup");
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({ controllerSha: s.config.reviewedControllerSha,
+      controllerRef: `preview-pair-controller/${s.config.reviewedControllerSha}`, requesterId: "user_requester", admissionEnabled: true });
+    expect(s.verifyFixtures).not.toHaveBeenCalled();
+    expect(await f.db.executor.selectFrom("preview_pair_cloud_intents").selectAll().execute()).toEqual([]);
+  });
+  it("does not expose controller setup to an outsider, Preview identity, expired reader or operator bearer", async () => {
+    const s = setup(), path = "/api/preview-pairs/setup";
+    expect((await s.get(path, "reader-outsider")).status).toBe(403);
+    expect((await s.get(path, "reader-preview")).status).toBe(403);
+    expect((await s.get(path, "reader-expired")).status).toBe(401);
+    expect((await s.get(path, "o".repeat(40))).status).toBe(401);
+  });
+  it("reuses an existing PR pair without granting the new controller cancellation ownership or creating another intent", async () => {
+    const s = setup(); s.receipt.pr = f.pair.pr;
+    const response = await s.post(undefined, { ...s.input, pr: f.pair.pr });
+    expect(response.status).toBe(202);
+    expect(await response.json()).toMatchObject({ kind: "pair", pairId: f.pair.pair_id, ownedRequest: false, state: "preparing" });
+    expect(await f.db.executor.selectFrom("preview_pair_cloud_intents").selectAll().execute()).toEqual([]);
+    expect(f.hetzner.createServer).not.toHaveBeenCalled();
+  });
+  it("lets only the recorded operator controller poll safe request and pair status", async () => {
+    const s = setup(); expect((await s.post()).status).toBe(202);
+    const path = `/vps/preview-pairs/${s.input.pairId}/status`;
+    const input = { generation: 1, controllerRunId: 42 };
+    const requested = await s.post(path, input);
+    expect(requested.status).toBe(200);
+    expect(await requested.json()).toMatchObject({ kind: "request", state: "prepared", publication: "unissued", infrastructureReady: false });
+    expect((await s.post(path, { ...input, controllerRunId: 99 })).status).toBe(409);
+    expect((await s.post(path, input, "reader-requester")).status).toBe(401);
+    await f.db.executor.updateTable("preview_pair_generations").set({ controller_run_id: "42" }).execute();
+    const paired = await s.post(`/vps/preview-pairs/${f.pair.pair_id}/status`, input);
+    expect(paired.status).toBe(200);
+    expect(await paired.json()).toMatchObject({ kind: "pair", pairId: f.pair.pair_id, generation: 1,
+      currentGeneration: 1, revision: f.pair.revision, state: "preparing", infrastructureReady: false });
+  });
+  it("lets a current control maintainer stop one fenced generation without a workflow approval delay", async () => {
+    const s = setup(), path = `/api/preview-pairs/${f.pair.pair_id}/stop`;
+    const stop = (token: string, revision = f.pair.revision) => s.post(path, { generation: 1, revision }, token);
+    expect((await stop("reader-outsider")).status).toBe(403);
+    expect((await stop("reader-preview")).status).toBe(403);
+    expect((await stop("reader-requester", f.pair.revision + 1)).status).toBe(409);
+    expect((await s.post(path, { generation: 1, revision: f.pair.revision, padding: "x".repeat(17_000) }, "reader-requester")).status).toBe(413);
+    expect((await stop("reader-requester")).status).toBe(200);
+    expect((await f.db.executor.selectFrom("preview_pairs").select("state").executeTakeFirstOrThrow()).state).toBe("cleanup_pending");
+    expect(f.hetzner.deleteServer).not.toHaveBeenCalled();
+  });
+  it("adopts the selected update once despite progress revisions, while rejecting a different parent source", async () => {
+    const s = setup(), p = s.provenance;
+    Object.assign(s.receipt, { pairId: f.pair.pair_id, generation: 2, pr: f.pair.pr });
+    const candidate = { ...p.input, sourceProfileFingerprint: s.config.sourceProfileFingerprint,
+      browserOrigin: p.input.browserOrigin.replace("g1", "g2"), apiOrigin: p.input.apiOrigin.replace("g1", "g2") };
+    Object.assign(p.authority, { generation: 2, browserOrigin: candidate.browserOrigin, apiOrigin: candidate.apiOrigin,
+      appDomainHosts: [new URL(candidate.browserOrigin).hostname] });
+    expect((await s.post(undefined, { ...s.input, pairId: f.pair.pair_id, generation: 2, pr: f.pair.pr })).status).toBe(202);
+    await claimPreviewPair(f.db, f.pair.pair_id, 1, f.pair.revision, PAIR_NOW);
+    const path = `/vps/preview-pairs/${f.pair.pair_id}/adoption`;
+    const input = { baseGeneration: 1, baseSourceSha: f.pair.source_sha, controllerRunId: 42, candidate };
+    expect((await s.post(path, { ...input, baseSourceSha: "e".repeat(40) })).status).toBe(409);
+    expect((await s.post(path, input)).status).toBe(202);
+    expect((await f.db.executor.selectFrom("preview_pairs").select("state").executeTakeFirstOrThrow()).state).toBe("updating");
+    expect((await s.post(path, input)).status).toBe(202);
+    expect(await f.db.executor.selectFrom("preview_pair_generations").selectAll().execute()).toHaveLength(2);
+    const status = await s.post(`/vps/preview-pairs/${f.pair.pair_id}/status`, { generation: 2, controllerRunId: 42 });
+    expect(await status.json()).toMatchObject({ kind: "pair", generation: 2, currentGeneration: 1, state: "updating" });
+    expect((await s.post(`/vps/preview-pairs/${f.pair.pair_id}/status`, { generation: 1, controllerRunId: 42 })).status).toBe(409);
+  });
+  it("runs the actual fixed-origin controller client against the production router without confusing operator and user credentials", async () => {
+    const s = setup();
+    const fetchImpl = vi.fn<typeof fetch>(async (url, init) => {
+      expect(new URL(String(url)).origin).toBe("https://api.matrix-os.com");
+      expect(init?.redirect).toBe("error"); expect(init?.signal).toBeInstanceOf(AbortSignal);
+      return s.app.request(new Request(url, init));
+    });
+    const reader = createPreviewPairControlClient({ origin: "https://api.matrix-os.com", token: "reader-requester", fetchImpl });
+    const operator = createPreviewPairControlClient({ origin: "https://api.matrix-os.com", token: "o".repeat(40), fetchImpl });
+    expect((await reader.setup()).requesterId).toBe("user_requester");
+    await expect(reader.prepare(s.receipt)).rejects.toMatchObject({ status: 401 });
+    const prepared = await operator.prepare(s.receipt); expect(prepared.kind).toBe("request");
+    expect(await operator.status(s.receipt)).toMatchObject({ kind: "request", state: "prepared" });
+    await operator.stopOwned(s.receipt);
+    expect(await reader.report(s.input.pairId)).toMatchObject({ kind: "request", state: "cleanup_pending" });
+    const before = fetchImpl.mock.calls.length;
+    expect(() => createPreviewPairControlClient({ origin: "https://candidate.invalid", token: "reader-requester", fetchImpl })).toThrow("unavailable");
+    expect(fetchImpl).toHaveBeenCalledTimes(before);
   });
   it.each(["controller", "maintainer", "isolation", "closed", "removed", "head"])("rejects %s before publication authority exists", async fault => {
     const s = setup();

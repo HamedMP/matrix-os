@@ -13,11 +13,15 @@ Use existing Hono auth, strict Zod4 boundary schemas and generic error mapping.
 | POST `/vps/preview-pairs/requests/:pairId/actions` | Same operator; strict stop action and exact recorded controller run/generation; cannot stop an adopted pair | No |
 | POST `/vps/preview-pairs/requests/:pairId/publication` | Same operator; exact live request, current reviewed controller/maintainer, fixture/target isolation and eligible source; image digest only, repository and bindings derive from approved source profile | No |
 | POST `/vps/preview-pairs/:pairId/actions` | Same operator authority; expected generation/revision; discriminated update/stop/reconcile payload | No |
+| POST `/vps/preview-pairs/:pairId/status` | Same operator; exact recorded controller run and effective generation (the target during update); safe status only, no manifest/content capability | No |
+| POST `/vps/preview-pairs/:pairId/adoption` | Same operator; current reviewed controller, memberships, verified candidate and immutable intent; exact parent generation/source checked under the admission lock, then revision-fenced writes | No |
 | POST `/vps/preview-pairs/reconcile` | Same operator authority; bounded claim count and worker lifetime | No |
 | GET `/api/preview-pairs/:pairId` | Real first-party Clerk session; requester, configured maintainer or actual leased fixture actor; current pair binding | No |
 | GET `/api/preview-pairs/:pairId/requests/:generation` | Verified control-issuer requester of this exact request or current configured maintainer; Preview-issuer/outsider denied uniformly | No |
 | GET `/api/preview-pairs/:pairId/manifest` | Same real actor check; live ready generation, current identity/routing/artifact/funding prerequisites; cache disabled | No |
 | GET `/api/preview-pairs` | Real configured maintainer membership; bounded cursor/limit; only permitted reports | No |
+| GET `/api/preview-pairs/setup` | Verified control-issuer reader and current configured maintainer; returns only reviewed controller identity/ref, verified requester and admission flag | No |
+| POST `/api/preview-pairs/:pairId/stop` | Verified control issuer and current configured maintainer; strict generation/revision,16KiB body limit; stops only the selected infrastructure generation | No |
 | GET `/preview-pair-updates/:handle/system-bundles/releases/:version.json` | Non-authorizing public bundle metadata; exact active projected Preview handle/slot, empty access list and matching confirmed/target version+digest; reject all channel/list/other-version paths | Yes |
 
 Every mutating route, including future DELETE aliases, has a16KiB body-limit
