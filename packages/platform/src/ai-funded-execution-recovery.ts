@@ -1,7 +1,6 @@
 import {
   FUNDED_EXECUTION_RECOVERY_MIN_AGE_MS,
   FUNDED_EXECUTION_RECOVERY_MAX_LIABILITY_MICROUSD,
-  FUNDED_EXECUTION_RECOVERY_MAX_UNKNOWN,
   FundedAiExecutionRecoveryRequestSchema,
   FundedAiExecutionRecoveryResponseSchema,
   type FundedAiExecutionRecoveryRequest,
@@ -11,7 +10,7 @@ import { sql } from "kysely";
 import type { PlatformDB } from "./db.js";
 import { AiFundedPolicyError } from "./ai-funded-policy-errors.js";
 
-import { hasOtherLiveWork, readRecoveredUnknowns } from "./ai-funded-recovery-lifecycle.js";
+import { claimRecoverySlot, hasOtherLiveWork, readRecoveredUnknowns } from "./ai-funded-recovery-lifecycle.js";
 import { readFundedRecoveryAudit, readFundedUsageAuthorization } from "./ai-funded-recovery-audit.js";
 
 /** Existing single-row operator recovery, independently fenced from financial settlement. */
@@ -26,7 +25,7 @@ export function createFundedExecutionRecovery(options: { db: PlatformDB; now: ()
       // serialize the bounded unknown set and cannot open two live execution slots.
       await sql`SELECT pg_advisory_xact_lock(hashtextextended(${`funded-ai-owner:${identity.ownerId}`}, 0))`
         .execute(trx.executor);
-      await readRecoveredUnknowns(trx.executor, identity.ownerId);
+      const unknown = await readRecoveredUnknowns(trx.executor, identity.ownerId);
       const machine = await trx.executor.selectFrom("user_machines")
         .select(["clerk_user_id", "runtime_slot", "status", "activation_state", "deleted_at"])
         .where("machine_id", "=", identity.machineId).forUpdate().executeTakeFirst();
@@ -62,25 +61,12 @@ export function createFundedExecutionRecovery(options: { db: PlatformDB; now: ()
         || Date.parse(request.localRunEndedAt) + 60_000 > checked.getTime()) {
         throw new AiFundedPolicyError("rate_limited");
       }
-      const unknown = await trx.executor.selectFrom("ai_funded_usage_reservations").selectAll()
-        .where("owner_id", "=", identity.ownerId).where("execution_admission_release", "is not", null)
-        .where("charge_waiver", "is", null)
-        .where("actual_microusd", "is", null).limit(FUNDED_EXECUTION_RECOVERY_MAX_UNKNOWN + 1).execute();
-      let liability = request.maximumLiabilityMicrousd;
-      const occupied: number[] = [];
-      for (const row of unknown) {
-        const audit = readFundedRecoveryAudit(row);
-        if (row.status !== "in_flight" || ![0, 1].includes(row.execution_recovery_slot)
-          || occupied.includes(row.execution_recovery_slot)) throw new AiFundedPolicyError("idempotency_conflict");
-        occupied.push(row.execution_recovery_slot);
-        liability += audit.request.maximumLiabilityMicrousd;
-      }
+      const liability = request.maximumLiabilityMicrousd + unknown.liability;
       const otherLive = await hasOtherLiveWork(trx.executor, identity.ownerId, [request.reservationId]);
-      if (unknown.length >= FUNDED_EXECUTION_RECOVERY_MAX_UNKNOWN
-        || liability > FUNDED_EXECUTION_RECOVERY_MAX_LIABILITY_MICROUSD || otherLive) {
+      if (liability > FUNDED_EXECUTION_RECOVERY_MAX_LIABILITY_MICROUSD || otherLive) {
         throw new AiFundedPolicyError("rate_limited");
       }
-      const recoverySlot: 0 | 1 = occupied.includes(0) ? 1 : 0;
+      const recoverySlot = await claimRecoverySlot(trx.executor, identity.ownerId);
       const response = FundedAiExecutionRecoveryResponseSchema.parse({
         contractVersion: 1, executionAdmissionReleased: true, usageKnown: false,
         reservedMicrousd: Number(reservation.reserved_microusd),

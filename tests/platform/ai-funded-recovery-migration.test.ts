@@ -118,7 +118,7 @@ describe.skipIf(engine === "PostgreSQL" && !databaseUrl)(`generation ${predecess
     ]);
     const column = await sql`SELECT data_type, is_nullable, column_default FROM information_schema.columns
       WHERE table_schema=current_schema() AND table_name='ai_funded_usage_reservations' AND column_name='execution_recovery_slot'`.execute(db.executor);
-    expect(column.rows).toEqual([{ data_type: "smallint", is_nullable: "NO", column_default: "0" }]);
+    expect(column.rows).toEqual([{ data_type: "integer", is_nullable: "NO", column_default: "0" }]);
     const skipped = vi.fn();
     await runPlatformMigration(db.executor, skipped, { revision: previousRevision });
     expect(skipped).not.toHaveBeenCalled();
@@ -148,18 +148,18 @@ describe.skipIf(engine === "PostgreSQL" && !databaseUrl)(`generation ${predecess
     ] : []);
     expect((await sql<{ indexdef: string }>`SELECT indexdef FROM pg_indexes WHERE schemaname=current_schema() AND indexname='idx_ai_funded_unknown_admission_owner'`.execute(db.executor)).rows[0].indexdef).toContain(predecessor.recoverySlots ? "(owner_id, execution_recovery_slot)" : "(owner_id)");
   });
-  it.each(["count", "sum"])("refuses an impossible legacy owner %s set transactionally", async (kind) => {
+  it.each(["many-record-sum", "sum"])("refuses an impossible legacy owner %s set transactionally", async (kind) => {
     await sql`DROP INDEX idx_ai_funded_unknown_admission_owner`.execute(db.executor);
     const row = (await sql<Record<string, unknown>>`SELECT * FROM ai_funded_usage_reservations`.execute(db.executor)).rows[0];
     const audit = JSON.parse(String(row.execution_admission_release));
     const authorization = JSON.parse(String(row.authorization_response));
-    const maximum = kind === "sum" ? 300_000 : 100;
+    const maximum = kind === "sum" ? 10_000_001 : 200_000;
     audit.request.maximumLiabilityMicrousd = maximum;
     audit.response.maximumLiabilityMicrousd = maximum;
     authorization.reservation.maxCostMicrousd = maximum;
     await sql`UPDATE ai_funded_usage_reservations SET execution_admission_release=${JSON.stringify(audit)},
       authorization_response=${JSON.stringify(authorization)}`.execute(db.executor);
-    for (let index = 1; index < (kind === "count" ? 3 : 2); index++) {
+    for (let index = 1; index < (kind === "many-record-sum" ? 101 : 2); index++) {
       const key = `legacy_extra_${index}`;
       const extraAudit = structuredClone(audit);
       const extraAuthorization = structuredClone(authorization);

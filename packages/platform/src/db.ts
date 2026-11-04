@@ -170,7 +170,7 @@ export interface AiFundedUsageReservationsTable {
   terminal_outcome: Generated<string | null>;
   charge_waiver: Generated<string | null>;
   execution_admission_release: Generated<string | null>;
-  execution_recovery_slot: Generated<0 | 1>;
+  execution_recovery_slot: Generated<number>;
   reservation_id: string;
   request_id: string;
   payload_hash: string;

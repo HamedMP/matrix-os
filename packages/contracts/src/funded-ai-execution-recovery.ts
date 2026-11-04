@@ -1,9 +1,10 @@
 import { z } from "zod/v4";
 import { IsoTimestampSchema } from "#contract-primitives";
 /** Support accepts uncertain upstream liability; this never attests a charge. */
-export const FUNDED_EXECUTION_RECOVERY_MAX_LIABILITY_MICROUSD = 500000;
-/** Maximum owner-wide actual-null audited obligations, independently of live work. */
-export const FUNDED_EXECUTION_RECOVERY_MAX_UNKNOWN = 2;
+export const FUNDED_EXECUTION_RECOVERY_MAX_LIABILITY_MICROUSD = 20_000_000;
+// Keep operator batch receipts within their existing wire/audit byte bounds.
+// The owner inventory is bounded by captured liability, not record count.
+const MAX_RECOVERY_BATCH_RECORDS = 2;
 // Legacy unbound Relay/operator proof waits for the full 15-minute limit plus grace.
 export const FUNDED_EXECUTION_RECOVERY_MIN_AGE_MS = 16 * 60000;
 const Reference = z.string().min(1).max(160).regex(/^[A-Za-z0-9][A-Za-z0-9_.:-]*$/);
@@ -61,7 +62,7 @@ export const FundedAiExecutionRecoveryBatchItemSchema = z.object({
 }).strict().refine((v) => Date.parse(v.localRunEndedAt) >= Date.parse(v.expectedStartedAt), { path: ["localRunEndedAt"], message: "Terminal evidence must follow start" });
 export const FundedAiExecutionRecoveryBatchRequestSchema = z.object({
   expectedOwnerId: Reference, reviewer: Evidence, evidenceRef: Evidence, acceptUnknownUpstreamLiability: z.literal(true),
-  reservations: z.array(FundedAiExecutionRecoveryBatchItemSchema).min(1).max(FUNDED_EXECUTION_RECOVERY_MAX_UNKNOWN),
+  reservations: z.array(FundedAiExecutionRecoveryBatchItemSchema).min(1).max(MAX_RECOVERY_BATCH_RECORDS),
 }).strict().superRefine((v, ctx) => {
   if (v.reservations.some((r) => r.ownerId !== v.expectedOwnerId)
     || new Set(v.reservations.map((r) => r.reservationId)).size !== v.reservations.length
@@ -72,6 +73,6 @@ export const FundedAiExecutionRecoveryBatchRequestSchema = z.object({
 export const FundedAiExecutionRecoveryBatchResponseSchema = z.object({
   contractVersion: z.literal(2), executionAdmissionReleased: z.literal(true), usageKnown: z.literal(false),
   maximumLiabilityMicrousd: z.number().int().positive().max(FUNDED_EXECUTION_RECOVERY_MAX_LIABILITY_MICROUSD),
-  reservations: z.array(FundedAiExecutionRecoveryResponseSchema.extend({ reservationId: Reference })).min(1).max(FUNDED_EXECUTION_RECOVERY_MAX_UNKNOWN),
+  reservations: z.array(FundedAiExecutionRecoveryResponseSchema.extend({ reservationId: Reference })).min(1).max(MAX_RECOVERY_BATCH_RECORDS),
 }).strict();
 export type FundedAiExecutionRecoveryBatchRequest = z.infer<typeof FundedAiExecutionRecoveryBatchRequestSchema>;

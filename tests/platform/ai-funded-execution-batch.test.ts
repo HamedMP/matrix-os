@@ -114,14 +114,14 @@ describe("atomic mixed GLM and speech execution recovery", () => {
     expect(await rows()).toEqual(beforeRows); expect(await finance()).toEqual(before); vi.restoreAllMocks();
   });
 
-  it("prevents a third audited obligation and rejects a malformed typed speech audit on admission and settlement", async () => {
+  it("recovers a third audited obligation and rejects a malformed typed speech audit on admission and settlement", async () => {
     expect((await send(await request())).status).toBe(200);
     const next = await repo.authorize({ credential: credential.token, requestId: "third-old", modelId, billingMode: "usage", maxCostMicrousd: 100 });
     await repo.startReservation({ reservationId: next.reservation.reservationId, tokenId: credential.tokenId });
     clock = new Date(clock.getTime() + 20 * 60_000);
     const body = await request(); body.reservations = body.reservations.filter((r) => r.expectedRequestId === "third-old");
     body.reservations[0].maximumLiabilityMicrousd = 100;
-    const before = await finance(); expect((await send(body)).status).toBe(429); expect(await finance()).toEqual(before);
+    const before = await finance(); expect((await send(body)).status).toBe(200); expect(await finance()).toEqual(before);
     const speechRow = (await rows()).find((r) => r.reservation_id === "speech-reservation")!;
     const audit = JSON.parse(speechRow.execution_admission_release!); audit.request.reservations.find((r: { fundingKind: string }) => r.fundingKind === "speech").maximumLiabilityMicrousd = 5_999;
     await db.executor.updateTable("ai_funded_usage_reservations").set({ execution_admission_release: JSON.stringify(audit) }).where("reservation_id", "=", speechRow.reservation_id).execute();

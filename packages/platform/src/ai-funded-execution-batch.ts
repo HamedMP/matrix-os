@@ -1,10 +1,10 @@
 import { createHash } from "node:crypto";
 import { sql } from "kysely";
-import { FUNDED_EXECUTION_RECOVERY_MAX_UNKNOWN, FUNDED_EXECUTION_RECOVERY_MAX_LIABILITY_MICROUSD, FundedAiExecutionRecoveryBatchRequestSchema, FundedAiExecutionRecoveryBatchResponseSchema, type FundedAiExecutionRecoveryBatchRequest } from "@matrix-os/contracts";
+import { FUNDED_EXECUTION_RECOVERY_MAX_LIABILITY_MICROUSD, FundedAiExecutionRecoveryBatchRequestSchema, FundedAiExecutionRecoveryBatchResponseSchema, type FundedAiExecutionRecoveryBatchRequest } from "@matrix-os/contracts";
 import type { PlatformDB } from "./db.js";
 import { AiFundedPolicyError } from "./ai-funded-policy-errors.js";
 import { readFundedRecoveryAudit, readFundedRecoveryLiability } from "./ai-funded-recovery-audit.js";
-import { assertRecoveryAge, assertRecoveryMachine, hasOtherLiveWork, readRecoveredUnknowns, recoveryResponse } from "./ai-funded-recovery-lifecycle.js";
+import { assertRecoveryAge, assertRecoveryMachine, claimRecoverySlot, hasOtherLiveWork, readRecoveredUnknowns, recoveryResponse } from "./ai-funded-recovery-lifecycle.js";
 /** Trusted operator route only. One owner lock and transaction cover the entire reviewed set. */
 export function createFundedExecutionBatch(options: {
   db: PlatformDB;
@@ -18,7 +18,7 @@ export function createFundedExecutionBatch(options: {
       const executor = trx.executor;
       await sql`SELECT pg_advisory_xact_lock(hashtextextended(${`funded-ai-owner:${request.expectedOwnerId}`}, 0))`.execute(executor);
       const unknown = await readRecoveredUnknowns(executor, request.expectedOwnerId);
-      // Stable machine lock order permits one owner with two reviewed runtimes.
+      // Stable machine lock order permits one owner with multiple reviewed runtimes.
       for (const item of [...request.reservations].sort((a, b) => a.machineId.localeCompare(b.machineId))) {
         await assertRecoveryMachine(executor, { owner_id: item.ownerId, machine_id: item.machineId, runtime_slot: item.runtimeSlot });
       }
@@ -63,8 +63,7 @@ export function createFundedExecutionBatch(options: {
         return FundedAiExecutionRecoveryBatchResponseSchema.parse(JSON.parse(replay).response);
       }
       const maximum = request.reservations.reduce((sum, item) => sum + item.maximumLiabilityMicrousd, 0);
-      if (rows.length + unknown.rows.length > FUNDED_EXECUTION_RECOVERY_MAX_UNKNOWN
-        || maximum + unknown.liability > FUNDED_EXECUTION_RECOVERY_MAX_LIABILITY_MICROUSD
+      if (maximum + unknown.liability > FUNDED_EXECUTION_RECOVERY_MAX_LIABILITY_MICROUSD
         || await hasOtherLiveWork(executor, request.expectedOwnerId, rows.map((r) => r.reservation_id)))
         throw new AiFundedPolicyError("rate_limited");
       const response = FundedAiExecutionRecoveryBatchResponseSchema.parse({ contractVersion: 2, executionAdmissionReleased: true,
@@ -72,8 +71,7 @@ export function createFundedExecutionBatch(options: {
           ...recoveryResponse(row, request.reservations[index].maximumLiabilityMicrousd, checked) })) });
       const audit = JSON.stringify({ kind: "operator_batch_v2", request, response });
       for (const row of rows) {
-        const slot = unknown.occupied.includes(0) ? 1 : 0;
-        unknown.occupied.push(slot);
+        const slot = await claimRecoverySlot(executor, request.expectedOwnerId);
         await executor.updateTable("ai_funded_usage_reservations").set({ execution_admission_release: audit, execution_recovery_slot: slot })
           .where("reservation_id", "=", row.reservation_id).where("status", "=", "in_flight").where("actual_microusd", "is", null)
           .where("execution_admission_release", "is", null).executeTakeFirstOrThrow();
