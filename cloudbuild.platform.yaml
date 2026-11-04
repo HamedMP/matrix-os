@@ -9,6 +9,7 @@ substitutions:
   _NEXT_PUBLIC_POSTHOG_HOST: ''
   _NEXT_PUBLIC_POSTHOG_API_HOST: ''
   _NEXT_PUBLIC_MATRIX_APP_URL: 'https://app.matrix-os.com'
+  _MATRIX_BUILD_SHA: 'manual'
 
 steps:
   - name: gcr.io/cloud-builders/docker
@@ -38,6 +39,8 @@ steps:
       - NEXT_PUBLIC_POSTHOG_API_HOST=${_NEXT_PUBLIC_POSTHOG_API_HOST}
       - --build-arg
       - NEXT_PUBLIC_MATRIX_APP_URL=${_NEXT_PUBLIC_MATRIX_APP_URL}
+      - --build-arg
+      - MATRIX_BUILD_SHA=${_MATRIX_BUILD_SHA}
       - -t
       - ${_IMAGE}
       - -t

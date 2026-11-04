@@ -1,3 +1,4 @@
+import { assertPrivateRoutineRun } from "./private-routine-authority.js";
 import { assertInputClaim, getChatInputState, pendingInputTransition } from "./input-submission.js";
 import {
   CanonicalChatIdSchema,
@@ -289,6 +290,7 @@ export class ChatRunLifecycleRepository {
         .forUpdate()
         .executeTakeFirst();
       if (!current) throw new ChatNotFoundError(input.chatId);
+      await assertPrivateRoutineRun(trx, owner, input.chatId, input.runId);
       if (current.status !== "accepted") {
         if (ACTIVE_RUNS.includes(current.status as typeof ACTIVE_RUNS[number])) return toRun(current);
         throw new ChatRunNotActiveError(input.chatId, input.runId);
@@ -333,6 +335,7 @@ export class ChatRunLifecycleRepository {
         .forUpdate()
         .executeTakeFirst();
       if (!run) throw new ChatNotFoundError(input.chatId);
+      await assertPrivateRoutineRun(trx, owner, input.chatId, input.runId);
       if (!ACTIVE_RUNS.includes(run.status as typeof ACTIVE_RUNS[number])) {
         throw new ChatRunNotActiveError(input.chatId, input.runId);
       }
@@ -379,6 +382,7 @@ export class ChatRunLifecycleRepository {
         .where("id", "=", runId).where("chat_id", "=", chatId).executeTakeFirst();
       if (existingRun && !run) throw new ChatRunNotActiveError(chatId, runId);
       if (!run) throw new ChatNotFoundError(chatId);
+      await assertPrivateRoutineRun(trx, owner, chatId, runId);
       if (expectedInputClaim) {
         const state = await getChatInputState(trx, owner, { chatId, runId, requestId: expectedInputClaim.requestId });
         if (state.resolved || state.submitted?.id !== expectedInputClaim.submissionId) throw new ChatConflictError(chatId, Number(current.revision));
@@ -510,6 +514,7 @@ export class ChatRunLifecycleRepository {
         .forUpdate()
         .executeTakeFirst();
       if (!run) throw new ChatNotFoundError(chatId);
+      await assertPrivateRoutineRun(trx, owner, chatId, input.runId);
       if (!ACTIVE_RUNS.includes(run.status as typeof ACTIVE_RUNS[number])) {
         throw new ChatRunNotActiveError(chatId, input.runId);
       }
@@ -647,6 +652,7 @@ export class ChatRunLifecycleRepository {
         .where("id", "=", input.runId).where("chat_id", "=", chatId)
         .forUpdate().executeTakeFirst();
       if (!run) throw new ChatNotFoundError(chatId);
+      await assertPrivateRoutineRun(trx, owner, chatId, input.runId);
       if (!ACTIVE_RUNS.includes(run.status as typeof ACTIVE_RUNS[number])) {
         throw new ChatRunNotActiveError(chatId, input.runId);
       }
@@ -765,6 +771,7 @@ export class ChatRunLifecycleRepository {
       const current = await trx.selectFrom("chat_runs").selectAll()
         .where("id", "=", input.runId).where("chat_id", "=", input.chatId).forUpdate().executeTakeFirst();
       if (!current) throw new ChatNotFoundError(input.chatId);
+      if (output) await assertPrivateRoutineRun(trx, owner, input.chatId, input.runId);
       if (!ACTIVE_RUNS.includes(current.status as typeof ACTIVE_RUNS[number])) {
         return { run: toRun(current), transitioned: false };
       }

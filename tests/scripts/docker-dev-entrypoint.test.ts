@@ -102,6 +102,16 @@ describe("Docker development entrypoint dependency layout", () => {
     }
   });
 
+  it("uses BusyBox-compatible lockfile checksum checks", () => {
+    const entrypoint = readFileSync(
+      join(root, "distro/docker-dev-entrypoint.sh"),
+      "utf8",
+    );
+
+    expect(entrypoint).not.toContain("md5sum --status");
+    expect(entrypoint.match(/md5sum -c node_modules\/\.pnpm-lock-hash >\/dev\/null 2>&1/g)).toHaveLength(2);
+  });
+
   it("builds the brand workspace before starting the shell", () => {
     const entrypoint = readFileSync(
       join(root, "distro/docker-dev-entrypoint.sh"),

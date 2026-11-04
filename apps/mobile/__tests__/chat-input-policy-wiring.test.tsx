@@ -10,6 +10,8 @@ const mockMutate = jest.fn();
 let mockCatalog = attachmentCatalog();
 let mockSelection = managedSelection;
 const mockComputer = { handle: "computer", runtimeSlot: "primary", gatewayPath: "/vm/computer" };
+jest.mock("expo-router",()=>({useIsFocused:()=>false}));
+jest.mock("@/lib/queries/use-active-gateway",()=>({useActiveGateway:()=>({ready:false,userId:"user_a",computerKey:"none",session:async()=>null})}));
 
 jest.mock("@clerk/clerk-expo", () => ({ useAuth: () => ({ isSignedIn: true, userId: "user_a" }) }));
 jest.mock("@/lib/canonical-chat-session-context", () => ({

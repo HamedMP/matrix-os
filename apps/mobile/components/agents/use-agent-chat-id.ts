@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 
 import { useActiveGateway } from "@/lib/queries/use-active-gateway";
+import { useSavedAgentChat, type SavedAgentChat } from "./use-saved-agent-chat";
 import { useEnsureAgentChat } from "@/lib/queries/use-agents";
 
 /**
@@ -8,11 +9,12 @@ import { useEnsureAgentChat } from "@/lib/queries/use-agents";
  * already carry; without it the server is asked, which creates the chat when
  * the agent has none yet.
  */
-export function useAgentChatId(agentId: string, knownChatId: string | null) {
+export function useAgentChatId(agentId: string, knownChatId: string | null, saved?: SavedAgentChat) {
   const gateway = useActiveGateway();
+  const savedChat = useSavedAgentChat(agentId, saved, gateway);
   const { mutate, data, variables, isError } = useEnsureAgentChat();
   const asked = variables === agentId;
-  const found = knownChatId ?? (asked ? data ?? null : null);
+  const found = saved ? null : knownChatId ?? (asked ? data ?? null : null);
   // Kept once found: a later status read that fails must not close the chat.
   const [kept, setKept] = useState<{ agentId: string; chatId: string } | null>(null);
   if (found !== null && (kept?.agentId !== agentId || kept.chatId !== found)) {
@@ -20,12 +22,13 @@ export function useAgentChatId(agentId: string, knownChatId: string | null) {
   }
   const chatId = found ?? (kept?.agentId === agentId ? kept.chatId : null);
   // The server can only be asked once the computer to ask is known.
-  const ask = chatId === null && gateway.ready;
+  const ask = !saved && chatId === null && gateway.ready;
 
   useEffect(() => {
     if (ask) mutate(agentId);
   }, [ask, agentId, mutate]);
 
+  if (saved) return savedChat;
   return {
     chatId,
     /** The chat could not be found: the computer or the chat itself is out of reach. */
