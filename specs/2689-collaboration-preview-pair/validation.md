@@ -92,3 +92,57 @@ The fix preserves the staged candidate, changes only its currency during update,
 and carries that currency into the completed generation.
 
 All15 admission/update assertions pass after the lifecycle review correction; Platform TypeScript passes.
+
+### Operator API and readiness implementation
+
+- Actual Hono routes enforce constant-time operator credentials, a16KiB streaming
+  body limit, strict requests, safe errors and prefix isolation. Actual Platform
+  registration remains disabled by default and leaves ordinary routes unchanged.
+- Read authorization is requester/current-maintainer or leased fixture owner/member;
+  the outsider, an expired principal and the wrong identity domain are rejected.
+  The principal verifier is an explicit production adapter contract; no fixture
+  principal verifier is mounted in production.
+- Readiness uses the actual Postgres ledger and generation/revision/claim fences.
+  Host, identity, service and funding observations remain synthetic adapter boundaries
+  in these tests. Reports use the actual readiness producer and expire its proof.
+- Final service/reconciler/admission/update run: **30/30 passed across4 files**,
+  zero skipped. The expiry-progress case first failed because cleanup was repeatedly
+  re-stopped; skipping that transition for cleanup-pending pairs makes it pass.
+- Queue promotion leases a canonical fixture and prepares both members in one
+  transaction. A second-member failure rolls everything back; hard expiry survives
+  queue wait. Controller receipts bind the real requester before admission.
+- Platform TypeScript passes for this layer. No provider boot, identity mutation,
+  grant, deployment, native launch or live visual acceptance is claimed.
+- T015 production provider/identity/source/host adapters and maintenance activation
+  remain in the dependent controller layer; this API is not an operational preview
+  service until those bindings pass independent isolation checks.
+
+Final HTTP/readers/readiness/reports/queue/provenance run: **64/64 passed across7 files**, zero skipped. Combined with the separate30-case run, all94 assertions in these two inventories passed. Required Postgres CI inventory now includes the six new database suites.
+
+### API review corrections
+
+Greptile identified waiting-pair starvation and loss of wrong-running-version
+diagnosis. Four real Postgres assertions failed first: a full waiting batch blocked
+an active pair, a waiting reservation had no backoff, hard expiry was hidden by a
+future schedule, and a wrong running version lost its computer-specific source
+stage. The fix prioritizes expired/cleanup/active work, applies a15s backoff to busy
+queues and fresh readiness, and checks runningVersion at the source boundary.
+Live claims are not repeatedly selected; expiry still invalidates an active claim.
+
+The first verification run then exhausted the task-owned384MiB temporary database
+filesystem. That is an environment failure, not a passing result or code regression.
+Only the verified ENG-418 fixture was replaced; no other container/database changed.
+The unchanged verification run is recorded separately below when complete.
+
+Final API review verification: **30/30 passed across4 files**, zero skipped, on
+fresh local Postgres; Platform TypeScript passes. All four new fault assertions
+are included in that run. No assertion or timeout was relaxed.
+
+### Bounded provisioning recovery (controller review)
+
+The real-Postgres orchestration regression advanced the actual10s operation timer
+and failed because the pair became `failed`. Activation deadline exhaustion now
+releases the fenced claim and schedules a15s continuation without claiming
+readiness or discarding durable jobs. Non-timeout activation errors retain their
+failure path. All **8/8 orchestration cases pass**, zero skipped; provider polling
+and cancellation are qualified separately in the dependent dispatcher layer.

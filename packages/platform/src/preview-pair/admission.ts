@@ -4,12 +4,43 @@ import { PreviewPairActorSchema, PreviewPairIdSchema, PreviewPairPrSchema, Previ
 import type { PlatformDB } from "../db.js";
 import type { EnabledPreviewPairConfig } from "./config.js";
 import { PreviewPairCandidateSchema } from "./provenance.js";
-import { PreviewPairConflictError, readPreviewPair, prepareLeasedPairMembers, type PreparePairMember } from "./repository.js";
+import { PreviewPairConflictError, readPreviewPair, prepareLeasedPairMembers, recordPreviewPairCurrency, type PreparePairMember } from "./repository.js";
 
 const Request = z.strictObject({ pairId: PreviewPairIdSchema, pr: PreviewPairPrSchema,
   requesterId: PreviewPairActorSchema, sourceSha: PreviewPairShaSchema, candidate: PreviewPairCandidateSchema });
 export type PreviewPairAdmissionRequest = z.infer<typeof Request>;
 export type { PreparePairMember } from "./repository.js";
+
+/** Both member/job writes and the free fixture lease share the original admission boundary. */
+export async function promoteQueuedPreviewPair(db: PlatformDB, config: EnabledPreviewPairConfig,
+  pairId: string, revision: number, prepare: PreparePairMember, now: number) {
+  PreviewPairIdSchema.parse(pairId); z.number().int().positive().max(Number.MAX_SAFE_INTEGER).parse(revision);
+  if (!Number.isFinite(now)) throw new PreviewPairConflictError();
+  return db.transaction(async trx => {
+    await sql`SELECT pg_advisory_xact_lock(hashtextextended('preview-pair-admission', 0))`.execute(trx.executor);
+    const pair = await trx.executor.selectFrom("preview_pairs").selectAll().where("pair_id", "=", pairId)
+      .where("revision", "=", revision).where("state", "=", "queued").forUpdate().executeTakeFirst();
+    if (!pair || Date.parse(pair.expires_at) <= now) throw new PreviewPairConflictError();
+    const available = await trx.executor.selectFrom("preview_pair_fixtures").selectAll()
+      .where("fixture_id", "in", config.fixtures.map(f => f.id)).where("active_pair_id", "is", null)
+      .orderBy("fixture_id").forUpdate().executeTakeFirst();
+    if (!available) return trx.executor.updateTable("preview_pairs")
+      .set({ next_attempt_at: new Date(now + 15_000).toISOString(), revision: sql`revision + 1` })
+      .where("pair_id", "=", pairId).where("revision", "=", revision).where("state", "=", "queued")
+      .returningAll().executeTakeFirstOrThrow();
+    const approved = config.fixtures.find(f => f.id === available.fixture_id);
+    if (!approved || approved.ownerActorId !== available.owner_actor_id || approved.memberActorId !== available.member_actor_id
+      || approved.outsiderActorId !== available.outsider_actor_id || approved.organizationId !== available.organization_id) throw new PreviewPairConflictError();
+    await trx.executor.updateTable("preview_pair_fixtures").set({ active_pair_id: pairId, revision: sql`revision + 1` })
+      .where("fixture_id", "=", available.fixture_id).where("active_pair_id", "is", null).where("revision", "=", available.revision)
+      .returning("fixture_id").executeTakeFirstOrThrow();
+    const updated = await trx.executor.updateTable("preview_pairs").set({ state: "preparing", fixture_id: available.fixture_id,
+      revision: sql`revision + 1`, next_attempt_at: null }).where("pair_id", "=", pairId).where("revision", "=", revision)
+      .where("state", "=", "queued").returningAll().executeTakeFirstOrThrow();
+    await prepareLeasedPairMembers(trx, pairId, updated.generation, prepare);
+    return updated;
+  });
+}
 
 /** Called only after independent controller provenance verification. No provider dispatch. */
 export async function admitPreviewPair(db: PlatformDB, config: EnabledPreviewPairConfig,
@@ -36,22 +67,7 @@ export async function admitPreviewPair(db: PlatformDB, config: EnabledPreviewPai
   }
   const existing = await trx.executor.selectFrom("preview_pairs").selectAll()
     .where("repository", "=", "HamedMP/matrix-os").where("pr", "=", input.pr).where("state", "!=", "stopped").executeTakeFirst();
-  if (existing) {
-    if (existing.state === "updating") {
-      if (!existing.requested_source_sha) throw new PreviewPairConflictError();
-      const outdated = input.sourceSha !== existing.requested_source_sha;
-      if (outdated === existing.outdated) return existing;
-      return trx.executor.updateTable("preview_pairs").set({ outdated, revision: sql`revision + 1` })
-        .where("pair_id", "=", existing.pair_id).where("revision", "=", existing.revision)
-        .returningAll().executeTakeFirstOrThrow();
-    }
-    const outdated = existing.source_sha !== input.sourceSha;
-    const requestedSource = outdated ? input.sourceSha : null;
-    if (existing.outdated === outdated && existing.requested_source_sha === requestedSource) return existing;
-    return trx.executor.updateTable("preview_pairs").set({ outdated, requested_source_sha: requestedSource,
-      revision: sql`revision + 1` }).where("pair_id", "=", existing.pair_id).where("revision", "=", existing.revision)
-      .returningAll().executeTakeFirstOrThrow();
-  }
+  if (existing) return recordPreviewPairCurrency(trx, existing, input.sourceSha);
   for (const kind of ["ui", "api"] as const) {
     const origin = kind === "ui" ? input.candidate.browserOrigin : input.candidate.apiOrigin;
     if (!origin.startsWith(`https://${previewPairTag(input.pairId, 1, kind)}---`)) throw new PreviewPairConflictError();

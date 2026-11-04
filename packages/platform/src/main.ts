@@ -2,6 +2,7 @@ import { registerFundedHostConfigRoutes } from "./funded-host-config-registratio
 import { registerBrowserChatApprovalRoutes } from "./browser-chat-approval-registration.js";
 import type { BrowserApprovalMachineLookup } from "./browser-approval-machine-lookup.js";
 import { createPreviewDriveRoutes, type PreviewDriveIntegration } from './preview-drive-routes.js';
+import { createPreviewPairRoutes, type PreviewPairRoutesDeps } from './preview-pair/routes.js';
 import { createAccountDeletionRoutes } from './account-deletion/routes.js';
 import type { AccountDeletionRuntime } from './account-deletion/wiring.js';
 import { registerInternalIntegrationRoutes } from './internal-integration-route-registration.js';
@@ -269,6 +270,7 @@ export function createApp(deps: {
   integrationRoutes?: Hono<any>;
   internalIntegrationRoutes?: Hono<any>;
   previewDriveIntegration?: PreviewDriveIntegration;
+  previewPairs?: PreviewPairRoutesDeps;
   customMcpRoutes?: Hono<any>;
   internalCustomMcpRoutes?: Hono<any>;
   internalCustomMcpApprovalRoutes?: Hono<any>;
@@ -493,6 +495,8 @@ export function createApp(deps: {
 
   if (deps.whatsappRoutes) app.route('/', deps.whatsappRoutes);
   app.route('/', createPlatformMcpRoutes({ db, env: appEnv }));
+  app.route('/', createPreviewPairRoutes({ ...deps.previewPairs,
+    enabled: appEnv.MATRIX_PREVIEW_PAIR_ENABLED === 'true' && deps.previewPairs?.enabled === true }));
   app.route('/', createComputerRoutes({
     db,
     clerkAuth,
