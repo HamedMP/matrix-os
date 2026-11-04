@@ -90,6 +90,11 @@ describe('fast CI preserves validation while removing serialized work', () => {
     expect(workflow.jobs.e2e['timeout-minutes']).toBe(30);
   });
 
+  it('keeps Playwright E2E on a supported hosted Ubuntu image', () => {
+    // Playwright 1.60 rejects Chromium installation on Ubuntu 26.04.
+    expect(workflow.jobs.e2e['runs-on']).toBe('ubuntu-24.04');
+  });
+
   it('retains frozen installs and keyed Next and browser caches', () => {
     expect(source).not.toContain('runs-on: ${{');
     expect(workflow.jobs['funded-postgres']['runs-on']).toBe('ubuntu-latest');
@@ -137,5 +142,22 @@ describe('fast CI preserves validation while removing serialized work', () => {
     expect(upload?.if).toContain('always()');
     expect(upload?.with?.name).toBe('unit-profile-${{ matrix.shard }}');
     expect(upload?.with?.['retention-days']).toBe(7);
+  });
+
+  it('builds node-pty from source before E2E prerequisites', () => {
+    const steps = workflow.jobs.e2e.steps;
+    const install = steps.findIndex(step => step.run === 'pnpm install --frozen-lockfile');
+    const rebuild = steps.findIndex(step => step.run === 'node scripts/build-node-pty.mjs');
+    const prepare = steps.findIndex(step => step.run === 'bun run test:prepare');
+
+    expect(rebuild).toBeGreaterThan(install);
+    expect(rebuild).toBeLessThan(prepare);
+
+    const builder = readFileSync(join(process.cwd(), 'scripts/build-node-pty.mjs'), 'utf8');
+    expect(builder).toContain("require.resolve('node-gyp/bin/node-gyp.js'");
+    expect(builder).toContain("join(nodePtyRoot, 'build', 'Release', 'pty.node')");
+    expect(builder).toContain("require('node-pty')");
+    expect(builder).toContain('} catch (error) {');
+    expect(builder).toContain('error instanceof Error ? error.stack ?? error.message : error');
   });
 });
