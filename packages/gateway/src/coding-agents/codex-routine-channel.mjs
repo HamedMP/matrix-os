@@ -109,7 +109,7 @@ export function createCodexRoutineChannel(options) {
       }
       if (calls.size >= 128 || [...calls.values()].filter(entry => !entry.done).length >= 8) { result(raw.id, unavailable); return true; }
       const actionId = randomUUID(), entry = { binding, callId: params.callId, fingerprint, intent: params.arguments, ids: [raw.id], done: false };
-      calls.set(actionId, entry); entry.timer = setTimeout(() => { send({ type: "shim.cancel", admissionId: entry.binding.admissionId, actionId }); complete(entry, routineUnknownResult(entry.intent)); }, 120_000); entry.timer.unref();
+      calls.set(actionId, entry); entry.timer = setTimeout(() => { send({ type: "shim.cancel", admissionId: entry.binding.admissionId, actionId }); complete(entry, routineUnknownResult(entry.intent)); }, ["propose", "pause", "resume", "archive"].includes(entry.intent.args[0]) ? 1_830_000 : 10_000); entry.timer.unref();
       if (!send({ type: "shim.call", ...binding, callId: params.callId, actionId, intent: params.arguments })) complete(entry, routineUnknownResult(entry.intent));
       return true;
     },

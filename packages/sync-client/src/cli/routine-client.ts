@@ -2,7 +2,7 @@ import { RoutineClientError } from "./routine-client-error.js";
 export { RoutineClientError } from "./routine-client-error.js";
 import { executeTerminalRoutineOperation } from "./routine-terminal-client.js";
 import { RoutineCliEnvelopeSchema, RoutineCliHostFrameSchema, ROUTINE_CLI_AUTH_SCHEME, ROUTINE_CLI_FRAME_BYTES,
-  ROUTINE_CLI_OUTPUT_BYTES, ROUTINE_CLI_HTTP_STATUS, routineCliResultMatchesOperation, type RoutineCliOperation, type RoutineCliResult } from "@matrix-os/contracts/routine-cli";
+  ROUTINE_CLI_OUTPUT_BYTES, ROUTINE_CLI_HTTP_STATUS, ROUTINE_CLI_OWNER_WAIT_MS, ROUTINE_CLI_REQUEST_TIMEOUT_MS, routineCliResultMatchesOperation, type RoutineCliOperation, type RoutineCliResult } from "@matrix-os/contracts/routine-cli";
 export const routineMutation = (operation: RoutineCliOperation): operation is Extract<RoutineCliOperation, { requestId: string; operation: "propose" | "pause" | "resume" | "archive" }> => ["propose", "pause", "resume", "archive"].includes(operation.operation);
 const unknown = (operation: Extract<RoutineCliOperation, { requestId: string }>): RoutineCliResult => ({ kind: "unknown", requestId: operation.requestId, disposition: "unknown", reconcile: true });
 async function readResponse(response: Response): Promise<unknown> {
@@ -21,7 +21,8 @@ export async function executeRoutineOperation(operation: RoutineCliOperation, si
   // Once private IPC exists, disconnection/uncertainty never falls back to a broker.
   if (!process.connected) throw new RoutineClientError("unavailable");
   // AbortSignal.any only arrived in Node20.3; this published client supports all Node>=20.
-  // One invocation controller/deadline covers both the private handoff and HTTP response.
+  // One controller fences both phases. Reads keep the original whole-call
+  // deadline; mutations may wait for a human before their HTTP deadline starts.
   const controller = new AbortController(), combined = controller.signal;
   const forwardAbort = () => controller.abort();
   signal.addEventListener("abort", forwardAbort, { once: true });
@@ -31,7 +32,8 @@ export async function executeRoutineOperation(operation: RoutineCliOperation, si
   let onMessage!: (value: unknown, handle?: unknown) => void;
   const disconnected = () => { controller.abort(); fail(new RoutineClientError("unavailable")); };
   const aborted = () => fail(new RoutineClientError("unavailable"));
-  const timer = setTimeout(() => { controller.abort(); fail(new RoutineClientError("unavailable")); }, 10000);
+  const expire = () => { controller.abort(); fail(new RoutineClientError("unavailable")); };
+  let timer = setTimeout(expire, routineMutation(operation) ? ROUTINE_CLI_OWNER_WAIT_MS : ROUTINE_CLI_REQUEST_TIMEOUT_MS);
   try {
     const capability = await new Promise<Extract<ReturnType<typeof RoutineCliHostFrameSchema.parse>, { type: "routine.capability" }>>((resolve, reject) => {
       fail = reject;
@@ -52,6 +54,7 @@ export async function executeRoutineOperation(operation: RoutineCliOperation, si
       process.send!({ v: 1, type: "routine.request", operation }, error => { if (error) reject(new RoutineClientError("unavailable")); });
     });
     if (combined.aborted) throw new RoutineClientError("unavailable");
+    if (routineMutation(operation)) { clearTimeout(timer); timer = setTimeout(expire, ROUTINE_CLI_REQUEST_TIMEOUT_MS); }
     const response = await fetch(capability.endpoint, { method: "POST", redirect: "error", headers: {
       authorization: `${ROUTINE_CLI_AUTH_SCHEME} ${capability.token}`, "content-type": "application/json",
     }, body: JSON.stringify({ operation }), signal: combined });

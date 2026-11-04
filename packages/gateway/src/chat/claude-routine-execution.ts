@@ -1,3 +1,4 @@
+import { ROUTINE_CLI_INVOCATION_TIMEOUT_MS } from "@matrix-os/contracts/routine-cli";
 import type { RoutineCliRuntime } from "../bots/routine-cli-runtime.js";
 import { createFixedNativeRoutineCliInvoker } from "../bots/routine-cli-invoker.js";
 import { createRoutineResultArtifacts, RoutineDisplayUnavailableError, routineDisplayRequestId } from "./routine-result-artifacts.js";
@@ -22,7 +23,7 @@ export function createClaudeRoutineExecution(options: NativeRoutineCliPort & { i
       const registered = await open(); registered.narrowNativeMode(nativePlan ? "plan" : undefined);
       if (closed || options.signal.aborted || signal.aborted) throw new Error("Routine source unavailable");
       invoker ??= createFixedNativeRoutineCliInvoker({ binPath: options.binPath, endpoint: options.endpoint, cwd: options.cwd, homePath: options.homePath,
-        authorize: registered.authorize, issue: registered.issue, cancel: registered.cancel, timeoutMs: 120_000 });
+        authorize: registered.authorize, issue: registered.issue, cancel: registered.cancel, timeoutMs: ROUTINE_CLI_INVOCATION_TIMEOUT_MS });
       const result = await invoker.invoke({ ...parsed, signal: AbortSignal.any([signal, options.signal]) });
       if (closed || options.signal.aborted || signal.aborted) throw new Error("Routine source unavailable");
       const requestId = routineDisplayRequestId(result);

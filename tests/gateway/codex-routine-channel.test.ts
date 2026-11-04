@@ -53,6 +53,9 @@ it("caps concurrent actions and preserves original business UUID on timeout with
     expect(f.sent.filter(frame => frame.type === "shim.call")).toHaveLength(8);
     expect(f.native).toHaveLength(1);
     await vi.advanceTimersByTimeAsync(120_001);
+    expect(f.native).toHaveLength(1); expect(f.sent.filter(frame => frame.type === "shim.cancel")).toHaveLength(0);
+    await vi.advanceTimersByTimeAsync(1_709_998); expect(f.native).toHaveLength(1);
+    await vi.advanceTimersByTimeAsync(1);
     expect(f.native).toHaveLength(9);
     expect(f.sent.filter(frame => frame.type === "shim.cancel")).toHaveLength(8);
     expect(JSON.parse(f.native[1].result.contentItems[0].text)).toMatchObject({ data: { kind: "unknown", requestId: uuid(9), reconcile: true } });
@@ -62,4 +65,14 @@ it("caps concurrent actions and preserves original business UUID on timeout with
 it("public controls cannot carry private source frames or source identity fields", () => {
   expect(CodexControlSchema.safeParse({ type: "host.turn", admissionId: uuid(2), first: true }).success).toBe(false);
   expect(CodexControlSchema.safeParse({ type: "turn", clientRequestId: "req_manual", prompt: "Fixture", modelOptions: [], admissionId: uuid(2) }).success).toBe(false);
+});
+
+it("does not lend a human-wait budget to native read calls", async () => {
+  vi.useFakeTimers(); const f = fixture();
+  try {
+    f.channel.handle(f.call()); await vi.advanceTimersByTimeAsync(9_999); expect(f.native).toHaveLength(0);
+    await vi.advanceTimersByTimeAsync(1); expect(f.native).toHaveLength(1);
+    expect(f.sent.filter(frame => frame.type === "shim.cancel")).toHaveLength(1);
+    expect(f.native[0]!.result.success).toBe(false);
+  } finally { f.channel.close(); vi.useRealTimers(); }
 });

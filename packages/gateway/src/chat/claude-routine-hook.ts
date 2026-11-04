@@ -1,3 +1,4 @@
+import { ROUTINE_CLI_NATIVE_TIMEOUT_MS } from "@matrix-os/contracts/routine-cli";
 import { RoutineDisplayUnavailableError } from "./routine-result-artifacts.js";
 import { randomBytes } from "node:crypto";
 import { z } from "zod/v4";
@@ -21,7 +22,7 @@ export function createClaudeRoutineHook(options: { signal: AbortSignal; write(fr
   let timer: ReturnType<typeof setTimeout> | undefined, writes = 0;
   const usedTools = new Set<string>(); // <=512; same native tool cannot issue another logical effect.
   const seen = new Set<string>(), tools = new Map<string, string>(); // <=512/run; saturation closes routines, no identity replay eviction.
-  const pending = new Map<string, { controller: AbortController; work: Promise<void> }>(); // max8, native cancel/120s/close drains.
+  const pending = new Map<string, { controller: AbortController; work: Promise<void> }>(); // max8, native cancel/deadline/close drains.
   const write = async (frame: unknown) => {
     if (writes >= 8 || closed || options.signal.aborted) throw new Error("Routine control transport unavailable");
     writes++;
@@ -42,7 +43,7 @@ export function createClaudeRoutineHook(options: { signal: AbortSignal; write(fr
     async start() {
       if (closed || initializing || options.signal.aborted) return; initializing = true;
       timer = setTimeout(() => { applied = false; startInput(); }, options.initTimeoutMs ?? 5000);
-      await write({ type: "control_request", request_id: initializeId, request: { subtype: "initialize", hooks: { PreToolUse: [{ matcher: "Bash", hookCallbackIds: [callbackId], timeout: 120 }] } } });
+      await write({ type: "control_request", request_id: initializeId, request: { subtype: "initialize", hooks: { PreToolUse: [{ matcher: "Bash", hookCallbackIds: [callbackId], timeout: ROUTINE_CLI_NATIVE_TIMEOUT_MS / 1000 }] } } });
     },
     handle(value: unknown): boolean {
       const parsed = FrameSchema.safeParse(value); if (!parsed.success) return false; const frame = parsed.data;
@@ -73,7 +74,7 @@ export function createClaudeRoutineHook(options: { signal: AbortSignal; write(fr
         void respond(id, "deny").catch(failed); return true;
       }
       usedTools.add(request.tool_use_id);
-      const controller = new AbortController(), signal = AbortSignal.any([controller.signal, options.signal, AbortSignal.timeout(120_000)]);
+      const controller = new AbortController(), signal = AbortSignal.any([controller.signal, options.signal, AbortSignal.timeout(ROUTINE_CLI_NATIVE_TIMEOUT_MS)]);
       const work = (async () => {
         try {
           let abort!: () => void;
