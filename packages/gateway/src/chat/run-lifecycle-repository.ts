@@ -1,3 +1,4 @@
+import { lockRunCollaborationScope } from "./run-scope-lock.js";
 import { assertPrivateRoutineRun } from "./private-routine-authority.js";
 import { assertInputClaim, getChatInputState, pendingInputTransition } from "./input-submission.js";
 import {
@@ -103,7 +104,9 @@ async function selectOwnedChat(
   owner: ChatOwner,
   chatId: string,
   lock = false,
+  runId?: string,
 ): Promise<Selectable<ChatsTable> | undefined> {
+  if (lock && runId) await lockRunCollaborationScope(executor, owner, chatId, runId);
   let query = executor.selectFrom("chats").selectAll()
     .where("id", "=", chatId)
     .where("owner_type", "=", owner.type)
@@ -282,7 +285,7 @@ export class ChatRunLifecycleRepository {
     const owner = validateOwner(ownerInput);
     const startedAt = new Date(input.startedAt).toISOString();
     return this.transact(async (trx) => {
-      const chat = await selectOwnedChat(trx, owner, CanonicalChatIdSchema.parse(input.chatId), true);
+      const chat = await selectOwnedChat(trx, owner, CanonicalChatIdSchema.parse(input.chatId), true, input.runId);
       if (!chat) throw new ChatNotFoundError(input.chatId);
       const current = await trx.selectFrom("chat_runs").selectAll()
         .where("id", "=", requireSafeRef(input.runId))
@@ -327,7 +330,7 @@ export class ChatRunLifecycleRepository {
       throw new ChatConflictError(input.chatId, 0);
     }
     await this.transact(async (trx) => {
-      const chat = await selectOwnedChat(trx, owner, CanonicalChatIdSchema.parse(input.chatId), true);
+      const chat = await selectOwnedChat(trx, owner, CanonicalChatIdSchema.parse(input.chatId), true, input.runId);
       if (!chat) throw new ChatNotFoundError(input.chatId);
       const run = await trx.selectFrom("chat_runs").select(["status", "driver_kind", "instance_id"])
         .where("id", "=", input.runId)
@@ -373,7 +376,7 @@ export class ChatRunLifecycleRepository {
     }
     if (activities.length === 0) return 0;
     return this.transact(async (trx) => {
-      const current = await selectOwnedChat(trx, owner, CanonicalChatIdSchema.parse(chatId), true);
+      const current = await selectOwnedChat(trx, owner, CanonicalChatIdSchema.parse(chatId), true, runId);
       if (!current) throw new ChatNotFoundError(chatId);
       const run = await trx.selectFrom("chat_runs").select("id")
         .where("id", "=", runId).where("chat_id", "=", chatId)
@@ -506,7 +509,7 @@ export class ChatRunLifecycleRepository {
     const createdAt = new Date(input.createdAt).toISOString();
     return this.transact(async (trx) => {
       let delta = input.delta;
-      const chat = await selectOwnedChat(trx, owner, chatId, true);
+      const chat = await selectOwnedChat(trx, owner, chatId, true, input.runId);
       if (!chat) throw new ChatNotFoundError(chatId);
       const run = await trx.selectFrom("chat_runs").selectAll()
         .where("id", "=", input.runId)
@@ -646,7 +649,7 @@ export class ChatRunLifecycleRepository {
       resource: { kind: "home", path: attachment.path },
     });
     return this.transact(async (trx) => {
-      const chat = await selectOwnedChat(trx, owner, chatId, true);
+      const chat = await selectOwnedChat(trx, owner, chatId, true, input.runId);
       if (!chat) throw new ChatNotFoundError(chatId);
       const run = await trx.selectFrom("chat_runs").selectAll()
         .where("id", "=", input.runId).where("chat_id", "=", chatId)
@@ -766,7 +769,7 @@ export class ChatRunLifecycleRepository {
     const completedAt = new Date(input.completedAt).toISOString();
     const output = input.output === undefined ? undefined : CanonicalChatMessageSchema.parse(input.output);
     return this.transact(async (trx) => {
-      const chat = await selectOwnedChat(trx, owner, CanonicalChatIdSchema.parse(input.chatId), true);
+      const chat = await selectOwnedChat(trx, owner, CanonicalChatIdSchema.parse(input.chatId), true, input.runId);
       if (!chat) throw new ChatNotFoundError(input.chatId);
       const current = await trx.selectFrom("chat_runs").selectAll()
         .where("id", "=", input.runId).where("chat_id", "=", input.chatId).forUpdate().executeTakeFirst();
