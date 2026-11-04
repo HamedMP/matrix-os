@@ -12,6 +12,8 @@ import {
 } from "@matrix-os/contracts";
 
 import { Button } from "@/components/ui";
+import { routineApprovalPreview } from "@matrix-os/ui/bot-routine-presentation";
+import { RoutineApprovalCard } from "./RoutineApprovalCard";
 
 import { approvalTitle, serviceLabel } from "../agent-copy";
 
@@ -34,6 +36,8 @@ const CLOSED_NOTES = {
 } as const;
 
 export interface PendingInteractionProps {
+  /** When supplied by Schedules, an old edit may be denied but not approved. */
+  currentRoutineRevision?: number | null;
   interaction: BotInteraction;
   /** False while the agent's status could not be read again, so what is shown may be out of date. */
   actionsAvailable?: boolean;
@@ -67,6 +71,7 @@ export function PendingInteraction({
   onResolve,
   onRefresh,
   onConnectUrl,
+  currentRoutineRevision,
 }: PendingInteractionProps) {
   const [sending, setSending] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -90,6 +95,10 @@ export function PendingInteraction({
   const testID = `interaction-${interaction.interactionId}`;
 
   const resolve = async (action: string, input: ResolveBotInteractionRequest) => {
+    if (input.kind !== "resume" && (!actionsAvailable || botInteractionCard(interaction, new Date().toISOString()).state !== "actionable")) {
+      setNow(new Date().toISOString());
+      return;
+    }
     if (inFlight.current || settled || (input.kind === "resume" && (!recovery || recovery.expired || !actionsAvailable))) return;
     inFlight.current = true;
     setSending(action);
@@ -150,6 +159,9 @@ export function PendingInteraction({
   }
 
   if (!payload || card.state !== "actionable") {
+    if (payload?.kind === "approval" && payload.tool === "routine.activate") return <RoutineApprovalCard
+      testID={testID} botId={interaction.agentId} preview={payload.preview} sending={null} error={null} stale={false}
+      closed={CLOSED_NOTES[card.state === "actionable" ? "unavailable" : card.state]} onAllow={() => {}} onDeny={() => {}} />;
     return (
       <InteractionCard testID={testID} label={label}>
         <InteractionNote>{CLOSED_NOTES[card.state === "actionable" ? "unavailable" : card.state]}</InteractionNote>
@@ -159,6 +171,9 @@ export function PendingInteraction({
   }
 
   if (!actionsAvailable) {
+    if (payload.kind === "approval" && payload.tool === "routine.activate") return <RoutineApprovalCard
+      testID={testID} botId={interaction.agentId} preview={payload.preview} sending={null} error={null} stale={false}
+      closed={STATUS_OUT_OF_DATE} onAllow={() => {}} onDeny={() => {}} />;
     return (
       <InteractionCard testID={testID} label={label} title={titleOf(payload)}>
         <InteractionNote>{STATUS_OUT_OF_DATE}</InteractionNote>
@@ -176,6 +191,14 @@ export function PendingInteraction({
 
   switch (payload.kind) {
     case "approval":
+      if (payload.tool === "routine.activate") {
+        const routine = routineApprovalPreview(payload.preview);
+        const stale = Boolean(routine?.source.routineId && currentRoutineRevision !== undefined
+          && routine.source.baseRoutineRevision !== currentRoutineRevision);
+        return <RoutineApprovalCard testID={testID} botId={interaction.agentId} preview={payload.preview} sending={sending} error={error} stale={stale}
+          onAllow={() => { if (routine && !stale) void resolve("approve", { kind: "approval", baseRevision, decision: "approve" }); }}
+          onDeny={() => void resolve("deny", { kind: "approval", baseRevision, decision: "deny" })} />;
+      }
       return (
         <ApprovalCard
           testID={testID}

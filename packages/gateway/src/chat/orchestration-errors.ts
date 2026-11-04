@@ -11,6 +11,7 @@ import {
   ChatRunNotActiveError,
 } from "./errors.js";
 import { ChatAgentContextError } from "./agent-context.js";
+import { BotEntryError } from "../bots/custom-direct-chat.js";
 
 export class CanonicalChatOrchestrationError extends Error {
   constructor(readonly safeError: CanonicalChatSafeError, readonly status: 400 | 404 | 409 | 503) {
@@ -57,6 +58,10 @@ export function mapChatAgentContextError(error: ChatAgentContextError): Canonica
 
 export function mapRepositoryError(error: unknown): never {
   if (error instanceof ChatAgentContextError) throw mapChatAgentContextError(error);
+  if (error instanceof BotEntryError && error.code === "unavailable") {
+    throw new CanonicalChatOrchestrationError(canonicalChatSafeError(
+      "resource_unavailable", "This Chat is unavailable for Agent execution.", false, []), 503);
+  }
   if (error instanceof ChatNotFoundError) {
     throw new CanonicalChatOrchestrationError(canonicalChatSafeError("chat_not_found", "Chat not found."), 404);
   }
