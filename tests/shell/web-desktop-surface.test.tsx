@@ -162,6 +162,8 @@ describe("WebDesktopSurface", () => {
     expect(vscodeIcon?.className).toContain("border-0 shadow-none");
     expect(vscodeIcon?.querySelector("img")?.getAttribute("src")).toBe("/vscode.png");
 
+    fireEvent.doubleClick(screen.getByRole("button", { name: "Settings" }));
+    expect(onOpenSettings).toHaveBeenLastCalledWith("agents-providers");
     fireEvent.doubleClick(screen.getByRole("button", { name: "Connect Apps" }));
     expect(onOpenSettings).toHaveBeenCalledWith("integrations");
     fireEvent.doubleClick(screen.getByRole("button", { name: "Notes" }));

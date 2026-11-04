@@ -142,7 +142,7 @@ export function Desktop({ launchAppPath, sharedTerminalScopeId, onOpenCommandPal
   const [interacting, setInteracting] = useState(false);
   const [taskBoardOpen, setTaskBoardOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const [settingsDefaultSection, setSettingsDefaultSection] = useState<SettingsSectionId>("appearance");
+  const [settingsDefaultSection, setSettingsDefaultSection] = useState<SettingsSectionId>("agents-providers");
   const [minimizingIds, setMinimizingIds] = useState<Set<string>>(new Set());
   const [firstRunStatus, setFirstRunStatus] = useState<DesktopFirstRunStatus>("checking");
   // Shell hydration always uses the shared Matrix brand surface. Theme-specific
@@ -844,7 +844,7 @@ export function Desktop({ launchAppPath, sharedTerminalScopeId, onOpenCommandPal
 
   const openLauncherDestination = useCallback((name: string, path: string) => {
     if (path === "__settings__" || path === "__plugins__") {
-      setSettingsDefaultSection(path === "__plugins__" ? "integrations" : "appearance");
+      setSettingsDefaultSection(path === "__plugins__" ? "integrations" : "agents-providers");
       setSettingsOpen(true);
       setTaskBoardOpen(false);
       return;

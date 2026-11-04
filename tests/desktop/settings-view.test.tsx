@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import React from "react";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import SettingsView from "../../desktop/src/renderer/src/features/settings/SettingsView";
 import { useConnection } from "../../desktop/src/renderer/src/stores/connection";
@@ -10,6 +10,7 @@ import { useProjectLifecycle } from "../../desktop/src/renderer/src/stores/proje
 
 describe("SettingsView", () => {
   beforeEach(() => {
+    useUi.setState({ requestedSettingsSection: null });
     document.documentElement.removeAttribute("data-theme");
     Object.defineProperty(window, "matchMedia", {
       configurable: true,
@@ -43,7 +44,14 @@ describe("SettingsView", () => {
     render(<SettingsView />);
 
     await waitFor(() => expect(screen.getByRole("button", { name: "Computers" })).not.toBeNull());
-    expect(screen.getByRole("heading", { name: "Account" })).not.toBeNull();
+    expect(screen.getByRole("heading", { name: "Agents & providers" })).not.toBeNull();
+    const nav = screen.getByRole("navigation", { name: "Settings sections" });
+    expect(within(nav).getAllByRole("button").map((button) => button.textContent)).toEqual([
+      "Agents & providers", "Connect Apps", "MCPs", "Skills", "Import chats", "CLI",
+      "Appearance", "Account", "Billing", "Organization", "Identity & personality",
+      "Computers", "Schedules", "System",
+    ]);
+    expect(within(nav).getByRole("button", { name: "Agents & providers" }).getAttribute("aria-current")).toBe("page");
     expect(screen.queryByRole("button", { name: "Projects" })).toBeNull();
     expect(screen.queryByRole("button", { name: "Channels" })).toBeNull();
     expect(screen.getByRole("button", { name: "Agents & providers" })).not.toBeNull();
@@ -128,7 +136,7 @@ describe("SettingsView", () => {
     render(<SettingsView />);
 
     await waitFor(() => expect(useUi.getState().requestedSettingsSection).toBeNull());
-    expect(screen.getByRole("heading", { name: "Account" })).not.toBeNull();
+    expect(screen.getByRole("heading", { name: "Agents & providers" })).not.toBeNull();
   });
 
 });

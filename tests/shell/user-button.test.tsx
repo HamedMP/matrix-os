@@ -345,6 +345,15 @@ describe("UserButton", () => {
     expect(screen.queryByRole("menuitemradio")).toBeNull();
   });
 
+  it("opens agent setup from the account menu's Settings action", async () => {
+    const onOpenSettings = vi.fn();
+    const { UserButton } = await import("../../shell/src/components/UserButton.js");
+    render(<UserButton variant="menubar" onOpenSettings={onOpenSettings} />);
+    fireEvent.pointerDown(screen.getByRole("button", { name: "Account menu for kongfupanda13" }), { button: 0, ctrlKey: false });
+    fireEvent.click(await screen.findByRole("menuitem", { name: "Settings" }));
+    expect(onOpenSettings).toHaveBeenCalledWith("agents-providers");
+  });
+
   it("matches the top-bar account menu and keeps billing functional", async () => {
     const onOpenSettings = vi.fn();
     const { UserButton } = await import("../../shell/src/components/UserButton.js");
