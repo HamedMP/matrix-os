@@ -4,6 +4,7 @@ import type { CSSProperties } from "react";
 import { useEffect, useMemo, useState } from "react";
 import { createErrorId, describeUnknownError } from "../lib/error-boundary-utils";
 import { capturePostHogException, reportClientError } from "../lib/posthog-client";
+import { classifyStaleBundleError, recoverFromStaleBundleError } from "../lib/stale-bundle-recovery";
 
 const PAGE_STYLE: CSSProperties = {
   alignItems: "center",
@@ -98,19 +99,23 @@ export default function GlobalError({
   // react-doctor-disable-next-line react-doctor/react-compiler-no-manual-memoization -- stable identity is consumed by the telemetry useEffect dependency array below ([error, errorId]); removing useMemo would re-run the exception-reporting effect on every render.
   const errorId = useMemo(() => createErrorId(error), [error]);
   const [copied, setCopied] = useState(false);
+  const staleBundleFingerprint = classifyStaleBundleError(error)?.fingerprint;
 
   useEffect(() => {
     capturePostHogException(error, {
       source: "shell-global-error-boundary",
       digest: error.digest,
       errorId,
+      staleBundleFingerprint,
     });
     reportClientError(error, {
       source: "shell-global-error-boundary",
       digest: error.digest,
       errorId,
+      staleBundleFingerprint,
     });
-  }, [error, errorId]);
+    recoverFromStaleBundleError(error);
+  }, [error, errorId, staleBundleFingerprint]);
 
   async function copyErrorId() {
     try {
@@ -144,10 +149,12 @@ export default function GlobalError({
               Matrix OS
             </p>
             <h2 style={{ fontSize: 30, fontWeight: 650, letterSpacing: "-0.01em", lineHeight: 1.08, margin: "12px 0 0" }}>
-              Something went wrong
+              {staleBundleFingerprint ? "Matrix needs the latest version" : "Something went wrong"}
             </h2>
             <p style={{ color: "rgba(67,78,63,0.65)", fontSize: 14, lineHeight: 1.6, margin: "12px 0 0", maxWidth: 360 }}>
-              Matrix hit an unexpected state. Try again and we will reload the shell.
+              {staleBundleFingerprint
+                ? "A shell update arrived while this tab was open. Matrix will reload automatically; if it stays here, reload the latest version."
+                : "Matrix hit an unexpected state. Try again and we will reload the shell."}
             </p>
             <button
               type="button"
@@ -164,10 +171,10 @@ export default function GlobalError({
             </button>
             <button
               type="button"
-              onClick={reset}
+              onClick={staleBundleFingerprint ? () => window.location.reload() : reset}
               style={RESET_BUTTON_STYLE}
             >
-              Try again
+              {staleBundleFingerprint ? "Reload latest version" : "Try again"}
             </button>
           </div>
         </div>
