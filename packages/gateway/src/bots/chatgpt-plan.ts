@@ -13,7 +13,7 @@ export interface ChatGptPlanBinding {
  * native peer. Borrowed CLI credentials and self-declared eligibility flags are excluded. */
 export interface ChatGptPlanAuthority {
     observe(ownerId: string): Promise<BotProviderConnection>;
-    resolve(selection: CanonicalChatModelSelection, ownerId: string, requestClass: 'interactive' | 'background'): Promise<ResolvedBotRoute>;
+    resolve(selection: CanonicalChatModelSelection, ownerId: string, requestClass: 'interactive' | 'background' | 'routine'): Promise<ResolvedBotRoute>;
     revalidate(binding: PiRuntimeBinding, signal: AbortSignal): Promise<boolean>;
     /** Local owner device performs inference. OAuth tokens never reach this gateway. */
     infer(binding: PiRuntimeBinding, body: string, signal: AbortSignal): Promise<{

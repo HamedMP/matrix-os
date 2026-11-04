@@ -82,6 +82,8 @@ function Message({
         chatId={chatId}
         renderComputerPhoto={renderComputerPhoto}
         delivery={message.delivery}
+        scheduled={message.scheduled}
+        scheduleEvent={message.scheduleEvent}
         onRetry={failed ? () => unsent.onRetry(message.id) : undefined}
         onEdit={failed ? () => unsent.onEdit(message.id) : undefined}
         retryDisabled={message.retryBlocked}
