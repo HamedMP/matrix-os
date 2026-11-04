@@ -25,7 +25,8 @@ const withinCeiling = (target: { botId: string; chatId: string }, ceiling?: Targ
 type Entry = { handle: RoutineSourceHandle; reference: RoutineCliSourceReference; invocationId: string; operation: RoutineCliOperation;
   operationDigest: string; target: RoutineCliResolvedTarget; boundTarget?: TargetCeiling; originalReceipt: boolean; fingerprint: string; mode: "allow" | "ask";
   expiresAt: number; challengeId: string; actionDigest: string; status: RoutineActionView["status"]; issued: boolean;
-  decision?: RoutineActionSubmit; settle(value: boolean): void; waiting: Promise<boolean>; detach(): void };
+  decision?: RoutineActionSubmit; settle(value: boolean): void; waiting: Promise<boolean>; detach(): void;
+  resolutionPublished: boolean; publishResolution(): void };
 const actionFor = (operation: RoutineCliOperation): RoutineCliAction => operation.operation === "propose" ? "propose"
   : ["list", "show", "request"].includes(operation.operation) ? "read" : "control";
 /** The host captures one normalized intent/invocation/source/target/policy. No UI/network wait owns a DB transaction.
@@ -49,12 +50,15 @@ export function createRoutineCliActionController(options: {
       && routineActionPolicy(entry.handle.source, registered.policy, actionFor(entry.operation)) === entry.mode;
   };
   const emit = (entry: Entry, resolved = false) => {
-    const registered = options.registry.read(entry.handle.source);
     if (entry.handle.source.identity.kind === "terminal_launch") return;
+    if (resolved) {
+      if (entry.resolutionPublished) return;
+      entry.resolutionPublished = true; entry.publishResolution(); return;
+    }
+    const registered = options.registry.read(entry.handle.source);
     if (!registered?.producer.publish) throw new RoutineCliError("unavailable");
-    registered.producer.publish(CanonicalProviderRunEventSchema.parse(resolved
-      ? { type: "approval.resolved", approvalId: entry.challengeId, decision: entry.decision?.decision ?? "cancel" }
-      : { type: "approval.requested", approvalId: entry.challengeId, actionDigest: entry.actionDigest,
+    registered.producer.publish(CanonicalProviderRunEventSchema.parse(
+      { type: "approval.requested", approvalId: entry.challengeId, actionDigest: entry.actionDigest,
         title: `Allow routine ${entry.operation.operation}?`, safeDescription: ROUTINE_ACTION_NOTICE,
         risk: "medium", allowedDecisions: ["approve", "decline", "cancel"] }));
   };
@@ -136,10 +140,18 @@ export function createRoutineCliActionController(options: {
     const decisionTtl = mode === "ask" ? ttl : Math.min(ttl, 120_000);
     const expiresAt = Math.min(now() + decisionTtl, Date.parse(handle.source.expiresAt));
     const challengeId = `rcact_${randomBytes(16).toString("hex")}`;
+    // Retain only this prepared producer's resolution channel. Source expiry may
+    // remove its registry entry before the original Chat's idle tracker is drained.
+    // Requests and all authority checks still require the live registry.
+    const publish = registered.producer.publish?.bind(registered.producer);
     const entry: Entry = { handle, reference, invocationId, operation, boundTarget, operationDigest: routineActionHash(operation), ...prepared,
       fingerprint: registered.fingerprint, mode, expiresAt, challengeId, actionDigest: routineActionHash({ purpose: "routine_cli_owner_action:v1",
         source: handle.source, sourceId: reference.sourceId, invocationId, operation, boundTarget, target: prepared.target, policy: registered.fingerprint, expiresAt, challengeId }),
-      status: mode === "ask" ? "pending" : "approved", issued: false, waiting, settle, detach: () => {} };
+      status: mode === "ask" ? "pending" : "approved", issued: false, waiting, settle, detach: () => {}, resolutionPublished: false,
+      publishResolution() {
+        if (!publish) throw new RoutineCliError("unavailable");
+        publish(CanonicalProviderRunEventSchema.parse({ type: "approval.resolved", approvalId: challengeId, decision: entry.decision?.decision ?? "cancel" }));
+      } };
     const abort = () => remove(entry);
     call.signal.addEventListener("abort", abort, { once: true }); handle.signal.addEventListener("abort", abort, { once: true });
     entry.detach = () => { call.signal.removeEventListener("abort", abort); handle.signal.removeEventListener("abort", abort); };
