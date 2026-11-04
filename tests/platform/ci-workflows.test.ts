@@ -316,13 +316,11 @@ describe('CI workflows', () => {
     expect(unknown.output).toContain('trigger_requested=false');
   });
 
-  it('omits the required check only for drafts and executes authenticated metadata verification', () => {
-    // A draft cannot merge; leaving the required check absent shows "expected", never red.
+  it('keeps the required check stable across delayed draft events and authenticates metadata coverage', () => {
     const workflow = parse(readFileSync(join(process.cwd(), '.github/workflows/ci.yml'), 'utf8'));
     const results = workflow.jobs['ci-results'];
-    const ignored = "(github.event_name == 'pull_request' && github.event.pull_request.draft == true)";
-    expect(results.name).toBe(`\${{ ${ignored} && 'CI Draft (ignored)' || 'CI Results' }}`);
-    expect(results.if).toBe(`always() && !${ignored}`);
+    expect(results.name).toBe('CI Results');
+    expect(results.if).toBe('always()');
     expect(results.steps.find(step => step.name === 'Verify exact-source coverage after metadata edit')?.with.script).toContain('verifyMetadataCoverage');
     expect(results.steps.find(step => step.name === 'Summarize required CI jobs')?.if).toContain("github.event.action == 'edited'");
   });
@@ -346,8 +344,7 @@ describe('CI workflows', () => {
 
     expect(workflow).toContain('ci-results:');
     const aggregate = parse(workflow).jobs['ci-results'];
-    const name = aggregate.name.replace(/^\$\{\{\s*|\s*\}\}$/g, '');
-    expect(Function('github', `return (${name});`)({ event_name: 'push', event: {} })).toBe('CI Results');
+    expect(aggregate.name).toBe('CI Results');
     expect(workflow).toContain('if: always()');
     expect(aggregate.needs).toEqual(['redirect', 'changes', 'isolated-ci-backend', 'ci-backend', 'typecheck', 'shell-production-build', 'patterns', 'react-doctor', 'sync-client', 'agent-sdk-compatibility', 'unit', 'funded-postgres', 'collaboration-postgres', 'funded-host-root', 'docs-contract', 'os-view-parity', 'e2e', 'dedicated-linux', 'completion-handoff']);
     expect(workflow).toContain('### CI Results');

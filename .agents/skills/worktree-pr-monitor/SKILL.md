@@ -104,6 +104,13 @@ manual git worktree flow for isolated PR publication.
      review with `gh pr ready`. That starts full PR CI.
    - Wait for the triggered checks with `gh pr checks --watch` or equivalent
      GitHub API status reads.
+   - Before declaring required CI green, run
+     `node scripts/ci/check-pr-readiness.mjs <pr>`. Exit 0 authenticates
+     `CI Results` in the newest current-head PR suite; exit 1 is blocked and
+     exit 2 is an inspection error. This read-only check does not cover other
+     required workflows, reviews or mergeability. Inspect those separately.
+     Historical green rollup entries, a successful metadata suite with a
+     missing aggregate, and reruns of older suites do not establish readiness.
    - If every required triggered check passes, the PR is ready.
    - If any triggered check fails, convert the PR back to draft with
      `gh pr ready --undo`, inspect the failure, implement the fix, rerun
@@ -136,4 +143,5 @@ gh pr create --draft
 gh pr ready
 gh pr ready --undo
 gh pr checks --watch
+node scripts/ci/check-pr-readiness.mjs <pr>
 ```

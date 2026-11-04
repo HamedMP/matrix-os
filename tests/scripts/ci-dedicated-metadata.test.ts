@@ -7,6 +7,18 @@ const format=(text:string,...values:unknown[])=>text.replace(/\{(\d+)\}/g,(_,i)=
 function expression(text:string,github:any,inputs={}){if(!text.startsWith('${{')&&!text.includes('always(')&&!text.includes('github.'))return text;return Function('github','inputs','format','always','needs','vars',`return (${text.replace(/^\$\{\{\s*|\s*\}\}$/g,'')});`)(github,inputs,format,()=>true,{redirect:{outputs:{}}},{});}
 const sha='a'.repeat(40),head='b'.repeat(40),base='c'.repeat(40),repo={owner:'HamedMP',repo:'matrix-os'};
 describe('metadata-only PR events cannot replace required coverage',()=>{
+ it.each(['opened','synchronize','edited'])('keeps a delayed draft %s suite on the required verifier after ready CI',action=>{
+  // Replay the captured event, not the current PR. A queued draft event can
+  // create the newest suite after ready_for_review has started real coverage.
+  const github={event_name:'pull_request',sha,event:{action,changes:{},pull_request:{number:2454,draft:true}}};
+  expect(expression(ci['run-name'],github)).toContain('CI metadata-v1');
+  expect(expression(ci.jobs['ci-results'].name,github)).toBe('CI Results');
+  expect(expression(ci.jobs['ci-results'].if,github)).toBe(true);
+  const verify=ci.jobs['ci-results'].steps.find((step:any)=>step.name==='Verify exact-source coverage after metadata edit');
+  expect(expression(verify.if,github)).toBe(true);
+  const summarize=ci.jobs['ci-results'].steps.find((step:any)=>step.name==='Summarize required CI jobs');
+  expect(expression(summarize.if,github)).toBe(false);
+ });
  it.each(['title','body'])('keeps the required aggregate executable for ready %s edits while excluding metadata from coverage provenance',field=>{
   const github={event_name:'pull_request',sha,event:{action:'edited',changes:{[field]:{from:'before'}},pull_request:{number:2454,labels:[{name:'ready-for-ci'},{name:'fast-ci'}]}}};
   const title=expression(ci['run-name'],github);expect(title).toContain('CI metadata-v1');
