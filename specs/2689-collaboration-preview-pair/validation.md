@@ -433,3 +433,97 @@ legal cp-prefixed customer handles retain directory, endpoint and both ticket
 paths. All5 real two-database retirement cases pass, zero skipped; focused Platform
 native TypeScript passes. Existing pair tombstone and in-flight writer fences
 remain exercised. This is a source fix, not a live customer mutation.
+
+### Actual host observation checkpoint
+
+The new reader consumes the existing gateway system-info producer, canonical
+control metadata, actual isolated registration and the existing target endpoint
+registry. Provider responses and HTTP transport are fixtures; no public-IP request
+or paid machine was made. It checks provider labels/address, global-IP safety,
+installed and running source/digests, slot/owner/epoch, protocol, actual target
+confirmation and fresh control activity. Infrastructure readiness grants no access.
+
+The unimplemented positive path failed first. A401 response-body cancellation
+assertion failed before its fix. Removing the final canonical check made a real
+stop request during the probe return healthy; restoring the check rejects that
+completion while the target/control remain healthy. Ten response mismatch variants
+assert the responsible HTTP boundary is reached. Stale control recovers only after
+an actual heartbeat; unsafe addresses and unrelated providers cannot trigger probes.
+
+Final original-fixture run: **6/6 pass, zero skipped/errors**; focused Platform native
+TypeScript passes. One earlier run passed its6 assertions but reported an unhandled
+Postgres57P01 during fixture DROP DATABASE; that invocation is not counted green.
+Two diagnostic reruns and the final run passed, but no teardown root cause is
+claimed resolved. The temporary timing probe was removed; required qualification
+must still fail on any recurrence. Raw driver error logs stay private.
+
+Registration confirmation is read from the Preview database; the control ledger
+retains desired bundle metadata. An early new-reader contract mistake and a fixture
+expectation of a non-manifest tokenEpoch field were corrected; neither counts as
+regression proof. No real login, model prompt, live surface evidence or completed
+pair readiness is claimed. Funding and production maintenance composition remain open.
+
+### Bounded AI activation checkpoint
+
+Real control and isolated databases, the actual funded proof route and gateway
+configuration route now exercise separate collaboration and financial authorities.
+The initial candidate financial-origin request returned400 under the existing
+guard; that was a design mistake, not evidence of a product regression. The guard
+remains intact. The control ledger alone holds the capped Preview allowance.
+
+The source-only reader failed before correction when it looked in the candidate
+ledger. The unimplemented activation step failed all3 intended assertions. It now
+configures once, verifies loaded configuration on a later pass and recovers a lost
+applied response without a second POST, restart or credit grant. Reused control or
+allowance keys are rejected before host traffic. Source policy/balance/quota/epoch/
+expiry failures cannot qualify readiness; Speech is not a Chat prerequisite.
+
+**10/10 assertions pass across host-observation/funding/origin files**, followed by
+**3/3 activation assertions**, zero skipped/errors. Focused Platform native
+TypeScript passes for both checkpoints. HTTP, provider and OS apply/restart are
+explicit fixture boundaries; no real model call, paid machine, process restart,
+Clerk login or completed pair qualification is claimed. Concrete host transport,
+bootstrap/workflow and desktop composition still remain open.
+
+The concrete shared host transport now independently matches canonical membership,
+provider labels and the registered globally routable literal IP. It permits only
+system-info GET and funded-config GET/POST, caps POST bodies at4KB, replaces caller
+auth/Host/Origin headers, rejects redirects and composes caller/10-second deadlines.
+The unimplemented transport failed its intended positive assertion first. The
+combined observation, activation, funding and origin suite passes **14/14 across4
+files**, zero skipped/errors. Invalid paths/methods/body sizes cannot trigger a
+second probe. Actual provider/HTTP remain fixtures; no remote public-IP traffic.
+
+All8 native TypeScript projects pass on this maintenance source. Changed-file
+pattern scan reports0 violations and0 warnings. The complete required cohort
+validates all71 files, including retirement and the four new maintenance suites.
+Hosted CI is still pending; the external Codex0.166 qualification blocker already
+has its own [ENG-420](https://linear.app/matrix-os/issue/ENG-420/fixci-restore-main-contract-and-build-checks).
+No duplicate issue or compatibility bypass is added.
+
+### Review correction: real installed host metadata
+
+Greptile identified a valid producer/consumer mismatch: GET `/api/system/info`
+returns200 for a healthy fresh host, but the archive's release.json has neither
+digest field. The original observation fixture inserted those fields itself and
+did not protect the installed contract. It is replaced by the actual release,
+manifest/checksum and bootstrap-attestation producers, a minimal real tar archive,
+and actual system-route registration. Timing logs and source identity remain
+explicit fixtures; this is not a full bundle build, host boot or normal-login test.
+
+The fresh-host observation failed with the actual producer's missing fields.
+Gateway cases also reproduced missing digest normalization and acceptance of a
+contradictory sha256. Matching verified bootstrap evidence now exposes both digest
+fields; missing evidence and contradictory version/digests cannot be normalized.
+
+The native host launcher also does not export build-SHA variables. The actual
+route regression reproduced build.sha=unknown. Route registration now captures
+matching release provenance once, while configured build variables retain their
+precedence. A later installed-file change cannot relabel the running process.
+The observer now consumes this actual route without an injected build SHA.
+
+Combined verification: **47/47 assertions pass across6 files, zero skips/errors**,
+including retained gateway, real two-database observation and funding/activation.
+The required inventory remains valid at71 files. All8 native TypeScript projects
+pass again; changed-file patterns report0 violations/0 warnings. Current-head
+hosted review/CI still need requalification for this correction.
