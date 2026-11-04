@@ -5,7 +5,7 @@ import {PreviewPairShaSchema,PreviewPairPrSchema} from "@matrix-os/contracts/pre
 import {PreviewPairUpstreamError,readPreviewPairBytes,readPreviewPairJson} from "./http.js";
 const Id=z.number().int().positive().max(Number.MAX_SAFE_INTEGER);
 const Repo=z.object({full_name:z.literal("HamedMP/matrix-os")});
-const Run=z.object({id:Id,event:z.literal("workflow_dispatch"),status:z.string(),conclusion:z.string().nullable(),
+const Run=z.object({id:Id,run_attempt:z.literal(1),event:z.literal("workflow_dispatch"),status:z.string(),conclusion:z.string().nullable(),
   actor:z.object({id:Id}).optional(),triggering_actor:z.object({id:Id}).optional(),
   path:z.string().max(256),head_sha:PreviewPairShaSchema,repository:Repo,head_repository:Repo});
 const Artifact=z.object({id:Id,name:z.string().max(128),expired:z.literal(false),digest:z.string().regex(/^sha256:[a-f0-9]{64}$/),
@@ -19,7 +19,7 @@ export function createPreviewPairGitHub(options:{token:string;reviewedController
   const fetchImpl=options.fetchImpl??fetch,base="https://api.github.com/repos/HamedMP/matrix-os";
   const headers={Authorization:`Bearer ${options.token}`,Accept:"application/vnd.github+json","X-GitHub-Api-Version":"2022-11-28"};
   const api=(path:string)=>fetchImpl(`${base}${path}`,{headers,redirect:"error",signal:AbortSignal.timeout(10_000)}).then(response=>readPreviewPairJson(response));
-  async function run(id:number){return Run.parse(await api(`/actions/runs/${Id.parse(id)}`));}
+  async function run(id:number){return Run.parse(await api(`/actions/runs/${Id.parse(id)}/attempts/1`));}
   async function reviewedRun(id:number,workflow=".github/workflows/desktop-build.yml"){
     const record=await run(id),path=record.path.split("@")[0];
     if(record.id!==id||record.head_sha!==options.reviewedControllerSha||path!==workflow)throw new PreviewPairUpstreamError();

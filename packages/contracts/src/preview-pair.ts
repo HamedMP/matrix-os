@@ -147,3 +147,13 @@ export type PreviewPairMember = z.infer<typeof PreviewPairMemberSchema>;
 export type PreviewPairDesktopArtifact = z.infer<typeof PreviewPairDesktopArtifactSchema>;
 export type PreviewPairRole = z.infer<typeof PreviewPairRoleSchema>;
 export type PreviewPairState = z.infer<typeof PreviewPairStateSchema>;
+
+// A namespace prevents test-login bytes from being selected for ordinary builds.
+// Classification is never an authorization or provenance assertion.
+export const PREVIEW_PAIR_BUNDLE_MARKER = "-collabpair-";
+export function isPreviewPairBundle(version: string): boolean {
+  return version.includes(PREVIEW_PAIR_BUNDLE_MARKER);
+}
+export function previewPairBundleVersion(pairId: string, generation: number, sourceSha: string): string {
+  return `v0.0.0-collabpair-${PreviewPairIdSchema.parse(pairId)}-g${PreviewPairGenerationSchema.parse(generation)}-${PreviewPairShaSchema.parse(sourceSha)}`;
+}

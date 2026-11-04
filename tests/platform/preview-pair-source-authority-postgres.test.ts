@@ -55,20 +55,20 @@ describe.skipIf(!process.env.MATRIX_TEST_POSTGRES_URL)("source readers bind live
     await preparePreviewPairCloudIntent(f.db, config, { pairId, generation: 1, pr: 3023, requesterId: "user_requester",
       sourceSha: f.pair.source_sha, controllerRunId: 42, profileFingerprint: config.sourceProfileFingerprint }, PAIR_NOW);
     s.pull.number = 3023;
-    const run = { id: 42, event: "workflow_dispatch", status: "completed", conclusion: "success" as string | null,
+    const run = { id: 42, run_attempt: 1, event: "workflow_dispatch", status: "completed", conclusion: "success" as string | null,
       head_sha: f.config.reviewedControllerSha, path: ".github/workflows/preview-collaboration-pair.yml",
       repository: { full_name: "HamedMP/matrix-os" }, head_repository: { full_name: "HamedMP/matrix-os" } };
-    s.fetchImpl.mockImplementation(async target => Response.json(new URL(String(target)).pathname.endsWith("/42") ? run : s.pull));
+    s.fetchImpl.mockImplementation(async target => Response.json(new URL(String(target)).pathname.endsWith("/42/attempts/1") ? run : s.pull));
     expect(await s.authority.inspectRequest({ pairId, generation: 1, pr: 3023 }, AbortSignal.timeout(5000)))
       .toMatchObject({ requested: false, sourceSha: f.pair.source_sha });
   });
   it("keeps a successfully adopted controller but retires failed or cancelled canonical generations", async () => {
     const s = await setup(), input = { pairId: f.pair.pair_id, generation: 1, pr: f.pair.pr };
     await f.db.executor.updateTable("preview_pair_generations").set({ controller_run_id: "42" }).execute();
-    const run = { id: 42, event: "workflow_dispatch", status: "completed", conclusion: "success" as string | null,
+    const run = { id: 42, run_attempt: 1, event: "workflow_dispatch", status: "completed", conclusion: "success" as string | null,
       head_sha: f.config.reviewedControllerSha, path: ".github/workflows/preview-collaboration-pair.yml",
       repository: { full_name: "HamedMP/matrix-os" }, head_repository: { full_name: "HamedMP/matrix-os" } };
-    s.fetchImpl.mockImplementation(async target => Response.json(new URL(String(target)).pathname.endsWith("/42") ? run : s.pull));
+    s.fetchImpl.mockImplementation(async target => Response.json(new URL(String(target)).pathname.endsWith("/42/attempts/1") ? run : s.pull));
     expect(await s.authority.inspectRequest(input, AbortSignal.timeout(5000))).toMatchObject({ requested: true });
     run.conclusion = "cancelled";
     expect(await s.authority.inspectRequest(input, AbortSignal.timeout(5000))).toMatchObject({ requested: false });
@@ -84,15 +84,15 @@ describe.skipIf(!process.env.MATRIX_TEST_POSTGRES_URL)("source readers bind live
     await f.db.executor.updateTable("preview_pair_generations").set({ controller_run_id: "40" }).execute();
     await requestPreviewPairUpdate(f.db, f.pair.pair_id, 1, f.pair.revision, { ...f.candidate,
       browserOrigin: f.candidate.browserOrigin.replace("g1", "g2"), apiOrigin: f.candidate.apiOrigin.replace("g1", "g2") }, PAIR_NOW, 42);
-    const run = (id: number) => ({ id, event: "workflow_dispatch", status: "completed", conclusion: id === 42 ? "cancelled" : "success",
+    const run = (id: number) => ({ id, run_attempt: 1, event: "workflow_dispatch", status: "completed", conclusion: id === 42 ? "cancelled" : "success",
       head_sha: f.config.reviewedControllerSha, path: ".github/workflows/preview-collaboration-pair.yml",
       repository: { full_name: "HamedMP/matrix-os" }, head_repository: { full_name: "HamedMP/matrix-os" } });
     s.fetchImpl.mockImplementation(async target => {
       const path = new URL(String(target)).pathname;
-      return Response.json(path.includes("/actions/runs/") ? run(Number(path.split("/").at(-1))) : s.pull);
+      return Response.json(path.includes("/actions/runs/") ? run(Number(path.split("/").at(-3))) : s.pull);
     });
     expect(await s.authority.inspectRequest({ pairId: f.pair.pair_id, generation: 1, pr: f.pair.pr }, AbortSignal.timeout(5000)))
       .toMatchObject({ requested: false });
-    expect(s.fetchImpl.mock.calls.some(([target]) => String(target).endsWith("/actions/runs/42"))).toBe(true);
+    expect(s.fetchImpl.mock.calls.some(([target]) => String(target).endsWith("/actions/runs/42/attempts/1"))).toBe(true);
   });
 });

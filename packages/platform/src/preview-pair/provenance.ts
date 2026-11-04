@@ -1,7 +1,7 @@
 import { z } from "zod/v4";
 import { PreviewPairDesktopArtifactSchema, PreviewPairDigestSchema, PreviewPairGenerationSchema,
   PreviewPairIdSchema, PreviewPairManifestSchema, PreviewPairOriginSchema, PreviewPairPrSchema,
-  PreviewPairShaSchema, previewPairTag } from "@matrix-os/contracts/preview-pair";
+  PreviewPairShaSchema, previewPairTag, previewPairBundleVersion } from "@matrix-os/contracts/preview-pair";
 import type { EnabledPreviewPairConfig } from "./config.js";
 
 export const PreviewPairCandidateSchema = z.strictObject({
@@ -67,6 +67,7 @@ async function bounded<T>(read: () => Promise<T>): Promise<T> {
 export async function verifyPreviewPairCandidate(input: unknown, expectedInput: unknown,
   source: PreviewPairProvenanceSource, config: EnabledPreviewPairConfig, now: number): Promise<PreviewPairCandidate> {
   const candidate = parse(PreviewPairCandidateSchema, input), expected = parse(Expected, expectedInput);
+  requireProof(candidate.hostBundleVersion === previewPairBundleVersion(expected.pairId, expected.generation, expected.sourceSha));
   requireProof(candidate.sourceSha === expected.sourceSha && Number.isFinite(now));
   requireProof(!config.sourceProfileFingerprint || candidate.sourceProfileFingerprint === config.sourceProfileFingerprint);
   requireProof(candidate.identityIssuer === config.identityIssuer && candidate.browserOrigin !== candidate.apiOrigin);
