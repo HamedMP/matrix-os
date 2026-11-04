@@ -1,3 +1,4 @@
+import { admitCollaborationRuntimeWrite } from "./runtime-write-admission.js";
 import type { Kysely } from "kysely";
 import type { Agent } from "undici";
 import type { ClerkAuth } from "../clerk-auth.js";
@@ -130,7 +131,8 @@ export async function bootstrapPlatformCollaboration(
   const collaborationDb = options.db.kysely as unknown as Kysely<CollaborationPlatformDatabase>;
   const direct = await createPlatformCollaborationDirect({
     db: options.db.kysely as unknown as Kysely<RuntimeEndpointPlatformDatabase>,
-    repository: new PlatformCollaborationRepository(collaborationDb),
+    repository: new PlatformCollaborationRepository(collaborationDb, { admitRuntimeWrite: admitCollaborationRuntimeWrite }),
+    admitRuntimeWrite: admitCollaborationRuntimeWrite,
     controlAuthority: organizations.controlAuthority,
     projection: organizations.projection,
     keyring: config.ticketKeyring,
@@ -157,6 +159,7 @@ export async function bootstrapPlatformCollaboration(
 
   const collaboration = await createPlatformCollaboration({
     db: collaborationDb,
+    admitRuntimeWrite: admitCollaborationRuntimeWrite,
     organizations,
     direct,
     allowedOrigins: config.allowedOrigins,

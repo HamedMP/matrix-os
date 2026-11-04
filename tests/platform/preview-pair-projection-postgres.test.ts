@@ -1,3 +1,5 @@
+import {bootstrapPlatformCollaborationDatabase} from "../../packages/platform/src/collaboration/database.js";
+import {bootstrapPlatformRuntimeEndpointDatabase} from "../../packages/platform/src/collaboration/runtime-endpoints.js";
 import {sql} from "kysely";
 import {afterEach,beforeEach,describe,expect,it} from "vitest";
 import {createSeededPreviewPair} from "./preview-pair-seeded-postgres.js";
@@ -13,7 +15,7 @@ import * as projection from "../../packages/platform/src/preview-pair/projection
 
 describe.skipIf(!process.env.MATRIX_TEST_POSTGRES_URL)("real registration across isolated pair databases",()=>{
  let f:Awaited<ReturnType<typeof createSeededPreviewPair>>,target:Awaited<ReturnType<typeof createIsolatedPreviewPairDatabase>>;
- beforeEach(async()=>{f=await createSeededPreviewPair();try{target=await createIsolatedPreviewPairDatabase();}catch(error:unknown){await f.destroy();throw error;}},30_000);
+ beforeEach(async()=>{f=await createSeededPreviewPair();try{target=await createIsolatedPreviewPairDatabase();await bootstrapPlatformCollaborationDatabase(target.db.kysely as never);await bootstrapPlatformRuntimeEndpointDatabase(target.db.kysely as never);}catch(error:unknown){try{await target?.destroy();}finally{await f.destroy();}throw error;}},30_000);
  afterEach(async()=>{try{await target?.destroy();}finally{await f?.destroy();}});
  async function snapshot(){
   const members=await f.db.executor.selectFrom("preview_pair_members").selectAll().orderBy("role").execute();

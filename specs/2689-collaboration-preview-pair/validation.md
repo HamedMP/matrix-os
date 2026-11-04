@@ -372,3 +372,64 @@ Five policy cases cover the verified pair, ordinary Preview, wrong slot, wrong
 generation and missing marker. The extraction retains the harness boundary marker;
 no existing assertion was changed. Initial extraction/harness failures were fixed
 and are not counted as the intended regression. No host restart or live boot claimed.
+
+### Scoped access retirement and late writer fencing
+
+The real two-database regressions first reproduced leftover Shared with me entries
+and successful retirement despite a corrupted cross-runtime child. Exact runtime
+metadata is now removed in the same target transaction as its machine tombstone;
+unrelated runtime routes, discovery entries and tickets remain. The non-cascading
+cutover journal is retired before directory deletion. Inconsistent ownership aborts
+the transaction instead of cascading into another runtime.
+
+A further regression used actual production collaboration bootstrap: all four late
+writes originally succeeded after retirement (directory event, endpoint registration,
+control ticket and connection ticket). Production composition now injects the existing
+machine admission fence into their actual transactions. This is independent of new
+pair admission being enabled. A controlled in-flight writer proves that machine
+FOR SHARE blocks retirement's non-key UPDATE; changing it to FOR KEY SHARE reproduces
+the assertion failure. The correct lock was restored before the full green run.
+
+**17/17 cases pass across2 actual Postgres files, zero skipped** (13 projection plus4
+access retirement). The focused first two cases and subsequent3-case run also passed.
+Fixture setup initially omitted collaboration migrations; that failure was corrected
+and is not counted as regression evidence. The alternate-address test remains an
+owned catalog fixture rather than a real socket/VPN validation. Provider IDs/responses
+and fixture identities are synthetic. Actual registration, two databases, production
+collaboration composition, SQL locks and discovery consumers are real. This does not
+claim Clerk login, paid infrastructure cleanup or a completed owner/member journey.
+T015/T033 remain unchecked until host/funding/controller maintenance is composed.
+
+All8 native typecheck projects pass on the retirement source. Retained bootstrap/
+internal routes:12/12 pass. Retained repository/tickets/endpoints:40 pass,3 existing
+skipped cases; this is compatibility coverage, not a non-skipping acceptance lane.
+The final expanded production positive-then-retired case passes (1 selected,3
+excluded by filter). Pattern scan reports0 violations and5 existing warnings.
+
+### CI startup expectation corrections
+
+Failed unit-shard logs identified two full-startup revision lists that omitted
+the independent pair migration. The owning schema layer reproduced3 assertion
+failures across2 files before correction;17/17 cases across3 full files pass with
+its exact generation1 marker. Controller-layer requalification then reproduced2
+stale generation assertions;17/17 cases across the same3 full files pass with
+its actual generation2 controller marker. Existing default, constraint, snapshot
+isolation, cache and channel restart assertions remain. These changes update test
+expectations only, not runtime startup behavior. CI on the restacked published
+heads must still be checked rather than inferred from the local runs.
+
+### Retirement review: preserve ordinary customer names
+
+The required cohort additionally reported the new retirement suite missing after
+the earlier ordering failure was fixed. Its exact manifest-drift failure was
+reproduced, then the suite was registered in this owning layer. No discovery or
+non-skipping qualification guard was relaxed; the five actual retirement cases
+remain part of the required database lane.
+
+Greptile found that the broad cp-prefix check classified legal customer handles
+such as cp-alice as managed pairs. The actual production-composition regression
+failed before correction. Recognition now uses the complete reserved pair pattern;
+legal cp-prefixed customer handles retain directory, endpoint and both ticket
+paths. All5 real two-database retirement cases pass, zero skipped; focused Platform
+native TypeScript passes. Existing pair tombstone and in-flight writer fences
+remain exercised. This is a source fix, not a live customer mutation.

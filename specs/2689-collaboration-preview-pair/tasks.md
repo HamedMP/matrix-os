@@ -124,9 +124,10 @@ Use official `gh stack init/add/rebase/submit`; never hand-retarget or flatten.
 | 3b | Verified identity/provider readers, controller receipt ownership and guarded dispatcher (parts of T015–T016) | `codex/eng-418-preview-pair-controller` | Layer3a |
 | 3c | Isolated two-database runtime projection and retirement tombstones (part of T015) / #3033 | `codex/eng-418-preview-pair-runtime` | Layer3b |
 | 3d | Verified host/browser/API binding and pinned update policy (part of T015) | `codex/eng-418-preview-pair-host` | Layer3c |
-| 3e | Actual host observation, funding, complete retirement and production maintenance composition (complete T015, T033) | `codex/eng-418-preview-pair-operations` | Layer3d |
-| 3f | Protected request/build/publish/reaper workflow and controller CLI (complete T016) | `codex/eng-418-preview-pair-automation` | Layer3e |
-| 4 | Electron pinning, local launcher and badge (T018–T025, T035) | `codex/eng-418-preview-pair-desktop` | Layer3f |
+| 3e | Exact projected collaboration access retirement and transaction-scoped late writer fences (part of T015/T033) | `codex/eng-418-preview-pair-operations` | Layer3d |
+| 3f | Actual host observation, funding and production maintenance composition (complete T015, T033) | `codex/eng-418-preview-pair-maintenance` | Layer3e |
+| 3g | Protected request/build/publish/reaper workflow and controller CLI (complete T016) | `codex/eng-418-preview-pair-automation` | Layer3f |
+| 4 | Electron pinning, local launcher and badge (T018–T025, T035) | `codex/eng-418-preview-pair-desktop` | Layer3g |
 | 5 if needed | Evidence runner, acceptance and internal docs (T026–T029, T036–T042) | `codex/eng-418-preview-pair-qualification` | Layer4 |
 
 Target <1000 additions/<20 files where practical; split a layer before exceeding
