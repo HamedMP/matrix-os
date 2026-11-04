@@ -158,7 +158,7 @@ export async function waitForRuntimeSsh(timeoutMs = 15 * 60_000, signal, { probe
 export async function waitForRuntimeReadiness(timeoutMs = 30 * 60_000, signal, { probe = runRuntimeSshProbe } = {}) {
   const deadline = Date.now() + timeoutMs;
   const command = [
-    "sudo", "test", "-f", "/opt/matrix/register-complete", "&&",
+    "sudo", "test", "-f", "/var/lib/matrix-vps-registration/register-complete", "&&",
     "sudo", "systemctl", "is-active", "--quiet",
     "nginx", "matrix-gateway", "matrix-shell", "matrix-scope-runtime", "matrix-terminal-runtime",
   ];

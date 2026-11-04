@@ -84,11 +84,16 @@ export { createCanonicalChatAdmissionTracker, ChatAdmissionUnconfirmed, CHAT_ADM
 export { recoverCanonicalChatAdmission, type CanonicalChatClientAdmission } from "./canonical-chat-admission-recovery.js";
 export { useCanonicalChatStopRecovery } from "./use-canonical-chat-stop-recovery.js";
 export { applyCanonicalChatContent } from "./canonical-chat-content.js";
-export { usePlatformSpeechDraft } from "./speech/use-platform-speech-draft.js";
+export {
+  platformSpeechControlState,
+  platformSpeechPreviewQuotaLabel,
+  usePlatformSpeechDraft,
+} from "./speech/use-platform-speech-draft.js";
 export { SpeechInputWaveform } from "./speech/SpeechInputWaveform.js";
 export type {
   PlatformSpeechCapture,
   PlatformSpeechCaptureAdapter,
+  PlatformSpeechControlState,
   PlatformSpeechDraftClient,
   PlatformSpeechDraftPhase,
   PlatformSpeechRecording,
