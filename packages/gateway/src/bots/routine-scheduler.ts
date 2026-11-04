@@ -1,5 +1,6 @@
 import type { BotRoutine, BotRoutineFire, BotRoutinesRepository } from "./repositories/routines.js";
 import { nextBotRoutineFire } from "./routine-schedule.js";
+import { routineOutcomeDiagnostic } from "./routine-outcome-diagnostic.js";
 export type RoutineRunResult = {
   status: "completed" | "failed" | "cancelled" | "uncertain" | "capacity_before_dispatch" | "accepted";
 };
@@ -83,7 +84,7 @@ export function createBotRoutineScheduler(deps: {
       try {
         result = await deps.run(r, dispatched, lifetime.signal);
       } catch (error: unknown) {
-        console.warn("[bots] routine outcome unavailable", error instanceof Error ? error.name : "UnknownError");
+        console.warn("[bots] routine outcome unavailable", routineOutcomeDiagnostic(error));
         result = {
           status: "uncertain"
         };
