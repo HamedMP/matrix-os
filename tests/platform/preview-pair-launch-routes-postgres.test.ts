@@ -24,7 +24,7 @@ describe.skipIf(!process.env.MATRIX_TEST_POSTGRES_URL)("non-authorizing launch r
         ? { kind: "control", actorId: "user_requester", expiresAt: PAIR_NOW + 60_000 } : null });
     const post = (path: string, input: unknown, token?: string) => app.request(path, { method: "POST",
       headers: { "content-type": "application/json", ...(token ? { authorization: `Bearer ${token}` } : {}) }, body: JSON.stringify(input) });
-    const issue = () => post(`/api/preview-pairs/${f.pair.pair_id}/launch`, { role: "owner", platform: "darwin", arch: "arm64" }, "real-reader-fixture");
+    const issue = (role: "owner" | "member" = "owner") => post(`/api/preview-pairs/${f.pair.pair_id}/launch`, { role, platform: "darwin", arch: "arm64" }, "real-reader-fixture");
     return { service, membership, post, issue, app };
   }
   it("issues through the real authenticated manifest then publicly verifies only a current non-authorizing descriptor", async () => {
@@ -37,6 +37,32 @@ describe.skipIf(!process.env.MATRIX_TEST_POSTGRES_URL)("non-authorizing launch r
     const verified = await s.post("/api/preview-pairs/launch/verify", proof);
     expect(verified.status).toBe(200); expect(await verified.json()).toEqual({ valid: true });
     expect(await f.db.executor.selectFrom("user_machines").select("machine_id").execute()).toHaveLength(2);
+  });
+  it.each(["owner", "member"] as const)("verifies %s control generation independently of the machine token epoch", async role => {
+    const members = await f.db.executor.selectFrom("preview_pair_members").select(["role", "observation"]).execute();
+    // Launch issuance refreshes readiness through these host observations.
+    f.manifest.members.owner.authorityGeneration = 7;
+    f.manifest.members.member.authorityGeneration = 9;
+    const s = setup(), issued = await s.issue(role);
+    expect(issued.status).toBe(200); const proof = await issued.json();
+    expect(proof.context.authorityGeneration).toBe(role === "owner" ? 7 : 9);
+    const machine = await f.db.executor.selectFrom("user_machines").select("runtime_token_epoch")
+      .where("machine_id", "=", proof.context.machineId).executeTakeFirstOrThrow();
+    expect(machine.runtime_token_epoch).toBe(1);
+    expect((await s.post("/api/preview-pairs/launch/verify", proof)).status).toBe(200);
+    const observed = members.find(member => member.role === role)!.observation;
+    await f.db.executor.updateTable("preview_pair_members")
+      .set({ observation: JSON.stringify({ ...observed, authorityGeneration: proof.context.authorityGeneration + 1 }) })
+      .where("role", "=", role).execute();
+    expect((await s.post("/api/preview-pairs/launch/verify", proof)).status).toBe(404);
+    f.manifest.members[role].authorityGeneration = proof.context.authorityGeneration + 1;
+    const renewed = await s.issue(role); expect(renewed.status).toBe(200);
+    const renewedProof = await renewed.json();
+    expect((await s.post("/api/preview-pairs/launch/verify", renewedProof)).status).toBe(200);
+    // Token revocation is an independent boundary even when control generation matches.
+    await f.db.executor.updateTable("user_machines").set({ runtime_token_epoch: 2 })
+      .where("machine_id", "=", proof.context.machineId).execute();
+    expect((await s.post("/api/preview-pairs/launch/verify", renewedProof)).status).toBe(404);
   });
   it("checks crypto and streaming limits before canonical membership reads", async () => {
     const s = setup(), issued = await s.issue(); expect(issued.status).toBe(200);
