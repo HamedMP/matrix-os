@@ -47,8 +47,22 @@ const ScheduledWakeupStatus = z.object({ type: z.literal("command_lifecycle"), c
   state: z.literal("started"), wakeup_source: z.literal("schedule_wakeup"), uuid: z.uuid(), session_id: nativeRef }).strict();
 const ScheduledCompletionStatus = z.object({ type: z.literal("command_lifecycle"), command_uuid: z.uuid(),
   state: z.literal("completed"), uuid: z.uuid(), session_id: nativeRef }).strict();
-function reportNativeSessionFailure(error: unknown) {
-  console.warn("[claude-native] Native session operation unavailable", error instanceof Error ? error.name : "UnknownError");
+type NativeFailureOperation = "Native session operation unavailable" | "Native output unavailable" | "Native output drain unavailable"
+  | "Native input unavailable" | "Native process unavailable" | "Startup observer unavailable"
+  | "Stderr observer unavailable" | "Phase settlement unavailable" | "Process signal unavailable";
+function reportNativeSessionFailure(error: unknown, operation: NativeFailureOperation = "Native session operation unavailable") {
+  // Error names, messages and stacks can contain provider output or callback secrets.
+  let kind = "UnknownError";
+  try {
+    kind = error instanceof CanonicalCliError ? "CanonicalCliError" : error instanceof SyntaxError ? "SyntaxError"
+      : error instanceof TypeError ? "TypeError" : error instanceof RangeError ? "RangeError"
+      : error instanceof ReferenceError ? "ReferenceError" : error instanceof URIError ? "URIError"
+      : error instanceof EvalError ? "EvalError" : error instanceof Error ? "Error" : "UnknownError";
+  } catch (classificationError: unknown) {
+    // A thrown Proxy can reject prototype inspection; diagnostics must not skip stop/settlement.
+    console.warn("[claude-native] Native error classification unavailable", typeof classificationError);
+  }
+  console.warn(`[claude-native] ${operation}`, kind);
 }
 const sessionKey = (input: Pick<CanonicalProviderRunInput, "owner" | "chatId">) => JSON.stringify([input.owner.type, input.owner.ownerId, input.chatId]);
 
@@ -105,27 +119,27 @@ export function createClaudeNativeSessionPool(options: PoolOptions = {}) {
         cwd: initial.cwd, env: initial.replaceEnv ? initial.env : { ...process.env, ...initial.env } as Record<string, string>, stdio: ["pipe", "pipe", "pipe"],
       });
       this.control = createClaudeNativeSessionControl({ send: frame => this.send(frame), emit: frame => this.deliver(frame), timeoutMs: controlMs });
-      this.child.stdin?.on?.("error", () => { void this.stop(new CanonicalCliError("startup")).catch(reportNativeSessionFailure); });
+      this.child.stdin?.on?.("error", (error: unknown) => { reportNativeSessionFailure(error, "Native input unavailable"); void this.stop(new CanonicalCliError("startup")).catch(reportNativeSessionFailure); });
       const lines = createBoundedCliLines(Math.min(MAX_FRAME_BYTES, initial.maxStdoutBytes), raw => {
         const frame = nativeRecord(JSON.parse(raw)); if (!frame || typeof frame.type !== "string") throw new Error("Native frame unavailable");
         this.frame(frame);
       });
-      this.child.stdout.on("data", chunk => { if (!this.stopped) try { lines.push(chunk); } catch (error: unknown) { void this.stop(new CanonicalCliError("invalid_output")).catch(reportNativeSessionFailure); } });
+      this.child.stdout.on("data", chunk => { if (!this.stopped) try { lines.push(chunk); } catch (error: unknown) { reportNativeSessionFailure(error, "Native output unavailable"); void this.stop(new CanonicalCliError("invalid_output")).catch(reportNativeSessionFailure); } });
       this.child.stderr.on("data", chunk => {
         const phase = this.phase; if (!phase) return;
         const bounded = chunk.subarray(0, Math.max(0, (phase.options.maxStderrBytes ?? 8192) - phase.stderrBytes));
         phase.stderrBytes += bounded.byteLength;
         if (bounded.byteLength) try { phase.options.onStderr?.(bounded); }
-        catch (error: unknown) { console.warn("[claude-native] Stderr observer unavailable", error instanceof Error ? error.name : "UnknownError"); }
+        catch (error: unknown) { reportNativeSessionFailure(error, "Stderr observer unavailable"); }
       });
-      this.child.once("error", () => { void this.stop(new CanonicalCliError("startup")).catch(reportNativeSessionFailure); });
+      this.child.once("error", (error: unknown) => { reportNativeSessionFailure(error, "Native process unavailable"); void this.stop(new CanonicalCliError("startup")).catch(reportNativeSessionFailure); });
       let exitError: Error | undefined;
       this.child.once("exit", (code, signal) => { exitError = code === 0 && signal === null ? undefined : new CanonicalCliError("exit", code, signal); });
       // Native ChildProcess emits close after stdout/stderr drain. An absent close never proves cleanup.
       const closer = this.child as CanonicalCliProcess & { once(event: "close", listener: () => void): void };
       closer.once("close", () => {
         if (this.physicalClosed) return; this.physicalClosed = true;
-        if (!this.stopped) try { lines.finish(); } catch (error: unknown) { exitError = new CanonicalCliError("invalid_output"); }
+        if (!this.stopped) try { lines.finish(); } catch (error: unknown) { reportNativeSessionFailure(error, "Native output drain unavailable"); exitError = new CanonicalCliError("invalid_output"); }
         this.stopped = true; this.clearTimers(); this.control.close();
         if (sessions.get(this.key) === this) sessions.delete(this.key);
         this.finishPhase(this.termination ?? exitError);
@@ -175,7 +189,7 @@ export function createClaudeNativeSessionPool(options: PoolOptions = {}) {
       const phase = this.phase; if (!phase) return;
       this.phase = undefined; this.lastInput = phase.options.input; this.lastSchedulingAllowed = phase.options.schedulingAllowed !== false;
       clearTimeout(phase.idleTimer); clearTimeout(phase.startupTimer); phase.options.signal.removeEventListener("abort", phase.abort);
-      try { phase.options.onSettled?.(); } catch (error: unknown) { console.warn("[claude-native] Phase settlement unavailable", error instanceof Error ? error.name : "UnknownError"); }
+      try { phase.options.onSettled?.(); } catch (error: unknown) { reportNativeSessionFailure(error, "Phase settlement unavailable"); }
       if (error) phase.reject(error); else phase.resolve();
     }
     private endPhase() {
@@ -222,7 +236,7 @@ export function createClaudeNativeSessionPool(options: PoolOptions = {}) {
           void this.stop(new CanonicalCliError("startup")).catch(reportNativeSessionFailure); throw error;
         });
         try { turn.onStart?.(managedWrite, () => this.endPhase(), { pause: () => { phase.idlePaused = true; clearTimeout(phase.idleTimer); }, resume: () => { phase.idlePaused = false; this.touch(phase); } }, { ready: () => { clearTimeout(phase.startupTimer); phase.startupTimer = undefined; } }); }
-        catch (error: unknown) { void this.stop(new CanonicalCliError("startup")).catch(reportNativeSessionFailure); }
+        catch (error: unknown) { reportNativeSessionFailure(error, "Startup observer unavailable"); void this.stop(new CanonicalCliError("startup")).catch(reportNativeSessionFailure); }
       });
     }
     private frame(frame: NativeRecord) {
@@ -329,7 +343,7 @@ export function createClaudeNativeSessionPool(options: PoolOptions = {}) {
       this.stopped = true; this.termination = error; this.control.close(); this.clearTimers();
       const kill = (signal: NodeJS.Signals) => {
         try { this.child.kill(signal); }
-        catch (error: unknown) { console.warn("[claude-native] Process signal unavailable", error instanceof Error ? error.name : "UnknownError"); }
+        catch (error: unknown) { reportNativeSessionFailure(error, "Process signal unavailable"); }
       };
       kill("SIGTERM");
       this.forceTimer = setTimeout(() => {
