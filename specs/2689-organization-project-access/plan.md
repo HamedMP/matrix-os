@@ -6,7 +6,7 @@
 
 ## Summary
 
-Make a shared project one organization-wide work boundary. Once its owner shares it, every current and future active member of that organization receives the complete non-administrative project capability set without invitations, activations, roles, or per-member grants. Shared AI requests resolve the owner's current global Provider Settings `active` route at request time, record the exact route used for the run, and fail closed if it is unavailable or changes. The owner alone retains share/unshare, whole-project deletion, AI/billing configuration, and organization membership administration.
+Make a shared project one organization-wide work boundary. Once its owner shares it, every current and future active member of that organization receives the complete non-administrative project capability set without invitations, activations, roles, or per-member grants while the owner remains an active member of the selected organization. Shared AI requests resolve the owner's current global Provider Settings `active` route at request time, record the exact route used for the run, and fail closed if it is unavailable or changes. The owner alone retains share/unshare, whole-project deletion, and owner AI/billing configuration; organization administration remains governed by organization policy.
 
 The serving path will use the existing `collaboration_scopes.organization_id`, lifecycle, ownership, and fresh organization membership evidence. Project grant and execution-policy records will no longer be authorization inputs. They remain temporarily readable only where required for standalone-share compatibility, rollback, and audit; cleanup is a later migration after telemetry proves the new path.
 
@@ -16,7 +16,7 @@ The serving path will use the existing `collaboration_scopes.organization_id`, l
 **Primary Dependencies**: Hono, Kysely, PostgreSQL, Zod 4 (`zod/v4`), Clerk organization evidence, Matrix provider-settings V3
 **Storage**: Existing owner-controlled PostgreSQL collaboration tables and owner Provider Settings; no new database or ORM
 **Testing**: Vitest with `@vitest/coverage-v8`; gateway, contract, UI, and live surface verification
-**Target Platform**: VPS-native Matrix gateway plus Web Desktop and Electron desktop shells
+**Target Platform**: VPS-native Matrix gateway plus Web Canvas, Web Desktop, and Electron Desktop shells
 **Project Type**: Monorepo web/desktop application with shared contracts and gateway
 **Performance Goals**: No additional network round trip beyond the existing fresh organization precondition; authorization and AI source resolution remain bounded by current request deadlines
 **Constraints**: Fail closed; no credential disclosure; no provider fallback; membership and provider authority checked at request time; all mutations retain body limits and typed validation; affected live surfaces require captures
@@ -108,13 +108,14 @@ tests/e2e/
 
 - Add contract tests for an organization-wide project access presentation with no role, grant, activation, model allowlist, or acknowledgment fields.
 - Add gateway tests proving that an active organization member immediately receives the complete project work action set, including for inherited resources, while an outsider is denied.
-- Add owner-boundary tests proving members cannot share/unshare, delete the whole project, configure owner AI/billing, or administer organization membership.
+- Add administration-boundary tests proving members cannot share/unshare, delete the whole project, or configure owner AI/billing, and that organization membership administration follows organization policy rather than project ownership.
+- Add a revocation test proving that loss of the project owner's membership stops all non-owner access while preserving the owner's private project access.
 - Add AI admission tests proving the current Provider Settings V3 `active` tuple is resolved for each request, unavailable means fail closed, and no alternate source is selected.
 - Add migration/compatibility tests for already-shared projects and legacy standalone shares.
 
 ### 2. Collapse project authorization onto organization membership
 
-- Introduce one project-access decision in `capability-evaluator.ts`: a live `project` scope plus matching fresh organization membership yields the contributor action set; owner detection remains separate.
+- Introduce one project-access decision in `capability-evaluator.ts`: for a non-owner, a live `project` scope plus fresh active membership for both the project owner and requesting actor in the selected organization yields the contributor action set; owner detection and private owner access remain separate.
 - Apply the same decision to inherited child scopes and transactional chat authorization so REST, WebSocket, terminal, files, apps, and Git brokers cannot diverge.
 - Keep lifecycle, deleted-state, organization mismatch, stale evidence, archived read-only behavior, and revocation fences fail closed.
 - Stop requiring grant activation for project discovery/opening. Current and future members see/open the project from organization inventory without accepting it.
@@ -145,7 +146,7 @@ tests/e2e/
 ### 6. Verify behavior and surfaces
 
 - Run focused contract/gateway/UI suites, then the collaboration regression suite and coverage for touched production modules.
-- Run the Web Desktop and Electron desktop sharing flows against a live gateway: share, join as existing member, join as newly added member, edit/use AI, change owner AI settings, remove member, unshare.
+- Run the Web Canvas, Web Desktop, and Electron Desktop sharing flows against a live gateway: share, join as an existing member, join as a newly added member, edit/use AI, change owner AI settings, remove a member, remove the owner from the selected organization, and unshare.
 - Capture each affected surface at the exact reviewed commit/build and attach evidence to the PR and Slack `#tech` with ENG-29 and PR links, per repository policy.
 
 ## Delivery Sequence
