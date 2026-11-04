@@ -87,9 +87,9 @@ export default defineConfig((): UserConfig => ({
       fs: { allow: [searchForWorkspaceRoot(__dirname), ...rendererFontPackageDirs()] },
     },
     resolve: {
-      // Workspace UI peers may resolve another React patch version. Hooks must
-      // share the renderer's React instance in development and packaged builds.
-      dedupe: ["react", "react-dom"],
+      // Global-store peers can resolve separate React/Lexical copies. Hooks and
+      // custom editor nodes must share their renderer runtime's class identity.
+      dedupe: ["react", "react-dom", "lexical"],
       alias: {
         "@renderer": resolve(__dirname, "src/renderer/src"),
       },

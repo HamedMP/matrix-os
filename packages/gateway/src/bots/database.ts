@@ -4,6 +4,7 @@
  */
 import { sql, type ColumnType, type Kysely, type Transaction } from "kysely";
 import type { ChatDatabase } from "../chat/database.js";
+import { hasHistoricalThreadSchema } from "./v9-compatibility.js";
 import { BOT_MIGRATIONS, type BotMigration } from "./database-migrations.js";
 
 type Timestamp = ColumnType<Date | string, Date | string, Date | string>;
@@ -32,7 +33,9 @@ export interface BotChatBindingsTable {
   owner_id: string;
   bot_id: string;
   chat_id: string;
-  kind: "direct" | "group";
+  kind: "direct" | "group" | "thread";
+  // Historical v8 SELECT * rows have no project_id; dormant v9 rows may retain it.
+  project_id: ColumnType<string | null | undefined, string | null | undefined, string | null>;
   created_at: Timestamp;
   removed_at: NullableTimestamp;
 }
@@ -210,6 +213,19 @@ export interface BotDatabase {
   bot_chat_bindings: BotChatBindingsTable;
   bot_agent_sessions: BotAgentSessionsTable;
   bot_tasks: BotTasksTable;
+  bot_routines: {
+    routine_id: string; owner_id: string; bot_id: string; chat_id: string;
+    proposal: Json<import("@matrix-os/contracts").BotRoutineProposal>;
+    approved_source: Json<import("./routine-authorization.js").RoutineAuthorization> | null; approval_id: string | null;
+    status: import("@matrix-os/contracts").BotRoutineStatus;
+    next_fire_at: NullableTimestamp; revision: Revision; created_at: Timestamp; updated_at: Timestamp;
+  };
+  bot_routine_fires: {
+    fire_id: string; owner_id: string; routine_id: string; scheduled_for: Timestamp; task_id: string;
+    status: import("@matrix-os/contracts").BotRoutineFireStatus;
+    attempts: ColumnType<number, number | undefined, number>; retry_after: NullableTimestamp; lease_expires_at: NullableTimestamp; failure_code: string | null;
+    created_at: Timestamp; updated_at: Timestamp;
+  };
   bot_tool_checkpoints: BotToolCheckpointsTable;
   bot_interactions: BotInteractionsTable;
   bot_connect_requests: BotConnectRequestsTable;
@@ -247,7 +263,11 @@ async function assertCompatibleSchema(db: Transaction<OwnerBotDatabase>, migrati
   for (const row of recorded) {
     const migration = migrations[row.version - 1];
     if (!migration) throw new BotSchemaError("newer_schema");
-    if (row.name !== migration.name) throw new BotSchemaError("invalid_migrations");
+    if (row.name !== migration.name) {
+      const retainedThreadV9 = row.version === 9 && row.name === "bot_chat_threads" && migration.name === "question_source_run"
+        && migrations[9]?.name === "bot_question_threads_bridge" && migrations[10]?.name === "bot_routines";
+      if (!retainedThreadV9 || !(await hasHistoricalThreadSchema(db))) throw new BotSchemaError("invalid_migrations");
+    }
   }
 }
 

@@ -1,5 +1,7 @@
+import type { PlatformSpeechControlState, PlatformSpeechDraftPhase } from "@matrix-os/ui/speech";
+
 /** What dictation is doing in a composer that offers it. */
-export type ComposerSpeechPhase = "idle" | "requesting_permission" | "recording" | "transcribing" | "error";
+export type ComposerSpeechPhase = PlatformSpeechDraftPhase;
 
 /**
  * Dictation into a composer's draft, as the composer draws it. A composer
@@ -8,6 +10,10 @@ export type ComposerSpeechPhase = "idle" | "requesting_permission" | "recording"
  */
 export interface ComposerSpeech {
   phase: ComposerSpeechPhase;
+  /** Server-authoritative visibility, label, and availability for the microphone. */
+  control: PlatformSpeechControlState;
+  /** The bounded Preview allowance and expiry, already formatted for display. */
+  previewQuotaLabel: string | null;
   /** How long the recording has run. */
   elapsedMs: number;
   /** The microphone's loudness, 0 to 1. */
@@ -21,6 +27,8 @@ export interface ComposerSpeech {
   stop(): void;
   /** Drops the recording, or the transcription on its way. */
   cancel(): void;
+  /** Rechecks speech capability after the last known allowance became stale. */
+  retryCapabilities(): void;
 }
 
 /** True while dictation holds the composer: the message waits until it is done. */
