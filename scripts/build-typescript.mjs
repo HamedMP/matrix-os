@@ -8,7 +8,7 @@ import { join, resolve } from "node:path";
 import { spawn } from "node:child_process";
 import { pathToFileURL } from "node:url";
 import { setTimeout as delay } from "node:timers/promises";
-import { assertOutputDirectory, prepareBuildOutput, publishBuildOutput, stagedOutputDirectory } from "./typescript-build-output.mjs";
+import { assertOutputDirectory, clearBuildOutput, prepareBuildOutput, publishBuildOutput } from "./typescript-build-output.mjs";
 
 const STATE = ".matrix.tsbuildinfo";
 const STAMP = ".matrix-build.json";
@@ -293,7 +293,7 @@ export async function buildTypescript(packageDirectory, compile) {
     await rm(stamp, { force: true });
     throw error;
   } finally {
-    try { await rm(stagedOutputDirectory(packageDirectory), { recursive: true, force: true }); }
+    try { await clearBuildOutput(packageDirectory); }
     finally { await release(); }
   }
 }

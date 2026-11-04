@@ -215,14 +215,36 @@ services start. Press Ctrl-C to stop the source processes; infrastructure
 continues in Docker and can be stopped with `bun run dev:infra:stop`.
 
 Gateway, proxy, and platform use `tsx watch`, including when source files are
-replaced atomically by a sync tool. Kernel consumers load `packages/kernel/dist`,
-so Kernel edits still require `pnpm --filter @matrix-os/kernel build`; `dev:kernel`
-does not update that directory. Shared TypeScript builds compile into a private
-`.matrix-build-output` directory and publish changed files only after a successful
-compile. Compiler errors leave the last successful runtime files untouched.
-Successful publication uses atomic replacement per file, not an atomic
-whole-package deployment. This does not add an automatic Kernel build/restart
-loop; restart the source Gateway after a successful build if needed.
+replaced atomically by a sync tool. The source runner and Docker development gateway launcher own a Kernel compiler
+watcher: changes to Kernel source or its package/root TypeScript configuration
+rebuild `packages/kernel/dist`, and Gateway observes successful emitted updates.
+Kernel source errors remain visible in the foreground output while the last successful
+Kernel stays available; correcting the error resumes updates. Ctrl-C stops this
+watcher and its compiler descendants with the other source processes.
+
+Shared TypeScript builds use a private `0700` `.matrix-build-output` directory,
+retaining its empty root so Docker development needs no write permission on source
+parents. Only successful, validated output is published. Unchanged files preserve
+their mtimes; changed files are replaced atomically per file, not as a whole-package
+transaction. Compiler state and staging roots are excluded from host bundles.
+`dev:kernel` alone still watches the package entrypoint rather than generating
+`dist`; when using a narrower command, build the Kernel explicitly with
+`pnpm --filter @matrix-os/kernel build`.
+
+An engineer or agent launching the source runner receives the same compiler and
+service stdout/stderr in its terminal session. Focused feedback checks can run
+without Clerk/provider credentials:
+
+```bash
+pnpm test tests/scripts/source-watch.test.ts tests/scripts/kernel-source-watch.test.ts
+```
+
+Those tests use isolated source/compiler/consumer fixtures and controlled startup
+callbacks. They verify edit/error/recovery and owned-process cleanup, not real
+sign-in, model calls, database bootstrap or several complete running stacks. The
+stock source mode still uses fixed local service ports and explicit development
+auth bypasses; full worktree data/port/auth isolation needs its own configured
+composition and acceptance.
 
 Use `bun run dev:infra` when you only need ready PostgreSQL and object storage.
 The narrower `bun run dev` command still starts exactly three source processes:

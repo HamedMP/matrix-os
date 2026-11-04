@@ -13,14 +13,15 @@ prepare_build_outputs() {
     base="$APP_ROOT/packages/$package"
     # Generated directories are the only source-mount paths the non-root build
     # needs to own. Never follow an output symlink into source or owner data.
-    for output in "$APP_ROOT/packages" "$base" "$base/dist" "$base/.matrix-build-cache"; do
+    for output in "$APP_ROOT/packages" "$base" "$base/dist" "$base/.matrix-build-cache" "$base/.matrix-build-output"; do
       if [ -L "$output" ]; then
         echo "[matrix-os-dev] Refusing symlinked build output: $output" >&2
         return 1
       fi
     done
-    mkdir -p "$base/dist" "$base/.matrix-build-cache"
-    chown -hR matrixos:matrixos "$base/dist" "$base/.matrix-build-cache"
+    mkdir -p "$base/dist" "$base/.matrix-build-cache" "$base/.matrix-build-output"
+    chmod 700 "$base/.matrix-build-output"
+    chown -hR matrixos:matrixos "$base/dist" "$base/.matrix-build-cache" "$base/.matrix-build-output"
   done
 }
 
@@ -32,7 +33,7 @@ prepare_gateway() {
 }
 
 launch_gateway() {
-  exec node --import=tsx --watch packages/gateway/src/main.ts
+  exec node scripts/dev-gateway.mjs
 }
 
 case "${1:-}" in
