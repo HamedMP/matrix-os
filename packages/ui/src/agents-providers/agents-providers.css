@@ -275,6 +275,12 @@
 .matrix-ap-credit-row > div:first-child { display: flex; flex-direction: column; }
 .matrix-ap-credit-row strong { font-size: 16px; letter-spacing: -0.02em; }
 .matrix-ap-credit-row span { color: var(--matrix-ap-faint); font-size: 10px; }
+.matrix-ap-preview-allowances { background: var(--matrix-ap-sunken); border: 1px solid var(--matrix-ap-border); border-top: 0; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.matrix-ap-preview-allowance { display: flex; flex-direction: column; gap: 3px; min-width: 0; padding: 14px 20px; }
+.matrix-ap-preview-allowance + .matrix-ap-preview-allowance { border-left: 1px solid var(--matrix-ap-border); }
+.matrix-ap-preview-allowance > span { color: var(--matrix-ap-muted); font-size: 11px; font-weight: 600; }
+.matrix-ap-preview-allowance > strong { font-size: 13px; font-weight: 650; }
+.matrix-ap-preview-allowance > small { color: var(--matrix-ap-faint); font-size: 10px; }
 .matrix-ap-policy-grid { align-items: end; display: grid; gap: 10px; grid-template-columns: minmax(0, 1fr) auto; }
 .matrix-ap-money-input { align-items: center; display: flex; padding: 0; }
 .matrix-ap-money-input i { color: var(--matrix-ap-faint); font-style: normal; padding-left: 9px; }
@@ -333,6 +339,8 @@
   .matrix-ap-policy-grid { grid-template-columns: 1fr; }
   .matrix-ap-policy-grid > .matrix-ap-button { justify-self: start; }
   .matrix-ap-credit-row { align-items: flex-start; flex-direction: column; }
+  .matrix-ap-preview-allowances { grid-template-columns: 1fr; }
+  .matrix-ap-preview-allowance + .matrix-ap-preview-allowance { border-left: 0; border-top: 1px solid var(--matrix-ap-border); }
   .matrix-ap-account { grid-template-columns: 1fr; }
   .matrix-ap-account-actions,
   .matrix-ap-account-usage { grid-column: 1; grid-row: auto; }
