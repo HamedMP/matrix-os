@@ -1,6 +1,6 @@
 import { FileText, Link2, Wrench } from "@renderer/lib/hugeicons";
 import { useState } from "react";
-import { ChatAttachments, type ChatMessageAttachment } from "@matrix-os/ui";
+import { ChatAttachments, RoutineMessageMeta, type RoutineOccurrence, type ChatMessageAttachment } from "@matrix-os/ui";
 import { ConversationItem } from "./conversation";
 import { Bubble, BubbleContent } from "./bubble";
 import { Message, MessageContent, MessageMetadata, MessageResponse } from "./message";
@@ -13,12 +13,14 @@ function escapeLinkLabel(label: string): string {
 export function UserMessage({
   message,
   callbacks,
+  scheduled,
 }: {
   message: ConversationMessagePresentation;
   callbacks: ConversationPresentationCallbacks;
+  scheduled?: RoutineOccurrence;
 }) {
   const lines = message.markdown.split("\n");
-  const collapsible = message.markdown.length > 700 || lines.length > 12;
+  const collapsible = scheduled ? message.markdown.length > 200 || lines.length > 3 : message.markdown.length > 700 || lines.length > 12;
   const [expanded, setExpanded] = useState(false);
   const references = (message.references ?? message.attachments ?? []).filter((reference) =>
     reference.kind !== "file" || !message.content?.some((segment) =>
@@ -44,6 +46,7 @@ export function UserMessage({
     <ConversationItem messageId={`user:${message.id}`} scrollAnchor>
       <Message align="end">
         <MessageContent className="gap-1.5">
+          {scheduled ? <RoutineMessageMeta occurrence={scheduled}/> : null}
           <ChatAttachments attachments={(message.content ?? []).flatMap<ChatMessageAttachment>((segment) => segment.kind === "image"
             ? [{ ...segment, kind: "image" as const }]
             : segment.kind === "reference" && segment.referenceKind === "file" ? [{ ...segment, kind: "file" as const }] : [])}

@@ -1,7 +1,4 @@
-import {
-  CanonicalProviderCatalogSchema,
-  type CanonicalProviderCatalog,
-} from "@matrix-os/contracts";
+import { adapter, catalog, owner, principal } from "./chat-orchestrator-test-support.js";
 import type { KyselyPGlite } from "kysely-pglite";
 import { createTestPGlite } from "../helpers/pglite-test-helper.js";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -12,72 +9,6 @@ import {
   type CanonicalChatProviderAdapter,
 } from "../../packages/gateway/src/chat/provider-adapter.js";
 import { ChatRepository } from "../../packages/gateway/src/chat/repository.js";
-
-const owner = { type: "personal" as const, ownerId: "owner_orchestrator" };
-const principal = { userId: owner.ownerId, source: "jwt" as const };
-
-function catalog(): CanonicalProviderCatalog {
-  return CanonicalProviderCatalogSchema.parse({
-    revision: "catalog_orchestrator",
-    drivers: [{
-      kind: "codex",
-      displayName: "Codex",
-      adapterVersion: "1.0.0",
-      capabilityClass: "coding_agent",
-    }],
-    instances: [{
-      id: "codex_default",
-      driverKind: "codex",
-      displayName: "Codex",
-      availability: "available",
-      workspaceRequirement: "project_optional",
-      catalogRevision: "catalog_orchestrator",
-      models: [{
-        id: "gpt-5.6-sol",
-        displayName: "GPT-5.6-Sol",
-        availability: "available",
-        capabilities: ["reasoning", "tools"],
-        supportsVision: false,
-        supportsToolUse: true,
-      }],
-      options: [],
-      skills: [],
-      commands: [],
-      setupActions: [],
-      supports: {
-        rootChat: true,
-        resume: true,
-        cancellation: true,
-        steering: "same_run",
-        attachments: ["file", "image", "structured_ref"],
-        tools: [],
-        approvals: true,
-        userInput: true,
-        worktrees: "optional",
-        resources: ["file", "folder", "project", "task", "app", "terminal_session"],
-        interactionModes: ["default"],
-        permissionModes: ["supervised"],
-      },
-    }],
-  });
-}
-
-function adapter(
-  start: CanonicalChatProviderAdapter<{ sessionId: string }>["start"],
-): CanonicalChatProviderAdapter<{ sessionId: string }> {
-  return {
-    driverKind: "codex",
-    stateSchemaVersion: 1,
-    parseState(value) {
-      if (!value || typeof value !== "object" || typeof (value as { sessionId?: unknown }).sessionId !== "string") {
-        throw new Error("invalid state");
-      }
-      return value as { sessionId: string };
-    },
-    serializeState: (value) => value,
-    start,
-  };
-}
 
 describe("CanonicalChatOrchestrator", () => {
   let pglite: InstanceType<typeof KyselyPGlite>;
@@ -2057,43 +1988,5 @@ describe("CanonicalChatOrchestrator", () => {
     expect(orchestrator.activeCount).toBe(0);
   });
 
-  it("bounds shutdown even when a Provider ignores cancellation", async () => {
-    await repository.create(owner, {
-      id: "chat_shutdown",
-      clientRequestId: "req_create_shutdown",
-      title: "Shutdown",
-    });
-    const provider = {
-      ...adapter(async function* () {
-        await new Promise<void>(() => undefined);
-        yield { type: "run.completed", outcome: "completed" };
-      }),
-      cancel: vi.fn(async () => new Promise<void>(() => undefined)),
-    };
-    const orchestrator = new CanonicalChatOrchestrator({
-      repository,
-      catalog: { getCatalog: async () => catalog() },
-      adapters: new CanonicalChatProviderRegistry([provider]),
-      shutdownDrainMs: 20,
-      now: () => new Date("2026-08-26T00:00:00.000Z"),
-    });
-    await orchestrator.admitTurn(principal, owner, "chat_shutdown", {
-      clientRequestId: "req_shutdown_turn",
-      baseRevision: 0,
-      parts: [{ type: "text", text: "hang" }],
-      selection: { instanceId: "codex_default", model: "gpt-5.6-sol" },
-      interactionMode: "default",
-      permissionMode: "supervised",
-    });
 
-    const startedAt = Date.now();
-    const closed = await Promise.race([
-      orchestrator.close().then(() => true),
-      new Promise<false>((resolve) => setTimeout(() => resolve(false), 100)),
-    ]);
-    expect(closed).toBe(true);
-    expect(Date.now() - startedAt).toBeLessThan(500);
-    const snapshot = await repository.exportChat(owner, "chat_shutdown");
-    expect(snapshot?.runs[0]).toMatchObject({ status: "aborted", outcome: "aborted" });
-  });
 });
