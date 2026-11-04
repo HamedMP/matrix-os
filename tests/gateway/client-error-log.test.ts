@@ -8,6 +8,7 @@ import {
   forwardClientErrorToPostHog,
   writeClientErrorReport,
 } from "../../packages/gateway/src/client-error-log.js";
+import { buildClientErrorReport } from "../../shell/src/lib/client-error-report.js";
 
 async function tmpHome(): Promise<string> {
   return resolve(await mkdtemp(join(tmpdir(), "client-error-log-")));
@@ -33,6 +34,25 @@ describe("client error log", () => {
     });
 
     expect(report.errorId).toBe("mx-339sbf-bdf7b985");
+  });
+
+  it("accepts the browser stale-bundle payload and preserves its fingerprint", () => {
+    const payload = buildClientErrorReport(
+      new Error("Loading chunk 9 failed"),
+      {
+        errorId: "mx-stale-1",
+        source: "shell-error-boundary",
+        staleBundleFingerprint: "webpack-abc123def456.js",
+      },
+      {
+        buildSha: "ea89261d59362753accd577f9d56a0c85e611cc2",
+        path: "/vm/test?view=desktop",
+        userAgent: "Mozilla/5.0",
+      },
+    );
+
+    expect(ClientErrorReportSchema.parse(payload).staleBundleFingerprint)
+      .toBe("webpack-abc123def456.js");
   });
 
   it("rejects malformed error IDs and unknown fields", () => {
@@ -102,8 +122,24 @@ describe("client error PostHog forwarding", () => {
       errorId: "mx-339sbf-bdf7b985",
       path: "/vm/hamed-billing-staging",
       build_sha: "ea89261d59362753accd577f9d56a0c85e611cc2",
+      stale_bundle_fingerprint: undefined,
       user_agent: "Mozilla/5.0",
     });
+  });
+
+  it("forwards stale-bundle fingerprints to PostHog", () => {
+    const captureException = vi.fn().mockResolvedValue(true);
+    const staleReport = ClientErrorReportSchema.parse({
+      ...report,
+      staleBundleFingerprint: "webpack-abc123def456.js",
+    });
+
+    forwardClientErrorToPostHog({ captureException }, "user_123", staleReport);
+
+    const [, options] = captureException.mock.calls[0] as [Error, {
+      properties?: Record<string, unknown>;
+    }];
+    expect(options.properties?.stale_bundle_fingerprint).toBe("webpack-abc123def456.js");
   });
 
   it("strips query strings from the forwarded path", () => {
