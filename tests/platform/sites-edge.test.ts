@@ -18,6 +18,19 @@ it('rejects query-bearing form requests without forwarding them', async () => {
   expect(response.status).toBe(400); expect(forward).not.toHaveBeenCalled();
  } finally { vi.unstubAllGlobals(); }
 });
+it('rejects query-string credentials and malformed or oversized viewer cookies before forwarding',async()=>{
+ const forward=vi.fn(async()=>new Response('app'));vi.stubGlobal('fetch',forward);
+ try{
+  const env={SITES_PLATFORM_ORIGIN:'https://platform.example.com',SITES_EDGE_SECRET:'x'.repeat(40)};
+  for(const request of [
+   new Request('https://matrix.page/launch-2026?access=private'),
+   new Request('https://matrix.page/launch-2026?token=private'),
+   new Request('https://matrix.page/launch-2026',{headers:{cookie:'x'.repeat(8193)}}),
+   new Request('https://matrix.page/launch-2026',{headers:{cookie:'__Host-matrix_site_viewer_bad=private'}}),
+  ])expect((await worker.fetch(request,env)).status).toBe(400);
+  expect(forward).not.toHaveBeenCalled();
+ }finally{vi.unstubAllGlobals();}
+});
 it('redirects only the homepage to Matrix without forwarding queries or requiring site configuration', async () => {
  const forward = vi.fn(async () => new Response('app'));
  vi.stubGlobal('fetch', forward);
@@ -56,6 +69,32 @@ it('only forwards sites routes and strips visitor credentials', async () => {
     finally {
         vi.unstubAllGlobals();
     }
+});
+it('forwards only bounded site-viewer cookies and only approved viewer Set-Cookie values', async () => {
+ const safeName='__Host-matrix_site_viewer_11111111111141118111111111111111';
+ const safeValue=`11111111-1111-4111-8111-111111111111.${'s'.repeat(43)}`;
+ const forward=vi.fn(async(request:Request)=>{
+  expect(request.headers.get('cookie')).toBe(`${safeName}=${safeValue}`);
+  return new Response('ok',{headers:{'Set-Cookie':`${safeName}=${safeValue}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=2592000`}});
+ });
+ vi.stubGlobal('fetch',forward);
+ try{
+  const response=await worker.fetch(new Request('https://matrix.page/launch-2026',{headers:{cookie:`__session=private; ${safeName}=${safeValue}; unrelated=secret`}}),{SITES_PLATFORM_ORIGIN:'https://platform.example.com',SITES_EDGE_SECRET:'x'.repeat(40)});
+  expect(response.headers.get('set-cookie')).toBe(`${safeName}=${safeValue}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=2592000`);
+ }finally{vi.unstubAllGlobals();}
+});
+it('accepts same-origin explicit claims and rejects cross-site claim requests before forwarding',async()=>{
+ const forward=vi.fn(async()=>new Response(JSON.stringify({accepted:true})));
+ vi.stubGlobal('fetch',forward);
+ try{
+  const body=JSON.stringify({linkId:'11111111-1111-4111-8111-111111111111',token:'t'.repeat(43)});
+  const accepted=await worker.fetch(new Request('https://matrix.page/launch-2026/access/claim',{method:'POST',headers:{origin:'https://matrix.page','content-type':'application/json'},body}),{SITES_PLATFORM_ORIGIN:'https://platform.example.com',SITES_EDGE_SECRET:'x'.repeat(40)});
+  expect(accepted.status).toBe(200);
+  expect((forward.mock.calls[0]![0] as Request).headers.get('x-matrix-sites-origin')).toBe('same-origin');
+  const rejected=await worker.fetch(new Request('https://matrix.page/launch-2026/access/claim',{method:'POST',headers:{origin:'https://evil.example','content-type':'application/json'},body}),{SITES_PLATFORM_ORIGIN:'https://platform.example.com',SITES_EDGE_SECRET:'x'.repeat(40)});
+  expect(rejected.status).toBe(404);
+  expect(forward).toHaveBeenCalledTimes(1);
+ }finally{vi.unstubAllGlobals();}
 });
 it('forwards only the coarse edge-health path so deployment can distinguish accepted proof', async () => {
  const forward = vi.fn(async (request: Request) => new Response(

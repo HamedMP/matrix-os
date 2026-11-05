@@ -5,6 +5,7 @@ import { insertUserMachine, type PlatformDB } from '../../packages/platform/src/
 import { buildPlatformVerificationToken, buildPlatformSyncVerificationToken } from '../../packages/platform/src/platform-token.js';
 import { createSitesService } from '../../packages/platform/src/sites/service.js';
 import { createSiteManagementRoutes } from '../../packages/platform/src/sites/management-routes.js';
+import { randomUUID } from 'node:crypto';
 let db: PlatformDB;
 let app: Hono;
 const secret = 's'.repeat(40);
@@ -30,6 +31,22 @@ it('derives customer owner from verified machine and rejects preview credentials
 it('fails closed when dedicated asset storage is not configured', async () => {
     const response = await app.request('/internal/containers/launch/sites/event?runtimeSlot=primary', { method: 'POST', headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' }, body: '{}' });
     expect(response.status).toBe(503);
+});
+
+it('manages write-only access links through the verified machine owner route',async()=>{
+ const siteId=randomUUID();
+ await db.executor.insertInto('public_sites').values({id:siteId,owner_id:'user_launch',machine_id:identity.machineId,app_slug:'private-event',title:'Private event',description:'',slug:null,revision:1,status:'published',access_mode:'private_link',active_version:null,created_at:new Date().toISOString()}).execute();
+ const url='/internal/containers/launch/sites/private-event/access-links?runtimeSlot=primary';
+ const headers={authorization:`Bearer ${token}`,'content-type':'application/json'};
+ const created=await app.request(url,{method:'POST',headers,body:JSON.stringify({baseRevision:1})});
+ expect(created.status).toBe(200);
+ const value=await created.json() as {link:{id:string};url:string};
+ expect(value.url).toMatch(new RegExp(`^https://matrix\\.page/${siteId}#access=`));
+ const listed=await (await app.request(url,{headers})).json();
+ expect(listed).toEqual({links:[expect.objectContaining({id:value.link.id,status:'unclaimed'})]});
+ expect(JSON.stringify(listed)).not.toContain('#access=');
+ expect((await app.request(`${url.replace('?runtimeSlot=primary','')}/${value.link.id}?runtimeSlot=primary`,{method:'DELETE',headers})).status).toBe(200);
+ expect(await (await app.request(url,{headers})).json()).toEqual({links:[]});
 });
 
 it('rejects legacy handle credentials, different machines, different slots and old token epochs',async()=>{

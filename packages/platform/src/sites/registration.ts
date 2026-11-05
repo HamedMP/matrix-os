@@ -17,5 +17,6 @@ export function registerSiteRoutes(app: Hono<any>, options: {
 }) {
     const service = createSitesService(options);
     app.route('/internal/containers/:handle/sites', createSiteManagementRoutes({ ...options, service }));
-    app.route('/public/sites', createSitePublicRoutes({ service, edgeSecret: options.edgeSecret, submit: createSiteSubmissionTransport(options) }));
+    app.route('/public/sites', createSitePublicRoutes({ service, edgeSecret: options.edgeSecret,
+        edgePreviousSecret: options.edgePreviousSecret, submit: createSiteSubmissionTransport(options) }));
 }

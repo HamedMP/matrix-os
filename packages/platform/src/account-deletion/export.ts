@@ -59,18 +59,21 @@ export async function exportOwnerPlatformData(db: PlatformDB, owner: string) {
       .where('clerk_user_id','=',owner).execute();
     const registry = await sql<{present:boolean}>`SELECT to_regclass('public_sites') IS NOT NULL AS present`.execute(trx.executor);
     const sites = registry.rows[0]?.present ? await trx.executor.selectFrom('public_sites').select([
-      'id','machine_id','app_slug','title','description','slug','revision','status','active_version','created_at',
+      'id','machine_id','app_slug','title','description','slug','revision','status','access_mode','active_version','created_at',
     ]).where('owner_id','=',owner).orderBy('id').limit(1001).execute() : [];
     const siteIds=sites.map(site=>site.id);
     const versions=siteIds.length ? await trx.executor.selectFrom('public_site_versions').selectAll()
       .where('site_id','in',siteIds).orderBy('site_id').orderBy('created_at').orderBy('id').limit(50001).execute() : [];
     const aliases=siteIds.length ? await trx.executor.selectFrom('public_site_aliases').select(['slug','site_id'])
       .where('site_id','in',siteIds).orderBy('slug').limit(10001).execute() : [];
+    const accessLinks=siteIds.length ? await trx.executor.selectFrom('public_site_access_links').select([
+      'id','site_id','created_at','claim_expires_at','claimed_at','session_expires_at',
+    ]).where('site_id','in',siteIds).orderBy('site_id').orderBy('created_at').orderBy('id').limit(50001).execute() : [];
     if ([posts,comments,likes,follows].some((rows)=>rows.length>10000) || machines.length>1000 || billing.length>1000
-      || sites.length>1000 || versions.length>50000 || aliases.length>10000) {
+      || sites.length>1000 || versions.length>50000 || aliases.length>10000 || accessLinks.length>50000) {
       throw new Error('Platform export capacity exceeded');
     }
-    return { version:2,exportedAt:new Date().toISOString(),profile,posts,comments,likes,follows,machines,billing,onboarding,
-      publicSites:{sites,versions,aliases} };
+    return { version:3,exportedAt:new Date().toISOString(),profile,posts,comments,likes,follows,machines,billing,onboarding,
+      publicSites:{sites,versions,aliases,accessLinks} };
   });
 }

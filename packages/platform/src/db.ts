@@ -838,6 +838,7 @@ export interface PlatformDatabase {
   public_sites: import('./sites/types.js').SitesTable;
   public_site_versions: import('./sites/types.js').SiteVersionsTable;
   public_site_aliases: import('./sites/types.js').SiteAliasesTable;
+  public_site_access_links: import('./sites/types.js').SiteAccessLinksTable;
   account_deletion_jobs: AccountDeletionJobsTable;
   users: UsersTable;
   containers: ContainersTable;

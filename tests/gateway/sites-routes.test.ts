@@ -17,6 +17,19 @@ describe('owner publishing authentication',()=>{
  it('returns no publication and validates app paths',async()=>{expect((await ownerApp().request('/api/apps/event/site')).status).toBe(404);expect((await ownerApp().request('/api/apps/%24evil/site')).status).toBe(400);});
  it('fails safely when publication services are missing',async()=>{const response=await ownerApp('owner',null).request('/api/apps/event/site');expect(response.status).toBe(503);expect(await response.json()).toEqual({error:'Site unavailable'});});
  it('caps every mutation before JSON parsing',async()=>{const response=await ownerApp().request('/api/apps/event/site',{method:'DELETE',body:'x'.repeat(20000)});expect(response.status).toBe(413);});
+ it('validates and forwards owner access-link management without exposing platform details',async()=>{
+  const linkId=randomUUID();
+  const platform={request:vi.fn(),accessLinks:vi.fn().mockResolvedValue({links:[]}),createAccessLink:vi.fn().mockResolvedValue({link:{id:linkId},url:'https://matrix.page/link'}),revokeAccessLink:vi.fn().mockResolvedValue(undefined)};
+  const app=ownerApp('owner',platform);
+  expect((await app.request('/api/apps/event/site/access-links')).status).toBe(200);
+  expect((await app.request('/api/apps/event/site/access-links',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({baseRevision:4})})).status).toBe(200);
+  expect((await app.request(`/api/apps/event/site/access-links/${linkId}`,{method:'DELETE'})).status).toBe(200);
+  expect(platform.accessLinks).toHaveBeenCalledWith('event');
+  expect(platform.createAccessLink).toHaveBeenCalledWith('event',{baseRevision:4});
+  expect(platform.revokeAccessLink).toHaveBeenCalledWith('event',linkId);
+  expect((await app.request('/api/apps/event/site/access-links',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({baseRevision:4,token:'forbidden'})})).status).toBe(400);
+  expect((await app.request('/api/apps/event/site/access-links/not-a-uuid',{method:'DELETE'})).status).toBe(400);
+ });
 });
 describe('scoped platform submission route',()=>{
  function app() { const submit=vi.fn().mockResolvedValue(undefined); const app=new Hono();app.route('/',createSiteSubmitRoutes({serviceSecret:'token',submissions:{submit} as any}));return {app,submit}; }

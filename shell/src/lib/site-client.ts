@@ -1,7 +1,7 @@
-import { SITE_PUBLISH_CLIENT_TIMEOUT_MS, SitePublishRequestSchema, SiteMetadataSchema, SitePublishingSchema, SiteRecordSchema, SiteSubmissionsResponseSchema, type SiteRecord, type SitePublishing, type SiteSubmission, type SiteSubmissionsResponse } from "@matrix-os/contracts";
+import { SITE_PUBLISH_CLIENT_TIMEOUT_MS, SiteAccessLinkCreateRequestSchema, SiteAccessLinkCreateResponseSchema, SiteAccessLinksResponseSchema, SitePublishRequestSchema, SiteMetadataSchema, SitePublishingSchema, SiteRecordSchema, SiteSubmissionsResponseSchema, type SiteAccessLinkCreateResponse, type SiteAccessLinksResponse, type SiteRecord, type SitePublishing, type SiteSubmission, type SiteSubmissionsResponse } from "@matrix-os/contracts";
 
 export const SITE_CLIENT_MAX_RESPONSE_BYTES = 1_048_576;
-export interface SiteMetadata { title: string; description: string; slug: string | null; baseRevision?: number }
+export interface SiteMetadata { title: string; description: string; slug: string | null; accessMode?: "public" | "private_link"; baseRevision?: number }
 export type { SiteSubmission };
 export type SiteSubmissionsPage = SiteSubmissionsResponse;
 export interface SitePublishMetadata extends SiteMetadata { reviewedConfig: SitePublishing }
@@ -12,6 +12,9 @@ export interface SiteClient {
   rollback(app: string, value: { versionId: string; baseRevision: number }, signal: AbortSignal): Promise<SiteRecord>;
   unpublish(app: string, revision: number, signal: AbortSignal): Promise<SiteRecord>;
   getConfig(app: string, signal: AbortSignal): Promise<SitePublishing>;
+  accessLinks(app: string, signal: AbortSignal): Promise<SiteAccessLinksResponse>;
+  createAccessLink(app: string, value: { baseRevision: number }, signal: AbortSignal): Promise<SiteAccessLinkCreateResponse>;
+  revokeAccessLink(app: string, linkId: string, signal: AbortSignal): Promise<void>;
   submissions(app: string, cursor: string | null, signal: AbortSignal): Promise<SiteSubmissionsPage>;
   exportSubmissions(app: string, cursor: string | null, signal: AbortSignal): Promise<Blob>;
   deleteSubmission(app: string, id: string, signal: AbortSignal): Promise<void>;
@@ -61,6 +64,9 @@ export function createSiteClient(transport: SiteTransport): SiteClient {
       const value = await transport.get<{ manifest?: { publishing?: unknown } }>(`/api/apps/${encodeURIComponent(app)}/manifest`, { signal });
       return SitePublishingSchema.parse(value.manifest?.publishing ?? { data: {}, forms: [] });
     },
+    accessLinks: async (app, signal) => SiteAccessLinksResponseSchema.parse(await transport.get(`${sitePath(app)}/access-links`, { signal })),
+    createAccessLink: async (app, value, signal) => SiteAccessLinkCreateResponseSchema.parse(await transport.post(`${sitePath(app)}/access-links`, SiteAccessLinkCreateRequestSchema.parse(value), { signal })),
+    revokeAccessLink: async (app, linkId, signal) => { await transport.delete(`${sitePath(app)}/access-links/${encodeURIComponent(linkId)}`, undefined, { signal }); },
     submissions: async (app, cursor, signal) => SiteSubmissionsResponseSchema.parse(await transport.get(`${sitePath(app)}/submissions?limit=50${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ""}`, { signal })),
     exportSubmissions: (app, cursor, signal) => transport.getBlob(`${sitePath(app)}/submissions/export?limit=50${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ""}`, { signal }),
     deleteSubmission: async (app, id, signal) => { await transport.delete(`${sitePath(app)}/submissions/${encodeURIComponent(id)}`, undefined, { signal }); },

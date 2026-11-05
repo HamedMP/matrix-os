@@ -4,8 +4,19 @@ export interface SitesWorkerEnv {
 }
 const reference = '(?:[a-z][a-z0-9-]{1,62}|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})';
 const read = new RegExp(`^/${reference}(?:/frame|/assets/[0-9a-f-]{36}/[A-Za-z0-9_./-]{1,240})?$`);
-const write = new RegExp(`^/${reference}/forms/[a-z][a-z0-9_]{0,63}$`);
+const write = new RegExp(`^/${reference}/(?:forms/[a-z][a-z0-9_]{0,63}|access/claim)$`);
 const blocked = new Set(['api', 'public', 'assets', 'frame', 'forms', 'preview', 'admin', 'auth', 'health', 'robots', 'favicon', 'index', 'sites', 'www']);
+const viewerCookie = /^__Host-matrix_site_viewer_[a-f0-9]{32}=[0-9a-f-]{36}\.[A-Za-z0-9_-]{43}$/i;
+const viewerSetCookie = /^__Host-matrix_site_viewer_[a-f0-9]{32}=[0-9a-f-]{36}\.[A-Za-z0-9_-]{43}; Path=\/; HttpOnly; Secure; SameSite=Lax; Max-Age=2592000$/i;
+function forwardedViewerCookies(raw: string | null): { value: string | null; invalid: boolean } {
+    if (!raw) return { value: null, invalid: false };
+    if (new TextEncoder().encode(raw).byteLength > 8192) return { value: null, invalid: true };
+    const entries = raw.split(';').map(value => value.trim()).filter(Boolean);
+    const viewerEntries = entries.filter(value => value.toLowerCase().startsWith('__host-matrix_site_viewer_'));
+    if (viewerEntries.some(value => !viewerCookie.test(value)) || viewerEntries.length > 20)
+        return { value: null, invalid: true };
+    return { value: viewerEntries.length ? viewerEntries.join('; ') : null, invalid: false };
+}
 async function handleSiteRequest(request: Request, env: SitesWorkerEnv): Promise<Response> {
         const url = new URL(request.url);
         if (url.pathname === '/' && (request.method === 'GET' || request.method === 'HEAD'))
@@ -14,6 +25,8 @@ async function handleSiteRequest(request: Request, env: SitesWorkerEnv): Promise
         const valid = edgeHealth || (request.method === 'GET' ? read.test(url.pathname) : request.method === 'POST' && write.test(url.pathname));
         if (!valid || blocked.has(url.pathname.split('/')[1]!))
             return new Response('Site unavailable', { status: 404 });
+        if ([...url.searchParams.keys()].some(key => ['access', 'token', 'linkid', 'session'].includes(key.toLowerCase())))
+            return new Response('Site unavailable', { status: 400 });
         let origin: URL;
         try {
             origin = new URL(env.SITES_PLATFORM_ORIGIN);
@@ -28,9 +41,19 @@ async function handleSiteRequest(request: Request, env: SitesWorkerEnv): Promise
         // read the immutable path and never forward visitor query values.
         if (url.search && request.method !== 'GET')
             return new Response('Site unavailable', { status: 400 });
+        const claim = request.method === 'POST' && url.pathname.endsWith('/access/claim');
+        if (claim && request.headers.get('origin') !== url.origin)
+            return new Response('Site unavailable', { status: 404 });
         const headers = new Headers({ 'x-matrix-sites-edge': env.SITES_EDGE_SECRET, 'x-matrix-sites-source': request.headers.get('cf-connecting-ip') ?? 'unknown' });
         if (request.method === 'POST')
             headers.set('content-type', 'application/json');
+        if (claim)
+            headers.set('x-matrix-sites-origin', 'same-origin');
+        const safeCookies = forwardedViewerCookies(request.headers.get('cookie'));
+        if (safeCookies.invalid)
+            return new Response('Site unavailable', { status: 400 });
+        if (safeCookies.value)
+            headers.set('cookie', safeCookies.value);
         let body: Uint8Array | undefined;
         if (request.method === 'POST') {
             if (!request.body)
@@ -44,7 +67,7 @@ async function handleSiteRequest(request: Request, env: SitesWorkerEnv): Promise
                     if (chunk.done)
                         break;
                     size += chunk.value.length;
-                    if (size > 17 * 1024) {
+                    if (size > (claim ? 2048 : 17 * 1024)) {
                         await reader.cancel();
                         return new Response('Invalid submission', { status: 413 });
                     }
@@ -72,6 +95,11 @@ async function handleSiteRequest(request: Request, env: SitesWorkerEnv): Promise
                 throw new TypeError('Upstream redirect rejected');
             const result = new Response(response.body, { status: response.status, headers: response.headers });
             result.headers.delete('set-cookie');
+            const responseHeaders = response.headers as Headers & { getSetCookie?: () => string[]; getAll?: (name: string) => string[] };
+            const cookies = responseHeaders.getSetCookie?.() ?? responseHeaders.getAll?.('set-cookie')
+                ?? (response.headers.get('set-cookie') ? [response.headers.get('set-cookie')!] : []);
+            for (const cookie of cookies)
+                if (viewerSetCookie.test(cookie)) result.headers.append('set-cookie', cookie);
             result.headers.set('Cache-Control', 'no-store');
             result.headers.set('CDN-Cache-Control', 'no-store');
             return result;

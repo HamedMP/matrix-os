@@ -2,7 +2,7 @@ import { expect, it, vi } from 'vitest';
 import { JSDOM } from 'jsdom';
 import { APP_CSP, siteFrame, sitePage } from '../../packages/platform/src/sites/renderer.js';
 import type { SiteRecord } from '@matrix-os/contracts';
-const site: SiteRecord = { id: 'a2fd72d0-0926-49d5-b45f-bbfb167e50d2', appSlug: 'launch', title: '<script>bad()</script>', description: '', slug: null, url: 'https://matrix.page/a2fd72d0-0926-49d5-b45f-bbfb167e50d2', revision: 1, status: 'published', activeVersion: 'cd0a12e9-18a0-4b4e-9a10-269eb5697d4f', versions: [], config: { data: {}, forms: [] } };
+const site: SiteRecord = { id: 'a2fd72d0-0926-49d5-b45f-bbfb167e50d2', appSlug: 'launch', title: '<script>bad()</script>', description: '', slug: null, url: 'https://matrix.page/a2fd72d0-0926-49d5-b45f-bbfb167e50d2', revision: 1, status: 'published', accessMode: 'public', activeVersion: 'cd0a12e9-18a0-4b4e-9a10-269eb5697d4f', versions: [], config: { data: {}, forms: [] } };
 it.each(['TypeError', 'Error', 'UnknownError'])('logs only a coarse %s category when public submission fails', async category => {
  const warn = vi.fn(), postMessage = vi.fn(), close = vi.fn();
  const dom = new JSDOM(sitePage(site), { url: site.url, runScripts: 'dangerously', beforeParse(window) {
@@ -36,6 +36,17 @@ it('permits form submit events inside opaque sandbox and verifies exact frame so
     expect(page).toContain('sandbox="allow-scripts allow-forms allow-popups allow-popups-to-escape-sandbox"');
     expect(page).toContain('event.source!==frame.contentWindow');
     expect(page).toContain('&lt;script&gt;');
+});
+it('sends the site-scoped viewer cookie when a private wrapper submits a declared form', () => {
+    const page=sitePage({...site,accessMode:'private_link'});
+    expect(page).toContain("credentials:'same-origin'");
+    expect(page).not.toContain("credentials:'include'");
+});
+it('keeps the opaque iframe while credentialing private Vite module and stylesheet asset loads',()=>{
+ const privateSite={...site,accessMode:'private_link' as const};
+ const frame=siteFrame('<html><head><link rel="modulepreload" href="./chunk.js"><link rel="stylesheet" href="./app.css"><script type="module" src="./app.js"></script></head></html>',privateSite);
+ expect(frame.match(/crossorigin="use-credentials"/g)).toHaveLength(3);
+ expect(APP_CSP).not.toContain('allow-same-origin');
 });
 it('opens guide links with no opener and preserves in-page anchors without granting private access', () => {
  const dom = new JSDOM(siteFrame('<head></head><body><a id="post" href="https://matrix-os.com/community">Posts</a><a id="other" href="https://matrix.page/other-guide" rel="opener nofollow">Another guide</a><a id="toc" href="#support">Support</a><h2 id="support">Support Matrix</h2></body>', site), { url: site.url + '/frame', runScripts: 'dangerously', beforeParse(window) { Object.defineProperty(window, 'TextDecoder', { value: TextDecoder }); } });

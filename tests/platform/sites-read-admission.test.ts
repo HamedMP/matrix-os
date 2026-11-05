@@ -4,8 +4,9 @@ import type { SitesService } from '../../packages/platform/src/sites/service.js'
 const id = '11111111-1111-4111-8111-111111111111';
 const path = `/${id}/assets/${id}/assets/main.js`;
 function fixture() {
+  const site={id,appSlug:'launch',title:'Launch',description:'',slug:null,url:`https://matrix.page/${id}`,revision:1,status:'published' as const,accessMode:'public' as const,activeVersion:id,versions:[],config:{data:{},forms:[]}};
   const asset = vi.fn(async () => ({ body: Buffer.from('app'), contentType: 'text/javascript' }));
-  const app = createSitePublicRoutes({ service: { asset } as unknown as SitesService, edgeSecret: 'verified-edge-proof-secret-1234567890', submit: async () => ({ accepted: true }) });
+  const app = createSitePublicRoutes({ service: { asset,resolve:vi.fn(async()=>site) } as unknown as SitesService, edgeSecret: 'verified-edge-proof-secret-1234567890', submit: async () => ({ accepted: true }) });
   const request = (source = 'visitor') => app.request(path, { headers: { 'x-matrix-sites-edge': 'verified-edge-proof-secret-1234567890', 'x-matrix-sites-source': source } });
   return { asset, request };
 }
