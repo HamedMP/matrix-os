@@ -1,3 +1,4 @@
+import { initialRoutineChatOrigin } from "./routine-chat-origin-map.js";
 import { RoutineAuthorizationSchema, routineApprovalDigest, routineSelection, hasLiveRoutineChat, type RoutineAuthorization } from "./routine-authorization.js";
 import { z } from "zod/v4";
 import { BOT_ROUTINE_APPROVAL_PREVIEW_LIMIT, BotRoutineProposalSchema, BotRoutineEditRequestSchema, type BotRoutineProposal } from "@matrix-os/contracts";
@@ -225,7 +226,9 @@ export function createBotRoutineApprovals(deps: {
       const nextFireAt = nextBotRoutineFire(proposal.schedule, at);
       if (!nextFireAt) throw new BotStateError("invalid_input");
       const repository = createBotRoutinesRepository(tx.db);
+      const origin = source.routineId ? undefined : await initialRoutineChatOrigin(tx.db, interaction);
       const data = {
+        ...(origin ? { origin: { computerId: origin.computerId, requestId: origin.requestId } } : {}),
         ownerId: interaction.ownerId,
         botId: interaction.botId,
         chatId: interaction.chatId,

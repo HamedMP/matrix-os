@@ -20,6 +20,7 @@ export const BotRoutineCenterItemSchema = z.object({
   proposal: BotRoutineProposalSchema, computerId: z.string().min(1).max(128).nullable(),
   status: z.enum(["active", "paused", "archived"]), revision: z.number().int().positive(),
   nextFireAt: z.iso.datetime({ offset: true }).nullable(), requiresReview: z.boolean(), targetAvailable: z.boolean(),
+  originChatId: CanonicalChatIdSchema.optional(), originAvailable: z.boolean().optional(),
   sourceAvailable: z.boolean(), lastFire: BotRoutineFireViewSchema.nullable(),
 }).strict();
 export const BotRoutineCenterResponseSchema = z.object({
