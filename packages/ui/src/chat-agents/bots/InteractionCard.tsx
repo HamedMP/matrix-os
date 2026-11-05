@@ -7,7 +7,10 @@ import { RoutineApprovalDetails } from "./RoutineApprovalDetails.js";
 const MAX_STRUCTURED_ANSWER_BYTES = 700;
 const encoder = new TextEncoder();
 
-export function InteractionCard({ interaction, onResolve, onResolved, actionsAvailable = true, agentName, currentRoutineRevision }: {
+export function InteractionCard({ interaction, onResolve, onResolved, actionsAvailable = true, agentName, currentRoutineRevision, unavailableMessage, approvalDecision, decisionError }: {
+  unavailableMessage?: string;
+  approvalDecision?: "approve" | "deny";
+  decisionError?: string;
   agentName?: string;
   currentRoutineRevision?: number | null;
   interaction: BotInteraction;
@@ -20,6 +23,7 @@ export function InteractionCard({ interaction, onResolve, onResolved, actionsAva
   const [typedAnswers, setTypedAnswers] = useState<Record<string, string>>({});
   const [pending, setPending] = useState(false);
   const [resolved, setResolved] = useState(false);
+  const [continuationUnconfirmed, setContinuationUnconfirmed] = useState(false);
   const [savedRevision, setSavedRevision] = useState<number | null>(null);
   const [error, setError] = useState("");
   const [connectUrl, setConnectUrl] = useState<string | null>(null);
@@ -49,6 +53,7 @@ export function InteractionCard({ interaction, onResolve, onResolved, actionsAva
     try {
       const response = await onResolve(request);
       if (response?.continuationPending) {
+        if (interaction.kind !== "question") { setContinuationUnconfirmed(true); setResolved(true); }
         setSavedRevision(response.interaction.revision);
         onResolved?.();
         return;
@@ -60,7 +65,7 @@ export function InteractionCard({ interaction, onResolve, onResolved, actionsAva
       if (!response?.connectUrl) onResolved?.();
     } catch (failure: unknown) {
       console.warn("[chat-agents] Bot interaction failed:", failure instanceof Error ? failure.name : "UnknownError");
-      setError(request.kind === "resume" ? "Your answer is saved. Work could not resume. Refresh and try again." : "Could not save your response. Refresh and try again.");
+      setError(request.kind === "resume" ? "Your answer is saved. Work could not resume. Refresh and try again." : decisionError ?? "Could not save your response. Refresh and try again.");
     } finally {
       setPending(false);
     }
@@ -94,7 +99,8 @@ export function InteractionCard({ interaction, onResolve, onResolved, actionsAva
     && payload.questions.every((question) => questionAnswers[question.questionId]?.length);
   return <section aria-label={title} className="matrix-chat-agent-card matrix-bot-interaction-card grid min-w-0 gap-3 rounded-xl border p-4" data-interaction-kind={interaction.kind}>
     <div><h3 className="break-words text-sm font-semibold">{title}</h3>
-    {!actionable ? <p role="status" className="mt-1 text-xs" style={chatAgentMutedStyle}>{resolved ? "Resolved" : !actionsAvailable && card.state === "actionable" ? "Status unavailable. Refresh to respond." : card.state === "unavailable" ? "Only the designated person can respond." : card.state}</p> : null}</div>
+    {!actionable ? <p role="status" className="mt-1 text-xs" style={chatAgentMutedStyle}>{resolved ? "Resolved" : !actionsAvailable && card.state === "actionable" ? unavailableMessage ?? "Status unavailable. Refresh to respond." : card.state === "unavailable" ? "Only the designated person can respond." : card.state}</p> : null}</div>
+    {continuationUnconfirmed ? <p role="status" className="text-sm">Your decision was saved. Continuation was not confirmed. Check execution history for current status.</p> : null}
     {staleRoutine ? <p role="status" className="text-sm">This schedule changed. Cancel this review, then review your draft against the current revision.</p> : null}
     {access ? <div className="grid gap-1 text-xs" style={chatAgentMutedStyle}>
       <p>Requested access: {access.summary}</p>{access.boundary ? <p>{access.boundary}</p> : null}
@@ -155,7 +161,7 @@ export function InteractionCard({ interaction, onResolve, onResolved, actionsAva
         <div><dt style={chatAgentMutedStyle}>Permission</dt><dd>This action only</dd></div>
       </dl></details></> : null}
       <div className="flex flex-wrap gap-2">{(["approve", "deny"] as const).map((decision) => <button key={decision} type="button"
-        className={chatAgentButtonClass} disabled={pending || staleRoutine && decision === "approve"} onClick={() => { void decide({ kind: "approval", baseRevision: interaction.revision, decision }); }}>
+        className={chatAgentButtonClass} disabled={pending || staleRoutine && decision === "approve" || Boolean(approvalDecision && approvalDecision !== decision)} onClick={() => { void decide({ kind: "approval", baseRevision: interaction.revision, decision }); }}>
         {routine ? decision === "approve" ? routine.source.routineId ? "Approve changes" : "Approve schedule" : "Cancel" : decision === "approve" ? "Approve" : "Deny"}</button>)}</div>
     </> : null}
     {isRoutine && !routine ? <p role="alert" className="text-sm">Schedule details are unavailable. Ask the Bot for a new proposal.</p> : null}
