@@ -1,3 +1,4 @@
+import { portableCommandSocketPin } from "../helpers/portable-command-socket-pin.js";
 import { createUnixSocketTempDir } from "../helpers/unix-socket-temp.js";
 import { lstat, mkdir, readFile, rm, stat, symlink, writeFile } from "node:fs/promises";
 import { createServer, type Server } from "node:net";
@@ -46,6 +47,7 @@ async function fixture() {
     root,
     home,
     paths: {
+      pinCommandSocket: portableCommandSocketPin,
       stateRoot: join(root, "state"),
       sdkDirectory,
       nativeDirectory,

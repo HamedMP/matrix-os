@@ -1,3 +1,4 @@
+import { portableCommandSocketPin } from "../helpers/portable-command-socket-pin.js";
 import { chmod, mkdir, readFile, rm, stat, symlink, writeFile } from "node:fs/promises";
 import { startInferenceBridge } from "../../packages/scope-runtime/src/inference-bridge.js";
 import { parseScopeRuntimeChatRequest } from "../../packages/scope-runtime/src/worker.js";
@@ -44,7 +45,7 @@ async function fixture(managerNamespaces: readonly (string | undefined)[] = name
     const commandSocketRoot = namespace === undefined ? undefined : join(root, namespace + "x".repeat(Math.max(0, 54 - Buffer.byteLength(root) - namespace.length)));
     let failNext = false;
     const launcher = createSystemdScopeRuntimeLauncher({
-      namespace, commandSocketRoot, stateRoot, sdkDirectory, nativeDirectory, workerFile, brokerSocket, nodeBinary: process.execPath, codexBinary,
+      pinCommandSocket: portableCommandSocketPin, namespace, commandSocketRoot, stateRoot, sdkDirectory, nativeDirectory, workerFile, brokerSocket, nodeBinary: process.execPath, codexBinary,
       async runCommand(command, args) {
         calls.push({ owner: namespace, command, args });
         if (command === codexBinary) return { stdout: "codex-cli 0.162.1\n" };
