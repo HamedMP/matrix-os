@@ -190,10 +190,69 @@ describe("platform collaboration routes", () => {
     });
     expect(await firstMember.json()).toEqual(expected);
 
+    const sharedForMember = await app.request("/api/collaboration/shared", {
+      headers: { "x-test-actor": platformCollaborationActors.recipientWithoutComputer },
+    });
+    expect(await sharedForMember.json()).toEqual(expected);
+
     const futureMember = await app.request("/api/collaboration/inbox", {
       headers: { "x-test-actor": "user_future_member" },
     });
     expect(await futureMember.json()).toEqual(expected);
+
+    const sharedForFutureMember = await app.request("/api/collaboration/shared", {
+      headers: { "x-test-actor": "user_future_member" },
+    });
+    expect(await sharedForFutureMember.json()).toEqual(expected);
+  });
+
+  it("ignores historical project grant state when current organization membership grants access", async () => {
+    const invitedProjectId = "10000000-0000-4000-8000-000000000089";
+    const revokedProjectId = "10000000-0000-4000-8000-000000000090";
+    for (const [scope, status, suffix] of [
+      [invitedProjectId, "invited", "089"],
+      [revokedProjectId, "revoked", "090"],
+    ] as const) {
+      await repository.applyDirectoryEvent({
+        ...directoryEvent(status === "revoked" ? "accepted" : status),
+        eventId: `20000000-0000-4000-8000-000000000${suffix}`,
+        scopeId: scope,
+        kind: "project",
+        organizationId: "org_1",
+        audience: "organization",
+        recipients: [{
+          actorId: platformCollaborationActors.recipientWithoutComputer,
+          status: status === "revoked" ? "accepted" : status,
+        }],
+      });
+      if (status === "revoked") {
+        await fixture.collaborationDb.updateTable("collaboration_user_index")
+          .set({ status: "revoked" })
+          .where("scope_id", "=", scope)
+          .where("actor_id", "=", platformCollaborationActors.recipientWithoutComputer)
+          .execute();
+      }
+    }
+    organizationIds = ["org_1"];
+
+    const inbox = await app.request("/api/collaboration/inbox", {
+      headers: { "x-test-actor": platformCollaborationActors.recipientWithoutComputer },
+    });
+    const inboxPage = await inbox.json() as { items: Array<{ scopeId: string; status: string }> };
+    expect(inboxPage.items).toEqual(expect.arrayContaining([
+      expect.objectContaining({ scopeId: invitedProjectId, status: "accepted" }),
+      expect.objectContaining({ scopeId: revokedProjectId, status: "accepted" }),
+    ]));
+    expect(inboxPage.items).not.toContainEqual(expect.objectContaining({ status: "organization_pending" }));
+
+    const shared = await app.request("/api/collaboration/shared", {
+      headers: { "x-test-actor": platformCollaborationActors.recipientWithoutComputer },
+    });
+    const sharedPage = await shared.json() as { items: Array<{ scopeId: string; status: string }> };
+    expect(sharedPage.items).toEqual(expect.arrayContaining([
+      expect.objectContaining({ scopeId: invitedProjectId, status: "accepted" }),
+      expect.objectContaining({ scopeId: revokedProjectId, status: "accepted" }),
+    ]));
   });
 
   it("keeps the inbox available when one indexed entry cannot be represented", async () => {
@@ -203,7 +262,7 @@ describe("platform collaboration routes", () => {
     await repository.applyDirectoryEvent({ ...directoryEvent("invited"), organizationId: "org_1" });
     await repository.applyDirectoryEvent({
       ...directoryEvent("invited"), eventId: "20000000-0000-4000-8000-0000000000a1",
-      scopeId: "10000000-0000-4000-8000-0000000000a1", kind: "project" as never, organizationId: "org_1",
+      scopeId: "10000000-0000-4000-8000-0000000000a1", organizationId: "org_1",
       recipients: [{ actorId: platformCollaborationActors.recipientWithoutComputer, status: "invited" as const }],
     });
     const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
@@ -229,7 +288,7 @@ describe("platform collaboration routes", () => {
     await repository.applyDirectoryEvent({ ...directoryEvent("invited"), organizationId: "org_1" });
     await repository.applyDirectoryEvent({
       ...directoryEvent("invited"), eventId: "20000000-0000-4000-8000-0000000000a2",
-      scopeId: "00000000-0000-4000-8000-0000000000a2", kind: "project" as never, organizationId: "org_1",
+      scopeId: "00000000-0000-4000-8000-0000000000a2", organizationId: "org_1",
       recipients: [{ actorId: platformCollaborationActors.recipientWithoutComputer, status: "invited" as const }],
     });
     const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);

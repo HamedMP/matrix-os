@@ -130,12 +130,16 @@ export function registerProjectRoutes(routes: Hono, options: CollaborationRouteO
     const { value, bytes } = await readJson(c);
     const context = await authorizeOwnerScope(options, c, bytes, scopeId);
     const input = CollaborationProjectUnshareRequestSchema.parse(value);
-    return c.json(CollaborationProjectUnshareResponseSchema.parse(await requireProjectSharing(options.projectSharing).unshare({
+    const result = await requireProjectSharing(options.projectSharing).unshare({
       scopeId,
       actorId: context.actorId,
       clientRequestId: input.clientRequestId,
       expectedRevision: Number(input.expectedRevision),
       payloadHash: digest(bytes),
-    })));
+    });
+    return c.json(CollaborationProjectUnshareResponseSchema.parse({
+      ...result,
+      revision: String(result.revision),
+    }));
   }));
 }
