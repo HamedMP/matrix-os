@@ -88,7 +88,7 @@ Deploy in this order:
 2. Matrix.page Worker cookie/claim forwarding allowlist.
 3. Gateway and shell owner controls. Do not expose the private-link selector until platform and edge support are deployed.
 
-During the platform-first window, management callers that do not send the versioned sites-contract capability header receive the legacy site response shape without `accessMode`. Updated Gateways negotiate contract version 2 and receive the complete record. This applies to reads and mutation responses so an older Gateway never reports a committed mutation as an upstream schema failure.
+During the platform-first window, management callers that do not send the versioned sites-contract capability header receive the legacy site response shape without `accessMode`. Updated Gateways negotiate contract version 2 and receive the complete record. This applies to reads and mutation responses so an older Gateway never reports a committed mutation as an upstream schema failure. A caller without negotiation that nevertheless submits `accessMode` is an ambiguous access-aware client and fails before mutation; a genuinely legacy caller omits that field and remains compatible. This prevents an unversioned client from defaulting a stripped private mode to public and sending it back.
 
 Rollback of shell/gateway controls leaves existing private publications enforceable at the platform/edge. Rolling platform code back across the migration is unsupported without first returning private sites to public or unpublishing them; the additive table/column may remain safely.
 

@@ -43,8 +43,13 @@ export function createSiteManagementRoutes(options: {
     app.use('*', async (c, next) => { c.header('Cache-Control', 'no-store'); await next(); });
     const denied = (c: Context) => c.json({ error: 'Unauthorized' }, 401);
     const smallBody = bodyLimit({ maxSize: 2048, onError: c => c.json({ error: 'Site unavailable' }, 413) });
+    const usesCurrentContract = (c: Context) => c.req.header(SITE_MANAGEMENT_CONTRACT_VERSION_HEADER) === SITE_MANAGEMENT_CONTRACT_VERSION;
+    const rejectUnnegotiatedAccessMode = (c: Context, input: unknown) => {
+        if (!usesCurrentContract(c) && typeof input === 'object' && input !== null && Object.hasOwn(input, 'accessMode'))
+            throw new SiteError('invalid_request');
+    };
     const siteResponse = (c: Context, site: SiteRecord) => {
-        if (c.req.header(SITE_MANAGEMENT_CONTRACT_VERSION_HEADER) === SITE_MANAGEMENT_CONTRACT_VERSION)
+        if (usesCurrentContract(c))
             return c.json(site);
         const { accessMode: _, ...legacySite } = site;
         return c.json(legacySite);
@@ -65,11 +70,12 @@ export function createSiteManagementRoutes(options: {
             if (error instanceof SyntaxError) return null;
             throw error;
         });
+        rejectUnnegotiatedAccessMode(c, input);
         return siteResponse(c, await options.service.deploy(identity, input, { deadlineAt, signal: c.req.raw.signal }));
     });
     app.patch('/:appSlug', async (c) => { const identity = await owner(c); if (!identity)
-        return denied(c); return siteResponse(c, await options.service.patch(identity, await c.req.json().catch((error: unknown) => { if (error instanceof SyntaxError)
-        return null; throw error; }))); });
+        return denied(c); const input = await c.req.json().catch((error: unknown) => { if (error instanceof SyntaxError)
+        return null; throw error; }); rejectUnnegotiatedAccessMode(c, input); return siteResponse(c, await options.service.patch(identity, input)); });
     app.delete('/:appSlug', async (c) => {
         const identity = await owner(c);
         if (!identity)

@@ -45,8 +45,11 @@ it('preserves the legacy site response unless the gateway negotiates access mode
  const legacyPatch=await (await app.request(url,{method:'PATCH',headers,body:JSON.stringify({title:'Legacy updated',baseRevision:1})})).json() as Record<string,unknown>;
  expect(legacyPatch).not.toHaveProperty('accessMode');
 
+ const unsafePatch=await app.request(url,{method:'PATCH',headers,body:JSON.stringify({title:'Unsafe update',accessMode:'public',baseRevision:2})});
+ expect(unsafePatch.status).toBe(400);
+
  const current=await (await app.request(url,{headers:{...headers,[SITE_MANAGEMENT_CONTRACT_VERSION_HEADER]:SITE_MANAGEMENT_CONTRACT_VERSION}})).json() as Record<string,unknown>;
- expect(current.accessMode).toBe('private_link');
+ expect(current).toMatchObject({title:'Legacy updated',accessMode:'private_link',revision:2});
 });
 
 it('manages write-only access links through the verified machine owner route',async()=>{
