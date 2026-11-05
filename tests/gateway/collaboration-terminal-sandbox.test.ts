@@ -114,13 +114,36 @@ describe("dispatcher task policy", () => {
       .rejects.toMatchObject({ code: "forbidden" });
   });
 
-  it("lets an organization member control an inherited project terminal without a separate owner grant", async () => {
-    const projectTerminal = setup("editor", { taskProfile: "host_shell", contributorControl: false }, {
+  it("lets an organization member control an inherited sandbox terminal without a separate owner grant", async () => {
+    const projectTerminal = setup("editor", { taskProfile: "sandbox_shell", contributorControl: false }, {
       inheritedProject: true,
     });
     await expect(projectTerminal.dispatcher.dispatch({
       scopeId,
       actorId: projectTerminal.actorId,
+      connectionId: "c1",
+      action: acquire,
+    })).resolves.toMatchObject({ action: "acquired" });
+  });
+
+  it("keeps an inherited owner host shell observe-only until the owner explicitly enables control", async () => {
+    const withheld = setup("editor", { taskProfile: "host_shell", contributorControl: false }, {
+      inheritedProject: true,
+    });
+    await expect(withheld.dispatcher.dispatch({
+      scopeId,
+      actorId: withheld.actorId,
+      connectionId: "c1",
+      action: acquire,
+    })).rejects.toMatchObject({ code: "forbidden" });
+    expect(withheld.runtime.input).not.toHaveBeenCalled();
+
+    const granted = setup("editor", { taskProfile: "host_shell", contributorControl: true }, {
+      inheritedProject: true,
+    });
+    await expect(granted.dispatcher.dispatch({
+      scopeId,
+      actorId: granted.actorId,
       connectionId: "c1",
       action: acquire,
     })).resolves.toMatchObject({ action: "acquired" });
