@@ -9,6 +9,7 @@
  * digest are unchanged.
  */
 import { createScopeRuntimeUnitIdentity } from "./systemd-unit-identity.js";
+import { nodeProfileDigest, type OwnedNode } from "./node-runtime.js";
 import { createHash } from "node:crypto";
 import {
   BROKER_SOCKET_TOKEN,
@@ -17,6 +18,7 @@ import {
   FIXED_SYSTEMD_PROPERTIES,
   NATIVE_DIRECTORY_TOKEN,
   READINESS_FILE_TOKEN,
+  SCOPE_RUNTIME_PROFILE_ID, SCOPE_RUNTIME_PROFILE_VERSION, SCOPE_RUNTIME_PROFILE_DIGEST,
   SCOPE_ROOT_TOKEN,
   SDK_DIRECTORY_TOKEN,
   WORKER_FILE_TOKEN,
@@ -83,6 +85,13 @@ export function piProfileIdentity(profileId: string | undefined) {
     profileId, profileVersion: SCOPE_RUNTIME_MANAGED_PI_PROFILE_VERSION, profileDigest: SCOPE_RUNTIME_MANAGED_PI_PROFILE_DIGEST,
   };
   return undefined;
+}
+
+export function runtimeProfileIdentity(profileId: string | undefined, owned?: OwnedNode) {
+  const base = piProfileIdentity(profileId) ?? {
+    profileId: SCOPE_RUNTIME_PROFILE_ID, profileVersion: SCOPE_RUNTIME_PROFILE_VERSION, profileDigest: SCOPE_RUNTIME_PROFILE_DIGEST,
+  };
+  return { ...base, profileDigest: nodeProfileDigest(base.profileDigest, owned) };
 }
 
 export interface ScopeRuntimeBotProfilePaths {

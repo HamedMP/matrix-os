@@ -3,7 +3,7 @@ const yesKeys = ["MountAPIVFS", "PrivateNetwork", "PrivateIPC", "PrivateDevices"
 export const COMMON_SECURITY_KEYS = [...yesKeys, "Type", "User", "Group", "DynamicUser", "PrivateUsers", "PrivateTmp", "ProtectProc", "ProcSubset", "ProtectSystem", "ProtectHome", "CapabilityBoundingSet", "AmbientCapabilities", "RestrictAddressFamilies", "RestrictNamespaces", "SystemCallArchitectures", "MemoryMax", "TasksMax", "UMask", "RootDirectory", "RuntimeMaxUSec", "TimeoutStopUSec", "BindPaths", "BindReadOnlyPaths", "KillMode"];
 export const WORKER_SECURITY_KEYS = [...COMMON_SECURITY_KEYS, "CPUQuotaPerSecUSec", "TemporaryFileSystem", "WorkingDirectory", "MainPID", "ControlGroup"];
 export const CODEX_BINARY = "/opt/matrix/runtime/node/bin/codex";
-export const SUPERVISOR_SECURITY_KEYS = [...COMMON_SECURITY_KEYS, "InaccessiblePaths", "RuntimeDirectory", "RuntimeDirectoryMode", "StateDirectory", "StateDirectoryMode", "ReadWritePaths", "WatchdogUSec", "NotifyAccess", "Restart", "RestartUSec", "LockPersonality", "KillSignal", "RuntimeDirectoryPreserve", "RemainAfterExit"];
+export const SUPERVISOR_SECURITY_KEYS = [...COMMON_SECURITY_KEYS, "MainPID", "InaccessiblePaths", "RuntimeDirectory", "RuntimeDirectoryMode", "StateDirectory", "StateDirectoryMode", "ReadWritePaths", "WatchdogUSec", "NotifyAccess", "Restart", "RestartUSec", "LockPersonality", "KillSignal", "RuntimeDirectoryPreserve", "RemainAfterExit"];
 function list(value) { assert(typeof value === "string" && value.length <= 16384 && !/[\n\r\\]/.test(value), "security_value_invalid"); return value.split(/\s+/).filter(Boolean).sort(); }
 function same(value, expected) { assert(JSON.stringify(value) === JSON.stringify(expected), "security_property_drift"); }
 export function duration(value) {
@@ -42,8 +42,9 @@ export function validateWorkerProperties(properties, config, handle, dependencie
   for (const [key, value] of Object.entries({ Type: "exec", User: "matrix-scope-workload", KillMode: "control-group", DynamicUser: "yes", PrivateUsers: "yes", PrivateTmp: "yes", ProtectHome: "yes", RootDirectory: `${root}/root`, MemoryMax: "1073741824", TasksMax: "256", UMask: "0077", WorkingDirectory: "/workspace" })) same(properties[key], value);
   same(list(properties.RestrictAddressFamilies), ["AF_INET", "AF_INET6", "AF_UNIX"]);
   same(duration(properties.CPUQuotaPerSecUSec), 2000); same(duration(properties.RuntimeMaxUSec), 90000); same(duration(properties.TimeoutStopUSec), 10000);
-  const readonly = ["/lib", "/lib64", "/usr/lib", "/usr/bin/env", "/opt/matrix/runtime/node"].map(path => `${path}:${path}:rbind`);
-  readonly.push(`${dependencies.sdk.root}:/opt/matrix/scope-sdk/sdk:rbind`, `${dependencies.native.root}:/opt/matrix/scope-sdk/native:rbind`, `${dependencies.workerFile}:/opt/matrix/scope-runtime/worker.mjs:rbind`);
+  const readonly = ["/lib", "/lib64", "/usr/lib", "/usr/bin/env"].map(path => `${path}:${path}:rbind`);
+  readonly.push(`${config.ownedNode.root}:${config.ownedNode.workerRoot}:rbind`,
+    `${dependencies.sdk.root}:/opt/matrix/scope-sdk/sdk:rbind`, `${dependencies.native.root}:/opt/matrix/scope-sdk/native:rbind`, `${dependencies.workerFile}:/opt/matrix/scope-runtime/worker.mjs:rbind`);
   same(bindList(properties.BindReadOnlyPaths), readonly.sort());
   same(bindList(properties.BindPaths), [`${config.brokerSocket}:/run/matrix-scope/broker.sock:rbind`, `${root}/ready:/run/matrix-scope-readiness/ready:rbind`, `${config.commandSocketRoot}/${suffix}:/run/matrix-scope-command:rbind`].sort());
   same(temporaryFilesystems(properties.TemporaryFileSystem), temporaryFilesystems("/workspace:rw,nosuid,nodev,size=10G,mode=1777 /tmp:rw,nosuid,nodev,noexec,size=64M,mode=1777"));

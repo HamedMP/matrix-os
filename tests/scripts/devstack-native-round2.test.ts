@@ -69,7 +69,7 @@ it.each(["replace", "sentinel"])("refuses %s in a reserved leaf before submissio
 it("inventories omitted compiled imports before loading and refuses writable/linked/replaced server.js", async () => {
   const { compiledRuntimeInventory, verifyCompiledRuntime } = await import("../../scripts/ops/devstack-native/compiled.mjs");
   const base = await root(), dist = join(base, "packages/scope-runtime/dist"); await mkdir(dist, { recursive: true });
-  for (const name of ["main.js", "worker.js", "host-config.js", "protocol.js", "systemd-unit-identity.js", "profile.js", "server.js", "supervisor.js", "systemd-launcher.js"]) await writeFile(join(dist, name), "export const checked = true;\n");
+  for (const name of ["main.js", "worker.js", "host-config.js", "node-runtime.js", "protocol.js", "systemd-unit-identity.js", "profile.js", "server.js", "supervisor.js", "systemd-launcher.js"]) await writeFile(join(dist, name), "export const checked = true;\n");
   const inventory = await compiledRuntimeInventory(base); expect(inventory.files["server.js"].sha256).toMatch(/^[a-f0-9]{64}$/);
   await writeFile(join(dist, "server.js"), "export const tampered = true;\n"); await expect(verifyCompiledRuntime(base, inventory)).rejects.toThrow(/compiled/);
   await chmod(join(dist, "server.js"), 0o666); await expect(compiledRuntimeInventory(base)).rejects.toThrow(/compiled/);
