@@ -9,6 +9,10 @@ import { canonicalSafeLabel } from "#canonical-chat-primitives";
 export const ChatAssistantTextWireVersionSchema = z.enum(["0", "1"]).default("0");
 export type ChatAssistantTextWireVersion = z.infer<typeof ChatAssistantTextWireVersionSchema>;
 
+/** Long option explanations require explicit support from strict released clients. */
+export const ChatQuestionDescriptionWireVersionSchema = z.enum(["0", "1"]).default("0");
+export type ChatQuestionDescriptionWireVersion = z.infer<typeof ChatQuestionDescriptionWireVersionSchema>;
+
 /** Independent of SSE framing: protocol-2 clients shipped with message-v1 parsers. */
 export const ChatMessageWireVersionSchema = z.enum(["1", "2"]).default("1");
 export type ChatMessageWireVersion = z.infer<typeof ChatMessageWireVersionSchema>;
@@ -21,7 +25,7 @@ export type ChatCommandPreviewWireVersion = z.infer<typeof ChatCommandPreviewWir
 const LegacyToolPreviewSchema = canonicalSafeLabel(1_000, 4_000);
 
 export function chatMessageVersionUrl(path: string): string {
-  return `${path}${path.includes("?") ? "&" : "?"}messageVersion=2&inputVersion=1&commandPreviewVersion=1&assistantTextVersion=1`;
+  return `${path}${path.includes("?") ? "&" : "?"}messageVersion=2&inputVersion=1&commandPreviewVersion=1&assistantTextVersion=1&questionDescriptionVersion=1`;
 }
 
 function commandPreviewActivities(activities: CanonicalChatRunActivity[], version: ChatCommandPreviewWireVersion): CanonicalChatRunActivity[] {
@@ -42,12 +46,23 @@ function legacyMessage<T extends CanonicalChatMessage>(message: T) {
   return legacy;
 }
 
-function legacyInputActivities(activities: CanonicalChatRunActivity[], version: ChatInputWireVersion): CanonicalChatRunActivity[] {
+function legacyQuestionDescription(description: string, label: string): string {
+  // Released question contracts reject blank strings as well as long strings.
+  const clipped = description.slice(0, 300).replace(/[\uD800-\uDBFF]$/u, "");
+  return clipped.trim().length ? clipped : label;
+}
+
+function legacyInputActivities(activities: CanonicalChatRunActivity[], version: ChatInputWireVersion, descriptionVersion: ChatQuestionDescriptionWireVersion): CanonicalChatRunActivity[] {
   return activities.flatMap<CanonicalChatRunActivity>(activity => {
     if (version === "1") {
       if (activity.type !== "input.requested") return [activity];
       const { asynchronous: _asynchronous, ...compatible } = activity;
-      return [compatible];
+      if (descriptionVersion === "1" || !compatible.questions) return [compatible];
+      return [{ ...compatible, questions: compatible.questions.map(question => ({ ...question,
+        ...(question.options ? { options: question.options.map(option => ({ ...option,
+          description: legacyQuestionDescription(option.description, option.label),
+        })) } : {}),
+      })) }];
     }
     if (activity.type === "input.submitted") return [];
     if (activity.type === "input.requested") {
@@ -67,7 +82,7 @@ export function projectChatMessageResponse<T extends {
   message?: CanonicalChatMessage;
   messages?: CanonicalChatMessage[];
   activities?: CanonicalChatRunActivity[];
-}>(response: T, version: ChatMessageWireVersion, inputVersion: ChatInputWireVersion = "0", commandPreviewVersion: ChatCommandPreviewWireVersion = "0", assistantTextVersion: ChatAssistantTextWireVersion = "0"): T {
+}>(response: T, version: ChatMessageWireVersion, inputVersion: ChatInputWireVersion = "0", commandPreviewVersion: ChatCommandPreviewWireVersion = "0", assistantTextVersion: ChatAssistantTextWireVersion = "0", questionDescriptionVersion: ChatQuestionDescriptionWireVersion = "0"): T {
   if (version === "2" && !response.activities && assistantTextVersion === "1") return response;
   const message = (value: CanonicalChatMessage) => {
     const projected = version === "1" ? legacyMessage(value) : value;
@@ -77,7 +92,7 @@ export function projectChatMessageResponse<T extends {
     ...response,
     ...(response.message ? { message: message(response.message) } : {}),
     ...(response.messages ? { messages: response.messages.map(message) } : {}),
-    ...(response.activities ? { activities: commandPreviewActivities(legacyInputActivities(response.activities, inputVersion), commandPreviewVersion) } : {}),
+    ...(response.activities ? { activities: commandPreviewActivities(legacyInputActivities(response.activities, inputVersion, questionDescriptionVersion), commandPreviewVersion) } : {}),
   };
 }
 
@@ -87,12 +102,13 @@ export function projectChatMessageFrame(
   inputVersion: ChatInputWireVersion = "0",
   commandPreviewVersion: ChatCommandPreviewWireVersion = "0",
   assistantTextVersion: ChatAssistantTextWireVersion = "0",
+  questionDescriptionVersion: ChatQuestionDescriptionWireVersion = "0",
 ): CanonicalChatTransportFrame {
   if (frame.type !== "chat.content") return frame;
   // Legacy snapshots may regroup parts: raw delta indices would no longer match.
   if (assistantTextVersion === "0") return { type: "chat.event", event: frame.event };
   return { ...frame, content: {
-    ...projectChatMessageResponse(frame.content, version, inputVersion, commandPreviewVersion, assistantTextVersion),
+    ...projectChatMessageResponse(frame.content, version, inputVersion, commandPreviewVersion, assistantTextVersion, questionDescriptionVersion),
     ...(version === "1" && frame.content.messageDelta ? { messageDelta: {
       ...frame.content.messageDelta,
       message: legacyMessage(frame.content.messageDelta.message),

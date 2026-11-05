@@ -9,6 +9,7 @@ import { BotDirectChatResponseSchema, ChatAgentListResponseSchema, CanonicalChat
 import { createCanonicalChatFixture } from "../../contracts/fixtures/canonical-chat";
 import { startStubGateway, type StubGateway } from "./fixtures/stub-gateway";
 import { dismissGettingStartedOnInteraction } from "./fixtures/getting-started";
+import { longClaudeQuestion } from "../../fixtures/long-claude-question";
 
 const root = resolve(import.meta.dirname, "../../..");
 const hasDesktopBuild = existsSync(join(root, "desktop/out/main/index.js"));
@@ -18,7 +19,7 @@ if (process.env.MATRIX_DESKTOP_E2E_REQUIRED === "1" && !hasDesktopBuild) {
 const suite = hasDesktopBuild ? describe : describe.skip;
 const executablePath = createRequire(join(root, "desktop/package.json"))("electron") as string;
 const manualReview = process.env.OM239_HUMAN_REVIEW === "1";
-const output = join(root, "output/playwright/om-239");
+const output = process.env.MATRIX_CHAT_INPUT_EVIDENCE_DIR ?? join(root, "output/playwright/om-239");
 let app: ElectronApplication, page: Page, gateway: StubGateway, profile: string;
 let detail: CanonicalChatDetailResponse;
 const streams = new Set<ServerResponse>(); // Test-only, explicitly drained in afterAll.
@@ -65,7 +66,7 @@ beforeAll(async () => {
   detail = CanonicalChatDetailResponseSchema.parse({ record: { chat, activeRun: snapshot.chat.activeRun, providerBinding: snapshot.chat.providerBinding }, messages: snapshot.messages, turns: snapshot.turns, runs: snapshot.runs, activities: [{
     id: "evt_question", chatId: snapshot.chat.id, runId: snapshot.runs[0]!.id, occurredAt: new Date().toISOString(), type: "input.requested", requestId: "input_destination", title: "A few details for the report", asynchronous: true,
     safeDescription: "You can answer while work continues. Only work that needs your answer will wait.", questions: [
-      { questionId: "destination", header: "Destination", question: "Where should I save the report?", allowOther: true, secret: false, options: [{ label: "Project folder", description: "Keep it with this project" }, { label: "Documents", description: "Save it in your files" }] },
+      { questionId: "destination", header: "Destination", question: "Where should I save the report?", allowOther: true, secret: false, options: [{ label: "Project folder", description: longClaudeQuestion.options[0].description }, { label: "Documents", description: longClaudeQuestion.options[1].description }] },
       { questionId: "note", header: "Note", question: "What should the report include?", allowOther: false, secret: false },
     ],
   }] });
@@ -104,9 +105,13 @@ it("answers in the existing run and receives intermediate output without reloadi
   await page.getByText("I am preparing the report outline while you choose where to save it.", { exact: true }).waitFor();
   expect(submissions).toHaveLength(0);
   await page.getByRole("radio", { name: /Project folder/ }).waitFor();
+  await page.getByText(longClaudeQuestion.options[0].description, { exact: true }).waitFor();
+  await page.getByText(longClaudeQuestion.options[1].description, { exact: true }).waitFor();
   await page.screenshot({ path: join(output, "01-question-wide.png") });
   await page.setViewportSize({ width: 600, height: 850 });
   await page.getByRole("button", { name: "Toggle Chat sidebar" }).click();
+  await page.getByText(longClaudeQuestion.options[0].description, { exact: true }).waitFor();
+  await page.getByText(longClaudeQuestion.options[1].description, { exact: true }).waitFor();
   await page.screenshot({ path: join(output, "02-question-narrow.png") });
   if (manualReview) {
     await expect.poll(() => submissions.length, { timeout: 15 * 60_000 }).toBe(1);
