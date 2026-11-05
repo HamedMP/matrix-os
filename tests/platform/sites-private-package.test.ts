@@ -1,5 +1,5 @@
 import { Buffer } from 'node:buffer';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { fileURLToPath } from 'node:url';
 import { build, type RollupOutput } from 'vite';
 import { packagePrivateSiteHtml } from '../../packages/platform/src/sites/private-package.js';
@@ -121,5 +121,21 @@ describe('private site package', () => {
       { path: 'index.html', contentType: 'text/html', body: bytes(references) },
       { path: 'large.png', contentType: 'image/png', body: image },
     ], 'index.html')).rejects.toMatchObject({ code: 'unavailable' });
+  });
+
+  it('stops producing repeated module asset expansions when the output budget is exhausted', async () => {
+    const assetPath = '/assets/logo-ABCdef12.png';
+    const references = Array.from({ length: 30 }, () => JSON.stringify(assetPath)).join(',');
+    const stringify = vi.spyOn(JSON, 'stringify');
+    try {
+      await expect(packagePrivateSiteHtml([
+        { path: 'index.html', contentType: 'text/html', body: bytes('<script type="module" src="./assets/main.js"></script>') },
+        { path: 'assets/main.js', contentType: 'text/javascript', body: bytes(`window.assets=[${references}]`) },
+        { path: 'assets/logo-ABCdef12.png', contentType: 'image/png', body: Buffer.alloc(1024 * 1024, 1) },
+      ], 'index.html')).rejects.toMatchObject({ code: 'unavailable' });
+      const expandedAssets = stringify.mock.calls.filter(([value]) => typeof value === 'string' && value.startsWith('data:image/png;base64,'));
+      expect(expandedAssets.length).toBeLessThan(20);
+    }
+    finally { stringify.mockRestore(); }
   });
 });

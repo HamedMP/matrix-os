@@ -73,11 +73,14 @@ function rewriteCss(css: string, path: string, files: Map<string, PrivateSiteFil
   });
 }
 
-function applyReplacements(code: string, replacements: Array<{ start: number; end: number; value: string }>): string {
+type Replacement = { start: number; end: number; value: string | (() => string) };
+
+function applyReplacements(code: string, replacements: Replacement[]): string {
   const budget = new ExpansionBudget(code);
   for (const replacement of replacements.sort((a, b) => b.start - a.start)) {
     const original = code.slice(replacement.start, replacement.end);
-    const value = budget.replacement(original, replacement.value);
+    const next = typeof replacement.value === 'function' ? replacement.value() : replacement.value;
+    const value = budget.replacement(original, next);
     code = code.slice(0, replacement.start) + value + code.slice(replacement.end);
   }
   return code;
@@ -106,7 +109,7 @@ function rewriteViteGeneratedAssetLiterals(code: string, path: string, files: Ma
   // Default-base Vite builds emit imported non-code assets as hashed absolute
   // literals. Requiring both that signature and an exact packaged file avoids
   // treating ordinary app copy and route strings as build dependencies.
-  const replacements: Array<{ start: number; end: number; value: string }> = [];
+  const replacements: Replacement[] = [];
   const tokens = tokenizer(code, { ecmaVersion: 'latest', sourceType: 'module', allowHashBang: true });
   while (true) {
     const token = tokens.getToken();
@@ -121,7 +124,7 @@ function rewriteViteGeneratedAssetLiterals(code: string, path: string, files: Ma
     const isCodeOrStyle = /(?:java|ecma)script|application\/x-javascript|text\/css|text\/html/.test(file.contentType)
       || /\.(?:m?js|css|html?)$/i.test(file.path);
     if (isCodeOrStyle) continue;
-    replacements.push({ start: token.start, end: token.end, value: JSON.stringify(uriFor(resolved!)) });
+    replacements.push({ start: token.start, end: token.end, value: () => JSON.stringify(uriFor(resolved!)) });
   }
   return applyReplacements(code, replacements);
 }
