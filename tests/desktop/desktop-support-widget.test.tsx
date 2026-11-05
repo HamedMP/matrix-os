@@ -13,6 +13,17 @@ import { useUi } from "@desktop/renderer/src/stores/ui";
 import { useNativeDesktopMode } from "@desktop/renderer/src/stores/native-desktop-mode";
 import { DesktopHelpMenu } from "@matrix-os/ui";
 
+const toastMock = vi.hoisted(() => ({
+  error: vi.fn((_message: string, _options?: {
+    description: string;
+    id?: string;
+    onDismiss?: () => void;
+    onAutoClose?: () => void;
+  }) => undefined),
+  dismiss: vi.fn(),
+}));
+vi.mock("sonner", () => ({ toast: toastMock }));
+
 const operatorEventListeners = vi.hoisted(() => ({
   analyticsCapture: null as null | ((payload: unknown) => void),
   flushRequested: null as null | ((payload: unknown) => void),
@@ -187,7 +198,7 @@ describe("Desktop support widget", () => {
     );
   });
 
-  it("keeps Support available through Help without redirecting an unconfigured chat action to docs", async () => {
+  it("offers the support email through Help when chat is unconfigured", async () => {
     vi.stubEnv("VITE_POSTHOG_PROJECT_TOKEN", "");
 
     render(<DesktopModeControls />);
@@ -196,6 +207,12 @@ describe("Desktop support widget", () => {
     await act(async () => Promise.resolve());
     expect(useTabs.getState().tabs).toEqual([]);
     expect(useBrowserNavigation.getState().pending).toBeNull();
+    expect(toastMock.error).toHaveBeenCalledWith("Support chat is unavailable", expect.objectContaining({
+      description: "Email support@matrix-os.com for help.",
+    }));
+    expect(useUi.getState().rendererOverlayCount).toBe(1);
+    act(() => toastMock.error.mock.lastCall?.[1]?.onDismiss?.());
+    expect(useUi.getState().rendererOverlayCount).toBe(0);
   });
 
   it("loads PostHog Conversations through the first-party relay without broad Desktop capture", async () => {
@@ -279,6 +296,55 @@ describe("Desktop support widget", () => {
       posthogClient.reset.mock.invocationCallOrder[0]!,
     );
     expect(posthogClient.reset).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps the configured failure email above native apps until the toast closes", async () => {
+    const warning = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    posthogClient.conversations.show.mockImplementationOnce(() => {
+      throw new Error("private provider failure");
+    });
+    render(<DesktopSupportWidget />);
+    await waitFor(() => expect(posthogClient.identify).toHaveBeenCalled());
+
+    await expect(openDesktopSupport()).resolves.toBe(false);
+
+    expect(warning).toHaveBeenCalledWith("[desktop-support] Support chat unavailable:", "Error");
+    expect(toastMock.error).toHaveBeenCalledWith("Support chat is unavailable", expect.objectContaining({
+      description: "Email support@matrix-os.com for help.",
+    }));
+    expect(useUi.getState().rendererOverlayCount).toBe(1);
+    act(() => toastMock.error.mock.lastCall?.[1]?.onAutoClose?.());
+    expect(useUi.getState().rendererOverlayCount).toBe(0);
+  });
+
+  it("releases only the fallback lease when a later Support attempt opens", async () => {
+    posthogClient.conversations.show
+      .mockImplementationOnce(() => { throw new Error("provider failure"); })
+      .mockImplementationOnce(renderPostHogLauncher);
+    vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    render(<DesktopSupportWidget />);
+    await waitFor(() => expect(posthogClient.identify).toHaveBeenCalled());
+
+    await expect(openDesktopSupport()).resolves.toBe(false);
+    expect(useUi.getState().rendererOverlayCount).toBe(1);
+    await expect(openDesktopSupport()).resolves.toBe(true);
+
+    expect(toastMock.dismiss).toHaveBeenCalledWith("desktop-support-unavailable");
+    expect(useUi.getState().rendererOverlayCount).toBe(1);
+    act(() => closeDesktopSupport());
+    await waitFor(() => expect(useUi.getState().rendererOverlayCount).toBe(0));
+  });
+
+  it("releases the fallback overlay when the user signs out before dismissing the toast", async () => {
+    vi.stubEnv("VITE_POSTHOG_PROJECT_TOKEN", "");
+    render(<DesktopSupportWidget />);
+    await openDesktopSupport();
+    expect(useUi.getState().rendererOverlayCount).toBe(1);
+
+    act(() => useConnection.setState({ status: "signed-out" }));
+
+    await waitFor(() => expect(useUi.getState().rendererOverlayCount).toBe(0));
+    expect(toastMock.dismiss).toHaveBeenCalled();
   });
 
   it("reports the open support panel so the onboarding widget can step aside", async () => {
@@ -412,7 +478,7 @@ describe("Desktop support widget", () => {
     }));
   });
 
-  it("opens support from beside the avatar without leaving the default launcher", async () => {
+  it("opens support from a visible title-bar button without leaving the default launcher", async () => {
     posthogClient.conversations.hide.mockImplementation(() => {
       document.getElementById("ph-conversations-widget-container")?.remove();
     });
@@ -439,6 +505,7 @@ describe("Desktop support widget", () => {
         "Search",
         "Inbox",
         "Help",
+        "Support",
         "Main computer",
         "Open account menu",
       ]);
@@ -451,7 +518,7 @@ describe("Desktop support widget", () => {
     fireEvent.click(screen.getByRole("button", { name: "Search" }));
     expect(useUi.getState().paletteOpen).toBe(true);
 
-    openSupportFromHelp();
+    fireEvent.click(screen.getByRole("button", { name: "Support", exact: true }));
 
     await waitFor(() => expect(posthogClient.conversations.show).toHaveBeenCalledTimes(1));
     expect(useUi.getState().rendererOverlayCount).toBe(1);
@@ -483,7 +550,7 @@ describe("Desktop support widget", () => {
     });
     expect(screen.queryByRole("button", { name: "Open chat" })).toBeNull();
 
-    openSupportFromHelp();
+    fireEvent.click(screen.getByRole("button", { name: "Support", exact: true }));
 
     await waitFor(() => expect(posthogClient.conversations.show).toHaveBeenCalledTimes(2));
     expect(useUi.getState().rendererOverlayCount).toBe(1);
@@ -837,6 +904,7 @@ describe("Desktop support widget", () => {
 
     await waitFor(() => expect(screen.queryByRole("button", { name: "Open chat" })).toBeNull());
     expect(screen.queryByRole("button", { name: "Close" })).toBeNull();
+    expect(toastMock.error).not.toHaveBeenCalled();
   });
 
   it("honors a support click while the widget is still initializing", async () => {
