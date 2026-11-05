@@ -1,3 +1,4 @@
+import { resolveScopeRuntimeHostConfig, resolveScopeRuntimeSourcePaths } from "./host-config.js";
 import { describeScopeRuntimeFailure } from "./failure.js";
 import { createScopeRuntimeServer } from "./server.js";
 import { createScopeRuntimeController } from "./supervisor.js";
@@ -5,26 +6,22 @@ import { createSystemdScopeRuntimeLauncher, nextExecutionGeneration } from "./sy
 import { botSandboxRootsForHome, managedPiSandboxRootsForHome, sandboxRootsForHome } from "./sandbox.js";
 import { startScopeRuntimeWatchdog } from "./systemd-watchdog.js";
 
-const RUNTIME_DIRECTORY = "/run/matrix-scope-runtime";
-const STATE_DIRECTORY = "/var/lib/matrix-scope-runtime";
-
 async function main(): Promise<void> {
   const home = process.env.MATRIX_HOME ?? "/home/matrix/home";
+  const config = resolveScopeRuntimeHostConfig({ env: process.env, homePath: home });
   const launcher = createSystemdScopeRuntimeLauncher({
-    stateRoot: STATE_DIRECTORY,
-    sdkDirectory: "/opt/matrix/app/node_modules/@anthropic-ai/claude-agent-sdk",
-    nativeDirectory: "/opt/matrix/app/node_modules/@anthropic-ai/claude-agent-sdk-linux-x64",
-    workerFile: "/opt/matrix/app/packages/scope-runtime/dist/worker.js",
-    brokerSocket: `${RUNTIME_DIRECTORY}/broker.sock`,
+    namespace: config.namespace,
+    stateRoot: config.stateRoot,
+    ...resolveScopeRuntimeSourcePaths(config),
+    brokerSocket: config.brokerSocket,
     sandboxRoots: sandboxRootsForHome(home),
-    botRuntimeDirectory: "/opt/matrix/app/packages/bot-runtime/dist",
     botSandboxRoots: botSandboxRootsForHome(home),
     managedPiSandboxRoots: managedPiSandboxRootsForHome(home),
   });
-  const executionGeneration = await nextExecutionGeneration(`${STATE_DIRECTORY}/generation`);
+  const executionGeneration = await nextExecutionGeneration(`${config.stateRoot}/generation`);
   const controller = await createScopeRuntimeController({ launcher, executionGeneration });
   const server = createScopeRuntimeServer({
-    socketPath: `${RUNTIME_DIRECTORY}/supervisor.sock`,
+    socketPath: config.supervisorSocket,
     controller,
   });
   await server.start();

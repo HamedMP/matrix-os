@@ -1,3 +1,4 @@
+import { createScopeRuntimeUnitIdentity } from "./systemd-unit-identity.js";
 import { randomBytes } from "node:crypto";
 import { execFile } from "node:child_process";
 import {
@@ -61,7 +62,6 @@ import {
 const execFileAsync = promisify(execFile);
 const COMMAND_TIMEOUT_MS = 10_000;
 const COMMAND_MAX_BUFFER_BYTES = 64 * 1024;
-const UNIT_PREFIX = "matrix-scope-runtime-";
 const READINESS_RELATIVE_PATH = "run/matrix-scope-readiness/ready";
 const PROVENANCE_FILE = "provenance.json";
 const MAX_RECONCILED_ENTRIES = 128;
@@ -79,6 +79,7 @@ export interface ScopeRuntimeCommandRunner {
 }
 
 interface LauncherPaths {
+  namespace?: string;
   stateRoot: string;
   sdkDirectory: string;
   nativeDirectory: string;
@@ -96,14 +97,10 @@ interface LauncherPaths {
   managedPiSandboxRoots?: readonly string[];
 }
 
-type ResolvedLauncherPaths = Required<Omit<LauncherPaths, "botRuntimeDirectory">> & { botRuntimeDirectory?: string };
+type ResolvedLauncherPaths = Required<Omit<LauncherPaths, "botRuntimeDirectory" | "namespace">> & { botRuntimeDirectory?: string };
 
 function isPiLaunch(input: { profileId?: string }): boolean {
   return piProfileIdentity(input.profileId) !== undefined;
-}
-
-function unitName(runtimeHandle: string): string {
-  return `${UNIT_PREFIX}${RuntimeHandleSchema.parse(runtimeHandle).slice("runtime_".length)}.service`;
 }
 
 function assertTrustedAbsolutePath(value: string): string {
@@ -116,7 +113,7 @@ function assertTrustedAbsolutePath(value: string): string {
 export function buildFixedSystemdRunArgs(
   input: ScopeRuntimeLaunchRequest,
   paths: ScopeRuntimeProfilePaths & { nodeBinary: string },
-  options: { sandboxProperties?: readonly string[] } = {},
+  options: { sandboxProperties?: readonly string[]; namespace?: string } = {},
 ): string[] {
   const runtimeHandle = RuntimeHandleSchema.parse(input.runtimeHandle);
   const scopeHandle = ScopeHandleSchema.parse(input.scopeHandle);
@@ -140,7 +137,7 @@ export function buildFixedSystemdRunArgs(
     commandDirectory: assertTrustedAbsolutePath(paths.commandDirectory),
   });
   return [
-    `--unit=${unitName(runtimeHandle)}`,
+    `--unit=${createScopeRuntimeUnitIdentity(options.namespace).workerUnit(runtimeHandle)}`,
     "--quiet",
     "--no-block",
     ...properties.map((property) => `--property=${property}`),
@@ -168,7 +165,7 @@ export function buildFixedSystemdRunArgs(
 export function buildBotSystemdRunArgs(
   input: ScopeRuntimeLaunchRequest,
   paths: ScopeRuntimeBotProfilePaths & { nodeBinary: string },
-  options: { sandboxProperties: readonly string[] },
+  options: { sandboxProperties: readonly string[]; namespace?: string },
 ): string[] {
   const runtimeHandle = RuntimeHandleSchema.parse(input.runtimeHandle);
   const scopeHandle = ScopeHandleSchema.parse(input.scopeHandle);
@@ -186,9 +183,9 @@ export function buildBotSystemdRunArgs(
     brokerSocket: assertTrustedAbsolutePath(paths.brokerSocket),
     readinessFile: assertTrustedAbsolutePath(paths.readinessFile),
     commandDirectory: assertTrustedAbsolutePath(paths.commandDirectory),
-  });
+  }, { namespace: options.namespace });
   return [
-    `--unit=${unitName(runtimeHandle)}`,
+    `--unit=${createScopeRuntimeUnitIdentity(options.namespace).workerUnit(runtimeHandle)}`,
     "--quiet",
     "--no-block",
     ...properties.map((property) => `--property=${property}`),
@@ -629,6 +626,7 @@ async function cleanupOrphanedRuntimeRoots(
 export function createSystemdScopeRuntimeLauncher(
   input: LauncherPaths & { runCommand?: ScopeRuntimeCommandRunner },
 ): ScopeRuntimeLauncher {
+  const identity = createScopeRuntimeUnitIdentity(input.namespace);
   const paths: ResolvedLauncherPaths = {
     stateRoot: assertTrustedAbsolutePath(input.stateRoot),
     sdkDirectory: assertTrustedAbsolutePath(input.sdkDirectory),
@@ -693,14 +691,14 @@ export function createSystemdScopeRuntimeLauncher(
         "--state=active",
         "--plain",
         "--no-legend",
-        `${UNIT_PREFIX}*.service`,
+        identity.discoveryGlob,
       ]);
       const running = new Set<string>();
       for (const line of stdout.split("\n")) {
         const name = line.trim().split(/\s+/, 1)[0];
-        const match = name ? /^matrix-scope-runtime-([a-f0-9]{32})\.service$/.exec(name) : null;
-        if (!match) continue;
-        running.add(`runtime_${match[1]}`);
+        const handle = name ? identity.parseWorkerUnit(name) : undefined;
+        if (!handle) continue;
+        running.add(handle);
         if (running.size > MAX_RECONCILED_ENTRIES) throw new Error("Scope runtime liveness exceeds capacity");
       }
       return running;
@@ -712,7 +710,7 @@ export function createSystemdScopeRuntimeLauncher(
         "--all",
         "--plain",
         "--no-legend",
-        `${UNIT_PREFIX}*.service`,
+        identity.discoveryGlob,
       ]);
       const handles: ScopeRuntimeReconciledRuntime[] = [];
       const retainedSuffixes = new Set<string>();
@@ -720,12 +718,11 @@ export function createSystemdScopeRuntimeLauncher(
       for (const line of stdout.split("\n")) {
         const [name, , activeState] = line.trim().split(/\s+/, 4);
         if (!name) continue;
+        const runtimeHandle = identity.parseWorkerUnit(name);
+        if (!runtimeHandle) continue;
         entries += 1;
         if (entries > MAX_RECONCILED_ENTRIES) throw new Error("Scope runtime reconciliation exceeds capacity");
-        const match = /^matrix-scope-runtime-([a-f0-9]{32})\.service$/.exec(name);
-        if (!match) throw new Error("Invalid reconciled scope runtime unit");
-        const suffix = match[1]!;
-        const runtimeHandle = RuntimeHandleSchema.parse(`runtime_${suffix}`);
+        const suffix = runtimeHandle.slice("runtime_".length);
         const ready = activeState === "active" && await readinessPublished(
           join(paths.stateRoot, "runtimes", suffix, "ready"),
           runtimeHandle,
@@ -770,20 +767,20 @@ export function createSystemdScopeRuntimeLauncher(
         const common = { scopeRoot: root, brokerSocket: paths.brokerSocket, readinessFile, commandDirectory, nodeBinary: paths.nodeBinary };
         const args = botSources
           ? buildBotSystemdRunArgs(request, { ...common, botRuntimeDirectory: botSources.botRuntimeDirectory }, {
-              sandboxProperties: sandboxProperties ?? [],
+              sandboxProperties: sandboxProperties ?? [], namespace: input.namespace,
             })
-          : buildFixedSystemdRunArgs(request, { ...common, ...chatSources! }, sandboxProperties ? { sandboxProperties } : {});
+          : buildFixedSystemdRunArgs(request, { ...common, ...chatSources! }, { sandboxProperties, namespace: input.namespace });
         submitted = true;
         await runCommand("/usr/bin/systemd-run", args);
         await waitUntilReady(
           runCommand,
-          unitName(request.runtimeHandle),
+          identity.workerUnit(request.runtimeHandle),
           readinessFile,
           request.runtimeHandle,
         );
       } catch (error: unknown) {
         const cleaned = !submitted
-          || await cleanupSubmittedUnit(runCommand, unitName(request.runtimeHandle));
+          || await cleanupSubmittedUnit(runCommand, identity.workerUnit(request.runtimeHandle));
         if (cleaned) await rm(dirname(root), { recursive: true, force: true });
         throw error;
       }
@@ -802,7 +799,7 @@ export function createSystemdScopeRuntimeLauncher(
     },
     async stop(runtimeHandle: string): Promise<void> {
       const handle = RuntimeHandleSchema.parse(runtimeHandle);
-      const name = unitName(handle);
+      const name = identity.workerUnit(handle);
       try {
         await runCommand("/usr/bin/systemctl", ["is-active", "--quiet", name]);
         await runCommand("/usr/bin/systemctl", ["stop", name]);

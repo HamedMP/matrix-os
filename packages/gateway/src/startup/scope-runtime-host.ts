@@ -1,3 +1,4 @@
+import { resolveScopeRuntimeHostConfig } from "@matrix-os/scope-runtime/host-config";
 import type { FundedAdmissionQueue } from "../funded-ai/admission-queue.js";
 import type { MatrixFundedCredentialProvider } from "../funded-ai-credential-manager.js";
 import { BOT_SCOPE_RUNTIME_PROFILE_CATALOG } from "../bots/scope-runtime-profile.js";
@@ -17,7 +18,10 @@ export async function startScopeRuntimeHost(options: {
   onFailure(context: string, error: unknown): void;
 }): Promise<ScopeRuntimeHost | undefined> {
   try {
+    const config = resolveScopeRuntimeHostConfig({ env: process.env, homePath: options.homePath });
     return await createScopeRuntimeHost({
+      supervisorSocket: config.supervisorSocket,
+      brokerSocket: config.brokerSocket,
       homePath: options.homePath,
       profileCatalog: { ...SHARED_AI_PROFILE_CATALOG, ...BOT_SCOPE_RUNTIME_PROFILE_CATALOG, ...MANAGED_PI_SCOPE_RUNTIME_PROFILE_CATALOG },
       ...(options.fundedCredentialProvider ? { fundedCredentialProvider: options.fundedCredentialProvider } : {}),

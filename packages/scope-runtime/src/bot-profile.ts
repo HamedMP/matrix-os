@@ -8,6 +8,7 @@
  * Claude SDK, native binary, and Chat worker file. The chat profile and its
  * digest are unchanged.
  */
+import { createScopeRuntimeUnitIdentity } from "./systemd-unit-identity.js";
 import { createHash } from "node:crypto";
 import {
   BROKER_SOCKET_TOKEN,
@@ -22,7 +23,7 @@ import {
 } from "./profile.js";
 
 export const SCOPE_RUNTIME_BOT_PROFILE_ID = "scope-runtime-bot-v1";
-export const SCOPE_RUNTIME_BOT_PROFILE_VERSION = 2;
+export const SCOPE_RUNTIME_BOT_PROFILE_VERSION = 3;
 export const SCOPE_RUNTIME_BOT_ADAPTER_ID = "matrix-bot";
 /** The pinned Pi agent version inside the bot-runtime bundle. */
 export const SCOPE_RUNTIME_BOT_HARNESS_VERSION = "1.0.0";
@@ -32,6 +33,7 @@ export const SCOPE_RUNTIME_PI_LEASE_MS = 900_000;
 export const BOT_RUNTIME_MOUNT = "/opt/matrix/scope-sdk/bot-runtime";
 export const BOT_RUNTIME_ENTRY = `${BOT_RUNTIME_MOUNT}/bot-worker.mjs`;
 export const BOT_RUNTIME_DIRECTORY_TOKEN = "<bot-runtime-directory>";
+const SUPERVISOR_UNIT_TOKEN = "<supervisor-unit>";
 
 const CHAT_ONLY_MOUNTS: readonly string[] = [
   `BindReadOnlyPaths=${SDK_DIRECTORY_TOKEN}:/opt/matrix/scope-sdk/sdk`,
@@ -50,7 +52,7 @@ function deriveBotProperties(): readonly string[] {
     properties.push(property === "RuntimeMaxSec=90" ? "RuntimeMaxSec=infinity" : property);
   }
   // If the supervisor crashes, systemd stops its workers even before a lease sweep.
-  properties.push("BindsTo=matrix-scope-runtime.service", "After=matrix-scope-runtime.service");
+  properties.push(`BindsTo=${SUPERVISOR_UNIT_TOKEN}`, `After=${SUPERVISOR_UNIT_TOKEN}`);
   return Object.freeze(properties);
 }
 
@@ -67,7 +69,7 @@ export const SCOPE_RUNTIME_BOT_PROFILE_DIGEST = createHash("sha256")
 
 /** Ordinary owner-authorized Chat shares Pi's worker, never recipe Bot mount authority. */
 export const SCOPE_RUNTIME_MANAGED_PI_PROFILE_ID = "scope-runtime-managed-pi-v1";
-export const SCOPE_RUNTIME_MANAGED_PI_PROFILE_VERSION = 2;
+export const SCOPE_RUNTIME_MANAGED_PI_PROFILE_VERSION = 3;
 export const SCOPE_RUNTIME_MANAGED_PI_PROFILE_DIGEST = createHash("sha256")
   .update(`${SCOPE_RUNTIME_BOT_PROFILE_DIGEST}\nProfile=${SCOPE_RUNTIME_MANAGED_PI_PROFILE_ID}\nRoots=agent-workspaces,projects,worktrees\n`)
   .digest("hex");
@@ -91,8 +93,9 @@ export interface ScopeRuntimeBotProfilePaths {
   commandDirectory: string;
 }
 
-export function materializeBotSystemdProperties(paths: ScopeRuntimeBotProfilePaths): string[] {
+export function materializeBotSystemdProperties(paths: ScopeRuntimeBotProfilePaths, options: { namespace?: string } = {}): string[] {
   const replacements: Readonly<Record<string, string>> = {
+    [SUPERVISOR_UNIT_TOKEN]: createScopeRuntimeUnitIdentity(options.namespace).supervisorUnit,
     [SCOPE_ROOT_TOKEN]: paths.scopeRoot,
     [BOT_RUNTIME_DIRECTORY_TOKEN]: paths.botRuntimeDirectory,
     [BROKER_SOCKET_TOKEN]: paths.brokerSocket,

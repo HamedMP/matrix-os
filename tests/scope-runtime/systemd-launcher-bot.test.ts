@@ -154,14 +154,18 @@ describe("scope runtime systemd launcher bot profile", () => {
       .resolves.toEqual([]);
   });
 
-  it("launches a bot inside its workspace under the bot root with bot provenance", async () => {
+  it.each([undefined, "eng432-stage2"])("launches a bot under its root and supervisor with bot provenance (%s)", async (namespace) => {
     const { paths, home } = await fixture();
     const calls: Array<{ command: string; args: readonly string[] }> = [];
-    const launcher = createSystemdScopeRuntimeLauncher({ ...paths, runCommand: readyRunner(paths.stateRoot, calls) });
+    const launcher = createSystemdScopeRuntimeLauncher({ ...paths, namespace, runCommand: readyRunner(paths.stateRoot, calls) });
     const workspace = join(home, "bots", "bot_abcdef12");
 
     await expect(launcher.start(botLaunch(workspace))).resolves.toBeUndefined();
     const submitted = calls.find((call) => call.command === "/usr/bin/systemd-run")!.args;
+    const supervisor = namespace ? `matrix-devstack-${namespace}-scope-runtime` : "matrix-scope-runtime";
+    expect(submitted).toContain(`--unit=${supervisor}-${SUFFIX}.service`);
+    expect(submitted).toContain(`--property=BindsTo=${supervisor}.service`);
+    expect(submitted).toContain(`--property=After=${supervisor}.service`);
     expect(submitted).toContain(`--property=BindPaths=${workspace}:/workspace/project`);
     expect(submitted).toContain(`--property=BindReadOnlyPaths=${paths.botRuntimeDirectory}:/opt/matrix/scope-sdk/bot-runtime`);
     const runtimeRoot = join(paths.stateRoot, "runtimes", SUFFIX);
