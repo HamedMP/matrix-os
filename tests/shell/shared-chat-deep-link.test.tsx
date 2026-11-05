@@ -158,6 +158,17 @@ describe("shared app deep link", () => {
     expect(JSON.stringify(page)).toContain(`"kind":"app","scopeId":"${scopeId}"`);
   });
 
+  it("carries a bounded exact build and share revision into the common renderer", async () => {
+    const buildId = "b".repeat(64);
+    const page = await SharedAppPage({
+      params: Promise.resolve({ scopeId }),
+      searchParams: Promise.resolve({ expectedBuildId: buildId, expectedShareRevision: "7" }),
+    });
+
+    expect(JSON.stringify(page)).toContain(`"expectedBuildId":"${buildId}"`);
+    expect(JSON.stringify(page)).toContain('"expectedShareRevision":"7"');
+  });
+
   it("rejects malformed app scope IDs at the server route boundary", async () => {
     await expect(SharedAppPage({ params: Promise.resolve({ scopeId: "../../not-a-scope" }) }))
       .rejects.toThrow("NEXT_NOT_FOUND");

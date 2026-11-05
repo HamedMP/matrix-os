@@ -358,6 +358,14 @@ export function registerIpcHandlers(ipcMain: IpcMainLike, ctx: HandlerContext): 
           active: request.active,
         });
       }
+      if (request.kind === "shared-app") {
+        return await ctx.embeds.open({
+          kind: request.kind,
+          target: request.target,
+          bounds,
+          active: request.active,
+        });
+      }
       return await ctx.embeds.open({
         kind: request.kind,
         slug: request.slug,

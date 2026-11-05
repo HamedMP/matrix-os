@@ -269,6 +269,37 @@ describe("registerIpcHandlers", () => {
     });
   });
 
+  it("routes an exact shared-app target without owner launch fields", async () => {
+    const harness = makeHarness();
+    const target = {
+      scopeId: "10000000-0000-4000-8000-000000000001",
+      runtimeId: "runtime_owner",
+      organizationId: "org_matrix",
+      authorityGeneration: 2,
+      appId: "team-tracker",
+      catalogId: "30000000-0000-4000-8000-000000000001",
+      readinessId: "40000000-0000-4000-8000-000000000001",
+      registrationIncarnation: "a".repeat(64),
+      buildId: "b".repeat(64),
+      shareRevision: "7",
+      owner: { actorId: "user_owner", displayName: "Nima" },
+    };
+    vi.mocked(harness.ctx.embeds.open).mockResolvedValue({ embedId: "shared-1", state: "loading" });
+
+    await expect(harness.invoke("embed:open", {
+      kind: "shared-app",
+      target,
+      bounds: { x: 20, y: 30, width: 640, height: 480 },
+      active: true,
+    })).resolves.toEqual({ embedId: "shared-1", state: "loading" });
+    expect(harness.ctx.embeds.open).toHaveBeenCalledWith({
+      kind: "shared-app",
+      target,
+      bounds: { x: 20, y: 30, width: 640, height: 480 },
+      active: true,
+    });
+  });
+
   it("returns a failed retry-auth result when embed retry throws", async () => {
     const harness = makeHarness();
     vi.mocked(harness.ctx.embeds.retryAuth).mockRejectedValue(new Error("handoff unavailable"));

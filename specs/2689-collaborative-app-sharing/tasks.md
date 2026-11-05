@@ -169,7 +169,7 @@
 
 - [ ] T072 [P] [US4] Write failing host-offline/restart tests that distinguish availability from stopped access, readiness drift, membership loss, and replacement in `tests/platform/collaborative-app-host-availability.test.ts`
 - [ ] T073 [P] [US4] Write failing Web Canvas/Desktop/mobile tests proving the iframe remains mounted and unsaved input survives offline, conflict, uncertain, recheck, and access-ended overlays in `tests/shell/collaborative-app-viewer.test.tsx`
-- [ ] T074 [P] [US4] Write failing Electron tests proving the isolated `WebContentsView` uses the shared facade and remains mounted through offline/recovery in `tests/desktop/collaborative-app-embed.test.ts`
+- [X] T074 [P] [US4] Write failing Electron tests proving the isolated `WebContentsView` uses the shared facade and remains mounted through offline/recovery in `tests/desktop/collaborative-app-embed.test.ts`
 
 ### Implementation for User Story 4
 
@@ -178,8 +178,8 @@
 - [ ] T077 [US4] Refactor the web app viewer into common mounted rendering with owner and shared transports in `shell/src/components/AppViewer.tsx`
 - [ ] T078 [P] [US4] Carry shared launch targets through Canvas, desktop windows, mobile launcher, and stable window deduplication in `shell/src/components/canvas/CanvasAppViewer.tsx`, `shell/src/components/desktop/DesktopWindow.tsx`, `shell/src/components/mobile/MobileShell.tsx`, and `shell/src/hooks/useWindowManager.ts`
 - [ ] T079 [US4] Route the restricted shared bridge and safe lifecycle overlays without exposing owner tokens in `shell/src/lib/os-bridge.ts`
-- [ ] T080 [P] [US4] Extend typed IPC so Electron distinguishes owner and shared exact-build launch targets in `desktop/src/shared/ipc-contract.ts`
-- [ ] T081 [US4] Load the authenticated shared facade in the isolated embed and retain the `WebContentsView` across offline recovery in `desktop/src/main/embeds/app-launch.ts`, `desktop/src/main/embeds/native-app-bridge.ts`, and `desktop/src/renderer/src/features/embeds/EmbedHost.tsx`
+- [X] T080 [P] [US4] Extend typed IPC so Electron distinguishes owner and shared exact-build launch targets in `desktop/src/shared/ipc-contract.ts`
+- [X] T081 [US4] Load the authenticated shared facade in the isolated embed and retain the `WebContentsView` across offline recovery in `desktop/src/main/embeds/app-launch.ts`, `desktop/src/main/embeds/native-app-bridge.ts`, and `desktop/src/renderer/src/features/embeds/EmbedHost.tsx`
 
 **Checkpoint**: User Story 4 is independently complete across supported shells: host outage is retryable, confirmed data survives, and local input is not destroyed by transport state.
 

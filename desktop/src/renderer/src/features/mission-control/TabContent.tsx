@@ -98,7 +98,9 @@ export function TabPane({
     case "projects":
       return <WorkTab route="projects" active={active} visible={visible} />;
     case "app":
-      return tab.slug
+      return tab.sharedAppTarget
+        ? <EmbedHost kind="shared-app" target={tab.sharedAppTarget} active={active} visible={visible} layoutRevision={layoutRevision} visualScale={visualScale} />
+        : tab.slug
         ? <EmbedHost kind="app" slug={tab.slug} appIdentity={tab.appIdentity} active={active} visible={visible} layoutRevision={layoutRevision} visualScale={visualScale} />
         : null;
     case "project":
