@@ -846,6 +846,40 @@ describe("project collaboration transition journal", () => {
     expect(cleanupStaging).not.toHaveBeenCalled();
   });
 
+  it("does not clean staging after another operation settles the transition", async () => {
+    const queryPause = createQueryResultPause();
+    const transitions = createProjectTransitionJournal({
+      db: fixture.db.withPlugin(queryPause.plugin),
+      now: () => NOW,
+      createTransitionId: () => TRANSITION_ID,
+    });
+    await prepare();
+    await journal().beginStaging(TRANSITION_ID);
+    const cleanupStaging = vi.fn(async () => undefined);
+    const gate = queryPause.arm();
+
+    const recovery = transitions.recoverTransition(TRANSITION_ID, {
+      cleanupStaging,
+      completePublication: vi.fn(async () => undefined),
+    });
+    await gate.paused;
+    await fixture.db.transaction().execute(async (trx) => {
+      await trx.updateTable("collaboration_transitions").set({
+        status: "failed",
+        error_code: "owner_membership_ended",
+        updated_at: NOW,
+      }).where("id", "=", TRANSITION_ID).executeTakeFirstOrThrow();
+      await trx.updateTable("collaboration_scopes").set({
+        lifecycle: "private",
+        updated_at: NOW,
+      }).where("id", "=", SCOPE_ID).executeTakeFirstOrThrow();
+    });
+    gate.release();
+
+    await expect(recovery).resolves.toBe("failed");
+    expect(cleanupStaging).not.toHaveBeenCalled();
+  });
+
   it("removes staged bindings and inherited scopes when recovery restores privacy", async () => {
     const transitions = journal();
     await prepare();

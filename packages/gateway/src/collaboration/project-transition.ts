@@ -738,6 +738,8 @@ export function createProjectTransitionJournal(options: {
     let attempt: Promise<"activated" | "failed" | null>;
     attempt = (async () => {
       const current = await enterRecovery(value);
+      if (current.status === "active") return "activated" as const;
+      if (current.status === "failed") return "failed" as const;
       if (current.publicationMarker) {
         if (!current.stagedManifestRef) throw new ProjectTransitionError("conflict");
         await input.completePublication({
