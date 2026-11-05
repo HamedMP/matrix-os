@@ -41,7 +41,13 @@ export function applyAppDomainRuntimeAssetCacheHeaders(headers: Headers, path: s
   const policy = getAppDomainRuntimeAssetCachePolicy(headers, path, rawUrl);
   if (policy === null) return;
   const immutable = policy.maxAge === ONE_YEAR_SECONDS ? ', immutable' : '';
-  headers.set('cache-control', `private, max-age=${policy.maxAge}${immutable}`);
+  // Development chunks reuse URLs; never upgrade upstream revalidation or
+  // no-store directives into a year-long immutable browser cache.
+  const preserveUpstream = path.startsWith('/_next/static/')
+    && /(?:^|,)\s*no-(?:store|cache)\s*(?:=|,|$)/i.test(headers.get('cache-control') ?? '');
+  if (!preserveUpstream) {
+    headers.set('cache-control', `private, max-age=${policy.maxAge}${immutable}`);
+  }
   headers.set('cdn-cache-control', 'no-store');
   headers.set('cloudflare-cdn-cache-control', 'no-store');
   if (policy.varyOnCookie) {
