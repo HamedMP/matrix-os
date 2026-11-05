@@ -130,6 +130,11 @@ composition, `codex-observation-cache-recovery.test.ts` for fake-time recovery,
 fences, the production Electron background-cache fixture for visible recovery,
 and applicable mobile model-choice/request suites.
 
+`canonical-chat-wiring.test.ts` also verifies settings-event registration and
+the ordered authority invalidation followed by a forced refresh. Keep these
+assertions scoped to the handler's security contract: retry-budget bookkeeping
+may precede that sequence without changing the required authority boundary.
+
 ## Delivery
 
 Ship from a manual worktree through a Conventional Commit PR with Tests and

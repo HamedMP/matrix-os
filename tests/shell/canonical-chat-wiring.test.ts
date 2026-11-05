@@ -30,7 +30,11 @@ describe("Canvas and web desktop canonical Chat wiring", () => {
     expect(canonicalState).not.toContain('type: "message"');
     expect(providerState).toMatch(/import\s*\{[^}]*\bcanonicalChatProviderCatalogPath\b[^}]*\}\s*from "@matrix-os\/ui";/);
     expect(providerState).toContain("canonicalChatProviderCatalogPath(forceRefresh)");
-    expect(providerState).toMatch(/const onSettingsChange = \(\) => \{\s*authorityGeneration \+= 1;\s*authoritySuspended = true;\s*setHasTrustedCatalog\(false\);\s*void refresh\(true\);\s*\};/);
+    // Keep authority invalidation and the forced refresh wired together while allowing
+    // independent recovery bookkeeping, such as resetting the observation retry budget.
+    const settingsChangeHandler = providerState.match(/const onSettingsChange = \(\) => \{([\s\S]*?)\n    \};/)?.[1];
+    expect(settingsChangeHandler).toMatch(/authorityGeneration \+= 1;\s*authoritySuspended = true;\s*setHasTrustedCatalog\(false\);\s*void refresh\(true\);/);
+    expect(providerState).toContain("window.addEventListener(PROVIDER_SETTINGS_CHANGED_EVENT, onSettingsChange)");
     expect(providerState).not.toContain("/api/ai/providers");
     // The setup action used to be invoked from an inline arrow in the shell component. It is now
     // handed to the shared composer model picker, which invokes it, so assert both halves. A mixed-funding
