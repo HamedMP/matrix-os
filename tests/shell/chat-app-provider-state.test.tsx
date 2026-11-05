@@ -350,12 +350,12 @@ describe("Chat canonical provider state", () => {
       onNewChat={vi.fn()} onSwitchConversation={vi.fn()} onSubmit={vi.fn()}
     />);
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
-    expect(String(fetchMock.mock.calls[0]?.[0])).toMatch(/\/api\/chat-providers\?includeConnectionLabels=true&includeConnectionState=true&includeFundingState=true&includeChatFunding=true$/);
+    expect(String(fetchMock.mock.calls[0]?.[0])).toMatch(/\/api\/chat-providers\?includeConnectionLabels=true&includeConnectionState=true&includeFundingState=true&includeChatFunding=true&includeObservationState=true$/);
 
     fireEvent(window, new Event(PROVIDER_SETTINGS_CHANGED_EVENT));
 
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
-    expect(String(fetchMock.mock.calls[1]?.[0])).toContain("/api/chat-providers?refresh=true&includeConnectionLabels=true&includeConnectionState=true&includeFundingState=true&includeChatFunding=true");
+    expect(String(fetchMock.mock.calls[1]?.[0])).toContain("/api/chat-providers?refresh=true&includeConnectionLabels=true&includeConnectionState=true&includeFundingState=true&includeChatFunding=true&includeObservationState=true");
   });
 
   it("uses the canonical catalog, preserves the draft, and submits the exact harness route", async () => {
@@ -380,7 +380,7 @@ describe("Chat canonical provider state", () => {
     expect(screen.getByText("Not supported in this runtime")).toBeVisible();
     expect(screen.queryByText("Channels")).toBeNull();
     expect(draft).toHaveValue("Keep this draft");
-    expect(fetchMock).toHaveBeenCalledWith(expect.stringMatching(/\/api\/chat-providers\?includeConnectionLabels=true&includeConnectionState=true&includeFundingState=true&includeChatFunding=true$/), expect.any(Object));
+    expect(fetchMock).toHaveBeenCalledWith(expect.stringMatching(/\/api\/chat-providers\?includeConnectionLabels=true&includeConnectionState=true&includeFundingState=true&includeChatFunding=true&includeObservationState=true$/), expect.any(Object));
 
     fireEvent.keyDown(screen.getByRole("searchbox"), { key: "Escape" });
     fireEvent.click(screen.getByRole("button", { name: "Permission mode" }));
@@ -600,6 +600,22 @@ describe("Chat canonical provider state", () => {
       promptText: expect.anything(),
     })));
   });
+});
+
+it("retains a saved native Codex choice during checking rather than choosing another provider", async () => {
+  const base = providerCatalog().instances[0]!;
+  const selection = { instanceId: "codex_default", modelId: "gpt-5.6-sol" };
+  window.localStorage.setItem("matrix:canonical-chat-provider-selection", JSON.stringify({ key: `${selection.instanceId}:${selection.modelId}`, options: [], interactionMode: "default", permissionMode: "supervised" }));
+  const catalog = { revision: "catalog_shell", drivers: [{ kind: "codex", displayName: "Codex", adapterVersion: "1.0.0", capabilityClass: "coding_agent" }, { kind: "pi", displayName: "Pi", adapterVersion: "1.0.0", capabilityClass: "coding_agent" }], instances: [
+    { ...base, id: selection.instanceId, driverKind: "codex", displayName: "Codex", availability: "unavailable", observationState: "checking", unavailabilityReason: "runtime_unavailable", models: [{ ...base.models[0], id: selection.modelId, displayName: "GPT-5.6-Sol", availability: "unavailable" }], defaultSelection: undefined }, base,
+  ] };
+  CanonicalProviderCatalogSchema.parse(catalog);
+  vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify(catalog), { status: 200 })));
+  const { result } = renderHook(() => useChatProviderState());
+  await waitFor(() => expect(result.current.loading).toBe(false));
+  expect(result.current.displaySelection).toEqual(selection);
+  expect(result.current.selected).toBeNull();
+  expect(result.current.selectionStatus).toBe("Checking Codex access…");
 });
 
 it.each([false, true])("keeps explicitly chosen unavailable Matrix models selectable and saved without enabling Web send (mobile=%s)", async mobile => {

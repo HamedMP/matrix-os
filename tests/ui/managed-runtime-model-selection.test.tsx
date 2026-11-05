@@ -76,3 +76,32 @@ it("selects either outage model in the Electron picker and retains its unavailab
   expect(screen.getByRole("button", { name: "Choose model and provider" })).toHaveAttribute("data-model", "cloudflare:@cf/zai-org/glm-5.3-flash");
   expect(screen.getByRole("button", { name: "Choose model and provider" }).title).toContain("Unavailable");
 });
+
+it("keeps checking Codex disabled beside selectable unavailable Matrix intent", () => {
+  const catalog = outageCatalog();
+  const native = catalog.instances[0]!;
+  native.availability = "unavailable";
+  native.observationState = "checking";
+  native.unavailabilityReason = "runtime_unavailable";
+  delete native.defaultSelection;
+  native.models.forEach(model => { model.availability = "unavailable"; });
+  CanonicalProviderCatalogSchema.parse(catalog);
+  expect(canonicalProviderModelCanBeSelected(native, native.models[0]!.id)).toBe(false);
+  const selected = { instanceId: native.id, model: native.models[0]!.id, options: [],
+    interactionMode: native.supports.interactionModes[0]!, permissionMode: native.supports.permissionModes[0]! };
+  const changed = vi.fn();
+  render(<ProviderModelPicker catalog={catalog} selection={selected} instanceLocked={false} onChange={changed} />);
+  const trigger = screen.getByRole("button", { name: "Choose model and provider" });
+  expect(trigger.title).toContain("Checking Codex access…");
+  fireEvent.click(trigger);
+  const nativeRow = screen.getByRole("option", { name: /GPT-5.6-Sol.*Codex/ });
+  expect(nativeRow).toBeDisabled();
+  fireEvent.click(nativeRow);
+  expect(changed).not.toHaveBeenCalled();
+  fireEvent.click(screen.getByRole("button", { name: "Matrix AI agent, Matrix AI unavailable" }));
+  const managedRow = screen.getByRole("option", { name: "GLM 5.3 Flash via Matrix AI" });
+  expect(managedRow).toBeEnabled();
+  fireEvent.click(managedRow);
+  expect(changed).toHaveBeenCalledWith(expect.objectContaining({ instanceId: "matrix_pi_default", model: "cloudflare:@cf/zai-org/glm-5.3-flash" }));
+  expect(canonicalComposerSelectionIsAvailable(catalog, changed.mock.calls[0]![0])).toBe(false);
+});

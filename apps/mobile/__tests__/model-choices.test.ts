@@ -378,3 +378,15 @@ describe("a saved model run through the person's own subscription", () => {
       .toBe("Connection changed. Choose the model again or check Agents & providers.");
   });
 });
+
+
+it("keeps a checking Codex model selected and inspectable but never selectable or runnable", () => {
+  const catalog = catalogOf(codexInstance([[GPT.model, "GPT-5.6-Sol", "unavailable"]], {
+    availability: "unavailable", unavailabilityReason: "runtime_unavailable", observationState: "checking",
+  }), matrixInstance());
+  const native = modelEngines(catalog, GPT).find(engine => engine.id === GPT.instanceId)!;
+  expect(native.note).toBe("Checking Codex access…");
+  expect(native.models).toEqual([expect.objectContaining({ name: "GPT-5.6-Sol", selected: true, available: false, selectable: false, detail: expect.stringContaining("Checking Codex access…") })]);
+  expect(chosenSelection(catalog, native.models[0]!.key)).toBeNull();
+  expect(selectionCanRun(catalog, GPT)).toBe(false);
+});

@@ -1,5 +1,11 @@
 # Automatic recovery of saved Codex connections
 
+Transient native observation and model-display recovery are specified separately
+in [ENG-434](../547-provider-authorization/codex-observation-recovery.md). That
+repair preserves this feature's private account binding and owner-consent guards;
+temporary observation failure must not be interpreted as a new connection or
+permission to switch accounts.
+
 Tracking: [ENG-354](https://linear.app/matrix-os/issue/ENG-354/fix-web-desktop-codex-auth-consistency-logout-and-provider-recovery).
 Related: [PR #2810](https://github.com/HamedMP/matrix-os/pull/2810), which adds an explicit completion action and broader Web Desktop recovery.
 
