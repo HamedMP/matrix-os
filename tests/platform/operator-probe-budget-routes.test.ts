@@ -64,3 +64,31 @@ describe('operator-only bounded authority', () => {
     expect(() => readOperatorProbeAuthorityConfig({ ...env, MATRIX_FUNDED_AI_OPERATOR_PROBE_AUTHORITY_DATABASE_URL: undefined, DATABASE_URL: env.MATRIX_FUNDED_AI_OPERATOR_PROBE_AUTHORITY_DATABASE_URL })).toThrow();
   });
 });
+
+it('requires the configured wallet precondition for a remote mutation and rejects old authorities before admission', async () => {
+  const { createHash } = await import('node:crypto');
+  const { configureOperatorProbes } = await import('../../packages/platform/src/operator-probe-budget/adapter.js');
+  const { OperatorProbeBeginSchema } = await import('../../packages/contracts/src/funded-operator-probe.js');
+  const budgetId = 'synthetic';
+  const { store } = fixture();
+  const app = createOperatorProbeBudgetApp({ token, store, budgetId });
+  const admission = beginInput(), etag = '"' + createHash('sha256').update(budgetId).digest('hex') + '"';
+  const req = (expected: string, body: unknown) => app.request(base + '/begin', { method: 'POST', headers: {
+    authorization: 'Bearer ' + token, 'if-match': expected }, body: JSON.stringify(body) });
+  expect((await req('"wrong"', { operation: admission })).status).toBe(412);
+  expect((await req(etag, { operation: admission })).status).toBe(200);
+  expect(store.begin).toHaveBeenCalledExactlyOnceWith(admission);
+  const oldAuthority = vi.fn<typeof fetch>(async () => {
+    return Response.json({}, { status: 400 });
+  });
+  const remote = configureOperatorProbes({ MATRIX_FUNDED_AI_OPERATOR_PROBE_BUDGET_ID: budgetId,
+    MATRIX_FUNDED_AI_OPERATOR_PROBE_AUTHORITY_TOKEN: token, MATRIX_FUNDED_AI_OPERATOR_PROBE_AUTHORITY_URL: 'https://example.test',
+    MATRIX_FUNDED_AI_OPERATOR_PROBE_RELAY_URL: 'http://127.0.0.1:1234' }, {} as never, 'r'.repeat(32), oldAuthority)!;
+  await expect(remote.store.begin(admission)).rejects.toThrow();
+  expect(oldAuthority).toHaveBeenCalledTimes(1);
+  // Task 1 accepts only a strict Begin payload and ignores unknown headers.
+  const legacyPayload = JSON.parse(String(oldAuthority.mock.calls[0][1]?.body));
+  expect(legacyPayload).toEqual({ operation: admission });
+  expect(OperatorProbeBeginSchema.safeParse(legacyPayload).success).toBe(false);
+  await remote.close();
+});

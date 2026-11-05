@@ -18,7 +18,7 @@ afterEach(async () => {
   try { await destroyTestPlatformDb(db); }
   finally { vi.useRealTimers(); }
 });
-async function fixture() {
+async function fixture(operator?: Parameters<typeof createFundedModelProbeService>[0]["operator"]) {
   const repository = createAiFundedPolicyRepository({ db, credentialHashSecret: "h".repeat(32) });
   await repository.updateGlobalPolicy({ expectedRevision: 0, enabled: true, allowedModelIds: [JEV_MODEL_ID] });
   const runtime = (suffix: string) => ({ identity: { ownerId: `owner_${suffix}`, machineId: `machine_${suffix}`, runtimeSlot: "primary" }, globalRevision: 1, runtimeRevision: 1 });
@@ -35,7 +35,7 @@ async function fixture() {
     expect(init).toMatchObject({ method: "POST", body: "{}", redirect: "error", signal: expect.any(AbortSignal) });
     return Response.json({ ready: true, priceValidThrough });
   });
-  const service = createFundedModelProbeService({ db, credentials: repository, relayBaseUrl: "https://relay.example.test",
+  const service = createFundedModelProbeService({ db, operator, credentials: repository, relayBaseUrl: "https://relay.example.test",
     relayControlToken: "c".repeat(32), dailyLimit: 10, minuteLimit: 2, fetchFn });
   return { service, repository, runtime, issue, revoke, fetchFn };
 }
@@ -108,4 +108,14 @@ it("keeps owner-specific Jev observations at thirty seconds and outside the shar
   expect((await f.service.probe(JEV_MODEL_ID, { runtime: f.runtime("a") })).ready).toBe(true);
   expect(f.fetchFn).toHaveBeenCalledTimes(2);
   expect(f.issue).toHaveBeenCalledTimes(2);
+});
+
+it("keeps Jev on the owner credential and ordinary Relay when operator monetary mode is active", async () => {
+  const store = { getStatus: vi.fn(), getAttempt: vi.fn(), begin: vi.fn(), finalize: vi.fn() };
+  const f = await fixture({ store, budgetId: "synthetic", namespace: "test", relayOrigin: "https://operator.invalid", close: vi.fn() });
+  expect((await f.service.probe(JEV_MODEL_ID, { runtime: f.runtime("a") })).ready).toBe(true);
+  expect(f.fetchFn.mock.calls[0][0]).toBe("https://relay.example.test/v1/jev-readiness");
+  expect(f.issue).toHaveBeenCalledOnce();
+  expect(f.revoke).toHaveBeenCalledOnce();
+  for (const operation of Object.values(store)) expect(operation).not.toHaveBeenCalled();
 });

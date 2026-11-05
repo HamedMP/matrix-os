@@ -1,3 +1,4 @@
+import { normalizeOperatorServiceOrigin as normalizeFundedPlatformOrigin } from "@matrix-os/contracts/funded-operator-probe";
 import { readFundedPricingReviews, type FundedPricingReviews } from "./funded-pricing-review.js";
 
 import { readJevPricingReview, type JevPricingReview } from "./jev-pricing-review.js";
@@ -25,6 +26,7 @@ export const COUNT_TOKENS_BODY_LIMIT_BYTES = 256 * 1024;
 export const BETA_ID = /^[a-zA-Z0-9][a-zA-Z0-9._=-]{0,127}$/;
 
 export interface FundedRelayConfig {
+  operatorProbeBudgetRequired?: boolean;
   gatewayBaseUrl: string;
   gatewayToken: string;
   jevMaxCostMicrousd: number;
@@ -112,34 +114,7 @@ function readGatewayBaseUrl(env: NodeJS.ProcessEnv): string {
   return `${url.origin}${path}`;
 }
 
-export function normalizeFundedPlatformOrigin(raw: string): string {
-  const exactOrigin = /^(https?):\/\/([^/?#]*)(.*)$/i.exec(raw);
-  let url: URL;
-  try {
-    url = new URL(raw);
-  } catch (error) {
-    if (error instanceof TypeError) throw new Error("PLATFORM_INTERNAL_URL must be a valid URL");
-    throw error;
-  }
-  const rawAuthority = exactOrigin?.[2] ?? "";
-  const rawSuffix = exactOrigin?.[3] ?? "";
-  const closingBracket = rawAuthority.indexOf("]");
-  const rawHostname = rawAuthority.startsWith("[") && closingBracket >= 0
-    ? rawAuthority.slice(0, closingBracket + 1).toLowerCase()
-    : (rawAuthority.split(":", 1)[0] ?? "").toLowerCase();
-  const isExactLoopback = rawHostname === "127.0.0.1"
-    || rawHostname === "[::1]";
-  if (!exactOrigin
-    || !(["http:", "https:"] as const).includes(url.protocol as "http:" | "https:")
-    || url.username !== "" || url.password !== "" || url.search !== "" || url.hash !== ""
-    || (rawSuffix !== "" && rawSuffix !== "/")
-    || (url.protocol === "http:" && !isExactLoopback)) {
-    throw new Error(
-      "PLATFORM_INTERNAL_URL must be an HTTPS origin or a literal loopback HTTP origin without credentials or a path",
-    );
-  }
-  return url.origin;
-}
+export { normalizeFundedPlatformOrigin };
 
 function readPlatformBaseUrl(env: NodeJS.ProcessEnv): string {
   return normalizeFundedPlatformOrigin(readRequired(env, "PLATFORM_INTERNAL_URL", 2_048));
@@ -178,6 +153,7 @@ export function resolveFundedRelayConfig(
     throw new Error("Funded AI relay credentials must be distinct");
   }
   return {
+    operatorProbeBudgetRequired: readEnabled(env.MATRIX_AI_RELAY_OPERATOR_PROBE_BUDGET_REQUIRED),
     gatewayBaseUrl,
     gatewayToken,
     pricingReviews: readFundedPricingReviews(env),

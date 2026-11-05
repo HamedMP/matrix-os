@@ -32,18 +32,18 @@ export async function initializeOperatorProbeBudget(db: Kysely<OperatorProbeData
     if (row.rows[0]?.config_hash !== configHash) throw new OperatorProbeBudgetError('conflict');
   });
 }
-export function createOperatorProbeBudgetRepository(options: {
-  db: Kysely<OperatorProbeDatabase>; budgetId: string; now?: () => Date;
+export function createOperatorProbeBudgetRepository<DB extends OperatorProbeDatabase>(options: {
+  db: Kysely<DB>; budgetId: string; now?: () => Date;
 }): OperatorProbeBudgetStore {
   const { db, budgetId } = options;
   if (!budgetId || budgetId.length > 160) throw new Error('Operator probe budget configuration is required');
   const now = options.now ?? (() => new Date());
-  async function wallet(tx: Transaction<OperatorProbeDatabase>) {
+  async function wallet(tx: Transaction<DB>) {
     const result = await sql<WalletRow>`SELECT * FROM operator_probe_wallets WHERE budget_id=${budgetId} FOR UPDATE`.execute(tx);
     if (!result.rows[0]) throw new OperatorProbeBudgetError('unavailable');
     return result.rows[0];
   }
-  async function attempt(connection: Kysely<OperatorProbeDatabase>, probeId: string) {
+  async function attempt(connection: Kysely<DB>, probeId: string) {
     const result = await sql<{ attempt: OperatorProbeAttempt }>`SELECT attempt FROM operator_probe_attempts
       WHERE budget_id=${budgetId} AND probe_id=${probeId}`.execute(connection);
     return result.rows[0]?.attempt ?? null;
@@ -109,6 +109,7 @@ export function createOperatorProbeBudgetRepository(options: {
         // Nonterminal counts may be partial; retain the maximum liability, never publish them as final cost.
         if (status === 'unknown') cost = null;
         const body = { payloadHash, status, outcome: input.outcome, costMicrousd: cost,
+          ...(input.providerLogId ? { providerLogId: input.providerLogId } : {}),
           usage: input.usage, providerReferenceHash: input.providerReferenceHash, finalizedAt: now().toISOString() } as const;
         const receipt: OperatorProbeReceipt = { ...body, receiptHash: hash({ probeId: input.probeId,
           executionId: input.executionId, economicHash: input.economicHash, ...body }) };

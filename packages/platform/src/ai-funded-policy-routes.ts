@@ -1,3 +1,4 @@
+import { OperatorProbeBeginSchema, OperatorProbeFinalizeSchema, type OperatorProbeBudgetStore } from "@matrix-os/contracts/funded-operator-probe";
 import {
   FundedAiAuthorizationRequestSchema,
   FundedAiTerminalOutcomeRequestSchema, FundedAiExecutionRecoveryBatchRequestSchema,
@@ -607,6 +608,7 @@ export function createAiFundedOperatorRoutes(options: {
 }
 
 export function createAiFundedRelayRoutes(options: {
+  operatorStore?: OperatorProbeBudgetStore;
   relayControlToken: string;
   repository: AiFundedPolicyRepository;
 }) {
@@ -622,6 +624,21 @@ export function createAiFundedRelayRoutes(options: {
     }
     return next();
   });
+  if (options.operatorStore) {
+    const store = options.operatorStore;
+    app.post("/operator-probe/begin", bodyLimit({ maxSize: RELAY_BODY_LIMIT }), async c => {
+      const request = OperatorProbeBeginSchema.safeParse(await readStrictJson(c));
+      if (!request.success || new URL(c.req.url).search) return c.json(safeError("invalid_request"), 400);
+      try { return c.json(await store.begin(request.data)); }
+      catch (error) { return policyErrorResponse(c, error); }
+    });
+    app.post("/operator-probe/finalize", bodyLimit({ maxSize: RELAY_BODY_LIMIT }), async c => {
+      const request = OperatorProbeFinalizeSchema.safeParse(await readStrictJson(c));
+      if (!request.success || new URL(c.req.url).search) return c.json(safeError("invalid_request"), 400);
+      try { return c.json(await store.finalize(request.data)); }
+      catch (error) { return policyErrorResponse(c, error); }
+    });
+  }
   app.post("/authorize", bodyLimit({ maxSize: RELAY_BODY_LIMIT }), async (c) => {
     const request = FundedAiAuthorizationRequestSchema.safeParse(await readStrictJson(c));
     if (!request.success) return c.json(safeError("invalid_request"), 400);
