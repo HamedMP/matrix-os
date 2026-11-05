@@ -1,3 +1,4 @@
+import { assertNamespaceSocket, type NamespacePathTrust } from "@matrix-os/scope-runtime/host-config";
 import { BOT_IMAGE_INFERENCE_FRAME_MAX_BYTES, INFERENCE_RESPONSE_BODY_MAX_BYTES, INFERENCE_RESPONSE_FRAME_MAX_BYTES } from "@matrix-os/contracts";
 import { ScopeRuntimeBotInferenceRequestSchema } from "@matrix-os/scope-runtime/broker-protocol";
 import { isInferenceStream, writeInferenceStream } from './inference-stream-transport.js';
@@ -470,6 +471,7 @@ async function removeBrokerSocket(path: string): Promise<void> {
 
 export function createScopeRuntimeBrokerServer(options: {
   socketPath: string;
+  namespaceTrust?: NamespacePathTrust;
   broker: {
     handle(request: ScopeRuntimeBrokerRequest): Promise<ScopeRuntimeBrokerResponse>;
     close(): Promise<void> | void;
@@ -637,6 +639,7 @@ export function createScopeRuntimeBrokerServer(options: {
   return {
     async start(): Promise<void> {
       if (closed || server) throw new Error("Scope broker server cannot start");
+      if (options.namespaceTrust) await assertNamespaceSocket(options.socketPath, options.namespaceTrust);
       await removeBrokerSocket(options.socketPath);
       const candidate = createServer({ allowHalfOpen: true }, accept);
       server = candidate;
@@ -659,6 +662,7 @@ export function createScopeRuntimeBrokerServer(options: {
       if (closed) return;
       closed = true;
       const current = server;
+      if (options.namespaceTrust) await assertNamespaceSocket(options.socketPath, options.namespaceTrust);
       server = undefined;
       const serverClosed = current
         ? new Promise<void>((resolve) => current.close(() => resolve()))
@@ -668,6 +672,7 @@ export function createScopeRuntimeBrokerServer(options: {
       await Promise.allSettled([...operations]);
       await options.broker.close();
       try {
+        if (options.namespaceTrust) await assertNamespaceSocket(options.socketPath, options.namespaceTrust);
         const entry = await lstat(options.socketPath);
         if (entry.isSocket() && !entry.isSymbolicLink()) await unlink(options.socketPath);
       } catch (error: unknown) {

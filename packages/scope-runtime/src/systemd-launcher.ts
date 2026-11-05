@@ -1,3 +1,4 @@
+import { assertNamespaceDirectory, assertNamespaceSocket, assertRuntimeDirectoryPlacement, HOST_NAMESPACE_TRUST, type NamespacePathTrust } from "./namespace-ancestry.js";
 import { pinScopeRuntimeCommandSocket, type CommandSocketPinner } from "./command-socket-pin.js";
 import { cleanupOrphanedRuntimeDirectories, commandDirectoryForRuntime, createRuntimeDirectories, removeRuntimeDirectories } from "./runtime-directories.js";
 import { createScopeRuntimeUnitIdentity } from "./systemd-unit-identity.js";
@@ -81,6 +82,7 @@ export interface ScopeRuntimeCommandRunner {
 
 interface LauncherPaths {
   namespace?: string;
+  namespaceTrust?: NamespacePathTrust;
   commandSocketRoot?: string;
   stateRoot: string;
   sdkDirectory: string;
@@ -99,7 +101,7 @@ interface LauncherPaths {
   managedPiSandboxRoots?: readonly string[];
 }
 
-type ResolvedLauncherPaths = Required<Omit<LauncherPaths, "botRuntimeDirectory" | "namespace" | "commandSocketRoot">> & { botRuntimeDirectory?: string; commandSocketRoot?: string };
+type ResolvedLauncherPaths = Required<Omit<LauncherPaths, "botRuntimeDirectory" | "namespace" | "namespaceTrust" | "commandSocketRoot">> & { botRuntimeDirectory?: string; commandSocketRoot?: string; namespaceTrust?: NamespacePathTrust };
 
 function isPiLaunch(input: { profileId?: string }): boolean {
   return piProfileIdentity(input.profileId) !== undefined;
@@ -595,6 +597,7 @@ export function createSystemdScopeRuntimeLauncher(
   }
   const paths: ResolvedLauncherPaths = {
     stateRoot: assertTrustedAbsolutePath(input.stateRoot),
+    ...(input.namespace !== undefined ? { namespaceTrust: input.namespaceTrust ?? HOST_NAMESPACE_TRUST } : {}),
     ...(input.commandSocketRoot ? { commandSocketRoot: assertTrustedAbsolutePath(input.commandSocketRoot) } : {}),
     sdkDirectory: assertTrustedAbsolutePath(input.sdkDirectory),
     nativeDirectory: assertTrustedAbsolutePath(input.nativeDirectory),
@@ -607,7 +610,16 @@ export function createSystemdScopeRuntimeLauncher(
     managedPiSandboxRoots: (input.managedPiSandboxRoots ?? []).map((root) => assertTrustedAbsolutePath(root)),
     ...(input.botRuntimeDirectory ? { botRuntimeDirectory: assertTrustedAbsolutePath(input.botRuntimeDirectory) } : {}),
   };
-  const runCommand = input.runCommand ?? defaultRunCommand;
+  const verifyPlacement = async () => {
+    if (!paths.namespaceTrust) return;
+    await assertRuntimeDirectoryPlacement(paths);
+    await assertNamespaceSocket(paths.brokerSocket, paths.namespaceTrust);
+  };
+  const execute = input.runCommand ?? defaultRunCommand;
+  const runCommand: ScopeRuntimeCommandRunner = async (command, args) => {
+    await verifyPlacement();
+    return execute(command, args);
+  };
   const pinCommandSocket = input.pinCommandSocket ?? pinScopeRuntimeCommandSocket;
 
   async function dispatchCommand<T>(runtimeHandle: string, dispatch: (path: string) => Promise<T>): Promise<T> {
@@ -619,6 +631,7 @@ export function createSystemdScopeRuntimeLauncher(
 
   return {
     async supportedAdapters(profileId?: string) {
+      await verifyPlacement();
       if (piProfileIdentity(profileId)) {
         const roots = profileId === SCOPE_RUNTIME_BOT_PROFILE_ID ? paths.botSandboxRoots : paths.managedPiSandboxRoots;
         if (!paths.botRuntimeDirectory || roots.length === 0) return [];
@@ -717,6 +730,7 @@ export function createSystemdScopeRuntimeLauncher(
     async start(request: ScopeRuntimeLaunchRequest): Promise<void> {
       // Capability discovery runs before the gateway opens this socket. Only
       // an actual workload launch requires the broker to be listening.
+      await verifyPlacement();
       await validateBrokerSocket(paths.brokerSocket);
       const { root, readinessFile, commandDirectory } = await prepareRuntimeRoot(paths, request);
       let submitted = false;
@@ -789,8 +803,9 @@ export function createSystemdScopeRuntimeLauncher(
   };
 }
 
-export async function nextExecutionGeneration(path: string): Promise<string> {
+export async function nextExecutionGeneration(path: string, namespaceTrust?: NamespacePathTrust): Promise<string> {
   const target = assertTrustedAbsolutePath(path);
+  if (namespaceTrust) await assertNamespaceDirectory(dirname(target), namespaceTrust);
   await mkdir(dirname(target), { recursive: true, mode: 0o700 });
   let current = 0n;
   try {

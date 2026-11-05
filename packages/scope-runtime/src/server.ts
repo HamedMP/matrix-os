@@ -1,3 +1,4 @@
+import { assertNamespaceSocket, type NamespacePathTrust } from "./namespace-ancestry.js";
 import { chmod, lstat, unlink } from "node:fs/promises";
 import { createServer, type Server, type Socket } from "node:net";
 import { ScopeRuntimeRequestSchema, type ScopeRuntimeRequest, type ScopeRuntimeResponse } from "./protocol.js";
@@ -30,6 +31,7 @@ async function removeStaleSocket(socketPath: string): Promise<void> {
 
 export function createScopeRuntimeServer(options: {
   socketPath: string;
+  namespaceTrust?: NamespacePathTrust;
   controller: ScopeRuntimeController;
   maxConnections?: number;
   requestTimeoutMs?: number;
@@ -129,6 +131,7 @@ export function createScopeRuntimeServer(options: {
   return {
     async start(): Promise<void> {
       if (closed || server) throw new Error("Scope runtime server cannot start");
+      if (options.namespaceTrust) await assertNamespaceSocket(options.socketPath, options.namespaceTrust);
       await removeStaleSocket(options.socketPath);
       const candidate = createServer({ allowHalfOpen: true }, accept);
       server = candidate;
@@ -149,6 +152,7 @@ export function createScopeRuntimeServer(options: {
     },
     async close(): Promise<void> {
       if (closed) return;
+      if (options.namespaceTrust) await assertNamespaceSocket(options.socketPath, options.namespaceTrust);
       closed = true;
       const current = server;
       server = undefined;
@@ -162,6 +166,7 @@ export function createScopeRuntimeServer(options: {
       await options.controller.close();
       await Promise.allSettled([...operations]);
       try {
+        if (options.namespaceTrust) await assertNamespaceSocket(options.socketPath, options.namespaceTrust);
         const entry = await lstat(options.socketPath);
         if (entry.isSocket()) await unlink(options.socketPath);
       } catch (error: unknown) {

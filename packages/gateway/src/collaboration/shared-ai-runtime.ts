@@ -1,4 +1,4 @@
-import { resolveScopeRuntimeHostConfig } from "@matrix-os/scope-runtime/host-config";
+import { HOST_NAMESPACE_TRUST, resolveScopeRuntimeHostConfig } from "@matrix-os/scope-runtime/host-config";
 import {
   CanonicalChatModelSelectionSchema,
   type CanonicalChatModelSelection,
@@ -230,6 +230,7 @@ export async function createSharedAiRuntime(options: {
   const ownedHost = options.host ? undefined : await createScopeRuntimeHost({
     homePath: options.homePath,
     profileCatalog: SHARED_AI_PROFILE_CATALOG,
+    ...(deployment?.namespace !== undefined ? { namespaceTrust: HOST_NAMESPACE_TRUST } : {}),
     supervisorSocket: options.supervisorSocket ?? deployment!.supervisorSocket,
     brokerSocket: options.brokerSocket ?? deployment!.brokerSocket,
     ...(options.fundedCredentialProvider ? { fundedCredentialProvider: options.fundedCredentialProvider } : {}),

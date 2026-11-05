@@ -1,3 +1,4 @@
+import { assertNamespaceSocket, type NamespacePathTrust } from "@matrix-os/scope-runtime/host-config";
 /**
  * The gateway's single scope-runtime host (spec 536, research R4): one
  * supervisor client and one broker socket, started whenever the scope
@@ -78,12 +79,18 @@ export async function createScopeRuntimeHost(options: {
   homePath: string;
   profileCatalog: ScopeRuntimeProfileCatalog;
   supervisorSocket?: string;
+  namespaceTrust?: NamespacePathTrust;
   brokerSocket?: string;
   fundedCredentialProvider?: MatrixFundedCredentialProvider;
   fundedAdmission?: FundedAdmissionQueue;
   fetchImpl?: typeof fetch;
 }): Promise<ScopeRuntimeHost> {
+  if (options.namespaceTrust) {
+    await assertNamespaceSocket(options.supervisorSocket ?? SUPERVISOR_SOCKET, options.namespaceTrust);
+    await assertNamespaceSocket(options.brokerSocket ?? BROKER_SOCKET, options.namespaceTrust);
+  }
   const client = createScopeRuntimeClient({
+    namespaceTrust: options.namespaceTrust,
     socketPath: options.supervisorSocket ?? SUPERVISOR_SOCKET,
     profileCatalog: options.profileCatalog,
   });
@@ -118,6 +125,7 @@ export async function createScopeRuntimeHost(options: {
   });
   const server = createScopeRuntimeBrokerServer({
     botImageFrames: true,
+    namespaceTrust: options.namespaceTrust,
     socketPath: options.brokerSocket ?? BROKER_SOCKET,
     broker,
     routeFrame(raw, signal) {

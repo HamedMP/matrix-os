@@ -1,3 +1,4 @@
+import { HOST_NAMESPACE_TRUST, assertRuntimeDirectoryPlacement, assertNamespaceSocket } from "./namespace-ancestry.js";
 import { resolveScopeRuntimeHostConfig, resolveScopeRuntimeSourcePaths } from "./host-config.js";
 import { describeScopeRuntimeFailure } from "./failure.js";
 import { createScopeRuntimeServer } from "./server.js";
@@ -9,6 +10,12 @@ import { startScopeRuntimeWatchdog } from "./systemd-watchdog.js";
 async function main(): Promise<void> {
   const home = process.env.MATRIX_HOME ?? "/home/matrix/home";
   const config = resolveScopeRuntimeHostConfig({ env: process.env, homePath: home });
+  const namespaceTrust = config.namespace === undefined ? undefined : HOST_NAMESPACE_TRUST;
+  if (namespaceTrust) {
+    await assertRuntimeDirectoryPlacement(config);
+    await assertNamespaceSocket(config.supervisorSocket, namespaceTrust);
+    await assertNamespaceSocket(config.brokerSocket, namespaceTrust);
+  }
   const launcher = createSystemdScopeRuntimeLauncher({
     namespace: config.namespace,
     commandSocketRoot: config.commandSocketRoot,
@@ -19,10 +26,11 @@ async function main(): Promise<void> {
     botSandboxRoots: botSandboxRootsForHome(home),
     managedPiSandboxRoots: managedPiSandboxRootsForHome(home),
   });
-  const executionGeneration = await nextExecutionGeneration(`${config.stateRoot}/generation`);
+  const executionGeneration = await nextExecutionGeneration(`${config.stateRoot}/generation`, namespaceTrust);
   const controller = await createScopeRuntimeController({ launcher, executionGeneration });
   const server = createScopeRuntimeServer({
     socketPath: config.supervisorSocket,
+    namespaceTrust,
     controller,
   });
   await server.start();

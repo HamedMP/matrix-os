@@ -45,7 +45,7 @@ async function fixture(managerNamespaces: readonly (string | undefined)[] = name
     const commandSocketRoot = namespace === undefined ? undefined : join(root, namespace + "x".repeat(Math.max(0, 54 - Buffer.byteLength(root) - namespace.length)));
     let failNext = false;
     const launcher = createSystemdScopeRuntimeLauncher({
-      pinCommandSocket: portableCommandSocketPin, namespace, commandSocketRoot, stateRoot, sdkDirectory, nativeDirectory, workerFile, brokerSocket, nodeBinary: process.execPath, codexBinary,
+      namespaceTrust: { root, uid: process.getuid!() }, pinCommandSocket: portableCommandSocketPin, namespace, commandSocketRoot, stateRoot, sdkDirectory, nativeDirectory, workerFile, brokerSocket, nodeBinary: process.execPath, codexBinary,
       async runCommand(command, args) {
         calls.push({ owner: namespace, command, args });
         if (command === codexBinary) return { stdout: "codex-cli 0.162.1\n" };

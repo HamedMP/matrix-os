@@ -1,3 +1,4 @@
+import { assertNamespaceSocket, type NamespacePathTrust } from "@matrix-os/scope-runtime/host-config";
 import { randomUUID } from "node:crypto";
 import { createConnection, type Socket } from "node:net";
 import {
@@ -69,6 +70,7 @@ export class ScopeRuntimeClientError extends Error {
 
 export function createScopeRuntimeClient(options: {
   socketPath: string;
+  namespaceTrust?: NamespacePathTrust;
   profileCatalog: ScopeRuntimeProfileCatalog;
   timeoutMs?: number;
   createRequestId?: () => string;
@@ -104,7 +106,7 @@ export function createScopeRuntimeClient(options: {
       return Promise.reject(new ScopeRuntimeClientError("runtime_unavailable"));
     }
     inFlight[lane]++;
-    const operation = new Promise<ScopeRuntimeResponse>((resolve, reject) => {
+    const connect = () => new Promise<ScopeRuntimeResponse>((resolve, reject) => {
       const socket = createConnection({ path: options.socketPath });
       let timer: ReturnType<typeof setTimeout> | undefined;
       let response = "";
@@ -160,6 +162,12 @@ export function createScopeRuntimeClient(options: {
         if (!settled) fail();
       });
     });
+    const operation = options.namespaceTrust
+      ? assertNamespaceSocket(options.socketPath, options.namespaceTrust).then(() => {
+          if (closed || callerSignal?.aborted) throw new ScopeRuntimeClientError("runtime_unavailable");
+          return connect();
+        })
+      : connect();
     operations.add(operation);
     void operation.finally(() => { operations.delete(operation); inFlight[lane]--; }).catch((error: unknown) => {
       if (!(error instanceof ScopeRuntimeClientError)) {

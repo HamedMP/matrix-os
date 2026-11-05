@@ -1,4 +1,4 @@
-import { resolveScopeRuntimeHostConfig } from "@matrix-os/scope-runtime/host-config";
+import { HOST_NAMESPACE_TRUST, resolveScopeRuntimeHostConfig } from "@matrix-os/scope-runtime/host-config";
 import type { FundedAdmissionQueue } from "../funded-ai/admission-queue.js";
 import type { MatrixFundedCredentialProvider } from "../funded-ai-credential-manager.js";
 import { BOT_SCOPE_RUNTIME_PROFILE_CATALOG } from "../bots/scope-runtime-profile.js";
@@ -20,6 +20,7 @@ export async function startScopeRuntimeHost(options: {
   const config = resolveScopeRuntimeHostConfig({ env: process.env, homePath: options.homePath });
   try {
     return await createScopeRuntimeHost({
+      ...(config.namespace !== undefined ? { namespaceTrust: HOST_NAMESPACE_TRUST } : {}),
       supervisorSocket: config.supervisorSocket,
       brokerSocket: config.brokerSocket,
       homePath: options.homePath,

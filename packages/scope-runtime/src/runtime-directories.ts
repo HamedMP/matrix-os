@@ -1,8 +1,8 @@
 import { chmod, lstat, mkdir, opendir, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { RuntimeHandleSchema } from "./protocol.js";
+import { assertRuntimeDirectoryPlacement, type RuntimeDirectoryRoots } from "./namespace-ancestry.js";
 
-interface RuntimeDirectoryRoots { stateRoot: string; commandSocketRoot?: string }
 const MAX_ENTRIES = 128;
 
 async function assertDirectoryIfPresent(path: string): Promise<boolean> {
@@ -16,9 +16,10 @@ async function assertDirectoryIfPresent(path: string): Promise<boolean> {
   }
 }
 
-async function ensurePrivateDirectory(path: string): Promise<void> {
+async function ensurePrivateDirectory(path: string, preserveVerifiedIpcMode = false): Promise<void> {
   await mkdir(path, { recursive: true, mode: 0o700 });
   await assertDirectoryIfPresent(path);
+  if (preserveVerifiedIpcMode && ((await lstat(path)).mode & 0o7777) === 0o770) return;
   await chmod(path, 0o700);
 }
 
@@ -29,6 +30,7 @@ function directoryPaths(paths: RuntimeDirectoryRoots, runtimeHandle: string) {
 }
 
 export async function commandDirectoryForRuntime(paths: RuntimeDirectoryRoots, runtimeHandle: string): Promise<string> {
+  await assertRuntimeDirectoryPlacement(paths);
   const { runtimeRoot, commandDirectory } = directoryPaths(paths, runtimeHandle);
   await assertDirectoryIfPresent(paths.stateRoot);
   await assertDirectoryIfPresent(join(paths.stateRoot, "runtimes"));
@@ -40,10 +42,11 @@ export async function commandDirectoryForRuntime(paths: RuntimeDirectoryRoots, r
 
 /** Exclusive creates establish ownership; failed setup never removes a pre-existing directory/link. */
 export async function createRuntimeDirectories(paths: RuntimeDirectoryRoots, runtimeHandle: string) {
+  await assertRuntimeDirectoryPlacement(paths);
   await ensurePrivateDirectory(paths.stateRoot);
   const runtimesRoot = join(paths.stateRoot, "runtimes");
   await ensurePrivateDirectory(runtimesRoot);
-  if (paths.commandSocketRoot) await ensurePrivateDirectory(paths.commandSocketRoot);
+  if (paths.commandSocketRoot) await ensurePrivateDirectory(paths.commandSocketRoot, true);
   const { runtimeRoot, commandDirectory } = directoryPaths(paths, runtimeHandle);
   await mkdir(runtimeRoot, { mode: 0o700 });
   let commandCreated = false;
@@ -63,6 +66,7 @@ export async function createRuntimeDirectories(paths: RuntimeDirectoryRoots, run
 }
 
 export async function removeRuntimeDirectories(paths: RuntimeDirectoryRoots, runtimeHandle: string): Promise<void> {
+  await assertRuntimeDirectoryPlacement(paths);
   const { runtimeRoot, commandDirectory } = directoryPaths(paths, runtimeHandle);
   await assertDirectoryIfPresent(paths.stateRoot);
   await assertDirectoryIfPresent(join(paths.stateRoot, "runtimes"));
@@ -77,6 +81,7 @@ export async function removeRuntimeDirectories(paths: RuntimeDirectoryRoots, run
 
 /** Sweep each owned root independently, including command orphans left by interrupted preparation. */
 export async function cleanupOrphanedRuntimeDirectories(paths: RuntimeDirectoryRoots, retainedSuffixes: ReadonlySet<string>): Promise<void> {
+  await assertRuntimeDirectoryPlacement(paths);
   for (const root of [join(paths.stateRoot, "runtimes"), ...(paths.commandSocketRoot ? [paths.commandSocketRoot] : [])]) {
     await assertDirectoryIfPresent(paths.stateRoot);
     if (!await assertDirectoryIfPresent(root)) continue;

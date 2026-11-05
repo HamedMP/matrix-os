@@ -157,9 +157,9 @@ describe("scope runtime systemd launcher bot profile", () => {
   });
 
   it.each([undefined, "eng432-stage2"])("launches a bot under its root and supervisor with bot provenance (%s)", async (namespace) => {
-    const { paths, home } = await fixture();
+    const { paths, home, root } = await fixture();
     const calls: Array<{ command: string; args: readonly string[] }> = [];
-    const launcher = createSystemdScopeRuntimeLauncher({ ...paths, namespace, ...(namespace ? { commandSocketRoot: join(paths.stateRoot, "c") } : {}), runCommand: readyRunner(paths.stateRoot, calls) });
+    const launcher = createSystemdScopeRuntimeLauncher({ ...paths, namespace, ...(namespace ? { namespaceTrust: { root, uid: process.getuid!() }, commandSocketRoot: join(paths.stateRoot, "c") } : {}), runCommand: readyRunner(paths.stateRoot, calls) });
     const workspace = join(home, "bots", "bot_abcdef12");
 
     await expect(launcher.start(botLaunch(workspace))).resolves.toBeUndefined();
