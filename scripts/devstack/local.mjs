@@ -34,7 +34,7 @@ function boundedText(value, limit = 8192) {
 async function plainFile(path, limit = recordLimit) {
   if (!isAbsolute(path)) throw new Error('File path must be absolute');
   if (await realpath(path) !== path) throw new Error('Canonical paths required; symlink paths are not accepted');
-  const handle = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW);
+  const handle = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
   try {
     const stat = await handle.stat();
     if (!stat.isFile() || stat.uid !== process.getuid?.() || (stat.mode & 0o7777) !== 0o600) throw new Error('File must be owned and private 0600');
@@ -71,6 +71,7 @@ async function validate(manifest) {
 }
 
 export function createAdapter({ registry = process.env.DEVSTACK_STATE_DIR ?? join(homedir(), '.matrixos', 'devstack'), capacity = Number(process.env.DEVSTACK_CAPACITY ?? 3), runner = commandRunner } = {}) {
+  if (typeof registry !== 'string' || !isAbsolute(registry)) throw new Error('Registry path must be absolute');
   if (!Number.isSafeInteger(capacity) || capacity < 1 || capacity > 100) throw new Error('Invalid local capacity');
   async function init() {
     await mkdir(registry, { recursive: true, mode: 0o700 });
@@ -100,12 +101,19 @@ export function createAdapter({ registry = process.env.DEVSTACK_STATE_DIR ?? joi
     const result = await runner('orb', ['-m', manifest.machine, '-u', user, ...args]);
     return { code: Number.isInteger(result.code) ? result.code : 1, stdout: boundedText(redact(result.stdout)), stderr: boundedText(redact(result.stderr)) };
   }
+  async function authoritativeOutput(manifest, args) {
+    const result = await runner('orb', ['-m', manifest.machine, '-u', 'root', ...args]);
+    const stdout = String(result.stdout ?? '');
+    if (Buffer.byteLength(stdout, 'utf8') > manifestLimit) throw new Error('Machine ownership output exceeds byte limit');
+    // Identity comparisons must use original bytes, never display sanitization.
+    return { code: result.code, stdout };
+  }
   async function owner(manifest) {
     await validate(manifest);
-    const protection = await invoke(manifest, 'root', ['stat', '--format=%u:%a:%F', '--', '/opt/matrix/.devstack-owner']);
+    const protection = await authoritativeOutput(manifest, ['stat', '--format=%u:%a:%F', '--', '/opt/matrix/.devstack-owner']);
     const [uid, mode, type] = protection.stdout.trim().split(':');
     if (protection.code !== 0 || uid !== '0' || !/^[0-7]{3,4}$/.test(mode) || (Number.parseInt(mode, 8) & 0o022) || type !== 'regular file') throw new Error('Machine owner marker is not protected');
-    const result = await invoke(manifest, 'root', ['cat', '/opt/matrix/.devstack-owner']);
+    const result = await authoritativeOutput(manifest, ['cat', '/opt/matrix/.devstack-owner']);
     let marker;
     try { marker = JSON.parse(result.stdout); } catch { throw new Error('Machine owner marker unavailable'); }
     if (result.code !== 0 || marker.version !== 1 || marker.machine !== manifest.machine || marker.purpose !== purpose || marker.id !== manifest.id || marker.worktree !== manifest.worktree) throw new Error('Machine owner marker mismatch');
