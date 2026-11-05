@@ -31,4 +31,4 @@
 
 ## Notes
 
-Direct app sharing without a project, use of the creator's existing app data, creator hosting, and full access for every current member of the selected organization are confirmed. This is a draft specification, not implementation approval. The readiness companion contains technical gates, known runtime gaps, and an operation-level authorization matrix.
+Direct app sharing without a project, owner-retained delegated use of the creator's existing app data, creator hosting, sharing by any current member, and full access for every current member including guests are confirmed. The specification is approved for implementation. The readiness companion contains technical gates, known runtime gaps, and an operation-level authorization matrix; readiness remains fail-closed until the deferred second-principal mechanism is approved.

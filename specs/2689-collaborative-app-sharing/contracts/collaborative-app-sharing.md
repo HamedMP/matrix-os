@@ -5,8 +5,8 @@ This contract defines the additive V1 interfaces. Concrete schemas live in `@mat
 ## Contract principles
 
 1. The exact app registration and build are explicit in every readiness, share, launch, data, and event response.
-2. The server authorizes `active share + current organization membership` at every boundary. UI discovery and a launch ID are never authority.
-3. Recipients have full declared app functionality. No app role, invitation, acceptance, grant activation, or record filter appears in V1 contracts.
+2. The server authorizes `active share + current organization membership` at every boundary. Any current member may share an app they own, and every current member including a guest receives full app use. UI discovery and a launch ID are never authority.
+3. Recipients have full declared app functionality. No admin approval, app permission system, app role, invitation, acceptance, grant activation, or record filter appears in V1 contracts.
 4. Owner and recipient use the creator's existing app schema through one collaboration-aware mutation coordinator.
 5. Client errors are closed safe codes and copy. Provider names, raw errors, database details, owner paths, tokens, and membership assertions never cross the boundary.
 6. Mutations have body limits, per-action schemas, stable request IDs, payload hashes, and revision predicates.
@@ -104,7 +104,7 @@ Request:
 - Authentication: owner Matrix session.
 - Authority: exact app owner and current organization membership.
 - Body limit: collaboration JSON limit before buffering.
-- Behavior: capture the immutable build, run the bounded two-principal production-path verifier, clean tagged probe data, and persist the safe result.
+- Behavior: capture the immutable build and invoke the bounded two-principal production-path verifier. Until the second-principal source and authorization lifecycle are approved, persist a safe blocked result and never issue a ready certificate. Once configured, clean all tagged probe data after verification.
 - Idempotency: same request ID and payload replays the readiness result.
 - Result: `202` while checking or `200` for a completed replay.
 
@@ -159,7 +159,7 @@ Request:
 ```
 
 - Authentication: owner Matrix session.
-- Authority: app owner and current member of the selected organization.
+- Authority: app owner and current member of the selected organization; no organization-admin approval is required.
 - Transaction: scope, exact-build binding, owner invariant row, operation, audit, event, and directory outbox commit together.
 - Result: `201 CollaborativeAppShare`, or `200` for an exact replay.
 - No project, role, invite, member, record-filter, or acceptance field is accepted.
@@ -189,7 +189,7 @@ Request body (DELETE still receives the mutating body limit):
 - Authentication: platform Matrix session.
 - Authority: current membership in each returned organization.
 - Response: bounded cursor page of active app share metadata.
-- New current members appear without an activation or per-user row.
+- New current members, including guests, appear without an activation, permission, or per-user row.
 - Departed members, wrong-organization users, outsiders, stopped shares, and stale/unready builds are omitted.
 
 The existing `Shared with me` aggregate may include this projection, but an app item is always typed as `app`; it never falls through to Chat/project rendering.

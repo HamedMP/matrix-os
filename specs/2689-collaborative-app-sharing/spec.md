@@ -2,14 +2,14 @@
 
 **Feature Branch**: 2690-collaborative-app-sharing
 **Created**: 2026-11-04
-**Status**: Draft for product review
+**Status**: Approved for implementation
 **Input**: Define when a Matrix app is collaborative and let organization members open and use one live, shared app.
 
 ## User Scenarios & Testing *(mandatory)*
 
 ### User Story 1 - Share and use one live app (Priority: P1)
 
-A member builds a team tracker with saved tasks, chooses **Share app** from that app, and selects an organization. Any current member of that organization can open the app hosted by the creator, see those existing tasks, add another, and see the update. Neither person has to create or join a project, and colleagues do not install copies.
+A member builds a team tracker with saved tasks, chooses **Share app** from that app, and selects an organization. Any current member of that organization, including a guest, can open the app hosted by the creator, see those existing tasks, add another, and see the update. Neither person has to create or join a project, and colleagues do not install copies.
 
 **Why this priority**: This is the first complete outcome that makes an app useful to a team.
 
@@ -42,7 +42,7 @@ An app builder checks readiness before inviting colleagues. The check explains m
 
 ### User Story 3 - Work with the organization (Priority: P2)
 
-After the owner shares the app, every current member of the selected organization can use its full app functionality. There are no additional app-specific roles, member invitations, or record-level restrictions. Concurrent edits and membership changes produce clear outcomes instead of silent overwrites.
+After the owner shares the app, every current member of the selected organization, including a guest, can use its full app functionality. Every current organization member may share an app they own. There are no additional app-specific roles, member invitations, admin approval, or record-level restrictions. Concurrent edits and membership changes produce clear outcomes instead of silent overwrites.
 
 **Why this priority**: Joining the organization should be sufficient to use the shared app, while leaving it must end access.
 
@@ -86,11 +86,11 @@ Colleagues understand that the app and its data are served by the creator's Matr
 
 - **FR-001**: Matrix MUST define a collaborative app as an exact app version that passes an owner-visible technical readiness check for multiple authenticated users, one creator-hosted app and data store, safe multi-user writes, and update propagation. A declaration is necessary but insufficient.
 - **FR-002**: Readiness MUST name each missing capability, bind to the exact app identity and version, and become invalid after a relevant app or runtime change.
-- **FR-003**: An eligible owner MUST be able to share the app directly from the app with one selected organization. Creating or sharing a project, choosing per-member grants, or assigning app roles MUST NOT be required.
-- **FR-004**: Every current member of the selected organization MUST be able to discover the share in **Shared with me** and open the creator-hosted app without a separate invitation, acceptance step, copied installation, or the creator's personal app session.
+- **FR-003**: Any current organization member MUST be able to share an app they own directly from the app with one selected organization. Creating or sharing a project, obtaining organization-admin approval, choosing per-member grants, or assigning app roles MUST NOT be required.
+- **FR-004**: Every current member of the selected organization, including a guest, MUST be able to discover the share in **Shared with me** and open the creator-hosted app without a separate invitation, acceptance step, copied installation, or the creator's personal app session.
 - **FR-005**: A recipient opening the app MUST see the creator's existing app records and later confirmed changes in that same app database. V1 does not filter individual app records by recipient.
 - **FR-006**: Every launch, asset, data read, data write, and update MUST verify that the app is currently shared with the actor's organization and that the actor is a current member. No second app-specific permission check is required.
-- **FR-007**: Every eligible organization member MUST be able to use the app's full declared functionality. Matrix MUST NOT add Viewer/Editor modes, per-member grants, or per-record filtering to V1 shared apps.
+- **FR-007**: Every current organization member, including a guest, MUST be able to use the app's full declared functionality. Matrix MUST NOT add Viewer/Editor modes, per-member grants, admin approval, or per-record filtering to V1 shared apps.
 - **FR-008**: Participants in one instance MUST see the same committed records after reload; active sessions MUST receive a bounded change signal and reconcile without duplicates or lost records.
 - **FR-009**: Writes MUST handle retries and concurrent edits without duplicate creations or silent lost updates. Failed or uncertain saves remain visible as unsaved or needing confirmation.
 - **FR-010**: The owner MUST be able to see which organization has access, stop sharing the app, and see safe unavailable states. Share and unshare actions MUST be recorded.
@@ -110,9 +110,9 @@ Colleagues understand that the app and its data are served by the creator's Matr
 
 ### Assumptions and Dependencies
 
-- **Confirmed product decisions**: Collaborative apps are shared directly and independently of projects. Recipients use the creator-hosted app and see its existing database records. Choosing the organization is the only sharing decision; all current members get full app access with no additional app roles, per-person grants, acceptance flow, or record filter.
+- **Confirmed product decisions**: Collaborative apps are shared directly and independently of projects. Records remain solely owner-owned in the creator's database while the owner delegates revocable use to one organization. Any current organization member may share an app they own, and every current member, including a guest, gets full app access. Choosing the organization is the only sharing decision; there is no admin approval, additional app permission system, app role, per-person grant, acceptance flow, or record filter.
 - This feature reuses Matrix organizations, current membership, **Shared with me**, and the owner app catalog. It creates no second login or app permission vocabulary.
-- The first implementation must prove that owner and recipient launch against the same owner app and database. Existing asset routes alone are insufficient evidence.
+- The first implementation must prove that owner and recipient launch against the same owner app and database. Existing asset routes alone are insufficient evidence. The exact mechanism that supplies the second authenticated readiness principal is intentionally deferred; readiness MUST fail closed and sharing MUST remain disabled until that mechanism is approved and wired.
 - V1 targets Web Canvas, Web Desktop, Electron desktop, and web mobile where owner-built apps already launch. Native Mobile parity is a separate planning decision.
 - A later skill may teach builders this contract. Public links, external guests, marketplace distribution, arbitrary custom app servers, cross-organization sharing of one owner database, creator departure while sharing, and Native Mobile parity are outside V1.
 - Implementation must use test-first coverage at real identity, authorization, and persistence boundaries and live owner/member/outsider journeys on every affected surface. The implementation plan must include a separate public documentation PR in FinnaAI/matrix-os-site.
@@ -123,7 +123,7 @@ Colleagues understand that the app and its data are served by the creator's Matr
 
 - **SC-001**: In a two-member acceptance journey, 100% of the creator's pre-share records and confirmed later creates, edits, and deletes appear to both after reload.
 - **SC-002**: At least 95% of active-session changes become visible to the other participant within 5 seconds under supported test conditions.
-- **SC-003**: In acceptance testing, 100% of current organization members can use the shared app without another permission step, while departed members, outsiders, and wrong-organization users cannot open it.
+- **SC-003**: In acceptance testing, 100% of current organization members, including guests, can use the shared app without another permission step, while departed members, outsiders, and wrong-organization users cannot open it.
 - **SC-004**: A builder can identify why an ineligible app cannot be shared in one check, and a ready owner can complete sharing in under 2 minutes.
 - **SC-005**: Two concurrent members can recover from a conflicting edit without silent data loss in every acceptance run.
 - **SC-006**: After a creator-hosted runtime restarts, authorized colleagues can reopen the app and see every confirmed record.

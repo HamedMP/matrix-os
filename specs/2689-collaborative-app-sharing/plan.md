@@ -6,11 +6,11 @@
 
 ## Summary
 
-Make an eligible Matrix app a direct collaboration boundary. The creator selects one organization; every current member can discover and run the exact creator-hosted build against the creator's existing Postgres records, with no project, install, invitation, acceptance, app role, or record filter.
+Make an eligible Matrix app a direct collaboration boundary. Any current organization member may share an app they own with one organization; every current member, including a guest, can discover and run the exact creator-hosted build against the creator's existing Postgres records, with no project, install, admin approval, invitation, acceptance, app role, app permission system, or record filter.
 
 Implementation reuses the existing collaboration scope/direct-session/directory/resource/event infrastructure and adds exact-build readiness certificates plus app bindings. A same-origin authenticated launch facade renders ordinary code-split apps without exposing owner credentials. Owner and recipient mutations converge on one transactional, idempotent, revision-checked coordinator. Bounded change signals trigger authoritative rereads. Stop-share, membership loss, build drift, host outage, conflicts, and uncertain saves remain distinct recoverable states.
 
-The implementation stack is intentionally capped at **five Matrix OS PRs plus one final public-documentation PR (six deliverables total)**. The hard maximum is ten; exceeding it requires explicit requester approval.
+The implementation uses the fewest reviewable Matrix OS PRs practical while keeping every PR below the 3,000-line hard review limit. The five architecture layers below are logical boundaries, not a fixed PR count; split them when required and never exceed ten Matrix OS PRs. The separate public-documentation PR does not count toward that maximum.
 
 ## Technical Context
 
@@ -21,9 +21,9 @@ The implementation stack is intentionally capped at **five Matrix OS PRs plus on
 **Target Platform**: Matrix owner VPS plus Web Canvas, Web Desktop, Electron Desktop, and web mobile recipients; Native Mobile deferred
 **Project Type**: Monorepo web/desktop application with gateway, platform control plane, shared contracts/UI, and multiple shells
 **Performance Goals**: 95% of supported active-session updates visible within 5 seconds; ready owner shares in under 2 minutes; bounded asset/data responses and event replay
-**Constraints**: Creator-hosted V1; one organization per share; exact build only; existing records visible; full functionality for every current member; no owner credential/provider/AI delegation; safe offline/conflict input retention; no authorization feature flag
-**Scale/Scope**: One active share per exact app catalog identity; existing collaboration connection/page/replay caps; bounded launch/readiness registries and immutable-build retention; six-deliverable stack
-**Unknowns**: None. Phase 0 decisions are resolved in [research.md](research.md).
+**Constraints**: Creator-hosted V1; one organization per share; exact build only; existing records visible; full functionality for every current member including guests; any member may share an app they own; no admin approval or second app permission system; no owner credential/provider/AI delegation; safe offline/conflict input retention; no authorization feature flag
+**Scale/Scope**: One active share per exact app catalog identity; existing collaboration connection/page/replay caps; bounded launch/readiness registries and immutable-build retention; at most ten Matrix OS PRs under 3,000 changed lines each
+**Unknowns**: The source and authorization lifecycle of the second authenticated readiness principal is intentionally deferred. The verifier seam may be implemented, but readiness must return a safe blocked result and sharing must remain disabled until this mechanism is approved.
 
 ## Constitution Check
 
@@ -36,7 +36,7 @@ The implementation stack is intentionally capped at **five Matrix OS PRs plus on
 | Headless core, multi-shell | Readiness, share, membership, data, and event services work without UI; shells consume typed contracts. | PASS |
 | Quality over shortcuts | Exact-build proof and production-path two-principal qualification replace declaration-only readiness. | PASS |
 | App ecosystem | Direct private sharing stays distinct from Gallery install and public Sites. | PASS |
-| Multi-tenancy | One selected organization and fresh membership define audience; personal owner data is explicitly shared, never relabeled as org-owned or merged into org storage. | PASS with disclosed ownership boundary |
+| Multi-tenancy | Constitution v2.5.0 permits owner-retained delegated app access. Any current member may share an app they own; every current member including guests receives full app functionality through existing membership, without a second permission system. | PASS |
 | Defense in depth | Auth matrix, strict schemas, body limits, generic errors, bounded resources, timeouts, immutable assets, and reauthorization are designed before implementation. | PASS |
 | TDD | Every layer starts with a named failing production-boundary test and records red/green evidence; required lanes cannot skip. | PASS |
 | Worktree/PR/Greptile | Plan is added through the existing manual PR worktree; every stack layer is a PR and requires Greptile 5/5. | PASS |
@@ -49,9 +49,9 @@ The implementation stack is intentionally capped at **five Matrix OS PRs plus on
 - All related writes are transactional; revision predicates are in write statements; idempotent create/retry paths use `ON CONFLICT` or operation receipts.
 - External platform/owner calls have trusted origins, redirect rejection, and explicit timeouts. Streams, pages, results, registries, and artifacts are bounded and cleaned up.
 - UI errors retain mounted iframe/`WebContentsView` state and allowlist safe strings.
-- Real Postgres plus rendered two-account tests cover actual producer/consumer boundaries.
+- Real Postgres plus rendered two-account tests cover actual producer/consumer boundaries after the second-principal mechanism is approved; until then the readiness result is blocked and no share can be created.
 
-**Post-design gate result**: PASS. No constitution violation needs a complexity exception.
+**Post-design gate result**: PASS against Constitution v2.5.0. The deferred second-principal mechanism is an explicit implementation blocker, not a complexity exception.
 
 ## Project Structure
 
@@ -173,9 +173,9 @@ recipient Matrix session
 
 ## Implementation Stack
 
-All layers reuse ENG-29. The stack is **five Matrix OS PRs**, followed by **one separate public docs PR**. Each PR is reviewable and tested independently; only PR 5 head is qualified as the complete feature.
+All layers reuse ENG-29. The stack has five logical Matrix OS layers that may be split to keep each PR below 3,000 changed lines, with a maximum of ten Matrix OS PRs. The separate public docs PR is created after qualification and does not count toward ten. Each PR is reviewable and tested independently; only the final Matrix OS stack head is qualified as the complete feature.
 
-### PR 1 — Exact-version readiness and compatibility foundation
+### Logical layer 1 — Exact-version readiness and compatibility foundation
 
 **Title**: `feat(collaboration): add exact-version app readiness`
 
@@ -186,7 +186,7 @@ All layers reuse ENG-29. The stack is **five Matrix OS PRs**, followed by **one 
 - Add strict collaborative manifest/bridge/runtime ABI declarations.
 - Capture immutable built bytes under the build lock and calculate exact build ID.
 - Add readiness migration/repository/evaluator/routes and bounded gate results.
-- Run a purpose-bound two-principal production-path proof and clean tagged probe data.
+- Add a fail-closed verifier seam. Do not issue a ready certificate until the deferred second-principal source and authorization lifecycle are approved; once approved, run the purpose-bound production-path proof and clean tagged probe data.
 - Mark readiness stale on manifest/schema/assets/bridge/runtime-ABI drift.
 - Render app entries as “client update required” on old clients, never as Chat/project.
 - Reconcile `specs/124-organization-collaboration/spec.md`.
@@ -199,7 +199,7 @@ All layers reuse ENG-29. The stack is **five Matrix OS PRs**, followed by **one 
 
 **Visual evidence**: Backend-only N/A with architectural rationale and reviewer approval; attach API/real-Postgres receipts.
 
-### PR 2 — Organization-wide app share lifecycle and discovery
+### Logical layer 2 — Organization-wide app share lifecycle and discovery
 
 **Title**: `feat(collaboration): enable organization app shares`
 
@@ -223,7 +223,7 @@ All layers reuse ENG-29. The stack is **five Matrix OS PRs**, followed by **one 
 
 **Visual evidence**: Backend-only N/A with reviewer approval; attach API/real-Postgres receipts.
 
-### PR 3 — Owner-hosted launch, common data, concurrency, and realtime
+### Logical layer 3 — Owner-hosted launch, common data, concurrency, and realtime
 
 **Title**: `feat(collaboration): run shared apps on the owner host`
 
@@ -247,7 +247,7 @@ All layers reuse ENG-29. The stack is **five Matrix OS PRs**, followed by **one 
 
 **Visual evidence**: Backend-only N/A with reviewer approval; attach headless integration receipts.
 
-### PR 4 — Recipient experience on all supported shells
+### Logical layer 4 — Recipient experience on all supported shells
 
 **Title**: `feat(shell): render owner-hosted shared apps`
 
@@ -271,7 +271,7 @@ All layers reuse ENG-29. The stack is **five Matrix OS PRs**, followed by **one 
 
 **Live evidence**: Separate captures for all four supported surfaces.
 
-### PR 5 — Owner controls and stack qualification
+### Logical layer 5 — Owner controls and stack qualification
 
 **Title**: `feat(apps): add collaborative readiness and sharing controls`
 
@@ -294,7 +294,7 @@ All layers reuse ENG-29. The stack is **five Matrix OS PRs**, followed by **one 
 
 **Live evidence**: Owner and recipient scenarios on all four supported surfaces, exact build/commit, posted to PR and Slack `#tech` with permalink back.
 
-### PR 6 — Separate public documentation repository
+### Separate public documentation repository
 
 **Repository**: `FinnaAI/matrix-os-site`
 **Title**: `docs(apps): explain collaborative app sharing`
@@ -303,13 +303,13 @@ Document readiness, existing records, organization-wide full access, creator hos
 
 ## Stack Integration and Qualification
 
-- Validate the union at PR 5 head; never claim an isolated layer implements the feature.
+- Validate the union at the final Matrix OS stack head; never claim an isolated layer implements the feature.
 - Reuse ENG-29 and include ticket URL plus stack link in every PR body.
 - Recommend collaboration product/design, gateway/platform, shell/Electron, security, and docs review.
 - Use a disposable feature-test VPS and exact host bundle; Docker is not customer-runtime evidence.
 - Test owner/current/new/departed/wrong-org/outsider, 20 rows, CRUD, conflict, lost response, event timing, restart, stop, drift, and replacement.
 - Roll back to PR 1 compatibility if needed; additive inactive tables remain and owner data is never rolled back.
-- No promotion until four surface evidence gates and Greptile 5/5 pass on every stack PR.
+- No promotion until four surface evidence gates and Greptile 5/5 pass on every stack PR, 100% of new collaborative-sharing code is covered, and overall package coverage does not regress.
 
 ## Live Evidence Matrix
 

@@ -20,7 +20,7 @@ pnpm install --frozen-lockfile
 
 ## Stack rule
 
-Ship five dependency-ordered Matrix OS PRs and one final public-documentation PR: six deliverables total. Never exceed ten without explicit requester approval. Every PR reuses ENG-29 and links the stack. Each code PR contains its own test-first red/green proof; cross-stack qualification happens at PR 5.
+Ship the fewest dependency-ordered Matrix OS PRs practical and split whenever a layer approaches 3,000 changed lines. Never exceed ten Matrix OS PRs. The final public-documentation PR is separate and does not count toward ten. Every PR reuses ENG-29 and links the stack. Each code PR contains its own test-first red/green proof; cross-stack qualification happens at the final Matrix OS stack head.
 
 ## Red → green workflow for each code PR
 
@@ -31,6 +31,7 @@ Ship five dependency-ordered Matrix OS PRs and one final public-documentation PR
 5. Run focused tests and capture green evidence.
 6. Run affected typechecks/builds and verify no required assertions skip.
 7. Restack onto the previous layer and verify the union.
+8. Run coverage for affected packages; new collaborative-sharing code must remain at 100% and overall package coverage must not regress.
 
 Example focused lanes (adjust exact filenames to the implemented layer):
 
@@ -55,10 +56,10 @@ bun run build:desktop
 
 Using real Postgres and real owner/platform/gateway boundaries, prove:
 
-1. Exact build readiness fails for browser-only storage, broken recipient launch, unsafe provider authority, duplicate retry, stale-write overwrite, or missing update signal.
+1. Exact build readiness fails for browser-only storage, broken recipient launch, unsafe provider authority, duplicate retry, stale-write overwrite, or missing update signal. Until the second authenticated readiness principal is approved and wired, the verifier must return a safe blocked result and sharing must remain disabled.
 2. A passing certificate is invalidated by manifest/schema/asset/bridge/runtime-ABI drift, but not an ordinary compatible host restart.
 3. Share creation is atomic/idempotent and creates no half-discoverable scope.
-4. Every current organization member discovers/opens without activation, app role, or member row.
+4. Every current organization member, including a guest, discovers/opens without activation, app role, app permission, admin approval, or member row; any current member may share an app they own.
 5. Newcomer gains access; departed member, wrong-org member, and outsider lose/never gain discovery, HTML, asset, read, write, subscription, and reconnect access.
 6. Owner and recipient see the same 20 existing records and confirmed CRUD after reload.
 7. Lost response replay does not duplicate; two stale concurrent writers produce one commit and one recoverable conflict.
@@ -103,7 +104,7 @@ Native Mobile is not a qualified V1 runtime. Record an architectural N/A rationa
 
 ## Disposable VPS stack-head qualification
 
-At PR 5 head:
+At the final Matrix OS stack head:
 
 1. Build an exact host bundle from the stack head.
 2. Provision or reuse a disposable feature-test VPS; do not use the requester's primary computer.
@@ -141,7 +142,8 @@ Document readiness, existing-record disclosure, organization-wide full access, o
 
 ## Completion gate
 
-- All five Matrix OS PRs are green, restacked, and Greptile 5/5.
+- Every Matrix OS stack PR is green, restacked, and Greptile 5/5; the stack stays within ten PRs and every PR stays below 3,000 changed lines.
+- New collaborative-sharing code has 100% coverage and overall affected-package coverage has not regressed.
 - The stack-head end-to-end matrix passes without skipped required assertions.
 - Every affected surface has live evidence in its PR and Slack `#tech`.
 - The public docs PR matches the qualified contracts and copy.

@@ -6,7 +6,7 @@
 
 **Tests**: TDD is mandatory. For every test task, capture a failure caused by the missing production behavior before implementing the paired task, then capture the green result. Fixture, setup, or skipped-assertion failures do not count as red evidence.
 
-**Organization**: Tasks are grouped by user story so each outcome remains independently testable. Task order also preserves the approved five-layer Matrix OS stack plus one final public-documentation PR. Do not exceed ten total PRs without explicit requester approval.
+**Organization**: Tasks are grouped by user story so each outcome remains independently testable. The five architecture layers are logical review boundaries, not a fixed PR count. Use the fewest Matrix OS PRs practical, split before 3,000 changed lines, and never exceed ten Matrix OS PRs. The separate public-documentation PR does not count toward ten.
 
 ## Format: `[ID] [P?] [Story] Description`
 
@@ -22,7 +22,7 @@
 - [ ] T002 [P] Add strict bounded collaborative build, readiness, share, launch-target, participant, mutation, change-signal, and safe-error schemas in `packages/contracts/src/collaboration.ts`
 - [ ] T003 [P] Add exact-build capability and compatibility declarations in `packages/contracts/src/collaboration-capabilities.ts`
 - [ ] T004 [P] Write failing serialization, bounds, unknown-field, and owner/shared launch-union contract tests in `tests/contracts/collaborative-app-sharing.test.ts`
-- [ ] T005 [P] Add two-principal tracker, organization, newcomer, departed-member, wrong-organization, and outsider fixtures in `tests/e2e/fixtures/collaborative-app-sharing.ts`
+- [ ] T005 [P] Add tracker, organization, guest, newcomer, departed-member, wrong-organization, and outsider fixtures while leaving the deferred second-principal credential source unimplemented in `tests/e2e/fixtures/collaborative-app-sharing.ts`
 - [ ] T006 Export the additive collaborative app contracts without changing legacy collaboration exports in `packages/contracts/src/index.ts`
 
 **Checkpoint**: Additive contracts compile, deliberately reject roles/grants/acceptance fields, and old collaboration types remain source-compatible.
@@ -64,14 +64,14 @@
 
 - [ ] T021 [P] [US2] Write failing readiness evaluator tests for declaration, exact build, owner Postgres, recipient launch, participant identity, retry, conflict, signal, provider safety, and cleanup gates in `tests/gateway/collaborative-app-readiness.test.ts`
 - [ ] T022 [P] [US2] Write failing route tests for owner auth, strict path/body schemas, pre-buffer body limits, idempotent replay, bounded errors, and no-store responses in `tests/gateway/collaborative-app-readiness-routes.test.ts`
-- [ ] T023 [P] [US2] Write a failing real-boundary two-principal readiness journey that rejects browser storage, broken recipient launch, unsafe provider use, duplicate retry, lost update, and missing signals in `tests/gateway/collaborative-app-readiness-production-path.test.ts`
+- [ ] T023 [P] [US2] Write a failing production-boundary readiness journey that rejects browser storage, broken recipient launch, unsafe provider use, duplicate retry, lost update, and missing signals, and returns blocked while the second-principal source is unconfigured, in `tests/gateway/collaborative-app-readiness-production-path.test.ts`
 - [ ] T024 [P] [US2] Write failing stale-certificate and same-slug replacement regression tests in `tests/gateway/collaborative-app-readiness-drift.test.ts`
 
 ### Implementation for User Story 2
 
 - [ ] T025 [US2] Implement the bounded readiness state machine and safe actionable gate mapping in `packages/gateway/src/collaboration/collaborative-app-readiness.ts`
-- [ ] T026 [US2] Implement a purpose-bound two-principal verifier using the real launch, bridge, Postgres, mutation, and event paths with tagged probe cleanup in `packages/gateway/src/collaboration/collaborative-app-readiness.ts`
-- [ ] T027 [US2] Add owner-only GET/check routes with Zod boundaries, `bodyLimit`, idempotency, no-store caching, and generic error mapping in `packages/gateway/src/collaboration/collaborative-app-readiness-routes.ts`
+- [ ] T026 [US2] Implement the purpose-bound verifier interface and fail-closed unconfigured result; do not issue ready until the deferred second-principal identity source is approved, then use the real launch, bridge, Postgres, mutation, event, and tagged-cleanup paths in `packages/gateway/src/collaboration/collaborative-app-readiness.ts`
+- [ ] T027 [US2] Add owner-only GET/check routes with Zod boundaries, `bodyLimit`, per-actor rate limits, idempotency, no-store caching, and generic error mapping in `packages/gateway/src/collaboration/collaborative-app-readiness-routes.ts`
 - [ ] T028 [US2] Mount readiness routes and resolve every dependency at registration time in `packages/gateway/src/collaboration/routes.ts`
 - [ ] T029 [US2] Invalidate readiness after catalog deletion/replacement and exact input drift without treating compatible runtime restart as drift in `packages/gateway/src/collaboration/resource-catalog.ts`
 - [ ] T030 [US2] Block required app behavior that depends on creator credentials, connected providers, or AI funding under shared-provider policy in `packages/gateway/src/collaboration/shared-provider-readiness.ts`
@@ -103,9 +103,9 @@
 
 - [ ] T041 [US1] Enable direct app preflight only for the current ready exact build while preserving legacy/project scope behavior in `packages/gateway/src/collaboration/standalone-resource-scope.ts`
 - [ ] T042 [US1] Atomically create/select the unique app scope and exact binding with operation, audit, event, and directory outbox writes in `packages/gateway/src/collaboration/scope-routes.ts`
-- [ ] T043 [US1] Add owner preflight/create/get/DELETE routes with confirmation binding, strict schemas, body limits, revision predicates, replay, and safe errors in `packages/gateway/src/collaboration/collaborative-app-readiness-routes.ts`
+- [ ] T043 [US1] Add owner preflight/create/get/DELETE routes with confirmation binding, strict schemas, body limits, per-actor rate limits, revision predicates, replay, and safe errors in `packages/gateway/src/collaboration/collaborative-app-readiness-routes.ts`
 - [ ] T044 [US1] Project active app scopes as `current_membership` directory entries without activation or recipient rows in `packages/gateway/src/collaboration/directory-outbox.ts`
-- [ ] T045 [US1] Add bounded current-membership shared-app discovery and exact-build launch endpoints in `packages/platform/src/collaboration/routes.ts`
+- [ ] T045 [US1] Add bounded and per-actor-rate-limited current-membership shared-app discovery and exact-build launch endpoints in `packages/platform/src/collaboration/routes.ts`
 - [ ] T046 [US1] Persist and query app/build/lifecycle routing metadata only, excluding owner app records and per-recipient grants, in `packages/platform/src/collaboration/repository.ts`
 - [ ] T047 [US1] Issue proof-key-bound owner-runtime tickets only after active share, current membership, exact readiness, and host checks in `packages/platform/src/collaboration/ticket-issuer.ts`
 
@@ -138,7 +138,7 @@
 
 ### Tests for User Story 3
 
-- [ ] T059 [P] [US3] Write failing authority tests for active exact share plus current membership, full functionality, no Viewer/Editor mapping, and preserved legacy project roles in `tests/gateway/collaborative-app-authority.test.ts`
+- [ ] T059 [P] [US3] Write failing authority tests for active exact share plus current membership, guest access, sharing by any member-owner, full functionality, no admin approval or Viewer/Editor mapping, and preserved legacy project roles in `tests/gateway/collaborative-app-authority.test.ts`
 - [ ] T060 [P] [US3] Write failing newcomer/departed/wrong-org/outsider tests across discovery, launch, asset, read, write, subscribe, resume, broadcast, and reconnect in `tests/gateway/collaborative-app-membership-revocation.test.ts`
 - [ ] T061 [P] [US3] Write failing concurrent-write and idempotency tests for revision predicates in the write statement, same-ID replay, different-payload rejection, uncertain outcome, and retained local input in `tests/gateway/collaborative-app-concurrency-postgres.test.ts`
 - [ ] T062 [P] [US3] Write failing stop/rebind tests for scope/binding CAS, auth-epoch bump, post-commit session closure, event delivery, and owner-data retention in `tests/gateway/collaborative-app-stop-postgres.test.ts`
@@ -146,7 +146,7 @@
 ### Implementation for User Story 3
 
 - [ ] T063 [US3] Authorize new app scopes from active exact binding plus fresh organization membership while preserving existing project/grant semantics in `packages/gateway/src/collaboration/authority.ts`
-- [ ] T064 [US3] Map every current organization member to full declared app functionality without recipient grant, activation, invitation, or role rows in `packages/gateway/src/collaboration/app-instance-adapter.ts`
+- [ ] T064 [US3] Map every current organization member including guests to full declared app functionality, allow every member to share an app they own, and create no recipient grant, permission, activation, invitation, approval, or role rows in `packages/gateway/src/collaboration/app-instance-adapter.ts`
 - [ ] T065 [US3] Recheck bounded organization membership with explicit timeouts and generic failures at every owner-runtime admission boundary in `packages/gateway/src/collaboration/organization-membership-client.ts`
 - [ ] T066 [US3] Enforce the global app `data_revision` predicate inside each mutation transaction and return bounded authoritative conflict metadata in `packages/gateway/src/collaboration/collaborative-app-runtime.ts`
 - [ ] T067 [US3] Reuse stable request IDs and payload hashes for replay/uncertain outcomes without duplicate owner records in `packages/gateway/src/collaboration/scoped-app-bridge.ts`
@@ -193,17 +193,17 @@
 - [ ] T083 Complete the owner hook for readiness, preflight, create, current share, recheck, and stop with serializable state and stable selectors in `packages/ui/src/collaboration/useCollaborativeAppSharing.ts`
 - [ ] T084 Show exactly one organization selector, active organization, Stop sharing, safe state copy, and no project/person/role/acceptance controls in `packages/ui/src/collaboration/CollaborativeAppShareDialog.tsx`
 - [ ] T085 Export collaborative sharing UI and typed transport APIs from `packages/ui/src/index.ts`
-- [ ] T086 [P] Add owner readiness/share/stop component tests including under-two-minute happy path and all required disclosures in `tests/ui/collaborative-app-sharing-controls.test.tsx`
+- [ ] T086 [P] Add owner readiness/share/stop component tests and all required disclosures in `tests/ui/collaborative-app-sharing-controls.test.tsx`
 - [ ] T087 [P] Add full owner/member/outsider Web Canvas and Web Desktop journeys with 20 preexisting rows, CRUD, reload, conflict, lost response, membership loss, stop, rebuild, and replacement in `tests/e2e/collaborative-app-sharing.spec.ts`
 - [ ] T088 [P] Add responsive web-mobile sharing, recipient edit, conflict, offline, and recovery coverage in `tests/e2e/collaborative-app-sharing-mobile.spec.ts`
 - [ ] T089 [P] Add Electron shared-app launch, common-record, offline/recovery, and retained-view coverage in `tests/e2e/app-collaborative-sharing-electron.e2e.test.ts`
-- [ ] T090 Run focused suites, full Vitest, real-Postgres integration, shell production build, and desktop build exactly as listed in `specs/2689-collaborative-app-sharing/quickstart.md`, failing the lane on missing prerequisites or skipped required assertions
-- [ ] T091 Qualify PR 5 stack head on a disposable VPS with the exact bundle and actor/data/concurrency/restart matrix in `specs/2689-collaborative-app-sharing/quickstart.md`
-- [ ] T092 Capture separate Web Canvas, Web Desktop, Electron Desktop, and web-mobile live evidence outside the repository, attach it to PR 5 and Slack `#tech`, and record exact commit/build, ENG-29, scenarios, limitations, and Slack permalink as required by `specs/2689-collaborative-app-sharing/quickstart.md`
+- [ ] T090 Run focused suites, full Vitest, real-Postgres integration, shell production build, desktop build, and affected-package coverage exactly as listed in `specs/2689-collaborative-app-sharing/quickstart.md`; require 100% coverage for new collaborative-sharing code, no overall coverage regression, and no missing prerequisites or skipped required assertions
+- [ ] T091 Qualify the final Matrix OS stack head on a disposable VPS with the exact bundle and actor/data/concurrency/restart matrix in `specs/2689-collaborative-app-sharing/quickstart.md`
+- [ ] T092 Capture separate Web Canvas, Web Desktop, Electron Desktop, and web-mobile live evidence outside the repository, attach it to the final Matrix OS stack-head PR and Slack `#tech`, and record exact commit/build, ENG-29, scenarios, limitations, and Slack permalink as required by `specs/2689-collaborative-app-sharing/quickstart.md`
 - [ ] T093 Record the Native Mobile V1 N/A architecture rationale and reviewer approval, and verify any listing says Open on web without claiming parity, in `specs/2689-collaborative-app-sharing/quickstart.md`
 - [ ] T094 Open the sixth deliverable in `FinnaAI/matrix-os-site` with readiness, existing-record, organization access, creator hosting, retry/CAS/signals, identity/provider limits, stop behavior, and Gallery/Sites distinctions in `content/docs/apps/collaborative-app-sharing.mdx`
 
-**Checkpoint**: All five Matrix OS layers are green and Greptile 5/5, the exact stack head passes live qualification on all supported surfaces, evidence is in the PR and Slack `#tech`, and the public docs PR matches the qualified behavior.
+**Checkpoint**: Every Matrix OS stack PR is below 3,000 changed lines, green, and Greptile 5/5; the stack has at most ten Matrix OS PRs, the exact stack head passes live qualification on all supported surfaces, evidence is in the PR and Slack `#tech`, and the separate public docs PR matches the qualified behavior.
 
 ---
 
@@ -313,26 +313,26 @@ US3 membership transitions/concurrency hardening and US4 host-availability UX fo
 
 ## GitHub Stack Plan
 
-Use GitHub native stacks via `gh stack` and reuse ENG-29 in every layer. Keep each Matrix OS PR below the preferred 1,000 additions/20 files where practical and always below 3,000 additions/50 files; split only with explicit requester approval if the six-deliverable plan would otherwise exceed the hard review limits. Never flatten completed layers.
+Use GitHub native stacks via `gh stack` and reuse ENG-29 in every layer. The five layers below are logical review boundaries, not a fixed PR count. Use the fewest Matrix OS PRs practical, keep each below the preferred 1,000 additions/20 files where possible, split before 3,000 changed lines or 50 files, and never exceed ten Matrix OS PRs. The separate public docs PR does not count toward ten. Every task has exactly one owning logical layer; dependencies are references, not duplicate ownership. Never flatten completed layers.
 
 ### Layer 1 — Exact-version readiness and compatibility foundation
 
 - **Title**: `feat(collaboration): add exact-version app readiness`
-- **Tasks**: T001–T034
+- **Tasks**: T001–T030
 - **Review boundary**: additive contracts, exact build identity/snapshots, migrations, readiness repository/evaluator/routes, compatibility, and readiness owner state.
 - **Evidence**: contract/real-Postgres/production-path receipts; backend-only visual N/A requires architecture rationale and reviewer approval.
 
 ### Layer 2 — Organization-wide app share lifecycle and discovery
 
 - **Title**: `feat(collaboration): enable organization app shares`
-- **Tasks**: T035–T047 plus the authority/discovery portions of T059–T065
+- **Tasks**: T035–T037, T041–T047, T059–T060, T062–T065, and T069
 - **Review boundary**: preflight/create/get/stop, binding lifecycle, current-membership directory projection, discovery, tickets, and no recipient rows.
 - **Evidence**: API/real-Postgres receipts; backend-only visual N/A requires reviewer approval.
 
 ### Layer 3 — Owner-hosted launch, data, concurrency, and realtime
 
 - **Title**: `feat(collaboration): run shared apps on the owner host`
-- **Tasks**: T038–T054 and T061–T070, excluding shell/Electron-only work
+- **Tasks**: T038–T039, T048–T054, T061, T066–T068, and T070–T071
 - **Review boundary**: authenticated launch facade, immutable assets, one mutation coordinator, CAS/idempotency, signals, reauthorization, revocation, and headless two-home journey.
 - **Evidence**: real owner/platform/gateway/Postgres integration receipts; backend-only visual N/A requires reviewer approval.
 
@@ -350,7 +350,7 @@ Use GitHub native stacks via `gh stack` and reuse ENG-29 in every layer. Keep ea
 - **Review boundary**: readiness/share/recheck/stop owner UX, disclosures, complete E2E/VPS qualification, evidence, and Native Mobile N/A approval.
 - **Evidence**: exact stack-head owner/member/outsider captures for all four supported surfaces in the PR and Slack `#tech`.
 
-### Layer 6 — Separate public documentation repository
+### Separate public documentation repository
 
 - **Repository**: `FinnaAI/matrix-os-site`
 - **Title**: `docs(apps): explain collaborative app sharing`
@@ -364,4 +364,4 @@ Use GitHub native stacks via `gh stack` and reuse ENG-29 in every layer. Keep ea
 - Every backend layer must document source of truth, transaction/lock scope, orphan behavior, auth authority, and deferred scope in its PR body.
 - Every layer links ENG-29, PR #3123/spec, and the GitHub native stack; every current head reaches Greptile 5/5 before merge.
 - Visual evidence stays outside the repository and is attached to the relevant PR plus Slack `#tech`.
-- PR 5 head, not any isolated layer, is the only build that may claim complete feature qualification.
+- The final Matrix OS stack head, not any isolated layer, is the only build that may claim complete feature qualification.
