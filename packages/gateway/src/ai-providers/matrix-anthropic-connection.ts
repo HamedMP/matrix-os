@@ -61,7 +61,7 @@ export function createMatrixAnthropicConnectionService(options: {
     if (key.state === "invalid" || key.state === "unavailable") throw new MatrixAnthropicConnectionError("unavailable");
     return { source, key, generation: key.credentialGeneration ?? null };
   }
-  async function observe(owner: string): Promise<MatrixAnthropicConnection> {
+  async function status(owner: string): Promise<MatrixAnthropicConnection> {
     authorize(owner);
     let source = { version: 1 as const, revision: 0, enabled: false, credentialGeneration: null as string | null }, generation: string | null = null;
     let state: MatrixAnthropicConnection["state"] = "unavailable";
@@ -79,6 +79,35 @@ export function createMatrixAnthropicConnectionService(options: {
       actions: state === "read_only" || state === "unsupported" ? [] : ["connect", ...(source.enabled ? ["refresh", "disconnect"] : [])],
       checkedAt: usable ? new Date(usable.checkedAt).toISOString() : null, staleAfter: usable ? new Date(usable.checkedAt + ttl).toISOString() : null,
       supports: state === "read_only" || state === "unsupported" ? { rootChat: false, recipeBots: false } : options.supports });
+  }
+  // A connected key whose catalog aged past the TTL, or was never read since this runtime
+  // started, is checked again by one shared, queued discovery under the same CAS fences.
+  // Errors leave it refresh_required; a rejected key is not checked again until it changes.
+  let renewal: Promise<void> | null = null, renewAfter = 0, rejectedGeneration: string | null = null;
+  async function renew(owner: string) {
+    const aged = catalog;
+    if (aged && now() < aged.checkedAt + ttl || now() < renewAfter || options.readOnly || !options.supports.rootChat && !options.supports.recipeBots) return;
+    renewal ??= enqueue(owner, async () => {
+      const captured = await current(), generation = captured.generation;
+      if (catalog !== aged || !captured.source.enabled || !captured.key.key || generation === null || captured.source.credentialGeneration !== generation
+        || generation === rejectedGeneration) { renewAfter = now() + Math.min(ttl, 30_000); return; }
+      const models = await discover(captured.key.key).catch(error => {
+        if (error instanceof MatrixAnthropicConnectionError && error.code === "rejected") rejectedGeneration = generation;
+        throw error;
+      });
+      authorize(owner); const latest = await current();
+      if (catalog !== aged || !latest.source.enabled || latest.source.revision !== captured.source.revision || latest.generation !== generation
+        || latest.source.credentialGeneration !== generation) return;
+      catalog = { generation, revision: captured.source.revision, checkedAt: now(), models };
+    }).catch(error => {
+      renewAfter = now() + Math.min(ttl, 30_000);
+      if (error instanceof MatrixAnthropicConnectionError && error.code === "rejected" && catalog === aged) catalog = null;
+      console.warn("[matrix-connection] Catalog renewal unavailable:", error instanceof Error ? error.name : "UnknownError");
+    }).finally(() => { renewal = null; });
+    await renewal;
+  }
+  async function observe(owner: string): Promise<MatrixAnthropicConnection> {
+    authorize(owner); await renew(owner); return status(owner);
   }
   async function enqueue<T>(owner: string, operation: () => Promise<T>): Promise<T> {
     authorize(owner); writable(); if (queued >= 8) throw new MatrixAnthropicConnectionError("unavailable"); queued++;
@@ -145,34 +174,37 @@ export function createMatrixAnthropicConnectionService(options: {
     observe,
     connect: (owner, input) => enqueue(owner, async () => {
       const parsed = MatrixAnthropicConnectSchema.safeParse(input); if (!parsed.success) throw new MatrixAnthropicConnectionError("rejected");
-      if (await options.sourceStore.replayConnection(parsed.data)) return observe(owner);
+      if (await options.sourceStore.replayConnection(parsed.data)) return status(owner);
       assertCAS(await current(), parsed.data); const models = await discover(parsed.data.apiKey); authorize(owner);
       const result = await options.sourceStore.commitConnection(parsed.data);
-      if (!result.replayed) { catalog = { generation: result.state.credentialGeneration!, revision: result.state.revision, checkedAt: now(), models }; notifyChanged(); }
-      return observe(owner);
+      if (!result.replayed) { catalog = { generation: result.state.credentialGeneration!, revision: result.state.revision, checkedAt: now(), models }; rejectedGeneration = null; notifyChanged(); }
+      return status(owner);
     }),
     refresh: (owner, input) => enqueue(owner, async () => {
       const parsed = MatrixAnthropicRefreshSchema.safeParse(input); if (!parsed.success) throw new MatrixAnthropicConnectionError("rejected");
       const payload = JSON.stringify([parsed.data.expectedRevision, parsed.data.expectedCredentialGeneration]);
       while (refreshReceipts.length && refreshReceipts[0]!.expires <= now()) refreshReceipts.shift();
       const receipt = refreshReceipts.find(item => item.key === parsed.data.idempotencyKey);
-      if (receipt) { if (receipt.payload !== payload) throw new MatrixAnthropicConnectionError("conflict"); return observe(owner); }
+      if (receipt) { if (receipt.payload !== payload) throw new MatrixAnthropicConnectionError("conflict"); return status(owner); }
       const captured = await current(); assertCAS(captured, parsed.data);
       if (!captured.source.enabled || captured.source.credentialGeneration !== captured.generation || !captured.key.key) throw new MatrixAnthropicConnectionError("rejected");
       let models: QualifiedModel[];
       try { models = await discover(captured.key.key); }
-      catch (error) { if (catalog?.generation === captured.generation && catalog.revision === captured.source.revision) catalog = null; throw error; }
+      catch (error) {
+        if (error instanceof MatrixAnthropicConnectionError && error.code === "rejected") rejectedGeneration = captured.generation;
+        if (catalog?.generation === captured.generation && catalog.revision === captured.source.revision) catalog = null; throw error;
+      }
       authorize(owner); const latest = await current(); assertCAS(latest, parsed.data);
       if (!latest.source.enabled || latest.source.credentialGeneration !== captured.source.credentialGeneration) throw new MatrixAnthropicConnectionError("conflict");
-      catalog = { generation: captured.generation!, revision: captured.source.revision, checkedAt: now(), models };
-      refreshReceipts.push({ key: parsed.data.idempotencyKey, payload, expires: now() + ttl }); if (refreshReceipts.length > 64) refreshReceipts.shift(); return observe(owner);
+      catalog = { generation: captured.generation!, revision: captured.source.revision, checkedAt: now(), models }; rejectedGeneration = null;
+      refreshReceipts.push({ key: parsed.data.idempotencyKey, payload, expires: now() + ttl }); if (refreshReceipts.length > 64) refreshReceipts.shift(); return status(owner);
     }),
     disconnect: (owner, input) => enqueue(owner, async () => {
       const parsed = MatrixAnthropicDisconnectSchema.safeParse(input); if (!parsed.success) throw new MatrixAnthropicConnectionError("rejected");
       try {
         const result = await options.sourceStore.disconnect(parsed.data);
         if (!result.replayed) { catalog = null; notifyChanged(); }
-        return observe(owner);
+        return status(owner);
       } catch (error) {
         if (error instanceof MatrixAnthropicPublicationUncertainError) {
           // Unknown publication is enough to withdraw qualification and cancel paid consumers.
