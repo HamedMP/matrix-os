@@ -437,3 +437,10 @@ test('finite logs retain newest compiler error after full redaction while test s
 test('canonical preview endpoint cannot be reserved by a second machine or worktree', async t => {
   await assert.rejects(capacityGroup(t, 2, 2, ['https://LAB.example.test:443/vm/a', 'https://lab.example.test/vm/a']), /preview.*claimed/i);
 });
+
+test('trailing slash aliases collide only at explicit Matrix slot roots', async t => {
+  const slot = 'https://lab.example.test/vm/alice/~runtime/alpha';
+  await assert.rejects(capacityGroup(t, 2, 2, [slot, slot + '/']), /preview.*claimed/i);
+  const group = await capacityGroup(t, 2, 2, [slot + '/asset', slot + '/asset/']);
+  assert.equal((await group.adapter.status(group.id(1))).manifest.preview, slot + '/asset/');
+});

@@ -815,6 +815,22 @@ jobs:
         run: |
           node --input-type=module -e "import { readFile, writeFile } from 'node:fs/promises'; const p='desktop/package.json'; const j=JSON.parse(await readFile(p,'utf8')); const exact=process.env.RELEASE_VERSION || ''; const suffix=process.env.VERSION_SUFFIX || ''; j.version = exact || (j.version.replace(/-.*/, '') + '-' + suffix); await writeFile(p, JSON.stringify(j, null, 2) + '\n');"
 
+      - name: Verify cold Windows brand build and staging permissions
+        shell: pwsh
+        run: |
+          pnpm exec vitest run tests/scripts/build-typescript-publication.test.ts -t 'cold and repeated'
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          pnpm --filter '@matrix-os/brand' build
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          if (!(Test-Path packages/brand/dist/index.js -PathType Leaf)) { throw "Missing brand package entrypoint" }
+          $acl = Get-Acl -LiteralPath packages/brand/.matrix-build-output
+          $rules = @($acl.GetAccessRules($true, $true, [System.Security.Principal.SecurityIdentifier]))
+          $sid = [System.Security.Principal.WindowsIdentity]::GetCurrent().User
+          if (!$acl.AreAccessRulesProtected -or $rules.Count -ne 1 -or $rules[0].IdentityReference -ne $sid) {
+            throw "Brand compiler staging must be private to the build account"
+          }
+          # The normal desktop build below repeats brand compilation with retained output.
+
       - name: Build desktop app
         shell: pwsh
         env:

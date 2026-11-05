@@ -223,7 +223,11 @@ Kernel stays available; correcting the error resumes updates. Ctrl-C stops this
 watcher and its compiler descendants with the other source processes.
 
 Shared TypeScript builds compile inside a private `0700` `.matrix-build-output`.
-When emitted bytes change, the builder publishes the entire validated directory
+Cold builds publish a complete directory with a single rename, including fresh
+Windows Desktop builds. Windows protects staging with a build-account ACL.
+A byte-identical rerun reuses the live directory. To rebuild changed outputs
+on Windows, stop consumers and remove that package’s generated `dist` first.
+On Linux and macOS, when existing output changes, the builder publishes the entire validated directory
 with one native filesystem operation (Linux `renameat2(RENAME_EXCHANGE)` or
 macOS `renamex_np(RENAME_SWAP)`). Python 3 with standard-library ctypes is a
 **build-time** prerequisite. The staging and output directories must be on the

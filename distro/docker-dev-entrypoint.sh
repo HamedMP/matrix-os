@@ -42,14 +42,33 @@ prepare_build_outputs() {
   done
 }
 
+prepare_kernel_marker() {
+  # A preceding host build may own the marker. Work only on the opened inode;
+  # validate a generated digest before changing ownership or permissions.
+  python3 -I - "$APP_ROOT/packages/kernel/matrix-kernel-published.tsbuildinfo" <<'PY_MARKER'
+import os, pwd, re, stat, sys
+
+fd = os.open(sys.argv[1], os.O_RDONLY | os.O_CREAT | os.O_NOFOLLOW | os.O_NONBLOCK, 0o644)
+try:
+    info = os.fstat(fd)
+    if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1 or info.st_size not in (0, 64):
+        raise ValueError("Invalid Kernel publication marker")
+    if info.st_size and not re.fullmatch(b"[0-9a-f]{64}", os.read(fd, 65)):
+        raise ValueError("Invalid Kernel publication marker contents")
+    owner = pwd.getpwnam("matrixos")
+    os.fchown(fd, owner.pw_uid, owner.pw_gid)
+    os.fchmod(fd, 0o644)
+finally:
+    os.close(fd)
+PY_MARKER
+}
+
 build_dev_packages() {
   prepare_build_outputs
+  prepare_kernel_marker
   su-exec matrixos pnpm --filter @matrix-os/observability build
   su-exec matrixos pnpm --filter @matrix-os/brand build
   su-exec matrixos "$ENTRYPOINT_DIR/docker-dev-entrypoint.sh" --prepare-gateway
-  local marker="$APP_ROOT/packages/kernel/matrix-kernel-published.tsbuildinfo"
-  if [ -L "$marker" ] || { [ -e "$marker" ] && [ ! -f "$marker" ]; }; then echo "Invalid Kernel publication marker" >&2; return 1; fi
-  if [ ! -e "$marker" ]; then install -m 0644 -o matrixos -g matrixos /dev/null "$marker"; fi
   su-exec matrixos pnpm --filter @matrix-os/kernel build
 }
 
