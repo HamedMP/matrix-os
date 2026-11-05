@@ -254,6 +254,88 @@ describe("whole-project transition integration", () => {
     await coordinator.shutdown();
   });
 
+  it("does not let an old recovery delete bindings created after its transition failed", async () => {
+    const transitions = createProjectTransitionJournal({
+      db: fixture.db,
+      now: () => NOW,
+      createTransitionId: () => TRANSITION,
+      createEventId: uuid,
+    });
+    await prepareTransition(transitions, PROJECT_SCOPE, "50000000-0000-4000-8000-000000000194");
+    const newResourceScope = "10000000-0000-4000-8000-000000000193";
+    const newBinding = "30000000-0000-4000-8000-000000000193";
+    const transitionPort: typeof transitions = {
+      ...transitions,
+      recoverTransition: async (transitionId, callbacks) => {
+        await fixture.db.transaction().execute(async (trx) => {
+          await trx.updateTable("collaboration_transitions").set({
+            status: "failed",
+            error_code: "owner_membership_ended",
+            updated_at: NOW,
+          }).where("id", "=", transitionId).executeTakeFirstOrThrow();
+          await trx.updateTable("collaboration_scopes").set({
+            lifecycle: "preparing",
+            updated_at: NOW,
+          }).where("id", "=", PROJECT_SCOPE).executeTakeFirstOrThrow();
+          await trx.insertInto("collaboration_scopes").values({
+            id: newResourceScope,
+            owner_type: "personal",
+            owner_id: OWNER,
+            kind: "chat",
+            organization_id: "org_matrix_team",
+            resource_id: "chat_new_share",
+            parent_scope_id: PROJECT_SCOPE,
+            membership_mode: "inherited",
+            lifecycle: "preparing",
+            revision: 1,
+            auth_epoch: 0,
+            authority_runtime_id: RUNTIME,
+            authority_generation: 3,
+            execution_generation: null,
+            execution_eligibility: null,
+            created_at: NOW,
+            updated_at: NOW,
+            deleted_at: null,
+          }).execute();
+          await trx.insertInto("collaboration_resource_bindings").values({
+            id: newBinding,
+            project_scope_id: PROJECT_SCOPE,
+            resource_scope_id: newResourceScope,
+            resource_kind: "chat",
+            resource_id: "chat_new_share",
+            authority_runtime_id: RUNTIME,
+            authority_generation: 3,
+            revision: 1,
+            readiness: "ready",
+            blocker: null,
+            incarnation: null,
+            created_at: NOW,
+            updated_at: NOW,
+          }).execute();
+        });
+        await callbacks.cleanupStaging({
+          transitionId,
+          signal: new AbortController().signal,
+        });
+        return "failed";
+      },
+    };
+    const coordinator = createProjectTransitionCoordinator({
+      db: fixture.db,
+      transitions: transitionPort,
+      fence: createProjectFence({ db: fixture.db, transitions }),
+      inheritance: createProjectInheritanceResolver({ db: fixture.db, now: () => NOW }),
+      inventory: { preview: async () => { throw new Error("staging failed"); } },
+    });
+
+    expect(coordinator.schedule(TRANSITION)).toBe(true);
+    await coordinator.shutdown();
+
+    await expect(fixture.db.selectFrom("collaboration_resource_bindings")
+      .select("id").where("id", "=", newBinding).executeTakeFirstOrThrow())
+      .resolves.toEqual({ id: newBinding });
+  });
+
   function emptyInventory() {
     return {
       projectRevision: 7,
