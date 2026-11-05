@@ -4,6 +4,7 @@ import { createScopeRuntimeController } from "./supervisor.js";
 import { createSystemdScopeRuntimeLauncher, nextExecutionGeneration } from "./systemd-launcher.js";
 import { botSandboxRootsForHome, managedPiSandboxRootsForHome, sandboxRootsForHome } from "./sandbox.js";
 import { startScopeRuntimeWatchdog } from "./systemd-watchdog.js";
+import { scopeRuntimeNativeSdkDirectory } from "./native-sdk.js";
 
 const RUNTIME_DIRECTORY = "/run/matrix-scope-runtime";
 const STATE_DIRECTORY = "/var/lib/matrix-scope-runtime";
@@ -13,7 +14,7 @@ async function main(): Promise<void> {
   const launcher = createSystemdScopeRuntimeLauncher({
     stateRoot: STATE_DIRECTORY,
     sdkDirectory: "/opt/matrix/app/node_modules/@anthropic-ai/claude-agent-sdk",
-    nativeDirectory: "/opt/matrix/app/node_modules/@anthropic-ai/claude-agent-sdk-linux-x64",
+    nativeDirectory: scopeRuntimeNativeSdkDirectory(),
     workerFile: "/opt/matrix/app/packages/scope-runtime/dist/worker.js",
     brokerSocket: `${RUNTIME_DIRECTORY}/broker.sock`,
     sandboxRoots: sandboxRootsForHome(home),
