@@ -11,6 +11,7 @@ import {
   createSharedAiApprovalReconciler,
   createSharedAiCancellationDispatcher,
   createSharedChatSandboxManifest,
+  executableChatSelectionForOwnerRoute,
   recoverSharedAiQueue,
   resolveClaudeProviderReadiness,
   resolveSharedProviderReadiness,
@@ -53,6 +54,29 @@ describe("shared provider identity", () => {
 });
 
 describe("current owner route dispatch fence", () => {
+  it("translates the saved Provider Settings instance to the executable Chat instance", () => {
+    const providerRoute = resolveCurrentOwnerRoute({
+      ...currentRouteSnapshot(3),
+      instances: currentRouteSnapshot(3).instances.map((instance) => ({
+        ...instance,
+        id: "kernel_owner_anthropic_key",
+        driverId: "kernel" as const,
+      })),
+      active: {
+        providerInstanceId: "kernel_owner_anthropic_key",
+        accessSourceId: "matrix_included",
+        modelId: "claude-sonnet-5",
+      },
+    }, Date.parse("2026-08-29T21:00:01.000Z"));
+
+    expect(providerRoute).not.toBeNull();
+    expect(executableChatSelectionForOwnerRoute(providerRoute!)).toEqual({
+      instanceId: "claude_code_default",
+      model: "claude-sonnet-5",
+    });
+    expect(providerRoute!.providerInstanceId).toBe("kernel_owner_anthropic_key");
+  });
+
   it("accepts the immutable admission tuple only while the exact owner route and revision remain current", () => {
     const admitted = resolveCurrentOwnerRoute(currentRouteSnapshot(3), Date.parse("2026-08-29T21:00:01.000Z"));
     expect(admitted).not.toBeNull();

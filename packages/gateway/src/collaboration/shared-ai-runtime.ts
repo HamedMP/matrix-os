@@ -41,6 +41,7 @@ import {
 } from "./chat-execution-adapter.js";
 import {
   parseCollaborationAiEligibility,
+  CODEX_SHARED_INSTANCE_ID,
   sharedAiAdapterFor,
   sharedAiEligibilitySupportsDriver,
   SHARED_MATRIX_BOT_ELIGIBILITY,
@@ -85,6 +86,7 @@ const SUPERVISOR_SOCKET = "/run/matrix-scope-runtime/supervisor.sock";
 const BROKER_SOCKET = "/run/matrix-scope-runtime/broker.sock";
 const QUEUE_WAKE_INTERVAL_MS = 10_000;
 const QUEUE_WAKE_LIMIT = 64;
+const CLAUDE_CHAT_INSTANCE_ID = "claude_code_default";
 /**
  * S07: the production profile pins the sandbox policy, so a supervisor that
  * does not advertise exactly this policy is an unsupported profile and no
@@ -364,9 +366,10 @@ export async function createSharedAiRuntime(options: {
             requestingActorId: execution.requestingActorId,
             driverKind: execution.driverKind,
           });
+          const executableSelection = executableChatSelectionForOwnerRoute(ownerDecision);
           if (ownerDecision.authorityKind === "provider_settings_active"
-            && (ownerDecision.providerInstanceId !== execution.selection.instanceId
-              || ownerDecision.modelId !== execution.selection.model)) {
+            && (executableSelection.instanceId !== execution.selection.instanceId
+              || executableSelection.model !== execution.selection.model)) {
             throw new SharedChatRunPreparationError("unavailable");
           }
           const providerIdentity = sharedProviderIdentityFor(execution.driverKind, ownerDecision);
@@ -518,10 +521,7 @@ export async function createSharedAiRuntime(options: {
       }
       const driverKind = decision.harness === "codex" ? "codex" as const : "claude_code" as const;
       if (boundDriverKind !== null && boundDriverKind !== driverKind) return null;
-      const currentSelection = {
-        instanceId: decision.providerInstanceId,
-        model: decision.modelId,
-      };
+      const currentSelection = executableChatSelectionForOwnerRoute(decision);
       if (!options.providerCatalog) return null;
       const catalog = await options.providerCatalog.getCatalog({ userId: ownerId, source: "jwt" });
       const validated = validateChatProviderSelection({
@@ -793,6 +793,20 @@ function sharedAdapterFor(
 ): CollaborationAiExecutionEligibility["adapters"][number] | undefined {
   const adapterId = sharedAiAdapterFor(driverKind, instanceId);
   return adapterId ? eligibility.adapters.find((adapter) => adapter.adapterId === adapterId) : undefined;
+}
+
+/**
+ * Provider Settings instance IDs identify saved route provenance, while the
+ * Chat catalog identifies executable harness instances. Keep the former on
+ * the immutable run binding and translate only the dispatch selection.
+ */
+export function executableChatSelectionForOwnerRoute(
+  decision: Pick<SharedRunOwnerSourceDecision, "harness" | "modelId">,
+): CanonicalChatModelSelection {
+  return CanonicalChatModelSelectionSchema.parse({
+    instanceId: decision.harness === "codex" ? CODEX_SHARED_INSTANCE_ID : CLAUDE_CHAT_INSTANCE_ID,
+    model: decision.modelId,
+  });
 }
 
 export function sharedDispatchFenceMatches(
