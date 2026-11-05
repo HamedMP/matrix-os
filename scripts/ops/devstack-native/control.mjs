@@ -8,6 +8,7 @@ import { promisify } from "node:util";
 
 const execute = promisify(execFile);
 export const NODE = "/opt/matrix/runtime/node/bin/node";
+export const safeCode = error => /^[a-z][a-z0-9_]{0,95}$/.test(error?.message) ? error.message : "native_acceptance_failed";
 export function assert(value, code) { if (!value) throw new Error(code); }
 export async function stat(path) {
   try { return await lstat(path); } catch (error) { if (error.code === "ENOENT") return undefined; throw error; }
@@ -87,13 +88,16 @@ export async function sourceFacts(input) {
   return { version: 1, purpose: "matrix-devstack-native-acceptance", namespace: input.namespace,
     appRoot: app, home: input.home, sourceSha, lockfileSha256 };
 }
-export async function assertVacant(config, run = command, heldLock) {
+export async function assertNoUnits(config, run = command) {
   const shown = await run("/usr/bin/systemctl", ["show", config.supervisorUnit, "--property=LoadState"]);
   assert(shown.code === 0 && shown.stdout.trim() === "LoadState=not-found", "existing_or_unknown_supervisor_unit");
   for (const action of ["list-units", "list-unit-files"]) {
     const units = await run("/usr/bin/systemctl", [action, "--all", "--no-legend", "--plain", `${config.workerUnitPrefix}*.service`]);
     assert(units.code === 0 && units.stdout.trim() === "", "existing_or_unknown_worker_unit");
   }
+}
+export async function assertVacant(config, run = command, heldLock) {
+  await assertNoUnits(config, run);
   for (const path of [config.runtimeDirectory, config.commandSocketRoot, config.stateRoot]) {
     assert(!await stat(path), "ambiguous_partial_state");
   }
@@ -103,7 +107,8 @@ export async function assertVacant(config, run = command, heldLock) {
 export async function preflight(config, run = command) {
   const blockers = [];
   if (process.platform !== "linux" || process.arch !== "x64" || process.getuid?.() !== 0) blockers.push("linux_x64_root_required");
-  try { await assertVacant(config, run); } catch (error) { blockers.push(error.message); }
+  const { preparePlacement } = await import("./placement.mjs");
+  try { await preparePlacement(config, { readOnly: true }); await assertVacant(config, run); } catch (error) { blockers.push(safeCode(error)); }
   for (const path of [NODE, "/usr/bin/systemd-run", "/usr/bin/systemctl", "/usr/bin/nsenter", "/usr/bin/env", "/usr/bin/systemd-notify"]) {
     try { await access(path, constants.X_OK); } catch (error) {
       if (!["ENOENT", "EACCES"].includes(error.code)) throw error; blockers.push("native_dependency_missing");
@@ -122,25 +127,6 @@ export async function preflight(config, run = command) {
     assert((await stat("/sys/fs/cgroup/cgroup.controllers"))?.isFile(), "cgroup_v2_required");
   } catch (error) { blockers.push(["worker_not_world_readable", "sdk_not_world_readable", "cgroup_v2_required"].includes(error.message) ? error.message : "native_build_missing"); }
   return { mode: "preflight", ready: blockers.length === 0, blockers: [...new Set(blockers)], config };
-}
-export async function withOwnedSupervisor(config, token, run, start, proof, cleanup = async () => {}) {
-  const observation = () => run("/usr/bin/systemctl", ["show", config.supervisorUnit,
-    "--property=Description", "--property=Transient", "--property=LoadState"]);
-  const owned = result => result.code === 0 && result.stdout.split("\n").includes(`Description=${token}`)
-    && result.stdout.split("\n").includes("Transient=yes");
-  let proven = false;
-  try {
-    await start(); proven = owned(await observation()); assert(proven, "supervisor_ownership_unproven");
-    return await proof();
-  } finally {
-    const observed = await observation();
-    if (owned(observed)) {
-      proven = true;
-      const stopped = await run("/usr/bin/systemctl", ["stop", config.supervisorUnit], 55_000);
-      assert(stopped.code === 0, "owned_supervisor_cleanup_failed");
-    } else assert(observed.code === 0 && observed.stdout.split("\n").includes("LoadState=not-found"), "cleanup_ownership_unproven");
-    if (proven) await cleanup();
-  }
 }
 export async function waitFor(check, code, timeout = 30_000) {
   const deadline = Date.now() + timeout;

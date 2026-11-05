@@ -9,8 +9,8 @@ afterEach(async () => { await Promise.all(scratch.splice(0).map(p => rm(p, { rec
 const args = ["--namespace=proof", "--app-root=/var/lib/matrix-devstack/proof/app", "--home=/var/lib/matrix-devstack/proof/home", "--mode=preflight"];
 const source = "a".repeat(40), lockfile = "b".repeat(64);
 async function subject() { return import("../../scripts/ops/devstack-native/control.mjs"); }
-async function fixture() {
-  const root = await mkdtemp(join(await realpath(tmpdir()), "native-proof-")); scratch.push(root);
+async function fixture(workspace = false) {
+  const root = await mkdtemp(join(workspace ? process.cwd() : await realpath(tmpdir()), "native-proof-")); scratch.push(root);
   const path = join(root, ".native-acceptance-owner.json");
   const expected = { version: 1, purpose: "matrix-devstack-native-acceptance", namespace: "proof", appRoot: "/var/lib/matrix-devstack/proof/app", home: "/var/lib/matrix-devstack/proof/home", sourceSha: source, lockfileSha256: lockfile };
   await writeFile(path, JSON.stringify(expected), { mode: 0o600 });
@@ -46,12 +46,14 @@ describe("owned native acceptance boundaries", () => {
   });
 
   it("preflight never creates directories, marker, units or receipt", async () => {
-    const { preflight } = await subject(); const f = await fixture();
+    const { preflight } = await subject(); const f = await fixture(true);
     const before = await readdir(f.root);
     const commands: string[][] = [];
     const config = resolveScopeRuntimeHostConfig({ env: { MATRIX_SCOPE_RUNTIME_NAMESPACE: "proof", MATRIX_SCOPE_RUNTIME_APP_ROOT: "/var/lib/matrix-devstack/proof/app", MATRIX_HOME: "/var/lib/matrix-devstack/proof/home" } });
+    Object.assign(config, { runtimeDirectory: join(f.root, "run", "scope-runtime"), commandSocketRoot: join(f.root, "run", "c"), stateRoot: join(f.root, "state", "scope-runtime"), appRoot: join(f.root, "app") });
     const result = await preflight(config, async (_bin: string, argv: string[]) => { commands.push(argv); return { code: 0, stdout: argv.includes("show") ? "LoadState=not-found\n" : "" }; });
     expect(result.ready).toBe(false); expect(await readdir(f.root)).toEqual(before);
+    expect(commands).toHaveLength(3);
     expect(commands.every(argv => ["show", "list-units", "list-unit-files"].includes(argv[0]))).toBe(true);
     expect(await readFile(f.path, "utf8")).toContain('"namespace":"proof"');
   });
@@ -64,20 +66,7 @@ describe("owned native acceptance boundaries", () => {
     await expect(assertVacant({ ...config, stateRoot: f.root }, async (_: string, argv: string[]) => ({ code: 0, stdout: argv[0] === "show" ? "LoadState=not-found\n" : "" }))).rejects.toThrow(/state/);
   });
 
-  it("cleans a failed partial submission only after proving invocation ownership", async () => {
-    const { withOwnedSupervisor } = await subject(); const stopped: string[] = [];
-    const config = { supervisorUnit: "matrix-devstack-proof-scope-runtime.service" };
-    const command = async (_: string, argv: string[]) => {
-      if (argv[0] === "show") return { code: 0, stdout: "Description=matrix-native-proof-token\nTransient=yes\n" };
-      if (argv[0] === "stop") stopped.push(argv[1]);
-      return { code: 0, stdout: "" };
-    };
-    await expect(withOwnedSupervisor(config, "matrix-native-proof-token", command, async () => { throw new Error("partial_start"); }, async () => {})).rejects.toThrow("partial_start");
-    expect(stopped).toEqual(["matrix-devstack-proof-scope-runtime.service"]);
-    stopped.length = 0;
-    await expect(withOwnedSupervisor(config, "matrix-native-proof-token", async (_: string, argv: string[]) => argv[0] === "show" ? { code: 0, stdout: "Description=foreign\nTransient=yes\n" } : command(_, argv), async () => { throw new Error("partial_start"); }, async () => {})).rejects.toThrow();
-    expect(stopped).toEqual([]);
-  });
+
 });
 
 describe("native proof transport and fixed service profile", () => {

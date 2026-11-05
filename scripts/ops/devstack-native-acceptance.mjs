@@ -3,64 +3,63 @@ import { randomUUID } from "node:crypto";
 import { open, readFile, unlink, writeFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { assert, assertVacant, command, must, noSymlinkAncestors, parseOptions, preflight, readOwnerMarker,
-  resolveConfig, sourceFacts, stat, withOwnedSupervisor } from "./devstack-native/control.mjs";
-import { buildFacts, hostSnapshot, inspectWorker, show } from "./devstack-native/evidence.mjs";
-import { nativeProof, supervisorArgs } from "./devstack-native/proof.mjs";
+import { assert, assertVacant, command, noSymlinkAncestors, parseOptions, preflight, readOwnerMarker,
+  resolveConfig, sourceFacts, stat } from "./devstack-native/control.mjs";
+import { buildFacts, hostSnapshot } from "./devstack-native/evidence.mjs";
+import { createUnitLedger } from "./devstack-native/ownership.mjs";
+import { createJournal, safeCode } from "./devstack-native/receipt.mjs";
+import { preparePlacement } from "./devstack-native/placement.mjs";
+import { verifyDependencies } from "./devstack-native/dependencies.mjs";
+import { submitSupervisor } from "./devstack-native/submission.mjs";
+import { nativeProof, observeWorkers } from "./devstack-native/proof.mjs";
 
 const scriptRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
-const safeCode = error => /^[a-z][a-z0-9_]{0,95}$/.test(error?.message) ? error.message : "native_acceptance_failed";
-
-async function cleanupWorkers(config, identity) {
-  const listing = await must("/usr/bin/systemctl", ["list-units", "--all", "--no-legend", "--plain", identity.discoveryGlob], "owned_worker_inventory_failed");
-  const units = listing.split("\n").map(line => line.trim().split(/\s+/)[0]).filter(Boolean);
-  assert(units.length <= 32, "owned_worker_capacity");
-  for (const unit of units) {
-    const handle = identity.parseWorkerUnit(unit); assert(handle, "cleanup_worker_identity_invalid");
-    const evidence = await show(unit, ["Transient", "RootDirectory", "DynamicUser"]);
-    assert(evidence.Transient === "yes" && evidence.DynamicUser === "yes"
-      && evidence.RootDirectory === `${config.stateRoot}/runtimes/${handle.slice(8)}/root`, "cleanup_worker_ownership_unproven");
-    await must("/usr/bin/systemctl", ["stop", unit], "owned_worker_cleanup_failed");
-  }
-  return { workersChecked: units.length, exactNamesOnly: true };
-}
 async function run(config, marker, identity, interrupted) {
   const base = dirname(config.appRoot); const token = `matrix-native-${randomUUID()}`;
   const lockPath = `${base}/.native-acceptance-active`;
   const receiptPath = `${base}/native-acceptance-receipt-${token}.json`;
+  const journal = createJournal(), ledger = createUnitLedger(config, token);
   const receipt = { version: 1, status: "failed", purpose: marker.purpose, namespace: config.namespace,
     source: marker, host: { platform: process.platform, architecture: process.arch }, startedAt: new Date().toISOString(), receiptPath };
   const lock = await open(lockPath, "wx", 0o600); const ownedLock = await lock.stat();
   try {
-    await lock.writeFile(`${token}\n`);
-    await assertVacant(config, command, ownedLock);
-    receipt.build = await buildFacts(config);
-    receipt.before = await hostSnapshot(config);
+    await lock.writeFile(`${token}\n`); await assertVacant(config, command, ownedLock);
+    receipt.placement = await journal.step("placement", () => preparePlacement(config));
+    // Before any native executable/version query, retain definitions, artifacts,
+    // required service incarnations and all bounded peer/legacy command sockets.
+    receipt.before = await journal.step("baseline", () => hostSnapshot(config));
+    const dependencies = await journal.step("dependencies", () => verifyDependencies(config, marker));
+    dependencies.workerFile = `${config.appRoot}/packages/scope-runtime/dist/worker.js`;
+    receipt.build = await journal.step("build", () => buildFacts(config, dependencies));
+    const profile = await import(pathToFileURL(`${config.appRoot}/packages/scope-runtime/dist/profile.js`).href);
     const templatePath = `${config.appRoot}/distro/customer-vps/systemd/matrix-scope-runtime.service`;
-    await noSymlinkAncestors(templatePath, true);
-    const template = await readFile(templatePath, "utf8");
-    // This exclusive lock reserves a previously vacant namespace. No installed unit is changed.
-    await withOwnedSupervisor(config, token, command, async () => {
-      await must("/usr/bin/systemd-run", supervisorArgs(config, token, template), "owned_supervisor_start_failed", 30_000);
-    }, async () => {
-      receipt.native = await nativeProof(config, identity, unit => inspectWorker(config, unit));
-    }, async () => { receipt.cleanup = await cleanupWorkers(config, identity); });
-    receipt.status = "passed";
-  } catch (error) { receipt.error = safeCode(error); }
+    await noSymlinkAncestors(templatePath, true); const template = await readFile(templatePath, "utf8");
+    await journal.step("supervisor", () => submitSupervisor(config, token, template, ledger));
+    await nativeProof(config, identity, { journal, ledger, dependencies, baseline: receipt.before,
+      expectedProfile: { profileDigest: profile.SCOPE_RUNTIME_PROFILE_DIGEST } });
+  } catch (error) { receipt.error = journal.fail(error); }
   finally {
     try {
-      if (receipt.before) {
+      receipt.cleanup = await journal.step("cleanup", async () => {
+        receipt.ownership = ledger.evidence();
+        const checks = await ledger.cleanup(); receipt.cleanupChecks = checks;
+        ledger.inventory(await observeWorkers(config)); receipt.quarantine = ledger.quarantine();
+        assert(checks.every(item => item.state === "passed") && receipt.quarantine.length === 0, "cleanup_or_quarantine_unresolved"); return checks;
+      });
+    } catch (error) { receipt.cleanupError = journal.fail(error); }
+    if (receipt.before) try {
+      await journal.step("unchanged", async () => {
         receipt.after = await hostSnapshot(config);
         receipt.unchangedPeersAndInstalled = JSON.stringify(receipt.before) === JSON.stringify(receipt.after);
-        assert(receipt.unchangedPeersAndInstalled, "peer_or_installed_state_changed");
-      }
-    } catch (error) { receipt.status = "failed"; receipt.cleanupError = safeCode(error); }
+        assert(receipt.unchangedPeersAndInstalled, "peer_or_installed_state_changed"); return { identical: true };
+      });
+    } catch (error) { receipt.baselineError = journal.fail(error); }
     await lock.close();
     const current = await stat(lockPath);
     if (current?.ino === ownedLock.ino && current.dev === ownedLock.dev) await unlink(lockPath);
-    else { receipt.status = "failed"; receipt.cleanupError = "lock_ownership_lost"; }
-    if (interrupted()) { receipt.status = "failed"; receipt.error = "acceptance_interrupted"; }
-    receipt.finishedAt = new Date().toISOString();
+    else receipt.lockError = journal.fail(Error("lock_ownership_lost"));
+    if (interrupted()) receipt.error = journal.fail(Error("acceptance_interrupted"));
+    Object.assign(receipt, journal.result()); receipt.finishedAt = new Date().toISOString();
     await writeFile(receiptPath, `${JSON.stringify(receipt, null, 2)}\n`, { flag: "wx", mode: 0o600 });
   }
   return receipt;
@@ -91,7 +90,9 @@ export async function main(argv) {
 }
 if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {
   try {
-    const result = await main(process.argv.slice(2)); process.stdout.write(`${JSON.stringify(result)}\n`);
+    const result = await main(process.argv.slice(2));
+    const output = result.receiptPath ? { status: result.status, receiptPath: result.receiptPath, sourceSha: result.source.sourceSha, error: result.error, gates: Object.fromEntries(Object.entries(result.gates).map(([name, value]) => [name, value.state])) } : result;
+    process.stdout.write(`${JSON.stringify(output)}\n`);
     process.exitCode = result.ready === true || result.status === "passed" ? 0 : 2;
   } catch (error) { process.stderr.write(`${safeCode(error)}\n`); process.exitCode = 2; }
 }
