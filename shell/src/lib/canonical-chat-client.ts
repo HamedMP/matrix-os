@@ -1,4 +1,5 @@
 import { createBrowserPermissionClient, recoverCanonicalChatAdmission, type CanonicalChatClientAdmission, type BrowserPermissionClient } from "@matrix-os/ui";
+import { createRoutineFullAccessBrowserClient, routineFullAccessTurnHeaders, type RoutineFullAccessClient } from "@matrix-os/ui";
 import type { CanonicalSubmitChatApprovalRequest } from "@matrix-os/contracts";
 import { markChatNavigation, chatImportSourceVersionUrl } from "@matrix-os/ui";
 import { MAX_AGENT_ATTACHMENT_BYTES, CanonicalChatNavigationResponseSchema, canonicalAssistantOutputMessages, type CanonicalChatNavigationResponse } from "@matrix-os/contracts";
@@ -60,6 +61,7 @@ export type CanonicalShellChatDeletion = z.infer<typeof CanonicalShellChatDeleti
 export interface CanonicalShellChatClient {
   agents?: ChatAgentClient;
   browserPermissions?: BrowserPermissionClient;
+  routineFullAccess?: RoutineFullAccessClient;
   navigation?():Promise<CanonicalChatNavigationResponse>;
   list(input?: { unreadOnly?: boolean; cursor?: string }): Promise<CanonicalChatListResponse>;
   openEventStream(input: { cursor?: number; signal: AbortSignal }): Promise<Response>;
@@ -196,6 +198,7 @@ export function createCanonicalShellChatClient(options: {
   gatewayUrl: string;
   fetchFn?: typeof fetch;
   createId?: () => string;
+  captureAuthority?: (chatId: string) => () => boolean;
 }): CanonicalShellChatClient {
   const fetchFn = options.fetchFn ?? fetch;
   const request = (path: string, init: RequestInit = {}, requestOptions?: { timeoutMs?: number; signal?: AbortSignal }) => fetchFn(`${options.gatewayUrl}${path.startsWith("/api/chats") ? chatImportSourceVersionUrl(chatFundingVersionUrl(chatReadStateVersionUrl(path))) : path}`, {
@@ -206,7 +209,9 @@ export function createCanonicalShellChatClient(options: {
     signal: requestOptions?.signal ? AbortSignal.any([requestOptions.signal, AbortSignal.timeout(requestOptions.timeoutMs ?? REQUEST_TIMEOUT_MS)]) : AbortSignal.timeout(requestOptions?.timeoutMs ?? REQUEST_TIMEOUT_MS),
   }).then(response => jsonResponse(response, path));
   const createId = options.createId ?? (() => globalThis.crypto.randomUUID().replaceAll("-", ""));
+  const routineFullAccess = createRoutineFullAccessBrowserClient(options.gatewayUrl, fetchFn);
   return {
+    routineFullAccess,
     browserPermissions: createBrowserPermissionClient((path, method, body) => request(path, { method, ...(body === undefined ? {} : { headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) }) })),
     agents: createChatAgentClient((path, method, body, requestOptions) => request(path, { method,
       ...(body === undefined ? {} : { headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) }),
@@ -290,9 +295,12 @@ export function createCanonicalShellChatClient(options: {
     async admitTurn(chatId, input) {
       const id = CanonicalChatIdSchema.parse(chatId);
       const body = CanonicalCreateChatTurnRequestSchema.parse(input);
+      const current = options.captureAuthority?.(id);
+      const routineHeaders = await routineFullAccessTurnHeaders(routineFullAccess, id, body, current);
+      if (body.permissionMode === "full_access" && current && !current()) throw new Error("Chat context changed");
       try {
         return CanonicalChatTurnAdmissionResponseSchema.parse(await request(chatMessageVersionUrl(`/api/chats/${encodeURIComponent(id)}/turns`), {
-          method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
+          method: "POST", headers: { "Content-Type": "application/json", ...routineHeaders }, body: JSON.stringify(body),
         }));
       } catch (error: unknown) {
         const ambiguous = error instanceof TypeError

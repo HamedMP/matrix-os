@@ -1,4 +1,5 @@
 import { createRoutineActionOwnerRoutes } from "../bots/routine-action-routes.js";
+import { createRoutineFullAccessRoutes } from "../bots/routine-full-access-routes.js";
 import { createRoutineCliExecutionRoutes } from "../bots/routine-cli-routes.js";
 import { RoutineCliError } from "../bots/routine-cli-errors.js";
 import { createRoutineCliDestinationRoutes } from "../bots/routine-cli-destination-routes.js";
@@ -117,6 +118,7 @@ export function registerCollaborationChatRoutes(options: CollaborationChatRouteO
     getPrincipal: (c) => requireRequestPrincipal(c),
   }));
   app.route("/", createRoutineActionOwnerRoutes({ actions: botServices?.routineCli ?? null, getPrincipal: requireRequestPrincipal }));
+  app.route("/", createRoutineFullAccessRoutes({ service: botServices?.routineCli?.fullAccess ?? null, getPrincipal: requireRequestPrincipal }));
   app.route("/", createRoutineCliExecutionRoutes({ requests: { execute: input => {
     if (!botServices?.routineCli) throw new RoutineCliError("unavailable"); return botServices.routineCli.execute(input);
   } } }));

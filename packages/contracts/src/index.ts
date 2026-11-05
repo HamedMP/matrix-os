@@ -1503,3 +1503,5 @@ export * from "#shared-browser";
 export { createBrowserGrantUndoTracker, reconcileBrowserGrantObservation, browserPermissionChoices, browserPermissionRequest, browserPermissionOutcome, browserPermissionErrorKind, type BrowserPermissionChoice } from "#browser-permission-presentation";
 export * from "#funded-host-activation";
 export * from "#routine-action";
+export * from "#routine-full-access";
+export * from "#routine-full-access-view";

@@ -203,6 +203,7 @@ export class CanonicalChatOrchestrator {
     adapters: CanonicalChatProviderRegistry;
     browserApprovals?: BrowserApprovalControl;
     routineActions?: Pick<RoutineCliActionController, "submitChat">;
+    beforeRoutineFullAccessDispatch?: import("./turn-admission.js").TurnAdmissionOptions["beforeRoutineFullAccessDispatch"];
     executionRoots?: ChatExecutionRootResolver;
     agentContext?: ChatAgentContext;
     collaborationGuard?: {
@@ -319,7 +320,7 @@ export class CanonicalChatOrchestrator {
   async admitTurn(
     principal: RequestPrincipal, owner: ChatOwner, chatId: string,
     inputValue: CanonicalCreateChatTurnRequest,
-    provenance?: { previewTurnProof?: string },
+    provenance?: import("./turn-admission.js").CanonicalTurnProvenance,
   ): Promise<CanonicalChatTurnAdmissionResponse> {
     return admitCanonicalTurn({
       ...this.options,

@@ -23,6 +23,7 @@ import {
   canonicalProviderUnavailableSelectionLabel,
   canonicalChatSubscriptionSelectionMatches,
   canonicalProviderChoiceCanBeDefault,
+  useRoutineFullAccess, type RoutineFullAccessClient,
 } from "@matrix-os/ui";
 import { getGatewayUrl } from "@/lib/gateway";
 import { PROVIDER_SETTINGS_CHANGED_EVENT } from "@/lib/canonical-provider-setup";
@@ -100,7 +101,8 @@ function applySavedSelection(
 export function useChatProviderState(
   currentSelection?: CanonicalChatModelSelection,
   boundInstanceId?: string,
-  context?: { chatId?: string; scopeKey?: string; executionControls?: CanonicalChatExecutionControls },
+  context?: { chatId?: string; scopeKey?: string; executionControls?: CanonicalChatExecutionControls;
+    routineFullAccessClient?: RoutineFullAccessClient; allowRoutineScope?: boolean },
 ) {
   const [catalog, setCatalog] = useState<CanonicalProviderCatalog | null>(null);
   const [savedChoice, setSavedChoice] = useState(readSavedChoice);
@@ -246,12 +248,11 @@ export function useChatProviderState(
       && current.modelId === choice.modelId
       && canonicalChatSubscriptionSelectionMatches(catalog?.instances.find(instance => instance.id === choice.instanceId), choice.selectedOptions))) return;
     const preserveControls = selected?.instanceId === choice.instanceId;
-    save({
-      key: choiceKey(choice),
+    const next = { key: choiceKey(choice),
       interactionMode: preserveControls ? selected.interactionMode : choice.interactionMode,
       permissionMode: preserveControls ? selected.permissionMode : choice.permissionMode,
-      options: preserveControls && !(isChatgptPlanChatRoute(choice) || isMatrixAnthropicChatRoute(choice)) ? selected.selectedOptions : choice.selectedOptions,
-    });
+      options: preserveControls && !(isChatgptPlanChatRoute(choice) || isMatrixAnthropicChatRoute(choice)) ? selected.selectedOptions : choice.selectedOptions };
+    routineAccess.guardSelectionChange(choice.driverKind === "claude_code" && next.permissionMode === "full_access" && next.interactionMode === "default", () => save(next));
   };
 
   const updateSelected = (patch: Partial<Omit<SavedProviderSelection, "key">>) => {
@@ -266,11 +267,17 @@ export function useChatProviderState(
   };
 
   const selectInteractionMode = (mode: string) => {
-    if (selected?.interactionModes.includes(mode)) updateSelected({ interactionMode: mode });
+    if (selected?.interactionModes.includes(mode)) routineAccess.guardSelectionChange(selected.driverKind === "claude_code" && selected.permissionMode === "full_access" && mode === "default", () => updateSelected({ interactionMode: mode }));
   };
-  const selectPermissionMode = (mode: string) => {
+  const commitPermissionMode = (mode: string) => {
     if (selected?.permissionModes.includes(mode)) updateSelected({ permissionMode: mode });
   };
+  const routineAccess = useRoutineFullAccess({ client: context?.routineFullAccessClient, chatId: context?.chatId,
+    identity: JSON.stringify([context?.scopeKey, selected?.instanceId, selected?.modelId]),
+    manage: context?.allowRoutineScope === true,
+    enabled: context?.allowRoutineScope === true && selected?.driverKind === "claude_code" && selected.interactionMode === "default", browserOrigin: true,
+    permissionMode: selected?.permissionMode ?? "supervised", onPermissionModeChange: commitPermissionMode });
+  const selectPermissionMode = (mode: string) => { if (selected?.permissionModes.includes(mode)) routineAccess.changeMode(mode); };
   const selectOption = (id: string, value: string | boolean) => {
     if (!selected) return;
     const descriptor = selected.options.find((option) => option.id === id);
@@ -297,6 +304,7 @@ export function useChatProviderState(
     select,
     selectInteractionMode,
     selectPermissionMode,
+    routineAccess,
     selectOption,
     loading,
     hasTrustedCatalog,
