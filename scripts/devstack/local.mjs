@@ -10,12 +10,12 @@ export const shellUnit = 'matrix-devstack-shell.service';
 const purpose = 'ENG-432-local-worktree';
 const slug = /^[a-z0-9][a-z0-9-]{0,62}$/;
 const revision = /^(unknown|[a-f0-9]{7,64})$/;
-export function redact(value = '') {
+function sanitize(value = '') {
   return String(value).replace(/("[^"]*(?:token|secret|password|api[_-]?key)[^"]*"\s*:\s*)"(?:[^"\\]|\\.)*"/gi, '$1"[redacted]"').replace(/\b(?:bearer)\s+\S+/gi, 'Bearer [redacted]')
     .replace(/\b([\w-]*(?:token|secret|password|api[_-]?key)[\w-]*\s*[=:]\s*)[^\s,;]+/gi, '$1[redacted]')
-    .replace(/\b(?:sk|ghp|github_pat|xoxb|xoxp)[-_][A-Za-z0-9_-]+/g, '[redacted]')
-    .slice(0, 32768);
+    .replace(/\b(?:sk|ghp|github_pat|xoxb|xoxp)[-_][A-Za-z0-9_-]+/g, '[redacted]');
 }
+export function redact(value = '') { return sanitize(value).slice(0, 32768); }
 export function commandRunner(command, args) {
   const result = spawnSync(command, args, { encoding: 'utf8', timeout: 300_000, maxBuffer: 1024 * 1024, killSignal: 'SIGKILL', env: { ...process.env, ORBENV: '' } });
   return { code: result.status ?? 1, stdout: result.stdout ?? '', stderr: result.error ? `Command failed: ${result.error.code}` : result.stderr ?? '' };
@@ -23,13 +23,16 @@ export function commandRunner(command, args) {
 const recordLimit = 65536;
 const manifestLimit = 16384;
 function serializedBytes(value) { return Buffer.byteLength(JSON.stringify(value), 'utf8'); }
-function boundedText(value, limit = 8192) {
+function boundedText(value, limit = 8192, tail = false) {
   const text = String(value); let low = 0, high = text.length;
+  const portion = length => tail ? text.slice(text.length - length) : text.slice(0, length);
   while (low < high) {
     const mid = Math.ceil((low + high) / 2);
-    if (serializedBytes(text.slice(0, mid)) <= limit) low = mid; else high = mid - 1;
+    if (serializedBytes(portion(mid)) <= limit) low = mid; else high = mid - 1;
   }
-  return text.slice(0, low);
+  const result = portion(low);
+  // A suffix must not begin midway through a UTF-16 surrogate pair.
+  return tail && /[\uDC00-\uDFFF]/.test(result[0] ?? '') ? result.slice(1) : result;
 }
 async function plainFile(path, limit = recordLimit) {
   if (!isAbsolute(path)) throw new Error('File path must be absolute');
@@ -112,9 +115,9 @@ export function createAdapter({ registry = process.env.DEVSTACK_STATE_DIR ?? joi
     try { await handle.writeFile(content); await handle.close(); await rename(temp, path); }
     finally { await handle.close(); await unlink(temp).catch(error => { if (error.code !== 'ENOENT') throw error; }); }
   }
-  async function invoke(manifest, user, args) {
+  async function invoke(manifest, user, args, { recentStdout = false } = {}) {
     const result = await runner('orb', ['-m', manifest.machine, '-u', user, ...args]);
-    return { code: Number.isInteger(result.code) ? result.code : 1, stdout: boundedText(redact(result.stdout)), stderr: boundedText(redact(result.stderr)) };
+    return { code: Number.isInteger(result.code) ? result.code : 1, stdout: recentStdout ? boundedText(sanitize(result.stdout), 8192, true) : boundedText(redact(result.stdout)), stderr: boundedText(redact(result.stderr)) };
   }
   async function authoritativeOutput(manifest, args) {
     const result = await runner('orb', ['-m', manifest.machine, '-u', 'root', ...args]);
@@ -262,7 +265,7 @@ export function createAdapter({ registry = process.env.DEVSTACK_STATE_DIR ?? joi
             await save(record);
           } else if (action === 'logs') {
             if (args.length) throw new Error('Logs use fixed units and a finite 200-line limit');
-            result = await invoke(manifest, 'root', ['journalctl', '--no-pager', '-n', '200', ...manifest.managedUnits.flatMap(unit => ['-u', unit])]);
+            result = await invoke(manifest, 'root', ['journalctl', '--no-pager', '-n', '200', ...manifest.managedUnits.flatMap(unit => ['-u', unit])], { recentStdout: true });
           } else {
             result = await invoke(manifest, 'matrix', ['--workdir', manifest.sourceRoot, ...args]);
             record.lastCommand = { action, code: result.code, stderr: result.stderr };
