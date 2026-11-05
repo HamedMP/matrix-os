@@ -142,6 +142,21 @@ export function createRoutineCliTargetService(deps: RoutineCliTargetDependencies
   });
   return {
     validatePinnedWithin,
+    /** Read-only owner snapshot for explicit scope review/admission. No fabricated native source,
+     * capability or mutation authorization is created by this port. Keep the existing lock order. */
+    resolveOwnerDefaultWithin: (trx: Transaction<OwnerBotDatabase>, principal: RequestPrincipal,
+      pinned?: RoutineCliResolvedTarget): Promise<RoutineCliResolvedTarget> => routineCliBoundary(async () => {
+      if (!trx.isTransaction) throw new RoutineCliError("unavailable");
+      const configured = requireOwner(principal);
+      await lockRoutineCliPreference(trx, configured);
+      const saved = await preferences.get(configured, trx);
+      if (!saved?.target) throw new RoutineCliError("target_required");
+      if (pinned && (pinned.ownerId !== configured.ownerId || pinned.computerId !== configured.computerId
+        || pinned.preferenceRevision !== saved.revision || pinned.botId !== saved.target.botId
+        || pinned.chatId !== saved.target.chatId || pinned.bindingCreatedAt !== saved.target.bindingCreatedAt))
+        throw new RoutineCliError("revision_conflict");
+      return { ...configured, ...await validateTarget(trx, configured, saved.target, "read"), preferenceRevision: saved.revision };
+    }),
     /** Private accepted-task port: caller must prove the immutable task/run claim first. This validates
      * current owner/target policy only; it neither revives the origin nor authorizes an unclaimed intent. */
     validateClaimedTargetWithin: (trx: Transaction<OwnerBotDatabase>, snapshot: RoutineCliResolvedTarget): Promise<RoutineCliResolvedTarget> => routineCliBoundary(async () => {

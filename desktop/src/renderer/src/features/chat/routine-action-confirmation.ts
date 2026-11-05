@@ -2,7 +2,7 @@ import { MatrixComputerListSchema, RoutineActionIdSchema, RoutineActionViewSchem
 import { useConnection } from "../../stores/connection";
 import { invoke } from "../../lib/operator";
 import type { RoutineActionRequest } from "@matrix-os/ui";
-async function destination() {
+export async function desktopRoutineConfirmationDestination() {
   const connection = useConnection.getState(), api = connection.api;
   if (connection.status !== "signed-in" || !api || !connection.platformHost) throw new Error("Confirmation unavailable");
   const current = () => { const next = useConnection.getState(); return next.api === api && next.authGeneration === connection.authGeneration && next.runtimeSlot === connection.runtimeSlot && next.userId === connection.userId; };
@@ -16,14 +16,14 @@ async function destination() {
   return { api: api.forRuntime("primary"), current, computer, connection, prefix };
 }
 export const desktopRoutineActionRequest: RoutineActionRequest = async input => {
-  input.signal.throwIfAborted(); const target = await destination(); input.signal.throwIfAborted();
+  input.signal.throwIfAborted(); const target = await desktopRoutineConfirmationDestination(); input.signal.throwIfAborted();
   const options = { signal: input.signal, timeoutMs: 10_000, maxBytes: 128 * 1024 }, path = target.prefix + input.path;
   const result = input.method === "GET" ? await target.api.get(path, options) : await target.api.post(path, input.body, options);
   if (!target.current() || input.signal.aborted) throw new Error("Confirmation unavailable"); return result;
 };
 /** Owner-button path only. Browser opening carries opaque selectors and never submits a decision. */
 export async function openDesktopRoutineConfirmation(challengeId: string, signal?: AbortSignal): Promise<void> {
-  signal?.throwIfAborted(); RoutineActionIdSchema.parse(challengeId); const target = await destination(); signal?.throwIfAborted();
+  signal?.throwIfAborted(); RoutineActionIdSchema.parse(challengeId); const target = await desktopRoutineConfirmationDestination(); signal?.throwIfAborted();
   const challenge = RoutineActionViewSchema.parse(await target.api.get(`${target.prefix}/api/routine-cli/actions/${challengeId}`, { signal, maxBytes: 32 * 1024, timeoutMs: 10_000 }));
   signal?.throwIfAborted();
   if (!target.current() || challenge.challengeId !== challengeId || challenge.status !== "pending" || Date.parse(challenge.expiresAt) <= Date.now()) throw new Error("Confirmation unavailable");

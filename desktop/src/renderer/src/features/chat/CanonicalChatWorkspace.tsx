@@ -88,6 +88,7 @@ import { useImportedChatAssets } from "./use-imported-chat-assets";
 import { useChatArtifactActions } from "./use-chat-artifact-actions";
 import { useChatCredentialDisclosure } from "./use-chat-credential-disclosure";
 import { ChatCredentialDisclosure } from "./ChatCredentialDisclosure";
+import { useNativeRoutineFullAccessContext } from "./routine-full-access";
 
 const EMPTY_PROVIDER_SUMMARIES: AgentProviderSummary[] = [];
 
@@ -300,6 +301,8 @@ function CanonicalChatWorkspaceContent({
   }, [explicitSharedRoute, routedComposerChatId, client, reportBotHeaderBinding, botBinding.status, directBotId]);
   const botExecution = useBotExecution(directBotId, client.agents, providerCatalog, botEventRevision);
   const botIdentityUnknown = botBinding.status === "loading" || botBinding.status === "error" || botExecution.loading || Boolean(botExecution.error);
+  const routineFullAccess = useNativeRoutineFullAccessContext({ client: client.routineFullAccess, chat: controller.detail?.record.chat,
+    selection: providerSelection, catalog: providerCatalog, ordinary: !explicitSharedRoute && !botIdentityUnknown && !directBotId });
   const botPresentation = botExecution.presentation;
   const attachmentPolicy = chatAttachmentComposerPolicy(providerCatalog, directBotId ? botExecution.agent?.selection : providerSelection, botPresentation?.kind === "recipe");
   const attachments = useConversationAttachments(controller.activeChatId, api ?? null, attachmentPolicy.error);
@@ -769,6 +772,7 @@ function CanonicalChatWorkspaceContent({
 
       <BrowserPermissionReminder/>
       <SharedChatComposer
+        routineFullAccess={routineFullAccess}
         permissionModeRequest={permissionModeRequest}
         value={draft}
         onChange={setDraft}

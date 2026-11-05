@@ -660,6 +660,8 @@ function MobileAppFrame({
               agentClient={chat.agentClient} agentSummaryClient={chat.agentSummaryClient} authorityKey={chat.authorityKey} gatewayUrl={chat.gatewayUrl} composerIdentity={chat.composerIdentity} isCurrentAuthority={chat.isCurrentAuthority} navigationFresh={chat.navigationFresh} navigationClassifications={chat.navigationClassifications} botEventRevision={chat.botEventRevision} queuedTurns={chat.queuedTurns} onCancelQueuedTurn={chat.cancelQueuedTurn} onSteerQueuedTurn={chat.steerQueuedTurn} canSteerQueuedTurns={chat.canSteerQueuedTurns} chatProjectId={chat.chatProjectId} onSetChatProject={chat.setChatProject}
         onSubmitApproval={chat.submitApproval}
                 browserPermissions={chat.browserPermissions}
+                routineFullAccess={chat.routineFullAccess}
+                routineFullAccessChat={chat.routineFullAccessChat}
         onSubmitInput={chat.submitInput}
         providerSelection={chat.providerSelection}
               executionControls={chat.executionControls}

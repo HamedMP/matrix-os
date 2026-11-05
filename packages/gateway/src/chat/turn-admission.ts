@@ -36,9 +36,20 @@ export interface TurnAdmissionOptions {
   hasStoppingExecution(owner: ChatOwner, chatId: string, admissionKey?: string): boolean;
   beforePreviewDispatch?: (input: { actorId: string; chatId: string; turnId: string; runId: string;
     clientRequestId: string; body: CanonicalCreateChatTurnRequest; proof: string }) => Promise<void | (() => void)>;
+  beforeRoutineFullAccessDispatch?: (input: RoutineFullAccessTurnAdmission) => Promise<void | (() => void)>;
   startDispatch(owner: ChatOwner, message: CanonicalChatMessage, run: CanonicalChatRun,
     adapter: CanonicalChatProviderAdapter, root?: ResolvedChatExecutionRoot, resumeState?: unknown,
     promptOverride?: string, admissionKey?: string): Promise<void>;
+}
+
+/** Process-private admission port. Never persisted in a Run, provider input or native prompt. */
+export interface RoutineFullAccessTurnAdmission {
+  principal: RequestPrincipal; actorId: string; owner: ChatOwner; chatId: string; turnId: string; runId: string;
+  run: CanonicalChatRun; clientRequestId: string; body: CanonicalCreateChatTurnRequest;
+  scopeId?: string; proof?: string;
+}
+export interface CanonicalTurnProvenance {
+  previewTurnProof?: string; routineFullAccessScope?: string; routineFullAccessProof?: string;
 }
 
 const id = (prefix: string) => `${prefix}${randomUUID().replaceAll("-", "")}`;
@@ -46,7 +57,7 @@ const id = (prefix: string) => `${prefix}${randomUUID().replaceAll("-", "")}`;
 export async function admitCanonicalTurn(
   deps: TurnAdmissionOptions, principal: RequestPrincipal, owner: ChatOwner,
   chatId: string, inputValue: CanonicalCreateChatTurnRequest,
-  provenance?: { previewTurnProof?: string },
+  provenance?: CanonicalTurnProvenance,
 ): Promise<CanonicalChatTurnAdmissionResponse> {
     deps.assertOpen();
     await deps.assertPersonalExecutionAllowed(owner, chatId);
@@ -227,12 +238,15 @@ export async function admitCanonicalTurn(
     }
 
     let previewCleanup: void | (() => void) = undefined;
+    let routineCleanup: void | (() => void) = undefined;
     const disposePendingPreview = () => {
       try {
         if (previewCleanup) previewCleanup();
       } catch (error: unknown) {
         console.warn("[chat] Preview Drive admission cleanup failed", error instanceof Error ? error.name : "UnknownError");
       }
+      try { routineCleanup?.(); }
+      catch (error: unknown) { console.warn("[chat] Routine origin cleanup failed", error instanceof Error ? error.name : "UnknownError"); }
     };
     let dispatched = false;
     try {
@@ -261,6 +275,17 @@ export async function admitCanonicalTurn(
           } catch (error: unknown) {
             // The Chat turn remains valid, but the personal integration stays unavailable.
             console.warn("[chat] Preview Drive turn redemption failed", error instanceof Error ? error.name : "UnknownError");
+          }
+        }
+        if (deps.beforeRoutineFullAccessDispatch) {
+          try {
+            routineCleanup = await deps.beforeRoutineFullAccessDispatch({ principal, actorId: principal.userId, owner, chatId,
+              turnId: admitted.turn.id, runId: admitted.run.id, run: admitted.run,
+              clientRequestId: input.clientRequestId, body: input,
+              scopeId: provenance?.routineFullAccessScope, proof: provenance?.routineFullAccessProof });
+          } catch (error: unknown) {
+            // The ordinary turn can still run with the exact owner-action ceiling.
+            console.warn("[chat] Routine origin unavailable", error instanceof Error ? error.name : "UnknownError");
           }
         }
         // Redemption yields to other admissions and shutdown. Keep this final
@@ -293,7 +318,7 @@ export async function admitCanonicalTurn(
         );
         // Startup may fail before a provider issues the capability. Disposal
         // only removes this exact pending entry; issued capabilities own cleanup.
-        if (previewCleanup) void completion.then(disposePendingPreview, disposePendingPreview);
+        if (previewCleanup || routineCleanup) void completion.then(disposePendingPreview, disposePendingPreview);
         dispatched = true;
       }
       return CanonicalChatTurnAdmissionResponseSchema.parse({
