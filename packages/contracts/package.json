@@ -139,6 +139,8 @@
     "#preview-pair": "./src/preview-pair.ts",
     "#routine-full-access": "./src/routine-full-access.ts",
     "#routine-full-access-view": "./src/routine-full-access-view.ts",
+    "#routine-chat-origin": "./src/routine-chat-origin.ts",
+    "#routine-chat-receipt": "./src/routine-chat-receipt.ts",
     "#routine-origin-proof": "./src/routine-origin-proof.ts"
   },
   "main": "src/index.ts",

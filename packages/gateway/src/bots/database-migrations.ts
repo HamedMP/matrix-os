@@ -1,3 +1,4 @@
+import { migrateRoutineChatOriginV16 } from "./routine-chat-origin-migration.js";
 import { migrateRoutineCliProposalsV15 } from "./routine-cli-proposal-migration.js";
 /**
  * Versioned migrations for owner bot state (spec 536, data-model.md). Each
@@ -369,4 +370,5 @@ export const BOT_MIGRATIONS: readonly BotMigration[] = [
   { version: 13, name: "routine_cli_sources", up: migrateRoutineCliSourcesV13 },
   { version: 14, name: "routine_cli_requests", up: migrateRoutineCliRequestsV14 },
   { version: 15, name: "routine_cli_proposals", up: migrateRoutineCliProposalsV15 },
+  { version: 16, name: "routine_chat_origin", up: migrateRoutineChatOriginV16 },
 ];
