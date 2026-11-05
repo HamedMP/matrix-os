@@ -17,7 +17,7 @@ Extends DevStack [#3023](https://github.com/HamedMP/matrix-os/pull/3023), FR19/A
 
 ## Local allocation and scope
 
-The user delegated probe-budget sizing while the original total authorization remains $10. Choose **$5.25 prospective operator lifetime availability**, not a charge: the existing worst-case estimator needs $4.800012 for one Sonnet probe and approximately $0.235930 for GLM. Actual complete usage releases the difference. Avoid a new optimistic tokenizer or no-cache assumption merely to fit a small wallet.
+The user delegated probe-budget sizing while the original total authorization remains $10. Choose **$5.25 prospective operator lifetime availability**, not a charge: the existing worst-case estimator needs $4.800012 for one Sonnet probe and approximately $0.235931 for GLM. Actual complete usage releases the difference. Avoid a new optimistic tokenizer or no-cache assumption merely to fit a small wallet.
 
 Keep **$1.00 as a conservative historical probe reserve**, based on a broader read-only usage audit and refreshed before activation. Individual historical probes remain unpriced; it is not an exact attribution and must never be initialized as zero actual expense or advertised as a retrospectively enforced dollar cap. New receipts collect payload-free pseudonymous provider references for future reconciliation. Historical provider-cost verification remains a separate evidence gate.
 
