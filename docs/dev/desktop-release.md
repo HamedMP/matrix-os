@@ -197,46 +197,34 @@ incomplete uninstall blocks the release.
 
 ## Updates
 
-### Desktop and cloud release alignment
+### Independent Desktop and cloud compatibility
 
-Each Electron build embeds the actual checkout commit and up to 256 ancestors.
-Release jobs fetch sufficient Git history and reject a release SHA that differs
-from the checkout or contains uncommitted source changes. Only the release
-workflow's package-version stamping is exempt; dirty local builds report unknown
-provenance. This metadata is exposed through the bounded `app:get-version`
-IPC response; installed apps do not need Git or GitHub access to compare releases.
+Desktop semver and VPS bundle versions describe separate products and release
+channels. Different commits, ancestry, timestamps or branch names are not an
+incompatibility signal. Build source metadata remains available for support
+and source-alignment diagnostics, but never drives an update warning.
 
-The update reminder first compares that source with the running gateway's
-`/api/system/info.build.sha`. Native host bundles may return `"unknown"` for
-this legacy image-environment field. In that case the shared contract reads
-`release.gitCommit` only from a schema-1 host bundle whose `release.version`,
-`version`, and explicit `runningVersion` all match. Missing running versions or
-an installation awaiting gateway restart cannot establish source identity.
-`installedVersion` is template/package metadata and is not used for this check.
-Different commits trigger an advisory reminder even when both releases advertise
-the same legacy protocol number. An ancestor identifies missing cloud changes;
-different branches or history beyond the bounded window remain different without
-inventing an ordering. Matching source proves release alignment, not that every
-configuration, external provider, or feature is operational.
+The running gateway advertises `runtimeCompatibility` in `/api/system/info`.
+Electron compares its bundled `DESKTOP_PROTOCOL_VERSION` to the inclusive
+`minDesktopProtocol` / `maxDesktopProtocol` window. A supported generation
+allows use without an update modal. A Desktop below the minimum is directed to
+update Desktop; a Desktop above the maximum is directed to update its cloud
+computer. Missing legacy metadata remains unverified; malformed metadata and
+network failures remain unavailable. Neither is a forced-upgrade signal.
 
-Regression coverage includes the captured public provenance fields from a native
-host response, the actual `getSystemInfo` producer without image build variables,
-and built-Electron replay through the preload IPC and update dialog. The producer
-test also replaces release metadata before simulating gateway restart, after its
-file cache expires. Verify against a real authenticated VPS before release; an
-idealized fixture with a populated `build.sha` cannot prove host compatibility.
+This window describes the base API contract, not every feature or external
+provider. Preserve feature-specific negotiation, such as canonical Chat message
+versions, and gate new optional features using their real capability contracts.
+Breaking API changes must update the protocol contract with cross-version tests;
+additive or backend-only fixes must not bump it merely to force an update.
 
-Checks run at startup, computer switches, and reconnect. Focus checks have a
-15-minute cooldown, and there is no periodic alignment poll. Network failures and
-missing provenance stay quiet and are never reported as aligned, unless a valid
-protocol window explicitly requires an upgrade. Such an unsupported protocol
-keeps its required-component recovery direction; a supported protocol never
-proves source alignment. Dismissal applies
-to the current source pair on the current computer; a later release pair can prompt
-again. Updates retain each component's channel, update the cloud before Desktop
-when both are available, and verify the installed cloud target is running. If
-current channels cannot provide matching releases, the reminder does not claim
-completion or silently switch channels.
+Checks run at startup, computer changes and reconnect; focus checks have a
+15-minute cooldown. Dismissal is scoped to the current connection and protocol
+window, not every source commit. The workspace stays mounted during the dialog.
+Local Software Update and cloud Settings continue to expose independent channel
+updates. An available release is not proof it repairs compatibility: updates
+remain explicit, retain their channels, and recheck the running handshake after
+installation. Unknown compatibility cannot be shown as verified completion.
 
 ### Desktop artifact discovery
 
@@ -316,34 +304,17 @@ to date.
 
 ## Desktop / VPS compatibility and update freshness
 
-Desktop and host bundles have independent product versions. Electron Desktop
-uses the source alignment check above for update reminders and retains explicit
-unsupported-protocol recovery. The gateway advertises `runtimeCompatibility`; its
-manually maintained protocol window is not evidence that both releases contain
-the same merged changes. Preserve older wire formats while clients migrate.
+The protocol check above replaces source-alignment update reminders. Versions
+are compared only within each component's own channel. The compatibility dialog
+shows the component requiring an update and the versions available on the
+existing channels, without promising that the newest release will resolve the
+mismatch. Opening or dismissing the dialog never installs an update.
 
-Electron Desktop checks at startup, on computer switches, and on realtime/network
-reconnect. Focus checks run only when the previous check is at least 15 minutes
-old. There is no background polling timer. Network failures and missing or invalid
-source identities stay silent unless a valid protocol window proves an upgrade
-is required.
-
-Different source identities open a centered, dismissible reminder with installed
-and available versions for both components. It preserves the titlebar and mounted
-workspace. Later, Escape, or clicking outside dismisses that release pair for the
-current computer connection; a different pair can prompt again. Native embeds
-suspend only while the modal is open and resume on dismissal.
-
-One primary action checks both channels again. If both have updates, the cloud
-computer goes first; the desktop app restarts only after the installed and running
-cloud versions match the target. Channel freshness alone does not prove alignment:
-after an update returns, reread the actual sources before reporting completion.
-Versions are compared within each component's own channel, never between desktop
-semver and bundle dates. Failed checks stay explicitly unavailable. Update
-progress may be hidden without cancelling an accepted update. Changing computers
-cancels subsequent steps, and cloud requests stay bound to the original runtime.
-The button discloses a local restart; opening the reminder never installs either
-update. Users can dismiss the reminder and keep their current work.
+Cloud updates verify both installed and running target versions before any
+following Desktop step. Completion also requires a fresh compatible handshake
+and successful channel checks. A still-incompatible, legacy, failed or pending
+check cannot report completion. Changing computers aborts subsequent steps;
+accepted cloud installs retain their normal server-side lifecycle.
 
 For canonical Chat, `messageVersion=2` explicitly opts into `actorId` and `purpose`.
 Absent or `messageVersion=1` retains the message shape accepted by Desktop
