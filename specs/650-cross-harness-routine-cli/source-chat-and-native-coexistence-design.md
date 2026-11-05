@@ -64,6 +64,19 @@ automatically migrated or duplicated.
   controls continue to identify the actual existing task origin and retain all
   existing authorization checks. Intentional creation of tasks using different
   engines uses separate explicit creation flows.
+- Compatibility with existing exact-operation CLI: an ordinary native phase
+  may offer a manually invoked Matrix proposal as an explicit persistent-task
+  confirmation. A host-private per-phase creation latch is claimed before
+  either engine's creation effect. Native creation first refuses a later
+  Matrix creation; a pending manual Matrix choice first fences native creation.
+  A manual/unattested Matrix flow always requires its real signed exact-operation
+  owner decision, even when an unrelated Full Access scope exists. It is never
+  automatically authorized from a model command. Keep the claim through
+  cancellation/unknown to prevent alternate-engine fallback. Reads and controls
+  do not claim it; due phases receive a fresh latch and no old source authority.
+  The explicit browser Persistent submit remains part of immutable request
+  identity; legacy owner decisions remain bound to their actual operation
+  UUID/source invocation, without changing historical request hashes.
 - Do not automatically fall back after timeout/unknown; reconcile the original
   native job or CLI UUID. This prevents double creation within one admitted
   flow, not semantic deduplication of every similar prompt across future turns.
@@ -74,6 +87,14 @@ automatically migrated or duplicated.
   contract and help text to Nima's existing discovery/skill work.
 
 ## Existing Bot target remains an execution dependency
+
+Electron Desktop and Native Mobile keep their current trusted-device ceiling.
+Their explicit persistent creation action opens this same Chat in the real
+browser for an owner submit, retaining the app's draft. It does not transfer a
+prompt, token, signed choice or automatic submit in the URL. Source approval
+handoff shows the same canonical interaction in the browser. This is an explicit
+platform limitation; native Cron remains directly usable in the app. No new
+native challenge/grant protocol is introduced merely to imitate browser proof.
 
 Reuse the existing owner-selected eligible private canonical Bot Chat. Source
 Chat can offer the existing target picker inline when no valid preference
