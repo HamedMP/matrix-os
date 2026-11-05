@@ -1,6 +1,7 @@
 import { createRequire } from "node:module";
 import { resolve } from "node:path";
 import type { NextConfig } from "next";
+import { resolveAllowedDevOrigins } from "./dev-origins.mjs";
 
 const gatewayUrl = process.env.GATEWAY_URL ?? "http://localhost:4000";
 const platformShellAssetPrefix = process.env.MATRIX_PLATFORM_AUTH_SHELL === "1"
@@ -37,12 +38,7 @@ const nextConfig: NextConfig = {
   // Allow HMR websockets when the dev shell is reached through a tunnel
   // (staging/dev.matrix-os.com) rather than localhost. Next 16 blocks dev
   // resources on cross-origin hostnames by default.
-  allowedDevOrigins: [
-    "staging.matrix-os.com",
-    "dev.matrix-os.com",
-    "localhost",
-    "127.0.0.1",
-  ],
+  allowedDevOrigins: resolveAllowedDevOrigins(process.env.MATRIX_ALLOWED_DEV_ORIGINS),
   // Next's default trailing-slash 308 redirect breaks spec 063 app-runtime:
   // the iframe navigates to /apps/{slug}/ (trailing slash), Next 308s to
   // /apps/{slug} (no slash), and the browser drops the cookie because its
