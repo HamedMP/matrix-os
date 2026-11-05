@@ -97,7 +97,7 @@
 - [X] T037 [P] [US1] Write failing platform discovery and launch tests for current members, typed app items, cursor bounds, proof-bound sessions, and outsider omission in `tests/platform/collaborative-app-discovery.test.ts`
 - [X] T038 [P] [US1] Write failing launch-facade security tests for session recheck, path confinement, immutable bytes, strict content types, `nosniff`, redirect rejection, stream limits, cancellation, and credential non-disclosure in `tests/platform/collaborative-app-launch-facade.test.ts`
 - [X] T039 [P] [US1] Write failing owner/recipient common-data tests for 20 existing rows, CRUD, reload, lost-response replay, and content-free change signals in `tests/gateway/collaborative-app-two-home-postgres.test.ts`
-- [ ] T040 [P] [US1] Write failing shared-viewer transport tests proving recipients never fall back to a local same-slug app or owner credentials in `tests/ui/collaborative-app-viewer.test.tsx`
+- [X] T040 [P] [US1] Write failing shared-viewer transport tests proving recipients never fall back to a local same-slug app or owner credentials in `tests/ui/collaborative-app-viewer.test.tsx`
 
 ### Share lifecycle and discovery implementation
 
@@ -114,17 +114,17 @@
 - [X] T048 [US1] Implement bounded launch-session TTL/LRU state, stale sweeps, revocation, and shutdown drain in extracted `packages/platform/src/collaboration/app-launch-sessions.ts` wiring beside `packages/platform/src/collaboration/relay.ts`
 - [X] T049 [US1] Implement the same-origin authenticated launch facade with per-request session/share/membership/build/host reauthorization in `packages/platform/src/collaboration/routes.ts`
 - [X] T050 [US1] Serve only immutable qualified assets with confined paths, bounded streams, cancellation, safe headers, and timed trusted-origin relay calls in `packages/gateway/src/collaboration/resource-routes.ts`
-- [ ] T051 [US1] Inject bounded participant context and expose only the restricted parent-mediated data bridge in `packages/gateway/src/collaboration/collaborative-app-runtime.ts`
+- [X] T051 [US1] Inject bounded participant context and expose only the restricted parent-mediated data bridge in `packages/gateway/src/collaboration/collaborative-app-runtime.ts`
 - [X] T052 [US1] Route owner and recipient reads to the same bounded declared owner tables without using scope as a row namespace in `packages/gateway/src/collaboration/scoped-app-bridge.ts`
 - [X] T053 [US1] Route owner and recipient mutations through one transactional coordinator that commits data revision, mutation, operation receipt, audit, and event together in `packages/gateway/src/collaboration/app-instance-adapter.ts`
-- [ ] T054 [US1] Emit bounded content-free app change signals and require client authoritative rereads in `packages/gateway/src/collaboration/events.ts`
+- [X] T054 [US1] Emit bounded content-free app change signals and require client authoritative rereads in `packages/gateway/src/collaboration/events.ts`
 
 ### Recipient rendering and owner control implementation
 
-- [ ] T055 [P] [US1] Add typed owner/shared transport, launch, read, write, retry, conflict, and signal reconciliation in `packages/ui/src/collaboration/shared-app-transport.ts`
-- [ ] T056 [P] [US1] Add a mounted shared-app renderer with host attribution and safe overlays in `packages/ui/src/collaboration/SharedAppViewer.tsx`
-- [ ] T057 [US1] Hydrate typed app cards in Shared with me and open shared targets without Chat/project or local-app fallback in `packages/ui/src/collaboration/ChatCollaboration.tsx`
-- [ ] T058 [US1] Add direct Share app controls with one organization selector and existing-data/all-members/creator-host disclosures in `packages/ui/src/collaboration/CollaborativeAppShareDialog.tsx`
+- [X] T055 [P] [US1] Add typed owner/shared transport, launch, read, write, retry, conflict, and signal reconciliation in `packages/ui/src/collaboration/shared-app-transport.ts`
+- [X] T056 [P] [US1] Add a mounted shared-app renderer with host attribution and safe overlays in `packages/ui/src/collaboration/SharedAppViewer.tsx`
+- [X] T057 [US1] Hydrate typed app cards in Shared with me and open shared targets without Chat/project or local-app fallback in `packages/ui/src/collaboration/ChatCollaboration.tsx`
+- [X] T058 [US1] Add direct Share app controls with one organization selector and existing-data/all-members/creator-host disclosures in `packages/ui/src/collaboration/CollaborativeAppShareDialog.tsx`
 
 **Checkpoint**: User Story 1 is independently complete on the shared web renderer: one qualified owner app, one organization, one existing owner record set, and no recipient copy or secondary permission flow.
 
@@ -152,7 +152,7 @@
 - [X] T067 [US3] Reuse stable request IDs and payload hashes for replay/uncertain outcomes without duplicate owner records in `packages/gateway/src/collaboration/app-instance-adapter.ts`
 - [X] T068 [US3] Reauthorize event open, resume, broadcast, and reconnect; evict failed/dead senders and continue other subscribers in `packages/gateway/src/collaboration/event-websocket-route.ts`
 - [ ] T069 [US3] CAS stop/rebind, bump auth epoch, commit operation/audit/event/outbox, then revoke direct/launch sessions and subscriptions in `packages/gateway/src/collaboration/collaborative-app-share-repository.ts`
-- [ ] T070 [P] [US3] Preserve optimistic edits through conflict and uncertain-save states and require deliberate retry/reload in `packages/ui/src/collaboration/shared-app-transport.ts`
+- [X] T070 [P] [US3] Preserve optimistic edits through conflict and uncertain-save states and require deliberate retry/reload in `packages/ui/src/collaboration/shared-app-transport.ts`
 - [ ] T071 [US3] Prove newcomer, departure, conflict, retry, stop, and no-recipient-row outcomes at real gateway/platform/Postgres boundaries in `tests/e2e/collaborative-app-membership.spec.ts`
 
 **Checkpoint**: User Story 3 is independently complete: organization membership is the only recipient authority and concurrency/revocation outcomes are explicit and recoverable.
@@ -173,8 +173,8 @@
 
 ### Implementation for User Story 4
 
-- [ ] T075 [US4] Return typed retryable host-offline outcomes without stopping the share or deleting readiness/binding/data state in `packages/platform/src/collaboration/relay.ts`
-- [ ] T076 [P] [US4] Add a shared deep-link page that resolves only typed exact-build targets in `shell/src/app/shared/app/[scopeId]/page.tsx`
+- [X] T075 [US4] Return typed retryable host-offline outcomes without stopping the share or deleting readiness/binding/data state in `packages/platform/src/collaboration/relay.ts`
+- [X] T076 [P] [US4] Add a shared deep-link page that resolves only typed exact-build targets in `shell/src/app/shared/app/[scopeId]/page.tsx`
 - [ ] T077 [US4] Refactor the web app viewer into common mounted rendering with owner and shared transports in `shell/src/components/AppViewer.tsx`
 - [ ] T078 [P] [US4] Carry shared launch targets through Canvas, desktop windows, mobile launcher, and stable window deduplication in `shell/src/components/canvas/CanvasAppViewer.tsx`, `shell/src/components/desktop/DesktopWindow.tsx`, `shell/src/components/mobile/MobileShell.tsx`, and `shell/src/hooks/useWindowManager.ts`
 - [ ] T079 [US4] Route the restricted shared bridge and safe lifecycle overlays without exposing owner tokens in `shell/src/lib/os-bridge.ts`
@@ -189,11 +189,11 @@
 
 **Purpose**: Complete the fifth Matrix OS stack layer, qualify the union, publish evidence, and create the sixth public-documentation deliverable.
 
-- [ ] T082 [P] Add the Share app button as a distinct action from Gallery publication and public Sites in `packages/ui/src/collaboration/CollaborativeAppShareButton.tsx`
+- [X] T082 [P] Add the Share app button as a distinct action from Gallery publication and public Sites in `packages/ui/src/collaboration/CollaborativeAppShareButton.tsx`
 - [ ] T083 Complete the owner hook for readiness, preflight, create, current share, recheck, and stop with serializable state and stable selectors in `packages/ui/src/collaboration/useCollaborativeAppSharing.ts`
-- [ ] T084 Show exactly one organization selector, active organization, Stop sharing, safe state copy, and no project/person/role/acceptance controls in `packages/ui/src/collaboration/CollaborativeAppShareDialog.tsx`
-- [ ] T085 Export collaborative sharing UI and typed transport APIs from `packages/ui/src/index.ts`
-- [ ] T086 [P] Add owner readiness/share/stop component tests and all required disclosures in `tests/ui/collaborative-app-sharing-controls.test.tsx`
+- [X] T084 Show exactly one organization selector, active organization, Stop sharing, safe state copy, and no project/person/role/acceptance controls in `packages/ui/src/collaboration/CollaborativeAppShareDialog.tsx`
+- [X] T085 Export collaborative sharing UI and typed transport APIs from `packages/ui/src/index.ts`
+- [X] T086 [P] Add owner readiness/share/stop component tests and all required disclosures in `tests/ui/collaborative-app-sharing-controls.test.tsx`
 - [ ] T087 [P] Add full owner/member/outsider Web Canvas and Web Desktop journeys with 20 preexisting rows, CRUD, reload, conflict, lost response, membership loss, stop, rebuild, and replacement in `tests/e2e/collaborative-app-sharing.spec.ts`
 - [ ] T088 [P] Add responsive web-mobile sharing, recipient edit, conflict, offline, and recovery coverage in `tests/e2e/collaborative-app-sharing-mobile.spec.ts`
 - [ ] T089 [P] Add Electron shared-app launch, common-record, offline/recovery, and retained-view coverage in `tests/e2e/app-collaborative-sharing-electron.e2e.test.ts`

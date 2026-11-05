@@ -68,11 +68,13 @@ function conversationMeta(record: ChatNavigationRecord) {
 
 function collaborationViewFromPathname(pathname: string): ChatCollaborationView | null {
   if (pathname === "/shared" || pathname === "/shared/") return { kind: "home" };
-  const match = /^\/shared\/(chat|project)\/([^/]+)\/?$/.exec(pathname);
+  const match = /^\/shared\/(chat|project|app)\/([^/]+)\/?$/.exec(pathname);
   if (!match) return null;
   const scopeId = CollaborationIdSchema.safeParse(match[2]);
   if (!scopeId.success) return null;
-  return match[1] === "project" ? { kind: "project", scopeId: scopeId.data } : { kind: "chat", scopeId: scopeId.data };
+  return match[1] === "project" ? { kind: "project", scopeId: scopeId.data }
+    : match[1] === "app" ? { kind: "app", scopeId: scopeId.data }
+    : { kind: "chat", scopeId: scopeId.data };
 }
 
 function pushShellChatPath(pathname: string): void {

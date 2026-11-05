@@ -26,6 +26,7 @@ const share = {
   readinessId: "60000000-0000-4000-8000-000000000001",
   state: "active" as const,
   shareRevision: "1",
+  bindingRevision: "1",
   dataRevision: "0",
   createdAt: "2026-11-05T10:00:00.000Z",
   updatedAt: "2026-11-05T10:00:00.000Z",

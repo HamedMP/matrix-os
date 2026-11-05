@@ -66,6 +66,7 @@ export function ShellChatCollaboration({
       openProject={(scopeId) => {
         onOpenProject?.(scopeId);
       }}
+      openApp={(scopeId) => router.push(`/shared/app/${encodeURIComponent(scopeId)}`)}
     />
   </div>;
 }
