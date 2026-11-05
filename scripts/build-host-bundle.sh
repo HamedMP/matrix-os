@@ -153,6 +153,7 @@ chmod 0755 "$STAGE_DIR/bin/matrix-support-access"
 cp -a "$ROOT_DIR/node_modules" "$STAGE_DIR/app/node_modules"
 install -m 0755 "$DIST_DIR/$GH_DIST/bin/gh" "$STAGE_DIR/app/node_modules/.bin/gh"
 cp -a "$ROOT_DIR/packages" "$STAGE_DIR/app/packages"
+bash "$ROOT_DIR/scripts/materialize-built-packages.sh" "$STAGE_DIR/app/packages"
 test -f "$STAGE_DIR/app/packages/gateway/dist/collaboration/filesystem-identity.node"
 # Check the copied native bytes against the customer ABI, then load the exact
 # staged dependency with the Node version shipped in this bundle.
@@ -184,7 +185,7 @@ fi
 rm -rf "$STAGE_DIR/app/shell/.next/cache" "$STAGE_DIR/app/shell/e2e" "$STAGE_DIR/app/shell/node_modules"
 # Compiler state is local build input, never runtime or incremental release data.
 # Default find traversal does not follow directory symlinks; remove links themselves.
-find "$STAGE_DIR/app/packages" -name .matrix-build-cache -prune -exec rm -rf {} +
+find "$STAGE_DIR/app/packages" \( -name .matrix-build-cache -o -name .matrix-build-output \) -prune -exec rm -rf {} +
 # Portable gallery starters live under app-templates, outside home/apps.
 # Their dependency stores are build-only too; preserve source, lockfiles and dist.
 find "$STAGE_DIR/app/home" -type d -name node_modules -prune -exec rm -rf {} +

@@ -48,6 +48,12 @@ describe("gateway URL resolution", () => {
     );
   });
 
+  it("keeps an explicit runtime path independent of cookies and conflicting query selectors", () => {
+    window.history.replaceState({}, "", "/vm/alice-shared/~runtime/alpha/canvas?runtime=beta");
+    expect(getGatewayUrl()).toBe(`${window.location.origin}/vm/alice-shared/~runtime/alpha`);
+    expect(getGatewayWs()).toBe(`ws://${window.location.host}/vm/alice-shared/~runtime/alpha/ws`);
+  });
+
   it("does not prefix lookalike non-vm paths", () => {
     window.history.replaceState({}, "", "/settings/vmware");
     expect(getGatewayUrl()).toBe(window.location.origin);

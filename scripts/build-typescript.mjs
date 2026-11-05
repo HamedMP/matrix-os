@@ -1,13 +1,14 @@
 // Keep the JavaScript compiler for declaration emit and compiler-API consumers.
 // Incremental state is reusable only while every recorded output stays intact.
 import { createHash, randomUUID } from "node:crypto";
-import { lstat, mkdir, open, opendir, readFile, rename, rm, rmdir, stat, writeFile } from "node:fs/promises";
+import { lstat, mkdir, open, opendir, readFile, realpath, rename, rm, rmdir, stat, writeFile } from "node:fs/promises";
 import { constants } from "node:fs";
 import { createRequire } from "node:module";
 import { join, resolve } from "node:path";
 import { spawn } from "node:child_process";
 import { pathToFileURL } from "node:url";
 import { setTimeout as delay } from "node:timers/promises";
+import { assertOutputDirectory, clearBuildOutput, prepareBuildOutput, publishBuildOutput, liveOutputDirectory } from "./typescript-build-output.mjs";
 
 const STATE = ".matrix.tsbuildinfo";
 const STAMP = ".matrix-build.json";
@@ -249,21 +250,29 @@ async function acquire(directory) {
   }
 }
 
-export async function buildTypescript(packageDirectory, compile) {
+export async function buildTypescript(packageDirectory, compile, notifyGateway = false) {
   const directory = join(packageDirectory, "dist");
-  await mkdir(directory, { recursive: true });
   const cache = join(packageDirectory, ".matrix-build-cache");
   await mkdir(cache, { recursive: true });
   const release = await acquire(cache);
   const state = join(cache, STATE);
   const stamp = join(cache, STAMP);
   try {
+    // Cold publication may briefly remove an empty placeholder. Another
+    // builder must not recreate it while the first owns publication.
+    await mkdir(directory, { recursive: true });
     await sweep(cache);
+    const live = await liveOutputDirectory(packageDirectory);
+    const previous = await outputs(directory);
     await discardInvalidState(state);
     if (!await intact(directory, stamp)) await rm(state, { force: true });
     // TypeScript tracks inputs, imports, options and compiler version itself.
     // Always run it: an output fingerprint alone cannot prove source freshness.
-    const status = await compile(["--project", "tsconfig.json", "--incremental", "--tsBuildInfoFile", state], { lock: join(cache, LOCK) });
+    const output = await prepareBuildOutput(packageDirectory, previous);
+    // Node/TypeScript canonicalize cwd (for example /var -> /private/var on
+    // macOS). Match that spelling so emitted source maps remain package-relative.
+    const status = await compile(["--project", "tsconfig.json", "--incremental", "--tsBuildInfoFile", state,
+      "--outDir", await realpath(output), "--noEmitOnError"], { lock: join(cache, LOCK) });
     if (status !== 0) {
       await rm(state, { force: true });
       await rm(stamp, { force: true });
@@ -274,17 +283,41 @@ export async function buildTypescript(packageDirectory, compile) {
     await discardInvalidState(state);
     const temporary = `${stamp}.${randomUUID()}.tmp`;
     try {
-      const manifest = JSON.stringify({ version: 1, files: await outputs(directory) });
+      await assertOutputDirectory(output);
+      const next = await outputs(output);
+      const manifest = JSON.stringify({ version: 1, files: next });
       if (Buffer.byteLength(manifest) > MAX_MANIFEST_BYTES) throw new Error("Build output manifest exceeds byte bounds");
       await writeFile(temporary, manifest, { flag: "wx" });
       await rename(temporary, stamp);
+      await publishBuildOutput(packageDirectory, live, previous, next);
+      if (notifyGateway) {
+        // tsx ignores hidden directories and follows imported file inodes. A
+        // stable, bounded success record survives directory swaps. Reconcile a
+        // missed notification even on a no-op build after an interrupted writer.
+        const marker = await open(join(packageDirectory, "matrix-kernel-published.tsbuildinfo"),
+          constants.O_RDWR | constants.O_CREAT | constants.O_NOFOLLOW | constants.O_NONBLOCK, 0o644);
+        try {
+          const info = await marker.stat();
+          if (!info.isFile() || info.nlink !== 1) throw new Error("Invalid Kernel publication marker");
+          const digest = createHash("sha256").update(manifest).digest("hex");
+          const buffer = Buffer.alloc(64);
+          await marker.read(buffer, 0, 64, 0);
+          if (info.size !== 64 || buffer.toString() !== digest) {
+            await marker.write(digest, 0);
+            await marker.truncate(64);
+          }
+        } finally { await marker.close(); }
+      }
     } finally { await rm(temporary, { force: true }); }
     return 0;
   } catch (error) {
     await rm(state, { force: true });
     await rm(stamp, { force: true });
     throw error;
-  } finally { await release(); }
+  } finally {
+    try { await clearBuildOutput(packageDirectory); }
+    finally { await release(); }
+  }
 }
 
 function superviseCompiler(directory, compiler, args) {
@@ -356,10 +389,10 @@ async function ownedCompiler(directory, compiler, args, lock) {
 
 if (process.argv[2] === "--compiler-supervisor") {
   superviseCompiler(process.argv[3], process.argv[4], process.argv.slice(5));
-} else if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {
+} else if (process.argv[1] && import.meta.url === pathToFileURL(await realpath(process.argv[1])).href) {
   const directory = process.cwd();
   const require = createRequire(join(directory, "package.json"));
   const compiler = require.resolve("typescript/lib/tsc.js");
   const compile = (args, { lock }) => ownedCompiler(directory, compiler, args, lock);
-  process.exitCode = await buildTypescript(directory, compile);
+  process.exitCode = await buildTypescript(directory, compile, process.argv.includes("--notify-gateway"));
 }

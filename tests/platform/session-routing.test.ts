@@ -2,6 +2,25 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { createClerkAuth, type ClerkAuth } from "../../packages/platform/src/clerk-auth.js";
 import { applyAppDomainRuntimeAssetCacheHeaders } from "../../packages/platform/src/session-routing-proxy.js";
 
+describe("app-domain Next asset caching", () => {
+  it.each(["no-store", "no-cache", "public, max-age=0, must-revalidate, no-cache", "public, max-age=0, must-revalidate", "No-Cache=\"Set-Cookie\""])("preserves upstream %s", (cacheControl) => {
+    const headers = new Headers({ "cache-control": cacheControl, vary: "Origin" });
+    applyAppDomainRuntimeAssetCacheHeaders(headers, "/_next/static/chunks/app.js", "https://app.matrix-os.com/_next/static/chunks/app.js");
+    expect(headers.get("cache-control")).toBe(cacheControl);
+    expect(headers.get("cdn-cache-control")).toBe("no-store");
+    expect(headers.get("cloudflare-cdn-cache-control")).toBe("no-store");
+    expect(headers.get("vary")).toBe("Origin, Cookie, Accept-Encoding");
+  });
+
+  it.each(["/_next/static/chunks/hashed.js", "/apps/notes/assets/index-hash.js"])("keeps immutable policy for %s", (path) => {
+    const headers = new Headers({ "cache-control": "public, max-age=31536000, immutable" });
+    applyAppDomainRuntimeAssetCacheHeaders(headers, path, `https://app.matrix-os.com${path}`);
+    expect(headers.get("cache-control")).toBe("private, max-age=31536000, immutable");
+    expect(headers.get("cdn-cache-control")).toBe("no-store");
+    expect(headers.get("vary")).toBe("Cookie, Accept-Encoding");
+  });
+});
+
 describe("app-domain icon caching", () => {
   it("uses a one-year private cache only when the requested icon version matches the response", () => {
     const current = new Headers({ etag: '"mtime-size"' });

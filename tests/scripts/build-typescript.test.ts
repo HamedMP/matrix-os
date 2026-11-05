@@ -1,7 +1,7 @@
-import { lstat, mkdtemp, mkdir, readFile, readdir, rm, symlink, truncate, utimes, writeFile } from "node:fs/promises";
+import { chmod, lstat, mkdtemp, mkdir, readFile, readdir, rm, symlink, truncate, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { createRequire } from "node:module";
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { buildTypescript } from "../../scripts/build-typescript.mjs";
@@ -97,6 +97,7 @@ describe("incremental shared TypeScript builds", () => {
     await mkdir(join(directory, "src"));
     await writeFile(join(directory, "tsconfig.json"), JSON.stringify({ compilerOptions: {
       outDir: "dist", rootDir: "src", types: [], strict: true, target: "ES2022", skipLibCheck: true,
+      sourceMap: true, declaration: true, declarationMap: true,
     }, include: ["src"] }));
     await writeFile(join(directory, "src/index.ts"), "export const value: number = 1;\n");
     const compiler = createRequire(import.meta.url).resolve("typescript/lib/tsc.js");
@@ -106,11 +107,99 @@ describe("incremental shared TypeScript builds", () => {
       child.once("exit", code => accept(code ?? 1));
     });
     expect(await buildTypescript(directory, compile)).toBe(0);
+    expect(JSON.parse(await readFile(join(directory, "dist/index.js.map"), "utf8")).sources).toEqual(["../src/index.ts"]);
+    expect(JSON.parse(await readFile(join(directory, "dist/index.d.ts.map"), "utf8")).sources).toEqual(["../src/index.ts"]);
+    const unchanged = await lstat(join(directory, "dist/index.js"));
+    expect(await buildTypescript(directory, compile)).toBe(0);
+    expect((await lstat(join(directory, "dist/index.js"))).mtimeMs).toBe(unchanged.mtimeMs);
     await rm(join(directory, "dist/index.js"));
     expect(await buildTypescript(directory, compile)).toBe(0);
     expect(await readFile(join(directory, "dist/index.js"), "utf8")).toContain("value = 1");
     await writeFile(join(directory, "src/index.ts"), 'export const value: number = "wrong";\n');
+    const lastGood = await readFile(join(directory, "dist/index.js"), "utf8");
     expect(await buildTypescript(directory, compile)).not.toBe(0);
+    expect(await readFile(join(directory, "dist/index.js"), "utf8")).toBe(lastGood);
+    await writeFile(join(directory, "src/index.ts"), "export const value: number = 2;\n");
+    expect(await buildTypescript(directory, compile)).toBe(0);
+    expect(await readFile(join(directory, "dist/index.js"), "utf8")).toContain("value = 2");
+  });
+
+  it("executes the build entrypoint through a symlink and emits package-relative source maps", async () => {
+    const directory = await fixture();
+    await mkdir(join(directory, "src"));
+    await writeFile(join(directory, "package.json"), JSON.stringify({ type: "module" }));
+    await writeFile(join(directory, "tsconfig.json"), JSON.stringify({ compilerOptions: {
+      outDir: "dist", rootDir: "src", types: [], target: "ES2022", skipLibCheck: true,
+      sourceMap: true, declaration: true, declarationMap: true,
+    }, include: ["src"] }));
+    await writeFile(join(directory, "src/index.ts"), "export const value: number = 1;\n");
+    await symlink(join(process.cwd(), "scripts"), join(directory, "scripts"), "dir");
+    await symlink(join(process.cwd(), "node_modules"), join(directory, "node_modules"), "dir");
+    const alias = `${directory}-alias`;
+    directories.push(alias);
+    await symlink(directory, alias, "dir");
+    const result = spawnSync(process.execPath, [join(alias, "scripts/build-typescript.mjs")], {
+      cwd: alias, encoding: "utf8", timeout: 15000,
+    });
+    expect(result.error).toBeUndefined();
+    expect(result.status, result.stdout + result.stderr).toBe(0);
+    expect(await readFile(join(directory, "dist/index.js"), "utf8")).toContain("value = 1");
+    for (const file of ["index.js.map", "index.d.ts.map"]) {
+      expect(JSON.parse(await readFile(join(directory, "dist", file), "utf8")).sources).toEqual(["../src/index.ts"]);
+    }
+  });
+
+  it.each(["exit", "throw"])("keeps partial compiler output away from live consumers on %s failure", async mode => {
+    const directory = await fixture();
+    const lastGood = await readFile(join(directory, "dist/index.js"), "utf8");
+    const compile = async (args: string[]) => {
+      const index = args.indexOf("--outDir");
+      const output = index < 0 ? join(directory, "dist") : args[index + 1];
+      await writeFile(join(output, "index.js"), "broken output from a failed compiler");
+      // Check while the compiler still owns the build, before error handling.
+      expect(await readFile(join(directory, "dist/index.js"), "utf8")).toBe(lastGood);
+      if (mode === "throw") throw new Error("compiler interrupted");
+      return 2;
+    };
+    if (mode === "throw") await expect(buildTypescript(directory, compile)).rejects.toThrow("compiler interrupted");
+    else expect(await buildTypescript(directory, compile)).toBe(2);
+    expect(await readFile(join(directory, "dist/index.js"), "utf8")).toBe(lastGood);
+  });
+
+  it("keeps staged output private even with a permissive caller umask", async () => {
+    const directory = await fixture();
+    const previous = process.umask(0);
+    try {
+      expect(await buildTypescript(directory, async (args: string[]) => {
+        const output = args[args.indexOf("--outDir") + 1];
+        expect((await lstat(output)).mode & 0o777).toBe(0o700);
+        return 0;
+      })).toBe(0);
+    } finally { process.umask(previous); }
+  });
+
+  it.skipIf(process.getuid?.() === 0)("builds with a read-only source parent and pre-provisioned writable generated directories", async () => {
+    const directory = await fixture();
+    const output = join(directory, ".matrix-build-output");
+    await mkdir(output, { mode: 0o700 });
+    await mkdir(join(directory, ".matrix-build-cache"), { mode: 0o700 });
+    // The provisioner establishes this same-depth dist alias before dropping UID.
+    const mirror = join(directory, "..", ".matrix-publish-" + directory.split("/").at(-1));
+    directories.push(mirror);
+    await mkdir(mirror);
+    await (await import('node:fs/promises')).rename(join(directory, "dist"), join(mirror, "dist"));
+    await symlink("../" + mirror.split("/").at(-1) + "/dist", join(directory, "dist"));
+    await chmod(directory, 0o500);
+    try {
+      for (let revision = 2; revision <= 3; revision++) {
+        expect(await buildTypescript(directory, async (args: string[]) => {
+          await writeFile(join(args[args.indexOf("--outDir") + 1], "index.js"), `export const value = ${revision};\n`);
+          return 0;
+        })).toBe(0);
+        expect(await readFile(join(directory, "dist/index.js"), "utf8")).toContain(`value = ${revision}`);
+        expect(await readdir(output)).toEqual([]);
+      }
+    } finally { await chmod(directory, 0o700); }
   });
 
   it("serializes competing builds of the same package", async () => {
@@ -253,7 +342,7 @@ describe("incremental shared TypeScript builds", () => {
     const compile = async (args: string[]) => {
       const state = args[args.indexOf("--tsBuildInfoFile") + 1];
       if (calls++) await expect(readFile(state)).rejects.toMatchObject({ code: "ENOENT" });
-      await writeFile(join(directory, "dist/index.js"), "export const value = 1;\n");
+      await writeFile(join(args[args.indexOf("--outDir") + 1], "index.js"), "export const value = 1;\n");
       await writeFile(state, "compiler-state");
       return 0;
     };
