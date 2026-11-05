@@ -142,6 +142,10 @@ describe("createHomeMirror", () => {
   }
 
   beforeEach(async () => {
+    // Native notifications can be absent after chokidar's ready event on macOS
+    // under filesystem churn. Polling still exercises real watch -> policy ->
+    // publication behavior without changing Linux or production watcher defaults.
+    if (process.platform === "darwin") vi.stubEnv("CHOKIDAR_USEPOLLING", "true");
     tmpRoot = await mkdtemp(join(tmpdir(), "home-mirror-test-"));
     r2 = createFakeR2();
     db = createFakeManifestDb();
@@ -150,19 +154,23 @@ describe("createHomeMirror", () => {
   });
 
   afterEach(async () => {
-    let stopError: unknown;
-    for (const mirror of [...activeMirrors].reverse()) {
-      try {
-        await mirror.stop();
-      } catch (err: unknown) {
-        stopError ??= err;
+    try {
+      let stopError: unknown;
+      for (const mirror of [...activeMirrors].reverse()) {
+        try {
+          await mirror.stop();
+        } catch (err: unknown) {
+          stopError ??= err;
+        }
       }
-    }
-    activeMirrors = [];
-    await rm(tmpRoot, { recursive: true, force: true });
-    vi.restoreAllMocks();
-    if (stopError) {
-      throw stopError;
+      activeMirrors = [];
+      await rm(tmpRoot, { recursive: true, force: true });
+      if (stopError) {
+        throw stopError;
+      }
+    } finally {
+      vi.restoreAllMocks();
+      vi.unstubAllEnvs();
     }
   });
 

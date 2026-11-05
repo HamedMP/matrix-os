@@ -9,9 +9,9 @@ import {createEvidenceDirectory} from "./fixtures/evidence-directory";
 import {dismissGettingStartedOnInteraction} from "./fixtures/getting-started";
 import {closeElectronApp} from "./fixtures/close-electron";
 const root=resolve(__dirname,"../../..");
-const built=existsSync(join(root,"desktop/out/main/index.js"));
+const built = existsSync(join(root,"desktop/out/main/index.js"));
 if(process.env.MATRIX_DESKTOP_E2E_REQUIRED==="1"&&!built)throw new Error("Required Electron Desktop build is missing");
-const suite=built?describe:describe.skip;
+const suite = built ? describe : describe.skip;
 suite("Electron Desktop native Claude legacy recovery (synthetic identity)",()=>{
  let app:ElectronApplication,page:Page,profile:string;
  let gateway:Awaited<ReturnType<typeof startClaudeLegacyRecoveryGateway>>;
@@ -19,7 +19,7 @@ suite("Electron Desktop native Claude legacy recovery (synthetic identity)",()=>
  const settings=()=>page.locator(".matrix-agents-providers");
  const row=()=>settings().locator(".matrix-ap-rail-item").filter({hasText:"Claude"}).first();
  beforeAll(async()=>{
-  captures=createEvidenceDirectory(process.env.MATRIX_SETTINGS_EVIDENCE_DIR);
+  captures=createEvidenceDirectory(process.env.MATRIX_SETTINGS_EVIDENCE_DIR ? join(process.env.MATRIX_SETTINGS_EVIDENCE_DIR,"claude-legacy-connection") : undefined);
   gateway=await startClaudeLegacyRecoveryGateway();profile=mkdtempSync(join(tmpdir(),"matrix-2632-electron-"));
   app=await _electron.launch({executablePath:createRequire(join(root,"desktop/package.json"))("electron") as string,
     args:[join(root,"desktop/out/main/index.js")],env:{...process.env,OPERATOR_GATEWAY_URL:gateway.url,OPERATOR_USER_DATA_DIR:profile}});
