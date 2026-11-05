@@ -6,6 +6,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { assert, assertVacant, command, noSymlinkAncestors, parseOptions, preflight, readOwnerMarker,
   resolveConfig, sourceFacts, stat } from "./devstack-native/control.mjs";
 import { compiledRuntimeInventory, verifyCompiledRuntime } from "./devstack-native/compiled.mjs";
+import { createStderrCapture, stderrPath } from "./devstack-native/close-evidence.mjs";
 import { buildFacts, hostSnapshot } from "./devstack-native/evidence.mjs";
 import { createUnitLedger } from "./devstack-native/ownership.mjs";
 import { createJournal, safeCode } from "./devstack-native/receipt.mjs";
@@ -23,6 +24,7 @@ async function run(config, marker, identity, compiled, interrupted) {
   const receipt = { version: 1, status: "failed", purpose: marker.purpose, namespace: config.namespace,
     source: marker, compiled, host: { platform: process.platform, architecture: process.arch }, startedAt: new Date().toISOString(), receiptPath };
   const lock = await open(lockPath, "wx", 0o600); const ownedLock = await lock.stat();
+  let capture;
   try {
     await lock.writeFile(`${token}\n`); await assertVacant(config, command, ownedLock);
     receipt.placement = await journal.step("placement", () => preparePlacement(config));
@@ -37,8 +39,9 @@ async function run(config, marker, identity, compiled, interrupted) {
     const templatePath = `${config.appRoot}/distro/customer-vps/systemd/matrix-scope-runtime.service`;
     await noSymlinkAncestors(templatePath, true); const template = await readFile(templatePath, "utf8");
     await verifyCompiledRuntime(config.appRoot, compiled);
+    capture = await createStderrCapture(stderrPath(config, token));
     await journal.step("supervisor", () => submitSupervisor(config, token, template, ledger, command, receipt.placement));
-    await nativeProof(config, identity, { journal, ledger, dependencies, baseline: receipt.before,
+    await nativeProof(config, identity, { journal, ledger, capture, dependencies, baseline: receipt.before,
       expectedProfile: { profileDigest: profile.SCOPE_RUNTIME_PROFILE_DIGEST } });
   } catch (error) { receipt.error = journal.fail(error); }
   finally {
@@ -57,6 +60,7 @@ async function run(config, marker, identity, compiled, interrupted) {
         assert(receipt.unchangedPeersAndInstalled, "peer_or_installed_state_changed"); return { identical: true };
       });
     } catch (error) { receipt.baselineError = journal.fail(error); }
+    if (capture) try { await capture.close(); } catch (error) { receipt.captureCleanupError = journal.fail(error); }
     if (receipt.placement?.close) try { await receipt.placement.close(); } catch (error) { receipt.placementError = journal.fail(error); }
     await lock.close();
     const current = await stat(lockPath);

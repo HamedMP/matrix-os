@@ -2,7 +2,7 @@ import { lstat } from "node:fs/promises";
 import { assert, command, hash, waitFor } from "./control.mjs";
 import { safeCode } from "./receipt.mjs";
 export const CASCADE_KEYS = ["BoundBy", "ConsistsOf", "RequiredBy", "RequisiteOf", "PropagatesStopTo", "PartOf", "BindsTo", "OnFailure", "OnSuccess", "ExecStop", "ExecStopPost"];
-export const IDENTITY_KEYS = ["LoadState", "Description", "Transient", "InvocationID", "MainPID", "ActiveState", "DynamicUser", "RootDirectory", "FragmentPath", "KillSignal", "RuntimeDirectoryPreserve", "RemainAfterExit", "SubState", "Result", "ExecMainPID", "ExecMainCode", "ExecMainStatus", ...CASCADE_KEYS];
+export const IDENTITY_KEYS = ["LoadState", "Description", "Transient", "InvocationID", "MainPID", "ActiveState", "DynamicUser", "RootDirectory", "FragmentPath", "KillSignal", "RuntimeDirectoryPreserve", "RemainAfterExit", "SubState", "Result", "ExecMainPID", "ExecMainCode", "ExecMainStatus", "StandardError", "LimitFSIZE", "LimitFSIZESoft", ...CASCADE_KEYS];
 export async function observeUnit(name, run = command) {
   const result = await run("/usr/bin/systemctl", ["show", name, ...IDENTITY_KEYS.map(key => `--property=${key}`)]);
   assert(result.code === 0, "unit_identity_unavailable"); const values = {};
@@ -75,10 +75,16 @@ export function createUnitLedger(config, token, io = {}) {
     freshSupervisor,
     captureExpectedRestart: adoptExpectedRestart,
     releaseWorker(handle) { const entry = workers.get(handle); assert(entry, "worker_not_recorded"); entry.released = true; },
-    async supervisorAction(action) {
+    async supervisorAction(action, beginClose) {
       assert(["kill", "stop"].includes(action), "supervisor_action_invalid");
       const current = await freshSupervisor(); cascadeSafe(current); await transitionSafe();
       const transition = { supervisor: { ...current }, handles: [...workers].filter(([, item]) => !item.released).map(([handle]) => handle) };
+      if (action === "stop") {
+        assert(typeof beginClose === "function", "close_evidence_required");
+        transition.verifyClose = await beginClose(transition.supervisor, transition.handles);
+        assert(typeof transition.verifyClose === "function", "close_evidence_required");
+        cascadeSafe(await freshSupervisor()); await transitionSafe();
+      }
       await mutate(action, config.supervisorUnit); if (action === "kill") awaitingRestart = true;
       else graceful = transition;
     },
@@ -102,7 +108,8 @@ export function createUnitLedger(config, token, io = {}) {
           drained.push({ unit: known.name, outcome: "inactive", invocationId: worker.InvocationID });
         }
         if (!await socketAbsent()) return false;
-        return { ownSupervisorStopped: true, workerInactive: true, supervisorSocketAbsent: true,
+        const controllerClose = await graceful.verifyClose();
+        return { controllerClose, ownSupervisorStopped: true, workerInactive: true, supervisorSocketAbsent: true,
           supervisor: { invocationId: exited.InvocationID, originalPid: Number(exited.ExecMainPID), processExited: true, unitRetained: true,
             activeState: exited.ActiveState, subState: exited.SubState, result: exited.Result, exitCode: exited.ExecMainCode, exitStatus: Number(exited.ExecMainStatus) }, workers: drained };
       }, "graceful_termination_unproven", timeout);

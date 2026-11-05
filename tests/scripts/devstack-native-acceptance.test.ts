@@ -90,6 +90,8 @@ describe("native proof transport and fixed service profile", () => {
     const template = await readFile(new URL("../../distro/customer-vps/systemd/matrix-scope-runtime.service", import.meta.url), "utf8");
     const config = resolveScopeRuntimeHostConfig({ env: { MATRIX_SCOPE_RUNTIME_NAMESPACE: "proof", MATRIX_SCOPE_RUNTIME_APP_ROOT: "/var/lib/matrix-devstack/proof/app", MATRIX_HOME: "/var/lib/matrix-devstack/proof/home" } });
     const result = supervisorArgs(config, "matrix-native-proof-token", template);
+    expect(result).toContain("--property=StandardError=append:/var/lib/matrix-devstack/proof/.matrix-native-proof-token.stderr");
+    expect(result).toContain("--property=LimitFSIZE=65536");
     expect(result).toContain("--property=PrivateNetwork=yes");
     expect(result).toContain("--property=CapabilityBoundingSet=");
     expect(result).toContain("--property=RestrictAddressFamilies=AF_UNIX");
