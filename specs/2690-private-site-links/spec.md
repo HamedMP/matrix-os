@@ -19,6 +19,7 @@ No Clerk account, Matrix onboarding, computer provisioning, email delivery, visi
 - The generic private wrapper reveals no app title or owner metadata. JavaScript reads the fragment but sends it only after the visitor clicks **Open shared app**, preventing preview scanners from claiming links.
 - After claim, the wrapper removes the fragment and reloads the canonical URL. Refreshes work with the site-scoped cookie. Reuse in another browser fails with the same generic unavailable result as other invalid credentials.
 - Owners can page through non-secret link status (`Unclaimed`, `Claimed`, `Expired`), timestamps, and revoke links.
+- Conflict recovery preserves draft metadata but refreshes an untouched access selection from the latest publication. An explicit owner access-mode change remains an intentional override.
 - Switching private to public or unpublishing deletes all link and session rows in the same transaction. Switching back to private never restores them. Updates and rollbacks preserve valid access.
 - Revocation blocks new requests. Bytes already delivered to a browser cannot be remotely erased. Losing browser cookies requires a new link.
 - PostHog records successful Matrix.page lifecycle outcomes for publish/update, settings and access-mode changes, unpublish, rollback, link create/claim/revoke, canonical page views, and accepted form submissions. Events use only low-cardinality state such as access mode and operation; they never include site/link IDs, URLs, slugs, titles, descriptions, form IDs or fields, tokens, cookies, or source addresses.
@@ -86,6 +87,8 @@ Deploy in this order:
 1. Platform migration and services. Existing publications become `public`; owner export and deletion understand link metadata.
 2. Matrix.page Worker cookie/claim forwarding allowlist.
 3. Gateway and shell owner controls. Do not expose the private-link selector until platform and edge support are deployed.
+
+During the platform-first window, management callers that do not send the versioned sites-contract capability header receive the legacy site response shape without `accessMode`. Updated Gateways negotiate contract version 2 and receive the complete record. This applies to reads and mutation responses so an older Gateway never reports a committed mutation as an upstream schema failure. A caller without negotiation that nevertheless submits `accessMode` is an ambiguous access-aware client and fails before mutation; a genuinely legacy caller omits that field and remains compatible. This prevents an unversioned client from defaulting a stripped private mode to public and sending it back.
 
 Rollback of shell/gateway controls leaves existing private publications enforceable at the platform/edge. Rolling platform code back across the migration is unsupported without first returning private sites to public or unpublishing them; the additive table/column may remain safely.
 

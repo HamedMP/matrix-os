@@ -6,6 +6,7 @@ import { buildPlatformVerificationToken, buildPlatformSyncVerificationToken } fr
 import { createSitesService } from '../../packages/platform/src/sites/service.js';
 import { createSiteManagementRoutes } from '../../packages/platform/src/sites/management-routes.js';
 import { randomUUID } from 'node:crypto';
+import { SITE_MANAGEMENT_CONTRACT_VERSION, SITE_MANAGEMENT_CONTRACT_VERSION_HEADER } from '@matrix-os/contracts';
 let db: PlatformDB;
 let app: Hono;
 const secret = 's'.repeat(40);
@@ -31,6 +32,24 @@ it('derives customer owner from verified machine and rejects preview credentials
 it('fails closed when dedicated asset storage is not configured', async () => {
     const response = await app.request('/internal/containers/launch/sites/event?runtimeSlot=primary', { method: 'POST', headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' }, body: '{}' });
     expect(response.status).toBe(503);
+});
+
+it('preserves the legacy site response unless the gateway negotiates access mode', async () => {
+ const siteId=randomUUID();
+ await db.executor.insertInto('public_sites').values({id:siteId,owner_id:'user_launch',machine_id:identity.machineId,app_slug:'legacy-contract',title:'Legacy',description:'',slug:null,revision:1,status:'published',access_mode:'private_link',active_version:null,created_at:new Date().toISOString()}).execute();
+ const url='/internal/containers/launch/sites/legacy-contract?runtimeSlot=primary';
+ const headers={authorization:`Bearer ${token}`,'content-type':'application/json'};
+
+ const legacyGet=await (await app.request(url,{headers})).json() as Record<string,unknown>;
+ expect(legacyGet).not.toHaveProperty('accessMode');
+ const legacyPatch=await (await app.request(url,{method:'PATCH',headers,body:JSON.stringify({title:'Legacy updated',baseRevision:1})})).json() as Record<string,unknown>;
+ expect(legacyPatch).not.toHaveProperty('accessMode');
+
+ const unsafePatch=await app.request(url,{method:'PATCH',headers,body:JSON.stringify({title:'Unsafe update',accessMode:'public',baseRevision:2})});
+ expect(unsafePatch.status).toBe(400);
+
+ const current=await (await app.request(url,{headers:{...headers,[SITE_MANAGEMENT_CONTRACT_VERSION_HEADER]:SITE_MANAGEMENT_CONTRACT_VERSION}})).json() as Record<string,unknown>;
+ expect(current).toMatchObject({title:'Legacy updated',accessMode:'private_link',revision:2});
 });
 
 it('manages write-only access links through the verified machine owner route',async()=>{
