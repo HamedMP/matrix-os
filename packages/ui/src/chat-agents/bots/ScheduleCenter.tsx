@@ -153,16 +153,19 @@ export function ScheduleCenter({ client, onClose, onOpenBotChat, onNewSchedule, 
         <div><dt style={chatAgentMutedStyle}>Status</dt><dd>{statusLabel(detail.routine)}</dd></div>
         <div><dt style={chatAgentMutedStyle}>Next run</dt><dd className="break-words">{nextRun(detail.routine)}</dd></div>
         <div><dt style={chatAgentMutedStyle}>Schedule</dt><dd>{routineScheduleCopy(detail.routine.proposal.schedule).frequency}</dd><dd>{routineScheduleCopy(detail.routine.proposal.schedule).timezone}</dd></div>
-        <div><dt style={chatAgentMutedStyle}>Runs in</dt><dd className="break-words">{onOpenBotChat?<button type="button" className="underline underline-offset-2" aria-label="Open task Chat" disabled={pending} onClick={()=>void act(async()=>{await onOpenBotChat(detail.routine.chatId);},onClose,false)}>{names[detail.routine.botId]??"Private Bot"}</button>:names[detail.routine.botId]??"Private Bot"} · {detail.routine.computerId ?? "Computer unavailable"}</dd></div>
+        <div><dt style={chatAgentMutedStyle}>Runs in</dt><dd className="break-words">{onOpenBotChat&&detail.routine.targetAvailable?<button type="button" className="underline underline-offset-2" aria-label="Open task Chat" disabled={pending} onClick={()=>void act(async()=>{await onOpenBotChat(detail.routine.chatId);},onClose,false)}>{names[detail.routine.botId]??"Private Bot"}</button>:names[detail.routine.botId]??"Private Bot"} · {detail.routine.computerId ?? "Computer unavailable"}</dd></div>
       </dl>
       {rowButtons(detail.routine)}
       <div className="flex flex-wrap gap-2">
         {detail.routine.status !== "archived" ? <button type="button" className={chatAgentButtonClass} disabled={pending || !detail.routine.targetAvailable || !detail.routine.sourceAvailable} onClick={() => setEditing(true)}>Edit schedule</button> : null}
       </div>
+      {detail.routine.originChatId ? detail.routine.originAvailable
+        ? onOpenBotChat ? <button type="button" className={`${chatAgentButtonClass} justify-self-start`} disabled={pending} onClick={()=>void act(async()=>{await onOpenBotChat(detail.routine.originChatId!);},onClose,false)}>Open source Chat</button> : null
+        : <p role="status" className="text-sm">Source Chat unavailable. Execution history remains available.</p> : null}
       {editing && api ? <ScheduleEditForm key={detail.routine.routineId} routine={detail.routine} api={api} botClient={client.bots!} agentName={names[detail.routine.botId]} pendingReadRevision={listRevision} getPendingReadSequence={() => reads.current} pendingInteractions={data?.pending ?? []} onRefreshRequired={refreshCommitted} onChanged={() => { detailIntent.current += 1; selectedRoutine.current = null; setEditing(false); setDetail(null); }}/>: null}
     </section> : null}
     {data && !loading && !detail ? <>
-      {!data.items.length ? <div className="rounded-xl border p-6"><h2 className="font-semibold">{query.archived === "true" ? "No archived schedules" : "No schedules yet"}</h2><p className="mt-2 text-sm" style={chatAgentMutedStyle}>Ask a private Bot Chat to schedule a task, then review and approve it in Chat.</p></div> : <ul className="grid min-w-0 gap-3">
+      {!data.items.length ? <div className="rounded-xl border p-6"><h2 className="font-semibold">{query.archived === "true" ? "No archived schedules" : "No schedules yet"}</h2><p className="mt-2 text-sm" style={chatAgentMutedStyle}>Choose Persistent task in a private Chat, then review and approve it there.</p></div> : <ul className="grid min-w-0 gap-3">
         {data.items.map(row => { const copy = routineScheduleCopy(row.proposal.schedule); return <li key={row.routineId} className="grid min-w-0 gap-3 rounded-xl border p-4">
           <div className="flex flex-wrap items-start justify-between gap-2"><button type="button" className="text-left font-semibold" aria-label={`View ${row.proposal.name}`} disabled={pending} onClick={() => void view(row)}>{row.proposal.name}</button><span className="rounded-full border px-2 py-1 text-xs">{statusLabel(row)}</span></div>
           <p className="whitespace-pre-wrap break-words text-sm">{row.proposal.prompt}</p>
