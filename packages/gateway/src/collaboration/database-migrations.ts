@@ -452,6 +452,77 @@ async function migrateOrganizationContextV7(trx: Transaction<OwnerCollaborationD
   `.execute(trx);
 }
 
+export async function migrateCollaborativeAppsV16(trx: Transaction<OwnerCollaborationDatabase>): Promise<void> {
+  await sql`
+    CREATE TABLE IF NOT EXISTS collaboration_app_readiness (
+      id UUID PRIMARY KEY,
+      owner_id TEXT NOT NULL CHECK (char_length(owner_id) BETWEEN 1 AND 128),
+      catalog_id UUID NOT NULL REFERENCES collaboration_resource_catalog(id),
+      registration_incarnation TEXT NOT NULL CHECK (registration_incarnation ~ '^[a-f0-9]{64}$'),
+      app_id TEXT NOT NULL CHECK (char_length(app_id) BETWEEN 1 AND 256 AND app_id ~ '^[A-Za-z0-9_-]+$'),
+      manifest_version TEXT NOT NULL CHECK (manifest_version ~ '^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$'),
+      build_id TEXT NOT NULL CHECK (build_id ~ '^[a-f0-9]{64}$'),
+      manifest_digest TEXT NOT NULL CHECK (manifest_digest ~ '^[a-f0-9]{64}$'),
+      schema_digest TEXT NOT NULL CHECK (schema_digest ~ '^[a-f0-9]{64}$'),
+      asset_digest TEXT NOT NULL CHECK (asset_digest ~ '^[a-f0-9]{64}$'),
+      bridge_contract_version TEXT NOT NULL CHECK (bridge_contract_version ~ '^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$'),
+      runtime_abi TEXT NOT NULL CHECK (runtime_abi ~ '^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$'),
+      artifact_ref TEXT NOT NULL CHECK (char_length(artifact_ref) BETWEEN 1 AND 4096),
+      status TEXT NOT NULL CHECK (status IN ('checking', 'ready', 'blocked', 'stale', 'failed')),
+      gate_results JSONB NOT NULL DEFAULT '[]'::jsonb CHECK (
+        jsonb_typeof(gate_results) = 'array' AND jsonb_array_length(gate_results) <= 12
+      ),
+      verified_at TIMESTAMPTZ,
+      invalidated_at TIMESTAMPTZ,
+      invalidation_reason TEXT CHECK (
+        invalidation_reason IS NULL OR invalidation_reason IN ('build_drift', 'catalog_deleted', 'runtime_incompatible', 'manual_recheck')
+      ),
+      verifier_version TEXT NOT NULL CHECK (verifier_version ~ '^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$'),
+      revision BIGINT NOT NULL DEFAULT 1 CHECK (revision > 0),
+      created_at TIMESTAMPTZ NOT NULL,
+      updated_at TIMESTAMPTZ NOT NULL,
+      UNIQUE (catalog_id, build_id, verifier_version),
+      CHECK (status <> 'ready' OR (verified_at IS NOT NULL AND invalidated_at IS NULL AND jsonb_array_length(gate_results) > 0)),
+      CHECK ((status = 'stale') = (invalidated_at IS NOT NULL)),
+      CHECK ((invalidated_at IS NULL) = (invalidation_reason IS NULL))
+    )
+  `.execute(trx);
+  await sql`
+    CREATE INDEX IF NOT EXISTS idx_collaboration_app_readiness_current
+    ON collaboration_app_readiness(owner_id, catalog_id, updated_at DESC)
+  `.execute(trx);
+  await sql`
+    CREATE TABLE IF NOT EXISTS collaboration_app_bindings (
+      scope_id UUID PRIMARY KEY REFERENCES collaboration_scopes(id) ON DELETE CASCADE,
+      catalog_id UUID NOT NULL REFERENCES collaboration_resource_catalog(id),
+      registration_incarnation TEXT NOT NULL CHECK (registration_incarnation ~ '^[a-f0-9]{64}$'),
+      readiness_id UUID NOT NULL REFERENCES collaboration_app_readiness(id),
+      build_id TEXT NOT NULL CHECK (build_id ~ '^[a-f0-9]{64}$'),
+      data_revision BIGINT NOT NULL DEFAULT 0 CHECK (data_revision >= 0),
+      state TEXT NOT NULL CHECK (state IN ('active', 'needs_recheck', 'stopped')),
+      revision BIGINT NOT NULL DEFAULT 1 CHECK (revision > 0),
+      created_at TIMESTAMPTZ NOT NULL,
+      updated_at TIMESTAMPTZ NOT NULL,
+      stopped_at TIMESTAMPTZ,
+      CHECK ((state = 'stopped') = (stopped_at IS NOT NULL))
+    )
+  `.execute(trx);
+  await sql`
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_collaboration_app_one_live_binding
+    ON collaboration_app_bindings(catalog_id)
+    WHERE state <> 'stopped'
+  `.execute(trx);
+  await sql`
+    CREATE INDEX IF NOT EXISTS idx_collaboration_app_binding_readiness
+    ON collaboration_app_bindings(readiness_id)
+  `.execute(trx);
+  await sql`
+    INSERT INTO collaboration_schema_migrations (version)
+    VALUES (16)
+    ON CONFLICT (version) DO NOTHING
+  `.execute(trx);
+}
+
 export interface CollaborationVersionedMigration {
   readonly version: number;
   readonly run: (trx: Transaction<OwnerCollaborationDatabase>) => Promise<void>;
@@ -472,4 +543,5 @@ export const COLLABORATION_VERSIONED_MIGRATIONS: readonly CollaborationVersioned
   { version: 13, run: migrateProjectGitOperationsV13 },
   { version: 14, run: migrateCollaborationCutoverV14 },
   { version: 15, run: migrateTerminalBindingsV15 },
+  { version: 16, run: migrateCollaborativeAppsV16 },
 ];

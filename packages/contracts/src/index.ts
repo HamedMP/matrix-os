@@ -71,6 +71,7 @@ export * from "#canonical-chat-provider";
 export * from "#canonical-chat-surface";
 export * from "#collaboration";
 export * from "#collaboration-capabilities";
+export * from "./collaborative-app-sharing.js";
 export * from "#collaboration-direct";
 export * from "#collaboration-execution";
 export * from "#collaboration-peer";
