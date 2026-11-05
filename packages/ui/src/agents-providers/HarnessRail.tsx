@@ -2,6 +2,7 @@ import { useLocalObservationExpiry } from "../local-observation-expiry.js";
 import { capabilityRowStatus, resolvedWorkflowRowStatus } from "./workflow-row-status.js";
 import { AgentRow } from "./AgentRow.js";
 import { resolveHarnessConnection } from "./harness-connection.js";
+import {legacyClaudeNativeConnection, nativeClaudeAuthenticationExpiry} from "./legacy-claude-connection.js";
 import type { ReactNode } from "react";
 import type {
   ProviderAccessSource,
@@ -43,7 +44,7 @@ export function HarnessRail({
   onEnable: (harness: ProviderHarnessInstance) => void;
   renderDetails: (harness: ProviderHarnessInstance) => ReactNode;
 }) {
-  useLocalObservationExpiry([...sources.map(item => item.localObservation?.staleAfter), ...harnesses.map(item => item.localObservation?.staleAfter)]);
+  useLocalObservationExpiry([...sources.map(item => item.localObservation?.staleAfter), ...harnesses.map(item => item.localObservation?.staleAfter), ...accounts.map(nativeClaudeAuthenticationExpiry)]);
   return (
     <section className="matrix-ap-agent-groups" aria-label="Installed agents">
       {(["Coding agents", "General agents"] as const).map((group) => {
@@ -106,7 +107,7 @@ export function HarnessRail({
                   id={harness.id}
                   harness={harness.harness}
                   name={harness.harness === "claude" && harness.displayName === "Claude" ? "Claude Code" : harness.displayName}
-                  status={resolvedWorkflowRowStatus(harness, source, statusOverride?.[harness.id])}
+                  status={legacyClaudeNativeConnection(harness, accounts, sources) ? "Connected" : resolvedWorkflowRowStatus(harness, source, statusOverride?.[harness.id])}
                   accent={harness.accentColor ?? "none"}
                   expanded={expanded}
                   onToggle={() => onSelect(harness.id)}

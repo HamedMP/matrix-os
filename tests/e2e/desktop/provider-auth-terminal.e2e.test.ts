@@ -86,7 +86,7 @@ async function settings() {
   if (await claude.getAttribute("aria-expanded") !== "true") await claude.click();
 }
 
-it("keeps browser login, cancellation, completion and selected-agent disconnect in Settings without opening Terminal", async () => {
+it("keeps browser login in Settings and disconnects execution without logging out the native account", async () => {
   try {
     const identity = await app.evaluate(({ app: electronApp }) => electronApp.getAppPath());
     expect(identity).toBe(join(root, "desktop/out/main"));
@@ -125,16 +125,22 @@ it("keeps browser login, cancellation, completion and selected-agent disconnect 
     await disconnect.click();
     await page.getByRole("dialog", { name: "Disconnect Claude?", exact: true }).getByRole("button", { name: "Disconnect", exact: true }).click();
     await accountChoice.waitFor();
-    await page.getByRole("button", { name: /^Claude.*Not connected/ }).waitFor();
-    expect(await claudeRow.textContent()).toContain("Not connected");
-    expect(gateway.workflowEvents.at(-1)).toBe("agent-disabled");
-    // Fixture HTTP state independently proves Disconnect did not log out the account.
+    await page.getByRole("button", { name: /^Claude.*Connected/ }).waitFor();
+    expect(await claudeRow.textContent()).toContain("Connected");
+    expect(gateway.workflowEvents).toEqual(["browser-login", "cancel", "browser-login", "code-completed", "agent-enabled", "agent-disabled"]);
+    // Connected describes native authentication; Disconnect only disables execution.
+    // Independent HTTP state must retain the account, source, model and action scope.
     const retained = await (await fetch(`${gateway.url}/api/ai/provider-settings`, {signal: AbortSignal.timeout(5000)})).json();
-    expect(retained.accounts[0].authState).toBe("authenticated");
-    expect(retained.harnesses[0].enabled).toBe(false);
+    expect(retained.accounts).toEqual(connected.accounts);
+    expect(retained.accessSources).toEqual(connected.accessSources);
+    expect(retained.supportedActions).toEqual(connected.supportedActions);
+    expect(retained.harnesses[0]).toMatchObject({ enabled: false, configuredEnabled: false, authState: "authenticated",
+      selectedAccountId: connected.harnesses[0].selectedAccountId, accessSourceId: connected.harnesses[0].accessSourceId,
+      route: connected.harnesses[0].route });
     await terminal.waitFor({ state: "hidden" });
     expect(gateway.commands).toHaveLength(0);
-    await page.screenshot({ path: join(output, "settings-browser-disconnected.png") });
+    await claudeRow.scrollIntoViewIfNeeded();
+    await page.screenshot({ path: join(output, "settings-browser-disabled-authenticated.png") });
   } catch (error) {
     await page.screenshot({ path: join(output, "provider-auth-terminal-failure.png") });
     throw error;
