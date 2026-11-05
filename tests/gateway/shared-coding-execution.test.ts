@@ -520,6 +520,53 @@ describe("shared coding execution (S09)", () => {
       expect(await markLostSharedRunsOnStartup({ db: fixture.db, loss, batchSize: 1 })).toEqual([]);
     });
 
+    it("interrupts only the departed actor's active runs during member revocation", async () => {
+      const secondChat = "chat_collaboration_revocation_secondary";
+      const secondScope = "10000000-0000-4000-8000-000000000078";
+      await seedSecondarySharedChat(fixture, { chatId: secondChat, scopeId: secondScope, tag: "3" });
+      await repository.enqueueSharedQueuedTurn(owner, aiRequest(28, collaborationActors.editor));
+      await repository.enqueueSharedQueuedTurn(owner, {
+        ...aiRequest(29, otherEditor),
+        chatId: secondChat,
+        scopeId: secondScope,
+      });
+      const departed = await claim("member_departed");
+      const retained = await repository.claimNextQueuedTurn(owner, {
+        chatId: secondChat,
+        turnId: "cturn_member_retained",
+        runId: "run_member_retained",
+        messageId: "msg_member_retained",
+        claimedAt: now,
+      });
+      const cancelSharedRun = vi.fn(async (
+        runOwner: typeof owner,
+        _scopeId: string,
+        chatId: string,
+        runId: string,
+        options?: { sharedRequestState?: "cancelled" | "interrupted" },
+      ) => {
+        await repository.finishRun(runOwner, {
+          chatId,
+          runId,
+          outcome: "aborted",
+          completedAt: now,
+          ...(options?.sharedRequestState ? { sharedRequestState: options.sharedRequestState } : {}),
+        });
+      });
+
+      await expect(interruptActiveSharedRuns({
+        db: fixture.db,
+        loss,
+        reason: "run_unit_exit",
+        orchestrator: { cancelSharedRun },
+        requestingActorId: collaborationActors.editor,
+      })).resolves.toEqual([departed.run.id]);
+
+      expect(cancelSharedRun).toHaveBeenCalledOnce();
+      expect(await fixture.db.selectFrom("chat_runs").select("status")
+        .where("id", "=", retained!.run.id).executeTakeFirstOrThrow()).toEqual({ status: "accepted" });
+    });
+
     it("classifies isolated runtime failures into the frozen loss reasons", () => {
       expect(classifySharedRunLoss(new ScopeRuntimeClientError("runtime_unavailable"), "create")).toBe("scope_runtime_crash");
       expect(classifySharedRunLoss(new ScopeRuntimeClientError("runtime_unavailable"), "inference")).toBe("scope_runtime_crash");
@@ -996,6 +1043,7 @@ async function seedSecondarySharedChat(
   await fixture.db.insertInto("collaboration_members").values([
     { ...member(collaborationActors.owner, "owner"), scope_id: input.scopeId },
     { ...member(collaborationActors.editor, "editor"), scope_id: input.scopeId },
+    { ...member(otherEditor, "editor"), scope_id: input.scopeId },
   ]).execute();
 }
 

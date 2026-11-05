@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { parseCollaborationJourneyEnvironment } from "./collaboration.js";
 
-describe("two-account collaboration journey fixture", () => {
+describe("organization collaboration journey fixture", () => {
   it("builds supported session-routed URLs without exposing storage-state paths", () => {
     expect(parseCollaborationJourneyEnvironment({
       PATH: "/usr/bin",
@@ -9,6 +9,7 @@ describe("two-account collaboration journey fixture", () => {
       MATRIX_COLLABORATION_E2E_RUNTIME_HANDLE: "review-vm",
       MATRIX_COLLABORATION_E2E_OWNER_STATE: "/tmp/owner.json",
       MATRIX_COLLABORATION_E2E_EDITOR_STATE: "/tmp/editor.json",
+      MATRIX_COLLABORATION_E2E_OUTSIDER_STATE: "/tmp/outsider.json",
       MATRIX_COLLABORATION_E2E_PROJECT_ID: "proj_review",
       MATRIX_COLLABORATION_E2E_EDITOR_ACTOR_ID: "user_editor",
       MATRIX_COLLABORATION_E2E_EDITOR_EMAIL: "editor@example.com",
@@ -18,6 +19,7 @@ describe("two-account collaboration journey fixture", () => {
       runtimePath: "/vm/review-vm",
       ownerStorageState: "/tmp/owner.json",
       editorStorageState: "/tmp/editor.json",
+      outsiderStorageState: "/tmp/outsider.json",
       projectId: "proj_review",
       editorActorId: "user_editor",
       editorEmail: "editor@example.com",
@@ -31,6 +33,7 @@ describe("two-account collaboration journey fixture", () => {
       MATRIX_COLLABORATION_E2E_RUNTIME_HANDLE: "review-vm",
       MATRIX_COLLABORATION_E2E_OWNER_STATE: "/tmp/owner.json",
       MATRIX_COLLABORATION_E2E_EDITOR_STATE: "/tmp/editor.json",
+      MATRIX_COLLABORATION_E2E_OUTSIDER_STATE: "/tmp/outsider.json",
       MATRIX_COLLABORATION_E2E_PROJECT_ID: "proj_review",
       MATRIX_COLLABORATION_E2E_EDITOR_ACTOR_ID: "user_editor",
       MATRIX_COLLABORATION_E2E_EDITOR_EMAIL: "editor@example.com",
@@ -41,6 +44,7 @@ describe("two-account collaboration journey fixture", () => {
       MATRIX_COLLABORATION_E2E_RUNTIME_HANDLE: "../owner",
       MATRIX_COLLABORATION_E2E_OWNER_STATE: "/tmp/owner.json",
       MATRIX_COLLABORATION_E2E_EDITOR_STATE: "/tmp/editor.json",
+      MATRIX_COLLABORATION_E2E_OUTSIDER_STATE: "/tmp/outsider.json",
       MATRIX_COLLABORATION_E2E_PROJECT_ID: "proj_review",
       MATRIX_COLLABORATION_E2E_EDITOR_ACTOR_ID: "user_editor",
       MATRIX_COLLABORATION_E2E_EDITOR_EMAIL: "editor@example.com",

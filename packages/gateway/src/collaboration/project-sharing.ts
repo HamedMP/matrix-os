@@ -91,6 +91,8 @@ export function createProjectSharingService(options: {
     authorityGeneration: number;
   }>;
   onPrepared?(transition: ProjectTransitionRecord): boolean;
+  /** Runs only after the private lifecycle/auth-epoch fence commits. */
+  onUnshared?(scopeId: string): Promise<void>;
   /** The owner's name for a project; without it the overview is unavailable, never a guess. */
   projectName?(ownerId: string, projectId: string): Promise<string | null>;
 }) {
@@ -263,7 +265,7 @@ export function createProjectSharingService(options: {
         expectedRevision: z.number().int().nonnegative(),
         payloadHash: DigestSchema,
       }).strict().parse(input);
-      return options.db.transaction().execute(async (trx) => {
+      const result = await options.db.transaction().execute(async (trx) => {
         const scope = await trx.selectFrom("collaboration_scopes").selectAll()
           .where("id", "=", parsed.scopeId).where("kind", "=", "project")
           .where("deleted_at", "is", null).forUpdate().executeTakeFirst();
@@ -328,6 +330,8 @@ export function createProjectSharingService(options: {
         }).execute();
         return result;
       });
+      await options.onUnshared?.(parsed.scopeId);
+      return result;
     },
   };
 }

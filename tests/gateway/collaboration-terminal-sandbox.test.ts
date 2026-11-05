@@ -185,6 +185,19 @@ describe("owner opt-in for Contributor control", () => {
 });
 
 describe("revocation enforcer", () => {
+  it("stops every runtime in a revoked scope without touching another scope", async () => {
+    const stopRuntime = vi.fn(async () => undefined);
+    const runtimes = new SandboxRuntimeRegistry({ client: { stopRuntime }, startTimer: false });
+    const otherScope = "10000000-0000-4000-8000-000000000099";
+    runtimes.bind({ scopeId, actorId: "actor_1", runtimeHandle: "runtime_11111111111111111111111111111111" });
+    runtimes.bind({ scopeId, actorId: "actor_2", runtimeHandle: "runtime_22222222222222222222222222222222" });
+    runtimes.bind({ scopeId: otherScope, actorId: "actor_1", runtimeHandle: "runtime_33333333333333333333333333333333" });
+
+    await expect(runtimes.stopForScope(scopeId)).resolves.toBe(2);
+    expect(stopRuntime).toHaveBeenCalledTimes(2);
+    expect(runtimes.size).toBe(1);
+    runtimes.close();
+  });
   it("keeps another valid session's controller when one action budget is exhausted", async () => {
     const control = new TerminalControlCoordinator({ startTimer: false });
     const enforcer = new CollaborationRevocationEnforcer({ control });

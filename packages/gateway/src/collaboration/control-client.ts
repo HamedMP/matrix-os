@@ -116,6 +116,8 @@ export class CollaborationControlClient {
     capabilities?: Pick<CollaborationCapabilityRepository, "endActorGrants">;
     /** Drops cached membership evidence for the denied actor or organization. */
     membership?: MembershipEvidenceEvictor;
+    /** Drains project sessions/runs after membership evidence has been fenced. */
+    onMembershipEnded?(input: { organizationId: string; actorId: string }): Promise<void>;
     fetchImpl?: typeof fetch;
     /** Opens the control WebSocket; production uses `ws` through `loadDefaultConnector`, tests pass a fake. */
     connect?(url: string, headers: Record<string, string>, onMessage: (raw: string) => void, onClose: () => void): ControlSocketLike | Promise<ControlSocketLike>;
@@ -299,6 +301,19 @@ export class CollaborationControlClient {
         // The drain may have landed while the cleanup was in flight. The runtime has stopped
         // serving, so the denial is left to complete at its lease deadline rather than being
         // acknowledged on behalf of a fenced home.
+        if (this.closed) return;
+      }
+      if (denial.organizationId && denial.actorId && this.options.onMembershipEnded) {
+        try {
+          await this.options.onMembershipEnded({
+            organizationId: denial.organizationId,
+            actorId: denial.actorId,
+          });
+        } catch (error: unknown) {
+          console.warn("[collaboration-control-client] project access drain failed",
+            error instanceof Error ? error.name : "UnknownError");
+          return;
+        }
         if (this.closed) return;
       }
       this.lastFenceAt = this.now().toISOString();
