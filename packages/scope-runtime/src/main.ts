@@ -1,4 +1,4 @@
-import { finishCloses } from "./socket-shutdown.js";
+import { installSupervisorShutdownHandlers } from "./supervisor-shutdown.js";
 import { HOST_NAMESPACE_TRUST, assertRuntimeDirectoryPlacement, assertNamespaceSocket } from "./namespace-ancestry.js";
 import { resolveScopeRuntimeHostConfig, resolveScopeRuntimeSourcePaths } from "./host-config.js";
 import { describeScopeRuntimeFailure } from "./failure.js";
@@ -38,22 +38,7 @@ async function main(): Promise<void> {
   const watchdog = startScopeRuntimeWatchdog();
   process.stdout.write("scope_runtime_supervisor_ready\n");
 
-  let shutdown: Promise<void> | undefined;
-  const stop = () => {
-    if (shutdown) return;
-    shutdown = finishCloses(watchdog.close(), server.close()).then(() => {
-      process.off("SIGTERM", stop);
-      process.off("SIGINT", stop);
-      process.exitCode = 0;
-    }).catch((error: unknown) => {
-      shutdown = undefined;
-      console.error("scope_runtime_supervisor_shutdown_failed:",
-        error instanceof Error ? error.name : "UnknownError");
-      process.exitCode = 1;
-    });
-  };
-  process.on("SIGTERM", stop);
-  process.on("SIGINT", stop);
+  installSupervisorShutdownHandlers(watchdog, server);
 }
 
 main().catch((error: unknown) => {
