@@ -3,7 +3,7 @@ import React from "react";
 import "@testing-library/jest-dom/vitest";
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { ProviderSettingsSnapshot, ProviderWorkflowCapability, ProviderWorkflowConnectionOption } from "@matrix-os/contracts";
+import { ProviderSettingsSnapshotSchema, type ProviderAccessSource, type ProviderSettingsSnapshot, type ProviderWorkflowCapability, type ProviderWorkflowConnectionOption } from "@matrix-os/contracts";
 import type { ProviderWorkflowClient } from "../../packages/ui/src/agents-providers/types";
 import type { GetStartedAgentLoginPort } from "../../packages/ui/src/get-started/agent-login.js";
 import { GetStartedAgentsStep } from "../../packages/ui/src/get-started/agents-step.js";
@@ -16,30 +16,46 @@ const option = (id: string, method: "browser" | "terminal"): ProviderWorkflowCon
 
 type Connection = { authMethod: "api_key" | "subscription" } | null;
 
-function creditSource(availableMicrousd: number, asOf: string) {
+function creditSource(availableMicrousd: number, asOf: string): ProviderAccessSource {
   return {
-    id: "matrix_cloudflare", kind: "matrix_gateway", providerId: "cloudflare", fundingKind: "matrix_managed",
-    readiness: { state: "ready", checkedAt: asOf }, eligibleModelIds: [],
+    id: "matrix_cloudflare", kind: "matrix_gateway", providerId: "cloudflare", fundingKind: "matrix_included", accountId: null, displayName: "Matrix AI",
+    readiness: { state: "ready", checkedAt: asOf, staleAfter: null, action: "none", safeReason: null }, eligibleModelIds: [],
     usage: {
       kind: "managed_credit", authority: "matrix_ledger", state: "current", scope: "owner_entitlement", currency: "USD",
       usedMicrousd: 0, remainingMicrousd: availableMicrousd, limitMicrousd: 50_000_000, periodStartedAt: asOf, resetsAt: null, asOf,
       credit: { promotionalBalanceMicrousd: availableMicrousd, addonBalanceMicrousd: 0, creditBalanceMicrousd: availableMicrousd, reservedMicrousd: 0, remainingBalanceMicrousd: availableMicrousd },
       budget: { monthlyBudgetMicrousd: 50_000_000, settledThisMonthMicrousd: 0, reservedThisMonthMicrousd: 0, remainingBudgetMicrousd: 50_000_000 },
-      chatAvailability: { asOf, eligibleBalanceMicrousd: availableMicrousd, availableBalanceMicrousd: availableMicrousd },
+      chatAvailability: { contractVersion: 1, asOf, eligibleBalanceMicrousd: availableMicrousd, availableBalanceMicrousd: availableMicrousd },
     },
   };
 }
 
-function snapshot({ connection = null, installState = "installed", sources = [] }: { connection?: Connection; installState?: "installed" | "missing"; sources?: unknown[] } = {}): ProviderSettingsSnapshot {
-  return {
-    harnesses: [{ id: "claude", harness: "claude", displayName: "Claude Code", installState, authState: connection ? "authenticated" : "unauthenticated", connectivity: "online", enabled: true, configuredEnabled: true, accessSourceId: connection ? "src_1" : null, accountIds: connection ? ["acct_1"] : [], selectedAccountId: connection ? "acct_1" : null, loginMethods: ["browser"] }],
-    accounts: connection ? [{ id: "acct_1", accessSourceId: "src_1", providerId: "anthropic", authMethod: connection.authMethod, authState: "authenticated", displayName: "sam@example.com" }] : [],
+function snapshot({ connection = null, installState = "installed", sources = [] }: { connection?: Connection; installState?: "installed" | "missing"; sources?: ProviderAccessSource[] } = {}): ProviderSettingsSnapshot {
+  const checkedAt = "2026-10-01T00:00:00Z";
+  // Get started consumes the same validated Settings DTO as Web/Electron, not a partial harness.
+  return ProviderSettingsSnapshotSchema.parse({
+    contractVersion: 1, revision: 1, projectionOf: { contract: "AiProviderSnapshotV3", contractVersion: 3, revision: 1 },
+    harnesses: [{ id: "claude", harness: "claude", displayName: "Claude Code", accentColor: "orange", installState,
+      version: installState === "installed" ? "fixture" : null, recommendedLoginMethod: "terminal", activeChatCount: 0,
+      route: { kind: "fixed", providerId: "anthropic", modelId: "claude-sonnet-5" },
+      authState: connection ? "authenticated" : "unauthenticated", connectivity: "online", enabled: installState === "installed", configuredEnabled: true,
+      accessSourceId: connection ? "src_1" : null, accountIds: connection ? ["acct_1"] : [], selectedAccountId: connection ? "acct_1" : null, loginMethods: ["terminal"] }],
+    accounts: connection ? [{ id: "acct_1", accessSourceId: "src_1", providerId: "anthropic", authMethod: connection.authMethod === "api_key" ? "api_key" : "terminal",
+      authState: "authenticated", displayName: "sam@example.com", lastCheckedAt: checkedAt,
+      dependencies: { activeChatCount: 0, resumableChatCount: 0, harnessInstanceCount: 1 } }] : [],
     accessSources: [
-      ...(connection ? [{ id: "src_1", kind: "harness_profile", providerId: "anthropic", fundingKind: connection.authMethod === "api_key" ? "owner_api_key" : "owner_account", readiness: { state: "ready" }, usage: { kind: "unavailable", reason: "not_reported" } }] : []),
+      ...(connection ? [{ id: "src_1", kind: "provider_account", providerId: "anthropic", accountId: "acct_1", displayName: "Claude account",
+        fundingKind: connection.authMethod === "api_key" ? "owner_api_key" : "owner_account", eligibleModelIds: ["claude-sonnet-5"],
+        readiness: { state: "ready", checkedAt, staleAfter: null, action: "none", safeReason: null },
+        usage: { kind: "unavailable", authority: "unavailable", state: "unavailable", scope: "account", reason: "provider_does_not_report", asOf: checkedAt } }] : []),
       ...sources,
     ],
-    modelProviders: [], gatewayPolicy: null, configurationHarnessKinds: [], supportedActions: [], access: { mode: "writable" }, refreshedAt: "2026-10-01T00:00:00Z",
-  } as unknown as ProviderSettingsSnapshot;
+    modelProviders: [{ id: "anthropic", displayName: "Anthropic", models: [{ id: "claude-sonnet-5", displayName: "Claude Sonnet 5", enabled: true }] },
+      { id: "cloudflare", displayName: "Cloudflare", models: [] }],
+    harnessCatalog: (["hermes", "openclaw", "pi", "opencode"] as const).map(harness => ({ harness, displayName: harness, installState: "unknown",
+      available: false, runnable: false, setupAction: "none", safeReason: "runtime_not_supported" })),
+    gatewayPolicy: null, configurationHarnessKinds: [], supportedActions: [], access: { mode: "writable" }, refreshedAt: checkedAt,
+  });
 }
 
 function port(overrides: Partial<GetStartedAgentLoginPort> = {}, capabilities: Promise<ProviderWorkflowCapability[]> = Promise.resolve([claude, codex])): GetStartedAgentLoginPort {
