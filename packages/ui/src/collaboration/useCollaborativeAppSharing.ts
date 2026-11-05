@@ -1,7 +1,9 @@
 import {
   CollaborativeAppReadinessSchema,
+  CollaborativeAppShareSchema,
   CollaborationOrganizationIdSchema,
   type CollaborativeAppReadiness,
+  type CollaborativeAppShare,
 } from "@matrix-os/contracts";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { z } from "zod/v4";
@@ -12,26 +14,56 @@ const RecheckInputSchema = z.object({
   expectedRegistrationIncarnation: z.string().regex(/^[a-f0-9]{64}$/).optional(),
   clientRequestId: z.uuid().optional(),
 }).strict();
+const CreateShareInputSchema = z.object({
+  organizationId: CollaborationOrganizationIdSchema,
+  clientRequestId: z.uuid().optional(),
+}).strict();
+const PreflightSchema = z.discriminatedUnion("eligible", [
+  z.object({
+    eligible: z.literal(true),
+    catalogId: z.uuid(),
+    resourceRevision: z.string().regex(/^\d+$/),
+    readinessId: z.uuid(),
+    buildId: z.string().regex(/^[a-f0-9]{64}$/),
+    confirmationToken: z.string().min(16).max(8_192),
+    existingShare: CollaborativeAppShareSchema.optional(),
+  }).strict(),
+  z.object({
+    eligible: z.literal(false),
+    reason: z.enum(["not_ready", "readiness_stale", "organization_mismatch", "already_shared", "unavailable"]),
+  }).strict(),
+]);
 const SAFE_UNAVAILABLE = "App collaboration readiness is unavailable.";
+const SAFE_SHARE_UNAVAILABLE = "App sharing is unavailable. Try again.";
 
 export interface CollaborativeAppReadinessApi {
   get(path: string): Promise<unknown>;
   post(path: string, body: unknown): Promise<unknown>;
+  delete?(path: string, body?: unknown): Promise<unknown>;
 }
 
 export type CollaborativeAppSharingState = "idle" | "loading" | "checking"
   | "blocked" | "ready" | "stale" | "failed";
+export type CollaborativeAppSharingActionState = "idle" | "loading" | "sharing" | "stopping" | "failed";
 
 export function useCollaborativeAppSharing(input: {
   appId: string;
   api: CollaborativeAppReadinessApi;
   buildEpoch?: number;
+  manageShare?: boolean;
 }) {
   const [readiness, setReadiness] = useState<CollaborativeAppReadiness | null>(null);
   const [readinessRequestKey, setReadinessRequestKey] = useState<string | null>(null);
   const [phase, setPhase] = useState<"idle" | "loading" | "checking">("loading");
   const [safeMessage, setSafeMessage] = useState<string | null>(null);
+  const [share, setShare] = useState<CollaborativeAppShare | null>(null);
+  const [shareKnown, setShareKnown] = useState(!input.manageShare);
+  const [actionState, setActionState] = useState<CollaborativeAppSharingActionState>(
+    input.manageShare ? "loading" : "idle",
+  );
+  const [actionMessage, setActionMessage] = useState<string | null>(null);
   const requestGeneration = useRef(0);
+  const shareGeneration = useRef(0);
   const appId = AppIdSchema.safeParse(input.appId);
   const path = appId.success
     ? `/api/collaboration/apps/${encodeURIComponent(appId.data)}/readiness`
@@ -76,6 +108,40 @@ export function useCollaborativeAppSharing(input: {
     return () => { requestGeneration.current += 1; };
   }, [refresh]);
 
+  const refreshShare = useCallback(async () => {
+    const generation = ++shareGeneration.current;
+    setShareKnown(false);
+    setActionState("loading");
+    setActionMessage(null);
+    if (!input.manageShare || !path) {
+      setShare(null);
+      setShareKnown(true);
+      setActionState("idle");
+      return { ok: true as const, share: null };
+    }
+    try {
+      const raw = await input.api.get(path.replace(/\/readiness$/, "/share"));
+      const next = raw === null ? null : CollaborativeAppShareSchema.parse(raw);
+      if (shareGeneration.current !== generation) return { ok: false as const };
+      setShare(next);
+      setShareKnown(true);
+      setActionState("idle");
+      return { ok: true as const, share: next };
+    } catch (error: unknown) {
+      console.warn("[collaborative-app-share] state unavailable", error instanceof Error ? error.name : "UnknownError");
+      if (shareGeneration.current !== generation) return { ok: false as const };
+      setShareKnown(false);
+      setActionState("failed");
+      setActionMessage(SAFE_SHARE_UNAVAILABLE);
+      return { ok: false as const };
+    }
+  }, [input.api, input.manageShare, path]);
+
+  useEffect(() => {
+    if (input.manageShare) void refreshShare();
+    return () => { shareGeneration.current += 1; };
+  }, [input.manageShare, refreshShare]);
+
   const recheck = useCallback(async (rawInput: {
     organizationId: string;
     expectedRegistrationIncarnation?: string;
@@ -109,12 +175,93 @@ export function useCollaborativeAppSharing(input: {
     : phase === "loading" || phase === "checking"
     ? phase
     : currentReadiness?.status ?? (safeMessage ? "failed" : "idle");
+
+  const createShare = useCallback(async (rawInput: {
+    organizationId: string;
+    clientRequestId?: string;
+  }): Promise<CollaborativeAppShare | null> => {
+    const generation = ++shareGeneration.current;
+    setActionState("sharing");
+    setActionMessage(null);
+    try {
+      const parsed = CreateShareInputSchema.parse(rawInput);
+      if (!path || currentReadiness?.status !== "ready") throw new Error("ReadinessUnavailable");
+      const sharePath = path.replace(/\/readiness$/, "/share");
+      const preflight = PreflightSchema.parse(await input.api.post(`${sharePath}/preflight`, {
+        organizationId: parsed.organizationId,
+        expectedReadinessRevision: currentReadiness.revision,
+        expectedBuildId: currentReadiness.build.buildId,
+      }));
+      if (!preflight.eligible) throw new Error(`SharePreflight:${preflight.reason}`);
+      const next = preflight.existingShare ?? CollaborativeAppShareSchema.parse(await input.api.post(sharePath, {
+        organizationId: parsed.organizationId,
+        clientRequestId: parsed.clientRequestId ?? crypto.randomUUID(),
+        expectedResourceRevision: preflight.resourceRevision,
+        expectedReadinessRevision: currentReadiness.revision,
+        readinessId: preflight.readinessId,
+        buildId: preflight.buildId,
+        confirmationToken: preflight.confirmationToken,
+      }));
+      if (shareGeneration.current !== generation) return null;
+      setShare(next);
+      setShareKnown(true);
+      setActionState("idle");
+      return next;
+    } catch (error: unknown) {
+      console.warn("[collaborative-app-share] create failed", error instanceof Error ? error.name : "UnknownError");
+      if (shareGeneration.current === generation) {
+        setActionState("failed");
+        setActionMessage(SAFE_SHARE_UNAVAILABLE);
+      }
+      return null;
+    }
+  }, [currentReadiness, input.api, path]);
+
+  const stopShare = useCallback(async (clientRequestId?: string): Promise<CollaborativeAppShare | null> => {
+    const generation = ++shareGeneration.current;
+    setActionState("stopping");
+    setActionMessage(null);
+    try {
+      if (!path || !share || !input.api.delete) throw new Error("ShareUnavailable");
+      const next = CollaborativeAppShareSchema.parse(await input.api.delete(
+        path.replace(/\/readiness$/, "/share"),
+        {
+          clientRequestId: clientRequestId ?? crypto.randomUUID(),
+          expectedShareRevision: share.shareRevision,
+          expectedBindingRevision: share.bindingRevision,
+        },
+      ));
+      if (shareGeneration.current !== generation) return null;
+      setShare(next);
+      setShareKnown(true);
+      setActionState("idle");
+      return next;
+    } catch (error: unknown) {
+      console.warn("[collaborative-app-share] stop failed", error instanceof Error ? error.name : "UnknownError");
+      if (shareGeneration.current === generation) {
+        setActionState("failed");
+        setActionMessage("Sharing could not be stopped. Refresh and try again.");
+      }
+      await refreshShare();
+      setActionState("failed");
+      setActionMessage("Sharing could not be stopped. Refresh and try again.");
+      return null;
+    }
+  }, [input.api, path, refreshShare, share]);
+
   return {
     readiness: currentReadiness,
+    share,
+    shareKnown,
     state,
     safeMessage,
+    actionState,
+    actionMessage,
     canShare: readinessRequestKey === requestKey && phase === "idle" && currentReadiness?.status === "ready",
     refresh,
+    refreshShare,
     recheck,
+    createShare,
+    stopShare,
   };
 }

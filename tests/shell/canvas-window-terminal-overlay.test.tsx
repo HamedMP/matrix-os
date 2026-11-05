@@ -417,6 +417,22 @@ describe("CanvasWindow terminal interactivity", () => {
     expect(container.querySelector("[data-canvas-interaction-overlay]")).toBeTruthy();
   });
 
+  it("keeps the click shield for mounted shared app windows", () => {
+    const shared = {
+      scopeId: "10000000-0000-4000-8000-000000000001", runtimeId: "runtime_owner",
+      organizationId: "org_matrix_team", authorityGeneration: 1, appId: "tracker",
+      catalogId: "30000000-0000-4000-8000-000000000001",
+      readinessId: "40000000-0000-4000-8000-000000000001",
+      registrationIncarnation: "a".repeat(64), buildId: "b".repeat(64), shareRevision: "1",
+      owner: { actorId: "user_owner", displayName: "Nima" },
+    };
+    const { container } = render(<CanvasWindow win={{
+      ...iframeWindow, path: `__shared-app__:${shared.scopeId}`, sharedAppTarget: shared,
+    }} />);
+    expect(container.querySelector("[data-canvas-interaction-overlay]")).toBeTruthy();
+    expect(appViewerRender).toHaveBeenCalledWith(expect.objectContaining({ sharedAppTarget: shared }));
+  });
+
   it("does not mount AppViewer when Canvas defers offscreen app content", () => {
     const { container } = render(<CanvasWindow win={iframeWindow} deferAppContent />);
 

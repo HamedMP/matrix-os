@@ -17,6 +17,8 @@ import { useChatContext } from "@/stores/chat-context";
 import { TrafficLights } from "../window/TrafficLights";
 import { useThemeStyle } from "../window/useThemeStyle";
 import { resolveTitleBarVariant } from "../window/title-bar-variant";
+import type { CollaborativeAppDirectoryItem } from "@matrix-os/contracts";
+import { sharedAppWindowPath, sharedAppWindowTitle } from "@/lib/shared-app-target";
 import {
   MacGlassTitleBarChrome,
   MacTitleBarChrome,
@@ -74,6 +76,10 @@ export function CanvasWindow({ win, iconUrl, hidden = false, deferAppContent = f
   const moveWindow = useWindowManager((s) => s.moveWindow);
   const focusedWindowId = useWindowManager((s) => s.focusedWindowId);
   const fullscreenWindowId = useWindowManager((s) => s.fullscreenWindowId);
+  const openSharedApp = (target: CollaborativeAppDirectoryItem) => {
+    const manager = useWindowManager.getState();
+    manager.openWindow(sharedAppWindowTitle(target), sharedAppWindowPath(target), 0, { sharedAppTarget: target });
+  };
   // react-doctor-disable-next-line react-doctor/no-event-handler -- false positive: `isFocused` is a derived store value, not a DOM event handler. It is read by the reset effect below (already justified for set-state-in-effect / no-adjust-state-on-prop-change), which must remain an effect because it fires on programmatic canvas scroll / focus loss where no event exists to move the logic into.
   const isFocused = focusedWindowId === win.id;
   const isFullscreen = fullscreenWindowId === win.id;
@@ -89,7 +95,7 @@ export function CanvasWindow({ win, iconUrl, hidden = false, deferAppContent = f
 
   // Iframe windows get a "click-to-interact" overlay so wheel events reach
   // the canvas instead of being swallowed by the iframe's browsing context.
-  const isIframeWindow = !win.path.startsWith("__");
+  const isIframeWindow = Boolean(win.sharedAppTarget) || !win.path.startsWith("__");
   const terminalOwnsChrome = win.path.startsWith("__terminal__");
   const isCanvasScrolling = useCanvasTransform((s) => s.isScrolling);
   const [contentFocused, setContentFocused] = useState(false);
@@ -478,6 +484,7 @@ export function CanvasWindow({ win, iconUrl, hidden = false, deferAppContent = f
                 onOpenSharedChat={chatState.openSharedChat}
                 onOpenSharedProject={chatState.openSharedProject}
                 onOpenSharedHome={chatState.openSharedHome}
+                onOpenSharedApp={openSharedApp}
                 filterUnreadOnly={chatState.unreadOnly}
                 onUnreadFilterChange={chatState.setUnreadOnly}
                 active={isFocused && !win.minimized}
@@ -528,7 +535,8 @@ export function CanvasWindow({ win, iconUrl, hidden = false, deferAppContent = f
           )}
         </div>
       ) : (
-        <CanvasAppViewer path={win.path} active={isFocused && !win.minimized && !hidden && !isPreview} />
+        <CanvasAppViewer path={win.path} sharedAppTarget={win.sharedAppTarget}
+          active={isFocused && !win.minimized && !hidden && !isPreview} />
       )}
     </>
   );
