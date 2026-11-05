@@ -15,6 +15,7 @@ import { chatLoadState, chatScreenTitle, composerPlaceholder } from "./chat-scre
 import { CHAT_SUGGESTIONS } from "./chat-suggestions";
 import { composerAddProps } from "./composer-add";
 import { ModelTrigger } from "./ModelTrigger";
+import {NativeSourceChatRoutines} from "./NativeSourceChatRoutines";
 import { useChatThread } from "./use-chat-thread";
 
 export interface ActiveChatScreenProps {
@@ -37,7 +38,7 @@ export function ActiveChatScreen({ onBack, onNewChat }: ActiveChatScreenProps) {
   const { startDraftChat, draftChatRequests } = useCanonicalChatSession();
   const {
     connected: isConnected, activeChatId, detail, refresh, chatReadFailed, reloadChat, chatUnread, chats, gatewayUrl,
-    catalog, directBot, providerCatalogChecking, selection, setSelectionOverride, attachmentKinds, composer,
+    catalog, directBot, routineOriginEligible, providerCatalogChecking, selection, setSelectionOverride, attachmentKinds, composer,
   } = useActiveChat();
   const {
     draft, setDraft, attachments, addAttachments, removeAttachment, attachmentRoom, unreadableAttachments, attachmentNotice,
@@ -117,6 +118,7 @@ export function ActiveChatScreen({ onBack, onNewChat }: ActiveChatScreenProps) {
       renderRequest={renderRequest}
       renderResults={renderResults}
       renderComputerPhoto={renderComputerPhoto}
+      threadFooter={gatewayUrl && activeChatId ? <NativeSourceChatRoutines key={`${gatewayUrl}:${activeChatId}`} gatewayUrl={gatewayUrl} chatId={activeChatId} eligible={Boolean(routineOriginEligible)}/> : undefined}
       chatState={chatState}
       onReloadChat={reloadChat}
       unsentActions={unsentActions}

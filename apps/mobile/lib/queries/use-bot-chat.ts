@@ -44,6 +44,7 @@ export function useBotChat(chatId: string | null, gatewayUrl: string | null) {
     return { token, gatewayUrl, chatId, agentId: query.data.agentId };
   };
   return {
+    resolved: enabled && query.isSuccess,
     snapshot: query.data ?? null,
     isError: query.isError,
     refresh: async () => {

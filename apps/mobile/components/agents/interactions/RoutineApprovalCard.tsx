@@ -25,6 +25,7 @@ export function RoutineApprovalCard({ preview, sending, error, stale, closed, on
     {approval && timing ? <>
       <InteractionNote>{approval.proposal.prompt}</InteractionNote>
       <InteractionNote>{`Bot: ${botId}`}</InteractionNote>
+      <InteractionNote>{`Model: ${approval.proposal.selection.model}`}</InteractionNote>
       <InteractionNote>{`Computer: ${approval.source.computerId}`}</InteractionNote>
       <InteractionNote>{timing.frequency}</InteractionNote><InteractionNote>{timing.timezone}</InteractionNote>
       <InteractionNote>{`${approval.estimatedNextFireAt ? "Estimated next run" : "First run"}: ${next}`}</InteractionNote>
