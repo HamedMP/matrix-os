@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, writeFile, symlink, readFile, realpath, mkdir, rename } from 'node:fs/promises';
+import { mkdtemp, writeFile, symlink, readFile, realpath, mkdir, rename, chmod, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { execFileSync } from 'node:child_process';
@@ -11,16 +11,21 @@ async function fixture(t, capacity = 3) {
   t.after(async () => { const { rm } = await import('node:fs/promises'); await rm(root, { recursive: true, force: true }); });
   execFileSync('git', ['init', '-q', root]);
   const calls = [];
-  let foreign = false, fail = false;
+  let foreign = false, fail = false, response = () => undefined;
   const manifest = { version: 1, id: 'sample', worktree: root, machine: 'devstack-sample', preview: 'https://sample.example.test', sourceRoot: '/opt/matrix/app', managedUnits: units, sourceSHA: 'unknown', appliedRevision: 'unknown', capabilities: { sourceSync: 'unknown' } };
   const file = join(root, 'manifest.json');
-  await writeFile(file, JSON.stringify(manifest));
-  const adapter = createAdapter({ registry: join(root, 'private'), capacity, runner: async (command, args) => {
+  await writeFile(file, JSON.stringify(manifest), { mode: 0o600 });
+  const runner = async (command, args) => {
     calls.push([command, args]);
-    if (args.includes('/opt/matrix/.devstack-owner')) return { code: 0, stdout: JSON.stringify({ version: 1, purpose: foreign ? 'production' : 'ENG-432-local-worktree', machine: manifest.machine }), stderr: '' };
+    if (args.includes('cat') && args.includes('/opt/matrix/.devstack-owner')) return { code: 0, stdout: JSON.stringify({ version: 1, purpose: foreign ? 'production' : 'ENG-432-local-worktree', machine: manifest.machine, id: manifest.id, worktree: manifest.worktree }), stderr: '' };
+    const custom = await response(args); if (custom) return custom;
+    if (args.includes('stat')) return { code: 0, stdout: '0:600:regular file' };
+    if (args.includes('--property=LoadState')) return { code: 0, stdout: 'loaded', stderr: '' };
+    if (args.includes('--property=ActiveState')) return { code: 0, stdout: 'inactive', stderr: '' };
     return { code: fail ? 7 : 0, stdout: 'token=secret feedback', stderr: '' };
-  } });
-  return { root, adapter, file, calls, manifest, foreign: () => foreign = true, fail: () => fail = true };
+  };
+  const adapter = createAdapter({ registry: join(root, 'private'), capacity, runner });
+  return { root, adapter, file, calls, manifest, runner, setResponse: fn => response = fn, foreign: () => foreign = true, fail: () => fail = true };
 }
 
 test('register is exclusive, idempotent and capacity counts stopped claims', async t => {
@@ -43,7 +48,7 @@ test('stop/resume order, preserved data and unprivileged argument execution', as
   const f = await fixture(t); await f.adapter.register(f.file);
   await f.adapter.operation('sample', 'stop');
   await f.adapter.operation('sample', 'resume');
-  const actions = f.calls.filter(([, args]) => args.includes('systemctl')).map(([, args]) => args.slice(-2));
+  const actions = f.calls.filter(([, args]) => args.includes('systemctl') && (args.includes('start') || args.includes('stop'))).map(([, args]) => args.slice(-2));
   assert.deepEqual(actions, [['stop', units[1]], ['stop', units[0]], ['start', units[0]], ['start', units[1]]]);
   await f.adapter.operation('sample', 'test', ['bun', 'test', 'literal;$(value)']);
   assert.deepEqual(f.calls.at(-1)[1], ['-m', 'devstack-sample', '-u', 'matrix', '--workdir', '/opt/matrix/app', 'bun', 'test', 'literal;$(value)']);
@@ -63,7 +68,7 @@ test('each mutation rechecks owner and pinned worktree; preview/status perform n
   assert.equal((await f.adapter.status('sample')).manifest.preview, f.manifest.preview);
   assert.equal(f.calls.length, before);
   f.foreign(); await assert.rejects(f.adapter.operation('sample', 'start'), /owner/);
-  assert.equal(f.calls.filter(([, args]) => args.includes('systemctl')).length, 0);
+  assert.equal(f.calls.filter(([, args]) => args.includes('systemctl') && (args.includes('start') || args.includes('stop'))).length, 0);
 });
 
 
@@ -77,7 +82,7 @@ test('capacity rejects distinct machines and worktrees after a stopped claim', a
   await assert.rejects(f.adapter.register(f.file), /capacity/);
 });
 test('all write actions reject changed owners before executing a command', async t => {
-  const f = await fixture(t); await f.adapter.register(f.file); f.foreign();
+  const f = await fixture(t); await f.adapter.register(f.file); f.calls.length = 0; f.foreign();
   for (const action of ['start', 'stop', 'resume', 'exec', 'test', 'logs']) {
     await assert.rejects(f.adapter.operation('sample', action, ['exec', 'test'].includes(action) ? ['true'] : []), /owner/);
   }
@@ -108,7 +113,7 @@ test('optional fixed Shell unit starts last and stops first; arbitrary units fai
   const f = await fixture(t); f.manifest.managedUnits = [...units, shellUnit];
   await writeFile(f.file, JSON.stringify(f.manifest)); await f.adapter.register(f.file);
   await f.adapter.operation('sample', 'start'); await f.adapter.operation('sample', 'stop');
-  assert.deepEqual(f.calls.filter(([, args]) => args.includes('systemctl')).map(([, args]) => args.slice(-2)), [
+  assert.deepEqual(f.calls.filter(([, args]) => args.includes('systemctl') && (args.includes('start') || args.includes('stop'))).map(([, args]) => args.slice(-2)), [
     ['start', units[0]], ['start', units[1]], ['start', shellUnit],
     ['stop', shellUnit], ['stop', units[1]], ['stop', units[0]],
   ]);
@@ -132,4 +137,118 @@ test('replacing a Git directory at the same worktree path invalidates the claim'
 test('JSON credentials and authorization output are redacted', () => {
   const output = redact('{"api_key":"private-key","password": "private-password"} Authorization: Bearer private-bearer');
   assert.doesNotMatch(output, /private-/);
+});
+
+
+test('two registries cannot adopt a VM for a different id or worktree', async t => {
+  const f = await fixture(t); await f.adapter.register(f.file);
+  const other = await fixture(t);
+  const manifest = { ...f.manifest, id: 'other', worktree: other.root };
+  await writeFile(other.file, JSON.stringify(manifest));
+  const adapter = createAdapter({ registry: join(other.root, 'private'), runner: f.runner });
+  await assert.rejects(adapter.register(other.file), /owner/);
+  manifest.id = f.manifest.id; await writeFile(other.file, JSON.stringify(manifest));
+  await assert.rejects(adapter.register(other.file), /owner/);
+});
+test('later start failure rolls back newly started units, preserves healthy units and logs evidence', async t => {
+  const f = await fixture(t); f.manifest.managedUnits = [...units, shellUnit];
+  await writeFile(f.file, JSON.stringify(f.manifest)); await f.adapter.register(f.file);
+  f.setResponse(args => {
+    if (args.includes('--property=ActiveState')) return { code: 0, stdout: args.at(-1) === units[0] ? 'active' : 'inactive' };
+    if (args.includes('start') && args.at(-1) === shellUnit) return { code: 9, stderr: 'Shell failed' };
+  });
+  assert.equal((await f.adapter.operation('sample', 'start')).code, 9);
+  const mutations = f.calls.filter(([, args]) => args.includes('start') || args.includes('stop')).map(([, args]) => args.slice(-2));
+  assert.deepEqual(mutations, [['start', units[1]], ['start', shellUnit], ['stop', shellUnit], ['stop', units[1]]]);
+  const before = await f.adapter.status('sample');
+  await f.adapter.operation('sample', 'logs');
+  const after = await f.adapter.status('sample');
+  assert.deepEqual(after.diagnostic, before.diagnostic);
+  assert.equal(after.diagnostic.unit, shellUnit); assert.equal(after.lastExitCode, 9);
+});
+test('large Unicode and escape-heavy diagnostics remain readable after failure and do not block peers', async t => {
+  for (const text of ['界'.repeat(32768), '\u0000'.repeat(32768)]) {
+    const f = await fixture(t); await f.adapter.register(f.file);
+    f.setResponse(args => args.includes('--workdir') ? { code: 8, stderr: text } : undefined);
+    await f.adapter.operation('sample', 'test', ['false']);
+    const path = join(f.root, 'private', 'sample.json');
+    assert.ok((await stat(path)).size <= 65536);
+    await f.adapter.status('sample'); await f.adapter.operation('sample', 'stop');
+    const second = await fixture(t);
+    second.manifest.id = 'second'; second.manifest.machine = 'devstack-second';
+    await writeFile(second.file, JSON.stringify(second.manifest));
+    const adapter = createAdapter({ registry: join(f.root, 'private'), runner: second.runner });
+    await adapter.register(second.file);
+  }
+});
+test('read-only preflight checks unit prerequisites and consumes no claim', async t => {
+  const f = await fixture(t);
+  const preflight = await f.adapter.preflight(f.file);
+  assert.equal(preflight.prerequisites, 'verified');
+  assert.equal(preflight.readiness, 'unknown');
+  await assert.rejects(stat(join(f.root, 'private')), /ENOENT/);
+  f.setResponse(args => args.includes('--property=LoadState') ? { code: 0, stdout: 'not-found' } : undefined);
+  await assert.rejects(f.adapter.register(f.file), /unit/);
+  assert.equal(f.calls.some(([, args]) => args.includes('start')), false);
+});
+test('operator manifest must be absolute canonical owned private 0600', async t => {
+  const f = await fixture(t);
+  await chmod(f.file, 0o666); await assert.rejects(f.adapter.register(f.file), /0600|private/);
+  await chmod(f.file, 0o600);
+  const relative = await import('node:path').then(({ relative }) => relative(process.cwd(), f.file));
+  await assert.rejects(f.adapter.register(relative), /absolute/);
+});
+test('a delayed command locks only its instance while peers and switch remain independent', async t => {
+  const a = await fixture(t), b = await fixture(t);
+  b.manifest.id = 'peer'; b.manifest.machine = 'devstack-peer'; await writeFile(b.file, JSON.stringify(b.manifest));
+  const adapter = createAdapter({ registry: join(a.root, 'private'), runner: (cmd, args) => args[1] === a.manifest.machine ? a.runner(cmd, args) : b.runner(cmd, args) });
+  await adapter.register(a.file); await adapter.register(b.file);
+  let release, entered;
+  const started = new Promise(resolve => entered = resolve);
+  a.setResponse(args => args.includes('--workdir') ? new Promise(resolve => { release = () => resolve({ code: 0, stdout: 'done' }); entered(); }) : undefined);
+  const pending = adapter.operation('sample', 'test', ['wait']); await started;
+  try {
+    await adapter.operation('peer', 'logs'); await adapter.operation('peer', 'stop'); await adapter.select('peer');
+    await assert.rejects(adapter.operation('sample', 'logs'), /locked/);
+  } finally { release(); await pending; }
+});
+test('logs are observational and retain failed lifecycle exit and diagnostic', async t => {
+  const f = await fixture(t); await f.adapter.register(f.file); f.fail();
+  await f.adapter.operation('sample', 'start');
+  const before = await f.adapter.status('sample');
+  f.setResponse(args => args.includes('journalctl') ? { code: 0, stdout: 'journal entry' } : undefined);
+  await f.adapter.operation('sample', 'logs');
+  const after = await f.adapter.status('sample');
+  assert.deepEqual(after.diagnostic, before.diagnostic); assert.equal(after.lastExitCode, before.lastExitCode);
+});
+
+test('preflight rejects a guest marker writable by non-root owners', async t => {
+  const f = await fixture(t);
+  f.setResponse(args => args.includes('stat') ? { code: 0, stdout: '501:666:regular file' } : undefined);
+  await assert.rejects(f.adapter.preflight(f.file), /protected|marker/);
+});
+test('later Gateway failure rolls back all attempted inactive units and records rollback errors', async t => {
+  const f = await fixture(t); await f.adapter.register(f.file);
+  f.setResponse(args => {
+    if (args.includes('start') && args.at(-1) === units[1]) return { code: 12, stderr: 'Gateway failed' };
+    if (args.includes('stop') && args.at(-1) === units[0]) return { code: 13, stderr: 'rollback failed' };
+  });
+  const outcome = await f.adapter.operation('sample', 'resume'); assert.equal(outcome.code, 12);
+  assert.deepEqual(f.calls.filter(([, args]) => args.includes('start') || args.includes('stop')).map(([, args]) => args.slice(-2)), [
+    ['start', units[0]], ['start', units[1]], ['stop', units[1]], ['stop', units[0]],
+  ]);
+  const record = await f.adapter.status('sample');
+  assert.equal(record.state, 'failed'); assert.equal(record.diagnostic.unit, units[1]);
+  assert.deepEqual(record.diagnostic.rollback, [{ unit: units[1], code: 0 }, { unit: units[0], code: 13 }]);
+});
+test('oversized manifest is rejected before remote calls and command feedback preserves lifecycle failure', async t => {
+  const f = await fixture(t);
+  await writeFile(f.file, JSON.stringify({ ...f.manifest, preview: `https://example.test/${'界'.repeat(16384)}` }));
+  await assert.rejects(f.adapter.preflight(f.file), /bounded|budget/); assert.equal(f.calls.length, 0);
+  await writeFile(f.file, JSON.stringify(f.manifest)); await f.adapter.register(f.file); f.fail();
+  await f.adapter.operation('sample', 'start'); const before = await f.adapter.status('sample');
+  f.setResponse(args => args.includes('--workdir') ? { code: 0, stdout: 'test passed' } : undefined);
+  await f.adapter.operation('sample', 'test', ['true']); const after = await f.adapter.status('sample');
+  assert.deepEqual(after.diagnostic, before.diagnostic); assert.equal(after.lastExitCode, 7);
+  assert.equal(after.lastCommand.code, 0);
 });
