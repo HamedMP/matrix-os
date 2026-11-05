@@ -37,13 +37,19 @@ export function applyCookieRoutedShellAssetCacheHeaders(headers: Headers): void 
   addVaryHeader(headers, ['Cookie', 'Accept-Encoding']);
 }
 
-export function applyAppDomainRuntimeAssetCacheHeaders(headers: Headers, path: string, rawUrl: string): void {
+export function applyAppDomainRuntimeAssetCacheHeaders(
+  headers: Headers,
+  path: string,
+  rawUrl: string,
+  upstreamCacheControl = headers.get('cache-control') ?? '',
+): void {
   const policy = getAppDomainRuntimeAssetCachePolicy(headers, path, rawUrl);
   if (policy === null) return;
   const immutable = policy.maxAge === ONE_YEAR_SECONDS ? ', immutable' : '';
   // Development chunks reuse URLs; never upgrade upstream revalidation or
-  // no-store directives into a year-long immutable browser cache.
-  const upstreamCacheControl = headers.get('cache-control') ?? '';
+  // no-store directives into a year-long immutable browser cache. Cookie-route
+  // callers pass the original policy before their conservative no-store fallback;
+  // absent upstream policy keeps that fallback instead of inventing immutability.
   const preserveUpstream = path.startsWith('/_next/static/')
     && (/(?:^|,)\s*no-(?:store|cache)\s*(?:=|,|$)/i.test(upstreamCacheControl)
       || /(?:^|,)\s*max-age\s*=\s*"?0"?\s*(?:,|$)/i.test(upstreamCacheControl));

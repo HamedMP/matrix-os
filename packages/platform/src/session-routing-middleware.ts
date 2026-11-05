@@ -993,7 +993,9 @@ export function createSessionRoutingMiddleware(opts: CreateSessionRoutingMiddlew
         if ((identity.source === 'static-route' || isCookieRoutedShellAsset) && isAppDomainStaticAssetPath(path)) {
           applyCookieRoutedShellAssetCacheHeaders(responseHeaders);
         }
-        applyAppDomainRuntimeAssetCacheHeaders(responseHeaders, path, c.req.url);
+        applyAppDomainRuntimeAssetCacheHeaders(
+          responseHeaders, path, c.req.url, upstream.headers.get('cache-control') ?? undefined,
+        );
         if (identity.source === 'mobile-session') {
           const routeCookie = buildAppRouteCookie(runningMachine.handle, path);
           if (routeCookie) responseHeaders.append('set-cookie', routeCookie);
@@ -1212,7 +1214,9 @@ export function createSessionRoutingMiddleware(opts: CreateSessionRoutingMiddlew
         if ((identity.source === 'static-route' || isCookieRoutedShellAsset) && isAppDomainStaticAssetPath(path)) {
           applyCookieRoutedShellAssetCacheHeaders(responseHeaders);
         }
-        applyAppDomainRuntimeAssetCacheHeaders(responseHeaders, path, c.req.url);
+        applyAppDomainRuntimeAssetCacheHeaders(
+          responseHeaders, path, c.req.url, upstream.headers.get('cache-control') ?? undefined,
+        );
         if (identity.source === 'mobile-session') {
           const routeCookie = buildAppRouteCookie(record.handle, path);
           if (routeCookie) responseHeaders.append('set-cookie', routeCookie);
