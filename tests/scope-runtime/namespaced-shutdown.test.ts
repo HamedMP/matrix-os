@@ -21,6 +21,13 @@ async function exchange(path: string, frame: object) {
   });
 }
 
+function createPeer() {
+  return createServer({ allowHalfOpen: true }, socket => {
+    socket.resume();
+    socket.on("end", () => socket.end("peer"));
+  });
+}
+
 const requestId = "018f0ce5-7b4a-7f95-a7c8-acae0dc5c5d1";
 const roles = ["supervisor", "broker"] as const;
 async function fixture(role: typeof roles[number], close = vi.fn(async () => {})) {
@@ -45,7 +52,7 @@ async function fixture(role: typeof roles[number], close = vi.fn(async () => {})
     await server.close();
     await rm(root, { recursive: true, force: true });
   };
-  return { root, socketPath, server, parent, handle, close, frame, cleanup };
+  return { root, socketPath, server, parent, ipc, handle, close, frame, cleanup };
 }
 
 it.each(roles)("%s refuses unsafe shutdown, stops dispatch, and retries the original listener", async role => {
@@ -81,10 +88,7 @@ it.each(roles)("%s refuses unsafe shutdown, stops dispatch, and retries the orig
 it.each(roles)("%s preserves a replacement socket until the owned inode is restored", async role => {
   const f = await fixture(role);
   const moved = join(f.parent, "saved");
-  const peer = createServer({ allowHalfOpen: true }, socket => {
-    socket.resume();
-    socket.on("end", () => socket.end("peer"));
-  });
+  const peer = createPeer();
   await rename(f.socketPath, moved);
   await new Promise<void>((resolve, reject) => peer.once("error", reject).listen(f.socketPath, resolve));
   try {
@@ -97,6 +101,49 @@ it.each(roles)("%s preserves a replacement socket until the owned inode is resto
   } finally {
     await new Promise<void>(resolve => peer.close(() => resolve()));
     await rename(moved, f.socketPath);
+    await f.cleanup();
+  }
+});
+
+// Root bypasses the directory write permission that exercises libuv's failed unlink.
+it.skipIf(process.getuid?.() === 0).each(roles)("%s retries removal of its stale socket after native close", async role => {
+  const f = await fixture(role);
+  const saved = join(f.ipc, "saved");
+  const peer = createPeer();
+  try {
+    const original = await lstat(f.socketPath, { bigint: true });
+    await chmod(f.ipc, 0o500);
+    const attempts = await Promise.allSettled([f.server.close(), f.server.close()]);
+    expect.soft(attempts.map(r => r.status)).toEqual(["rejected", "rejected"]);
+    expect(await lstat(f.socketPath, { bigint: true })).toMatchObject({ dev: original.dev, ino: original.ino });
+    await expect(exchange(f.socketPath, f.frame)).rejects.toMatchObject({ code: "ECONNREFUSED" });
+    await expect.soft(f.server.close()).rejects.toThrow();
+
+    if (role === "broker") expect(f.close).toHaveBeenCalledOnce();
+    await chmod(f.ipc, 0o700);
+    await chmod(f.parent, 0o770);
+    await expect(f.server.close()).rejects.toThrow("Unsafe");
+    expect(await lstat(f.socketPath, { bigint: true })).toMatchObject({ dev: original.dev, ino: original.ino });
+
+    await chmod(f.parent, 0o700);
+    await rename(f.socketPath, saved);
+    try {
+      await new Promise<void>((resolve, reject) => peer.once("error", reject).listen(f.socketPath, resolve));
+      const replacement = await lstat(f.socketPath, { bigint: true });
+      await expect.soft(f.server.close()).rejects.toThrow();
+      expect(await lstat(f.socketPath, { bigint: true })).toMatchObject({ dev: replacement.dev, ino: replacement.ino });
+      expect(await exchange(f.socketPath, f.frame)).toBe("peer");
+    } finally {
+      if (peer.listening) await new Promise<void>(resolve => peer.close(() => resolve()));
+      await rename(saved, f.socketPath);
+    }
+
+    await Promise.all([f.server.close(), f.server.close()]);
+    await expect.soft(lstat(f.socketPath)).rejects.toMatchObject({ code: "ENOENT" });
+    await f.server.close();
+    expect(f.close).toHaveBeenCalledOnce();
+  } finally {
+    await chmod(f.ipc, 0o700);
     await f.cleanup();
   }
 });
