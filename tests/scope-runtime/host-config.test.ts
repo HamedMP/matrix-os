@@ -22,7 +22,7 @@ describe("scope-runtime host configuration", () => {
   });
   it("derives disjoint units, roots and both sockets from canonical explicit inputs", () => {
     expect(resolve({ env, homePath: `${base}/home` })).toEqual({
-      namespace, appRoot: `${base}/app`, runtimeDirectory: `/run/matrix-devstack/${namespace}/scope-runtime`,
+      namespace, commandSocketRoot: `/run/matrix-devstack/${namespace}/c`, appRoot: `${base}/app`, runtimeDirectory: `/run/matrix-devstack/${namespace}/scope-runtime`,
       stateRoot: `${base}/scope-runtime`, supervisorSocket: `/run/matrix-devstack/${namespace}/scope-runtime/supervisor.sock`,
       brokerSocket: `/run/matrix-devstack/${namespace}/scope-runtime/broker.sock`,
       workerUnitPrefix: `matrix-devstack-${namespace}-scope-runtime-`, supervisorUnit: `matrix-devstack-${namespace}-scope-runtime.service`,
@@ -56,6 +56,11 @@ describe("scope-runtime host configuration", () => {
     expect(() => resolve({ env: { MATRIX_HOME: "/a" }, homePath: "/b" })).toThrow();
   });
   it("resolves worker, Bot, SDK and architecture-specific Linux native packages under the app root", () => {
+    const longNamespace = "a".repeat(32);
+    const longConfig = resolve({ env: { MATRIX_SCOPE_RUNTIME_NAMESPACE: longNamespace,
+      MATRIX_SCOPE_RUNTIME_APP_ROOT: `/var/lib/matrix-devstack/${longNamespace}/app`, MATRIX_HOME: `/var/lib/matrix-devstack/${longNamespace}/home` } });
+    expect(Buffer.byteLength(`${longConfig.commandSocketRoot}/${"a".repeat(32)}/worker.sock`)).toBe(100);
+    expect(Buffer.byteLength(`${longConfig.commandSocketRoot}/${"a".repeat(32)}/inference.sock`)).toBe(103);
     const config = resolve({ env });
     for (const architecture of ["x64", "arm64"]) {
       expect(resolveScopeRuntimeSourcePaths(config, architecture)).toEqual({

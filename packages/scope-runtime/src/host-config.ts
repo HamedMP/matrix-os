@@ -10,6 +10,7 @@ export interface ScopeRuntimeHostConfig {
   brokerSocket: string;
   workerUnitPrefix: string;
   supervisorUnit: string;
+  commandSocketRoot?: string;
 }
 
 /** Fail closed before sockets, filesystem writes or systemd commands are attempted. */
@@ -34,7 +35,7 @@ export function resolveScopeRuntimeHostConfig(options: {
   const runtimeDirectory = namespace === undefined
     ? "/run/matrix-scope-runtime" : `/run/matrix-devstack/${namespace}/scope-runtime`;
   return {
-    ...(namespace === undefined ? {} : { namespace }),
+    ...(namespace === undefined ? {} : { namespace, commandSocketRoot: `/run/matrix-devstack/${namespace}/c` }),
     appRoot: appOverride ?? "/opt/matrix/app",
     runtimeDirectory,
     stateRoot: base === undefined ? "/var/lib/matrix-scope-runtime" : `${base}/scope-runtime`,

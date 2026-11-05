@@ -11,6 +11,7 @@ async function main(): Promise<void> {
   const config = resolveScopeRuntimeHostConfig({ env: process.env, homePath: home });
   const launcher = createSystemdScopeRuntimeLauncher({
     namespace: config.namespace,
+    commandSocketRoot: config.commandSocketRoot,
     stateRoot: config.stateRoot,
     ...resolveScopeRuntimeSourcePaths(config),
     brokerSocket: config.brokerSocket,

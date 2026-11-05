@@ -1,3 +1,4 @@
+import { cleanupOrphanedRuntimeDirectories, commandDirectoryForRuntime, createRuntimeDirectories, removeRuntimeDirectories } from "./runtime-directories.js";
 import { createScopeRuntimeUnitIdentity } from "./systemd-unit-identity.js";
 import { randomBytes } from "node:crypto";
 import { execFile } from "node:child_process";
@@ -6,7 +7,6 @@ import {
   chmod,
   lstat,
   mkdir,
-  opendir,
   open,
   readFile,
   realpath,
@@ -80,6 +80,7 @@ export interface ScopeRuntimeCommandRunner {
 
 interface LauncherPaths {
   namespace?: string;
+  commandSocketRoot?: string;
   stateRoot: string;
   sdkDirectory: string;
   nativeDirectory: string;
@@ -97,7 +98,7 @@ interface LauncherPaths {
   managedPiSandboxRoots?: readonly string[];
 }
 
-type ResolvedLauncherPaths = Required<Omit<LauncherPaths, "botRuntimeDirectory" | "namespace">> & { botRuntimeDirectory?: string };
+type ResolvedLauncherPaths = Required<Omit<LauncherPaths, "botRuntimeDirectory" | "namespace" | "commandSocketRoot">> & { botRuntimeDirectory?: string; commandSocketRoot?: string };
 
 function isPiLaunch(input: { profileId?: string }): boolean {
   return piProfileIdentity(input.profileId) !== undefined;
@@ -216,98 +217,83 @@ async function defaultRunCommand(command: string, args: readonly string[]): Prom
   return { stdout: result.stdout };
 }
 
-async function assertPrivateDirectory(path: string): Promise<void> {
-  const entry = await lstat(path);
-  if (!entry.isDirectory() || entry.isSymbolicLink()) throw new Error("Unsafe scope runtime state directory");
-}
-
 async function prepareRuntimeRoot(
-  stateRoot: string,
+  paths: ResolvedLauncherPaths,
   request: ScopeRuntimeLaunchRequest,
 ): Promise<{ root: string; readinessFile: string; commandDirectory: string }> {
   const runtimeHandle = RuntimeHandleSchema.parse(request.runtimeHandle);
-  const suffix = RuntimeHandleSchema.parse(runtimeHandle).slice("runtime_".length);
-  await mkdir(stateRoot, { recursive: true, mode: 0o700 });
-  await chmod(stateRoot, 0o700);
-  await assertPrivateDirectory(stateRoot);
-  const runtimesRoot = join(stateRoot, "runtimes");
-  await mkdir(runtimesRoot, { recursive: true, mode: 0o700 });
-  await assertPrivateDirectory(runtimesRoot);
-  const runtimeRoot = join(runtimesRoot, suffix);
-  await mkdir(runtimeRoot, { mode: 0o700 });
-  await assertPrivateDirectory(runtimeRoot);
-  const root = join(runtimeRoot, "root");
-  await mkdir(root, { mode: 0o755 });
-  await chmod(root, 0o755);
-  const commandDirectory = join(runtimeRoot, "command");
-  await mkdir(commandDirectory, { mode: 0o733 });
-  await chmod(commandDirectory, 0o733);
-  const bot = isPiLaunch(request);
-  const mountPoints = bot
-    ? ["opt/matrix/scope-sdk/bot-runtime"]
-    : ["opt/matrix/scope-sdk/native", "opt/matrix/scope-sdk/sdk", "opt/matrix/scope-runtime"];
-  const directories = [
-    "dev",
-    "lib",
-    "lib64",
-    "opt",
-    "opt/matrix",
-    "opt/matrix/runtime",
-    "opt/matrix/scope-sdk",
-    ...mountPoints,
-    "proc",
-    "run",
-    "run/matrix-scope",
-    "run/matrix-scope-readiness",
-    "sys",
-    "tmp",
-    "usr",
-    "usr/bin",
-    "usr/lib",
-    "workspace",
-  ];
-  for (const relative of directories) {
-    const directory = join(root, relative);
-    await mkdir(directory, { recursive: true, mode: 0o755 });
-    await chmod(directory, 0o755);
+  const { runtimeRoot, root, commandDirectory } = await createRuntimeDirectories(paths, runtimeHandle);
+  try {
+    const bot = isPiLaunch(request);
+    const mountPoints = bot
+      ? ["opt/matrix/scope-sdk/bot-runtime"]
+      : ["opt/matrix/scope-sdk/native", "opt/matrix/scope-sdk/sdk", "opt/matrix/scope-runtime"];
+    const directories = [
+      "dev",
+      "lib",
+      "lib64",
+      "opt",
+      "opt/matrix",
+      "opt/matrix/runtime",
+      "opt/matrix/scope-sdk",
+      ...mountPoints,
+      "proc",
+      "run",
+      "run/matrix-scope",
+      "run/matrix-scope-readiness",
+      "sys",
+      "tmp",
+      "usr",
+      "usr/bin",
+      "usr/lib",
+      "workspace",
+    ];
+    for (const relative of directories) {
+      const directory = join(root, relative);
+      await mkdir(directory, { recursive: true, mode: 0o755 });
+      await chmod(directory, 0o755);
+    }
+    const readinessFile = join(runtimeRoot, "ready");
+    const readinessHandle = await open(readinessFile, "wx", 0o622);
+    await readinessHandle.close();
+    await chmod(readinessFile, 0o622);
+    const provenance = `${JSON.stringify({
+      version: 1,
+      runtimeHandle,
+      ...(piProfileIdentity(request.profileId) ?? {
+        profileId: SCOPE_RUNTIME_PROFILE_ID, profileVersion: SCOPE_RUNTIME_PROFILE_VERSION, profileDigest: SCOPE_RUNTIME_PROFILE_DIGEST,
+      }),
+      workload: request.workload,
+      adapterId: request.adapterId,
+      harnessVersion: request.harnessVersion,
+      executionGeneration: request.executionGeneration,
+    })}\n`;
+    if (Buffer.byteLength(provenance) > MAX_PROVENANCE_BYTES
+      || !EXECUTION_GENERATION.test(request.executionGeneration)) {
+      throw new Error("Invalid scope runtime provenance");
+    }
+    await writeFile(join(runtimeRoot, PROVENANCE_FILE), provenance, { flag: "wx", mode: 0o600 });
+    const readinessTarget = join(root, READINESS_RELATIVE_PATH);
+    const readinessTargetHandle = await open(readinessTarget, "wx", 0o644);
+    await readinessTargetHandle.close();
+    await chmod(readinessTarget, 0o644);
+    if (!bot) {
+      const workerTarget = join(root, "opt/matrix/scope-runtime/worker.mjs");
+      const workerHandle = await open(workerTarget, "wx", 0o644);
+      await workerHandle.close();
+    }
+    const environmentTarget = join(root, "usr/bin/env");
+    const environmentHandle = await open(environmentTarget, "wx", 0o755);
+    await environmentHandle.close();
+    await chmod(environmentTarget, 0o755);
+    const brokerTarget = join(root, "run/matrix-scope/broker.sock");
+    const handle = await open(brokerTarget, "wx", 0o600);
+    await handle.close();
+    return { root, readinessFile, commandDirectory };
+  } catch (error: unknown) {
+    await removeRuntimeDirectories(paths, runtimeHandle);
+    throw error;
   }
-  const readinessFile = join(runtimeRoot, "ready");
-  const readinessHandle = await open(readinessFile, "wx", 0o622);
-  await readinessHandle.close();
-  await chmod(readinessFile, 0o622);
-  const provenance = `${JSON.stringify({
-    version: 1,
-    runtimeHandle,
-    ...(piProfileIdentity(request.profileId) ?? {
-      profileId: SCOPE_RUNTIME_PROFILE_ID, profileVersion: SCOPE_RUNTIME_PROFILE_VERSION, profileDigest: SCOPE_RUNTIME_PROFILE_DIGEST,
-    }),
-    workload: request.workload,
-    adapterId: request.adapterId,
-    harnessVersion: request.harnessVersion,
-    executionGeneration: request.executionGeneration,
-  })}\n`;
-  if (Buffer.byteLength(provenance) > MAX_PROVENANCE_BYTES
-    || !EXECUTION_GENERATION.test(request.executionGeneration)) {
-    throw new Error("Invalid scope runtime provenance");
-  }
-  await writeFile(join(runtimeRoot, PROVENANCE_FILE), provenance, { flag: "wx", mode: 0o600 });
-  const readinessTarget = join(root, READINESS_RELATIVE_PATH);
-  const readinessTargetHandle = await open(readinessTarget, "wx", 0o644);
-  await readinessTargetHandle.close();
-  await chmod(readinessTarget, 0o644);
-  if (!bot) {
-    const workerTarget = join(root, "opt/matrix/scope-runtime/worker.mjs");
-    const workerHandle = await open(workerTarget, "wx", 0o644);
-    await workerHandle.close();
-  }
-  const environmentTarget = join(root, "usr/bin/env");
-  const environmentHandle = await open(environmentTarget, "wx", 0o755);
-  await environmentHandle.close();
-  await chmod(environmentTarget, 0o755);
-  const brokerTarget = join(root, "run/matrix-scope/broker.sock");
-  const handle = await open(brokerTarget, "wx", 0o600);
-  await handle.close();
-  return { root, readinessFile, commandDirectory };
 }
 
 async function runWorkerChat(
@@ -598,37 +584,17 @@ async function cleanupSubmittedUnit(
   return cleaned;
 }
 
-async function cleanupOrphanedRuntimeRoots(
-  stateRoot: string,
-  retainedSuffixes: ReadonlySet<string>,
-): Promise<void> {
-  const runtimesRoot = join(stateRoot, "runtimes");
-  let directory;
-  try {
-    directory = await opendir(runtimesRoot);
-  } catch (error: unknown) {
-    if (error instanceof Error && (error as NodeJS.ErrnoException).code === "ENOENT") return;
-    throw error;
-  }
-  let count = 0;
-  for await (const entry of directory) {
-    count += 1;
-    if (count > MAX_RECONCILED_ENTRIES) throw new Error("Scope runtime reconciliation exceeds capacity");
-    if (!/^[a-f0-9]{32}$/.test(entry.name) || !entry.isDirectory() || entry.isSymbolicLink()) {
-      throw new Error("Unsafe reconciled scope runtime root");
-    }
-    if (!retainedSuffixes.has(entry.name)) {
-      await rm(join(runtimesRoot, entry.name), { recursive: true, force: true });
-    }
-  }
-}
-
 export function createSystemdScopeRuntimeLauncher(
   input: LauncherPaths & { runCommand?: ScopeRuntimeCommandRunner },
 ): ScopeRuntimeLauncher {
   const identity = createScopeRuntimeUnitIdentity(input.namespace);
+  if (input.namespace !== undefined && !input.commandSocketRoot) throw new Error("Namespaced scope runtime requires a short command socket root");
+  if (input.commandSocketRoot && Buffer.byteLength(join(input.commandSocketRoot, "a".repeat(32), "inference.sock")) > 107) {
+    throw new Error("Scope runtime command socket path exceeds capacity");
+  }
   const paths: ResolvedLauncherPaths = {
     stateRoot: assertTrustedAbsolutePath(input.stateRoot),
+    ...(input.commandSocketRoot ? { commandSocketRoot: assertTrustedAbsolutePath(input.commandSocketRoot) } : {}),
     sdkDirectory: assertTrustedAbsolutePath(input.sdkDirectory),
     nativeDirectory: assertTrustedAbsolutePath(input.nativeDirectory),
     workerFile: assertTrustedAbsolutePath(input.workerFile),
@@ -642,9 +608,12 @@ export function createSystemdScopeRuntimeLauncher(
   };
   const runCommand = input.runCommand ?? defaultRunCommand;
 
-  function commandSocketPath(runtimeHandle: string): string {
+  async function commandSocketPath(runtimeHandle: string): Promise<string> {
     const handle = RuntimeHandleSchema.parse(runtimeHandle);
-    return join(paths.stateRoot, "runtimes", handle.slice("runtime_".length), "command", WORKER_SOCKET_FILE);
+    const path = join(await commandDirectoryForRuntime(paths, handle), WORKER_SOCKET_FILE);
+    const entry = await lstat(path);
+    if (!entry.isSocket() || entry.isSymbolicLink()) throw new Error("Unsafe scope runtime command socket");
+    return path;
   }
 
   return {
@@ -734,21 +703,21 @@ export function createSystemdScopeRuntimeLauncher(
           if (!await cleanupSubmittedUnit(runCommand, name)) {
             throw new Error("Scope runtime reconciliation cleanup unavailable");
           }
-          await rm(join(paths.stateRoot, "runtimes", suffix), { recursive: true, force: true });
+          await removeRuntimeDirectories(paths, runtimeHandle);
           continue;
         }
         retainedSuffixes.add(suffix);
         handles.push(provenance);
         if (handles.length > 32) throw new Error("Scope runtime reconciliation exceeds capacity");
       }
-      await cleanupOrphanedRuntimeRoots(paths.stateRoot, retainedSuffixes);
+      await cleanupOrphanedRuntimeDirectories(paths, retainedSuffixes);
       return handles;
     },
     async start(request: ScopeRuntimeLaunchRequest): Promise<void> {
       // Capability discovery runs before the gateway opens this socket. Only
       // an actual workload launch requires the broker to be listening.
       await validateBrokerSocket(paths.brokerSocket);
-      const { root, readinessFile, commandDirectory } = await prepareRuntimeRoot(paths.stateRoot, request);
+      const { root, readinessFile, commandDirectory } = await prepareRuntimeRoot(paths, request);
       let submitted = false;
       try {
         const bot = isPiLaunch(request);
@@ -781,7 +750,7 @@ export function createSystemdScopeRuntimeLauncher(
       } catch (error: unknown) {
         const cleaned = !submitted
           || await cleanupSubmittedUnit(runCommand, identity.workerUnit(request.runtimeHandle));
-        if (cleaned) await rm(dirname(root), { recursive: true, force: true });
+        if (cleaned) await removeRuntimeDirectories(paths, request.runtimeHandle);
         throw error;
       }
     },
@@ -789,13 +758,13 @@ export function createSystemdScopeRuntimeLauncher(
       if (!EXECUTION_GENERATION.test(input.executionGeneration)) {
         throw new Error("Invalid scope runtime generation");
       }
-      return runWorkerChat(commandSocketPath(input.runtimeHandle), input);
+      return runWorkerChat(await commandSocketPath(input.runtimeHandle), input);
     },
     async runBot(input): Promise<ScopeRuntimeBotWorkerReply> {
       if (!EXECUTION_GENERATION.test(input.executionGeneration)) {
         throw new Error("Invalid scope runtime generation");
       }
-      return runWorkerBotCommand(commandSocketPath(input.runtimeHandle), input);
+      return runWorkerBotCommand(await commandSocketPath(input.runtimeHandle), input);
     },
     async stop(runtimeHandle: string): Promise<void> {
       const handle = RuntimeHandleSchema.parse(runtimeHandle);
@@ -814,8 +783,7 @@ export function createSystemdScopeRuntimeLauncher(
             error instanceof Error ? error.name : "UnknownError");
         }
       }
-      const suffix = handle.slice("runtime_".length);
-      await rm(join(paths.stateRoot, "runtimes", suffix), { recursive: true, force: true });
+      await removeRuntimeDirectories(paths, handle);
     },
   };
 }

@@ -1,4 +1,8 @@
-import { chmod, mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { chmod, mkdir, readFile, rm, stat, symlink, writeFile } from "node:fs/promises";
+import { startInferenceBridge } from "../../packages/scope-runtime/src/inference-bridge.js";
+import { parseScopeRuntimeChatRequest } from "../../packages/scope-runtime/src/worker.js";
+import { request as httpRequest } from "node:http";
+import { startBotCommandServer } from "../../packages/scope-runtime/src/worker-bot.js";
 import { createConnection, createServer } from "node:net";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -18,7 +22,7 @@ const unit = (ns: string | undefined, id = suffix) => `${ns ? `matrix-devstack-$
 const cleanup: Array<() => Promise<unknown>> = [];
 afterEach(async () => { for (const close of cleanup.splice(0).reverse()) await close(); });
 
-async function fixture() {
+async function fixture(managerNamespaces: readonly (string | undefined)[] = namespaces) {
   const root = await createUnixSocketTempDir();
   cleanup.push(() => rm(root, { recursive: true, force: true }));
   const sdkDirectory = join(root, "sdk"), nativeDirectory = join(root, "native"), workerFile = join(root, "worker.js");
@@ -35,11 +39,12 @@ async function fixture() {
   await chmod(codexBinary, 0o755);
   const units = new Map<string, string>();
   const calls: Array<{ owner: string | undefined; command: string; args: readonly string[] }> = [];
-  const managers = namespaces.map((namespace, index) => {
+  const managers = managerNamespaces.map((namespace, index) => {
     const stateRoot = join(root, `state-${index}`);
+    const commandSocketRoot = namespace === undefined ? undefined : join(root, namespace + "x".repeat(Math.max(0, 54 - Buffer.byteLength(root) - namespace.length)));
     let failNext = false;
     const launcher = createSystemdScopeRuntimeLauncher({
-      namespace, stateRoot, sdkDirectory, nativeDirectory, workerFile, brokerSocket, nodeBinary: process.execPath, codexBinary,
+      namespace, commandSocketRoot, stateRoot, sdkDirectory, nativeDirectory, workerFile, brokerSocket, nodeBinary: process.execPath, codexBinary,
       async runCommand(command, args) {
         calls.push({ owner: namespace, command, args });
         if (command === codexBinary) return { stdout: "codex-cli 0.162.1\n" };
@@ -57,7 +62,7 @@ async function fixture() {
         return { stdout: "" };
       },
     });
-    return { namespace, launcher, stateRoot, fail() { failNext = true; } };
+    return { namespace, launcher, stateRoot, commandSocketRoot, fail() { failNext = true; } };
   });
   return { root, units, calls, managers };
 }
@@ -182,4 +187,109 @@ it("closes two native host stacks independently and denies foreign handle/genera
   expect(units.has(unit(managers[2]!.namespace))).toBe(false);
   expect(units.has(unit(legacy.namespace))).toBe(true);
   expect(await legacy.launcher.list()).toHaveLength(1);
+});
+
+
+it("round-trips real worker commands at the 32-character namespace socket limit without touching a same-handle peer", async () => {
+  const { managers } = await fixture(["a".repeat(32), "b".repeat(32)]);
+  const workers = [];
+  for (const manager of managers) {
+    await manager.launcher.start(request);
+    const commandDirectory = join(manager.commandSocketRoot!, suffix);
+    expect(await stat(commandDirectory).catch(() => undefined), "namespaced commands must live in the short owned root").toBeDefined();
+    const socketPath = join(commandDirectory, "worker.sock");
+    expect(Buffer.byteLength(socketPath)).toBe(100);
+    const inferenceSocket = join(commandDirectory, "inference.sock");
+    expect(Buffer.byteLength(inferenceSocket)).toBe(103);
+    const bridge = await startInferenceBridge({ socketPath: inferenceSocket, brokerSocket: join(commandDirectory, "unused-broker.sock"),
+      runtimeHandle: handle, executionGeneration: "7", actionFor: () => undefined });
+    cleanup.push(() => bridge.close());
+    await expect(new Promise<number | undefined>((resolve, reject) => {
+      const request = httpRequest({ socketPath: inferenceSocket, path: "/denied", timeout: 2000 }, (response) => { response.resume(); resolve(response.statusCode); });
+      request.once("error", reject); request.once("timeout", () => request.destroy(new Error("Timed out"))); request.end();
+    })).resolves.toBe(404);
+    const worker = await startBotCommandServer({ socketPath,
+      invocation: { runtimeHandle: handle, scopeHandle: request.scopeHandle, workload: "bot_agent", adapterId: "matrix-bot", harnessVersion: "1.0.0", executionGeneration: "7" },
+      handler: { async handle() { return { namespace: manager.namespace }; } } });
+    cleanup.push(() => worker.close()); workers.push(worker);
+    await expect(manager.launcher.runBot!({ runtimeHandle: handle, executionGeneration: "7", command: { version: 1, kind: "bot.cancel", runId: "run_test" } }))
+      .resolves.toMatchObject({ ok: true, reply: { namespace: manager.namespace } });
+  }
+  const [own, peer] = managers;
+  await workers[0]!.close();
+  await own!.launcher.stop(handle);
+  await expect(stat(join(own!.commandSocketRoot!, suffix))).rejects.toMatchObject({ code: "ENOENT" });
+  await expect(peer!.launcher.runBot!({ runtimeHandle: handle, executionGeneration: "7", command: { version: 1, kind: "bot.cancel", runId: "run_test" } }))
+    .resolves.toMatchObject({ ok: true, reply: { namespace: peer!.namespace } });
+});
+
+it("cleans only owned short command directories after failure and reconciliation, refusing foreign symlinks", async () => {
+  const { managers, root } = await fixture();
+  const own = managers[1]!, peer = managers[2]!;
+  await peer.launcher.start(request);
+  own.fail();
+  await expect(own.launcher.start(request)).rejects.toThrow("Submitted launch failed");
+  await expect(stat(join(own.commandSocketRoot!, suffix))).rejects.toMatchObject({ code: "ENOENT" });
+  expect((await stat(join(peer.commandSocketRoot!, suffix))).isDirectory()).toBe(true);
+  const orphan = join(own.commandSocketRoot!, "3".repeat(32));
+  await mkdir(orphan, { recursive: true }); await writeFile(join(orphan, "sentinel"), "orphan");
+  await own.launcher.list();
+  await expect(stat(orphan)).rejects.toMatchObject({ code: "ENOENT" });
+  const foreign = join(root, "foreign"); await mkdir(foreign); await writeFile(join(foreign, "sentinel"), "preserve");
+  await symlink(foreign, join(own.commandSocketRoot!, suffix));
+  await expect(own.launcher.start(request)).rejects.toThrow();
+  expect(await readFile(join(foreign, "sentinel"), "utf8")).toBe("preserve");
+  await expect(own.launcher.list()).rejects.toThrow();
+  await expect(own.launcher.stop(handle)).rejects.toThrow();
+  expect(await readFile(join(foreign, "sentinel"), "utf8")).toBe("preserve");
+  expect((await stat(join(peer.commandSocketRoot!, suffix))).isDirectory()).toBe(true);
+});
+
+
+it("dispatches Chat commands through the 100-byte short path for same-handle namespace peers", async () => {
+  const { managers } = await fixture(["a".repeat(32), "b".repeat(32)]);
+  for (const manager of managers) {
+    await manager.launcher.start(request);
+    const socketPath = join(manager.commandSocketRoot!, suffix, "worker.sock");
+    expect(Buffer.byteLength(socketPath)).toBe(100);
+    const worker = createServer({ allowHalfOpen: true }, (socket) => {
+      let frame = ""; socket.setEncoding("utf8"); socket.on("data", (chunk) => { frame += chunk; });
+      socket.once("end", () => {
+        const command = parseScopeRuntimeChatRequest(JSON.parse(frame), request);
+        socket.end(`${JSON.stringify({ version: 1, type: "runtime.chat.result", requestId: "018f0ce5-7b4a-7f95-a7c8-acae0dc5c5d1",
+          ok: true, runtimeHandle: handle, executionGeneration: "7", text: `${manager.namespace}:${command.prompt}` })}\n`);
+      });
+    });
+    await new Promise<void>((resolve, reject) => { worker.once("error", reject); worker.listen(socketPath, resolve); });
+    cleanup.push(() => new Promise<void>((resolve) => worker.close(() => resolve())));
+    await expect(manager.launcher.runChat({ runtimeHandle: handle, executionGeneration: "7", model: "test", prompt: "roundtrip" }))
+      .resolves.toEqual({ text: `${manager.namespace}:roundtrip` });
+  }
+});
+
+it("refuses a symlinked short command root before writing through it or submitting any unit", async () => {
+  const { managers, root, calls } = await fixture();
+  const own = managers[1]!;
+  const foreign = join(root, "foreign-root"); await mkdir(foreign); await writeFile(join(foreign, "sentinel"), "preserve");
+  await symlink(foreign, own.commandSocketRoot!);
+  await expect(own.launcher.start(request)).rejects.toThrow("Unsafe");
+  expect(calls).toHaveLength(0);
+  expect(await readFile(join(foreign, "sentinel"), "utf8")).toBe("preserve");
+  await expect(stat(join(foreign, suffix))).rejects.toMatchObject({ code: "ENOENT" });
+});
+
+it.each(["root", "runtime", "socket"])("refuses dispatch through a foreign %s symlink even when the peer has the same handle and generation", async (target) => {
+  const { managers } = await fixture(); const own = managers[1]!, peer = managers[2]!;
+  await own.launcher.start(request); await peer.launcher.start(request);
+  const peerWorker = await startBotCommandServer({ socketPath: join(peer.commandSocketRoot!, suffix, "worker.sock"),
+    invocation: { runtimeHandle: handle, scopeHandle: request.scopeHandle, workload: "bot_agent", adapterId: "matrix-bot", harnessVersion: "1.0.0", executionGeneration: "7" },
+    handler: { async handle() { return { namespace: "peer" }; } } });
+  cleanup.push(() => peerWorker.close());
+  const ownPath = target === "root" ? own.commandSocketRoot! : target === "runtime" ? join(own.commandSocketRoot!, suffix) : join(own.commandSocketRoot!, suffix, "worker.sock");
+  const peerPath = target === "root" ? peer.commandSocketRoot! : target === "runtime" ? join(peer.commandSocketRoot!, suffix) : join(peer.commandSocketRoot!, suffix, "worker.sock");
+  await rm(ownPath, { recursive: true, force: true }); await symlink(peerPath, ownPath);
+  await expect(own.launcher.runBot!({ runtimeHandle: handle, executionGeneration: "7", command: { version: 1, kind: "bot.cancel", runId: "run_test" } }))
+    .rejects.toThrow("Unsafe");
+  await expect(peer.launcher.runBot!({ runtimeHandle: handle, executionGeneration: "7", command: { version: 1, kind: "bot.cancel", runId: "run_test" } }))
+    .resolves.toMatchObject({ ok: true, reply: { namespace: "peer" } });
 });

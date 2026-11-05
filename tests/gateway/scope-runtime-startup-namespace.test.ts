@@ -19,8 +19,18 @@ describe("scope-runtime startup namespace wiring", () => {
     vi.stubEnv("MATRIX_SCOPE_RUNTIME_NAMESPACE", "eng432-stage2");
     vi.stubEnv("MATRIX_SCOPE_RUNTIME_APP_ROOT", "/opt/matrix/app");
     const onFailure = vi.fn();
-    expect(await startScopeRuntimeHost({ homePath: "/home/matrix/home", onFailure })).toBeUndefined();
+    await expect(startScopeRuntimeHost({ homePath: "/home/matrix/home", onFailure })).rejects.toThrow();
     expect(createHost).not.toHaveBeenCalled();
+    expect(onFailure).not.toHaveBeenCalled();
+  });
+  it("propagates a namespaced constructor failure rather than exposing an absent host", async () => {
+    const namespace = "eng432-stage2";
+    vi.stubEnv("MATRIX_SCOPE_RUNTIME_NAMESPACE", namespace);
+    vi.stubEnv("MATRIX_SCOPE_RUNTIME_APP_ROOT", `/var/lib/matrix-devstack/${namespace}/app`);
+    vi.stubEnv("MATRIX_HOME", `/var/lib/matrix-devstack/${namespace}/home`);
+    createHost.mockRejectedValueOnce(new Error("host failed"));
+    const onFailure = vi.fn();
+    await expect(startScopeRuntimeHost({ homePath: `/var/lib/matrix-devstack/${namespace}/home`, onFailure })).rejects.toThrow("host failed");
     expect(onFailure).toHaveBeenCalledOnce();
   });
 });
