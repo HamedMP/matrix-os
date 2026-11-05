@@ -171,3 +171,6 @@ distro/observability/logs-edge/logs-edge.env
 
 # Private TypeScript emit, published only after a successful compile
 .matrix-build-output/
+# Generated writable Docker publication parents
+.matrix-publish-*/
+packages/*/dist

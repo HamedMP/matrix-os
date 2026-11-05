@@ -4047,6 +4047,22 @@ describe("platform proxy routing", () => {
     });
     expect(fontRes.status).toBe(200);
     expect(fetchMock.mock.calls[3]?.[0]).toBe("https://203.0.113.34:443/apps/chess/assets/font.woff2");
+    const headers = { host: "app.matrix-os.com", origin: "null" };
+    fetchMock.mockResolvedValueOnce(new Response("primary"));
+    const primary = assetPath!.replace("/alice/", "/alice/~runtime/primary/");
+    expect((await app.request(primary, { headers })).status).toBe(200);
+    expect(fetchMock.mock.calls[4]?.[0]).toBe("https://203.0.113.34:443/apps/chess/assets/index.js");
+    await insertUserMachine(db, {
+      machineId: "9f05824c-8d0a-4d83-9cb4-b312d43ff141", clerkUserId: "user_alice",
+      handle: "alice", runtimeSlot: "review", status: "running", hetznerServerId: 123485,
+      publicIPv4: "203.0.113.35", imageVersion: "fixture", provisionedAt: "2026-04-27T12:00:00.000Z",
+    });
+    expect((await app.request(assetPath!.replace("/alice/", "/alice/~runtime/review/"), { headers })).status).toBe(401);
+    // Without an explicit slot the general handle lookup prefers primary but
+    // falls back to the latest peer. A primary capability must never do so.
+    await db.executor.deleteFrom("user_machines").where("machine_id", "=", "9f05824c-8d0a-4d83-9cb4-b312d43ff140").execute();
+    expect((await app.request(assetPath!, { headers })).status).toBe(404);
+    expect(fetchMock).toHaveBeenCalledTimes(5);
   });
 
   it("binds cookie-free Vite assets and lazy chunks to the selected same-handle runtime", async () => {
@@ -4116,7 +4132,16 @@ describe("platform proxy routing", () => {
       /^\/vm\/alice\/apps\/chess\/assets\/index\.js\?runtime=review&matrix_asset_token=/,
     );
 
-    const entryRes = await app.request(entryAssetPath ?? "/invalid", {
+    const headers = { host: "app.matrix-os.com", origin: "null" };
+    const explicit = entryAssetPath!.replace("/alice/", "/alice/~runtime/review/");
+    for (const conflict of [
+      entryAssetPath!.replace("/alice/", "/alice/~runtime/primary/"),
+      explicit + "&runtime=primary",
+    ]) {
+      expect((await app.request(conflict, { headers })).status).toBe(401);
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+    }
+    const entryRes = await app.request(explicit.replace("runtime=review&", ""), {
       headers: { host: "app.matrix-os.com", origin: "null" },
     });
     expect(entryRes.status).toBe(200);

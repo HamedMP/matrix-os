@@ -53,7 +53,7 @@ describe("Docker development entrypoint dependency layout", () => {
         expect(existsSync(join(base, "dist"))).toBe(true);
         expect(existsSync(join(base, ".matrix-build-cache"))).toBe(true);
         expect(existsSync(join(base, ".matrix-build-output"))).toBe(true);
-        expect(calls).toContain(`-hR matrixos:matrixos ${base}/dist ${base}/.matrix-build-cache ${base}/.matrix-build-output`);
+        expect(calls).toContain(`-hR matrixos:matrixos ${fixture}/packages/.matrix-publish-${name} ${base}/.matrix-build-cache ${base}/.matrix-build-output`);
         expect(readFileSync(join(base, "src/unchanged.ts"), "utf8")).toBe("owner source");
       }
       expect(readFileSync(join(existingCache, ".matrix.tsbuildinfo"), "utf8")).toBe("existing incremental data");

@@ -8,7 +8,7 @@ import { join, resolve } from "node:path";
 import { spawn } from "node:child_process";
 import { pathToFileURL } from "node:url";
 import { setTimeout as delay } from "node:timers/promises";
-import { assertOutputDirectory, clearBuildOutput, prepareBuildOutput, publishBuildOutput } from "./typescript-build-output.mjs";
+import { assertOutputDirectory, clearBuildOutput, prepareBuildOutput, publishBuildOutput, liveOutputDirectory } from "./typescript-build-output.mjs";
 
 const STATE = ".matrix.tsbuildinfo";
 const STAMP = ".matrix-build.json";
@@ -250,7 +250,7 @@ async function acquire(directory) {
   }
 }
 
-export async function buildTypescript(packageDirectory, compile) {
+export async function buildTypescript(packageDirectory, compile, notifyGateway = false) {
   const directory = join(packageDirectory, "dist");
   await mkdir(directory, { recursive: true });
   const cache = join(packageDirectory, ".matrix-build-cache");
@@ -260,7 +260,7 @@ export async function buildTypescript(packageDirectory, compile) {
   const stamp = join(cache, STAMP);
   try {
     await sweep(cache);
-    await assertOutputDirectory(directory);
+    const live = await liveOutputDirectory(packageDirectory);
     const previous = await outputs(directory);
     await discardInvalidState(state);
     if (!await intact(directory, stamp)) await rm(state, { force: true });
@@ -286,8 +286,26 @@ export async function buildTypescript(packageDirectory, compile) {
       const manifest = JSON.stringify({ version: 1, files: next });
       if (Buffer.byteLength(manifest) > MAX_MANIFEST_BYTES) throw new Error("Build output manifest exceeds byte bounds");
       await writeFile(temporary, manifest, { flag: "wx" });
-      await publishBuildOutput(packageDirectory, previous, next);
       await rename(temporary, stamp);
+      await publishBuildOutput(packageDirectory, live, previous, next);
+      if (notifyGateway) {
+        // tsx ignores hidden directories and follows imported file inodes. A
+        // stable, bounded success record survives directory swaps. Reconcile a
+        // missed notification even on a no-op build after an interrupted writer.
+        const marker = await open(join(packageDirectory, "matrix-kernel-published.tsbuildinfo"),
+          constants.O_RDWR | constants.O_CREAT | constants.O_NOFOLLOW | constants.O_NONBLOCK, 0o644);
+        try {
+          const info = await marker.stat();
+          if (!info.isFile() || info.nlink !== 1) throw new Error("Invalid Kernel publication marker");
+          const digest = createHash("sha256").update(manifest).digest("hex");
+          const buffer = Buffer.alloc(64);
+          await marker.read(buffer, 0, 64, 0);
+          if (info.size !== 64 || buffer.toString() !== digest) {
+            await marker.write(digest, 0);
+            await marker.truncate(64);
+          }
+        } finally { await marker.close(); }
+      }
     } finally { await rm(temporary, { force: true }); }
     return 0;
   } catch (error) {
@@ -374,5 +392,5 @@ if (process.argv[2] === "--compiler-supervisor") {
   const require = createRequire(join(directory, "package.json"));
   const compiler = require.resolve("typescript/lib/tsc.js");
   const compile = (args, { lock }) => ownedCompiler(directory, compiler, args, lock);
-  process.exitCode = await buildTypescript(directory, compile);
+  process.exitCode = await buildTypescript(directory, compile, process.argv.includes("--notify-gateway"));
 }

@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { copyFile, cp, lstat, mkdir, mkdtemp, readFile, rm } from "node:fs/promises";
+import { copyFile, cp, lstat, symlink, writeFile, mkdir, mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -53,3 +53,26 @@ it.each(["Dockerfile", "Dockerfile.ai-relay"])(
     } finally { await rm(stage, { recursive: true, force: true }); }
   },
 );
+
+it("materializes canonical dev outputs into real portable bundle directories", async () => {
+  const stage = await mkdtemp(join(tmpdir(), "matrix-compiler-delivery-"));
+  try {
+    const peer = join(stage, ".matrix-publish-kernel");
+    await mkdir(join(peer, "dist"), { recursive: true });
+    await writeFile(join(peer, "dist/index.js"), "export const healthy = true;");
+    await mkdir(join(stage, "kernel"));
+    await symlink("../.matrix-publish-kernel/dist", join(stage, "kernel/dist"));
+    await writeFile(join(stage, "kernel/matrix-kernel-published.tsbuildinfo"), "build-only");
+    const script = join(root, "scripts/materialize-built-packages.sh");
+    const run = () => spawnSync("bash", [script, stage], { encoding:"utf8" });
+    expect(run().status).toBe(0);
+    expect((await lstat(join(stage, "kernel/dist"))).isDirectory()).toBe(true);
+    expect(await readFile(join(stage, "kernel/dist/index.js"), "utf8")).toContain("healthy");
+    await expect(lstat(peer)).rejects.toHaveProperty("code", "ENOENT");
+    await expect(lstat(join(stage, "kernel/matrix-kernel-published.tsbuildinfo"))).rejects.toHaveProperty("code", "ENOENT");
+    await mkdir(join(stage, "brand"));
+    await symlink("../kernel/dist", join(stage, "brand/dist"));
+    expect(run().status).not.toBe(0);
+    expect(await readFile(join(stage, "kernel/dist/index.js"), "utf8")).toContain("healthy");
+  } finally { await rm(stage, { recursive:true, force:true }); }
+});

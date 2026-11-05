@@ -29,3 +29,6 @@ spike
 # Private compiler state and staged emit are local build inputs
 **/.matrix-build-cache
 **/.matrix-build-output
+
+**/.matrix-publish-*
+packages/*/dist

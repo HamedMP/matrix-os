@@ -183,6 +183,12 @@ describe("incremental shared TypeScript builds", () => {
     const output = join(directory, ".matrix-build-output");
     await mkdir(output, { mode: 0o700 });
     await mkdir(join(directory, ".matrix-build-cache"), { mode: 0o700 });
+    // The provisioner establishes this same-depth dist alias before dropping UID.
+    const mirror = join(directory, "..", ".matrix-publish-" + directory.split("/").at(-1));
+    directories.push(mirror);
+    await mkdir(mirror);
+    await (await import('node:fs/promises')).rename(join(directory, "dist"), join(mirror, "dist"));
+    await symlink("../" + mirror.split("/").at(-1) + "/dist", join(directory, "dist"));
     await chmod(directory, 0o500);
     try {
       for (let revision = 2; revision <= 3; revision++) {

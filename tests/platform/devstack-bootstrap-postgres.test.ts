@@ -1,3 +1,5 @@
+import type Dockerode from 'dockerode';
+import { resolveContainerEndpoint } from '../../packages/platform/src/container-endpoint.js';
 import { randomUUID } from 'node:crypto';
 import { Kysely, PostgresDialect, sql } from 'kysely';
 import { Pool } from 'pg';
@@ -17,7 +19,7 @@ describe.skipIf(!connectionString)('DevStack identity initialization on PostgreS
   const input = (overrides: Partial<DevstackBootstrapInput> = {}): DevstackBootstrapInput => ({
     instance: 'demo-a', clerkUserId: 'user_devstack_fixture', handle: 'devstack-fixture',
     email: 'devstack@example.com', displayName: 'DevStack fixture',
-    containerId: 'devstack-owned-runtime', gatewayPort: 4000, shellPort: 3000,
+    containerId: 'a'.repeat(64), gatewayPort: 4000, shellPort: 3000,
     ...overrides,
   });
 
@@ -75,7 +77,7 @@ describe.skipIf(!connectionString)('DevStack identity initialization on PostgreS
   });
 
   it.each([
-    { instance: 'another' }, { handle: 'another-handle' }, { containerId: 'foreign-runtime' },
+    { instance: 'another' }, { handle: 'another-handle' }, { containerId: 'b'.repeat(64) },
     { gatewayPort: 4999 }, { shellPort: 3999 },
   ])('refuses to repoint retained identity or routing: %j', async (override) => {
     const original = await bootstrapDevstackIdentity(db, input());
@@ -102,6 +104,49 @@ describe.skipIf(!connectionString)('DevStack identity initialization on PostgreS
       .where('clerk_id', '=', input().clerkUserId).execute();
     await expect(bootstrapDevstackIdentity(db, input())).rejects.toThrow(/owned|ownership/i);
     expect(await getPlatformUserByClerkId(db, input().clerkUserId)).toMatchObject({ containerId: 'clerk:foreign' });
+  });
+
+  it('cannot give a different Clerk owner and handle an occupied execution target', async () => {
+    await bootstrapDevstackIdentity(db, input());
+    await expect(bootstrapDevstackIdentity(other, input({ clerkUserId: 'user_other', handle: 'another' })))
+      .rejects.toThrow(/target.*owned/i);
+    expect(await getContainer(db, 'another')).toBeUndefined();
+    expect(await getPlatformUserByClerkId(db, 'user_other')).toBeFalsy();
+  });
+
+  it('does not claim an ambiguous execution target before a legacy name has been reconciled', async () => {
+    await bootstrapDevstackIdentity(db, input());
+    await db.executor.updateTable('containers').set({ container_id: 'matrixos-existing' })
+      .where('handle', '=', input().handle).execute();
+    await expect(bootstrapDevstackIdentity(other, input({ clerkUserId: 'user_peer', handle: 'peer' })))
+      .rejects.toThrow(/reconcile/i);
+    expect(await getContainer(db, 'peer')).toBeUndefined();
+  });
+
+  it('replays after normal Docker resolution reconciles an already owned legacy name', async () => {
+    const first = await bootstrapDevstackIdentity(db, input());
+    const name = 'matrixos-existing';
+    await db.executor.updateTable('containers').set({ container_id: name }).where('handle', '=', input().handle).execute();
+    const docker = { getContainer(id: string) {
+      expect(id).toBe(name);
+      return { inspect: async () => ({ Id: input().containerId, State: { Running: true }, NetworkSettings: { Networks: {} } }) };
+    } } as unknown as Dockerode;
+    await resolveContainerEndpoint(docker, other, input().handle, name);
+    expect(await getContainer(db, input().handle)).toMatchObject({ containerId: input().containerId });
+    expect(await bootstrapDevstackIdentity(db, input())).toEqual(first);
+  });
+
+  it('retains the same immutable target after a real endpoint lookup and identical replay', async () => {
+    const first = await bootstrapDevstackIdentity(db, input());
+    const docker = { getContainer(id: string) {
+      expect(id).toBe(input().containerId);
+      return { inspect: async () => ({ Id: input().containerId, State: { Running: true }, NetworkSettings: { Networks: {} } }) };
+    } } as unknown as Dockerode;
+    const route = await getContainer(other, input().handle);
+    expect(await resolveContainerEndpoint(docker, other, input().handle, route?.containerId))
+      .toMatchObject({ source: 'docker-id', containerId: input().containerId });
+    expect(await bootstrapDevstackIdentity(db, input())).toEqual(first);
+    await expect(bootstrapDevstackIdentity(db, input({containerId: 'matrixos-owned-name'}))).rejects.toThrow(/identity|registration/i);
   });
 
   it('cannot give another Clerk user an occupied local handle', async () => {

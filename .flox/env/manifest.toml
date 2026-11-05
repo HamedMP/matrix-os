@@ -5,6 +5,7 @@ nodejs_24.pkg-path = "nodejs_24"
 pnpm_10.pkg-path = "pnpm_10"
 bun.pkg-path = "bun"
 git.pkg-path = "git"
+python3.flake = "github:flox/nixpkgs/6201e203d09599479a3b3450ed24fa81537ebc4e#python3"
 
 [hook]
 on-activate = '''

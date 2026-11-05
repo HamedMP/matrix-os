@@ -31,10 +31,10 @@ export const localServiceProcesses = [
       "../../node_modules/tsx/dist/cli.mjs", "watch", "--clear-screen=false",
       "--include", "src/**/*", "--include", "tsconfig.json", "--include", "../../tsconfig.json",
       "--exclude", "dist/**",
-      "../../scripts/build-typescript.mjs",
+      "../../scripts/build-typescript.mjs", "--notify-gateway",
     ],
   },
-  { name: "gateway", args: ["node_modules/tsx/dist/cli.mjs", "watch", "--clear-screen=false", "packages/gateway/src/main.ts"] },
+  { name: "gateway", args: ["node_modules/tsx/dist/cli.mjs", "watch", "--clear-screen=false", "--include", "packages/kernel/matrix-kernel-published.tsbuildinfo", "packages/gateway/src/main.ts"] },
   { name: "proxy", args: ["node_modules/tsx/dist/cli.mjs", "watch", "--clear-screen=false", "packages/proxy/src/main.ts"] },
   { name: "platform", args: ["node_modules/tsx/dist/cli.mjs", "watch", "--clear-screen=false", "packages/platform/src/main.ts"] },
   {

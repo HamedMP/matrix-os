@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { assertLocalDevstackDatabase } from '../../packages/platform/src/devstack-bootstrap.js';
+import { assertLocalDevstackDatabase, parseDevstackBootstrapInput } from '../../packages/platform/src/devstack-bootstrap.js';
 import { runDevstackBootstrap } from '../../scripts/devstack-bootstrap.js';
 
 const localUrl = 'postgresql://local:private@127.0.0.1:55432/matrixos_devstack_demo_a';
@@ -39,6 +39,13 @@ describe('DevStack bootstrap database boundary', () => {
       env: { PLATFORM_RUNTIME_MODE: 'local', PLATFORM_DATABASE_URL: localUrl.replace('127.0.0.1', 'db.example.com') },
       openDatabase })).rejects.toThrow(/local|loopback/i);
     expect(openDatabase).not.toHaveBeenCalled();
+  });
+
+  it('rejects names and shortened Docker IDs before registration', () => {
+    for (const containerId of ['matrixos-owned', 'ab1234567890']) {
+      expect(() => parseDevstackBootstrapInput({ instance: 'demo-a', clerkUserId: 'user_example', handle: 'example',
+        email: 'example@example.com', gatewayPort: 4000, shellPort: 3000, containerId })).toThrow(/registration/i);
+    }
   });
 
   it('prints help without acquiring a database', async () => {

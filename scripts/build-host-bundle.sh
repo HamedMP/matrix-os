@@ -153,6 +153,7 @@ chmod 0755 "$STAGE_DIR/bin/matrix-support-access"
 cp -a "$ROOT_DIR/node_modules" "$STAGE_DIR/app/node_modules"
 install -m 0755 "$DIST_DIR/$GH_DIST/bin/gh" "$STAGE_DIR/app/node_modules/.bin/gh"
 cp -a "$ROOT_DIR/packages" "$STAGE_DIR/app/packages"
+bash "$ROOT_DIR/scripts/materialize-built-packages.sh" "$STAGE_DIR/app/packages"
 test -f "$STAGE_DIR/app/packages/gateway/dist/collaboration/filesystem-identity.node"
 # Check the copied native bytes against the customer ABI, then load the exact
 # staged dependency with the Node version shipped in this bundle.
