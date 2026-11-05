@@ -127,7 +127,8 @@ jobs:
         id: config
         run: |
           set -euo pipefail
-          if [ "${CONNECT_COLLABORATION_PREVIEW:-false}" = "true" ]; then
+          if [ "${CONNECT_COLLABORATION_PREVIEW:-false}" = "true" ] &&
+             [ "${CONNECT_SHARE_PREVIEW:-false}" != "true" ]; then
             echo "connect_collaboration_preview runs only together with connect_share_preview for the same PR." >&2
             exit 1
           fi
