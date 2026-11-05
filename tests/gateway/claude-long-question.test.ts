@@ -97,3 +97,25 @@ it("retains protocol failure handling for malformed envelopes and non-question t
     expect(permission).not.toHaveBeenCalled();
   } finally { controller.close(); }
 });
+
+
+it("denies a native list at the byte boundary when canonical projection exceeds it", async () => {
+  const questions = [{ question: "Choose a sample workflow", header: "Workflow", options: [
+    { label: "First", description: "x" }, { label: "Second", description: "Second explanation" },
+  ] }];
+  const overhead = Buffer.byteLength(JSON.stringify(questions)) - 1;
+  questions[0]!.options[0]!.description = "x".repeat(65_536 - overhead);
+  const projectedQuestions = questions.map((question, index) => ({ ...question, questionId: `q${index}`, allowOther: true, secret: false }));
+  expect(Buffer.byteLength(JSON.stringify(questions))).toBe(65_536);
+  expect(Buffer.byteLength(JSON.stringify(projectedQuestions))).toBeGreaterThan(65_536);
+  const write = vi.fn<(frame: string) => Promise<void>>().mockResolvedValue(undefined); const emit = vi.fn();
+  const controller = createClaudeInputController({ write, emit });
+  try {
+    expect(() => controller.handle(request(questions))).not.toThrow();
+    await Promise.resolve();
+    expect(emit).not.toHaveBeenCalled();
+    expect(JSON.parse(write.mock.calls[0]![0]).response.response.behavior).toBe("deny");
+    controller.handle(request([longClaudeQuestion]));
+    expect(emit).toHaveBeenCalledWith(expect.objectContaining({ type: "input.requested" }));
+  } finally { controller.close(); }
+});

@@ -1,6 +1,6 @@
 import { expect, it } from "vitest";
 import { UserInputQuestionListSchema, projectChatMessageFrame, projectChatMessageResponse, type CanonicalChatRunActivity, type CanonicalChatTransportFrame } from "@matrix-os/contracts";
-import { longClaudeQuestion } from "../fixtures/long-claude-question.js";
+import { legacyMultibyteQuestions, longClaudeQuestion } from "../fixtures/long-claude-question.js";
 
 const question = { ...longClaudeQuestion, questionId: "q0", allowOther: true, secret: false };
 const activity: CanonicalChatRunActivity = { type: "input.requested", id: "activity_question", chatId: "chat_question", runId: "run_question", requestId: "question", title: "Input needed", occurredAt: "2026-11-05T00:00:00.000Z", questions: [question] };
@@ -38,4 +38,16 @@ it("keeps legacy projections nonblank and avoids cutting an emoji surrogate pair
   const projected = projectChatMessageResponse({ activities: [original] }, "2", "1", "1", "1").activities[0];
   expect(projected).toMatchObject({ questions: [{ options: [{ label: "Readable fallback", description: "Readable fallback" }, { label: "Emoji", description: "x".repeat(299) }] }] });
   expect(original.questions[0]!.options).toEqual(options);
+});
+
+
+it("preserves released question shapes above the expanded-description budget", () => {
+  expect(Buffer.byteLength(JSON.stringify(legacyMultibyteQuestions))).toBeGreaterThan(65_536);
+  expect(UserInputQuestionListSchema.parse(legacyMultibyteQuestions)).toEqual(legacyMultibyteQuestions);
+  const expanded = legacyMultibyteQuestions.map((question, index) => index === 0 ? {
+    ...question, options: question.options.map((option, optionIndex) => optionIndex === 0 ? {
+      ...option, description: option.description + "界",
+    } : option),
+  } : question);
+  expect(UserInputQuestionListSchema.safeParse(expanded).success).toBe(false);
 });

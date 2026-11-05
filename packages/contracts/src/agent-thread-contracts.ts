@@ -102,7 +102,7 @@ export const AgentApprovalRequestSchema = z.object({
   correlationId: CorrelationIdSchema,
 }).strict();
 
-/** One bounded canonical/native question list, measured as serialized UTF-8. */
+/** Expanded canonical descriptions and all new Claude lists use this UTF-8 budget. */
 export const MAX_USER_INPUT_QUESTIONS_BYTES = 64 * 1024;
 
 export const UserInputOptionSchema = z.object({
@@ -135,7 +135,11 @@ export type UserInputQuestion = z.infer<typeof UserInputQuestionSchema>;
 
 export const UserInputQuestionListSchema = z.array(UserInputQuestionSchema).min(1).max(8)
   .superRefine((questions, context) => {
-    if (byteLength(JSON.stringify(questions)) > MAX_USER_INPUT_QUESTIONS_BYTES) {
+    // Released shapes had bounded fields/counts but no aggregate budget. Keep
+    // those durable records readable; only expanded descriptions add this limit.
+    const expanded = questions.some(question => question.options?.some(option =>
+      option.description.length > 300 || byteLength(option.description) > 1_200));
+    if (expanded && byteLength(JSON.stringify(questions)) > MAX_USER_INPUT_QUESTIONS_BYTES) {
       context.addIssue({ code: "custom", message: "Question list exceeds byte limit" });
     }
     const seen = new Set<string>();

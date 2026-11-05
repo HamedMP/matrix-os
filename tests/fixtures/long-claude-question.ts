@@ -7,3 +7,10 @@ export const longClaudeQuestion = {
     { label: "Review in a separate window", description: "Open the review in a separate window so the original task stays visible. Preserve this explanation while you compare the choices and send the selected label back to the same waiting process. The original Chat remains available and preserves your draft until you safely finish. No second run is created for this answer. This is the full second explanation." },
   ],
 };
+
+/** Maximum released option counts with valid 300-code-unit multilingual text. */
+export const legacyMultibyteQuestions = Array.from({ length: 8 }, (_, index) => ({
+  questionId: `q${index}`, header: `Choice ${index + 1}`, question: `Which sample workflow should question ${index + 1} use?`,
+  options: Array.from({ length: 10 }, (_, option) => ({ label: `Choice ${option + 1}`, description: "界".repeat(300) })),
+  allowOther: false, secret: false,
+}));

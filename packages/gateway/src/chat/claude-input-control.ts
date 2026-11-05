@@ -90,7 +90,12 @@ export function createClaudeInputController(options: { write(frame: string): Pro
         expiresAt: new Date(Date.now() + CLAUDE_HUMAN_INPUT_TTL_MS).toISOString(),
         questions: questions.map((question, index) => ({ questionId: `q${index}`, ...question, ...(secretQuestion(question.question) ? { question: "Enter the requested sensitive value.", options: undefined } : {}), allowOther: true, secret: secretQuestion(question.question) })),
       });
-      if (!projected.success || projected.data.type !== "input.requested") { denyUnsupportedQuestion(request.request_id); return true; }
+      // Admission stays strict even though shared readers accept released shapes
+      // whose aggregate size predates the expanded-description budget.
+      if (!projected.success || projected.data.type !== "input.requested" || !projected.data.questions
+        || Buffer.byteLength(JSON.stringify(projected.data.questions), "utf8") > MAX_USER_INPUT_QUESTIONS_BYTES) {
+        denyUnsupportedQuestion(request.request_id); return true;
+      }
       const event = projected.data;
       const expire = () => {
         if (closed || pending.get(requestId) !== current) return;

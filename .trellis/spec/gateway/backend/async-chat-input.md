@@ -52,7 +52,13 @@ independently constructed capability lists can silently strip valid questions.
 ### 3. Contracts
 
 Measure the complete serialized question list as UTF-8, including JSON escaping.
-Check both the original native list and its canonical projection. Preserve native
+Shared readers preserve all released shapes with each description at most 300
+UTF-16 code units and 1,200 UTF-8 bytes, even above the aggregate budget; existing
+field/count/safe-display bounds remain. Expanded-description shapes require the
+64 KiB budget. Never break durable reads/exports or impose a new fatal cap on
+unrelated providers to enforce Claude admission. Independently cap both the new
+Claude original native list and its validated canonical projection at 64 KiB.
+Preserve native
 counts, all other field limits, safe-display validation and sensitive-question
 masking. Reject unsupported content before pending-state/timer registration using
 an explicit native denial; never implicitly approve a tool. Transport write errors
@@ -81,7 +87,9 @@ question as a fatal observer exception.
 Use an independently worded public fixture. Cover real-adapter stdin continuation,
 64 KiB exact/overflow boundaries with multibyte and escaped text, controlled denial
 and transport-error privacy, HTTP/SSE capability validation and projection, durable
-input/detail/export reads after a legacy read, cancellation, expiry, duplicate
+input/detail/export reads after a legacy read (including released 8-by-10 CJK
+lists above 64 KiB), capable/released wire parsing, native original/projected
+aggregate admission boundaries, cancellation, expiry, duplicate
 answers, secret inputs and ordinary permission denial. Runtime visual qualification
 records exact source/client provenance separately from synthetic transport tests.
 
