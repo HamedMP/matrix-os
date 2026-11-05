@@ -218,6 +218,7 @@ export async function constructOwnerCollaboration(options: OwnerCollaborationSta
         homePath,
         appRegistry,
         repository: collaborativeApps.readiness,
+        shares: collaborativeApps.shares,
         builds: collaborativeApps.builds,
       });
       return surfaces;
