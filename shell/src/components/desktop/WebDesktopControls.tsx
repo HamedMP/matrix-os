@@ -29,7 +29,7 @@ async function loadActivity(): Promise<unknown> {
 /** Shared action ordering and menus, with web-authenticated transports. */
 export function WebDesktopControls({ onOpenSettings, onOpenCommandPalette, onOpenSupport, onOpenFirstWork }: WebDesktopControlsProps) {
   const gateway = getGatewayUrl();
-  return <DesktopTopBarActions onSearch={onOpenCommandPalette}
+  return <DesktopTopBarActions onSearch={onOpenCommandPalette} onSupport={onOpenSupport}
     inbox={<DesktopActivityInbox scope={gateway} load={loadActivity} />}
     help={<GettingStartedPopover onOpenSettings={onOpenSettings} onOpenFirstWork={onOpenFirstWork}
       helpMenu={{ onSupport: onOpenSupport, discordIcon: <span aria-hidden="true" className="size-3.5 shrink-0 bg-current" style={{ mask: `url(${gateway}/system-app-icons/v3/discord.svg) center/contain no-repeat` }} /> }} />}

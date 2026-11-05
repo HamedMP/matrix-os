@@ -25,10 +25,11 @@ export default function DesktopModeControls() {
     if (useConnection.getState().authGeneration !== generation || useConnection.getState().runtimeSlot !== runtimeSlot) return Promise.reject(new Error("Runtime changed"));
     return invoke("runtime:get-summary", {});
   }, [generation, runtimeSlot]);
+  const openSupport = () => { void openDesktopSupport(); };
   return <div className="no-drag ml-auto flex h-full shrink-0 items-center border-l pl-3" style={{ borderColor: "var(--border-subtle)" }}>
-    <DesktopTopBarActions onSearch={() => setPaletteOpen(true)}
+    <DesktopTopBarActions onSearch={() => setPaletteOpen(true)} onSupport={openSupport}
       inbox={<DesktopActivityInbox overlay={menuOverlay} scope={`${generation}:${runtimeSlot}`} load={loadActivity} onOpenTask={id => { void openCodingAgentThread(id); }} />}
-      help={<GettingStartedPopover helpMenu={{ onSupport: () => { void openDesktopSupport(); }, discordIcon: <span aria-hidden="true" className="size-3.5 shrink-0 bg-current" style={{ mask: `url(${discordIconUrl}) center/contain no-repeat` }} /> }} />}
+      help={<GettingStartedPopover helpMenu={{ onSupport: openSupport, discordIcon: <span aria-hidden="true" className="size-3.5 shrink-0 bg-current" style={{ mask: `url(${discordIconUrl}) center/contain no-repeat` }} /> }} />}
       computer={<RuntimeComputerMenu collapsed={false} />} update={<DesktopUpdateButton />} account={<AccountMenu collapsed compact />} />
   </div>;
 }
