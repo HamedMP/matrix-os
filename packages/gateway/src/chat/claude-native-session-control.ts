@@ -1,8 +1,10 @@
 import { randomBytes } from "node:crypto";
 import { z } from "zod/v4";
+import { ROUTINE_CLI_NATIVE_TIMEOUT_MS } from "@matrix-os/contracts/routine-cli";
 import { nativeRecord, nativeRef, type NativeRecord } from "./claude-native-session-jobs.js";
 
-const HooksSchema = z.object({ PreToolUse: z.array(z.object({ matcher: z.literal("Bash"), hookCallbackIds: z.array(nativeRef).length(1), timeout: z.number().int().min(1).max(120).optional() }).strict()).length(1) }).strict();
+const bashHookTimeoutSeconds = ROUTINE_CLI_NATIVE_TIMEOUT_MS / 1000;
+const HooksSchema = z.object({ PreToolUse: z.array(z.object({ matcher: z.literal("Bash"), hookCallbackIds: z.array(nativeRef).length(1), timeout: z.number().int().min(1).max(bashHookTimeoutSeconds).optional() }).strict()).length(1) }).strict();
 const McpReplacementSchema = z.object({
   added: z.array(nativeRef).max(16), removed: z.array(nativeRef).max(16),
   errors: z.record(nativeRef, z.string().max(8192)).refine(errors => Object.keys(errors).length <= 16),
@@ -29,7 +31,9 @@ export function createClaudeNativeSessionControl(options: {
   });
   const hooks = (bashId: string) => ({
     UserPromptSubmit: [{ hookCallbackIds: [promptCallbackId], timeout: 120 }],
-    PreToolUse: [{ matcher: "Bash", hookCallbackIds: [bashId], timeout: 120 }, { matcher: ".*", hookCallbackIds: [cronCallbackId], timeout: 10 }],
+    // Initialize once with the shared bounded ceiling, even before a routine phase.
+    // Later registration only remaps callbacks; it cannot change native hook timeouts.
+    PreToolUse: [{ matcher: "Bash", hookCallbackIds: [bashId], timeout: bashHookTimeoutSeconds }, { matcher: ".*", hookCallbackIds: [cronCallbackId], timeout: 10 }],
   });
   const ensure = async (requestId?: string) => {
     if (initializePromise) return initializePromise;
