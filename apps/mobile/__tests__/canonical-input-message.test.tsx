@@ -1,6 +1,7 @@
 import React from "react";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react-native";
 import { CanonicalInputMessage } from "@/components/CanonicalInputMessage";
+import { longClaudeQuestion } from "../../../tests/fixtures/long-claude-question";
 
 jest.mock("@clerk/clerk-expo", () => ({ useAuth: () => ({ getToken: async () => "test-token" }) }));
 jest.mock("micromark", () => ({ micromark: jest.fn() }));
@@ -9,6 +10,18 @@ const request = { id: "evt_input", runId: "run_test", requestId: "input_test", t
   questions: [{ questionId: "direction", header: "Direction", allowOther: false, secret: false, question: "Which direction?", options: [{ label: "North", description: "Go north" }] }] };
 const props = { chatId: "chat_test", gatewayUrl: "https://app.matrix-os.com/vm/test", onSettled: jest.fn() };
 afterEach(() => jest.restoreAllMocks());
+it("renders complete long explanations and submits the original selected label", async () => {
+  const fetchMock = jest.spyOn(global, "fetch").mockResolvedValue({ ok: true, json: async () => ({ requestId: "input_test", submission: "accepted" }) } as Response);
+  render(<CanonicalInputMessage {...props} request={{ ...request, questions: [{
+    ...longClaudeQuestion, questionId: "direction", allowOther: true, secret: false,
+  }] }} />);
+  for (const option of longClaudeQuestion.options) expect(screen.getByText(option.description)).toBeTruthy();
+  fireEvent.press(screen.getByText(longClaudeQuestion.options[0].label));
+  fireEvent.press(screen.getByText("Submit answer"));
+  await waitFor(() => expect(fetchMock).toHaveBeenCalled());
+  expect(JSON.parse(fetchMock.mock.calls[0]![1]!.body as string).structuredAnswers)
+    .toEqual({ direction: [longClaudeQuestion.options[0].label] });
+});
 it("submits a choice to the original request and retries with the same id after failure", async () => {
   const fetchMock = jest.spyOn(global, "fetch").mockRejectedValueOnce(new Error("private upstream"))
     .mockResolvedValue({ ok: true, json: async () => ({ requestId: "input_test", submission: "accepted" }) } as Response);

@@ -1,14 +1,14 @@
 import { z } from "zod/v4";
-import type { CanonicalSubmitChatInputRequest } from "@matrix-os/contracts";
+import { MAX_USER_INPUT_QUESTIONS_BYTES, type CanonicalSubmitChatInputRequest } from "@matrix-os/contracts";
 import { CanonicalProviderRunEventSchema, type CanonicalProviderRunEvent } from "./provider-adapter.js";
 import { inputSubmissionGate, nativeInputId, questionAnswers, secretQuestion } from "./native-input-control.js";
 const QuestionSchema = z.object({
   question: z.string().min(1).max(600), header: z.string().min(1).max(160),
-  options: z.array(z.object({ label: z.string().min(1).max(160), description: z.string().min(1).max(300) })).min(2).max(4),
+  options: z.array(z.object({ label: z.string().min(1).max(160), description: z.string().min(1).max(MAX_USER_INPUT_QUESTIONS_BYTES) })).min(2).max(4),
   multiSelect: z.boolean().optional(),
 });
 const RequestSchema = z.object({ type: z.literal("control_request"), request_id: z.string().min(1).max(256),
-  request: z.object({ subtype: z.literal("can_use_tool"), tool_name: z.string().min(1).max(256), input: z.record(z.string(), z.unknown()) }),
+  request: z.object({ subtype: z.literal("can_use_tool"), tool_name: z.string().min(1).max(256), input: z.unknown() }),
 });
 type InputEvent = Extract<CanonicalProviderRunEvent, { type: "input.requested" }>;
 export const CLAUDE_HUMAN_INPUT_TTL_MS = 30 * 60_000;
@@ -24,6 +24,12 @@ export function createClaudeInputController(options: { write(frame: string): Pro
   const respond = (requestId: string, response: unknown) => closed || options.signal?.aborted
     ? Promise.reject(new Error("Input transport unavailable"))
     : options.write(`${JSON.stringify({ type: "control_response", response: { subtype: "success", request_id: requestId, response } })}\n`);
+  const denyUnsupportedQuestion = (nativeId: string) => {
+    void respond(nativeId, { behavior: "deny", message: "This question is too large or unsupported. Ask a shorter question with valid choices." }).catch((error: unknown) => {
+      console.warn("[chat-claude] Unsupported question response failed");
+      options.onError?.(error);
+    });
+  };
   const resolve = (requestId: string, reason: "answered" | "cancelled" | "expired") => {
     const request = pending.get(requestId);
     if (!request) return;
@@ -53,9 +59,15 @@ export function createClaudeInputController(options: { write(frame: string): Pro
       }
       if (frame.type !== "control_request") return false;
       const request = RequestSchema.parse(value);
+      const parsedInput = z.record(z.string(), z.unknown()).safeParse(request.request.input);
+      if (!parsedInput.success) {
+        if (request.request.tool_name !== "AskUserQuestion") throw parsedInput.error;
+        denyUnsupportedQuestion(request.request_id); return true;
+      }
+      const nativeInput = parsedInput.data;
       if (request.request.tool_name !== "AskUserQuestion") {
         if (options.onToolPermission?.({ nativeRequestId: request.request_id, toolName: request.request.tool_name,
-          input: request.request.input }, response => respond(request.request_id, response))) return true;
+          input: nativeInput }, response => respond(request.request_id, response))) return true;
         // Do not turn the stdio permission callback into implicit tool approval.
         void respond(request.request_id, { behavior: "deny", message: "Tool approval is unavailable in this Chat connection." }).catch(error => {
           console.warn("[chat-claude] Permission response failed", error instanceof Error ? error.name : "UnknownError");
@@ -66,11 +78,20 @@ export function createClaudeInputController(options: { write(frame: string): Pro
       const requestId = nativeInputId(request.request_id);
       if (pending.has(requestId)) return true;
       if (pending.size >= 16) throw new Error("Input request limit exceeded");
-      const questions = z.array(QuestionSchema).min(1).max(4).parse(request.request.input.questions);
-      const event = CanonicalProviderRunEventSchema.parse({ type: "input.requested", requestId, title: "Input needed",
+      const rawQuestions = nativeInput.questions;
+      // Bound the original question list, including unknown fields, before projecting it.
+      if (!Array.isArray(rawQuestions) || Buffer.byteLength(JSON.stringify(rawQuestions), "utf8") > MAX_USER_INPUT_QUESTIONS_BYTES) {
+        denyUnsupportedQuestion(request.request_id); return true;
+      }
+      const parsedQuestions = z.array(QuestionSchema).min(1).max(4).safeParse(rawQuestions);
+      if (!parsedQuestions.success) { denyUnsupportedQuestion(request.request_id); return true; }
+      const questions = parsedQuestions.data;
+      const projected = CanonicalProviderRunEventSchema.safeParse({ type: "input.requested", requestId, title: "Input needed",
         expiresAt: new Date(Date.now() + CLAUDE_HUMAN_INPUT_TTL_MS).toISOString(),
         questions: questions.map((question, index) => ({ questionId: `q${index}`, ...question, ...(secretQuestion(question.question) ? { question: "Enter the requested sensitive value.", options: undefined } : {}), allowOther: true, secret: secretQuestion(question.question) })),
-      }) as InputEvent;
+      });
+      if (!projected.success || projected.data.type !== "input.requested") { denyUnsupportedQuestion(request.request_id); return true; }
+      const event = projected.data;
       const expire = () => {
         if (closed || pending.get(requestId) !== current) return;
         resolve(requestId, "expired");
@@ -81,7 +102,7 @@ export function createClaudeInputController(options: { write(frame: string): Pro
       };
       const timer = setTimeout(expire, CLAUDE_HUMAN_INPUT_TTL_MS);
       timer.unref?.();
-      const current = { nativeId: request.request_id, input: request.request.input, questions, event, timer, expire };
+      const current = { nativeId: request.request_id, input: nativeInput, questions, event, timer, expire };
       pending.set(requestId, current);
       options.emit(event);
       return true;

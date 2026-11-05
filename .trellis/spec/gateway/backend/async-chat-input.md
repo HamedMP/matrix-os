@@ -31,3 +31,63 @@ Good: a normal wait-for-answer prompt receives Alpha within the same active nati
 ## 7. Wrong vs Correct
 
 Wrong: unconditionally enqueue the answer for after `run.completed`. Correct: use validated active native delivery when supported; otherwise retain the existing safe phase-boundary path. A prompt asking the model to end its phase before receiving the answer is a workaround and cannot certify normal question continuation.
+
+## Long native question descriptions
+
+### 1. Scope / Trigger
+
+Native Claude `AskUserQuestion` may supply ordinary option explanations longer than
+300 characters. A presentation validation failure must not terminate the Chat.
+
+### 2. Signatures
+
+`UserInputQuestionListSchema` and the Claude controller share
+`MAX_USER_INPUT_QUESTIONS_BYTES = 64 * 1024`. The independent
+`questionDescriptionVersion=1` query capability is the sixth argument of
+`projectChatMessageResponse` / `projectChatMessageFrame`; its default is `"0"`.
+`chatMessageVersionUrl` advertises the capability without changing `inputVersion=1`.
+Native Mobile also uses this helper for detail reads, turn admission and SSE;
+independently constructed capability lists can silently strip valid questions.
+
+### 3. Contracts
+
+Measure the complete serialized question list as UTF-8, including JSON escaping.
+Check both the original native list and its canonical projection. Preserve native
+counts, all other field limits, safe-display validation and sensitive-question
+masking. Reject unsupported content before pending-state/timer registration using
+an explicit native denial; never implicitly approve a tool. Transport write errors
+still reach the existing error boundary; diagnostics contain fixed labels only.
+Keep original native question keys and selected option labels for the stdin answer.
+
+### 4. Validation / Error Matrix
+
+Within budget and safe: admit the full canonical descriptions. Malformed, unsafe
+or oversized: deny that tool request and permit a later supported question.
+Absent/zero capability: project nonblank descriptions to at most 300 UTF-16 code
+units without splitting a surrogate pair. Capability one: preserve full text.
+Invalid/repeated capability: HTTP400 before service work or stream registration.
+Existing endpoint auth, body limits, owner/run fences and deadlines are unchanged.
+
+### 5. Good / Base / Bad Cases
+
+Good: a 380/355-character pair is displayed and answered on the same native process.
+Base: an old client parses a shortened display while the repository retains the
+complete text; an old gateway ignores the new query flag. Bad: widening only the
+gateway parser, truncating stored data or option labels, or treating a rejected
+question as a fatal observer exception.
+
+### 6. Tests Required
+
+Use an independently worded public fixture. Cover real-adapter stdin continuation,
+64 KiB exact/overflow boundaries with multibyte and escaped text, controlled denial
+and transport-error privacy, HTTP/SSE capability validation and projection, durable
+input/detail/export reads after a legacy read, cancellation, expiry, duplicate
+answers, secret inputs and ordinary permission denial. Runtime visual qualification
+records exact source/client provenance separately from synthetic transport tests.
+
+### 7. Wrong vs Correct
+
+Wrong: native `.parse()` throws on an ordinary long explanation, or an unnegotiated
+response breaks released strict clients. Correct: shared bounded validation,
+controlled local rejection, full canonical persistence and capability-specific
+wire projection that never changes answer identity.
