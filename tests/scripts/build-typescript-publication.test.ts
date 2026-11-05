@@ -51,3 +51,38 @@ it("keeps a fresh real consumer on the complete old revision when publication fa
     expect(result.stderr).toContain("No such file or directory");
   } finally { await rm(pkg, { recursive:true, force:true }); }
 });
+
+it("publishes a cold and repeated release build without a POSIX exchange helper", async () => {
+  const pkg = await mkdtemp(join(tmpdir(), "matrix-cold-release-"));
+  try {
+    const wrapper = new URL("../../scripts/build-typescript.mjs", import.meta.url).href;
+    const source = `import { buildTypescript } from ${JSON.stringify(wrapper)};
+      import { writeFile } from "node:fs/promises";
+      import { join } from "node:path";
+      const compile = async args => {
+        const outDir = args[args.indexOf("--outDir") + 1];
+        await writeFile(join(outDir, "brand.cjs"), 'module.exports = "available";');
+        return 0;
+      };
+      const first = await buildTypescript(process.cwd(), compile);
+      const repeated = await buildTypescript(process.cwd(), compile);
+      if (first || repeated) process.exitCode = 1;
+      if (process.platform === "win32") {
+        let rejected = false;
+        try {
+          await buildTypescript(process.cwd(), async args => {
+            await writeFile(join(args[args.indexOf("--outDir") + 1], "brand.cjs"), 'module.exports = "changed";');
+            return 0;
+          });
+        } catch (error) {
+          rejected = error.message.includes("cannot exchange a changed live output");
+        }
+        if (!rejected) throw new Error("Changed Windows live output must fail closed");
+      }`;
+    // Windows uses its native ACL tools. All platforms must cold-publish without Python.
+    const env = process.platform === "win32" ? process.env : { ...process.env, PATH: "/no-exchange-helper" };
+    const run = spawnSync(process.execPath, ["--input-type=module", "-e", source], { cwd: pkg, env, encoding: "utf8", timeout: 45000 });
+    expect(run.status, run.stderr).toBe(0);
+    expect(await readFile(join(pkg, "dist/brand.cjs"), "utf8")).toContain("available");
+  } finally { await rm(pkg, { recursive:true, force:true }); }
+}, 50_000);

@@ -86,10 +86,11 @@ export async function bootstrapDevstackIdentity(db: PlatformDB, rawInput: Devsta
     if (await getPlatformHandleConflict(transaction, input.handle, input.clerkUserId)) {
       throw new DevstackBootstrapError('Requested local handle is already owned by another identity.');
     }
-    // A legacy Docker name or short ID may denote the very same immutable
+    // A missing ID falls back to the handle-derived Docker name. That name
+    // or another legacy name/short ID may denote the very same immutable
     // target. This offline command cannot attest that alias, so fail closed.
     const unresolved = await transaction.executor.selectFrom('containers').select('handle')
-      .where(sql<boolean>`container_id IS NOT NULL AND container_id !~ '^[0-9a-f]{64}$'`).executeTakeFirst();
+      .where(sql<boolean>`container_id IS NULL OR container_id !~ '^[0-9a-f]{64}$'`).executeTakeFirst();
     if (unresolved) throw new DevstackBootstrapError('Reconcile retained local container aliases to verified immutable IDs before registration.');
     const foreignTarget = await transaction.executor.selectFrom('containers').select('handle')
       .where('container_id', '=', input.containerId)

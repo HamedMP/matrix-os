@@ -37,6 +37,10 @@ if [ "$2" = "@matrix-os/kernel" ]; then exec node ../../scripts/build-typescript
 exec node ../../scripts/build-typescript.mjs
 SH
 chmod 755 node_modules/.bin/pnpm
+marker=packages/kernel/matrix-kernel-published.tsbuildinfo
+printf "%064d" 0 > "$marker"
+chown 501:501 "$marker"
+chmod 0644 "$marker"
 for revision in 1 2; do
   for pkg in brand observability terminal-runtime kernel; do
     echo "export const revision = $revision;" > "packages/$pkg/src/index.ts"
@@ -49,5 +53,24 @@ for revision in 1 2; do
     test "$(stat -c %a "$base/.matrix-build-output")" = 700
     su-exec nobody node --input-type=module -e "import {revision} from \"./$base/dist/index.js\"; if (revision !== $revision) process.exit(1)"
   done
+done
+rm "$marker"
+echo "owner sentinel" > /test/owner
+chown 501:501 /test/owner
+for kind in symlink hardlink invalid fifo; do
+  case "$kind" in
+    symlink) ln -s /test/owner "$marker" ;;
+    hardlink) ln /test/owner "$marker" ;;
+    invalid) cp -p /test/owner "$marker" ;;
+    fifo) mkfifo "$marker" ;;
+  esac
+  if bash distro/docker-dev-entrypoint.sh --build-dev-packages >/dev/null 2>&1; then exit 1; fi
+  if [ "$kind" = invalid ]; then
+    test "$(cat "$marker")" = "owner sentinel"
+    test "$(stat -c %u "$marker")" = 501
+  fi
+  test "$(cat /test/owner)" = "owner sentinel"
+  test "$(stat -c %u /test/owner)" = 501
+  rm "$marker"
 done
 '

@@ -57,6 +57,16 @@ function gitIdentity(worktree) {
   const stat = statSync(path);
   return JSON.stringify({ path, dev: stat.dev, ino: stat.ino });
 }
+function previewEndpoint(value) {
+  const url = new URL(value);
+  // The Platform explicit slot parser sends both slot-root spellings to "/".
+  // Preserve trailing slashes on resources beneath that root.
+  if (/^\/vm\/[a-z0-9][a-z0-9-]{1,62}\/~runtime\/[a-z0-9](?:[a-z0-9-]{0,30}[a-z0-9])?\/$/.test(url.pathname)) {
+    url.pathname = url.pathname.slice(0, -1);
+  }
+  return url.href;
+}
+
 async function validate(manifest) {
   const keys = ['version', 'id', 'worktree', 'machine', 'preview', 'sourceRoot', 'managedUnits', 'sourceSHA', 'appliedRevision', 'capabilities'];
   if (!manifest || typeof manifest !== 'object' || Object.keys(manifest).some(key => !keys.includes(key))) throw new Error('Invalid local manifest fields');
@@ -225,7 +235,7 @@ export function createAdapter({ registry = process.env.DEVSTACK_STATE_DIR ?? joi
               if (existing.gitIdentity !== identity) throw new Error('Pinned Git worktree identity changed');
               return existing;
             }
-            if (new URL(existing.manifest.preview).href === new URL(manifest.preview).href) throw new Error('Preview endpoint already claimed');
+            if (previewEndpoint(existing.manifest.preview) === previewEndpoint(manifest.preview)) throw new Error('Preview endpoint already claimed');
             if (existing.manifest.machine === manifest.machine || existing.manifest.worktree === manifest.worktree) throw new Error('Machine or worktree already claimed');
           }
           if (names.length >= 100) throw new Error('Retained registration safety bound reached');

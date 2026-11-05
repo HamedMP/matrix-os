@@ -252,13 +252,15 @@ async function acquire(directory) {
 
 export async function buildTypescript(packageDirectory, compile, notifyGateway = false) {
   const directory = join(packageDirectory, "dist");
-  await mkdir(directory, { recursive: true });
   const cache = join(packageDirectory, ".matrix-build-cache");
   await mkdir(cache, { recursive: true });
   const release = await acquire(cache);
   const state = join(cache, STATE);
   const stamp = join(cache, STAMP);
   try {
+    // Cold publication may briefly remove an empty placeholder. Another
+    // builder must not recreate it while the first owns publication.
+    await mkdir(directory, { recursive: true });
     await sweep(cache);
     const live = await liveOutputDirectory(packageDirectory);
     const previous = await outputs(directory);

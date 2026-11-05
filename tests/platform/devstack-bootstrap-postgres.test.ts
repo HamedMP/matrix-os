@@ -114,13 +114,16 @@ describe.skipIf(!connectionString)('DevStack identity initialization on PostgreS
     expect(await getPlatformUserByClerkId(db, 'user_other')).toBeFalsy();
   });
 
-  it('does not claim an ambiguous execution target before a legacy name has been reconciled', async () => {
-    await bootstrapDevstackIdentity(db, input());
-    await db.executor.updateTable('containers').set({ container_id: 'matrixos-existing' })
+  it.each([null, 'matrixos-existing'])('refuses an unresolved retained route %j before admitting another owner', async target => {
+    const first = await bootstrapDevstackIdentity(db, input());
+    await db.executor.updateTable('containers').set({ container_id: target })
       .where('handle', '=', input().handle).execute();
     await expect(bootstrapDevstackIdentity(other, input({ clerkUserId: 'user_peer', handle: 'peer' })))
       .rejects.toThrow(/reconcile/i);
     expect(await getContainer(db, 'peer')).toBeUndefined();
+    expect(await getPlatformUserByClerkId(db, 'user_peer')).toBeFalsy();
+    expect(await getPlatformUserByClerkId(db, input().clerkUserId)).toMatchObject({ id: first.userId });
+    expect(await getContainer(db, input().handle)).toMatchObject({ containerId: target, clerkUserId: input().clerkUserId });
   });
 
   it('replays after normal Docker resolution reconciles an already owned legacy name', async () => {
