@@ -38,6 +38,9 @@ describe('private Matrix.page routes', () => {
     expect(html).toContain('location.hash');
     expect(html).not.toContain(privateSite.title);
     expect(html).not.toContain(privateSite.description);
+    const cleared = response.headers.getSetCookie();
+    expect(cleared).toContain(`__Secure-matrix_site_viewer_${siteId.replaceAll('-', '')}=; Path=/${siteId}; HttpOnly; Secure; SameSite=Lax; Max-Age=0`);
+    expect(cleared).toContain(`__Secure-matrix_site_asset_${siteId.replaceAll('-', '')}=; Path=/${siteId}/assets/; HttpOnly; Secure; SameSite=None; Max-Age=0`);
   });
 
   it('denies private frames and assets before loading bytes when the viewer session is absent', async () => {

@@ -11,6 +11,8 @@ const viewerCookie = new RegExp(`^__Secure-matrix_site_viewer_([a-f0-9]{32})=${s
 const assetCookie = new RegExp(`^__Secure-matrix_site_asset_([a-f0-9]{32})=${siteIdPattern}\\.[A-Za-z0-9_-]{43}$`, 'i');
 const viewerSetCookie = new RegExp(`^__Secure-matrix_site_viewer_([a-f0-9]{32})=${siteIdPattern}\\.[A-Za-z0-9_-]{43}; Path=\/(${siteIdPattern}); HttpOnly; Secure; SameSite=Lax; Max-Age=2592000$`, 'i');
 const assetSetCookie = new RegExp(`^__Secure-matrix_site_asset_([a-f0-9]{32})=${siteIdPattern}\\.[A-Za-z0-9_-]{43}; Path=\/(${siteIdPattern})\/assets\/; HttpOnly; Secure; SameSite=None; Max-Age=2592000$`, 'i');
+const viewerClearCookie = new RegExp(`^__Secure-matrix_site_viewer_([a-f0-9]{32})=; Path=\/(${siteIdPattern}); HttpOnly; Secure; SameSite=Lax; Max-Age=0$`, 'i');
+const assetClearCookie = new RegExp(`^__Secure-matrix_site_asset_([a-f0-9]{32})=; Path=\/(${siteIdPattern})\/assets\/; HttpOnly; Secure; SameSite=None; Max-Age=0$`, 'i');
 const matrixCookiePrefix = /^__(?:Secure-matrix_site_(?:viewer|asset)_|Host-matrix_site_viewer_)/i;
 function pathSiteId(pathname: string): string | null {
     const candidate = pathname.split('/')[1] ?? '';
@@ -18,7 +20,8 @@ function pathSiteId(pathname: string): string | null {
 }
 function approvedSetCookie(cookie: string, targetSiteId: string | null): boolean {
     if (!targetSiteId) return false;
-    const match = viewerSetCookie.exec(cookie) ?? assetSetCookie.exec(cookie);
+    const match = viewerSetCookie.exec(cookie) ?? assetSetCookie.exec(cookie)
+        ?? viewerClearCookie.exec(cookie) ?? assetClearCookie.exec(cookie);
     return Boolean(match && match[1]?.toLowerCase() === targetSiteId.replaceAll('-', '') && match[2]?.toLowerCase() === targetSiteId);
 }
 function forwardedViewerCookies(raw: string | null, targetSiteId: string | null): { value: string | null; invalid: boolean } {

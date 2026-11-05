@@ -9,7 +9,7 @@ import { SiteError } from './types.js';
 import type { SitesService } from './service.js';
 import { APP_CSP, PAGE_CSP, siteAccessGate, siteFrame, sitePage } from './renderer.js';
 import { createSiteReadAdmission } from './read-admission.js';
-import { buildSiteAssetCookie, readSiteViewerCookie } from './access-links.js';
+import { buildSiteAssetCookie, clearSiteAssetCookie, clearSiteViewerCookie, readSiteViewerCookie } from './access-links.js';
 const ID = z.uuid();
 function unavailable(c: Context, error: unknown) {
     if (error instanceof SiteError)
@@ -33,6 +33,10 @@ export function createSitePublicRoutes(options: {
     const reads = createSiteReadAdmission();
     const readSources = createBoundedRateLimiter(1200);
     const readGlobal = createBoundedRateLimiter(12000);
+    function clearSiteCookies(c: Context, siteId: string) {
+        c.header('Set-Cookie', clearSiteViewerCookie(siteId), { append: true });
+        c.header('Set-Cookie', clearSiteAssetCookie(siteId), { append: true });
+    }
     async function authorizedSite(c: Context, credential: 'viewer' | 'asset' = 'viewer') {
         const parsed = SiteReferenceSchema.safeParse(c.req.param('reference'));
         if (!parsed.success) return null;
@@ -85,8 +89,13 @@ export function createSitePublicRoutes(options: {
         const site = await options.service.resolve(c.req.param('reference'));
         if (!site) throw new SiteError('not_found');
         c.header('Content-Security-Policy', PAGE_CSP);
-        if (site.accessMode === 'private_link' && !await options.service.authorize(c.req.param('reference'), c.req.header('cookie')))
+        if (site.accessMode === 'private_link' && !await options.service.authorize(c.req.param('reference'), c.req.header('cookie'))) {
+            clearSiteCookies(c, site.id);
             return c.html(siteAccessGate());
+        }
+        // A private-to-public transition invalidates the database session. Clear
+        // any path-scoped browser remnants on the next canonical page request.
+        if (site.accessMode === 'public' && c.req.header('cookie')) clearSiteCookies(c, site.id);
         return c.html(sitePage(site));
     });
     app.get('/:reference/frame', async (c) => { const reference = c.req.param('reference'); const site = await authorizedSite(c); if (!site?.activeVersion)

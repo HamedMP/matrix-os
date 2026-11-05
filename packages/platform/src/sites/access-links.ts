@@ -54,6 +54,28 @@ export function buildSiteAssetCookie(siteId: string, linkId: string, secret: str
   ].join('; ');
 }
 
+export function clearSiteViewerCookie(siteId: string): string {
+  return [
+    `${siteViewerCookieName(siteId)}=`,
+    `Path=/${SiteIdSchema.parse(siteId)}`,
+    'HttpOnly',
+    'Secure',
+    'SameSite=Lax',
+    'Max-Age=0',
+  ].join('; ');
+}
+
+export function clearSiteAssetCookie(siteId: string): string {
+  return [
+    `${siteAssetCookieName(siteId)}=`,
+    `Path=/${SiteIdSchema.parse(siteId)}/assets/`,
+    'HttpOnly',
+    'Secure',
+    'SameSite=None',
+    'Max-Age=0',
+  ].join('; ');
+}
+
 export function readSiteViewerCookie(cookieHeader: string | undefined, siteId: string): { linkId: string; token: string } | null {
   return readSiteCookie(cookieHeader, siteViewerCookieName(siteId));
 }

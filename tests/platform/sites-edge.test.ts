@@ -110,6 +110,18 @@ it('forwards the narrow asset cookie and only its exact SameSite=None Set-Cookie
   expect(response.status).toBe(200);expect(response.headers.get('set-cookie')).toBe(setCookie);
  }finally{vi.unstubAllGlobals();}
 });
+it('forwards only exact site-scoped cookie deletions so stale revoked sessions are cleared',async()=>{
+ const siteId='11111111-1111-4111-8111-111111111111',suffix=siteId.replaceAll('-','');
+ const viewer=`__Secure-matrix_site_viewer_${suffix}=; Path=/${siteId}; HttpOnly; Secure; SameSite=Lax; Max-Age=0`;
+ const asset=`__Secure-matrix_site_asset_${suffix}=; Path=/${siteId}/assets/; HttpOnly; Secure; SameSite=None; Max-Age=0`;
+ const bad=`__Secure-matrix_site_viewer_${suffix}=; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=0`;
+ const forward=vi.fn(async()=>{const headers=new Headers();for(const value of [viewer,asset,bad])headers.append('Set-Cookie',value);return new Response('gate',{headers});});
+ vi.stubGlobal('fetch',forward);
+ try{
+  const response=await worker.fetch(new Request(`https://matrix.page/${siteId}`),{SITES_PLATFORM_ORIGIN:'https://platform.example.com',SITES_EDGE_SECRET:'x'.repeat(40)});
+  expect(response.headers.getSetCookie()).toEqual([viewer,asset]);
+ }finally{vi.unstubAllGlobals();}
+});
 it('accepts same-origin explicit claims and rejects cross-site claim requests before forwarding',async()=>{
  const forward=vi.fn(async()=>new Response(JSON.stringify({accepted:true})));
  vi.stubGlobal('fetch',forward);
