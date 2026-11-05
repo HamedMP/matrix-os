@@ -1,5 +1,6 @@
 /** Build the owner-backed collaboration runtime after Chat and canvas bootstrap. */
 import { createHash } from "node:crypto";
+import { join } from "node:path";
 import type { Hono } from "hono";
 import type { createNodeWebSocket } from "@hono/node-ws";
 import type { Kysely } from "kysely";
@@ -13,6 +14,9 @@ import { enableOwnerCollaborationSurfaces } from "../collaboration/owner-runtime
 import { createProjectGitDriver } from "../collaboration/project-git-operations.js";
 import { createCanonicalTerminalCollaborationBridge } from "../collaboration/canonical-terminal-bridge.js";
 import type { OwnerCollaborationDatabase } from "../collaboration/database.js";
+import { CollaborativeAppReadinessRepository } from "../collaboration/collaborative-app-readiness-repository.js";
+import { CollaborativeAppShareRepository } from "../collaboration/collaborative-app-share-repository.js";
+import { ImmutableCollaborativeBuildStore } from "../app-runtime/build-cache.js";
 import { registerFailClosedCollaborationRoutes } from "../collaboration/fail-closed.js";
 import {
   constructGatewayCollaborationOrFailClosed,
@@ -22,6 +26,64 @@ import {
   type GatewayCollaborationRuntime,
 } from "../collaboration/wiring.js";
 import type { createProjectManager } from "../project-manager.js";
+
+const COLLABORATIVE_BUILD_RETENTION_MS = 30 * 24 * 60 * 60 * 1_000;
+const COLLABORATIVE_BUILD_CLEANUP_INTERVAL_MS = 60 * 60 * 1_000;
+const MAX_COLLABORATIVE_BUILD_SNAPSHOTS = 1_000;
+
+export interface CollaborativeAppInfrastructure {
+  readiness: CollaborativeAppReadinessRepository;
+  shares: CollaborativeAppShareRepository;
+  builds: ImmutableCollaborativeBuildStore;
+  close(): Promise<void>;
+}
+
+/** Repository wrappers borrow the owner pool; only the immutable-build store is owned here. */
+export function createCollaborativeAppInfrastructure(options: {
+  db: Kysely<OwnerCollaborationDatabase>;
+  buildStoreRoot: string;
+  startTimers?: boolean;
+}): CollaborativeAppInfrastructure {
+  const builds = new ImmutableCollaborativeBuildStore({
+    rootDir: options.buildStoreRoot,
+    maxSnapshots: MAX_COLLABORATIVE_BUILD_SNAPSHOTS,
+    retentionMs: COLLABORATIVE_BUILD_RETENTION_MS,
+    cleanupIntervalMs: COLLABORATIVE_BUILD_CLEANUP_INTERVAL_MS,
+    startTimer: options.startTimers !== false,
+  });
+  return {
+    readiness: new CollaborativeAppReadinessRepository(options.db),
+    shares: new CollaborativeAppShareRepository(options.db),
+    builds,
+    close: () => builds.close(),
+  };
+}
+
+function ownCollaborativeAppInfrastructure<T extends {
+  shutdown(): Promise<void>;
+  fence?: () => void;
+}>(runtime: T, infrastructure: CollaborativeAppInfrastructure): T & {
+  collaborativeApps: CollaborativeAppInfrastructure;
+} {
+  const shutdown = runtime.shutdown.bind(runtime);
+  const fence = runtime.fence?.bind(runtime);
+  return Object.assign(runtime, {
+    collaborativeApps: infrastructure,
+    async shutdown(): Promise<void> {
+      try {
+        await shutdown();
+      } finally {
+        await infrastructure.close();
+      }
+    },
+    ...(fence ? {
+      fence(): void {
+        void infrastructure.close();
+        fence();
+      },
+    } : {}),
+  });
+}
 
 export interface OwnerCollaborationRouteOptions {
   app: Hono;
@@ -73,6 +135,10 @@ export async function constructOwnerCollaboration(options: OwnerCollaborationSta
     terminalWorkspaceRuntime,
   } = options;
   const ownerChatRepository = chatRepository;
+  const collaborativeApps = createCollaborativeAppInfrastructure({
+    db: ownerChatRepository.kysely as unknown as Kysely<OwnerCollaborationDatabase>,
+    buildStoreRoot: join(homePath, "system", "collaboration", "app-builds"),
+  });
   const projectGitDriver = createProjectGitDriver({
     resolveProjectRoot: async ({ ownerId, projectId }) => {
       const root = await ownerChatExecutionRoots.resolve(
@@ -82,26 +148,34 @@ export async function constructOwnerCollaboration(options: OwnerCollaborationSta
     },
   });
   const construction = await constructGatewayCollaborationOrFailClosed(
-    () => createGatewayCollaboration({
-    db: ownerChatRepository.kysely as Kysely<any>,
-    chatRepository: ownerChatRepository,
-    config: collaborationConfig,
-    providerSnapshotReader,
-    projectSource: {
-      getProject: async (ownerId, projectId) => {
-        const result = await codingAgentProjectManager.getProjectById(
-          { type: "user", id: ownerId },
-          projectId,
-        );
-        if (!result.ok) return null;
-        const revision = Date.parse(result.project.updatedAt);
-        if (!Number.isSafeInteger(revision) || revision < 0) {
-          throw new Error("ProjectRevisionUnavailable");
-        }
-        return { id: result.project.id, ownerId, revision };
-      },
+    async () => {
+      try {
+        const runtime = await createGatewayCollaboration({
+          db: ownerChatRepository.kysely as Kysely<any>,
+          chatRepository: ownerChatRepository,
+          config: collaborationConfig,
+          providerSnapshotReader,
+          projectSource: {
+            getProject: async (ownerId, projectId) => {
+              const result = await codingAgentProjectManager.getProjectById(
+                { type: "user", id: ownerId },
+                projectId,
+              );
+              if (!result.ok) return null;
+              const revision = Date.parse(result.project.updatedAt);
+              if (!Number.isSafeInteger(revision) || revision < 0) {
+                throw new Error("ProjectRevisionUnavailable");
+              }
+              return { id: result.project.id, ownerId, revision };
+            },
+          },
+        });
+        return ownCollaborativeAppInfrastructure(runtime, collaborativeApps);
+      } catch (error: unknown) {
+        await collaborativeApps.close();
+        throw error;
+      }
     },
-  }),
     {
     // The shared resources, their app binding and the project inventory belong to the
     // collaboration package's own composition, so this delegates rather than keeping a copy —

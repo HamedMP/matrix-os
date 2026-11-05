@@ -1,4 +1,5 @@
 import { Hono } from "hono";
+import { sql } from "kysely";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ChatRepository } from "../../packages/gateway/src/chat/repository.js";
 import { SharedChatQueueError } from "../../packages/gateway/src/chat/queue-repository.js";
@@ -8,6 +9,7 @@ import {
 import {
   applyCollaborationBaseSchema,
   COLLABORATION_VERSIONED_MIGRATIONS,
+  migrateCollaborativeAppsV16,
 } from "../../packages/gateway/src/collaboration/database-migrations.js";
 import { CollaborationRepository } from "../../packages/gateway/src/collaboration/repository.js";
 import { CollaborationGrantRepository } from "../../packages/gateway/src/collaboration/grant-repository.js";
@@ -217,13 +219,29 @@ describe("gateway collaboration schema bootstrap (S01 foundation)", () => {
 
   it("registers the versioned migrations in order and records every version idempotently", async () => {
     // S12 adds migration 12 (resource catalog); 13 is the S10 project Git migration below it.
-    expect(COLLABORATION_VERSIONED_MIGRATIONS.map((step) => step.version)).toEqual([3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]);
+    expect(COLLABORATION_VERSIONED_MIGRATIONS.map((step) => step.version)).toEqual([3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]);
     expect(typeof applyCollaborationBaseSchema).toBe("function");
     await bootstrapCollaborationDatabase(fixture.db);
     await bootstrapCollaborationDatabase(fixture.db);
     const versions = await fixture.db.selectFrom("collaboration_schema_migrations")
       .select("version").orderBy("version").execute();
-    expect(versions.map((row) => Number(row.version))).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]);
+    expect(versions.map((row) => Number(row.version))).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]);
+  });
+
+  it("rolls back the collaborative-app DDL and migration marker as one transaction", async () => {
+    await bootstrapCollaborationDatabase(fixture.db);
+    await expect(fixture.db.transaction().execute(async (trx) => {
+      await sql`DROP TABLE collaboration_app_bindings`.execute(trx);
+      await sql`DELETE FROM collaboration_schema_migrations WHERE version = 16`.execute(trx);
+      await migrateCollaborativeAppsV16(trx);
+      throw new Error("rollback probe");
+    })).rejects.toThrow("rollback probe");
+    expect(await fixture.db.selectFrom("collaboration_schema_migrations")
+      .select("version").where("version", "=", 16).executeTakeFirst()).toEqual({ version: 16 });
+    expect(await sql<{ table_name: string }>`
+      SELECT table_name FROM information_schema.tables
+      WHERE table_name = 'collaboration_app_bindings'
+    `.execute(fixture.db)).toMatchObject({ rows: [{ table_name: "collaboration_app_bindings" }] });
   });
 });
 

@@ -6,9 +6,9 @@
 
 ## Authoritative product boundary
 
-The project is the only boundary for creating new live collaboration. Sharing a project grants access to all current and future project-owned content, including every existing and future project Chat and its history. A project Chat is one inherited group AI timeline: attributed human prompts render on the right and assistant/tool output renders on the left. It is not copied or split into private per-member Chats.
+The project remains the only boundary for creating new live collaboration for Chat, terminal, file, and folder resources. Sharing a project grants access to all current and future project-owned content, including every existing and future project Chat and its history. A project Chat is one inherited group AI timeline: attributed human prompts render on the right and assistant/tool output renders on the left. It is not copied or split into private per-member Chats.
 
-New standalone live Chat, terminal, file, folder, and app scopes cannot be created. Existing standalone scopes, recipient links, and `Shared with me` entries remain readable for compatibility, and owners retain a legacy **Manage access** path so they can change roles or revoke access. The gateway continues to accept project scope creation and internal project-inherited child Chat scope creation.
+New standalone live Chat, terminal, file, and folder scopes cannot be created. An exact app build that satisfies the collaborative-app readiness contract may create one direct organization app scope without a project; this additive exception derives full access from current organization membership and does not reuse project roles, grants, invitations, or activation. Existing standalone scopes, recipient links, and `Shared with me` entries remain readable for compatibility, and owners retain a legacy **Manage access** path so they can change roles or revoke access. The gateway continues to accept project scope creation and internal project-inherited child Chat scope creation.
 
 Public read-only Chat snapshots are a separate publication feature. Snapshot creation remains available and never grants project or live-Chat access. Chat sharing offers the snapshot action only; the old live **Invite collaborators** choice is removed.
 
@@ -61,7 +61,8 @@ AI execution and project file mutations remain on the owner's runtime. This rele
 - Existing scope IDs, grants, events, standalone links, and recipient entries remain valid.
 - Reads, role management, and revocation remain available for existing standalone scopes.
 - The standalone preflight may return an existing scope for management, but it must not issue a confirmation token for a new standalone scope.
-- Direct standalone create requests fail closed at the gateway with a generic authorization response.
+- Direct standalone create requests fail closed at the gateway with a generic authorization response, except for an exact app build with a current readiness certificate under `specs/2689-collaborative-app-sharing/`.
+- The app exception never changes legacy project or standalone roles. Any current organization member may share an app they own, and every current member including the organization guest role receives the app's full declared functionality without app-specific permission rows.
 - Public Chat snapshots stay supported and are not live collaboration.
 - The Figma concept in which each member receives a private Chat or per-member snapshot is **rejected**, not deferred. Project Chats remain shared group timelines.
 
@@ -74,7 +75,8 @@ AI execution and project file mutations remain on the owner's runtime. This rele
 | Project grant create/change/revoke | owner direct session | `manage_members`; current scope and grant revisions | idempotent mutation |
 | Project access presentation | owner direct session | `manage_members` | owner/general/activated/pending projection |
 | Project-inherited Chat scope creation | internal project path | active parent project authority | allowed and audience-inherited |
-| Standalone live scope create | owner-runtime session | none can authorize | denied |
+| Standalone live Chat/terminal/file/folder create | owner-runtime session | none can authorize | denied |
+| Direct collaborative app scope create | owner-runtime session | exact app owner + current organization membership + current exact-build readiness | allowed without project/grant/activation |
 | Existing standalone read/manage/revoke | direct session | existing grant/capability | compatibility path remains |
 | Public Chat snapshot create/read | existing snapshot authority | snapshot rules, not collaboration grants | unchanged read-only publication |
 
@@ -92,7 +94,7 @@ Release evidence must prove:
 - inheritance for existing and newly created project Chats;
 - snapshot-only Chat sharing and absence of new standalone live-share controls;
 - legacy standalone access management and recipient compatibility;
-- gateway denial of every new standalone kind while project and inherited Chat creation still work;
+- gateway denial of new standalone Chat, terminal, file, and folder kinds while project, inherited Chat, and readiness-qualified direct app creation still work;
 - no project read from organization admin status alone;
 - Editor AI/file capabilities and Viewer restrictions;
 - parity on Web Canvas, Web Desktop, and Electron Desktop.
@@ -107,7 +109,7 @@ Track these items in one linked GitHub issue, not an empty draft PR:
 - closer Figma redesign and filtering of `Shared with me`;
 - topbar reorganization and Notification Inbox;
 - Native Mobile collaboration parity;
-- standalone live Chat, terminal, file, folder, and app sharing;
+- standalone live Chat, terminal, file, and folder sharing, plus any app sharing that does not meet the exact-build collaborative-app contract;
 - collaborative terminal UX within shared projects;
 - public project links, copy-link flows, and external access requests;
 - organization invite links and “join with work email”;
