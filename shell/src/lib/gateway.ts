@@ -60,6 +60,8 @@ function getExplicitVmPrefix(): string {
   const pathname = window.location.pathname ?? "";
   const match = pathname.match(/^\/vm\/([A-Za-z0-9_-]{1,64})(?:\/|$)/);
   if (!match) return "";
+  const explicitSlot = pathname.match(/^\/vm\/[^/]+\/~runtime\/([a-z0-9](?:[a-z0-9-]{0,30}[a-z0-9])?)(?:\/|$)/);
+  if (explicitSlot) return `/vm/${match[1]}/~runtime/${explicitSlot[1]}`;
   const runtimeSlot = new URLSearchParams(window.location.search ?? "").get("runtime");
   return runtimeSlot && /^[A-Za-z0-9_-]{1,32}$/.test(runtimeSlot)
     ? `/vm/${match[1]}/~runtime/${runtimeSlot}`
