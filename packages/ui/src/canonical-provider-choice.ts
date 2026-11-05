@@ -107,6 +107,7 @@ export function canonicalProviderAvailabilityLabel(instance: CanonicalProviderIn
 /** Preserve a bound route while reporting why it cannot execute. */
 export function canonicalProviderUnavailableSelectionLabel(instance?: CanonicalProviderInstanceDescriptor | null, modelId?: string): string {
   if (!instance || isLegacyMatrixSdkProvider(instance) || !instance.models.some(model => model.id === modelId)) return "Unavailable";
+  if (instance.observationState === "checking") return "Checking Codex access…";
   const fundingState = canonicalProviderFundingState(instance);
   if (fundingState === "credit_reserved") return "Credit reserved";
   if (fundingState === "budget_exceeded") return "Monthly budget reached";

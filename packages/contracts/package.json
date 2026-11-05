@@ -134,7 +134,9 @@
     "#browser-permission-presentation": "./src/browser-permission-presentation.ts",
     "#command-preview": "./src/command-preview.ts",
     "#routine-action": "./src/routine-action.ts",
-    "#preview-pair": "./src/preview-pair.ts"
+    "#preview-pair": "./src/preview-pair.ts",
+    "#routine-full-access": "./src/routine-full-access.ts",
+    "#routine-full-access-view": "./src/routine-full-access-view.ts"
   },
   "main": "src/index.ts",
   "types": "src/index.ts",

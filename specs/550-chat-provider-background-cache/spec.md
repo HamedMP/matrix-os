@@ -1,5 +1,16 @@
 # Electron Desktop Chat provider background cache (ENG-168)
 
+## Transient Codex observations (ENG-434)
+
+The five-minute successful-catalog policy must not turn a temporary Codex identity
+observation failure into a prolonged empty model picker. Follow
+[Codex observation and model recovery](../547-provider-authorization/codex-observation-recovery.md):
+retain safe same-scope model display with nonadmitted/checking state, recover
+transient negatives within a bounded retry budget, and continue to enforce fresh
+identity, exact account binding and owner consent on every real admission.
+Confirmed logout, account/credential replacement, consent revocation and owner
+disable remain hard invalidations; cached presentation cannot override them.
+
 ## Outcome and scope
 Returning to Chat shows its already loaded provider/model choices immediately. Ordinary provider discovery runs silently outside Chat component lifetimes and does not block sending.
 

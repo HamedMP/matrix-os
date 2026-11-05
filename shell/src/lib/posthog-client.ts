@@ -2,6 +2,7 @@
 
 import "posthog-js/dist/conversations";
 import posthog from "posthog-js";
+import { toast } from "sonner";
 import {
   getPostHogClientConfig,
   resolvePostHogClientApiHost,
@@ -99,7 +100,7 @@ export function capturePostHogEvent(event: string, properties: ClientProperties 
 }
 
 export async function openShellSupport(currentConfig: typeof config = config): Promise<boolean> {
-  if (!currentConfig) return false;
+  if (!currentConfig) return reportSupportUnavailable();
   try {
     ensurePostHogInitialized(currentConfig);
     const properties = await loadShellSupportProperties();
@@ -111,21 +112,28 @@ export async function openShellSupport(currentConfig: typeof config = config): P
         let closeButton = findPostHogButton(POSTHOG_CLOSE_SELECTOR);
         if (!closeButton) {
           const launcher = await waitForPostHogButton(POSTHOG_LAUNCHER_SELECTOR, deadline);
-          if (!launcher) return false;
+          if (!launcher) return reportSupportUnavailable();
           launcher.click();
           closeButton = await waitForPostHogButton(POSTHOG_CLOSE_SELECTOR, deadline);
         }
-        if (!closeButton) return false;
+        if (!closeButton) return reportSupportUnavailable();
         posthog.capture("shell_support_chat_opened", properties);
         return true;
       }
       await new Promise((resolve) => globalThis.setTimeout(resolve, 100));
     }
-    return false;
+    return reportSupportUnavailable();
   } catch (err: unknown) {
     console.warn("[posthog] Failed to open support chat:", err instanceof Error ? err.name : typeof err);
-    return false;
+    return reportSupportUnavailable();
   }
+}
+
+function reportSupportUnavailable(): false {
+  toast.error("Support chat is unavailable", {
+    description: "Email support@matrix-os.com for help.",
+  });
+  return false;
 }
 
 async function loadShellSupportProperties(): Promise<SupportChatProperties> {

@@ -285,7 +285,7 @@ function CanonicalChatWorkspaceContent({
   }) : undefined, [controller.detail]);
   const { selection: providerSelection, onSelectionChange } = useCanonicalComposerSelection({
     catalog: providerCatalog,
-    catalogReady: Boolean(catalog || liveCatalog.lastSuccessAt !== null || liveCatalog.status === "error"),
+    catalogReady: Boolean(catalog || liveCatalog.status === "ready" || liveCatalog.status === "error"),
     initializeImmediately: Boolean(catalog),
     chatId: controller.detail?.record.chat.id ?? null,
     currentSelection: controller.detail?.record.chat.currentSelection,

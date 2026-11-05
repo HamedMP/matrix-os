@@ -1,3 +1,5 @@
+import { projectChatMessageFrame, type CanonicalChatTransportFrame } from "@matrix-os/contracts";
+import { longClaudeQuestion } from "../../../tests/fixtures/long-claude-question";
 import { fetch as streamingFetch } from "expo/fetch";
 
 import {
@@ -13,15 +15,15 @@ jest.mock("micromark-extension-gfm", () => ({ gfm: jest.fn(), gfmHtml: jest.fn()
 
 const mockFetch = streamingFetch as unknown as jest.Mock;
 const GATEWAY_URL = "https://example.test/vm/alice?runtime=primary";
-const STREAM_URL = "https://example.test/vm/alice/api/chats/events?runtime=primary&fundingVersion=1&messageVersion=2&commandPreviewVersion=1&assistantTextVersion=1";
+const STREAM_URL = "https://example.test/vm/alice/api/chats/events?runtime=primary&fundingVersion=1&messageVersion=2&inputVersion=1&commandPreviewVersion=1&assistantTextVersion=1&questionDescriptionVersion=1";
 const createdAt = "2026-09-06T00:00:00.000Z";
 
 const chat = {
-  id: "chat_content", ownerScope: { type: "personal", ownerId: "owner_test" },
-  title: "Content", lifecycle: "active", attention: "none", revision: 2, messageCount: 0,
+  id: "chat_content", ownerScope: { type: "personal" as const, ownerId: "owner_test" },
+  title: "Content", lifecycle: "active" as const, attention: "none" as const, revision: 2, messageCount: 0,
   createdAt, updatedAt: createdAt,
 };
-const event = { cursor: 7, revision: 2, chatId: chat.id, eventType: "run.message", createdAt };
+const event = { cursor: 7, revision: 2, chatId: chat.id, eventType: "run.message" as const, createdAt };
 const contentFrame = {
   type: "chat.content",
   event,
@@ -139,6 +141,32 @@ describe("createCanonicalChatEventSource", () => {
     };
     stream.emit(sse(frame));
     await settle();
+    expect(events).toEqual([{
+      type: "chat.changed", chatId: chat.id, cursor: 7, eventType: "run.message", content: frame,
+    }]);
+    source.disconnect();
+  });
+
+  it("requests and delivers full question explanations through the gateway projection", async () => {
+    const stream = streamingResponse();
+    mockFetch.mockResolvedValue(stream.response);
+    const { source, events } = connectedSource();
+    await settle();
+    const query = new URL(mockFetch.mock.calls[0]![0]).searchParams;
+    const activity = {
+      type: "input.requested" as const, id: "activity_question", chatId: chat.id, runId: "run_question",
+      requestId: "question", title: "Input needed", occurredAt: createdAt,
+      questions: [{ ...longClaudeQuestion, questionId: "q0", allowOther: true, secret: false }],
+    };
+    const frame: CanonicalChatTransportFrame = {
+      type: "chat.content", event,
+      content: { record: { chat }, activities: [activity] },
+    };
+    const projected = projectChatMessageFrame(frame, "2", query.get("inputVersion") === "1" ? "1" : "0", "1", "1",
+      query.get("questionDescriptionVersion") === "1" ? "1" : "0");
+    stream.emit(sse(projected));
+    await settle();
+
     expect(events).toEqual([{
       type: "chat.changed", chatId: chat.id, cursor: 7, eventType: "run.message", content: frame,
     }]);

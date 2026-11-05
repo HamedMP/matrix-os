@@ -28,6 +28,7 @@ import { ConnectionChoices } from "./ConnectionChoices.js";
 import { settingsErrorPresentation } from "./settings-error-presentation.js";
 import type { AgentsProvidersViewProps, ProviderSettingsMutationIntent } from "./types.js";
 import { selectedHarness } from "./utils.js";
+import {legacyClaudeNativeConnection} from "./legacy-claude-connection.js";
 
 export type { AgentsProvidersViewProps, ProviderSettingsMutationIntent } from "./types.js";
 
@@ -277,6 +278,7 @@ export function AgentsProvidersView({
             );
             const guided = Boolean(workflowClient && capability);
             const { account: selectedAccount, source } = resolveHarnessConnection(harness, snapshot.accounts, snapshot.accessSources);
+            const legacyNative = legacyClaudeNativeConnection(harness, snapshot.accounts, snapshot.accessSources);
             const nativeSource = (harness.harness !== "claude" && harness.harness !== "codex") || isNativeAccountSource(harness.harness, source, selectedAccount);
             const nativeCodexReconnect = harness.harness === "codex" && source?.fundingKind === "owner_account";
             const allowedSavedConnection = nativeSource && (!nativeCodexReconnect || guided && Boolean(workflowClient?.startConnection) && capability?.connectionOptions?.some(isCodexNativeLoginOption));
@@ -287,7 +289,7 @@ export function AgentsProvidersView({
             const connected = nativeSource && (hasConfiguredConnection(harness, source) || hasStaleHermesConnection(harness, source));
             const savedNativeAccount = nativeSource && harness.harness === "codex" && selectedAccount?.authState === "authenticated" && !connected;
             const catalog = snapshot.harnessCatalog?.find(item => item.harness === harness.harness);
-            const connectionCard = (action?: ReactNode) => <ConnectedAccountCard harness={harness} account={selectedAccount} source={source} action={action} disabled={mutationsDisabled} onRefresh={refreshSettings} />;
+            const connectionCard = (action?: ReactNode) => <ConnectedAccountCard harness={harness} account={legacyNative?.account ?? selectedAccount} source={legacyNative?.source ?? source} action={action} disabled={mutationsDisabled} onRefresh={refreshSettings} />;
             return (
               <>
                 {workflowClient?.botConnections && harness.harness === "claude" ? <BotUseAuthorizationPanel key={`${harness.id}:bot-use`} client={workflowClient.botConnections} refreshKey={snapshot.refreshedAt} harness={harness.harness} disabled={mutationsDisabled || workflowPermission === "forbidden"} /> : null}
@@ -310,7 +312,7 @@ export function AgentsProvidersView({
                 {!guided && harness.installState === "missing" && harness.harness !== "codex" && harness.harness !== "claude" ? <CatalogSetupPanel
                   entry={catalog ?? { harness: harness.harness as "pi" | "opencode" | "hermes" | "openclaw", displayName: harness.displayName, installState: "missing", available: false, runnable: false, setupAction: "none", safeReason: "runtime_unavailable" }}
                   disabled={mutationsDisabled} onSetupHarness={onSetupHarness} onRefresh={refreshSettings} /> : null}
-                {!guided ? <>{connected ? connectionCard() : <ConnectionFallback harness={harness} source={source} workflowPermission={workflowPermission} disabled={mutationsDisabled} onRefresh={refreshSettings} onSetupHarness={onSetupHarness} />}</> : null}
+                {!guided ? <>{connected || legacyNative ? connectionCard() : <ConnectionFallback harness={harness} source={source} workflowPermission={workflowPermission} disabled={mutationsDisabled} onRefresh={refreshSettings} onSetupHarness={onSetupHarness} />}</> : null}
                 {!guided && allowedSavedConnection && (!workflowClient || workflowPermission === "available")
                   && supports("set_harness_enabled") && (harness.configuredEnabled ?? harness.enabled) === false
                   && hasConfiguredConnection({ ...harness, configuredEnabled: true, enabled: true }, source) ?
@@ -350,7 +352,8 @@ export function AgentsProvidersView({
                         canSelectSource={supports("select_access_source")} canSelectAccount={supports("select_account")}
                         onMutate={onMutate} onRefresh={refreshSettings} />
                     </> : undefined}
-                    renderConnection={connected ? connectionCard : undefined}
+                    renderConnection={connected || legacyNative ? connectionCard : undefined}
+                    availableClaudeAccount={Boolean(legacyNative)}
                     renderAccountActions={(operationDisabled) => harness.harness === "codex" ? <CodexAccountActions
                       account={nativeSource ? selectedAccount : undefined} harnessId={harness.id} scopeOwner={workflowClient}
                       disabled={operationDisabled || workflowPermission === "forbidden"}

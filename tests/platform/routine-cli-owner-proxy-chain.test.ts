@@ -258,6 +258,39 @@ it("registers the actual verifier with browser grants disabled and checks the pe
   expect(response.headers.get("cache-control")).toBe("private, no-store");
   expect((await response.json()).verified).toMatchObject({ ...tuple, purpose: "routine_cli_owner_action" });
 });
+
+it("does not return an exact-operation proof that expires during the registered machine lookup", async () => {
+  const proof = await submit({ authorization: "Bearer clerk-fixture" });
+  const payload = JSON.parse(Buffer.from(proof!.split(".")[0]!, "base64url").toString("utf8"));
+  vi.spyOn(lookup, "resolveMachine").mockImplementationOnce(async () => {
+    vi.spyOn(Date, "now").mockReturnValue(payload.expiresAt);
+    return { machineId, clerkUserId: ownerId, runtimeSlot: "primary", status: "running" };
+  });
+  expect((await verifiedRequest(proof)).status).toBe(403);
+});
+
+it.each([false, true])("bounds a slow registered exact-operation verifier body with authenticated=%s", async authenticated => {
+  const proof = await submit({ authorization: "Bearer clerk-fixture" });
+  let controller!: ReadableStreamDefaultController<Uint8Array>, cancelled = false;
+  const request = new Request(`http://localhost/internal/containers/${handle}/routine-actions/verify`, { method: "POST", headers: {
+    authorization: authenticated ? `Bearer ${buildPlatformVerificationToken(handle, secret)}` : "Bearer unrelated",
+    [ROUTINE_ACTION_PROOF_HEADER]: proof!,
+  }, body: new ReadableStream<Uint8Array>({ start(value) { controller = value; value.enqueue(new TextEncoder().encode("{")); },
+    cancel() { cancelled = true; } }), duplex: "half" } as RequestInit);
+  const pending = app.request(request);
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    const response = await Promise.race([pending, new Promise<null>(resolve => { timer = setTimeout(() => resolve(null), authenticated ? 5500 : 150); })]);
+    expect(response?.status).toBe(authenticated ? 408 : 401);
+    expect(response?.headers.get("cache-control")).toBe("private, no-store");
+    if (authenticated) expect(cancelled).toBe(true);
+  } finally {
+    clearTimeout(timer);
+    if (!cancelled) controller.close();
+    await pending;
+  }
+  expect((await verifiedRequest(proof)).status).toBe(200);
+}, 10_000);
 it("the registered verifier requires both machine transport and the exact preexisting owner proof", async () => {
   const proof = await submit({ authorization: "Bearer clerk-fixture" });
   for (const authorization of ["", "Bearer wrong-transport"]) expect((await verifiedRequest(proof, tuple, { authorization })).status).toBe(401);

@@ -64,7 +64,11 @@ export function createClaudeTaskObserver(input: { homePath: string; providers: {
       } finally { await profile.close(); }
       if (typeof accountUuid !== 'string' || !/^[A-Za-z0-9_-]{1,128}$/.test(accountUuid)) return { available: false, reason: 'authentication_required' };
       const snapshot = await input.providers.getSnapshot();
-      const source = snapshot.accessSources.find(entry => entry.id === 'owner_anthropic_profile' && entry.state === 'ready'
+      // Fresh native auth above qualifies the official CLI task executor. The
+      // kernel's unprobed profile is intentionally unknown, not signed out.
+      // Keep negative readiness and catalog expiry fail-closed; no inference
+      // probe or credential import is needed merely to offer explicit Bot consent.
+      const source = snapshot.accessSources.find(entry => entry.id === 'owner_anthropic_profile' && (entry.state === 'ready' || entry.state === 'unknown')
         && (entry.staleAfter === null || Date.parse(entry.staleAfter) > Date.now()));
       const models = source ? snapshot.models.filter(model => model.vendor === 'anthropic' && model.status !== 'retired' && model.status !== 'unavailable'
         && source.eligibleModelIds.includes(model.id) && model.eligibleAccessSourceIds.includes(source.id))

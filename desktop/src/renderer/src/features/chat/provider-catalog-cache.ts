@@ -1,3 +1,4 @@
+import { providerCatalogObservationRetryDelay } from "@matrix-os/ui";
 import { AppError } from "../../../../shared/app-error";
 import type { CanonicalProviderCatalog } from "@matrix-os/contracts";
 import type { QueryClient } from "@tanstack/react-query";
@@ -49,6 +50,7 @@ export class ProviderCatalogCache {
   private queuedRefresh: "cached" | "force" | null = null;
   private readonly loginReceipts = new Set<string>(); // 64 receipts, FIFO eviction; cleared on identity change.
   private failures = 0;
+  private observationRetries = 0;
   private nextReadAt = 0;
   private online = true;
 
@@ -75,6 +77,7 @@ export class ProviderCatalogCache {
     const changed = this.binding.generation !== binding.generation;
     this.binding = binding; // New ApiClient objects do not invalidate same-scope display data.
     if (!changed) return;
+    this.observationRetries = 0;
     this.epoch += 1;
     const current = this.getSnapshot();
     const affected = binding.affectedInstanceIds ?? null;
@@ -94,7 +97,7 @@ export class ProviderCatalogCache {
     return true;
   }
 
-  refresh = (): void => this.requestRefresh(true);
+  refresh = (): void => { this.observationRetries = 0; this.requestRefresh(true); };
 
   private requestRefresh(force: boolean, supersede = false): void {
     if (!this.binding) return;
@@ -134,6 +137,7 @@ export class ProviderCatalogCache {
     this.queuedRefresh = null;
     this.loginReceipts.clear();
     this.failures = 0;
+    this.observationRetries = 0;
     this.nextReadAt = 0;
     this.client.removeQueries({ queryKey: QUERY_KEY, exact: true });
   }
@@ -171,16 +175,24 @@ export class ProviderCatalogCache {
       const previous = this.getSnapshot();
       const unchanged = previous.catalog && semanticCatalog(previous.catalog) === semanticCatalog(catalog);
       this.failures = 0;
-      this.nextReadAt = Date.now() + PROVIDER_CATALOG_FRESH_MS;
+      const checking = catalog.instances.some(instance => instance.observationState === "checking");
+      const delay = providerCatalogObservationRetryDelay(catalog, this.observationRetries);
+      this.observationRetries = checking ? Math.min(3, this.observationRetries + 1) : 0;
+      this.nextReadAt = Date.now() + (delay ?? PROVIDER_CATALOG_FRESH_MS);
       this.publish({ identityKey: binding.identityKey, generation: binding.generation,
         catalog: unchanged ? previous.catalog : catalog, refreshing: false,
-        lastSuccessAt: Date.now(), refreshError: null, authoritySuspended: false, suspendedInstanceIds: null });
+        lastSuccessAt: checking ? previous.lastSuccessAt : Date.now(), refreshError: null, authoritySuspended: false, suspendedInstanceIds: null });
     }).catch((error: unknown) => {
       if (this.request !== request || this.epoch !== epoch || request.signal.aborted) return;
       console.warn("[chat] Provider catalog unavailable:", error instanceof Error ? error.name : "UnknownError");
-      const delay = RETRY_DELAYS[Math.min(this.failures++, RETRY_DELAYS.length - 1)] ?? PROVIDER_CATALOG_FRESH_MS;
-      this.nextReadAt = Date.now() + delay + Math.floor(Math.random() * delay * 0.1);
-      this.publish({ ...this.getSnapshot(), refreshing: false, refreshError: REFRESH_ERROR,
+      const previous = this.getSnapshot();
+      const checkingCatalog = previous.catalog?.instances.some(instance => instance.observationState === "checking") ? previous.catalog : null;
+      const delay = checkingCatalog
+        ? providerCatalogObservationRetryDelay(checkingCatalog, this.observationRetries) ?? PROVIDER_CATALOG_FRESH_MS
+        : RETRY_DELAYS[Math.min(this.failures++, RETRY_DELAYS.length - 1)] ?? PROVIDER_CATALOG_FRESH_MS;
+      if (checkingCatalog) this.observationRetries = Math.min(3, this.observationRetries + 1);
+      this.nextReadAt = Date.now() + delay + (checkingCatalog ? 0 : Math.floor(Math.random() * delay * 0.1));
+      this.publish({ ...previous, refreshing: false, refreshError: REFRESH_ERROR,
         ...(error instanceof AppError && error.category === "unauthorized"
           ? { authoritySuspended: true, suspendedInstanceIds: null } : {}) });
     }).finally(() => {

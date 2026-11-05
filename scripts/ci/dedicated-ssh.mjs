@@ -10,7 +10,7 @@ import {verifyDedicatedLeaseGrant} from './dedicated-lease.mjs';
 const sha=/^[a-f0-9]{40}$/;
 const hash=/^[a-f0-9]{64}$/;
 const limits={unitWorkers:16,cpu:30,memoryMiB:114688,workMiB:65536,tmpMiB:8192,homeMiB:1024,pids:4096,shmMiB:2048};
-const electronFiles=['account-organization-picker','preview-pair','file-download','canonical-input','provider-auth-terminal','agents-providers-figma','agents-providers-button-contrast','provider-settings-idle','project-folder-picker-layout','project-deletion','terminal-file-drop','terminal-snapshot','release-alignment','chat-title-layout','terminal-clipboard'].map(name=>`tests/e2e/desktop/${name}.e2e.test.ts`).concat('tests/e2e/provider-authorization-electron.e2e.test.ts').sort();
+const electronFiles=['account-organization-picker','preview-pair','file-download','canonical-input','provider-auth-terminal','agents-providers-figma','agents-providers-button-contrast','provider-settings-idle','claude-legacy-connection','project-folder-picker-layout','project-deletion','terminal-file-drop','terminal-snapshot','release-alignment','chat-title-layout','terminal-clipboard'].map(name=>`tests/e2e/desktop/${name}.e2e.test.ts`).concat('tests/e2e/provider-authorization-electron.e2e.test.ts').sort();
 const reports=['unit','general','grid','electron-download','electron-input','electron-preview-pair','electron-providers','electron-folder','electron-deletion','electron-clipboard','electron-drop','electron-snapshot','electron-release','electron-title'];
 const integer=value=>Number.isSafeInteger(value)&&value>=0;
 const disconnectClass=(code,state,bytes,grantSent)=>code===null?'terminated':state==='initial'&&bytes===0&&!grantSent?(code===255?'ssh_unclassified':'remote_rejected'):'control_incomplete';
@@ -40,7 +40,7 @@ export function verifyLeaseReceipt(receipt,envelope){
  if(canonicalRequest(Object.keys(receipt.reports??{}).sort())!==canonicalRequest(reports.slice().sort()))throw new Error('Incomplete qualification evidence reports');
  for(const [name,report] of Object.entries(receipt.reports)){
   if(name==='electron-preview-pair'&&report.skipped!==0)throw new Error('Incomplete required preview-pair journey');
-  if(![report.files,report.total,report.passed,report.skipped,report.failed].every(integer)||report.files<1||report.files>10000||report.total<1||report.total>1000000||report.passed<1||report.failed!==0||report.total!==report.passed+report.skipped||report.inventoryComplete!==true||(name.startsWith('electron-')&&report.files!==(name==='electron-providers'?5:name==='electron-input'?2:1)))throw new Error('Invalid observed qualification evidence counts');
+  if(![report.files,report.total,report.passed,report.skipped,report.failed].every(integer)||report.files<1||report.files>10000||report.total<1||report.total>1000000||report.passed<1||report.failed!==0||report.total!==report.passed+report.skipped||report.inventoryComplete!==true||(name.startsWith('electron-')&&report.files!==(name==='electron-providers'?6:name==='electron-input'?2:1)))throw new Error('Invalid observed qualification evidence counts');
  }
  const smoke=receipt.smoke;
  if(!smoke||!integer(smoke.comparedExports)||smoke.comparedExports<1||smoke.svgRenderComparisons!==smoke.comparedExports||!integer(smoke.distinctIconModules)||smoke.distinctIconModules<1||smoke.missingExportControl!=='rejected'||smoke.negativeAliasControl!=='rejected')throw new Error('Incomplete real production icon evidence');
