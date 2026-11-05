@@ -1147,14 +1147,16 @@ export class ChatQueueRepository {
       }).where("chat_id", "=", chatId).where("status", "=", "queued")
         .where("position", ">", Number(row.position)).execute();
       const revision = Number(chat.revision) + 1;
+      const usesCurrentOwnerRoute = row.collaboration_scope_id !== null
+        && sharedScope?.parent_scope_id != null;
       const updatedChat = await trx.updateTable("chats").set({
         revision,
         message_count: sql<number>`message_count + 1`,
         ...(!run.context?.agent ? {
           current_selection: jsonb(selection),
-          bound_driver_kind: chat.bound_driver_kind ?? run.driverKind,
-          bound_instance_id: chat.bound_instance_id ?? run.instanceId,
-          bound_at_turn_id: chat.bound_at_turn_id ?? turn.id,
+          bound_driver_kind: usesCurrentOwnerRoute ? run.driverKind : chat.bound_driver_kind ?? run.driverKind,
+          bound_instance_id: usesCurrentOwnerRoute ? run.instanceId : chat.bound_instance_id ?? run.instanceId,
+          bound_at_turn_id: usesCurrentOwnerRoute ? turn.id : chat.bound_at_turn_id ?? turn.id,
         } : {}),
         attention: "none",
         last_message_preview: message.parts.find((part) => part.type === "text")?.text.slice(0, 280) ?? null,
