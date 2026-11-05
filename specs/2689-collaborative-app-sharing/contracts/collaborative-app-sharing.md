@@ -48,6 +48,7 @@ type CollaborativeAppShare = {
   readinessId: string;
   state: "active" | "needs_recheck" | "stopped";
   shareRevision: string;
+  bindingRevision: string;
   dataRevision: string;
   createdAt: string;
   updatedAt: string;

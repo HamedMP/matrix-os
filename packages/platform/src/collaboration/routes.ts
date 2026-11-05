@@ -677,12 +677,17 @@ async function injectCollaborativeAppBootstrap(
     throw error;
   }
   const context = JSON.stringify(participant).replaceAll("<", "\\u003c");
-  const bootstrap = `<base href="${basePath}"><script id="matrix-collaboration-context" type="application/json">${context}</script>`;
+  const bootstrap = `<base href="${basePath}"><script id="matrix-collaboration-context" type="application/json">${context}</script>${collaborativeAppBridgeBootstrap()}`;
   const source = Buffer.concat(chunks).toString("utf8");
   const html = source.includes("<head>") ? source.replace("<head>", `<head>${bootstrap}`) : `${bootstrap}${source}`;
   const headers = new Headers(response.headers);
   headers.set("content-length", String(Buffer.byteLength(html)));
   return new Response(html, { status: response.status, headers });
+}
+
+/** A capability-minimal iframe bridge: participant context plus scoped query/mutate only. */
+function collaborativeAppBridgeBootstrap(): string {
+  return `<script>(()=>{const c=JSON.parse(document.getElementById("matrix-collaboration-context").textContent);const p=new Map();const l=new Set();const ask=(type,action,expectedRevision)=>new Promise((resolve,reject)=>{if(p.size>=32){reject(new Error("Shared app unavailable"));return}const requestId=crypto.randomUUID();const timer=setTimeout(()=>{p.delete(requestId);reject(new Error("Shared app unavailable"))},10000);p.set(requestId,{resolve,reject,timer});parent.postMessage({type,requestId,action,...(expectedRevision===undefined?{}:{expectedRevision})},"*")});addEventListener("message",event=>{if(event.source!==parent||event.origin!==location.origin)return;const m=event.data;if(m?.type==="matrix:shared-app:response"&&typeof m.requestId==="string"){const request=p.get(m.requestId);if(!request)return;p.delete(m.requestId);clearTimeout(request.timer);m.ok?request.resolve(m.result):request.reject(new Error(typeof m.message==="string"?m.message:"Shared app unavailable"));return}if(m?.type==="matrix:shared-app:changed")for(const listener of [...l])try{listener()}catch{}});addEventListener("pagehide",()=>{for(const request of p.values()){clearTimeout(request.timer);request.reject(new Error("Shared app unavailable"))}p.clear();l.clear()},{once:true});window.MatrixOS=window.MatrixOS||{};window.MatrixOS.collaboration=Object.freeze({participant:Object.freeze(c),query:action=>ask("matrix:shared-app:query",action),mutate:(action,expectedRevision)=>ask("matrix:shared-app:mutate",action,expectedRevision),onChange:listener=>{if(typeof listener!=="function"||l.size>=32)return()=>{};l.add(listener);return()=>l.delete(listener)}})})()</script>`;
 }
 
 function safeJson(c: RouteContext, error: string, status: 401 | 403 | 404 | 409 | 413 | 422 | 429 | 503) {
