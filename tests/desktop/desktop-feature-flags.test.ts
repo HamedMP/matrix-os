@@ -72,4 +72,40 @@ describe("Electron Desktop feature flags", () => {
     markDesktopFeatureFlagsReady();
     expect(posthogClient.onFeatureFlags).toHaveBeenCalledTimes(MAX_PENDING_FLAG_LISTENERS);
   });
+
+  it("reads flags from the recreated Support client instead of the discarded singleton", async () => {
+    const { createDesktopFeatureFlagSource, markDesktopFeatureFlagsReady } = await loadModule();
+    const replacement = {
+      onFeatureFlags: vi.fn((_callback: unknown) => vi.fn()),
+      isFeatureEnabled: vi.fn(() => false),
+    };
+    const listener = vi.fn();
+    createDesktopFeatureFlagSource()!.subscribe("get-started-wizard", listener);
+    markDesktopFeatureFlagsReady(replacement);
+    expect(posthogClient.onFeatureFlags).not.toHaveBeenCalled();
+    expect(replacement.onFeatureFlags).toHaveBeenCalledTimes(1);
+    const callback = replacement.onFeatureFlags.mock.calls[0]![0] as (flags: string[], variants: object, context?: object) => void;
+    callback([], {}, { errorsLoading: false });
+    expect(listener).toHaveBeenCalledWith(false);
+  });
+
+  it("rebinds mounted gates and ignores late callbacks from an old account", async () => {
+    const stopOld = vi.fn();
+    posthogClient.onFeatureFlags.mockReturnValueOnce(stopOld);
+    const { createDesktopFeatureFlagSource, markDesktopFeatureFlagsReady } = await loadModule();
+    markDesktopFeatureFlagsReady(posthogClient);
+    const listener = vi.fn();
+    const unsubscribe = createDesktopFeatureFlagSource()!.subscribe("get-started-wizard", listener);
+    const oldCallback = posthogClient.onFeatureFlags.mock.calls[0]![0] as (flags: string[], variants: object) => void;
+    const replacement = {
+      onFeatureFlags: vi.fn((_callback: unknown) => vi.fn()),
+      isFeatureEnabled: vi.fn(() => false),
+    };
+    markDesktopFeatureFlagsReady(replacement);
+    expect(stopOld).toHaveBeenCalledTimes(1);
+    expect(replacement.onFeatureFlags).toHaveBeenCalledTimes(1);
+    oldCallback([], {});
+    expect(listener).not.toHaveBeenCalled();
+    unsubscribe();
+  });
 });

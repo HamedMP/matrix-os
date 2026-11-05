@@ -155,6 +155,36 @@ describe("Codex exact native execution authority", () => {
     await f.bumpOtherSettings();
     await expect(f.admission.validate("owner", binding)).resolves.toBeUndefined();
   });
+  it("renews an idle session after fresh consent only when the prior execution is proved stopped", async () => {
+    const f = await fixture();
+    const stopSession = vi.fn(async () => undefined);
+    const admission = createCodexExecutionAdmission({ ...f.options, stopSession });
+    const oldBinding = await admission.start("owner", "sess_switched");
+    const release = await admission.prepareRevocation();
+    await release();
+    await f.bumpOtherSettings();
+    const path = join(f.homePath, "system/ai-providers/settings.json");
+    const config = JSON.parse(await readFile(path, "utf8"));
+    config.harnesses[0].nativeAccountConsentRevision = 2;
+    await writeFile(path, JSON.stringify(config));
+    const proveStopped = vi.fn(async () => true);
+    const renewed = await admission.renewStoppedSession("owner", oldBinding!, "sess_switched", proveStopped);
+    expect(renewed).not.toBe(oldBinding);
+    expect(proveStopped).toHaveBeenCalledOnce();
+    await expect(admission.validate("owner", renewed, "sess_switched")).resolves.toBeUndefined();
+    await expect(admission.renewStoppedSession("other", oldBinding!, "sess_switched", proveStopped)).rejects.toThrow("unavailable");
+  });
+  it("keeps a changed account fenced when the old execution stop is uncertain", async () => {
+    const f = await fixture();
+    const oldBinding = await f.admission.start("owner", "sess_uncertain_switch");
+    await f.bumpOtherSettings();
+    const path = join(f.homePath, "system/ai-providers/settings.json");
+    const config = JSON.parse(await readFile(path, "utf8"));
+    config.harnesses[0].nativeAccountConsentRevision = 2;
+    await writeFile(path, JSON.stringify(config));
+    await expect(f.admission.renewStoppedSession("owner", oldBinding!, "sess_uncertain_switch", async () => false)).rejects.toThrow("unavailable");
+    await expect(f.admission.renewStoppedSession("owner", oldBinding!, "sess_uncertain_switch", async () => true)).rejects.toThrow("unavailable");
+  });
   it("rejects expired privately bound observation without inferring a fallback", async () => {
     const f = await fixture();
     const admission = createCodexExecutionAdmission({ ...f.options, readNativeAccount: async () => bindNativeAccountMetadata({

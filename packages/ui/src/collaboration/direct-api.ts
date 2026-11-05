@@ -82,6 +82,9 @@ export function createCollaborationDirectApi(options: CollaborationDirectClientO
         return { ...item, resource: await direct.request(scopeId, "GET", `/api/collaboration/invitations/${item.invitationId}`) };
       }
       if (item.status === "accepted") {
+        // Standalone resources are read by their file, drive or app surface. They have
+        // no Chat summary; probing /chat both fails and incorrectly marks healthy homes offline.
+        if (item.kind === "file" || item.kind === "folder" || item.kind === "app") return item;
         const base = `/api/collaboration/scopes/${scopeId}`;
         const [scope, content, overview] = await Promise.all([
           direct.request(scopeId, "GET", base),
