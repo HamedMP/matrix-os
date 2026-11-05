@@ -141,38 +141,28 @@ describe.skipIf(!databaseUrl)("usage admission on independent PostgreSQL connect
     expect(rows).toHaveLength(1);
   });
 
-  it("keeps expired usage capacity held across cleanup until exact settlement", async () => {
+  it("releases expired AI capacity without charging unknown usage, even after late exact settlement", async () => {
     const authorization = await first.authorize({ credential: credentials[0], requestId: "unresolved_usage",
       modelId, maxCostMicrousd: 100, billingMode: "usage" });
-    await first.startReservation({
-      reservationId: authorization.reservation.reservationId,
-      tokenId: tokenIds[0],
-    });
+    const key = { reservationId: authorization.reservation.reservationId, tokenId: tokenIds[0] };
+    await first.startReservation(key);
     clock = new Date(clock.getTime() + 61_000);
-
-    await expect(second.cleanupExpiredReservations({ limit: 1 })).resolves.toBe(0);
-    await expect(second.authorize({ credential: credentials[1], requestId: "held_capacity",
-      modelId, maxCostMicrousd: 100, billingMode: "usage" }))
-      .rejects.toMatchObject({ code: "rate_limited" });
+    await expect(second.cleanupExpiredReservations({ limit: 1 })).resolves.toBe(1);
+    const next = await second.authorize({ credential: credentials[1], requestId: "released_capacity",
+      modelId, maxCostMicrousd: 100, billingMode: "usage" });
     expect(await db.executor.selectFrom("ai_funded_usage_reservations")
-      .select(["status", "actual_microusd"])
-      .where("reservation_id", "=", authorization.reservation.reservationId)
-      .executeTakeFirstOrThrow()).toEqual({ status: "in_flight", actual_microusd: null });
-
-    await expect(second.finalizeReservation({
-      reservationId: authorization.reservation.reservationId,
-      tokenId: tokenIds[0],
-      mode: "exact",
-      actualCostMicrousd: 40,
-    })).resolves.toMatchObject({
-      status: "settled", actualCostMicrousd: 40, chargedCostMicrousd: 40, releasedMicrousd: 60,
-    });
-    expect((await db.executor.selectFrom("ai_funded_credit_ledger").select("amount_microusd")
-      .where("reservation_id", "=", authorization.reservation.reservationId).execute())
-      .reduce((total, row) => total + Number(row.amount_microusd), 0)).toBe(-40);
-    await expect(second.authorize({ credential: credentials[1], requestId: "after_exact_settlement",
-      modelId, maxCostMicrousd: 100, billingMode: "usage" }))
-      .resolves.toMatchObject({ authorized: true });
+      .select(["status", "actual_microusd", "customer_charge_release"])
+      .where("reservation_id", "=", key.reservationId).executeTakeFirstOrThrow())
+      .toEqual({ status: "expired", actual_microusd: null, customer_charge_release: expect.any(String) });
+    await expect(second.finalizeReservation({ ...key, mode: "exact", actualCostMicrousd: 40 }))
+      .resolves.toMatchObject({ status: "settled", actualCostMicrousd: 40, chargedCostMicrousd: 0,
+        matrixAbsorbedMicrousd: 40, releasedMicrousd: 0 });
+    expect(await db.executor.selectFrom("ai_funded_credit_ledger").selectAll()
+      .where("reservation_id", "=", key.reservationId).execute()).toEqual([]);
+    // The old financial receipt cannot free a newer owner's execution slot.
+    await expect(second.authorize({ credential: credentials[1], requestId: "third_execution",
+      modelId, maxCostMicrousd: 100, billingMode: "usage" })).rejects.toMatchObject({ code: "rate_limited" });
+    await second.releaseReservation({ reservationId: next.reservation.reservationId, tokenId: tokenIds[1], reason: "pre_upstream_failure" });
   });
 
   it("serializes audited recovery and preserves one live execution across independent pools", async () => {

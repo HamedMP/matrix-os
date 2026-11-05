@@ -23,6 +23,7 @@ import {
   canonicalProviderUnavailableSelectionLabel,
   canonicalChatSubscriptionSelectionMatches,
   canonicalProviderChoiceCanBeDefault,
+  canonicalComposerSelectionIsAvailable,
 } from "@matrix-os/ui";
 import { getGatewayUrl } from "@/lib/gateway";
 import { PROVIDER_SETTINGS_CHANGED_EVENT } from "@/lib/canonical-provider-setup";
@@ -189,7 +190,7 @@ export function useChatProviderState(
     };
   }, []);
 
-  const choices = catalog ? deriveCanonicalProviderChoices(catalog).filter(choice => catalog.instances.some(instance => instance.id === choice.instanceId && instance.supports.rootChat)
+  const choices = catalog ? deriveCanonicalProviderChoices(catalog, { allowUnavailableManagedModels: true }).filter(choice => catalog.instances.some(instance => instance.id === choice.instanceId && instance.supports.rootChat)
     && (!unavailable || !(isChatgptPlanChatRoute(choice) || isMatrixAnthropicChatRoute(choice)))) : [];
   const bindingKey = currentSelection
     ? JSON.stringify([context?.scopeKey ?? "", context?.chatId ?? "", currentSelection, context?.executionControls?.runId ?? ""])
@@ -201,16 +202,16 @@ export function useChatProviderState(
       ? boundDraft.selection
       : { key: `${currentSelection.instanceId}:${currentSelection.model}`, options: currentSelection.options ?? [], ...restoredModes }
     : savedChoice;
-  const personalInstanceId = [MATRIX_PI_CHATGPT_PLAN_INSTANCE_ID, MATRIX_PI_ANTHROPIC_API_INSTANCE_ID]
+  const retainedInstanceId = ["matrix_pi_default", MATRIX_PI_CHATGPT_PLAN_INSTANCE_ID, MATRIX_PI_ANTHROPIC_API_INSTANCE_ID]
     .find(instanceId => effectiveSaved.key.startsWith(`${instanceId}:`));
-  const personalIntent = personalInstanceId
-    ? { instanceId: personalInstanceId, modelId: effectiveSaved.key.slice(personalInstanceId.length + 1) } : null;
+  const retainedIntent = retainedInstanceId
+    ? { instanceId: retainedInstanceId, modelId: effectiveSaved.key.slice(retainedInstanceId.length + 1) } : null;
   const rememberedChoice = choices.find(choice => (!boundInstanceId || choice.instanceId === boundInstanceId) && choiceKey(choice) === effectiveSaved.key);
   const chatChoice = choices.find((choice) => (!boundInstanceId || choice.instanceId === boundInstanceId)
     && choiceKey(choice) === effectiveSaved.key)
     ?? choices.find((choice) => choice.instanceId === currentSelection?.instanceId
       && choice.modelId === currentSelection.model);
-  const selectedBase = personalIntent
+  const selectedBase = retainedIntent
     ? rememberedChoice ?? null
     : currentSelection
     ? chatChoice ?? null
@@ -220,7 +221,9 @@ export function useChatProviderState(
       const instance = catalog?.instances.find((candidate) => candidate.id === choice.instanceId);
       return instance?.defaultSelection?.model === choice.modelId;
     })
-    ?? choices.find(canonicalProviderChoiceCanBeDefault)
+    ?? choices.find(choice => canonicalProviderChoiceCanBeDefault(choice)
+      && catalog?.instances.some(instance => instance.id === choice.instanceId && instance.availability === "available"
+        && instance.models.some(model => model.id === choice.modelId && model.availability === "available")))
     ?? null;
   const selectedInstance = catalog?.instances.find(instance => instance.id === selectedBase?.instanceId);
   const selected = selectedBase && canonicalChatSubscriptionSelectionMatches(selectedInstance, effectiveSaved.options)
@@ -284,16 +287,21 @@ export function useChatProviderState(
   };
 
   const displaySelection = selected ? { instanceId: selected.instanceId, modelId: selected.modelId }
-    : personalIntent ?? (currentSelection ? { instanceId: currentSelection.instanceId, modelId: currentSelection.model } : null);
+    : retainedIntent ?? (currentSelection ? { instanceId: currentSelection.instanceId, modelId: currentSelection.model } : null);
   const activeInstance = catalog?.instances.find((instance) => instance.id === displaySelection?.instanceId) ?? null;
   const displayModelLabel = selected?.modelLabel
     ?? activeInstance?.models.find(model => model.id === displaySelection?.modelId)?.displayName
     ?? currentSelection?.model;
-  const selectionStatus = displaySelection && !selected ? canonicalProviderUnavailableSelectionLabel(activeInstance, displaySelection.modelId) : null;
+  const selectionAvailable = Boolean(catalog && selected && canonicalComposerSelectionIsAvailable(catalog, {
+    instanceId: selected.instanceId, model: selected.modelId, options: selected.selectedOptions,
+    interactionMode: selected.interactionMode, permissionMode: selected.permissionMode,
+  }));
+  const selectionStatus = displaySelection && !selectionAvailable ? canonicalProviderUnavailableSelectionLabel(activeInstance, displaySelection.modelId) : null;
   return {
     catalog,
     choices,
     selected,
+    selectionAvailable,
     select,
     selectInteractionMode,
     selectPermissionMode,

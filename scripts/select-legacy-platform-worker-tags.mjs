@@ -3,7 +3,7 @@
 import { readFileSync } from "node:fs";
 import { pathToFileURL } from "node:url";
 
-const MAX_TAGGED_REVISIONS = 100;
+const MAX_TAGGED_REVISIONS = 200;
 const revisionNamePattern = /^[a-z][a-z0-9-]{0,62}$/;
 
 function taggedIdleTargets(service) {

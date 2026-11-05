@@ -10,9 +10,17 @@ import {
   planAgentInstance,
   planBinding,
   planInstance,
+  unavailableMatrixInstance,
+  GLM,
 } from "./model-test-catalog";
 jest.mock("micromark", () => ({ micromark: jest.fn() }));
 jest.mock("micromark-extension-gfm", () => ({ gfm: jest.fn(), gfmHtml: jest.fn() }));
+
+it("does not auto-select or admit a model whose readiness is unavailable even when it can be explicitly chosen", () => {
+  const catalog = catalogOf(unavailableMatrixInstance());
+  expect(defaultCatalogSelection(catalog)).toBeNull();
+  expect(defaultTurnModes(catalog, GLM)).toBeNull();
+});
 
 it("uses Matrix Pi for a new Native Chat and refuses a revoked or unavailable saved model", () => {
   const catalog = createCanonicalProviderCatalogFixture();

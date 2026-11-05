@@ -124,7 +124,7 @@ export async function fundingSourceAvailability(
   identity: FundedAiRuntimeIdentity,
   balance: FundedAiReservationBalance,
   checkedAt: string,
-  options: { readOnly?: true } = {},
+  options: Partial<AllowedFundingSources> = {},
 ): Promise<{ ceilingMicrousd: number; availableMicrousd: number }> {
   const sources = await readFundingSources(executor, identity, balance, checkedAt, { promotional: true, addon: true, ...options });
   return {

@@ -183,6 +183,21 @@ describe("speech operation repository", () => {
     expect((await repo.get(identity, requestId))?.executionState).toBe("dispatching");
   });
 
+  it.each([{ ...identity, ownerId: "other_owner" }, { ...identity, runtimeSlot: "other-slot" }])(
+    "refuses operations outside the machine's captured owner/runtime (%j)", async (foreignIdentity) => {
+      const repo = repository();
+      let reservations = 0;
+      await expect(repo.admit({ ...admission, identity: foreignIdentity }, async () => {
+        reservations += 1;
+        return { reservationId: "foreign_funding", reservedMicrousd: 0 };
+      })).rejects.toBeInstanceOf(SpeechOperationStateError);
+      await expect(repo.cancel(foreignIdentity, requestId, async () => undefined))
+        .rejects.toBeInstanceOf(SpeechOperationStateError);
+      expect(reservations).toBe(0);
+      expect(await repo.get(foreignIdentity, requestId)).toBeUndefined();
+    },
+  );
+
   it("uses a cancellation tombstone to prevent late registration", async () => {
     const repo = repository();
     expect(await repo.cancel(identity, requestId, async () => undefined)).toMatchObject({
@@ -218,6 +233,31 @@ describe("speech operation repository", () => {
     expect(JSON.stringify(row)).not.toContain("private transcript");
   });
 
+  it("commits unknown expense and its funding disposition atomically without inventing zero", async () => {
+    const repo = repository();
+    await repo.admit(admission, async () => ({ reservationId: "funding_1", reservedMicrousd: 0 }));
+    await repo.claimDispatch(identity, requestId);
+    let settlements = 0;
+    const completion = { executionState: "uncertain" as const, outcomeCode: "timeout" as const,
+      actualCostMicrousd: null };
+    await expect(repo.complete(identity, requestId, completion, async (trx, _id, actual) => {
+      expect(actual).toBeNull();
+      await trx.updateTable("user_machines").set({ image_version: "expense-waived" })
+        .where("machine_id", "=", identity.machineId).execute();
+      throw new Error("funding transaction failed");
+    })).rejects.toThrow("funding transaction failed");
+    expect(await repo.get(identity, requestId)).toMatchObject({ executionState: "dispatching", actualCostMicrousd: null });
+    expect(await db.executor.selectFrom("user_machines").select("image_version")
+      .where("machine_id", "=", identity.machineId).executeTakeFirstOrThrow()).not.toEqual({ image_version: "expense-waived" });
+    const completed = await repo.complete(identity, requestId, completion, async (_trx, _id, actual) => {
+      settlements += 1;
+      expect(actual).toBeNull();
+    });
+    expect(completed).toMatchObject({ executionState: "uncertain", outcomeCode: "timeout", actualCostMicrousd: null });
+    await repo.complete(identity, requestId, completion, async () => { settlements += 1; });
+    expect(settlements).toBe(1);
+  });
+
   it("marks cancellation after dispatch without releasing a possibly billable hold", async () => {
     const repo = repository();
     await repo.admit(admission, async () => ({ reservationId: "funding_1", reservedMicrousd: 20 }));
@@ -227,6 +267,28 @@ describe("speech operation repository", () => {
     expect(cancelled).toMatchObject({ executionStarted: true, cancellationRequested: true });
     expect(releases).toBe(0);
     expect((await repo.get(identity, requestId))?.executionState).toBe("dispatching");
+  });
+
+  it("rejects contradictory terminal replays and requires known successful expense", async () => {
+    const repo = repository();
+    await repo.admit(admission, async () => ({ reservationId: "funding_1", reservedMicrousd: 0 }));
+    await repo.claimDispatch(identity, requestId);
+    await expect(repo.complete(identity, requestId, { executionState: "succeeded", outcomeCode: "transcript",
+      actualCostMicrousd: null }, async () => undefined)).rejects.toThrow();
+    const exact = { executionState: "succeeded" as const, outcomeCode: "transcript" as const, actualCostMicrousd: 15 };
+    let settlements = 0;
+    await repo.complete(identity, requestId, exact, async () => { settlements += 1; });
+    await repo.complete(identity, requestId, exact, async () => { settlements += 1; });
+    for (const conflict of [
+      { ...exact, actualCostMicrousd: 16 },
+      { ...exact, outcomeCode: "no_speech" as const },
+      { executionState: "uncertain" as const, outcomeCode: "provider_failure" as const, actualCostMicrousd: null },
+    ]) {
+      await expect(repo.complete(identity, requestId, conflict, async () => { settlements += 1; }))
+        .rejects.toBeInstanceOf(SpeechOperationConflictError);
+    }
+    expect(settlements).toBe(1);
+    expect(await repo.get(identity, requestId)).toMatchObject(exact);
   });
 
   it("rejects persisted lifecycle shapes that status contracts cannot represent", async () => {

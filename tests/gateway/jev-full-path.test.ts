@@ -1,10 +1,12 @@
 import {
+  FundedAiAuthorizationRequestSchema,
   FundedAiStartRequestSchema,
   FundedAiTerminalOutcomeRequestSchema,
   FundedAiTerminalOutcomeResponseSchema,
   JEV_EMAIL_TRIAGE_ANSWER_IDS,
   JEV_EMAIL_TRIAGE_INSTRUCTIONS,
   JEV_MODEL_ID,
+  type FundedAiAuthorizationRequest,
   type FundedAiStartRequest,
   type FundedAiTerminalOutcomeRequest,
 } from "@matrix-os/contracts";
@@ -33,24 +35,30 @@ describe("Jev local Gateway to funded relay", () => {
     };
     const funding = {
       asOf: now.toISOString(), periodStart: "2026-09-01T00:00:00.000Z", monthlyBudgetMicrousd: 100_000,
-      settledThisMonthMicrousd: 0, reservedMicrousd: 5_000, reservedThisMonthMicrousd: 5_000,
+      settledThisMonthMicrousd: 0, reservedMicrousd: 0, reservedThisMonthMicrousd: 0,
       promotionalBalanceMicrousd: 100_000, addonBalanceMicrousd: 0, creditBalanceMicrousd: 100_000,
-      remainingBalanceMicrousd: 95_000, remainingBudgetMicrousd: 95_000,
+      remainingBalanceMicrousd: 100_000, remainingBudgetMicrousd: 100_000,
     };
     let executionId: string | undefined;
     const platformClient = {
       check: vi.fn(async () => ({ contractVersion: 1 as const, authorized: true as const, identity, policy })),
-      authorize: vi.fn(async (input: { requestId: string }) => ({
-        contractVersion: 1 as const, authorized: true as const, identity, policy, funding,
-        reservation: {
-          reservationId: "reservation_123", requestId: input.requestId, modelId: JEV_MODEL_ID,
-          reservedMicrousd: 5_000, maxCostMicrousd: 5_000, billingMode: "usage" as const,
-          jevPricingVersion: "typesafe-jev-input-2026-09",
-          remainingBalanceMicrousd: 95_000, remainingBudgetMicrousd: 95_000,
-          periodStart: "2026-09-01T00:00:00.000Z", expiresAt: "2026-09-22T10:05:00.000Z",
-          status: "reserved" as const,
-        },
-      })),
+      authorize: vi.fn(async (input: FundedAiAuthorizationRequest) => {
+        const request = FundedAiAuthorizationRequestSchema.parse(input);
+        expect(request).toMatchObject({ modelId: JEV_MODEL_ID, billingMode: "usage", billingPolicy: "postpaid",
+          maxCostMicrousd: 5_000 });
+        return {
+          contractVersion: 1 as const, authorized: true as const, identity, policy, funding,
+          reservation: {
+            reservationId: "reservation_123", requestId: request.requestId, modelId: JEV_MODEL_ID,
+            reservedMicrousd: 0, maxCostMicrousd: request.maxCostMicrousd, billingMode: "usage" as const,
+            billingPolicy: "postpaid" as const,
+            jevPricingVersion: "typesafe-jev-input-2026-09",
+            remainingBalanceMicrousd: 100_000, remainingBudgetMicrousd: 100_000,
+            periodStart: "2026-09-01T00:00:00.000Z", expiresAt: "2026-09-22T10:05:00.000Z",
+            status: "reserved" as const,
+          },
+        };
+      }),
       start: vi.fn(async (input: FundedAiStartRequest) => {
         const start = FundedAiStartRequestSchema.parse(input);
         expect(start).toEqual({ reservationId: "reservation_123", tokenId: identity.tokenId, executionId: expect.any(String) });
@@ -75,8 +83,10 @@ describe("Jev local Gateway to funded relay", () => {
       finalize: vi.fn(async (input: { actualCostMicrousd?: number }) => ({
         contractVersion: 1 as const, reservationId: "reservation_123", requestId: "request_123",
         tokenId: "credential_123", actualCostMicrousd: input.actualCostMicrousd ?? 5_000,
-        releasedMicrousd: 4_988, remainingBalanceMicrousd: 99_988, remainingBudgetMicrousd: 99_988,
-        funding: { ...funding, reservedMicrousd: 0, reservedThisMonthMicrousd: 0 },
+        releasedMicrousd: 0, customerChargedMicrousd: input.actualCostMicrousd ?? 5_000,
+        matrixAbsorbedMicrousd: 0, remainingBalanceMicrousd: 99_988, remainingBudgetMicrousd: 99_988,
+        funding: { ...funding, settledThisMonthMicrousd: 12, promotionalBalanceMicrousd: 99_988,
+          creditBalanceMicrousd: 99_988, remainingBalanceMicrousd: 99_988, remainingBudgetMicrousd: 99_988 },
         settledAt: now.toISOString(), status: "settled" as const, finalizationMode: "exact" as const,
       })),
     };

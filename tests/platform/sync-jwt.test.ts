@@ -17,7 +17,7 @@ function base64UrlEncode(value: string | Uint8Array): string {
 }
 
 function signHs256Jwt(
-  claims: Record<string, string | number>,
+  claims: Record<string, unknown>,
   secretBytes: Uint8Array,
 ): string {
   const header = base64UrlEncode(JSON.stringify({ alg: "HS256", typ: "JWT" }));
@@ -30,6 +30,39 @@ function signHs256Jwt(
 }
 
 const SECRET = "test-secret-at-least-32-characters-long";
+
+describe("signed verified human-browser provenance", () => {
+  const input = { secret: SECRET, clerkUserId: "user_owner", handle: "owner-pc", gatewayUrl: "https://app.example.test/vm/owner-pc" };
+  it("adds the stronger marker only on an explicit server-issued browser session", async () => {
+    const strong = await issueSyncJwt({ ...input, sessionProvenance: "clerk-browser", verifiedHumanBrowser: true });
+    expect((await verifySyncJwt(strong.token, { secret: SECRET })).verified_human_browser).toBe(true);
+    for (const sessionProvenance of [undefined, "clerk-browser", "clerk-device"] as const) {
+      const legacy = await issueSyncJwt({ ...input, sessionProvenance });
+      expect(Object.hasOwn(await verifySyncJwt(legacy.token, { secret: SECRET }), "verified_human_browser")).toBe(false);
+    }
+  });
+  it.each([undefined, "clerk-device"] as const)("does not issue a human-browser marker for %s provenance", async sessionProvenance => {
+    await expect(issueSyncJwt({ ...input, sessionProvenance, verifiedHumanBrowser: true })).rejects.toThrow("Invalid sync JWT claims");
+  });
+  it.each([false, "true", 1, {}, [true]])("strictly rejects malformed signed human marker %j", async marker => {
+    const token = signHs256Jwt({ sub: "user_owner", handle: "owner-pc", gateway_url: input.gatewayUrl,
+      aud: SYNC_JWT_AUDIENCE, iss: SYNC_JWT_ISSUER, iat: Math.floor(Date.now() / 1000), exp: Math.floor(Date.now() / 1000) + 120,
+      session_provenance: "clerk-browser", verified_human_browser: marker }, new TextEncoder().encode(SECRET));
+    await expect(verifySyncJwt(token, { secret: SECRET })).rejects.toThrow("Invalid sync JWT claims");
+  });
+  it("rejects a correctly signed marker attached to device provenance", async () => {
+    const token = signHs256Jwt({ sub: "user_owner", handle: "owner-pc", gateway_url: input.gatewayUrl,
+      aud: SYNC_JWT_AUDIENCE, iss: SYNC_JWT_ISSUER, iat: Math.floor(Date.now() / 1000), exp: Math.floor(Date.now() / 1000) + 120,
+      session_provenance: "clerk-device", verified_human_browser: true }, new TextEncoder().encode(SECRET));
+    await expect(verifySyncJwt(token, { secret: SECRET })).rejects.toThrow("Invalid sync JWT claims");
+  });
+  it("does not accept a strong marker with a fractional signed session expiry", async () => {
+    const token = signHs256Jwt({ sub: "user_owner", handle: "owner-pc", gateway_url: input.gatewayUrl,
+      aud: SYNC_JWT_AUDIENCE, iss: SYNC_JWT_ISSUER, iat: Math.floor(Date.now() / 1000), exp: Math.floor(Date.now() / 1000) + 120.5,
+      session_provenance: "clerk-browser", verified_human_browser: true }, new TextEncoder().encode(SECRET));
+    await expect(verifySyncJwt(token, { secret: SECRET })).rejects.toThrow("Invalid sync JWT claims");
+  });
+});
 
 describe("sync-jwt: issuance", () => {
   it("issues a JWT with the expected claims", async () => {

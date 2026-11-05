@@ -29,7 +29,7 @@ export function ProviderModelPicker({ catalog, selection, instanceLocked, disabl
   const routeLabel = canonicalProviderModelRouteLabel(selectedInstance, selectedModel?.displayName ?? selection?.model ?? unavailableProviderLabel ?? "Choose model");
   const unavailableLabel = canonicalProviderUnavailableSelectionLabel(selectedInstance, selection?.model);
   const showUnavailable = unavailable && (!loading || unavailableLabel === "Credit reserved");
-  return <ChatModelPicker catalog={catalog} choices={deriveCanonicalProviderChoices(catalog)}
+  return <ChatModelPicker catalog={catalog} choices={deriveCanonicalProviderChoices(catalog, { allowUnavailableManagedModels: true })}
     selected={selection ? { instanceId: selection.instanceId, modelId: selection.model } : null}
     label={routeLabel} statusLabel={showUnavailable ? unavailableLabel : null}
     instanceId={selectedInstance?.id ?? selection?.instanceId} modelId={selectedModel?.id ?? selection?.model}

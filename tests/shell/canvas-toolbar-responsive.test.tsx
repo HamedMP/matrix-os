@@ -61,6 +61,7 @@ describe("responsive CanvasToolbar", () => {
       "Scroll to navigate",
       "Click and drag to navigate",
       "Getting started — 0 of 5",
+      "Support",
     ]) {
       expect(screen.getByRole("button", { name })).toBeTruthy();
     }

@@ -166,16 +166,16 @@ describe("funded Jev evaluation relay", () => {
             requestId: "request_123",
             modelId: JEV_MODEL_ID,
             maxCostMicrousd: 5_000,
-            billingMode: "usage",
+            billingMode: "usage", billingPolicy: "postpaid",
             jevPricingVersion: "typesafe-jev-input-2026-09",
           });
           return json({
-            contractVersion: 1, authorized: true, identity: identity(), policy: policy(), funding: funding(5_000),
+            contractVersion: 1, authorized: true, identity: identity(), policy: policy(), funding: funding(0),
             reservation: {
               reservationId: "reservation_123", requestId: "request_123", modelId: JEV_MODEL_ID,
-              reservedMicrousd: 5_000, maxCostMicrousd: 5_000, billingMode: "usage",
+              reservedMicrousd: 0, maxCostMicrousd: 5_000, billingPolicy: "postpaid", billingMode: "usage",
               jevPricingVersion: "typesafe-jev-input-2026-09",
-              remainingBalanceMicrousd: 95_000, remainingBudgetMicrousd: 95_000,
+              remainingBalanceMicrousd: 100_000, remainingBudgetMicrousd: 100_000,
               periodStart: "2026-09-01T00:00:00.000Z", expiresAt: "2026-09-22T10:05:00.000Z", status: "reserved",
             },
           });
@@ -280,12 +280,12 @@ describe("funded Jev evaluation relay", () => {
           modelId: JEV_MODEL_ID, billingMode: "usage", jevPricingVersion: "typesafe-jev-input-2026-09",
         });
         return json({
-          contractVersion: 1, authorized: true, identity: identity(), policy: policy(), funding: funding(5_000),
+          contractVersion: 1, authorized: true, identity: identity(), policy: policy(), funding: funding(0),
           reservation: {
             reservationId: "reservation_123", requestId: "request_123", modelId: JEV_MODEL_ID,
-            reservedMicrousd: 5_000, maxCostMicrousd: 5_000, billingMode: "usage",
+            reservedMicrousd: 0, maxCostMicrousd: 5_000, billingPolicy: "postpaid", billingMode: "usage",
             ...(version ? { jevPricingVersion: version } : {}),
-            remainingBalanceMicrousd: 95_000, remainingBudgetMicrousd: 95_000,
+            remainingBalanceMicrousd: 100_000, remainingBudgetMicrousd: 100_000,
             periodStart: "2026-09-01T00:00:00.000Z", expiresAt: "2026-09-22T10:05:00.000Z",
             status: "reserved",
           },
@@ -394,12 +394,12 @@ describe("funded Jev evaluation relay", () => {
     const platformClient = {
       check: vi.fn(async () => ({ contractVersion: 1 as const, authorized: true as const, identity: identity(), policy: policy() })),
       authorize: vi.fn(async (input: { requestId: string }) => ({
-        contractVersion: 1 as const, authorized: true as const, identity: identity(), policy: policy(), funding: funding(5_000),
+        contractVersion: 1 as const, authorized: true as const, identity: identity(), policy: policy(), funding: funding(0),
         reservation: {
           reservationId: "reservation_123", requestId: input.requestId, modelId: JEV_MODEL_ID,
-          reservedMicrousd: 5_000, maxCostMicrousd: 5_000, billingMode: "usage" as const,
+          reservedMicrousd: 0, maxCostMicrousd: 5_000, billingPolicy: "postpaid", billingMode: "usage" as const,
           jevPricingVersion: "typesafe-jev-input-2026-09",
-          remainingBalanceMicrousd: 95_000, remainingBudgetMicrousd: 95_000,
+          remainingBalanceMicrousd: 100_000, remainingBudgetMicrousd: 100_000,
           periodStart: "2026-09-01T00:00:00.000Z", expiresAt: "2026-09-22T10:05:00.000Z",
           status: "reserved" as const,
         },
@@ -414,7 +414,7 @@ describe("funded Jev evaluation relay", () => {
       finalize: vi.fn(async () => ({
         contractVersion: 1 as const, reservationId: "reservation_123", requestId: "request_123",
         tokenId: "credential_123", actualCostMicrousd: 5_000, releasedMicrousd: 0,
-        remainingBalanceMicrousd: 95_000, remainingBudgetMicrousd: 95_000,
+        remainingBalanceMicrousd: 100_000, remainingBudgetMicrousd: 100_000,
         funding: funding(0), settledAt: NOW.toISOString(), status: "settled" as const,
         finalizationMode: "conservative" as const,
       })),
