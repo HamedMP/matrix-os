@@ -131,6 +131,12 @@ describe("shared coding execution (S09)", () => {
         now: () => new Date(now), organizationPrecondition: allowAllOrganizationPrecondition, capabilities,
       });
       repository.setSharedAuthorizer((scopeId, actorId, action) => authority.authorize({ scopeId, actorId, action }));
+      await fixture.db.updateTable("chats").set({
+        current_selection: JSON.stringify({ instanceId: "codex_default", model: "gpt-5.6-sol" }),
+        bound_driver_kind: "codex",
+        bound_instance_id: "codex_default",
+        bound_at_turn_id: "cturn_previous_owner_route",
+      }).where("id", "=", collaborationIds.chat).execute();
 
       const requestDispatch = vi.fn(async () => undefined);
       const adapter = new CollaborationChatExecutionAdapter({
@@ -163,6 +169,29 @@ describe("shared coding execution (S09)", () => {
         },
       });
       expect(requestDispatch).toHaveBeenCalledWith(collaborationIds.scope, collaborationIds.chat);
+
+      await expect(repository.claimNextQueuedTurn(owner, {
+        chatId: collaborationIds.chat,
+        collaborationScopeId: collaborationIds.scope,
+        turnId: "cturn_default_contributor_prompt",
+        runId: "run_default_contributor_prompt",
+        messageId: "msg_default_contributor_prompt",
+        claimedAt: now,
+      })).resolves.toMatchObject({
+        run: {
+          driverKind: "claude_code",
+          instanceId: "claude_shared",
+          selection: { instanceId: "claude_shared", model: "claude-opus-4-6" },
+        },
+      });
+      await expect(fixture.db.selectFrom("chats")
+        .select(["bound_driver_kind", "bound_instance_id", "bound_at_turn_id"])
+        .where("id", "=", collaborationIds.chat).executeTakeFirstOrThrow())
+        .resolves.toEqual({
+          bound_driver_kind: "claude_code",
+          bound_instance_id: "claude_shared",
+          bound_at_turn_id: "cturn_default_contributor_prompt",
+        });
     });
 
     it("keeps inherited Chat control organization-wide when a historical member grant is narrowed", async () => {
