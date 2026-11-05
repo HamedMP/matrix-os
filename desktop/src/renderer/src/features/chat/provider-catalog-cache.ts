@@ -185,9 +185,14 @@ export class ProviderCatalogCache {
     }).catch((error: unknown) => {
       if (this.request !== request || this.epoch !== epoch || request.signal.aborted) return;
       console.warn("[chat] Provider catalog unavailable:", error instanceof Error ? error.name : "UnknownError");
-      const delay = RETRY_DELAYS[Math.min(this.failures++, RETRY_DELAYS.length - 1)] ?? PROVIDER_CATALOG_FRESH_MS;
-      this.nextReadAt = Date.now() + delay + Math.floor(Math.random() * delay * 0.1);
-      this.publish({ ...this.getSnapshot(), refreshing: false, refreshError: REFRESH_ERROR,
+      const previous = this.getSnapshot();
+      const checkingCatalog = previous.catalog?.instances.some(instance => instance.observationState === "checking") ? previous.catalog : null;
+      const delay = checkingCatalog
+        ? providerCatalogObservationRetryDelay(checkingCatalog, this.observationRetries) ?? PROVIDER_CATALOG_FRESH_MS
+        : RETRY_DELAYS[Math.min(this.failures++, RETRY_DELAYS.length - 1)] ?? PROVIDER_CATALOG_FRESH_MS;
+      if (checkingCatalog) this.observationRetries = Math.min(3, this.observationRetries + 1);
+      this.nextReadAt = Date.now() + delay + (checkingCatalog ? 0 : Math.floor(Math.random() * delay * 0.1));
+      this.publish({ ...previous, refreshing: false, refreshError: REFRESH_ERROR,
         ...(error instanceof AppError && error.category === "unauthorized"
           ? { authoritySuspended: true, suspendedInstanceIds: null } : {}) });
     }).finally(() => {
