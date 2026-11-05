@@ -3,7 +3,7 @@ import { createClerkAuth, type ClerkAuth } from "../../packages/platform/src/cle
 import { applyAppDomainRuntimeAssetCacheHeaders } from "../../packages/platform/src/session-routing-proxy.js";
 
 describe("app-domain Next asset caching", () => {
-  it.each(["no-store", "no-cache", "public, max-age=0, must-revalidate, no-cache", "No-Cache=\"Set-Cookie\""])("preserves upstream %s", (cacheControl) => {
+  it.each(["no-store", "no-cache", "public, max-age=0, must-revalidate, no-cache", "public, max-age=0, must-revalidate", "No-Cache=\"Set-Cookie\""])("preserves upstream %s", (cacheControl) => {
     const headers = new Headers({ "cache-control": cacheControl, vary: "Origin" });
     applyAppDomainRuntimeAssetCacheHeaders(headers, "/_next/static/chunks/app.js", "https://app.matrix-os.com/_next/static/chunks/app.js");
     expect(headers.get("cache-control")).toBe(cacheControl);

@@ -43,8 +43,10 @@ export function applyAppDomainRuntimeAssetCacheHeaders(headers: Headers, path: s
   const immutable = policy.maxAge === ONE_YEAR_SECONDS ? ', immutable' : '';
   // Development chunks reuse URLs; never upgrade upstream revalidation or
   // no-store directives into a year-long immutable browser cache.
+  const upstreamCacheControl = headers.get('cache-control') ?? '';
   const preserveUpstream = path.startsWith('/_next/static/')
-    && /(?:^|,)\s*no-(?:store|cache)\s*(?:=|,|$)/i.test(headers.get('cache-control') ?? '');
+    && (/(?:^|,)\s*no-(?:store|cache)\s*(?:=|,|$)/i.test(upstreamCacheControl)
+      || /(?:^|,)\s*max-age\s*=\s*"?0"?\s*(?:,|$)/i.test(upstreamCacheControl));
   if (!preserveUpstream) {
     headers.set('cache-control', `private, max-age=${policy.maxAge}${immutable}`);
   }
