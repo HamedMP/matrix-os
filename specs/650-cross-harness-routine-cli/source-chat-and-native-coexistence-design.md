@@ -226,3 +226,15 @@ output, no wrong-engine create, and no automatic alternate-engine fallback.
 Mocks/protocol fixtures, isolated PostgreSQL, actual native controls and real
 account acceptance remain separate evidence classes. No new resources,
 background total grant, customer deployment, merge or Slack is authorized here.
+
+## Native receipt compatibility regression
+
+The qualified 2.1.317 runtime emits `Scheduled one-shot task <id>` in a real
+CronCreate tool result. Retained-session ownership accepts that native spelling
+alongside the previously supported `job` spelling. Correlation to the actual
+root tool call, validated input, exact native session and admitted phase remains
+mandatory; assistant prose and failed, foreign or delegated results grant no
+ownership. A session-pool regression must retain the child through the native
+due phase and release the one-shot job afterward. This fixture evidence does
+not replace the matching Dev delayed-result gate. Existing cancellation/list
+semantics and unknown historical creates remain unchanged.
