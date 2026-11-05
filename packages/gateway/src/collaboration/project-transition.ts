@@ -311,14 +311,14 @@ export function createProjectTransitionJournal(options: {
           if (!existing) throw new ProjectTransitionError("unavailable");
           return rowToTransition(existing);
         }
-        const pendingUnshare = await trx.selectFrom("collaboration_operations")
+        const pendingAccessCleanup = await trx.selectFrom("collaboration_operations")
           .select("client_request_id")
           .where("scope_id", "=", scope.id)
-          .where("operation_kind", "=", "project.unshare")
+          .where("operation_kind", "in", ["project.unshare", "membership.departure_cleanup"])
           .where("status", "=", "accepted")
           .limit(1)
           .executeTakeFirst();
-        if (pendingUnshare) throw new ProjectTransitionError("conflict");
+        if (pendingAccessCleanup) throw new ProjectTransitionError("conflict");
         const sameRuntime = scope.authority_runtime_id === parsed.destinationAuthorityRuntimeId;
         if (scope.membership_mode !== "direct"
           || scope.lifecycle !== "private" || Number(scope.revision) !== parsed.expectedScopeRevision

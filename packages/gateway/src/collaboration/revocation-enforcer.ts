@@ -8,12 +8,14 @@
  * fresh session is admitted or the block ages out. A normal close is not a
  * revocation. Both registries are bounded.
  */
+import { createHash, randomUUID } from "node:crypto";
 import type { DirectSessionEndReason } from "./direct-sessions.js";
 import type { TerminalControlCoordinator } from "./terminal-control.js";
 import type { Kysely } from "kysely";
 import { sql } from "kysely";
+import { z } from "zod/v4";
 import type { OwnerCollaborationDatabase } from "./database.js";
-import { appendMutationRecords } from "./repository-shared.js";
+import { appendMutationRecords, jsonb, OPERATION_RETENTION_MS, parseJson } from "./repository-shared.js";
 
 const DEFAULT_TTL_MS = 20 * 60 * 1_000;
 const DEFAULT_MAX_ENTRIES = 4_096;
@@ -23,6 +25,11 @@ const DEFAULT_RUNTIME_SWEEP_INTERVAL_MS = 60 * 1_000;
 const RUNTIME_HANDLE = /^runtime_[a-f0-9]{32}$/;
 const MAX_ORGANIZATION_PROJECTS = 1_000;
 const MAX_PROJECT_SCOPES = 100_000;
+const OWNER_DEPARTURE_OPERATION = "membership.departure_cleanup";
+const OwnerDepartureCleanupSchema = z.object({
+  scopeIds: z.array(z.uuid()).min(1).max(MAX_PROJECT_SCOPES + 1),
+  revision: z.number().int().positive(),
+}).strict();
 
 export type { DirectSessionEndReason };
 /** An exhausted action budget belongs to one session, not every session held by the actor. */
@@ -307,7 +314,26 @@ export class ProjectAccessRevocationEnforcer {
   }) {}
 
   async membershipEnded(input: { organizationId: string; actorId: string }): Promise<void> {
-    const { projects, children } = await this.options.db.transaction().execute(async (trx) => {
+    const { projects, children, ownerCleanups } = await this.options.db.transaction().execute(async (trx) => {
+      const pendingCleanupRows = await trx.selectFrom("collaboration_operations as operation")
+        .innerJoin("collaboration_scopes as scope", "scope.id", "operation.scope_id")
+        .select(["operation.scope_id", "operation.client_request_id", "operation.result_ref"])
+        .where("operation.actor_id", "=", input.actorId)
+        .where("operation.operation_kind", "=", OWNER_DEPARTURE_OPERATION)
+        .where("operation.status", "=", "accepted")
+        .where("scope.organization_id", "=", input.organizationId)
+        .where("scope.deleted_at", "is", null)
+        .orderBy("operation.scope_id")
+        .limit(MAX_ORGANIZATION_PROJECTS + 1)
+        .execute();
+      if (pendingCleanupRows.length > MAX_ORGANIZATION_PROJECTS) {
+        throw new Error("Owner project cleanup capacity exceeded");
+      }
+      const ownerCleanups = pendingCleanupRows.map((row) => ({
+        projectScopeId: row.scope_id,
+        operationId: row.client_request_id,
+        ...OwnerDepartureCleanupSchema.parse(parseJson(row.result_ref)),
+      }));
       const projects = await trx.selectFrom("collaboration_scopes")
         .selectAll()
         .where("organization_id", "=", input.organizationId)
@@ -372,8 +398,31 @@ export class ProjectAccessRevocationEnforcer {
           discoveryState: "revoked",
           reasonCode: "owner_membership_ended",
         });
+        const operationId = randomUUID();
+        const scopeIds = [project.id, ...ownedChildren.map((child) => child.id)];
+        await trx.insertInto("collaboration_operations").values({
+          scope_id: project.id,
+          actor_id: input.actorId,
+          client_request_id: operationId,
+          operation_kind: OWNER_DEPARTURE_OPERATION,
+          payload_hash: createHash("sha256")
+            .update(`${input.organizationId}\0${input.actorId}\0${project.id}\0${updated.revision}`)
+            .digest("hex"),
+          status: "accepted",
+          result_ref: jsonb({ scopeIds, revision: Number(updated.revision) }),
+          expected_revision: Number(updated.revision),
+          accepted_auth_epoch: Number(updated.auth_epoch),
+          created_at: committedAt,
+          expires_at: new Date(new Date(committedAt).getTime() + OPERATION_RETENTION_MS),
+        }).execute();
+        ownerCleanups.push({
+          projectScopeId: project.id,
+          operationId,
+          scopeIds,
+          revision: Number(updated.revision),
+        });
       }
-      return { projects, children };
+      return { projects, children, ownerCleanups };
     });
     this.options.sessions.revoke(input);
     const childrenByProject = new Map<string, string[]>();
@@ -384,13 +433,30 @@ export class ProjectAccessRevocationEnforcer {
       childrenByProject.set(child.parent_scope_id, grouped);
     }
     for (const project of projects) {
+      if (project.owner_id === input.actorId) continue;
       const scopes = [project.id, ...(childrenByProject.get(project.id) ?? [])];
-      if (project.owner_id === input.actorId) {
-        this.options.sessions.revoke({ scopeId: project.id });
-        for (const scopeId of scopes) await this.options.drainScope(scopeId);
-      } else {
-        for (const scopeId of scopes) await this.options.drainScope(scopeId, input.actorId);
-      }
+      for (const scopeId of scopes) await this.options.drainScope(scopeId, input.actorId);
+    }
+    for (const cleanup of ownerCleanups) {
+      const fence = await this.options.db.selectFrom("collaboration_scopes")
+        .select("id")
+        .where("id", "=", cleanup.projectScopeId)
+        .where("lifecycle", "=", "private")
+        .where("revision", "=", cleanup.revision)
+        .where("deleted_at", "is", null)
+        .executeTakeFirst();
+      if (!fence) throw new Error("Owner project departure fence is unavailable");
+      this.options.sessions.revoke({ scopeId: cleanup.projectScopeId });
+      for (const scopeId of cleanup.scopeIds) await this.options.drainScope(scopeId);
+      await this.options.db.updateTable("collaboration_operations").set({
+        status: "completed",
+        expires_at: new Date(Date.now() + OPERATION_RETENTION_MS),
+      }).where("scope_id", "=", cleanup.projectScopeId)
+        .where("actor_id", "=", input.actorId)
+        .where("client_request_id", "=", cleanup.operationId)
+        .where("operation_kind", "=", OWNER_DEPARTURE_OPERATION)
+        .where("status", "=", "accepted")
+        .execute();
     }
   }
 
