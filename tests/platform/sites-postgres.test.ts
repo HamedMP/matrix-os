@@ -32,6 +32,25 @@ postgres('public sites independent PostgreSQL sessions', () => {
             await admin.end();
         }
     });
+    it('allows exactly one claim across separate services and independent PostgreSQL connections', async () => {
+        const claimant = { ownerId: 'user_private_claim_race', machineId: 'private-claim-race-runtime', appSlug: 'event' };
+        await insertUserMachine(dbA, { machineId: claimant.machineId, clerkUserId: claimant.ownerId, handle: claimant.machineId, status: 'running', provisionedAt: new Date().toISOString() });
+        const storage = { async putObject() { return {}; }, async getObject() { return { body: null }; } };
+        const serviceA = createSitesService({ db: dbA, storage });
+        const serviceB = createSitesService({ db: dbB, storage });
+        const site = await serviceA.deploy(claimant, { title: 'Private race', accessMode: 'private_link', config: {}, files: [{ path: 'index.html', contentType: 'text/html', body: Buffer.from('private').toString('base64') }] });
+        const link = await serviceA.createAccessLink(claimant, { baseRevision: site.revision });
+        const token = link.url.split('.').at(-1)!;
+        const outcomes = await Promise.allSettled([
+            serviceA.claimAccessLink(site.id, { linkId: link.link.id, token }),
+            serviceB.claimAccessLink(site.id, { linkId: link.link.id, token }),
+        ]);
+        expect(outcomes.filter(outcome => outcome.status === 'fulfilled')).toHaveLength(1);
+        expect(outcomes.filter(outcome => outcome.status === 'rejected')).toHaveLength(1);
+        const rejected = outcomes.find(outcome => outcome.status === 'rejected');
+        if (rejected?.status !== 'rejected') throw new Error('missing rejected claim');
+        expect(rejected.reason).toMatchObject({ code: 'not_found' });
+    });
     it('revoke waits on admitted form lock and all later admissions fail', async () => {
         const storage = { async putObject() { return {}; }, async getObject() { return { body: null }; } };
         const a = createSitesService({ db: dbA, storage });

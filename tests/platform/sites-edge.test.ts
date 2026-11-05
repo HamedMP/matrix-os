@@ -18,6 +18,19 @@ it('rejects query-bearing form requests without forwarding them', async () => {
   expect(response.status).toBe(400); expect(forward).not.toHaveBeenCalled();
  } finally { vi.unstubAllGlobals(); }
 });
+it('rejects query-string credentials and malformed or oversized viewer cookies before forwarding',async()=>{
+ const forward=vi.fn(async()=>new Response('app'));vi.stubGlobal('fetch',forward);
+ try{
+  const env={SITES_PLATFORM_ORIGIN:'https://platform.example.com',SITES_EDGE_SECRET:'x'.repeat(40)};
+  for(const request of [
+   new Request('https://matrix.page/launch-2026?access=private'),
+   new Request('https://matrix.page/launch-2026?token=private'),
+   new Request('https://matrix.page/launch-2026',{headers:{cookie:'x'.repeat(8193)}}),
+   new Request('https://matrix.page/launch-2026',{headers:{cookie:'__Host-matrix_site_viewer_bad=private'}}),
+  ])expect((await worker.fetch(request,env)).status).toBe(400);
+  expect(forward).not.toHaveBeenCalled();
+ }finally{vi.unstubAllGlobals();}
+});
 it('redirects only the homepage to Matrix without forwarding queries or requiring site configuration', async () => {
  const forward = vi.fn(async () => new Response('app'));
  vi.stubGlobal('fetch', forward);
@@ -57,6 +70,71 @@ it('only forwards sites routes and strips visitor credentials', async () => {
         vi.unstubAllGlobals();
     }
 });
+it('forwards only current-site viewer cookies and approved path-scoped viewer Set-Cookie values', async () => {
+ const siteId='11111111-1111-4111-8111-111111111111';
+ const safeName='__Secure-matrix_site_viewer_11111111111141118111111111111111';
+ const safeValue=`11111111-1111-4111-8111-111111111111.${'s'.repeat(43)}`;
+ const forward=vi.fn(async(request:Request)=>{
+  expect(request.headers.get('cookie')).toBe(`${safeName}=${safeValue}`);
+  return new Response('ok',{headers:{'Set-Cookie':`${safeName}=${safeValue}; Path=/${siteId}; HttpOnly; Secure; SameSite=Lax; Max-Age=2592000`}});
+ });
+ vi.stubGlobal('fetch',forward);
+ try{
+  const response=await worker.fetch(new Request(`https://matrix.page/${siteId}`,{headers:{cookie:`__session=private; ${safeName}=${safeValue}; unrelated=secret`}}),{SITES_PLATFORM_ORIGIN:'https://platform.example.com',SITES_EDGE_SECRET:'x'.repeat(40)});
+  expect(response.headers.get('set-cookie')).toBe(`${safeName}=${safeValue}; Path=/${siteId}; HttpOnly; Secure; SameSite=Lax; Max-Age=2592000`);
+ }finally{vi.unstubAllGlobals();}
+});
+it('does not let cookies for more than twenty other claimed sites lock out the current site',async()=>{
+ const siteId='11111111-1111-4111-8111-111111111111';
+ const target=`__Secure-matrix_site_viewer_${siteId.replaceAll('-','')}=${siteId}.${'s'.repeat(43)}`;
+ const unrelated=Array.from({length:21},(_,index)=>{
+  const suffix=(index+1).toString(16).padStart(32,'0');
+  return `__Secure-matrix_site_viewer_${suffix}=22222222-2222-4222-8222-222222222222.${'t'.repeat(43)}`;
+ });
+ const forward=vi.fn(async(request:Request)=>{expect(request.headers.get('cookie')).toBe(target);return new Response('ok');});
+ vi.stubGlobal('fetch',forward);
+ try{
+  const response=await worker.fetch(new Request(`https://matrix.page/${siteId}`,{headers:{cookie:[...unrelated,target].join('; ')}}),{SITES_PLATFORM_ORIGIN:'https://platform.example.com',SITES_EDGE_SECRET:'x'.repeat(40)});
+  expect(response.status).toBe(200);expect(forward).toHaveBeenCalledOnce();
+ }finally{vi.unstubAllGlobals();}
+});
+it('strips legacy cross-site asset cookies and never accepts their Set-Cookie shape',async()=>{
+ const siteId='11111111-1111-4111-8111-111111111111',version='22222222-2222-4222-8222-222222222222';
+ const name=`__Secure-matrix_site_asset_${siteId.replaceAll('-','')}`;
+ const value=`33333333-3333-4333-8333-333333333333.${'a'.repeat(43)}`;
+ const setCookie=`${name}=${value}; Path=/${siteId}/assets/; HttpOnly; Secure; SameSite=None; Max-Age=2592000`;
+ const forward=vi.fn(async(request:Request)=>{expect(request.headers.get('cookie')).toBeNull();return new Response('ok',{headers:{'Set-Cookie':setCookie}});});
+ vi.stubGlobal('fetch',forward);
+ try{
+  const response=await worker.fetch(new Request(`https://matrix.page/${siteId}/assets/${version}/assets/main.js`,{headers:{cookie:`${name}=${value}; unrelated=private`}}),{SITES_PLATFORM_ORIGIN:'https://platform.example.com',SITES_EDGE_SECRET:'x'.repeat(40)});
+  expect(response.status).toBe(200);expect(response.headers.get('set-cookie')).toBeNull();
+ }finally{vi.unstubAllGlobals();}
+});
+it('forwards only exact site-scoped cookie deletions so stale revoked sessions are cleared',async()=>{
+ const siteId='11111111-1111-4111-8111-111111111111',suffix=siteId.replaceAll('-','');
+ const viewer=`__Secure-matrix_site_viewer_${suffix}=; Path=/${siteId}; HttpOnly; Secure; SameSite=Lax; Max-Age=0`;
+ const asset=`__Secure-matrix_site_asset_${suffix}=; Path=/${siteId}/assets/; HttpOnly; Secure; SameSite=None; Max-Age=0`;
+ const bad=`__Secure-matrix_site_viewer_${suffix}=; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=0`;
+ const forward=vi.fn(async()=>{const headers=new Headers();for(const value of [viewer,asset,bad])headers.append('Set-Cookie',value);return new Response('gate',{headers});});
+ vi.stubGlobal('fetch',forward);
+ try{
+  const response=await worker.fetch(new Request(`https://matrix.page/${siteId}`),{SITES_PLATFORM_ORIGIN:'https://platform.example.com',SITES_EDGE_SECRET:'x'.repeat(40)});
+  expect(response.headers.getSetCookie()).toEqual([viewer]);
+ }finally{vi.unstubAllGlobals();}
+});
+it('accepts same-origin explicit claims and rejects cross-site claim requests before forwarding',async()=>{
+ const forward=vi.fn(async()=>new Response(JSON.stringify({accepted:true})));
+ vi.stubGlobal('fetch',forward);
+ try{
+  const body=JSON.stringify({linkId:'11111111-1111-4111-8111-111111111111',token:'t'.repeat(43)});
+  const accepted=await worker.fetch(new Request('https://matrix.page/launch-2026/access/claim',{method:'POST',headers:{origin:'https://matrix.page','content-type':'application/json'},body}),{SITES_PLATFORM_ORIGIN:'https://platform.example.com',SITES_EDGE_SECRET:'x'.repeat(40)});
+  expect(accepted.status).toBe(200);
+  expect((forward.mock.calls[0]![0] as Request).headers.get('x-matrix-sites-origin')).toBe('same-origin');
+  const rejected=await worker.fetch(new Request('https://matrix.page/launch-2026/access/claim',{method:'POST',headers:{origin:'https://evil.example','content-type':'application/json'},body}),{SITES_PLATFORM_ORIGIN:'https://platform.example.com',SITES_EDGE_SECRET:'x'.repeat(40)});
+  expect(rejected.status).toBe(404);
+  expect(forward).toHaveBeenCalledTimes(1);
+ }finally{vi.unstubAllGlobals();}
+});
 it('forwards only the coarse edge-health path so deployment can distinguish accepted proof', async () => {
  const forward = vi.fn(async (request: Request) => new Response(
   request.headers.get('x-matrix-sites-edge') === 'x'.repeat(40) ? '{"status":"ok"}' : 'Site unavailable',
@@ -86,6 +164,15 @@ it('uses edge-supported manual redirects and rejects every upstream redirect', a
   expect(await response.text()).toBe('Site unavailable');
   expect((forward.mock.calls[0]![0] as Request).redirect).toBe('manual');
  } finally { vi.unstubAllGlobals(); }
+});
+it('passes through only a private-site canonical redirect to a permanent ID',async()=>{
+ const target='/11111111-1111-4111-8111-111111111111';
+ const forward=vi.fn(async()=>new Response(null,{status:307,headers:{location:target}}));
+ vi.stubGlobal('fetch',forward);
+ try{
+  const response=await worker.fetch(new Request('https://matrix.page/private-launch'),{SITES_PLATFORM_ORIGIN:'https://platform.example.com',SITES_EDGE_SECRET:'x'.repeat(40)});
+  expect(response.status).toBe(307);expect(response.headers.get('location')).toBe(target);
+ }finally{vi.unstubAllGlobals();}
 });
 it('logs only coarse error types and keeps configuration/upstream failures generic', async () => {
  const log = vi.spyOn(console, 'warn').mockImplementation(() => {});

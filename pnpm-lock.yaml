@@ -1023,9 +1023,15 @@ importers:
       '@modelcontextprotocol/sdk':
         specifier: ^1.32.0
         version: 1.32.1(zod@4.6.7)
+      acorn:
+        specifier: 8.16.0
+        version: 8.16.0
       dockerode:
         specifier: ^4.0.7
         version: 4.0.9
+      es-module-lexer:
+        specifier: 2.1.0
+        version: 2.1.0
       fflate:
         specifier: 0.8.3
         version: 0.8.3

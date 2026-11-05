@@ -28,7 +28,7 @@ export async function runPlatformStartupMigrations(db: Kysely<PlatformDatabase>)
   });
   await runPlatformMigration(db, migrateGooglePurchases, { scope: 'billing-google-purchases', revision: GOOGLE_TRACKING_REVISION, deadlockAttempts: 12 });
   await runPlatformMigration(db, migrateSites, {
-    scope: 'sites', revision: { generation: 1, fingerprint: 'public-app-sites-v1' }, deadlockAttempts: 12,
+    scope: 'sites', revision: { generation: 2, fingerprint: 'public-app-sites-private-links-v2' }, deadlockAttempts: 12,
   });
   await runPlatformMigration(db, migratePreviewPairPublisher, {
     scope: 'preview-pairs', revision: { generation: 5, fingerprint: 'collaboration-preview-pair-publisher-v5' }, deadlockAttempts: 12,

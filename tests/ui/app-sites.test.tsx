@@ -3,14 +3,61 @@ import React from "react";
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { AppSitePanel } from "../../shell/src/components/app-sites/AppSitePanel";
-import type { SiteClient } from "../../shell/src/lib/site-client";
+import { SiteClientError, type SiteClient } from "../../shell/src/lib/site-client";
 
-const published = { id: "11111111-1111-4111-8111-111111111111", appSlug: "launch", title: "Launch", description: "Join us", slug: "matrix-launch", url: "https://matrix.page/matrix-launch", revision: 1, status: "published" as const, activeVersion: "22222222-2222-4222-8222-222222222222", versions: [{ id: "22222222-2222-4222-8222-222222222222", createdAt: "2026-10-09T12:00:00Z" }, { id: "33333333-3333-4333-8333-333333333333", createdAt: "2026-10-08T12:00:00Z" }], config: { data: {}, forms: [] } };
+const published = { id: "11111111-1111-4111-8111-111111111111", appSlug: "launch", title: "Launch", description: "Join us", slug: "matrix-launch", url: "https://matrix.page/matrix-launch", revision: 1, status: "published" as const, accessMode: "public" as const, activeVersion: "22222222-2222-4222-8222-222222222222", versions: [{ id: "22222222-2222-4222-8222-222222222222", createdAt: "2026-10-09T12:00:00Z" }, { id: "33333333-3333-4333-8333-333333333333", createdAt: "2026-10-08T12:00:00Z" }], config: { data: {}, forms: [] } };
 function client(overrides: Partial<SiteClient> = {}): SiteClient {
-  return { getConfig: vi.fn(async () => ({ data: {}, forms: [] })), get: vi.fn(async () => published), deploy: vi.fn(async () => published), update: vi.fn(async () => published), rollback: vi.fn(async () => published), unpublish: vi.fn(async () => ({ ...published, status: "unpublished" as const })), submissions: vi.fn(async () => ({ submissions: [], nextCursor: null })), exportSubmissions: vi.fn(async () => new Blob(["[]"])), deleteSubmission: vi.fn(async () => undefined), ...overrides };
+  return { getConfig: vi.fn(async () => ({ data: {}, forms: [] })), get: vi.fn(async () => published), deploy: vi.fn(async () => published), update: vi.fn(async () => published), rollback: vi.fn(async () => published), unpublish: vi.fn(async () => ({ ...published, status: "unpublished" as const })), accessLinks: vi.fn(async () => ({ links: [] })), createAccessLink: vi.fn(), revokeAccessLink: vi.fn(async () => undefined), submissions: vi.fn(async () => ({ submissions: [], nextCursor: null })), exportSubmissions: vi.fn(async () => new Blob(["[]"])), deleteSubmission: vi.fn(async () => undefined), ...overrides };
 }
 afterEach(cleanup);
 describe("shared app publishing", () => {
+  it("saves private link mode with the publication revision", async () => {
+    const api=client({update:vi.fn(async()=>({...published,accessMode:"private_link" as const,revision:2}))});
+    render(<AppSitePanel appSlug="launch" client={api} />);
+    await screen.findByText("Your app is public.");
+    fireEvent.change(screen.getByLabelText("Access"),{target:{value:"private_link"}});
+    fireEvent.click(screen.getByRole("button",{name:"Save URL and details"}));
+    await screen.findByText("Publication settings saved.");
+    expect(api.update).toHaveBeenCalledWith("launch",expect.objectContaining({accessMode:"private_link",baseRevision:1}),expect.any(AbortSignal));
+  });
+  it("shows a generated private URL once, lists only metadata, and revokes a link", async () => {
+    const link={id:"44444444-4444-4444-8444-444444444444",status:"unclaimed" as const,createdAt:"2026-11-05T12:00:00.000Z",claimExpiresAt:"2026-11-12T12:00:00.000Z",claimedAt:null,sessionExpiresAt:null};
+    const privateSite={...published,accessMode:"private_link" as const};
+    const url=`https://matrix.page/${privateSite.id}#access=${link.id}.${"a".repeat(43)}`;
+    const api=client({get:vi.fn(async()=>privateSite),accessLinks:vi.fn(async()=>({links:[]})),createAccessLink:vi.fn(async()=>({link,url}))});
+    render(<AppSitePanel appSlug="launch" client={api} />);
+    const create=await screen.findByRole("button",{name:"Create one-time link"});
+    await waitFor(()=>expect(create).toHaveProperty("disabled",false));
+    fireEvent.click(create);
+    const secretUrl=await screen.findByText(url);
+    expect(secretUrl).toBeTruthy();
+    expect(secretUrl.closest('.ph-no-capture')).not.toBeNull();
+    expect(secretUrl.getAttribute('data-ph-mask')).toBe('true');
+    expect(screen.getByText("Save this URL now. It will not be shown again.")).toBeTruthy();
+    expect(api.createAccessLink).toHaveBeenCalledWith("launch",{baseRevision:1},expect.any(AbortSignal));
+    fireEvent.click(screen.getByRole("button",{name:"Revoke link"}));
+    await waitFor(()=>expect(api.revokeAccessLink).toHaveBeenCalledWith("launch",link.id,expect.any(AbortSignal)));
+    expect(screen.queryByText(url)).toBeNull();
+  });
+  it("offers publication refresh when one-time link creation loses a revision race",async()=>{
+    const privateSite={...published,accessMode:"private_link" as const};
+    const api=client({get:vi.fn(async()=>privateSite),accessLinks:vi.fn(async()=>({links:[]})),createAccessLink:vi.fn(async()=>{throw new SiteClientError(409);})});
+    render(<AppSitePanel appSlug="launch" client={api} />);
+    const create=await screen.findByRole("button",{name:"Create one-time link"});
+    await waitFor(()=>expect(create).toHaveProperty("disabled",false));
+    fireEvent.click(create);
+    expect(await screen.findByRole("button",{name:"Refresh publication"})).toBeTruthy();
+  });
+  it("fails closed and retries when private link metadata cannot be loaded",async()=>{
+    const privateSite={...published,accessMode:"private_link" as const};
+    const accessLinks=vi.fn().mockRejectedValueOnce(new Error("postgres://private/password")).mockResolvedValueOnce({links:[]});
+    render(<AppSitePanel appSlug="launch" client={client({get:vi.fn(async()=>privateSite),accessLinks})} />);
+    expect((await screen.findByRole("alert")).textContent).toBe("Could not complete this action. Please try again.");
+    expect(screen.getByRole("button",{name:"Create one-time link"})).toHaveProperty("disabled",true);
+    fireEvent.click(screen.getByRole("button",{name:"Retry link list"}));
+    await waitFor(()=>expect(screen.getByRole("button",{name:"Create one-time link"})).toHaveProperty("disabled",false));
+    expect(accessLinks).toHaveBeenCalledTimes(2);
+  });
   it("toggles deployment review closed and fetches a fresh unapproved declaration on reopening", async () => {
     const getConfig=vi.fn().mockResolvedValueOnce({data:{revision:"first"},forms:[]}).mockResolvedValueOnce({data:{revision:"second"},forms:[]});
     const api=client({getConfig});

@@ -6,13 +6,18 @@ const id = '11111111-1111-4111-8111-111111111111';
 const edgeSecret = 'verified-edge-proof-secret-1234567890';
 const paths = [`/${id}`, `/${id}/frame`, `/${id}/assets/${id}/assets/main.js`, `/${id}/forms/contact`];
 function fixture(secret?: string, previousSecret?: string) {
-  const resolve = vi.fn();
+  const resolve = vi.fn(async () => ({
+    id, appSlug: 'launch', title: 'Launch', description: '', slug: null,
+    url: `https://matrix.page/${id}`, revision: 1, status: 'published' as const,
+    accessMode: 'public' as const, activeVersion: id, versions: [], config: { data: {}, forms: [] },
+  }));
+  const authorize = vi.fn();
   const asset = vi.fn(async () => ({ body: Buffer.from('app'), contentType: 'text/javascript' }));
   const admitted = vi.fn();
   const submit = vi.fn();
-  const app = createSitePublicRoutes({ service: { resolve, asset, admitted } as unknown as SitesService,
+  const app = createSitePublicRoutes({ service: { resolve, authorize, asset, admitted } as unknown as SitesService,
     edgeSecret: secret, edgePreviousSecret: previousSecret, submit });
-  return { app, resolve, asset, admitted, submit };
+  return { app, resolve, authorize, asset, admitted, submit };
 }
 function request(path: string, proof?: string) {
   return {

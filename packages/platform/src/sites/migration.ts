@@ -7,6 +7,8 @@ export async function migrateSites(db: PlatformMigrationExecutor): Promise<void>
   revision INTEGER NOT NULL DEFAULT 0 CHECK (revision >= 0), status TEXT NOT NULL CHECK (status IN ('published','unpublished')),
   active_version TEXT, created_at TEXT NOT NULL, UNIQUE(owner_id,machine_id,app_slug)
  )`.execute(db);
+    await sql `ALTER TABLE public_sites ADD COLUMN IF NOT EXISTS access_mode TEXT NOT NULL DEFAULT 'public'
+      CHECK (access_mode IN ('public','private_link'))`.execute(db);
     await sql `CREATE TABLE IF NOT EXISTS public_site_versions (
   id TEXT PRIMARY KEY, site_id TEXT NOT NULL REFERENCES public_sites(id) ON DELETE CASCADE,
   created_at TEXT NOT NULL, config JSONB NOT NULL, files JSONB NOT NULL
@@ -16,4 +18,15 @@ export async function migrateSites(db: PlatformMigrationExecutor): Promise<void>
     await sql `CREATE TABLE IF NOT EXISTS public_site_aliases (
   slug TEXT PRIMARY KEY, site_id TEXT REFERENCES public_sites(id) ON DELETE SET NULL
  )`.execute(db);
+    await sql `CREATE TABLE IF NOT EXISTS public_site_access_links (
+  id TEXT PRIMARY KEY, site_id TEXT NOT NULL REFERENCES public_sites(id) ON DELETE CASCADE,
+  claim_token_hash TEXT NOT NULL CHECK (claim_token_hash ~ '^[a-f0-9]{64}$'),
+  session_token_hash TEXT CHECK (session_token_hash IS NULL OR session_token_hash ~ '^[a-f0-9]{64}$'),
+  created_at TEXT NOT NULL, claim_expires_at TEXT NOT NULL,
+  claimed_at TEXT, session_expires_at TEXT,
+  CHECK ((claimed_at IS NULL AND session_token_hash IS NULL AND session_expires_at IS NULL)
+    OR (claimed_at IS NOT NULL AND session_token_hash IS NOT NULL AND session_expires_at IS NOT NULL))
+ )`.execute(db);
+    await sql `CREATE INDEX IF NOT EXISTS public_site_access_links_site
+      ON public_site_access_links(site_id,created_at,id)`.execute(db);
 }
