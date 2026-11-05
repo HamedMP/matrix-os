@@ -1,3 +1,4 @@
+import { portableCommandSocketPin } from "../helpers/portable-command-socket-pin.js";
 import { createUnixSocketTempDir } from "../helpers/unix-socket-temp.js";
 import { chmod, lstat, mkdir, readFile, rm, stat, unlink, writeFile } from "node:fs/promises";
 import { createServer, type Server } from "node:net";
@@ -51,7 +52,7 @@ async function fixture() {
   });
   cleanup.push(() => new Promise<void>((resolve) => broker.close(() => resolve())));
   return {
-    root, sdkDirectory, nativeDirectory, workerFile, brokerSocket, stateRoot,
+    root, sdkDirectory, nativeDirectory, workerFile, brokerSocket, stateRoot, pinCommandSocket: portableCommandSocketPin,
     nodeBinary: process.execPath, codexBinary,
   };
 }

@@ -1,3 +1,4 @@
+import { HOST_NAMESPACE_TRUST, resolveScopeRuntimeHostConfig } from "@matrix-os/scope-runtime/host-config";
 import type { FundedAdmissionQueue } from "../funded-ai/admission-queue.js";
 import type { MatrixFundedCredentialProvider } from "../funded-ai-credential-manager.js";
 import { BOT_SCOPE_RUNTIME_PROFILE_CATALOG } from "../bots/scope-runtime-profile.js";
@@ -8,7 +9,7 @@ import { createScopeRuntimeHost, type ScopeRuntimeHost } from "../scope-runtime-
 /**
  * Starts the gateway's one scope-runtime host before collaboration, so
  * private bot runs work without it and shared AI registers on the same
- * broker socket. A failure leaves the host absent; callers fall back.
+ * broker socket. Namespaced configuration/constructor failures are terminal.
  */
 export async function startScopeRuntimeHost(options: {
   homePath: string;
@@ -16,8 +17,12 @@ export async function startScopeRuntimeHost(options: {
   fundedAdmission?: FundedAdmissionQueue;
   onFailure(context: string, error: unknown): void;
 }): Promise<ScopeRuntimeHost | undefined> {
+  const config = resolveScopeRuntimeHostConfig({ env: process.env, homePath: options.homePath });
   try {
     return await createScopeRuntimeHost({
+      ...(config.namespace !== undefined ? { namespaceTrust: HOST_NAMESPACE_TRUST } : {}),
+      supervisorSocket: config.supervisorSocket,
+      brokerSocket: config.brokerSocket,
       homePath: options.homePath,
       profileCatalog: { ...SHARED_AI_PROFILE_CATALOG, ...BOT_SCOPE_RUNTIME_PROFILE_CATALOG, ...MANAGED_PI_SCOPE_RUNTIME_PROFILE_CATALOG },
       ...(options.fundedCredentialProvider ? { fundedCredentialProvider: options.fundedCredentialProvider } : {}),
@@ -25,6 +30,7 @@ export async function startScopeRuntimeHost(options: {
     });
   } catch (error: unknown) {
     options.onFailure("Scope runtime host startup failed", error);
+    if (config.namespace !== undefined) throw error;
     return undefined;
   }
 }

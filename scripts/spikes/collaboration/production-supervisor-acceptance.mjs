@@ -24,11 +24,11 @@ const EXPECTED_PROFILE_ID = "scope-runtime-chat-v1";
 const EXPECTED_HARNESS_VERSION = "2.1.240";
 const EXPECTED_CODEX_VERSION = "0.162.1";
 const EXPECTED_BOT_PROFILE_ID = "scope-runtime-bot-v1";
-// Pi profile version 2 pins a renewable 900000ms supervisor lease, an infinite
-// busy-unit lifetime and BindsTo/After the watchdog-protected supervisor.
-const EXPECTED_BOT_PROFILE_DIGEST = "a1edb17cbb6df8cc52f3d15f137dfaa616045cade2198bcd65ae2c258d94e14b";
+// Pi profile version 3 retains the renewable lease and infinite busy lifetime
+// while materializing BindsTo/After from the trusted supervisor identity.
+const EXPECTED_BOT_PROFILE_DIGEST = "484ec0191600d71f8c7f72ba9d9b16b13921bc2a6838a98faa50f0e4b61822dc";
 const EXPECTED_MANAGED_PI_PROFILE_ID = "scope-runtime-managed-pi-v1";
-const EXPECTED_MANAGED_PI_PROFILE_DIGEST = "0002759f9c6bb5f010abdf336be8bbe6721cbcb23ad7af18f1abcd3e212d051a";
+const EXPECTED_MANAGED_PI_PROFILE_DIGEST = "24673fc7807247a93f9b103512421658a5417a4fbede2753c0ee278a3dda80b3";
 const EXPECTED_BOT_HARNESS_VERSION = "1.0.0";
 const MAX_FRAME_BYTES = 64 * 1024;
 const SUPERVISOR_QUERY_TIMEOUT_MS = 5_000;
@@ -220,7 +220,7 @@ function validateCapability(response) {
     "profile_catalog_invalid");
     const bot = response.profiles.find((entry) => entry.profileId === EXPECTED_BOT_PROFILE_ID);
     if (bot !== undefined) {
-      assert(bot.profileId === EXPECTED_BOT_PROFILE_ID && bot.profileVersion === 2
+      assert(bot.profileId === EXPECTED_BOT_PROFILE_ID && bot.profileVersion === 3
         && bot.profileDigest === EXPECTED_BOT_PROFILE_DIGEST
         && bot.executionGeneration === profile.executionGeneration, "bot_profile_invalid");
       assert(bot.adapters?.length === 1
@@ -231,7 +231,7 @@ function validateCapability(response) {
     }
     const managed = response.profiles.find((entry) => entry.profileId === EXPECTED_MANAGED_PI_PROFILE_ID);
     if (managed !== undefined) {
-      assert(managed.profileVersion === 2 && managed.profileDigest === EXPECTED_MANAGED_PI_PROFILE_DIGEST
+      assert(managed.profileVersion === 3 && managed.profileDigest === EXPECTED_MANAGED_PI_PROFILE_DIGEST
         && managed.executionGeneration === profile.executionGeneration, "managed_pi_profile_invalid");
       assert(managed.adapters?.length === 1 && managed.adapters[0]?.adapterId === "matrix-bot"
         && managed.adapters[0]?.harnessVersion === EXPECTED_BOT_HARNESS_VERSION

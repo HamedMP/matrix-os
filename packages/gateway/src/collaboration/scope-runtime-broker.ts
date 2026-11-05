@@ -1,3 +1,4 @@
+import { assertNamespaceSocket, closeOwnedListener, finishCloses, retryableClose, socketIdentity, type NamespacePathTrust } from "@matrix-os/scope-runtime/host-config";
 import { BOT_IMAGE_INFERENCE_FRAME_MAX_BYTES, INFERENCE_RESPONSE_BODY_MAX_BYTES, INFERENCE_RESPONSE_FRAME_MAX_BYTES } from "@matrix-os/contracts";
 import { ScopeRuntimeBotInferenceRequestSchema } from "@matrix-os/scope-runtime/broker-protocol";
 import { isInferenceStream, writeInferenceStream } from './inference-stream-transport.js';
@@ -470,6 +471,7 @@ async function removeBrokerSocket(path: string): Promise<void> {
 
 export function createScopeRuntimeBrokerServer(options: {
   socketPath: string;
+  namespaceTrust?: NamespacePathTrust;
   broker: {
     handle(request: ScopeRuntimeBrokerRequest): Promise<ScopeRuntimeBrokerResponse>;
     close(): Promise<void> | void;
@@ -505,10 +507,17 @@ export function createScopeRuntimeBrokerServer(options: {
   const sockets = new Set<Socket>();
   const operations = new Set<Promise<void>>();
   let server: Server | undefined;
-  let closed = false;
+  let stopping = false;
+  let bound: ReturnType<typeof socketIdentity> | undefined;
+
+  async function closeListener(): Promise<void> {
+    if (!server) return;
+    await closeOwnedListener(server, options.socketPath, options.namespaceTrust, bound);
+    server = undefined;
+  }
 
   function accept(socket: Socket): void {
-    if (closed || sockets.size >= maxConnections) {
+    if (stopping || sockets.size >= maxConnections) {
       socket.destroy();
       return;
     }
@@ -567,7 +576,7 @@ export function createScopeRuntimeBrokerServer(options: {
     function dispatch(): void {
       if (started) return;
       started = true;
-      if (closed || rejected) {
+      if (stopping || rejected) {
         socket.destroy();
         return;
       }
@@ -616,7 +625,7 @@ export function createScopeRuntimeBrokerServer(options: {
             socket.destroy();
             return;
           }
-          if (!closed && !socket.destroyed) socket.end(frame);
+          if (!stopping && !socket.destroyed) socket.end(frame);
           else socket.destroy();
         } catch (error: unknown) {
           if (!(error instanceof SyntaxError) && !(error instanceof z.ZodError)) {
@@ -634,9 +643,21 @@ export function createScopeRuntimeBrokerServer(options: {
     }
   }
 
+  const closeBackend = retryableClose(async () => {
+    await options.broker.close();
+    await Promise.allSettled([...operations]);
+  });
+
+  const close = retryableClose(async () => {
+    stopping = true;
+    for (const socket of sockets) socket.destroy();
+    await finishCloses(closeListener(), closeBackend());
+  });
+
   return {
     async start(): Promise<void> {
-      if (closed || server) throw new Error("Scope broker server cannot start");
+      if (stopping || server) throw new Error("Scope broker server cannot start");
+      if (options.namespaceTrust) await assertNamespaceSocket(options.socketPath, options.namespaceTrust);
       await removeBrokerSocket(options.socketPath);
       const candidate = createServer({ allowHalfOpen: true }, accept);
       server = candidate;
@@ -648,34 +669,16 @@ export function createScopeRuntimeBrokerServer(options: {
         // Workloads use systemd DynamicUser, so filesystem ownership cannot be
         // assigned ahead of launch. Authorization still requires an active,
         // unpredictable runtime handle and current execution generation.
+        if (options.namespaceTrust) bound = socketIdentity(options.socketPath);
         await chmod(options.socketPath, 0o666);
       } catch (error: unknown) {
-        server = undefined;
-        candidate.close();
+        if (candidate.listening) {
+          stopping = true;
+          await closeListener();
+        } else { server = undefined; }
         throw error;
       }
     },
-    async close(): Promise<void> {
-      if (closed) return;
-      closed = true;
-      const current = server;
-      server = undefined;
-      const serverClosed = current
-        ? new Promise<void>((resolve) => current.close(() => resolve()))
-        : Promise.resolve();
-      for (const socket of sockets) socket.destroy();
-      await serverClosed;
-      await Promise.allSettled([...operations]);
-      await options.broker.close();
-      try {
-        const entry = await lstat(options.socketPath);
-        if (entry.isSocket() && !entry.isSymbolicLink()) await unlink(options.socketPath);
-      } catch (error: unknown) {
-        if (!notFound(error)) {
-          console.warn("[collaboration] scope broker socket cleanup failed:",
-            error instanceof Error ? error.name : "UnknownError");
-        }
-      }
-    },
+    close,
   };
 }
