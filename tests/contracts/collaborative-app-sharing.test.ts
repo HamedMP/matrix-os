@@ -4,6 +4,8 @@ import {
   CollaborativeAppChangeSignalSchema,
   CollaborativeAppCompatibilityDeclarationSchema,
   CollaborativeAppLaunchTargetSchema,
+  CollaborativeAppLaunchRequestSchema,
+  CollaborativeAppLaunchResponseSchema,
   CollaborativeAppManifestDeclarationSchema,
   CollaborativeAppMutationRequestSchema,
   CollaborativeAppMutationResponseSchema,
@@ -152,6 +154,22 @@ describe("collaborative app sharing contracts", () => {
     }
     expect(CollaborativeAppLaunchTargetSchema.parse({ ...sharedTarget, iconUrl: "/icon?v=1#safe" }).iconUrl)
       .toBe("/icon?v=1#safe");
+    const launch = {
+      target: sharedTarget,
+      launchId: requestId,
+      entryUrl: `/api/collaboration/shared-apps/${scopeId}/runtime/${requestId}/index.html`,
+      expiresAt: now,
+    };
+    expect(CollaborativeAppLaunchRequestSchema.parse({
+      clientRequestId: requestId,
+      expectedShareRevision: "2",
+      expectedBuildId: digest,
+    })).toMatchObject({ expectedBuildId: digest });
+    expect(CollaborativeAppLaunchResponseSchema.parse(launch)).toEqual(launch);
+    expect(CollaborativeAppLaunchResponseSchema.safeParse({ ...launch, entryUrl: "https://owner.invalid/index.html" }).success)
+      .toBe(false);
+    expect(CollaborativeAppLaunchResponseSchema.safeParse({ ...launch, ownerCredential: "secret" }).success)
+      .toBe(false);
   });
 
   it("bounds participant identity to display context without membership or credential claims", () => {
