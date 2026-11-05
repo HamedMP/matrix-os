@@ -10,6 +10,22 @@ function fixture(){
  const github={rest:{pulls:{get:vi.fn(async()=>({data:pull}))},repos:{getCommit:vi.fn(async()=>({data:{sha:source,parents:[{sha:base},{sha:head}]}})),getBranch:vi.fn(async()=>({data:{name:'main',commit:{sha:base}}}))},actions:{getWorkflow:vi.fn(async()=>({data:{id:98,path:'.github/workflows/ci.yml'}})),listWorkflowRuns:vi.fn(async()=>({data:{workflow_runs:[run]}})),listJobsForWorkflowRun:vi.fn(async()=>({data:{total_count:1,jobs:[job]}}))},checks:{get:vi.fn(async()=>({data:check}))}}};return{github,run,check,job,pull};
 }
 describe('metadata edits verify genuine exact-source coverage',()=>{
+ it.each(['draft','closed','head','base','retarget','merge','head-repository','base-repository'])('rejects a delayed stack event after live %s changes',async kind=>{
+  const f=fixture();f.pull.base.ref='stack/parent';f.run.pull_requests[0]!.base.ref='stack/parent';
+  if(kind==='draft')f.pull.draft=true;
+  if(kind==='closed')f.pull.state='closed';
+  if(kind==='head')f.pull.head.sha='a'.repeat(40);
+  if(kind==='base')f.pull.base.sha='a'.repeat(40);
+  if(kind==='retarget')f.pull.base.ref='other/parent';
+  if(kind==='merge')f.pull.merge_commit_sha='a'.repeat(40);
+  if(kind==='head-repository')f.pull.head.repo.full_name='attacker/matrix-os';
+  if(kind==='base-repository')f.pull.base.repo.full_name='attacker/matrix-os';
+  await expect(verifyMetadataCoverage(f.github,repo,{...snapshot,baseRef:'stack/parent'},21)).rejects.toThrow();
+ });
+ it('rechecks the live revision after authenticating the prior aggregate',async()=>{
+  const f=fixture();f.github.rest.checks.get.mockImplementation(async()=>{f.pull.head.sha='a'.repeat(40);return{data:f.check};});
+  await expect(verifyMetadataCoverage(f.github,repo,snapshot,21)).rejects.toThrow();
+ });
  it('keeps a passed first-attempt PR green through repeated title/body edits without a head or base update',async()=>{
   const f=fixture();for(const id of [21,22])expect(await verifyMetadataCoverage(f.github,repo,snapshot,id)).toEqual({runId:20,runAttempt:1,sourceSha:source,baseSha:base});
  });

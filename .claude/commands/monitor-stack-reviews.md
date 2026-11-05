@@ -169,6 +169,14 @@ final human review.
      concise response and ask before changing behavior.
 
 5. Continue until complete.
+   - For each ready PR, run `node scripts/ci/check-pr-readiness.mjs <pr>`
+     before reporting required CI green. Exit 0 authenticates the required
+     `CI Results` in the newest current-head PR suite; exit 1 is blocked and
+     exit 2 is an inspection error. Continue checking other required workflows,
+     reviews and mergeability separately. Never select only historical full
+     coverage runs: a newer metadata suite can hide their passing aggregate.
+     Rerunning an older job does not make its suite newer. Diagnose a mismatch
+     before changing status, deleting a run or requesting another run.
    - Re-poll checks and Greptile after each pushed fix, waiting at least
      60 seconds between polls. Do not stop only because an already-running CI
      job remains `queued`, `pending`, or `in_progress` across consecutive

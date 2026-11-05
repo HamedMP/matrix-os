@@ -65,6 +65,16 @@ Do not require each internal shard directly unless branch protection is updated
 at the same time. The shard jobs remain visible for logs and artifacts; the
 aggregate job is the merge gate.
 
+Before reporting required CI green, run
+`node scripts/ci/check-pr-readiness.mjs <pr>` (optional second argument:
+`owner/repo`). It reads GitHub only: exit 0 confirms the newest current-head
+`ci.yml` PR suite contains a successful, authenticated `CI Results`; exit 1
+means blocked; exit 2 means inspection failed. Check other required workflows,
+reviews and mergeability separately. A successful suite with skipped jobs or
+a historical green aggregate cannot replace a missing current required check.
+Rerunning an old job does not make its suite the newest. Diagnose the suite
+and coverage mismatch before requesting a rerun or changing any remote state.
+
 Workflow ownership and optional checks are documented in
 `.github/workflows/README.md`.
 

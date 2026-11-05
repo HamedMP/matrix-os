@@ -1483,12 +1483,12 @@ jobs:
             core.setOutput('attempt',String(result.attempt));
 
   ci-results:
-    # Every non-draft suite executes this stable required check. Metadata edits
-    # verify earlier exact-source coverage instead of renaming/skipping the job:
+    # Even a captured draft event can become the newest suite after ready CI.
+    # Keep the required name stable and verify live readiness plus real coverage:
     # GitHub's merge box only considers the latest suite for this workflow.
-    name: ${{ (github.event_name == 'pull_request' && github.event.pull_request.draft == true) && 'CI Draft (ignored)' || 'CI Results' }}
+    name: CI Results
     needs: [redirect, changes, isolated-ci-backend, ci-backend, typecheck, shell-production-build, patterns, react-doctor, sync-client, agent-sdk-compatibility, unit, funded-postgres, collaboration-postgres, funded-host-root, docs-contract, os-view-parity, e2e, dedicated-linux, completion-handoff]
-    if: always() && !(github.event_name == 'pull_request' && github.event.pull_request.draft == true)
+    if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 2
     permissions:
@@ -1498,14 +1498,14 @@ jobs:
       pull-requests: read
     steps:
       - name: Checkout metadata verification helpers
-        if: github.event_name == 'pull_request' && github.event.action == 'edited' && github.event.changes.base == null
+        if: github.event_name == 'pull_request' && (github.event.pull_request.draft == true || (github.event.action == 'edited' && github.event.changes.base == null))
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           ref: ${{ github.sha }}
           persist-credentials: false
           sparse-checkout: scripts/ci
       - name: Verify exact-source coverage after metadata edit
-        if: github.event_name == 'pull_request' && github.event.action == 'edited' && github.event.changes.base == null
+        if: github.event_name == 'pull_request' && (github.event.pull_request.draft == true || (github.event.action == 'edited' && github.event.changes.base == null))
         uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8
         env:
           EXECUTION_CONTROLLER_SHA: ${{ vars.MATRIX_CI_ISOLATED_EXECUTION == 'true' && vars.MATRIX_CI_CONTROLLER_SHA || '' }}
@@ -1532,7 +1532,7 @@ jobs:
           fi
           echo "Routing-only request accepted. No candidate tests or coverage are claimed." >> "$GITHUB_STEP_SUMMARY"
       - name: Summarize required CI jobs
-        if: ${{ needs.redirect.outputs.routed != 'true' && !(github.event_name == 'pull_request' && github.event.action == 'edited' && github.event.changes.base == null) }}
+        if: ${{ needs.redirect.outputs.routed != 'true' && !(github.event_name == 'pull_request' && (github.event.pull_request.draft == true || (github.event.action == 'edited' && github.event.changes.base == null))) }}
         env:
           CI_ISOLATED_REQUEST: ${{ github.event_name == 'workflow_dispatch' && inputs.pr_number != '' && vars.MATRIX_CI_ISOLATED_EXECUTION == 'true' && github.ref == format('refs/heads/ci-execution/{0}', vars.MATRIX_CI_CONTROLLER_SHA) }}
           CI_REQUESTING_ATTEMPT: ${{ github.run_attempt }}
