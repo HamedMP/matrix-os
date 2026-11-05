@@ -435,6 +435,15 @@ async function readDiscoveryPage(
     : { items: [] as Awaited<ReturnType<PlatformCollaborationRepository["listForActorPage"]>>["items"], nextCursor: undefined };
   // Metadata only: the client hydrates every item from the resource's home.
   const items: unknown[] = page.items.map((entry) => (
+    entry.kind === "project" && entry.organizationId ? {
+      scopeId: entry.scopeId,
+      runtimeId: entry.runtimeId,
+      ownerId: entry.ownerId,
+      kind: entry.kind,
+      authorityGeneration: entry.authorityGeneration,
+      status: "accepted",
+      organizationId: entry.organizationId,
+    } :
     // A pending grant addressed to this actor alone opens exactly like an organization-wide
     // one (accept the grant on the home), so it uses the same entry and every client --
     // including released ones, which parse the whole page strictly -- already handles it.
@@ -458,12 +467,14 @@ async function readDiscoveryPage(
       ...(entry.organizationId ? { organizationId: entry.organizationId } : {}),
     }));
   let nextCursor = page.nextCursor ? encodeDiscoveryCursor(actorId, status, "indexed", page.nextCursor) : undefined;
-  if (status === "invited" && !page.nextCursor && options.listOrganizationIds) {
+  if (!page.nextCursor && options.listOrganizationIds) {
     const organizationIds = await listCurrentOrganizationIds(actorId, options);
     const remaining = limit - items.length;
     const pending = await options.repository.listOrganizationSharesForActorPage(actorId, organizationIds, {
       limit: Math.max(1, remaining),
       ...(phase === "pending" && cursor?.after ? { after: cursor.after } : {}),
+      projectsOnly: status === "accepted",
+      excludeProjectIndexStatus: status,
     });
     if (remaining > 0) {
       for (const entry of pending.items) {
