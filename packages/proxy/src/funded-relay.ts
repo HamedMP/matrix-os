@@ -412,9 +412,9 @@ export function createFundedRelay(dependencies: FundedRelayDependencies | null):
 
     let inputTokens: number;
     try {
-      if (isOpenAi) {
-        // Workers AI does not expose a trusted preflight token-count endpoint.
-        // Keep its admission conservative until the provider offers one.
+      if (c.req.path !== COUNT_TOKENS_PATH && (isOpenAi || config.reservationMode === "usage")) {
+        // Bound provider liability without requiring an unavailable tokenizer.
+        // This is not an observed count and never substitutes for actual usage.
         inputTokens = maximumFundedInputTokens(model.canonicalModelId);
       } else {
         const counted = await countTokens({

@@ -187,7 +187,7 @@ describe("funded relay configuration and pricing", () => {
 
 describe("Cloudflare funded relay control-plane ordering", () => {
   it.each(["cloudflare-count", "usage"])("records zero-hold admission before Cloudflare generation and settles actual usage (%s)", async (reservationMode) => {
-    const reservedMicrousd = RESERVED_MICROUSD;
+    const reservedMicrousd = reservationMode === "usage" ? 4_801_200 : RESERVED_MICROUSD;
     const events: string[] = [];
     const fetchMock = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
       const url = String(input);
@@ -307,7 +307,7 @@ describe("Cloudflare funded relay control-plane ordering", () => {
     expect(response.status).toBe(200);
     await response.text();
     await vi.waitFor(() => expect(events).toContain("finalize"));
-    expect(events).toEqual(["check", "cloudflare_count", "authorize", "start", "cloudflare_generate", "finalize"]);
+    expect(events).toEqual(["check", ...(reservationMode === "cloudflare-count" ? ["cloudflare_count"] : []), "authorize", "start", "cloudflare_generate", "finalize"]);
     await relay.close();
   });
 
@@ -465,9 +465,13 @@ describe("Cloudflare funded relay control-plane ordering", () => {
     await relay.close();
   });
 
-  it.each(["cloudflare-count", "usage"])(
-    "times out bounded token counting and does not reserve or generate (%s)",
-    async (reservationMode) => {
+  it.each([
+    { reservationMode: "cloudflare-count", path: "/v1/messages" },
+    { reservationMode: "cloudflare-count", path: "/v1/messages/count_tokens" },
+    { reservationMode: "usage", path: "/v1/messages/count_tokens" },
+  ])(
+    "times out real token counting and does not reserve or generate ($reservationMode $path)",
+    async ({ reservationMode, path }) => {
       const events: string[] = [];
       const fetchMock = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
         const url = String(input);
@@ -481,7 +485,7 @@ describe("Cloudflare funded relay control-plane ordering", () => {
       const relay = configuredRelay(fetchMock as typeof fetch, { countTokensTimeoutMs: 20, reservationMode });
       const app = new Hono();
       relay.register(app);
-      const response = await app.request("/v1/messages", fundedRequest());
+      const response = await app.request(path, fundedRequest());
       expect(response.status).toBe(504);
       expect(events).toEqual(["check", "cloudflare_count"]);
       await relay.close();
@@ -631,9 +635,10 @@ describe("Cloudflare funded relay control-plane ordering", () => {
       }
       if (url.endsWith("/authorize")) {
         events.push("authorize");
+        expect(JSON.parse(String(init?.body)).maxCostMicrousd).toBe(4_801_200);
         const authorized = authorizationResponse("request_123");
         return json({ ...authorized, reservation: {
-          ...authorized.reservation, billingMode: "usage", maxCostMicrousd: RESERVED_MICROUSD,
+          ...authorized.reservation, billingMode: "usage", maxCostMicrousd: JSON.parse(String(init?.body)).maxCostMicrousd,
         } });
       }
       if (url.endsWith("/start")) { events.push("start"); return json({ ...startResponse("request_123"), executionId: JSON.parse(String(init?.body)).executionId }); }
@@ -656,7 +661,7 @@ describe("Cloudflare funded relay control-plane ordering", () => {
     relay.register(app);
     expect((await app.request("/v1/messages", fundedRequest())).status).toBe(429);
     await vi.waitFor(() => expect(events).toContain("finalize:exact:0"));
-    expect(events).toEqual(["cloudflare_count", "authorize", "start", "upstream_429", "finalize:exact:0"]);
+    expect(events).toEqual(["authorize", "start", "upstream_429", "finalize:exact:0"]);
     expect(warn).toHaveBeenCalledWith("[proxy] Funded AI upstream rate limited", {
       retryAfterSeconds: 60, inputTokensRemaining: 0,
     });

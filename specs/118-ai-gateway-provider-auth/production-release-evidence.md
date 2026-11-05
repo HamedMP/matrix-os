@@ -114,6 +114,24 @@ rotation and revocation. See [Cloudflare authentication](https://developers.clou
 Funding-summary reads call Platform only; a successful credit display does not
 establish upstream inference readiness or GA acceptance.
 
+### Inspect an existing operator credential without exporting it
+
+`AI Gateway Read-only Inspection` is a manual, main-only workflow that uses the
+existing Production `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID`. It checks
+that the account matches the configured production Gateway URL, then makes only
+bounded, non-redirecting GET requests for the fixed Preview and production
+gateways. It performs no inference, deployment, token provisioning, permission
+change, or Gateway configuration write. Runtime inference tokens and an active
+Worker deployment credential do not by themselves establish Gateway management
+access.
+
+The report contains HTTP status, safe numeric error codes, coarse configuration
+booleans, a configuration hash, and a spend-rule count. It excludes credentials,
+raw Gateway responses, and customer metadata/filter values. A successful read
+proves read access only; it does not prove write access, exercise the spend fuse,
+or satisfy an acceptance receipt. Failure remains a failure rather than a reason
+to export the encrypted GitHub secret or trigger an unrelated Worker deployment.
+
 ## Metadata packet contract
 
 Create a ZIP containing `receipt.json` and the referenced, public-safe metadata

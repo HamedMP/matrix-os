@@ -102,7 +102,7 @@ describe("generic funded model pricing reviews", () => {
       expect(response.status).toBe(200);
       await response.text();
       expect(control.authorize).toHaveBeenCalledWith(expect.objectContaining({ modelId: model.id, billingMode: "usage" }), expect.any(AbortSignal));
-      expect(fetchFn).toHaveBeenCalledTimes(model.prefix === "SONNET" ? 2 : 1);
+      expect(fetchFn).toHaveBeenCalledTimes(1);
     } finally { await relay.close(); }
     expect(control.finalize).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ mode: "exact", actualCostMicrousd: model.prefix === "GLM" ? 24 : 400 }), expect.any(AbortSignal));
   });
@@ -121,7 +121,7 @@ describe("generic funded model pricing reviews", () => {
       expect(response.status).toBe(503);
       expect(control.release).toHaveBeenCalledExactlyOnceWith({ reservationId: "reservation_1", tokenId: "credential_123", reason: "pre_upstream_failure" }, expect.any(AbortSignal));
       expect(control.start).not.toHaveBeenCalled();
-      expect(fetchFn).toHaveBeenCalledTimes(model.prefix === "SONNET" ? 1 : 0);
+      expect(fetchFn).not.toHaveBeenCalled();
       expect(control.finalize).not.toHaveBeenCalled();
     } finally { await relay.close(); }
   });

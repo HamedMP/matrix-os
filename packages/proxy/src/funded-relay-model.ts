@@ -93,9 +93,9 @@ export function mapFundedModel(modelId: string): FundedModelMapping {
   return { nativeModelId: NATIVE_SONNET_5, canonicalModelId: CANONICAL_SONNET_5 };
 }
 
-/** Provider-enforced ceiling, NOT a local tokenizer estimate. Anthropic
- * admission uses the provider-counted request size; Workers AI uses this
- * conservative fallback until it exposes a trusted preflight count. Keep it
+/** Provider-enforced ceiling, NOT a local tokenizer estimate. Usage-mode
+ * generation uses this conservative liability bound; legacy count-mode
+ * Anthropic admission retains its trusted remote preflight count. Keep it
  * reviewed with the expiring price table. Sonnet 5 has a 1M context:
  * https://platform.claude.com/docs/en/models/sonnet-5/whats-new-sonnet-5
  */
