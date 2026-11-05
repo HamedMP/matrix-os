@@ -189,6 +189,10 @@ run_suite() {
         tests/e2e/desktop/terminal-file-drop.e2e.test.ts \
         tests/e2e/desktop/terminal-snapshot.e2e.test.ts tests/e2e/desktop/release-alignment.e2e.test.ts \
         tests/e2e/desktop/chat-title-layout.e2e.test.ts
+      step "e2e-preview-pair-$pass" env MATRIX_DESKTOP_E2E_REQUIRED=1 \
+        MATRIX_PREVIEW_PAIR_EVIDENCE_DIR=output/playwright/preview-pair xvfb-run --auto-servernum \
+        pnpm exec vitest run --config vitest.e2e.config.ts \
+        tests/e2e/desktop/preview-pair.e2e.test.ts --maxWorkers=1
       # Hosted CI gives clipboard its own display. A different Electron window
       # can blur a held mouse drag and cancel its edge-scroll selection timer.
       step "e2e-clipboard-$pass" env MATRIX_DESKTOP_E2E_REQUIRED=1 xvfb-run --auto-servernum \

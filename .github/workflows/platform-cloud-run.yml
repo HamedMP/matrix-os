@@ -21,6 +21,8 @@ on:
       - "scripts/render-platform-worker-service.mjs"
       - "scripts/select-legacy-platform-worker-tags.mjs"
       - "scripts/ci/remove-legacy-platform-worker-tags.mjs"
+      - "scripts/ci/platform-source-compatibility.mjs"
+      - "specs/639-managed-model-selection/current-runtime-compatibility.json"
       - "Dockerfile.platform"
       - "cloudbuild.platform.yaml"
   workflow_dispatch:
@@ -152,7 +154,11 @@ jobs:
       DEPLOY_ENVIRONMENT: ${{ github.event_name == 'workflow_dispatch' && inputs.environment || 'production' }}
     steps:
       - name: Checkout
+        timeout-minutes: 5
         uses: actions/checkout@v6
+        with:
+          # Source ancestry must survive squash merges and ordinary main deployments.
+          fetch-depth: 0
 
       - name: Validate Private Preview organization configuration
         run: |
@@ -361,6 +367,9 @@ jobs:
       - name: Set up gcloud
         # Keep this aligned with auth@v3 until google-github-actions publishes v4.
         uses: google-github-actions/setup-gcloud@v3
+
+      - name: Verify default-serving source before build
+        run: node scripts/ci/platform-source-compatibility.mjs
 
       - name: Verify Custom MCP credential secret
         if: ${{ env.CUSTOM_MCP_ENABLED == 'true' }}
@@ -970,6 +979,9 @@ jobs:
           fi
           echo "IMAGE_DIGEST=${image%:*}@${digest}" >> "$GITHUB_ENV"
 
+      - name: Recheck default-serving source before candidate startup
+        run: node scripts/ci/platform-source-compatibility.mjs
+
       - name: Deploy tagged revision
         run: |
           set -euo pipefail
@@ -1427,6 +1439,12 @@ jobs:
         if: ${{ github.event_name == 'push' || inputs.promote }}
         run: scripts/ci/platform-sites-env.sh verify-revision "$PRODUCTION_REVISION"
 
+      - name: Recheck default-serving source before worker startup
+        if: ${{ github.event_name == 'push' || inputs.promote }}
+        env:
+          REQUIRE_RUNTIME_CONFIGURATION_PRESERVATION: 'true'
+        run: node scripts/ci/platform-source-compatibility.mjs
+
       - name: Deploy dedicated platform worker
         if: ${{ github.event_name == 'push' || inputs.promote }}
         run: |
@@ -1506,6 +1524,12 @@ jobs:
       - name: Install locked Matrix.page Worker dependencies
         if: ${{ (github.event_name == 'push' || inputs.promote) && env.DEPLOY_ENVIRONMENT == 'production' && env.MATRIX_PUBLIC_SITES_ENABLED == 'true' }}
         run: pnpm install --frozen-lockfile --filter @matrix-os/edge-router...
+
+      - name: Recheck default-serving source before promotion
+        if: ${{ github.event_name == 'push' || inputs.promote }}
+        env:
+          REQUIRE_RUNTIME_CONFIGURATION_PRESERVATION: 'true'
+        run: node scripts/ci/platform-source-compatibility.mjs
 
       - name: Promote revision
         if: ${{ github.event_name == 'push' || inputs.promote }}

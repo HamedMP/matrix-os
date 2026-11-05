@@ -176,10 +176,15 @@ export const FundedAiAuthorizationRequestSchema = z.object({
   /** Strict hold, or maximum platform liability when billingMode is usage. */
   maxCostMicrousd: MicrousdSchema.min(1),
   billingMode: z.literal("usage").optional(),
+  /** Explicit zero-hold customer policy; the provider ceiling remains bounded. */
+  billingPolicy: z.literal("postpaid").optional(),
   jevPricingVersion: z.literal(JEV_PRICING_VERSION).optional(),
   /** Gateway-supplied turn identity for interactive priority ordering; never authority. */
   claimKey: FundedAiClaimKeySchema.optional(),
 }).strict().superRefine((value, ctx) => {
+  if (value.billingPolicy === "postpaid" && value.billingMode !== "usage") {
+    ctx.addIssue({ code: "custom", path: ["billingPolicy"], message: "Postpaid policy requires usage billing" });
+  }
   if (value.jevPricingVersion !== undefined
     && (value.modelId !== JEV_MODEL_ID || value.billingMode !== "usage")) {
     ctx.addIssue({ code: "custom", path: ["jevPricingVersion"], message: "Jev pricing requires Jev usage authorization" });
@@ -323,8 +328,9 @@ export const FundedAiAuthorizationResponseSchema = z.object({
     reservationId: canonicalReferenceId(160),
     requestId: canonicalReferenceId(160),
     modelId: ProviderModelReferenceSchema,
-    reservedMicrousd: MicrousdSchema.min(1),
+    reservedMicrousd: MicrousdSchema,
     billingMode: z.literal("usage").optional(),
+    billingPolicy: z.literal("postpaid").optional(),
     maxCostMicrousd: MicrousdSchema.min(1).optional(),
     jevPricingVersion: JevProvenanceSchema.shape.pricingVersion.optional(),
     remainingBalanceMicrousd: MicrousdSchema,
@@ -335,6 +341,15 @@ export const FundedAiAuthorizationResponseSchema = z.object({
   }).strict(),
 }).strict().superRefine((value, ctx) => {
   const reservation = value.reservation;
+  if (reservation.billingPolicy === "postpaid") {
+    if (reservation.billingMode !== "usage" || reservation.reservedMicrousd !== 0) {
+      ctx.addIssue({ code: "custom", path: ["reservation", "billingPolicy"],
+        message: "Postpaid usage must not reserve customer credit" });
+    }
+  } else if (reservation.reservedMicrousd === 0) {
+    ctx.addIssue({ code: "custom", path: ["reservation", "reservedMicrousd"],
+      message: "Legacy authorization requires a positive hold" });
+  }
   if (reservation.billingMode === "usage") {
     if (reservation.maxCostMicrousd === undefined) {
       ctx.addIssue({
@@ -376,6 +391,8 @@ export const FundedAiFinalizationRequestSchema = z.discriminatedUnion("mode", [
     mode: z.literal("exact"),
     actualCostMicrousd: MicrousdSchema,
     jevProvenance: JevProvenanceSchema.optional(),
+    /** Control-authenticated Relay failure; valid only for captured postpaid usage. */
+    customerCharge: z.literal("waived").optional(),
   }).strict(),
   z.object({
     reservationId: canonicalReferenceId(160),
@@ -464,7 +481,7 @@ export const FundedAiReleaseResponseSchema = z.object({
   reservationId: canonicalReferenceId(160),
   requestId: canonicalReferenceId(160),
   tokenId: TokenIdSchema,
-  releasedMicrousd: MicrousdSchema.min(1),
+  releasedMicrousd: MicrousdSchema,
   releasedAt: IsoTimestampSchema,
   reason: z.literal("pre_upstream_failure"),
   status: z.literal("released"),

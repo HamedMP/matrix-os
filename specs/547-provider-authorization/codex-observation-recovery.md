@@ -132,6 +132,10 @@ retry shutdown must drain timers and abandon obsolete requests.
   bounded failure exhaustion and cancellation across authority generations.
 - Legacy strict wire parsing and applicable shared Web/Electron/mobile derivations
   remain compatible. Rendered fixtures are separate from live account acceptance.
+- Integration with the managed-model selection policy in `specs/639-managed-model-selection/`
+  preserves unavailable Matrix AI selection intent independently of execution
+  readiness. Native Codex checking rows remain nonselectable and nonadmitted;
+  neither policy may silently replace the saved provider/model.
 
 Maintained assertion points include native-reader no-usage requests,
 `codex-native-observation-recovery.test.ts` for real Settings/catalog/admission

@@ -1,3 +1,4 @@
+import { PREVIEW_PAIR_BUNDLE_MARKER, isPreviewPairBundle } from "@matrix-os/contracts/preview-pair";
 import { sql } from 'kysely';
 import { z } from 'zod/v4';
 import type {
@@ -148,6 +149,7 @@ export async function getLatestHostBundleReleaseForPr(
     .selectFrom('host_bundle_releases')
     .selectAll()
     .where('source_pr', '=', sourcePr)
+    .where('version', 'not like', `%${PREVIEW_PAIR_BUNDLE_MARKER}%`)
     .orderBy('created_at', 'desc')
     .orderBy('version', 'desc')
     .limit(1)
@@ -167,6 +169,7 @@ export async function listHostBundleReleases(
       .innerJoin('host_bundle_releases', 'host_bundle_releases.version', 'host_bundle_release_channels.version')
       .selectAll('host_bundle_releases')
       .where('host_bundle_release_channels.channel', '=', channel)
+      .where('host_bundle_releases.version', 'not like', `%${PREVIEW_PAIR_BUNDLE_MARKER}%`)
       .orderBy('host_bundle_releases.created_at', 'desc')
       .limit(limit)
       .execute();
@@ -175,6 +178,7 @@ export async function listHostBundleReleases(
   const rows = await db.executor
     .selectFrom('host_bundle_releases')
     .selectAll()
+    .where('version', 'not like', `%${PREVIEW_PAIR_BUNDLE_MARKER}%`)
     .orderBy('created_at', 'desc')
     .limit(limit)
     .execute();
@@ -197,6 +201,7 @@ export async function promoteHostBundleChannelInTransaction(
   version: string,
   updatedAt: string,
 ): Promise<HostBundleChannelRecord> {
+    if (isPreviewPairBundle(version)) throw new Error('Host bundle channel is unavailable');
     const release = await db.executor
       .selectFrom('host_bundle_releases')
       .selectAll()
@@ -268,6 +273,7 @@ export async function getHostBundleReleaseByChannel(
     .innerJoin('host_bundle_releases', 'host_bundle_releases.version', 'host_bundle_channels.version')
     .selectAll('host_bundle_releases')
     .where('host_bundle_channels.channel', '=', channel)
+    .where('host_bundle_releases.version', 'not like', `%${PREVIEW_PAIR_BUNDLE_MARKER}%`)
     .executeTakeFirst();
   return row ? mapHostBundleRelease(row) : undefined;
 }

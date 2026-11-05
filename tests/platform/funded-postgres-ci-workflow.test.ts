@@ -87,6 +87,9 @@ describe("funded PostgreSQL CI coverage", () => {
       "tests/platform/ai-funded-terminal-concurrency.test.ts",
       "tests/platform/ai-funded-usage-waiver.test.ts", "tests/platform/ai-funded-usage-waiver-cli.test.ts",
       "tests/platform/ai-funded-usage-waiver-locks-postgres.test.ts",
+      "tests/platform/ai-funded-postpaid-postgres.test.ts",
+      "tests/platform/speech-postpaid-postgres.test.ts",
+      "tests/platform/ai-funded-conservative-fence-postgres.test.ts",
       "--maxWorkers=1", "--no-file-parallelism",
     ]);
   });
@@ -152,7 +155,8 @@ printf '\\n' >> "$WAIVER_CI_COMMANDS_PATH"
   it("keeps scoped service credentials and trigger with a measured bounded PG qualification window", () => {
     expect(job.needs).toBe("changes");
     expect(job.if).toBe("always() && !cancelled() && needs.changes.result == 'success' && (needs.changes.outputs.should_run == 'true')");
-    expect(job["timeout-minutes"]).toBe(14);
+    expect(job["timeout-minutes"]).toBeGreaterThanOrEqual(20);
+    expect(job["timeout-minutes"]).toBeLessThanOrEqual(30);
     expect(job.services.postgres.image).toBe("mirror.gcr.io/library/postgres:16");
     expect(job.services.postgres.env).toEqual({ POSTGRES_USER: "matrix_test",
       POSTGRES_PASSWORD: "matrix_test", POSTGRES_DB: "matrix_test" });

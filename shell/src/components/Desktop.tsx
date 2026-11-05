@@ -6,6 +6,7 @@ import { appKeys, appsQueryOptions, hydrateAppIconUrls, type ApiAppEntry } from 
 import { useCatalogAppShortcuts } from "@/hooks/useCatalogAppShortcuts";
 import { useFileWatcher } from "@/hooks/useFileWatcher";
 import { useWindowManager } from "@/hooks/useWindowManager";
+import { useSettingsNavigation } from "@/hooks/useSettingsNavigation";
 import { useCommandStore } from "@/stores/commands";
 import { useDesktopMode } from "@/stores/desktop-mode";
 import { useVocalStore } from "@/stores/vocal";
@@ -14,7 +15,7 @@ import { useDesktopConfigStore } from "@/stores/desktop-config";
 import { parseDesktopFirstRunStatus, type DesktopFirstRunStatus } from "@/lib/desktop-first-run";
 import { MissionControl } from "./MissionControl";
 import { DotGrid } from "./DotGrid";
-import { Settings, type SettingsSectionId } from "./Settings";
+import { Settings } from "./Settings";
 import { CanvasRenderer } from "./canvas/CanvasRenderer";
 import {
   Tooltip,
@@ -141,8 +142,7 @@ export function Desktop({ launchAppPath, sharedTerminalScopeId, onOpenCommandPal
 
   const [interacting, setInteracting] = useState(false);
   const [taskBoardOpen, setTaskBoardOpen] = useState(false);
-  const [settingsOpen, setSettingsOpen] = useState(false);
-  const [settingsDefaultSection, setSettingsDefaultSection] = useState<SettingsSectionId>("appearance");
+  const { settingsOpen, settingsDefaultSection, setSettingsOpen, openSettings, toggleSettings } = useSettingsNavigation();
   const [minimizingIds, setMinimizingIds] = useState<Set<string>>(new Set());
   const [firstRunStatus, setFirstRunStatus] = useState<DesktopFirstRunStatus>("checking");
   // Shell hydration always uses the shared Matrix brand surface. Theme-specific
@@ -453,8 +453,7 @@ export function Desktop({ launchAppPath, sharedTerminalScopeId, onOpenCommandPal
 
   useEffect(() => {
     const openProviderSettings = () => {
-      setSettingsDefaultSection("agents-providers");
-      setSettingsOpen(true);
+      openSettings();
       setTaskBoardOpen(false);
     };
     const openProviderTerminal = (event: Event) => {
@@ -467,7 +466,7 @@ export function Desktop({ launchAppPath, sharedTerminalScopeId, onOpenCommandPal
       window.removeEventListener(OPEN_PROVIDER_SETTINGS_EVENT, openProviderSettings);
       window.removeEventListener(OPEN_PROVIDER_TERMINAL_EVENT, openProviderTerminal);
     };
-  }, [openExistingProviderTerminal]);
+  }, [openExistingProviderTerminal, openSettings]);
 
   // Vocal mode's open_app tool and auto-open-after-build both go through
   // this. Fuzzy-matches `query` against the current apps list and focuses
@@ -640,7 +639,7 @@ export function Desktop({ launchAppPath, sharedTerminalScopeId, onOpenCommandPal
         group: "Actions",
         shortcut: "Cmd+,",
         keywords: ["settings", "preferences", "config", "configure"],
-        execute: () => { setSettingsOpen((prev) => !prev); setTaskBoardOpen(false); },
+        execute: () => { toggleSettings(); setTaskBoardOpen(false); },
       },
       {
         id: "action:open-file-browser",
@@ -797,7 +796,7 @@ export function Desktop({ launchAppPath, sharedTerminalScopeId, onOpenCommandPal
       "view:fullscreen",
       ...visibleModes().map((m) => `mode:${m.id}`),
     ]);
-  }, [register, unregister, visibleModes, setDesktopMode, openWindow, animateMinimize, wmCloseWindow, toggleVocal, wmToggleFullscreen]);
+  }, [register, unregister, visibleModes, setDesktopMode, openWindow, animateMinimize, wmCloseWindow, toggleVocal, wmToggleFullscreen, toggleSettings]);
 
   useEffect(() => {
     const appCommands = apps.map((app) => ({
@@ -822,10 +821,9 @@ export function Desktop({ launchAppPath, sharedTerminalScopeId, onOpenCommandPal
   }, [fullscreenWindowId, wmExitFullscreen]);
 
   const openWebSettings = useCallback((section: WebDesktopSettingsSection) => {
-    setSettingsDefaultSection(section);
-    setSettingsOpen(true);
+    openSettings(section);
     setTaskBoardOpen(false);
-  }, []);
+  }, [openSettings]);
 
   const openGettingStartedWork = useGettingStartedDestination(chat, openAppOrFocus);
 
@@ -844,14 +842,13 @@ export function Desktop({ launchAppPath, sharedTerminalScopeId, onOpenCommandPal
 
   const openLauncherDestination = useCallback((name: string, path: string) => {
     if (path === "__settings__" || path === "__plugins__") {
-      setSettingsDefaultSection(path === "__plugins__" ? "integrations" : "appearance");
-      setSettingsOpen(true);
+      openSettings(path === "__plugins__" ? "integrations" : "agents-providers");
       setTaskBoardOpen(false);
       return;
     }
     openAppOrFocus(path, name);
     setTaskBoardOpen(false);
-  }, [openAppOrFocus]);
+  }, [openAppOrFocus, openSettings]);
 
   if (firstRunStatus === "checking") {
     return (
@@ -878,7 +875,7 @@ export function Desktop({ launchAppPath, sharedTerminalScopeId, onOpenCommandPal
           onOpenApp={openAppOrFocus}
           onFocusWindow={(id) => { wmRestoreAndFocusWindow(id); focusCanvasWindow(id); }}
           onMinimizeWindow={animateMinimize}
-          onOpenSettings={() => { setSettingsOpen(true); setTaskBoardOpen(false); }}
+          onOpenSettings={() => { openSettings(); setTaskBoardOpen(false); }}
           onOpenCommandPalette={onOpenCommandPalette ?? (() => {})}
         >
           {canvasToolbarChild}
@@ -1161,7 +1158,7 @@ export function Desktop({ launchAppPath, sharedTerminalScopeId, onOpenCommandPal
                     <button
                       type="button"
                       data-testid="dock-settings"
-                      onClick={() => { setSettingsOpen((prev) => !prev); setTaskBoardOpen(false); }}
+                      onClick={() => { toggleSettings(); setTaskBoardOpen(false); }}
                       className={`flex items-center justify-center rounded-xl border shadow-sm hover:shadow-md hover:scale-105 active:scale-95 transition-all ${
                         settingsOpen
                           ? "bg-primary text-primary-foreground border-primary"
@@ -1218,7 +1215,7 @@ export function Desktop({ launchAppPath, sharedTerminalScopeId, onOpenCommandPal
               </button>
             )}            <button
               type="button"
-              onClick={() => { setSettingsOpen((prev) => !prev); setTaskBoardOpen(false); }}
+              onClick={() => { toggleSettings(); setTaskBoardOpen(false); }}
               className={`flex shrink-0 size-9 items-center justify-center rounded-lg border transition-all active:scale-95 ${
                 settingsOpen
                   ? "bg-primary text-primary-foreground border-primary"
@@ -1278,11 +1275,7 @@ export function Desktop({ launchAppPath, sharedTerminalScopeId, onOpenCommandPal
                   onOpenFirstWork={openGettingStartedWork}
                 />
               )}
-              onOpenSettings={(section: WebDesktopSettingsSection) => {
-                setSettingsDefaultSection(section);
-                setSettingsOpen(true);
-                setTaskBoardOpen(false);
-              }}
+              onOpenSettings={openWebSettings}
               onActivateWindow={(id) => wmRestoreAndFocusWindow(id)}
               onCloseWindow={wmCloseWindow}
               onShowDesktop={() => showWebDesktop(animateMinimize)}

@@ -9,7 +9,7 @@ import {
   modelKey,
   modelNotices,
   modelTrigger,
-  selectionCanRun,
+  selectionCanBeChosen,
 } from "@/components/chat/model-choices";
 import { modelOptionGroups, selectionWithOption } from "@/components/chat/model-options";
 import { ModelSheet, type ModelSheetProps } from "@/components/chat/ModelSheet";
@@ -50,10 +50,10 @@ export function ModelPicker({
   function handleModel(key: string) {
     if (catalogLoading) return;
     // Choosing the current model again must not rebuild the selection, which
-    // would drop the options saved with it -- unless it cannot run as saved,
+    // would drop the options saved with it -- unless it cannot be chosen as saved,
     // as when the account it is bound to has since been replaced.
     const kept = selection !== null && key === modelKey(selection.instanceId, selection.model)
-      && selectionCanRun(catalog, selection);
+      && selectionCanBeChosen(catalog, selection);
     if (!kept) {
       const next = chosenSelection(catalog, key);
       if (!next) return;

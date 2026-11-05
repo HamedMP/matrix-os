@@ -2,6 +2,7 @@ import { registerFundedHostConfigRoutes } from "./funded-host-config-registratio
 import { registerBrowserChatApprovalRoutes } from "./browser-chat-approval-registration.js";
 import type { BrowserApprovalMachineLookup } from "./browser-approval-machine-lookup.js";
 import { createPreviewDriveRoutes, type PreviewDriveIntegration } from './preview-drive-routes.js';
+import { createPreviewPairRoutes, type PreviewPairRoutesDeps } from './preview-pair/routes.js';
 import { createAccountDeletionRoutes } from './account-deletion/routes.js';
 import type { AccountDeletionRuntime } from './account-deletion/wiring.js';
 import { registerInternalIntegrationRoutes } from './internal-integration-route-registration.js';
@@ -83,8 +84,7 @@ import {
   createPlatformLaunchEvidenceLoader,
 } from './launch-readiness.js';
 import { createLaunchReadinessRoutes } from './launch-readiness-routes.js';
-import { createHostBundleRoutes } from './host-bundle-routes.js';
-import { createPrivatePreviewUpdateRoutes } from './private-preview-update-routes.js';
+import { mountHostBundleRoutes } from './host-bundle-composition.js';
 import { createPrivatePreviewRoutes } from './private-preview-routes.js';
 import { createPrivatePreviewAccess } from './private-preview-wiring.js';
 import type { PrivatePreviewMembershipCheck } from './private-preview-access.js';
@@ -269,6 +269,7 @@ export function createApp(deps: {
   integrationRoutes?: Hono<any>;
   internalIntegrationRoutes?: Hono<any>;
   previewDriveIntegration?: PreviewDriveIntegration;
+  previewPairs?: PreviewPairRoutesDeps;
   customMcpRoutes?: Hono<any>;
   internalCustomMcpRoutes?: Hono<any>;
   internalCustomMcpApprovalRoutes?: Hono<any>;
@@ -446,7 +447,7 @@ export function createApp(deps: {
       operatorSecret: goldenSnapshotOperatorSecret,
     }));
   }
-  const hostBundleRoutes = createHostBundleRoutes({
+  mountHostBundleRoutes(app, {
     db,
     platformSecret,
     adminBodyLimit: ADMIN_BODY_LIMIT,
@@ -456,10 +457,6 @@ export function createApp(deps: {
     goldenSnapshotCompatibility: deps.goldenSnapshotConfig?.compatibility,
     goldenSnapshotFreshnessMaxAgeMs: deps.goldenSnapshotConfig?.freshnessMaxAgeMs,
   });
-  app.route('/system-bundles', hostBundleRoutes);
-  app.route('/private-preview-updates', createPrivatePreviewUpdateRoutes({
-    db, hostBundleRoutes, logRouteError: logPlatformRouteError,
-  }));
 
   // OAuth 2.0 Device Flow (RFC 8628) -- mounted before any host-based routing
   // so the CLI's poll/code endpoints work regardless of which subdomain hits
@@ -493,6 +490,9 @@ export function createApp(deps: {
 
   if (deps.whatsappRoutes) app.route('/', deps.whatsappRoutes);
   app.route('/', createPlatformMcpRoutes({ db, env: appEnv }));
+  app.route('/', createPreviewPairRoutes({ ...deps.previewPairs,
+    enabled: (appEnv.MATRIX_PREVIEW_PAIR_ENABLED === 'true' || appEnv.MATRIX_PREVIEW_PAIR_MAINTENANCE_ENABLED === 'true')
+      && deps.previewPairs?.enabled === true }));
   app.route('/', createComputerRoutes({
     db,
     clerkAuth,

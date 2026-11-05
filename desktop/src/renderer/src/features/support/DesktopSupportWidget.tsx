@@ -1,5 +1,5 @@
 import "posthog-js/dist/conversations";
-import posthog from "posthog-js/dist/module.no-external";
+import { PostHog } from "posthog-js/dist/module.no-external";
 import { markDesktopFeatureFlagsReady } from "./desktop-feature-flags";
 import {
   buildSupportChatProperties,
@@ -14,14 +14,17 @@ import {
 import type { ApiClient } from "../../lib/api";
 import { invoke, onEvent } from "../../lib/operator";
 import { useEffect } from "react";
+import { toast } from "sonner";
 import { useConnection } from "../../stores/connection";
 import { useUi } from "../../stores/ui";
 import "@matrix-os/ui/onboarding-support-dock.css";
 
-type PostHogInitOptions = Parameters<typeof posthog.init>[1];
+type PostHogInitOptions = Parameters<PostHog["init"]>[1];
 
+let posthog = new PostHog();
 let initialized = false;
 let activeIdentity: string | null = null;
+let clientIdentityKey: string | null = null;
 let activeApiHost: string | null = null;
 let allowPostHogWidget = false;
 let launcherObserver: MutationObserver | null = null;
@@ -29,6 +32,7 @@ let openSupportPromise: Promise<boolean> | null = null;
 let supportLifecycleGeneration = 0;
 let cancelPendingElementWait: (() => void) | null = null;
 let supportOverlayHeld = false;
+let releaseSupportFallbackOverlay: (() => void) | null = null;
 let supportPanelTracked = false;
 let applicationOpenTracked = false;
 
@@ -36,6 +40,7 @@ const POSTHOG_WIDGET_ID = "ph-conversations-widget-container";
 const POSTHOG_LAUNCHER_SELECTOR = 'button[aria-label^="Open chat"]';
 const POSTHOG_CLOSE_SELECTOR = 'button[aria-label="Close"]';
 const SUPPORT_OPEN_TIMEOUT_MS = 10_000;
+const SUPPORT_FALLBACK_TOAST_ID = "desktop-support-unavailable";
 const QUIT_CAPTURE_TIMEOUT_MS = 500;
 
 function errorKind(error: unknown): string {
@@ -312,7 +317,10 @@ async function openSupportPanel(generation: number): Promise<boolean> {
 }
 
 export function openDesktopSupport(): Promise<boolean> {
-  if (!isDesktopSupportConfigured()) return Promise.resolve(false);
+  if (!isDesktopSupportConfigured()) {
+    reportSupportUnavailable();
+    return Promise.resolve(false);
+  }
   if (!openSupportPromise) {
     acquireSupportOverlay();
     const generation = supportLifecycleGeneration;
@@ -323,9 +331,13 @@ export function openDesktopSupport(): Promise<boolean> {
       })
       .then((opened) => {
         if (opened) {
+          clearSupportFallback();
           supportPanelTracked = true;
           captureActive({ name: "desktop_support_opened" });
         } else {
+          if (generation === supportLifecycleGeneration && useConnection.getState().status === "signed-in") {
+            reportSupportUnavailable();
+          }
           releaseSupportOverlay();
         }
         return opened;
@@ -338,37 +350,82 @@ export function openDesktopSupport(): Promise<boolean> {
   return openSupportPromise;
 }
 
+function reportSupportUnavailable(): void {
+  releaseSupportFallbackOverlay?.();
+  useUi.getState().acquireRendererOverlay();
+  let active = true;
+  const release = () => {
+    if (!active) return;
+    active = false;
+    if (releaseSupportFallbackOverlay === release) releaseSupportFallbackOverlay = null;
+    useUi.getState().releaseRendererOverlay();
+  };
+  releaseSupportFallbackOverlay = release;
+  try {
+    toast.error("Support chat is unavailable", {
+      id: SUPPORT_FALLBACK_TOAST_ID,
+      description: "Email support@matrix-os.com for help.",
+      onDismiss: release,
+      onAutoClose: release,
+    });
+  } catch (error: unknown) {
+    release();
+    console.warn("[desktop-support] Failed to show support fallback:", errorKind(error));
+  }
+}
+
+function clearSupportFallback(): void {
+  const release = releaseSupportFallbackOverlay;
+  if (!release) return;
+  try {
+    toast.dismiss(SUPPORT_FALLBACK_TOAST_ID);
+  } catch (error: unknown) {
+    console.warn("[desktop-support] Failed to dismiss support fallback:", errorKind(error));
+  } finally {
+    release();
+  }
+}
+
 export function closeDesktopSupport(): void {
   findPostHogButton(POSTHOG_CLOSE_SELECTOR)?.click();
 }
 
-function clearActivePostHogIdentity(
+function discardPostHogClient(
   eventName: "desktop_sign_out" | "desktop_identity_reset",
 ): void {
-  if (activeIdentity === null) return;
-  closeTrackedSupportPanel();
-  captureActive({ name: eventName });
-  try {
-    posthog.clearIdentity();
-  } catch (error: unknown) {
-    console.warn("[desktop-support] Failed to clear Conversations identity:", errorKind(error));
+  invalidatePendingSupportOpen();
+  allowPostHogWidget = false;
+  hidePostHogWidget();
+  if (activeIdentity !== null) {
+    closeTrackedSupportPanel();
+    captureActive({ name: eventName });
+    try {
+      posthog.clearIdentity();
+    } catch (error: unknown) {
+      console.warn("[desktop-support] Failed to clear Conversations identity:", errorKind(error));
+    }
   }
   try {
     posthog.reset();
   } catch (error: unknown) {
     console.warn("[desktop-support] Failed to reset PostHog identity:", errorKind(error));
   }
+  markDesktopFeatureFlagsReady(null);
+  posthog = new PostHog();
+  initialized = false;
   activeIdentity = null;
+  clientIdentityKey = null;
+  activeApiHost = null;
 }
 
 function hideAndResetSupport(): void {
   invalidatePendingSupportOpen();
   allowPostHogWidget = false;
+  clearSupportFallback();
   releaseSupportOverlay();
   useUi.getState().setSupportPanelOpen(false);
   if (!initialized) return;
-  hidePostHogWidget();
-  clearActivePostHogIdentity("desktop_sign_out");
+  discardPostHogClient("desktop_sign_out");
 }
 
 export default function DesktopSupportWidget() {
@@ -391,6 +448,10 @@ export default function DesktopSupportWidget() {
     }
 
     startLauncherObserver();
+    const identity = `${userId}:${authGeneration}`;
+    if (initialized && (activeApiHost !== apiHost || clientIdentityKey !== identity)) {
+      discardPostHogClient("desktop_identity_reset");
+    }
 
     if (!initialized) {
       try {
@@ -418,28 +479,14 @@ export default function DesktopSupportWidget() {
         } as PostHogInitOptions);
         initialized = true;
         activeApiHost = apiHost;
-        markDesktopFeatureFlagsReady();
+        clientIdentityKey = identity;
+        markDesktopFeatureFlagsReady(posthog);
       } catch (error: unknown) {
         console.warn("[desktop-support] PostHog initialization failed:", errorKind(error));
         return;
       }
     }
 
-    if (activeApiHost !== apiHost) {
-      invalidatePendingSupportOpen();
-      allowPostHogWidget = false;
-      hidePostHogWidget();
-      try {
-        clearActivePostHogIdentity("desktop_identity_reset");
-        posthog.set_config({ api_host: apiHost });
-        activeApiHost = apiHost;
-      } catch (error: unknown) {
-        console.warn("[desktop-support] PostHog relay rebind failed:", errorKind(error));
-        return;
-      }
-    }
-
-    const identity = `${userId}:${authGeneration}`;
     if (activeIdentity === identity) {
       try {
         posthog.setPersonProperties({
@@ -450,12 +497,6 @@ export default function DesktopSupportWidget() {
         console.warn("[desktop-support] PostHog profile update failed:", errorKind(error));
       }
       return;
-    }
-    if (activeIdentity !== null) {
-      invalidatePendingSupportOpen();
-      allowPostHogWidget = false;
-      hidePostHogWidget();
-      clearActivePostHogIdentity("desktop_identity_reset");
     }
     const generation = supportLifecycleGeneration;
 
@@ -569,6 +610,7 @@ export default function DesktopSupportWidget() {
   useEffect(() => () => {
     invalidatePendingSupportOpen();
     allowPostHogWidget = false;
+    clearSupportFallback();
     releaseSupportOverlay();
     stopLauncherObserver();
   }, []);

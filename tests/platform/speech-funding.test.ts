@@ -86,7 +86,7 @@ describe("funded AI speech wallet adapter", () => {
     expect(await db.executor.selectFrom("ai_funded_runtime_balances")
       .select(["month_spent_microusd", "month_reserved_microusd", "reserved_microusd"])
       .where("machine_id", "=", identity.machineId).executeTakeFirstOrThrow())
-      .toEqual({ month_spent_microusd: 77, month_reserved_microusd: 11, reserved_microusd: 120 });
+      .toEqual({ month_spent_microusd: 77, month_reserved_microusd: 11, reserved_microusd: 0 });
     expect(await db.executor.selectFrom("speech_runtime_allowances")
       .select(["period_spent_microusd", "period_reserved_microusd"])
       .where("machine_id", "=", identity.machineId).executeTakeFirstOrThrow())
@@ -108,7 +108,7 @@ describe("funded AI speech wallet adapter", () => {
     expect(await db.executor.selectFrom("ai_funded_runtime_policies").selectAll().execute()).toEqual([]);
   });
 
-  it("conservatively cleans up monthly speech without requiring a text-model policy", async () => {
+  it("audits and releases expired monthly speech without requiring a text-model policy", async () => {
     await db.executor.updateTable("ai_funded_runtime_balances").set({
       month_spent_microusd: 77,
       month_reserved_microusd: 11,
@@ -131,7 +131,7 @@ describe("funded AI speech wallet adapter", () => {
     expect(await db.executor.selectFrom("speech_runtime_allowances")
       .select(["period_spent_microusd", "period_reserved_microusd"])
       .where("machine_id", "=", identity.machineId).executeTakeFirstOrThrow())
-      .toEqual({ period_spent_microusd: 80, period_reserved_microusd: 0 });
+      .toEqual({ period_spent_microusd: 0, period_reserved_microusd: 0 });
     expect(await db.executor.selectFrom("ai_funded_runtime_balances")
       .select(["month_spent_microusd", "month_reserved_microusd"])
       .where("machine_id", "=", identity.machineId).executeTakeFirstOrThrow())
@@ -215,6 +215,13 @@ describe("funded AI speech wallet adapter", () => {
       modelId: "gpt-4o-transcribe",
       maximumCostMicrousd: 60,
     }));
+    for (const [id, held] of [[settlement.reservationId, 80], [release.reservationId, 60]] as const) {
+      await db.executor.updateTable("ai_funded_usage_reservations").set({ reserved_microusd: held,
+        addon_reserved_microusd: held, authorization_response: JSON.stringify({ capability: "speech:transcribe", policyRevision: "speech-legacy" }) })
+        .where("reservation_id", "=", id).execute();
+    }
+    await db.executor.updateTable("ai_funded_runtime_balances").set({ reserved_microusd: 140, month_reserved_microusd: 140 })
+      .where("machine_id", "=", identity.machineId).execute();
     await db.transaction((trx) => legacy.start(trx.executor, settlement.reservationId));
 
     const current = monthlyPort("unused_current_factory");
@@ -248,7 +255,7 @@ describe("funded AI speech wallet adapter", () => {
       maximumCostMicrousd: 120,
     }));
 
-    expect(reservation).toEqual({ reservationId: "speech_funding_1", reservedMicrousd: 120 });
+    expect(reservation).toEqual({ reservationId: "speech_funding_1", reservedMicrousd: 0 });
     expect(await db.executor.selectFrom("ai_funded_usage_reservations")
       .select("model_id").where("reservation_id", "=", reservation.reservationId)
       .executeTakeFirstOrThrow()).toEqual({ model_id: "gpt-4o-transcribe" });
@@ -371,7 +378,7 @@ describe("funded AI speech wallet adapter", () => {
       .executeTakeFirstOrThrow()).toEqual({ status: "reserved" });
   });
 
-  it("conservatively reconciles an expired in-flight speech reservation", async () => {
+  it("audits unknown expense and releases an expired in-flight speech request", async () => {
     await funded.grantCredit({
       entryId: "addon_crashed_dispatch",
       identity,
@@ -402,14 +409,14 @@ describe("funded AI speech wallet adapter", () => {
       .select(["status", "actual_microusd", "finalization_mode"])
       .where("reservation_id", "=", reservation.reservationId)
       .executeTakeFirstOrThrow()).toEqual({
-        status: "settled",
-        actual_microusd: 80,
-        finalization_mode: "conservative",
+        status: "expired",
+        actual_microusd: null,
+        finalization_mode: null,
       });
     expect(await db.executor.selectFrom("ai_funded_runtime_balances")
       .select(["credit_balance_microusd", "reserved_microusd"])
       .where("machine_id", "=", identity.machineId)
-      .executeTakeFirstOrThrow()).toMatchObject({ credit_balance_microusd: 220, reserved_microusd: 0 });
+      .executeTakeFirstOrThrow()).toMatchObject({ credit_balance_microusd: 300, reserved_microusd: 0 });
   });
 
   it("rolls back the wallet reservation when its enclosing speech admission fails", async () => {
@@ -467,7 +474,7 @@ describe("funded AI speech wallet adapter", () => {
       policyRevision: "speech-2",
       modelId: "gpt-4o-transcribe",
       maximumCostMicrousd: 40,
-    }))).resolves.toEqual({ reservationId: "speech_funding_rotated", reservedMicrousd: 40 });
+    }))).resolves.toEqual({ reservationId: "speech_funding_rotated", reservedMicrousd: 0 });
     expect(await db.executor.selectFrom("ai_runtime_credentials").select("token_id").execute()).toHaveLength(2);
   });
 });

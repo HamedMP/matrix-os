@@ -43,3 +43,8 @@ export function readBuildSource(root, expectedCommit) {
   if (ancestors.some((sha) => !COMMIT.test(sha))) throw new Error("Invalid build source history");
   return { commit, ancestors };
 }
+
+/** Candidate checkout and controller execution are separate immutable identities. */
+export function readDesktopBuildSource(root, env = process.env) {
+  return readBuildSource(root, env.MATRIX_DESKTOP_SOURCE_SHA || env.GITHUB_SHA);
+}

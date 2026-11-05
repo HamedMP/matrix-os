@@ -7,6 +7,7 @@ import { runPlatformMigration } from '../../packages/platform/src/migration-runn
 import { migratePlatformSchema } from '../../packages/platform/src/database/migrate.js';
 import { PLATFORM_SCHEMA_REVISION } from '../../packages/platform/src/database/migration-revision.js';
 import { runPlatformStartupMigrations } from '../../packages/platform/src/database/run-migrations.js';
+import { FUNDED_CONSERVATIVE_FENCE_REVISION } from '../../packages/platform/src/database/funded-conservative-fence-revision.js';
 import { FUNDED_PROBE_CACHE_REVISION } from '../../packages/platform/src/database/funded-probe-cache-revision.js';
 import { WHATSAPP_SCHEMA_REVISION } from '../../packages/platform/src/database/whatsapp-migration-revision.js';
 import { GOOGLE_TRACKING_REVISION } from '../../packages/platform/src/billing/google-tracking-revision.js';
@@ -65,7 +66,9 @@ describe('WhatsApp schema startup', () => {
       expect(revisions.rows).toEqual([
         { scope: 'billing-google-purchases', ...GOOGLE_TRACKING_REVISION },
         { scope: 'core', ...PLATFORM_SCHEMA_REVISION },
+        { scope: 'funded-conservative-fence', ...FUNDED_CONSERVATIVE_FENCE_REVISION },
         { scope: 'funded-probe-cache', ...FUNDED_PROBE_CACHE_REVISION },
+        { scope: 'preview-pairs', generation: 5, fingerprint: 'collaboration-preview-pair-publisher-v5' },
         { scope: 'sites', generation: 1, fingerprint: 'public-app-sites-v1' },
         { scope: 'whatsapp', ...WHATSAPP_SCHEMA_REVISION },
       ]);

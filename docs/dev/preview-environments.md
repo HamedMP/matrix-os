@@ -716,3 +716,9 @@ dashboards.
 - Preview bundles in R2 (`system-bundles/v*-pr*`) can be cleaned after PR
   close; they are never referenced by channel pointers. Keep any version that an
   active Private Preview still has confirmed.
+
+## Collaboration preview pair
+
+For two test-owned computers and matching isolated Electron apps from an unmerged
+PR, see [Collaboration preview pairs](collaboration-preview-pairs.md). Requires
+reviewed protected setup; ordinary Private Previews keep their existing flow.

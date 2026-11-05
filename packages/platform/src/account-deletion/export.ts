@@ -57,6 +57,14 @@ export async function exportOwnerPlatformData(db: PlatformDB, owner: string) {
       .where('clerk_user_id','=',owner).limit(1001).execute();
     const onboarding = await trx.executor.selectFrom('onboarding_first_run').select(['completed_at','goal','steps','source'])
       .where('clerk_user_id','=',owner).execute();
+    const credit = await trx.executor.selectFrom('ai_funded_runtime_balances').select([
+      'machine_id','runtime_slot','credit_balance_microusd','reserved_microusd','month_period_start','month_spent_microusd',
+    ]).where('owner_id','=',owner).limit(1001).execute();
+    const aiRequests = await trx.executor.selectFrom('ai_funded_usage_reservations').select([
+      'reservation_id','request_id','machine_id','runtime_slot','model_id','status','reserved_microusd','actual_microusd',
+      'created_at','started_at','settled_at','released_at','customer_charge_release','settlement_response',
+      sql<number>`COALESCE((authorization_response::jsonb #>> '{reservation,maxCostMicrousd}')::bigint, reserved_microusd)`.as('maximum_liability_microusd'),
+    ]).where('owner_id','=',owner).orderBy('reservation_id').limit(10001).execute();
     const registry = await sql<{present:boolean}>`SELECT to_regclass('public_sites') IS NOT NULL AS present`.execute(trx.executor);
     const sites = registry.rows[0]?.present ? await trx.executor.selectFrom('public_sites').select([
       'id','machine_id','app_slug','title','description','slug','revision','status','active_version','created_at',
@@ -67,10 +75,10 @@ export async function exportOwnerPlatformData(db: PlatformDB, owner: string) {
     const aliases=siteIds.length ? await trx.executor.selectFrom('public_site_aliases').select(['slug','site_id'])
       .where('site_id','in',siteIds).orderBy('slug').limit(10001).execute() : [];
     if ([posts,comments,likes,follows].some((rows)=>rows.length>10000) || machines.length>1000 || billing.length>1000
-      || sites.length>1000 || versions.length>50000 || aliases.length>10000) {
+      || sites.length>1000 || versions.length>50000 || aliases.length>10000 || credit.length>1000 || aiRequests.length>10000) {
       throw new Error('Platform export capacity exceeded');
     }
     return { version:2,exportedAt:new Date().toISOString(),profile,posts,comments,likes,follows,machines,billing,onboarding,
-      publicSites:{sites,versions,aliases} };
+      publicSites:{sites,versions,aliases}, aiGatewayCredit:{ balances:credit, requests:aiRequests } };
   });
 }
