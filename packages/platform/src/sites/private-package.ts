@@ -1,4 +1,5 @@
 import { posix } from 'node:path';
+import { tokenizer } from 'acorn';
 import { init, parse } from 'es-module-lexer';
 import { SiteError } from './types.js';
 
@@ -102,19 +103,27 @@ function rewriteVitePreloadMetadata(code: string, path: string, files: Map<strin
 }
 
 function rewriteViteGeneratedAssetLiterals(code: string, path: string, files: Map<string, PrivateSiteFile>, uriFor: (path: string) => string): string {
-  const budget = new ExpansionBudget(code);
   // Default-base Vite builds emit imported non-code assets as hashed absolute
   // literals. Requiring both that signature and an exact packaged file avoids
   // treating ordinary app copy and route strings as build dependencies.
-  return code.replace(/(['"])(\/assets\/[^'"\n]*-[A-Za-z0-9_-]{6,}\.[A-Za-z0-9]+)\1/g, (match, _quote: string, raw: string) => {
+  const replacements: Array<{ start: number; end: number; value: string }> = [];
+  const tokens = tokenizer(code, { ecmaVersion: 'latest', sourceType: 'module', allowHashBang: true });
+  while (true) {
+    const token = tokens.getToken();
+    if (token.type.label === 'eof') break;
+    const value = (token as typeof token & { value?: unknown }).value;
+    if (token.type.label !== 'string' || typeof value !== 'string') continue;
+    const raw = value;
+    if (!/^\/assets\/[^\n]*-[A-Za-z0-9_-]{6,}\.[A-Za-z0-9]+$/.test(raw)) continue;
     const resolved = resolvedPath(files, raw, path);
     const file = resolved ? files.get(resolved) : undefined;
-    if (!file) return match;
+    if (!file) continue;
     const isCodeOrStyle = /(?:java|ecma)script|application\/x-javascript|text\/css|text\/html/.test(file.contentType)
       || /\.(?:m?js|css|html?)$/i.test(file.path);
-    if (isCodeOrStyle) return match;
-    return budget.replacement(match, JSON.stringify(uriFor(resolved!)));
-  });
+    if (isCodeOrStyle) continue;
+    replacements.push({ start: token.start, end: token.end, value: JSON.stringify(uriFor(resolved!)) });
+  }
+  return applyReplacements(code, replacements);
 }
 
 async function rewriteModule(code: string, path: string, files: Map<string, PrivateSiteFile>, uriFor: (path: string) => string): Promise<string> {

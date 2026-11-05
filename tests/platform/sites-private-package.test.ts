@@ -78,14 +78,17 @@ describe('private site package', () => {
   it('does not interpret ordinary quoted app strings as build artifact paths', async () => {
     const html = await packagePrivateSiteHtml([
       { path: 'index.html', contentType: 'text/html', body: bytes('<script type="module" src="./assets/main.js"></script>') },
-      { path: 'assets/main.js', contentType: 'text/javascript', body: bytes('window.navigate("../.."); window.label = "/assets/logo.png";') },
+      { path: 'assets/main.js', contentType: 'text/javascript', body: bytes('window.navigate("../.."); window.label = "/assets/logo.png"; window.template = "<img src=\'/assets/logo-ABCdef12.svg\'>";') },
       { path: 'assets/logo.png', contentType: 'image/png', body: Buffer.from([1, 2, 3]) },
+      { path: 'assets/logo-ABCdef12.svg', contentType: 'image/svg+xml', body: bytes('<svg/>') },
     ], 'index.html');
     const mapText = html.match(/<script type="importmap">([^<]+)<\/script>/)?.[1];
     const imports = JSON.parse(mapText!).imports as Record<string, string>;
     const main = Buffer.from(imports['matrix-site:assets/main.js']!.split(',')[1]!, 'base64').toString('utf8');
     expect(main).toContain('window.navigate("../..")');
     expect(main).toContain('window.label = "/assets/logo.png"');
+    expect(main).toContain('window.template = "<img src=\'/assets/logo-ABCdef12.svg\'>"');
+    expect(() => new Function(main)).not.toThrow();
   });
 
   it('embeds an image imported by an actual default-base Vite build', async () => {
