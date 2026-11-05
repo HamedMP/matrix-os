@@ -307,7 +307,26 @@ describe("platform serving-source compatibility", () => {
   it("keeps the reviewed production manifest bounded and source-only", () => {
     const manifest = validateCompatibilityManifest(readFileSync("specs/639-managed-model-selection/current-runtime-compatibility.json", "utf8"));
     expect(manifest.exceptions).toHaveLength(1);
-    expect(manifest.exceptions[0].preservedFiles).toHaveLength(16);
-    expect(manifest.exceptions[0].sourceSha).toBe("ccdac762ff830e547d6b26ea18a98ccec6d31b3c");
+    expect(manifest.exceptions[0]).toMatchObject({
+      sourceSha: "10ce63461e3658f6f2de9366754efb57c1adeae9",
+      imageDigest: "sha256:e12d00150b7d592d16605b2afefca88237a153f2caf446007b9ec0c3f4d5e210",
+      preserveRuntimeConfiguration: true,
+    });
+    expect(manifest.exceptions[0].preservedFiles.map(({ path }) => path)).toEqual([
+      "packages/contracts/package.json",
+      "packages/contracts/src/index.ts",
+      "packages/contracts/src/routine-full-access-view.ts",
+      "packages/contracts/src/routine-full-access.ts",
+      "packages/platform/src/browser-chat-approval-proof.ts",
+      "packages/platform/src/browser-chat-approval-registration.ts",
+      "packages/platform/src/canonical-owner-approval-proxy.ts",
+      "packages/platform/src/routine-action-routes.ts",
+      "packages/platform/src/routine-full-access-proof.ts",
+      "packages/platform/src/routine-full-access-proxy.ts",
+      "packages/platform/src/routine-full-access-routes.ts",
+      "packages/platform/src/routine-proof-verification-guard.ts",
+      "packages/platform/src/session-routing-proxy.ts",
+      "packages/platform/src/session-routing-websocket.ts",
+    ]);
   });
 });
