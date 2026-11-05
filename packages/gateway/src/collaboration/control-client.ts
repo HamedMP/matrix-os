@@ -293,10 +293,10 @@ export class CollaborationControlClient {
         try {
           await this.options.capabilities.endActorGrants({ organizationId: denial.organizationId, actorId: denial.actorId });
         } catch (error: unknown) {
-          // Not fully applied: no fence is acknowledged, so the denial completes only at its lease
-          // deadline; access is already closed because the evidence was evicted and sessions ended.
+          // Rejecting terminates this ordered stream, so no later acknowledgement can cover the
+          // failed denial. The platform redelivers it after reconnect; access is already closed.
           console.warn("[collaboration-control-client] departure grant cleanup failed", error instanceof Error ? error.name : "UnknownError");
-          return;
+          throw error;
         }
         // The drain may have landed while the cleanup was in flight. The runtime has stopped
         // serving, so the denial is left to complete at its lease deadline rather than being
@@ -312,7 +312,7 @@ export class CollaborationControlClient {
         } catch (error: unknown) {
           console.warn("[collaboration-control-client] project access drain failed",
             error instanceof Error ? error.name : "UnknownError");
-          return;
+          throw error;
         }
         if (this.closed) return;
       }
