@@ -15,7 +15,7 @@ import { assertCurrentPublishingRuntime, createPublishAdmission } from './publis
 import { loadSiteAsset } from './asset-stream.js';
 import {
     buildSiteViewerCookie, createSiteAccessSecret, hashSiteAccessSecret,
-    readSiteViewerCookie, siteAccessSecretMatches,
+    readSiteAssetCookie, readSiteViewerCookie, siteAccessSecretMatches,
 } from './access-links.js';
 type Storage = Omit<CustomerVpsObjectStore, 'getObject'> & {
     getObject(key: string, options?: { signal?: AbortSignal }): Promise<{ body: unknown; etag?: string; contentLength?: number }>;
@@ -260,10 +260,11 @@ export function createSitesService(options: {
             return work(projected, trx);
         }, env));
     }
-    async function authorize(reference: string, cookieHeader?: string, scoped = db) {
+    async function authorizeCredential(reference: string, cookieHeader: string | undefined,
+        readCredential: typeof readSiteViewerCookie, scoped = db) {
         const site = await resolve(reference, scoped);
         if (!site || site.accessMode === 'public') return site;
-        const credential = readSiteViewerCookie(cookieHeader, site.id);
+        const credential = readCredential(cookieHeader, site.id);
         if (!credential) return null;
         const row = await scoped.executor.selectFrom('public_site_access_links').selectAll()
             .where('id', '=', credential.linkId).where('site_id', '=', site.id).executeTakeFirst();
@@ -271,6 +272,12 @@ export function createSitesService(options: {
             || Date.parse(row.session_expires_at) <= Date.now()
             || !siteAccessSecretMatches(credential.token, row.session_token_hash)) return null;
         return site;
+    }
+    async function authorize(reference: string, cookieHeader?: string, scoped = db) {
+        return authorizeCredential(reference, cookieHeader, readSiteViewerCookie, scoped);
+    }
+    async function authorizeAsset(reference: string, cookieHeader?: string, scoped = db) {
+        return authorizeCredential(reference, cookieHeader, readSiteAssetCookie, scoped);
     }
     async function listAccessLinks(owner: SiteOwner) {
         await db.ready;
@@ -345,7 +352,7 @@ export function createSitesService(options: {
             return { cookie: buildSiteViewerCookie(site.id, link.id, sessionToken), link: accessLinkSummary(changed) };
         }, env));
     }
-    return { get, resolve, authorize, deploy, patch, unpublish, rollback, asset, admitted,
+    return { get, resolve, authorize, authorizeAsset, deploy, patch, unpublish, rollback, asset, admitted,
         listAccessLinks, createAccessLink, revokeAccessLink, claimAccessLink };
 }
 export type SitesService = ReturnType<typeof createSitesService>;

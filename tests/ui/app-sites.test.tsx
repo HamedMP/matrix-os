@@ -3,7 +3,7 @@ import React from "react";
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { AppSitePanel } from "../../shell/src/components/app-sites/AppSitePanel";
-import type { SiteClient } from "../../shell/src/lib/site-client";
+import { SiteClientError, type SiteClient } from "../../shell/src/lib/site-client";
 
 const published = { id: "11111111-1111-4111-8111-111111111111", appSlug: "launch", title: "Launch", description: "Join us", slug: "matrix-launch", url: "https://matrix.page/matrix-launch", revision: 1, status: "published" as const, accessMode: "public" as const, activeVersion: "22222222-2222-4222-8222-222222222222", versions: [{ id: "22222222-2222-4222-8222-222222222222", createdAt: "2026-10-09T12:00:00Z" }, { id: "33333333-3333-4333-8333-333333333333", createdAt: "2026-10-08T12:00:00Z" }], config: { data: {}, forms: [] } };
 function client(overrides: Partial<SiteClient> = {}): SiteClient {
@@ -29,12 +29,24 @@ describe("shared app publishing", () => {
     const create=await screen.findByRole("button",{name:"Create one-time link"});
     await waitFor(()=>expect(create).toHaveProperty("disabled",false));
     fireEvent.click(create);
-    expect(await screen.findByText(url)).toBeTruthy();
+    const secretUrl=await screen.findByText(url);
+    expect(secretUrl).toBeTruthy();
+    expect(secretUrl.closest('.ph-no-capture')).not.toBeNull();
+    expect(secretUrl.getAttribute('data-ph-mask')).toBe('true');
     expect(screen.getByText("Save this URL now. It will not be shown again.")).toBeTruthy();
     expect(api.createAccessLink).toHaveBeenCalledWith("launch",{baseRevision:1},expect.any(AbortSignal));
     fireEvent.click(screen.getByRole("button",{name:"Revoke link"}));
     await waitFor(()=>expect(api.revokeAccessLink).toHaveBeenCalledWith("launch",link.id,expect.any(AbortSignal)));
     expect(screen.queryByText(url)).toBeNull();
+  });
+  it("offers publication refresh when one-time link creation loses a revision race",async()=>{
+    const privateSite={...published,accessMode:"private_link" as const};
+    const api=client({get:vi.fn(async()=>privateSite),accessLinks:vi.fn(async()=>({links:[]})),createAccessLink:vi.fn(async()=>{throw new SiteClientError(409);})});
+    render(<AppSitePanel appSlug="launch" client={api} />);
+    const create=await screen.findByRole("button",{name:"Create one-time link"});
+    await waitFor(()=>expect(create).toHaveProperty("disabled",false));
+    fireEvent.click(create);
+    expect(await screen.findByRole("button",{name:"Refresh publication"})).toBeTruthy();
   });
   it("fails closed and retries when private link metadata cannot be loaded",async()=>{
     const privateSite={...published,accessMode:"private_link" as const};

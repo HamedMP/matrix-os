@@ -6,16 +6,36 @@ const reference = '(?:[a-z][a-z0-9-]{1,62}|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[
 const read = new RegExp(`^/${reference}(?:/frame|/assets/[0-9a-f-]{36}/[A-Za-z0-9_./-]{1,240})?$`);
 const write = new RegExp(`^/${reference}/(?:forms/[a-z][a-z0-9_]{0,63}|access/claim)$`);
 const blocked = new Set(['api', 'public', 'assets', 'frame', 'forms', 'preview', 'admin', 'auth', 'health', 'robots', 'favicon', 'index', 'sites', 'www']);
-const viewerCookie = /^__Host-matrix_site_viewer_[a-f0-9]{32}=[0-9a-f-]{36}\.[A-Za-z0-9_-]{43}$/i;
-const viewerSetCookie = /^__Host-matrix_site_viewer_[a-f0-9]{32}=[0-9a-f-]{36}\.[A-Za-z0-9_-]{43}; Path=\/; HttpOnly; Secure; SameSite=Lax; Max-Age=2592000$/i;
-function forwardedViewerCookies(raw: string | null): { value: string | null; invalid: boolean } {
+const siteIdPattern = '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}';
+const viewerCookie = new RegExp(`^__Secure-matrix_site_viewer_([a-f0-9]{32})=${siteIdPattern}\\.[A-Za-z0-9_-]{43}$`, 'i');
+const assetCookie = new RegExp(`^__Secure-matrix_site_asset_([a-f0-9]{32})=${siteIdPattern}\\.[A-Za-z0-9_-]{43}$`, 'i');
+const viewerSetCookie = new RegExp(`^__Secure-matrix_site_viewer_([a-f0-9]{32})=${siteIdPattern}\\.[A-Za-z0-9_-]{43}; Path=\/(${siteIdPattern}); HttpOnly; Secure; SameSite=Lax; Max-Age=2592000$`, 'i');
+const assetSetCookie = new RegExp(`^__Secure-matrix_site_asset_([a-f0-9]{32})=${siteIdPattern}\\.[A-Za-z0-9_-]{43}; Path=\/(${siteIdPattern})\/assets\/; HttpOnly; Secure; SameSite=None; Max-Age=2592000$`, 'i');
+const matrixCookiePrefix = /^__(?:Secure-matrix_site_(?:viewer|asset)_|Host-matrix_site_viewer_)/i;
+function pathSiteId(pathname: string): string | null {
+    const candidate = pathname.split('/')[1] ?? '';
+    return new RegExp(`^${siteIdPattern}$`, 'i').test(candidate) ? candidate.toLowerCase() : null;
+}
+function approvedSetCookie(cookie: string, targetSiteId: string | null): boolean {
+    if (!targetSiteId) return false;
+    const match = viewerSetCookie.exec(cookie) ?? assetSetCookie.exec(cookie);
+    return Boolean(match && match[1]?.toLowerCase() === targetSiteId.replaceAll('-', '') && match[2]?.toLowerCase() === targetSiteId);
+}
+function forwardedViewerCookies(raw: string | null, targetSiteId: string | null): { value: string | null; invalid: boolean } {
     if (!raw) return { value: null, invalid: false };
     if (new TextEncoder().encode(raw).byteLength > 8192) return { value: null, invalid: true };
     const entries = raw.split(';').map(value => value.trim()).filter(Boolean);
-    const viewerEntries = entries.filter(value => value.toLowerCase().startsWith('__host-matrix_site_viewer_'));
-    if (viewerEntries.some(value => !viewerCookie.test(value)) || viewerEntries.length > 20)
+    const viewerEntries = entries.filter(value => matrixCookiePrefix.test(value));
+    const parsed = viewerEntries.map(value => ({ value, match: viewerCookie.exec(value) ?? assetCookie.exec(value) }));
+    if (parsed.some(value => !value.match))
         return { value: null, invalid: true };
-    return { value: viewerEntries.length ? viewerEntries.join('; ') : null, invalid: false };
+    if (!targetSiteId) return { value: null, invalid: false };
+    const suffix = targetSiteId.replaceAll('-', '');
+    const matching = parsed.filter(value => value.match?.[1]?.toLowerCase() === suffix).map(value => value.value);
+    const matchingViewers = matching.filter(value => viewerCookie.test(value)).length;
+    const matchingAssets = matching.filter(value => assetCookie.test(value)).length;
+    if (matchingViewers > 1 || matchingAssets > 1) return { value: null, invalid: true };
+    return { value: matching.length ? matching.join('; ') : null, invalid: false };
 }
 async function handleSiteRequest(request: Request, env: SitesWorkerEnv): Promise<Response> {
         const url = new URL(request.url);
@@ -49,7 +69,8 @@ async function handleSiteRequest(request: Request, env: SitesWorkerEnv): Promise
             headers.set('content-type', 'application/json');
         if (claim)
             headers.set('x-matrix-sites-origin', 'same-origin');
-        const safeCookies = forwardedViewerCookies(request.headers.get('cookie'));
+        const targetSiteId = pathSiteId(url.pathname);
+        const safeCookies = forwardedViewerCookies(request.headers.get('cookie'), targetSiteId);
         if (safeCookies.invalid)
             return new Response('Site unavailable', { status: 400 });
         if (safeCookies.value)
@@ -99,7 +120,7 @@ async function handleSiteRequest(request: Request, env: SitesWorkerEnv): Promise
             const cookies = responseHeaders.getSetCookie?.() ?? responseHeaders.getAll?.('set-cookie')
                 ?? (response.headers.get('set-cookie') ? [response.headers.get('set-cookie')!] : []);
             for (const cookie of cookies)
-                if (viewerSetCookie.test(cookie)) result.headers.append('set-cookie', cookie);
+                if (approvedSetCookie(cookie, targetSiteId)) result.headers.append('set-cookie', cookie);
             result.headers.set('Cache-Control', 'no-store');
             result.headers.set('CDN-Cache-Control', 'no-store');
             return result;

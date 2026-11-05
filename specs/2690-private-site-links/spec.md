@@ -36,15 +36,16 @@ Plaintext tokens are never persisted or returned by list/export APIs. Owner expo
 
 Owner UI → verified gateway owner route → machine-authenticated platform management route → owner/site transaction in platform Postgres.
 
-Visitor browser → Matrix.page Worker → edge-proofed platform public route. The Worker permits only the exact site viewer cookie family, strips Clerk/authorization/unrelated cookies, and accepts only a validated viewer `Set-Cookie`. The platform resolves the active publication and validates the cookie hash before returning wrapper/frame/assets or forwarding a form.
+Visitor browser → Matrix.page Worker → edge-proofed platform public route. The Worker permits only the exact cookies for the permanent site ID in the request path, strips Clerk/authorization/unrelated and other-site cookies, and accepts only validated site-matching `Set-Cookie` values. The platform resolves the active publication and validates the session hash before returning wrapper/frame/assets or forwarding a form.
 
 Claim flow:
 
 1. Initial `GET /<reference>` has no secret on the wire and returns the generic claim wrapper for a private publication without a valid viewer cookie.
 2. Explicit click sends the exact `{ linkId, token }` body to `POST /<reference>/access/claim` from the Matrix.page origin.
 3. The platform takes the owner advisory lock, site row lock, then link row lock; checks site state/mode, site/link binding, expiry, unclaimed state, and a constant-time hash match.
-4. One conditional update writes the claim time, new random session hash, and session expiry. The response contains only a site-specific `HttpOnly; Secure; SameSite=Lax` cookie.
-5. The browser clears the fragment and reloads. All private entry points revalidate the current row; no cached authorization decision exists.
+4. One conditional update writes the claim time, new random session hash, and session expiry. The response contains a site-path-scoped `HttpOnly; Secure; SameSite=Lax` viewer cookie.
+5. The browser clears the fragment and reloads. The authenticated `/frame` navigation revalidates the viewer cookie and issues a second `HttpOnly; Secure; SameSite=None` credential scoped narrowly to `/<permanent-site-id>/assets/`. Opaque sandbox module and stylesheet requests do not carry a Lax cookie, so this derived credential is required without weakening the iframe sandbox. It contains the same site-bound session bearer and every asset request revalidates its stored hash, expiry, and revocation state.
+6. All private entry points revalidate the current row; no cached authorization decision exists. The asset credential cannot authorize the wrapper, frame, or form routes, and the viewer credential cannot authorize an opaque-origin asset request.
 
 The platform database is the source of truth for access mode, link claim state, session validity, and revocation. The browser cookie is only a bearer presented for hash verification.
 
@@ -57,8 +58,8 @@ The platform database is the source of truth for access mode, link claim state, 
 | `DELETE /api/apps/:slug/site/access-links/:linkId` | Same owner chain and site-bound link ID | No |
 | `GET /:reference` | Worker edge proof; public mode or valid site viewer session. Invalid private sessions receive generic gate/unavailable content | Yes |
 | `POST /:reference/access/claim` | Worker edge proof, same-origin browser request, exact bounded claim payload, active private site and unclaimed site-bound link | Yes |
-| `GET /:reference/frame/:version` | Worker edge proof plus valid site viewer session for private sites | Yes |
-| `GET /:reference/assets/:version/*` | Worker edge proof plus valid site viewer session for private sites | Yes |
+| `GET /:reference/frame` | Worker edge proof plus valid site viewer session for private sites; issues a narrowly scoped asset credential | Yes |
+| `GET /:reference/assets/:version/*` | Worker edge proof plus valid site asset credential backed by the same private session | Yes |
 | `POST /:reference/forms/:formId` | Worker edge proof, valid private viewer session, existing form admission and exact declared schema | Yes |
 
 No user-controlled forwarding header, Clerk cookie, owner cookie, or Authorization header establishes viewer access.
@@ -67,7 +68,8 @@ No user-controlled forwarding header, Clerk cookie, owner cookie, or Authorizati
 
 - Claim and management bodies use strict Zod schemas and 2 KiB body limits. Query-string credentials are unsupported.
 - Claim tokens and session tokens contain 256 random bits encoded as 43 base64url characters. Hash comparisons use `timingSafeEqual` after exact shape validation.
-- Cookie input is capped at 8 KiB. The Worker forwards only exact bounded Matrix.page viewer cookies; platform parsing is site-specific.
+- Cookie input is capped at 8 KiB. The Worker forwards at most the exact viewer and asset cookies whose suffix matches the permanent site ID in the path; cookies for other claimed sites cannot accumulate into a request or consume its allowance. Platform parsing remains site-specific.
+- The viewer cookie is Lax and scoped to `/<site-id>`. The opaque-frame asset cookie is `SameSite=None` and scoped to `/<site-id>/assets/`; it authorizes read-only immutable published bytes only, never claims, forms, owner APIs, or wrapper/frame access. Both bearers are checked against the same revocable session hash.
 - At most 50 link rows exist per site. Existing owner and public rate/in-flight admission caps apply; claim uses the bounded mutation admission path so revocation capacity remains available.
 - Lock order is owner advisory lock → site row → link row. Related changes are transactional and optimistic publication revision checks occur in the write transaction.
 - All responses are `no-store`. Public errors are generic. Tokens and hashes are excluded from logs, owner list responses, and export.
@@ -86,8 +88,8 @@ Rollback of shell/gateway controls leaves existing private publications enforcea
 
 ## Verification and delivery
 
-- Regression tests cover migration default, one concurrent claim winner, exact seven/30-day expiry, multiple links, 50-row cap, revocation, cross-site denial, public/private/unpublish transitions, secret absence, cookie allowlists, and fail-closed wrapper/frame/asset/form routes.
-- UI tests cover mode changes, copy-once URL display, metadata status, safe errors, and revocation.
+- Regression tests cover migration default, one concurrent claim winner on independent PostgreSQL connections, exact seven/30-day expiry, multiple links, 50-row cap, revocation, cross-site denial, public/private/unpublish transitions, secret absence, cookie allowlists, opaque-frame asset credentialing, cookie accumulation, and fail-closed wrapper/frame/asset/form routes.
+- UI tests cover mode changes, copy-once URL display, replay masking, revision-conflict recovery, metadata status, safe errors, and revocation.
 - A real browser journey uses two clean profiles: profile A claims and refreshes; profile B cannot reuse; revocation blocks A. Public Matrix.page and authenticated private form submission are checked separately.
 - Live evidence is required for Web Canvas, Web Desktop, Electron Desktop, Web Mobile, and desktop/mobile Matrix.page viewing. Native Mobile owner management is unsupported until separately approved.
 - Ship through the ENG-437 worktree PR with current-head CI, Greptile 5/5, product/security review recommendation, captures in the PR and Slack `#tech`, and a separate public-docs PR in `FinnaAI/matrix-os-site`.

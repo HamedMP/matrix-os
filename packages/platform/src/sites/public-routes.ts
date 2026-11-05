@@ -9,6 +9,7 @@ import { SiteError } from './types.js';
 import type { SitesService } from './service.js';
 import { APP_CSP, PAGE_CSP, siteAccessGate, siteFrame, sitePage } from './renderer.js';
 import { createSiteReadAdmission } from './read-admission.js';
+import { buildSiteAssetCookie, readSiteViewerCookie } from './access-links.js';
 const ID = z.uuid();
 function unavailable(c: Context, error: unknown) {
     if (error instanceof SiteError)
@@ -32,13 +33,15 @@ export function createSitePublicRoutes(options: {
     const reads = createSiteReadAdmission();
     const readSources = createBoundedRateLimiter(1200);
     const readGlobal = createBoundedRateLimiter(12000);
-    async function authorizedSite(c: Context) {
+    async function authorizedSite(c: Context, credential: 'viewer' | 'asset' = 'viewer') {
         const parsed = SiteReferenceSchema.safeParse(c.req.param('reference'));
         if (!parsed.success) return null;
         const reference = parsed.data;
         const site = await options.service.resolve(reference);
         if (!site || site.accessMode === 'public') return site;
-        return options.service.authorize(reference, c.req.header('cookie'));
+        return credential === 'asset'
+            ? options.service.authorizeAsset(reference, c.req.header('cookie'))
+            : options.service.authorize(reference, c.req.header('cookie'));
     }
     app.use('*', async (c, next) => {
         c.header('Cache-Control', 'no-store');
@@ -87,13 +90,19 @@ export function createSitePublicRoutes(options: {
         return c.html(sitePage(site));
     });
     app.get('/:reference/frame', async (c) => { const reference = c.req.param('reference'); const site = await authorizedSite(c); if (!site?.activeVersion)
-        throw new SiteError('not_found'); const asset = await options.service.asset(reference, site.activeVersion, 'index.html'); c.header('Content-Security-Policy', APP_CSP); return c.html(siteFrame(asset.body.toString('utf8'), site)); });
+        throw new SiteError('not_found');
+        if (site.accessMode === 'private_link') {
+            const viewer = readSiteViewerCookie(c.req.header('cookie'), site.id);
+            if (!viewer) throw new SiteError('not_found');
+            c.header('Set-Cookie', buildSiteAssetCookie(site.id, viewer.linkId, viewer.token));
+        }
+        const asset = await options.service.asset(reference, site.activeVersion, 'index.html'); c.header('Content-Security-Policy', APP_CSP); return c.html(siteFrame(asset.body.toString('utf8'), site)); });
     app.get('/:reference/assets/:version/*', async (c) => {
         const version = ID.safeParse(c.req.param('version'));
         const path = SiteAssetPathSchema.safeParse(c.req.path.split(`/assets/${c.req.param('version')}/`)[1]);
         if (!version.success || !path.success)
             throw new SiteError('not_found');
-        const authorized = await authorizedSite(c);
+        const authorized = await authorizedSite(c, 'asset');
         if (!authorized) throw new SiteError('not_found');
         const asset = await options.service.asset(c.req.param('reference'), version.data, path.data);
         c.header('Content-Type', asset.contentType);

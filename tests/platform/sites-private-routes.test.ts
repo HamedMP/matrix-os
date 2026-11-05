@@ -14,14 +14,15 @@ const privateSite = {
 function fixture() {
   const resolve = vi.fn(async () => privateSite);
   const authorize = vi.fn(async () => null as typeof privateSite | null);
+  const authorizeAsset = vi.fn(async () => null as typeof privateSite | null);
   const asset = vi.fn(async () => ({ body: Buffer.from('<h1>private app</h1>'), contentType: 'text/html', site: privateSite }));
   const admitted = vi.fn();
   const claimAccessLink = vi.fn(async () => ({
-    cookie: `__Host-matrix_site_viewer_${siteId.replaceAll('-', '')}=${randomUUID()}.${'s'.repeat(43)}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=2592000`,
+    cookie: `__Secure-matrix_site_viewer_${siteId.replaceAll('-', '')}=${randomUUID()}.${'s'.repeat(43)}; Path=/${siteId}; HttpOnly; Secure; SameSite=Lax; Max-Age=2592000`,
     link: { id: randomUUID(), status: 'claimed', createdAt: new Date().toISOString(), claimExpiresAt: new Date().toISOString(), claimedAt: new Date().toISOString(), sessionExpiresAt: new Date().toISOString() },
   }));
-  const service = { resolve, authorize, asset, admitted, claimAccessLink } as unknown as SitesService;
-  return { app: createSitePublicRoutes({ service, edgeSecret, submit: vi.fn() }), resolve, authorize, asset, admitted, claimAccessLink };
+  const service = { resolve, authorize, authorizeAsset, asset, admitted, claimAccessLink } as unknown as SitesService;
+  return { app: createSitePublicRoutes({ service, edgeSecret, submit: vi.fn() }), resolve, authorize, authorizeAsset, asset, admitted, claimAccessLink };
 }
 const request = (path: string, init: RequestInit = {}) => new Request(`https://platform.example.com${path}`, {
   ...init, headers: { 'x-matrix-sites-edge': edgeSecret, 'x-matrix-sites-source': '203.0.113.10', ...init.headers },
@@ -57,7 +58,8 @@ describe('private Matrix.page routes', () => {
     }));
     expect(response.status).toBe(200);
     expect(await response.json()).toEqual({ accepted: true });
-    expect(response.headers.get('set-cookie')).toMatch(/^__Host-matrix_site_viewer_/);
+    expect(response.headers.get('set-cookie')).toMatch(/^__Secure-matrix_site_viewer_/);
+    expect(response.headers.get('set-cookie')).toContain(`Path=/${siteId};`);
     expect(claimAccessLink).toHaveBeenCalledWith(siteId, { linkId, token: 't'.repeat(43) });
   });
 
@@ -65,9 +67,11 @@ describe('private Matrix.page routes', () => {
     const { app, authorize, admitted, asset } = fixture();
     authorize.mockResolvedValue(privateSite);
     admitted.mockImplementation(async (_reference, work) => work(privateSite, {}));
-    const cookie = `__Host-matrix_site_viewer_${siteId.replaceAll('-', '')}=${randomUUID()}.${'s'.repeat(43)}`;
+    const cookie = `__Secure-matrix_site_viewer_${siteId.replaceAll('-', '')}=${randomUUID()}.${'s'.repeat(43)}`;
     const frame = await app.request(request(`/${siteId}/frame`, { headers: { cookie } }));
     expect(frame.status).toBe(200);
+    expect(frame.headers.get('set-cookie')).toMatch(new RegExp(`^__Secure-matrix_site_asset_${siteId.replaceAll('-', '')}=`));
+    expect(frame.headers.get('set-cookie')).toContain(`Path=/${siteId}/assets/; HttpOnly; Secure; SameSite=None`);
     expect(asset).toHaveBeenCalled();
     const formSite = { ...privateSite, config: { data: {}, forms: [{ id: 'rsvp', title: 'RSVP', fields: { name: { type: 'text' as const, required: true } } }] } };
     authorize.mockResolvedValue(formSite);
@@ -80,9 +84,14 @@ describe('private Matrix.page routes', () => {
     expect(admitted).toHaveBeenCalledWith(siteId, expect.any(Function), cookie);
   });
 
-  it('allows credentialed opaque-origin asset reads only after private session authorization',async()=>{
-    const {app,authorize}=fixture();authorize.mockResolvedValue(privateSite);
-    const response=await app.request(request(`/${siteId}/assets/${versionId}/assets/main.js`,{headers:{cookie:'viewer'}}));
+  it('requires the frame-issued asset credential because opaque module requests omit the Lax viewer cookie',async()=>{
+    const {app,authorize,authorizeAsset,asset}=fixture();authorize.mockResolvedValue(privateSite);
+    const viewer=`__Secure-matrix_site_viewer_${siteId.replaceAll('-', '')}=${randomUUID()}.${'s'.repeat(43)}`;
+    expect((await app.request(request(`/${siteId}/assets/${versionId}/assets/main.js`,{headers:{cookie:viewer}}))).status).toBe(404);
+    expect(asset).not.toHaveBeenCalled();
+    authorizeAsset.mockResolvedValue(privateSite);
+    const assetCookie=`__Secure-matrix_site_asset_${siteId.replaceAll('-', '')}=${randomUUID()}.${'s'.repeat(43)}`;
+    const response=await app.request(request(`/${siteId}/assets/${versionId}/assets/main.js`,{headers:{cookie:assetCookie}}));
     expect(response.status).toBe(200);
     expect(response.headers.get('access-control-allow-origin')).toBe('null');
     expect(response.headers.get('access-control-allow-credentials')).toBe('true');

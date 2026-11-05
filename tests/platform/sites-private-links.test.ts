@@ -65,6 +65,10 @@ describe('private Matrix.page access links', () => {
     expect(claim.value.cookie).toContain('SameSite=Lax');
     expect(Date.parse(claim.value.link.sessionExpiresAt!)-Date.parse(claim.value.link.claimedAt!)).toBe(SITE_VIEWER_SESSION_TTL_MS);
     expect(await service.authorize(siteId, claim.value.cookie)).toMatchObject({ id: siteId, accessMode: 'private_link' });
+    expect(await service.authorizeAsset(siteId, claim.value.cookie)).toBeNull();
+    const assetCookie = claim.value.cookie.replace('_viewer_', '_asset_');
+    expect(await service.authorizeAsset(siteId, assetCookie)).toMatchObject({ id: siteId, accessMode: 'private_link' });
+    expect(await service.authorize(siteId, assetCookie)).toBeNull();
     expect(await service.authorize(randomUUID(), claim.value.cookie)).toBeNull();
   });
 

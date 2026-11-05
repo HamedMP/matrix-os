@@ -27,7 +27,7 @@ export function SiteAccessLinks({ appSlug, client, site, state, disabled }: {
     return () => controller.abort();
   }, [appSlug, client, site.id, site.status, site.accessMode, reload]);
   if (site.status !== "published" || site.accessMode !== "private_link") return null;
-  const create = () => state.action(
+  const create = () => state.mutate(
     signal => client.createAccessLink(appSlug, { baseRevision: site.revision }, signal),
     result => { setLinks(current => [result.link, ...current.filter(link => link.id !== result.link.id)]); setGeneratedUrl(result.url); },
     "One-time link created.",
@@ -42,9 +42,9 @@ export function SiteAccessLinks({ appSlug, client, site, state, disabled }: {
     <div className="space-y-1"><p className="text-sm font-medium">Private — one-time links</p>
       <p className="text-xs">Each link can be claimed by one browser. Unclaimed links expire after 7 days; access lasts 30 days.</p></div>
     <Button size="sm" disabled={disabled || !linksLoaded || links.length >= SITE_MAX_ACCESS_LINKS} onClick={() => void create()}>Create one-time link</Button>
-    {generatedUrl ? <div className="space-y-2 rounded border p-2" role="status">
+    {generatedUrl ? <div className="ph-no-capture space-y-2 rounded border p-2" role="status">
       <p className="text-xs font-medium">Save this URL now. It will not be shown again.</p>
-      <p className="break-all text-sm">{generatedUrl}</p>
+      <p className="break-all text-sm" data-ph-mask="true">{generatedUrl}</p>
       <Button size="sm" variant="secondary" disabled={disabled} onClick={() => void state.action(async () => navigator.clipboard.writeText(generatedUrl), () => {}, "One-time link copied.")}>Copy one-time link</Button>
     </div> : null}
     {loadError ? <div className="space-y-2"><p role="alert" className="text-sm">{loadError}</p><Button size="sm" variant="secondary" disabled={disabled} onClick={() => { setLinksLoaded(false); setLoadError(null); setReload(value => value + 1); }}>Retry link list</Button></div> : null}

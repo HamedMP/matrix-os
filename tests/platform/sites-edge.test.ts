@@ -70,17 +70,44 @@ it('only forwards sites routes and strips visitor credentials', async () => {
         vi.unstubAllGlobals();
     }
 });
-it('forwards only bounded site-viewer cookies and only approved viewer Set-Cookie values', async () => {
- const safeName='__Host-matrix_site_viewer_11111111111141118111111111111111';
+it('forwards only current-site viewer cookies and approved path-scoped viewer Set-Cookie values', async () => {
+ const siteId='11111111-1111-4111-8111-111111111111';
+ const safeName='__Secure-matrix_site_viewer_11111111111141118111111111111111';
  const safeValue=`11111111-1111-4111-8111-111111111111.${'s'.repeat(43)}`;
  const forward=vi.fn(async(request:Request)=>{
   expect(request.headers.get('cookie')).toBe(`${safeName}=${safeValue}`);
-  return new Response('ok',{headers:{'Set-Cookie':`${safeName}=${safeValue}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=2592000`}});
+  return new Response('ok',{headers:{'Set-Cookie':`${safeName}=${safeValue}; Path=/${siteId}; HttpOnly; Secure; SameSite=Lax; Max-Age=2592000`}});
  });
  vi.stubGlobal('fetch',forward);
  try{
-  const response=await worker.fetch(new Request('https://matrix.page/launch-2026',{headers:{cookie:`__session=private; ${safeName}=${safeValue}; unrelated=secret`}}),{SITES_PLATFORM_ORIGIN:'https://platform.example.com',SITES_EDGE_SECRET:'x'.repeat(40)});
-  expect(response.headers.get('set-cookie')).toBe(`${safeName}=${safeValue}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=2592000`);
+  const response=await worker.fetch(new Request(`https://matrix.page/${siteId}`,{headers:{cookie:`__session=private; ${safeName}=${safeValue}; unrelated=secret`}}),{SITES_PLATFORM_ORIGIN:'https://platform.example.com',SITES_EDGE_SECRET:'x'.repeat(40)});
+  expect(response.headers.get('set-cookie')).toBe(`${safeName}=${safeValue}; Path=/${siteId}; HttpOnly; Secure; SameSite=Lax; Max-Age=2592000`);
+ }finally{vi.unstubAllGlobals();}
+});
+it('does not let cookies for more than twenty other claimed sites lock out the current site',async()=>{
+ const siteId='11111111-1111-4111-8111-111111111111';
+ const target=`__Secure-matrix_site_viewer_${siteId.replaceAll('-','')}=${siteId}.${'s'.repeat(43)}`;
+ const unrelated=Array.from({length:21},(_,index)=>{
+  const suffix=(index+1).toString(16).padStart(32,'0');
+  return `__Secure-matrix_site_viewer_${suffix}=22222222-2222-4222-8222-222222222222.${'t'.repeat(43)}`;
+ });
+ const forward=vi.fn(async(request:Request)=>{expect(request.headers.get('cookie')).toBe(target);return new Response('ok');});
+ vi.stubGlobal('fetch',forward);
+ try{
+  const response=await worker.fetch(new Request(`https://matrix.page/${siteId}`,{headers:{cookie:[...unrelated,target].join('; ')}}),{SITES_PLATFORM_ORIGIN:'https://platform.example.com',SITES_EDGE_SECRET:'x'.repeat(40)});
+  expect(response.status).toBe(200);expect(forward).toHaveBeenCalledOnce();
+ }finally{vi.unstubAllGlobals();}
+});
+it('forwards the narrow asset cookie and only its exact SameSite=None Set-Cookie shape',async()=>{
+ const siteId='11111111-1111-4111-8111-111111111111',version='22222222-2222-4222-8222-222222222222';
+ const name=`__Secure-matrix_site_asset_${siteId.replaceAll('-','')}`;
+ const value=`33333333-3333-4333-8333-333333333333.${'a'.repeat(43)}`;
+ const setCookie=`${name}=${value}; Path=/${siteId}/assets/; HttpOnly; Secure; SameSite=None; Max-Age=2592000`;
+ const forward=vi.fn(async(request:Request)=>{expect(request.headers.get('cookie')).toBe(`${name}=${value}`);return new Response('ok',{headers:{'Set-Cookie':setCookie}});});
+ vi.stubGlobal('fetch',forward);
+ try{
+  const response=await worker.fetch(new Request(`https://matrix.page/${siteId}/assets/${version}/assets/main.js`,{headers:{cookie:`${name}=${value}; unrelated=private`}}),{SITES_PLATFORM_ORIGIN:'https://platform.example.com',SITES_EDGE_SECRET:'x'.repeat(40)});
+  expect(response.status).toBe(200);expect(response.headers.get('set-cookie')).toBe(setCookie);
  }finally{vi.unstubAllGlobals();}
 });
 it('accepts same-origin explicit claims and rejects cross-site claim requests before forwarding',async()=>{
