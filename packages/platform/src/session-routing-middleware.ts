@@ -82,7 +82,7 @@ import {
   applySandboxedAppAssetCorsHeaders,
   buildAppDomainProxyResponse,
   buildCodeDomainProxyHeaders,
-  hasValidExplicitVmAppAssetToken,
+  verifiedExplicitVmAppAssetSlot,
   isAppDomainStaticAssetPath,
   isCodeDomainStaticAssetPath,
   isViteAppAssetPath,
@@ -525,20 +525,17 @@ export function createSessionRoutingMiddleware(opts: CreateSessionRoutingMiddlew
     const cookieHeader = c.req.header('cookie');
     const path = c.req.path;
     const explicitVmRoute = isAppDomain ? readExplicitVmRoute(path) : null;
-    const explicitVmRouteHasValidAppAssetToken = Boolean(
-      explicitVmRoute &&
-      hasValidExplicitVmAppAssetToken({
-        method: c.req.method,
-        rawUrl: c.req.url,
-        route: explicitVmRoute,
-        platformSecret,
-      }),
-    );
+    const verifiedAssetSlot = explicitVmRoute && verifiedExplicitVmAppAssetSlot({
+      method: c.req.method,
+      rawUrl: c.req.url,
+      route: explicitVmRoute,
+      platformSecret,
+    });
     const explicitVmRouteHasNativeAppStreamCapability = Boolean(
       explicitVmRoute && hasExplicitVmNativeAppStreamCapability(c.req.method, explicitVmRoute),
     );
     const explicitVmRouteHasCredentiallessCapability =
-      explicitVmRouteHasValidAppAssetToken || explicitVmRouteHasNativeAppStreamCapability;
+      verifiedAssetSlot !== null || explicitVmRouteHasNativeAppStreamCapability;
     if (
       explicitVmRoute
       && isNativeAppStreamPath(explicitVmRoute.upstreamPath)
@@ -683,7 +680,7 @@ export function createSessionRoutingMiddleware(opts: CreateSessionRoutingMiddlew
       const machine = await getActiveUserMachineByHandle(
         db,
         explicitVmRoute.handle,
-        explicitVmRoute.runtimeSlot ?? (
+        verifiedAssetSlot ?? explicitVmRoute.runtimeSlot ?? (
           runtimeSelection.source === 'query' ? requestRuntimeSlot : undefined
         ),
       );

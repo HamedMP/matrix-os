@@ -28,7 +28,7 @@ const InputSchema = z.strictObject({
   handle: z.string().regex(HANDLE_PATTERN),
   email: z.email().max(320),
   displayName: z.string().trim().min(1).max(128).optional(),
-  containerId: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$/),
+  containerId: z.string().regex(/^[0-9a-f]{64}$/),
   gatewayPort: z.number().int().min(1).max(65535),
   shellPort: z.number().int().min(1).max(65535),
 });
@@ -86,6 +86,16 @@ export async function bootstrapDevstackIdentity(db: PlatformDB, rawInput: Devsta
     if (await getPlatformHandleConflict(transaction, input.handle, input.clerkUserId)) {
       throw new DevstackBootstrapError('Requested local handle is already owned by another identity.');
     }
+    // A legacy Docker name or short ID may denote the very same immutable
+    // target. This offline command cannot attest that alias, so fail closed.
+    const unresolved = await transaction.executor.selectFrom('containers').select('handle')
+      .where(sql<boolean>`container_id IS NOT NULL AND container_id !~ '^[0-9a-f]{64}$'`).executeTakeFirst();
+    if (unresolved) throw new DevstackBootstrapError('Reconcile retained local container aliases to verified immutable IDs before registration.');
+    const foreignTarget = await transaction.executor.selectFrom('containers').select('handle')
+      .where('container_id', '=', input.containerId)
+      .where(eb => eb.or([eb('clerk_user_id', '!=', input.clerkUserId), eb('handle', '!=', input.handle)]))
+      .executeTakeFirst();
+    if (foreignTarget) throw new DevstackBootstrapError('Local execution target is already owned by a different registration.');
     const previousRoute = await getContainerByClerkId(transaction, input.clerkUserId);
     if (previousRoute) assertOwnedRoute(previousRoute, input);
 

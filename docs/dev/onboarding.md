@@ -222,11 +222,21 @@ Kernel source errors remain visible in the foreground output while the last succ
 Kernel stays available; correcting the error resumes updates. Ctrl-C stops this
 watcher and its compiler descendants with the other source processes.
 
-Shared TypeScript builds use a private `0700` `.matrix-build-output` directory,
-retaining its empty root so Docker development needs no write permission on source
-parents. Only successful, validated output is published. Unchanged files preserve
-their mtimes; changed files are replaced atomically per file, not as a whole-package
-transaction. Compiler state and staging roots are excluded from host bundles.
+Shared TypeScript builds compile inside a private `0700` `.matrix-build-output`.
+When emitted bytes change, the builder publishes the entire validated directory
+with one native filesystem operation (Linux `renameat2(RENAME_EXCHANGE)` or
+macOS `renamex_np(RENAME_SWAP)`). Python 3 with standard-library ctypes is a
+**build-time** prerequisite. The staging and output directories must be on the
+same filesystem and support atomic exchange; unsupported setups fail closed.
+An unchanged build leaves the existing output untouched. Gateway's watcher
+observes `packages/kernel/matrix-kernel-published.tsbuildinfo`, a digest written
+after publication, so failed compiles do not restart the healthy consumer.
+
+A writable checkout keeps `dist` as a real directory. For Docker development
+the stopped entrypoint prepares a generated same-depth peer so the unprivileged
+builder can replace `dist` without gaining write access to source parents.
+The peer supplies the same package metadata, source and dependency lookup paths.
+Host bundles ship regular output directories and exclude staging and watch state.
 `dev:kernel` alone still watches the package entrypoint rather than generating
 `dist`; when using a narrower command, build the Kernel explicitly with
 `pnpm --filter @matrix-os/kernel build`.
@@ -298,7 +308,7 @@ pnpm exec tsx scripts/devstack-bootstrap.ts \
   --clerk-user-id "$DEVSTACK_CLERK_USER_ID" \
   --handle devstack-local \
   --email "$DEVSTACK_EMAIL" \
-  --container-id matrixos-devstack-local \
+  --container-id "$(docker inspect --type container --format '{{.Id}}' matrixos-devstack-local)" \
   --gateway-port 4000 --shell-port 3000
 ```
 
@@ -306,7 +316,10 @@ For another instance, use another database: `matrixos_devstack_<instance>`, with
 hyphens replaced by underscores. Initialization commits the local user and
 legacy-container route together. Repeating the exact command keeps the user ID
 and existing Pipedream mapping; it refuses to adopt foreign rows or change a
-retained route. The command prints a targeted receipt, never the database URL.
+retained route. Use the full immutable Docker ID; names and short IDs are rejected.
+The initializer refuses ambiguous aliases already present in its local database.
+For each legacy name, verify ownership and use normal local Docker endpoint
+resolution to retain its inspected ID before replaying. The command prints a targeted receipt, never the database URL.
 It does not create VPS records, change paid entitlements, or grant AI credit.
 
 After normal sign-in to the local Platform, use its existing

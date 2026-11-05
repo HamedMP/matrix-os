@@ -77,7 +77,7 @@ test('retained stopped claims do not prevent distinct worktree registration', as
   await f.adapter.operation('sample', 'stop');
   const second = join(f.root, 'second'); await mkdir(second);
   execFileSync('git', ['init', '-q', second]);
-  Object.assign(f.manifest, { id: 'second', machine: 'devstack-second', worktree: second });
+  Object.assign(f.manifest, { id: 'second', machine: 'devstack-second', preview: 'https://second.example.test', worktree: second });
   await writeFile(f.file, JSON.stringify(f.manifest));
   assert.equal((await f.adapter.register(f.file)).state, 'registered');
 });
@@ -176,7 +176,7 @@ test('large Unicode and escape-heavy diagnostics remain readable after failure a
     assert.ok((await stat(path)).size <= 65536);
     await f.adapter.status('sample'); await f.adapter.operation('sample', 'stop');
     const second = await fixture(t);
-    second.manifest.id = 'second'; second.manifest.machine = 'devstack-second';
+    second.manifest.id = 'second'; second.manifest.machine = 'devstack-second'; second.manifest.preview = 'https://second.example.test';
     await writeFile(second.file, JSON.stringify(second.manifest));
     const adapter = createAdapter({ registry: join(f.root, 'private'), runner: second.runner });
     await adapter.register(second.file);
@@ -201,7 +201,7 @@ test('operator manifest must be absolute canonical owned private 0600', async t 
 });
 test('a delayed command locks only its instance while peers and switch remain independent', async t => {
   const a = await fixture(t), b = await fixture(t);
-  b.manifest.id = 'peer'; b.manifest.machine = 'devstack-peer'; await writeFile(b.file, JSON.stringify(b.manifest));
+  b.manifest.id = 'peer'; b.manifest.machine = 'devstack-peer'; b.manifest.preview = 'https://peer.example.test'; await writeFile(b.file, JSON.stringify(b.manifest));
   const adapter = createAdapter({ registry: join(a.root, 'private'), runner: (cmd, args) => args[1] === a.manifest.machine ? a.runner(cmd, args) : b.runner(cmd, args) });
   await adapter.register(a.file); await adapter.register(b.file);
   let release, entered;
@@ -293,10 +293,11 @@ test('writerless FIFO manifest rejects in a bounded subprocess instead of hangin
 });
 
 
-async function capacityGroup(t, capacity, count = 3) {
+async function capacityGroup(t, capacity, count = 3, previews = []) {
   const members = [];
   for (let index = 0; index < count; index++) {
     const f = await fixture(t); f.manifest.id = `member-${index}`; f.manifest.machine = `devstack-member-${index}`;
+    f.manifest.preview = previews[index] ?? `https://shared.example.test/vm/owner/~runtime/member-${index}`;
     await writeFile(f.file, JSON.stringify(f.manifest)); members.push(f);
   }
   const adapter = createAdapter({ registry: join(members[0].root, 'private'), capacity,
@@ -431,4 +432,8 @@ test('finite logs retain newest compiler error after full redaction while test s
   assert.equal(journal[journal.indexOf('-n') + 1], '200'); assert.equal(journal.includes('--follow'), false);
   const test = await f.adapter.operation('sample', 'test', ['show-feedback']);
   assert.equal(test.stdout.startsWith('OLD_STARTUP'), true); assert.doesNotMatch(test.stdout, /LATEST_KERNEL_ERROR/);
+});
+
+test('canonical preview endpoint cannot be reserved by a second machine or worktree', async t => {
+  await assert.rejects(capacityGroup(t, 2, 2, ['https://LAB.example.test:443/vm/a', 'https://lab.example.test/vm/a']), /preview.*claimed/i);
 });

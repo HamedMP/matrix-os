@@ -7,7 +7,7 @@ import { assertLocalDevstackDatabase, bootstrapDevstackIdentity, parseDevstackBo
 
 const usage = `Usage: PLATFORM_RUNTIME_MODE=local PLATFORM_DATABASE_URL=<local-instance-url> pnpm exec tsx scripts/devstack-bootstrap.ts
   --instance <slug> --clerk-user-id <id> --handle <handle> --email <email>
-  --container-id <owned-local-container> [--display-name <name>]
+  --container-id <64-lowercase-hex-docker-id> [--display-name <name>]
   [--gateway-port <port>] [--shell-port <port>]
 
 The database must already exist at literal loopback and be named

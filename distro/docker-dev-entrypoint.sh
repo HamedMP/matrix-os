@@ -8,21 +8,49 @@ cd "$APP_ROOT"
 export PATH="$APP_ROOT/node_modules/.bin:$PATH"
 
 prepare_build_outputs() {
-  local package base output
+  local package base output peer alias link
   for package in brand observability terminal-runtime kernel; do
     base="$APP_ROOT/packages/$package"
-    # Generated directories are the only source-mount paths the non-root build
-    # needs to own. Never follow an output symlink into source or owner data.
-    for output in "$APP_ROOT/packages" "$base" "$base/dist" "$base/.matrix-build-cache" "$base/.matrix-build-output"; do
+    peer="$APP_ROOT/packages/.matrix-publish-$package"
+    alias="../.matrix-publish-$package/dist"
+    for output in "$APP_ROOT/packages" "$base" "$base/.matrix-build-cache" "$base/.matrix-build-output" "$peer" "$peer/dist"; do
       if [ -L "$output" ]; then
         echo "[matrix-os-dev] Refusing symlinked build output: $output" >&2
         return 1
       fi
     done
-    mkdir -p "$base/dist" "$base/.matrix-build-cache" "$base/.matrix-build-output"
+    if [ -L "$base/dist" ] && [ "$(readlink "$base/dist")" != "$alias" ]; then
+      echo "[matrix-os-dev] Refusing symlinked build output: $base/dist" >&2
+      return 1
+    fi
+    mkdir -p "$base/.matrix-build-cache" "$base/.matrix-build-output" "$peer"
     chmod 700 "$base/.matrix-build-output"
-    chown -hR matrixos:matrixos "$base/dist" "$base/.matrix-build-cache" "$base/.matrix-build-output"
+    # Only the generated peer is writable. A same-depth location preserves
+    # package-relative template and map paths, even for realpath-based imports.
+    if [ -d "$base/dist" ] && [ ! -L "$base/dist" ]; then
+      if [ -e "$peer/dist" ]; then echo "Ambiguous retained dev build output" >&2; return 1; fi
+      mv "$base/dist" "$peer/dist"
+    fi
+    mkdir -p "$peer/dist"
+    if [ ! -L "$base/dist" ]; then ln -s "$alias" "$base/dist"; fi
+    for link in package.json node_modules src; do
+      if [ ! -L "$peer/$link" ]; then ln -s "../$package/$link" "$peer/$link"; fi
+      if [ "$(readlink "$peer/$link")" != "../$package/$link" ]; then echo "Invalid build peer link" >&2; return 1; fi
+    done
+    chmod 755 "$peer"
+    chown -hR matrixos:matrixos "$peer" "$base/.matrix-build-cache" "$base/.matrix-build-output"
   done
+}
+
+build_dev_packages() {
+  prepare_build_outputs
+  su-exec matrixos pnpm --filter @matrix-os/observability build
+  su-exec matrixos pnpm --filter @matrix-os/brand build
+  su-exec matrixos "$ENTRYPOINT_DIR/docker-dev-entrypoint.sh" --prepare-gateway
+  local marker="$APP_ROOT/packages/kernel/matrix-kernel-published.tsbuildinfo"
+  if [ -L "$marker" ] || { [ -e "$marker" ] && [ ! -f "$marker" ]; }; then echo "Invalid Kernel publication marker" >&2; return 1; fi
+  if [ ! -e "$marker" ]; then install -m 0644 -o matrixos -g matrixos /dev/null "$marker"; fi
+  su-exec matrixos pnpm --filter @matrix-os/kernel build
 }
 
 prepare_gateway() {
@@ -37,6 +65,10 @@ launch_gateway() {
 }
 
 case "${1:-}" in
+  --build-dev-packages)
+    build_dev_packages
+    exit 0
+    ;;
   --prepare-build-outputs)
     prepare_build_outputs
     exit 0
@@ -70,27 +102,7 @@ ensure_deps() {
 }
 ensure_deps
 
-echo "[matrix-os-dev] Building observability package..."
-pnpm --filter @matrix-os/observability build
-
-echo "[matrix-os-dev] Building brand package..."
-# The shell imports @matrix-os/brand through its package exports, which point
-# at emitted dist files. A clean Docker volume has no host-built dist output.
-pnpm --filter @matrix-os/brand build
-
-"$ENTRYPOINT_DIR/docker-dev-entrypoint.sh" --prepare-gateway
-
-echo "[matrix-os-dev] Building kernel package..."
-# Dev container startup needs emitted kernel JS before the gateway starts.
-# This tolerant path is dev-only: production/CI build scripts still fail on
-# kernel type errors instead of running partially typed output.
-if ! pnpm --filter '@matrix-os/kernel' exec tsc --noEmitOnError false; then
-  if [ ! -f /app/packages/kernel/dist/index.js ]; then
-    echo "[matrix-os-dev] Kernel build failed before emitting dist"
-    exit 1
-  fi
-  echo "[matrix-os-dev] Kernel build emitted dist with type errors; continuing for dev runtime"
-fi
+build_dev_packages
 
 # Ensure home directory exists
 if [ ! -d "$MATRIX_HOME" ]; then
@@ -221,7 +233,6 @@ cp /app/distro/p10k.zsh "$MATRIX_HOME/.p10k.zsh" 2>/dev/null || true
 chown -R matrixos:matrixos "$MATRIX_HOME"
 chown -R matrixos:matrixos /home/matrixos/.claude 2>/dev/null || true
 chown -R matrixos:matrixos /home/matrixos/.codex 2>/dev/null || true
-prepare_build_outputs
 chown matrixos:matrixos "$MATRIX_HOME/.zshrc" "$MATRIX_HOME/.p10k.zsh" 2>/dev/null || true
 
 # Set zsh as default shell for matrixos user (for PTY sessions)
@@ -258,12 +269,6 @@ exec su-exec matrixos bash -c '
   export SHELL=/bin/zsh
   export PATH="/app/node_modules/.bin:$PATH"
   cd /app
-
-  echo "[matrix-os-dev] Building kernel package..."
-  pnpm --filter "@matrix-os/kernel" build || {
-    echo "[matrix-os-dev] Kernel build failed"
-    exit 1
-  }
 
   # QMD: register collections + start MCP server (best-effort, background)
   if command -v qmd >/dev/null 2>&1 && [ -d "$MATRIX_HOME" ]; then

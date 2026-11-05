@@ -173,31 +173,33 @@ export function getViteAppAssetSlug(path: string): string | null {
   return match?.[1] ?? null;
 }
 
-export function hasValidExplicitVmAppAssetToken(input: {
+export function verifiedExplicitVmAppAssetSlot(input: {
   method: string;
   rawUrl: string;
-  route: { handle: string; upstreamPath: string };
+  route: { handle: string; upstreamPath: string; runtimeSlot?: string };
   platformSecret: string;
-}): boolean {
-  if (input.method !== 'GET' && input.method !== 'HEAD') return false;
+}): string | null {
+  if (input.method !== 'GET' && input.method !== 'HEAD') return null;
   const slug = getViteAppAssetSlug(input.route.upstreamPath);
-  if (!slug) return false;
+  if (!slug) return null;
   try {
     const url = new URL(input.rawUrl, 'https://app.matrix-os.com');
-    const runtimeParam = url.searchParams.get('runtime');
-    if (runtimeParam !== null && !RuntimeSlotSchema.safeParse(runtimeParam).success) {
-      return false;
-    }
+    const selectors = url.searchParams.getAll('runtime');
+    const querySlot = selectors[0];
+    const pathSlot = input.route.runtimeSlot;
+    if (selectors.length > 1 || (querySlot !== undefined && !RuntimeSlotSchema.safeParse(querySlot).success)
+      || (pathSlot && querySlot && pathSlot !== querySlot)) return null;
+    const slot = pathSlot ?? querySlot ?? 'primary';
     return verifyAppAssetRouteToken({
       token: url.searchParams.get(APP_ASSET_ROUTE_TOKEN_PARAM),
       expectedHandle: input.route.handle,
       expectedSlug: slug,
-      expectedRuntimeSlot: runtimeParam ?? 'primary',
+      expectedRuntimeSlot: slot,
       platformSecret: input.platformSecret,
-    });
+    }) ? slot : null;
   } catch (err: unknown) {
     console.warn('[platform] Failed to parse explicit VM asset URL:', err instanceof Error ? err.message : String(err));
-    return false;
+    return null;
   }
 }
 

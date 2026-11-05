@@ -225,6 +225,7 @@ export function createAdapter({ registry = process.env.DEVSTACK_STATE_DIR ?? joi
               if (existing.gitIdentity !== identity) throw new Error('Pinned Git worktree identity changed');
               return existing;
             }
+            if (new URL(existing.manifest.preview).href === new URL(manifest.preview).href) throw new Error('Preview endpoint already claimed');
             if (existing.manifest.machine === manifest.machine || existing.manifest.worktree === manifest.worktree) throw new Error('Machine or worktree already claimed');
           }
           if (names.length >= 100) throw new Error('Retained registration safety bound reached');

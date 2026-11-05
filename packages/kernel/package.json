@@ -42,7 +42,7 @@
   },
   "scripts": {
     "dev": "tsx watch src/index.ts",
-    "build": "node ../../scripts/build-typescript.mjs"
+    "build": "node ../../scripts/build-typescript.mjs --notify-gateway"
   },
   "devDependencies": {
     "@types/better-sqlite3": "^7.6.13",
