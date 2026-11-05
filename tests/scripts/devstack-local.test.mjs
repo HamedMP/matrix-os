@@ -252,3 +252,41 @@ test('oversized manifest is rejected before remote calls and command feedback pr
   assert.deepEqual(after.diagnostic, before.diagnostic); assert.equal(after.lastExitCode, 7);
   assert.equal(after.lastCommand.code, 0);
 });
+
+async function redactedOwnershipFixture(t) {
+  const f = await fixture(t);
+  const worktree = join(f.root, 'sk-fixture'), alias = join(f.root, '[redacted]');
+  for (const directory of [worktree, alias]) {
+    await mkdir(directory); execFileSync('git', ['init', '-q', directory]);
+  }
+  f.manifest.worktree = worktree;
+  await writeFile(f.file, JSON.stringify(f.manifest));
+  return { ...f, alias };
+}
+test('matching owner worktree containing a token-like name validates original bytes', async t => {
+  const f = await redactedOwnershipFixture(t);
+  assert.equal((await f.adapter.preflight(f.file)).prerequisites, 'verified');
+});
+test('a literal redacted-alias worktree cannot match a different original owner path', async t => {
+  const f = await redactedOwnershipFixture(t);
+  await writeFile(f.file, JSON.stringify({ ...f.manifest, worktree: f.alias }));
+  await assert.rejects(f.adapter.preflight(f.file), /owner/);
+});
+test('relative registry override rejects at construction before any filesystem writes', async t => {
+  const f = await fixture(t);
+  const path = join(f.root, 'relative-state');
+  const relative = await import('node:path').then(module => module.relative(process.cwd(), path));
+  assert.throws(() => createAdapter({ registry: relative, runner: f.runner }), /absolute/);
+  await assert.rejects(stat(path), /ENOENT/);
+});
+test('writerless FIFO manifest rejects in a bounded subprocess instead of hanging', async t => {
+  const f = await fixture(t); const fifo = join(f.root, 'manifest.fifo');
+  execFileSync('mkfifo', ['-m', '600', fifo]);
+  const moduleURL = new URL('../../scripts/devstack/local.mjs', import.meta.url).href;
+  const program = `import { createAdapter } from ${JSON.stringify(moduleURL)};
+    try { await createAdapter().preflight(process.argv[1]); process.exitCode = 8; }
+    catch (error) { console.log(error.message); process.exitCode = /regular|0600/.test(error.message) ? 0 : 9; }`;
+  const result = await import('node:child_process').then(({ spawnSync }) => spawnSync(process.execPath, ['--input-type=module', '-e', program, fifo], { encoding: 'utf8', timeout: 2000, killSignal: 'SIGKILL' }));
+  assert.equal(result.error, undefined, 'FIFO input must reject without waiting for a writer');
+  assert.equal(result.status, 0); assert.match(result.stdout, /regular|0600/);
+});
