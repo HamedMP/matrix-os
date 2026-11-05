@@ -8,9 +8,19 @@ export interface VerifyResult {
   authenticated: boolean;
   userId?: string;
   sessionId?: string;
+  /** Verified Clerk JWT epoch seconds, when exposed by the verifier. */
+  tokenExpiresAt?: number;
   issuer?: string;
   expiresAt?: number;
   error?: string;
+}
+
+/** Positive human-session evidence only; ordinary user routing stays unchanged. */
+export function hasVerifiedClerkBrowserSession(result: VerifyResult, expectedUserId: string, now = Math.floor(Date.now() / 1000)):
+  result is VerifyResult & { sessionId: string; tokenExpiresAt: number } {
+  return expectedUserId.trim().length > 0 && result.authenticated && result.userId === expectedUserId && typeof result.sessionId === "string"
+    && result.sessionId.trim().length > 0 && result.tokenExpiresAt !== undefined && Number.isSafeInteger(result.tokenExpiresAt)
+    && result.tokenExpiresAt > 0 && result.tokenExpiresAt > now;
 }
 
 export const CLERK_SESSION_REVOKE_TIMEOUT_MS = 10_000;
@@ -92,6 +102,7 @@ function verifiedResultFromPayload(payload: ClerkTokenPayload): VerifyResult {
   return {
     authenticated: true,
     userId: payload.sub,
+    ...(typeof payload.exp === "number" && Number.isSafeInteger(payload.exp) && payload.exp > 0 ? { tokenExpiresAt: payload.exp } : {}),
     ...(typeof payload.iss === "string" ? { issuer: payload.iss } : {}),
     ...(typeof payload.exp === "number" && Number.isSafeInteger(payload.exp) ? { expiresAt: payload.exp * 1000 } : {}),
     ...(typeof payload.sid === "string" && payload.sid.length > 0
