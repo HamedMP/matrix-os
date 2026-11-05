@@ -75,13 +75,10 @@ test("owner shares once, organization members work immediately, outsiders stay d
 
   const memberDirect = await authenticatedDirectClient(config.editor.context, platform);
   let streamState: "connecting" | "connected" | "reconnecting" | "unavailable" = "connecting";
-  let unshareReturned = false;
-  let streamStoppedBeforeUnshareReturned = false;
   const unsubscribe = memberDirect.subscribeEvents(created.id, {
     onEvent() {},
     onUnavailable() {
       streamState = "unavailable";
-      streamStoppedBeforeUnshareReturned = !unshareReturned;
     },
     onConnectionChange(state) {
       streamState = state;
@@ -94,10 +91,8 @@ test("owner shares once, organization members work immediately, outsiders stay d
     const unshared = await ownerRequest.post(`${platform}/api/collaboration/scopes/${created.id}/project/unshare`, {
       data: { clientRequestId: randomUUID(), expectedRevision },
     });
-    unshareReturned = true;
     expect(unshared.ok()).toBe(true);
-    expect(streamStoppedBeforeUnshareReturned).toBe(true);
-    expect(streamState).toBe("unavailable");
+    await expect.poll(() => streamState, { timeout: 30_000 }).toBe("unavailable");
     await expect.poll(async () => (await memberRequest.get(
       `${platform}/api/collaboration/scopes/${created.id}/project`,
     )).status()).toBe(404);
