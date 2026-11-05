@@ -1,5 +1,7 @@
 import { Buffer } from 'node:buffer';
 import { describe, expect, it } from 'vitest';
+import { fileURLToPath } from 'node:url';
+import { build, type RollupOutput } from 'vite';
 import { packagePrivateSiteHtml } from '../../packages/platform/src/sites/private-package.js';
 
 const bytes = (value: string) => Buffer.from(value);
@@ -76,14 +78,37 @@ describe('private site package', () => {
   it('does not interpret ordinary quoted app strings as build artifact paths', async () => {
     const html = await packagePrivateSiteHtml([
       { path: 'index.html', contentType: 'text/html', body: bytes('<script type="module" src="./assets/main.js"></script>') },
-      { path: 'assets/main.js', contentType: 'text/javascript', body: bytes('window.navigate("../.."); window.label = "assets/logo.png";') },
+      { path: 'assets/main.js', contentType: 'text/javascript', body: bytes('window.navigate("../.."); window.label = "/assets/logo.png";') },
       { path: 'assets/logo.png', contentType: 'image/png', body: Buffer.from([1, 2, 3]) },
     ], 'index.html');
     const mapText = html.match(/<script type="importmap">([^<]+)<\/script>/)?.[1];
     const imports = JSON.parse(mapText!).imports as Record<string, string>;
     const main = Buffer.from(imports['matrix-site:assets/main.js']!.split(',')[1]!, 'base64').toString('utf8');
     expect(main).toContain('window.navigate("../..")');
-    expect(main).toContain('window.label = "assets/logo.png"');
+    expect(main).toContain('window.label = "/assets/logo.png"');
+  });
+
+  it('embeds an image imported by an actual default-base Vite build', async () => {
+    const result = await build({
+      root: fileURLToPath(new URL('../fixtures/sites-private-vite', import.meta.url)),
+      logLevel: 'silent',
+      build: { write: false, assetsInlineLimit: 0 },
+    }) as RollupOutput;
+    const files = result.output.map(item => {
+      const body = item.type === 'chunk' ? Buffer.from(item.code) : Buffer.from(item.source);
+      const contentType = item.fileName.endsWith('.html') ? 'text/html'
+        : item.fileName.endsWith('.js') ? 'text/javascript'
+          : item.fileName.endsWith('.svg') ? 'image/svg+xml'
+            : 'application/octet-stream';
+      return { path: item.fileName, contentType, body };
+    });
+    const html = await packagePrivateSiteHtml(files, 'index.html');
+    const mapText = html.match(/<script type="importmap">([^<]+)<\/script>/)?.[1];
+    const imports = JSON.parse(mapText!).imports as Record<string, string>;
+    const mainEntry = Object.entries(imports).find(([path]) => /^matrix-site:assets\/index-.*\.js$/.test(path));
+    const main = Buffer.from(mainEntry![1].split(',')[1]!, 'base64').toString('utf8');
+    expect(main).toContain('data:image/svg+xml;base64,');
+    expect(main).not.toMatch(/["']\/assets\/logo-[A-Za-z0-9_-]+\.svg["']/);
   });
 
   it('rejects repeated resource expansion before constructing an oversized output', async () => {

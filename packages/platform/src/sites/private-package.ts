@@ -101,6 +101,22 @@ function rewriteVitePreloadMetadata(code: string, path: string, files: Map<strin
   );
 }
 
+function rewriteViteGeneratedAssetLiterals(code: string, path: string, files: Map<string, PrivateSiteFile>, uriFor: (path: string) => string): string {
+  const budget = new ExpansionBudget(code);
+  // Default-base Vite builds emit imported non-code assets as hashed absolute
+  // literals. Requiring both that signature and an exact packaged file avoids
+  // treating ordinary app copy and route strings as build dependencies.
+  return code.replace(/(['"])(\/assets\/[^'"\n]*-[A-Za-z0-9_-]{6,}\.[A-Za-z0-9]+)\1/g, (match, _quote: string, raw: string) => {
+    const resolved = resolvedPath(files, raw, path);
+    const file = resolved ? files.get(resolved) : undefined;
+    if (!file) return match;
+    const isCodeOrStyle = /(?:java|ecma)script|application\/x-javascript|text\/css|text\/html/.test(file.contentType)
+      || /\.(?:m?js|css|html?)$/i.test(file.path);
+    if (isCodeOrStyle) return match;
+    return budget.replacement(match, JSON.stringify(uriFor(resolved!)));
+  });
+}
+
 async function rewriteModule(code: string, path: string, files: Map<string, PrivateSiteFile>, uriFor: (path: string) => string): Promise<string> {
   const budget = new ExpansionBudget(code);
   code = code.replace(/new\s+URL\(\s*(['"])([^'"]+)\1\s*,\s*import\.meta\.url\s*\)/g, (match, _quote: string, raw: string) => {
@@ -124,7 +140,8 @@ async function rewriteModule(code: string, path: string, files: Map<string, Priv
   code = applyReplacements(code, replacements);
   // Vite names lazy CSS/JS chunks as strings in its generated dependency map.
   // Restrict rewriting to that metadata so ordinary app strings stay untouched.
-  return rewriteVitePreloadMetadata(code, path, files, uriFor);
+  code = rewriteVitePreloadMetadata(code, path, files, uriFor);
+  return rewriteViteGeneratedAssetLiterals(code, path, files, uriFor);
 }
 
 function moduleData(file: PrivateSiteFile, uriFor: (path: string) => string, code?: string): string {
