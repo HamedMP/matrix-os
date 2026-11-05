@@ -231,6 +231,40 @@ describe("whole-project sharing coordinator", () => {
       .executeTakeFirst()).toEqual({ status: "completed" });
   });
 
+  it("does not resolve unshare until the committed subscriber drain completes", async () => {
+    await fixture.db.updateTable("collaboration_scopes").set({ lifecycle: "shared" })
+      .where("id", "=", PROJECT_SCOPE).execute();
+    let signalDrainStarted!: () => void;
+    let releaseDrain!: () => void;
+    const drainStarted = new Promise<void>((resolve) => { signalDrainStarted = resolve; });
+    const drainReleased = new Promise<void>((resolve) => { releaseDrain = resolve; });
+    const onUnshared = vi.fn(async () => {
+      signalDrainStarted();
+      await drainReleased;
+    });
+    const service = serviceFixture(fixture, preview, verifyConfirmation, replayPreparation, prepare, onUnshared);
+    let settled = false;
+    const unshare = service.unshare({
+      scopeId: PROJECT_SCOPE,
+      actorId: OWNER,
+      clientRequestId: "50000000-0000-4000-8000-000000000707",
+      expectedRevision: 4,
+      payloadHash: "4".repeat(64),
+    }).then((result) => {
+      settled = true;
+      return result;
+    });
+
+    await drainStarted;
+    expect(settled).toBe(false);
+    releaseDrain();
+    await expect(unshare).resolves.toEqual({
+      scopeId: PROJECT_SCOPE,
+      lifecycle: "private",
+      revision: 5,
+    });
+  });
+
   it("preserves the private project and requires a new explicit confirmation before re-sharing", async () => {
     await fixture.db.updateTable("collaboration_scopes").set({ lifecycle: "shared" })
       .where("id", "=", PROJECT_SCOPE).execute();
