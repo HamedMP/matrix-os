@@ -9,6 +9,11 @@ import { createConnection, createServer } from "node:net";
 import { assert, must, NODE, noSymlinkAncestors, stat, waitFor } from "./control.mjs";
 
 export function assertDrained(state) { assert(state.split("\n").includes("ActiveState=inactive"), "worker_not_drained"); }
+export async function qualifyGracefulDrain(config, ledger, handle, io = {}) {
+  await ledger.supervisorAction("stop");
+  const socketAbsent = io.socketAbsent ?? (async () => !await stat(config.supervisorSocket));
+  return ledger.waitForGracefulDrain(handle, socketAbsent, io.timeout);
+}
 export const MODEL = "claude-haiku-4-5-20251001";
 export function supervisorArgs(config, token, template) {
   const properties = []; let service = false;
@@ -25,7 +30,7 @@ export function supervisorArgs(config, token, template) {
   assert(properties.includes("--property=ProtectSystem=strict") && properties.includes("--property=PrivateNetwork=yes"), "supervisor_template_invalid");
   return ["--quiet", `--unit=${config.supervisorUnit}`, `--description=${token}`, ...properties,
     `--property=ReadWritePaths=${config.runtimeDirectory} ${config.commandSocketRoot}`,
-    "--property=RuntimeMaxSec=180", "--property=KillSignal=SIGKILL", `--setenv=MATRIX_SCOPE_RUNTIME_NAMESPACE=${config.namespace}`,
+    "--property=RuntimeMaxSec=180", "--property=KillSignal=SIGKILL", "--property=RemainAfterExit=yes", `--setenv=MATRIX_SCOPE_RUNTIME_NAMESPACE=${config.namespace}`,
     `--setenv=MATRIX_SCOPE_RUNTIME_APP_ROOT=${config.appRoot}`, `--setenv=MATRIX_HOME=${config.home ?? `${config.appRoot.slice(0, -4)}/home`}`,
     "--", "/usr/bin/env", "-i", `PATH=/opt/matrix/runtime/node/bin:/usr/bin:/bin`,
     `MATRIX_SCOPE_RUNTIME_NAMESPACE=${config.namespace}`, `MATRIX_SCOPE_RUNTIME_APP_ROOT=${config.appRoot}`,
@@ -206,10 +211,7 @@ export async function nativeProof(config, identity, context) {
     });
     broker = await startBroker(config.brokerSocket, dirname(config.runtimeDirectory)); const second = await create(after, "drain");
     await journal.step("drain", async () => {
-      await assertInventory(); await ledger.supervisorAction("stop");
-      await waitFor(async () => !await stat(config.supervisorSocket), "socket_not_drained");
-      const state = await must("/usr/bin/systemctl", ["show", identity.workerUnit(second), "--property=ActiveState"], "drain_state_unavailable");
-      assertDrained(state); return { ownSupervisorStopped: true, workerInactive: true, supervisorSocketAbsent: true };
+      await assertInventory(); return qualifyGracefulDrain(config, ledger, second);
     });
   } finally {
     const failures = [];

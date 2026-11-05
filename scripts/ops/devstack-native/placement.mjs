@@ -7,7 +7,7 @@ function protectedDirectory(entry) {
   // Mutable CLI requires uid0. Using the caller's identity also permits real
   // filesystem tests without treating synthetic metadata as root acceptance.
   return entry.isDirectory() && !entry.isSymbolicLink()
-    && (entry.uid === 0 || entry.uid === process.getuid()) && (entry.mode & 0o022) === 0;
+    && (Number(entry.uid) === 0 || Number(entry.uid) === process.getuid()) && (Number(entry.mode) & 0o022) === 0;
 }
 export async function inspectPlacement(path) {
   assert(resolve(path) === path, "placement_path_invalid");
@@ -28,20 +28,25 @@ export async function preparePlacement(config, { readOnly = false } = {}) {
   // Validate both trees completely before creating even the first directory.
   const inspections = [];
   for (const path of roots) inspections.push(await inspectPlacement(path));
+  const leafPaths = [config.runtimeDirectory, config.commandSocketRoot, config.stateRoot];
+  assert(new Set(leafPaths).size === 3, "placement_leaf_paths_invalid");
+  if (!readOnly) for (const path of leafPaths) assert(inspections[roots.indexOf(path)].includes(path), "placement_leaf_already_present");
   const created = [];
   if (!readOnly) for (const missing of inspections) for (const path of missing) {
     if (created.some(item => item.path === path)) continue;
     await inspectPlacement(dirname(path));
     await mkdir(path, { mode: path === dirname(dirname(config.runtimeDirectory)) ? 0o755 : 0o700 });
-    const entry = await lstat(path); assert(protectedDirectory(entry), "placement_create_unprotected");
-    created.push({ path, inode: entry.ino, device: entry.dev });
+    const entry = await lstat(path, { bigint: true }); assert(protectedDirectory(entry), "placement_create_unprotected");
+    created.push({ path, inode: String(entry.ino), device: String(entry.dev) });
   }
   if (readOnly) return { state: "checked", created };
   const leaves = [], pins = [];
   try {
-    for (const path of [config.runtimeDirectory, config.commandSocketRoot, config.stateRoot]) {
+    for (const path of leafPaths) {
       const handle = await open(path, constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW);
       pins.push(handle); const entry = await handle.stat({ bigint: true });
+      const own = created.find(item => item.path === path);
+      assert(own && String(entry.ino) === own.inode && String(entry.dev) === own.device, "placement_created_object_changed");
       leaves.push({ path, inode: String(entry.ino), device: String(entry.dev) });
     }
   } catch (error) { await Promise.allSettled(pins.map(handle => handle.close())); throw error; }

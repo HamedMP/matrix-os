@@ -1,8 +1,8 @@
 import { lstat } from "node:fs/promises";
-import { assert, command, hash } from "./control.mjs";
+import { assert, command, hash, waitFor } from "./control.mjs";
 import { safeCode } from "./receipt.mjs";
 export const CASCADE_KEYS = ["BoundBy", "ConsistsOf", "RequiredBy", "RequisiteOf", "PropagatesStopTo", "PartOf", "BindsTo", "OnFailure", "OnSuccess", "ExecStop", "ExecStopPost"];
-export const IDENTITY_KEYS = ["LoadState", "Description", "Transient", "InvocationID", "MainPID", "ActiveState", "DynamicUser", "RootDirectory", "FragmentPath", "KillSignal", "RuntimeDirectoryPreserve", ...CASCADE_KEYS];
+export const IDENTITY_KEYS = ["LoadState", "Description", "Transient", "InvocationID", "MainPID", "ActiveState", "DynamicUser", "RootDirectory", "FragmentPath", "KillSignal", "RuntimeDirectoryPreserve", "RemainAfterExit", "SubState", "Result", "ExecMainPID", "ExecMainCode", "ExecMainStatus", ...CASCADE_KEYS];
 export async function observeUnit(name, run = command) {
   const result = await run("/usr/bin/systemctl", ["show", name, ...IDENTITY_KEYS.map(key => `--property=${key}`)]);
   assert(result.code === 0, "unit_identity_unavailable"); const values = {};
@@ -23,7 +23,7 @@ export function createUnitLedger(config, token, io = {}) {
       : action === "stop" && name === config.supervisorUnit ? ["kill", "--kill-whom=main", "--signal=SIGTERM", name] : ["stop", name];
     const result = await command("/usr/bin/systemctl", args, 55_000); assert(result.code === 0, "owned_unit_mutation_failed");
   });
-  let submitted = false, supervisor, awaitingRestart = false;
+  let submitted = false, supervisor, awaitingRestart = false, graceful;
   const workers = new Map(); const quarantine = []; const partialCreates = [];
   const incarnation = value => value?.LoadState === "loaded" && /^[a-f0-9]{32}$/.test(value?.InvocationID) && /^[1-9][0-9]*$/.test(value?.MainPID);
   const same = (a, b) => a.InvocationID === b.InvocationID && a.MainPID === b.MainPID;
@@ -31,6 +31,18 @@ export function createUnitLedger(config, token, io = {}) {
   const checkSupervisor = value => assert(value?.Description === token && value.Transient === "yes" && incarnation(value), "supervisor_incarnation_unproven");
   const supervisorIdentity = async () => { assert(supervisor, "supervisor_incarnation_unproven"); const current = await observe(config.supervisorUnit);
     checkSupervisor(current); assert(same(current, supervisor), "supervisor_incarnation_changed"); return current; };
+  const exitedSupervisor = current => {
+    assert(current.LoadState === "loaded" && current.Description === token && current.Transient === "yes"
+      && current.InvocationID === supervisor.InvocationID && current.MainPID === "0" && current.ExecMainPID === supervisor.MainPID
+      && stableDefinition(current, supervisor), "supervisor_exit_incarnation_unproven");
+    assert(current.ActiveState === "active" && current.SubState === "exited" && current.RemainAfterExit === "yes"
+      && current.Result === "success" && current.ExecMainCode === "1" && current.ExecMainStatus === "0", "supervisor_graceful_exit_failed");
+    return current;
+  };
+  const supervisorCleanupIdentity = async () => {
+    const current = await observe(config.supervisorUnit);
+    return current.MainPID === "0" ? exitedSupervisor(current) : supervisorIdentity();
+  };
   const workerName = handle => { assert(/^runtime_[a-f0-9]{32}$/.test(handle), "worker_handle_invalid"); return `${config.workerUnitPrefix}${handle.slice(8)}.service`; };
   const checkWorker = (_handle, value) => assert(incarnation(value), "worker_incarnation_unproven");
   const workerIdentity = async handle => { const known = workers.get(handle); assert(known, "worker_not_recorded"); const current = await observe(known.name);
@@ -66,7 +78,34 @@ export function createUnitLedger(config, token, io = {}) {
     async supervisorAction(action) {
       assert(["kill", "stop"].includes(action), "supervisor_action_invalid");
       const current = await freshSupervisor(); cascadeSafe(current); await transitionSafe();
+      const transition = { supervisor: { ...current }, handles: [...workers].filter(([, item]) => !item.released).map(([handle]) => handle) };
       await mutate(action, config.supervisorUnit); if (action === "kill") awaitingRestart = true;
+      else graceful = transition;
+    },
+    async waitForGracefulDrain(handle, socketAbsent, timeout = 55_000) {
+      assert(graceful && graceful.handles.includes(handle), "graceful_transition_not_recorded");
+      return waitFor(async () => {
+        const current = await observe(config.supervisorUnit);
+        if (current.LoadState === "not-found") return false; // Default fields after GC are not exit evidence.
+        assert(current.InvocationID === graceful.supervisor.InvocationID && stableDefinition(current, graceful.supervisor), "supervisor_incarnation_changed");
+        if (current.MainPID !== "0") {
+          assert(current.MainPID === graceful.supervisor.MainPID && current.ActiveState !== "failed", "supervisor_exit_incarnation_unproven"); return false;
+        }
+        const exited = exitedSupervisor(current), drained = [];
+        for (const tracked of graceful.handles) {
+          const known = workers.get(tracked), worker = await observe(known.name);
+          if (worker.LoadState === "not-found") { drained.push({ unit: known.name, outcome: "collected_after_controller_close" }); continue; }
+          assert(worker.InvocationID === known.identity.InvocationID && stableDefinition(worker, known.identity), "worker_incarnation_changed");
+          assert(worker.ActiveState !== "failed", "worker_drain_failed");
+          if (worker.MainPID !== "0" || worker.ActiveState !== "inactive") return false;
+          assert(worker.ExecMainPID === known.identity.MainPID && worker.Result === "success", "worker_exit_incarnation_unproven");
+          drained.push({ unit: known.name, outcome: "inactive", invocationId: worker.InvocationID });
+        }
+        if (!await socketAbsent()) return false;
+        return { ownSupervisorStopped: true, workerInactive: true, supervisorSocketAbsent: true,
+          supervisor: { invocationId: exited.InvocationID, originalPid: Number(exited.ExecMainPID), processExited: true, unitRetained: true,
+            activeState: exited.ActiveState, subState: exited.SubState, result: exited.Result, exitCode: exited.ExecMainCode, exitStatus: Number(exited.ExecMainStatus) }, workers: drained };
+      }, "graceful_termination_unproven", timeout);
     },
     async recordWorker(reply) {
       const handle = reply?.runtimeHandle; const name = workerName(handle);
@@ -75,7 +114,7 @@ export function createUnitLedger(config, token, io = {}) {
       workers.set(handle, { name, identity: { ...current }, generation: reply.executionGeneration }); return name;
     },
     freshWorker,
-    async protocolAction(handle, action) { await freshSupervisor(); await freshWorker(handle); return action(); },
+    async protocolAction(handle, action) { await freshSupervisor(); const current = await freshWorker(handle); cascadeSafe(current); return action(); },
     inventory(names) {
       assert(names.length <= 64, "quarantine_capacity");
       for (const name of names) if (typeof name === "string" && name.startsWith(config.workerUnitPrefix)
@@ -112,7 +151,7 @@ export function createUnitLedger(config, token, io = {}) {
         catch (error) { results.push({ unit: config.supervisorUnit, state: "failed", code: safeCode(error) }); }
       }
       if (awaitingRestart && supervisor) try { await adoptExpectedRestart(); } catch (error) { results.push({ unit: config.supervisorUnit, state: "failed", code: safeCode(error) }); }
-      if (supervisor) await attempt(config.supervisorUnit, supervisorIdentity);
+      if (supervisor) await attempt(config.supervisorUnit, supervisorCleanupIdentity);
       for (const [handle, entry] of workers) await attempt(entry.name, () => workerIdentity(handle));
       return results;
     },

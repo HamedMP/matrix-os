@@ -102,6 +102,7 @@ it("attests LockPersonality and rejects its degraded supervisor value", async ()
   expect(() => validateSupervisorProperties(observed, config)).not.toThrow();
   expect(() => validateSupervisorProperties({ ...observed, LockPersonality: "no" }, config)).toThrow();
   expect(() => validateSupervisorProperties({ ...observed, KillSignal: "15" }, config)).toThrow();
+  expect(() => validateSupervisorProperties({ ...observed, RemainAfterExit: "no" }, config)).toThrow();
 });
 
 
