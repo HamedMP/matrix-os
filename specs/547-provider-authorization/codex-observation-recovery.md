@@ -38,10 +38,17 @@ trigger; they do not identify the failed RPC in every historical report.
    ordinary cadence. A healthy observation, explicit Refresh or accepted settings
    generation change resets the short-retry budget; scope changes cancel obsolete
    work. Share the delay policy with Web recovery.
+   A transport failure during a checking retry must consume the same bounded
+   recovery budget and schedule its next attempt; it must not strand recovery
+   until an unrelated focus or manual-refresh event.
 5. Unknown state cannot grant execution. Each real Chat admission still requires
    current native identity, private account binding and owner consent. Do not
    increase evidence TTLs, retimestamp old proof, silently switch models/accounts,
    or restore authority from cached presentation.
+6. A validated catalog response is ready for display even if it contains a
+   checking instance. Keep that readiness separate from healthy freshness:
+   restore saved nonrunnable Codex intent on a cold read and keep healthy sibling
+   providers usable without marking the checking observation as fresh authority.
 
 ## Contracts and compatibility
 
@@ -119,6 +126,10 @@ retry shutdown must drain timers and abandon obsolete requests.
   a transient checking state.
 - Fake-time cache tests cover recovery before normal freshness, retry exhaustion,
   offline/cancellation/scope changes and independent-provider availability.
+- The normal Electron workspace path without an injected catalog covers a cold
+  mixed checking/healthy response, retained disabled Codex intent and a runnable
+  healthy sibling. Web tests cover a failed short retry followed by recovery,
+  bounded failure exhaustion and cancellation across authority generations.
 - Legacy strict wire parsing and applicable shared Web/Electron/mobile derivations
   remain compatible. Rendered fixtures are separate from live account acceptance.
 

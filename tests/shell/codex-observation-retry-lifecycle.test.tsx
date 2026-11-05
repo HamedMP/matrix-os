@@ -12,8 +12,9 @@ const checking = { ...healthy, instances: healthy.instances.map(instance => ({ .
 })) };
 function deferred() {
   let resolve!: (response: Response) => void;
-  const promise = new Promise<Response>(done => { resolve = done; });
-  return { promise, resolve };
+  let reject!: (error: Error) => void;
+  const promise = new Promise<Response>((done, fail) => { resolve = done; reject = fail; });
+  return { promise, resolve, reject };
 }
 beforeEach(() => { vi.useFakeTimers(); window.localStorage.clear(); });
 afterEach(() => { cleanup(); vi.useRealTimers(); vi.unstubAllGlobals(); vi.restoreAllMocks(); });
@@ -122,4 +123,66 @@ it("queues retained offline settings intent when online returns before the activ
   expect(fetch).toHaveBeenCalledTimes(2);
   expect(String(fetch.mock.calls[1]?.[0])).toContain("refresh=true");
   expect(result.current.hasTrustedCatalog).toBe(true);
+});
+
+it("continues bounded checking recovery after a short retry fails", async () => {
+  const fetch = vi.fn().mockResolvedValueOnce(Response.json(checking))
+    .mockRejectedValueOnce(new Error("NetworkUnavailable"))
+    .mockImplementation(async () => Response.json(healthy));
+  vi.stubGlobal("fetch", fetch);
+  const { result } = renderHook(() => useChatProviderState());
+  await act(async () => { await Promise.resolve(); });
+  await act(async () => vi.advanceTimersByTimeAsync(5000));
+  expect(fetch).toHaveBeenCalledTimes(2);
+  expect(result.current.unavailable).toBe(true);
+  expect(result.current.catalog?.instances[0]?.observationState).toBe("checking");
+  await act(async () => vi.advanceTimersByTimeAsync(14999));
+  expect(fetch).toHaveBeenCalledTimes(2);
+  await act(async () => vi.advanceTimersByTimeAsync(1));
+  expect(fetch).toHaveBeenCalledTimes(3);
+  expect(result.current.unavailable).toBe(false);
+  expect(result.current.catalog?.instances[0]?.availability).toBe("available");
+  await act(async () => vi.advanceTimersByTimeAsync(300000));
+  expect(fetch).toHaveBeenCalledTimes(3);
+});
+
+it("ignores a rejected pre-settings retry without spending the new generation recovery budget", async () => {
+  const before = deferred(), after = deferred();
+  const fetch = vi.fn().mockResolvedValueOnce(Response.json(checking))
+    .mockReturnValueOnce(before.promise).mockReturnValueOnce(after.promise)
+    .mockImplementation(async () => Response.json(healthy));
+  vi.stubGlobal("fetch", fetch);
+  const { result } = renderHook(() => useChatProviderState());
+  await act(async () => { await Promise.resolve(); });
+  await act(async () => vi.advanceTimersByTimeAsync(5000));
+  act(() => window.dispatchEvent(new CustomEvent(PROVIDER_SETTINGS_CHANGED_EVENT)));
+  await act(async () => before.reject(new Error("ObsoleteNetworkFailure")));
+  expect(fetch).toHaveBeenCalledTimes(3);
+  expect(result.current.unavailable).toBe(false);
+  expect(result.current.hasTrustedCatalog).toBe(false);
+  await act(async () => after.resolve(Response.json(checking)));
+  expect(result.current.hasTrustedCatalog).toBe(true);
+  await act(async () => vi.advanceTimersByTimeAsync(4999));
+  expect(fetch).toHaveBeenCalledTimes(3);
+  await act(async () => vi.advanceTimersByTimeAsync(1));
+  expect(fetch).toHaveBeenCalledTimes(4);
+  expect(result.current.catalog?.instances[0]?.availability).toBe("available");
+});
+
+it("exhausts failed short retries before returning to ordinary checking cadence and cancels on teardown", async () => {
+  const fetch = vi.fn().mockResolvedValueOnce(Response.json(checking)).mockRejectedValue(new Error("NetworkUnavailable"));
+  vi.stubGlobal("fetch", fetch);
+  const { unmount } = renderHook(() => useChatProviderState());
+  await act(async () => { await Promise.resolve(); });
+  for (const [delay, reads] of [[5000, 2], [15000, 3], [30000, 4]]) {
+    await act(async () => vi.advanceTimersByTimeAsync(delay!));
+    expect(fetch).toHaveBeenCalledTimes(reads!);
+  }
+  await act(async () => vi.advanceTimersByTimeAsync(299999));
+  expect(fetch).toHaveBeenCalledTimes(4);
+  await act(async () => vi.advanceTimersByTimeAsync(1));
+  expect(fetch).toHaveBeenCalledTimes(5);
+  unmount();
+  await act(async () => vi.advanceTimersByTimeAsync(300000));
+  expect(fetch).toHaveBeenCalledTimes(5);
 });

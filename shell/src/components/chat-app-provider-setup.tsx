@@ -125,8 +125,23 @@ export function useChatProviderState(
     let pending = false;
     let forcePending = false;
     let observationRetries = 0;
+    let observedCatalog: CanonicalProviderCatalog | null = null;
     let observationTimer: ReturnType<typeof setTimeout> | undefined;
     const isOnline = () => navigator.onLine !== false;
+    const scheduleObservationCheck = (value: CanonicalProviderCatalog) => {
+      clearTimeout(observationTimer);
+      if (!value.instances.some(instance => instance.observationState === "checking")) {
+        observationRetries = 0;
+        return;
+      }
+      const delay = providerCatalogObservationRetryDelay(value, observationRetries) ?? 5 * 60_000;
+      observationRetries = Math.min(3, observationRetries + 1);
+      if (document.visibilityState === "visible" && isOnline()) {
+        observationTimer = setTimeout(() => {
+          if (document.visibilityState === "visible" && isOnline()) void refresh();
+        }, delay);
+      }
+    };
     async function refresh(force = false) {
       if (cancelled) return;
       forcePending = forcePending || force;
@@ -158,10 +173,9 @@ export function useChatProviderState(
           if (!cancelled && requestAuthorityGeneration === authorityGeneration) {
             clearTimeout(observationTimer);
             hasCatalog = true;
+            observedCatalog = value;
             setCatalog(value);
-            const delay = providerCatalogObservationRetryDelay(value, observationRetries);
-            observationRetries = value.instances.some(instance => instance.observationState === "checking") ? Math.min(3, observationRetries + 1) : 0;
-            if (delay !== null && document.visibilityState === "visible" && isOnline()) observationTimer = setTimeout(() => { if (document.visibilityState === "visible" && isOnline()) void refresh(); }, delay);
+            scheduleObservationCheck(value);
             setUnavailable(false);
             setLoading(false);
             if (requestAuthorityGeneration === authorityGeneration && (!authoritySuspended || forceRefresh)) {
@@ -171,7 +185,10 @@ export function useChatProviderState(
           }
         } catch (error: unknown) {
           console.warn("[chat] Canonical Provider catalog unavailable:", error instanceof Error ? error.name : "UnknownError");
-          if (!cancelled) setUnavailable(true);
+          if (!cancelled && requestAuthorityGeneration === authorityGeneration) {
+            setUnavailable(true);
+            if (observedCatalog) scheduleObservationCheck(observedCatalog);
+          }
         }
       } while (!cancelled && pending && isOnline());
       refreshing = false;
