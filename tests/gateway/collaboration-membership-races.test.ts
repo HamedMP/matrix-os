@@ -230,6 +230,36 @@ describe("organization project revocation races", () => {
       .execute()).toEqual([{ discovery_state: "revoked" }]);
   });
 
+  it("retries durable owner-project cleanup after a drain fails", async () => {
+    let ownedChatFailures = 0;
+    const drainScope = vi.fn(async (scopeId: string) => {
+      if (scopeId === ownedChat && ownedChatFailures++ === 0) throw new Error("drain interrupted");
+    });
+    const enforcer = new ProjectAccessRevocationEnforcer({
+      db: fixture.db,
+      sessions: { revoke: vi.fn(() => [] as string[]) },
+      drainScope,
+    });
+
+    await expect(enforcer.membershipEnded({ organizationId: org, actorId: departedOwner }))
+      .rejects.toThrow("drain interrupted");
+    expect(await fixture.db.selectFrom("collaboration_operations")
+      .select("status")
+      .where("scope_id", "=", ownedProject)
+      .where("operation_kind", "=", "membership.departure_cleanup")
+      .executeTakeFirstOrThrow()).toEqual({ status: "accepted" });
+
+    await enforcer.membershipEnded({ organizationId: org, actorId: departedOwner });
+
+    expect(drainScope.mock.calls.filter(([scope]) => scope === ownedProject)).toHaveLength(2);
+    expect(drainScope.mock.calls.filter(([scope]) => scope === ownedChat)).toHaveLength(2);
+    expect(await fixture.db.selectFrom("collaboration_operations")
+      .select("status")
+      .where("scope_id", "=", ownedProject)
+      .where("operation_kind", "=", "membership.departure_cleanup")
+      .executeTakeFirstOrThrow()).toEqual({ status: "completed" });
+  });
+
   it("drains the project and every inherited scope after unshare commits", async () => {
     const revoke = vi.fn(() => [] as string[]);
     const drainScope = vi.fn(async () => undefined);
