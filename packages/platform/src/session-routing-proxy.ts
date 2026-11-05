@@ -23,6 +23,7 @@ const SENSITIVE_PROXY_HEADERS = new Set([
   'x-matrix-code-proxy-token',
   'x-matrix-custom-mcp-approval-proof',
   'x-matrix-browser-approval-proof',
+  'x-matrix-routine-action-proof',
   'x-matrix-preview-drive-turn-proof',
 ]);
 

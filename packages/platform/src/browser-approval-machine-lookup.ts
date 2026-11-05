@@ -33,11 +33,11 @@ export class BrowserApprovalMachineLookup {
         await client.query("SET LOCAL statement_timeout = '5s'");
         await client.query("SET LOCAL lock_timeout = '3s'");
         await client.query("SET LOCAL idle_in_transaction_session_timeout = '5s'");
-        const result = await client.query<{ clerk_user_id: string; runtime_slot: string; status: string }>(
-          "SELECT clerk_user_id,runtime_slot,status FROM user_machines WHERE handle=$1 AND runtime_slot=$2 AND status='running' AND activation_state='authorized' AND deleted_at IS NULL LIMIT 1", [handle, runtimeSlot]);
+        const result = await client.query<{ machine_id: string; clerk_user_id: string; runtime_slot: string; status: string }>(
+          "SELECT machine_id,clerk_user_id,runtime_slot,status FROM user_machines WHERE handle=$1 AND runtime_slot=$2 AND status='running' AND activation_state='authorized' AND deleted_at IS NULL LIMIT 1", [handle, runtimeSlot]);
         await client.query("COMMIT");
         const row = result.rows[0];
-        return row ? { clerkUserId: row.clerk_user_id, runtimeSlot: row.runtime_slot, status: row.status } : undefined;
+        return row ? { machineId: row.machine_id, clerkUserId: row.clerk_user_id, runtimeSlot: row.runtime_slot, status: row.status } : undefined;
       } catch (error: unknown) { this.release(lease, true); throw error; }
       finally { this.release(lease); }
     })().finally(() => { this.operations.delete(result); });

@@ -133,6 +133,7 @@
     "#browser-chat-approval": "./src/browser-chat-approval.ts",
     "#browser-permission-presentation": "./src/browser-permission-presentation.ts",
     "#command-preview": "./src/command-preview.ts",
+    "#routine-action": "./src/routine-action.ts",
     "#preview-pair": "./src/preview-pair.ts"
   },
   "main": "src/index.ts",

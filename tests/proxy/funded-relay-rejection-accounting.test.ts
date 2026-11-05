@@ -53,7 +53,7 @@ describe("trusted Relay rejection usage accounting", () => {
     await expect(repo.authorize(request(credential.token, "next_owner_run"))).resolves.toMatchObject({ authorized: true });
   });
 
-  it("retains the owner admission barrier when a 429 has no trustworthy response body", async () => {
+  it("releases customer credit but retains the owner execution barrier when a 429 has no trustworthy response body", async () => {
     const admitted = await repo.authorize(request(credential.token, "unknown_run"));
     const key = { reservationId: admitted.reservation.reservationId, tokenId: credential.tokenId };
     await repo.startReservation(key);
@@ -61,8 +61,14 @@ describe("trusted Relay rejection usage accounting", () => {
       canonicalModelId: modelId, requestPath: "/v1/messages", signal: new AbortController().signal });
     expect(decision).toEqual({ mode: "conservative" });
     await expect(repo.finalizeReservation({ ...key, ...decision })).rejects.toMatchObject({ code: "unavailable" });
-    expect(await repo.getFundingSummary(identity)).toMatchObject({ reservedMicrousd: 1_000_000,
-      settledThisMonthMicrousd: 0, remainingBalanceMicrousd: 0 });
+    expect(await repo.getFundingSummary(identity)).toMatchObject({ reservedMicrousd: 0,
+      reservedThisMonthMicrousd: 0, settledThisMonthMicrousd: 0,
+      remainingBalanceMicrousd: 1_000_000, remainingBudgetMicrousd: 1_000_000 });
+    const retained = await db.executor.selectFrom("ai_funded_usage_reservations").selectAll()
+      .where("reservation_id", "=", key.reservationId).executeTakeFirstOrThrow();
+    expect(retained).toMatchObject({ status: "expired", actual_microusd: null, settlement_response: null });
+    expect(JSON.parse(retained.customer_charge_release!)).toMatchObject({ reason: "usage_unknown",
+      reservedMicrousd: 1_000_000, releasedMicrousd: 1_000_000 });
     await expect(repo.authorize(request(credential.token, "blocked_owner_run"))).rejects.toMatchObject({ code: "rate_limited" });
   });
 });

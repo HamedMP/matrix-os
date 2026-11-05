@@ -143,7 +143,8 @@ export async function reconcileSourceQualification(github,repo,controller,option
   let snapshot={prNumber:pull.number,headSha:pull.head.sha,headRef:pull.head.ref,baseSha:pull.base.sha,baseRef:pull.base.ref,sourceSha:pull.merge_commit_sha};
   if(config.isolated)snapshot.executionControllerSha=config.controllerSha;
   const admitted=config.admitted&&same(pull.head?.repo?.full_name,repo)&&pull.state==='open'&&pull.draft===false&&['ready-for-ci','fast-ci'].every(label=>pull.labels?.some(value=>value.name===label));
-  const previouslyAdmitted=history||Boolean(prior&&(prior.evidence.admittedPreviously===true||prior.evidence.notApplicable!==true));
+  // An explicit never-admitted discovery failure is not historical admission evidence.
+  const previouslyAdmitted=history||Boolean(prior&&(prior.evidence.admittedPreviously===true||(prior.evidence.admittedPreviously!==false&&prior.evidence.notApplicable!==true)));
   const recovery=!admitted&&previouslyAdmitted;
   if(recovery)snapshot.executionMode='hosted-only';
   const old=prior?.evidence;

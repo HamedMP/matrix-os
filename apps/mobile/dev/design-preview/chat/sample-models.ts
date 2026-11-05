@@ -5,7 +5,7 @@ import { MATRIX_ENGINE_ID, type ModelChoice, type ModelEngine } from "@/componen
 // shows the models of Matrix AI only.
 
 function matrixModel(key: string, name: string, selected = false): ModelChoice {
-  return { key, name, detail: "Matrix AI", logo: "matrix", selected, available: true };
+  return { key, name, detail: "Matrix AI", logo: "matrix", selected, available: true, selectable: true };
 }
 
 export const SAMPLE_MODEL_ENGINES: ModelEngine[] = [

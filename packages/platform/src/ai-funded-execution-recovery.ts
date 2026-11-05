@@ -64,7 +64,7 @@ export function createFundedExecutionRecovery(options: { db: PlatformDB; now: ()
       }
       const unknown = await trx.executor.selectFrom("ai_funded_usage_reservations").selectAll()
         .where("owner_id", "=", identity.ownerId).where("execution_admission_release", "is not", null)
-        .where("charge_waiver", "is", null)
+        .where("charge_waiver", "is", null).where("customer_charge_release", "is", null)
         .where("actual_microusd", "is", null).limit(FUNDED_EXECUTION_RECOVERY_MAX_UNKNOWN + 1).execute();
       let liability = request.maximumLiabilityMicrousd;
       const occupied: number[] = [];

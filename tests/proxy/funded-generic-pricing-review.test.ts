@@ -139,9 +139,9 @@ function platformControl(afterAuthorize?: () => void) {
   const identity = { tokenId: "credential_123", ownerId: "owner_123", machineId: "machine_123", runtimeSlot: "preview", audience: "matrix-funded-relay", scope: "ai:invoke", expiresAt: "2026-11-01T00:10:00.000Z" };
   return {
     check: vi.fn(async () => ({ identity })),
-    authorize: vi.fn(async (input: { requestId: string; modelId: string }) => {
+    authorize: vi.fn(async (input: { requestId: string; modelId: string; maxCostMicrousd: number }) => {
       afterAuthorize?.();
-      return { identity, reservation: { reservationId: "reservation_1", requestId: input.requestId, modelId: input.modelId, reservedMicrousd: 1, billingMode: "usage" } };
+      return { identity, reservation: { reservationId: "reservation_1", requestId: input.requestId, modelId: input.modelId, reservedMicrousd: 0, billingMode: "usage", billingPolicy: "postpaid", maxCostMicrousd: input.maxCostMicrousd } };
     }),
     start: vi.fn(async (input: { executionId?: string }) => ({ executionId: input.executionId, reservationId: "reservation_1", requestId: "request_1", tokenId: identity.tokenId })),
     release: vi.fn(async () => ({})), finalize: vi.fn(async () => ({})),

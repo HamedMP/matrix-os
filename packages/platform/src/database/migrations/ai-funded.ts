@@ -1,3 +1,4 @@
+import { migrateFundedPostpaid } from "./ai-funded-postpaid.js";
 import { readTerminalOutcome } from "../../ai-funded-terminal-outcome.js";
 import { sql } from 'kysely';
 import { ensureFundedReservationIndexes } from '../../ai-funded-reservation-indexes.js';
@@ -209,6 +210,7 @@ export async function migrateAiFunded(db: PlatformMigrationExecutor): Promise<vo
     terminalCursor = terminalRows[terminalRows.length - 1].reservation_id;
   }
   await migrateUsageWaivers(db);
+  await migrateFundedPostpaid(db);
   await ensureFundedReservationIndexes(db);
   await sql`
     CREATE TABLE IF NOT EXISTS ai_funded_credit_ledger (
