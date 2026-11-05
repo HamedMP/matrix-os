@@ -147,7 +147,7 @@ As a project owner or organization administrator, I can remove access through th
 - The owner accepts responsibility for usage charges when confirming organization-wide project sharing; the confirmation copy states this consequence without a separate checkbox.
 - Provider Settings remains the single owner-facing place to select, change, or disconnect AI connections.
 - Installed capabilities may still be unavailable for operational reasons; universal project access does not bypass runtime availability or project isolation.
-- Public documentation ships in a separate `FinnaAI/matrix-os-site` pull request.
+- Public documentation ships in [FinnaAI/matrix-os-site#338](https://github.com/FinnaAI/matrix-os-site/pull/338).
 - Product, collaboration, provider-runtime, and security owners should review the authorization simplification; the requester has approved the V1 product direction.
 
 ## Explicit Exclusions
