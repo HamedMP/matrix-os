@@ -26,6 +26,12 @@ describe("protected candidate build admission", () => {
 const workflow = parse(readFileSync(".github/workflows/desktop-build.yml", "utf8"));
 describe("actual unsigned pair build job", () => {
   const job = workflow.jobs.pair_artifacts;
+  it("keeps preview-only selectors optional for reusable release callers", () => {
+    const callInputs = workflow.on.workflow_call.inputs;
+    for (const name of ["candidate_sha", "pair_pr", "pair_id", "pair_generation"]) {
+      expect(callInputs[name]).toMatchObject({ required: false, type: "string", default: "" });
+    }
+  });
   it("isolates candidate execution from signing jobs and mutable source refs", () => {
     expect(job.environment).toBe("collaboration-preview-build");
     expect(job.permissions).toEqual({ contents: "read" });

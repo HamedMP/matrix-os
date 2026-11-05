@@ -22,6 +22,26 @@ on:
         type: string
   workflow_call:
     inputs:
+      candidate_sha:
+        description: Preview-only candidate SHA; empty for reusable release callers.
+        required: false
+        type: string
+        default: ""
+      pair_pr:
+        description: Preview-only pull request number; empty for reusable release callers.
+        required: false
+        type: string
+        default: ""
+      pair_id:
+        description: Preview-only canonical pair UUID; empty for reusable release callers.
+        required: false
+        type: string
+        default: ""
+      pair_generation:
+        description: Preview-only canonical generation; empty for reusable release callers.
+        required: false
+        type: string
+        default: ""
       channel:
         description: Desktop update channel.
         required: true
