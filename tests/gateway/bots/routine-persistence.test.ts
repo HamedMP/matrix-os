@@ -1,3 +1,5 @@
+import { bootstrapChatDatabase } from "../../../packages/gateway/src/chat/database.js";
+import { insertChat } from "./bot-state-support.js";
 import { createBotRoutineScheduler } from "../../../packages/gateway/src/bots/routine-scheduler.js";
 import { createBotTasksRepository } from "../../../packages/gateway/src/bots/repositories/tasks.js";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -31,11 +33,10 @@ beforeAll(async () => {
   db = new Kysely<OwnerBotDatabase>({
     dialect: pg.dialect
   });
-  // Only the two existing Chat prerequisites. All Bot migrations run unchanged.
-  await sql`CREATE TABLE chats (id TEXT PRIMARY KEY, owner_id TEXT NOT NULL, owner_type TEXT NOT NULL, collaboration JSONB, lifecycle TEXT NOT NULL)`.execute(db);
-  await sql`CREATE TABLE chat_runs (id TEXT PRIMARY KEY, chat_id TEXT NOT NULL, driver_kind TEXT NOT NULL)`.execute(db);
+  // Use the real Chat prerequisites for additive Bot receipt foreign keys.
+  await bootstrapChatDatabase(db);
   await bootstrapBotDatabase(db);
-  await sql`INSERT INTO chats VALUES (${CHAT}, ${OWNER}, 'personal', NULL, 'active')`.execute(db);
+  await insertChat(db, CHAT, OWNER);
   await db.insertInto("bot_chat_bindings").values({
     owner_id: OWNER,
     bot_id: BOT,
@@ -434,7 +435,7 @@ it("32 invalid Chat rows cannot starve the next live due or pending fire", async
   for (let i = 0; i < 33; i++) {
     const owner = "queue_fixture_" + i,
       chat = "chat_queue_fixture_" + i;
-    await sql`INSERT INTO chats VALUES (${chat},${owner},'personal',NULL,'active')`.execute(db);
+    await insertChat(db, chat, owner);
     await db.insertInto("bot_chat_bindings").values({
       owner_id: owner,
       bot_id: BOT,
@@ -533,7 +534,7 @@ it("pauses a failed recurring routine instead of filling the Chat with repeated 
 
 it("archiving releases working capacity and retained history cannot hide current routines", async () => {
   const owner = "routine_capacity_owner", chat = "chat_routine_capacity";
-  await sql`INSERT INTO chats VALUES (${chat},${owner},'personal',NULL,'active')`.execute(db);
+  await insertChat(db, chat, owner);
   await db.insertInto("bot_chat_bindings").values({ owner_id: owner, bot_id: BOT, chat_id: chat, kind: "direct", created_at: NOW, removed_at: null }).execute();
   const make = (now = NOW) => repo.create({ ownerId: owner, botId: BOT, chatId: chat, proposal, nextFireAt: NEXT, now });
   const old = [];

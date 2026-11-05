@@ -33,10 +33,10 @@ describe.skipIf(!v9PgEnabled)("released v9 and unpublished routine migration ide
       bot_chat_bindings: before.rows.bot_chat_bindings!.map(row => Object.assign({}, row, { project_id: null })),
     });
     expect(after.history.filter(row => row.version <= 8)).toEqual(before.history);
-    expect(await fixture.db.selectFrom("bot_schema_migrations").select(["version", "name"]).where("version", ">=", 9).where("version", "<=", 15).orderBy("version").execute())
+    expect(await fixture.db.selectFrom("bot_schema_migrations").select(["version", "name"]).where("version", ">=", 9).where("version", "<=", 16).orderBy("version").execute())
       .toEqual([{ version: 9, name: "question_source_run" }, { version: 10, name: "bot_question_threads_bridge" }, { version: 11, name: "bot_routines" },
         { version: 12, name: "routine_cli_preferences" }, { version: 13, name: "routine_cli_sources" },
-        { version: 14, name: "routine_cli_requests" }, { version: 15, name: "routine_cli_proposals" }]);
+        { version: 14, name: "routine_cli_requests" }, { version: 15, name: "routine_cli_proposals" }, { version: 16, name: "routine_chat_origin" }]);
     expect(await routineTables()).toHaveLength(2);
   });
 
