@@ -338,7 +338,7 @@ export class ProjectAccessRevocationEnforcer {
         .selectAll()
         .where("organization_id", "=", input.organizationId)
         .where("kind", "=", "project")
-        .where("lifecycle", "in", ["shared", "archived"])
+        .where("lifecycle", "in", ["preparing", "shared", "archived", "recovering"])
         .where("deleted_at", "is", null)
         .orderBy("id")
         .limit(MAX_ORGANIZATION_PROJECTS + 1)

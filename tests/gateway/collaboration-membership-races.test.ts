@@ -4,6 +4,7 @@ import { CollaborationAuthority } from "../../packages/gateway/src/collaboration
 import { bootstrapCollaborationDatabase } from "../../packages/gateway/src/collaboration/database.js";
 import { CollaborationRepository } from "../../packages/gateway/src/collaboration/repository.js";
 import { ProjectAccessRevocationEnforcer } from "../../packages/gateway/src/collaboration/revocation-enforcer.js";
+import { createProjectTransitionJournal } from "../../packages/gateway/src/collaboration/project-transition.js";
 import {
   collaborationActors,
   collaborationIds,
@@ -258,6 +259,53 @@ describe("organization project revocation races", () => {
       .where("scope_id", "=", ownedProject)
       .where("operation_kind", "=", "membership.departure_cleanup")
       .executeTakeFirstOrThrow()).toEqual({ status: "completed" });
+  });
+
+  it("makes an in-progress share private before acknowledging owner departure", async () => {
+    const transitionId = "73000000-0000-4000-8000-000000000005";
+    await fixture.db.updateTable("collaboration_scopes").set({ lifecycle: "preparing" })
+      .where("id", "in", [ownedProject, ownedChat]).execute();
+    await fixture.db.insertInto("collaboration_transitions").values({
+      id: transitionId,
+      scope_id: ownedProject,
+      source_authority_runtime_id: "vps:revocation",
+      source_authority_generation: 1,
+      destination_authority_runtime_id: "vps:revocation-next",
+      destination_authority_generation: 1,
+      requested_by: departedOwner,
+      inventory_revision: 1,
+      inventory_hash: "a".repeat(64),
+      intended_membership_hash: "b".repeat(64),
+      status: "committing",
+      source_fence_epoch: 1,
+      staged_manifest_ref: "manifest_11111111111111111111111111111111",
+      publication_marker: "publication_11111111111111111111111111111111",
+      retry_count: 0,
+      error_code: null,
+      created_at: now,
+      updated_at: now,
+    }).execute();
+    const enforcer = new ProjectAccessRevocationEnforcer({
+      db: fixture.db,
+      sessions: { revoke: vi.fn(() => [] as string[]) },
+      drainScope: vi.fn(async () => undefined),
+    });
+
+    await enforcer.membershipEnded({ organizationId: org, actorId: departedOwner });
+
+    await expect(fixture.db.selectFrom("collaboration_scopes")
+      .select(["id", "lifecycle"])
+      .where("id", "in", [ownedProject, ownedChat])
+      .orderBy("id")
+      .execute()).resolves.toEqual([
+      { id: ownedProject, lifecycle: "private" },
+      { id: ownedChat, lifecycle: "private" },
+    ]);
+    const transitions = createProjectTransitionJournal({ db: fixture.db, now: () => now });
+    await expect(transitions.activate(transitionId)).rejects.toMatchObject({ code: "conflict" });
+    await expect(fixture.db.selectFrom("collaboration_scopes")
+      .select("lifecycle").where("id", "=", ownedProject).executeTakeFirstOrThrow())
+      .resolves.toEqual({ lifecycle: "private" });
   });
 
   it("drains the project and every inherited scope after unshare commits", async () => {
