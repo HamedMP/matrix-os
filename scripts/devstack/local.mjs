@@ -142,7 +142,7 @@ export function createAdapter({ registry = process.env.DEVSTACK_STATE_DIR ?? joi
     }
     return { manifest, prerequisites: 'verified', readiness: 'unknown' };
   }
-  async function lifecycle(manifest, action) {
+  async function lifecycle(manifest, action, priorLease) {
     const initial = new Map(); const attempted = []; const rollback = [];
     let result = { code: 0, stdout: '', stderr: '' }, unit;
     try {
@@ -174,7 +174,7 @@ export function createAdapter({ registry = process.env.DEVSTACK_STATE_DIR ?? joi
     }
     const fullyRolledBack = initial.size === manifest.managedUnits.length
       && [...initial.values()].every(state => state !== 'active') && rollback.every(item => item.code === 0) && rollback.length === attempted.length;
-    const activeLease = action === 'stop' ? result.code !== 0 : result.code === 0 || !fullyRolledBack;
+    const activeLease = action === 'stop' ? result.code !== 0 && priorLease : result.code === 0 || !fullyRolledBack;
     return { result, activeLease, diagnostic: result.code === 0 ? null : { action, unit, code: result.code, stderr: result.stderr, rollback } };
   }
   function hasActiveLease(record) {
@@ -191,7 +191,8 @@ export function createAdapter({ registry = process.env.DEVSTACK_STATE_DIR ?? joi
         for (const name of names) if (hasActiveLease(await claim(name.slice(0, -5)))) active++;
         if (active >= capacity) throw new Error('Local active capacity reached; stop an active instance before starting another');
       }
-      record.activeLease = true; record.state = action === 'stop' ? 'stopping' : 'starting';
+      record.activeLease = action === 'stop' ? hasActiveLease(record) : true;
+      record.state = action === 'stop' ? 'stopping' : 'starting';
       await save(record);
     });
   }
@@ -200,22 +201,34 @@ export function createAdapter({ registry = process.env.DEVSTACK_STATE_DIR ?? joi
     status, preflight,
     async register(file) {
       const { manifest } = await preflight(file);
-      const identity = gitIdentity(manifest.worktree);
       return locked(async () => {
-        const names = (await readdir(registry)).filter(name => name.endsWith('.json'));
-        if (names.length > 100) throw new Error('Registry exceeds capacity safety bound');
-        for (const name of names) {
-          const existing = await claim(name.slice(0, -5));
-          if (existing.manifest.id === manifest.id) {
-            if (JSON.stringify(existing.manifest) !== JSON.stringify(manifest)) throw new Error('Instance already claimed with a different manifest');
-            return existing;
+        const identity = gitIdentity(manifest.worktree);
+        let existing;
+        try { existing = await claim(manifest.id); } catch (error) { if (error.code !== 'ENOENT') throw error; }
+        if (!existing) {
+          // New claims cannot conceal already live resources outside admission.
+          for (const unit of manifest.managedUnits) {
+            const state = await invoke(manifest, 'root', ['systemctl', 'show', '--property=ActiveState', '--value', unit]);
+            if (state.code !== 0 || state.stdout.trim() !== 'inactive') throw new Error(`First adoption requires stopped units; stop ${unit} before registering`);
           }
-          if (existing.manifest.machine === manifest.machine || existing.manifest.worktree === manifest.worktree) throw new Error('Machine or worktree already claimed');
         }
-        if (names.length >= 100) throw new Error('Retained registration safety bound reached');
-        const record = { manifest, gitIdentity: identity, state: 'registered', activeLease: false, lastExitCode: null, diagnostic: null };
-        await save(record); return record;
-      });
+        return locked(async () => {
+          const names = (await readdir(registry)).filter(name => name.endsWith('.json'));
+          if (names.length > 100) throw new Error('Registry exceeds capacity safety bound');
+          for (const name of names) {
+            const existing = await claim(name.slice(0, -5));
+            if (existing.manifest.id === manifest.id) {
+              if (JSON.stringify(existing.manifest) !== JSON.stringify(manifest)) throw new Error('Instance already claimed with a different manifest');
+              if (existing.gitIdentity !== identity) throw new Error('Pinned Git worktree identity changed');
+              return existing;
+            }
+            if (existing.manifest.machine === manifest.machine || existing.manifest.worktree === manifest.worktree) throw new Error('Machine or worktree already claimed');
+          }
+          if (names.length >= 100) throw new Error('Retained registration safety bound reached');
+          const record = { manifest, gitIdentity: identity, state: 'registered', activeLease: false, lastExitCode: null, diagnostic: null };
+          await save(record); return record;
+        });
+      }, `.${manifest.id}.lock`);
     },
     async select(id) {
       const record = await get(id); await owner(record.manifest);
@@ -240,8 +253,9 @@ export function createAdapter({ registry = process.env.DEVSTACK_STATE_DIR ?? joi
         let result;
         try {
           if (['start', 'stop', 'resume'].includes(action)) {
+            const priorLease = hasActiveLease(record);
             await reserve(record, action);
-            const outcome = await lifecycle(manifest, action); result = outcome.result;
+            const outcome = await lifecycle(manifest, action, priorLease); result = outcome.result;
             record.activeLease = outcome.activeLease;
             record.state = result.code === 0 ? action === 'stop' ? 'stopped' : 'running' : 'failed';
             record.lastExitCode = result.code; record.diagnostic = outcome.diagnostic;
