@@ -94,6 +94,7 @@ function useActiveChatState() {
     gatewayUrl,
     catalog,
     directBot,
+    routineOriginEligible: !chatReadFailed && botChat.resolved && !directBot && detail && detail.record.chat.id === activeChatId && detail.record.chat.ownerScope.type === "personal" && detail.record.chat.lifecycle === "active" && !detail.record.chat.collaboration,
     providerCatalogChecking,
     selection,
     setSelectionOverride,

@@ -1,3 +1,4 @@
+import type {ScheduledMessagePresentation} from "@matrix-os/ui/chat-scheduled-message";
 import { useEffect, useState } from "react";
 import { Pressable, Text, View } from "react-native";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";

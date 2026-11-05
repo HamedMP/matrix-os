@@ -15,7 +15,7 @@ const date = (value: string) => new Date(value).toLocaleString();
 
 
 /** Keyed by owner + Computer in the route; every read also has a view-generation fence. */
-export function SchedulesScreen({ api, resolve, onBack, onOpenChat, onNewSchedule }: { api: BotRoutineClient; resolve: ResolveSchedule; onBack(): void; onOpenChat?: (chatId: string, botId: string) => void | Promise<void>; onNewSchedule?: () => void }) {
+export function SchedulesScreen({ api, resolve, onBack, onOpenChat, onNewSchedule }: { api: BotRoutineClient; resolve: ResolveSchedule; onBack(): void; onOpenChat?: (chatId: string, botId?: string) => void | Promise<void>; onNewSchedule?: () => void }) {
   const [archived, setArchived] = useState(false), [data, setData] = useState(EMPTY);
   const [loading, setLoading] = useState(true), [fresh, setFresh] = useState(false), [error, setError] = useState("");
   const [detail, setDetail] = useState<BotRoutineDetailResponse | null>(null), [selected, setSelected] = useState<string | null>(null);
@@ -104,10 +104,10 @@ export function SchedulesScreen({ api, resolve, onBack, onOpenChat, onNewSchedul
       if (alive.current) { setFresh(false); setError("The schedule could not be changed. Refresh its current revision before trying again."); }
     } finally { mutation.current = false; if (alive.current) setBusy(false); }
   }
-  async function openHistory(chatId: string, botId: string) {
+  async function openHistory(chatId: string, botId?: string) {
     if (!onOpenChat || mutation.current || !alive.current) return;
     mutation.current = true; setBusy(true); setError("");
-    try { await onOpenChat(chatId, botId); }
+    try { await (botId ? onOpenChat(chatId, botId) : onOpenChat(chatId)); }
     catch (failure: unknown) {
       console.warn("[mobile-schedules] Chat unavailable", failure instanceof Error ? failure.name : "UnknownError");
       if (alive.current) setError("This task’s Chat could not be opened. Try again.");
@@ -117,7 +117,7 @@ export function SchedulesScreen({ api, resolve, onBack, onOpenChat, onNewSchedul
   return <TabScreen testID="schedules-screen"><ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
     <Button label="Back" variant="text" onPress={onBack} />
     <Text accessibilityRole="header" style={styles.title}>Schedules</Text>
-    <Text style={styles.note}>Your tasks on the selected Computer. Create and approve new schedules in a private Bot Chat.</Text>
+    <Text style={styles.note}>Your tasks on the selected Computer. Approve persistent tasks in their source Chat.</Text>
     {onNewSchedule ? <Button label="New schedule" disabled={busy} onPress={onNewSchedule} /> : null}
     <View style={styles.row}><Button label={archived ? "Show current" : "Show archived"} variant="outline" disabled={busy} onPress={() => setArchived(value => !value)} />
       <Button label="Refresh" variant="outline" disabled={busy} onPress={() => { setError(""); void refreshAll(); }} /></View>
@@ -140,13 +140,14 @@ export function SchedulesScreen({ api, resolve, onBack, onOpenChat, onNewSchedul
             {text: "Cancel", style: "cancel"}, {text: "Archive", style: "destructive", onPress: () => void control(current, "archived")},
           ])} />
         </View> : null}
+        {current.originChatId?current.originAvailable?onOpenChat?<Button label="Open source Chat" variant="text" disabled={busy} onPress={()=>void openHistory(current.originChatId!)}/>:null:<Text style={styles.note}>Source Chat unavailable. Execution history remains available.</Text>:null}
         {editing && current.status !== "archived" ? <ScheduleEditor key={current.routineId} routine={current} api={api} resolve={resolve}
           actionsAvailable={fresh && !busy} pending={data.pending} pendingRead={pendingRead} getReadSequence={() => listRead.current}
           onRefresh={refreshAll} onDone={() => { if (alive.current) setEditing(false); }} /> : null}
       </View> : null}
     </> : <>
       {loading ? <Text style={styles.note}>Loading schedules…</Text> : null}
-      {!loading && fresh && !data.items.length ? <Text style={styles.note}>{archived ? "No archived schedules." : "No schedules yet. Ask a private Bot Chat for a timed task, then review its proposal."}</Text> : null}
+      {!loading && fresh && !data.items.length ? <Text style={styles.note}>{archived ? "No archived schedules." : "No schedules yet. Choose Persistent task in a private Chat, then review its proposal."}</Text> : null}
       {data.items.map(item => <View key={item.routineId} style={styles.card}>
         <Button label={item.proposal.name} variant="text" onPress={() => void view(item.routineId)} />
         <Text style={styles.text}>{`${status(item)} · ${routineScheduleCopy(item.proposal.schedule).frequency}`}</Text>
