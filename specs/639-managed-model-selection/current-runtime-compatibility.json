@@ -7,7 +7,7 @@
       "preservedFiles": [
         {
           "path": "packages/contracts/package.json",
-          "sha256": "1f3c9cac23bffc2af20416f93984aef83597684676110dd660a0c3c5cb8a3e47"
+          "sha256": "3f6fae23a9c3847f1a8f1f4fbe6e75510bc8f8066de15a4d0b2fae2e23d84699"
         },
         {
           "path": "packages/contracts/src/bots/routine-cli.ts",
@@ -15,7 +15,7 @@
         },
         {
           "path": "packages/contracts/src/index.ts",
-          "sha256": "6ed7a8d69c726d32fc3aec8da8aa99807ec70c4f8cec28804b0ba05daa923c11"
+          "sha256": "0839d62525d68fa9c18ab9490015a2f1844406762df5b0986da96dacb5827f87"
         },
         {
           "path": "packages/contracts/src/routine-action.ts",
@@ -43,7 +43,7 @@
         },
         {
           "path": "packages/platform/src/clerk-auth.ts",
-          "sha256": "75bb6a781d16ac8161157bef833f0f8d0c566cc5fdde2e71b90910f244c031ab"
+          "sha256": "df803928a0c0b511441016c2750334957ef79e19cd1d20db9e09db2a47aacd62"
         },
         {
           "path": "packages/platform/src/routine-action-proof.ts",
@@ -67,7 +67,7 @@
         },
         {
           "path": "packages/platform/src/sync-jwt.ts",
-          "sha256": "a5854ed899b40a40f868f58d2cad8e0115b7a2a8e04d62abcfee0c12f1acc61d"
+          "sha256": "bef6d33c0f9c8138fe711ad70593e035a571dbe3711d99c9320b3848ae9147dd"
         }
       ],
       "preserveRuntimeConfiguration": true

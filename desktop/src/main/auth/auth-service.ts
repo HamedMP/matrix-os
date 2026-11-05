@@ -1,3 +1,7 @@
+import type { VerifiedDesktopPreviewContext } from "../preview-pair-context";
+import type { PreviewPairProfileBinding } from "@matrix-os/contracts/preview-pair-launch";
+import { PreviewPairAuthMismatch, assertPreviewPairCredential, matchesPreviewPairCache,
+  previewPairContextExpired, previewPairProfileBinding } from "./preview-pair-binding";
 import {
   MatrixComputerListSchema,
   RuntimeSelectionRequestSchema,
@@ -15,6 +19,7 @@ import {
 } from "./device-auth";
 
 export interface ConnectionProfile {
+  previewPair?: PreviewPairProfileBinding;
   handle: string;
   userId: string;
   platformHost: string;
@@ -48,6 +53,7 @@ export type AuthStatus =
 
 export type PollResult = {
   status: "pending" | "authorized" | "expired";
+  reason?: "preview_account_mismatch";
   profile?: { handle: string; userId: string };
 };
 
@@ -86,6 +92,7 @@ async function readBoundedResponseText(response: Response): Promise<string> {
 }
 
 interface AuthServiceDeps {
+  previewContext?: VerifiedDesktopPreviewContext;
   credentialStore: CredentialStore;
   platformHost: string;
   runtimeSelectionOrigin: string;
@@ -103,17 +110,28 @@ export class AuthService {
   private profile: ConnectionProfile | null = null;
   private flowState: "idle" | "pending" | "authorized" | "expired" = "idle";
   private flowNonce = 0;
+  private flowFailureReason: "preview_account_mismatch" | undefined;
   private persistenceTail: Promise<void> = Promise.resolve();
   private pendingDeviceCode: Pick<DeviceCodeResponse, "userCode" | "verificationUri" | "expiresIn"> | null = null;
   private readonly deps: AuthServiceDeps;
 
   constructor(deps: AuthServiceDeps) {
+    if (deps.previewContext && (deps.platformHost !== deps.previewContext.apiOrigin || deps.runtimeSelectionOrigin !== deps.previewContext.apiOrigin)) {
+      throw new PreviewPairAuthMismatch(deps.previewContext.role);
+    }
     this.deps = deps;
   }
 
   async init(): Promise<void> {
     this.credential = await this.deps.credentialStore.load();
     this.profile = await this.deps.loadProfile();
+    const preview = this.deps.previewContext;
+    if (preview && (this.credential || this.profile) && !matchesPreviewPairCache(preview, this.credential, this.profile, this.now())) {
+      this.replaceCredential(null); this.profile = null;
+      for (const clear of [() => this.deps.credentialStore.clear(), () => this.deps.clearProfile()]) {
+        try { await clear(); } catch (error: unknown) { console.warn("[auth] preview cache retirement failed", error instanceof Error ? error.name : "UnknownError"); }
+      }
+    }
     if (this.isExpired()) {
       this.credential = null;
       try {
@@ -140,7 +158,8 @@ export class AuthService {
   // A credential past (or within the skew window of) its expiry is unusable;
   // sending it would just earn a 401, so treat it as signed-out.
   private isExpired(): boolean {
-    return this.credential !== null && this.credential.expiresAt <= this.now() + EXPIRY_SKEW_MS;
+    return this.credential !== null && (this.credential.expiresAt <= this.now() + EXPIRY_SKEW_MS
+      || Boolean(this.deps.previewContext && previewPairContextExpired(this.deps.previewContext, this.now())));
   }
 
   getToken(): string | null {
@@ -150,6 +169,7 @@ export class AuthService {
   }
 
   getGatewayOrigin(): string {
+    if (this.deps.previewContext) return this.deps.previewContext.apiOrigin;
     const profile = this.credential && this.profile?.userId !== this.credential.userId
       ? null
       : this.profile;
@@ -170,7 +190,7 @@ export class AuthService {
     if (!credential) {
       return {
         signedIn: false,
-        runtimeSlot: this.profile?.runtimeSlot ?? "primary",
+        runtimeSlot: this.deps.previewContext?.runtimeSlot ?? this.profile?.runtimeSlot ?? "primary",
         platformHost: this.getGatewayOrigin(),
         authGeneration: this.authGeneration,
       };
@@ -197,12 +217,14 @@ export class AuthService {
     if (this.flowState === "pending" && this.pendingDeviceCode) {
       return this.pendingDeviceCode;
     }
-    const fetchFn = this.deps.fetchFn ?? ((input: string, init?: RequestInit) => fetch(input, init));
+    const fetchFn = this.deps.fetchFn ?? ((input: string, init?: RequestInit) => fetch(input, { ...init, signal: init?.signal ?? AbortSignal.timeout(10_000) }));
     const baseUrl = this.getGatewayOrigin();
     const nonce = ++this.flowNonce;
+    this.flowFailureReason = undefined;
     let code: DeviceCodeResponse;
     try {
-      code = await requestDeviceCode({ fetchFn, baseUrl });
+      code = await requestDeviceCode({ fetchFn, baseUrl, ...(this.deps.previewContext ? { nativeRedirect: false } : {}) });
+      if (this.deps.previewContext && new URL(code.verificationUri).origin !== this.deps.previewContext.browserOrigin) throw new PreviewPairAuthMismatch(this.deps.previewContext.role);
     } catch (err: unknown) {
       if (nonce !== this.flowNonce) throw new Error("Sign-in request was canceled.");
       throw err;
@@ -237,8 +259,13 @@ export class AuthService {
           userId: token.userId,
           handle: token.handle,
         };
-        let runtimeSlot = token.runtimeSlot ?? this.profile?.runtimeSlot ?? "primary";
-        if (!token.runtimeSlot && runtimeSlot !== "primary") {
+        const preview = this.deps.previewContext;
+        let runtimeSlot = preview?.runtimeSlot ?? token.runtimeSlot ?? this.profile?.runtimeSlot ?? "primary";
+        if (preview) {
+          if (token.userId !== preview.actorId || token.runtimeSlot && token.runtimeSlot !== preview.runtimeSlot) throw new PreviewPairAuthMismatch(preview.role);
+          if (!token.runtimeSlot) credential = await this.exchangeRuntimeCredential(credential, preview.runtimeSlot);
+          assertPreviewPairCredential(preview, credential, runtimeSlot, this.now());
+        } else if (!token.runtimeSlot && runtimeSlot !== "primary") {
           try {
             credential = await this.exchangeRuntimeCredential(credential, runtimeSlot);
           } catch (err: unknown) {
@@ -257,6 +284,7 @@ export class AuthService {
           userId: token.userId,
           platformHost: baseUrl,
           runtimeSlot,
+          ...(preview ? { previewPair: previewPairProfileBinding(preview) } : {}),
           ...(token.displayName ? { displayName: token.displayName } : {}),
           ...(token.imageUrl ? { imageUrl: token.imageUrl } : {}),
           ...(token.email ? { email: token.email } : {}),
@@ -298,6 +326,7 @@ export class AuthService {
       })
       .catch((err: unknown) => {
         if (nonce !== this.flowNonce) return;
+        if (err instanceof PreviewPairAuthMismatch) this.flowFailureReason = "preview_account_mismatch";
         if (err instanceof DeviceFlowError) {
           this.flowState = "expired";
           this.pendingDeviceCode = null;
@@ -325,7 +354,7 @@ export class AuthService {
         profile: { handle: this.profile.handle, userId: this.profile.userId },
       };
     }
-    if (this.flowState === "expired") return { status: "expired" };
+    if (this.flowState === "expired") return { status: "expired", ...(this.flowFailureReason ? { reason: this.flowFailureReason } : {}) };
     return { status: "pending" };
   }
 
@@ -335,7 +364,7 @@ export class AuthService {
   ): Promise<StoredCredential> {
     const request = RuntimeSelectionRequestSchema.parse({ slot });
     const endpoint = new URL("/api/auth/runtime-selection", this.deps.runtimeSelectionOrigin);
-    const fetchFn = this.deps.fetchFn ?? ((input: string, init?: RequestInit) => fetch(input, init));
+    const fetchFn = this.deps.fetchFn ?? ((input: string, init?: RequestInit) => fetch(input, { ...init, signal: init?.signal ?? AbortSignal.timeout(10_000) }));
     const requestInit = (): RequestInit => ({
       method: "POST",
       headers: {
@@ -344,6 +373,7 @@ export class AuthService {
       },
       body: JSON.stringify(request),
       signal: AbortSignal.timeout(RUNTIME_SELECTION_TIMEOUT_MS),
+      redirect: "error",
     });
     let response: Response;
     try {
@@ -363,7 +393,7 @@ export class AuthService {
     }
     const text = await readBoundedResponseText(response);
     const replacement = RuntimeSelectionResponseSchema.parse(JSON.parse(text));
-    if (replacement.slot !== request.slot) throw new Error("runtime selection mismatch");
+    if (replacement.slot !== request.slot || this.deps.previewContext && replacement.handle !== this.deps.previewContext.handle) throw new Error("runtime selection mismatch");
     return {
       accessToken: replacement.accessToken,
       expiresAt: replacement.expiresAt,
@@ -373,6 +403,7 @@ export class AuthService {
   }
 
   async selectRuntime(slot: string): Promise<void> {
+    if (this.deps.previewContext && slot !== this.deps.previewContext.runtimeSlot) throw new Error(RUNTIME_SELECTION_ERROR);
     this.expireCredentialIfNeeded();
     const currentCredential = this.credential;
     const currentProfile = this.profile;
@@ -380,6 +411,7 @@ export class AuthService {
       throw new Error(RUNTIME_SELECTION_ERROR);
     }
     const nonce = ++this.flowNonce;
+    this.flowFailureReason = undefined;
     const isCurrentSelection = () => (
       nonce === this.flowNonce
       && this.credential === currentCredential
@@ -435,7 +467,7 @@ export class AuthService {
     if (!currentCredential) throw new Error("Runtime computers unavailable");
 
     const endpoint = new URL("/api/auth/computers", this.deps.platformHost);
-    const fetchFn = this.deps.fetchFn ?? ((input: string, init?: RequestInit) => fetch(input, init));
+    const fetchFn = this.deps.fetchFn ?? ((input: string, init?: RequestInit) => fetch(input, { ...init, signal: init?.signal ?? AbortSignal.timeout(10_000) }));
     try {
       const response = await fetchFn(endpoint.toString(), {
         method: "GET",

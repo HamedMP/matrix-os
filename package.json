@@ -69,7 +69,14 @@
     "typecheck:legacy": "node scripts/typecheck.mjs legacy",
     "check:patterns": "./scripts/review/check-patterns.sh",
     "check:patterns:diff": "./scripts/review/check-patterns.sh --diff main",
-    "lint": "bun run --filter './shell' lint"
+    "lint": "bun run --filter './shell' lint",
+    "preview:pair:create": "bun scripts/preview-pair/control.ts create",
+    "preview:pair:update": "bun scripts/preview-pair/control.ts update",
+    "preview:pair:qualify:fixtures": "bun scripts/preview-pair/qualify-fixtures.ts",
+    "preview:pair:qualify": "bun scripts/preview-pair/qualify.ts",
+    "preview:pair:open": "bun scripts/preview-pair/launch.ts",
+    "preview:pair:report": "bun scripts/preview-pair/control.ts report",
+    "preview:pair:stop": "bun scripts/preview-pair/control.ts stop"
   },
   "pnpm": {
     "onlyBuiltDependencies": [
@@ -214,11 +221,13 @@
     "better-sqlite3": "^12.10.0",
     "chess.js": "1.4.0",
     "drizzle-orm": "^0.45.2",
+    "fflate": "0.8.3",
     "hono": "^4.12.25",
     "lexical": "0.41.0",
     "lucide-react": "^0.563.0",
     "react": "^19.2.6",
     "react-dom": "^19.2.6",
+    "tar": "7.5.21",
     "tsx": "^4.21.0",
     "typescript": "5.9.3",
     "vite": "^6.4.4",

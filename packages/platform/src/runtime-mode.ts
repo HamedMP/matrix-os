@@ -1,4 +1,5 @@
 import { z } from 'zod/v4';
+import { loadPreviewPairCandidateRuntimeProfile } from './preview-pair/candidate-profile.js';
 
 const PlatformRuntimeModeSchema = z.enum(['cloud_run', 'compose', 'local']);
 const LOCAL_DATABASE_HOSTS = new Set([
@@ -44,6 +45,8 @@ function isLocalDatabaseUrl(value: string): boolean {
 }
 
 export function loadPlatformRuntimeConfig(env: NodeJS.ProcessEnv = process.env): PlatformRuntimeConfig {
+  // Validate isolation before startup may construct provider clients or workers.
+  const candidateRuntime = loadPreviewPairCandidateRuntimeProfile(env);
   const rawMode = env.PLATFORM_RUNTIME_MODE ?? 'compose';
   const parsedMode = PlatformRuntimeModeSchema.safeParse(rawMode);
   if (!parsedMode.success) {
@@ -55,7 +58,7 @@ export function loadPlatformRuntimeConfig(env: NodeJS.ProcessEnv = process.env):
   const platformDatabaseUrl = resolvePlatformDatabaseUrl(env);
 
   if (mode === 'cloud_run') {
-    if (!customerVpsEnabled) {
+    if (!customerVpsEnabled && !candidateRuntime) {
       throw new PlatformStartupConfigError('CUSTOMER_VPS_ENABLED=true is required when PLATFORM_RUNTIME_MODE=cloud_run');
     }
     if (!env.PLATFORM_DATABASE_URL) {
@@ -74,6 +77,6 @@ export function loadPlatformRuntimeConfig(env: NodeJS.ProcessEnv = process.env):
     mode,
     platformDatabaseUrl,
     customerVpsEnabled,
-    legacyContainerOrchestrationEnabled: mode !== 'cloud_run',
+    legacyContainerOrchestrationEnabled: mode !== 'cloud_run' && !candidateRuntime,
   };
 }

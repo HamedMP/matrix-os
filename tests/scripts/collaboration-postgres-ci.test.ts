@@ -152,7 +152,9 @@ describe("required collaboration PostgreSQL workflow", () => {
 
   it("retains required jobs, exact-source checkout and all commands within measured bounded qualification windows", () => {
     const workflow = parse(readFileSync(".github/workflows/ci.yml", "utf8")); const job = workflow.jobs["funded-postgres"];
-    expect(job.needs).toBe("changes"); expect(job["timeout-minutes"]).toBe(14);
+    expect(job.needs).toBe("changes");
+    expect(job["timeout-minutes"]).toBeGreaterThanOrEqual(20);
+    expect(job["timeout-minutes"]).toBeLessThanOrEqual(30);
     expect(job.if).not.toMatch(/dedicated|ci-backend/);
     expect(job.steps[0].with.ref).toBe("${{ needs.changes.outputs.source_sha }}");
     const fundedTestSteps = job.steps.filter((step: { run?: string }) => step.run?.includes("pnpm exec vitest run"));
@@ -167,7 +169,11 @@ describe("required collaboration PostgreSQL workflow", () => {
     expect(collaboration).toBeDefined();
     expect(collaboration.needs).toBe("changes");
     expect(collaboration.if).toBe(job.if);
-    expect(collaboration["timeout-minutes"]).toBe(12);
+    // Run41112133779 completed67 selected files at9m55, then hit the10m
+    // job limit before completion/upload. Keep margin above observed runtime;
+    // the collaboration budget must not be frozen to the shorter funded lane.
+    const observedQualificationSeconds = 9 * 60 + 55;
+    expect(collaboration["timeout-minutes"] * 60).toBeGreaterThan(observedQualificationSeconds + 120);
     expect(collaboration.services).toEqual(job.services);
     expect(collaboration.env).toEqual(job.env);
     expect(collaboration.steps.slice(0, 6)).toEqual(job.steps.slice(0, 6));

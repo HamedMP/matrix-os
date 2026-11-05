@@ -38,7 +38,8 @@ mkdir -p "$STAGE_DIR/bin" "$STAGE_DIR/app" "$STAGE_DIR/runtime" "$STAGE_DIR/syst
 # Runtime dependencies must resolve inside the copied app payload, even when
 # the calling environment is a developer shell with the shared store enabled.
 pnpm install --frozen-lockfile --config.enableGlobalVirtualStore=false
-pnpm rebuild node-pty
+# node-pty belongs to the gateway workspace; a root-only rebuild skips it.
+pnpm --filter '@matrix-os/gateway' rebuild node-pty
 pnpm --filter '@matrix-os/observability' build
 pnpm --filter '@matrix-os/brand' build
 pnpm --filter '@matrix-os/kernel' build

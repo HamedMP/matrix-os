@@ -1,44 +1,58 @@
 import posthog from "posthog-js/dist/module.no-external";
-import { subscribePostHogFlag, type FeatureFlagListener, type FeatureFlagSource } from "@matrix-os/ui/feature-flags";
+import { subscribePostHogFlag, type FeatureFlagListener, type FeatureFlagSource, type PostHogFlagClient } from "@matrix-os/ui/feature-flags";
 
-/** Gates mounted before PostHog starts; oldest dropped first, and a dropped gate falls back to its timeout. */
+/** Bound mounted gates across client replacement; evict the oldest subscription first. */
 export const MAX_PENDING_FLAG_LISTENERS = 8;
 
-let ready = false;
-const pending = new Set<() => void>();
+let activeClient: PostHogFlagClient | null = null;
+type Subscription = { start(): void; stop(): void };
+const subscriptions = new Set<Subscription>();
 
 /**
- * DesktopSupportWidget starts PostHog once a computer is signed in, usually after the Get started
- * gate has mounted. A listener added before `init` only ever hears a load error, so subscriptions
- * wait here until the widget reports PostHog is up.
+ * Support owns the live client. Gates wait for initialization and rebind when account or relay
+ * changes replace that client. Passing null detaches callbacks while Support is signed out.
  */
-export function markDesktopFeatureFlagsReady(): void {
-  ready = true;
-  const starts = [...pending];
-  pending.clear();
-  for (const start of starts) start();
+export function markDesktopFeatureFlagsReady(client: PostHogFlagClient | null = posthog): void {
+  if (activeClient === client) return;
+  activeClient = client;
+  for (const subscription of subscriptions) {
+    subscription.stop();
+    subscription.start();
+  }
 }
 
 function subscribe(key: string, listener: FeatureFlagListener): () => void {
   let closed = false;
   let stop: (() => void) | null = null;
-  const start = () => {
-    pending.delete(start);
-    if (!closed) stop = subscribePostHogFlag(posthog, key, listener);
+  let generation = 0;
+  const subscription: Subscription = {
+    start() {
+      const client = activeClient;
+      if (closed || !client) return;
+      const current = generation;
+      stop = subscribePostHogFlag(client, key, enabled => {
+        if (!closed && current === generation && client === activeClient) listener(enabled);
+      });
+    },
+    stop() {
+      generation += 1;
+      stop?.();
+      stop = null;
+    },
   };
-  if (ready) {
-    start();
-  } else {
-    if (pending.size >= MAX_PENDING_FLAG_LISTENERS) {
-      const oldest = pending.values().next().value;
-      if (oldest) pending.delete(oldest);
+  if (subscriptions.size >= MAX_PENDING_FLAG_LISTENERS) {
+    const oldest = subscriptions.values().next().value;
+    if (oldest) {
+      oldest.stop();
+      subscriptions.delete(oldest);
     }
-    pending.add(start);
   }
+  subscriptions.add(subscription);
+  subscription.start();
   return () => {
     closed = true;
-    pending.delete(start);
-    stop?.();
+    subscriptions.delete(subscription);
+    subscription.stop();
   };
 }
 

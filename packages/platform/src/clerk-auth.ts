@@ -10,6 +10,8 @@ export interface VerifyResult {
   sessionId?: string;
   /** Verified Clerk JWT epoch seconds, when exposed by the verifier. */
   tokenExpiresAt?: number;
+  issuer?: string;
+  expiresAt?: number;
   error?: string;
 }
 
@@ -101,6 +103,8 @@ function verifiedResultFromPayload(payload: ClerkTokenPayload): VerifyResult {
     authenticated: true,
     userId: payload.sub,
     ...(typeof payload.exp === "number" && Number.isSafeInteger(payload.exp) && payload.exp > 0 ? { tokenExpiresAt: payload.exp } : {}),
+    ...(typeof payload.iss === "string" ? { issuer: payload.iss } : {}),
+    ...(typeof payload.exp === "number" && Number.isSafeInteger(payload.exp) ? { expiresAt: payload.exp * 1000 } : {}),
     ...(typeof payload.sid === "string" && payload.sid.length > 0
       ? { sessionId: payload.sid }
       : {}),

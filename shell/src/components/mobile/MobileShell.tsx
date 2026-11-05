@@ -162,7 +162,7 @@ export function MobileShell({ launchAppPath, sharedTerminalScopeId, onOpenComman
   const [openStack, setOpenStack] = useState<OpenApp[]>([]);
   const [view, setView] = useState<"launcher" | "app" | "switcher">("launcher");
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const [settingsDefaultSection, setSettingsDefaultSection] = useState<"appearance" | "agents-providers">("appearance");
+  const [settingsDefaultSection, setSettingsDefaultSection] = useState<"appearance" | "agents-providers">("agents-providers");
   const [time, setTime] = useState("--:--");
   const [terminalInputActiveId, setTerminalInputActiveId] = useState<string | null>(null);
   const stackRef = useRef(openStack);
@@ -509,7 +509,7 @@ export function MobileShell({ launchAppPath, sharedTerminalScopeId, onOpenComman
                 apps={displayApps}
                 onOpen={openApp}
                 onOpenSettings={() => {
-                  setSettingsDefaultSection("appearance");
+                  setSettingsDefaultSection("agents-providers");
                   setSettingsOpen(true);
                 }}
                 openStackCount={openStack.length}

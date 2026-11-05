@@ -106,7 +106,7 @@ describe('customer VPS host bundle', () => {
     expect(script).toContain('matrix-code');
     expect(script).toContain('matrix-sync-agent');
     expect(script).toContain('sha256sum');
-    expect(script).toContain('pnpm rebuild node-pty');
+    expect(script).toContain("pnpm --filter '@matrix-os/gateway' rebuild node-pty");
     expect(script).toContain('scripts/build-default-apps.mjs');
     expect(script).toContain('generateTemplateManifest');
     expect(script).toContain('home/.template-manifest.json');
@@ -1266,7 +1266,9 @@ test "$(readlink "$MATRIX_LEGACY_HOME/.hermes")" = "$MATRIX_HOME/.hermes"
   });
 
   it('sync agent distinguishes newer and older date-based host bundles', () => {
-    const syncAgent = readFileSync(join(process.cwd(), 'distro/customer-vps/host-bin/matrix-sync-agent'), 'utf8');
+    const syncAgent = readFileSync(join(process.cwd(), 'distro/customer-vps/host-bin/matrix-sync-agent'), 'utf8')
+      .replace(/# BEGIN update manifest library loader[\s\S]*?# END update manifest library loader/,
+        readFileSync(join(process.cwd(), 'distro/customer-vps/host-bin/matrix-update-manifest'), 'utf8'));
 
     expect(compareSyncAgentVersions('v2026.08.06-1', 'v2026.08.05-912')).toBe('newer');
     expect(compareSyncAgentVersions('v2026.08.05-912', 'v2026.08.05-912')).toBe('equal');

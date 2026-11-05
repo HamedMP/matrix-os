@@ -15,6 +15,8 @@ An old Relay never requests the postpaid marker, so the upgraded Platform does n
 
 ## Read-only inventory
 
+The main integration at `bc52a37f684` preserves 12 frozen routine production files byte-for-byte. Four additive integration pins cover the contracts package exports/index, Clerk verifier and sync-JWT helper: retain all routine exports and positive epoch-seconds expiry while also preserving main's Preview-pair exports, verified issuer, millisecond expiry and an exported configuration-error classifier. The manifest pins their reviewed combined contents; do not describe these four files as byte-identical to the frozen live source. Core schema generation 25 and auxiliary conservative fence generation 1 remain unchanged; Preview-pair migrations use their independent scope.
+
 In the reviewed operator environment with its existing `PLATFORM_DATABASE_URL` configuration:
 
 ```sh
