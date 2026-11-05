@@ -82,12 +82,27 @@ export function createAdapter({ registry = process.env.DEVSTACK_STATE_DIR ?? joi
   async function locked(action, name = '.lock') {
     await init();
     const path = join(registry, name);
-    const lock = await open(path, 'wx', 0o600).catch(error => { if (error.code === 'EEXIST') throw new Error(`Registry locked (${name}); inspect the owner process before removing a stale lock`); throw error; });
+    let lock; const deadline = Date.now() + 2000;
+    while (!lock) {
+      try { lock = await open(path, 'wx', 0o600); }
+      catch (error) {
+        if (error.code !== 'EEXIST') throw error;
+        if (name !== '.lock' || Date.now() >= deadline) throw new Error(`Registry locked (${name}); inspect the owner process before removing a stale lock`);
+        await new Promise(resolve => setTimeout(resolve, 10));
+      }
+    }
     try { await lock.writeFile(JSON.stringify({ pid: process.pid })); return await action(); }
     finally { await lock.close(); await unlink(path); }
   }
   function statePath(id) { if (typeof id !== 'string' || !slug.test(id)) throw new Error('Invalid instance id'); return join(registry, `${id}.json`); }
-  async function get(id) { const record = await plainFile(statePath(id)); await validate(record.manifest); if (record.gitIdentity !== gitIdentity(record.manifest.worktree)) throw new Error('Pinned Git worktree identity changed'); return record; }
+  async function claim(id) {
+    const record = await plainFile(statePath(id));
+    if (record?.manifest?.id !== id || typeof record.manifest.worktree !== 'string' || typeof record.manifest.machine !== 'string'
+      || !['registered', 'starting', 'running', 'stopping', 'stopped', 'failed'].includes(record.state)
+      || (record.activeLease !== undefined && typeof record.activeLease !== 'boolean')) throw new Error('Invalid retained claim');
+    return record;
+  }
+  async function get(id) { const record = await claim(id); await validate(record.manifest); if (record.gitIdentity !== gitIdentity(record.manifest.worktree)) throw new Error('Pinned Git worktree identity changed'); return record; }
   async function save(record) {
     const content = JSON.stringify(record);
     if (Buffer.byteLength(content, 'utf8') > recordLimit) throw new Error('Record exceeds serialized byte budget');
@@ -157,26 +172,48 @@ export function createAdapter({ registry = process.env.DEVSTACK_STATE_DIR ?? joi
         } catch (error) { rollback.push({ unit: item, code: 1, message: boundedText(redact(error.message), 1024) }); }
       }
     }
-    return { result, diagnostic: result.code === 0 ? null : { action, unit, code: result.code, stderr: result.stderr, rollback } };
+    const fullyRolledBack = initial.size === manifest.managedUnits.length
+      && [...initial.values()].every(state => state !== 'active') && rollback.every(item => item.code === 0) && rollback.length === attempted.length;
+    const activeLease = action === 'stop' ? result.code !== 0 : result.code === 0 || !fullyRolledBack;
+    return { result, activeLease, diagnostic: result.code === 0 ? null : { action, unit, code: result.code, stderr: result.stderr, rollback } };
+  }
+  function hasActiveLease(record) {
+    if (typeof record.activeLease === 'boolean') return record.activeLease;
+    // Old running/uncertain records stay counted until an explicit lifecycle result.
+    return ['running', 'starting', 'stopping', 'failed'].includes(record.state);
+  }
+  async function reserve(record, action) {
+    await locked(async () => {
+      if (action !== 'stop' && !hasActiveLease(record)) {
+        const names = (await readdir(registry)).filter(name => name.endsWith('.json'));
+        if (names.length > 100) throw new Error('Registry exceeds safety bound');
+        let active = 0;
+        for (const name of names) if (hasActiveLease(await claim(name.slice(0, -5)))) active++;
+        if (active >= capacity) throw new Error('Local active capacity reached; stop an active instance before starting another');
+      }
+      record.activeLease = true; record.state = action === 'stop' ? 'stopping' : 'starting';
+      await save(record);
+    });
   }
   async function status(id) { await init(); return get(id); }
   return {
     status, preflight,
     async register(file) {
       const { manifest } = await preflight(file);
+      const identity = gitIdentity(manifest.worktree);
       return locked(async () => {
         const names = (await readdir(registry)).filter(name => name.endsWith('.json'));
         if (names.length > 100) throw new Error('Registry exceeds capacity safety bound');
         for (const name of names) {
-          const existing = await get(name.slice(0, -5));
+          const existing = await claim(name.slice(0, -5));
           if (existing.manifest.id === manifest.id) {
             if (JSON.stringify(existing.manifest) !== JSON.stringify(manifest)) throw new Error('Instance already claimed with a different manifest');
             return existing;
           }
           if (existing.manifest.machine === manifest.machine || existing.manifest.worktree === manifest.worktree) throw new Error('Machine or worktree already claimed');
         }
-        if (names.length >= capacity) throw new Error('Local capacity reached; stopped instances retain claims');
-        const record = { manifest, gitIdentity: gitIdentity(manifest.worktree), state: 'registered', lastExitCode: null, diagnostic: null };
+        if (names.length >= 100) throw new Error('Retained registration safety bound reached');
+        const record = { manifest, gitIdentity: identity, state: 'registered', activeLease: false, lastExitCode: null, diagnostic: null };
         await save(record); return record;
       });
     },
@@ -203,7 +240,9 @@ export function createAdapter({ registry = process.env.DEVSTACK_STATE_DIR ?? joi
         let result;
         try {
           if (['start', 'stop', 'resume'].includes(action)) {
+            await reserve(record, action);
             const outcome = await lifecycle(manifest, action); result = outcome.result;
+            record.activeLease = outcome.activeLease;
             record.state = result.code === 0 ? action === 'stop' ? 'stopped' : 'running' : 'failed';
             record.lastExitCode = result.code; record.diagnostic = outcome.diagnostic;
             await save(record);

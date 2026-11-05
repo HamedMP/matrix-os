@@ -28,7 +28,7 @@ async function fixture(t, capacity = 3) {
   return { root, adapter, file, calls, manifest, runner, setResponse: fn => response = fn, foreign: () => foreign = true, fail: () => fail = true };
 }
 
-test('register is exclusive, idempotent and capacity counts stopped claims', async t => {
+test('register is exclusive and idempotent', async t => {
   const f = await fixture(t, 1);
   await f.adapter.register(f.file);
   await f.adapter.register(f.file);
@@ -72,14 +72,14 @@ test('each mutation rechecks owner and pinned worktree; preview/status perform n
 });
 
 
-test('capacity rejects distinct machines and worktrees after a stopped claim', async t => {
+test('retained stopped claims do not prevent distinct worktree registration', async t => {
   const f = await fixture(t, 1); await f.adapter.register(f.file);
   await f.adapter.operation('sample', 'stop');
   const second = join(f.root, 'second'); await mkdir(second);
   execFileSync('git', ['init', '-q', second]);
   Object.assign(f.manifest, { id: 'second', machine: 'devstack-second', worktree: second });
   await writeFile(f.file, JSON.stringify(f.manifest));
-  await assert.rejects(f.adapter.register(f.file), /capacity/);
+  assert.equal((await f.adapter.register(f.file)).state, 'registered');
 });
 test('all write actions reject changed owners before executing a command', async t => {
   const f = await fixture(t); await f.adapter.register(f.file); f.calls.length = 0; f.foreign();
@@ -289,4 +289,96 @@ test('writerless FIFO manifest rejects in a bounded subprocess instead of hangin
   const result = await import('node:child_process').then(({ spawnSync }) => spawnSync(process.execPath, ['--input-type=module', '-e', program, fifo], { encoding: 'utf8', timeout: 2000, killSignal: 'SIGKILL' }));
   assert.equal(result.error, undefined, 'FIFO input must reject without waiting for a writer');
   assert.equal(result.status, 0); assert.match(result.stdout, /regular|0600/);
+});
+
+
+async function capacityGroup(t, capacity, count = 3) {
+  const members = [];
+  for (let index = 0; index < count; index++) {
+    const f = await fixture(t); f.manifest.id = `member-${index}`; f.manifest.machine = `devstack-member-${index}`;
+    await writeFile(f.file, JSON.stringify(f.manifest)); members.push(f);
+  }
+  const adapter = createAdapter({ registry: join(members[0].root, 'private'), capacity,
+    runner: (command, args) => members.find(f => f.manifest.machine === args[1]).runner(command, args) });
+  for (const f of members) await adapter.register(f.file);
+  return { adapter, members, id: index => members[index].manifest.id };
+}
+test('active C=2 admits three retained owners and releases a slot only after successful stop', async t => {
+  const { adapter, members, id } = await capacityGroup(t, 2);
+  await adapter.operation(id(0), 'start'); await adapter.operation(id(1), 'start');
+  await adapter.operation(id(0), 'start'); // Existing active instance needs no extra lease.
+  const bBefore = await adapter.status(id(1));
+  await assert.rejects(adapter.operation(id(2), 'start'), /capacity/);
+  assert.equal(members[2].calls.some(([, args]) => args.includes('start')), false);
+  await adapter.operation(id(0), 'stop'); await adapter.operation(id(2), 'resume');
+  assert.deepEqual(await adapter.status(id(1)), bBefore);
+  assert.equal((await adapter.status(id(0))).activeLease, false);
+  assert.equal((await adapter.status(id(2))).activeLease, true);
+});
+test('concurrent starts serialize short admission while starting peers leave logs/test usable', async t => {
+  const { adapter, members, id } = await capacityGroup(t, 2);
+  let release, entered;
+  const started = new Promise(resolve => entered = resolve);
+  members[0].setResponse(args => args.includes('start') && args.at(-1) === units[0] ? new Promise(resolve => {
+    release = () => resolve({ code: 0 }); entered();
+  }) : undefined);
+  const first = adapter.operation(id(0), 'start'); await started;
+  try {
+    const [second] = await Promise.all([adapter.operation(id(1), 'start'), adapter.operation(id(2), 'logs')]);
+    assert.equal(second.code, 0);
+    await adapter.operation(id(2), 'test', ['true']);
+    await assert.rejects(adapter.operation(id(2), 'start'), /capacity/);
+    assert.equal((await adapter.status(id(0))).state, 'starting');
+  } finally { release(); await first; }
+});
+test('simultaneous independent starts both get available active slots', async t => {
+  const { adapter, id } = await capacityGroup(t, 2, 2);
+  const results = await Promise.all([adapter.operation(id(0), 'start'), adapter.operation(id(1), 'start')]);
+  assert.equal(results.every(result => result.code === 0), true);
+});
+test('failed start keeps capacity for preexisting units or rollback failures, releases fully stopped rollback', async t => {
+  for (const mode of ['preexisting', 'rollback-failed', 'clean-rollback']) {
+    const { adapter, members, id } = await capacityGroup(t, 1, 2);
+    members[0].setResponse(args => {
+      if (mode === 'preexisting' && args.includes('--property=ActiveState') && args.at(-1) === units[0]) return { code: 0, stdout: 'active' };
+      if (args.includes('start') && args.at(-1) === units[1]) return { code: 7 };
+      if (mode === 'rollback-failed' && args.includes('stop')) return { code: 9 };
+    });
+    await adapter.operation(id(0), 'start');
+    assert.equal((await adapter.status(id(0))).activeLease, mode !== 'clean-rollback');
+    if (mode === 'clean-rollback') assert.equal((await adapter.operation(id(1), 'start')).code, 0);
+    else {
+      await assert.rejects(adapter.operation(id(1), 'start'), /capacity/);
+      members[0].setResponse(() => undefined);
+      await adapter.operation(id(0), 'stop');
+      assert.equal((await adapter.operation(id(1), 'start')).code, 0);
+    }
+  }
+});
+test('legacy running records without lease fields retain capacity until explicit successful stop', async t => {
+  const { adapter, members, id } = await capacityGroup(t, 1, 2);
+  const path = join(members[0].root, 'private', `${id(0)}.json`);
+  const record = JSON.parse(await readFile(path, 'utf8')); record.state = 'running'; delete record.activeLease;
+  await writeFile(path, JSON.stringify(record));
+  await assert.rejects(adapter.operation(id(1), 'start'), /capacity/);
+  await adapter.operation(id(0), 'stop');
+  assert.equal((await adapter.operation(id(1), 'start')).code, 0);
+});
+test('stopped retained claims do not require their finished Git worktree during peer admission', async t => {
+  const { adapter, members, id } = await capacityGroup(t, 1, 2);
+  await adapter.operation(id(0), 'start'); await adapter.operation(id(0), 'stop');
+  await rename(join(members[0].root, '.git'), join(members[0].root, 'finished-git'));
+  assert.equal((await adapter.operation(id(1), 'start')).code, 0);
+});
+test('failed stop and unknown initial activity retain a conservative active lease', async t => {
+  const { adapter, members, id } = await capacityGroup(t, 1, 2);
+  await adapter.operation(id(0), 'start');
+  members[0].setResponse(args => args.includes('stop') ? { code: 8 } : undefined);
+  assert.equal((await adapter.operation(id(0), 'stop')).code, 8);
+  assert.equal((await adapter.status(id(0))).activeLease, true);
+  await assert.rejects(adapter.operation(id(1), 'start'), /capacity/);
+  members[0].setResponse(args => args.includes('--property=ActiveState') ? { code: 0, stdout: 'activating' } : undefined);
+  await adapter.operation(id(0), 'resume');
+  assert.equal((await adapter.status(id(0))).activeLease, true);
+  await assert.rejects(adapter.operation(id(1), 'start'), /capacity/);
 });
