@@ -1,3 +1,4 @@
+export { closeOwnedListener, finishCloses, retryableClose, socketIdentity } from "./socket-shutdown.js";
 export { HOST_NAMESPACE_TRUST, assertNamespaceDirectory, assertNamespaceSocket, type NamespacePathTrust } from "./namespace-ancestry.js";
 import { join } from "node:path";
 import { createScopeRuntimeUnitIdentity } from "./systemd-unit-identity.js";

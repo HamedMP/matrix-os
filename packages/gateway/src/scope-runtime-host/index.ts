@@ -1,4 +1,4 @@
-import { assertNamespaceSocket, type NamespacePathTrust } from "@matrix-os/scope-runtime/host-config";
+import { assertNamespaceSocket, finishCloses, retryableClose, type NamespacePathTrust } from "@matrix-os/scope-runtime/host-config";
 /**
  * The gateway's single scope-runtime host (spec 536, research R4): one
  * supervisor client and one broker socket, started whenever the scope
@@ -98,13 +98,14 @@ export async function createScopeRuntimeHost(options: {
   const authorizers = new Map<string, ScopeRuntimeAuthorizer>();
   let closed = false;
 
+  const closeClient = retryableClose(() => client.close());
   const unavailable = (): ScopeRuntimeHost => ({
     client,
     available: false,
     registerAuthorizer: () => () => undefined,
     async close() {
       closed = true;
-      await client.close();
+      await closeClient();
     },
   });
 
@@ -159,13 +160,10 @@ export async function createScopeRuntimeHost(options: {
         if (authorizers.get(authorizer.id) === authorizer) authorizers.delete(authorizer.id);
       };
     },
-    /** Stops new frames first, then drops registrations, then the supervisor connection. */
-    async close() {
-      if (closed) return;
+    close: retryableClose(async () => {
       closed = true;
-      await server.close();
       authorizers.clear();
-      await client.close();
-    },
+      await finishCloses(server.close(), closeClient());
+    }),
   };
 }

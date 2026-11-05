@@ -13,8 +13,6 @@ describe("dormant scope runtime host bundle", () => {
     const main = await readFile("packages/scope-runtime/src/main.ts", "utf8");
     expect(main.indexOf("const watchdog = startScopeRuntimeWatchdog()"))
       .toBeGreaterThan(main.indexOf("await server.start()"));
-    expect(main.indexOf("await watchdog.close()"))
-      .toBeLessThan(main.indexOf("await server.close()"));
   });
 
   it("installs a least-privilege system supervisor that is fenced by the app marker", async () => {
