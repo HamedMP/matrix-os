@@ -151,24 +151,16 @@ export function createProjectAppAdapter(options: {
       .where("id", "=", context.scopeId);
     scopeQuery = requireWrite ? scopeQuery.forUpdate() : scopeQuery.forShare();
     const scope = await scopeQuery.executeTakeFirst();
-    let memberQuery = trx.selectFrom("collaboration_members").selectAll()
-      .where("scope_id", "=", context.membershipScopeId)
-      .where("actor_id", "=", context.actorId);
-    memberQuery = requireWrite ? memberQuery.forUpdate() : memberQuery.forShare();
-    const member = await memberQuery.executeTakeFirst();
-    const expired = member?.expires_at && new Date(member.expires_at).getTime() <= now().getTime();
     if (!scope || scope.kind !== "project" || scope.lifecycle !== "shared"
       || scope.resource_id !== context.resourceId || scope.owner_id !== context.ownerId
       || scope.authority_runtime_id !== context.authorityRuntimeId
       || Number(scope.authority_generation) !== context.authorityGeneration
-      || Number(scope.auth_epoch) !== context.authEpoch
-      || (member !== undefined && (member.status !== "accepted" || expired))) {
+      || Number(scope.auth_epoch) !== context.authEpoch) {
       throw new ProjectAppAdapterError("not_found");
     }
-    // S04 grants do not create legacy member rows. The scope lock and epoch
-    // fence serialize grant mutation against this transaction; the fresh
-    // authorization above resolved the grant to `context.role`.
-    if (requireWrite && (context.role === "viewer" || (member && !["owner", "editor"].includes(member.role)))) {
+    // Fresh organization membership is resolved before the transaction. Historical project
+    // member/grant rows are intentionally not a second authority source at this fence.
+    if (requireWrite && context.role === "viewer") {
       throw new ProjectAppAdapterError("forbidden");
     }
   }

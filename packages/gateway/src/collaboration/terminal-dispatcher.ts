@@ -166,7 +166,8 @@ export class CollaborationTerminalDispatcher {
       if (this.options.revocations?.isRevoked(context.scopeId, context.actorId)) {
         throw new CollaborationTerminalDispatcherError("forbidden");
       }
-      if (context.role !== "owner" && !terminalControlAllowed({
+      const inheritedProjectTerminal = context.membershipScopeId !== context.scopeId;
+      if (context.role !== "owner" && !inheritedProjectTerminal && !terminalControlAllowed({
         role: context.role,
         policy: {
           taskProfile: terminal.taskProfile ?? "host_shell",
