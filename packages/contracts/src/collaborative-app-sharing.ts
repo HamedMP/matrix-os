@@ -100,6 +100,8 @@ export const CollaborativeAppShareSchema = z.object({
   readinessId: CollaborationIdSchema,
   state: z.enum(["active", "needs_recheck", "stopped"]),
   shareRevision: CollaborationRevisionSchema,
+  /** CAS token for owner stop/rebind operations; distinct from app data revision. */
+  bindingRevision: CollaborationRevisionSchema,
   dataRevision: CollaborationRevisionSchema,
   createdAt: z.iso.datetime(),
   updatedAt: z.iso.datetime(),

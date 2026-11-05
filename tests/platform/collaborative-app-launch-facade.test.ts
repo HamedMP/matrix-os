@@ -130,6 +130,10 @@ describe("collaborative app authenticated launch facade", () => {
     expect(html).toContain(`<base href="/api/collaboration/shared-apps/${scopeId}/runtime/${launchId}/">`);
     expect(html).toContain(`"actorId":"${actorId}"`);
     expect(html).toContain('"organizationId":"org_matrix_team"');
+    expect(html).toContain("matrix:shared-app:query");
+    expect(html).toContain("matrix:shared-app:mutate");
+    expect(html).toContain("matrix:shared-app:changed");
+    expect(html).toContain("MatrixOS.collaboration");
     expect(html).not.toMatch(/credential|proof|token|ownerCookie/i);
     expect(request).toHaveBeenCalledWith("index.html", expect.any(AbortSignal));
   });

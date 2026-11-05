@@ -352,6 +352,7 @@ export class CollaborativeAppShareService {
       readinessId: readiness.id,
       state,
       shareRevision: String(share.scopeRevision),
+      bindingRevision: String(share.binding.revision),
       dataRevision: String(share.binding.dataRevision),
       createdAt: share.createdAt,
       updatedAt: share.updatedAt,
