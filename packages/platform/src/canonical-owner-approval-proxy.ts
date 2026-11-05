@@ -6,16 +6,20 @@ import { hasVerifiedPreviewUserSession } from "./preview-drive-turn-proof.js";
 import { isPreviewMachine } from "./customer-vps-preview.js";
 import type { UserMachineRecord } from "./db.js";
 import type { AppDomainIdentity } from "./session-routing-identity.js";
+import { authenticatedRoutineFullAccessProxyProof } from "./routine-full-access-proxy.js";
+import { routineFullAccessPath } from "./routine-full-access-proof.js";
 
 /** Bounded owner body reader shared by legacy integration and new browser proofs.
  * Production explicitly passes the default-off browser feature gate.
  */
-export async function authenticatedApprovalProxyProof(input: {
+export interface OwnerApprovalProxyInput {
   request: Request; method: string; path: string; handle: string;
   identity: AppDomainIdentity; platformSecret: string; timeoutMs?: number; browserApprovalsEnabled?: boolean;
   machine?: Pick<UserMachineRecord, "handle" | "runtimeSlot" | "provisioningClass"> & { clerkUserId?: string; machineId?: string };
   clerkAuth?: ClerkAuth;
-}): Promise<string | null | { status: 408 | 413 }> {
+}
+export async function authenticatedApprovalProxyProof(input: OwnerApprovalProxyInput): Promise<string | null | { status: 400 | 408 | 413 | 503 }> {
+  if (routineFullAccessPath(input.method, input.path)) return authenticatedRoutineFullAccessProxyProof(input);
   const routine = routineActionPathId(input.method, input.path);
   // The proxy has selected/authorized this exact Computer. A fresh Clerk identity may still carry a legacy/default routing handle.
   if (routine && (!input.machine?.machineId || input.machine.handle !== input.handle
