@@ -187,6 +187,11 @@ destination region returned by the profile must satisfy the approved policy.
    IDs), `AI_FUNDED_BEDROCK_MODEL_IDS` (a JSON array of at most eight canonical
    model IDs), `AI_FUNDED_UPSTREAM_PREFERENCE_VALID_THROUGH` (at most 30 days),
    and `AI_FUNDED_UPSTREAM_SELECTION_SECRET`.
+   Platform production and PR Preview deployments source the non-secret enable,
+   model and expiry values from their selected GitHub environment and bind owner
+   IDs plus the selection proof from environment-specific Secret Manager
+   resources. Missing or malformed configuration keeps the selector absent;
+   Preview must never fall back to production cohort or proof secrets.
 2. Confirm credits/expiry, target region and allowed residency destinations,
    model access, inference profile, service quotas, exact prices, and workload
    identity in the real AWS account.
@@ -204,8 +209,11 @@ destination region returned by the profile must satisfy the approved policy.
    carries its pricing version and provenance. Unresolved holds require evidence
    reconciliation, not deletion.
 7. After current-head Greptile reaches 5/5 and CI is green, create an explicitly
-   approved preview VPS and verify the full preference, routing, streaming,
-   settlement, and fallback flow on real devices before merge.
+   approved preview VPS and pair it with the exact-head Platform Preview before
+   verifying the full preference, routing, streaming, settlement, and fallback
+   flow on real devices. A host-only Private Preview still uses the production
+   Platform authority and therefore cannot qualify an unmerged preference or
+   prove Bedrock dispatch.
 
 ## Verification
 

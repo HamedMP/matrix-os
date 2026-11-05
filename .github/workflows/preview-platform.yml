@@ -114,6 +114,9 @@ jobs:
       MATRIX_FUNDED_AI_RELAY_URL: ${{ vars.MATRIX_FUNDED_AI_RELAY_URL }}
       MATRIX_FUNDED_AI_MODEL_PROBE_DAILY_LIMIT: ${{ vars.MATRIX_FUNDED_AI_MODEL_PROBE_DAILY_LIMIT || '0' }}
       MATRIX_FUNDED_AI_MODEL_PROBE_MINUTE_LIMIT: ${{ vars.MATRIX_FUNDED_AI_MODEL_PROBE_MINUTE_LIMIT || '0' }}
+      AI_FUNDED_UPSTREAM_PREFERENCE_ENABLED: ${{ vars.AI_FUNDED_UPSTREAM_PREFERENCE_ENABLED || 'false' }}
+      AI_FUNDED_BEDROCK_MODEL_IDS: ${{ vars.AI_FUNDED_BEDROCK_MODEL_IDS }}
+      AI_FUNDED_UPSTREAM_PREFERENCE_VALID_THROUGH: ${{ vars.AI_FUNDED_UPSTREAM_PREFERENCE_VALID_THROUGH }}
       # Preview-only name, so a production key id can never be inherited from a repository variable.
       MATRIX_COLLABORATION_TICKET_ACTIVE_KEY_ID: ${{ vars.PREVIEW_COLLABORATION_TICKET_ACTIVE_KEY_ID || 'collaboration-preview-v1' }}
       MATRIX_INTERNAL_CLERK_ORG_ID: ${{ vars.MATRIX_INTERNAL_CLERK_ORG_ID }}
@@ -513,6 +516,8 @@ jobs:
             funded_ai_env_bindings="${funded_ai_env_bindings}|MATRIX_FUNDED_AI_MODEL_PROBE_DAILY_LIMIT=${MATRIX_FUNDED_AI_MODEL_PROBE_DAILY_LIMIT}|MATRIX_FUNDED_AI_MODEL_PROBE_MINUTE_LIMIT=${MATRIX_FUNDED_AI_MODEL_PROBE_MINUTE_LIMIT}"
             funded_ai_secret_bindings=",AI_RELAY_CONTROL_TOKEN=ai-relay-control-token:latest,AI_FUNDED_CREDENTIAL_HASH_SECRET=ai-funded-credential-hash-secret:latest"
           fi
+          funded_ai_env_bindings="${funded_ai_env_bindings}$(scripts/ci/platform-funded-upstream-env.sh env-bindings preview)"
+          funded_ai_secret_bindings="${funded_ai_secret_bindings}$(scripts/ci/platform-funded-upstream-env.sh secret-bindings preview)"
           PREVIEW_SPEECH_NOT_AFTER="$(date -u -d '+24 hours' '+%Y-%m-%dT%H:%M:%S.000Z')"
           deploy_preview() {
             local api_origin="$1"
@@ -621,6 +626,12 @@ jobs:
             --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format=json |
             verify_collaboration_revision; then
             echo "PR-tagged preview revision is missing its preview collaboration configuration." >&2
+            exit 1
+          fi
+          if ! gcloud run revisions describe "$revision" \
+            --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format=json |
+            scripts/ci/platform-funded-upstream-env.sh verify-revision preview; then
+            echo "PR-tagged preview revision is missing its funded upstream preference configuration." >&2
             exit 1
           fi
           curl --fail --silent --show-error --retry 5 --retry-all-errors \
