@@ -164,4 +164,19 @@ describe("immutable collaborative build snapshots", () => {
     await store.cleanup();
     expect(await readFile(join(root, "outside"), "utf8")).toBe("keep");
   });
+
+  it("opens only confined regular files from the immutable snapshot with strict content types", async () => {
+    const store = createStore();
+    const snapshot = await store.capture({ buildRoot, buildId: "9".repeat(64) });
+
+    const script = await store.readAsset(snapshot.buildId, "assets/app.js");
+    expect(script).toMatchObject({ size: 17, contentType: "text/javascript; charset=utf-8" });
+    expect(await new Response(script.stream).text()).toBe("console.log('v1')");
+    await expect(store.readAsset(snapshot.buildId, "../metadata/secret"))
+      .rejects.toMatchObject({ code: "invalid_snapshot" });
+
+    await symlink(join(root, "outside"), join(snapshot.artifactPath, "assets", "escape.js"));
+    await expect(store.readAsset(snapshot.buildId, "assets/escape.js"))
+      .rejects.toMatchObject({ code: "invalid_snapshot" });
+  });
 });

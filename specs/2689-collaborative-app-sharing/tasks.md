@@ -95,8 +95,8 @@
 - [X] T035 [P] [US1] Write failing preflight/create/get/stop contract tests for no project, role, grant, invitation, acceptance, or record-filter fields in `tests/gateway/collaborative-app-share-routes.test.ts`
 - [X] T036 [P] [US1] Write failing real-Postgres atomicity/idempotency tests for scope, binding, owner invariant, operation, audit, event, and outbox creation in `tests/gateway/collaborative-app-share-postgres.test.ts`
 - [X] T037 [P] [US1] Write failing platform discovery and launch tests for current members, typed app items, cursor bounds, proof-bound sessions, and outsider omission in `tests/platform/collaborative-app-discovery.test.ts`
-- [ ] T038 [P] [US1] Write failing launch-facade security tests for session recheck, path confinement, immutable bytes, strict content types, `nosniff`, redirect rejection, stream limits, cancellation, and credential non-disclosure in `tests/platform/collaborative-app-launch-facade.test.ts`
-- [ ] T039 [P] [US1] Write failing owner/recipient common-data tests for 20 existing rows, CRUD, reload, lost-response replay, and content-free change signals in `tests/gateway/collaborative-app-two-home-postgres.test.ts`
+- [X] T038 [P] [US1] Write failing launch-facade security tests for session recheck, path confinement, immutable bytes, strict content types, `nosniff`, redirect rejection, stream limits, cancellation, and credential non-disclosure in `tests/platform/collaborative-app-launch-facade.test.ts`
+- [X] T039 [P] [US1] Write failing owner/recipient common-data tests for 20 existing rows, CRUD, reload, lost-response replay, and content-free change signals in `tests/gateway/collaborative-app-two-home-postgres.test.ts`
 - [ ] T040 [P] [US1] Write failing shared-viewer transport tests proving recipients never fall back to a local same-slug app or owner credentials in `tests/ui/collaborative-app-viewer.test.tsx`
 
 ### Share lifecycle and discovery implementation
@@ -105,18 +105,18 @@
 - [X] T042 [US1] Atomically create/select the unique app scope and exact binding with operation, audit, event, and directory outbox writes in `packages/gateway/src/collaboration/scope-routes.ts`
 - [X] T043 [US1] Add owner preflight/create/get/DELETE routes with confirmation binding, strict schemas, body limits, per-actor rate limits, revision predicates, replay, and safe errors in `packages/gateway/src/collaboration/collaborative-app-readiness-routes.ts`
 - [X] T044 [US1] Project active app scopes as `current_membership` directory entries without activation or recipient rows in `packages/gateway/src/collaboration/directory-outbox.ts`
-- [ ] T045 [US1] Add bounded and per-actor-rate-limited current-membership shared-app discovery and exact-build launch endpoints in `packages/platform/src/collaboration/routes.ts`
+- [X] T045 [US1] Add bounded and per-actor-rate-limited current-membership shared-app discovery and exact-build launch endpoints in `packages/platform/src/collaboration/routes.ts`
 - [X] T046 [US1] Persist and query app/build/lifecycle routing metadata only, excluding owner app records and per-recipient grants, in `packages/platform/src/collaboration/repository.ts`
 - [X] T047 [US1] Issue proof-key-bound owner-runtime tickets only after active share, current membership, exact readiness, and host checks in `packages/platform/src/collaboration/ticket-issuer.ts`
 
 ### Owner-hosted runtime and common-data implementation
 
-- [ ] T048 [US1] Implement bounded launch-session TTL/LRU state, stale sweeps, revocation, and shutdown drain in `packages/platform/src/collaboration/relay.ts`
-- [ ] T049 [US1] Implement the same-origin authenticated launch facade with per-request session/share/membership/build/host reauthorization in `packages/platform/src/collaboration/routes.ts`
-- [ ] T050 [US1] Serve only immutable qualified assets with confined paths, bounded streams, cancellation, safe headers, and timed trusted-origin relay calls in `packages/gateway/src/collaboration/resource-routes.ts`
+- [X] T048 [US1] Implement bounded launch-session TTL/LRU state, stale sweeps, revocation, and shutdown drain in extracted `packages/platform/src/collaboration/app-launch-sessions.ts` wiring beside `packages/platform/src/collaboration/relay.ts`
+- [X] T049 [US1] Implement the same-origin authenticated launch facade with per-request session/share/membership/build/host reauthorization in `packages/platform/src/collaboration/routes.ts`
+- [X] T050 [US1] Serve only immutable qualified assets with confined paths, bounded streams, cancellation, safe headers, and timed trusted-origin relay calls in `packages/gateway/src/collaboration/resource-routes.ts`
 - [ ] T051 [US1] Inject bounded participant context and expose only the restricted parent-mediated data bridge in `packages/gateway/src/collaboration/collaborative-app-runtime.ts`
-- [ ] T052 [US1] Route owner and recipient reads to the same bounded declared owner tables without using scope as a row namespace in `packages/gateway/src/collaboration/scoped-app-bridge.ts`
-- [ ] T053 [US1] Route owner and recipient mutations through one transactional coordinator that commits data revision, mutation, operation receipt, audit, and event together in `packages/gateway/src/collaboration/collaborative-app-runtime.ts`
+- [X] T052 [US1] Route owner and recipient reads to the same bounded declared owner tables without using scope as a row namespace in `packages/gateway/src/collaboration/scoped-app-bridge.ts`
+- [X] T053 [US1] Route owner and recipient mutations through one transactional coordinator that commits data revision, mutation, operation receipt, audit, and event together in `packages/gateway/src/collaboration/app-instance-adapter.ts`
 - [ ] T054 [US1] Emit bounded content-free app change signals and require client authoritative rereads in `packages/gateway/src/collaboration/events.ts`
 
 ### Recipient rendering and owner control implementation
@@ -147,10 +147,10 @@
 
 - [X] T063 [US3] Authorize new app scopes from active exact binding plus fresh organization membership while preserving existing project/grant semantics in `packages/gateway/src/collaboration/authority.ts`
 - [X] T064 [US3] Map every current organization member including guests to full declared app functionality, allow every member to share an app they own, and create no recipient grant, permission, activation, invitation, approval, or role rows in `packages/gateway/src/collaboration/app-instance-adapter.ts`
-- [ ] T065 [US3] Recheck bounded organization membership with explicit timeouts and generic failures at every owner-runtime admission boundary in `packages/gateway/src/collaboration/organization-membership-client.ts`
-- [ ] T066 [US3] Enforce the global app `data_revision` predicate inside each mutation transaction and return bounded authoritative conflict metadata in `packages/gateway/src/collaboration/collaborative-app-runtime.ts`
-- [ ] T067 [US3] Reuse stable request IDs and payload hashes for replay/uncertain outcomes without duplicate owner records in `packages/gateway/src/collaboration/scoped-app-bridge.ts`
-- [ ] T068 [US3] Reauthorize event open, resume, broadcast, and reconnect; evict failed/dead senders and continue other subscribers in `packages/gateway/src/collaboration/event-websocket-route.ts`
+- [X] T065 [US3] Recheck bounded organization membership with explicit timeouts and generic failures at every owner-runtime admission boundary in `packages/gateway/src/collaboration/organization-membership-client.ts`
+- [X] T066 [US3] Enforce the global app `data_revision` predicate inside each mutation transaction and return bounded authoritative conflict metadata in `packages/gateway/src/collaboration/app-instance-adapter.ts`
+- [X] T067 [US3] Reuse stable request IDs and payload hashes for replay/uncertain outcomes without duplicate owner records in `packages/gateway/src/collaboration/app-instance-adapter.ts`
+- [X] T068 [US3] Reauthorize event open, resume, broadcast, and reconnect; evict failed/dead senders and continue other subscribers in `packages/gateway/src/collaboration/event-websocket-route.ts`
 - [ ] T069 [US3] CAS stop/rebind, bump auth epoch, commit operation/audit/event/outbox, then revoke direct/launch sessions and subscriptions in `packages/gateway/src/collaboration/collaborative-app-share-repository.ts`
 - [ ] T070 [P] [US3] Preserve optimistic edits through conflict and uncertain-save states and require deliberate retry/reload in `packages/ui/src/collaboration/shared-app-transport.ts`
 - [ ] T071 [US3] Prove newcomer, departure, conflict, retry, stop, and no-recipient-row outcomes at real gateway/platform/Postgres boundaries in `tests/e2e/collaborative-app-membership.spec.ts`

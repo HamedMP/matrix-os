@@ -29,6 +29,7 @@ import { createFileActionExecutor, type CollaborationResourceDriver } from "./re
 import { CollaborationResourceCatalog, ResourceCatalogError, type CatalogEntryRecord } from "./resource-catalog.js";
 import type { CollaborationUploadStager } from "./upload-stages.js";
 import { assertResourceIdentity } from "./resource-identity-admission.js";
+import type { ImmutableCollaborativeBuildStore } from "../app-runtime/build-cache.js";
 
 export type { CollaborationResourceDriver } from "./resource-actions.js";
 
@@ -36,6 +37,7 @@ export interface CollaborationResourceServices {
   catalog: CollaborationResourceCatalog;
   driver: CollaborationResourceDriver;
   apps?: AppInstanceAdapter;
+  builds?: ImmutableCollaborativeBuildStore;
   uploads?: CollaborationUploadStager;
   createEventId?: () => string;
 }
@@ -239,12 +241,15 @@ export function registerResourceRoutes(routes: Hono, options: CollaborationRoute
     const context = await authorize(options, c, new Uint8Array(), "read", scopeId);
     const instance = await apps.describe(context, appId);
     if (instance.readiness !== "ready" || instance.collaborationMode !== "scoped") throw new ResourceCatalogError("unavailable");
-    const asset = await resources.driver.readAppAsset({ ...instance.assetNamespace, appId, assetPath });
+    const asset = instance.collaborativeBuildId && resources.builds
+      ? await resources.builds.readAsset(instance.collaborativeBuildId, assetPath)
+      : await resources.driver.readAppAsset({ ...instance.assetNamespace, appId, assetPath });
     try {
       // Recheck after the file is opened: a same-slug unregister/re-register
       // between authorization and open must never stream the new app's bytes.
       const current = await apps.describe(context, appId);
-      if (current.incarnation !== instance.incarnation || current.readiness !== "ready"
+      if (current.incarnation !== instance.incarnation
+        || current.collaborativeBuildId !== instance.collaborativeBuildId || current.readiness !== "ready"
         || current.collaborationMode !== "scoped") throw new ResourceCatalogError("unavailable");
     } catch (error: unknown) {
       await asset.stream.cancel().catch((cancelError: unknown) => {

@@ -516,6 +516,7 @@ export async function createGatewayCollaboration(options: {
         readiness: input.repository,
         store: input.builds,
       });
+      resourceServices.builds = input.builds;
       collaborativeAppReadiness = {
         ownerId: input.ownerId,
         repository: input.repository,

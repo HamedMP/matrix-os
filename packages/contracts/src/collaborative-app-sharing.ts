@@ -149,6 +149,19 @@ export const CollaborativeAppLaunchTargetSchema = z.discriminatedUnion("kind", [
   }).strict(),
 ]);
 
+export const CollaborativeAppLaunchRequestSchema = z.object({
+  clientRequestId: CollaborationIdSchema,
+  expectedShareRevision: CollaborationRevisionSchema,
+  expectedBuildId: Sha256Schema,
+}).strict();
+
+export const CollaborativeAppLaunchResponseSchema = z.object({
+  target: CollaborativeAppLaunchTargetSchema.refine((target) => target.kind === "shared"),
+  launchId: CollaborationIdSchema,
+  entryUrl: SameOriginPathSchema,
+  expiresAt: z.iso.datetime(),
+}).strict();
+
 export const CollaborativeAppParticipantSchema = z.object({
   actorId: CollaborationActorIdSchema,
   displayName: boundedDisplayText(120, 512),
@@ -201,6 +214,8 @@ export type CollaborativeAppReadiness = z.infer<typeof CollaborativeAppReadiness
 export type CollaborativeAppShare = z.infer<typeof CollaborativeAppShareSchema>;
 export type CollaborativeAppDirectoryItem = z.infer<typeof CollaborativeAppDirectoryItemSchema>;
 export type CollaborativeAppLaunchTarget = z.infer<typeof CollaborativeAppLaunchTargetSchema>;
+export type CollaborativeAppLaunchRequest = z.infer<typeof CollaborativeAppLaunchRequestSchema>;
+export type CollaborativeAppLaunchResponse = z.infer<typeof CollaborativeAppLaunchResponseSchema>;
 export type CollaborativeAppParticipant = z.infer<typeof CollaborativeAppParticipantSchema>;
 export type CollaborativeAppMutationRequest = z.infer<typeof CollaborativeAppMutationRequestSchema>;
 export type CollaborativeAppMutationResponse = z.infer<typeof CollaborativeAppMutationResponseSchema>;
