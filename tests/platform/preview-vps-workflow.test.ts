@@ -8,6 +8,7 @@ import YAML from 'yaml';
 
 const root = process.cwd();
 const waitScript = join(root, 'scripts/wait-preview-provisioning.sh');
+const readRuntimeScript = join(root, 'scripts/read-preview-runtime.sh');
 const tempDirectories: string[] = [];
 const machineId = '30000000-0000-4000-8000-000000000001';
 
@@ -27,6 +28,7 @@ try {
 } catch (error) {
   if (error?.code !== 'ENOENT') throw error;
 }
+
 fs.writeFileSync(statePath, String(invocation + 1));
 const statusCode = statusCodes[Math.min(invocation, statusCodes.length - 1)];
 const body = statusCode === '200'
@@ -91,6 +93,50 @@ if (args.includes('-c')) {
       FAKE_HTTP_CODES: '200',
       FAKE_CURL_STATE: join(directory, 'curl-state'),
       ...overrides,
+    },
+  });
+}
+
+async function runReadRuntimeScript(failureMode: 'transport' | 'invalid') {
+  const directory = await mkdtemp(join(tmpdir(), 'matrix-preview-runtime-'));
+  tempDirectories.push(directory);
+  const curlPath = join(directory, 'curl');
+  await writeFile(curlPath, `#!/usr/bin/env node
+const fs = require('node:fs');
+
+const statePath = process.env.FAKE_CURL_STATE;
+let invocation = 0;
+try { invocation = Number(fs.readFileSync(statePath, 'utf8')); } catch (error) {
+  if (error?.code !== 'ENOENT') throw error;
+}
+fs.writeFileSync(statePath, String(invocation + 1));
+if (invocation === 0) {
+  process.stdout.write('{"machines":[');
+  process.stderr.write('private upstream detail');
+  process.exit(process.env.FAKE_FAILURE_MODE === 'transport' ? 56 : 0);
+}
+process.stdout.write(process.env.FAKE_FLEET_RESPONSE);
+`);
+  await chmod(curlPath, 0o755);
+
+  return spawnSync('bash', [readRuntimeScript], {
+    cwd: root,
+    encoding: 'utf8',
+    env: {
+      ...process.env,
+      PATH: `${directory}:${process.env.PATH ?? ''}`,
+      PLATFORM_PUBLIC_URL: 'https://platform.example',
+      PLATFORM_SECRET: 'platform-secret',
+      HANDLE: 'pr-1340',
+      PREVIEW_FLEET_MAX_ATTEMPTS: '2',
+      PREVIEW_FLEET_RETRY_SECONDS: '0',
+      FAKE_CURL_STATE: join(directory, 'curl-state'),
+      FAKE_FAILURE_MODE: failureMode,
+      FAKE_FLEET_RESPONSE: JSON.stringify({ machines: [{
+        handle: 'pr-1340', runtimeSlot: 'pr-1340', status: 'running', healthy: true,
+        runtimeVersion: 'v-preview', publicIPv4: '203.0.113.10', deletedAt: null,
+        provisionedAt: '2026-11-05T00:00:00Z',
+      }] }),
     },
   });
 }
@@ -167,6 +213,29 @@ describe('Preview VPS provisioning workflow', () => {
     expect(deployStep).toContain('collect_preview_diagnostics || true');
     expect(deployStep.indexOf('collect_preview_diagnostics || true'))
       .toBeLessThan(deployStep.indexOf('Timed out waiting for ${HANDLE}'));
+  });
+
+  it.each(['transport', 'invalid'] as const)(
+    'retries a transient %s fleet response without exposing upstream details',
+    async (failureMode) => {
+      const result = await runReadRuntimeScript(failureMode);
+
+      expect(result.status, result.stderr).toBe(0);
+      expect(JSON.parse(result.stdout)).toMatchObject({
+        handle: 'pr-1340', runtimeVersion: 'v-preview', healthy: true,
+      });
+      expect(result.stderr).toContain('Preview fleet status unavailable; retrying.');
+      expect(result.stderr).not.toContain('private upstream detail');
+    },
+  );
+
+  it('uses the bounded fleet reader for install polling', () => {
+    const workflow = YAML.parse(readFileSync(join(root, '.github/workflows/preview-vps.yml'), 'utf8'));
+    const deployStep = workflow.jobs.deploy.steps.find(
+      (step: { name?: string }) => step.name === 'Deploy preview bundle to preview VPS',
+    ).run as string;
+
+    expect(deployStep).toContain('runtime="$(./scripts/read-preview-runtime.sh)"');
   });
 
   it('budgets the job for provisioning, bounded repair, and workflow overhead', () => {
