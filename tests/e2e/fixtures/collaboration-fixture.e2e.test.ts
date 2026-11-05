@@ -2,6 +2,20 @@ import { describe, expect, it } from "vitest";
 import { parseCollaborationJourneyEnvironment } from "./collaboration.js";
 
 describe("organization collaboration journey fixture", () => {
+  it("accepts the documented member storage-state variable", () => {
+    expect(parseCollaborationJourneyEnvironment({
+      MATRIX_COLLABORATION_E2E_BASE_URL: "https://app.matrix-os.com",
+      MATRIX_COLLABORATION_E2E_RUNTIME_HANDLE: "review-vm",
+      MATRIX_COLLABORATION_E2E_OWNER_STATE: "/tmp/owner.json",
+      MATRIX_COLLABORATION_E2E_MEMBER_STATE: "/tmp/member.json",
+      MATRIX_COLLABORATION_E2E_OUTSIDER_STATE: "/tmp/outsider.json",
+      MATRIX_COLLABORATION_E2E_PROJECT_ID: "proj_review",
+      MATRIX_COLLABORATION_E2E_EDITOR_ACTOR_ID: "user_editor",
+      MATRIX_COLLABORATION_E2E_EDITOR_EMAIL: "editor@example.com",
+      MATRIX_COLLABORATION_E2E_EDITOR_USERNAME: "nimanaderi",
+    }).editorStorageState).toBe("/tmp/member.json");
+  });
+
   it("builds supported session-routed URLs without exposing storage-state paths", () => {
     expect(parseCollaborationJourneyEnvironment({
       PATH: "/usr/bin",

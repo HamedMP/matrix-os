@@ -1,4 +1,6 @@
 import { randomUUID } from "node:crypto";
+import { createCollaborationDirectClient } from "../../packages/ui/src/collaboration/direct-client";
+import { WebSocket as NodeWebSocket } from "ws";
 import { expect, collaborationTest as test } from "./fixtures/collaboration";
 
 test("owner shares once, organization members work immediately, outsiders stay denied, and unshare revokes", async ({ collaborationJourney }) => {
@@ -71,21 +73,68 @@ test("owner shares once, organization members work immediately, outsiders stay d
   expect(memberProject).not.toHaveProperty("grants");
   expect((await outsiderRequest.get(`${platform}/api/collaboration/scopes/${created.id}/project`)).status()).toBe(404);
 
-  const currentScope = await ownerRequest.get(`${platform}/api/collaboration/scopes/${created.id}`);
-  const expectedRevision = (await currentScope.json() as { revision: string }).revision;
-  const unshared = await ownerRequest.post(`${platform}/api/collaboration/scopes/${created.id}/project/unshare`, {
-    data: { clientRequestId: randomUUID(), expectedRevision },
+  const memberDirect = await authenticatedDirectClient(config.editor.context, platform);
+  let streamState: "connecting" | "connected" | "reconnecting" | "unavailable" = "connecting";
+  let unshareReturned = false;
+  let streamStoppedBeforeUnshareReturned = false;
+  const unsubscribe = memberDirect.subscribeEvents(created.id, {
+    onEvent() {},
+    onUnavailable() {
+      streamState = "unavailable";
+      streamStoppedBeforeUnshareReturned = !unshareReturned;
+    },
+    onConnectionChange(state) {
+      streamState = state;
+    },
   });
-  expect(unshared.ok()).toBe(true);
-  await expect.poll(async () => (await memberRequest.get(
-    `${platform}/api/collaboration/scopes/${created.id}/project`,
-  )).status()).toBe(404);
+  try {
+    await expect.poll(() => streamState, { timeout: 30_000 }).toBe("connected");
+    const currentScope = await ownerRequest.get(`${platform}/api/collaboration/scopes/${created.id}`);
+    const expectedRevision = (await currentScope.json() as { revision: string }).revision;
+    const unshared = await ownerRequest.post(`${platform}/api/collaboration/scopes/${created.id}/project/unshare`, {
+      data: { clientRequestId: randomUUID(), expectedRevision },
+    });
+    unshareReturned = true;
+    expect(unshared.ok()).toBe(true);
+    expect(streamStoppedBeforeUnshareReturned).toBe(true);
+    expect(streamState).toBe("unavailable");
+    await expect.poll(async () => (await memberRequest.get(
+      `${platform}/api/collaboration/scopes/${created.id}/project`,
+    )).status()).toBe(404);
 
-  await confirmShare();
-  await expect.poll(async () => (await memberRequest.get(
-    `${platform}/api/collaboration/scopes/${created.id}/project`,
-  )).status(), { timeout: 60_000 }).toBe(200);
+    await confirmShare();
+    await expect.poll(async () => (await memberRequest.get(
+      `${platform}/api/collaboration/scopes/${created.id}/project`,
+    )).status(), { timeout: 60_000 }).toBe(200);
+  } finally {
+    unsubscribe();
+    memberDirect.close();
+  }
 });
+
+async function authenticatedDirectClient(
+  context: import("@playwright/test").BrowserContext,
+  platformUrl: string,
+) {
+  const platformOrigin = new URL(platformUrl).origin;
+  const cookieHeader = (await context.cookies(platformOrigin))
+    .map((cookie) => `${cookie.name}=${cookie.value}`)
+    .join("; ");
+  const fetchImpl: typeof fetch = async (input, init) => {
+    const url = new URL(typeof input === "string" || input instanceof URL ? input : input.url);
+    const headers = new Headers(init?.headers);
+    if (url.origin === platformOrigin && cookieHeader) headers.set("cookie", cookieHeader);
+    return fetch(input, { ...init, headers });
+  };
+  return createCollaborationDirectClient({
+    platformBaseUrl: platformOrigin,
+    clientOrigin: platformOrigin,
+    fetchImpl,
+    webSocketFactory: (url) => new NodeWebSocket(url, {
+      headers: cookieHeader ? { Cookie: cookieHeader } : undefined,
+    }) as unknown as WebSocket,
+  });
+}
 
 test("two accounts complete an isolated Codex shared-Chat round trip", async ({ collaborationJourney }) => {
   const config = collaborationJourney;

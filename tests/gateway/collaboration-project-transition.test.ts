@@ -150,6 +150,28 @@ describe("project collaboration transition journal", () => {
     });
   });
 
+  it("does not prepare a re-share while committed unshare cleanup is pending", async () => {
+    await fixture.db.insertInto("collaboration_operations").values({
+      scope_id: SCOPE_ID,
+      actor_id: OWNER_ID,
+      client_request_id: "50000000-0000-4000-8000-000000000052",
+      operation_kind: "project.unshare",
+      payload_hash: "d".repeat(64),
+      status: "accepted",
+      result_ref: { scopeId: SCOPE_ID, lifecycle: "private", revision: 4 },
+      expected_revision: 3,
+      accepted_auth_epoch: 0,
+      created_at: NOW,
+      expires_at: new Date(NOW.getTime() + 60_000),
+    }).execute();
+
+    await expect(prepare()).rejects.toMatchObject({ code: "conflict" });
+    await expect(fixture.db.selectFrom("collaboration_scopes")
+      .select("lifecycle")
+      .where("id", "=", SCOPE_ID)
+      .executeTakeFirstOrThrow()).resolves.toEqual({ lifecycle: "private" });
+  });
+
   it("moves to a new authority generation on the same owner runtime", async () => {
     await expect(journal().prepare({
       scopeId: SCOPE_ID,

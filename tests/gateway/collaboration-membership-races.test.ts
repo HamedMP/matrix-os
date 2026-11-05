@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { bootstrapChatDatabase } from "../../packages/gateway/src/chat/database.js";
+import { CollaborationAuthority } from "../../packages/gateway/src/collaboration/authority.js";
 import { bootstrapCollaborationDatabase } from "../../packages/gateway/src/collaboration/database.js";
 import { CollaborationRepository } from "../../packages/gateway/src/collaboration/repository.js";
 import { ProjectAccessRevocationEnforcer } from "../../packages/gateway/src/collaboration/revocation-enforcer.js";
@@ -8,6 +9,7 @@ import {
   collaborationIds,
   createCollaborationTestDatabase,
   createRealCollaborationTestDatabase,
+  allowAllOrganizationPrecondition,
   type CollaborationTestDatabase,
 } from "./collaboration-test-support.js";
 
@@ -202,6 +204,30 @@ describe("organization project revocation races", () => {
     expect(drainScope).toHaveBeenCalledWith(ownedChat);
     expect(drainScope).toHaveBeenCalledWith(otherProject, departedOwner);
     expect(drainScope).toHaveBeenCalledWith(otherTerminal, departedOwner);
+
+    expect(await fixture.db.selectFrom("collaboration_scopes")
+      .select(["id", "lifecycle", "revision", "auth_epoch"])
+      .where("id", "in", [ownedProject, ownedChat, otherProject, otherTerminal])
+      .orderBy("id")
+      .execute()).toEqual([
+      { id: ownedProject, lifecycle: "private", revision: 2, auth_epoch: 2 },
+      { id: ownedChat, lifecycle: "private", revision: 2, auth_epoch: 2 },
+      { id: otherProject, lifecycle: "shared", revision: 1, auth_epoch: 1 },
+      { id: otherTerminal, lifecycle: "shared", revision: 1, auth_epoch: 1 },
+    ]);
+    const authority = new CollaborationAuthority(new CollaborationRepository(fixture.db), {
+      now: () => now,
+      organizationPrecondition: allowAllOrganizationPrecondition,
+    });
+    await expect(authority.authorize({
+      scopeId: ownedProject,
+      actorId: otherOwner,
+      action: "read",
+    })).rejects.toMatchObject({ code: "not_found" });
+    expect(await fixture.db.selectFrom("collaboration_directory_outbox")
+      .select("discovery_state")
+      .where("scope_id", "=", ownedProject)
+      .execute()).toEqual([{ discovery_state: "revoked" }]);
   });
 
   it("drains the project and every inherited scope after unshare commits", async () => {
@@ -213,10 +239,32 @@ describe("organization project revocation races", () => {
       drainScope,
     });
 
-    await enforcer.unshared(ownedProject);
+    await fixture.db.updateTable("collaboration_scopes").set({ lifecycle: "private", revision: 2 })
+      .where("id", "in", [ownedProject, ownedChat]).execute();
+    await enforcer.unshared({ scopeId: ownedProject, revision: 2 });
 
     expect(revoke).toHaveBeenCalledWith({ scopeId: ownedProject });
     expect(drainScope.mock.calls).toEqual([[ownedProject], [ownedChat]]);
+  });
+
+  it("does not let an old unshare retry drain work admitted by a later share", async () => {
+    await fixture.db.updateTable("collaboration_scopes").set({ lifecycle: "private", revision: 2 })
+      .where("id", "in", [ownedProject, ownedChat]).execute();
+    await fixture.db.updateTable("collaboration_scopes").set({ lifecycle: "shared", revision: 3 })
+      .where("id", "in", [ownedProject, ownedChat]).execute();
+    const revoke = vi.fn(() => [] as string[]);
+    const drainScope = vi.fn(async () => undefined);
+    const enforcer = new ProjectAccessRevocationEnforcer({
+      db: fixture.db,
+      sessions: { revoke },
+      drainScope,
+    });
+
+    await expect(enforcer.unshared({ scopeId: ownedProject, revision: 2 }))
+      .rejects.toThrow("Project revocation fence is unavailable");
+
+    expect(revoke).not.toHaveBeenCalled();
+    expect(drainScope).not.toHaveBeenCalled();
   });
 
   function revocationScope(
