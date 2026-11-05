@@ -1,3 +1,4 @@
+import { nativeCronCreationAllowed } from "./routine-creation-policy.js";
 import { z } from "zod/v4";
 import { spawnIsolatedProviderProcess } from "../coding-agents/provider-process-isolation.js";
 import { createBoundedCliLines } from "./bounded-cli-lines.js";
@@ -12,6 +13,7 @@ export type ClaudeNativeSessionTurnOptions = Parameters<typeof runCanonicalCli>[
   /** Current account/source/root/model/permission fingerprint; never a scoped Run token. */
   sourceFingerprint: string;
   schedulingAllowed?: boolean;
+  creationPolicy?: import("./routine-creation-latch.js").RoutineCreationLatch;
 };
 type ScheduledHandler = (request: NativeScheduledPhaseRequest) => Promise<void>;
 interface PoolOptions {
@@ -333,7 +335,11 @@ export function createClaudeNativeSessionPool(options: PoolOptions = {}) {
       if (parsed.data.agent_id !== undefined) { void deny().catch(reportNativeSessionFailure); return; }
       const tool = this.jobs.toolInput(parsed.data.tool_use_id);
       if (!tool || JSON.stringify(tool.input) !== JSON.stringify(parsed.data.tool_input)) { void deny().catch(reportNativeSessionFailure); return; }
-      if (parsed.data.tool_name === "CronCreate" && (!this.eligible() || !capacity(this) || !this.jobs.authorizeCreate(parsed.data.tool_use_id))) { void deny().catch(reportNativeSessionFailure); return; }
+      if (parsed.data.tool_name === "CronCreate" && (
+        !nativeCronCreationAllowed(phase.options.input)
+        || (phase.options.creationPolicy && !phase.options.creationPolicy.claim("native"))
+        || !this.eligible() || !capacity(this) || !this.jobs.authorizeCreate(parsed.data.tool_use_id)
+      )) { void deny().catch(reportNativeSessionFailure); return; }
       if (parsed.data.tool_name === "CronCreate") this.reserved = true;
       void this.control.respond(id, {}).catch((error: unknown) => { reportNativeSessionFailure(error); void this.stop(new CanonicalCliError("startup")).catch(reportNativeSessionFailure); });
     }

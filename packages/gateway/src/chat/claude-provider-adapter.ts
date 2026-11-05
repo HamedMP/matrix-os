@@ -1,3 +1,4 @@
+import { createRoutineCreationLatch } from "./routine-creation-latch.js";
 import type { ClaudeNativeSessionPool } from "./claude-native-session.js";
 import type { NativeScheduledPhaseRequest } from "./native-scheduled-admission.js";
 import { resolveClaudeSessionSource } from "./claude-session-source.js";
@@ -572,9 +573,11 @@ export function createClaudeChatProviderAdapter(options: {
       }
     };
 
+    const creationPolicy = createRoutineCreationLatch(input);
     const routineController = new AbortController();
     const routineSignal = AbortSignal.any([processSignal, routineController.signal]);
     const routineExecution = options.routineCli ? createClaudeRoutineExecution({ ...options.routineCli, input, signal: routineSignal,
+      creationPolicy,
       current: () => activeRuns.get(input.runId) === activeRun, publish: humanWait.emit, cwd, homePath: options.homePath }) : undefined;
     const initialInput = () => writeControl!(`${JSON.stringify({ type: "user", session_id: resumeState?.sessionId ?? "", message: { role: "user", content: nativePrompt }, parent_tool_use_id: null })}\n`);
     const routineHook = routineExecution ? createClaudeRoutineHook({ signal: routineSignal,
@@ -725,7 +728,7 @@ export function createClaudeChatProviderAdapter(options: {
           homePath: options.homePath, command: protocol.command, cwd: launch.cwd, args: launch.args, env: runEnv, input,
         });
         return await options.nativeSessions!.runTurn({ ...transport, command: protocol.command, ...remainingLifetime(),
-          input, sourceFingerprint: source.fingerprint, schedulingAllowed: source.schedulingAllowed });
+          input, creationPolicy, sourceFingerprint: source.fingerprint, schedulingAllowed: source.schedulingAllowed });
       } catch (error: unknown) {
         if (error instanceof ClaudeNativeProbeCleanupError) input.onCleanupUnconfirmed?.();
         await cancelScheduledSource(input);

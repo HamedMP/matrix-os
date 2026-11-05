@@ -206,6 +206,7 @@ export class CanonicalChatOrchestrator {
     adapters: CanonicalChatProviderRegistry;
     browserApprovals?: BrowserApprovalControl;
     routineActions?: Pick<RoutineCliActionController, "submitChat">;
+    beforeRoutineCreationAdmission?: import("./turn-admission.js").TurnAdmissionOptions["beforeRoutineCreationAdmission"];
     beforeRoutineFullAccessDispatch?: import("./turn-admission.js").TurnAdmissionOptions["beforeRoutineFullAccessDispatch"];
     executionRoots?: ChatExecutionRootResolver;
     agentContext?: ChatAgentContext;
@@ -376,6 +377,7 @@ export class CanonicalChatOrchestrator {
     owner: ChatOwner,
     chatId: string,
     inputValue: CanonicalQueueChatTurnRequest,
+    provenance?: import("./turn-admission.js").CanonicalTurnProvenance,
   ): Promise<CanonicalChatQueueAdmissionResponse> {
     this.assertOpen();
     await this.assertPersonalExecutionAllowed(owner, chatId);
@@ -387,6 +389,7 @@ export class CanonicalChatOrchestrator {
         input: CanonicalQueueChatTurnRequestSchema.parse(inputValue),
         repository: this.options.repository,
         agentContext: this.options.agentContext,
+        beforeRoutineCreationAdmission: this.options.beforeRoutineCreationAdmission, provenance,
         catalog: this.options.catalog,
         adapters: this.options.adapters,
         ...(this.options.executionRoots ? { executionRoots: this.options.executionRoots } : {}),

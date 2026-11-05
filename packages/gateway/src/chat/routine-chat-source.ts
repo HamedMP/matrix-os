@@ -11,6 +11,7 @@ import type { RoutineFullAccessSourceLease } from "../bots/routine-full-access.j
  * Full-access mode alone does not prove human provenance; only the host's private lease can raise its ceiling. */
 export function createChatRoutineSourceProducer(options: { input: CanonicalProviderRunInput; computerId: string; signal: AbortSignal;
   publish(event: CanonicalProviderRunEvent): void; current(invocation?: RoutineCliVerifiedInvocation): boolean; provider?: "claude" | "codex" | "hermes" | "opencode" | "pi" | "matrix_pi";
+  creationPolicy?: import("./routine-creation-latch.js").RoutineCreationLatch;
   bindFullAccess?: (source: RoutineSourceProducer["source"], signal: AbortSignal) => RoutineFullAccessSourceLease | null }) {
   const input = parseCanonicalProviderRunInput(options.input), generation = `${options.provider === "matrix_pi" ? "managed" : "native"}_${randomBytes(24).toString("hex")}`;
   const provider = options.provider ?? "claude";
@@ -23,15 +24,18 @@ export function createChatRoutineSourceProducer(options: { input: CanonicalProvi
     originCeiling: "exact", revision: generation };
   const source: RoutineSourceProducer["source"] = { ownerId: input.owner.ownerId, computerId: options.computerId, harness: provider === "matrix_pi" ? "pi" : provider, identity: { kind: "chat_run", chatId: input.chatId, runId: input.runId, route: provider === "matrix_pi" ? "managed" : "native" },
     generation, issuedAt: new Date().toISOString(), expiresAt: new Date(Date.now() + 30 * 60_000).toISOString(), actions: ["read", "propose", "control"] };
-  let lease = provider === "claude" && policy.scope === "personal" && policy.permissionMode === "full_access"
+  const creationRoute = () => input.nativeScheduled ? "native" as const : input.context?.routineCreation ?? options.creationPolicy?.current();
+  let lease = !input.nativeScheduled && provider === "claude" && policy.scope === "personal" && policy.permissionMode === "full_access"
     && policy.interactionMode === "default" ? options.bindFullAccess?.(source, options.signal) : null;
   const producer: RoutineSourceProducer = {
     source,
     signal: options.signal, publish: options.publish,
-    readPolicy: () => ({ ...policy, originCeiling: lease ? "full" : "exact", revision: lease ? `${generation}:full_${lease.revision}` : generation,
+    readPolicy: () => ({ ...policy, ...(creationRoute() ? { creationRoute: creationRoute() } : {}),
+      ...(options.creationPolicy && !options.creationPolicy.attestedMatrix ? { creationApproval: "exact" as const } : {}), originCeiling: lease ? "full" : "exact", revision: lease ? `${generation}:full_${lease.revision}` : generation,
       live: options.current() && !options.signal.aborted && (!lease || lease.current()),
       ...(narrowed ? { interactionMode: "plan" as const, originCeiling: "read" as const } : {}) }),
     async validateWithin(source, trx, action, invocation) {
+      if (action === "propose" && creationRoute() === "native") return false;
       if (source.generation !== generation || !options.current(invocation) || options.signal.aborted || source.identity.kind !== "chat_run") return false;
       if (narrowed && action !== undefined && action !== "read") return false;
       // Hold current admission rows through issue/consume. Neither runtimeOwnerId nor model/native IDs supply scope.

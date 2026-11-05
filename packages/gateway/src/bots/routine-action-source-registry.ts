@@ -12,6 +12,8 @@ export const RoutineSourcePolicySchema = z.strictObject({
   live: z.boolean(), scope: z.enum(["personal", "shared", "org"]),
   interactionMode: z.enum(["default", "plan", "review"]),
   permissionMode: z.enum(["full_access", "supervised", "auto", "auto_accept_edits", "unsupported"]),
+  creationApproval: z.enum(["exact", "admitted"]).optional(),
+  creationRoute: z.enum(["native", "matrix"]).optional(),
   originCeiling: z.enum(["read", "exact", "full"]), revision: z.string().min(1).max(128),
 });
 export type RoutineSourcePolicy = z.infer<typeof RoutineSourcePolicySchema>;
@@ -21,7 +23,9 @@ export function routineActionPolicy(source: RoutineCliSourceContext, policyValue
   if (!parsed.success || !parsed.data.live || !source.actions.includes(action)) return "deny";
   const policy = parsed.data;
   if (action === "read") return "allow";
+  if (action === "propose" && policy.creationRoute === "native") return "deny";
   if (policy.scope !== "personal" || policy.interactionMode !== "default" || policy.permissionMode === "unsupported" || policy.originCeiling === "read") return "deny";
+  if (action === "propose" && policy.creationApproval === "exact") return "ask";
   return source.identity.kind !== "terminal_launch" && policy.permissionMode === "full_access" && policy.originCeiling === "full" ? "allow" : "ask";
 }
 export interface RoutineSourceProducer {

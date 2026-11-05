@@ -1,10 +1,15 @@
 import { withChatSessionHistory, SESSION_HISTORY_MESSAGE_LIMIT } from "./session-history.js";
-import { isChatAgentDriver, type ChatRunContext, type CanonicalChatQueuedTurn } from "@matrix-os/contracts";
+import { ChatRunContextSchema, isChatAgentDriver, type ChatRunContext, type CanonicalChatQueuedTurn } from "@matrix-os/contracts";
 import { ChatConflictError } from "./errors.js";
 import type { Kysely, Transaction } from "kysely";
 import type { ChatDatabase } from "./database.js";
-import { toMessage } from "./records.js";
+import { parseJson, toMessage } from "./records.js";
 import { chatContextRequestHash } from "./agent-context.js";
+
+/** The browser selected one creation payload. A queue edit or steer cannot reuse that decision. */
+export function hasAttestedCreationChoice(snapshot: unknown): boolean {
+  return snapshot != null && ChatRunContextSchema.parse(parseJson(snapshot)).routineCreation === "matrix";
+}
 
 export function validateQueuedAgentDriver(context: ChatRunContext | undefined, driver: string, chatId: string, revision: number) {
   if (context?.agent && !isChatAgentDriver(driver)) throw new ChatConflictError(chatId, revision);
