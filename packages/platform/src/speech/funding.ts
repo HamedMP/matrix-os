@@ -1,3 +1,6 @@
+import { readSpeechAuthorization } from "./reservation-policy.js";
+import { settlePostpaidSpeech } from "./funding-postpaid.js";
+import { releaseSpeechAllowance } from "../ai-funded-customer-charge-release.js";
 import { readFundedRecoveryAudit } from "../ai-funded-recovery-audit.js";
 import { createHash, createHmac } from "node:crypto";
 import type { Transaction } from "kysely";
@@ -10,7 +13,7 @@ import {
   debitAttributedPromotionalGrants,
   reconcileExpiredPromotionalCredit,
   reservationDebitSplit,
-  reserveFundingSources,
+  fundingSourceAvailability,
 } from "../ai-funded-reservation-sources.js";
 import { ensureSpeechMonthlyAllowance, SpeechAllowanceError } from "./allowance.js";
 import { isSpeechMonthlyAuthorization } from "./reservation-policy.js";
@@ -171,14 +174,15 @@ export function createAiFundedSpeechFundingPort(options: {
     rawInput: Parameters<SpeechFundingPort["reserve"]>[1],
   ) {
     const input = ReserveSchema.parse(rawInput);
-    const checked = now();
-    const checkedAt = checked.toISOString();
-    const periodStart = utcMonthStart(checked);
     try {
       await sql`SELECT pg_advisory_xact_lock(hashtextextended(${`funded-ai-owner:${input.identity.ownerId}`}, 0))`.execute(trx);
       const machine = await trx.selectFrom("user_machines").select([
         "clerk_user_id", "runtime_slot", "status", "activation_state", "deleted_at",
-      ]).where("machine_id", "=", input.identity.machineId).forUpdate().executeTakeFirst();
+      ]).where("machine_id", "=", input.identity.machineId).forNoKeyUpdate().executeTakeFirst();
+      await trx.selectFrom("ai_funded_runtime_balances").select("machine_id").where("machine_id", "=", input.identity.machineId).forUpdate().executeTakeFirst();
+      const checked = now();
+      const checkedAt = checked.toISOString();
+      const periodStart = utcMonthStart(checked);
       const runtime = options.monthlyAllowance ? undefined : await trx.selectFrom("ai_funded_runtime_policies").select([
         "owner_id", "runtime_slot", "monthly_budget_microusd",
       ]).where("machine_id", "=", input.identity.machineId).executeTakeFirst();
@@ -204,11 +208,11 @@ export function createAiFundedSpeechFundingPort(options: {
       const tokenId = await ensurePlatformCredential(trx, input.identity, checkedAt);
       const hash = payloadHash(input);
       const existing = await trx.selectFrom("ai_funded_usage_reservations")
-        .select(["reservation_id", "payload_hash", "reserved_microusd"])
+        .select(["reservation_id", "payload_hash", "reserved_microusd", "status", "customer_charge_release"])
         .where("token_id", "=", tokenId).where("request_id", "=", input.requestId)
         .executeTakeFirst();
       if (existing) {
-        if (existing.payload_hash !== hash) throw new SpeechFundingError("unavailable");
+        if (existing.payload_hash !== hash || !["reserved", "in_flight"].includes(existing.status) || existing.customer_charge_release !== null) throw new SpeechFundingError("unavailable");
         return {
           reservationId: ReservationIdSchema.parse(existing.reservation_id),
           reservedMicrousd: exactInteger(existing.reserved_microusd),
@@ -234,20 +238,13 @@ export function createAiFundedSpeechFundingPort(options: {
       const monthlyBudget = exactInteger(
         allowance?.monthly_budget_microusd ?? runtime?.monthly_budget_microusd,
       );
-      const reserved = await trx.updateTable("ai_funded_runtime_balances").set({
-        reserved_microusd: sql<number>`reserved_microusd + ${input.maximumCostMicrousd}`,
-        ...(!allowance ? {
-          month_reserved_microusd: sql<number>`month_reserved_microusd + ${input.maximumCostMicrousd}`,
-        } : {}),
-        updated_at: checkedAt,
-      }).where("machine_id", "=", input.identity.machineId)
-        .where(sql<boolean>`reserved_microusd <= ${Number.MAX_SAFE_INTEGER - input.maximumCostMicrousd}`)
-        .where(sql<boolean>`credit_balance_microusd - reserved_microusd - funding_shortfall_microusd >= ${input.maximumCostMicrousd}`)
-        .$if(!allowance, (query) => query.where(
-          sql<boolean>`${monthlyBudget} - month_spent_microusd - month_reserved_microusd >= ${input.maximumCostMicrousd}`,
-        ))
-        .returningAll().executeTakeFirst();
-      if (!reserved) throw new SpeechFundingError("allowance_exhausted");
+      const reserved = reset;
+      const availability = await fundingSourceAvailability(trx, input.identity, reserved, checkedAt, sourcePolicy);
+      if (Math.min(availability.availableMicrousd, exactInteger(reserved.credit_balance_microusd)
+        - exactInteger(reserved.reserved_microusd) - exactInteger(reserved.funding_shortfall_microusd)) <= 0
+        || (!allowance && monthlyBudget - exactInteger(reserved.month_spent_microusd) - exactInteger(reserved.month_reserved_microusd) <= 0)) {
+        throw new SpeechFundingError("allowance_exhausted");
+      }
       if (allowance) {
         const speechReserved = await trx.updateTable("speech_runtime_allowances").set({
           period_reserved_microusd: sql<number>`period_reserved_microusd + ${input.maximumCostMicrousd}`,
@@ -261,14 +258,6 @@ export function createAiFundedSpeechFundingPort(options: {
           .returning("machine_id").executeTakeFirst();
         if (!speechReserved) throw new SpeechFundingError("allowance_exhausted");
       }
-      const allocation = await reserveFundingSources(
-        trx,
-        input.identity,
-        input.maximumCostMicrousd,
-        reserved,
-        checkedAt,
-        sourcePolicy,
-      );
       const reservationId = ReservationIdSchema.parse(options.reservationIdFactory());
       const expiresAt = new Date(checked.getTime() + reservationTtlMs).toISOString();
       await trx.insertInto("ai_funded_usage_reservations").values({
@@ -279,6 +268,9 @@ export function createAiFundedSpeechFundingPort(options: {
           capability: ACTIVE_SPEECH_SCOPE,
           policyRevision: input.policyRevision,
           ...(allowance ? { fundingPolicy: "speech_monthly_v1" } : {}),
+          reservation: { billingMode: "usage", billingPolicy: "postpaid", reservedMicrousd: 0, maxCostMicrousd: input.maximumCostMicrousd },
+          allowanceReservedMicrousd: allowance ? input.maximumCostMicrousd : 0,
+          allowancePeriodStart: allowance ? periodStart : null,
         }),
         settlement_response: null,
         finalization_mode: null,
@@ -290,9 +282,9 @@ export function createAiFundedSpeechFundingPort(options: {
         machine_id: input.identity.machineId,
         runtime_slot: input.identity.runtimeSlot,
         model_id: input.modelId,
-        reserved_microusd: input.maximumCostMicrousd,
-        promotional_reserved_microusd: allocation.promotionalReservedMicrousd,
-        addon_reserved_microusd: allocation.addonReservedMicrousd,
+        reserved_microusd: 0,
+        promotional_reserved_microusd: 0,
+        addon_reserved_microusd: 0,
         actual_microusd: null,
         period_start: periodStart,
         status: "reserved",
@@ -302,17 +294,7 @@ export function createAiFundedSpeechFundingPort(options: {
         settled_at: null,
         released_at: null,
       }).execute();
-      if (allocation.grantAllocations.length > 0) {
-        await trx.insertInto("ai_funded_reservation_promotional_allocations").values(
-          allocation.grantAllocations.map((item) => ({
-            reservation_id: reservationId,
-            grant_entry_id: item.grantEntryId,
-            amount_microusd: item.amountMicrousd,
-            created_at: checkedAt,
-          })),
-        ).execute();
-      }
-      return { reservationId, reservedMicrousd: input.maximumCostMicrousd };
+      return { reservationId, reservedMicrousd: 0 };
     } catch (error: unknown) {
       if (error instanceof SpeechAllowanceError) throw new SpeechFundingError("unavailable");
       return mapFundingError(error);
@@ -324,29 +306,35 @@ export function createAiFundedSpeechFundingPort(options: {
     reservationId: string,
     activeAt?: string,
   ) {
-    const locator = await trx.selectFrom("ai_funded_usage_reservations").select("owner_id")
+    const locator = await trx.selectFrom("ai_funded_usage_reservations").select(["owner_id", "machine_id"])
       .where("reservation_id", "=", ReservationIdSchema.parse(reservationId)).executeTakeFirst();
     if (!locator) return undefined;
     await sql`SELECT pg_advisory_xact_lock(hashtextextended(${`funded-ai-owner:${locator.owner_id}`}, 0))`.execute(trx);
+    await trx.selectFrom("user_machines").select("machine_id").where("machine_id", "=", locator.machine_id).forNoKeyUpdate().executeTakeFirstOrThrow();
     let query = trx.selectFrom("ai_funded_usage_reservations as reservation")
       .innerJoin("ai_runtime_credentials as credential", "credential.token_id", "reservation.token_id")
       .selectAll("reservation")
       .where("reservation.reservation_id", "=", ReservationIdSchema.parse(reservationId))
       .where("credential.audience", "=", ACTIVE_SPEECH_AUDIENCE)
       .where("credential.scope", "=", ACTIVE_SPEECH_SCOPE);
+    const row = await query.forUpdate().executeTakeFirst();
+    if (!row) return undefined;
+    await trx.selectFrom("ai_funded_runtime_balances").select("machine_id").where("machine_id", "=", row.machine_id).forUpdate().executeTakeFirstOrThrow();
     if (activeAt !== undefined) {
-      query = query.where("credential.revoked_at", "is", null)
-        .where("credential.expires_at", ">", activeAt);
+      const credential = await trx.selectFrom("ai_runtime_credentials").select(["revoked_at", "expires_at"])
+        .where("token_id", "=", row.token_id).executeTakeFirstOrThrow();
+      if (credential.revoked_at !== null || credential.expires_at <= now().toISOString()) return undefined;
     }
-    return query.forUpdate().executeTakeFirst();
+    return row;
   }
 
   async function start(trx: Transaction<PlatformDatabase>, reservationId: string): Promise<void> {
+    const row = await speechReservation(trx, reservationId, "active");
     const checked = now();
     const checkedAt = checked.toISOString();
-    const row = await speechReservation(trx, reservationId, checkedAt);
     if (!row) throw new SpeechFundingError("unavailable");
-    if (row.execution_admission_release !== null || row.charge_waiver !== null) throw new SpeechFundingError("unavailable");
+    if (row.execution_admission_release !== null || row.charge_waiver !== null || row.customer_charge_release !== null) throw new SpeechFundingError("unavailable");
+    const capture = readSpeechAuthorization(row);
     if (row.status === "in_flight") return;
     if (row.status !== "reserved" || Date.parse(row.expires_at) <= checked.getTime()) {
       throw new SpeechFundingError("unavailable");
@@ -355,7 +343,7 @@ export function createAiFundedSpeechFundingPort(options: {
       status: "in_flight",
       started_at: checkedAt,
       expires_at: new Date(checked.getTime() + inFlightTtlMs).toISOString(),
-      start_response: JSON.stringify({ capability: ACTIVE_SPEECH_SCOPE, startedAt: checkedAt }),
+      start_response: JSON.stringify({ capability: ACTIVE_SPEECH_SCOPE, startedAt: checkedAt, ...(capture.postpaid ? { billingPolicy: "postpaid" } : {}) }),
     }).where("reservation_id", "=", row.reservation_id).where("status", "=", "reserved")
       .returning("reservation_id").executeTakeFirst();
     if (!updated) throw new SpeechFundingError("unavailable");
@@ -368,8 +356,20 @@ export function createAiFundedSpeechFundingPort(options: {
   ): Promise<void> {
     const row = await speechReservation(trx, reservationId);
     if (!row) throw new SpeechFundingError("unavailable");
-    if (row.execution_admission_release !== null) readFundedRecoveryAudit(row);
-    if (row.execution_admission_release !== null && input.mode !== "exact") throw new SpeechFundingError("unavailable");
+    if (row.execution_admission_release !== null && row.customer_charge_release === null) readFundedRecoveryAudit(row);
+    const capture = readSpeechAuthorization(row);
+    if (!capture.postpaid && row.customer_charge_release === null && row.status === "settled") {
+      const replayActual = input.mode === "exact" ? MoneySchema.parse(input.actualCostMicrousd) : exactInteger(row.reserved_microusd);
+      if (row.actual_microusd === null || exactInteger(row.actual_microusd) !== replayActual || row.finalization_mode !== input.mode) {
+        throw new SpeechFundingError("unavailable");
+      }
+      return;
+    }
+    if (capture.postpaid || row.customer_charge_release !== null || input.mode === "conservative"
+      || row.expires_at <= now().toISOString()) {
+      await settlePostpaidSpeech(trx, row, input, now().toISOString(), sourcePolicy);
+      return;
+    }
     const reserved = exactInteger(row.reserved_microusd);
     const actual = input.mode === "exact" ? MoneySchema.parse(input.actualCostMicrousd) : reserved;
     if (actual > reserved) throw new SpeechFundingError("unavailable");
@@ -432,7 +432,15 @@ export function createAiFundedSpeechFundingPort(options: {
     if (row.status !== "reserved") throw new SpeechFundingError("unavailable");
     const checkedAt = now().toISOString();
     const reserved = exactInteger(row.reserved_microusd);
-    const speechMonthly = isSpeechMonthlyAuthorization(row.authorization_response);
+    const capture = readSpeechAuthorization(row);
+    const speechMonthly = capture.monthly;
+    if (capture.postpaid) {
+      await releaseSpeechAllowance(trx, row, capture, checkedAt);
+      await trx.updateTable("ai_funded_usage_reservations").set({ status: "released", release_reason: "cancelled",
+        release_response: JSON.stringify({ capability: ACTIVE_SPEECH_SCOPE, billingPolicy: "postpaid", releasedMicrousd: 0 }), released_at: checkedAt })
+        .where("reservation_id", "=", row.reservation_id).where("status", "=", "reserved").returning("reservation_id").executeTakeFirstOrThrow();
+      return;
+    }
     const balance = await trx.updateTable("ai_funded_runtime_balances").set({
       reserved_microusd: sql<number>`reserved_microusd - ${reserved}`,
       ...(!speechMonthly ? {

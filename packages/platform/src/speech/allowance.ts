@@ -60,7 +60,7 @@ export async function ensureSpeechMonthlyAllowance(
   const { periodStart, nextPeriodStart, periodKey } = monthBoundaries(config.now);
   const machine = await trx.selectFrom("user_machines").select([
     "clerk_user_id", "runtime_slot", "status", "activation_state", "deleted_at", "provisioning_class",
-  ]).where("machine_id", "=", identity.machineId).forUpdate().executeTakeFirst();
+  ]).where("machine_id", "=", identity.machineId).forNoKeyUpdate().executeTakeFirst();
   if (!machine || machine.clerk_user_id !== identity.ownerId || machine.runtime_slot !== identity.runtimeSlot
     || machine.status !== "running" || machine.activation_state !== "authorized"
     || machine.deleted_at !== null || machine.provisioning_class !== "customer") {

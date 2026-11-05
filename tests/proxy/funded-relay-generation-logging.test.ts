@@ -27,8 +27,7 @@ function fixture(reservationMode: "usage" | "cloudflare-count" = "usage") {
     authorize: vi.fn(async (input: { requestId: string; modelId: string; maxCostMicrousd: number }) => ({
       identity: IDENTITY, reservation: {
         reservationId: "reservation_1", requestId: input.requestId, modelId: input.modelId,
-        reservedMicrousd: reservationMode === "usage" ? 1 : input.maxCostMicrousd,
-        ...(reservationMode === "usage" ? { billingMode: "usage" } : {}),
+        reservedMicrousd: 0, billingMode: "usage", billingPolicy: "postpaid", maxCostMicrousd: input.maxCostMicrousd,
       },
     })),
     start: vi.fn(async (input: { executionId?: string }) => ({ executionId: input.executionId, reservationId: "reservation_1", requestId: "request_1", tokenId: IDENTITY.tokenId })),

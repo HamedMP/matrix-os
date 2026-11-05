@@ -1,4 +1,5 @@
 import { createRelayTerminalRecorder } from "./funded-relay-terminal-outcome.js";
+import { postpaidAuthorizationMatches, postpaidExactFinalization } from "./funded-relay-postpaid.js";
 import { createRelayRequestDrain, RELAY_SHUTDOWN_TIMEOUT_MS } from "./funded-relay-lifecycle.js";
 import { isManagedWorkersAiModel } from "@matrix-os/contracts";
 import { createHmac, randomUUID } from "node:crypto";
@@ -6,6 +7,7 @@ import {
   FundedAiClaimKeySchema,
   FundedAiPolicyCheckRequestSchema,
   JEV_MODEL_ID,
+  type FundedAiFinalizationRequest,
   type FundedAiIdentity,
 } from "@matrix-os/contracts";
 import type { Context, Hono } from "hono";
@@ -461,7 +463,8 @@ export function createFundedRelay(dependencies: FundedRelayDependencies | null):
         requestId,
         modelId: model.canonicalModelId,
         maxCostMicrousd,
-        ...(config.reservationMode === "usage" ? { billingMode: "usage" as const } : {}),
+        billingMode: "usage",
+        billingPolicy: "postpaid",
         ...(claimKey ? { claimKey } : {}),
       }, state.lifetimeSignal);
     } catch (error) {
@@ -470,10 +473,7 @@ export function createFundedRelay(dependencies: FundedRelayDependencies | null):
     }
     const reservation = authorization.reservation;
     if (!identitiesMatch(checked.identity, authorization.identity)
-      || reservation.requestId !== requestId || reservation.modelId !== model.canonicalModelId
-      || (config.reservationMode === "usage"
-        ? reservation.billingMode !== "usage" || reservation.reservedMicrousd <= 0 || reservation.reservedMicrousd > maxCostMicrousd
-        : reservation.billingMode === "usage" || reservation.reservedMicrousd !== maxCostMicrousd)) {
+      || !postpaidAuthorizationMatches(reservation, { requestId, modelId: model.canonicalModelId, maxCostMicrousd })) {
       await releaseBeforeStart(reservation.reservationId, authorization.identity.tokenId);
       return errorResponse(c, 503, "api_error", "AI access is temporarily unavailable");
     }
@@ -509,12 +509,10 @@ export function createFundedRelay(dependencies: FundedRelayDependencies | null):
     const terminal = createRelayTerminalRecorder({ identity: authorization.identity, reservationId: reservation.reservationId,
       requestId, now, queue: settlementQueue, acknowledgementTimeoutMs: Math.min(10_000, 2 * config.platformTimeoutMs), shutdownSignal: shutdown.signal });
     const enqueueFinalization = async (result: FundedFinalization, terminalState: "completed" | "failed" | "cancelled" = "completed"): Promise<void> => {
-      if (result.mode === "conservative" && reservation.billingMode === "usage") {
+      if (result.mode === "conservative") {
         if (!await terminal.unknown(terminalState) && closing) terminalComplete = false;
-      } else if (result.mode === "exact" && (reservation.billingMode === "usage" || result.actualCostMicrousd <= reservation.reservedMicrousd)) {
-        settlementQueue.enqueue({ ...finalizationLocator, ...result });
       } else {
-        settlementQueue.enqueue({ ...finalizationLocator, mode: "conservative" });
+        settlementQueue.enqueue(postpaidExactFinalization(finalizationLocator, result, terminalState));
       }
     };
 
@@ -560,7 +558,7 @@ export function createFundedRelay(dependencies: FundedRelayDependencies | null):
         await enqueueFinalization(await classifyFundedUpstreamRejection({
           upstream, canonicalModelId: model.canonicalModelId,
           requestPath: c.req.path, signal: state.lifetimeSignal,
-        }));
+        }), "failed");
         if (upstream.status === 429) {
           console.warn("[proxy] Funded AI upstream rate limited", {
             retryAfterSeconds: rateLimitHeader(upstream, "retry-after"),
@@ -675,6 +673,7 @@ export function createFundedRelay(dependencies: FundedRelayDependencies | null):
         modelId: JEV_MODEL_ID,
         maxCostMicrousd: config.jevMaxCostMicrousd,
         billingMode: "usage",
+        billingPolicy: "postpaid",
         jevPricingVersion: pricing.version,
       }, state.lifetimeSignal);
     } catch (error) {
@@ -682,9 +681,7 @@ export function createFundedRelay(dependencies: FundedRelayDependencies | null):
     }
     const reservation = authorization.reservation;
     if (!identitiesMatch(checked.identity, authorization.identity)
-      || reservation.requestId !== requestId || reservation.modelId !== JEV_MODEL_ID
-      || reservation.billingMode !== "usage" || reservation.reservedMicrousd <= 0
-      || reservation.reservedMicrousd > config.jevMaxCostMicrousd
+      || !postpaidAuthorizationMatches(reservation, { requestId, modelId: JEV_MODEL_ID, maxCostMicrousd: config.jevMaxCostMicrousd })
       || reservation.jevPricingVersion !== pricing.version) {
       await releaseBeforeStart(reservation.reservationId, authorization.identity.tokenId);
       return jevNotStarted(errorResponse(c, 503, "api_error", "AI access is temporarily unavailable"));
@@ -728,6 +725,8 @@ export function createFundedRelay(dependencies: FundedRelayDependencies | null):
     const evaluationSignal = AbortSignal.any([state.lifetimeSignal, deadline]);
     let started = false;
     let dispatched = false;
+    let exactCompletion: Extract<FundedAiFinalizationRequest, { mode: "exact" }> | undefined;
+    let chargeSubmitted = false;
     const startedAt = now().getTime();
     try {
       // Keep the admitted review; a new deployment attestation cannot renew this request.
@@ -796,20 +795,18 @@ export function createFundedRelay(dependencies: FundedRelayDependencies | null):
           pricingVersion: normalized.pricingVersion,
         },
       } as const;
+      exactCompletion = { ...finalizationLocator, ...finalization };
       if (probe) {
-        try {
-          const settled = await platform.finalize({ ...finalizationLocator, ...finalization }, state.lifetimeSignal);
-          assertJevProbeSettlement(settled, { ...finalizationLocator, requestId, actualCostMicrousd: normalized.actualCostMicrousd });
-          state.lifetimeSignal.throwIfAborted();
-          const latest = await platform.check(checkInput.data, state.lifetimeSignal);
-          if (!identitiesMatch(checked.identity, latest.identity)
-            || checked.policy.globalRevision !== latest.policy.globalRevision
-            || checked.policy.runtimeRevision !== latest.policy.runtimeRevision) throw new Error("Jev probe authorization changed");
-          reviewedJevPricing(now(), pricing); state.lifetimeSignal.throwIfAborted();
-        } catch (error) {
-          await enqueueFinalization(finalization);
-          throw error;
-        }
+        // Complete every abortable readiness prerequisite before customer debit.
+        evaluationSignal.throwIfAborted();
+        const latest = await platform.check(checkInput.data, state.lifetimeSignal);
+        if (!identitiesMatch(checked.identity, latest.identity)
+          || checked.policy.globalRevision !== latest.policy.globalRevision
+          || checked.policy.runtimeRevision !== latest.policy.runtimeRevision) throw new Error("Jev probe authorization changed");
+        reviewedJevPricing(now(), pricing); evaluationSignal.throwIfAborted();
+        chargeSubmitted = true;
+        const settled = await platform.finalize(exactCompletion, state.lifetimeSignal);
+        assertJevProbeSettlement(settled, { ...finalizationLocator, requestId, actualCostMicrousd: normalized.actualCostMicrousd });
       } else await enqueueFinalization(finalization);
       resourceLease.release();
       state.resourceLease = null;
@@ -829,6 +826,10 @@ export function createFundedRelay(dependencies: FundedRelayDependencies | null):
           });
           settlementQueue.enqueue(task);
         }
+      } else if (exactCompletion) {
+        // Once submitted, a lost acknowledgement/abort may follow a committed
+        // debit. Retry identical accounting; never retroactively change policy.
+        settlementQueue.enqueue(chargeSubmitted ? exactCompletion : { ...exactCompletion, customerCharge: "waived" });
       } else {
         await enqueueFinalization({ mode: "conservative" });
       }

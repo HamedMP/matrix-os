@@ -570,6 +570,35 @@ describe("platform speech service", () => {
     });
   });
 
+  it.each(["hello world", ""])("recovers a committed success after its acknowledgement is lost (%j)", async (text) => {
+    const caller = new AbortController();
+    const repository = createSpeechOperationsRepository({ db, now: () => now });
+    const operations: SpeechOperationsRepository = { ...repository,
+      complete: vi.fn(async (...args) => {
+        await repository.complete(...args);
+        caller.abort();
+        throw new Error("completion acknowledgement lost");
+      }),
+    };
+    const { speech, funding, adapter } = service({ operations,
+      adapter: { id: "openai-file", transcribe: vi.fn(async () => ({ text })) } });
+    await expect(speech.transcribe({ identity, requestId, sourceKind: "dictation", audio: oneSecondWav(),
+      mediaType: "audio/wav", signal: caller.signal })).resolves.toMatchObject({ status: "succeeded",
+      outcome: text ? "transcript" : "no_speech", ...(text ? { text } : {}) });
+    expect(adapter.transcribe).toHaveBeenCalledTimes(1);
+    expect(funding.settle).toHaveBeenCalledExactlyOnceWith(expect.anything(), "funding_1", {
+      mode: "exact", actualCostMicrousd: 1,
+    });
+    expect(funding.release).not.toHaveBeenCalled();
+    expect(await repository.get(identity, requestId)).toMatchObject({ executionState: "succeeded",
+      cancellationRequested: false, actualCostMicrousd: 1 });
+    // A separate request has no transcript receipt and must not invoke the provider again.
+    await expect(speech.transcribe({ identity, requestId, sourceKind: "dictation", audio: oneSecondWav(),
+      mediaType: "audio/wav", signal: new AbortController().signal })).rejects.toMatchObject({ code: "result_not_replayable" });
+    expect(adapter.transcribe).toHaveBeenCalledTimes(1);
+    await speech.shutdown();
+  });
+
   it("lets a committed cancellation beat exact completion after the final abort check", async () => {
     const caller = new AbortController();
     const repository = createSpeechOperationsRepository({ db, now: () => now });
@@ -609,6 +638,29 @@ describe("platform speech service", () => {
       cancellationRequested: true,
       outcomeCode: "cancelled",
     });
+  });
+
+  it.each([
+    [0, "request_failed", "transcription_failed", "provider_failure"],
+    [120, "request_failed", "transcription_failed", "provider_failure"],
+    [0, "invalid_response", "transcription_failed", "provider_failure"],
+    [0, "timeout", "timeout", "timeout"],
+    [0, "cancelled", "cancelled", "cancelled"],
+  ] as const)("retains unknown expense with a %s hold after %s", async (reservedMicrousd, adapterCode, serviceCode, outcomeCode) => {
+    const funding: SpeechFundingPort = {
+      reserve: vi.fn(async () => ({ reservationId: "funding_1", reservedMicrousd })),
+      start: vi.fn(async () => undefined),
+      settle: vi.fn(async () => undefined),
+      release: vi.fn(async () => undefined),
+    };
+    const { speech, operations } = service({ funding, adapter: { id: "openai-file",
+      transcribe: async () => { throw new SpeechAdapterError(adapterCode, "private provider detail"); } } });
+    await expect(speech.transcribe({ identity, requestId, sourceKind: "dictation", audio: oneSecondWav(),
+      mediaType: "audio/wav", signal: new AbortController().signal })).rejects.toMatchObject({ code: serviceCode });
+    expect(await operations.get(identity, requestId)).toMatchObject({ executionState: "uncertain",
+      outcomeCode, actualCostMicrousd: null });
+    expect(funding.settle).toHaveBeenCalledExactlyOnceWith(expect.anything(), "funding_1", { mode: "conservative" });
+    await speech.shutdown();
   });
 
   it("preserves adapter deadline semantics through conservative settlement", async () => {

@@ -11,6 +11,7 @@ import { createFundedPlatformClient } from "../../packages/proxy/src/funded-rela
 import { createTestPlatformDb, destroyTestPlatformDb } from "./platform-db-test-helper.js";
 import { createAiFundedSpeechFundingPort } from "../../packages/platform/src/speech/funding.js";
 import { createSpeechOperationsRepository } from "../../packages/platform/src/speech/operations.js";
+import { FundedAiTerminalOutcomeRequestSchema } from "@matrix-os/contracts";
 
 const modelId = "@cf/zai-org/glm-5.3-flash";
 const identity = { ownerId: "terminal_owner", machineId: "terminal_machine", runtimeSlot: "primary" };
@@ -32,6 +33,7 @@ describe("durable unknown terminal outcomes across Relay and Platform", () => {
   let relay: ReturnType<typeof createFundedRelay> | undefined;
   const makeRepo = (inFlightTtlMs = 30 * 60_000) => createAiFundedPolicyRepository({ db, credentialHashSecret: "h".repeat(32),
     now: () => new Date(clock), credentialTtlMs: 3_600_000, inFlightTtlMs });
+  // Legacy captures exercise adoption; actual Relay calls negotiate postpaid below.
   const authorize = (requestId: string, maximum = 100) => repo.authorize({ credential: credential.token,
     requestId, modelId, billingMode: "usage", maxCostMicrousd: maximum });
   const row = () => db.executor.selectFrom("ai_funded_usage_reservations").selectAll().orderBy("created_at").executeTakeFirstOrThrow();
@@ -43,6 +45,13 @@ describe("durable unknown terminal outcomes across Relay and Platform", () => {
     allowances: await db.executor.selectFrom("speech_runtime_allowances").selectAll().execute(),
     restrictions: await db.executor.selectFrom("ai_funded_credit_restrictions").selectAll().execute(),
   });
+  const expectReleasedCredit = async (before: Awaited<ReturnType<typeof finance>>, amount: number) => {
+    expect(await finance()).toEqual({ ...before, balances: before.balances.map(balance => ({ ...balance,
+      reserved_microusd: Number(balance.reserved_microusd) - amount,
+      month_reserved_microusd: Number(balance.month_reserved_microusd) - amount,
+      updated_at: clock.toISOString(),
+    })) });
+  };
   const terminal = async (body: unknown, token = controlToken) => app.request("/internal/ai/funded/terminal", {
     method: "POST", headers: { authorization: `Bearer ${token}`, "content-type": "application/json" }, body: JSON.stringify(body),
   });
@@ -52,6 +61,18 @@ describe("durable unknown terminal outcomes across Relay and Platform", () => {
       requestId: saved.request_id, ...identity, startedAt: saved.started_at!, expiresAt: saved.expires_at,
       executionId: JSON.parse(saved.start_response!).executionId ?? "relay-execution-1", terminalState: "failed", terminalAt: new Date(Date.parse(saved.started_at!) + 30_000).toISOString(),
       outcome: "usage_unknown" };
+  };
+  // Persist pre-policy history without invoking today's customer-credit transition.
+  // Production recovery still generates and validates the historical execution audit.
+  const seedHistoricalTerminal = async (body: unknown, recover = false) => {
+    const request = FundedAiTerminalOutcomeRequestSchema.parse(body);
+    await db.executor.updateTable("ai_funded_usage_reservations").set({ terminal_outcome: JSON.stringify({ request,
+      response: { contractVersion: 1, outcomeAccepted: true, usageKnown: false, receivedAt: clock.toISOString() } }) })
+      .where("reservation_id", "=", request.reservationId).execute();
+    if (recover) await db.transaction(async trx => {
+      await sql`SELECT pg_advisory_xact_lock(hashtextextended(${`funded-ai-owner:${identity.ownerId}`}, 0))`.execute(trx.executor);
+      await recoverTerminalOutcomes(trx.executor, identity.ownerId, clock);
+    });
   };
   beforeEach(async () => {
     ({ db, instance } = await createTestPlatformDb()); clock = new Date(initialTime); repo = makeRepo();
@@ -65,7 +86,7 @@ describe("durable unknown terminal outcomes across Relay and Platform", () => {
   });
   afterEach(async () => { await relay?.close(); relay = undefined; vi.restoreAllMocks(); await destroyTestPlatformDb(db); });
 
-  it("releases failed A at30s before returning504 and admits B immediately before A's30minute financial expiry", async () => {
+  it("closes failed A at30s before returning504 and admits B before A's30minute execution deadline", async () => {
     vi.spyOn(console, "warn").mockImplementation(() => undefined);
     const cfg = resolveFundedRelayConfig({ MATRIX_FUNDED_AI_ENABLED: "true", MATRIX_FUNDED_AI_RESERVATION_MODE: "usage",
       MATRIX_FUNDED_AI_FIRST_RESPONSE_TIMEOUT_MS: "1000",
@@ -92,23 +113,24 @@ describe("durable unknown terminal outcomes across Relay and Platform", () => {
     expect(result.status).toBe(504); expect(dispatches).toBe(1);
     const old = await row();
     expect(old.expires_at).toBe("2026-09-10T12:30:00.000Z");
-    expect(old.execution_admission_release).not.toBeNull();
-    expect(await finance()).toEqual(heldFinances!);
-    // Legacy conservative usage settlement really rejects503; the durable terminal path must avoid it.
+    expect(old.execution_admission_release).toBeNull();
+    expect(JSON.parse(old.customer_charge_release!)).toMatchObject({ reason: "gateway_failure", reservedMicrousd: 0, releasedMicrousd: 0 });
+    await expectReleasedCredit(heldFinances!, 0);
+    // Unknown provider expense cannot become a conservative customer charge.
     await expect(repo.finalizeReservation({ reservationId: old.reservation_id, tokenId: old.token_id, mode: "conservative" }))
       .rejects.toMatchObject({ code: "unavailable" });
     expect(platformStatuses.filter((r) => r.path.endsWith("/finalize"))).toEqual([]);
     expect(platformStatuses.filter((r) => r.path.endsWith("/terminal"))).toEqual([{ path: "/internal/ai/funded/terminal", status: 200 }]);
-    expect(old).toMatchObject({ status: "in_flight", actual_microusd: null });
+    expect(old).toMatchObject({ status: "expired", actual_microusd: null });
     expect(JSON.parse(old.terminal_outcome!)).toMatchObject({ request: { requestId: "stalled-request", outcome: "usage_unknown" } });
     const before = await finance();
     const next = await authorize("after-terminal"); expect(next.authorized).toBe(true);
     const nextStart = await repo.startReservation({ reservationId: next.reservation.reservationId, tokenId: credential.tokenId });
     expect(nextStart.startedAt).toBe("2026-09-10T12:00:30.000Z");
     const recovered = await db.executor.selectFrom("ai_funded_usage_reservations").selectAll().where("reservation_id", "=", old.reservation_id).executeTakeFirstOrThrow();
-    expect(JSON.parse(recovered.execution_admission_release!)).toMatchObject({ kind: "relay_terminal_v2" });
-    expect(recovered).toMatchObject({ status: "in_flight", actual_microusd: null, reserved_microusd: old.reserved_microusd });
-    // New work adds its own hold, while recovery retains the entire old liability.
+    expect(recovered.customer_charge_release).toBe(old.customer_charge_release);
+    expect(recovered).toMatchObject({ status: "expired", actual_microusd: null, reserved_microusd: 0 });
+    // The failed request remains auditable without any customer debit.
     expect((await finance()).ledger).toEqual(before.ledger);
   });
 
@@ -131,7 +153,7 @@ describe("durable unknown terminal outcomes across Relay and Platform", () => {
     expect(delivered).toBe(false);
     await expect(authorize("before-commit")).rejects.toMatchObject({ code: "rate_limited" });
     commit.resolve(); expect((await pending).status).toBe(502);
-    expect((await row()).execution_admission_release).not.toBeNull();
+    expect((await row()).customer_charge_release).not.toBeNull();
     await expect(authorize("after-commit")).resolves.toMatchObject({ authorized: true });
   });
 
@@ -155,7 +177,7 @@ describe("durable unknown terminal outcomes across Relay and Platform", () => {
     finish.resolve(); await closing;
     expect(closedBeforeCancellation).toBe(false);
     expect((await row()).terminal_outcome).not.toBeNull();
-    expect((await row()).execution_admission_release).not.toBeNull();
+    expect((await row()).customer_charge_release).not.toBeNull();
   });
 
   it("authenticates and binds immutable unknown receipts, surviving repository recreation and late exact settlement", async () => {
@@ -166,10 +188,8 @@ describe("durable unknown terminal outcomes across Relay and Platform", () => {
     expect((await terminal({ ...proof, ownerId: "other" })).status).toBe(404);
     expect((await terminal({ ...proof, terminalAt: "2026-09-11T00:00:00.000Z" })).status).toBe(409);
     expect((await terminal(proof)).status).toBe(200); const first = await row();
-    expect(await finance()).toEqual(before);
+    await expectReleasedCredit(before, 100);
     // Restore actual persisted database bytes, then run production startup checks.
-    await sql`UPDATE platform_schema_revisions SET generation=20,
-      fingerprint='a57002ed113b35b0d04760677d434320c1314ba60c44ebe2ea0cc1a7edb05930' WHERE scope='core'`.execute(db.executor);
     const persisted = await instance.client.dumpDataDir("none"); await db.destroy();
     instance = await KyselyPGlite.create({ loadDataDir: persisted }); db = createPlatformDb({ dialect: instance.dialect }); await db.ready;
     repo = makeRepo(); app = new Hono().route("/internal/ai/funded", createAiFundedRelayRoutes({ repository: repo, relayControlToken: controlToken }));
@@ -177,12 +197,19 @@ describe("durable unknown terminal outcomes across Relay and Platform", () => {
     expect((await terminal({ ...proof, executionId: "other-run" })).status).toBe(409);
     const next = await authorize("immediately-after-reload");
     expect(next.authorized).toBe(true);
-    await repo.finalizeReservation({ reservationId: first.reservation_id, tokenId: first.token_id, mode: "exact", actualCostMicrousd: 10 });
+    const activeBeforeLateReceipt = await db.executor.selectFrom("ai_funded_usage_reservations").selectAll()
+      .where("reservation_id", "=", next.reservation.reservationId).executeTakeFirstOrThrow();
+    const financeBeforeLateReceipt = await finance();
+    expect(await repo.finalizeReservation({ reservationId: first.reservation_id, tokenId: first.token_id, mode: "exact", actualCostMicrousd: 10 }))
+      .toMatchObject({ actualCostMicrousd: 10, chargedCostMicrousd: 0, matrixAbsorbedMicrousd: 10 });
+    expect(await finance()).toEqual(financeBeforeLateReceipt);
+    expect(await db.executor.selectFrom("ai_funded_usage_reservations").selectAll()
+      .where("reservation_id", "=", next.reservation.reservationId).executeTakeFirstOrThrow()).toEqual(activeBeforeLateReceipt);
     const exact = await row(); expect((await terminal(proof)).status).toBe(200);
     expect(await row()).toEqual(exact);
   });
 
-  it("fences old start and authorize replay even when the liability cap prevents execution release", async () => {
+  it("fences old dispatch replay while releasing customer credit above the historical recovery ceiling", async () => {
     const auth = await authorize("cap-fenced", 500_001);
     const start = { reservationId: auth.reservation.reservationId, tokenId: credential.tokenId, executionId: "cap-attempt" };
     await repo.startReservation(start);
@@ -192,12 +219,14 @@ describe("durable unknown terminal outcomes across Relay and Platform", () => {
     const before = await finance();
     expect((await terminal(proof)).status).toBe(200);
     expect((await row()).execution_admission_release).toBeNull();
+    expect(JSON.parse((await row()).customer_charge_release!)).toMatchObject({ maximumLiabilityMicrousd: 500_001,
+      releasedMicrousd: 500_001 });
     await expect(repo.startReservation(start)).rejects.toMatchObject({ code: "reservation_closed" });
     await expect(authorize("cap-fenced", 500_001)).rejects.toMatchObject({ code: "reservation_closed" });
-    expect(await finance()).toEqual(before);
+    await expectReleasedCredit(before, 500_001);
   });
 
-  it("preserves slot_busy when a terminal receipt commits while authorization waits to enter its transaction", async () => {
+  it("admits waiting work after a terminal transaction releases the old customer hold", async () => {
     const auth = await authorize("cap-waiting-a", 500_001);
     await repo.startReservation({ reservationId: auth.reservation.reservationId,
       tokenId: credential.tokenId, executionId: "cap-waiting-attempt" });
@@ -218,14 +247,16 @@ describe("durable unknown terminal outcomes across Relay and Platform", () => {
       expect((await terminal(await receipt())).status).toBe(200);
       saved = await row();
       expect(saved.execution_admission_release).toBeNull();
+      expect(saved.customer_charge_release).not.toBeNull();
     } finally { resume.resolve(); }
-    expect((await admission)[0]).toMatchObject({ status: "rejected",
-      reason: { code: "rate_limited", reason: "slot_busy" } });
-    expect(await db.executor.selectFrom("ai_funded_usage_reservations").selectAll().execute()).toEqual([saved!]);
-    // The ordinary capacity claim commits the existing authorization snapshot's
-    // timestamp; all amounts, holds and financial records stay unchanged.
+    expect((await admission)[0]).toMatchObject({ status: "fulfilled", value: { authorized: true } });
+    const requests = await db.executor.selectFrom("ai_funded_usage_reservations").selectAll().execute();
+    expect(requests).toHaveLength(2);
+    expect(requests.find(request => request.reservation_id === saved!.reservation_id)).toEqual(saved!);
+    expect(requests.find(request => request.request_id === "cap-waiting-b")).toMatchObject({ status: "reserved", reserved_microusd: 100 });
+    // No provider cost is invented or charged; only B's own legacy hold remains.
     expect(await finance()).toEqual({ ...before, balances: before.balances.map(balance => ({
-      ...balance, updated_at: "2026-09-10T12:00:29.000Z",
+      ...balance, reserved_microusd: 100, month_reserved_microusd: 100, updated_at: "2026-09-10T12:00:29.000Z",
     })) });
   });
 
@@ -244,7 +275,7 @@ describe("durable unknown terminal outcomes across Relay and Platform", () => {
     expect(await repo.startReservation({ reservationId: legacy.reservation.reservationId, tokenId: credential.tokenId })).toEqual(old);
   });
 
-  it("retains proof behind unrelated live speech and reconciles after public exact speech completion", async () => {
+  it("releases failed AI credit without touching live speech funding or its execution barrier", async () => {
     const auth = await authorize("waiting-for-live-speech");
     const start = await repo.startReservation({ reservationId: auth.reservation.reservationId, tokenId: credential.tokenId, executionId: "waiting-attempt" });
     const funding = createAiFundedSpeechFundingPort({ allowedSources: ["addon"], credentialHashSecret: "s".repeat(32),
@@ -261,19 +292,22 @@ describe("durable unknown terminal outcomes across Relay and Platform", () => {
     const readA = () => db.executor.selectFrom("ai_funded_usage_reservations").selectAll().where("reservation_id", "=", start.reservationId).executeTakeFirstOrThrow();
     const before = await finance();
     expect((await terminal(proof)).status).toBe(200);
-    expect((await readA()).execution_admission_release).toBeNull(); expect(await finance()).toEqual(before);
+    expect((await readA()).execution_admission_release).toBeNull();
+    expect((await readA()).customer_charge_release).not.toBeNull();
+    await expectReleasedCredit(before, 100);
+    await expect(authorize("while-speech-live")).rejects.toMatchObject({ code: "rate_limited" });
     await expect(repo.startReservation({ reservationId: start.reservationId, tokenId: start.tokenId, executionId: start.executionId }))
       .rejects.toMatchObject({ code: "reservation_closed" });
     await operations.complete(identity, operationId, { executionState: "succeeded", outcomeCode: "transcript", actualCostMicrousd: 10 },
       (trx, id, actual) => funding.settle(trx, id, { mode: "exact", actualCostMicrousd: actual }));
-    expect((await readA()).execution_admission_release).not.toBeNull();
+    expect((await readA()).customer_charge_release).not.toBeNull();
     await expect(authorize("after-live-speech-ended")).resolves.toMatchObject({ authorized: true });
   });
 
   it.each(["released-before-receipt", "received-before-terminal", "different-start-attempt"])("rejects forged strong chronology/binding: %s", async (forgery) => {
     const auth = await authorize("audit-time");
     await repo.startReservation({ reservationId: auth.reservation.reservationId, tokenId: credential.tokenId, executionId: "audit-attempt" });
-    clock = new Date(clock.getTime() + 30_000); expect((await terminal(await receipt())).status).toBe(200);
+    clock = new Date(clock.getTime() + 30_000); await seedHistoricalTerminal(await receipt(), true);
     const saved = await row(); const audit = JSON.parse(saved.execution_admission_release!); const terminalAudit = JSON.parse(saved.terminal_outcome!);
     const start = JSON.parse(saved.start_response!);
     if (forgery === "released-before-receipt") audit.response.releasedAt = new Date(clock.getTime() - 1).toISOString();
@@ -286,7 +320,7 @@ describe("durable unknown terminal outcomes across Relay and Platform", () => {
     expect(await finance()).toEqual(before);
   });
 
-  it.each([false, true])("bounded terminal transport outage=%s preserves holds and never redispatches", async (outage) => {
+  it.each([false, true])("bounded terminal transport outage=%s never freezes customer credit or redispatches", async (outage) => {
     const cfg = relayConfig(); let calls = 0; let generations = 0;
     const platform = createFundedPlatformClient({ ...cfg, fetch: async (url, init) => {
       if (String(url).endsWith("/terminal") && (++calls === 1 || outage)) return new Response("unavailable", { status: 503 });
@@ -301,23 +335,26 @@ describe("durable unknown terminal outcomes across Relay and Platform", () => {
       authorization: `Bearer ${credential.token}`, "content-type": "application/json" },
       body: JSON.stringify({ model: modelId, max_tokens: 256, messages: [{ role: "user", content: "Fixture" }] }) });
     expect(result.status).toBe(502); expect(Date.now() - began).toBeLessThan(2_000);
-    expect(generations).toBe(1); expect(calls).toBe(2); expect(await finance()).toEqual(held!);
+    expect(generations).toBe(1); expect(calls).toBe(2);
     if (outage) {
+      expect(await finance()).toEqual(held!);
       expect((await row()).terminal_outcome).toBeNull(); expect((await row()).execution_admission_release).toBeNull();
+      expect((await row()).customer_charge_release).toBeNull();
       await expect(authorize("outage-next")).rejects.toMatchObject({ code: "rate_limited" });
     } else {
-      expect((await row()).execution_admission_release).not.toBeNull();
+      await expectReleasedCredit(held!, 0);
+      expect((await row()).customer_charge_release).not.toBeNull();
       await expect(authorize("retry-next")).resolves.toMatchObject({ authorized: true });
     }
   });
-  it.each(["missing-proof", "minimum-age", "terminal-grace", "unexpired", "liability-cap", "machine-identity", "malformed-proof"])("keeps admission and every financial byte for automatic %s guard", async (guard) => {
+  it.each(["missing-proof", "minimum-age", "terminal-grace", "unexpired", "liability-cap", "machine-identity", "malformed-proof"])("validates pre-policy recovery history without changing financial bytes for %s guard", async (guard) => {
     repo = makeRepo(guard === "unexpired" ? 30 * 60_000 : 60_000);
     app = new Hono().route("/internal/ai/funded", createAiFundedRelayRoutes({ repository: repo, relayControlToken: controlToken }));
     const auth = await authorize("guard-request", guard === "liability-cap" ? 500_001 : 100);
     await repo.startReservation({ reservationId: auth.reservation.reservationId, tokenId: credential.tokenId });
     clock = new Date(Date.parse(initialTime) + (guard === "terminal-grace" ? 16 * 60_000 : 30_000));
     const proof = await receipt(); if (guard === "terminal-grace") proof.terminalAt = clock.toISOString();
-    if (guard !== "missing-proof") expect((await terminal(proof)).status).toBe(200);
+    if (guard !== "missing-proof") await seedHistoricalTerminal(proof);
     clock = new Date(Date.parse(initialTime) + (guard === "minimum-age" ? 15 * 60_000 : 16 * 60_000));
     if (guard === "machine-identity") await db.executor.updateTable("user_machines").set({ activation_state: "cancelled" }).where("machine_id", "=", identity.machineId).execute();
     if (guard === "malformed-proof") await db.executor.updateTable("ai_funded_usage_reservations").set({ terminal_outcome: "{}" }).execute();
@@ -330,14 +367,14 @@ describe("durable unknown terminal outcomes across Relay and Platform", () => {
     expect((await row()).execution_admission_release).toBeNull(); expect(await finance()).toEqual(before);
   });
 
-  it("saves exactly two unknown obligations, validates their audits and blocks a third terminal obligation", async () => {
+  it("retains the bounded pre-policy execution recovery audits and detects their corruption", async () => {
     for (let index = 0; index < 3; index++) {
       const auth = await authorize(`unknown-${index}`, 100);
       const start = await repo.startReservation({ reservationId: auth.reservation.reservationId, tokenId: credential.tokenId, executionId: `execution-${index}` });
       clock = new Date(clock.getTime() + 30_000);
-      expect((await terminal({ contractVersion: 1, ...identity, reservationId: start.reservationId, requestId: start.requestId,
+      await seedHistoricalTerminal({ contractVersion: 1, ...identity, reservationId: start.reservationId, requestId: start.requestId,
         tokenId: start.tokenId, startedAt: start.startedAt, expiresAt: start.expiresAt, executionId: `execution-${index}`,
-        terminalState: "failed", terminalAt: clock.toISOString(), outcome: "usage_unknown" })).status).toBe(200);
+        terminalState: "failed", terminalAt: clock.toISOString(), outcome: "usage_unknown" }, true);
     }
     const before = await finance();
     await expect(authorize("fourth-unknown")).rejects.toMatchObject({ code: "rate_limited" });
@@ -353,7 +390,29 @@ describe("durable unknown terminal outcomes across Relay and Platform", () => {
     await expect(authorize("corrupt-audit")).rejects.toMatchObject({ code: "idempotency_conflict" });
   });
 
-  it.each([false, true])("exact settlement reconciles pending terminal release after commit; unrelated corrupt audit=%s", async (corrupt) => {
+  it("admits further postpaid work after three unknown failures without the old two-obligation cap", async () => {
+    const before = await finance();
+    for (let index = 0; index < 3; index++) {
+      const auth = await repo.authorize({ credential: credential.token, requestId: `postpaid-${index}`, modelId,
+        billingMode: "usage", billingPolicy: "postpaid", maxCostMicrousd: 100 });
+      const start = await repo.startReservation({ reservationId: auth.reservation.reservationId,
+        tokenId: credential.tokenId, executionId: `postpaid-attempt-${index}` });
+      clock = new Date(clock.getTime() + 30_000);
+      expect((await terminal({ contractVersion: 1, ...identity, reservationId: start.reservationId, requestId: start.requestId,
+        tokenId: start.tokenId, startedAt: start.startedAt, expiresAt: start.expiresAt, executionId: start.executionId,
+        terminalState: "failed", terminalAt: clock.toISOString(), outcome: "usage_unknown" })).status).toBe(200);
+    }
+    const closed = await db.executor.selectFrom("ai_funded_usage_reservations").selectAll().execute();
+    expect(closed).toHaveLength(3);
+    expect(closed.every(request => request.status === "expired" && request.actual_microusd === null
+      && request.reserved_microusd === 0 && request.customer_charge_release !== null)).toBe(true);
+    await expectReleasedCredit(before, 0);
+    await expect(repo.authorize({ credential: credential.token, requestId: "postpaid-fourth", modelId,
+      billingMode: "usage", billingPolicy: "postpaid", maxCostMicrousd: 100 }))
+      .resolves.toMatchObject({ authorized: true, reservation: { reservedMicrousd: 0 } });
+  });
+
+  it.each([false, true])("exact settlement reconciles pre-policy terminal history after commit; unrelated corrupt audit=%s", async (corrupt) => {
     const saved = [];
     for (let index = 0; index < 3; index++) {
       const auth = await authorize(`pending-${index}`);
@@ -362,7 +421,7 @@ describe("durable unknown terminal outcomes across Relay and Platform", () => {
       const proof = { contractVersion: 1, ...identity, reservationId: start.reservationId, requestId: start.requestId,
         tokenId: start.tokenId, startedAt: start.startedAt, expiresAt: start.expiresAt, executionId: start.executionId!,
         terminalState: "failed", terminalAt: clock.toISOString(), outcome: "usage_unknown" };
-      expect((await terminal(proof)).status).toBe(200);
+      await seedHistoricalTerminal(proof, true);
       saved.push({ start, proof });
     }
     const get = (id: string) => db.executor.selectFrom("ai_funded_usage_reservations").selectAll().where("reservation_id", "=", id).executeTakeFirstOrThrow();
@@ -396,7 +455,7 @@ describe("durable unknown terminal outcomes across Relay and Platform", () => {
     clock = new Date(clock.getTime() + 30_000);
     const proofA = { contractVersion: 1, ...identity, reservationId: a.reservationId, tokenId: a.tokenId, requestId: a.requestId,
       startedAt: a.startedAt, expiresAt: a.expiresAt, executionId: a.executionId!, terminalState: "failed", terminalAt: clock.toISOString(), outcome: "usage_unknown" };
-    expect((await terminal(proofA)).status).toBe(200);
+    await seedHistoricalTerminal(proofA, true);
     const second = await authorize("receipt-second");
     const b = await repo.startReservation({ reservationId: second.reservation.reservationId, tokenId: credential.tokenId, executionId: "receipt-attempt-b" });
     await db.executor.updateTable("ai_funded_usage_reservations").set({ execution_admission_release: "{}" }).where("reservation_id", "=", a.reservationId).execute();
@@ -406,7 +465,9 @@ describe("durable unknown terminal outcomes across Relay and Platform", () => {
     expect((await terminal(proofB)).status).toBe(200);
     const saved = await db.executor.selectFrom("ai_funded_usage_reservations").selectAll().where("reservation_id", "=", b.reservationId).executeTakeFirstOrThrow();
     expect(JSON.parse(saved.terminal_outcome!)).toMatchObject({ request: proofB });
-    expect(saved.execution_admission_release).toBeNull(); expect(await finance()).toEqual(before);
+    expect(saved.execution_admission_release).toBeNull();
+    expect(saved.customer_charge_release).not.toBeNull();
+    await expectReleasedCredit(before, 100);
   });
 
   it("records a late unknown receipt after exact usage without changing financial settlement, and replays it", async () => {

@@ -8,7 +8,11 @@ import type { ModelOptionGroup } from "../components/chat/model-options";
 import { flat } from "./ui-test-utils";
 
 function model(key: string, name: string, overrides: Partial<ModelChoice> = {}): ModelChoice {
-  return { key, name, detail: "Matrix AI", logo: "matrix", selected: false, available: true, ...overrides };
+  return {
+    key, name, detail: "Matrix AI", logo: "matrix", selected: false, available: true,
+    ...overrides,
+    selectable: overrides.selectable ?? overrides.available ?? true,
+  };
 }
 
 export const matrix: ModelEngine = {

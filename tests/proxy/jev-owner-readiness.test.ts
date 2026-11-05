@@ -11,6 +11,8 @@ function fixture(mode = "valid", reviewEnv: NodeJS.ProcessEnv = {}, now = defaul
   let clock = now;
   const later = (minutes: number) => new Date(now.getTime() + minutes * 60_000).toISOString();
   const finalizations: Record<string, unknown>[] = [];
+  const charged: number[] = [];
+  const caller = new AbortController();
   const events: string[] = [];
   let executionId: string | undefined;
   const identity = { tokenId: "credential_fixture", ownerId: "owner_fixture", machineId: "machine_fixture", runtimeSlot: "primary",
@@ -29,14 +31,17 @@ function fixture(mode = "valid", reviewEnv: NodeJS.ProcessEnv = {}, now = defaul
         clock = new Date(Date.parse(reviewEnv.MATRIX_JEV_PRICING_VALID_THROUGH!) + 1);
       }
       if (action === "check") {
-        if (mode === "revoked" && events.filter(event => event === "check").length > 1) return Response.json({}, { status: 403 });
-        return Response.json({ contractVersion: 1, authorized: true, identity, policy });
+        const repeated = events.filter(event => event === "check").length > 1;
+        if (mode === "revoked" && repeated) return Response.json({}, { status: 403 });
+        if (mode === "abort-during-check" && repeated) caller.abort(new DOMException("Cancelled", "AbortError"));
+        return Response.json({ contractVersion: 1, authorized: true, identity,
+          policy: mode === "policy-changed" && repeated ? { ...policy, runtimeRevision: 2 } : policy });
       }
       if (action === "authorize") return Response.json({ contractVersion: 1, authorized: true, identity, policy,
-        funding: { ...funding, reservedMicrousd: 5_000, reservedThisMonthMicrousd: 5_000, remainingBalanceMicrousd: 95_000, remainingBudgetMicrousd: 95_000 },
+        funding,
         reservation: { reservationId: "reservation_fixture", requestId: "request_fixture", modelId: JEV_MODEL_ID,
-          reservedMicrousd: 5_000, maxCostMicrousd: 5_000, billingMode: "usage", jevPricingVersion: JEV_PRICING_VERSION,
-          remainingBalanceMicrousd: 95_000, remainingBudgetMicrousd: 95_000, periodStart: funding.periodStart,
+          reservedMicrousd: 0, maxCostMicrousd: 5_000, billingPolicy: "postpaid", billingMode: "usage", jevPricingVersion: JEV_PRICING_VERSION,
+          remainingBalanceMicrousd: 100_000, remainingBudgetMicrousd: 100_000, periodStart: funding.periodStart,
           expiresAt: later(5), status: "reserved" } });
       if (action === "start") {
         const start = FundedAiStartRequestSchema.parse(JSON.parse(String(init?.body)));
@@ -56,7 +61,7 @@ function fixture(mode = "valid", reviewEnv: NodeJS.ProcessEnv = {}, now = defaul
           usageKnown: false, receivedAt: clock.toISOString() }));
       }
       if (action === "release") return Response.json({ contractVersion: 1, reservationId: "reservation_fixture", requestId: "request_fixture",
-        tokenId: identity.tokenId, releasedMicrousd: 5_000, releasedAt: clock.toISOString(), reason: "pre_upstream_failure",
+        tokenId: identity.tokenId, releasedMicrousd: 0, releasedAt: clock.toISOString(), reason: "pre_upstream_failure",
         status: "released", funding });
       if (action === "finalize") {
         const task = JSON.parse(String(init?.body));
@@ -65,9 +70,13 @@ function fixture(mode = "valid", reviewEnv: NodeJS.ProcessEnv = {}, now = defaul
         if (mode === "settlement-failure" || (mode === "review-expires-during-start-retry" && finalizations.length === 1)) {
           return Response.json({}, { status: 503 });
         }
+        const customerCost = task.customerCharge === "waived" ? 0 : mode === "partial-funding" ? 1 : cost;
+        if (mode !== "lost-settlement-ack" || finalizations.length === 1) charged.push(customerCost);
+        // Model a committed idempotent Platform debit whose first reply was lost.
+        if (mode === "lost-settlement-ack" && finalizations.length === 1) throw new TypeError("Settlement acknowledgement lost");
         return Response.json({ contractVersion: 1, reservationId: mode === "wrong-finalization" ? "other_reservation" : "reservation_fixture",
-          requestId: "request_fixture", tokenId: identity.tokenId, actualCostMicrousd: cost, chargedCostMicrousd: cost,
-          matrixAbsorbedMicrousd: 0, releasedMicrousd: 5_000 - cost, remainingBalanceMicrousd: 99_988, remainingBudgetMicrousd: 99_988,
+          requestId: "request_fixture", tokenId: identity.tokenId, actualCostMicrousd: cost, chargedCostMicrousd: customerCost,
+          matrixAbsorbedMicrousd: cost - customerCost, releasedMicrousd: 0, remainingBalanceMicrousd: 99_988, remainingBudgetMicrousd: 99_988,
           funding: { ...funding, settledThisMonthMicrousd: 12, promotionalBalanceMicrousd: 99_988,
             creditBalanceMicrousd: 99_988, remainingBalanceMicrousd: 99_988, remainingBudgetMicrousd: 99_988 },
           settledAt: now.toISOString(), status: "settled", finalizationMode: "exact" });
@@ -89,17 +98,48 @@ function fixture(mode = "valid", reviewEnv: NodeJS.ProcessEnv = {}, now = defaul
   const relay = createFundedRelay({ ...config, fetch: fetchFn, now: () => clock, requestIdFactory: () => "request_fixture" });
   const app = new Hono(); relay.register(app);
   const request = (control = config.relayControlToken, body = "{}") => app.request("/v1/jev-readiness", { method: "POST",
-    headers: { authorization: `Bearer ${control}`, "x-api-key": token, "content-type": "application/json" }, body });
+    headers: { authorization: `Bearer ${control}`, "x-api-key": token, "content-type": "application/json" }, body, signal: caller.signal });
   const evaluation = () => app.request("/v1/evaluate", { method: "POST", headers: { "x-api-key": token, "content-type": "application/json" },
     body: JSON.stringify(fixedJevProbeRequest()) });
-  return { relay, events, request, evaluation, finalizations };
+  return { relay, events, request, evaluation, finalizations, charged };
 }
 it("awaits exact owner-funded settlement before marking the fixed Jev readiness probe ready", async () => {
   const f = fixture();
   try {
     const response = await f.request(); expect(response.status).toBe(200);
     expect(await response.json()).toEqual({ ready: true, priceValidThrough: "2026-09-30T23:59:59.999Z" });
-    expect(f.events).toEqual(["check", "authorize", "start", "evaluate", "finalize", "check"]);
+    expect(f.events).toEqual(["check", "authorize", "start", "evaluate", "check", "finalize"]);
+  } finally { await f.relay.close(); }
+});
+it.each(["revoked", "policy-changed", "abort-during-check"])("waives known provider cost when %s prevents probe success before settlement", async mode => {
+  const f = fixture(mode);
+  try {
+    expect((await f.request()).status).not.toBe(200);
+    await vi.waitFor(() => expect(f.finalizations).toHaveLength(1));
+    expect(f.finalizations[0]).toMatchObject({ mode: "exact", actualCostMicrousd: 12, customerCharge: "waived",
+      jevProvenance: { resolvedModel: "jev-1.13.0", pricingVersion: JEV_PRICING_VERSION } });
+    expect(f.charged).toEqual([0]);
+    expect(f.events).toEqual(["check", "authorize", "start", "evaluate", "check", "finalize"]);
+  } finally { await f.relay.close(); }
+});
+it("accepts an exact postpaid probe receipt when Matrix absorbs cost beyond eligible credit", async () => {
+  const f = fixture("partial-funding");
+  try {
+    expect((await f.request()).status).toBe(200);
+    expect(f.charged).toEqual([1]);
+    expect(f.finalizations).toHaveLength(1);
+  } finally { await f.relay.close(); }
+});
+it("retries identical exact accounting after a lost committed acknowledgement without retroactive waiver", async () => {
+  const f = fixture("lost-settlement-ack");
+  try {
+    expect((await f.request()).status).not.toBe(200);
+    await vi.waitFor(() => expect(f.finalizations).toHaveLength(2));
+    expect(f.finalizations[1]).toEqual(f.finalizations[0]);
+    expect(f.finalizations[0]).toMatchObject({ mode: "exact", actualCostMicrousd: 12 });
+    expect(f.finalizations[0]).not.toHaveProperty("customerCharge");
+    expect(f.charged).toEqual([12]);
+    expect(f.events).not.toContain("terminal");
   } finally { await f.relay.close(); }
 });
 it.each(["missing-usage", "settlement-failure", "wrong-finalization", "revoked"])("never marks %s probe ready", async mode => {
@@ -144,13 +184,15 @@ it.each([{}, { ...renewedReview, MATRIX_JEV_PRICING_VALID_THROUGH: "2026-10-01T0
       expect(f.events).toEqual([]);
     } finally { await f.relay.close(); }
   });
-it("retains exact accounting but never reports ready if review expires during the paid probe", async () => {
+it("retains exact Matrix expense without customer debit if review expires during the probe", async () => {
   const f = fixture("review-expires", { ...renewedReview, MATRIX_JEV_PRICING_VALID_THROUGH: "2026-10-01T00:00:00.020Z" },
     new Date("2026-10-01T00:00:00.000Z"));
   try {
     expect((await f.request()).status).not.toBe(200);
     expect(f.events).toContain("evaluate");
-    expect(f.finalizations).toContainEqual(expect.objectContaining({ mode: "exact", actualCostMicrousd: 12 }));
+    await vi.waitFor(() => expect(f.finalizations).toContainEqual(expect.objectContaining({ mode: "exact", actualCostMicrousd: 12,
+      customerCharge: "waived" })));
+    expect(f.charged).toEqual([0]);
   } finally { await f.relay.close(); }
 });
 

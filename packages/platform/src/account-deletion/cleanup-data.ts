@@ -1,3 +1,4 @@
+import { readCustomerChargeRelease } from "../ai-funded-customer-charge-release.js";
 import { createHash } from 'node:crypto';
 import { eraseOwnerSiteRegistry } from '../sites/account-lifecycle.js';
 import { sql } from 'kysely';
@@ -40,11 +41,18 @@ export async function assertDeletionOwnershipSafe(db: PlatformDB, owner: string)
 export async function eraseOwnerPlatformData(db: PlatformDB, owner: string, ownerHash?: (owner: string) => string): Promise<void> {
   await db.transaction(async (trx) => {
     if (ownerHash) await lockAccountDeletionOwner(trx.executor,ownerHash(owner));
+    // Financial lifecycle changes take the same lock before deciding whether
+    // unknown platform expense remains. Do not erase between a check and receipt.
+    await sql`SELECT pg_advisory_xact_lock(hashtextextended(${`funded-ai-owner:${owner}`}, 0))`.execute(trx.executor);
     await assertDeletionOwnershipSafe(trx, owner);
     const unresolved = await trx.executor.selectFrom('ai_funded_usage_reservations').select('reservation_id')
       .where('owner_id', '=', owner).where((eb) => eb.or([
         eb('status', 'not in', ['settled', 'released', 'expired']),
         eb.and([eb('charge_waiver', 'is not', null), eb('actual_microusd', 'is', null)]),
+        eb.and([eb('started_at', 'is not', null), eb('actual_microusd', 'is', null), eb.or([
+          eb('customer_charge_release', 'is not', null),
+          sql<boolean>`authorization_response::jsonb #>> '{reservation,billingPolicy}' = 'postpaid'`,
+        ])]),
       ])).limit(1).execute();
     if (unresolved.length) throw new Error('accounting_reconciliation_required');
     // Known waived expense may be anonymized only after validating its durable no-owner-charge receipt.
@@ -58,6 +66,19 @@ export async function eraseOwnerPlatformData(db: PlatformDB, owner: string, owne
       hasWaivedExpense ||= waived.length > 0;
       if (waived.length < 100) break;
       waiverCursor = waived[waived.length - 1].reservation_id;
+    }
+    let customerReleaseCursor = '';
+    let hasPostpaidExpense = false;
+    for (;;) {
+      const released = await trx.executor.selectFrom('ai_funded_usage_reservations').selectAll()
+        .where('owner_id', '=', owner).where((eb) => eb.or([
+          eb('customer_charge_release', 'is not', null),
+          sql<boolean>`authorization_response::jsonb #>> '{reservation,billingPolicy}' = 'postpaid'`,
+        ])).where('reservation_id', '>', customerReleaseCursor).orderBy('reservation_id').limit(100).execute();
+      for (const row of released) if (row.customer_charge_release !== null) readCustomerChargeRelease(row);
+      hasPostpaidExpense ||= released.some(row => row.actual_microusd !== null);
+      if (released.length < 100) break;
+      customerReleaseCursor = released[released.length - 1].reservation_id;
     }
     const liveRuntime=await trx.executor.selectFrom('user_machines').select('machine_id')
       .where('clerk_user_id','=',owner).where((eb)=>eb.or([eb('deleted_at','is',null),eb('status','!=','deleted')])).limit(1).execute();
@@ -130,7 +151,7 @@ export async function eraseOwnerPlatformData(db: PlatformDB, owner: string, owne
       (SELECT reservation_id FROM ai_funded_usage_reservations WHERE owner_id = ${owner}) OR grant_entry_id IN
       (SELECT entry_id FROM ai_funded_credit_ledger WHERE owner_id = ${owner})`.execute(trx.executor);
     const ledger = await trx.executor.selectFrom('ai_funded_credit_ledger').select('entry_id').where('owner_id','=',owner).limit(1).execute();
-    if (ledger.length || hasWaivedExpense) {
+    if (ledger.length || hasWaivedExpense || hasPostpaidExpense) {
       if (!ownerHash) throw new Error('Accounting erasure configuration unavailable');
       const summary = await sql`UPDATE account_deletion_jobs SET accounting_summary =
         COALESCE((SELECT jsonb_object_agg(kind, totals) FROM
@@ -139,6 +160,12 @@ export async function eraseOwnerPlatformData(db: PlatformDB, owner: string, owne
         || CASE WHEN ${hasWaivedExpense} THEN jsonb_build_object('waived_platform_expense',
           (SELECT jsonb_build_object('entryCount',count(*),'amountMicrousd',sum(actual_microusd))
             FROM ai_funded_usage_reservations WHERE owner_id=${owner} AND charge_waiver IS NOT NULL))
+          ELSE '{}'::jsonb END
+        || CASE WHEN ${hasPostpaidExpense} THEN jsonb_build_object('postpaid_platform_expense',
+          (SELECT jsonb_build_object('entryCount',count(*),'amountMicrousd',
+            sum(COALESCE((settlement_response::jsonb ->> 'matrixAbsorbedMicrousd')::bigint, 0)))
+            FROM ai_funded_usage_reservations WHERE owner_id=${owner} AND actual_microusd IS NOT NULL
+              AND (customer_charge_release IS NOT NULL OR authorization_response::jsonb #>> '{reservation,billingPolicy}' = 'postpaid')))
           ELSE '{}'::jsonb END
         WHERE owner_hash = ${ownerHash(owner)} RETURNING owner_hash`.execute(trx.executor);
       if (!summary.rows.length) throw new Error('Accounting erasure tombstone unavailable');

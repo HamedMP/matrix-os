@@ -143,8 +143,37 @@ describe("platform worker deployment", () => {
     expect(workflow).toContain('      - "scripts/ci/remove-legacy-platform-worker-tags.mjs"');
   });
 
+  it.each([101, 200])("handles %i idle tags plus production traffic without selecting ordinary API tags", (count) => {
+    const traffic = Array.from({ length: count }, (_, index) => ({
+      tag: `tag-${index}`, revisionName: `revision-${index}`, percent: 0,
+    }));
+    const revisions = traffic.map((target, index) => ({
+      metadata: { name: target.revisionName, annotations: { "autoscaling.knative.dev/minScale": "1" } },
+      spec: { containers: [{ env: [{ name: "PLATFORM_BACKGROUND_WORKERS_ENABLED", value: index === 0 ? "true" : "false" }] }] },
+    }));
+    const result = spawnSync(process.execPath, [tagSelector], {
+      input: JSON.stringify({ service: { status: { traffic: [...traffic, { revisionName: "production", percent: 100 }] } }, revisions }),
+      encoding: "utf8",
+    });
+    expect(result.status).toBe(0);
+    expect(result.stdout.trim()).toBe("tag-0");
+  });
+
+  it("checks serving-source compatibility before build and every execution cutover", () => {
+    expect(workflow).toContain("fetch-depth: 0");
+    const guard = "run: node scripts/ci/platform-source-compatibility.mjs";
+    const locations = [...workflow.matchAll(new RegExp(guard.replaceAll(".", "\\."), "g"))].map((match) => match.index!);
+    expect(locations).toHaveLength(4);
+    expect(workflow.match(/REQUIRE_RUNTIME_CONFIGURATION_PRESERVATION: 'true'/g)).toHaveLength(2);
+    expect(workflow.includes('"scripts/ci/platform-source-compatibility.mjs"')).toBe(true);
+    for (const [index, marker] of ["- name: Build platform image", "- name: Deploy tagged revision", "- name: Deploy dedicated platform worker", "- name: Promote revision"].entries()) {
+      expect(locations[index]).toBeLessThan(workflow.indexOf(marker));
+      if (index > 0) expect(locations[index]).toBeGreaterThan(workflow.indexOf(["- name: Build platform image", "- name: Deploy tagged revision", "- name: Deploy dedicated platform worker"][index - 1]!));
+    }
+  });
+
   it("rejects an unexpectedly large tagged revision set before querying revisions", () => {
-    const traffic = Array.from({ length: 101 }, (_, index) => ({
+    const traffic = Array.from({ length: 201 }, (_, index) => ({
       tag: `tag-${index}`, revisionName: `revision-${index}`, percent: 0,
     }));
     const execute = (_command: string, args: string[]) => {

@@ -10,7 +10,7 @@ const CHECK_SIZE = 18;
 
 export interface ModelSheetRowProps {
   model: ModelChoice;
-  /** Nothing can be chosen for now, whether or not this model can run. */
+  /** Nothing can be chosen for now, whether or not this model is selectable. */
   disabled?: boolean;
   onPress: () => void;
 }
@@ -18,7 +18,7 @@ export interface ModelSheetRowProps {
 /** One model in the sheet: its name over the route it runs through. */
 export function ModelSheetRow({ model, disabled = false, onPress }: ModelSheetRowProps) {
   const { theme } = useUnistyles();
-  const inert = disabled || !model.available;
+  const inert = disabled || !model.selectable;
 
   return (
     <Pressable

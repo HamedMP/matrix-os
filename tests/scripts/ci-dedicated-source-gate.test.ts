@@ -279,6 +279,57 @@ it.each(['head','base','source','mode','time','boundary'])('does not retain an i
  const evidence=JSON.parse(prior.output.summary);expect(evidence).not.toHaveProperty('recoveryStartedAt');expect(evidence).not.toHaveProperty('recoveryAfterRunId');
  expect(f.github.rest.actions.createWorkflowDispatch).not.toHaveBeenCalled();
 });
+describe('failed discovery does not manufacture historical admission',()=>{
+ function discoveryPrior(admittedPreviously?:unknown){
+  return{id:9,name:'CI Source Qualification',head_sha:head,status:'completed',conclusion:'failure',app:{id:777,slug:'matrix-ci-gate'},details_url:'https://github.com/HamedMP/matrix-os/actions/runs/123',output:{title:'Fresh requesting CI discovery failed',summary:JSON.stringify({schemaVersion:1,prNumber:2454,controllerSha:main,controllerRef:'refs/heads/main',controllerAttempt:1,headSha:head,baseSha:base,sourceSha:merge,...(admittedPreviously===undefined?{}:{admittedPreviously})})}};
+ }
+ it.each([
+  {admission:false,legacy:false,recovery:false},
+  {admission:true,legacy:false,recovery:true},
+  {admission:undefined,legacy:false,recovery:true},
+  {admission:null,legacy:false,recovery:true},
+  {admission:0,legacy:false,recovery:true},
+  {admission:'false',legacy:false,recovery:true},
+  {admission:false,legacy:true,recovery:true},
+ ])('retains the exact admission boundary: $admission legacy=$legacy',async({admission,legacy,recovery})=>{
+  const f=fixture(),prior=discoveryPrior(admission);
+  const legacyResult={id:8,name:'Dedicated CI Results',head_sha:head,status:'completed',conclusion:'success',app:{slug:'github-actions'}};
+  f.github.rest.checks.listForRef.mockImplementation(async(args:any)=>({data:{check_runs:args.check_name==='Dedicated CI Results'?(legacy?[legacyResult]:[]):[prior]}}));
+  await reconcile(f);
+  const written=lastWrite(f),evidence=JSON.parse(written.output.summary);
+  if(recovery){
+   expect(written.status).toBe('in_progress');
+   expect(evidence).toMatchObject({admittedPreviously:true,executionMode:'hosted-only'});
+   expect(f.github.rest.actions.createWorkflowDispatch).toHaveBeenCalledWith(expect.objectContaining({inputs:expect.objectContaining({execution_mode:'hosted-only'})}));
+  }else{
+   expect(written).toMatchObject({conclusion:'success',output:{title:'Dedicated source qualification: not admitted'}});
+   expect(evidence).toMatchObject({admittedPreviously:false,notApplicable:true});
+   expect(evidence).not.toHaveProperty('executionMode');
+   expect(f.github.rest.actions.createWorkflowDispatch).not.toHaveBeenCalled();
+  }
+ });
+ it('returns an ordinary main PR to N/A after transient merge-parent discovery failure',async()=>{
+  const f=fixture();f.pull.base.ref='main';
+  let prior:any;
+  const create=f.gateGithub.rest.checks.create.getMockImplementation()!;
+  f.gateGithub.rest.checks.create.mockImplementation(async(args:any)=>{const result=await create(args);prior=result.data;return result;});
+  f.gateGithub.rest.checks.update.mockImplementation(async(args:any)=>{Object.assign(prior,args);return{data:prior};});
+  f.github.rest.checks.listForRef.mockImplementation(async(args:any)=>({data:{check_runs:args.check_name==='CI Source Qualification'&&prior?[prior]:[]}}));
+  f.github.rest.repos.getCommit.mockResolvedValueOnce({data:{sha:merge,parents:[{sha:base},{sha:'f'.repeat(40)}]}});
+  const warn=vi.spyOn(console,'warn').mockImplementation(()=>undefined);
+  try{
+   await reconcile(f);
+   expect(lastWrite(f)).toMatchObject({conclusion:'failure',output:{title:'Fresh requesting CI discovery failed'}});
+   expect(JSON.parse(prior.output.summary)).toMatchObject({admittedPreviously:false});
+   expect(JSON.parse(prior.output.summary)).not.toHaveProperty('notApplicable');
+   await reconcile(f);
+   expect(lastWrite(f)).toMatchObject({conclusion:'success',output:{title:'Dedicated source qualification: not admitted'}});
+   expect(JSON.parse(prior.output.summary)).toMatchObject({admittedPreviously:false,notApplicable:true});
+   expect(f.github.rest.actions.createWorkflowDispatch).not.toHaveBeenCalled();
+  }finally{warn.mockRestore();}
+ });
+});
+
 describe('source gate API budget',()=>{
  const notApplicablePrior=(evidence:Record<string,unknown>={})=>({id:9,name:'CI Source Qualification',head_sha:head,status:'completed',conclusion:'success',app:{id:777,slug:'matrix-ci-gate'},details_url:'https://github.com/HamedMP/matrix-os/actions/runs/123',output:{summary:JSON.stringify({schemaVersion:1,admittedPreviously:false,prNumber:2454,headSha:head,headRef:'child',baseSha:base,baseRef:'stack/parent',sourceSha:merge,controllerSha:main,controllerRef:'refs/heads/main',controllerAttempt:1,notApplicable:true,...evidence})}});
  it('does not rewrite an unchanged N/A gate for the same head, base and source',async()=>{
