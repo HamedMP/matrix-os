@@ -1,9 +1,9 @@
-import { execFile } from "node:child_process";
-import { chmod, lstat, mkdir, mkdtemp, readFile, readdir, realpath, rename, rm, symlink, writeFile } from "node:fs/promises";
+import { execFile, spawn, type SpawnOptions } from "node:child_process";
+import { chmod, link, lstat, mkdir, mkdtemp, readFile, readdir, realpath, rename, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { promisify } from "node:util";
-import { afterEach, expect, it } from "vitest";
+import { afterEach, expect, it, vi } from "vitest";
 const scratch: string[] = [];
 afterEach(async () => { await Promise.all(scratch.splice(0).map(path => rm(path, { recursive: true, force: true }))); });
 async function fixture() { const root = await mkdtemp(join(process.cwd(), ".native-safety-")); scratch.push(root); return root; }
@@ -200,7 +200,7 @@ it("keeps a conclusively created worker eligible for cleanup when isolation prop
 });
 
 it("ties observed supervisor and worker executables to the reviewed source object and SHA256", async () => {
-  const { executableEvidence, verifyExecutableEvidence } = await import("../../scripts/ops/devstack-native/evidence.mjs");
+  const { executableEvidence, verifyExecutableEvidence } = await import("../../scripts/ops/devstack-native/node-evidence.mjs");
   const dir = await fixture(), first = join(dir, "first"), other = join(dir, "other");
   await writeFile(first, "same"); await writeFile(other, "same");
   const reviewed = await executableEvidence(first);
@@ -208,4 +208,48 @@ it("ties observed supervisor and worker executables to the reviewed source objec
   await expect(verifyExecutableEvidence(other, reviewed)).rejects.toThrow("node_executable_mismatch");
   await writeFile(first, "changed");
   await expect(verifyExecutableEvidence(first, reviewed)).rejects.toThrow("node_executable_mismatch");
+});
+
+it("refuses a replaced guest executable despite a matching manager mapping and live worker image", async () => {
+  const { withVerifiedWorkerNode, executableEvidence } = await import("../../scripts/ops/devstack-native/node-evidence.mjs");
+  const { validateWorkerProperties } = await import("../../scripts/ops/devstack-native/security.mjs");
+  const f = profileFixture();
+  expect(() => validateWorkerProperties(f.properties, f.config, f.handle, f.deps)).not.toThrow();
+  const dir = await fixture(), host = join(dir, "source"), running = join(dir, "exe"), guest = join(dir, "guest");
+  await writeFile(host, "approved"); await link(host, running); await link(host, guest);
+  const expected = await executableEvidence(host), run = vi.fn();
+  await rm(guest); await writeFile(guest, "approved");
+  await expect(withVerifiedWorkerNode({ host, running, guest }, expected, run)).rejects.toThrow("node_executable_mismatch");
+  expect(run).not.toHaveBeenCalled();
+});
+
+it("pins the reviewed guest inode while running the probe and rejects replacement during execution", async () => {
+  const { withVerifiedWorkerNode, executableEvidence } = await import("../../scripts/ops/devstack-native/node-evidence.mjs");
+  const dir = await fixture(), host = join(dir, "source"), running = join(dir, "exe"), guest = join(dir, "guest");
+  await writeFile(host, "approved"); await link(host, running); await link(host, guest);
+  const expected = await executableEvidence(host);
+  const run = vi.fn(async (file: import("node:fs/promises").FileHandle) => {
+    await rm(guest); await writeFile(guest, "different");
+    expect(String((await file.stat({ bigint: true })).ino)).toBe(expected.inode);
+    return "untrusted-result";
+  });
+  await expect(withVerifiedWorkerNode({ host, running, guest }, expected, run)).rejects.toThrow("node_executable_mismatch");
+  expect(run).toHaveBeenCalledOnce();
+});
+
+it("passes the verified file descriptor to the namespaced probe executable", async () => {
+  const { executableEvidence, runPinnedDenialProbe, withVerifiedWorkerNode } = await import("../../scripts/ops/devstack-native/node-evidence.mjs");
+  const dir = await fixture(), host = join(dir, "source");
+  await writeFile(host, "pinned source");
+  const node = await executableEvidence(host);
+  const child = (command: string, args: string[], options: SpawnOptions) => {
+    expect(command).toBe("/usr/bin/nsenter");
+    expect(args.slice(0, args.indexOf("--") + 2)).toEqual(["--target=42", "--mount", "--net", "--root", "--wd",
+      "--setuid=61184", "--setgid=61184", "--", "/proc/self/fd/3"]);
+    // Exercise the real inherited fd using a portable child instead of entering a Linux namespace.
+    return spawn(process.execPath, ["-e", "process.stdout.write(String(require('node:fs').fstatSync(3, {bigint:true}).ino))"], options);
+  };
+  const observed = await withVerifiedWorkerNode({ host, running: host, guest: host }, node, (file: import("node:fs/promises").FileHandle) =>
+    runPinnedDenialProbe(file, { pid: 42, uid: 61184, gid: 61184 }, "{}", child));
+  expect(observed.result).toBe(node.inode);
 });

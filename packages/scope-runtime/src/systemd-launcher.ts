@@ -632,6 +632,7 @@ export function createSystemdScopeRuntimeLauncher(
 
   async function dispatchCommand<T>(runtimeHandle: string, dispatch: (path: string) => Promise<T>): Promise<T> {
     const handle = RuntimeHandleSchema.parse(runtimeHandle);
+    if (ownedNode) await assertProtectedNodeRoot(ownedNode.root);
     const path = join(await commandDirectoryForRuntime(paths, handle), WORKER_SOCKET_FILE);
     const pinned = await pinCommandSocket(path);
     try { return await dispatch(pinned.path); } finally { await pinned.close(); }

@@ -7,6 +7,7 @@ import { assert, assertVacant, command, noSymlinkAncestors, parseOptions, prefli
   resolveConfig, sourceFacts, stat } from "./devstack-native/control.mjs";
 import { compiledRuntimeInventory, verifyCompiledRuntime } from "./devstack-native/compiled.mjs";
 import { createStderrCapture, stderrPath } from "./devstack-native/close-evidence.mjs";
+import { attestRunningNode, verifyExecutableEvidence } from "./devstack-native/node-evidence.mjs";
 import { buildFacts, hostSnapshot } from "./devstack-native/evidence.mjs";
 import { createUnitLedger } from "./devstack-native/ownership.mjs";
 import { createJournal, safeCode } from "./devstack-native/receipt.mjs";
@@ -16,15 +17,16 @@ import { submitSupervisor } from "./devstack-native/submission.mjs";
 import { nativeProof, observeWorkers } from "./devstack-native/proof.mjs";
 
 const scriptRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
-async function run(config, marker, identity, compiled, interrupted) {
+async function run(config, marker, identity, compiled, harnessNode, interrupted) {
   const base = dirname(config.appRoot); const token = `matrix-native-${randomUUID()}`;
   const lockPath = `${base}/.native-acceptance-active`;
   const receiptPath = `${base}/native-acceptance-receipt-${token}.json`;
   const check = () => assert(!interrupted(), "acceptance_interrupted");
   const journal = createJournal(), ledger = createUnitLedger(config, token, { check });
   const receipt = { version: 1, status: "failed", purpose: marker.purpose, namespace: config.namespace,
-    source: marker, compiled, host: { platform: process.platform, architecture: process.arch }, startedAt: new Date().toISOString(), receiptPath };
+    source: marker, compiled, harnessNode, host: { platform: process.platform, architecture: process.arch }, startedAt: new Date().toISOString(), receiptPath };
   check();
+  await verifyExecutableEvidence(config.ownedNode.binary, harnessNode);
   const lock = await open(lockPath, "wx", 0o600); const ownedLock = await lock.stat();
   let capture;
   try {
@@ -35,7 +37,7 @@ async function run(config, marker, identity, compiled, interrupted) {
     receipt.before = await journal.step("baseline", () => hostSnapshot(config));
     const dependencies = await journal.step("dependencies", () => verifyDependencies(config, marker));
     dependencies.workerFile = `${config.appRoot}/packages/scope-runtime/dist/worker.js`;
-    receipt.build = await journal.step("build", () => buildFacts(config, dependencies, compiled, check));
+    receipt.build = await journal.step("build", () => buildFacts(config, dependencies, compiled, harnessNode, check));
     await verifyCompiledRuntime(config.appRoot, compiled);
     const { nodeProfileDigest } = await import(pathToFileURL(`${config.appRoot}/packages/scope-runtime/dist/node-runtime.js`).href);
     const profile = await import(pathToFileURL(`${config.appRoot}/packages/scope-runtime/dist/profile.js`).href);
@@ -79,7 +81,7 @@ async function run(config, marker, identity, compiled, interrupted) {
 export async function main(argv) {
   const input = parseOptions(argv);
   const blocked = code => ({ mode: input.mode, ready: false, blockers: [code] });
-  let marker, config, identity, compiled;
+  let marker, config, identity, compiled, harnessNode;
   try {
     assert(scriptRoot === input["app-root"], "harness_source_mismatch");
     marker = await sourceFacts(input);
@@ -92,10 +94,14 @@ export async function main(argv) {
     const { assertProtectedNodeRoot } = await import(pathToFileURL(`${runtime}/node-runtime.js`).href);
     assert(process.execPath === config.ownedNode.binary, "harness_node_mismatch");
     identity = createScopeRuntimeUnitIdentity(input.namespace);
-    const readiness = await preflight(config, assertProtectedNodeRoot);
+    const readiness = await preflight(config, async root => {
+      await assertProtectedNodeRoot(root);
+      return attestRunningNode(config.ownedNode.binary, "/proc/self/exe");
+    });
+    harnessNode = readiness.harnessNode;
     if (input.mode === "preflight" || !readiness.ready) return { ...readiness, mode: input.mode };
   } catch (error) { return blocked(safeCode(error)); }
-  return withInterruption(interrupted => run(config, marker, identity, compiled, interrupted));
+  return withInterruption(interrupted => run(config, marker, identity, compiled, harnessNode, interrupted));
 }
 
 export async function withInterruption(action) {

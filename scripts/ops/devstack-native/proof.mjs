@@ -200,7 +200,9 @@ export async function nativeProof(config, identity, context) {
       const current = await ledger.freshWorker(first);
       assert(current.MainPID === pair[0].properties.MainPID, "worker_pair_pid_changed");
       check();
-      return { ...await inspectWorker(pair[0], controls), pair: pair.map(({ handle, invocationId, properties, namespaces, rootIdentity, cgroup }) =>
+      const isolation = await inspectWorker(pair[0], controls, node);
+      await ledger.freshWorker(first); // Recheck the recorded incarnation across the namespace probe.
+      return { ...isolation, pair: pair.map(({ handle, invocationId, properties, namespaces, rootIdentity, cgroup }) =>
         ({ handle, invocationId, pid: Number(properties.MainPID), namespaces, rootIdentity, cgroup })) };
     });
     await journal.step("sdk", async () => {

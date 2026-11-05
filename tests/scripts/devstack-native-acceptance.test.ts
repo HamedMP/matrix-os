@@ -55,8 +55,9 @@ describe("owned native acceptance boundaries", () => {
       commands.push(["unexpected"]); throw Error("must not reach discovery");
     })).rejects.toThrow("owned_node_unprotected_or_unavailable");
     expect(commands).toEqual([]);
-    const result = await preflight(config, async (path: string) => { expect(path).toBe("/var/lib/matrix-devstack/proof/runtime/node"); }, async (_bin: string, argv: string[]) => { commands.push(argv); return { code: 0, stdout: argv.includes("show") ? "LoadState=not-found\n" : argv[0] === "list-unit-files" ? "matrix-gateway.service enabled enabled" : "" }; });
-    expect(result.ready).toBe(false); expect(await readdir(f.root)).toEqual(before);
+    const harnessNode = { inode: "123", device: "4", sha256: "5".repeat(64) };
+    const result = await preflight(config, async (path: string) => { expect(path).toBe("/var/lib/matrix-devstack/proof/runtime/node"); return harnessNode; }, async (_bin: string, argv: string[]) => { commands.push(argv); return { code: 0, stdout: argv.includes("show") ? "LoadState=not-found\n" : argv[0] === "list-unit-files" ? "matrix-gateway.service enabled enabled" : "" }; });
+    expect(result.harnessNode).toEqual(harnessNode); expect(result.ready).toBe(false); expect(await readdir(f.root)).toEqual(before);
     expect(commands).toHaveLength(3);
     expect(commands.every(argv => ["show", "list-units", "list-unit-files"].includes(argv[0]))).toBe(true);
     expect(await readFile(f.path, "utf8")).toContain('"namespace":"proof"');
@@ -192,4 +193,15 @@ it("fails closed on an overlong private bind path and removes only its empty sta
   await expect(startBroker(join(f.root, "public.sock"), parent)).rejects.toThrow("broker_bind_path_capacity");
   expect(await readdir(parent)).toEqual([]);
   await expect(lstat(join(f.root, "public.sock"))).rejects.toThrow();
+});
+
+it("rejects an atomic same-path Node replacement before and after auditing the harness process", async () => {
+  const { attestRunningNode, verifyExecutableEvidence } = await import("../../scripts/ops/devstack-native/node-evidence.mjs");
+  const { rename, link } = await import("node:fs/promises");
+  const f = await fixture(), host = join(f.root, "node"), running = join(f.root, "running-image");
+  await writeFile(host, "same bytes"); await link(host, running);
+  const preflightNode = await attestRunningNode(host, running);
+  const replacement = join(f.root, "next"); await writeFile(replacement, "same bytes"); await rename(replacement, host);
+  await expect(attestRunningNode(host, running)).rejects.toThrow("node_executable_mismatch");
+  await expect(verifyExecutableEvidence(host, preflightNode)).rejects.toThrow("node_executable_mismatch");
 });

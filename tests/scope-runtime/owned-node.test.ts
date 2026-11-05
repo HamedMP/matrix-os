@@ -79,14 +79,21 @@ it("discovery uses the selected host binary and never executes an optional insta
   const select = vi.spyOn(runtime, "ownedNodeForNamespace").mockReturnValue(selected);
   const validate = vi.spyOn(runtime, "assertProtectedNodeRoot").mockImplementation(path => originalValidate(path, trust));
   try {
+    const pin = vi.fn(async () => { throw Error("dispatch pin reached"); });
     const execute = vi.fn(async () => ({ stdout: "codex-cli 0.162.1" }));
     const manager = createSystemdScopeRuntimeLauncher({ namespace: "proof", namespaceTrust: trust, useOwnedNode: true,
       commandSocketRoot: join(dir, "c"), stateRoot: join(dir, "s"), brokerSocket: join(dir, "b"),
-      workerFile: join(dir, "sdk.mjs"), nativeDirectory: dir, sdkDirectory: dir, nodeBinary: process.execPath, codexBinary: codex, runCommand: execute });
+      workerFile: join(dir, "sdk.mjs"), nativeDirectory: dir, sdkDirectory: dir, nodeBinary: process.execPath, codexBinary: codex, runCommand: execute, pinCommandSocket: pin });
     await expect(manager.supportedAdapters?.()).resolves.toEqual([{ adapterId: "claude-code", harnessVersion: "2.1.240", workloads: ["chat_ai"] }]);
     await rm(binary);
     await expect(manager.supportedAdapters?.()).rejects.toThrow();
     await expect(manager.active?.()).rejects.toThrow();
+    const suffix = "a".repeat(32);
+    await mkdir(join(dir, "c", suffix), { recursive: true });
+    const ref = { runtimeHandle: "runtime_" + suffix, executionGeneration: "1" };
+    await expect(manager.runChat({ ...ref, model: "test", prompt: "test" })).rejects.toMatchObject({ code: "ENOENT" });
+    await expect(manager.runBot!({ ...ref, command: { version: 1, kind: "bot.cancel", runId: "run_test" } })).rejects.toMatchObject({ code: "ENOENT" });
+    expect(pin).not.toHaveBeenCalled();
     expect(execute).not.toHaveBeenCalled();
   } finally { validate.mockRestore(); select.mockRestore(); }
 });

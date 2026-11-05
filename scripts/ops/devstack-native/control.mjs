@@ -118,13 +118,14 @@ export async function assertVacant(config, run = command, heldLock) {
   const lock = await stat(`${dirname(config.stateRoot)}/.native-acceptance-active`);
   assert(!lock || heldLock && lock.ino === heldLock.ino && lock.dev === heldLock.dev, "ambiguous_partial_state");
 }
-export async function preflight(config, assertProtectedNodeRoot, run = command) {
+export async function preflight(config, attestHarness, run = command) {
   // Fail before any placement, lock, or manager operation even if another
   // dependency on this host is missing as well.
+  let harnessNode;
   try {
-    await assertProtectedNodeRoot(config.ownedNode.root);
+    harnessNode = await attestHarness(config.ownedNode.root);
   } catch (error) {
-    if (!(error instanceof Error)) throw error;
+    if (!(error instanceof Error) || error.message === "node_executable_mismatch") throw error;
     throw new Error("owned_node_unprotected_or_unavailable", { cause: error });
   }
   const blockers = [];
@@ -148,7 +149,7 @@ export async function preflight(config, assertProtectedNodeRoot, run = command) 
     }
     assert((await stat("/sys/fs/cgroup/cgroup.controllers"))?.isFile(), "cgroup_v2_required");
   } catch (error) { blockers.push(["worker_not_world_readable", "sdk_not_world_readable", "cgroup_v2_required"].includes(error.message) ? error.message : "native_build_missing"); }
-  return { mode: "preflight", ready: blockers.length === 0, blockers: [...new Set(blockers)], config };
+  return { mode: "preflight", ready: blockers.length === 0, blockers: [...new Set(blockers)], config, harnessNode };
 }
 export async function waitFor(check, code, timeout = 30_000) {
   const deadline = Date.now() + timeout;
