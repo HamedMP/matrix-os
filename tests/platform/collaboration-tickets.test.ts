@@ -280,6 +280,68 @@ describe("S05 platform tickets, endpoints and control", () => {
       expect(verifyEd25519(publicKey.publicKey, ticketSigningPayload(tampered), signed.signature)).toBe(false);
     });
 
+    it("issues proof-bound app sessions from current membership without recipient or grant rows", async () => {
+      const appScopeId = "10000000-0000-4000-8000-0000000000a5";
+      await repository.applyDirectoryEvent({
+        eventId: "20000000-0000-4000-8000-0000000000a5",
+        scopeId: appScopeId,
+        runtimeId,
+        ownerId: platformCollaborationActors.owner,
+        kind: "app",
+        organizationId,
+        audience: "current_membership",
+        authorityGeneration: 1,
+        metadataRevision: 1,
+        app: {
+          appId: "team-tracker",
+          catalogId: "50000000-0000-4000-8000-0000000000a5",
+          readinessId: "60000000-0000-4000-8000-0000000000a5",
+          registrationIncarnation: "a".repeat(64),
+          buildId: "b".repeat(64),
+          shareRevision: 1,
+          state: "active",
+        },
+        recipients: [{ actorId: platformCollaborationActors.owner, status: "accepted" }],
+      });
+      const appIssuer = new CollaborationTicketIssuer({
+        keyring: { activeKeyId: "ticket-key-1", keys: { "ticket-key-1": seedA } },
+        repository,
+        endpoints,
+        resolveOrganization: async () => organizationId,
+        projection: { isCurrentMember: async ({ actorId }) => members.has(actorId) },
+        relayOrigin: "https://app.matrix-os.com",
+        now: () => clock,
+      });
+      const proof = clientProofKey();
+      const issued = await appIssuer.issue({
+        actorId: platformCollaborationActors.recipientWithoutComputer,
+        request: {
+          clientRequestId: "40000000-0000-4000-8000-0000000000a5",
+          scopeId: appScopeId,
+          purpose: "direct_session",
+          proofPublicKey: proof.raw,
+        },
+      });
+      expect(issued.signedTicket.ticket).toMatchObject({
+        actorId: platformCollaborationActors.recipientWithoutComputer,
+        organizationId,
+        resource: { scopeId: appScopeId, kind: "app_instance" },
+        purpose: "direct_session",
+        proofKeyThumbprint: proof.thumbprint,
+      });
+      expect(issued.signedTicket.ticket.resource).not.toHaveProperty("pendingGrantId");
+      members.delete(platformCollaborationActors.recipientWithoutComputer);
+      await expect(appIssuer.issue({
+        actorId: platformCollaborationActors.recipientWithoutComputer,
+        request: {
+          clientRequestId: "40000000-0000-4000-8000-0000000000a6",
+          scopeId: appScopeId,
+          purpose: "direct_session",
+          proofPublicKey: proof.raw,
+        },
+      })).rejects.toMatchObject({ code: "not_found" });
+    });
+
     it("never issues to an outsider, a revoked recipient or an unknown scope, and denies generically", async () => {
       members.delete(platformCollaborationActors.recipientWithoutComputer);
       await expect(issuer.issue({

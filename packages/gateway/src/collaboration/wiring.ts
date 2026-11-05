@@ -98,6 +98,8 @@ import { CollaborativeAppBuildResolver } from "./collaborative-app-build-resolve
 import { CollaborativeAppReadinessEvaluator, UnconfiguredSecondPrincipalVerifier } from "./collaborative-app-readiness.js";
 import type { CollaborativeAppReadinessRepository } from "./collaborative-app-readiness-repository.js";
 import type { CollaborativeAppReadinessRouteDependencies } from "./collaborative-app-readiness-routes.js";
+import { CollaborativeAppShareService } from "./collaborative-app-share-service.js";
+import type { CollaborativeAppShareRepository } from "./collaborative-app-share-repository.js";
 import {
   CollaborationProjectScopeService,
   type CollaborationProjectSource,
@@ -499,6 +501,7 @@ export async function createGatewayCollaboration(options: {
       homePath: string;
       appRegistry: Pick<AppRegistry, "get">;
       repository: CollaborativeAppReadinessRepository;
+      shares: CollaborativeAppShareRepository;
       builds: ImmutableCollaborativeBuildStore;
     }): void {
       if (registered || closing || collaborativeAppReadiness || !resourceServices
@@ -524,6 +527,20 @@ export async function createGatewayCollaboration(options: {
         requireOrganizationMembership: async (actorId, organizationId) => {
           await organizationPrecondition.require({ actorId, organizationId });
         },
+        share: new CollaborativeAppShareService({
+          ownerId: input.ownerId,
+          runtimeId: options.config.runtimeId,
+          preflightSecret: confirmationSecret,
+          catalog: resourceServices.catalog,
+          readiness: input.repository,
+          shares: input.shares,
+          resolveCurrentBuild: (ownerId, appId, resolveOptions) => resolver.resolve(ownerId, appId, resolveOptions),
+          resolveOwner: resolveParticipant,
+          onStopped: async (scopeId) => {
+            directSessions.revoke({ scopeId });
+            await eventRegistry.broadcastScope(scopeId);
+          },
+        }),
       };
     },
     /** Live policy-qualified execution adapter; absent until shared AI is ready. */

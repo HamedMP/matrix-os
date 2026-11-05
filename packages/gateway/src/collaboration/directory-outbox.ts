@@ -30,9 +30,18 @@ interface ClaimedDirectoryEvent {
   discoveryState: "invited" | "accepted" | "revoked" | "deleted";
   /** S05: read inside the claim transaction so a lookup failure leaves the event unclaimed and retryable. */
   organizationId: string | null;
-  /** S06: `organization` when an active organization-wide grant exists; read inside the same claim transaction. */
-  audience: "organization" | null;
+  /** Organization-wide grants are explicit; app shares derive discovery from current membership. */
+  audience: "organization" | "current_membership" | null;
   organizationGrantId: string | null;
+  app?: {
+    appId: string;
+    catalogId: string;
+    readinessId: string;
+    registrationIncarnation: string;
+    buildId: string;
+    shareRevision: number;
+    state: "active" | "needs_recheck" | "stopped";
+  };
   /** A shared project's Chat route names its project; read inside the claim transaction. */
   parentScopeId: string | null;
   attempt: number;
@@ -108,6 +117,7 @@ export class CollaborationDirectoryOutbox {
         ...(organizationId ? { organizationId } : {}),
         ...(audience ? { audience } : {}),
         ...(event.organizationGrantId ? { organizationGrantId: event.organizationGrantId } : {}),
+        ...(event.app ? { app: event.app } : {}),
         ...(event.parentScopeId ? { parentScopeId: event.parentScopeId } : {}),
         authorityGeneration: event.authorityGeneration,
         metadataRevision: event.metadataRevision,
@@ -172,6 +182,8 @@ export class CollaborationDirectoryOutbox {
       const rows = await trx.selectFrom("collaboration_directory_outbox as outbox")
         .innerJoin("collaboration_scopes as scope", "scope.id", "outbox.scope_id")
         .innerJoin("collaboration_events as event", "event.event_id", "outbox.event_id")
+        .leftJoin("collaboration_app_bindings as app_binding", "app_binding.scope_id", "outbox.scope_id")
+        .leftJoin("collaboration_app_readiness as app_readiness", "app_readiness.id", "app_binding.readiness_id")
         .select([
           "outbox.event_id",
           "outbox.scope_id",
@@ -186,6 +198,14 @@ export class CollaborationDirectoryOutbox {
           "scope.membership_mode",
           "event.revision",
           "event.event_type",
+          "app_binding.catalog_id as app_catalog_id",
+          "app_binding.readiness_id as app_readiness_id",
+          "app_binding.registration_incarnation as app_registration_incarnation",
+          "app_binding.build_id as app_build_id",
+          "app_binding.state as app_binding_state",
+          "app_readiness.app_id",
+          "app_readiness.status as app_readiness_status",
+          "app_readiness.invalidated_at as app_invalidated_at",
           (eb) => eb.selectFrom("collaboration_grants as grant").select("grant.id")
               .whereRef("grant.scope_id", "=", "outbox.scope_id")
               .whereRef("grant.organization_id", "=", "scope.organization_id")
@@ -196,6 +216,10 @@ export class CollaborationDirectoryOutbox {
                 eb("grant.expires_at", ">", now.toISOString()),
               ]))
               .limit(1).as("organization_grant_id"),
+          (eb) => eb.selectFrom("collaboration_app_bindings as app_binding").select("app_binding.scope_id")
+              .whereRef("app_binding.scope_id", "=", "outbox.scope_id")
+              .where("app_binding.state", "=", "active")
+              .limit(1).as("active_app_scope_id"),
         ])
         .where("outbox.authority_runtime_id", "=", this.options.runtimeId)
         .where("outbox.delivered_at", "is", null)
@@ -261,6 +285,13 @@ export class CollaborationDirectoryOutbox {
         // members only, so a grant left from its direct share never travels with its route.
         const parentScopeId = row.event_type === PROJECT_CHAT_ROUTE_EVENT && row.membership_mode === "inherited"
           ? row.parent_scope_id : null;
+        const appState = row.resource_kind === "app" && row.app_binding_state
+          ? row.app_binding_state === "stopped"
+            ? "stopped" as const
+            : row.app_readiness_status === "ready" && row.app_invalidated_at === null
+              ? row.app_binding_state
+              : "needs_recheck" as const
+          : null;
         // A project Chat's route event carries no recipients; member grants live on the project.
         if (!parentScopeId && (row.discovery_state === "invited" || row.discovery_state === "accepted")) {
           recipientEntries = await withPendingMemberGrants(trx, row.scope_id, recipientEntries, row.discovery_state, now);
@@ -275,10 +306,24 @@ export class CollaborationDirectoryOutbox {
           recipientEntries,
           discoveryState: row.discovery_state,
           organizationId: row.organization_id ?? null,
-          audience: row.organization_grant_id && !parentScopeId ? "organization" : null,
+          audience: row.resource_kind === "app" && row.active_app_scope_id && !parentScopeId
+            ? "current_membership"
+            : row.organization_grant_id && !parentScopeId ? "organization" : null,
           organizationGrantId: parentScopeId ? null : row.organization_grant_id ?? null,
           parentScopeId,
           attempt,
+          ...(appState && row.app_id && row.app_catalog_id && row.app_readiness_id
+            && row.app_registration_incarnation && row.app_build_id ? {
+              app: {
+                appId: row.app_id,
+                catalogId: row.app_catalog_id,
+                readinessId: row.app_readiness_id,
+                registrationIncarnation: row.app_registration_incarnation,
+                buildId: row.app_build_id,
+                shareRevision: Number(row.revision),
+                state: appState,
+              },
+            } : {}),
         });
       }
       return claimed;

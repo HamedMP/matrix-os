@@ -256,7 +256,10 @@ export class CollaborationTicketIssuer {
       && await this.options.repository.getScopeActorStatus(directory.parentScopeId, input.actorId) !== "accepted") {
       throw denied();
     }
-    const effectiveStatus = directory.parentScopeId ? "accepted" : status;
+    const currentMembershipApp = directory.kind === "app"
+      && directory.audience === "current_membership"
+      && directory.app?.state === "active";
+    const effectiveStatus = directory.parentScopeId || currentMembershipApp ? "accepted" : status;
     if (effectiveStatus === "revoked") throw denied();
     // An accept-only pointer (never for a project Chat, which opens only through its accepted
     // project): the actor's own pending member grant, or else the organization-wide grant of a
@@ -297,7 +300,11 @@ export class CollaborationTicketIssuer {
       nonce: this.createNonce(),
       actorId: input.actorId,
       organizationId,
-      resource: { scopeId, kind: directory.kind, ...(pendingGrantId ? { pendingGrantId } : {}) },
+      resource: {
+        scopeId,
+        kind: directory.kind === "app" ? "app_instance" as const : directory.kind,
+        ...(pendingGrantId ? { pendingGrantId } : {}),
+      },
       purpose,
       runtime: { runtimeId: endpoint.runtimeId, authorityGeneration: directory.authorityGeneration },
       proofKeyThumbprint: proofKeyThumbprint(proofPublicKey),
