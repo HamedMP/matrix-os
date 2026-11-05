@@ -100,7 +100,7 @@ describe("shared coding execution (S09)", () => {
       expect(await repository.listSharedQueuedTurns(owner, collaborationIds.chat)).toEqual([]);
     });
 
-    it("lets an organization project member prompt through real authorization and the owner's saved AI policy", async () => {
+    it("lets an organization project member prompt through real authorization and the owner's current AI route", async () => {
       const parentId = "79000000-0000-4000-8000-000000000998";
       await fixture.db.insertInto("collaboration_scopes").values({
         id: parentId, owner_type: "personal", owner_id: collaborationActors.owner,
@@ -132,37 +132,18 @@ describe("shared coding execution (S09)", () => {
       });
       repository.setSharedAuthorizer((scopeId, actorId, action) => authority.authorize({ scopeId, actorId, action }));
 
-      const eligibility = new OwnerAccountEligibility({
-        snapshots: { async getSnapshotV3() { return ownerProviderSnapshot(); } },
-      });
-      const policies = new CollaborationExecutionPolicyRepository(fixture.db, {
-        now: () => new Date(now), eligibility,
-        organizationAiSubmission: { async resolve() { return "members"; } },
-      });
-      await policies.put({
-        scopeId: parentId,
-        actorId: collaborationActors.owner,
-        request: {
-          clientRequestId: uuid(66), expectedRevision: "0",
-          accessSourceId: "owner_anthropic_profile", providerInstanceId: "claude_shared",
-          submitMode: "owner_only", acknowledgeProviderTerms: true,
-          allowedModelIds: ["claude-opus-4-6"],
-        },
-        payloadHash: "6".repeat(64),
-      });
-      const ownerSource = new SharedRunOwnerSource({
-        policies,
-        eligibility,
-        bindings: new CollaborationRunBindingRepository(fixture.db, { now: () => new Date(now), eligibility }),
-      });
       const requestDispatch = vi.fn(async () => undefined);
       const adapter = new CollaborationChatExecutionAdapter({
         repository, commands: createCommands(),
         resolveParticipant: async (actorId) => ({ actorId, displayName: actorId }),
         resolveEligibility: async () => collaborationExecutionEligibility(),
         resolveResourceRevision: async () => 1,
-        resolveEffectiveSubmitMode: (scopeId) => policies.effectiveSubmitMode(scopeId),
-        resolveOwnerSourceAdmission: (scopeId, ownerId) => ownerSource.admission({ scopeId, ownerId }),
+        resolveOwnerSourceAdmission: async () => "ready",
+        resolveCanonicalProviderAuthority: async () => ({
+          driverKind: "claude_code",
+          selection: { instanceId: "claude_shared", model: "claude-opus-4-6" },
+          currentOwnerRoute: true,
+        }),
         requestDispatch,
         createQueuedTurnId: () => "qturn_default_contributor_prompt",
       });
@@ -230,7 +211,7 @@ describe("shared coding execution (S09)", () => {
         role: actorId === collaborationActors.owner ? "owner" as const : "editor" as const,
       });
       repository.setSharedAuthorizer(authorize);
-      const queued = await repository.enqueueSharedQueuedTurn(owner, aiRequest(70, collaborationActors.editor));
+      const queued = await repository.enqueueSharedQueuedTurn(owner, aiRequest(70, collaborationActors.editor, 1, true));
       const commands = createCommands(undefined, authorize);
       const cancelled = await commands.cancel(control(collaborationActors.editor, queued.id, 71, 71, await revision()));
       expect(cancelled.request?.state).toBe("cancelled");
@@ -239,16 +220,18 @@ describe("shared coding execution (S09)", () => {
       ]);
       await fixture.db.updateTable("collaboration_grants").set({ preset: "viewer", updated_at: now })
         .where("scope_id", "=", parentId).where("audience_actor_id", "=", collaborationActors.editor).execute();
-      await expect(repository.enqueueSharedQueuedTurn(
+      const ignoredLegacyGrant = await repository.enqueueSharedQueuedTurn(
         owner,
-        aiRequest(78, collaborationActors.editor, await revision()),
-      )).resolves.toMatchObject({ requestingActorId: collaborationActors.editor, state: "queued" });
+        aiRequest(78, collaborationActors.editor, await revision(), true),
+      );
+      expect(ignoredLegacyGrant.requestingActorId).toBe(collaborationActors.editor);
+      await commands.cancel(control(collaborationActors.editor, ignoredLegacyGrant.id, 79, 79, await revision()));
       await fixture.db.updateTable("collaboration_resource_bindings")
         .set({ readiness: "blocked", blocker: "test_blocked" })
         .where("resource_scope_id", "=", collaborationIds.scope).execute();
       await expect(repository.enqueueSharedQueuedTurn(
         owner,
-        aiRequest(77, collaborationActors.editor, await revision()),
+        aiRequest(77, collaborationActors.editor, await revision(), true),
       )).rejects.toMatchObject({ code: "unavailable" });
     });
 
@@ -881,7 +864,7 @@ function runInput(instanceId = "claude_shared", model = "claude-opus-4-6") {
   };
 }
 
-function aiRequest(index: number, actorId: string, expectedRevision = 1) {
+function aiRequest(index: number, actorId: string, expectedRevision = 1, currentOwnerRoute = false) {
   return {
     chatId: collaborationIds.chat, scopeId: collaborationIds.scope,
     queuedTurnId: `qturn_s09_${index}_${actorId}`, clientRequestId: uuid(index),
@@ -889,6 +872,13 @@ function aiRequest(index: number, actorId: string, expectedRevision = 1) {
     payloadHash: index.toString(16).padStart(64, "0"), expectedRevision,
     parts: [{ type: "text" as const, text: `Request ${index}` }],
     interactionMode: "default", permissionMode: "supervised", capabilitySnapshot, acceptedAt: now,
+    ...(currentOwnerRoute ? {
+      canonicalProviderAuthority: {
+        driverKind: "claude_code" as const,
+        selection: { instanceId: "claude_shared", model: "claude-opus-4-6" },
+        currentOwnerRoute: true as const,
+      },
+    } : {}),
   };
 }
 

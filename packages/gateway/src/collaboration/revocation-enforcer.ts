@@ -119,6 +119,26 @@ export class SandboxRuntimeRegistry {
     return stopped;
   }
 
+  /** Revokes and stops every shared runtime before owner provider authority changes. */
+  async stopAll(): Promise<number> {
+    const all = [...this.bindings.values()];
+    for (const binding of all) {
+      this.bindings.delete(binding.runtimeHandle);
+      this.notifyStop(binding);
+    }
+    let stopped = 0;
+    for (const binding of all) {
+      try {
+        await this.options.client.stopRuntime({ runtimeHandle: binding.runtimeHandle });
+        stopped += 1;
+      } catch (error: unknown) {
+        console.warn("[collaboration-revocation] sandbox runtime stop failed",
+          error instanceof Error ? error.name : "UnknownError");
+      }
+    }
+    return stopped;
+  }
+
   /** Waits for eviction stops started so far (tests and shutdown). */
   async settle(): Promise<void> {
     await this.inFlight;

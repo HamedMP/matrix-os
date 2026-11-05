@@ -162,6 +162,7 @@ describe("ProviderSettingsStore", () => {
     snapshot?: () => AiProviderSnapshotV3;
     fundingSummary?: { funding: FundedAiFundingSummary; policy: FundedAiEffectivePolicy } | Error;
     genericModelCatalog?: GenericHarnessModelCatalog | Error;
+    prepareSharedAiRouteChange?: () => Promise<void>;
   } = {}) {
     let nextId = 0;
     return new ProviderSettingsStore({
@@ -174,6 +175,7 @@ describe("ProviderSettingsStore", () => {
       accountLifecycle: options.withLifecycle === false ? undefined : lifecycle,
       loginCoordinator: options.withLogin === false ? undefined : login,
       runtimeCoordinator: options.withRuntime === false ? undefined : runtime,
+      ...(options.prepareSharedAiRouteChange ? { prepareSharedAiRouteChange: options.prepareSharedAiRouteChange } : {}),
       fundingSummaryReader: options.fundingSummary === undefined ? undefined : {
         getFundingSummary: vi.fn(async () => {
           if (options.fundingSummary instanceof Error) throw options.fundingSummary;
@@ -190,6 +192,19 @@ describe("ProviderSettingsStore", () => {
       idGenerator: () => `generated_${++nextId}`,
     });
   }
+
+  it("drains shared project AI before persisting a route-authority mutation", async () => {
+    const prepareSharedAiRouteChange = vi.fn(async () => undefined);
+    const store = createStore({ prepareSharedAiRouteChange });
+    const snapshot = await store.getSnapshot();
+    await store.mutate({
+      type: "set_gateway_budget",
+      expectedRevision: snapshot.revision,
+      idempotencyKey: "drain_shared_ai_before_budget_change",
+      monthlyBudgetMicrousd: 7_000_000,
+    });
+    expect(prepareSharedAiRouteChange).toHaveBeenCalledOnce();
+  });
 
   it("projects fresh V3 truth and persists owner configuration without readiness or usage copies", async () => {
     const store = createStore();

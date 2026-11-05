@@ -43,6 +43,7 @@ import {
 import { ProviderSettingsStoreError } from "./provider-settings-errors.js";
 import {
   applyProviderConfigurationMutation,
+  providerSettingsMutationChangesExecutionAuthority,
   type ProviderConfigurationMutation,
 } from "./provider-settings-mutations.js";
 import { projectProviderSettings } from "./provider-settings-projector.js";
@@ -94,6 +95,8 @@ export interface ProviderSettingsStoreWriter {
 interface ProviderSettingsStoreOptions {
   observationScope?: () => "canonical_matrix" | undefined;
   prepareNativeCodexRevocation?: () => Promise<() => Promise<void>>;
+  /** Drains shared project AI before a mutation can invalidate its current owner route. */
+  prepareSharedAiRouteChange?: () => Promise<void>;
   claudeNativeAccountMetadataReader?: ClaudeNativeAccountMetadataReader;
   codexNativeAccountMetadataReader?: CodexNativeAccountMetadataReader;
   hermesNativeAccountMetadataReader?: () => Promise<CodexNativeAccountMetadata | null>;
@@ -117,6 +120,7 @@ export class ProviderSettingsStore implements ProviderSettingsStoreWriter {
   readonly #observationScope?: ProviderSettingsStoreOptions["observationScope"];
   readonly #reader: CanonicalProviderSnapshotReader;
   readonly #prepareNativeCodexRevocation?: () => Promise<() => Promise<void>>;
+  readonly #prepareSharedAiRouteChange?: () => Promise<void>;
   readonly #claudeAccountMetadata?: ClaudeNativeAccountMetadataReader;
   readonly #nativeAccountMetadata?: CodexNativeAccountMetadataReader;
   readonly #hermesAccountMetadata?: () => Promise<CodexNativeAccountMetadata | null>;
@@ -150,6 +154,7 @@ export class ProviderSettingsStore implements ProviderSettingsStoreWriter {
     this.#claudeAccountMetadata = options.claudeNativeAccountMetadataReader;
     this.#nativeAccountMetadata = options.codexNativeAccountMetadataReader;
     this.#prepareNativeCodexRevocation = options.prepareNativeCodexRevocation;
+    this.#prepareSharedAiRouteChange = options.prepareSharedAiRouteChange;
     this.#hermesAccountMetadata = options.hermesNativeAccountMetadataReader;
     this.#dependencies = options.dependencyCoordinator;
     this.#lifecycle = options.accountLifecycle;
@@ -694,6 +699,15 @@ export class ProviderSettingsStore implements ProviderSettingsStoreWriter {
         id: this.#id,
         now: this.#now(),
       });
+      if (providerSettingsMutationChangesExecutionAuthority(mutation)) {
+        try {
+          await this.#prepareSharedAiRouteChange?.();
+        } catch (error: unknown) {
+          console.warn("[provider-settings] shared AI route revocation failed",
+            error instanceof Error ? error.name : "UnknownError");
+          throw new ProviderSettingsStoreError("runtime_unavailable", 503);
+        }
+      }
       if (codexNativeCompletion) {
         const generation = codexMetadata && nativeAccountPrincipalFingerprint(codexMetadata);
         const target = config.harnesses.find(row => "harnessInstanceId" in mutation && row.id === mutation.harnessInstanceId);

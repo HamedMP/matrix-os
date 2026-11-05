@@ -294,6 +294,18 @@ describe("revocation enforcer", () => {
     expect(enforcer.isRevoked(scopeId, "a")).toBe(false);
   });
 
+  it("revokes every runtime before an owner provider-route mutation completes", async () => {
+    const stopRuntime = vi.fn(async (input: { runtimeHandle: string }) => ({
+      runtimeHandle: input.runtimeHandle, executionGeneration: "9", state: "stopped" as const,
+    }));
+    const runtimes = new SandboxRuntimeRegistry({ client: { stopRuntime }, maxEntries: 4, startTimer: false });
+    runtimes.bind({ scopeId, actorId: "a", runtimeHandle: "runtime_11111111111111111111111111111111" });
+    runtimes.bind({ scopeId: "20000000-0000-4000-8000-000000000002", actorId: "b", runtimeHandle: "runtime_22222222222222222222222222222222" });
+    await expect(runtimes.stopAll()).resolves.toBe(2);
+    expect(runtimes.size).toBe(0);
+    expect(stopRuntime).toHaveBeenCalledTimes(2);
+  });
+
   it("stops and evicts runtime bindings that outlive the maximum run age", async () => {
     let clock = Date.parse("2026-09-21T10:00:00.000Z");
     const stopRuntime = vi.fn(async (input: { runtimeHandle: string }) => ({ runtimeHandle: input.runtimeHandle, executionGeneration: "9", state: "stopped" as const }));

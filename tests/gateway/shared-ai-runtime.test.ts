@@ -17,6 +17,30 @@ import {
   sharedDispatchFenceMatches,
   sharedProviderIdentityFor,
 } from "../../packages/gateway/src/collaboration/shared-ai-runtime.js";
+import {
+  currentOwnerRouteMatches,
+  resolveCurrentOwnerRoute,
+} from "../../packages/gateway/src/collaboration/shared-run-owner-source.js";
+import { makeAiProviderSnapshot } from "../fixtures/ai-provider-snapshot.js";
+import { providerSettingsMutationChangesExecutionAuthority } from "../../packages/gateway/src/ai-providers/provider-settings-mutations.js";
+
+function currentRouteSnapshot(revision = 1) {
+  const base = makeAiProviderSnapshot();
+  return {
+    ...base,
+    revision,
+    instances: base.instances.map((instance) => ({
+      ...instance,
+      id: "claude_code_default",
+      driverId: "claude_code",
+    })),
+    active: {
+      providerInstanceId: "claude_code_default",
+      accessSourceId: "matrix_included",
+      modelId: "claude-sonnet-5",
+    },
+  };
+}
 
 describe("shared provider identity", () => {
   it("binds Claude to the owner's kernel access source and refuses a non-kernel source instead of falling back", () => {
@@ -25,6 +49,30 @@ describe("shared provider identity", () => {
     expect(sharedProviderIdentityFor("codex", { accessSourceId: null }))
       .toEqual({ driverKind: "codex", instanceId: "codex_default" });
     expect(() => sharedProviderIdentityFor("claude_code", { accessSourceId: null })).toThrow(SharedChatRunPreparationError);
+  });
+});
+
+describe("current owner route dispatch fence", () => {
+  it("accepts the immutable admission tuple only while the exact owner route and revision remain current", () => {
+    const admitted = resolveCurrentOwnerRoute(currentRouteSnapshot(3), Date.parse("2026-08-29T21:00:01.000Z"));
+    expect(admitted).not.toBeNull();
+    expect(currentOwnerRouteMatches(currentRouteSnapshot(3), admitted!, Date.parse("2026-08-29T21:00:01.000Z")))
+      .toBe(true);
+    expect(currentOwnerRouteMatches(currentRouteSnapshot(4), admitted!, Date.parse("2026-08-29T21:00:01.000Z")))
+      .toBe(false);
+    expect(currentOwnerRouteMatches({
+      ...currentRouteSnapshot(3),
+      active: { providerInstanceId: null, accessSourceId: null, modelId: null },
+    }, admitted!, Date.parse("2026-08-29T21:00:01.000Z"))).toBe(false);
+  });
+
+  it("drains shared authority only for Provider Settings mutations that can change execution routing", () => {
+    expect(providerSettingsMutationChangesExecutionAuthority({ type: "set_route" } as never)).toBe(true);
+    expect(providerSettingsMutationChangesExecutionAuthority({ type: "select_access_source" } as never)).toBe(true);
+    expect(providerSettingsMutationChangesExecutionAuthority({ type: "logout_account" } as never)).toBe(true);
+    expect(providerSettingsMutationChangesExecutionAuthority({ type: "set_gateway_budget" } as never)).toBe(true);
+    expect(providerSettingsMutationChangesExecutionAuthority({ type: "update_harness" } as never)).toBe(false);
+    expect(providerSettingsMutationChangesExecutionAuthority({ type: "start_login" } as never)).toBe(false);
   });
 });
 
