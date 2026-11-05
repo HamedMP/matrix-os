@@ -47,7 +47,7 @@ it("wires real source-origin reads and verified decision dependencies without cr
   await insertChat(f.data.db, "chat_origin_startup");
   const before = await f.data.db.selectFrom("bot_chat_bindings").selectAll().execute();
   expect(await f.services.routineOrigin!.read(OWNER, "chat_origin_startup")).toEqual({
-    sourceChatId: "chat_origin_startup", pending: [], deliveries: [], hasMore: false,
+    sourceChatId: "chat_origin_startup", pending: [], deliveries: [], hasMore: false, deliveryPending: false,
   });
   const read = await app().request("/api/chats/chat_origin_startup/routine-origin", {
     headers: { authorization: "Bearer fixture-owner-token" },
