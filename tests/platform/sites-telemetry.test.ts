@@ -26,6 +26,20 @@ beforeEach(async () => {
 afterAll(async () => destroyTestPlatformDb(db));
 
 describe('Matrix.page product telemetry', () => {
+  it('records an access-mode change made through publish update', async () => {
+    const captureEvent = vi.fn();
+    const service = createSitesService({ db, captureEvent, storage: {
+      async putObject() { return {}; }, async getObject() { return { body: null }; },
+    } });
+
+    const first = await service.deploy(owner, deployment);
+    captureEvent.mockClear();
+    await service.deploy(owner, { ...deployment, accessMode: 'private_link', baseRevision: first.revision });
+
+    expect(captureEvent).toHaveBeenCalledWith(MATRIX_TELEMETRY_EVENTS.MATRIX_PAGE_ACCESS_MODE_CHANGED,
+      { previous_access_mode: 'public', access_mode: 'private_link' }, { distinctId: owner.ownerId });
+  });
+
   it('records successful owner and link lifecycle outcomes without content or credentials', async () => {
     const captureEvent = vi.fn();
     const service = createSitesService({ db, captureEvent, storage: {

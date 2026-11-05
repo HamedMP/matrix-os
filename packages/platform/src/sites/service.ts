@@ -127,6 +127,7 @@ export function createSitesService(options: {
         }, env);
         try {
             let operation: 'first_publish' | 'update' | 'republish' = 'first_publish';
+            let previousAccessMode: SiteRecord['accessMode'] | undefined;
             const result = await withSiteOwnerAdmission(db, owner.ownerId, async (trx) => {
                 check(); // The owner lock may have consumed the remaining publication budget.
                 await sql `SET LOCAL lock_timeout = '10s'`.execute(trx.executor);
@@ -137,6 +138,7 @@ export function createSitesService(options: {
                 operation = row.active_version
                     ? row.status === 'unpublished' ? 'republish' : 'update'
                     : 'first_publish';
+                previousAccessMode = row.access_mode;
                 check();
                 if (request.baseRevision !== undefined && row.revision !== request.baseRevision)
                     throw new SiteError('conflict');
@@ -172,6 +174,9 @@ export function createSitesService(options: {
             }, env);
             emitSiteTelemetry(captureEvent, MATRIX_TELEMETRY_EVENTS.MATRIX_PAGE_PUBLISHED,
                 { access_mode: result.accessMode, operation }, owner.ownerId);
+            if (operation !== 'first_publish' && previousAccessMode !== undefined && previousAccessMode !== result.accessMode)
+                emitSiteTelemetry(captureEvent, MATRIX_TELEMETRY_EVENTS.MATRIX_PAGE_ACCESS_MODE_CHANGED,
+                    { previous_access_mode: previousAccessMode, access_mode: result.accessMode }, owner.ownerId);
             return result;
         }
         catch (error) {

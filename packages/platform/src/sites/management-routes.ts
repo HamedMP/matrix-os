@@ -14,12 +14,15 @@ export function createSiteManagementRoutes(options: {
 }): Hono {
     const app = new Hono();
     app.use('*', bodyLimit({ maxSize: 15 * 1024 * 1024, onError: c => c.json({ error: 'Site unavailable' }, 413) }));
-    async function owner(c: Context) {
+    async function owner(c: Context, allowAccessLinkPaging = false) {
         if (options.platformSecret.length < 32)
             return null;
         const handle = SafeHandleSchema.safeParse(c.req.param('handle'));
         const appSlug = SiteAppSlugSchema.safeParse(c.req.param('appSlug'));
-        const query = z.object({ runtimeSlot: RuntimeSlotSchema.default('primary') }).strict().safeParse(c.req.query());
+        const query = z.object({
+            runtimeSlot: RuntimeSlotSchema.default('primary'),
+            ...(allowAccessLinkPaging ? { limit: z.string().optional(), cursor: z.string().optional() } : {}),
+        }).strict().safeParse(c.req.query());
         if (!handle.success || !appSlug.success || !query.success)
             throw new SiteError('invalid_request');
         const machine = await getRunningUserMachineByHandle(options.db, handle.data, query.data.runtimeSlot);
@@ -76,7 +79,7 @@ export function createSiteManagementRoutes(options: {
         return null; throw error; })); if (!input.success)
         throw new SiteError('invalid_request'); return c.json(await options.service.rollback(identity, input.data.versionId, input.data.baseRevision)); });
     app.get('/:appSlug/access-links', async c => {
-        const identity = await owner(c); if (!identity) return denied(c);
+        const identity = await owner(c, true); if (!identity) return denied(c);
         const query = SiteAccessLinksQuerySchema.safeParse({
             limit: c.req.query('limit'), cursor: c.req.query('cursor'),
         });

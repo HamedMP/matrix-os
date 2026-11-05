@@ -165,17 +165,18 @@ export function createSitePublicRoutes(options: {
         flights++;
         try {
             if (!await authorizedSite(c)) throw new SiteError('not_found');
-            return await options.service.admitted(c.req.param('reference'), async (site, trx) => {
+            const accessMode = await options.service.admitted(c.req.param('reference'), async (site, trx) => {
                 const form = site.config.forms.find(f => f.id === formId.data);
                 if (!form)
                     throw new SiteError('not_found');
                 if (!validateSiteForm(form, input.data.fields).success)
                     throw new SiteError('invalid_request');
                 await options.submit(site, trx, formId.data, input.data);
-                emitSiteTelemetry(options.captureEvent, MATRIX_TELEMETRY_EVENTS.MATRIX_PAGE_FORM_SUBMITTED,
-                    { access_mode: site.accessMode });
-                return c.json({ accepted: true });
+                return site.accessMode;
             }, c.req.header('cookie'));
+            emitSiteTelemetry(options.captureEvent, MATRIX_TELEMETRY_EVENTS.MATRIX_PAGE_FORM_SUBMITTED,
+                { access_mode: accessMode });
+            return c.json({ accepted: true });
         }
         finally {
             flights--;

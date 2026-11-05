@@ -93,6 +93,25 @@ describe('private Matrix.page routes', () => {
       { access_mode: 'private_link' });
   });
 
+  it('does not record a form success when transaction commit acknowledgement fails', async () => {
+    const { app, authorize, admitted, captureEvent } = fixture();
+    const formSite = { ...privateSite, config: { data: {}, forms: [{ id: 'rsvp', title: 'RSVP', fields: { name: { type: 'text' as const, required: true } } }] } };
+    authorize.mockResolvedValue(formSite);
+    admitted.mockImplementation(async (_reference, work) => {
+      await work(formSite, {});
+      throw new Error('commit acknowledgement lost');
+    });
+
+    const response = await app.request(request(`/${siteId}/forms/rsvp`, {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ fields: { name: 'Ada' }, idempotencyKey: 'commit-failed-submission' }),
+    }));
+
+    expect(response.status).toBe(503);
+    expect(captureEvent).not.toHaveBeenCalledWith(MATRIX_TELEMETRY_EVENTS.MATRIX_PAGE_FORM_SUBMITTED,
+      expect.anything());
+  });
+
   it('never serves private files to an unrelated opaque sandbox, even when its browser sends a viewer cookie',async()=>{
     const {app,authorize,asset}=fixture();authorize.mockResolvedValue(privateSite);
     const viewer=`__Secure-matrix_site_viewer_${siteId.replaceAll('-', '')}=${randomUUID()}.${'s'.repeat(43)}`;
