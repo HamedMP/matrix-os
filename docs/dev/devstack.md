@@ -60,3 +60,42 @@ flox activate -- node --test tests/scripts/devstack-local.test.mjs
 ```
 
 These tests use real temporary Git roots and an injected OrbStack command runner. They prove adapter claim/ownership/lifecycle/feedback behavior, not machine bootstrap, one-way source synchronization, live provider execution or surface parity. Public website documentation belongs in a separate `FinnaAI/matrix-os-site` PR when this operator workflow is ready for public delivery.
+
+## Preparing a source Shell
+
+The Shell, Platform and Relay can run as ordinary Node services in Docker. Native
+Kernel workloads and Terminal still need the prepared Linux execution environment.
+Reuse an unchanged production Shell build across worktrees; start a separate
+development Shell only for a worktree that changes frontend code. Its source,
+dependencies, `.next` directory, port and process ownership must remain separate
+from the shared baseline. Keep its API and WebSocket URLs bound to the explicit
+runtime route, including when another preview is open in the same browser.
+
+Set `MATRIX_DEVSTACK_ASSET_PREFIX` to the exact `/vm/<handle>/~runtime/<slot>`
+route for a development Shell. Set `MATRIX_ALLOWED_DEV_ORIGINS` to its exact
+external hostname. These settings do not create routing, TLS or authentication.
+Preserve the public Host **including its port** through the trusted proxy chain;
+dropping a development port can fail Next's Server Actions origin checks.
+
+Next 16.4 also expects that asset prefix on its upstream `/_next/hmr` upgrade.
+Platform strips the explicit runtime prefix before forwarding to a runtime, so
+the prepared runtime proxy must restore the selected Shell's prefix for that
+HMR path. Keep ordinary API/Terminal WebSocket routing unchanged. Preserve
+Upgrade/Connection headers, authentication, strict TLS and restrictive upstream
+cache directives. A normal page returning 200 does not prove HMR works: observe
+the authenticated browser connection and a visible source edit without reloading.
+
+Warm a source Shell before replacing a working preview route. Keep the baseline
+available when startup or compilation fails. In local qualification a cold
+Webpack build exceeded a 5 GiB native machine budget; raising memory alone did
+not establish a usable frontend loop. A Docker source Shell with an explicit
+heap budget was qualified separately. Count heavy frontend watchers separately
+from lightweight native runtime slots and set capacity for available resources.
+The adapter's numeric active-instance limit is not a memory admission controller.
+
+Machine preparation, vendor configuration, source transport, Shell-mode routing,
+native Terminal installation and private test-credit allocation remain operator
+steps. The local adapter does not provision these prerequisites. Replaying
+identity initialization must preserve owner data, existing integration mappings,
+credentials, funding balances, policy limits and expiry; never replenish credits
+as part of start, resume or source synchronization.
