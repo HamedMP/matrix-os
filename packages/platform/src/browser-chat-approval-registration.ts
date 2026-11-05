@@ -1,3 +1,4 @@
+import { createRoutineOriginVerificationRoutes } from "./routine-origin-proof-routes.js";
 import { createRoutineActionVerificationRoutes } from "./routine-action-routes.js";
 import type { Hono } from "hono";
 import { createBrowserChatApprovalRoutes } from "./browser-chat-approval-routes.js";
@@ -11,6 +12,7 @@ export function registerBrowserChatApprovalRoutes(app: Hono<any>, options: { pla
     ? new BrowserApprovalMachineLookup({ databaseUrl: options.env.PLATFORM_DATABASE_URL }) : undefined;
   app.route("/", createBrowserChatApprovalRoutes({ enabled, platformSecret: options.platformSecret, lookup: options.lookup ?? owned }));
   app.route("/", createRoutineActionVerificationRoutes({ platformSecret: options.platformSecret, lookup: options.lookup ?? owned }));
+  app.route("/", createRoutineOriginVerificationRoutes({ platformSecret: options.platformSecret, lookup: options.lookup ?? owned }));
   // Injection remains caller-owned; only this factory closes its own resource.
   return () => owned?.close() ?? Promise.resolve();
 }

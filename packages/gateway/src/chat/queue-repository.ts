@@ -3,7 +3,7 @@ import {associateAdmittedDriveChat} from "./drive-project-database.js";
 import { releaseTerminalQueuedSteer } from "./queued-steer-cleanup.js";
 import {admittedContextReferenceParts} from "./context-reference-parts.js";
 import { chatContextRequestHash } from "./agent-context.js";
-import { queuedRunContext, validateQueuedAgentDriver } from "./queued-context.js";
+import { hasAttestedCreationChoice, queuedRunContext, validateQueuedAgentDriver } from "./queued-context.js";
 import { randomUUID } from "node:crypto";
 import {
   ChatRunContextSchema,
@@ -209,13 +209,15 @@ export class SharedChatQueueError extends Error {
 }
 
 export function toQueuedTurn(row: Selectable<ChatQueuedTurnsTable>): CanonicalChatQueuedTurn {
+  const context = row.context_snapshot == null ? undefined : ChatRunContextSchema.parse(parseJson(row.context_snapshot));
   return CanonicalChatQueuedTurnSchema.parse({
     id: row.id,
     chatId: row.chat_id,
     clientRequestId: row.client_request_id,
     position: Number(row.position),
     parts: parseJson(row.parts),
-    ...(row.context_snapshot == null ? {} : { context: parseJson(row.context_snapshot) }),
+    ...(context ? { context } : {}),
+    ...(context?.routineCreation ? { routineCreation: context.routineCreation } : {}),
     selection: parseJson(row.selection),
     interactionMode: row.interaction_mode,
     permissionMode: row.permission_mode,
@@ -787,7 +789,7 @@ export class ChatQueueRepository {
         && JSON.stringify(existingParts) === JSON.stringify(parts)) {
         return { queuedTurn: toQueuedTurn(queued) };
       }
-      if (pendingSteer || queued.status !== "queued" || chat.lifecycle !== "active"
+      if (hasAttestedCreationChoice(queued.context_snapshot) || pendingSteer || queued.status !== "queued" || chat.lifecycle !== "active"
         || Number(chat.revision) !== input.baseRevision) {
         throw new ChatConflictError(chatId, Number(chat.revision));
       }

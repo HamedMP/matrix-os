@@ -20,6 +20,7 @@ export const ChatContextSnapshotSchema = z.object({
 export const ChatRunContextSchema = z.object({
   version: z.literal(1),
   requestHash: z.string().regex(/^[a-f0-9]{64}$/),
+  routineCreation: z.literal("matrix").optional(),
   agent: z.object({
     id: ChatAgentIdSchema,
     revision: z.number().int().min(1).max(Number.MAX_SAFE_INTEGER),

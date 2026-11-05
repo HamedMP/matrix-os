@@ -38,7 +38,7 @@ export function hasChatMentions(parts: CanonicalCreateChatTurnRequest["parts"]):
   return parts.some((part) => part.type === "resource_reference" && ["agent", "chat"].includes(part.resource.kind));
 }
 
-export function chatContextRequestHash<T extends Pick<CanonicalCreateChatTurnRequest, "parts" | "selection" | "interactionMode" | "permissionMode" | "executionRoot">>(input: T): string {
+export function chatContextRequestHash<T extends Pick<CanonicalCreateChatTurnRequest, "parts" | "selection" | "interactionMode" | "permissionMode" | "executionRoot" | "routineCreation">>(input: T): string {
   return createHash("sha256").update(canonicalChatTurnRequestIdentity(input)).digest("hex");
 }
 
