@@ -113,10 +113,10 @@ function CollaborationHome({ api, openInvitation, openChat, openTerminal, openPr
         if (!active) return;
         const inboxPage = CollaborationDiscoveryResponseSchema.parse(inbox);
         const sharedPage = CollaborationDiscoveryResponseSchema.parse(shared);
-        setItems([
+        setItems(appendUniqueDiscoveryItems([], [
           ...inboxPage.items,
           ...sharedPage.items,
-        ]);
+        ]));
         setInboxCursor(inboxPage.nextCursor ?? null);
         setSharedCursor(sharedPage.nextCursor ?? null);
         setError(false);
@@ -140,9 +140,7 @@ function CollaborationHome({ api, openInvitation, openChat, openTerminal, openPr
       const inboxPage = inbox ? CollaborationDiscoveryResponseSchema.parse(inbox) : null;
       const sharedPage = shared ? CollaborationDiscoveryResponseSchema.parse(shared) : null;
       const additions = [...(inboxPage?.items ?? []), ...(sharedPage?.items ?? [])];
-      setItems((current) => additions.reduce<DiscoveryItem[]>((combined, item) => (
-        combined.some((existing) => discoveryKey(existing) === discoveryKey(item)) ? combined : [...combined, item]
-      ), current));
+      setItems((current) => appendUniqueDiscoveryItems(current, additions));
       if (inboxPage) setInboxCursor(inboxPage.nextCursor ?? null);
       if (sharedPage) setSharedCursor(sharedPage.nextCursor ?? null);
     } catch (failure: unknown) {
@@ -321,6 +319,17 @@ function homeStateMessage(home: DiscoveryItem["home"]): string {
 function discoveryKey(item: DiscoveryItem): string {
   if (item.status === "invited") return `invite:${item.invitationId}`;
   return item.status === "organization_pending" ? `org:${item.scopeId}` : `scope:${item.scopeId}`;
+}
+
+function appendUniqueDiscoveryItems(current: DiscoveryItem[], additions: DiscoveryItem[]): DiscoveryItem[] {
+  const seen = new Set(current.map(discoveryKey));
+  const combined = [...current];
+  for (const item of additions) {
+    if (seen.has(discoveryKey(item))) continue;
+    seen.add(discoveryKey(item));
+    combined.push(item);
+  }
+  return combined;
 }
 
 function openAcceptedChat(

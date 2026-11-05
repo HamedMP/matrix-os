@@ -15,6 +15,36 @@ const scopeId = "10000000-0000-4000-8000-000000000001";
 const chatId = "chat_one";
 
 describe("Chat collaboration sharing", () => {
+  it("shows an accepted organization project once when inbox and shared discovery overlap", async () => {
+    const projectScopeId = "10000000-0000-4000-8000-000000000100";
+    const projectScope = {
+      id: projectScopeId, ownerId: "user_owner", kind: "project", resourceId: "project_duplicate",
+      membershipMode: "direct", lifecycle: "shared", revision: "1", authEpoch: "1",
+      authorityGeneration: "1", role: "editor",
+      capabilities: { read: true, discuss: true, manageMembers: false, requestAi: false,
+        observeTerminal: false, controlTerminal: false, stopTerminal: false },
+    } as const;
+    const discoveredProject = {
+      scopeId: projectScopeId, runtimeId: "runtime_owner", ownerId: "user_owner",
+      kind: "project" as const, authorityGeneration: 1, status: "accepted" as const,
+      organizationId: "org_matrix_team", resource: {
+        scope: projectScope,
+        project: { id: "project_duplicate", scopeId: projectScopeId, status: "active", resources: [] },
+        overview: { projectId: "project_duplicate", scopeId: projectScopeId,
+          name: "One organization project", status: "active", chats: [] },
+      },
+    };
+    const api = { baseUrl: "https://app.matrix-os.com",
+      get: vi.fn(async () => ({ items: [discoveredProject] })),
+      post: vi.fn(), delete: vi.fn(),
+    };
+
+    render(<ChatCollaboration view={{ kind: "home" }} api={api} actorId="user_editor" />);
+
+    expect(await screen.findAllByText("One organization project")).toHaveLength(1);
+    expect(screen.getAllByRole("button", { name: "Open project" })).toHaveLength(1);
+  });
+
   it("can reserve accepted shared projects for the Chats rail while keeping project invitations visible", async () => {
     const projectScopeId = "10000000-0000-4000-8000-000000000101";
     const projectInvitationId = "30000000-0000-4000-8000-000000000101";
