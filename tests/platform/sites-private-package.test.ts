@@ -58,7 +58,7 @@ describe('private site package', () => {
       { path: 'assets/override.css', contentType: 'text/css', body: bytes('body{color:blue}') },
       { path: 'assets/base.css', contentType: 'text/css', body: bytes('body{color:red}') },
       { path: 'assets/lazy.js', contentType: 'text/javascript', body: bytes('export default true;') },
-      { path: 'assets/main.js', contentType: 'text/javascript', body: bytes('window.lazyHref = "assets/lazy.css"; window.lazyChunk = "assets/lazy.js"; window.loadStyle = () => import("./lazy.css");') },
+      { path: 'assets/main.js', contentType: 'text/javascript', body: bytes('const __vite__mapDeps=(i,m=__vite__mapDeps,d=(m.f||(m.f=["assets/lazy.css","assets/lazy.js"])))=>i.map(i=>d[i]); window.loadStyle = () => import("./lazy.css");') },
     ], 'index.html');
     const hrefs = [...html.matchAll(/<link rel="stylesheet" href="([^"]+)">/g)].map(match => match[1]!);
     expect(hrefs).toHaveLength(2);
@@ -71,6 +71,19 @@ describe('private site package', () => {
     const main = Buffer.from(imports['matrix-site:assets/main.js']!.split(',')[1]!, 'base64').toString('utf8');
     expect(main).toContain('data:text/css;base64,');
     expect(main).toContain('data:text/javascript,export{}');
+  });
+
+  it('does not interpret ordinary quoted app strings as build artifact paths', async () => {
+    const html = await packagePrivateSiteHtml([
+      { path: 'index.html', contentType: 'text/html', body: bytes('<script type="module" src="./assets/main.js"></script>') },
+      { path: 'assets/main.js', contentType: 'text/javascript', body: bytes('window.navigate("../.."); window.label = "assets/logo.png";') },
+      { path: 'assets/logo.png', contentType: 'image/png', body: Buffer.from([1, 2, 3]) },
+    ], 'index.html');
+    const mapText = html.match(/<script type="importmap">([^<]+)<\/script>/)?.[1];
+    const imports = JSON.parse(mapText!).imports as Record<string, string>;
+    const main = Buffer.from(imports['matrix-site:assets/main.js']!.split(',')[1]!, 'base64').toString('utf8');
+    expect(main).toContain('window.navigate("../..")');
+    expect(main).toContain('window.label = "assets/logo.png"');
   });
 
   it('rejects repeated resource expansion before constructing an oversized output', async () => {

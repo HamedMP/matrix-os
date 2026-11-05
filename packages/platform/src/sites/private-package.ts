@@ -82,8 +82,27 @@ function applyReplacements(code: string, replacements: Array<{ start: number; en
   return code;
 }
 
+function rewriteVitePreloadMetadata(code: string, path: string, files: Map<string, PrivateSiteFile>, uriFor: (path: string) => string): string {
+  const budget = new ExpansionBudget(code);
+  return code.replace(
+    /(\b__vite__mapDeps\b[\s\S]*?\.f\s*\|\|\s*\(\s*[A-Za-z_$][\w$]*\.f\s*=\s*\[)([\s\S]*?)(\]\s*\)\s*\))/g,
+    (_match, prefix: string, entries: string, suffix: string) => {
+      const rewritten = entries.replace(/(['"])(\/?[^'"\n]+)\1/g, (entry, _quote: string, raw: string) => {
+        const resolved = resolvedPath(files, raw, path);
+        const file = resolved ? files.get(resolved) : undefined;
+        if (!file) return entry;
+        const isCode = /(?:java|ecma)script|application\/x-javascript/.test(file.contentType) || /\.(?:m?js)$/i.test(file.path);
+        // The real dynamic import is mapped separately. Preload a bounded empty
+        // module so Vite's helper succeeds without a private network request.
+        return budget.replacement(entry, JSON.stringify(isCode ? 'data:text/javascript,export{}' : uriFor(resolved!)));
+      });
+      return `${prefix}${rewritten}${suffix}`;
+    },
+  );
+}
+
 async function rewriteModule(code: string, path: string, files: Map<string, PrivateSiteFile>, uriFor: (path: string) => string): Promise<string> {
-  let budget = new ExpansionBudget(code);
+  const budget = new ExpansionBudget(code);
   code = code.replace(/new\s+URL\(\s*(['"])([^'"]+)\1\s*,\s*import\.meta\.url\s*\)/g, (match, _quote: string, raw: string) => {
     const resolved = resolvedPath(files, raw, path);
     if (!resolved) return match;
@@ -103,20 +122,9 @@ async function rewriteModule(code: string, path: string, files: Map<string, Priv
     replacements.push({ start: imported.s, end: imported.e, value: imported.d >= 0 ? JSON.stringify(specifier) : specifier });
   }
   code = applyReplacements(code, replacements);
-  // Vite's dynamic-import preload map names lazy CSS as ordinary strings rather
-  // than module imports. Convert only known non-code files; activation remains
-  // under Vite's own link creation and therefore stays lazy.
-  budget = new ExpansionBudget(code);
-  return code.replace(/(['"])(\/?[^'"\n]+)\1/g, (match, _quote: string, raw: string) => {
-    const resolved = resolvedPath(files, raw, path);
-    const file = resolved ? files.get(resolved) : undefined;
-    if (!file) return match;
-    const isCode = /(?:java|ecma)script|application\/x-javascript/.test(file.contentType) || /\.(?:m?js)$/i.test(file.path);
-    // Vite preload dependency arrays repeat lazy JS chunk paths as strings. The
-    // real dynamic import is already mapped above; preload a bounded empty data
-    // module so the helper succeeds without a private network request.
-    return budget.replacement(match, JSON.stringify(isCode ? 'data:text/javascript,export{}' : uriFor(resolved!)));
-  });
+  // Vite names lazy CSS/JS chunks as strings in its generated dependency map.
+  // Restrict rewriting to that metadata so ordinary app strings stay untouched.
+  return rewriteVitePreloadMetadata(code, path, files, uriFor);
 }
 
 function moduleData(file: PrivateSiteFile, uriFor: (path: string) => string, code?: string): string {
