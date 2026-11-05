@@ -1,18 +1,20 @@
 import { z } from 'zod/v4';
 const amount = z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER);
-const count = z.number().int().nonnegative().max(10_000_000);
+const admissionCount = z.number().int().nonnegative().max(10_000_000);
+// Reports must reach discrepancy handling even when they exceed an admission ceiling.
+const observedCount = z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER);
 const identifier = z.string().min(1).max(160);
 export const OperatorProbeHashSchema = z.string().regex(/^[a-f0-9]{64}$/);
 const rates = {
   inputRateThousandths: amount, outputRateThousandths: amount, cacheReadRateThousandths: amount,
   cacheWrite5mRateThousandths: amount, cacheWrite1hRateThousandths: amount,
 };
-export const OperatorProbeUsageSchema = z.strictObject({ inputTokens: count, outputTokens: count,
-  cacheReadTokens: count, cacheWrite5mTokens: count, cacheWrite1hTokens: count });
+export const OperatorProbeUsageSchema = z.strictObject({ inputTokens: observedCount, outputTokens: observedCount,
+  cacheReadTokens: observedCount, cacheWrite5mTokens: observedCount, cacheWrite1hTokens: observedCount });
 export type OperatorProbeUsage = z.infer<typeof OperatorProbeUsageSchema>;
 const policyShape = z.strictObject({ canonicalModelId: identifier, nativeModelId: identifier,
   pricingVersion: identifier, pricingValidThrough: z.iso.datetime(), requestFingerprint: OperatorProbeHashSchema,
-  maximumInputTokens: count.positive(), maximumOutputTokens: z.literal(1), ...rates,
+  maximumInputTokens: admissionCount.positive(), maximumOutputTokens: z.literal(1), ...rates,
   maximumCostMicrousd: amount.positive() });
 export type OperatorProbePolicy = z.infer<typeof policyShape>;
 function checked(value: bigint): number {

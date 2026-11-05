@@ -9,7 +9,7 @@ import { runPlatformStartupMigrations } from '../../packages/platform/src/databa
 import { createOperatorProbeBudgetRepository, initializeOperatorProbeBudget } from '../../packages/platform/src/operator-probe-budget/repository.js';
 import { runOperatorProbeBudgetMigrations } from '../../packages/platform/src/operator-probe-budget/migration.js';
 import { beginInput, config, policy, postgresFixture, usage } from './operator-probe-budget-fixture.js';
-describe('lifetime operator wallet with independent real PostgreSQL pools', () => {
+describe.skipIf(!process.env.MATRIX_TEST_POSTGRES_URL)('lifetime operator wallet with independent real PostgreSQL pools', () => {
   let fixture: Awaited<ReturnType<typeof postgresFixture>>;
   let db: ReturnType<typeof fixture.connect>;
   let clock: Date;
@@ -21,6 +21,20 @@ describe('lifetime operator wallet with independent real PostgreSQL pools', () =
   function finalize(attempt: Awaited<ReturnType<typeof started>>['attempt']) { return { protocolVersion: 1 as const,
     probeId: attempt.probeId, executionId: attempt.executionId, economicHash: attempt.economicHash,
     outcome: 'ready' as const, usage, providerReferenceHash: 'b'.repeat(64) }; }
+  async function authority() {
+    const portProbe = createServer();
+    await new Promise<void>(resolve => portProbe.listen(0, '127.0.0.1', resolve));
+    const address = portProbe.address();
+    if (!address || typeof address === 'string') throw new Error('Synthetic port unavailable');
+    await new Promise<void>((resolve, reject) => portProbe.close(error => error ? reject(error) : resolve()));
+    const service = await startOperatorProbeAuthority({
+      MATRIX_FUNDED_AI_OPERATOR_PROBE_AUTHORITY_DATABASE_URL: fixture.databaseUrl,
+      MATRIX_FUNDED_AI_OPERATOR_PROBE_AUTHORITY_TOKEN: 's'.repeat(32),
+      MATRIX_FUNDED_AI_OPERATOR_PROBE_BUDGET_ID: 'synthetic',
+      MATRIX_FUNDED_AI_OPERATOR_PROBE_AUTHORITY_PORT: String(address.port),
+    });
+    return { ...service, port: address.port };
+  }
   it('fails closed without an explicitly initialized wallet and never seeds at startup', async () => {
     await expect(store().begin(beginInput())).rejects.toThrow(); expect(await store().getStatus()).toBeNull();
   });
@@ -65,6 +79,56 @@ describe('lifetime operator wallet with independent real PostgreSQL pools', () =
     expect(await store().finalize(payload)).toMatchObject({ status: 'unknown' });
     expect((await store().getAttempt(attempt.probeId))?.status).toBe('settled');
   });
+  it('retains explicit unknown with valid counts until late terminal attribution and preserves bounded receipt history', async () => {
+    const { attempt } = await started();
+    const unknown = { ...finalize(attempt), outcome: 'unknown' as const };
+    const receipt = await store().finalize(unknown);
+    expect(receipt).toMatchObject({ status: 'unknown', costMicrousd: null });
+    expect(await store(fixture.connect()).getStatus()).toMatchObject({ heldMicrousd: policy.maximumCostMicrousd, settledMicrousd: 0 });
+    await expect(store().begin(beginInput())).rejects.toThrow();
+    await expect(store().finalize({ ...unknown, usage: { ...usage, inputTokens: 5 } })).rejects.toThrow();
+    await expect(store().finalize({ ...unknown, usage: null })).rejects.toThrow();
+    clock = new Date('2027-01-01T00:00:00Z');
+    expect(await store().finalize(finalize(attempt))).toMatchObject({ status: 'settled', costMicrousd: 25 });
+    expect(await store(fixture.connect()).getStatus()).toMatchObject({ heldMicrousd: 0, settledMicrousd: 25 });
+    expect(await store().finalize(unknown)).toEqual(receipt);
+    expect((await store().getAttempt(attempt.probeId))?.status).toBe('settled');
+    const count = await sql<{ count: string }>`SELECT count(*) AS count FROM operator_probe_receipts`.execute(db);
+    expect(Number(count.rows[0].count)).toBe(2);
+  });
+  it('prioritizes a discrepancy over changed unknown reports and keeps only bounded immutable history', async () => {
+    const { attempt } = await started();
+    const unknown = { ...finalize(attempt), outcome: 'unknown' as const };
+    const original = await store().finalize(unknown);
+    expect(await store().finalize({ ...unknown, usage: { ...usage, inputTokens: 10_000_001 } })).toMatchObject({ status: 'discrepancy' });
+    expect(await store().getStatus()).toMatchObject({ frozen: true, heldMicrousd: policy.maximumCostMicrousd, settledMicrousd: 0 });
+    expect(await store().finalize(unknown)).toEqual(original);
+    await expect(store().finalize(finalize(attempt))).rejects.toThrow();
+    const count = await sql<{ count: string }>`SELECT count(*) AS count FROM operator_probe_receipts`.execute(db);
+    expect(Number(count.rows[0].count)).toBe(2);
+  });
+  it.each(['inputTokens', 'outputTokens', 'cacheReadTokens'] as const)('freezes an authenticated HTTP %s overrun above admission bounds, even with unknown outcome', async bucket => {
+    const { attempt } = await started();
+    const service = await authority();
+    const origin = `http://127.0.0.1:${service.port}/ai/operator-probe-budget`;
+    const headers = { authorization: `Bearer ${'s'.repeat(32)}` };
+    try {
+      for (const invalid of [-1, 1.5, '10000001']) {
+        const rejected = await fetch(`${origin}/finalize`, { method: 'POST', headers,
+          body: JSON.stringify({ ...finalize(attempt), usage: { ...usage, [bucket]: invalid } }), signal: AbortSignal.timeout(5000), redirect: 'error' });
+        expect(rejected.status).toBe(400);
+      }
+      expect(await store().getStatus()).toMatchObject({ frozen: false, heldMicrousd: policy.maximumCostMicrousd });
+      const response = await fetch(`${origin}/finalize`, { method: 'POST', headers,
+        body: JSON.stringify({ ...finalize(attempt), outcome: 'unknown', usage: { ...usage, [bucket]: bucket === 'inputTokens' ? 10_000_001 : Number.MAX_SAFE_INTEGER } }),
+        signal: AbortSignal.timeout(5000), redirect: 'error' });
+      expect(response.status).toBe(200); expect(await response.json()).toMatchObject({ status: 'discrepancy' });
+      expect((await store().getAttempt(attempt.probeId))?.status).toBe('discrepancy');
+      expect(await store().getStatus()).toMatchObject({ frozen: true, heldMicrousd: policy.maximumCostMicrousd, settledMicrousd: 0 });
+      const next = await fetch(`${origin}/begin`, { method: 'POST', headers, body: JSON.stringify(beginInput()), signal: AbortSignal.timeout(5000), redirect: 'error' });
+      expect(next.status).toBe(503);
+    } finally { await service.close(); }
+  });
   it('freezes admission and retains discrepancies for over-bound attributable usage', async () => {
     const { attempt } = await started();
     expect(await store().finalize({ ...finalize(attempt), usage: { ...usage, outputTokens: 2 } })).toMatchObject({ status: 'discrepancy' });
@@ -73,8 +137,10 @@ describe('lifetime operator wallet with independent real PostgreSQL pools', () =
   });
   it('rejects expired policy or disabled budget before creating an attempt', async () => {
     await initializeOperatorProbeBudget(db, { ...config, expiresAt: '2026-12-30T00:00:00Z' });
-    clock = new Date('2026-11-26T00:00:00Z'); await expect(store().begin(beginInput())).rejects.toThrow();
-    expect(await store().getAttempt(beginInput().probeId)).toBeNull();
+    const input = beginInput();
+    clock = new Date('2026-11-26T00:00:00Z'); await expect(store().begin(input)).rejects.toThrow();
+    expect(await store().getAttempt(input.probeId)).toBeNull();
+    expect(await store().getStatus()).toMatchObject({ heldMicrousd: 0, attemptCount: 0 });
   });
   it('rolls back hold changes when attempt insertion fails', async () => {
     await seed();
@@ -139,19 +205,9 @@ describe('lifetime operator wallet with independent real PostgreSQL pools', () =
     expect(await store().getStatus()).toMatchObject({ heldMicrousd: 0, settledMicrousd: 17 });
   });
   it('starts only the standalone additive authority without seeding money and drains its owned server', async () => {
-    const portProbe = createServer();
-    await new Promise<void>(resolve => portProbe.listen(0, '127.0.0.1', resolve));
-    const address = portProbe.address();
-    if (!address || typeof address === 'string') throw new Error('Synthetic port unavailable');
-    await new Promise<void>((resolve, reject) => portProbe.close(error => error ? reject(error) : resolve()));
-    const service = await startOperatorProbeAuthority({
-      MATRIX_FUNDED_AI_OPERATOR_PROBE_AUTHORITY_DATABASE_URL: fixture.databaseUrl,
-      MATRIX_FUNDED_AI_OPERATOR_PROBE_AUTHORITY_TOKEN: 's'.repeat(32),
-      MATRIX_FUNDED_AI_OPERATOR_PROBE_BUDGET_ID: 'synthetic',
-      MATRIX_FUNDED_AI_OPERATOR_PROBE_AUTHORITY_PORT: String(address.port),
-    });
+    const service = await authority();
     try {
-      const response = await fetch(`http://127.0.0.1:${address.port}/ai/operator-probe-budget/status`, {
+      const response = await fetch(`http://127.0.0.1:${service.port}/ai/operator-probe-budget/status`, {
         headers: { authorization: `Bearer ${'s'.repeat(32)}` }, signal: AbortSignal.timeout(5000), redirect: 'error' });
       expect(response.status).toBe(200); expect(await response.json()).toBeNull();
       const scopes = await sql<{ scope: string }>`SELECT scope FROM platform_schema_revisions`.execute(db);

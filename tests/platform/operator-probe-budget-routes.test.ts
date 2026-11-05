@@ -30,10 +30,15 @@ describe('operator-only bounded authority', () => {
     for (const [path, method] of [['status', 'GET'], ['attempt', 'POST'], ['finalize', 'POST']]) {
       expect((await app.request(`${base}/${path}`, { method })).status).toBe(401);
     }
-    store.begin.mockRejectedValueOnce(new Error('secret provider database path'));
-    const result = await app.request(`${base}/begin`, { method: 'POST', headers: { authorization: `Bearer ${token}` }, body: JSON.stringify(beginInput()) });
-    expect(result.status).toBe(503); expect(await result.text()).not.toContain('secret');
-    expect((await app.request(`${base}/status`, { headers: { authorization: `Bearer ${token}` } })).status).toBe(200);
+    const error = new Error('secret provider database path');
+    const log = vi.spyOn(console, 'error').mockImplementation(() => {});
+    store.begin.mockRejectedValueOnce(error);
+    try {
+      const result = await app.request(`${base}/begin`, { method: 'POST', headers: { authorization: `Bearer ${token}` }, body: JSON.stringify(beginInput()) });
+      expect(result.status).toBe(503); expect(await result.text()).not.toContain('secret');
+      expect((await app.request(`${base}/status`, { headers: { authorization: `Bearer ${token}` } })).status).toBe(200);
+      expect(log).toHaveBeenCalledWith('[operator-probe-budget] Authority request failed', error);
+    } finally { log.mockRestore(); }
   });
   it('bounds and strictly validates both monetary callbacks and lookup before invoking the store', async () => {
     const { app, store } = fixture();

@@ -89,14 +89,13 @@ export function createOperatorProbeBudgetRepository(options: {
           WHERE budget_id=${budgetId} AND probe_id=${input.probeId} AND payload_hash=${payloadHash}`.execute(tx);
         if (saved.rows[0]) return saved.rows[0].receipt;
         // At most one unresolved and one resolving receipt; other changed replays conflict.
-        if (existing.status === 'settled' || existing.status === 'discrepancy'
-          || (existing.status === 'unknown' && !input.usage)) throw new OperatorProbeBudgetError('conflict');
+        if (existing.status === 'settled' || existing.status === 'discrepancy') throw new OperatorProbeBudgetError('conflict');
         let cost: number | null = null;
         let discrepancy = false;
         if (input.usage) {
           const usage = input.usage;
           discrepancy = usage.outputTokens > existing.policy.maximumOutputTokens
-            || usage.inputTokens + usage.cacheReadTokens + usage.cacheWrite5mTokens + usage.cacheWrite1hTokens > existing.policy.maximumInputTokens;
+            || BigInt(usage.inputTokens) + BigInt(usage.cacheReadTokens) + BigInt(usage.cacheWrite5mTokens) + BigInt(usage.cacheWrite1hTokens) > BigInt(existing.policy.maximumInputTokens);
           try { cost = priceOperatorProbeUsageMicrousd(existing.policy, usage); }
           catch (error: unknown) {
             if (!(error instanceof Error)) throw error;
@@ -105,7 +104,10 @@ export function createOperatorProbeBudgetRepository(options: {
           }
           discrepancy ||= cost !== null && cost > existing.policy.maximumCostMicrousd;
         }
-        const status = discrepancy ? 'discrepancy' : cost === null ? 'unknown' : 'settled';
+        const status = discrepancy ? 'discrepancy' : input.outcome === 'unknown' || cost === null ? 'unknown' : 'settled';
+        if (existing.status === 'unknown' && status === 'unknown') throw new OperatorProbeBudgetError('conflict');
+        // Nonterminal counts may be partial; retain the maximum liability, never publish them as final cost.
+        if (status === 'unknown') cost = null;
         const body = { payloadHash, status, outcome: input.outcome, costMicrousd: cost,
           usage: input.usage, providerReferenceHash: input.providerReferenceHash, finalizedAt: now().toISOString() } as const;
         const receipt: OperatorProbeReceipt = { ...body, receiptHash: hash({ probeId: input.probeId,
