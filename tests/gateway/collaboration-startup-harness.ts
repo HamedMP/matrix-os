@@ -38,6 +38,7 @@ export function recordingRuntime(surfaces: EnabledSurfaces) {
       surfaces.project = input;
       return "enabled";
     },
+    enableCollaborativeAppReadiness() { /* recorded by dedicated readiness route tests */ },
     async shutdown() { /* the fail-closed path shuts a partial runtime down. */ },
   };
 }

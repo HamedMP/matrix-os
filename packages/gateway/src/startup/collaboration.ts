@@ -183,7 +183,7 @@ export async function constructOwnerCollaboration(options: OwnerCollaborationSta
     // that is what stops the resource driver's app-asset and app-incarnation wiring drifting
     // out of this startup module. The canonical terminal bridge is this layer's own addition
     // and is wired here, before the delegation, because it must exist on the runtime first.
-    onPartialRuntime: (runtime) => {
+    onPartialRuntime: async (runtime) => {
       // The owner Chat database is the owner collaboration database (same Kysely instance as `db` above).
       const terminalBridge = createCanonicalTerminalCollaborationBridge({
         db: ownerChatRepository.kysely as unknown as Kysely<OwnerCollaborationDatabase>,
@@ -202,7 +202,7 @@ export async function constructOwnerCollaboration(options: OwnerCollaborationSta
           harnessVersion: "1.0.0",
         },
       });
-      return enableOwnerCollaborationSurfaces(runtime, {
+      const surfaces = await enableOwnerCollaborationSurfaces(runtime, {
         homePath,
         ownerId: collaborationConfig.ownerId,
         appRegistry,
@@ -213,6 +213,15 @@ export async function constructOwnerCollaboration(options: OwnerCollaborationSta
         projectGitDriver,
         terminalWorkspaces: terminalWorkspaceRuntime,
       });
+      if (!collaborationConfig.ownerId) throw new Error("Collaborative app owner is unavailable");
+      runtime.enableCollaborativeAppReadiness({
+        ownerId: collaborationConfig.ownerId,
+        homePath,
+        appRegistry,
+        repository: collaborativeApps.readiness,
+        builds: collaborativeApps.builds,
+      });
+      return surfaces;
     } },
   );
   return construction;

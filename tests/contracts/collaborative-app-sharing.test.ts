@@ -68,6 +68,12 @@ describe("collaborative app sharing contracts", () => {
     expect(CollaborativeAppReadinessSchema.parse(ready)).toEqual(ready);
     expect(CollaborativeAppReadinessSchema.parse({
       ...ready,
+      status: "checking",
+      checks: [],
+      verifiedAt: undefined,
+    })).toMatchObject({ status: "checking", checks: [] });
+    expect(CollaborativeAppReadinessSchema.parse({
+      ...ready,
       status: "blocked",
       verifiedAt: undefined,
       checks: [{ code: "two_principal_round_trip", status: "blocked", action: "A second verifier is not configured." }],

@@ -92,6 +92,12 @@ import { createProjectTransitionCoordinator } from "./project-transition-coordin
 import { bootstrapOrganizationDriveDatabase, type OrganizationDriveDatabase } from "../organization-drive/database.js";
 import { OrganizationDriveService } from "../organization-drive/service.js";
 import type { R2Client } from "../sync/r2-client.js";
+import type { AppRegistry } from "../app-db-registry.js";
+import type { ImmutableCollaborativeBuildStore } from "../app-runtime/build-cache.js";
+import { CollaborativeAppBuildResolver } from "./collaborative-app-build-resolver.js";
+import { CollaborativeAppReadinessEvaluator, UnconfiguredSecondPrincipalVerifier } from "./collaborative-app-readiness.js";
+import type { CollaborativeAppReadinessRepository } from "./collaborative-app-readiness-repository.js";
+import type { CollaborativeAppReadinessRouteDependencies } from "./collaborative-app-readiness-routes.js";
 import {
   CollaborationProjectScopeService,
   type CollaborationProjectSource,
@@ -337,6 +343,7 @@ export async function createGatewayCollaboration(options: {
   let ownerResourceDriver: (CollaborationResourceDriver & { close?(): void }) | undefined;
   let organizationDrive: OrganizationDriveService | undefined;
   let organizationDriveTimer: ReturnType<typeof setInterval> | undefined;
+  let collaborativeAppReadiness: CollaborativeAppReadinessRouteDependencies | undefined;
   function closeResourceServices(): void {
     resourceServices?.uploads?.close();
     ownerResourceDriver?.close?.();
@@ -486,6 +493,38 @@ export async function createGatewayCollaboration(options: {
         input.driver.close?.();
         throw error;
       }
+    },
+    enableCollaborativeAppReadiness(input: {
+      ownerId: string;
+      homePath: string;
+      appRegistry: Pick<AppRegistry, "get">;
+      repository: CollaborativeAppReadinessRepository;
+      builds: ImmutableCollaborativeBuildStore;
+    }): void {
+      if (registered || closing || collaborativeAppReadiness || !resourceServices
+        || input.ownerId !== options.config.ownerId) {
+        throw new Error("Collaborative app readiness cannot be initialized");
+      }
+      const resolver = new CollaborativeAppBuildResolver({
+        homePath: input.homePath,
+        ownerId: input.ownerId,
+        appRegistry: input.appRegistry,
+        catalog: resourceServices.catalog,
+        readiness: input.repository,
+        store: input.builds,
+      });
+      collaborativeAppReadiness = {
+        ownerId: input.ownerId,
+        repository: input.repository,
+        evaluator: new CollaborativeAppReadinessEvaluator({
+          repository: input.repository,
+          verifier: new UnconfiguredSecondPrincipalVerifier(),
+        }),
+        resolveCurrentBuild: (ownerId, appId, resolveOptions) => resolver.resolve(ownerId, appId, resolveOptions),
+        requireOrganizationMembership: async (actorId, organizationId) => {
+          await organizationPrecondition.require({ actorId, organizationId });
+        },
+      };
     },
     /** Live policy-qualified execution adapter; absent until shared AI is ready. */
     get chatExecutionAdapter() { return sharedAiRuntime?.available === true ? chatExecutionAdapter : undefined; },
@@ -726,6 +765,7 @@ export async function createGatewayCollaboration(options: {
         ...(resourceServices ? { resources: resourceServices } : {}),
         ...(standaloneScope ? { standaloneScope } : {}),
         ...(organizationDrive ? { organizationDrive } : {}),
+        ...(collaborativeAppReadiness ? { collaborativeAppReadiness } : {}),
         onScopeCommitted: (scopeId) => eventRegistry.broadcastScope(scopeId),
         onRevoked: (scopeId, actorId) => {
           eventRegistry.notifyRevoked(scopeId, actorId);

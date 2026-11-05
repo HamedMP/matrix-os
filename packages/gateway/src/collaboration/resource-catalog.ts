@@ -150,6 +150,9 @@ export class CollaborationResourceCatalog {
     executor: Executor,
     input: { id: string; expectedRevision: number; incarnation?: string; path?: string; parentId?: string | null },
   ): Promise<CatalogEntryRecord> {
+    if (executor === this.db) {
+      return this.db.transaction().execute((trx) => this.bump(trx, input));
+    }
     const timestamp = this.now();
     const row = await executor.updateTable("collaboration_resource_catalog").set({
       revision: input.expectedRevision + 1,
@@ -160,6 +163,9 @@ export class CollaborationResourceCatalog {
     }).where("id", "=", input.id).where("revision", "=", input.expectedRevision).where("deleted_at", "is", null)
       .returningAll().executeTakeFirst();
     if (!row) throw new ResourceCatalogError("conflict");
+    if (row.kind === "app" && input.incarnation !== undefined) {
+      await this.invalidateAppReadiness(executor, row.id, timestamp, "build_drift", input.incarnation);
+    }
     return toRecord(row);
   }
 
@@ -237,6 +243,9 @@ export class CollaborationResourceCatalog {
    * bytes.
    */
   async remove(input: { id: string; expectedRevision: number; executor?: Executor }): Promise<CatalogEntryRecord> {
+    if (input.executor === undefined || input.executor === this.db) {
+      return this.db.transaction().execute((trx) => this.remove({ ...input, executor: trx }));
+    }
     const executor = input.executor ?? this.db;
     const entry = await this.get(input.id, executor);
     if (!entry) throw new ResourceCatalogError("not_found");
@@ -253,6 +262,9 @@ export class CollaborationResourceCatalog {
         WHERE owner_id = ${entry.ownerId} AND project_id IS NOT DISTINCT FROM ${entry.projectId}
           AND deleted_at IS NULL AND path LIKE ${`${escapeLike(entry.path)}/%`}
       `.execute(executor);
+    }
+    if (entry.kind === "app") {
+      await this.invalidateAppReadiness(executor, entry.id, timestamp, "catalog_deleted");
     }
     return toRecord(row);
   }
@@ -347,6 +359,26 @@ export class CollaborationResourceCatalog {
       WHERE owner_id = ${folder.ownerId} AND project_id IS NOT DISTINCT FROM ${folder.projectId}
         AND deleted_at IS NULL AND path LIKE ${`${escapeLike(folder.path)}/%`}
     `.execute(executor);
+  }
+
+  private async invalidateAppReadiness(
+    executor: Executor,
+    catalogId: string,
+    timestamp: Date,
+    reason: "build_drift" | "catalog_deleted",
+    currentIncarnation?: string,
+  ): Promise<void> {
+    let update = executor.updateTable("collaboration_app_readiness").set({
+      status: "stale",
+      invalidated_at: timestamp,
+      invalidation_reason: reason,
+      revision: sql`revision + 1`,
+      updated_at: timestamp,
+    }).where("catalog_id", "=", catalogId).where("invalidated_at", "is", null);
+    if (currentIncarnation !== undefined) {
+      update = update.where("registration_incarnation", "!=", currentIncarnation);
+    }
+    await update.execute();
   }
 }
 

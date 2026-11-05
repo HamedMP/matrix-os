@@ -62,19 +62,19 @@
 
 ### Tests for User Story 2
 
-- [ ] T021 [P] [US2] Write failing readiness evaluator tests for declaration, exact build, owner Postgres, recipient launch, participant identity, retry, conflict, signal, provider safety, and cleanup gates in `tests/gateway/collaborative-app-readiness.test.ts`
-- [ ] T022 [P] [US2] Write failing route tests for owner auth, strict path/body schemas, pre-buffer body limits, idempotent replay, bounded errors, and no-store responses in `tests/gateway/collaborative-app-readiness-routes.test.ts`
-- [ ] T023 [P] [US2] Write a failing production-boundary readiness journey that rejects browser storage, broken recipient launch, unsafe provider use, duplicate retry, lost update, and missing signals, and returns blocked while the second-principal source is unconfigured, in `tests/gateway/collaborative-app-readiness-production-path.test.ts`
-- [ ] T024 [P] [US2] Write failing stale-certificate and same-slug replacement regression tests in `tests/gateway/collaborative-app-readiness-drift.test.ts`
+- [X] T021 [P] [US2] Write failing readiness evaluator tests for declaration, exact build, owner Postgres, recipient launch, participant identity, retry, conflict, signal, provider safety, and cleanup gates in `tests/gateway/collaborative-app-readiness.test.ts`
+- [X] T022 [P] [US2] Write failing route tests for owner auth, strict path/body schemas, pre-buffer body limits, idempotent replay, bounded errors, and no-store responses in `tests/gateway/collaborative-app-readiness-routes.test.ts`
+- [X] T023 [P] [US2] Write a failing production-boundary readiness journey that rejects browser storage, broken recipient launch, unsafe provider use, duplicate retry, lost update, and missing signals, and returns blocked while the second-principal source is unconfigured, in `tests/gateway/collaborative-app-readiness-production-path.test.ts`
+- [X] T024 [P] [US2] Write failing stale-certificate and same-slug replacement regression tests in `tests/gateway/collaborative-app-readiness-drift.test.ts`
 
 ### Implementation for User Story 2
 
-- [ ] T025 [US2] Implement the bounded readiness state machine and safe actionable gate mapping in `packages/gateway/src/collaboration/collaborative-app-readiness.ts`
-- [ ] T026 [US2] Implement the purpose-bound verifier interface and fail-closed unconfigured result; do not issue ready until the deferred second-principal identity source is approved, then use the real launch, bridge, Postgres, mutation, event, and tagged-cleanup paths in `packages/gateway/src/collaboration/collaborative-app-readiness.ts`
-- [ ] T027 [US2] Add owner-only GET/check routes with Zod boundaries, `bodyLimit`, per-actor rate limits, idempotency, no-store caching, and generic error mapping in `packages/gateway/src/collaboration/collaborative-app-readiness-routes.ts`
-- [ ] T028 [US2] Mount readiness routes and resolve every dependency at registration time in `packages/gateway/src/collaboration/routes.ts`
-- [ ] T029 [US2] Invalidate readiness after catalog deletion/replacement and exact input drift without treating compatible runtime restart as drift in `packages/gateway/src/collaboration/resource-catalog.ts`
-- [ ] T030 [US2] Block required app behavior that depends on creator credentials, connected providers, or AI funding under shared-provider policy in `packages/gateway/src/collaboration/shared-provider-readiness.ts`
+- [X] T025 [US2] Implement the bounded readiness state machine and safe actionable gate mapping in `packages/gateway/src/collaboration/collaborative-app-readiness.ts`
+- [X] T026 [US2] Implement the purpose-bound verifier interface and fail-closed unconfigured result; do not issue ready until the deferred second-principal identity source is approved, then use the real launch, bridge, Postgres, mutation, event, and tagged-cleanup paths in `packages/gateway/src/collaboration/collaborative-app-readiness.ts`
+- [X] T027 [US2] Add owner-only GET/check routes with Zod boundaries, `bodyLimit`, per-actor rate limits, idempotency, no-store caching, and generic error mapping in `packages/gateway/src/collaboration/collaborative-app-readiness-routes.ts`
+- [X] T028 [US2] Mount readiness routes and resolve every dependency at registration time in `packages/gateway/src/collaboration/routes.ts`
+- [X] T029 [US2] Invalidate readiness after catalog deletion/replacement and exact input drift without treating compatible runtime restart as drift in `packages/gateway/src/collaboration/resource-catalog.ts`
+- [X] T030 [US2] Block required app behavior that depends on creator credentials, connected providers, or AI funding under shared-provider policy in `packages/gateway/src/collaboration/shared-provider-readiness.ts`
 - [ ] T031 [P] [US2] Add checking, blocked, ready, stale, failed, and recheck client state with allowlisted bounded messages in `packages/ui/src/collaboration/useCollaborativeAppSharing.ts`
 - [ ] T032 [P] [US2] Add an actionable owner readiness summary that never displays raw verifier/provider/database errors in `packages/ui/src/collaboration/ReadinessSummary.tsx`
 - [ ] T033 [US2] Integrate readiness state into the owner app viewer without enabling share before a current ready certificate in `shell/src/components/AppViewer.tsx`
