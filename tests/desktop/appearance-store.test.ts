@@ -6,6 +6,7 @@ import { useAppearance } from "../../desktop/src/renderer/src/stores/appearance"
 
 describe("appearance store", () => {
   let eventListeners: Map<string, (payload: unknown) => void>;
+  const originalPlatform = Object.getOwnPropertyDescriptor(navigator, "platform");
 
   beforeEach(() => {
     useAppearance.setState({ mode: "light", themeId: DEFAULT_THEME_ID, zoom: 1, hydrated: true, pending: false, error: null, fontId: "geist", monoFontId: "jetbrains", customTheme: null });
@@ -33,7 +34,19 @@ describe("appearance store", () => {
     root.removeAttribute("data-theme");
     root.removeAttribute("data-theme-id");
     root.removeAttribute("style");
+    if (originalPlatform) Object.defineProperty(navigator, "platform", originalPlatform);
     vi.restoreAllMocks();
+  });
+
+  it("keeps Windows native controls aligned with the active toolbar palette", async () => {
+    Object.defineProperty(navigator, "platform", { configurable: true, value: "Win32" });
+
+    await useAppearance.getState().setMode("dark");
+
+    expect(window.operator.invoke).toHaveBeenCalledWith("window:set-titlebar-overlay", {
+      color: document.documentElement.style.getPropertyValue("--bg-sunken"),
+      symbolColor: document.documentElement.style.getPropertyValue("--text-primary"),
+    });
   });
 
   it('blocks writes while the initial preferences remain unread', async () => {
@@ -84,7 +97,7 @@ describe("appearance store", () => {
     await useAppearance.getState().setMode("dark");
 
     expect(document.documentElement.getAttribute("data-theme")).toBe("dark");
-    expect(window.operator.invoke).toHaveBeenLastCalledWith("state:set", {
+    expect(window.operator.invoke).toHaveBeenCalledWith("state:set", {
       key: "appearance",
       value: { fontId: "geist", monoFontId: "jetbrains", customTheme: null, theme: "dark", themeId: "dracula", zoom: 1 },
     });
