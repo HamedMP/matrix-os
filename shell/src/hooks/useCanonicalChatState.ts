@@ -428,6 +428,7 @@ export function useCanonicalChatState({ initialDraft, initialCollaborationView, 
             text: text.trim() ? options.promptText?.trim() || text.trim() : "",
             files: files ?? [], resources: options.resources ?? [], selection,
             interactionMode: options.interactionMode, permissionMode: options.permissionMode,
+            ...(options.routineCreation ? { routineCreation: options.routineCreation } : {}),
             clientRequestId: options.clientRequestId, projectId: draftProjectId });
           if (draftSendAttempt.current?.payload !== payload) {
             draftSendAttempt.current = { payload, clientRequestId: options.clientRequestId ?? requestId() };
@@ -465,6 +466,7 @@ export function useCanonicalChatState({ initialDraft, initialCollaborationView, 
         const input = {
           clientRequestId: draftRequestId ?? options.clientRequestId ?? requestId(), baseRevision: record.chat.revision,
           parts, selection, interactionMode: options.interactionMode!, permissionMode: options.permissionMode!,
+          ...(options.routineCreation ? { routineCreation: options.routineCreation } : {}),
         };
         const requestScope = record.chat.id;
         let operation = record.activeRun && options.resources?.length ? "queue" as const : "send" as const;
