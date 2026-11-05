@@ -1087,6 +1087,9 @@ importers:
 
   packages/proxy:
     dependencies:
+      '@aws-sdk/client-bedrock-runtime':
+        specifier: ^3.1127.0
+        version: 3.1127.0
       '@hono/node-server':
         specifier: ^1.19.15
         version: 1.19.17(hono@4.13.13)

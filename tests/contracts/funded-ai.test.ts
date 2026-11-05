@@ -19,6 +19,7 @@ import {
   FundedAiRuntimeCredentialIssueResponseSchema,
   FundedAiSafeErrorSchema,
   FundedAiSettlementResponseSchema,
+  FundedAiUpstreamProvenanceSchema,
 } from "@matrix-os/contracts";
 
 const now = "2026-08-30T20:00:00.000Z";
@@ -52,6 +53,22 @@ const funding = {
 } as const;
 
 describe("funded AI control-plane contracts", () => {
+  it("accepts Cloudflare model IDs without widening other upstream references", () => {
+    const provenance = {
+      upstream: "cloudflare_workers_ai",
+      routeId: "cloudflare-workers-ai",
+      resolvedModel: "@cf/zai-org/glm-5.3-flash",
+      pricingVersion: "cloudflare-2026-09-10-glm-flash",
+    } as const;
+    expect(FundedAiUpstreamProvenanceSchema.parse(provenance)).toEqual(provenance);
+    expect(FundedAiUpstreamProvenanceSchema.safeParse({
+      ...provenance, inferenceProfile: "@not-an-inference-profile",
+    }).success).toBe(false);
+    expect(FundedAiUpstreamProvenanceSchema.safeParse({
+      ...provenance, providerRequestId: "@not-a-provider-request-id",
+    }).success).toBe(false);
+  });
+
   it("negotiates Chat availability independently without weakening legacy financial contracts", () => {
     const chatAvailability = { contractVersion: 1, asOf: now, eligibleBalanceMicrousd: 400_000, availableBalanceMicrousd: 200_000 };
     const value = { contractVersion: 1, funding, policy, chatAvailability };

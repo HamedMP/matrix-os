@@ -61,8 +61,11 @@ export function createFundedUsageTracker(options: {
   canonicalModelId: string;
   pricingVersion: string;
   maxCaptureBytes?: number;
+  priceUsage?: (usage: FundedTokenUsage) => number;
 }): FundedUsageTracker {
-  if (isManagedWorkersAiModel(options.nativeModelId)) return createFundedOpenAiUsageTracker(options);
+  if (isManagedWorkersAiModel(options.nativeModelId) || options.priceUsage) {
+    return createFundedOpenAiUsageTracker(options);
+  }
   const maxCaptureBytes = options.maxCaptureBytes ?? DEFAULT_CAPTURE_LIMIT;
   const isSse = options.contentType.toLowerCase().startsWith("text/event-stream");
   const decoder = new TextDecoder("utf-8", { fatal: true });
