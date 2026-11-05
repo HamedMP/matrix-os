@@ -77,13 +77,25 @@ describe("current owner route dispatch fence", () => {
     expect(providerRoute!.providerInstanceId).toBe("kernel_owner_anthropic_key");
   });
 
-  it("accepts the immutable admission tuple only while the exact owner route and revision remain current", () => {
+  it("keeps cosmetic Settings revisions as provenance without changing execution authority", () => {
     const admitted = resolveCurrentOwnerRoute(currentRouteSnapshot(3), Date.parse("2026-08-29T21:00:01.000Z"));
     expect(admitted).not.toBeNull();
     expect(currentOwnerRouteMatches(currentRouteSnapshot(3), admitted!, Date.parse("2026-08-29T21:00:01.000Z")))
       .toBe(true);
+    const cosmeticallyUpdated = resolveCurrentOwnerRoute(
+      currentRouteSnapshot(4),
+      Date.parse("2026-08-29T21:00:01.000Z"),
+    );
+    expect(cosmeticallyUpdated).toMatchObject({ settingsRevision: "4" });
+    expect(cosmeticallyUpdated?.routeGeneration).toBe(admitted?.routeGeneration);
     expect(currentOwnerRouteMatches(currentRouteSnapshot(4), admitted!, Date.parse("2026-08-29T21:00:01.000Z")))
-      .toBe(false);
+      .toBe(true);
+    expect(currentOwnerRouteMatches({
+      ...currentRouteSnapshot(4),
+      accessSources: currentRouteSnapshot(4).accessSources.map((source) => source.id === "matrix_included"
+        ? { ...source, policyVersion: `${source.policyVersion}-changed` }
+        : source),
+    }, admitted!, Date.parse("2026-08-29T21:00:01.000Z"))).toBe(false);
     expect(currentOwnerRouteMatches({
       ...currentRouteSnapshot(3),
       active: { providerInstanceId: null, accessSourceId: null, modelId: null },

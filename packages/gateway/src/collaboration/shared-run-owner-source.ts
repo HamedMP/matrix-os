@@ -91,7 +91,6 @@ export function resolveCurrentOwnerRoute(
   if (harness === "claude_code" && !parsed.success) return null;
   const settingsRevision = String(snapshot.revision);
   const routeGeneration = createHash("sha256").update(JSON.stringify({
-    settingsRevision,
     providerInstanceId,
     providerAccessSourceId,
     modelId,
@@ -127,8 +126,7 @@ export function currentOwnerRouteMatches(
 }
 
 function sameOwnerRoute(current: SharedRunOwnerSourceDecision, expected: SharedRunOwnerSourceDecision): boolean {
-  return current.settingsRevision === expected.settingsRevision
-    && current.routeGeneration === expected.routeGeneration
+  return current.routeGeneration === expected.routeGeneration
     && current.harness === expected.harness
     && current.providerInstanceId === expected.providerInstanceId
     && current.providerAccessSourceId === expected.providerAccessSourceId
