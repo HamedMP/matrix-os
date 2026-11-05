@@ -1,8 +1,26 @@
 import { expect, it, vi } from 'vitest';
 import { JSDOM } from 'jsdom';
-import { APP_CSP, PRIVATE_APP_CSP, siteFrame, sitePage } from '../../packages/platform/src/sites/renderer.js';
+import { APP_CSP, PRIVATE_APP_CSP, siteAccessGate, siteFrame, sitePage } from '../../packages/platform/src/sites/renderer.js';
 import type { SiteRecord } from '@matrix-os/contracts';
 const site: SiteRecord = { id: 'a2fd72d0-0926-49d5-b45f-bbfb167e50d2', appSlug: 'launch', title: '<script>bad()</script>', description: '', slug: null, url: 'https://matrix.page/a2fd72d0-0926-49d5-b45f-bbfb167e50d2', revision: 1, status: 'published', accessMode: 'public', activeVersion: 'cd0a12e9-18a0-4b4e-9a10-269eb5697d4f', versions: [], config: { data: {}, forms: [] } };
+it('claims the current fragment when a fresh one-time link replaces a failed link in the same tab', async () => {
+ const firstId='11111111-1111-4111-8111-111111111111', secondId='22222222-2222-4222-8222-222222222222';
+ const firstToken='a'.repeat(43), secondToken='b'.repeat(43), bodies:string[]=[];
+ const dom=new JSDOM(siteAccessGate(),{url:`${site.url}#access=${firstId}.${firstToken}`,runScripts:'dangerously',beforeParse(window){
+  Object.defineProperty(window,'AbortSignal',{value:AbortSignal});
+  Object.defineProperty(window,'fetch',{value:vi.fn(async(_url:unknown,init?:RequestInit)=>{bodies.push(String(init?.body));return new Response('{}',{status:404});})});
+ }});
+ try{
+  const button=dom.window.document.querySelector('button')!;
+  button.click();
+  await vi.waitFor(()=>expect(bodies).toHaveLength(1));
+  await vi.waitFor(()=>expect(button.disabled).toBe(false));
+  dom.window.location.hash=`#access=${secondId}.${secondToken}`;
+  button.click();
+  await vi.waitFor(()=>expect(bodies).toHaveLength(2));
+  expect(JSON.parse(bodies[1]!)).toEqual({linkId:secondId,token:secondToken});
+ }finally{dom.window.close()}
+});
 it.each(['TypeError', 'Error', 'UnknownError'])('logs only a coarse %s category when public submission fails', async category => {
  const warn = vi.fn(), postMessage = vi.fn(), close = vi.fn();
  const dom = new JSDOM(sitePage(site), { url: site.url, runScripts: 'dangerously', beforeParse(window) {

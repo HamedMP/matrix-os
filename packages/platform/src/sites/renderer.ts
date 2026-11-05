@@ -8,9 +8,9 @@ export function siteAccessGate(): string {
 html,body{margin:0;min-height:100%;font-family:${desktopFonts.sans};background:${desktopPalette.canvas};color:${desktopPalette.forest}}body{display:grid;place-items:center;padding:24px;box-sizing:border-box}.card{width:min(100%,420px);border:1px solid ${desktopPalette.blue};border-radius:16px;background:${desktopPalette.paper};padding:28px;box-sizing:border-box;box-shadow:0 16px 48px rgba(14,52,34,.12)}h1{margin:0 0 10px;font-size:24px}p{line-height:1.5;color:${desktopPalette.textMuted}}button{width:100%;border:0;border-radius:10px;background:${desktopPalette.forest};color:${desktopPalette.paper};padding:12px 16px;font:inherit;font-weight:600;cursor:pointer}button:disabled{cursor:not-allowed;opacity:.55}.error{min-height:24px;color:${desktopPalette.danger};font-size:14px}
 </style></head><body><main class="card"><h1>Shared Matrix app</h1><p>This app was shared through a one-time private link. Opening it gives this browser access for 30 days.</p><p class="error" role="alert" aria-live="polite"></p><button type="button">Open shared app</button></main><script>
 const button=document.querySelector('button');const error=document.querySelector('.error');
-const match=location.hash.match(/^#access=([0-9a-f-]{36})\.([A-Za-z0-9_-]{43})$/i);
-if(!match){button.disabled=true;error.textContent='This access link is unavailable.'}
-button.addEventListener('click',async()=>{if(!match||button.disabled)return;button.disabled=true;error.textContent='';
+const readClaim=()=>location.hash.match(/^#access=([0-9a-f-]{36})\.([A-Za-z0-9_-]{43})$/i);
+const refresh=()=>{const available=Boolean(readClaim());button.disabled=!available;error.textContent=available?'':'This access link is unavailable.'};refresh();addEventListener('hashchange',refresh);
+button.addEventListener('click',async()=>{const match=readClaim();if(!match||button.disabled)return;button.disabled=true;error.textContent='';
  try{const response=await fetch(location.pathname+'/access/claim',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({linkId:match[1],token:match[2]}),credentials:'same-origin',redirect:'error',signal:AbortSignal.timeout(10000)});if(!response.ok)throw Error();history.replaceState(null,'',location.pathname);location.reload()}
  catch(claimError){console.warn('[sites] claim failed',claimError instanceof TypeError?'TypeError':claimError instanceof Error?'Error':'UnknownError');button.disabled=false;error.textContent='This access link is unavailable.'}});
 </script></body></html>`;
