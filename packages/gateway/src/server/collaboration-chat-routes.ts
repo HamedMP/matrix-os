@@ -1,4 +1,5 @@
 import { createRoutineActionOwnerRoutes } from "../bots/routine-action-routes.js";
+import { registerRoutineOriginHttp } from "./routine-origin-routes.js";
 import { createRoutineFullAccessRoutes } from "../bots/routine-full-access-routes.js";
 import { createRoutineCliExecutionRoutes } from "../bots/routine-cli-routes.js";
 import { RoutineCliError } from "../bots/routine-cli-errors.js";
@@ -117,6 +118,7 @@ export function registerCollaborationChatRoutes(options: CollaborationChatRouteO
       : createUnavailableCanonicalChatService(),
     getPrincipal: (c) => requireRequestPrincipal(c),
   }));
+  registerRoutineOriginHttp({ app, bots: botServices, repository: chatRepository, orchestrator: canonicalChatOrchestrator });
   app.route("/", createRoutineActionOwnerRoutes({ actions: botServices?.routineCli ?? null, getPrincipal: requireRequestPrincipal }));
   app.route("/", createRoutineFullAccessRoutes({
     service: botServices?.routineCli?.fullAccess ?? null,
