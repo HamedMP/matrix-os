@@ -4200,7 +4200,7 @@ describe("platform proxy routing", () => {
     const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
       new Response("asset", {
         status: 200,
-        headers: { "content-type": "text/javascript" },
+        headers: { "content-type": "text/javascript", "cache-control": "public, max-age=31536000, immutable" },
       }),
     );
     const app = createApp({
@@ -4226,6 +4226,10 @@ describe("platform proxy routing", () => {
     const headers = init?.headers as Headers;
     expect(headers.get("x-platform-user-id")).toBe("user_alice");
     expect(res.headers.get("cache-control")).toBe("private, max-age=31536000, immutable");
+    expect(res.headers.get("cdn-cache-control")).toBe("no-store");
+    expect(res.headers.get("cloudflare-cdn-cache-control")).toBe("no-store");
+    expect(res.headers.get("vary")).toContain("Cookie");
+    expect(res.headers.get("vary")).toContain("Accept-Encoding");
     expect(res.headers.get("set-cookie")).toContain("matrix_shell_route=alice-staging");
   });
 
@@ -5691,14 +5695,19 @@ describe("platform proxy routing", () => {
     expect(url).toBe("http://172.18.0.14:4000/icons/workspace.png?v=icon-etag");
   });
 
-  it("uses private browser caching and disables shared CDN cache for app-domain static assets", async () => {
+  it.each([
+    ["production immutable", "public, max-age=31536000, immutable", "private, max-age=31536000, immutable"],
+    ["development no-store", "no-store", "no-store"],
+    ["development no-cache", "no-cache", "no-cache"],
+    ["development max-age zero", "public, max-age=0, must-revalidate", "public, max-age=0, must-revalidate"],
+  ])("preserves %s browser caching and disables shared CDN cache for app-domain static assets", async (_mode, upstreamPolicy, browserPolicy) => {
     const verifyToken = vi.fn().mockResolvedValue({ sub: "user_alice" });
     vi.spyOn(globalThis, "fetch").mockResolvedValue(
       new Response("chunk", {
         status: 200,
         headers: {
           "content-type": "application/javascript",
-          "cache-control": "no-store",
+          "cache-control": upstreamPolicy,
           "cdn-cache-control": "public, max-age=31536000",
         },
       }),
@@ -5719,7 +5728,7 @@ describe("platform proxy routing", () => {
     });
 
     expect(res.status).toBe(200);
-    expect(res.headers.get("cache-control")).toBe("private, max-age=31536000, immutable");
+    expect(res.headers.get("cache-control")).toBe(browserPolicy);
     expect(res.headers.get("cdn-cache-control")).toBe("no-store");
     expect(res.headers.get("cloudflare-cdn-cache-control")).toBe("no-store");
     expect(res.headers.get("vary")).toContain("Cookie");
@@ -5755,7 +5764,13 @@ describe("platform proxy routing", () => {
     expect(res.headers.get("cloudflare-cdn-cache-control")).toBe("no-store");
   });
 
-  it("routes app-domain shell static assets with the short-lived shell route cookie", async () => {
+  it.each([
+    ["production immutable", "public, max-age=31536000, immutable", "private, max-age=31536000, immutable"],
+    ["development no-store", "no-store", "private, no-store"],
+    ["development no-cache", "no-cache", "private, no-store"],
+    ["development max-age zero", "public, max-age=0, must-revalidate", "private, no-store"],
+    ["missing upstream policy", undefined, "private, no-store"],
+  ])("routes app-domain shell static assets with the short-lived shell route cookie (%s)", async (_mode, upstreamPolicy, browserPolicy) => {
     await insertUserMachine(db, {
       machineId: "machine-alice",
       clerkUserId: "user_alice",
@@ -5773,6 +5788,7 @@ describe("platform proxy routing", () => {
           "content-encoding": "gzip",
           "content-length": "999",
           "content-type": "text/javascript",
+          ...(upstreamPolicy ? { "cache-control": upstreamPolicy } : {}),
         },
       }),
     );
@@ -5803,7 +5819,7 @@ describe("platform proxy routing", () => {
     expect(headers.get("x-platform-verified")).toBeNull();
     expect(res.headers.get("content-encoding")).toBeNull();
     expect(res.headers.get("content-length")).toBeNull();
-    expect(res.headers.get("cache-control")).toBe("private, max-age=31536000, immutable");
+    expect(res.headers.get("cache-control")).toBe(browserPolicy);
     expect(res.headers.get("cdn-cache-control")).toBe("no-store");
     expect(res.headers.get("cloudflare-cdn-cache-control")).toBe("no-store");
     expect(res.headers.get("vary")).toContain("Cookie");
