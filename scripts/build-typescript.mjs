@@ -1,7 +1,7 @@
 // Keep the JavaScript compiler for declaration emit and compiler-API consumers.
 // Incremental state is reusable only while every recorded output stays intact.
 import { createHash, randomUUID } from "node:crypto";
-import { lstat, mkdir, open, opendir, readFile, rename, rm, rmdir, stat, writeFile } from "node:fs/promises";
+import { lstat, mkdir, open, opendir, readFile, realpath, rename, rm, rmdir, stat, writeFile } from "node:fs/promises";
 import { constants } from "node:fs";
 import { createRequire } from "node:module";
 import { join, resolve } from "node:path";
@@ -267,8 +267,10 @@ export async function buildTypescript(packageDirectory, compile) {
     // TypeScript tracks inputs, imports, options and compiler version itself.
     // Always run it: an output fingerprint alone cannot prove source freshness.
     const output = await prepareBuildOutput(packageDirectory, previous);
+    // Node/TypeScript canonicalize cwd (for example /var -> /private/var on
+    // macOS). Match that spelling so emitted source maps remain package-relative.
     const status = await compile(["--project", "tsconfig.json", "--incremental", "--tsBuildInfoFile", state,
-      "--outDir", output, "--noEmitOnError"], { lock: join(cache, LOCK) });
+      "--outDir", await realpath(output), "--noEmitOnError"], { lock: join(cache, LOCK) });
     if (status !== 0) {
       await rm(state, { force: true });
       await rm(stamp, { force: true });
@@ -367,7 +369,7 @@ async function ownedCompiler(directory, compiler, args, lock) {
 
 if (process.argv[2] === "--compiler-supervisor") {
   superviseCompiler(process.argv[3], process.argv[4], process.argv.slice(5));
-} else if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {
+} else if (process.argv[1] && import.meta.url === pathToFileURL(await realpath(process.argv[1])).href) {
   const directory = process.cwd();
   const require = createRequire(join(directory, "package.json"));
   const compiler = require.resolve("typescript/lib/tsc.js");

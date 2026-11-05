@@ -1,7 +1,7 @@
 import { chmod, lstat, mkdtemp, mkdir, readFile, readdir, rm, symlink, truncate, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { createRequire } from "node:module";
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { buildTypescript } from "../../scripts/build-typescript.mjs";
@@ -122,6 +122,31 @@ describe("incremental shared TypeScript builds", () => {
     await writeFile(join(directory, "src/index.ts"), "export const value: number = 2;\n");
     expect(await buildTypescript(directory, compile)).toBe(0);
     expect(await readFile(join(directory, "dist/index.js"), "utf8")).toContain("value = 2");
+  });
+
+  it("executes the build entrypoint through a symlink and emits package-relative source maps", async () => {
+    const directory = await fixture();
+    await mkdir(join(directory, "src"));
+    await writeFile(join(directory, "package.json"), JSON.stringify({ type: "module" }));
+    await writeFile(join(directory, "tsconfig.json"), JSON.stringify({ compilerOptions: {
+      outDir: "dist", rootDir: "src", types: [], target: "ES2022", skipLibCheck: true,
+      sourceMap: true, declaration: true, declarationMap: true,
+    }, include: ["src"] }));
+    await writeFile(join(directory, "src/index.ts"), "export const value: number = 1;\n");
+    await symlink(join(process.cwd(), "scripts"), join(directory, "scripts"), "dir");
+    await symlink(join(process.cwd(), "node_modules"), join(directory, "node_modules"), "dir");
+    const alias = `${directory}-alias`;
+    directories.push(alias);
+    await symlink(directory, alias, "dir");
+    const result = spawnSync(process.execPath, [join(alias, "scripts/build-typescript.mjs")], {
+      cwd: alias, encoding: "utf8", timeout: 15000,
+    });
+    expect(result.error).toBeUndefined();
+    expect(result.status, result.stdout + result.stderr).toBe(0);
+    expect(await readFile(join(directory, "dist/index.js"), "utf8")).toContain("value = 1");
+    for (const file of ["index.js.map", "index.d.ts.map"]) {
+      expect(JSON.parse(await readFile(join(directory, "dist", file), "utf8")).sources).toEqual(["../src/index.ts"]);
+    }
   });
 
   it.each(["exit", "throw"])("keeps partial compiler output away from live consumers on %s failure", async mode => {
