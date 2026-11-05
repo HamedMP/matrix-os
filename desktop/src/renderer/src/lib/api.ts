@@ -93,7 +93,10 @@ export function createApiClient(options: ApiClientOptions): ApiClient {
     init: RequestInit,
     requestOptions?: RequestTimeoutOptions,
   ): Promise<Response> {
-    const url = buildGatewayUrl(options.baseUrl, /^\/api\/chats(?:[/?]|$)/.test(path) ? chatFundingVersionUrl(path) : path, options.getRuntimeSlot());
+    // Routine scope endpoints use their own strict wire contract, not Chat projections.
+    const negotiateChatResponse = /^\/api\/chats(?:[/?]|$)/.test(path)
+      && !/^\/api\/chats\/[^/?]+\/routine-cli\/full-access(?:[/?]|$)/.test(path);
+    const url = buildGatewayUrl(options.baseUrl, negotiateChatResponse ? chatFundingVersionUrl(path) : path, options.getRuntimeSlot());
     const callerSignals = [init.signal, requestOptions?.signal].filter(
       (signal): signal is AbortSignal => signal !== null && signal !== undefined,
     );
@@ -106,7 +109,7 @@ export function createApiClient(options: ApiClientOptions): ApiClient {
     try {
       response = await fetchFn(url, {
         ...init,
-        ...(/^\/api\/chats(?:[/?]|$)/.test(path) ? {
+        ...(negotiateChatResponse ? {
           headers: { ...Object.fromEntries(new Headers(init.headers)), "X-Matrix-Chat-Metadata": "1" },
         } : {}),
         signal: signalWithTimeout(callerSignal, requestOptions?.timeoutMs ?? API_TIMEOUT_MS),
