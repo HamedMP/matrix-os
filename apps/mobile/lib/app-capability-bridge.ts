@@ -1,4 +1,4 @@
-import { AppAiInputSchema, AppCapabilityInputSchema, AppIdentitySchema, MAX_APP_CAPABILITY_BYTES, MAX_APP_BRIDGE_REPLY_BYTES, MAX_APP_RESPONSE_CHUNKS, MAX_APP_DATABASE_REPLY_BYTES, MAX_APP_DATABASE_REQUEST_BYTES, appRuntimeSlugFromIdentity, appCapabilityReplyBytes } from "@matrix-os/contracts";
+import { AppChatReplySchema, appChatBridgeSource, AppAiInputSchema, AppCapabilityInputSchema, AppIdentitySchema, MAX_APP_CAPABILITY_BYTES, MAX_APP_BRIDGE_REPLY_BYTES, MAX_APP_RESPONSE_CHUNKS, MAX_APP_DATABASE_REPLY_BYTES, MAX_APP_DATABASE_REQUEST_BYTES, appRuntimeSlugFromIdentity, appCapabilityReplyBytes } from "@matrix-os/contracts";
 import { appRuntimeNavigation } from "./app-runtime-navigation";
 
 const MAX_BYTES = MAX_APP_DATABASE_REQUEST_BYTES + MAX_APP_CAPABILITY_BYTES;
@@ -14,6 +14,11 @@ function bytes(value: string): number {
 
 function requestFor(app: string, kind: unknown, input: unknown): { path: string; init: RequestInit } {
   if (kind === "capability") return { path: "/api/bridge/capabilities", init: { method: "POST", body: JSON.stringify({ app, input: AppCapabilityInputSchema.parse(input) }) } };
+  // Opening is authorized by the app's own Chat read access under its stamped identity.
+  if (kind === "chat.open") {
+    const chatId = input && typeof input === "object" ? (input as { chatId?: unknown }).chatId : undefined;
+    return { path: "/api/bridge/capabilities", init: { method: "POST", body: JSON.stringify({ app, input: AppCapabilityInputSchema.parse({ kind: "chats", request: { op: "get", chatId, limit: 1 } }) }) } };
+  }
   if (kind === "ai") return { path: "/api/bridge/ai", init: { method: "POST", body: JSON.stringify({ app, ...AppAiInputSchema.parse(input) }) } };
   if (kind === "ai.routes") return { path: `/api/bridge/ai/routes?app=${encodeURIComponent(app)}`, init: { method: "GET" } };
   if (kind === "db" && input && typeof input === "object" && !Array.isArray(input)) {
@@ -26,7 +31,7 @@ function requestFor(app: string, kind: unknown, input: unknown): { path: string;
 
 /** A broker is scoped to one launch; navigation/unmount destroys every pending request. */
 export function createMobileAppCapabilityBroker(options: {
-  app: string; runtimeUrl: string; runtimeSlug?: string; launchId: string; request: MobileAppBridgeRequest; reply: (script: string) => void;
+  app: string; runtimeUrl: string; runtimeSlug?: string; launchId: string; request: MobileAppBridgeRequest; reply: (script: string) => void; openChat?: (chatId: string) => void;
 }) {
   AppIdentitySchema.parse(options.app);
   const routeApp = new URL(options.runtimeUrl).pathname.match(/\/apps\/([a-z0-9][a-z0-9_-]{0,63})(?:\/|$)/)?.[1];
@@ -85,7 +90,7 @@ export function createMobileAppCapabilityBroker(options: {
       });
       const response = await Promise.race([options.request(path, { ...init, headers: { "content-type": "application/json" }, signal: controller.signal, redirect: "error" }), aborted]);
       if (!response.ok) throw new Error("App request unavailable");
-      const maxReply = frame.kind === "db" ? MAX_APP_DATABASE_REPLY_BYTES : frame.kind === "capability" ? appCapabilityReplyBytes(AppCapabilityInputSchema.parse(frame.input)) : MAX_APP_BRIDGE_REPLY_BYTES;
+      const maxReply = frame.kind === "db" || frame.kind === "chat.open" ? MAX_APP_DATABASE_REPLY_BYTES : frame.kind === "capability" ? appCapabilityReplyBytes(AppCapabilityInputSchema.parse(frame.input)) : MAX_APP_BRIDGE_REPLY_BYTES;
       if (Number(response.headers.get("content-length")) > maxReply) { await response.body?.cancel(); throw new Error("App response unavailable"); }
       if (!response.body?.getReader) throw new Error("App response unavailable");
       const reader = response.body.getReader();
@@ -103,7 +108,14 @@ export function createMobileAppCapabilityBroker(options: {
         }
         text+=decoder.decode();
       } finally { controller.signal.removeEventListener("abort",cancel); reader.releaseLock(); }
-      if (!controller.signal.aborted) send({ ok: true, body: JSON.parse(text) });
+      if (controller.signal.aborted) return;
+      if (frame.kind === "chat.open") {
+        if (!options.openChat || !AppChatReplySchema.parse(JSON.parse(text)).ok) throw new Error("Chat navigation is unavailable");
+        options.openChat(String((frame.input as { chatId: unknown }).chatId));
+        send({ ok: true, body: null });
+        return;
+      }
+      send({ ok: true, body: JSON.parse(text) });
     } catch (error) {
       console.warn("[mobile-app-bridge] request unavailable", error instanceof Error ? error.name : "UnknownError");
       send({ ok: false });
@@ -139,6 +151,8 @@ export function buildMobileAppBridgeScript(app: string, launchId: string): strin
       integrations:function(){return call("capability",{kind:"integrations.list"}).then(function(d){return d.services||[];});},
       describeService:function(service){return call("capability",{kind:"integrations.describe",service:service});},
       service:function(service,action,params,label){return call("capability",{kind:"integrations.call",service:service,action:action,params:params||{},label:label});},
+      chats:${appChatBridgeSource('function(input){return call("capability",input);}')},
+      openChat:function(target){if(!target||target.view!=="chat"||typeof target.chatId!=="string")return Promise.reject(new Error("Chat navigation is unavailable"));return call("chat.open",{chatId:target.chatId});},
       ai:{generate:function(input){return call("ai",input);},routes:function(){return call("ai.routes",{});}},
       db:{find:function(table,opts){opts=opts||{};return call("db",{action:"find",table:table,filter:opts.where,orderBy:opts.orderBy,limit:opts.limit,offset:opts.offset});},
         findOne:function(table,id){return call("db",{action:"findOne",table:table,id:id});},

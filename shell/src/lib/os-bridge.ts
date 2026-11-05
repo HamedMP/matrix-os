@@ -1,12 +1,13 @@
 import { isAppGalleryInventoryIdentity } from "@matrix-os/contracts/app-gallery-bridge-policy";
-import { MAX_APP_CAPABILITY_BYTES, MAX_APP_DATABASE_REQUEST_BYTES, MAX_APP_KV_REQUEST_BYTES } from "@matrix-os/contracts";
+import { appChatBridgeSource, CanonicalChatIdSchema, MAX_APP_CAPABILITY_BYTES, MAX_APP_DATABASE_REQUEST_BYTES, MAX_APP_KV_REQUEST_BYTES } from "@matrix-os/contracts";
 
 export type BridgeMessage =
   | { type: "os:generate"; app: string; payload: { context: string } }
   | { type: "os:navigate"; app: string; payload: { route: string; context?: string } }
   | { type: "os:read-data"; app: string; payload: { key: string } }
   | { type: "os:write-data"; app: string; payload: { key: string; value: string } }
-  | { type: "os:open-app"; app: string; payload: { name: string; path: string } };
+  | { type: "os:open-app"; app: string; payload: { name: string; path: string } }
+  | { type: "os:open-chat"; app: string; payload: { chatId: string } };
 
 export interface BridgeHandler {
   sendToKernel: (text: string) => void;
@@ -17,6 +18,7 @@ export interface BridgeHandler {
     value: string | undefined,
   ) => unknown | Promise<unknown>;
   openApp?: (name: string, path: string) => void;
+  openChat?: (chatId: string) => Promise<void>;
 }
 
 export interface BridgeMessageValidation {
@@ -186,6 +188,14 @@ export function handleBridgeMessage(
         const normalizedPath = msg.payload.path.replace(/^\/files\//, "");
         handler.openApp(msg.payload.name, normalizedPath);
       }
+      break;
+
+    case "os:open-chat":
+      replyToDataRequest(event, () => {
+        const chatId = CanonicalChatIdSchema.parse(msg.payload?.chatId);
+        if (!handler.openChat) throw new Error("Chat navigation is unavailable");
+        return handler.openChat(chatId);
+      });
       break;
   }
 }
@@ -412,6 +422,29 @@ export function buildBridgeScript(appName: string, themeVars?: ThemeVars, design
     openApp: function(name, path) {
       post("os:open-app", { name: name, path: path });
     },
+
+    openChat: function(target) {
+      return new Promise(function(resolve, reject) {
+        if (!target || target.view !== "chat" || typeof target.chatId !== "string") {
+          reject(new Error("Chat navigation is unavailable")); return;
+        }
+        var channel = new MessageChannel();
+        channel.port1.onmessage = function(e) {
+          channel.port1.close();
+          if (e.data && e.data.ok) resolve();
+          else reject(new Error("Chat navigation is unavailable"));
+        };
+        window.parent.postMessage(
+          { type: "os:open-chat", app: app, payload: { chatId: target.chatId } },
+          "*",
+          [channel.port2]
+        );
+      });
+    },
+
+    chats: ${appChatBridgeSource(`function(input) {
+      return parentFetch("/api/bridge/capabilities", { method: "POST", body: JSON.stringify(input) }, 35000).then(function(r) { return r.json(); });
+    }`)},
 
     onDataChange: function(callback) {
       dataChangeCallbacks.push(callback);

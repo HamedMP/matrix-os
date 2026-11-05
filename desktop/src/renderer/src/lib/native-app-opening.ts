@@ -29,6 +29,12 @@ export function wireNativeAppOpening(): () => void {
       }).catch(reportChatNavigationFailure);
       return;
     }
+    if (request.view === "chat") {
+      const tabId = useTabs.getState().openTab({ kind: "chat", title: "Chat", chatId: request.chatId, chatView: "conversation", closable: false });
+      useDesktopSurfaces.getState().activateSurface(tabId);
+      void acknowledgeNativeAppChatNavigation(request.requestId, { ok: true }).catch(reportChatNavigationFailure);
+      return;
+    }
     const tabId = openChatIndex();
     useDesktopSurfaces.getState().activateSurface(tabId);
     useNativeAppChatNavigation.getState().queue(request, tabId);

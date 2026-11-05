@@ -1,5 +1,6 @@
 "use client";
 
+import { useAppOpenChat } from "@/lib/app-open-chat";
 /**
  * MobileShell — iOS/Android-style single-app-fullscreen shell rendered when
  * the viewport is phone-sized. Replaces Desktop on mobile.
@@ -347,6 +348,12 @@ export function MobileShell({ launchAppPath, sharedTerminalScopeId, onOpenComman
     enqueueExistingProviderTerminal(sessionId, id);
   }, []);
 
+  useAppOpenChat((chatId) => {
+    const chatApp = apps.find((app) => app.path === "__chat__");
+    if (!chatApp) return;
+    chat?.switchConversation(chatId);
+    openApp(chatApp);
+  });
   useCompanyDriveChatLaunch(()=>{const app=apps.find(item=>item.path==="__chat__");if(app)openApp(app);});
 
   const terminalInstanceCount = openStack.reduce((count, entry) => (

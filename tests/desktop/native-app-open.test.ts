@@ -82,9 +82,11 @@ describe("native installed-app opening", () => {
     const openChat = createNativeAppOpenChatClient(invoke);
     await expect(openChat({ view: "recipes", recipeId: "company-brain" })).resolves.toBeUndefined();
     expect(invoke).toHaveBeenCalledWith({ view: "recipes", recipeId: "company-brain" });
+    await expect(openChat({ view: "chat", chatId: "chat_0123456789abcdef" })).resolves.toBeUndefined();
+    await expect(openChat({ view: "chat", chatId: "../settings" })).rejects.toThrow("Invalid Chat navigation");
     await expect(openChat({ view: "library" } as never)).rejects.toThrow("Invalid Chat navigation");
     await expect(openChat({ view: "recipes", recipeId: "../company-brain" })).rejects.toThrow("Invalid Chat navigation");
-    expect(invoke).toHaveBeenCalledTimes(1);
+    expect(invoke).toHaveBeenCalledTimes(2);
   });
   it("records a safe app-side diagnostic while keeping invocation failures generic", async () => {
     const warning = vi.spyOn(console, "warn").mockImplementation(() => undefined);
