@@ -1,4 +1,4 @@
-import { statSync, realpathSync } from 'node:fs';
+import { statSync, realpathSync, constants } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { lstat, mkdir, open, readFile, realpath, readdir, rename, unlink } from 'node:fs/promises';
 import { homedir } from 'node:os';
@@ -20,11 +20,34 @@ export function commandRunner(command, args) {
   const result = spawnSync(command, args, { encoding: 'utf8', timeout: 300_000, maxBuffer: 1024 * 1024, killSignal: 'SIGKILL', env: { ...process.env, ORBENV: '' } });
   return { code: result.status ?? 1, stdout: result.stdout ?? '', stderr: result.error ? `Command failed: ${result.error.code}` : result.stderr ?? '' };
 }
-async function plainFile(path) {
-  if ((await lstat(path)).isSymbolicLink() || await realpath(path) !== resolve(path)) throw new Error('symlink paths are not accepted');
-  const stat = await lstat(path);
-  if (!stat.isFile() || stat.size > 65536) throw new Error('Invalid bounded manifest file');
-  return JSON.parse(await readFile(path, 'utf8'));
+const recordLimit = 65536;
+const manifestLimit = 16384;
+function serializedBytes(value) { return Buffer.byteLength(JSON.stringify(value), 'utf8'); }
+function boundedText(value, limit = 8192) {
+  const text = String(value); let low = 0, high = text.length;
+  while (low < high) {
+    const mid = Math.ceil((low + high) / 2);
+    if (serializedBytes(text.slice(0, mid)) <= limit) low = mid; else high = mid - 1;
+  }
+  return text.slice(0, low);
+}
+async function plainFile(path, limit = recordLimit) {
+  if (!isAbsolute(path)) throw new Error('File path must be absolute');
+  if (await realpath(path) !== path) throw new Error('Canonical paths required; symlink paths are not accepted');
+  const handle = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW);
+  try {
+    const stat = await handle.stat();
+    if (!stat.isFile() || stat.uid !== process.getuid?.() || (stat.mode & 0o7777) !== 0o600) throw new Error('File must be owned and private 0600');
+    if (stat.size > limit) throw new Error('Invalid bounded manifest/record file');
+    const buffer = Buffer.alloc(limit + 1); let length = 0;
+    while (length < buffer.length) {
+      const read = await handle.read(buffer, length, buffer.length - length, length);
+      if (!read.bytesRead) break;
+      length += read.bytesRead;
+    }
+    if (length > limit) throw new Error('File grew beyond byte limit');
+    return JSON.parse(buffer.subarray(0, length).toString('utf8'));
+  } finally { await handle.close(); }
 }
 function gitIdentity(worktree) {
   const path = realpathSync(runCommandSync('git', ['-C', worktree, 'rev-parse', '--absolute-git-dir'], { capture: true }));
@@ -38,6 +61,7 @@ async function validate(manifest) {
     || manifest.sourceRoot !== '/opt/matrix/app' || ![units, [...units, shellUnit]].some(allowed => JSON.stringify(manifest.managedUnits) === JSON.stringify(allowed))
     || !revision.test(manifest.sourceSHA) || !revision.test(manifest.appliedRevision)
     || !manifest.capabilities || Object.keys(manifest.capabilities).some(key => key !== 'sourceSync') || !['unknown', 'external-one-way'].includes(manifest.capabilities.sourceSync)) throw new Error('Invalid local manifest');
+  if (serializedBytes(manifest) > manifestLimit) throw new Error('Manifest exceeds serialized byte budget');
   const url = new URL(manifest.preview);
   if (url.protocol !== 'https:' || url.username || url.password || url.hash || url.search) throw new Error('Invalid HTTPS preview');
   if (typeof manifest.worktree !== 'string' || !isAbsolute(manifest.worktree) || await realpath(manifest.worktree) !== manifest.worktree) throw new Error('Worktree must be canonical, absolute and not a symlink');
@@ -54,40 +78,85 @@ export function createAdapter({ registry = process.env.DEVSTACK_STATE_DIR ?? joi
     const stat = await lstat(registry);
     if (!stat.isDirectory() || (stat.mode & 0o077) || stat.uid !== process.getuid?.()) throw new Error('Registry must be owned and private (0700)');
   }
-  async function locked(action) {
+  async function locked(action, name = '.lock') {
     await init();
-    const path = join(registry, '.lock');
-    const lock = await open(path, 'wx', 0o600).catch(error => { if (error.code === 'EEXIST') throw new Error('Registry locked; inspect the owner process before removing a stale .lock'); throw error; });
+    const path = join(registry, name);
+    const lock = await open(path, 'wx', 0o600).catch(error => { if (error.code === 'EEXIST') throw new Error(`Registry locked (${name}); inspect the owner process before removing a stale lock`); throw error; });
     try { await lock.writeFile(JSON.stringify({ pid: process.pid })); return await action(); }
     finally { await lock.close(); await unlink(path); }
   }
   function statePath(id) { if (typeof id !== 'string' || !slug.test(id)) throw new Error('Invalid instance id'); return join(registry, `${id}.json`); }
   async function get(id) { const record = await plainFile(statePath(id)); await validate(record.manifest); if (record.gitIdentity !== gitIdentity(record.manifest.worktree)) throw new Error('Pinned Git worktree identity changed'); return record; }
   async function save(record) {
+    const content = JSON.stringify(record);
+    if (Buffer.byteLength(content, 'utf8') > recordLimit) throw new Error('Record exceeds serialized byte budget');
     const path = statePath(record.manifest.id);
     const temp = `${path}.${process.pid}.tmp`;
     const handle = await open(temp, 'wx', 0o600);
-    try { await handle.writeFile(JSON.stringify(record, null, 2)); await handle.close(); await rename(temp, path); }
+    try { await handle.writeFile(content); await handle.close(); await rename(temp, path); }
     finally { await handle.close(); await unlink(temp).catch(error => { if (error.code !== 'ENOENT') throw error; }); }
   }
   async function invoke(manifest, user, args) {
     const result = await runner('orb', ['-m', manifest.machine, '-u', user, ...args]);
-    return { code: Number.isInteger(result.code) ? result.code : 1, stdout: redact(result.stdout), stderr: redact(result.stderr) };
+    return { code: Number.isInteger(result.code) ? result.code : 1, stdout: boundedText(redact(result.stdout)), stderr: boundedText(redact(result.stderr)) };
   }
   async function owner(manifest) {
     await validate(manifest);
+    const protection = await invoke(manifest, 'root', ['stat', '--format=%u:%a:%F', '--', '/opt/matrix/.devstack-owner']);
+    const [uid, mode, type] = protection.stdout.trim().split(':');
+    if (protection.code !== 0 || uid !== '0' || !/^[0-7]{3,4}$/.test(mode) || (Number.parseInt(mode, 8) & 0o022) || type !== 'regular file') throw new Error('Machine owner marker is not protected');
     const result = await invoke(manifest, 'root', ['cat', '/opt/matrix/.devstack-owner']);
     let marker;
     try { marker = JSON.parse(result.stdout); } catch { throw new Error('Machine owner marker unavailable'); }
-    if (result.code !== 0 || marker.version !== 1 || marker.machine !== manifest.machine || marker.purpose !== purpose) throw new Error('Machine owner marker mismatch');
+    if (result.code !== 0 || marker.version !== 1 || marker.machine !== manifest.machine || marker.purpose !== purpose || marker.id !== manifest.id || marker.worktree !== manifest.worktree) throw new Error('Machine owner marker mismatch');
+  }
+  async function preflight(file) {
+    const manifest = await validate(await plainFile(file, manifestLimit));
+    await owner(manifest);
+    for (const unit of manifest.managedUnits) {
+      const result = await invoke(manifest, 'root', ['systemctl', 'show', '--property=LoadState', '--value', unit]);
+      if (result.code !== 0 || result.stdout.trim() !== 'loaded') throw new Error(`Required owned unit unavailable: ${unit}`);
+    }
+    return { manifest, prerequisites: 'verified', readiness: 'unknown' };
+  }
+  async function lifecycle(manifest, action) {
+    const initial = new Map(); const attempted = []; const rollback = [];
+    let result = { code: 0, stdout: '', stderr: '' }, unit;
+    try {
+      if (action !== 'stop') {
+        for (const item of manifest.managedUnits) {
+          const state = await invoke(manifest, 'root', ['systemctl', 'show', '--property=ActiveState', '--value', item]);
+          if (state.code !== 0 || !['active', 'inactive', 'failed'].includes(state.stdout.trim())) throw new Error(`Cannot safely determine initial unit activity: ${item}`);
+          initial.set(item, state.stdout.trim());
+        }
+      }
+      const ordered = action === 'stop' ? [...manifest.managedUnits].reverse() : manifest.managedUnits;
+      for (unit of ordered) {
+        if (action !== 'stop' && initial.get(unit) === 'active') continue;
+        await owner(manifest);
+        if (action !== 'stop') attempted.push(unit);
+        result = await invoke(manifest, 'root', ['systemctl', action === 'stop' ? 'stop' : 'start', unit]);
+        if (result.code !== 0) break;
+      }
+    } catch (error) { result = { code: 1, stdout: '', stderr: boundedText(redact(error.message)) }; }
+    if (result.code !== 0 && action !== 'stop') {
+      // Includes the failed unit: systemctl may fail after partially activating it.
+      for (const item of attempted.reverse()) {
+        try {
+          await owner(manifest);
+          const stopped = await invoke(manifest, 'root', ['systemctl', 'stop', item]);
+          rollback.push({ unit: item, code: stopped.code });
+        } catch (error) { rollback.push({ unit: item, code: 1, message: boundedText(redact(error.message), 1024) }); }
+      }
+    }
+    return { result, diagnostic: result.code === 0 ? null : { action, unit, code: result.code, stderr: result.stderr, rollback } };
   }
   async function status(id) { await init(); return get(id); }
   return {
-    status,
+    status, preflight,
     async register(file) {
+      const { manifest } = await preflight(file);
       return locked(async () => {
-        const manifest = await validate(await plainFile(file));
-        await owner(manifest);
         const names = (await readdir(registry)).filter(name => name.endsWith('.json'));
         if (names.length > 100) throw new Error('Registry exceeds capacity safety bound');
         for (const name of names) {
@@ -104,8 +173,8 @@ export function createAdapter({ registry = process.env.DEVSTACK_STATE_DIR ?? joi
       });
     },
     async select(id) {
+      const record = await get(id); await owner(record.manifest);
       return locked(async () => {
-        const record = await get(id); await owner(record.manifest);
         const path = join(registry, 'current');
         const temp = `${path}.${process.pid}.tmp`;
         const handle = await open(temp, 'wx', 0o600);
@@ -119,33 +188,36 @@ export function createAdapter({ registry = process.env.DEVSTACK_STATE_DIR ?? joi
       if (!['start', 'stop', 'resume', 'exec', 'test', 'logs'].includes(action)) throw new Error('Unknown local action');
       if (args.length > 128 || args.some(arg => typeof arg !== 'string' || arg.length > 8192 || arg.includes('\0'))) throw new Error('Invalid command arguments');
       if (['exec', 'test'].includes(action) && (!args.length || args[0].startsWith('-'))) throw new Error('Provide an executable after --');
+      statePath(id);
       return locked(async () => {
         const record = await get(id); const manifest = record.manifest;
         await owner(manifest);
         let result;
         try {
           if (['start', 'stop', 'resume'].includes(action)) {
-            const ordered = action === 'stop' ? [...manifest.managedUnits].reverse() : manifest.managedUnits;
-            for (const unit of ordered) {
-              // Recheck even between lifecycle writes: partial failures keep the claim.
-              await owner(manifest);
-              result = await invoke(manifest, 'root', ['systemctl', action === 'stop' ? 'stop' : 'start', unit]);
-              if (result.code !== 0) break;
-            }
+            const outcome = await lifecycle(manifest, action); result = outcome.result;
             record.state = result.code === 0 ? action === 'stop' ? 'stopped' : 'running' : 'failed';
+            record.lastExitCode = result.code; record.diagnostic = outcome.diagnostic;
+            await save(record);
           } else if (action === 'logs') {
             if (args.length) throw new Error('Logs use fixed units and a finite 200-line limit');
             result = await invoke(manifest, 'root', ['journalctl', '--no-pager', '-n', '200', ...manifest.managedUnits.flatMap(unit => ['-u', unit])]);
-          } else result = await invoke(manifest, 'matrix', ['--workdir', manifest.sourceRoot, ...args]);
-          record.lastExitCode = result.code;
-          record.diagnostic = result.code === 0 ? null : { action, code: result.code, stderr: result.stderr };
-          await save(record);
+          } else {
+            result = await invoke(manifest, 'matrix', ['--workdir', manifest.sourceRoot, ...args]);
+            record.lastCommand = { action, code: result.code, stderr: result.stderr };
+            // Preserve lifecycle evidence; command feedback has its own field.
+            if (!record.diagnostic) record.lastExitCode = result.code;
+            await save(record);
+          }
           return { ...result, id, preview: manifest.preview, state: record.state };
         } catch (error) {
-          record.state = 'failed'; record.diagnostic = { action, message: redact(error.message) };
-          await save(record); throw error;
+          if (action !== 'logs') {
+            record.lastCommand = { action, code: 1, message: boundedText(redact(error.message)) };
+            await save(record);
+          }
+          throw error;
         }
-      });
+      }, `.${id}.lock`);
     },
   };
 }

@@ -5,12 +5,12 @@ const adapter = createAdapter();
 const [action, target, ...rest] = process.argv.slice(2);
 try {
   let result;
-  if (action === 'register') {
-    if (!target || rest.length) throw new Error('Usage: local register /absolute/private-manifest.json');
-    result = await adapter.register(target);
+  if (action === 'register' || action === 'preflight') {
+    if (!target || rest.length) throw new Error('Usage: local register|preflight /absolute/private-manifest.json');
+    result = await adapter[action](target);
   } else {
     if (!['status', 'switch', 'preview', 'exec', 'test', 'logs', 'start', 'stop', 'resume'].includes(action)) {
-      throw new Error('Usage: staging-slot.sh local register|status|switch|preview|exec|test|logs|start|stop|resume [id] [-- executable args...]');
+      throw new Error('Usage: staging-slot.sh local register|preflight|status|switch|preview|exec|test|logs|start|stop|resume [id] [-- executable args...]');
     }
     const id = target ?? await adapter.current();
     if (!['exec', 'test'].includes(action) && rest.length) throw new Error('Unexpected arguments');
