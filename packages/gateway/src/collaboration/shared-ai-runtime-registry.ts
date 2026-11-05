@@ -6,6 +6,7 @@ import {
   type KernelCredentialAccessSourceId,
 } from "../kernel-credentials.js";
 import type { ScopeRuntimeBrokerAuthorization } from "./scope-runtime-broker.js";
+import type { SharedRunOwnerSourceDecision } from "./shared-run-owner-source.js";
 const MAX_CAPACITY = 64;
 const MAX_TTL_MS = 5 * 60_000;
 const GenerationSchema = z.string().regex(/^(0|[1-9][0-9]{0,19})$/);
@@ -21,6 +22,8 @@ export interface SharedAiRuntimeBinding {
   providerIdentity:
     | { driverKind: "claude_code"; instanceId: "claude_shared"; accessSourceId: KernelCredentialAccessSourceId }
     | { driverKind: "codex"; instanceId: "codex_default" };
+  /** Present only for project work governed by the owner's current global route. */
+  ownerRoute?: SharedRunOwnerSourceDecision;
   modelId?: string;
 }
 interface StoredBinding extends SharedAiRuntimeBinding {
@@ -130,6 +133,21 @@ function parseBinding(input: SharedAiRuntimeBinding): SharedAiRuntimeBinding {
           instanceId: z.literal("claude_shared"),
           accessSourceId: KernelCredentialAccessSourceIdSchema,
         }).strict().parse(input.providerIdentity),
+    ...(input.ownerRoute === undefined ? {} : {
+      ownerRoute: z.object({
+        authorityKind: z.literal("provider_settings_active"),
+        policyRevision: GenerationSchema,
+        settingsRevision: GenerationSchema,
+        routeGeneration: z.string().regex(/^[a-f0-9]{64}$/),
+        harness: z.enum(["codex", "claude_code"]),
+        providerInstanceId: ReferenceSchema,
+        providerAccessSourceId: ReferenceSchema,
+        accessSourceId: KernelCredentialAccessSourceIdSchema.nullable(),
+        allowedModelIds: z.array(ModelSchema).min(1).max(1),
+        modelId: ModelSchema,
+        effectiveSubmitMode: z.literal("members"),
+      }).strict().parse(input.ownerRoute),
+    }),
     ...(input.modelId === undefined ? {} : { modelId: ModelSchema.parse(input.modelId) }),
   };
 }

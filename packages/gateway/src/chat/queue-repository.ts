@@ -161,6 +161,8 @@ export interface EnqueueSharedQueuedTurnInput extends Omit<
 export interface CanonicalSharedProviderAuthority {
   driverKind: CanonicalProviderDriverKind;
   selection: CanonicalQueueChatTurnRequest["selection"];
+  /** Project-only: the owner's current Provider Settings route replaces durable Chat provider binding. */
+  currentOwnerRoute?: true;
 }
 
 export interface SharedQueuedTurn {
@@ -346,6 +348,7 @@ export class ChatQueueRepository {
         actorId: requestingActorId,
         executionEligibility: scope.execution_eligibility,
         canonicalProviderAuthority: input.canonicalProviderAuthority,
+        currentOwnerRoute: scope.parent_scope_id !== null,
       });
       if (provider.capability.status !== "available" || !provider.execution) {
         throw new SharedChatQueueError("unavailable");
@@ -496,6 +499,7 @@ export class ChatQueueRepository {
         "chats.bound_instance_id",
         "chats.bound_at_turn_id",
         "collaboration_scopes.execution_eligibility",
+        "collaboration_scopes.parent_scope_id",
         "collaboration_scopes.lifecycle as scope_lifecycle",
       ])
       .where("chats.id", "=", chatId)
@@ -505,6 +509,13 @@ export class ChatQueueRepository {
       .where("collaboration_scopes.kind", "=", "chat")
       .executeTakeFirst();
     if (!row || row.scope_lifecycle !== "shared") return { status: "unavailable" };
+    if (row.parent_scope_id !== null) {
+      const selection = CanonicalChatModelSelectionSchema.safeParse(safelyParseSharedJson(row.current_selection));
+      return {
+        status: "owner_binding_required",
+        ...(selection.success ? { effectiveSelection: selection.data } : {}),
+      };
+    }
     const boundDriverKind = CanonicalChatRunSchema.shape.driverKind.safeParse(row.bound_driver_kind);
     return {
       ...authoritativeSharedProvider({
@@ -971,8 +982,10 @@ export class ChatQueueRepository {
             canonicalProviderAuthority: {
               driverKind: candidateDriver.data,
               selection: candidateSelection.data,
+              ...(sharedScope?.parent_scope_id != null ? { currentOwnerRoute: true as const } : {}),
             },
           } : {}),
+          currentOwnerRoute: sharedScope?.parent_scope_id != null,
         });
         if (provider.capability.status !== "available" || !provider.execution
           || !candidateSelection.success
@@ -1313,6 +1326,7 @@ function authoritativeSharedProvider(input: {
   ownerId?: string;
   executionEligibility: unknown;
   canonicalProviderAuthority?: CanonicalSharedProviderAuthority;
+  currentOwnerRoute?: boolean;
 }): {
   capability: SharedAiCapability;
   execution?: {
@@ -1320,6 +1334,23 @@ function authoritativeSharedProvider(input: {
     selection: CanonicalQueueChatTurnRequest["selection"];
   };
 } {
+  if (input.currentOwnerRoute || input.canonicalProviderAuthority?.currentOwnerRoute) {
+    const authorityDriver = CanonicalChatRunSchema.shape.driverKind.safeParse(
+      input.canonicalProviderAuthority?.driverKind,
+    );
+    const authoritySelection = CanonicalChatModelSelectionSchema.safeParse(
+      input.canonicalProviderAuthority?.selection,
+    );
+    if (!authorityDriver.success || !authoritySelection.success || !sharedRuntimeSupports(
+      input.executionEligibility,
+      authorityDriver.data,
+      authoritySelection.data.instanceId,
+    )) return { capability: { status: "unavailable" } };
+    return {
+      capability: { status: "available", effectiveSelection: authoritySelection.data },
+      execution: { driverKind: authorityDriver.data, selection: authoritySelection.data },
+    };
+  }
   const selection = CanonicalChatModelSelectionSchema.safeParse(
     input.chat.current_selection === null
       ? undefined

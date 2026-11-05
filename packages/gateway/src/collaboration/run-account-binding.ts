@@ -14,7 +14,7 @@
  * so a changed source, root or audience starts a fresh continuation.
  */
 import { createHash } from "node:crypto";
-import type { Kysely } from "kysely";
+import { sql, type Kysely, type Transaction } from "kysely";
 import { z } from "zod/v4";
 import {
   CanonicalChatExecutionRootRefSchema,
@@ -25,12 +25,29 @@ import {
   type CollaborationRunBinding,
 } from "@matrix-os/contracts";
 import type { OwnerAccountEligibility } from "./account-eligibility.js";
+import type { SharedRunOwnerSourceDecision } from "./shared-run-owner-source.js";
 import type { OwnerCollaborationDatabase } from "./database.js";
 import {
   effectiveSubmitModeWithAcknowledgement,
   resolveExecutionScope,
 } from "./execution-policy.js";
 import { jsonb, parseJson, toIso } from "./repository-shared.js";
+
+export const COLLABORATION_PROVIDER_ROUTE_BINDING_MIGRATION_VERSION = 16;
+
+export async function migrateProviderRouteBindingsV16(
+  trx: Transaction<OwnerCollaborationDatabase>,
+): Promise<void> {
+  await sql`ALTER TABLE collaboration_run_bindings
+    ADD COLUMN IF NOT EXISTS provider_settings_revision BIGINT
+    CHECK (provider_settings_revision IS NULL OR provider_settings_revision >= 0)`.execute(trx);
+  await sql`ALTER TABLE collaboration_run_bindings
+    ADD COLUMN IF NOT EXISTS route_generation TEXT
+    CHECK (route_generation IS NULL OR route_generation ~ '^[a-f0-9]{64}$')`.execute(trx);
+  await sql`INSERT INTO collaboration_schema_migrations (version)
+    VALUES (${COLLABORATION_PROVIDER_ROUTE_BINDING_MIGRATION_VERSION})
+    ON CONFLICT (version) DO NOTHING`.execute(trx);
+}
 
 export type CollaborationRunBindingErrorCode =
   | "not_found"
@@ -132,6 +149,8 @@ interface BindingRow {
   harness: "codex" | "claude_code";
   model_id: string;
   policy_revision: number | string;
+  provider_settings_revision: number | string | null;
+  route_generation: string | null;
   audience_generation: number | string;
   execution_root: unknown;
   root_fingerprint: string;
@@ -161,6 +180,10 @@ function toBinding(row: BindingRow): CollaborationRunBinding {
       modelId: row.model_id,
     },
     policyRevision: String(row.policy_revision),
+    ...(row.provider_settings_revision === null ? {} : {
+      providerSettingsRevision: String(row.provider_settings_revision),
+      routeGeneration: row.route_generation!,
+    }),
     audienceGeneration: String(row.audience_generation),
     executionRoot: parseJson<CanonicalChatExecutionRootRef>(row.execution_root),
     rootFingerprint: row.root_fingerprint,
@@ -293,6 +316,8 @@ export class CollaborationRunBindingRepository {
           harness: source.harness,
           model_id: modelId,
           policy_revision: Number(policyRow.revision),
+          provider_settings_revision: null,
+          route_generation: null,
           audience_generation: Number(input.audienceGeneration),
           execution_root: jsonb(input.executionRoot),
           root_fingerprint: input.rootFingerprint,
@@ -307,6 +332,89 @@ export class CollaborationRunBindingRepository {
       const row = await trx.selectFrom("collaboration_run_bindings").selectAll()
         .where("run_id", "=", input.runId).executeTakeFirstOrThrow();
       return toBinding(row);
+    });
+  }
+
+  /**
+   * Admits project work from the exact current Provider Settings route. No
+   * collaboration execution-policy row is read or written on this path.
+   */
+  async admitCurrentRoute(
+    rawInput: CollaborationRunAdmission,
+    route: SharedRunOwnerSourceDecision,
+  ): Promise<CollaborationRunBinding> {
+    const input = AdmissionSchema.parse(rawInput);
+    if (route.authorityKind !== "provider_settings_active"
+      || input.expectedPolicyRevision !== route.settingsRevision
+      || (input.harness !== undefined && input.harness !== route.harness)
+      || (input.modelId !== undefined && input.modelId !== route.modelId)) {
+      throw new CollaborationRunBindingError("stale_policy", "The owner's current AI route changed");
+    }
+    const nowIso = this.now().toISOString();
+    const preflight = await resolveExecutionScope(this.db, input.scopeId);
+    if (!preflight || preflight.ref.kind !== "project") {
+      throw new CollaborationRunBindingError("not_found", "Project execution scope not found");
+    }
+    return this.db.transaction().execute(async (trx) => {
+      const resolution = await resolveExecutionScope(trx, input.scopeId, { lock: true });
+      if (!resolution || resolution.ref.kind !== "project"
+        || resolution.ref.scopeId !== preflight.ref.scopeId
+        || resolution.scope.owner_id !== preflight.scope.owner_id
+        || Number(resolution.scope.revision) !== Number(preflight.scope.revision)) {
+        throw new CollaborationRunBindingError("stale_policy", "The project changed during admission");
+      }
+      const existing = await trx.selectFrom("collaboration_run_bindings").select("run_id")
+        .where("run_id", "=", input.runId).executeTakeFirst();
+      if (existing) throw new CollaborationRunBindingError("conflict", "Run already admitted");
+      const source = {
+        accessSourceId: route.providerAccessSourceId,
+        providerInstanceId: route.providerInstanceId,
+        harness: route.harness,
+        modelId: route.modelId,
+      };
+      const sessionKey = sharedSessionKey({
+        source,
+        executionRoot: input.executionRoot,
+        rootFingerprint: input.rootFingerprint,
+        audienceGeneration: input.audienceGeneration,
+      });
+      const latest = await trx.selectFrom("collaboration_run_bindings").select(["session_generation", "session_key"])
+        .where("scope_id", "=", input.scopeId).orderBy("session_generation", "desc").limit(1).executeTakeFirst();
+      const sessionGeneration = latest === undefined
+        ? 1
+        : latest.session_key === sessionKey ? Number(latest.session_generation) : Number(latest.session_generation) + 1;
+      this.sessions.generationFor({ scopeId: resolution.ref.scopeId, chatId: input.scopeId, sessionKey, floor: sessionGeneration - 1 });
+      try {
+        await trx.insertInto("collaboration_run_bindings").values({
+          run_id: input.runId,
+          request_id: input.requestId,
+          scope_id: input.scopeId,
+          execution_scope_id: resolution.ref.scopeId,
+          execution_scope_kind: "project",
+          execution_resource_id: resolution.ref.projectId,
+          requesting_actor_id: input.requestingActorId,
+          executing_owner_id: resolution.scope.owner_id,
+          payer_actor_id: resolution.scope.owner_id,
+          access_source_id: source.accessSourceId,
+          provider_instance_id: source.providerInstanceId,
+          harness: source.harness,
+          model_id: source.modelId,
+          policy_revision: Number(route.settingsRevision),
+          provider_settings_revision: Number(route.settingsRevision),
+          route_generation: route.routeGeneration,
+          audience_generation: Number(input.audienceGeneration),
+          execution_root: jsonb(input.executionRoot),
+          root_fingerprint: input.rootFingerprint,
+          session_key: sessionKey,
+          session_generation: sessionGeneration,
+          admitted_at: nowIso,
+        }).execute();
+      } catch (error: unknown) {
+        if (isUniqueViolation(error)) throw new CollaborationRunBindingError("conflict", "Run already admitted");
+        throw error;
+      }
+      return toBinding(await trx.selectFrom("collaboration_run_bindings").selectAll()
+        .where("run_id", "=", input.runId).executeTakeFirstOrThrow());
     });
   }
 

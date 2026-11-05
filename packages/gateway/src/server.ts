@@ -1542,6 +1542,7 @@ export async function createGateway(config: GatewayConfig) {
     homePath,
     codexNativeAccountMetadataReader: nativeCodexRuntime.readAccount,
     prepareNativeCodexRevocation: () => nativeCodexRuntime.admission.prepareRevocation(),
+    prepareSharedAiRouteChange: () => gatewayCollaboration?.prepareOwnerAiRouteChange() ?? Promise.resolve(),
     providerSnapshotReader: aiProviderService,
     loginCoordinator: providerLoginCoordinator,
     accountLifecycle: providerAccountLifecycle,
