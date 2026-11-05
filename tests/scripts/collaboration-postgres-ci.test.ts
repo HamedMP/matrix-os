@@ -43,6 +43,7 @@ describe("collaboration PostgreSQL CI inventory", () => {
     expect(files.length).toBeGreaterThanOrEqual(39);
     expect(files).toContain("tests/platform/collaboration-registration-recovery.test.ts");
     expect(files).toContain("tests/gateway/direct-resource-policy-postgres.test.ts");
+    expect(files).toContain("tests/gateway/chat-native-scheduled-postgres.test.ts");
     expect(files).toContain("tests/platform/platform-migration-revision-db.test.ts");
     expect(files).toEqual([...files].sort());
   });
@@ -152,7 +153,7 @@ describe("required collaboration PostgreSQL workflow", () => {
 
   it("retains required jobs, exact-source checkout and all commands within measured bounded qualification windows", () => {
     const workflow = parse(readFileSync(".github/workflows/ci.yml", "utf8")); const job = workflow.jobs["funded-postgres"];
-    expect(job.needs).toBe("changes"); expect(job["timeout-minutes"]).toBe(14);
+    expect(job.needs).toBe("changes"); expect(job["timeout-minutes"]).toBe(25);
     expect(job.if).not.toMatch(/dedicated|ci-backend/);
     expect(job.steps[0].with.ref).toBe("${{ needs.changes.outputs.source_sha }}");
     const fundedTestSteps = job.steps.filter((step: { run?: string }) => step.run?.includes("pnpm exec vitest run"));

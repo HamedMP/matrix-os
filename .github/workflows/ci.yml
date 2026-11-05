@@ -841,8 +841,9 @@ jobs:
     needs: changes
     if: always() && !cancelled() && needs.changes.result == 'success' && (needs.changes.outputs.should_run == 'true')
     runs-on: ubuntu-latest
-    # Measured run 41180668331 reached remaining PG at 9m29s; retain its 120s runner budget plus artifact/cleanup margin.
-    timeout-minutes: 14
+    # Run 41699095598 reached inventory at 9m43s. The full routine
+    # cohort (24 files) took 445s of test time locally; retain bounded setup/artifact and remaining-PG margin.
+    timeout-minutes: 25
     services:
       postgres:
         # ECR Public anonymous pulls hit "toomanyrequests: Data limit exceeded" on shared runner IPs,
@@ -919,10 +920,12 @@ jobs:
           : "${MATRIX_TEST_POSTGRES_URL:?Disposable PostgreSQL test URL required}"
           pnpm exec vitest run tests/gateway/bots/deployed-v9-entry-postgres.test.ts tests/gateway/bots/routine-concurrency-postgres.test.ts tests/gateway/bots/routine-fencing-postgres.test.ts tests/gateway/bots/routine-recovery-postgres.test.ts tests/gateway/bots/thread-guard-postgres.test.ts --maxWorkers=1 --no-file-parallelism
 
-      - name: Routine CLI resume clock on PostgreSQL
+      - name: Routine CLI PostgreSQL qualification
+        env:
+          MATRIX_ROUTINE_CLI_TEST_POSTGRES_URL: ${{ env.MATRIX_TEST_POSTGRES_URL }}
         run: |
           : "${MATRIX_TEST_POSTGRES_URL:?Disposable PostgreSQL test URL required}"
-          MATRIX_ROUTINE_CLI_TEST_POSTGRES_URL="$MATRIX_TEST_POSTGRES_URL" pnpm exec vitest run --config vitest.routine-cli-integration.config.ts tests/gateway/bots/routine-cli-resume-clock.postgres.integration.ts --maxWorkers=1 --no-file-parallelism
+          pnpm exec vitest run --config vitest.routine-cli-integration.config.ts tests/gateway/bots/routine-cli-*.postgres.integration.ts --maxWorkers=1 --no-file-parallelism
 
       - name: Routine acceptance capture and preflight contracts
         run: node --test tests/gateway/bots/routine-acceptance-capture.test.mjs tests/gateway/bots/routine-acceptance-preflight.test.mjs
@@ -1082,7 +1085,9 @@ jobs:
     name: E2E Tests (${{ matrix.lane }})
     needs: [changes, ci-backend]
     if: always() && needs.changes.result == 'success' && needs.changes.outputs.should_run == 'true' && (needs.changes.outputs.dedicated_eligible != 'true' || needs.ci-backend.outputs.provider == 'hosted')
-    runs-on: ubuntu-latest
+    # Playwright 1.60 cannot install Chromium on the Ubuntu 26.04 image now
+    # selected by ubuntu-latest. Keep browser-dependent lanes on 24.04.
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
     env:
       LANG: C.UTF-8
@@ -1123,6 +1128,10 @@ jobs:
 
       - run: pnpm install --frozen-lockfile
         if: needs.changes.outputs.should_run == 'true'
+
+      - name: Build node-pty for E2E runtime
+        if: needs.changes.outputs.should_run == 'true'
+        run: node scripts/build-node-pty.mjs
 
       - name: Build test prerequisites once
         run: bun run test:prepare
