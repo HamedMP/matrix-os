@@ -7,7 +7,7 @@ export async function authenticatedRoutineFullAccessProxyProof(input: OwnerAppro
   const route = routineFullAccessPath(input.method, input.path), machine = input.machine;
   if (!route || !input.platformSecret || !machine?.machineId || machine.handle !== input.handle
     || machine.clerkUserId !== input.identity.userId || input.identity.source !== "auth"
-    || input.identity.runtimeSlot !== undefined && input.identity.runtimeSlot !== machine.runtimeSlot) return null;
+  ) return null;
   const scopeId = input.request.headers.get(ROUTINE_FULL_ACCESS_SCOPE_HEADER);
   if (route.kind === "turn" && !RoutineFullAccessIdSchema.safeParse(scopeId).success) return null;
   let sessionExpiresAt: number | null;

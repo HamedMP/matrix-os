@@ -64,6 +64,17 @@ it("binds an ordinary fresh Claude turn to the full canonical parsed request, sc
   }
 });
 
+it("binds an explicitly authorized Computer when the browser session still names another runtime slot", async () => {
+  const proof = await proxy(body, { identity: { ...identity, runtimeSlot: "previous-computer" } });
+  const value = parsed(proof);
+  expect(value).toMatchObject({
+    handle: machine.handle,
+    runtimeSlot: machine.runtimeSlot,
+    machineId: machine.machineId,
+    ownerId: identity.userId,
+  });
+});
+
 it.each([undefined, "", "rcfull_fake"])("does not mint a turn proof from full_access mode without a valid scope reference %s", async scope => {
   expect(await proxy(turn, { path: "/api/chats/chat_owner/turns" }, scope === undefined ? {} : { [ROUTINE_FULL_ACCESS_SCOPE_HEADER]: scope })).toBeNull();
 });
@@ -82,7 +93,7 @@ it("does not mint for other harnesses, supervised/plan modes, injected body auth
 
 it("rejects missing/foreign routed identity, Computer and runtime even with a verified Clerk browser", async () => {
   for (const patch of [{ machine: undefined }, { handle: "foreign-pc" }, { machine: { ...machine, machineId: undefined } },
-    { machine: { ...machine, clerkUserId: "user_foreign" } }, { identity: { ...identity, runtimeSlot: "other" } },
+    { machine: { ...machine, clerkUserId: "user_foreign" } },
     { identity: { ...identity, source: "static-route" as const } }, { identity: { ...identity, source: "mobile-session" as const } }]) {
     expect(await proxy(body, patch)).toBeNull();
   }
