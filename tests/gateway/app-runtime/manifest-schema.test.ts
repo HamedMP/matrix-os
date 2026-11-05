@@ -217,3 +217,22 @@ describe("AppManifestSchema", () => {
     }
   });
 });
+
+describe("AppManifestSchema integrations", () => {
+  const base = { name: "Inbox", slug: "inbox", version: "1.0.0", runtime: "static", runtimeVersion: "^1.0.0" };
+
+  it("preserves object-form integrations declared for the App Store", () => {
+    const integrations = { required: [{ service: "gmail", actions: ["list_messages"] }], optional: [] };
+    expect(AppManifestSchema.parse({ ...base, integrations }).integrations).toEqual(integrations);
+  });
+
+  it("preserves legacy string-form integrations", () => {
+    const integrations = { required: ["linear"], optional: ["github"] };
+    expect(AppManifestSchema.parse({ ...base, integrations }).integrations).toEqual(integrations);
+  });
+
+  it("drops malformed integrations without rejecting the app", () => {
+    expect(AppManifestSchema.parse({ ...base, integrations: { required: [{ service: "Bad Service" }] } }).integrations).toBeUndefined();
+    expect(AppManifestSchema.parse({ ...base, integrations: "gmail" }).integrations).toBeUndefined();
+  });
+});
