@@ -45,6 +45,8 @@ export interface TwoAccountCollaborationJourney {
   owner: CollaborationJourneyActor;
   editor: CollaborationJourneyActor;
   outsider: CollaborationJourneyActor;
+  editorActorId: string;
+  editorUsername: string;
   platformUrl: string;
   runtimeUrl: string;
   close(): Promise<void>;
@@ -53,7 +55,12 @@ export interface TwoAccountCollaborationJourney {
 export function parseCollaborationJourneyEnvironment(
   environment: Record<string, string | undefined> = process.env,
 ): CollaborationJourneyEnvironment {
-  const parsed = CollaborationJourneyEnvironmentSchema.parse(environment);
+  const parsed = CollaborationJourneyEnvironmentSchema.parse({
+    ...environment,
+    // MEMBER is the public qualification contract; EDITOR remains a compatibility alias.
+    MATRIX_COLLABORATION_E2E_EDITOR_STATE: environment.MATRIX_COLLABORATION_E2E_MEMBER_STATE
+      ?? environment.MATRIX_COLLABORATION_E2E_EDITOR_STATE,
+  });
   const baseUrl = new URL(parsed.MATRIX_COLLABORATION_E2E_BASE_URL);
   const localHttp = baseUrl.protocol === "http:"
     && ["localhost", "127.0.0.1", "::1"].includes(baseUrl.hostname);
@@ -97,6 +104,8 @@ export async function createTwoAccountCollaborationJourney(
       owner: { context: ownerContext, page: ownerPage },
       editor: { context: editorContext, page: editorPage },
       outsider: { context: outsiderContext, page: outsiderPage },
+      editorActorId: config.editorActorId,
+      editorUsername: config.editorUsername,
       platformUrl: config.baseUrl,
       runtimeUrl: new URL(config.runtimePath, config.baseUrl).toString(),
       async close() {

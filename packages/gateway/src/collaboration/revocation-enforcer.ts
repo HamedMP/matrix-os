@@ -11,7 +11,9 @@
 import type { DirectSessionEndReason } from "./direct-sessions.js";
 import type { TerminalControlCoordinator } from "./terminal-control.js";
 import type { Kysely } from "kysely";
+import { sql } from "kysely";
 import type { OwnerCollaborationDatabase } from "./database.js";
+import { appendMutationRecords } from "./repository-shared.js";
 
 const DEFAULT_TTL_MS = 20 * 60 * 1_000;
 const DEFAULT_MAX_ENTRIES = 4_096;
@@ -305,20 +307,75 @@ export class ProjectAccessRevocationEnforcer {
   }) {}
 
   async membershipEnded(input: { organizationId: string; actorId: string }): Promise<void> {
+    const { projects, children } = await this.options.db.transaction().execute(async (trx) => {
+      const projects = await trx.selectFrom("collaboration_scopes")
+        .selectAll()
+        .where("organization_id", "=", input.organizationId)
+        .where("kind", "=", "project")
+        .where("lifecycle", "in", ["shared", "archived"])
+        .where("deleted_at", "is", null)
+        .orderBy("id")
+        .limit(MAX_ORGANIZATION_PROJECTS + 1)
+        .forUpdate()
+        .execute();
+      if (projects.length > MAX_ORGANIZATION_PROJECTS) {
+        throw new Error("Organization project revocation capacity exceeded");
+      }
+      const children = projects.length === 0 ? [] : await trx.selectFrom("collaboration_scopes")
+        .selectAll()
+        .where("parent_scope_id", "in", projects.map((project) => project.id))
+        .where("membership_mode", "=", "inherited")
+        .where("deleted_at", "is", null)
+        .orderBy("id")
+        .limit(MAX_PROJECT_SCOPES + 1)
+        .forUpdate()
+        .execute();
+      if (children.length > MAX_PROJECT_SCOPES) {
+        throw new Error("Project scope revocation capacity exceeded");
+      }
+      const committedAt = new Date().toISOString();
+      for (const project of projects) {
+        if (project.owner_id !== input.actorId) continue;
+        const updated = await trx.updateTable("collaboration_scopes").set({
+          lifecycle: "private",
+          revision: sql<number>`revision + 1`,
+          auth_epoch: sql<number>`auth_epoch + 1`,
+          updated_at: committedAt,
+        }).where("id", "=", project.id)
+          .where("revision", "=", Number(project.revision))
+          .where("lifecycle", "=", project.lifecycle)
+          .returningAll()
+          .executeTakeFirst();
+        if (!updated) throw new Error("Owner project departure fence changed");
+        const ownedChildren = children.filter((child) => child.parent_scope_id === project.id);
+        if (ownedChildren.length > 0) {
+          const updatedChildren = await trx.updateTable("collaboration_scopes").set({
+            lifecycle: "private",
+            revision: sql<number>`revision + 1`,
+            auth_epoch: sql<number>`auth_epoch + 1`,
+            updated_at: committedAt,
+          }).where("id", "in", ownedChildren.map((child) => child.id))
+            .returning("id")
+            .execute();
+          if (updatedChildren.length !== ownedChildren.length) throw new Error("Owner project child fence changed");
+        }
+        const recipients = await trx.selectFrom("collaboration_members").select("actor_id")
+          .where("scope_id", "=", project.id)
+          .where("status", "=", "accepted")
+          .execute();
+        await appendMutationRecords(trx, {
+          scope: updated,
+          actorId: input.actorId,
+          action: "scope.owner_membership_ended",
+          now: committedAt,
+          recipients: recipients.map((recipient) => ({ actorId: recipient.actor_id })),
+          discoveryState: "revoked",
+          reasonCode: "owner_membership_ended",
+        });
+      }
+      return { projects, children };
+    });
     this.options.sessions.revoke(input);
-    const projects = await this.options.db.selectFrom("collaboration_scopes")
-      .select(["id", "owner_id"])
-      .where("organization_id", "=", input.organizationId)
-      .where("kind", "=", "project")
-      .where("lifecycle", "in", ["shared", "archived"])
-      .where("deleted_at", "is", null)
-      .orderBy("id")
-      .limit(MAX_ORGANIZATION_PROJECTS + 1)
-      .execute();
-    if (projects.length > MAX_ORGANIZATION_PROJECTS) {
-      throw new Error("Organization project revocation capacity exceeded");
-    }
-    const children = await this.childrenFor(projects.map((project) => project.id));
     const childrenByProject = new Map<string, string[]>();
     for (const child of children) {
       if (!child.parent_scope_id) continue;
@@ -337,14 +394,16 @@ export class ProjectAccessRevocationEnforcer {
     }
   }
 
-  async unshared(projectScopeId: string): Promise<void> {
+  async unshared(input: { scopeId: string; revision: number }): Promise<void> {
     const project = await this.options.db.selectFrom("collaboration_scopes")
       .select("id")
-      .where("id", "=", projectScopeId)
+      .where("id", "=", input.scopeId)
       .where("kind", "=", "project")
+      .where("lifecycle", "=", "private")
+      .where("revision", "=", input.revision)
       .where("deleted_at", "is", null)
       .executeTakeFirst();
-    if (!project) throw new Error("Project revocation scope is unavailable");
+    if (!project) throw new Error("Project revocation fence is unavailable");
     const children = await this.childrenFor([project.id]);
     this.options.sessions.revoke({ scopeId: project.id });
     for (const scopeId of [project.id, ...children.map((child) => child.id)]) {
