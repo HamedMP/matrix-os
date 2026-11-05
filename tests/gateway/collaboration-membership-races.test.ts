@@ -1,10 +1,12 @@
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { bootstrapChatDatabase } from "../../packages/gateway/src/chat/database.js";
 import { bootstrapCollaborationDatabase } from "../../packages/gateway/src/collaboration/database.js";
 import { CollaborationRepository } from "../../packages/gateway/src/collaboration/repository.js";
+import { ProjectAccessRevocationEnforcer } from "../../packages/gateway/src/collaboration/revocation-enforcer.js";
 import {
   collaborationActors,
   collaborationIds,
+  createCollaborationTestDatabase,
   createRealCollaborationTestDatabase,
   type CollaborationTestDatabase,
 } from "./collaboration-test-support.js";
@@ -158,3 +160,91 @@ realDescribe("collaboration membership real PostgreSQL races", () => {
 function uuid(index: number): string {
   return `72000000-0000-4000-8000-${index.toString().padStart(12, "0")}`;
 }
+
+describe("organization project revocation races", () => {
+  const org = "org_revocation_team";
+  const departedOwner = "user_departed_owner";
+  const otherOwner = "user_other_owner";
+  const ownedProject = "73000000-0000-4000-8000-000000000001";
+  const ownedChat = "73000000-0000-4000-8000-000000000002";
+  const otherProject = "73000000-0000-4000-8000-000000000003";
+  const otherTerminal = "73000000-0000-4000-8000-000000000004";
+  let fixture: CollaborationTestDatabase;
+
+  beforeEach(async () => {
+    fixture = await createCollaborationTestDatabase();
+    await bootstrapChatDatabase(fixture.db);
+    await bootstrapCollaborationDatabase(fixture.db);
+    await fixture.db.insertInto("collaboration_scopes").values([
+      revocationScope(ownedProject, departedOwner, "project", "project_owned"),
+      revocationScope(ownedChat, departedOwner, "chat", "chat_owned", ownedProject),
+      revocationScope(otherProject, otherOwner, "project", "project_other"),
+      revocationScope(otherTerminal, otherOwner, "terminal", "terminal_other", otherProject),
+    ]).execute();
+  });
+
+  afterEach(async () => fixture.destroy());
+
+  it("fully drains projects whose owner departs and only that actor from other organization projects", async () => {
+    const revoke = vi.fn(() => [] as string[]);
+    const drainScope = vi.fn(async () => undefined);
+    const enforcer = new ProjectAccessRevocationEnforcer({
+      db: fixture.db,
+      sessions: { revoke },
+      drainScope,
+    });
+
+    await enforcer.membershipEnded({ organizationId: org, actorId: departedOwner });
+
+    expect(revoke).toHaveBeenCalledWith({ organizationId: org, actorId: departedOwner });
+    expect(revoke).toHaveBeenCalledWith({ scopeId: ownedProject });
+    expect(drainScope).toHaveBeenCalledWith(ownedProject);
+    expect(drainScope).toHaveBeenCalledWith(ownedChat);
+    expect(drainScope).toHaveBeenCalledWith(otherProject, departedOwner);
+    expect(drainScope).toHaveBeenCalledWith(otherTerminal, departedOwner);
+  });
+
+  it("drains the project and every inherited scope after unshare commits", async () => {
+    const revoke = vi.fn(() => [] as string[]);
+    const drainScope = vi.fn(async () => undefined);
+    const enforcer = new ProjectAccessRevocationEnforcer({
+      db: fixture.db,
+      sessions: { revoke },
+      drainScope,
+    });
+
+    await enforcer.unshared(ownedProject);
+
+    expect(revoke).toHaveBeenCalledWith({ scopeId: ownedProject });
+    expect(drainScope.mock.calls).toEqual([[ownedProject], [ownedChat]]);
+  });
+
+  function revocationScope(
+    id: string,
+    ownerId: string,
+    kind: "project" | "chat" | "terminal",
+    resourceId: string,
+    parentScopeId: string | null = null,
+  ) {
+    return {
+      id,
+      owner_type: "personal" as const,
+      owner_id: ownerId,
+      organization_id: org,
+      kind,
+      resource_id: resourceId,
+      parent_scope_id: parentScopeId,
+      membership_mode: parentScopeId ? "inherited" as const : "direct" as const,
+      lifecycle: "shared" as const,
+      revision: 1,
+      auth_epoch: 1,
+      authority_runtime_id: "vps:revocation",
+      authority_generation: 1,
+      execution_generation: null,
+      execution_eligibility: null,
+      deleted_at: null,
+      created_at: now,
+      updated_at: now,
+    };
+  }
+});

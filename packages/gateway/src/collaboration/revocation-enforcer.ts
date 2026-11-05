@@ -10,6 +10,8 @@
  */
 import type { DirectSessionEndReason } from "./direct-sessions.js";
 import type { TerminalControlCoordinator } from "./terminal-control.js";
+import type { Kysely } from "kysely";
+import type { OwnerCollaborationDatabase } from "./database.js";
 
 const DEFAULT_TTL_MS = 20 * 60 * 1_000;
 const DEFAULT_MAX_ENTRIES = 4_096;
@@ -17,6 +19,8 @@ const DEFAULT_MAX_ENTRIES = 4_096;
 const DEFAULT_RUNTIME_MAX_AGE_MS = 6 * 60 * 60 * 1_000;
 const DEFAULT_RUNTIME_SWEEP_INTERVAL_MS = 60 * 1_000;
 const RUNTIME_HANDLE = /^runtime_[a-f0-9]{32}$/;
+const MAX_ORGANIZATION_PROJECTS = 1_000;
+const MAX_PROJECT_SCOPES = 100_000;
 
 export type { DirectSessionEndReason };
 /** An exhausted action budget belongs to one session, not every session held by the actor. */
@@ -102,6 +106,25 @@ export class SandboxRuntimeRegistry {
   async stopForActor(scopeId: string, actorId: string): Promise<number> {
     const matching = [...this.bindings.values()].filter(binding => binding.scopeId === scopeId && binding.actorId === actorId);
     // Revoke all model/frame authority before any asynchronous worker stop.
+    for (const binding of matching) {
+      this.bindings.delete(binding.runtimeHandle);
+      this.notifyStop(binding);
+    }
+    let stopped = 0;
+    for (const binding of matching) {
+      try {
+        await this.options.client.stopRuntime({ runtimeHandle: binding.runtimeHandle });
+        stopped += 1;
+      } catch (error: unknown) {
+        console.warn("[collaboration-revocation] sandbox runtime stop failed",
+          error instanceof Error ? error.name : "UnknownError");
+      }
+    }
+    return stopped;
+  }
+
+  async stopForScope(scopeId: string): Promise<number> {
+    const matching = [...this.bindings.values()].filter(binding => binding.scopeId === scopeId);
     for (const binding of matching) {
       this.bindings.delete(binding.runtimeHandle);
       this.notifyStop(binding);
@@ -266,6 +289,83 @@ export class CollaborationRevocationEnforcer {
       this.blocked.delete(oldest);
     }
     this.blocked.set(key, now + this.ttlMs);
+  }
+}
+
+/**
+ * Expands an organization membership loss or project unshare into the exact
+ * project scope set that must be drained. Database lifecycle/membership state
+ * is the authorization fence; this coordinator removes stale live authority.
+ */
+export class ProjectAccessRevocationEnforcer {
+  constructor(private readonly options: {
+    db: Kysely<OwnerCollaborationDatabase>;
+    sessions: { revoke(input: { organizationId?: string; actorId?: string; scopeId?: string }): string[] };
+    drainScope(scopeId: string, actorId?: string): Promise<void>;
+  }) {}
+
+  async membershipEnded(input: { organizationId: string; actorId: string }): Promise<void> {
+    this.options.sessions.revoke(input);
+    const projects = await this.options.db.selectFrom("collaboration_scopes")
+      .select(["id", "owner_id"])
+      .where("organization_id", "=", input.organizationId)
+      .where("kind", "=", "project")
+      .where("lifecycle", "in", ["shared", "archived"])
+      .where("deleted_at", "is", null)
+      .orderBy("id")
+      .limit(MAX_ORGANIZATION_PROJECTS + 1)
+      .execute();
+    if (projects.length > MAX_ORGANIZATION_PROJECTS) {
+      throw new Error("Organization project revocation capacity exceeded");
+    }
+    const children = await this.childrenFor(projects.map((project) => project.id));
+    const childrenByProject = new Map<string, string[]>();
+    for (const child of children) {
+      if (!child.parent_scope_id) continue;
+      const grouped = childrenByProject.get(child.parent_scope_id) ?? [];
+      grouped.push(child.id);
+      childrenByProject.set(child.parent_scope_id, grouped);
+    }
+    for (const project of projects) {
+      const scopes = [project.id, ...(childrenByProject.get(project.id) ?? [])];
+      if (project.owner_id === input.actorId) {
+        this.options.sessions.revoke({ scopeId: project.id });
+        for (const scopeId of scopes) await this.options.drainScope(scopeId);
+      } else {
+        for (const scopeId of scopes) await this.options.drainScope(scopeId, input.actorId);
+      }
+    }
+  }
+
+  async unshared(projectScopeId: string): Promise<void> {
+    const project = await this.options.db.selectFrom("collaboration_scopes")
+      .select("id")
+      .where("id", "=", projectScopeId)
+      .where("kind", "=", "project")
+      .where("deleted_at", "is", null)
+      .executeTakeFirst();
+    if (!project) throw new Error("Project revocation scope is unavailable");
+    const children = await this.childrenFor([project.id]);
+    this.options.sessions.revoke({ scopeId: project.id });
+    for (const scopeId of [project.id, ...children.map((child) => child.id)]) {
+      await this.options.drainScope(scopeId);
+    }
+  }
+
+  private async childrenFor(projectScopeIds: readonly string[]) {
+    if (projectScopeIds.length === 0) return [];
+    const children = await this.options.db.selectFrom("collaboration_scopes")
+      .select(["id", "parent_scope_id"])
+      .where("parent_scope_id", "in", projectScopeIds)
+      .where("membership_mode", "=", "inherited")
+      .where("deleted_at", "is", null)
+      .orderBy("id")
+      .limit(MAX_PROJECT_SCOPES + 1)
+      .execute();
+    if (children.length > MAX_PROJECT_SCOPES) {
+      throw new Error("Project scope revocation capacity exceeded");
+    }
+    return children;
   }
 }
 
