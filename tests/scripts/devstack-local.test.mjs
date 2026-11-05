@@ -132,6 +132,7 @@ test('replacing a Git directory at the same worktree path invalidates the claim'
   await rename(join(f.root, '.git'), join(f.root, 'saved-git'));
   execFileSync('git', ['init', '-q', f.root]);
   await assert.rejects(f.adapter.operation('sample', 'start'), /identity/);
+  await assert.rejects(f.adapter.register(f.file), /identity/);
 });
 
 test('JSON credentials and authorization output are redacted', () => {
@@ -381,4 +382,35 @@ test('failed stop and unknown initial activity retain a conservative active leas
   await adapter.operation(id(0), 'resume');
   assert.equal((await adapter.status(id(0))).activeLease, true);
   await assert.rejects(adapter.operation(id(1), 'start'), /capacity/);
+});
+
+test('new adoption requires stopped fixed units; existing running registration stays idempotent', async t => {
+  for (const state of ['active', 'activating', 'deactivating', 'reloading', 'unknown']) {
+    const f = await fixture(t, 1);
+    f.setResponse(args => args.includes('--property=ActiveState') && args.at(-1) === units[1] ? { code: 0, stdout: state } : undefined);
+    await assert.rejects(f.adapter.register(f.file), /stopped|inactive|adopt/);
+    await assert.rejects(stat(join(f.root, 'private', 'sample.json')), /ENOENT/);
+    if (state === 'active') {
+      const peer = await fixture(t); peer.manifest.id = 'peer'; peer.manifest.machine = 'devstack-peer';
+      await writeFile(peer.file, JSON.stringify(peer.manifest));
+      const adapter = createAdapter({ registry: join(f.root, 'private'), capacity: 1,
+        runner: (command, args) => args[1] === peer.manifest.machine ? peer.runner(command, args) : f.runner(command, args) });
+      await adapter.register(peer.file); assert.equal((await adapter.operation('peer', 'start')).code, 0);
+      assert.equal(f.calls.some(([, args]) => args.includes('start')), false);
+    }
+  }
+  const f = await fixture(t, 1); await f.adapter.register(f.file); await f.adapter.operation('sample', 'start');
+  f.setResponse(args => args.includes('--property=ActiveState') ? { code: 0, stdout: 'active' } : undefined);
+  assert.equal((await f.adapter.register(f.file)).state, 'running');
+});
+test('failed stop of an unleased claim cannot manufacture admission permission', async t => {
+  const { adapter, members, id } = await capacityGroup(t, 1, 2);
+  await adapter.operation(id(0), 'start');
+  members[1].setResponse(args => args.includes('stop') ? { code: 9 } : undefined);
+  assert.equal((await adapter.operation(id(1), 'stop')).code, 9);
+  assert.equal((await adapter.status(id(1))).activeLease, false);
+  await assert.rejects(adapter.operation(id(1), 'resume'), /capacity/);
+  assert.equal(members[1].calls.some(([, args]) => args.includes('start')), false);
+  await adapter.operation(id(0), 'stop');
+  assert.equal((await adapter.operation(id(1), 'resume')).code, 0);
 });
