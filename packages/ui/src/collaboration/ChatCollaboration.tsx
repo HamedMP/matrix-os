@@ -42,7 +42,7 @@ export type ChatCollaborationView =
   | { kind: "canonical-chat"; chatId: string }
   | { kind: "terminal"; scopeId: string }
   | { kind: "project"; scopeId: string }
-  | { kind: "app"; scopeId: string };
+  | { kind: "app"; scopeId: string; expectedBuildId?: string; expectedShareRevision?: string };
 
 export function ChatCollaboration({
   view,
@@ -69,7 +69,7 @@ export function ChatCollaboration({
   openChat?: (scopeId: string, chatId?: string, title?: string) => void;
   openTerminal?: (scopeId: string) => void;
   openProject?: (scopeId: string) => void;
-  openApp?: (scopeId: string) => void;
+  openApp?: (scopeId: string, target: CollaborativeAppDirectoryItem) => void;
   onChatMetadata?: (metadata: { title: string; role: "owner" | "editor" | "viewer" }) => void;
   headerContainer?: HTMLElement | null;
   layers?: CollaborationOverlayLayers;
@@ -86,7 +86,8 @@ export function ChatCollaboration({
   }
   if (view.kind === "terminal") return <SharedTerminalView api={api} actorId={actorId} scopeId={view.scopeId} layers={layers} />;
   if (view.kind === "project") return <SharedProjectView api={api} scopeId={view.scopeId} openChat={openChat} />;
-  if (view.kind === "app") return <SharedAppScopeView key={view.scopeId} api={api} scopeId={view.scopeId} />;
+  if (view.kind === "app") return <SharedAppScopeView key={view.scopeId} api={api} scopeId={view.scopeId}
+    expectedBuildId={view.expectedBuildId} expectedShareRevision={view.expectedShareRevision} />;
   if (view.kind === "canonical-chat") return <CanonicalSharedChatPanel api={api} actorId={actorId}
     runtimeId={runtimeId ?? "platform"} chatId={view.chatId} storage={storage} onMetadata={onChatMetadata}
     headerContainer={headerContainer} layers={layers} />;
@@ -94,19 +95,30 @@ export function ChatCollaboration({
     scopeId={view.scopeId} storage={storage} onMetadata={onChatMetadata} headerContainer={headerContainer} layers={layers} />;
 }
 
-function SharedAppScopeView({ api, scopeId }: { api: CollaborationApi; scopeId: string }) {
+function SharedAppScopeView({ api, scopeId, expectedBuildId, expectedShareRevision }: {
+  api: CollaborationApi;
+  scopeId: string;
+  expectedBuildId?: string;
+  expectedShareRevision?: string;
+}) {
   const [target, setTarget] = useState<CollaborativeAppDirectoryItem | null>(null);
   const [failed, setFailed] = useState(false);
   useEffect(() => {
     let active = true;
     void findSharedApp(api, scopeId)
-      .then((value) => { if (active) setTarget(value); })
+      .then((value) => {
+        if ((expectedBuildId && value.buildId !== expectedBuildId)
+          || (expectedShareRevision && value.shareRevision !== expectedShareRevision)) {
+          throw new Error("SharedAppTargetChanged");
+        }
+        if (active) setTarget(value);
+      })
       .catch((failure: unknown) => {
         console.warn("[shared-app] discovery failed", failure instanceof Error ? failure.name : "UnknownError");
         if (active) setFailed(true);
       });
     return () => { active = false; };
-  }, [api, scopeId]);
+  }, [api, expectedBuildId, expectedShareRevision, scopeId]);
   const direct = directClientOf(api);
   const transport = useMemo(() => target && direct
     ? createSharedAppTransport({ platform: api, direct, target })
@@ -136,7 +148,7 @@ function CollaborationHome({ api, openInvitation, openChat, openTerminal, openPr
   openChat: (scopeId: string, chatId?: string, title?: string) => void;
   openTerminal: (scopeId: string) => void;
   openProject: (scopeId: string) => void;
-  openApp: (scopeId: string) => void;
+  openApp: (scopeId: string, target: CollaborativeAppDirectoryItem) => void;
   hideAcceptedProjects: boolean;
 }) {
   const [items, setItems] = useState<DiscoveryItem[]>([]);
@@ -321,7 +333,7 @@ function CollaborationHome({ api, openInvitation, openChat, openTerminal, openPr
           <p className="truncate font-medium">{appDisplayName(app.appId)}</p>
           <p className="text-sm" style={{ color: "var(--text-secondary)" }}>App · shared by {app.owner.displayName}</p>
         </div>
-        <button type="button" className={buttonClass} onClick={() => openApp(app.scopeId)}>Open app</button>
+        <button type="button" className={buttonClass} onClick={() => openApp(app.scopeId, app)}>Open app</button>
       </article>)}
       {visibleItems.map((item) => item.status === "organization_pending"
         ? <article key={`org:${item.scopeId}`} className="flex flex-wrap items-center gap-4 rounded-2xl border p-4">
