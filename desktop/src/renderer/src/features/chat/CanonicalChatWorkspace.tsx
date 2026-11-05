@@ -1,3 +1,4 @@
+import { SourceChatRoutines } from "./SourceChatRoutines";
 import { createComposerAcknowledgement } from "./composer-acknowledgement";
 import { useChatSubmissionError } from "./use-chat-submission-error";
 import { BrowserPermissionReviewProvider, BrowserPermissionReminder } from "@matrix-os/ui";
@@ -770,6 +771,7 @@ function CanonicalChatWorkspaceContent({
         }}
       />
 
+      {!directBotId && controller.detail && controller.detail.record.chat.id === routedComposerChatId && globalView === "conversation" ? <SourceChatRoutines key={JSON.stringify([admissionIdentity,draftScope,routedComposerChatId])} client={client.agents} chat={controller.detail.record.chat} ordinary={!botIdentityUnknown && !explicitSharedRoute} revision={botEventRevision}/> : null}
       <BrowserPermissionReminder/>
       <SharedChatComposer
         routineFullAccess={routineFullAccess}
@@ -1000,6 +1002,7 @@ function CanonicalChatWorkspaceContent({
             <ChatContextMenu chatId={controller.detail.record.chat.id}>
             <div className="contents">
             <ConversationTranscript turns={transcript} callbacks={{
+              openChat: selectChat,
               browserChatId: controller.detail.record.chat.id,
               browserPermissions: client.browserPermissions,
               openPermissionMode: () => setPermissionModeRequest(value => value + 1),

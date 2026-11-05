@@ -19,7 +19,7 @@ beforeAll(async () => {
   await mkdir(output, { recursive: true });
   const result = await build({ absWorkingDir: root, entryPoints: ["tests/e2e/fixtures/native-scheduled-message.tsx"], bundle: true, write: false,
     outfile: "fixture.js", format: "iife", platform: "browser", jsx: "automatic",
-    alias: { "@renderer": join(root, "desktop/src/renderer/src"), "@": join(root, "shell/src") },
+    alias: { "@matrix-os/brand/marks":join(root,"packages/brand/src/marks.ts"),"@matrix-os/brand/tokens":join(root,"packages/brand/src/tokens.ts"),"@matrix-os/brand":join(root,"packages/brand/src/index.ts"), "@renderer": join(root, "desktop/src/renderer/src"), "@": join(root, "shell/src") },
     define: { "process.env.NODE_ENV": '"test"', "process.env": "{}" }, plugins: [{ name: "offline-renderer", setup(builder) {
       builder.onResolve({ filter: /^react(?:\/.*)?$/ }, args => ({ path: requireDesktop.resolve(args.path) }));
       builder.onResolve({ filter: /^react-dom(?:\/.*)?$/ }, args => ({ path: requireDesktop.resolve(args.path) }));
@@ -129,3 +129,21 @@ it.skipIf(process.env.MATRIX_NATIVE_CRON_UI_ELECTRON !== "1")("renders the actua
     await verify(page, "electron");
   } finally { await app?.close(); await rm(dir, { recursive: true, force: true }); }
 }, 30_000);
+
+
+it.each(["web", "web-mobile", "electron"])("renders a real persisted source receipt in %s without an extra input", async surface => {
+  const browser = await chromium.launch({ executablePath: process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE, headless: true });
+  try {
+    const page = await browser.newPage({viewport: surface === "web-mobile" ? {width:390,height:844} : {width:1280,height:720}});
+    const errors:string[]=[];page.on("pageerror",error=>errors.push(error.message));
+    await page.route("**/*",route=>route.abort());
+    await page.route("https://scheduled-ui.test/",route=>route.fulfill({contentType:"text/html",body:documentFor(surface).replace('data-surface=', 'data-variant="receipt" data-surface=')}));
+    await page.goto("https://scheduled-ui.test/");await page.addScriptTag({content:script});
+    await page.getByText("Outcome unconfirmed",{exact:true}).waitFor();
+    expect(await page.getByText("Committed routine result",{exact:true}).count()).toBe(1);
+    expect(await page.locator("[data-routine-receipt]").count()).toBe(1);
+    await page.getByRole("button",{name:"Open execution history"}).click();expect(await page.locator("html").getAttribute("data-open-chat")).toBe("chat_executor");
+    const bounds=await page.locator("[data-routine-receipt]").boundingBox();expect(bounds!.x).toBeGreaterThanOrEqual(0);expect(bounds!.x+bounds!.width).toBeLessThanOrEqual(page.viewportSize()!.width);
+    expect(errors).toEqual([]);await page.screenshot({path:join(output,`${surface}-receipt.png`)});
+  }finally{await browser.close();}
+});

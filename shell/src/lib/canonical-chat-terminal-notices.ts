@@ -1,4 +1,5 @@
 import { canonicalChatToolActivities, canonicalChatInputs, canonicalChatApprovals, canonicalChatTerminalNotices, canonicalAssistantOutputMessages, type CanonicalChatDetailResponse } from "@matrix-os/contracts";
+import { routineReceiptMessage } from "@matrix-os/ui";
 import type { ChatMessage } from "./chat";
 import { projectCanonicalMessages } from "./canonical-chat-client";
 import { nativeScheduledMessage } from "@matrix-os/ui/chat-scheduled-message";
@@ -13,6 +14,8 @@ export function projectCanonicalTranscript(detail: CanonicalChatDetailResponse):
     const source = sourceById[message.id];
     const scheduled = source && nativeScheduledMessage(source, { chatId: detail.record?.chat.id, turns: detail.turns, runs: detail.runs });
     if (scheduled) message.scheduledMessage = scheduled;
+    const receipt = source && routineReceiptMessage(source, detail.record?.chat.id);
+    if (receipt) message.routineReceipt = receipt;
     const context = source?.turnId ? contextsByTurn[source.turnId] : undefined;
     if (source?.role === "user" && context) message.metadata = { ...message.metadata, chatRunContext: context };
     const turn=detail.turns.find(turn=>turn.inputMessageId===source?.id&&turn.chatId===source.chatId);

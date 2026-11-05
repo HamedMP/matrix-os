@@ -3,7 +3,7 @@
 // this module never sees the credential. Every call has a timeout.
 import { AppError, classifyHttpStatus, classifyTransportError, safeErrorDetail } from "../../../shared/app-error";
 import { chatFundingVersionUrl } from "@matrix-os/contracts";
-import { botCreationFailureReason, type BotCreationFailureReason } from "@matrix-os/ui";
+import { isRoutineOriginPath, botCreationFailureReason, type BotCreationFailureReason } from "@matrix-os/ui";
 
 const API_TIMEOUT_MS = 10_000;
 
@@ -94,7 +94,7 @@ export function createApiClient(options: ApiClientOptions): ApiClient {
     requestOptions?: RequestTimeoutOptions,
   ): Promise<Response> {
     // Routine scope endpoints use their own strict wire contract, not Chat projections.
-    const negotiateChatResponse = /^\/api\/chats(?:[/?]|$)/.test(path)
+    const negotiateChatResponse = /^\/api\/chats(?:[/?]|$)/.test(path) && !isRoutineOriginPath(path)
       && !/^\/api\/chats\/[^/?]+\/routine-cli\/full-access(?:[/?]|$)/.test(path);
     const url = buildGatewayUrl(options.baseUrl, negotiateChatResponse ? chatFundingVersionUrl(path) : path, options.getRuntimeSlot());
     const callerSignals = [init.signal, requestOptions?.signal].filter(
