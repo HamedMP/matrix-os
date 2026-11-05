@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { describe, expect, it, vi } from 'vitest';
 import { createSitePublicRoutes } from '../../packages/platform/src/sites/public-routes.js';
 import type { SitesService } from '../../packages/platform/src/sites/service.js';
+import { MATRIX_TELEMETRY_EVENTS } from '../../packages/observability/src/events.js';
 
 const siteId = '11111111-1111-4111-8111-111111111111';
 const versionId = '22222222-2222-4222-8222-222222222222';
@@ -21,8 +22,9 @@ function fixture() {
     cookie: `__Secure-matrix_site_viewer_${siteId.replaceAll('-', '')}=${randomUUID()}.${'s'.repeat(43)}; Path=/${siteId}; HttpOnly; Secure; SameSite=Lax; Max-Age=2592000`,
     link: { id: randomUUID(), status: 'claimed', createdAt: new Date().toISOString(), claimExpiresAt: new Date().toISOString(), claimedAt: new Date().toISOString(), sessionExpiresAt: new Date().toISOString() },
   }));
+  const captureEvent = vi.fn();
   const service = { resolve, authorize, asset, privateFrame, admitted, claimAccessLink } as unknown as SitesService;
-  return { app: createSitePublicRoutes({ service, edgeSecret, submit: vi.fn() }), resolve, authorize, asset, privateFrame, admitted, claimAccessLink };
+  return { app: createSitePublicRoutes({ service, edgeSecret, submit: vi.fn(), captureEvent }), resolve, authorize, asset, privateFrame, admitted, claimAccessLink, captureEvent };
 }
 const request = (path: string, init: RequestInit = {}) => new Request(`https://platform.example.com${path}`, {
   ...init, headers: { 'x-matrix-sites-edge': edgeSecret, 'x-matrix-sites-source': '203.0.113.10', ...init.headers },
@@ -30,7 +32,7 @@ const request = (path: string, init: RequestInit = {}) => new Request(`https://p
 
 describe('private Matrix.page routes', () => {
   it('renders a generic explicit claim gate without leaking publication metadata', async () => {
-    const { app } = fixture();
+    const { app, captureEvent } = fixture();
     const response = await app.request(request(`/${siteId}`));
     expect(response.status).toBe(200);
     const html = await response.text();
@@ -41,6 +43,8 @@ describe('private Matrix.page routes', () => {
     const cleared = response.headers.getSetCookie();
     expect(cleared).toContain(`__Secure-matrix_site_viewer_${siteId.replaceAll('-', '')}=; Path=/${siteId}; HttpOnly; Secure; SameSite=Lax; Max-Age=0`);
     expect(cleared.some(value => value.includes('_asset_'))).toBe(false);
+    expect(captureEvent).toHaveBeenCalledWith(MATRIX_TELEMETRY_EVENTS.MATRIX_PAGE_VIEWED,
+      { access_mode: 'private_link', access_state: 'claim_required' });
   });
 
   it('denies private frames and assets before loading bytes when the viewer session is absent', async () => {
@@ -67,7 +71,7 @@ describe('private Matrix.page routes', () => {
   });
 
   it('serves an authorized private frame and passes the viewer cookie through form admission', async () => {
-    const { app, authorize, admitted, asset, privateFrame } = fixture();
+    const { app, authorize, admitted, asset, privateFrame, captureEvent } = fixture();
     authorize.mockResolvedValue(privateSite);
     admitted.mockImplementation(async (_reference, work) => work(privateSite, {}));
     const cookie = `__Secure-matrix_site_viewer_${siteId.replaceAll('-', '')}=${randomUUID()}.${'s'.repeat(43)}`;
@@ -85,6 +89,8 @@ describe('private Matrix.page routes', () => {
     }));
     expect(form.status).toBe(200);
     expect(admitted).toHaveBeenCalledWith(siteId, expect.any(Function), cookie);
+    expect(captureEvent).toHaveBeenCalledWith(MATRIX_TELEMETRY_EVENTS.MATRIX_PAGE_FORM_SUBMITTED,
+      { access_mode: 'private_link' });
   });
 
   it('never serves private files to an unrelated opaque sandbox, even when its browser sends a viewer cookie',async()=>{

@@ -54,6 +54,16 @@ export const MATRIX_TELEMETRY_EVENTS = {
   CLI_INSTALLED: "matrix_cli_installed",
   CLI_LOGGED_IN: "matrix_cli_logged_in",
   CLI_COMMAND_RUN: "matrix_cli_command_run",
+  MATRIX_PAGE_PUBLISHED: "matrix_page_published",
+  MATRIX_PAGE_SETTINGS_UPDATED: "matrix_page_settings_updated",
+  MATRIX_PAGE_ACCESS_MODE_CHANGED: "matrix_page_access_mode_changed",
+  MATRIX_PAGE_UNPUBLISHED: "matrix_page_unpublished",
+  MATRIX_PAGE_ROLLED_BACK: "matrix_page_rolled_back",
+  MATRIX_PAGE_LINK_CREATED: "matrix_page_link_created",
+  MATRIX_PAGE_LINK_CLAIMED: "matrix_page_link_claimed",
+  MATRIX_PAGE_LINK_REVOKED: "matrix_page_link_revoked",
+  MATRIX_PAGE_VIEWED: "matrix_page_viewed",
+  MATRIX_PAGE_FORM_SUBMITTED: "matrix_page_form_submitted",
 } as const;
 
 export type MatrixTelemetryEvent = typeof MATRIX_TELEMETRY_EVENTS[keyof typeof MATRIX_TELEMETRY_EVENTS];

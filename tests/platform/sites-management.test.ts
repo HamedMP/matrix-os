@@ -43,10 +43,10 @@ it('manages write-only access links through the verified machine owner route',as
  const value=await created.json() as {link:{id:string};url:string};
  expect(value.url).toMatch(new RegExp(`^https://matrix\\.page/${siteId}#access=`));
  const listed=await (await app.request(url,{headers})).json();
- expect(listed).toEqual({links:[expect.objectContaining({id:value.link.id,status:'unclaimed'})]});
+ expect(listed).toEqual({links:[expect.objectContaining({id:value.link.id,status:'unclaimed'})],nextCursor:null});
  expect(JSON.stringify(listed)).not.toContain('#access=');
  expect((await app.request(`${url.replace('?runtimeSlot=primary','')}/${value.link.id}?runtimeSlot=primary`,{method:'DELETE',headers})).status).toBe(200);
- expect(await (await app.request(url,{headers})).json()).toEqual({links:[]});
+ expect(await (await app.request(url,{headers})).json()).toEqual({links:[],nextCursor:null});
 });
 
 it('rejects legacy handle credentials, different machines, different slots and old token epochs',async()=>{

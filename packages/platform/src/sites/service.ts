@@ -1,8 +1,9 @@
 import { randomUUID } from 'node:crypto';
 import {
-    SITE_ACCESS_LINK_CLAIM_TTL_MS, SITE_MAX_ACCESS_LINKS, SITE_PUBLISH_TIMEOUT_MS,
+    SITE_ACCESS_LINK_CLAIM_TTL_MS, SITE_PUBLISH_TIMEOUT_MS,
     SITE_VIEWER_SESSION_TTL_MS, SiteAccessClaimSchema, SiteAccessLinkCreateRequestSchema,
-    SiteAccessLinkCreateResponseSchema, SiteAccessLinkSummarySchema, SiteAccessLinksResponseSchema,
+    SiteAccessLinkCreateResponseSchema, SiteAccessLinkSummarySchema, SiteAccessLinksQuerySchema,
+    SiteAccessLinksResponseSchema,
     SiteDeploymentSchema, SiteIdSchema, SiteMetadataSchema, SiteRecordSchema, SitePublishingSchema,
     type SiteAccessLinkSummary, type SiteRecord,
 } from '@matrix-os/contracts';
@@ -18,6 +19,8 @@ import {
     readSiteViewerCookie, siteAccessSecretMatches,
 } from './access-links.js';
 import { packagePrivateSiteHtml } from './private-package.js';
+import { MATRIX_TELEMETRY_EVENTS } from '@matrix-os/observability';
+import { emitSiteTelemetry, type SiteTelemetryCapture } from './telemetry.js';
 type Storage = Omit<CustomerVpsObjectStore, 'getObject'> & {
     getObject(key: string, options?: { signal?: AbortSignal }): Promise<{ body: unknown; etag?: string; contentLength?: number }>;
     deleteObject?(key: string, options?: {
@@ -59,8 +62,10 @@ export function createSitesService(options: {
     db: PlatformDB;
     storage?: Storage;
     env?: NodeJS.ProcessEnv;
+    captureEvent?: SiteTelemetryCapture;
 }) {
     const { db, storage } = options;
+    const captureEvent = options.captureEvent;
     const env = options.env ?? process.env;
     // Share four long-lived transaction slots across publishing and public submissions.
     // One owner cannot queue lock waiters; lifecycle work retains pool capacity.
@@ -121,13 +126,17 @@ export function createSitesService(options: {
             check();
         }, env);
         try {
-            return await withSiteOwnerAdmission(db, owner.ownerId, async (trx) => {
+            let operation: 'first_publish' | 'update' | 'republish' = 'first_publish';
+            const result = await withSiteOwnerAdmission(db, owner.ownerId, async (trx) => {
                 check(); // The owner lock may have consumed the remaining publication budget.
                 await sql `SET LOCAL lock_timeout = '10s'`.execute(trx.executor);
                 await sql `SET LOCAL statement_timeout = '10s'`.execute(trx.executor);
                 await assertCurrentPublishingRuntime(trx, owner);
                 check();
                 const row = await ownership(trx, owner).forUpdate().executeTakeFirstOrThrow();
+                operation = row.active_version
+                    ? row.status === 'unpublished' ? 'republish' : 'update'
+                    : 'first_publish';
                 check();
                 if (request.baseRevision !== undefined && row.revision !== request.baseRevision)
                     throw new SiteError('conflict');
@@ -161,6 +170,9 @@ export function createSitesService(options: {
                 activationCompleted = true;
                 return result;
             }, env);
+            emitSiteTelemetry(captureEvent, MATRIX_TELEMETRY_EVENTS.MATRIX_PAGE_PUBLISHED,
+                { access_mode: result.accessMode, operation }, owner.ownerId);
+            return result;
         }
         catch (error) {
             const cleanupSignal = AbortSignal.timeout(5000);
@@ -200,27 +212,41 @@ export function createSitesService(options: {
         if (!parsed.success)
             throw new SiteError('invalid_request');
         const request = parsed.data;
-        return mutate(owner, request.baseRevision, async (trx, row) => {
+        let previousAccessMode: SiteRecord['accessMode'] | undefined;
+        const result = await mutate(owner, request.baseRevision, async (trx, row) => {
+            previousAccessMode = row.access_mode;
             await claimAlias(trx, row.id, request.slug);
             if (request.accessMode === 'public' && row.access_mode === 'private_link')
                 await trx.executor.deleteFrom('public_site_access_links').where('site_id', '=', row.id).execute();
             const { baseRevision: _, accessMode, ...changes } = request;
             return { ...changes, ...(accessMode !== undefined ? { access_mode: accessMode } : {}) };
         });
+        const accessModeChanged = previousAccessMode !== undefined && previousAccessMode !== result.accessMode;
+        emitSiteTelemetry(captureEvent, MATRIX_TELEMETRY_EVENTS.MATRIX_PAGE_SETTINGS_UPDATED,
+            { access_mode: result.accessMode, access_mode_changed: accessModeChanged }, owner.ownerId);
+        if (accessModeChanged) emitSiteTelemetry(captureEvent, MATRIX_TELEMETRY_EVENTS.MATRIX_PAGE_ACCESS_MODE_CHANGED,
+            { previous_access_mode: previousAccessMode!, access_mode: result.accessMode }, owner.ownerId);
+        return result;
     }
     async function unpublish(owner: SiteOwner, revision?: number) {
-        return mutate(owner, revision, async (trx, row) => {
+        const result = await mutate(owner, revision, async (trx, row) => {
             await trx.executor.deleteFrom('public_site_access_links').where('site_id', '=', row.id).execute();
             return { status: 'unpublished' };
         });
+        emitSiteTelemetry(captureEvent, MATRIX_TELEMETRY_EVENTS.MATRIX_PAGE_UNPUBLISHED,
+            { access_mode: result.accessMode }, owner.ownerId);
+        return result;
     }
     async function rollback(owner: SiteOwner, versionId: string, revision?: number) {
-        return mutate(owner, revision, async (trx, row) => {
+        const result = await mutate(owner, revision, async (trx, row) => {
             const version = await trx.executor.selectFrom('public_site_versions').select('id').where('site_id', '=', row.id).where('id', '=', versionId).executeTakeFirst();
             if (!version)
                 throw new SiteError('not_found');
             return { active_version: versionId, status: 'published' };
         });
+        emitSiteTelemetry(captureEvent, MATRIX_TELEMETRY_EVENTS.MATRIX_PAGE_ROLLED_BACK,
+            { access_mode: result.accessMode }, owner.ownerId);
+        return result;
     }
     async function asset(reference: string, version: string, path: string) {
         if (!storage)
@@ -320,26 +346,35 @@ export function createSitesService(options: {
     async function authorize(reference: string, cookieHeader?: string, scoped = db) {
         return authorizeCredential(reference, cookieHeader, readSiteViewerCookie, scoped);
     }
-    async function listAccessLinks(owner: SiteOwner) {
+    async function listAccessLinks(owner: SiteOwner, input: unknown = {}) {
+        const parsed = SiteAccessLinksQuerySchema.safeParse(input);
+        if (!parsed.success) throw new SiteError('invalid_request');
         await db.ready;
         const site = await ownership(db, owner).executeTakeFirst();
         if (!site) throw new SiteError('not_found');
-        const rows = await db.executor.selectFrom('public_site_access_links').selectAll()
-            .where('site_id', '=', site.id).orderBy('created_at', 'desc').orderBy('id', 'desc')
-            .limit(SITE_MAX_ACCESS_LINKS).execute();
-        return SiteAccessLinksResponseSchema.parse({ links: rows.map(row => accessLinkSummary(row)) }).links;
+        let query = db.executor.selectFrom('public_site_access_links').selectAll()
+            .where('site_id', '=', site.id);
+        if (parsed.data.cursor) {
+            const [createdAt, id] = parsed.data.cursor.split('|');
+            query = query.where(sql<boolean>`(created_at, id) < (${createdAt}, ${id})`);
+        }
+        const rows = await query.orderBy('created_at', 'desc').orderBy('id', 'desc')
+            .limit(parsed.data.limit + 1).execute();
+        const page = rows.slice(0, parsed.data.limit);
+        const last = page.at(-1);
+        return SiteAccessLinksResponseSchema.parse({
+            links: page.map(row => accessLinkSummary(row)),
+            nextCursor: rows.length > parsed.data.limit && last ? `${last.created_at}|${last.id}` : null,
+        });
     }
     async function createAccessLink(owner: SiteOwner, input: unknown) {
         const parsed = SiteAccessLinkCreateRequestSchema.safeParse(input);
         if (!parsed.success) throw new SiteError('invalid_request');
-        return managementAdmission(owner.ownerId, () => withSiteOwnerAdmission(db, owner.ownerId, async trx => {
+        const result = await managementAdmission(owner.ownerId, () => withSiteOwnerAdmission(db, owner.ownerId, async trx => {
             await assertCurrentPublishingRuntime(trx, owner);
             const site = await ownership(trx, owner).forUpdate().executeTakeFirst();
             if (!site || site.status !== 'published' || site.access_mode !== 'private_link') throw new SiteError('not_found');
             if (site.revision !== parsed.data.baseRevision) throw new SiteError('conflict');
-            const count = await trx.executor.selectFrom('public_site_access_links').select(({ fn }) => fn.countAll<number>().as('count'))
-                .where('site_id', '=', site.id).executeTakeFirstOrThrow();
-            if (Number(count.count) >= SITE_MAX_ACCESS_LINKS) throw new SiteError('conflict');
             const now = new Date();
             const id = randomUUID();
             const token = createSiteAccessSecret();
@@ -354,11 +389,14 @@ export function createSitesService(options: {
                 url: `https://matrix.page/${site.id}#access=${id}.${token}`,
             });
         }, env));
+        emitSiteTelemetry(captureEvent, MATRIX_TELEMETRY_EVENTS.MATRIX_PAGE_LINK_CREATED,
+            { access_mode: 'private_link' }, owner.ownerId);
+        return result;
     }
     async function revokeAccessLink(owner: SiteOwner, linkId: string) {
         const id = SiteIdSchema.safeParse(linkId);
         if (!id.success) throw new SiteError('invalid_request');
-        return managementAdmission(owner.ownerId, () => withSiteOwnerAdmission(db, owner.ownerId, async trx => {
+        await managementAdmission(owner.ownerId, () => withSiteOwnerAdmission(db, owner.ownerId, async trx => {
             await assertCurrentPublishingRuntime(trx, owner);
             const site = await ownership(trx, owner).forUpdate().executeTakeFirst();
             if (!site) throw new SiteError('not_found');
@@ -366,6 +404,8 @@ export function createSitesService(options: {
                 .where('id', '=', id.data).returning('id').executeTakeFirst();
             if (!deleted) throw new SiteError('not_found');
         }, env));
+        emitSiteTelemetry(captureEvent, MATRIX_TELEMETRY_EVENTS.MATRIX_PAGE_LINK_REVOKED,
+            { access_mode: 'private_link' }, owner.ownerId);
     }
     async function claimAccessLink(reference: string, input: unknown) {
         const parsed = SiteAccessClaimSchema.safeParse(input);
@@ -374,7 +414,7 @@ export function createSitesService(options: {
         if (!initial || initial.accessMode !== 'private_link') throw new SiteError('not_found');
         const ownerRow = await db.executor.selectFrom('public_sites').select('owner_id').where('id', '=', initial.id).executeTakeFirst();
         if (!ownerRow) throw new SiteError('not_found');
-        return managementAdmission(ownerRow.owner_id, () => withSiteOwnerAdmission(db, ownerRow.owner_id, async trx => {
+        const result = await managementAdmission(ownerRow.owner_id, () => withSiteOwnerAdmission(db, ownerRow.owner_id, async trx => {
             const current = await resolve(reference, trx);
             if (!current || current.id !== initial.id) throw new SiteError('not_found');
             const site = await trx.executor.selectFrom('public_sites').selectAll().where('id', '=', current.id).forUpdate().executeTakeFirst();
@@ -392,6 +432,9 @@ export function createSitesService(options: {
             if (!changed) throw new SiteError('not_found');
             return { cookie: buildSiteViewerCookie(site.id, link.id, sessionToken), link: accessLinkSummary(changed) };
         }, env));
+        emitSiteTelemetry(captureEvent, MATRIX_TELEMETRY_EVENTS.MATRIX_PAGE_LINK_CLAIMED,
+            { access_mode: 'private_link' }, ownerRow.owner_id);
+        return result;
     }
     return { get, resolve, authorize, deploy, patch, unpublish, rollback, asset, privateFrame, admitted,
         listAccessLinks, createAccessLink, revokeAccessLink, claimAccessLink };

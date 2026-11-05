@@ -2,7 +2,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createTestPlatformDb, destroyTestPlatformDb } from './platform-db-test-helper.js';
 import { insertUserMachine } from '../../packages/platform/src/db.js';
-import { SITE_ACCESS_LINK_CLAIM_TTL_MS, SITE_MAX_ACCESS_LINKS, SITE_VIEWER_SESSION_TTL_MS } from '@matrix-os/contracts';
+import { SITE_ACCESS_LINK_CLAIM_TTL_MS, SITE_VIEWER_SESSION_TTL_MS } from '@matrix-os/contracts';
 import { createSitesService } from '../../packages/platform/src/sites/service.js';
 
 const db = await createTestPlatformDb({ serializeTransactions: true });
@@ -103,7 +103,7 @@ describe('private Matrix.page access links', () => {
     const nextClaim = await service.claimAccessLink(siteId, { linkId: next.link.id, token: next.url.split('.').at(-1)! });
     const publicSite = await service.patch(owner, { accessMode: 'public', baseRevision: 1 });
     expect(publicSite.accessMode).toBe('public');
-    expect(await service.listAccessLinks(owner)).toEqual([]);
+    expect(await service.listAccessLinks(owner)).toEqual({ links: [], nextCursor: null });
     expect(await service.authorize(siteId, nextClaim.cookie)).toMatchObject({ accessMode: 'public' });
 
     const privateAgain = await service.patch(owner, { accessMode: 'private_link', baseRevision: publicSite.revision });
@@ -127,18 +127,23 @@ describe('private Matrix.page access links', () => {
     await expect(service.claimAccessLink(siteId, { linkId, token: secret })).rejects.toMatchObject({ code: 'not_found' });
   });
 
-  it('caps active and expired link inventory at fifty until the owner revokes rows', async () => {
+  it('creates more than fifty links and pages the owner inventory without a total cap', async () => {
     const { siteId } = await publishedPrivateSite();
-    const now = new Date().toISOString();
-    await db.db.executor.insertInto('public_site_access_links').values(Array.from({length:SITE_MAX_ACCESS_LINKS},(_,index)=>({
-      id:randomUUID(),site_id:siteId,claim_token_hash:tokenHash(String(index).padStart(43,'x')),session_token_hash:null,
-      created_at:now,claim_expires_at:'2026-01-01T00:00:00.000Z',claimed_at:null,session_expires_at:null,
-    }))).execute();
     const service=createSitesService({db:db.db,env:{NODE_ENV:'test'}});
-    await expect(service.createAccessLink(owner,{baseRevision:1})).rejects.toMatchObject({code:'conflict'});
-    const first=(await service.listAccessLinks(owner))[0]!;
-    await service.revokeAccessLink(owner,first.id);
-    await expect(service.createAccessLink(owner,{baseRevision:1})).resolves.toHaveProperty('url');
+    for (let index=0;index<51;index++) {
+      await expect(service.createAccessLink(owner,{baseRevision:1})).resolves.toHaveProperty('url');
+    }
+    const first=await service.listAccessLinks(owner,{limit:25});
+    expect(first.links).toHaveLength(25);
+    expect(first.nextCursor).not.toBeNull();
+    const second=await service.listAccessLinks(owner,{limit:25,cursor:first.nextCursor!});
+    expect(second.links).toHaveLength(25);
+    expect(second.nextCursor).not.toBeNull();
+    const third=await service.listAccessLinks(owner,{limit:25,cursor:second.nextCursor!});
+    expect(third.links).toHaveLength(1);
+    expect(third.nextCursor).toBeNull();
+    expect(new Set([...first.links,...second.links,...third.links].map(link=>link.id))).toHaveProperty('size',51);
+    expect(await db.db.executor.selectFrom('public_site_access_links').select(({fn})=>fn.countAll<number>().as('count')).where('site_id','=',siteId).executeTakeFirstOrThrow()).toHaveProperty('count',51);
   });
 
   it('rejects an expired browser session even when its hash remains valid', async () => {
