@@ -3,13 +3,15 @@ import { preparePlacement } from "./placement.mjs";
 import { supervisorArgs } from "./proof.mjs";
 
 /** Caller holds the protected namespace reservation; no mutation precedes ancestry checks. */
-export async function submitSupervisor(config, token, template, ledger, run = command) {
+export async function submitSupervisor(config, token, template, ledger, run = command, reservation) {
   await preparePlacement(config, { readOnly: true });
   await assertNoUnits(config, run);
-  const placement = await preparePlacement(config);
+  assert(reservation && typeof reservation.verify === "function", "placement_reservation_required");
+  await reservation.verify();
   await assertNoUnits(config, run);
+  await reservation.verify();
   ledger.submitted();
   const result = await run("/usr/bin/systemd-run", supervisorArgs(config, token, template), 30_000);
   assert(result.code === 0, "owned_supervisor_start_failed");
-  return { identity: await ledger.captureSupervisor(), placement };
+  return { identity: await ledger.captureSupervisor(), placement: { leaves: reservation.leaves } };
 }

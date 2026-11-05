@@ -1,3 +1,4 @@
+import { verifyCompiledRuntime } from "./compiled.mjs";
 import { open, readFile, readlink } from "node:fs/promises";
 import { constants } from "node:fs";
 import { assert, hash, must, NODE, noSymlinkAncestors } from "./control.mjs";
@@ -5,13 +6,9 @@ import { show } from "./baseline.mjs";
 import { assertRootIdentity, validateWorkerProperties, validateSupervisorProperties, WORKER_SECURITY_KEYS, SUPERVISOR_SECURITY_KEYS } from "./security.mjs";
 import { DENIAL_PROBE, validateDenials } from "./controls.mjs";
 export { show, hostSnapshot } from "./baseline.mjs";
-export async function buildFacts(config, dependencies) {
-  const root = config.appRoot, hashes = {};
-  // Dependency archives and every runtime member have already been verified.
-  assert(dependencies?.lockfileSha256, "dependency_verification_required");
-  for (const name of ["main.js", "worker.js", "host-config.js", "systemd-unit-identity.js", "profile.js", "supervisor.js", "systemd-launcher.js"]) {
-    const path = `${root}/packages/scope-runtime/dist/${name}`; await noSymlinkAncestors(path, true); hashes[name] = await hash(path);
-  }
+export async function buildFacts(config, dependencies, compiled) {
+  assert(dependencies?.lockfileSha256 && compiled, "dependency_and_compiled_verification_required");
+  const inventory = await verifyCompiledRuntime(config.appRoot, compiled);
   await noSymlinkAncestors(NODE, true);
   const nodeVersion = await must(NODE, ["--version"], "node_version_failed");
   const nativeExecutable = `${dependencies.native.root}/claude`;
@@ -21,7 +18,7 @@ export async function buildFacts(config, dependencies) {
   assert(nativeMatch && nativeMatch[1] === dependencies.sdk.claudeCodeVersion, "native_version_invalid");
   return { node: { path: NODE, version: nodeVersion, sha256: await hash(NODE) },
     sdk: { path: dependencies.sdk.root, version: dependencies.sdk.version, sha256: dependencies.sdk.installed.members["sdk.mjs"] },
-    native: { path: nativeExecutable, version: nativeVersion, sha256: dependencies.native.installed.members.claude }, hashes };
+    native: { path: nativeExecutable, version: nativeVersion, sha256: dependencies.native.installed.members.claude }, hashes: inventory.files };
 }
 export async function inspectSupervisor(config) {
   return validateSupervisorProperties(await show(config.supervisorUnit, SUPERVISOR_SECURITY_KEYS), config);

@@ -1,4 +1,4 @@
-import { lstat, mkdir, open } from "node:fs/promises";
+import { lstat, mkdir, open, readdir } from "node:fs/promises";
 import { constants } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { assert, noSymlinkAncestors } from "./control.mjs";
@@ -36,7 +36,28 @@ export async function preparePlacement(config, { readOnly = false } = {}) {
     const entry = await lstat(path); assert(protectedDirectory(entry), "placement_create_unprotected");
     created.push({ path, inode: entry.ino, device: entry.dev });
   }
-  return { state: readOnly ? "checked" : "prepared", created };
+  if (readOnly) return { state: "checked", created };
+  const leaves = [], pins = [];
+  try {
+    for (const path of [config.runtimeDirectory, config.commandSocketRoot, config.stateRoot]) {
+      const handle = await open(path, constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW);
+      pins.push(handle); const entry = await handle.stat({ bigint: true });
+      leaves.push({ path, inode: String(entry.ino), device: String(entry.dev) });
+    }
+  } catch (error) { await Promise.allSettled(pins.map(handle => handle.close())); throw error; }
+  let closed;
+  return { state: "prepared", created, leaves,
+    async verify() {
+      assert(!closed, "placement_reservation_closed");
+      for (let index = 0; index < leaves.length; index++) {
+        const expected = leaves[index], current = await lstat(expected.path, { bigint: true }), pinned = await pins[index].stat({ bigint: true });
+        assert(current.isDirectory() && !current.isSymbolicLink() && String(current.ino) === expected.inode && String(current.dev) === expected.device
+          && current.ino === pinned.ino && current.dev === pinned.dev && current.uid === BigInt(process.getuid()) && (current.mode & 0o022n) === 0n, "placement_reserved_object_changed");
+        assert((await readdir(expected.path)).length === 0, "placement_reserved_leaf_not_vacant");
+      }
+    },
+    close() { return closed ??= Promise.all(pins.map(handle => handle.close())).then(() => undefined); },
+  };
 }
 export async function exclusiveDirectory(path) {
   await noSymlinkAncestors(dirname(path));

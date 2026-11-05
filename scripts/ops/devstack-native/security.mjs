@@ -2,7 +2,7 @@ import { assert } from "./control.mjs";
 const yesKeys = ["MountAPIVFS", "PrivateNetwork", "PrivateIPC", "PrivateDevices", "ProtectKernelTunables", "ProtectKernelModules", "ProtectKernelLogs", "ProtectControlGroups", "ProtectClock", "ProtectHostname", "NoNewPrivileges", "RestrictRealtime", "RestrictSUIDSGID"];
 export const COMMON_SECURITY_KEYS = [...yesKeys, "Type", "User", "Group", "DynamicUser", "PrivateUsers", "PrivateTmp", "ProtectProc", "ProcSubset", "ProtectSystem", "ProtectHome", "CapabilityBoundingSet", "AmbientCapabilities", "RestrictAddressFamilies", "RestrictNamespaces", "SystemCallArchitectures", "MemoryMax", "TasksMax", "UMask", "RootDirectory", "RuntimeMaxUSec", "TimeoutStopUSec", "BindPaths", "BindReadOnlyPaths", "KillMode"];
 export const WORKER_SECURITY_KEYS = [...COMMON_SECURITY_KEYS, "CPUQuotaPerSecUSec", "TemporaryFileSystem", "WorkingDirectory", "MainPID", "ControlGroup"];
-export const SUPERVISOR_SECURITY_KEYS = [...COMMON_SECURITY_KEYS, "RuntimeDirectory", "RuntimeDirectoryMode", "StateDirectory", "StateDirectoryMode", "ReadWritePaths", "WatchdogUSec", "NotifyAccess", "Restart", "RestartUSec"];
+export const SUPERVISOR_SECURITY_KEYS = [...COMMON_SECURITY_KEYS, "RuntimeDirectory", "RuntimeDirectoryMode", "StateDirectory", "StateDirectoryMode", "ReadWritePaths", "WatchdogUSec", "NotifyAccess", "Restart", "RestartUSec", "LockPersonality", "KillSignal", "RuntimeDirectoryPreserve"];
 function list(value) { assert(typeof value === "string" && value.length <= 16384 && !/[\n\r\\]/.test(value), "security_value_invalid"); return value.split(/\s+/).filter(Boolean).sort(); }
 function same(value, expected) { assert(JSON.stringify(value) === JSON.stringify(expected), "security_property_drift"); }
 export function duration(value) {
@@ -49,6 +49,8 @@ export function validateWorkerProperties(properties, config, handle, dependencie
   return { ...properties, BindReadOnlyPaths: bindList(properties.BindReadOnlyPaths), BindPaths: bindList(properties.BindPaths), TemporaryFileSystem: temporaryFilesystems(properties.TemporaryFileSystem) };
 }
 export function validateSupervisorProperties(properties, config) {
+  same(properties.LockPersonality, "yes"); same(properties.RuntimeDirectoryPreserve, "yes");
+  assert(["9", "SIGKILL"].includes(properties.KillSignal), "supervisor_cold_stop_signal_drift");
   // The fixture tightens its own IPC directory only. Legacy and fixed workers
   // retain their source profiles; this does not qualify non-root Gateway IPC.
   base(properties, false);

@@ -37,8 +37,8 @@ function units() {
   const supervisor = "matrix-devstack-proof-scope-runtime.service", worker = `matrix-devstack-proof-scope-runtime-${"a".repeat(32)}.service`;
   const config = { supervisorUnit: supervisor, workerUnitPrefix: "matrix-devstack-proof-scope-runtime-", stateRoot: "/var/lib/matrix-devstack/proof/scope-runtime" };
   const state: Record<string, Record<string, string>> = {
-    [supervisor]: { LoadState: "loaded", DefinitionIdentity: "supervisor-definition", Description: "matrix-native-token", Transient: "yes", InvocationID: "1".repeat(32), MainPID: "41", ActiveState: "active" },
-    [worker]: { LoadState: "loaded", DefinitionIdentity: "worker-definition", Transient: "yes", DynamicUser: "yes", InvocationID: "2".repeat(32), MainPID: "42", ActiveState: "active", RootDirectory: `/var/lib/matrix-devstack/proof/scope-runtime/runtimes/${"a".repeat(32)}/root` },
+    [supervisor]: { LoadState: "loaded", DefinitionIdentity: "supervisor-definition", KillSignal: "9", RuntimeDirectoryPreserve: "yes", BoundBy: "", ConsistsOf: "", RequiredBy: "", RequisiteOf: "", PropagatesStopTo: "", PartOf: "", BindsTo: "", OnFailure: "", OnSuccess: "", ExecStop: "", ExecStopPost: "", Description: "matrix-native-token", Transient: "yes", InvocationID: "1".repeat(32), MainPID: "41", ActiveState: "active" },
+    [worker]: { LoadState: "loaded", DefinitionIdentity: "worker-definition", KillSignal: "15", BoundBy: "", ConsistsOf: "", RequiredBy: "", RequisiteOf: "", PropagatesStopTo: "", PartOf: "", BindsTo: "", OnFailure: "", OnSuccess: "", ExecStop: "", ExecStopPost: "", Transient: "yes", DynamicUser: "yes", InvocationID: "2".repeat(32), MainPID: "42", ActiveState: "active", RootDirectory: `/var/lib/matrix-devstack/proof/scope-runtime/runtimes/${"a".repeat(32)}/root` },
   };
   return { supervisor, worker, config, state };
 }

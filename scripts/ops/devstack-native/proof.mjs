@@ -25,7 +25,7 @@ export function supervisorArgs(config, token, template) {
   assert(properties.includes("--property=ProtectSystem=strict") && properties.includes("--property=PrivateNetwork=yes"), "supervisor_template_invalid");
   return ["--quiet", `--unit=${config.supervisorUnit}`, `--description=${token}`, ...properties,
     `--property=ReadWritePaths=${config.runtimeDirectory} ${config.commandSocketRoot}`,
-    "--property=RuntimeMaxSec=180", `--setenv=MATRIX_SCOPE_RUNTIME_NAMESPACE=${config.namespace}`,
+    "--property=RuntimeMaxSec=180", "--property=KillSignal=SIGKILL", `--setenv=MATRIX_SCOPE_RUNTIME_NAMESPACE=${config.namespace}`,
     `--setenv=MATRIX_SCOPE_RUNTIME_APP_ROOT=${config.appRoot}`, `--setenv=MATRIX_HOME=${config.home ?? `${config.appRoot.slice(0, -4)}/home`}`,
     "--", "/usr/bin/env", "-i", `PATH=/opt/matrix/runtime/node/bin:/usr/bin:/bin`,
     `MATRIX_SCOPE_RUNTIME_NAMESPACE=${config.namespace}`, `MATRIX_SCOPE_RUNTIME_APP_ROOT=${config.appRoot}`,
@@ -188,11 +188,11 @@ export async function nativeProof(config, identity, context) {
     await journal.step("first_broker_cleanup", async () => { const previous = broker; broker = undefined; await previous.close(); return { closed: true }; });
     await journal.step("crash", async () => { await assertInventory(); await ledger.supervisorAction("kill"); return { ownMainKilled: true }; });
     const after = await journal.step("restart", async () => {
+      const incarnation = await waitFor(async () => ledger.captureExpectedRestart(), "own_restart_identity_unavailable");
       const profile = await waitFor(async () => {
         try { const value = await capability(); return value.executionGeneration !== before.executionGeneration && value; }
         catch (error) { if (["socket_unavailable", "socket_closed", "supervisor_request_failed"].includes(error.message)) return false; throw error; }
       }, "own_restart_failed");
-      const incarnation = await ledger.captureSupervisor({ restart: true });
       return { ...profile, incarnation, security: await inspectSupervisor(config) };
     });
     await journal.step("reconcile", async () => {
@@ -200,7 +200,7 @@ export async function nativeProof(config, identity, context) {
       for (const handle of [first, peer]) {
         await ledger.freshWorker(handle);
         const stopped = await ledger.protocolAction(handle, () => supervisorRequest(config, "runtime.stop", { runtimeHandle: handle }));
-        assert(stopped.state === "stopped" && stopped.runtimeHandle === handle, "runtime_stop_failed");
+        assert(stopped.state === "stopped" && stopped.runtimeHandle === handle, "runtime_stop_failed"); ledger.releaseWorker(handle);
       }
       return { originalIncarnationsPreserved: true, stoppedHandles: [first, peer] };
     });

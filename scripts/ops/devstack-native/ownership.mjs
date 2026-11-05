@@ -1,7 +1,8 @@
 import { lstat } from "node:fs/promises";
 import { assert, command, hash } from "./control.mjs";
 import { safeCode } from "./receipt.mjs";
-export const IDENTITY_KEYS = ["LoadState", "Description", "Transient", "InvocationID", "MainPID", "ActiveState", "DynamicUser", "RootDirectory", "FragmentPath"];
+export const CASCADE_KEYS = ["BoundBy", "ConsistsOf", "RequiredBy", "RequisiteOf", "PropagatesStopTo", "PartOf", "BindsTo", "OnFailure", "OnSuccess", "ExecStop", "ExecStopPost"];
+export const IDENTITY_KEYS = ["LoadState", "Description", "Transient", "InvocationID", "MainPID", "ActiveState", "DynamicUser", "RootDirectory", "FragmentPath", "KillSignal", "RuntimeDirectoryPreserve", ...CASCADE_KEYS];
 export async function observeUnit(name, run = command) {
   const result = await run("/usr/bin/systemctl", ["show", name, ...IDENTITY_KEYS.map(key => `--property=${key}`)]);
   assert(result.code === 0, "unit_identity_unavailable"); const values = {};
@@ -18,7 +19,8 @@ export async function observeUnit(name, run = command) {
 export function createUnitLedger(config, token, io = {}) {
   const observe = io.observe ?? (name => observeUnit(name));
   const mutate = io.mutate ?? (async (action, name) => {
-    const args = action === "kill" ? ["kill", "--kill-whom=main", "--signal=SIGKILL", name] : ["stop", name];
+    const args = action === "kill" ? ["kill", "--kill-whom=main", "--signal=SIGKILL", name]
+      : action === "stop" && name === config.supervisorUnit ? ["kill", "--kill-whom=main", "--signal=SIGTERM", name] : ["stop", name];
     const result = await command("/usr/bin/systemctl", args, 55_000); assert(result.code === 0, "owned_unit_mutation_failed");
   });
   let submitted = false, supervisor, awaitingRestart = false;
@@ -35,6 +37,20 @@ export function createUnitLedger(config, token, io = {}) {
     checkWorker(handle, current); assert(same(current, known.identity), "worker_incarnation_changed"); return current; };
   const freshSupervisor = async () => { const current = await supervisorIdentity(); assert(stableDefinition(current, supervisor), "supervisor_definition_changed"); return current; };
   const freshWorker = async handle => { const current = await workerIdentity(handle); assert(stableDefinition(current, workers.get(handle).identity), "worker_definition_changed"); return current; };
+  const cascadeSafe = current => assert(CASCADE_KEYS.every(key => current[key] === ""), "unit_dependency_or_stop_hook_quarantined");
+  const transitionSafe = async () => {
+    assert(quarantine.length === 0 && partialCreates.length === 0, "supervisor_drain_unproved_workers");
+    for (const [handle, entry] of workers) if (!entry.released) { const current = await freshWorker(handle); cascadeSafe(current); }
+  };
+  const adoptExpectedRestart = async () => {
+    if (!awaitingRestart || !supervisor) return false;
+    const current = await observe(config.supervisorUnit);
+    if (current.LoadState === "not-found" || current.MainPID === "0") return false;
+    checkSupervisor(current); if (same(current, supervisor)) return false;
+    assert(current.InvocationID !== supervisor.InvocationID && stableDefinition(current, supervisor), "supervisor_restart_incarnation_unproven");
+    supervisor = { ...current }; awaitingRestart = false;
+    return { invocationId: current.InvocationID, pid: Number(current.MainPID) };
+  };
   return {
     submitted() { submitted = true; },
     async captureSupervisor({ restart = false } = {}) {
@@ -45,8 +61,11 @@ export function createUnitLedger(config, token, io = {}) {
       return { invocationId: current.InvocationID, pid: Number(current.MainPID) };
     },
     freshSupervisor,
+    captureExpectedRestart: adoptExpectedRestart,
+    releaseWorker(handle) { const entry = workers.get(handle); assert(entry, "worker_not_recorded"); entry.released = true; },
     async supervisorAction(action) {
-      assert(["kill", "stop"].includes(action), "supervisor_action_invalid"); await freshSupervisor();
+      assert(["kill", "stop"].includes(action), "supervisor_action_invalid");
+      const current = await freshSupervisor(); cascadeSafe(current); await transitionSafe();
       await mutate(action, config.supervisorUnit); if (action === "kill") awaitingRestart = true;
     },
     async recordWorker(reply) {
@@ -80,13 +99,19 @@ export function createUnitLedger(config, token, io = {}) {
             assert(expected && current.InvocationID === expected.InvocationID, "inactive_incarnation_changed");
             results.push({ unit: name, state: "passed", outcome: "already_inactive" }); return;
           }
-          await verify(); await mutate("stop", name); results.push({ unit: name, state: "passed", outcome: "stopped" });
+          const proven = await verify(); cascadeSafe(proven);
+          if (name === config.supervisorUnit) {
+            assert(["9", "SIGKILL"].includes(proven.KillSignal), "supervisor_cold_stop_signal_unproven");
+            assert(proven.RuntimeDirectoryPreserve === "yes", "supervisor_cold_stop_preservation_unproven");
+          }
+          await mutate(name === config.supervisorUnit ? "stop-cold" : "stop", name); results.push({ unit: name, state: "passed", outcome: "stopped" });
         } catch (error) { results.push({ unit: name, state: "failed", code: safeCode(error) }); }
       };
       if (submitted && !supervisor) {
         try { const current = await observe(config.supervisorUnit); if (current.LoadState !== "not-found") { checkSupervisor(current); supervisor = { ...current }; } }
         catch (error) { results.push({ unit: config.supervisorUnit, state: "failed", code: safeCode(error) }); }
       }
+      if (awaitingRestart && supervisor) try { await adoptExpectedRestart(); } catch (error) { results.push({ unit: config.supervisorUnit, state: "failed", code: safeCode(error) }); }
       if (supervisor) await attempt(config.supervisorUnit, supervisorIdentity);
       for (const [handle, entry] of workers) await attempt(entry.name, () => workerIdentity(handle));
       return results;

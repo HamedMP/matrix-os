@@ -34,6 +34,16 @@ export async function socketInventory(roots) {
   for (const root of roots) await walk(root.path, root.depth, root.role);
   return { sockets: Object.fromEntries(Object.entries(sockets).sort()), absent: absent.sort((a, b) => a.path.localeCompare(b.path)) };
 }
+export async function installedArtifactEvidence(entries) {
+  assert(entries.length <= 32, "installed_artifact_capacity"); const artifacts = {};
+  for (const { path, required } of entries) {
+    const entry = await stat(path);
+    if (!entry) { assert(!required, "required_artifact_baseline_missing"); artifacts[path] = { classification: "optional_absent" }; continue; }
+    assert(entry.isFile() && !entry.isSymbolicLink(), "installed_artifact_invalid");
+    artifacts[path] = { sha256: await hash(path), inode: entry.ino, device: entry.dev, size: entry.size };
+  }
+  return artifacts;
+}
 export async function hostSnapshot(config) {
   const listing = await must("/usr/bin/systemctl", ["list-units", "--all", "--plain", "--no-legend", "matrix*.service"], "peer_inventory_unavailable");
   const names = listing.split("\n").map(line => line.trim().split(/\s+/)[0]).filter(Boolean);
@@ -49,11 +59,10 @@ export async function hostSnapshot(config) {
     if (required.includes(unit)) assert(info.ActiveState === "active" && /^[a-f0-9]{32}$/.test(info.InvocationID) && Number(info.MainPID) > 1, "required_service_incarnation_missing");
     services[unit] = { ...info, definitions: await definitionEvidence(info, definitionBudget) };
   }
-  const artifacts = {};
-  for (const path of ["/opt/matrix/release.json", "/opt/matrix/app/BUNDLE_VERSION", "/opt/matrix/bin/matrix-gateway", "/opt/matrix/bin/matrix-shell", "/opt/matrix/bin/matrix-sync-agent"]) {
-    const entry = await lstat(path); assert(entry.isFile(), "required_artifact_baseline_missing");
-    artifacts[path] = { sha256: await hash(path), inode: entry.ino, device: entry.dev, size: entry.size };
-  }
+  const artifacts = await installedArtifactEvidence([
+    ...["/opt/matrix/release.json", "/opt/matrix/app/BUNDLE_VERSION", "/opt/matrix/bin/matrix-gateway", "/opt/matrix/bin/matrix-shell", "/opt/matrix/bin/matrix-sync-agent", "/opt/matrix/app/packages/gateway/dist/main.js"].map(path => ({ path, required: true })),
+    ...["/opt/matrix/bin/matrix-scope-runtime", "/opt/matrix/app/packages/scope-runtime/dist/main.js"].map(path => ({ path, required: services["matrix-scope-runtime.service"]?.classification !== "absent" })),
+  ]);
   const roots = [{ path: "/run/matrix-scope-runtime", depth: 0, role: "legacy_ipc" }, { path: "/run/matrix-scope", depth: 0, role: "legacy_ipc" }];
   if (await stat("/run/matrix-devstack")) {
     const entries = await readdir("/run/matrix-devstack", { withFileTypes: true }); assert(entries.length <= 64, "peer_namespace_capacity");
