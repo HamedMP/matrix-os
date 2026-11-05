@@ -15,6 +15,7 @@ const ArtifactRefSchema = z.string().min(1).max(4_096).refine((value) => {
 });
 const VerifierVersionSchema = z.string().min(1).max(128).regex(/^[A-Za-z0-9][A-Za-z0-9._-]*$/);
 const OwnerIdSchema = z.string().min(1).max(128).regex(/^[A-Za-z0-9_-]+$/);
+const DigestSchema = z.string().regex(/^[a-f0-9]{64}$/);
 const GateResultsSchema = z.array(CollaborativeAppReadinessGateResultSchema).max(12);
 
 export type CollaborativeAppReadinessStatus = "checking" | "ready" | "blocked" | "stale" | "failed";
@@ -219,5 +220,32 @@ export class CollaborativeAppReadinessRepository {
       .limit(1)
       .executeTakeFirst();
     return row ? toRecord(row) : null;
+  }
+
+  async invalidateDriftedBuilds(input: {
+    ownerId: string;
+    catalogId: string;
+    currentBuildId: string;
+  }): Promise<number> {
+    const owner = OwnerIdSchema.safeParse(input.ownerId);
+    const catalog = z.uuid().safeParse(input.catalogId);
+    const build = DigestSchema.safeParse(input.currentBuildId);
+    if (!owner.success || !catalog.success || !build.success) {
+      throw new CollaborativeAppReadinessRepositoryError("invalid");
+    }
+    const timestamp = this.now();
+    const rows = await this.db.updateTable("collaboration_app_readiness").set({
+      status: "stale",
+      invalidated_at: timestamp,
+      invalidation_reason: "build_drift",
+      revision: sql`revision + 1`,
+      updated_at: timestamp,
+    }).where("owner_id", "=", owner.data)
+      .where("catalog_id", "=", catalog.data)
+      .where("build_id", "!=", build.data)
+      .where("invalidated_at", "is", null)
+      .returning("id")
+      .execute();
+    return rows.length;
   }
 }
