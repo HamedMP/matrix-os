@@ -2,72 +2,64 @@
   "version": 1,
   "exceptions": [
     {
-      "sourceSha": "ccdac762ff830e547d6b26ea18a98ccec6d31b3c",
-      "imageDigest": "sha256:7b4193df62f7f00b809cda2511543199d5031b4ce7f7b7c06593d79eca6a771b",
+      "sourceSha": "10ce63461e3658f6f2de9366754efb57c1adeae9",
+      "imageDigest": "sha256:e12d00150b7d592d16605b2afefca88237a153f2caf446007b9ec0c3f4d5e210",
       "preservedFiles": [
         {
           "path": "packages/contracts/package.json",
-          "sha256": "3f6fae23a9c3847f1a8f1f4fbe6e75510bc8f8066de15a4d0b2fae2e23d84699"
-        },
-        {
-          "path": "packages/contracts/src/bots/routine-cli.ts",
-          "sha256": "167c50d63cedec667d80ca1e9691faeda403e46cd33e8a01623f5e763cc7e25b"
+          "sha256": "98788855b939575e318b3b9a0d1ae2650eaff595c8c268b594b0255faae11a28"
         },
         {
           "path": "packages/contracts/src/index.ts",
-          "sha256": "0839d62525d68fa9c18ab9490015a2f1844406762df5b0986da96dacb5827f87"
+          "sha256": "e2d9b527684044e93821db3ecc92a0136e1b2e08f52a6bf8544b5b52fa5b00e6"
         },
         {
-          "path": "packages/contracts/src/routine-action.ts",
-          "sha256": "3af0a9989cb7376e6ecd35de1b4587b181eb6ed0f454f18ba4e4fd6042a6dd79"
+          "path": "packages/contracts/src/routine-full-access-view.ts",
+          "sha256": "2f7f92be410c85a009dbe76f29a7e80ee04846aa428c9b07a95dd8ad1390bd11"
         },
         {
-          "path": "packages/platform/src/app-session-routes.ts",
-          "sha256": "858d5da722941ed4f662057c1a60c249274fe61062e6690c8b508349591f2aea"
-        },
-        {
-          "path": "packages/platform/src/browser-approval-machine-lookup.ts",
-          "sha256": "5dba965f73fc69e8fdec888ec46d8b8eca9d0e764e0bed2f045f6a73563f3b84"
+          "path": "packages/contracts/src/routine-full-access.ts",
+          "sha256": "8eb972399ecaf1c809e5252f50a4f3cf812c628d16427f6ee7e8b7200f96b5a4"
         },
         {
           "path": "packages/platform/src/browser-chat-approval-proof.ts",
-          "sha256": "b73a948891891ab341189c803ea8e4d8f0f6c2c1d4b8d30b05e5248483968b7c"
+          "sha256": "c4526aee6f81cddccc0b8e8ac55947d92145beea55ff75984d82b0d524bca8f3"
         },
         {
           "path": "packages/platform/src/browser-chat-approval-registration.ts",
-          "sha256": "9052bd3d7d69034befbbf26801b1e79db9a90d36d1700b6fc9074d3dc6e5058b"
+          "sha256": "e272e24bd2c047376aee5ccb6d148553078323a818d5a92532f035d33d188314"
         },
         {
           "path": "packages/platform/src/canonical-owner-approval-proxy.ts",
-          "sha256": "c3625d2b9752c9c9b7deb9eea8b6f6828664ad6e910bddf170e75d684f4e3653"
-        },
-        {
-          "path": "packages/platform/src/clerk-auth.ts",
-          "sha256": "df803928a0c0b511441016c2750334957ef79e19cd1d20db9e09db2a47aacd62"
-        },
-        {
-          "path": "packages/platform/src/routine-action-proof.ts",
-          "sha256": "1c5460decbc3b1deb48ea71213ab371fb0a17615e1fb585f85047be3222e060e"
+          "sha256": "82e2d01361591e741e8d6d7ffa4435b32385a3043bc7666a32eda222a7ab583e"
         },
         {
           "path": "packages/platform/src/routine-action-routes.ts",
-          "sha256": "3e4fc49e9684eddf214750265b30eafb4c1b899e70c881b7c2edabc0a5a4e40a"
+          "sha256": "8e252cf8ecb9acc835ba268dc6de9b9774dfd3024d0236f81913c888199040ed"
         },
         {
-          "path": "packages/platform/src/session-routing-identity.ts",
-          "sha256": "53c6870d63422640c48b4bda45292ae850d97e838abb8bee36849aaabff78040"
+          "path": "packages/platform/src/routine-full-access-proof.ts",
+          "sha256": "1015dfbf9298704714900b191c1490cd1d3781ee7c480bd92b20d2ec380b9e61"
         },
         {
-          "path": "packages/platform/src/session-routing-middleware.ts",
-          "sha256": "220a42435905fb530d42d8116c2ecbbc9e86b98a934e188e11af59770273ed7d"
+          "path": "packages/platform/src/routine-full-access-proxy.ts",
+          "sha256": "b3bf29389605c67332a834cd8ab4dac8c7e2da518d97db82db035e7e95c0d97f"
+        },
+        {
+          "path": "packages/platform/src/routine-full-access-routes.ts",
+          "sha256": "4accead4c887a5b3e5fade3a7e28eafef9b2bf4749fd03b0edafd2dff877ae26"
+        },
+        {
+          "path": "packages/platform/src/routine-proof-verification-guard.ts",
+          "sha256": "48c96544e7df00f6a9b955928e2eed398c9047f56279b3fc63e183a9d6c69247"
         },
         {
           "path": "packages/platform/src/session-routing-proxy.ts",
-          "sha256": "88d69c6bdd8e89ad7ea6fd2c21e79920e793c4d88b81539712be4b5d93369ee8"
+          "sha256": "94452b2223dedf3dd572a0d211f4d35e399e7bf95a2456b4b3083036d8fccded"
         },
         {
-          "path": "packages/platform/src/sync-jwt.ts",
-          "sha256": "bef6d33c0f9c8138fe711ad70593e035a571dbe3711d99c9320b3848ae9147dd"
+          "path": "packages/platform/src/session-routing-websocket.ts",
+          "sha256": "756af73dd9ce81c4d9dfc598e6ca57aa626d1370308c0e29204d409e8c3bda9e"
         }
       ],
       "preserveRuntimeConfiguration": true
