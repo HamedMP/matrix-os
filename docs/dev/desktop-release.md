@@ -213,8 +213,11 @@ this legacy image-environment field. In that case the shared contract reads
 `version`, and explicit `runningVersion` all match. Missing running versions or
 an installation awaiting gateway restart cannot establish source identity.
 `installedVersion` is template/package metadata and is not used for this check.
-Different commits trigger an advisory reminder even when both releases advertise
-the same legacy protocol number. An ancestor identifies missing cloud changes;
+Different commits trigger an update-channel check. The advisory reminder opens
+only when a relevant update is available, or when the protocol window requires
+an upgrade. If both components are current on their channels and their protocols
+are compatible, the workspace stays visible without an update dialog. An
+ancestor identifies missing cloud changes;
 different branches or history beyond the bounded window remain different without
 inventing an ordering. Matching source proves release alignment, not that every
 configuration, external provider, or feature is operational.

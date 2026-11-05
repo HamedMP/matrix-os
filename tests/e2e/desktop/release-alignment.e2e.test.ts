@@ -65,7 +65,7 @@ suite("Desktop release alignment through the built IPC and gateway", () => {
     }
   }, 20_000);
 
-  it("embeds the actual source and prompts only after the running cloud source differs", async () => {
+  it("embeds the actual source and prompts only when a cloud update can repair the mismatch", async () => {
     const installed = await page.evaluate(() => (window as unknown as {
       operator: { invoke: (channel: string, payload: object) => Promise<unknown> };
     }).operator.invoke("app:get-version", {}));
@@ -73,10 +73,15 @@ suite("Desktop release alignment through the built IPC and gateway", () => {
     expect(await page.getByRole("dialog", { name: "Update Matrix OS" }).count()).toBe(0);
 
     gateway.setBuildCommit(source.ancestors[0] ?? "a".repeat(40));
+    const noUpdate = page.waitForResponse((value) => value.url().endsWith("/api/system/update"));
+    await recheck();
+    await (await noUpdate).finished();
+    expect(await page.getByRole("dialog", { name: "Update Matrix OS" }).count()).toBe(0);
+    gateway.setCloudUpdateVersion("v2026.09.10-1209");
     await recheck();
     await page.getByRole("dialog", { name: "Update Matrix OS" }).waitFor();
     await page.getByRole("rowheader", { name: /^Cloud computer/ }).waitFor();
-    await page.getByRole("button", { name: "Check again", exact: true }).waitFor();
+    await page.getByRole("button", { name: "Update", exact: true }).waitFor();
     mkdirSync(evidence, { recursive: true });
     await page.screenshot({ path: join(evidence, "source-mismatch.png") });
     await page.getByRole("button", { name: "Later", exact: true }).click();
@@ -95,6 +100,7 @@ suite("Desktop release alignment through the built IPC and gateway", () => {
   });
 
   it("shows the host-bundle replay and preserves a draft after dismissal", async () => {
+    gateway.setCloudUpdateVersion("v2026.09.10-1209");
     const dialog = page.getByRole("dialog", { name: "Update Matrix OS" });
     await page.getByRole("button", { name: "Chat", exact: true }).dblclick();
     await page.getByRole("button", { name: "New chat", exact: true }).click();

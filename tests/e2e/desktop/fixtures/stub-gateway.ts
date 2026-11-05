@@ -28,6 +28,7 @@ export interface StubGateway {
   setKernelResponseDelay(delayMs: number): void;
   setBuildCommit(commit: string): void;
   setSystemInfo(info: Record<string, unknown>): void;
+  setCloudUpdateVersion(version: string | null): void;
   disconnectKernel(): void;
   close(): Promise<void>;
   state: {
@@ -598,6 +599,7 @@ export function codingAgentSummary(): RuntimeSummary {
 
 export async function startStubGateway(options: StubGatewayOptions = {}): Promise<StubGateway> {
   const systemInfo = createSystemInfoFixture(readBuildSource(resolve(import.meta.dirname, "../../../.."))?.commit ?? "unknown");
+  let cloudUpdateVersion: string | null = null;
   const tasks = TASKS.map((task) => ({ ...task, tags: [...task.tags] }));
   const terminalTabs: Array<Record<string, unknown>> = [
     {
@@ -1395,6 +1397,11 @@ export async function startStubGateway(options: StubGatewayOptions = {}): Promis
       json(res, 200, systemInfo.read());
       return;
     }
+    if (path === "/api/system/update") {
+      json(res, 200, { channel: "dev", latest: cloudUpdateVersion ? { version: cloudUpdateVersion } : null,
+        updateAvailable: cloudUpdateVersion !== null });
+      return;
+    }
     json(res, 404, { error: "not found" });
   }
 
@@ -1556,6 +1563,7 @@ export async function startStubGateway(options: StubGatewayOptions = {}): Promis
     state,
     setBuildCommit: systemInfo.setBuildCommit,
     setSystemInfo: systemInfo.setSystemInfo,
+    setCloudUpdateVersion: (version) => { cloudUpdateVersion = version; },
     sendTerminalOutput: (data, session = "matrix-task-1") => activeTerminalOutputs[session]?.(data),
     setConversationBusy: (id, busy) => {
       if (busy) busyHermesConversations.add(id);
