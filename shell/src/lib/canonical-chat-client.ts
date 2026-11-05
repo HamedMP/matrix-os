@@ -1,4 +1,4 @@
-import { createBrowserPermissionClient, recoverCanonicalChatAdmission, type CanonicalChatClientAdmission, type BrowserPermissionClient } from "@matrix-os/ui";
+import { isRoutineOriginPath, createBrowserPermissionClient, recoverCanonicalChatAdmission, type CanonicalChatClientAdmission, type BrowserPermissionClient } from "@matrix-os/ui";
 import { createRoutineFullAccessBrowserClient, routineFullAccessTurnHeaders, type RoutineFullAccessClient } from "@matrix-os/ui";
 import type { CanonicalSubmitChatApprovalRequest } from "@matrix-os/contracts";
 import { markChatNavigation, chatImportSourceVersionUrl } from "@matrix-os/ui";
@@ -201,13 +201,17 @@ export function createCanonicalShellChatClient(options: {
   captureAuthority?: (chatId: string) => () => boolean;
 }): CanonicalShellChatClient {
   const fetchFn = options.fetchFn ?? fetch;
-  const request = (path: string, init: RequestInit = {}, requestOptions?: { timeoutMs?: number; signal?: AbortSignal }) => fetchFn(`${options.gatewayUrl}${path.startsWith("/api/chats") ? chatImportSourceVersionUrl(chatFundingVersionUrl(chatReadStateVersionUrl(path))) : path}`, {
-    ...init,
-    ...(/^\/api\/chats(?:[/?]|$)/.test(path) ? {
-      headers: { ...Object.fromEntries(new Headers(init.headers)), "X-Matrix-Chat-Metadata": "1" },
-    } : {}),
-    signal: requestOptions?.signal ? AbortSignal.any([requestOptions.signal, AbortSignal.timeout(requestOptions.timeoutMs ?? REQUEST_TIMEOUT_MS)]) : AbortSignal.timeout(requestOptions?.timeoutMs ?? REQUEST_TIMEOUT_MS),
-  }).then(response => jsonResponse(response, path));
+  const request = (path: string, init: RequestInit = {}, requestOptions?: { timeoutMs?: number; signal?: AbortSignal }) => {
+    // Routine origin endpoints reject Chat projection flags; preserve their exact URL and body.
+    const negotiateChatResponse = /^\/api\/chats(?:[/?]|$)/.test(path) && !isRoutineOriginPath(path);
+    return fetchFn(`${options.gatewayUrl}${negotiateChatResponse ? chatImportSourceVersionUrl(chatFundingVersionUrl(chatReadStateVersionUrl(path))) : path}`, {
+      ...init,
+      ...(negotiateChatResponse ? {
+        headers: { ...Object.fromEntries(new Headers(init.headers)), "X-Matrix-Chat-Metadata": "1" },
+      } : {}),
+      signal: requestOptions?.signal ? AbortSignal.any([requestOptions.signal, AbortSignal.timeout(requestOptions.timeoutMs ?? REQUEST_TIMEOUT_MS)]) : AbortSignal.timeout(requestOptions?.timeoutMs ?? REQUEST_TIMEOUT_MS),
+    }).then(response => jsonResponse(response, path));
+  };
   const createId = options.createId ?? (() => globalThis.crypto.randomUUID().replaceAll("-", ""));
   const routineFullAccess = createRoutineFullAccessBrowserClient(options.gatewayUrl, fetchFn);
   return {

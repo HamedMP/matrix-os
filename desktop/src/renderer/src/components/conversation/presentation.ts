@@ -17,6 +17,7 @@ export type ConversationMessageContentPresentation =
   | { kind: "image"; id: string; label: string; src: string; path?: string; importAsset?: ImportedChatAssetRef };
 
 export interface ConversationMessagePresentation {
+  scheduledMessage?: import("@matrix-os/ui/chat-scheduled-message").ScheduledMessagePresentation;
   kind: "message";
   id: string;
   role: ConversationMessageRole;
@@ -125,6 +126,8 @@ export type ConversationTurnTimelinePresentation =
   | { kind: "user-followup"; message: ConversationMessagePresentation };
 
 export interface ConversationTurnPresentation {
+  /** A real persisted source message, grouped for layout only; never a canonical Turn/Run. */
+  routineReceipt?: {receipt:import("@matrix-os/contracts").RoutineChatReceiptPart;text:string};
   /** All attempts belong to this persisted turn; Bot tasks bind by run ID. */
   runIds?: string[];
   agentLabel?: string;
@@ -143,6 +146,7 @@ export interface ConversationTurnPresentation {
 }
 
 export interface ConversationPresentationCallbacks {
+  openChat?: (chatId:string)=>void;
   browserChatId?: string;
   browserPermissions?: BrowserPermissionClient;
   openPermissionMode?: () => void;

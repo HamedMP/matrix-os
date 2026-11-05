@@ -1,12 +1,15 @@
 import { canonicalChatApprovals, canonicalChatInputs, canonicalAssistantOutputMessages, canonicalAssistantOutputRootId } from "@matrix-os/contracts";
 import type { CanonicalChatMessage, CanonicalChatRun, CanonicalChatRunActivity, CanonicalChatTurn } from "@matrix-os/contracts";
+import { routineReceiptMessage } from "@matrix-os/ui";
 import { chatAgentAttribution } from "@matrix-os/ui";
+import { nativeScheduledMessage } from "@matrix-os/ui/chat-scheduled-message";
 import type { ConversationTurnPresentation, ConversationWorkPresentation } from "../../components/conversation/presentation";
 import { historicalChatPresentation } from "./historical-chat-presentation";
 import { messagePresentation, messageWork, hasDisplayableMessageContent, promotedAssistantArtifacts, withoutAttachmentReferences } from "./canonical-chat-message-presentation";
 import { isActiveRun, runPresentation, activeModelStatus, replaceThinkingPlaceholders, groupAdjacentToolCalls } from "./canonical-chat-run-presentation";
 const MAX_STREAMED_MESSAGE_PROJECTIONS = 200;
 export function canonicalChatPresentation(input: {
+  record?: { chat: { id: string } };
   messages: CanonicalChatMessage[];
   turns: CanonicalChatTurn[];
   runs: CanonicalChatRun[];
@@ -26,13 +29,14 @@ export function canonicalChatPresentation(input: {
       ? turn
       : latest
   ), undefined)?.id;
-  const views = input.turns.map((turn) => {
+  const views: ConversationTurnPresentation[] = input.turns.map((turn) => {
     const historical = input.messages.filter(message => message.turnId === turn.id);
     if (!input.runs.some(run => run.turnId === turn.id) && historical.length
       && historical.every(message => message.parts.some(part => part.type === "import_provenance"))) {
       return historicalChatPresentation(historical, turn.id, turn.inputMessageId);
     }
     const userMessage = input.messages.find((message) => message.id === turn.inputMessageId);
+    const scheduledMessage = userMessage && nativeScheduledMessage(userMessage, { chatId: input.record?.chat.id, turns: input.turns, runs: input.runs });
     const userFollowups = input.messages.filter((message) => (
       message.turnId === turn.id
       && message.role === "user"
@@ -147,7 +151,7 @@ export function canonicalChatPresentation(input: {
       startedAt,
       endedAt,
       active: isActiveRun(run),
-      ...(userMessage ? { user: messagePresentation(userMessage, "commentary") } : {}),
+      ...(userMessage ? { user: { ...messagePresentation(userMessage, "commentary"), ...(scheduledMessage ? { scheduledMessage } : {}) } } : {}),
       ...(userFollowups.length > 0
         ? { userFollowups: userFollowups.map((message) => messagePresentation(message, "commentary")) }
         : {}),
@@ -176,9 +180,15 @@ export function canonicalChatPresentation(input: {
   });
   const orphans = input.messages.filter(message => !message.turnId && message.parts.some(part => part.type === "import_provenance"));
   if (orphans.length) views.push(historicalChatPresentation(orphans, `history:${orphans[0]!.id}`));
+  for(const message of input.messages){
+    const receipt=routineReceiptMessage(message,input.record?.chat.id);if(!receipt)continue;
+    const timestamp=Date.parse(message.createdAt);
+    views.push({id:message.id,startedAt:timestamp,endedAt:timestamp,active:false,work:[],routineReceipt:{receipt,text:message.parts.filter(part=>part.type==="text").map(part=>part.text).join("\n")}});
+  }
   const seqFor = (view: ConversationTurnPresentation) => {
     const turn = input.turns.find(turn => turn.id === view.id);
-    return turn?.baseMessageSeq ?? orphans[0]?.seq ?? Number.MAX_SAFE_INTEGER;
+    return turn ? input.messages.find(message=>message.id===turn.inputMessageId)?.seq ?? turn.baseMessageSeq + 1
+      : input.messages.find(message=>message.id===view.id)?.seq ?? orphans[0]?.seq ?? Number.MAX_SAFE_INTEGER;
   };
   return views.sort((left, right) => seqFor(left) - seqFor(right));
 }
