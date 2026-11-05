@@ -1,7 +1,7 @@
 import { Hono, type Context } from 'hono';
 import { bodyLimit } from 'hono/body-limit';
 import { z } from 'zod/v4';
-import { SITE_PUBLISH_TIMEOUT_MS, SiteAccessLinkCreateRequestSchema, SiteAccessLinksQuerySchema, SiteAppSlugSchema, SiteIdSchema, SiteRollbackSchema } from '@matrix-os/contracts';
+import { SITE_MANAGEMENT_CONTRACT_VERSION, SITE_MANAGEMENT_CONTRACT_VERSION_HEADER, SITE_PUBLISH_TIMEOUT_MS, SiteAccessLinkCreateRequestSchema, SiteAccessLinksQuerySchema, SiteAppSlugSchema, SiteIdSchema, SiteRollbackSchema, type SiteRecord } from '@matrix-os/contracts';
 import { RuntimeSlotSchema, SafeHandleSchema } from '../customer-vps-schema.js';
 import { getRunningUserMachineByHandle, type PlatformDB } from '../db.js';
 import { buildPlatformSyncVerificationToken, timingSafeTokenEquals } from '../platform-token.js';
@@ -43,9 +43,15 @@ export function createSiteManagementRoutes(options: {
     app.use('*', async (c, next) => { c.header('Cache-Control', 'no-store'); await next(); });
     const denied = (c: Context) => c.json({ error: 'Unauthorized' }, 401);
     const smallBody = bodyLimit({ maxSize: 2048, onError: c => c.json({ error: 'Site unavailable' }, 413) });
+    const siteResponse = (c: Context, site: SiteRecord) => {
+        if (c.req.header(SITE_MANAGEMENT_CONTRACT_VERSION_HEADER) === SITE_MANAGEMENT_CONTRACT_VERSION)
+            return c.json(site);
+        const { accessMode: _, ...legacySite } = site;
+        return c.json(legacySite);
+    };
     app.get('/:appSlug', async (c) => { const identity = await owner(c); if (!identity)
         return denied(c); const site = await options.service.get(identity); if (!site)
-        throw new SiteError('not_found'); return c.json(site); });
+        throw new SiteError('not_found'); return siteResponse(c, site); });
     app.post('/:appSlug', async (c) => {
         const identity = await owner(c);
         if (!identity) return denied(c);
@@ -59,10 +65,10 @@ export function createSiteManagementRoutes(options: {
             if (error instanceof SyntaxError) return null;
             throw error;
         });
-        return c.json(await options.service.deploy(identity, input, { deadlineAt, signal: c.req.raw.signal }));
+        return siteResponse(c, await options.service.deploy(identity, input, { deadlineAt, signal: c.req.raw.signal }));
     });
     app.patch('/:appSlug', async (c) => { const identity = await owner(c); if (!identity)
-        return denied(c); return c.json(await options.service.patch(identity, await c.req.json().catch((error: unknown) => { if (error instanceof SyntaxError)
+        return denied(c); return siteResponse(c, await options.service.patch(identity, await c.req.json().catch((error: unknown) => { if (error instanceof SyntaxError)
         return null; throw error; }))); });
     app.delete('/:appSlug', async (c) => {
         const identity = await owner(c);
@@ -72,12 +78,12 @@ export function createSiteManagementRoutes(options: {
             return null; throw error; }));
         if (!input.success)
             throw new SiteError('invalid_request');
-        return c.json(await options.service.unpublish(identity, input.data.baseRevision));
+        return siteResponse(c, await options.service.unpublish(identity, input.data.baseRevision));
     });
     app.post('/:appSlug/rollback', async (c) => { const identity = await owner(c); if (!identity)
         return denied(c); const input = SiteRollbackSchema.safeParse(await c.req.json().catch((error: unknown) => { if (error instanceof SyntaxError)
         return null; throw error; })); if (!input.success)
-        throw new SiteError('invalid_request'); return c.json(await options.service.rollback(identity, input.data.versionId, input.data.baseRevision)); });
+        throw new SiteError('invalid_request'); return siteResponse(c, await options.service.rollback(identity, input.data.versionId, input.data.baseRevision)); });
     app.get('/:appSlug/access-links', async c => {
         const identity = await owner(c, true); if (!identity) return denied(c);
         const query = SiteAccessLinksQuerySchema.safeParse({

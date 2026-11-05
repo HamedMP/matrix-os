@@ -1,4 +1,4 @@
-import { SITE_PUBLISH_TIMEOUT_MS, SiteAccessLinkCreateResponseSchema, SiteAccessLinksQuerySchema, SiteAccessLinksResponseSchema, SiteRecordSchema, type SiteAccessLinkCreateResponse, type SiteAccessLinksResponse, type SiteRecord } from '@matrix-os/contracts';
+import { SITE_MANAGEMENT_CONTRACT_VERSION, SITE_MANAGEMENT_CONTRACT_VERSION_HEADER, SITE_PUBLISH_TIMEOUT_MS, SiteAccessLinkCreateResponseSchema, SiteAccessLinksQuerySchema, SiteAccessLinksResponseSchema, SiteRecordSchema, type SiteAccessLinkCreateResponse, type SiteAccessLinksResponse, type SiteRecord } from '@matrix-os/contracts';
 import { z } from 'zod/v4';
 export class SitePlatformError extends Error{constructor(readonly status:400|404|409|503){super('Publishing request failed');}}
 export interface SitePlatformClient {
@@ -20,7 +20,7 @@ export function createSitePlatformClient(options:{url:string;token:string;handle
     timeoutMs=remaining;
    }
    const timeout=AbortSignal.timeout(timeoutMs);
-   const response=await fetch(target,{method,headers:{authorization:'Bearer '+options.token,'content-type':'application/json',...(deadlineAt===undefined?{}:{'x-matrix-site-deadline':String(deadlineAt)})},...(body===undefined?{}:{body:JSON.stringify(body)}),signal:signal?AbortSignal.any([signal,timeout]):timeout,redirect:'error'});
+   const response=await fetch(target,{method,headers:{authorization:'Bearer '+options.token,'content-type':'application/json',[SITE_MANAGEMENT_CONTRACT_VERSION_HEADER]:SITE_MANAGEMENT_CONTRACT_VERSION,...(deadlineAt===undefined?{}:{'x-matrix-site-deadline':String(deadlineAt)})},...(body===undefined?{}:{body:JSON.stringify(body)}),signal:signal?AbortSignal.any([signal,timeout]):timeout,redirect:'error'});
    if(response.status===404&&method==='GET'&&missingIsNull){await response.body?.cancel();return null;}
    if(!response.ok){await response.body?.cancel();throw new SitePlatformError(response.status===409?409:response.status===400?400:response.status===404?404:503);}
    // Bound streamed upstream response; Content-Length alone is not sufficient.
