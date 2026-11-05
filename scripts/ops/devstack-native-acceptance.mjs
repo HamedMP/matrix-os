@@ -37,6 +37,7 @@ async function run(config, marker, identity, compiled, interrupted) {
     dependencies.workerFile = `${config.appRoot}/packages/scope-runtime/dist/worker.js`;
     receipt.build = await journal.step("build", () => buildFacts(config, dependencies, compiled, check));
     await verifyCompiledRuntime(config.appRoot, compiled);
+    const { nodeProfileDigest } = await import(pathToFileURL(`${config.appRoot}/packages/scope-runtime/dist/node-runtime.js`).href);
     const profile = await import(pathToFileURL(`${config.appRoot}/packages/scope-runtime/dist/profile.js`).href);
     const templatePath = `${config.appRoot}/distro/customer-vps/systemd/matrix-scope-runtime.service`;
     await noSymlinkAncestors(templatePath, true); const template = await readFile(templatePath, "utf8");
@@ -44,8 +45,8 @@ async function run(config, marker, identity, compiled, interrupted) {
     check();
     capture = await createStderrCapture(stderrPath(config, token), undefined, check);
     await journal.step("supervisor", () => submitSupervisor(config, token, template, ledger, command, receipt.placement, check));
-    await nativeProof(config, identity, { journal, ledger, check, capture, dependencies, baseline: receipt.before,
-      expectedProfile: { profileDigest: profile.SCOPE_RUNTIME_PROFILE_DIGEST } });
+    await nativeProof(config, identity, { journal, ledger, check, capture, dependencies, node: receipt.build.node, baseline: receipt.before,
+      expectedProfile: { profileDigest: nodeProfileDigest(profile.SCOPE_RUNTIME_PROFILE_DIGEST, config.ownedNode) } });
   } catch (error) { receipt.error = journal.fail(error); }
   finally {
     try {
@@ -88,8 +89,10 @@ export async function main(argv) {
     const { resolveScopeRuntimeHostConfig } = await import(pathToFileURL(`${runtime}/host-config.js`).href);
     const { createScopeRuntimeUnitIdentity } = await import(pathToFileURL(`${runtime}/systemd-unit-identity.js`).href);
     config = { ...resolveConfig(input, resolveScopeRuntimeHostConfig), home: input.home };
+    const { assertProtectedNodeRoot } = await import(pathToFileURL(`${runtime}/node-runtime.js`).href);
+    assert(process.execPath === config.ownedNode.binary, "harness_node_mismatch");
     identity = createScopeRuntimeUnitIdentity(input.namespace);
-    const readiness = await preflight(config);
+    const readiness = await preflight(config, assertProtectedNodeRoot);
     if (input.mode === "preflight" || !readiness.ready) return { ...readiness, mode: input.mode };
   } catch (error) { return blocked(safeCode(error)); }
   return withInterruption(interrupted => run(config, marker, identity, compiled, interrupted));

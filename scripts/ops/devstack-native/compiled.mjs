@@ -2,7 +2,7 @@ import { lstat, opendir } from "node:fs/promises";
 import { join } from "node:path";
 import { assert, hash } from "./control.mjs";
 import { inspectPlacement } from "./placement.mjs";
-const REQUIRED = ["main.js", "worker.js", "host-config.js", "protocol.js", "systemd-unit-identity.js", "profile.js", "server.js", "supervisor.js", "systemd-launcher.js"];
+const REQUIRED = ["main.js", "worker.js", "host-config.js", "node-runtime.js", "protocol.js", "systemd-unit-identity.js", "profile.js", "server.js", "supervisor.js", "systemd-launcher.js"];
 export async function compiledRuntimeInventory(appRoot) {
   const root = join(appRoot, "packages/scope-runtime/dist");
   assert((await inspectPlacement(root)).length === 0, "compiled_root_missing");

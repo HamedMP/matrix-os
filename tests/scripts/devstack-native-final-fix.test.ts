@@ -32,9 +32,10 @@ it("refuses to enter supervisor discovery while a present installed Codex execut
   await mkdir(helpers, { recursive: true });
   await copyFile(new URL("../../scripts/ops/devstack-native/codex-mask-preload.mjs", import.meta.url), join(helpers, "codex-mask-preload.mjs"));
   await writeFile(join(helpers, "security.mjs"), "export const CODEX_BINARY = " + JSON.stringify(sentinel) + ";");
-  const args = supervisorArgs({ ...config, appRoot: root, runtimeDirectory: root, commandSocketRoot: root }, "matrix-native-proof", template);
+  const ownedNode = { root: "/var/lib/matrix-devstack/proof/runtime/node", binary: "/var/lib/matrix-devstack/proof/runtime/node/bin/node" };
+  const args = supervisorArgs({ ...config, ownedNode, appRoot: root, runtimeDirectory: root, commandSocketRoot: root }, "matrix-native-proof", template);
   // Run the generated Node command with the host path and runtime entry mapped into this private fixture.
-  const node = args.indexOf("/opt/matrix/runtime/node/bin/node");
+  const node = args.indexOf(ownedNode.binary);
   const argv = args.slice(node + 1).map((arg: string) => arg.replaceAll(installed, sentinel).replace(root + "/packages/scope-runtime/dist/main.js", main));
   const result = await promisify(execFile)(process.execPath, argv).then(() => "entered", () => "refused");
   expect.soft(await readFile(marker, "utf8").catch(() => null)).toBeNull();

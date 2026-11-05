@@ -8,7 +8,7 @@ import { randomUUID } from "node:crypto";
 import { chmod, link, lstat, mkdtemp, rmdir, unlink } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { createConnection, createServer } from "node:net";
-import { assert, must, NODE, noSymlinkAncestors, stat, waitFor } from "./control.mjs";
+import { assert, must, noSymlinkAncestors, stat, waitFor } from "./control.mjs";
 
 export function assertDrained(state) { assert(state.split("\n").includes("ActiveState=inactive"), "worker_not_drained"); }
 export async function qualifyGracefulDrain(config, ledger, handle, io = {}) {
@@ -35,10 +35,12 @@ export function supervisorArgs(config, token, template) {
     `--property=InaccessiblePaths=-${CODEX_BINARY}`,
     `--property=StandardError=append:${stderrPath(config, token)}`, `--property=LimitFSIZE=${STDERR_LIMIT}`,
     "--property=RuntimeMaxSec=180", "--property=KillSignal=SIGKILL", "--property=RemainAfterExit=yes", `--setenv=MATRIX_SCOPE_RUNTIME_NAMESPACE=${config.namespace}`,
+    `--setenv=MATRIX_SCOPE_RUNTIME_NODE_ROOT=${config.ownedNode.root}`,
     `--setenv=MATRIX_SCOPE_RUNTIME_APP_ROOT=${config.appRoot}`, `--setenv=MATRIX_HOME=${config.home ?? `${config.appRoot.slice(0, -4)}/home`}`,
-    "--", "/usr/bin/env", "-i", `PATH=/opt/matrix/runtime/node/bin:/usr/bin:/bin`,
+    "--", "/usr/bin/env", "-i", `PATH=${config.ownedNode.root}/bin:/usr/bin:/bin`,
+    `MATRIX_SCOPE_RUNTIME_NODE_ROOT=${config.ownedNode.root}`,
     `MATRIX_SCOPE_RUNTIME_NAMESPACE=${config.namespace}`, `MATRIX_SCOPE_RUNTIME_APP_ROOT=${config.appRoot}`,
-    `MATRIX_HOME=${config.home ?? `${config.appRoot.slice(0, -4)}/home`}`, "NOTIFY_SOCKET=/run/systemd/notify", "WATCHDOG_USEC=60000000", NODE, "--import", `${config.appRoot}/scripts/ops/devstack-native/codex-mask-preload.mjs`, `${config.appRoot}/packages/scope-runtime/dist/main.js`];
+    `MATRIX_HOME=${config.home ?? `${config.appRoot.slice(0, -4)}/home`}`, "NOTIFY_SOCKET=/run/systemd/notify", "WATCHDOG_USEC=60000000", config.ownedNode.binary, "--import", `${config.appRoot}/scripts/ops/devstack-native/codex-mask-preload.mjs`, `${config.appRoot}/packages/scope-runtime/dist/main.js`];
 }
 export function exchange(path, frame, timeout = 10_000) {
   return new Promise((resolve, reject) => {
@@ -167,7 +169,7 @@ export async function createTrackedWorker(config, profile, ledger, assertInvento
   return reply;
 }
 export async function nativeProof(config, identity, context) {
-  const { journal, ledger, dependencies, baseline, expectedProfile, check } = context;
+  const { journal, ledger, dependencies, baseline, expectedProfile, node, check } = context;
   const capability = async () => {
     check();
     const safe = safeCapability(await supervisorRequest(config, "capability.get"));
@@ -176,7 +178,7 @@ export async function nativeProof(config, identity, context) {
   const assertInventory = async () => assert(ledger.inventory(await observeWorkers(config)).length === 0, "unowned_worker_quarantined");
   const create = async (profile, role) => {
     const reply = await createTrackedWorker(config, profile, ledger, assertInventory, { check });
-    await journal.resourceStep(reply.runtimeHandle, role, () => inspectWorkerConfiguration(config, reply.runtimeHandle, dependencies, identity.workerUnit(reply.runtimeHandle)));
+    await journal.resourceStep(reply.runtimeHandle, role, () => inspectWorkerConfiguration(config, reply.runtimeHandle, dependencies, identity.workerUnit(reply.runtimeHandle), node));
     return reply.runtimeHandle;
   };
   let broker, controls;
@@ -184,14 +186,14 @@ export async function nativeProof(config, identity, context) {
     const before = await journal.step("capability", async () => waitFor(async () => {
       if (!(await stat(config.supervisorSocket))?.isSocket()) return false; return capability();
     }, "supervisor_not_ready"));
-    await journal.step("supervisor_security", () => inspectSupervisor(config));
+    await journal.step("supervisor_security", () => inspectSupervisor(config, node));
     check();
     broker = await startBroker(config.brokerSocket, dirname(config.runtimeDirectory), check);
     const first = await create(before, "sdk"), peer = await create(before, "peer_control");
     const peerSockets = [first, peer].map(handle => `${config.commandSocketRoot}/${handle.slice(8)}/worker.sock`);
     await journal.step("isolation", async () => {
       const pair = await inspectWorkerPair(ledger, [first, peer], handle =>
-        inspectWorkerConfiguration(config, handle, dependencies, identity.workerUnit(handle)));
+        inspectWorkerConfiguration(config, handle, dependencies, identity.workerUnit(handle), node));
       check();
       controls = await startControls(config, baseline, peerSockets, check);
       check();
@@ -220,7 +222,7 @@ export async function nativeProof(config, identity, context) {
         try { const value = await capability(); return value.executionGeneration !== before.executionGeneration && value; }
         catch (error) { if (["socket_unavailable", "socket_closed", "supervisor_request_failed"].includes(error.message)) return false; throw error; }
       }, "own_restart_failed");
-      return { ...profile, incarnation, security: await inspectSupervisor(config) };
+      return { ...profile, incarnation, security: await inspectSupervisor(config, node) };
     });
     await journal.step("reconcile", async () => {
       await assertInventory();

@@ -1,3 +1,4 @@
+import { assertProtectedNodeRoot } from "./node-runtime.js";
 import { installSupervisorShutdownHandlers } from "./supervisor-shutdown.js";
 import { HOST_NAMESPACE_TRUST, assertRuntimeDirectoryPlacement, assertNamespaceSocket } from "./namespace-ancestry.js";
 import { resolveScopeRuntimeHostConfig, resolveScopeRuntimeSourcePaths } from "./host-config.js";
@@ -12,6 +13,10 @@ async function main(): Promise<void> {
   const home = process.env.MATRIX_HOME ?? "/home/matrix/home";
   const config = resolveScopeRuntimeHostConfig({ env: process.env, homePath: home });
   const namespaceTrust = config.namespace === undefined ? undefined : HOST_NAMESPACE_TRUST;
+  if (config.ownedNode) {
+    await assertProtectedNodeRoot(config.ownedNode.root);
+    if (process.execPath !== config.ownedNode.binary) throw new Error("Supervisor Node executable disagrees with configuration");
+  }
   if (namespaceTrust) {
     await assertRuntimeDirectoryPlacement(config);
     await assertNamespaceSocket(config.supervisorSocket, namespaceTrust);
@@ -19,6 +24,7 @@ async function main(): Promise<void> {
   }
   const launcher = createSystemdScopeRuntimeLauncher({
     namespace: config.namespace,
+    useOwnedNode: !!config.ownedNode,
     commandSocketRoot: config.commandSocketRoot,
     stateRoot: config.stateRoot,
     ...resolveScopeRuntimeSourcePaths(config),

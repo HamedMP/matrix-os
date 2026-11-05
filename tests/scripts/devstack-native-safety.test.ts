@@ -70,6 +70,9 @@ it("retains completed SDK evidence after a later gate fails and strips unknown p
   await expect(journal.step("drain", async () => { throw Error("drain_failed"); })).rejects.toThrow();
   expect(journal.result().gates.sdk).toMatchObject({ state: "passed", evidence: { result: "scope-sdk-ok" } });
   expect(journal.result().status).toBe("failed");
+  const adapter = { adapterId: "claude-code", harnessVersion: "2.1.240" };
+  expect(() => safeCapability({ profile: { profileId: "scope-runtime-chat-v1", profileVersion: 2, profileDigest: "a".repeat(64),
+    executionGeneration: "1", adapters: [adapter, { adapterId: "codex", harnessVersion: "0.162.1" }] } })).toThrow("capability_invalid");
   expect(safeCapability({ profile: { profileId: "scope-runtime-chat-v1", profileVersion: 2, profileDigest: "a".repeat(64), executionGeneration: "1", adapters: [{ adapterId: "claude-code", harnessVersion: "2.1.240", secret: "never-store" }] }, secret: "never-store" })).not.toHaveProperty("secret");
 });
 it("rejects two matching dependency manifests from outside the owned checkout before version execution", async () => {
@@ -99,15 +102,15 @@ it("verifies archive SRI before parsing and matches every installed regular memb
 
 function profileFixture() {
   const suffix = "a".repeat(32), root = `/var/lib/matrix-devstack/proof/scope-runtime/runtimes/${suffix}`;
-  const config = { stateRoot: "/var/lib/matrix-devstack/proof/scope-runtime", commandSocketRoot: "/run/matrix-devstack/proof/c", brokerSocket: "/run/matrix-devstack/proof/scope-runtime/broker.sock" };
+  const config = { ownedNode: { root: "/var/lib/matrix-devstack/proof/runtime/node", workerRoot: "/opt/matrix/runtime/node" }, stateRoot: "/var/lib/matrix-devstack/proof/scope-runtime", commandSocketRoot: "/run/matrix-devstack/proof/c", brokerSocket: "/run/matrix-devstack/proof/scope-runtime/broker.sock" };
   const deps = { sdk: { root: "/owned/sdk" }, native: { root: "/owned/native" }, workerFile: "/owned/worker.js" };
-  const properties = { Type: "exec", User: "matrix-scope-workload", KillMode: "control-group", DynamicUser: "yes", PrivateUsers: "yes", RootDirectory: `${root}/root`, MountAPIVFS: "yes", PrivateNetwork: "yes", PrivateIPC: "yes", PrivateTmp: "yes", PrivateDevices: "yes", ProtectProc: "invisible", ProcSubset: "pid", ProtectSystem: "strict", ProtectHome: "yes", ProtectKernelTunables: "yes", ProtectKernelModules: "yes", ProtectKernelLogs: "yes", ProtectControlGroups: "yes", ProtectClock: "yes", ProtectHostname: "yes", NoNewPrivileges: "yes", CapabilityBoundingSet: "", AmbientCapabilities: "", RestrictAddressFamilies: "AF_INET6 AF_UNIX AF_INET", RestrictNamespaces: "yes", RestrictRealtime: "yes", RestrictSUIDSGID: "yes", SystemCallArchitectures: "native", MemoryMax: "1073741824", CPUQuotaPerSecUSec: "2s", TasksMax: "256", WorkingDirectory: "/workspace", UMask: "0077", RuntimeMaxUSec: "1min 30s", TimeoutStopUSec: "10s", TemporaryFileSystem: "/tmp:rw,nosuid,nodev,noexec,size=67108864,mode=1777 /workspace:rw,nodev,nosuid,size=10G,mode=1777", BindReadOnlyPaths: "/lib:/lib:rbind /lib64:/lib64:rbind /usr/lib:/usr/lib:rbind /usr/bin/env:/usr/bin/env:rbind /opt/matrix/runtime/node:/opt/matrix/runtime/node:rbind /owned/sdk:/opt/matrix/scope-sdk/sdk:rbind /owned/native:/opt/matrix/scope-sdk/native:rbind /owned/worker.js:/opt/matrix/scope-runtime/worker.mjs:rbind", BindPaths: `${config.brokerSocket}:/run/matrix-scope/broker.sock:rbind ${root}/ready:/run/matrix-scope-readiness/ready:rbind ${config.commandSocketRoot}/${suffix}:/run/matrix-scope-command:rbind` };
+  const properties = { Type: "exec", User: "matrix-scope-workload", KillMode: "control-group", DynamicUser: "yes", PrivateUsers: "yes", RootDirectory: `${root}/root`, MountAPIVFS: "yes", PrivateNetwork: "yes", PrivateIPC: "yes", PrivateTmp: "yes", PrivateDevices: "yes", ProtectProc: "invisible", ProcSubset: "pid", ProtectSystem: "strict", ProtectHome: "yes", ProtectKernelTunables: "yes", ProtectKernelModules: "yes", ProtectKernelLogs: "yes", ProtectControlGroups: "yes", ProtectClock: "yes", ProtectHostname: "yes", NoNewPrivileges: "yes", CapabilityBoundingSet: "", AmbientCapabilities: "", RestrictAddressFamilies: "AF_INET6 AF_UNIX AF_INET", RestrictNamespaces: "yes", RestrictRealtime: "yes", RestrictSUIDSGID: "yes", SystemCallArchitectures: "native", MemoryMax: "1073741824", CPUQuotaPerSecUSec: "2s", TasksMax: "256", WorkingDirectory: "/workspace", UMask: "0077", RuntimeMaxUSec: "1min 30s", TimeoutStopUSec: "10s", TemporaryFileSystem: "/tmp:rw,nosuid,nodev,noexec,size=67108864,mode=1777 /workspace:rw,nodev,nosuid,size=10G,mode=1777", BindReadOnlyPaths: "/lib:/lib:rbind /lib64:/lib64:rbind /usr/lib:/usr/lib:rbind /usr/bin/env:/usr/bin/env:rbind /var/lib/matrix-devstack/proof/runtime/node:/opt/matrix/runtime/node:rbind /owned/sdk:/opt/matrix/scope-sdk/sdk:rbind /owned/native:/opt/matrix/scope-sdk/native:rbind /owned/worker.js:/opt/matrix/scope-runtime/worker.mjs:rbind", BindPaths: `${config.brokerSocket}:/run/matrix-scope/broker.sock:rbind ${root}/ready:/run/matrix-scope-readiness/ready:rbind ${config.commandSocketRoot}/${suffix}:/run/matrix-scope-command:rbind` };
   return { config, deps, properties, handle: `runtime_${suffix}` };
 }
 it("rejects drift in normalized binds, restrictions, tmpfs, timeouts and actual root identity", async () => {
   const { validateWorkerProperties, assertRootIdentity } = await import("../../scripts/ops/devstack-native/security.mjs");
   const f = profileFixture(); expect(() => validateWorkerProperties(f.properties, f.config, f.handle, f.deps)).not.toThrow();
-  for (const patch of [{ BindPaths: `${f.properties.BindPaths} /outside:/extra:rbind` }, { RestrictNamespaces: "no" }, { RestrictAddressFamilies: "AF_UNIX AF_INET AF_INET6 AF_PACKET" }, { RuntimeMaxUSec: "2min" }, { TemporaryFileSystem: f.properties.TemporaryFileSystem.replace("10G", "11G") }, { RootDirectory: "/other" }]) {
+  for (const patch of [{ BindReadOnlyPaths: f.properties.BindReadOnlyPaths.replace(f.config.ownedNode.root, f.config.ownedNode.workerRoot) }, { BindPaths: `${f.properties.BindPaths} /outside:/extra:rbind` }, { RestrictNamespaces: "no" }, { RestrictAddressFamilies: "AF_UNIX AF_INET AF_INET6 AF_PACKET" }, { RuntimeMaxUSec: "2min" }, { TemporaryFileSystem: f.properties.TemporaryFileSystem.replace("10G", "11G") }, { RootDirectory: "/other" }]) {
     expect(() => validateWorkerProperties({ ...f.properties, ...patch }, f.config, f.handle, f.deps)).toThrow();
   }
   expect(() => assertRootIdentity({ ino: 1, dev: 2 }, { ino: 1, dev: 3 })).toThrow();
@@ -194,4 +197,15 @@ it("keeps a conclusively created worker eligible for cleanup when isolation prop
   f.state[f.worker].DefinitionIdentity = "security-property-update-same-incarnation";
   expect((await ledger.cleanup()).every((entry: {state: string}) => entry.state === "passed")).toBe(true);
   expect(stopped).toEqual([f.supervisor, f.worker]); expect(journal.result().resources[handle].state).toBe("failed");
+});
+
+it("ties observed supervisor and worker executables to the reviewed source object and SHA256", async () => {
+  const { executableEvidence, verifyExecutableEvidence } = await import("../../scripts/ops/devstack-native/evidence.mjs");
+  const dir = await fixture(), first = join(dir, "first"), other = join(dir, "other");
+  await writeFile(first, "same"); await writeFile(other, "same");
+  const reviewed = await executableEvidence(first);
+  expect(await verifyExecutableEvidence(first, reviewed)).toEqual(reviewed);
+  await expect(verifyExecutableEvidence(other, reviewed)).rejects.toThrow("node_executable_mismatch");
+  await writeFile(first, "changed");
+  await expect(verifyExecutableEvidence(first, reviewed)).rejects.toThrow("node_executable_mismatch");
 });

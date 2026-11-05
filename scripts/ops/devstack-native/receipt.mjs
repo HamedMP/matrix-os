@@ -26,7 +26,7 @@ export function safeCapability(reply) {
   const profile = reply?.profile;
   assert(profile && profile.profileId === "scope-runtime-chat-v1" && profile.profileVersion === 2
     && /^[a-f0-9]{64}$/.test(profile.profileDigest) && /^[1-9][0-9]{0,19}$/.test(profile.executionGeneration)
-    && Array.isArray(profile.adapters) && profile.adapters.length <= 16, "capability_invalid");
+    && Array.isArray(profile.adapters) && profile.adapters.length === 1, "capability_invalid");
   const adapter = profile.adapters.find(item => item?.adapterId === "claude-code");
   assert(adapter && /^[0-9]+\.[0-9]+\.[0-9]+$/.test(adapter.harnessVersion), "capability_adapter_invalid");
   return { profileId: profile.profileId, profileVersion: profile.profileVersion, profileDigest: profile.profileDigest,

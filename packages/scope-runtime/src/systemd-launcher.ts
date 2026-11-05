@@ -1,3 +1,4 @@
+import { assertProtectedNodeRoot, nodeMount, nodeProfileDigest, ownedNodeForNamespace, WORKER_NODE_BINARY, type OwnedNode } from "./node-runtime.js";
 import { assertNamespaceDirectory, assertNamespaceSocket, assertRuntimeDirectoryPlacement, HOST_NAMESPACE_TRUST, type NamespacePathTrust } from "./namespace-ancestry.js";
 import { pinScopeRuntimeCommandSocket, type CommandSocketPinner } from "./command-socket-pin.js";
 import { cleanupOrphanedRuntimeDirectories, commandDirectoryForRuntime, createRuntimeDirectories, removeRuntimeDirectories } from "./runtime-directories.js";
@@ -34,6 +35,7 @@ import {
   SCOPE_RUNTIME_BOT_HARNESS_VERSION,
   SCOPE_RUNTIME_BOT_PROFILE_ID,
   piProfileIdentity,
+  runtimeProfileIdentity,
   isBotAdapter,
   materializeBotSystemdProperties,
   type ScopeRuntimeBotProfilePaths,
@@ -82,6 +84,7 @@ export interface ScopeRuntimeCommandRunner {
 
 interface LauncherPaths {
   namespace?: string;
+  useOwnedNode?: boolean;
   namespaceTrust?: NamespacePathTrust;
   commandSocketRoot?: string;
   stateRoot: string;
@@ -101,7 +104,7 @@ interface LauncherPaths {
   managedPiSandboxRoots?: readonly string[];
 }
 
-type ResolvedLauncherPaths = Required<Omit<LauncherPaths, "botRuntimeDirectory" | "namespace" | "namespaceTrust" | "commandSocketRoot">> & { botRuntimeDirectory?: string; commandSocketRoot?: string; namespaceTrust?: NamespacePathTrust };
+type ResolvedLauncherPaths = Required<Omit<LauncherPaths, "botRuntimeDirectory" | "namespace" | "namespaceTrust" | "commandSocketRoot" | "useOwnedNode">> & { ownedNode?: OwnedNode; botRuntimeDirectory?: string; commandSocketRoot?: string; namespaceTrust?: NamespacePathTrust };
 
 function isPiLaunch(input: { profileId?: string }): boolean {
   return piProfileIdentity(input.profileId) !== undefined;
@@ -117,7 +120,7 @@ function assertTrustedAbsolutePath(value: string): string {
 export function buildFixedSystemdRunArgs(
   input: ScopeRuntimeLaunchRequest,
   paths: ScopeRuntimeProfilePaths & { nodeBinary: string },
-  options: { sandboxProperties?: readonly string[]; namespace?: string } = {},
+  options: { sandboxProperties?: readonly string[]; namespace?: string; useOwnedNode?: boolean } = {},
 ): string[] {
   const runtimeHandle = RuntimeHandleSchema.parse(input.runtimeHandle);
   const scopeHandle = ScopeHandleSchema.parse(input.scopeHandle);
@@ -131,6 +134,7 @@ export function buildFixedSystemdRunArgs(
   for (const property of sandboxProperties) {
     if (property.includes("\n") || property.includes("\0")) throw new Error("Invalid sandbox property");
   }
+  const owned = options.useOwnedNode ? ownedNodeForNamespace(options.namespace) : undefined;
   const properties = materializeFixedSystemdProperties({
     scopeRoot: assertTrustedAbsolutePath(paths.scopeRoot),
     sdkDirectory: assertTrustedAbsolutePath(paths.sdkDirectory),
@@ -144,14 +148,14 @@ export function buildFixedSystemdRunArgs(
     `--unit=${createScopeRuntimeUnitIdentity(options.namespace).workerUnit(runtimeHandle)}`,
     "--quiet",
     "--no-block",
-    ...properties.map((property) => `--property=${property}`),
+    ...properties.map((property) => `--property=${nodeMount(property, owned)}`),
     ...sandboxProperties.map((property) => `--property=${property}`),
     ...FIXED_SYSTEMD_ENVIRONMENT.map((entry) => `--setenv=${entry}`),
     "--",
     "/usr/bin/env",
     "-i",
     ...FIXED_SYSTEMD_ENVIRONMENT,
-    assertTrustedAbsolutePath(paths.nodeBinary),
+    owned?.workerBinary ?? assertTrustedAbsolutePath(paths.nodeBinary),
     "/opt/matrix/scope-runtime/worker.mjs",
     runtimeHandle,
     scopeHandle,
@@ -169,7 +173,7 @@ export function buildFixedSystemdRunArgs(
 export function buildBotSystemdRunArgs(
   input: ScopeRuntimeLaunchRequest,
   paths: ScopeRuntimeBotProfilePaths & { nodeBinary: string },
-  options: { sandboxProperties: readonly string[]; namespace?: string },
+  options: { sandboxProperties: readonly string[]; namespace?: string; useOwnedNode?: boolean },
 ): string[] {
   const runtimeHandle = RuntimeHandleSchema.parse(input.runtimeHandle);
   const scopeHandle = ScopeHandleSchema.parse(input.scopeHandle);
@@ -181,6 +185,7 @@ export function buildBotSystemdRunArgs(
   for (const property of options.sandboxProperties) {
     if (property.includes("\n") || property.includes("\0")) throw new Error("Invalid sandbox property");
   }
+  const owned = options.useOwnedNode ? ownedNodeForNamespace(options.namespace) : undefined;
   const properties = materializeBotSystemdProperties({
     scopeRoot: assertTrustedAbsolutePath(paths.scopeRoot),
     botRuntimeDirectory: assertTrustedAbsolutePath(paths.botRuntimeDirectory),
@@ -192,14 +197,14 @@ export function buildBotSystemdRunArgs(
     `--unit=${createScopeRuntimeUnitIdentity(options.namespace).workerUnit(runtimeHandle)}`,
     "--quiet",
     "--no-block",
-    ...properties.map((property) => `--property=${property}`),
+    ...properties.map((property) => `--property=${nodeMount(property, owned)}`),
     ...options.sandboxProperties.map((property) => `--property=${property}`),
     ...FIXED_SYSTEMD_ENVIRONMENT.map((entry) => `--setenv=${entry}`),
     "--",
     "/usr/bin/env",
     "-i",
     ...FIXED_SYSTEMD_ENVIRONMENT,
-    assertTrustedAbsolutePath(paths.nodeBinary),
+    owned?.workerBinary ?? assertTrustedAbsolutePath(paths.nodeBinary),
     BOT_RUNTIME_ENTRY,
     runtimeHandle,
     scopeHandle,
@@ -263,9 +268,7 @@ async function prepareRuntimeRoot(
     const provenance = `${JSON.stringify({
       version: 1,
       runtimeHandle,
-      ...(piProfileIdentity(request.profileId) ?? {
-        profileId: SCOPE_RUNTIME_PROFILE_ID, profileVersion: SCOPE_RUNTIME_PROFILE_VERSION, profileDigest: SCOPE_RUNTIME_PROFILE_DIGEST,
-      }),
+      ...runtimeProfileIdentity(request.profileId, paths.ownedNode),
       workload: request.workload,
       adapterId: request.adapterId,
       harnessVersion: request.harnessVersion,
@@ -351,6 +354,7 @@ async function runWorkerChat(
 async function readRuntimeProvenance(
   runtimeRoot: string,
   runtimeHandle: string,
+  owned?: OwnedNode,
 ): Promise<ScopeRuntimeReconciledRuntime | undefined> {
   let handle;
   try {
@@ -374,7 +378,7 @@ async function readRuntimeProvenance(
       || value.runtimeHandle !== runtimeHandle
       || value.profileId !== (pi?.profileId ?? SCOPE_RUNTIME_PROFILE_ID)
       || value.profileVersion !== (pi?.profileVersion ?? SCOPE_RUNTIME_PROFILE_VERSION)
-      || value.profileDigest !== (pi?.profileDigest ?? SCOPE_RUNTIME_PROFILE_DIGEST)
+      || value.profileDigest !== nodeProfileDigest(pi?.profileDigest ?? SCOPE_RUNTIME_PROFILE_DIGEST, owned)
       || value.workload !== (bot ? "bot_agent" : "chat_ai")
       || typeof value.adapterId !== "string"
       || typeof value.harnessVersion !== "string"
@@ -417,6 +421,7 @@ async function validateRuntimeSources(
   await access(join(nativeDirectory, "claude"), constants.X_OK);
   await access("/usr/bin/env", constants.X_OK);
   await access(paths.nodeBinary, constants.X_OK);
+  if (adapterId === "codex" && paths.ownedNode) throw new Error("Codex unavailable in owned Node runtime");
   if (adapterId === "codex") await verifyCodexBinary(paths.codexBinary, runCommand ?? defaultRunCommand);
   return { sdkDirectory, nativeDirectory, workerFile };
 }
@@ -595,7 +600,9 @@ export function createSystemdScopeRuntimeLauncher(
   if (input.commandSocketRoot && Buffer.byteLength(join(input.commandSocketRoot, "a".repeat(32), "inference.sock")) > 107) {
     throw new Error("Scope runtime command socket path exceeds capacity");
   }
+  const ownedNode = input.useOwnedNode ? ownedNodeForNamespace(input.namespace) : undefined;
   const paths: ResolvedLauncherPaths = {
+    ownedNode,
     stateRoot: assertTrustedAbsolutePath(input.stateRoot),
     ...(input.namespace !== undefined ? { namespaceTrust: input.namespaceTrust ?? HOST_NAMESPACE_TRUST } : {}),
     ...(input.commandSocketRoot ? { commandSocketRoot: assertTrustedAbsolutePath(input.commandSocketRoot) } : {}),
@@ -603,7 +610,7 @@ export function createSystemdScopeRuntimeLauncher(
     nativeDirectory: assertTrustedAbsolutePath(input.nativeDirectory),
     workerFile: assertTrustedAbsolutePath(input.workerFile),
     brokerSocket: assertTrustedAbsolutePath(input.brokerSocket),
-    nodeBinary: assertTrustedAbsolutePath(input.nodeBinary ?? "/opt/matrix/runtime/node/bin/node"),
+    nodeBinary: assertTrustedAbsolutePath(ownedNode?.binary ?? input.nodeBinary ?? WORKER_NODE_BINARY),
     codexBinary: assertTrustedAbsolutePath(input.codexBinary ?? "/opt/matrix/runtime/node/bin/codex"),
     sandboxRoots: (input.sandboxRoots ?? []).map((root) => assertTrustedAbsolutePath(root)),
     botSandboxRoots: (input.botSandboxRoots ?? []).map((root) => assertTrustedAbsolutePath(root)),
@@ -611,6 +618,7 @@ export function createSystemdScopeRuntimeLauncher(
     ...(input.botRuntimeDirectory ? { botRuntimeDirectory: assertTrustedAbsolutePath(input.botRuntimeDirectory) } : {}),
   };
   const verifyPlacement = async () => {
+    if (ownedNode) await assertProtectedNodeRoot(ownedNode.root);
     if (!paths.namespaceTrust) return;
     await assertRuntimeDirectoryPlacement(paths);
     await assertNamespaceSocket(paths.brokerSocket, paths.namespaceTrust);
@@ -630,6 +638,7 @@ export function createSystemdScopeRuntimeLauncher(
   }
 
   return {
+    profileDigest: base => nodeProfileDigest(base, ownedNode),
     async supportedAdapters(profileId?: string) {
       await verifyPlacement();
       if (piProfileIdentity(profileId)) {
@@ -654,6 +663,7 @@ export function createSystemdScopeRuntimeLauncher(
         harnessVersion: SCOPE_RUNTIME_HARNESS_VERSION,
         workloads: ["chat_ai" as const],
       }];
+      if (ownedNode) return adapters;
       try {
         await verifyCodexBinary(paths.codexBinary, runCommand);
         adapters.push({
@@ -711,7 +721,7 @@ export function createSystemdScopeRuntimeLauncher(
           runtimeHandle,
         );
         const provenance = ready
-          ? await readRuntimeProvenance(join(paths.stateRoot, "runtimes", suffix), runtimeHandle)
+          ? await readRuntimeProvenance(join(paths.stateRoot, "runtimes", suffix), runtimeHandle, paths.ownedNode)
           : undefined;
         if (!provenance) {
           if (!await cleanupSubmittedUnit(runCommand, name)) {
@@ -751,9 +761,9 @@ export function createSystemdScopeRuntimeLauncher(
         const common = { scopeRoot: root, brokerSocket: paths.brokerSocket, readinessFile, commandDirectory, nodeBinary: paths.nodeBinary };
         const args = botSources
           ? buildBotSystemdRunArgs(request, { ...common, botRuntimeDirectory: botSources.botRuntimeDirectory }, {
-              sandboxProperties: sandboxProperties ?? [], namespace: input.namespace,
+              sandboxProperties: sandboxProperties ?? [], namespace: input.namespace, useOwnedNode: input.useOwnedNode,
             })
-          : buildFixedSystemdRunArgs(request, { ...common, ...chatSources! }, { sandboxProperties, namespace: input.namespace });
+          : buildFixedSystemdRunArgs(request, { ...common, ...chatSources! }, { sandboxProperties, namespace: input.namespace, useOwnedNode: input.useOwnedNode });
         submitted = true;
         await runCommand("/usr/bin/systemd-run", args);
         await waitUntilReady(

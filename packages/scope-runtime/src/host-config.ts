@@ -1,3 +1,4 @@
+import { selectOwnedNode, type OwnedNode } from "./node-runtime.js";
 export { closeOwnedListener, finishCloses, retryableClose, socketIdentity } from "./socket-shutdown.js";
 export { HOST_NAMESPACE_TRUST, assertNamespaceDirectory, assertNamespaceSocket, type NamespacePathTrust } from "./namespace-ancestry.js";
 import { join } from "node:path";
@@ -5,6 +6,7 @@ import { createScopeRuntimeUnitIdentity } from "./systemd-unit-identity.js";
 
 export interface ScopeRuntimeHostConfig {
   namespace?: string;
+  ownedNode?: OwnedNode;
   appRoot: string;
   runtimeDirectory: string;
   stateRoot: string;
@@ -34,9 +36,11 @@ export function resolveScopeRuntimeHostConfig(options: {
   if (base !== undefined && (appOverride !== `${base}/app` || (homePath ?? env.MATRIX_HOME) !== `${base}/home`)) {
     throw new Error("Scope runtime namespace requires canonical isolated app and home roots");
   }
+  const ownedNode = selectOwnedNode(namespace, env.MATRIX_SCOPE_RUNTIME_NODE_ROOT);
   const runtimeDirectory = namespace === undefined
     ? "/run/matrix-scope-runtime" : `/run/matrix-devstack/${namespace}/scope-runtime`;
   return {
+    ...(ownedNode ? { ownedNode } : {}),
     ...(namespace === undefined ? {} : { namespace, commandSocketRoot: `/run/matrix-devstack/${namespace}/c` }),
     appRoot: appOverride ?? "/opt/matrix/app",
     runtimeDirectory,
