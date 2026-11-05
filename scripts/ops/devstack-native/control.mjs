@@ -15,9 +15,9 @@ export async function stat(path) {
 }
 export async function command(binary, args, timeout = 15_000) {
   try {
-    const { stdout } = await execute(binary, args, { encoding: "utf8", timeout, maxBuffer: 256 * 1024,
+    const { stdout, stderr } = await execute(binary, args, { encoding: "utf8", timeout, maxBuffer: 256 * 1024,
       killSignal: "SIGKILL", env: { PATH: "/usr/bin:/bin", HOME: "/", LANG: "C", GIT_OPTIONAL_LOCKS: "0" } });
-    return { code: 0, stdout: stdout.trim() };
+    return { code: 0, stdout: stdout.trim(), stderrPresent: stderr.trim().length > 0 };
   } catch (error) { return { code: Number.isInteger(error.code) ? error.code : -1, stdout: "" }; }
 }
 export async function must(binary, args, code, timeout) {
@@ -91,10 +91,22 @@ export async function sourceFacts(input) {
 export async function assertNoUnits(config, run = command) {
   const shown = await run("/usr/bin/systemctl", ["show", config.supervisorUnit, "--property=LoadState"]);
   assert(shown.code === 0 && shown.stdout.trim() === "LoadState=not-found", "existing_or_unknown_supervisor_unit");
-  for (const action of ["list-units", "list-unit-files"]) {
-    const units = await run("/usr/bin/systemctl", [action, "--all", "--no-legend", "--plain", `${config.workerUnitPrefix}*.service`]);
-    assert(units.code === 0 && units.stdout.trim() === "", "existing_or_unknown_worker_unit");
+  const units = await run("/usr/bin/systemctl", ["list-units", "--all", "--no-legend", "--plain", `${config.workerUnitPrefix}*.service`]);
+  assert(units.code === 0 && units.stdout.trim() === "", "existing_or_unknown_worker_unit");
+  // An unmatched list-unit-files glob can exit 1. Inspect the complete bounded
+  // service inventory with a known installed control instead of interpreting errors.
+  const inventory = await run("/usr/bin/systemctl", ["list-unit-files", "--all", "--type=service", "--no-pager", "--plain", "--no-legend"]);
+  assert(inventory.code === 0 && !inventory.stderrPresent && Buffer.byteLength(inventory.stdout) <= 256 * 1024, "unit_file_inventory_unavailable");
+  const rows = inventory.stdout.trim().split("\n");
+  assert(rows.length <= 4096, "unit_file_inventory_capacity");
+  let control = false;
+  for (const row of rows) {
+    const match = /^([^\s]{1,255}\.service)\s+(enabled(?:-runtime)?|disabled|static|masked(?:-runtime)?|linked(?:-runtime)?|alias|indirect|generated|transient|bad)(?:\s+(enabled|disabled|ignored|-))?$/.exec(row.trim());
+    assert(match, "unit_file_inventory_invalid");
+    assert(match[1] !== config.supervisorUnit && !match[1].startsWith(config.workerUnitPrefix), "existing_or_unknown_worker_unit");
+    if (match[1] === "matrix-gateway.service") control = true;
   }
+  assert(control, "unit_file_inventory_control_missing");
 }
 export async function assertVacant(config, run = command, heldLock) {
   await assertNoUnits(config, run);

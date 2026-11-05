@@ -51,7 +51,7 @@ describe("owned native acceptance boundaries", () => {
     const commands: string[][] = [];
     const config = resolveScopeRuntimeHostConfig({ env: { MATRIX_SCOPE_RUNTIME_NAMESPACE: "proof", MATRIX_SCOPE_RUNTIME_APP_ROOT: "/var/lib/matrix-devstack/proof/app", MATRIX_HOME: "/var/lib/matrix-devstack/proof/home" } });
     Object.assign(config, { runtimeDirectory: join(f.root, "run", "scope-runtime"), commandSocketRoot: join(f.root, "run", "c"), stateRoot: join(f.root, "state", "scope-runtime"), appRoot: join(f.root, "app") });
-    const result = await preflight(config, async (_bin: string, argv: string[]) => { commands.push(argv); return { code: 0, stdout: argv.includes("show") ? "LoadState=not-found\n" : "" }; });
+    const result = await preflight(config, async (_bin: string, argv: string[]) => { commands.push(argv); return { code: 0, stdout: argv.includes("show") ? "LoadState=not-found\n" : argv[0] === "list-unit-files" ? "matrix-gateway.service enabled enabled" : "" }; });
     expect(result.ready).toBe(false); expect(await readdir(f.root)).toEqual(before);
     expect(commands).toHaveLength(3);
     expect(commands.every(argv => ["show", "list-units", "list-unit-files"].includes(argv[0]))).toBe(true);
@@ -63,7 +63,7 @@ describe("owned native acceptance boundaries", () => {
     const config = { supervisorUnit: "matrix-devstack-proof-scope-runtime.service", workerUnitPrefix: "matrix-devstack-proof-scope-runtime-", runtimeDirectory: "/nonexistent-native-proof/r", commandSocketRoot: "/nonexistent-native-proof/c", stateRoot: "/nonexistent-native-proof/s" };
     await expect(assertVacant(config, async () => ({ code: 0, stdout: "LoadState=loaded\nActiveState=inactive\n" }))).rejects.toThrow(/unit/);
     const f = await fixture();
-    await expect(assertVacant({ ...config, stateRoot: f.root }, async (_: string, argv: string[]) => ({ code: 0, stdout: argv[0] === "show" ? "LoadState=not-found\n" : "" }))).rejects.toThrow(/state/);
+    await expect(assertVacant({ ...config, stateRoot: f.root }, async (_: string, argv: string[]) => ({ code: 0, stdout: argv[0] === "show" ? "LoadState=not-found\n" : argv[0] === "list-unit-files" ? "matrix-gateway.service enabled enabled" : "" }))).rejects.toThrow(/state/);
   });
 
 
@@ -134,7 +134,7 @@ it("does not accept a failed worker as graceful drain evidence", async () => {
 it("rechecks namespace vacancy under its own lock and rejects another invocation lock", async () => {
   const { assertVacant } = await subject(); const f = await fixture();
   const config = { supervisorUnit: "matrix-devstack-proof-scope-runtime.service", workerUnitPrefix: "matrix-devstack-proof-scope-runtime-", runtimeDirectory: join(f.root, "run"), commandSocketRoot: join(f.root, "c"), stateRoot: join(f.root, "state") };
-  const discover = async (_: string, argv: string[]) => ({ code: 0, stdout: argv[0] === "show" ? "LoadState=not-found" : "" });
+  const discover = async (_: string, argv: string[]) => ({ code: 0, stdout: argv[0] === "show" ? "LoadState=not-found" : argv[0] === "list-unit-files" ? "matrix-gateway.service enabled enabled" : "" });
   await expect(assertVacant(config, discover)).resolves.toBeUndefined();
   const lock = await open(join(f.root, ".native-acceptance-active"), "wx", 0o600);
   try {

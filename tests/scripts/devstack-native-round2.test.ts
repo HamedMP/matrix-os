@@ -60,7 +60,7 @@ it.each(["replace", "sentinel"])("refuses %s in a reserved leaf before submissio
   else await writeFile(join(config.stateRoot, "foreign"), "untouched");
   const identity = await lstat(config.commandSocketRoot); let submissions = 0;
   await expect(submitSupervisor(config, "matrix-native-token", "[Service]\nProtectSystem=strict\nPrivateNetwork=yes", { submitted() {}, captureSupervisor: async () => ({}) }, async (_: string, argv: string[]) => {
-    if (_.endsWith("systemd-run")) submissions++; return { code: 0, stdout: argv[0] === "show" ? "LoadState=not-found" : "" };
+    if (_.endsWith("systemd-run")) submissions++; return { code: 0, stdout: argv[0] === "show" ? "LoadState=not-found" : argv[0] === "list-unit-files" ? "matrix-gateway.service enabled enabled" : "" };
   }, placement)).rejects.toThrow(/placement/);
   expect(submissions).toBe(0); expect((await lstat(config.commandSocketRoot)).ino).toBe(identity.ino); await placement.close();
   if (mutation === "sentinel") expect(await readFile(join(config.stateRoot, "foreign"), "utf8")).toBe("untouched");
@@ -98,7 +98,9 @@ it("attests LockPersonality and rejects its degraded supervisor value", async ()
   const config = { namespace: "proof", runtimeDirectory: "/run/matrix-devstack/proof/scope-runtime", commandSocketRoot: "/run/matrix-devstack/proof/c", home: "/var/lib/matrix-devstack/proof/home" };
   const observed: Record<string, string> = Object.fromEntries(SUPERVISOR_SECURITY_KEYS.map((key: string) => [key, "yes"]));
   Object.assign(observed, { Type: "simple", User: "root", Group: "matrix", DynamicUser: "no", PrivateUsers: "no", PrivateTmp: "no", ProtectHome: "tmpfs", RootDirectory: "", MemoryMax: "268435456", TasksMax: "64", UMask: "0007", RuntimeDirectoryMode: "0700", StateDirectoryMode: "0700", NotifyAccess: "all", Restart: "on-failure", KillMode: "control-group", KillSignal: "9", RuntimeDirectoryPreserve: "yes", ProtectProc: "invisible", ProcSubset: "pid", ProtectSystem: "strict", CapabilityBoundingSet: "", AmbientCapabilities: "", RestrictNamespaces: "yes", SystemCallArchitectures: "native", RestrictAddressFamilies: "AF_UNIX", RuntimeMaxUSec: "3min", TimeoutStopUSec: "45s", WatchdogUSec: "1min", RestartUSec: "5s", ReadWritePaths: `${config.runtimeDirectory} ${config.commandSocketRoot}`, RuntimeDirectory: "matrix-devstack/proof/scope-runtime matrix-devstack/proof/c", StateDirectory: "matrix-devstack/proof/scope-runtime", BindPaths: "", BindReadOnlyPaths: ["bots", "agent-workspaces", "projects", "worktrees"].map(name => `-${config.home}/${name}`).join(" ") });
+  observed.InaccessiblePaths = "-/opt/matrix/runtime/node/bin/codex";
   expect(SUPERVISOR_SECURITY_KEYS).toContain("LockPersonality");
+  expect(() => validateSupervisorProperties({ ...observed, InaccessiblePaths: "" }, config)).toThrow();
   expect(() => validateSupervisorProperties(observed, config)).not.toThrow();
   expect(() => validateSupervisorProperties({ ...observed, LockPersonality: "no" }, config)).toThrow();
   expect(() => validateSupervisorProperties({ ...observed, KillSignal: "15" }, config)).toThrow();

@@ -1,7 +1,8 @@
 import { beginCloseEvidence, stderrPath, STDERR_LIMIT } from "./close-evidence.mjs";
+import { CODEX_BINARY } from "./security.mjs";
 import { safeCapability } from "./receipt.mjs";
 import { startControls } from "./controls.mjs";
-import { inspectWorker, inspectWorkerConfiguration, inspectSupervisor } from "./evidence.mjs";
+import { inspectWorker, inspectWorkerConfiguration, inspectWorkerPair, inspectSupervisor } from "./evidence.mjs";
 import { exclusiveDirectory } from "./placement.mjs";
 import { randomUUID } from "node:crypto";
 import { chmod, link, lstat, mkdtemp, rmdir, unlink } from "node:fs/promises";
@@ -31,12 +32,13 @@ export function supervisorArgs(config, token, template) {
   assert(properties.includes("--property=ProtectSystem=strict") && properties.includes("--property=PrivateNetwork=yes"), "supervisor_template_invalid");
   return ["--quiet", `--unit=${config.supervisorUnit}`, `--description=${token}`, ...properties,
     `--property=ReadWritePaths=${config.runtimeDirectory} ${config.commandSocketRoot}`,
+    `--property=InaccessiblePaths=-${CODEX_BINARY}`,
     `--property=StandardError=append:${stderrPath(config, token)}`, `--property=LimitFSIZE=${STDERR_LIMIT}`,
     "--property=RuntimeMaxSec=180", "--property=KillSignal=SIGKILL", "--property=RemainAfterExit=yes", `--setenv=MATRIX_SCOPE_RUNTIME_NAMESPACE=${config.namespace}`,
     `--setenv=MATRIX_SCOPE_RUNTIME_APP_ROOT=${config.appRoot}`, `--setenv=MATRIX_HOME=${config.home ?? `${config.appRoot.slice(0, -4)}/home`}`,
     "--", "/usr/bin/env", "-i", `PATH=/opt/matrix/runtime/node/bin:/usr/bin:/bin`,
     `MATRIX_SCOPE_RUNTIME_NAMESPACE=${config.namespace}`, `MATRIX_SCOPE_RUNTIME_APP_ROOT=${config.appRoot}`,
-    `MATRIX_HOME=${config.home ?? `${config.appRoot.slice(0, -4)}/home`}`, "NOTIFY_SOCKET=/run/systemd/notify", "WATCHDOG_USEC=60000000", NODE, `${config.appRoot}/packages/scope-runtime/dist/main.js`];
+    `MATRIX_HOME=${config.home ?? `${config.appRoot.slice(0, -4)}/home`}`, "NOTIFY_SOCKET=/run/systemd/notify", "WATCHDOG_USEC=60000000", NODE, "--import", `${config.appRoot}/scripts/ops/devstack-native/codex-mask-preload.mjs`, `${config.appRoot}/packages/scope-runtime/dist/main.js`];
 }
 export function exchange(path, frame, timeout = 10_000) {
   return new Promise((resolve, reject) => {
@@ -66,10 +68,10 @@ function providerResponse() {
     + event("message_delta", { delta: { stop_reason: "end_turn", stop_sequence: null }, usage: { output_tokens: 1 } })
     + event("message_stop", {});
 }
-export async function startBroker(path, bindingParent = dirname(path)) {
+export async function startBroker(path, bindingParent = dirname(path), check = () => {}) {
   const parent = await lstat(bindingParent);
   assert(parent.isDirectory() && !parent.isSymbolicLink() && parent.uid === process.getuid() && (parent.mode & 0o022) === 0, "broker_bind_parent_unprotected");
-  const publication = await exclusiveDirectory(dirname(path));
+  const publication = await exclusiveDirectory(dirname(path), check);
   try { await publication.verify(); assert(!await stat(path), "broker_collision"); } catch (error) { await publication.close(); throw error; }
   let requests = 0; const sockets = new Set();
   const server = createServer({ allowHalfOpen: true }, socket => {
@@ -99,7 +101,7 @@ export async function startBroker(path, bindingParent = dirname(path)) {
     });
   });
   let privateDirectory, privateOwner;
-  try { privateDirectory = await mkdtemp(join(bindingParent, ".b-")); privateOwner = await lstat(privateDirectory); }
+  try { check(); privateDirectory = await mkdtemp(join(bindingParent, ".b-")); privateOwner = await lstat(privateDirectory); }
   catch (error) { await publication.close(); throw error; }
   const bindPath = join(privateDirectory, "s");
   const removePrivate = async () => {
@@ -109,12 +111,13 @@ export async function startBroker(path, bindingParent = dirname(path)) {
   };
   let owned;
   try {
+    check();
     assert(Buffer.byteLength(bindPath) <= 107, "broker_bind_path_capacity");
     await new Promise((resolve, reject) => { server.once("error", reject); server.listen(bindPath, resolve); });
-    owned = await lstat(bindPath); await chmod(bindPath, 0o666);
+    owned = await lstat(bindPath); check(); await chmod(bindPath, 0o666);
     // Same-filesystem exclusive publication. Node may unlink only its protected
     // private bind path; it never owns the externally visible pathname.
-    await publication.verify(); await link(bindPath, path);
+    await publication.verify(); check(); await link(bindPath, path);
   } catch (error) {
     for (const socket of sockets) socket.destroy();
     if (server.listening) await new Promise(resolve => server.close(resolve));
@@ -151,21 +154,28 @@ export async function observeWorkers(config) {
   const names = text.split("\n").map(line => line.trim().split(/\s+/)[0]).filter(Boolean);
   assert(names.length <= 64, "worker_observation_capacity"); return names;
 }
+export async function createTrackedWorker(config, profile, ledger, assertInventory, { request = supervisorRequest, inventory = observeWorkers, check = () => {} } = {}) {
+  await ledger.freshSupervisor(); await assertInventory(); const scopeHandle = `scope_${randomUUID().replaceAll("-", "")}`;
+  check();
+  let reply;
+  try {
+    reply = await request(config, "runtime.create", { scopeHandle, profileId: profile.profileId, workload: "chat_ai", adapterId: "claude-code", harnessVersion: profile.adapter.harnessVersion });
+    assert(reply.state === "running" && reply.executionGeneration === profile.executionGeneration, "runtime_invalid");
+    await ledger.recordWorker(reply);
+  } catch (error) { ledger.partialCreate(scopeHandle, error); ledger.inventory(await inventory(config)); throw error; }
+  check(); // The submitted create is now conclusively recorded.
+  return reply;
+}
 export async function nativeProof(config, identity, context) {
-  const { journal, ledger, dependencies, baseline, expectedProfile } = context;
+  const { journal, ledger, dependencies, baseline, expectedProfile, check } = context;
   const capability = async () => {
+    check();
     const safe = safeCapability(await supervisorRequest(config, "capability.get"));
     assert(safe.profileDigest === expectedProfile.profileDigest && safe.adapter.harnessVersion === dependencies.sdk.claudeCodeVersion, "source_profile_mismatch"); return safe;
   };
   const assertInventory = async () => assert(ledger.inventory(await observeWorkers(config)).length === 0, "unowned_worker_quarantined");
   const create = async (profile, role) => {
-    await ledger.freshSupervisor(); await assertInventory(); const scopeHandle = `scope_${randomUUID().replaceAll("-", "")}`;
-    let reply;
-    try {
-      reply = await supervisorRequest(config, "runtime.create", { scopeHandle, profileId: profile.profileId, workload: "chat_ai", adapterId: "claude-code", harnessVersion: profile.adapter.harnessVersion });
-      assert(reply.state === "running" && reply.executionGeneration === profile.executionGeneration, "runtime_invalid");
-      await ledger.recordWorker(reply);
-    } catch (error) { ledger.partialCreate(scopeHandle, error); ledger.inventory(await observeWorkers(config)); throw error; }
+    const reply = await createTrackedWorker(config, profile, ledger, assertInventory, { check });
     await journal.resourceStep(reply.runtimeHandle, role, () => inspectWorkerConfiguration(config, reply.runtimeHandle, dependencies, identity.workerUnit(reply.runtimeHandle)));
     return reply.runtimeHandle;
   };
@@ -175,12 +185,21 @@ export async function nativeProof(config, identity, context) {
       if (!(await stat(config.supervisorSocket))?.isSocket()) return false; return capability();
     }, "supervisor_not_ready"));
     await journal.step("supervisor_security", () => inspectSupervisor(config));
-    broker = await startBroker(config.brokerSocket, dirname(config.runtimeDirectory));
+    check();
+    broker = await startBroker(config.brokerSocket, dirname(config.runtimeDirectory), check);
     const first = await create(before, "sdk"), peer = await create(before, "peer_control");
     const peerSockets = [first, peer].map(handle => `${config.commandSocketRoot}/${handle.slice(8)}/worker.sock`);
     await journal.step("isolation", async () => {
-      controls = await startControls(config, baseline, peerSockets);
-      return inspectWorker(config, first, dependencies, controls, identity.workerUnit(first));
+      const pair = await inspectWorkerPair(ledger, [first, peer], handle =>
+        inspectWorkerConfiguration(config, handle, dependencies, identity.workerUnit(handle)));
+      check();
+      controls = await startControls(config, baseline, peerSockets, check);
+      check();
+      const current = await ledger.freshWorker(first);
+      assert(current.MainPID === pair[0].properties.MainPID, "worker_pair_pid_changed");
+      check();
+      return { ...await inspectWorker(pair[0], controls), pair: pair.map(({ handle, invocationId, properties, namespaces, rootIdentity, cgroup }) =>
+        ({ handle, invocationId, pid: Number(properties.MainPID), namespaces, rootIdentity, cgroup })) };
     });
     await journal.step("sdk", async () => {
       const sdk = await ledger.protocolAction(first, () => supervisorRequest(config, "runtime.chat", { runtimeHandle: first, executionGeneration: before.executionGeneration, model: MODEL, prompt: "Return the bounded acceptance response." }));
@@ -188,6 +207,7 @@ export async function nativeProof(config, identity, context) {
       return { result: "scope-sdk-ok", transport: "unix_socket_fake_broker", providerCall: false, observedInferenceRequests: broker.requests() };
     });
     await journal.step("broker_mock", async () => {
+      check();
       const denied = await exchange(config.brokerSocket, { version: 1, requestId: randomUUID(), action: "host.fetch" });
       assert(denied?.ok === false && denied.error === "action_denied", "broker_mock_action_failed");
       return { lane: "host_fake_broker_protocol_only", workerAccessClaim: false, actionDenied: true };
@@ -207,11 +227,12 @@ export async function nativeProof(config, identity, context) {
       for (const handle of [first, peer]) {
         await ledger.freshWorker(handle);
         const stopped = await ledger.protocolAction(handle, () => supervisorRequest(config, "runtime.stop", { runtimeHandle: handle }));
-        assert(stopped.state === "stopped" && stopped.runtimeHandle === handle, "runtime_stop_failed"); ledger.releaseWorker(handle);
+        ledger.releaseWorker(handle, stopped);
       }
       return { originalIncarnationsPreserved: true, stoppedHandles: [first, peer] };
     });
-    broker = await startBroker(config.brokerSocket, dirname(config.runtimeDirectory)); const second = await create(after, "drain");
+    check();
+    broker = await startBroker(config.brokerSocket, dirname(config.runtimeDirectory), check); const second = await create(after, "drain");
     await journal.step("drain", async () => {
       await assertInventory(); return qualifyGracefulDrain(config, ledger, second, { capture: context.capture });
     });

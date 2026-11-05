@@ -17,6 +17,7 @@ export async function observeUnit(name, run = command) {
   return values;
 }
 export function createUnitLedger(config, token, io = {}) {
+  const check = io.check ?? (() => {});
   const observe = io.observe ?? (name => observeUnit(name));
   const mutate = io.mutate ?? (async (action, name) => {
     const args = action === "kill" ? ["kill", "--kill-whom=main", "--signal=SIGKILL", name]
@@ -74,7 +75,12 @@ export function createUnitLedger(config, token, io = {}) {
     },
     freshSupervisor,
     captureExpectedRestart: adoptExpectedRestart,
-    releaseWorker(handle) { const entry = workers.get(handle); assert(entry, "worker_not_recorded"); entry.released = true; },
+    releaseWorker(handle, reply) {
+      const entry = workers.get(handle); assert(entry, "worker_not_recorded");
+      assert(reply?.state === "stopped" && reply.runtimeHandle === handle, "runtime_stop_failed");
+      assert(reply.executionGeneration === entry.generation, "runtime_stop_generation_mismatch");
+      entry.released = true;
+    },
     async supervisorAction(action, beginClose) {
       assert(["kill", "stop"].includes(action), "supervisor_action_invalid");
       const current = await freshSupervisor(); cascadeSafe(current); await transitionSafe();
@@ -85,6 +91,7 @@ export function createUnitLedger(config, token, io = {}) {
         assert(typeof transition.verifyClose === "function", "close_evidence_required");
         cascadeSafe(await freshSupervisor()); await transitionSafe();
       }
+      check();
       await mutate(action, config.supervisorUnit); if (action === "kill") awaitingRestart = true;
       else graceful = transition;
     },
@@ -121,7 +128,7 @@ export function createUnitLedger(config, token, io = {}) {
       workers.set(handle, { name, identity: { ...current }, generation: reply.executionGeneration }); return name;
     },
     freshWorker,
-    async protocolAction(handle, action) { await freshSupervisor(); const current = await freshWorker(handle); cascadeSafe(current); return action(); },
+    async protocolAction(handle, action) { await freshSupervisor(); const current = await freshWorker(handle); cascadeSafe(current); check(); return action(); },
     inventory(names) {
       assert(names.length <= 64, "quarantine_capacity");
       for (const name of names) if (typeof name === "string" && name.startsWith(config.workerUnitPrefix)

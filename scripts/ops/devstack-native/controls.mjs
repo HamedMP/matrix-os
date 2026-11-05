@@ -10,7 +10,7 @@ export async function hostConnection(target) {
     socket.once("connect", () => finish()); socket.once("error", () => finish(Error("positive_control_unavailable")));
   });
 }
-export async function startControls(config, baseline, peerSockets) {
+export async function startControls(config, baseline, peerSockets, check = () => {}) {
   const targets = peerSockets.map((path, index) => ({ path, role: `owned_peer_command_${index}` }));
   for (const role of ["legacy_ipc", "legacy_command", "peer_ipc", "peer_command"]) {
     const entry = Object.entries(baseline.sockets).find(([, value]) => value.role === role);
@@ -18,6 +18,7 @@ export async function startControls(config, baseline, peerSockets) {
   }
   assert(targets.some(item => item.role === "legacy_ipc"), "required_legacy_endpoint_missing");
   for (const target of targets) { assert((await lstat(target.path)).isSocket(), "positive_socket_missing"); await hostConnection({ path: target.path }); }
+  check();
   const path = `${dirname(config.appRoot)}/.boundary-${randomUUID()}`; const file = await open(path, "wx", 0o600);
   await file.writeFile("synthetic native boundary fixture\n"); const identity = await file.stat(); await file.close();
   const sockets = new Set(); const server = createServer(socket => {
@@ -32,6 +33,7 @@ export async function startControls(config, baseline, peerSockets) {
     return { state: "passed", exactOwnedResources: true };
   };
   try {
+    check();
     await new Promise((resolve, reject) => { server.once("error", reject); server.listen(0, "127.0.0.1", resolve); });
     const address = server.address(); assert(address && typeof address === "object", "positive_tcp_unavailable");
     await hostConnection({ host: "127.0.0.1", port: address.port });

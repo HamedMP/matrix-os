@@ -16,8 +16,9 @@ async function protectedParent(path) {
 }
 
 // Create outside the three reserved leaves; they must stay empty until submission.
-export async function createStderrCapture(path, fd2 = pid => stat(`/proc/${pid}/fd/2`, { bigint: true })) {
+export async function createStderrCapture(path, fd2 = pid => stat(`/proc/${pid}/fd/2`, { bigint: true }), check = () => {}) {
   const parent = await protectedParent(dirname(path));
+  check();
   const file = await open(path, constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW | constants.O_RDWR, 0o600);
   const owned = await file.stat({ bigint: true });
   async function verify() {

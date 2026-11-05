@@ -29,7 +29,7 @@ it.each(["runtimeDirectory", "commandSocketRoot", "stateRoot"])("does not acquir
   const { preparePlacement } = await import("../../scripts/ops/devstack-native/placement.mjs");
   const base = await mkdtemp(join(process.cwd(), ".native-round3-")); scratch.push(base);
   const config = { ...fixture().config, runtimeDirectory: join(base, "run", "scope-runtime"), commandSocketRoot: join(base, "run", "c"), stateRoot: join(base, "state", "scope-runtime") };
-  await assertVacant(config, async (_binary: string, args: string[]) => ({ code: 0, stdout: args[0] === "show" ? "LoadState=not-found" : "" }));
+  await assertVacant(config, async (_binary: string, args: string[]) => ({ code: 0, stdout: args[0] === "show" ? "LoadState=not-found" : args[0] === "list-unit-files" ? "matrix-gateway.service enabled enabled" : "" }));
   const path = config[leaf as keyof typeof config]; await mkdir(path, { recursive: true, mode: 0o700 }); const foreign = await lstat(path);
   const outcome = await preparePlacement(config).catch((error: Error) => error);
   if (!(outcome instanceof Error)) await outcome.close();

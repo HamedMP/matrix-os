@@ -23,7 +23,7 @@ export async function inspectPlacement(path) {
   }
   return missing;
 }
-export async function preparePlacement(config, { readOnly = false } = {}) {
+export async function preparePlacement(config, { readOnly = false, check = () => {} } = {}) {
   const roots = [dirname(config.runtimeDirectory), config.runtimeDirectory, config.commandSocketRoot, config.stateRoot];
   // Validate both trees completely before creating even the first directory.
   const inspections = [];
@@ -35,6 +35,7 @@ export async function preparePlacement(config, { readOnly = false } = {}) {
   if (!readOnly) for (const missing of inspections) for (const path of missing) {
     if (created.some(item => item.path === path)) continue;
     await inspectPlacement(dirname(path));
+    check();
     await mkdir(path, { mode: path === dirname(dirname(config.runtimeDirectory)) ? 0o755 : 0o700 });
     const entry = await lstat(path, { bigint: true }); assert(protectedDirectory(entry), "placement_create_unprotected");
     created.push({ path, inode: String(entry.ino), device: String(entry.dev) });
@@ -64,14 +65,14 @@ export async function preparePlacement(config, { readOnly = false } = {}) {
     close() { return closed ??= Promise.all(pins.map(handle => handle.close())).then(() => undefined); },
   };
 }
-export async function exclusiveDirectory(path) {
+export async function exclusiveDirectory(path, check = () => {}) {
   await noSymlinkAncestors(dirname(path));
   const entry = await lstat(path);
   assert(entry.isDirectory() && !entry.isSymbolicLink() && entry.uid === process.getuid(), "publication_directory_foreign");
   const handle = await open(path, constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW);
   const owned = await handle.stat();
   assert(owned.ino === entry.ino && owned.dev === entry.dev, "publication_directory_replaced");
-  await handle.chmod(0o700);
+  try { check(); await handle.chmod(0o700); } catch (error) { await handle.close(); throw error; }
   const verify = async () => {
     const current = await lstat(path); const pinned = await handle.stat();
     assert(current.ino === pinned.ino && current.dev === pinned.dev && current.uid === process.getuid()

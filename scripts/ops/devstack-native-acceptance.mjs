@@ -20,28 +20,31 @@ async function run(config, marker, identity, compiled, interrupted) {
   const base = dirname(config.appRoot); const token = `matrix-native-${randomUUID()}`;
   const lockPath = `${base}/.native-acceptance-active`;
   const receiptPath = `${base}/native-acceptance-receipt-${token}.json`;
-  const journal = createJournal(), ledger = createUnitLedger(config, token);
+  const check = () => assert(!interrupted(), "acceptance_interrupted");
+  const journal = createJournal(), ledger = createUnitLedger(config, token, { check });
   const receipt = { version: 1, status: "failed", purpose: marker.purpose, namespace: config.namespace,
     source: marker, compiled, host: { platform: process.platform, architecture: process.arch }, startedAt: new Date().toISOString(), receiptPath };
+  check();
   const lock = await open(lockPath, "wx", 0o600); const ownedLock = await lock.stat();
   let capture;
   try {
     await lock.writeFile(`${token}\n`); await assertVacant(config, command, ownedLock);
-    receipt.placement = await journal.step("placement", () => preparePlacement(config));
+    receipt.placement = await journal.step("placement", () => preparePlacement(config, { check }));
     // Before any native executable/version query, retain definitions, artifacts,
     // required service incarnations and all bounded peer/legacy command sockets.
     receipt.before = await journal.step("baseline", () => hostSnapshot(config));
     const dependencies = await journal.step("dependencies", () => verifyDependencies(config, marker));
     dependencies.workerFile = `${config.appRoot}/packages/scope-runtime/dist/worker.js`;
-    receipt.build = await journal.step("build", () => buildFacts(config, dependencies, compiled));
+    receipt.build = await journal.step("build", () => buildFacts(config, dependencies, compiled, check));
     await verifyCompiledRuntime(config.appRoot, compiled);
     const profile = await import(pathToFileURL(`${config.appRoot}/packages/scope-runtime/dist/profile.js`).href);
     const templatePath = `${config.appRoot}/distro/customer-vps/systemd/matrix-scope-runtime.service`;
     await noSymlinkAncestors(templatePath, true); const template = await readFile(templatePath, "utf8");
     await verifyCompiledRuntime(config.appRoot, compiled);
-    capture = await createStderrCapture(stderrPath(config, token));
-    await journal.step("supervisor", () => submitSupervisor(config, token, template, ledger, command, receipt.placement));
-    await nativeProof(config, identity, { journal, ledger, capture, dependencies, baseline: receipt.before,
+    check();
+    capture = await createStderrCapture(stderrPath(config, token), undefined, check);
+    await journal.step("supervisor", () => submitSupervisor(config, token, template, ledger, command, receipt.placement, check));
+    await nativeProof(config, identity, { journal, ledger, check, capture, dependencies, baseline: receipt.before,
       expectedProfile: { profileDigest: profile.SCOPE_RUNTIME_PROFILE_DIGEST } });
   } catch (error) { receipt.error = journal.fail(error); }
   finally {
@@ -89,11 +92,15 @@ export async function main(argv) {
     const readiness = await preflight(config);
     if (input.mode === "preflight" || !readiness.ready) return { ...readiness, mode: input.mode };
   } catch (error) { return blocked(safeCode(error)); }
+  return withInterruption(interrupted => run(config, marker, identity, compiled, interrupted));
+}
+
+export async function withInterruption(action) {
   let interrupted = false;
   const interrupt = () => { interrupted = true; };
-  // Finish the current bounded operation, then clean owned resources and write a failed receipt.
-  process.once("SIGTERM", interrupt); process.once("SIGINT", interrupt);
-  try { return await run(config, marker, identity, compiled, () => interrupted); }
+  // Repeated signals remain latched until ownership resolution and cleanup finish.
+  process.on("SIGTERM", interrupt); process.on("SIGINT", interrupt);
+  try { return await action(() => interrupted); }
   finally { process.removeListener("SIGTERM", interrupt); process.removeListener("SIGINT", interrupt); }
 }
 if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {
