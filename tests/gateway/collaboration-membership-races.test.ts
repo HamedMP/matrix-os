@@ -301,11 +301,32 @@ describe("organization project revocation races", () => {
       { id: ownedProject, lifecycle: "private" },
       { id: ownedChat, lifecycle: "private" },
     ]);
-    const transitions = createProjectTransitionJournal({ db: fixture.db, now: () => now });
+    const transitions = createProjectTransitionJournal({
+      db: fixture.db,
+      now: () => now,
+      createTransitionId: () => "73000000-0000-4000-8000-000000000006",
+    });
+    await expect(transitions.get(transitionId)).resolves.toMatchObject({
+      status: "failed",
+      errorCode: "owner_membership_ended",
+    });
     await expect(transitions.activate(transitionId)).rejects.toMatchObject({ code: "conflict" });
+    await expect(transitions.prepare({
+      scopeId: ownedProject,
+      ownerId: departedOwner,
+      requestedBy: departedOwner,
+      clientRequestId: "73000000-0000-4000-8000-000000000007",
+      payloadHash: "c".repeat(64),
+      expectedScopeRevision: 2,
+      inventoryRevision: 2,
+      inventoryHash: "d".repeat(64),
+      membershipHash: "e".repeat(64),
+      destinationAuthorityRuntimeId: "vps:revocation",
+      destinationAuthorityGeneration: 2,
+    })).resolves.toMatchObject({ status: "prepared" });
     await expect(fixture.db.selectFrom("collaboration_scopes")
       .select("lifecycle").where("id", "=", ownedProject).executeTakeFirstOrThrow())
-      .resolves.toEqual({ lifecycle: "private" });
+      .resolves.toEqual({ lifecycle: "preparing" });
   });
 
   it("drains the project and every inherited scope after unshare commits", async () => {

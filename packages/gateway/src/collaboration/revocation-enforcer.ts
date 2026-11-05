@@ -373,6 +373,13 @@ export class ProjectAccessRevocationEnforcer {
           .returningAll()
           .executeTakeFirst();
         if (!updated) throw new Error("Owner project departure fence changed");
+        await trx.updateTable("collaboration_transitions").set({
+          status: "failed",
+          error_code: "owner_membership_ended",
+          updated_at: committedAt,
+        }).where("scope_id", "=", project.id)
+          .where("status", "in", ["prepared", "staging", "fenced", "committing", "recovering"])
+          .execute();
         const ownedChildren = children.filter((child) => child.parent_scope_id === project.id);
         if (ownedChildren.length > 0) {
           const updatedChildren = await trx.updateTable("collaboration_scopes").set({
