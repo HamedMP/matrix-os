@@ -83,6 +83,7 @@ describe("funded PostgreSQL CI coverage", () => {
     expect(result.args).toEqual([
       "exec", "vitest", "run", "tests/platform/ai-funded-usage-postgres.test.ts",
       "tests/platform/ai-funded-model-probes-postgres.test.ts",
+      "tests/platform/operator-probe-budget-postgres.test.ts",
       "tests/platform/ai-funded-recovery-migration.test.ts",
       "tests/platform/ai-funded-terminal-concurrency.test.ts",
       "tests/platform/ai-funded-usage-waiver.test.ts", "tests/platform/ai-funded-usage-waiver-cli.test.ts",
@@ -91,6 +92,7 @@ describe("funded PostgreSQL CI coverage", () => {
       "tests/platform/speech-postpaid-postgres.test.ts",
       "tests/platform/ai-funded-conservative-fence-postgres.test.ts",
       "--maxWorkers=1", "--no-file-parallelism",
+      "--reporter=default", "--reporter=./scripts/ci/operator-probe-postgres-reporter.mjs",
     ]);
   });
   it("fails before launching tests when the disposable database URL is absent", () => {
