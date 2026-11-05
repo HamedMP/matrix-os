@@ -719,7 +719,7 @@ function ChatAppContent({
         {/* Empty state or conversation */}
         <BotTranscriptLayout empty={isEmpty}>{showEmpty=>showEmpty ? (
           <><div className="mx-auto w-full max-w-[720px] px-4"><BotTranscriptFallback placement={botTranscript}/><RoutineMessageReadNotice/></div><EmptyState
-            composerProps={{ leadingControls: projectControl, toolbarControls: <>{composerToolbar}{persistentControl}</>, queue: queuePanel, attachmentPolicy: attachmentPolicy.error, slashInstance, slashCatalogLoading, botControls: botComposerControls, botContext: Boolean(directBotId), composer, agentClient, onOpenBotMention: botDraftNavigation.openBotMention, scope: composerScope, driveContextEnabled: !directBotId && providerState.selected?.supportsCompanyDriveContext === true, botConsentResources: botExecution.consentResources, botRequiresFullAccess: botPresentation?.requiresFullAccess, permissionMode: directBotId ? botPresentation?.permissionMode ?? "default" : providerState.selected?.permissionMode ?? "supervised" }}
+            composerProps={{ leadingControls: projectControl, toolbarControls: composerToolbar, footerControls: persistentControl, queue: queuePanel, attachmentPolicy: attachmentPolicy.error, slashInstance, slashCatalogLoading, botControls: botComposerControls, botContext: Boolean(directBotId), composer, agentClient, onOpenBotMention: botDraftNavigation.openBotMention, scope: composerScope, driveContextEnabled: !directBotId && providerState.selected?.supportsCompanyDriveContext === true, botConsentResources: botExecution.consentResources, botRequiresFullAccess: botPresentation?.requiresFullAccess, permissionMode: directBotId ? botPresentation?.permissionMode ?? "default" : providerState.selected?.permissionMode ?? "supervised" }}
             onSubmit={submitWithHermesSetup}
             connected={connected}
             mobile={mobile}
@@ -830,7 +830,8 @@ function ChatAppContent({
               ) : null}
               <ChatInput
                 leadingControls={projectControl}
-                toolbarControls={<>{composerToolbar}{persistentControl}</>}
+                toolbarControls={composerToolbar}
+                footerControls={persistentControl}
                 queue={queuePanel}
                 attachmentPolicy={attachmentPolicy.error}
                 slashInstance={slashInstance}
@@ -883,7 +884,7 @@ function EmptyState({
   providerReady,
   attachmentsEnabled,
 }: {
-  composerProps: Pick<React.ComponentProps<typeof ChatInput>, "leadingControls" | "toolbarControls" | "queue" | "composer" | "agentClient" | "scope" | "permissionMode" | "driveContextEnabled" | "botContext" | "botControls" | "botConsentResources" | "botRequiresFullAccess" | "onOpenBotMention" | "slashInstance" | "slashCatalogLoading" | "attachmentPolicy">;
+  composerProps: Pick<React.ComponentProps<typeof ChatInput>, "leadingControls" | "toolbarControls" | "footerControls" | "queue" | "composer" | "agentClient" | "scope" | "permissionMode" | "driveContextEnabled" | "botContext" | "botControls" | "botConsentResources" | "botRequiresFullAccess" | "onOpenBotMention" | "slashInstance" | "slashCatalogLoading" | "attachmentPolicy">;
   onSubmit: React.ComponentProps<typeof ChatInput>["onSubmit"];
   connected: boolean;
   mobile: boolean;

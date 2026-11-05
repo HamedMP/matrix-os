@@ -51,6 +51,7 @@ export function ChatInput({
   placeholder = "Reply to chat…",
   leadingControls,
   toolbarControls,
+  footerControls,
   queue,
 }: {
   composer: ChatComposerDraft;
@@ -83,6 +84,8 @@ export function ChatInput({
   leadingControls?: React.ReactNode;
   /** Model, effort and access pickers, rendered before Send/Stop like Electron Desktop. */
   toolbarControls?: React.ReactNode;
+  /** Expanded task/context controls belong below the compact model toolbar. */
+  footerControls?: React.ReactNode;
   /** Queued turns, attached above the prompt card. */
   queue?: React.ReactNode;
 }) {
@@ -256,6 +259,7 @@ export function ChatInput({
           canSubmit={canSend}
           sendLabel={busy && mayQueue ? "Queue next" : "Send"}
           placeholder={editorPlaceholder}
+          footer={footerControls}
           attachments={attachments.length || resources.length ? (
             <div data-slot="composer-context-row" className="flex min-w-0 flex-col gap-2 px-4 pt-3">
               <ChatMentionTokens resources={resources} onRemove={(resource) => composer.setResources(resources.filter((item) => item !== resource))} />
