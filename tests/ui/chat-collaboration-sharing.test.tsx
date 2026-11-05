@@ -332,7 +332,8 @@ describe("Chat collaboration sharing", () => {
       openProject={openProject} openChat={openChat} />);
     expect(await screen.findByRole("heading", { name: "Launch" })).toBeVisible();
     expect(screen.queryByText("proj_launch")).toBeNull();
-    expect(screen.getByText(/Viewer · read only/i)).toBeVisible();
+    expect(screen.getByText(/Organization-wide project access/i)).toBeVisible();
+    expect(screen.queryByText(/Viewer|Editor|read only|can edit/i)).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: /Launch checklist/ }));
     expect(openChat).toHaveBeenCalledWith(chatScope, "chat_launch", "Launch checklist");
     currentProjectScope = {
@@ -342,7 +343,8 @@ describe("Chat collaboration sharing", () => {
       capabilities: { ...projectScope.capabilities, discuss: true },
     };
     await act(async () => refreshProject());
-    expect(await screen.findByText(/Editor · can edit/i)).toBeVisible();
+    expect(await screen.findByText(/Organization-wide project access/i)).toBeVisible();
+    expect(screen.queryByText(/Viewer|Editor|read only|can edit/i)).toBeNull();
     act(() => revokeProject());
     expect(await screen.findByText("Shared project unavailable")).toBeVisible();
     expect(screen.queryByText("Launch checklist")).toBeNull();

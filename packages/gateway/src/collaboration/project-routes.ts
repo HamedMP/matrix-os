@@ -7,6 +7,8 @@ import {
   CollaborationProjectSchema,
   CollaborationProjectOverviewSchema,
   CollaborationProjectConfirmRequestSchema,
+  CollaborationProjectUnshareRequestSchema,
+  CollaborationProjectUnshareResponseSchema,
   CollaborationProjectInventorySchema,
   CollaborationProjectTransitionSchema,
 } from "@matrix-os/contracts";
@@ -121,5 +123,19 @@ export function registerProjectRoutes(routes: Hono, options: CollaborationRouteO
         ? { errorCode: transition.errorCode }
         : {}),
     }), 202);
+  }));
+
+  routes.post("/api/collaboration/scopes/:scopeId/project/unshare", async (c) => handle(c, async () => {
+    const scopeId = CollaborationIdSchema.parse(c.req.param("scopeId"));
+    const { value, bytes } = await readJson(c);
+    const context = await authorizeOwnerScope(options, c, bytes, scopeId);
+    const input = CollaborationProjectUnshareRequestSchema.parse(value);
+    return c.json(CollaborationProjectUnshareResponseSchema.parse(await requireProjectSharing(options.projectSharing).unshare({
+      scopeId,
+      actorId: context.actorId,
+      clientRequestId: input.clientRequestId,
+      expectedRevision: Number(input.expectedRevision),
+      payloadHash: digest(bytes),
+    })));
   }));
 }

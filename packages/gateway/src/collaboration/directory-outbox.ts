@@ -184,6 +184,8 @@ export class CollaborationDirectoryOutbox {
           "scope.organization_id",
           "scope.parent_scope_id",
           "scope.membership_mode",
+          "scope.kind",
+          "scope.lifecycle",
           "event.revision",
           "event.event_type",
           (eb) => eb.selectFrom("collaboration_grants as grant").select("grant.id")
@@ -275,8 +277,9 @@ export class CollaborationDirectoryOutbox {
           recipientEntries,
           discoveryState: row.discovery_state,
           organizationId: row.organization_id ?? null,
-          audience: row.organization_grant_id && !parentScopeId ? "organization" : null,
-          organizationGrantId: parentScopeId ? null : row.organization_grant_id ?? null,
+          audience: !parentScopeId && ((row.kind === "project" && (row.lifecycle === "shared" || row.lifecycle === "archived")) || row.organization_grant_id)
+            ? "organization" : null,
+          organizationGrantId: parentScopeId || row.kind === "project" ? null : row.organization_grant_id ?? null,
           parentScopeId,
           attempt,
         });

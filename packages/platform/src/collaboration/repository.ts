@@ -65,7 +65,8 @@ export interface CollaborationOrganizationShareEntry {
   kind: CollaborationDirectoryKind;
   authorityGeneration: number;
   organizationId: string;
-  grantId: string;
+  /** Standalone organization shares still require explicit activation; projects do not. */
+  grantId?: string;
 }
 
 /**
@@ -437,7 +438,10 @@ export class PlatformCollaborationRepository {
     let query = this.db.selectFrom("collaboration_directory as directory")
       .select(["directory.scope_id", "directory.runtime_id", "directory.owner_id", "directory.kind", "directory.organization_id", "directory.organization_grant_id", "directory.authority_generation", "directory.updated_at"])
       .where("directory.audience", "=", "organization")
-      .where("directory.organization_grant_id", "is not", null)
+      .where((eb) => eb.or([
+        eb("directory.kind", "=", "project"),
+        eb("directory.organization_grant_id", "is not", null),
+      ]))
       .where("directory.organization_id", "in", organizations)
       .where("directory.owner_id", "!=", actorId)
       .where(({ not, exists, selectFrom }) => not(exists(
@@ -460,7 +464,8 @@ export class PlatformCollaborationRepository {
     return {
       items: page.map((row) => ({
         scopeId: row.scope_id, runtimeId: row.runtime_id, ownerId: row.owner_id, kind: row.kind,
-        authorityGeneration: Number(row.authority_generation), organizationId: row.organization_id!, grantId: row.organization_grant_id!,
+        authorityGeneration: Number(row.authority_generation), organizationId: row.organization_id!,
+        ...(row.organization_grant_id ? { grantId: row.organization_grant_id } : {}),
       })),
       ...(last ? { nextCursor: { updatedAt: toIso(last.updated_at), scopeId: last.scope_id } } : {}),
     };

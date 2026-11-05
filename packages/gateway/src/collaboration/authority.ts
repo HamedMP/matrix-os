@@ -2,7 +2,7 @@ import type { CollaborationRole } from "@matrix-os/contracts";
 import type { Selectable } from "kysely";
 import { CollaborationAuthorizationError, type CollaborationAuthorizationErrorCode } from "./authority-error.js";
 import type { CollaborationScopesTable } from "./database.js";
-import { isActivationCurrent } from "./capability-evaluator.js";
+import { CollaborationCapabilityEvaluator, isActivationCurrent } from "./capability-evaluator.js";
 import type { CollaborationCapabilityRepository } from "./capability-repository.js";
 import type { OrganizationPrecondition } from "./organization-precondition.js";
 import type { CollaborationRepository } from "./repository.js";
@@ -67,6 +67,7 @@ export class CollaborationAuthority {
   /** The organization precondition every protected operation must pass, including proof-only owner operations. */
   readonly organizationPrecondition: OrganizationPrecondition;
   private readonly capabilities: CollaborationCapabilityRepository | undefined;
+  private readonly projectAccess: CollaborationCapabilityEvaluator;
   constructor(
     private readonly repository: CollaborationRepository,
     options: CollaborationAuthorityOptions,
@@ -74,6 +75,12 @@ export class CollaborationAuthority {
     this.now = options.now ?? (() => new Date());
     this.organizationPrecondition = options.organizationPrecondition;
     this.capabilities = options.capabilities;
+    this.projectAccess = new CollaborationCapabilityEvaluator({
+      db: repository.db,
+      organizationPrecondition: options.organizationPrecondition,
+      ...(options.capabilities ? { grants: options.capabilities } : {}),
+      ...(options.now ? { now: options.now } : {}),
+    });
   }
 
   async authorize(input: {
@@ -83,6 +90,33 @@ export class CollaborationAuthority {
   }): Promise<AuthorizedCollaborationContext> {
     const scope = await this.loadScope(input.scopeId);
     const membershipScope = await this.resolveMembershipScope(scope);
+    if (membershipScope.kind === "project") {
+      const decision = await this.projectAccess.decide({ scopeId: input.scopeId, actorId: input.actorId });
+      if (decision.access.preset === null) {
+        throw new CollaborationAuthorizationError("not_found", "Current organization membership is required");
+      }
+      const role: CollaborationRole = decision.isOwner
+        ? "owner"
+        : decision.access.preset === "viewer" ? "viewer" : "editor";
+      this.requireLifecycle(scope, role, input.action);
+      requireRoleCapability(role, input.action);
+      return {
+        actorId: input.actorId,
+        ownerId: scope.owner_id,
+        organizationId: membershipScope.organization_id!,
+        scopeId: scope.id,
+        membershipScopeId: membershipScope.id,
+        resourceKind: scope.kind,
+        resourceId: scope.resource_id,
+        role,
+        authEpoch: Math.max(Number(scope.auth_epoch), Number(membershipScope.auth_epoch)),
+        resourceAuthEpoch: Number(scope.auth_epoch),
+        membershipAuthEpoch: Number(membershipScope.auth_epoch),
+        authorityRuntimeId: scope.authority_runtime_id,
+        authorityGeneration: Number(scope.authority_generation),
+        capability: input.action,
+      };
+    }
     const evidence = await this.organizationPrecondition.require({
       organizationId: membershipScope.organization_id,
       actorId: input.actorId,
@@ -221,7 +255,7 @@ function requireRoleCapability(role: CollaborationRole, action: CollaborationAct
   const allowed = role === "owner"
     ? ["read", "discuss", "manage_members", "publish_snapshot", "mutate_project", "mutate_resource", "export_project", "recover"]
     : role === "editor"
-      ? ["read", "discuss", "mutate_project", "mutate_resource"]
+      ? ["read", "discuss", "mutate_project", "mutate_resource", "export_project"]
       : ["read"];
   if (!allowed.includes(action)) {
     throw new CollaborationAuthorizationError("forbidden", "Role does not allow this action");

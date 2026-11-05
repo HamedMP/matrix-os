@@ -250,13 +250,26 @@ export class CollaborationTicketIssuer {
     const status = entry?.status ?? null;
     // Existence is never disclosed: every denial is the same not-found.
     if (!directory || !organizationId) throw denied();
-    // A shared project's Chat has no members of its own: only someone who accepted the project
-    // may open it, never an invitee or an organization member who has not accepted yet.
-    if (directory.parentScopeId
+    const parent = directory.parentScopeId
+      ? await this.options.repository.getDirectoryRoute(directory.parentScopeId)
+      : null;
+    const organizationProject = directory.kind === "project"
+      && directory.audience === "organization"
+      && directory.parentScopeId === null;
+    const inheritedOrganizationProject = parent?.kind === "project"
+      && parent.audience === "organization"
+      && parent.parentScopeId === null
+      && parent.ownerId === directory.ownerId
+      && parent.runtimeId === directory.runtimeId;
+    // Legacy inherited resources still require accepted parent state. Organization-wide
+    // projects derive root and child admission from fresh membership, with no activation row.
+    if (directory.parentScopeId && !inheritedOrganizationProject
       && await this.options.repository.getScopeActorStatus(directory.parentScopeId, input.actorId) !== "accepted") {
       throw denied();
     }
-    const effectiveStatus = directory.parentScopeId ? "accepted" : status;
+    const effectiveStatus = organizationProject || inheritedOrganizationProject
+      ? "accepted"
+      : directory.parentScopeId ? "accepted" : status;
     if (effectiveStatus === "revoked") throw denied();
     // An accept-only pointer (never for a project Chat, which opens only through its accepted
     // project): the actor's own pending member grant, or else the organization-wide grant of a
@@ -278,7 +291,11 @@ export class CollaborationTicketIssuer {
       }
       if (!admitted) throw new CollaborationTicketIssuerError("unavailable", "Collaboration cutover is unavailable");
     }
-    if (!(await this.options.projection.isCurrentMember({ organizationId, actorId: input.actorId }))) throw denied();
+    const [actorIsMember, ownerIsMember] = await Promise.all([
+      this.options.projection.isCurrentMember({ organizationId, actorId: input.actorId }),
+      this.options.projection.isCurrentMember({ organizationId, actorId: directory.ownerId }),
+    ]);
+    if (!actorIsMember || !ownerIsMember) throw denied();
     // The endpoint proves the home is enrolled for this owner; the ticket binds
     // the resource's own authority generation, because one home hosts scopes at
     // different generations (a project at N, a standalone Chat at 1).
