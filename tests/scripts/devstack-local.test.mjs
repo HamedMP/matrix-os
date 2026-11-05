@@ -414,3 +414,21 @@ test('failed stop of an unleased claim cannot manufacture admission permission',
   await adapter.operation(id(0), 'stop');
   assert.equal((await adapter.operation(id(1), 'resume')).code, 0);
 });
+test('finite logs retain newest compiler error after full redaction while test stdout keeps its prefix', async t => {
+  const f = await fixture(t); await f.adapter.register(f.file);
+  const old = 'OLD_STARTUP 界\u0000\\" startup detail\n'.repeat(4000);
+  const latest = '\nLATEST_KERNEL_ERROR TS2322 incompatible type 界\n{"api_key":"private-latest-key"} token=private-latest-token Authorization: Bearer private-latest-bearer\n';
+  f.setResponse(args => args.includes('journalctl') || args.includes('--workdir') ? { code: 0, stdout: old + latest } : undefined);
+  const before = await f.adapter.status('sample');
+  const logs = await f.adapter.operation('sample', 'logs');
+  assert.ok(logs.stdout.includes('LATEST_KERNEL_ERROR TS2322'), 'newest compiler error must survive the log output budget');
+  assert.doesNotMatch(logs.stdout, /private-latest-/); assert.match(logs.stdout, /\[redacted\]/);
+  assert.ok(Buffer.byteLength(JSON.stringify(logs.stdout), 'utf8') <= 8192);
+  assert.equal(logs.stdout.startsWith('OLD_STARTUP'), false);
+  assert.deepEqual(await f.adapter.status('sample'), before);
+  assert.ok((await stat(join(f.root, 'private', 'sample.json'))).size <= 65536);
+  const journal = f.calls.find(([, args]) => args.includes('journalctl'))[1];
+  assert.equal(journal[journal.indexOf('-n') + 1], '200'); assert.equal(journal.includes('--follow'), false);
+  const test = await f.adapter.operation('sample', 'test', ['show-feedback']);
+  assert.equal(test.stdout.startsWith('OLD_STARTUP'), true); assert.doesNotMatch(test.stdout, /LATEST_KERNEL_ERROR/);
+});
