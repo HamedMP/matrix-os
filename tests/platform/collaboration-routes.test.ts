@@ -164,6 +164,39 @@ describe("platform collaboration routes", () => {
     expect(await shared.json()).toMatchObject({ items: [{ scopeId: orgScopeId, status: "accepted" }] });
   });
 
+  it("lists a shared project immediately for every current or future organization member without activation", async () => {
+    const projectScopeId = "10000000-0000-4000-8000-000000000088";
+    await repository.applyDirectoryEvent({
+      ...directoryEvent("accepted"),
+      eventId: "20000000-0000-4000-8000-000000000088",
+      scopeId: projectScopeId,
+      kind: "project",
+      organizationId: "org_1",
+      audience: "organization",
+      recipients: [],
+    });
+
+    organizationIds = ["org_1"];
+    const expected = { items: [{
+      scopeId: projectScopeId,
+      runtimeId: "runtime_owner",
+      ownerId: platformCollaborationActors.owner,
+      kind: "project",
+      authorityGeneration: 1,
+      status: "accepted",
+      organizationId: "org_1",
+    }] };
+    const firstMember = await app.request("/api/collaboration/inbox", {
+      headers: { "x-test-actor": platformCollaborationActors.recipientWithoutComputer },
+    });
+    expect(await firstMember.json()).toEqual(expected);
+
+    const futureMember = await app.request("/api/collaboration/inbox", {
+      headers: { "x-test-actor": "user_future_member" },
+    });
+    expect(await futureMember.json()).toEqual(expected);
+  });
+
   it("keeps the inbox available when one indexed entry cannot be represented", async () => {
     // Production 2026-10-03: a member-audience grant is published as an `invited` recipient with no
     // invitation id (capability-repository.ts). The strict item parse used to throw, and the catch

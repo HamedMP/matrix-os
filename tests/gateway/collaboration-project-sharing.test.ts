@@ -154,6 +154,30 @@ describe("whole-project sharing coordinator", () => {
     })).rejects.toMatchObject({ code: "conflict" });
     expect(prepare).not.toHaveBeenCalled();
   });
+
+  it("unshares once by returning the project and inherited resources to private owner state", async () => {
+    await fixture.db.updateTable("collaboration_scopes").set({ lifecycle: "shared" })
+      .where("id", "=", PROJECT_SCOPE).execute();
+    await fixture.db.updateTable("collaboration_scopes").set({
+      parent_scope_id: PROJECT_SCOPE, membership_mode: "inherited", lifecycle: "shared",
+    }).where("id", "=", CHAT_SCOPE).execute();
+    const service = serviceFixture(fixture, preview, verifyConfirmation, replayPreparation, prepare);
+
+    await expect(service.unshare({
+      scopeId: PROJECT_SCOPE,
+      actorId: OWNER,
+      clientRequestId: "50000000-0000-4000-8000-000000000703",
+      expectedRevision: 4,
+      payloadHash: "f".repeat(64),
+    })).resolves.toEqual({ scopeId: PROJECT_SCOPE, lifecycle: "private", revision: 5 });
+    expect(await fixture.db.selectFrom("collaboration_scopes").select(["id", "lifecycle", "auth_epoch"])
+      .where("id", "in", [PROJECT_SCOPE, CHAT_SCOPE]).orderBy("id").execute()).toEqual([
+      { id: PROJECT_SCOPE, lifecycle: "private", auth_epoch: 1 },
+      { id: CHAT_SCOPE, lifecycle: "private", auth_epoch: 1 },
+    ]);
+    expect(await fixture.db.selectFrom("collaboration_directory_outbox").select("discovery_state")
+      .where("scope_id", "=", PROJECT_SCOPE).execute()).toEqual([{ discovery_state: "revoked" }]);
+  });
 });
 
 function serviceFixture(

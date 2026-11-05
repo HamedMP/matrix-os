@@ -87,16 +87,17 @@ function button(api: ReturnType<typeof harness>["api"]) {
 }
 
 describe("first-click sharing over the real direct client and relay classifier", () => {
-  it("opens the dialog after preflight, private create/read, default grant and inventory without a directory route", async () => {
+  it("opens the dialog after preflight, private create/read and inventory without a grant or directory route", async () => {
     const h = harness();
     const view = render(button(h.api));
     try {
       fireEvent.click(screen.getByRole("button", { name: "Share project" }));
       await screen.findByRole("heading", { name: "Share “Fresh project”" });
-      expect(h.calls.slice(0, 8)).toEqual([
+      expect(h.calls.slice(0, 6)).toEqual([
         "POST /api/collaboration/owner-runtime/connections", "POST /api/collaboration/owner-runtime/sessions",
-        `POST ${setup}/preflight`, `POST ${setup}`, `GET ${base}`, `GET ${base}/grants`, `POST ${base}/grants`, `GET ${base}/project/inventory`,
+        `POST ${setup}/preflight`, `POST ${setup}`, `GET ${base}`, `GET ${base}/project/inventory`,
       ]);
+      expect(h.calls.some(path => path.includes("/grants"))).toBe(false);
       expect(h.directory).toHaveBeenCalled();
       expect(h.calls.some(path => path.endsWith("/project/confirm"))).toBe(false);
       expect(scope.lifecycle).toBe("private");
