@@ -28,7 +28,7 @@ This research resolves the implementation choices behind [spec.md](spec.md), [jo
 
 ## 4. Derive access from current organization membership
 
-**Decision**: For new active app scopes, authorize full app use from `active exact app share + current organization membership`. Do not create recipient grants, activations, invitations, acceptance records, roles, or per-member rows. Keep only an owner invariant row if generic scope code requires it.
+**Decision**: For new active app scopes, authorize full app use from `active exact app share + current organization membership`. Any current organization member may share an app they own, and every current member, including a guest, receives full app functionality. Do not require admin approval or create recipient grants, activations, invitations, acceptance records, roles, permissions, or per-member rows. Keep only an owner invariant row if generic scope code requires it.
 
 **Rationale**: The membership projection is already authoritative and expiring. Materialized app members would duplicate Clerk state, delay newcomers, and create synchronization races.
 
@@ -98,18 +98,26 @@ This research resolves the implementation choices behind [spec.md](spec.md), [jo
 
 **Alternatives considered**: Slug/path encoding is fragile; a second web renderer drifts; automatic reload destroys input.
 
-## 13. Five Matrix PRs plus one documentation PR
+## 13. Reviewable Matrix stack with a ten-PR maximum
 
-**Decision**: Use five dependency-ordered Matrix OS implementation PRs and one final `FinnaAI/matrix-os-site` docs PR, all linked to ENG-29. Hard cap: ten total PRs; any extra split needs explicit requester approval and must retain the planned boundaries.
+**Decision**: Use the fewest dependency-ordered Matrix OS PRs practical, splitting logical layers whenever a PR would approach 3,000 changed lines. Never exceed ten Matrix OS PRs. The final `FinnaAI/matrix-os-site` docs PR is separate and does not count toward ten. All PRs link ENG-29.
 
-**Rationale**: The five code layers isolate readiness, share authority, owner runtime/data, recipient surfaces, and owner UX/qualification. The sixth deliverable keeps public docs in the canonical repository.
+**Rationale**: The five logical code layers isolate readiness, share authority, owner runtime/data, recipient surfaces, and owner UX/qualification, while flexible splits keep review size safe. The separate deliverable keeps public docs in the canonical repository.
 
-**Alternatives considered**: One large PR is not reviewable at this risk; more than ten layers create excessive restacking and integration overhead.
+**Alternatives considered**: One large PR is not reviewable at this risk; a fixed five-PR limit can force oversized diffs; more than ten Matrix OS layers create excessive restacking and integration overhead.
 
 ## 14. Qualify the stack head on a disposable VPS
 
-**Decision**: Validate the union at PR 5 with an exact VPS-native host bundle and owner/member/newcomer/departed/wrong-org/outsider accounts. No authorization or rollout feature flag participates. Rollback targets the compatibility foundation; owner data is never rolled back.
+**Decision**: Validate the union at the final Matrix OS stack head with an exact VPS-native host bundle and owner/member/guest/newcomer/departed/wrong-org/outsider accounts. No authorization or rollout feature flag participates. Rollback targets the compatibility foundation; owner data is never rolled back.
 
 **Rationale**: Production is VPS-native, and only the stack head proves the whole journey.
 
 **Alternatives considered**: Docker is not production parity; isolated-layer demos do not prove the feature; a flag must not become an authorization input.
+
+## 15. Defer the second readiness principal and fail closed
+
+**Decision**: Implement the verifier boundary and a safe `blocked` outcome, but do not invent or impersonate the second authenticated participant. Until its identity source, authorization, lifecycle, and cleanup are approved, no readiness certificate may become `ready` and no share may be created.
+
+**Rationale**: The product decision was intentionally deferred. A synthetic or real-member strategy changes identity, consent, and security behavior and cannot be guessed during implementation.
+
+**Alternatives considered**: Silently impersonating a member violates the identity boundary; declaration-only readiness violates the production-path requirement; allowing share while the verifier is unavailable fails open.

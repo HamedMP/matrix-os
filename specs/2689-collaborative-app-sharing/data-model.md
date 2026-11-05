@@ -4,7 +4,7 @@ PostgreSQL through Kysely remains authoritative for collaboration metadata and a
 
 ## Ownership boundary
 
-App code, qualified builds, and records remain owned by the creator. Sharing grants current members of one organization access to that owner-controlled app; it does not move records into organization storage. UI must disclose this. Creator departure while sharing remains deferred.
+App code, qualified builds, and records remain solely owned by the creator. Sharing delegates revocable full app use to every current member of one organization, including guests, without transferring ownership, creating a second permission system, or moving records into organization storage. Any current organization member may share an app they own. UI must disclose this. Creator departure while sharing remains deferred.
 
 ## Existing entities reused
 
@@ -32,7 +32,7 @@ For a direct app share:
 - `membership_mode = direct` for schema compatibility, without recipient member rows;
 - lifecycle/revision/auth epoch and owner runtime identity remain the routing/revocation fence.
 
-At most one non-deleted direct app scope exists for a catalog identity. Current members derive full functionality from the active scope. An owner `collaboration_members` row may remain only for generic ownership invariants; recipients do not receive member/grant/activation rows.
+At most one non-deleted direct app scope exists for a catalog identity. Every current member, including a guest, derives full functionality from the active scope. An owner `collaboration_members` row may remain only for generic ownership invariants; recipients do not receive member/grant/activation/permission rows.
 
 ### Owner app records
 
@@ -183,4 +183,4 @@ Uncertain retries reuse the same request ID/payload. Conflict never replaces loc
 - Creator departure/ownership transfer or durable organization hosting.
 - One owner database shared with multiple organizations.
 - Per-record ACLs, Viewer/Editor roles, direct grants, or per-record revisions.
-- Public links, guests, Gallery install, arbitrary servers, and Native Mobile runtime parity.
+- Public links, external non-member guests, Gallery install, arbitrary servers, and Native Mobile runtime parity.
