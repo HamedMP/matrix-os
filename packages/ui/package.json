@@ -29,7 +29,8 @@
     "./chat-scheduled-message": "./src/chat/scheduled-message.ts",
     "./routine-destination": "./src/routine-destination/index.ts",
     "./routine-action": "./src/routine-action/index.ts",
-    "./terminal-launch": "./src/terminal/agent-launch.ts"
+    "./terminal-launch": "./src/terminal/agent-launch.ts",
+    "./routine-origin": "./src/chat/routine-origin.ts"
   },
   "dependencies": {
     "@matrix-os/contracts": "workspace:*",
