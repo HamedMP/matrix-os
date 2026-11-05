@@ -28,7 +28,7 @@ gcloud() {
 }
 ${script}
 `], { encoding: "utf8", timeout: 10_000, env: {
-    ...process.env, GITHUB_SHA: "a".repeat(40), CANDIDATE_TAG: `relay-${"a".repeat(12)}`,
+    ...process.env, GITHUB_SHA: "d".repeat(40), RELEASE_SOURCE_SHA: "a".repeat(40), CANDIDATE_TAG: `relay-${"a".repeat(12)}`,
     GATEWAY_TOKEN_SECRET: "cloudflare-ai-gateway-token", GATEWAY_TOKEN_VERSION: "latest",
     WORKERS_TOKEN_SECRET: "cloudflare-workers-ai-token-preview", WORKERS_TOKEN_VERSION: "latest",
     CONTROL_TOKEN_SECRET: "ai-relay-control-token", CONTROL_TOKEN_VERSION: "latest",

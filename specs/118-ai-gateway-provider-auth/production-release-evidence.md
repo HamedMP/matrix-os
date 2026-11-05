@@ -14,7 +14,8 @@ change. A repository administrator sets these production environment variables
 only after reviewing the actual acceptance packet:
 
 - `MATRIX_FUNDED_AI_ACCEPTANCE_RUN_ID`: completed, successful same-repository run of
-  `.github/workflows/funded-ai-acceptance-evidence.yml` on the exact deployed main SHA.
+  `.github/workflows/funded-ai-acceptance-evidence.yml` on a reviewed main controller,
+  with generated provenance binding the exact deployed release SHA.
 - `MATRIX_FUNDED_AI_ACCEPTANCE_RECEIPT_SHA256`: SHA-256 of the exact `receipt.json`
   bytes in that run's `funded-ai-production-acceptance` artifact.
 
@@ -60,7 +61,7 @@ candidate revision receives zero percent default traffic. Do not remove
 `--no-traffic` to make new-service deployment succeed.
 
 Both environments derive the candidate tag as `relay-<first 12 characters of
-GITHUB_SHA>` after validating the full 40-character source. No dispatch input
+RELEASE_SOURCE_SHA>` after validating the full 40-character source. No dispatch input
 can select an existing customer alias. Before building and immediately before
 deployment, the workflow requires an unused derived tag; an existing tag is
 left unchanged, including when its label has a different full SHA with the same
@@ -204,10 +205,59 @@ exactly `metering`, `canary_metrics`, `policy_health`, `spend_fuse`, `kill_switc
 `auth_leakage`, `surface_parity`, `rollback`, `review_gates` and `public_docs`.
 Each entry has exactly `status`, `path` and `sha256`; `passed` is allowed only
 after actual acceptance. Every referenced byte hash is checked. Review validity
-must be current and at most seven days. Source must equal the import and deploy
-run SHA; previous-head receipts cannot be carried forward. Sonnet/GLM price
+must be current and at most seven days. Receipt `sourceSha` must equal the
+validated `RELEASE_SOURCE_SHA` in both import and deploy runs. The main workflow
+controller may advance without changing this immutable release source or
+relabeling evidence. Older-source evidence never qualifies a different release. Sonnet/GLM price
 reviews must be current, at most 31 days; Jev at most 90 days. Versions remain
 immutable and timestamps are not renewed relative to startup.
+
+## Fixed release source and controller provenance
+
+This is operator-only release provenance tooling. Customer behavior and the
+already merged public funded-AI documentation remain unchanged; no separate
+public-site content change is required for this workflow repair.
+
+Both manual workflows accept optional `release_source_sha`. Set it to the same
+full 40-character reviewed main commit in every dispatch for a release; blank
+selects that dispatch's controller `GITHUB_SHA`. Dispatch still runs only from
+`refs/heads/main`; it does not execute a workflow supplied by the chosen source.
+The trusted controller first checks the exact commit identities and that the
+release is an ancestor of its immutable controller snapshot. Later main merges
+do not change that snapshot or the selected release.
+
+Before source checkout, cloud authentication, or evidence import, the controller
+requires the latest bounded exact-source run of canonical `.github/workflows/ci.yml`
+to be completed and successful, from same-repository `push` on `main`, with exact
+`CI coverage-v1 · <release SHA>` title and canonical workflow ID. It also checks
+current-attempt `CI Results`, `Type Check` and all four `Unit Tests (n/4)` jobs
+and actual successful typecheck/unit execution steps. Metadata-only, routing-only,
+docs-only or skipped workload success is insufficient. This initial gate supports
+hosted workload proof; delegated runs without those executed jobs fail closed.
+CI history and job-list overflow, API failure, and unknown provenance also fail
+closed rather than treating partial pagination as complete evidence.
+
+The validated source is checked out separately into `release-source/`, without
+persisted credentials, and that directory and its Cloud Build configuration form
+the complete build input. Controller verification scripts stay in the original
+checkout. `GITHUB_SHA` always identifies the real workflow controller; it is never
+overridden to impersonate the release. Candidate tags, image tags and full source
+labels use `RELEASE_SOURCE_SHA`. Existing candidates from that genuine release
+remain eligible for evidence-checked production promotion.
+
+Receipt schema version 1 and all original receipt/evidence bytes remain unchanged.
+The importer rejects any input archive containing reserved
+`release-provenance.json`; only the trusted importer generates it after checking
+the archive hash and release source. The generated schema-version-1 metadata binds
+`controllerSha`, `releaseSourceSha`, repository, actual import run ID/attempt,
+source CI run ID/attempt, receipt SHA-256 and original input archive SHA-256.
+The artifact loader binds this metadata to GitHub's actual successful import run
+head/ID/attempt and the separately validated release/CI source before accepting
+the receipt. A new CI attempt requires reimporting evidence to bind that attempt.
+The generated file cannot serve as a GA check file or replace any live evidence.
+Legacy artifacts without generated provenance retain the strict previous rule:
+actual import `head_sha` must equal the release SHA. The seven-day receipt window,
+artifact expiry, administrator pins and all ten genuine acceptance gates remain.
 
 ## Canonical Platform control-plane staging
 
@@ -249,14 +299,14 @@ stage does not justify resetting budgets or renewing price timestamps.
    and rollback evidence. Customer Chat turns are not the paid acceptance probe.
 2. Package the existing metadata evidence, hashing each referenced file and the
    final receipt bytes. Upload that ZIP as a same-repository release asset.
-   Dispatch **Funded AI Acceptance Evidence** on main with `release_asset_id`
-   and `archive_sha256`. The importer downloads only that repository's asset,
+   Dispatch **Funded AI Acceptance Evidence** on main with `release_source_sha`,
+   `release_asset_id` and `archive_sha256`. The importer downloads only that repository's asset,
    checks the archive pin/bounds/source/schema, executes no content, and retains
    the artifact for seven days. It grants no deployment permission and uses no
    cloud secret. It prints no raw evidence. Review its artifact and set the
    administrator-managed production run/receipt pins.
 3. Dispatch **AI Relay Cloud Run**, production, `promote=false`, with the
-   `stage=preview` packet. Configuration must exactly match the packet; separate
+   `stage=preview` packet and the same explicit `release_source_sha`. Configuration must exactly match the packet; separate
    production secrets and explicit price attestations are required. The image is
    digest-pinned, labelled with the full source SHA, tagged with its derived
    `relay-<source-prefix>` alias, and kept off
@@ -267,7 +317,7 @@ stage does not justify resetting budgets or renewing price timestamps.
    `stage=production`, all the actual GA evidence, and one additional field:
    `"candidate": {"revision":"<exact candidate revision>","image":"<full Artifact Registry image@sha256:digest>"}`.
    Review and update the production run/receipt pins.
-5. Dispatch production `promote=true` from that same SHA. This path **reuses**
+5. Dispatch production `promote=true` on main with that same `release_source_sha`. This path **reuses**
    the existing candidate rather than rebuilding/deploying. It independently
    reads Cloud Run's source-owned tag/revision and checks the exact digest, source
    label, service account, Ready condition, funded configuration, price reviews

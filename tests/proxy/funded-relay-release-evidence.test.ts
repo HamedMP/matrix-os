@@ -73,6 +73,7 @@ try:
     if data.get("exercisePromotion"):
         config = result["configuration"]
         os.environ.update({"DEPLOY_ENVIRONMENT": "production", "GITHUB_REF": "refs/heads/main", "GITHUB_ENV": "/dev/null", "GITHUB_SHA": "${sha}"})
+        if data.get("controllerAdvance"): os.environ.update({"GITHUB_SHA":"d"*40,"RELEASE_SOURCE_SHA":"${sha}"})
         os.environ.update({key: config[field] for field, key in gate.CONFIG_ENV.items()})
         os.environ.update(config["pricing"])
         # A supplied emitted environment is the complete candidate input; never
@@ -180,6 +181,9 @@ describe("reviewed funded Relay release evidence", () => {
   it("verifies actual candidate configuration before promotion", () => {
     expect(verify(productionFixture(), { promotion: true, exercisePromotion: true }).status).toBe(0);
   });
+  it("promotes the genuine release candidate after the trusted controller advances", () => {
+    expect(verify(productionFixture(), { promotion: true, exercisePromotion: true, controllerAdvance: true }).status).toBe(0);
+  });
   it.each([false, true])("promotes the exact emitted environment with Workers review %s", withWorkers => {
     const receipt = productionFixture();
     if (withWorkers) Object.assign(receipt.configuration.pricing, workersReview());
@@ -192,7 +196,7 @@ describe("reviewed funded Relay release evidence", () => {
 gcloud() { for arg in "$@"; do printf '%s\\n' "$arg"; done; exit 0; }
 ${script}
 `], { encoding: "utf8", timeout: 10_000, env: {
-      ...process.env, GITHUB_SHA: sha, CANDIDATE_TAG: `relay-${sha.slice(0, 12)}`, IMAGE_DIGEST: receipt.candidate.image,
+      ...process.env, GITHUB_SHA: "d".repeat(40), RELEASE_SOURCE_SHA: sha, CANDIDATE_TAG: `relay-${sha.slice(0, 12)}`, IMAGE_DIGEST: receipt.candidate.image,
       GCP_PROJECT_ID: config.projectId, GCP_REGION: config.region,
       AI_RELAY_CLOUD_RUN_SERVICE: config.relayService,
       AI_RELAY_CLOUD_RUN_SERVICE_ACCOUNT: config.relayServiceAccount,

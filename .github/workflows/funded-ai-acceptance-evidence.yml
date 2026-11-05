@@ -3,6 +3,10 @@ name: Funded AI Acceptance Evidence
 on:
   workflow_dispatch:
     inputs:
+      release_source_sha:
+        description: Full immutable main ancestor SHA with successful exact-source CI (blank uses controller SHA)
+        required: false
+        type: string
       release_asset_id:
         description: Same-repository metadata ZIP asset ID (no credentials or customer data)
         required: true
@@ -14,6 +18,7 @@ on:
 
 permissions:
   contents: read
+  actions: read
 
 jobs:
   import:
@@ -22,6 +27,11 @@ jobs:
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - name: Validate immutable release source before importing evidence
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REQUESTED_RELEASE_SOURCE_SHA: ${{ inputs.release_source_sha }}
+        run: python3 scripts/verify-funded-relay-evidence.py release-source
       - name: Import bounded metadata evidence without executing it
         env:
           GH_TOKEN: ${{ github.token }}

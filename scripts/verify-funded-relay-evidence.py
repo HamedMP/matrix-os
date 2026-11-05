@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Verify reviewed metadata, not live acceptance; never execute archive content."""
 import hashlib
+import importlib.util
 import io
 import json
 import os
@@ -13,6 +14,10 @@ import urllib.parse
 import urllib.request
 import zipfile
 from datetime import datetime, timedelta, timezone
+
+source_spec = importlib.util.spec_from_file_location("release_source", os.path.join(os.path.dirname(__file__), "funded_relay_release_source.py"))
+release = importlib.util.module_from_spec(source_spec)
+source_spec.loader.exec_module(release)
 
 MAX_ARCHIVE = 2 * 1024 * 1024
 MAX_FILE = 128 * 1024
@@ -132,13 +137,19 @@ def pricing_environment_matches(pricing):
             all(not os.environ.get(key) for key in WORKERS_PRICING_ENV - set(pricing)))
 
 
-def verify_evidence(body, receipt_hash, source, run, repository, stage):
+def verify_evidence(body, receipt_hash, source, run, repository, stage, provenance_env=None):
     require(matches(r"[a-f0-9]{40}", source), "Exact source required")
-    require(run["head_sha"] == source and run["head_branch"] == "main" and
+    require(run["head_branch"] == "main" and
             run["event"] == "workflow_dispatch" and run["conclusion"] == "success" and
             run["path"] == WORKFLOW and run["repository"]["full_name"] == repository and
             run["head_repository"]["full_name"] == repository, "Untrusted acceptance run")
     files = archive_files(body)
+    provenance = files.pop(release.PROVENANCE_FILE, None)
+    if provenance is None:
+        require(run["head_sha"] == source, "Legacy acceptance source mismatch")
+    else:
+        require(provenance_env is not None, "Validated import provenance required")
+        release.verify_provenance(read_json(provenance), provenance_env, run, receipt_hash)
     require(matches(r"[a-f0-9]{64}", receipt_hash), "Reviewed receipt hash required")
     require(hashlib.sha256(files["receipt.json"]).hexdigest() == receipt_hash, "Receipt hash mismatch")
     receipt = read_json(files["receipt.json"])
@@ -188,10 +199,10 @@ def fetch_bytes(url, limit, token=None, accept="application/vnd.github+json"):
         return body
 
 
-def github_api(path):
+def github_api(path, limit=MAX_FILE):
     require(matches(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", os.environ["GITHUB_REPOSITORY"]), "Invalid repository")
     return read_json(fetch_bytes("https://api.github.com/repos/" + os.environ["GITHUB_REPOSITORY"] + path,
-                                MAX_FILE, os.environ["GH_TOKEN"]))
+                                limit, os.environ["GH_TOKEN"]))
 
 
 def download_archive(path):
@@ -214,6 +225,7 @@ def load_evidence(stage):
     run_id = os.environ["MATRIX_FUNDED_AI_ACCEPTANCE_RUN_ID"]
     require(matches(r"[1-9]\d{0,19}", run_id), "Reviewed acceptance run required")
     run = github_api("/actions/runs/" + run_id)
+    require(type(run.get("id")) is int and run["id"] == int(run_id), "Acceptance run ID mismatch")
     require(run.get("status") == "completed", "Completed acceptance run required")
     require(run.get("conclusion") == "success", "Successful acceptance run required")
     artifacts = github_api("/actions/runs/" + run_id + "/artifacts?per_page=100")
@@ -224,8 +236,10 @@ def load_evidence(stage):
     artifact_id = selected[0]["id"]
     require(type(artifact_id) is int and artifact_id > 0, "Invalid artifact ID")
     body = download_archive("/actions/artifacts/" + str(artifact_id) + "/zip")
+    if release.PROVENANCE_FILE in archive_files(body):
+        release.validate_ancestry(lambda path: github_api(path, MAX_ARCHIVE), release.release_source(os.environ), run["head_sha"])
     return verify_evidence(body, os.environ["MATRIX_FUNDED_AI_ACCEPTANCE_RECEIPT_SHA256"],
-                           os.environ["GITHUB_SHA"], run, os.environ["GITHUB_REPOSITORY"], stage)
+                           release.release_source(os.environ), run, os.environ["GITHUB_REPOSITORY"], stage, os.environ)
 
 
 def emit_env(values):
@@ -237,7 +251,7 @@ def emit_env(values):
 
 
 def candidate_tag():
-    source = os.environ["GITHUB_SHA"]
+    source = release.release_source(os.environ)
     require(matches(r"[a-f0-9]{40}", source), "Exact candidate source required")
     return "relay-" + source[:12]
 
@@ -332,7 +346,7 @@ def candidate_isolation():
     revision = cloud_json("revisions", revision_name)
     container, = revision["spec"]["containers"]
     require(container["image"] == os.environ["IMAGE_DIGEST"] and
-            revision["metadata"]["labels"].get("matrix-source-sha") == os.environ["GITHUB_SHA"] and
+            revision["metadata"]["labels"].get("matrix-source-sha") == release.release_source(os.environ) and
             any(item["type"] == "Ready" and item["status"] == "True" for item in revision["status"]["conditions"]),
             "Candidate provenance/readiness mismatch")
     previous = os.environ["CANDIDATE_BASELINE_TRAFFIC_SHA256"]
@@ -387,23 +401,39 @@ def import_evidence():
     body = download_archive("/releases/assets/" + asset_id)
     require(hashlib.sha256(body).hexdigest() == archive_hash, "Evidence asset hash mismatch")
     files = archive_files(body)
+    require(release.PROVENANCE_FILE not in files, "Reserved import provenance rejected")
     # Structural validation only; administrator review pins the subsequent run and receipt.
     receipt = read_json(files["receipt.json"])
+    receipt_hash = hashlib.sha256(files["receipt.json"]).hexdigest()
+    if os.environ.get("SOURCE_CI_RUN_ID"):
+        files[release.PROVENANCE_FILE] = json.dumps(release.make_provenance(os.environ, receipt_hash, archive_hash), sort_keys=True).encode()
+        buffer = io.BytesIO()
+        with zipfile.ZipFile(buffer, "w") as archive:
+            for name, content in files.items():
+                archive.writestr(name, content)
+        body = buffer.getvalue()
     run = {"head_sha": os.environ["GITHUB_SHA"], "head_branch": "main", "event": "workflow_dispatch",
            "conclusion": "success", "path": WORKFLOW,
            "repository": {"full_name": os.environ["GITHUB_REPOSITORY"]},
-           "head_repository": {"full_name": os.environ["GITHUB_REPOSITORY"]}}
-    verify_evidence(body, hashlib.sha256(files["receipt.json"]).hexdigest(), os.environ["GITHUB_SHA"], run,
-                    os.environ["GITHUB_REPOSITORY"], receipt["stage"])
+           "head_repository": {"full_name": os.environ["GITHUB_REPOSITORY"]},
+           "id": int(os.environ.get("GITHUB_RUN_ID", "0")), "run_attempt": int(os.environ.get("GITHUB_RUN_ATTEMPT", "0"))}
+    verify_evidence(body, receipt_hash, release.release_source(os.environ), run,
+                    os.environ["GITHUB_REPOSITORY"], receipt["stage"], os.environ)
     os.mkdir("funded-ai-evidence", 0o700)
     for name, content in files.items():
         with open("funded-ai-evidence/" + name, "xb") as output:
             output.write(content)
 
 
+def validate_release_source():
+    binding = release.validate_source(lambda path: github_api(path, MAX_ARCHIVE), os.environ)
+    emit_env({"RELEASE_SOURCE_SHA": binding["releaseSourceSha"], "SOURCE_CI_RUN_ID": str(binding["sourceCiRunId"]),
+              "SOURCE_CI_RUN_ATTEMPT": str(binding["sourceCiRunAttempt"])})
+
+
 if __name__ == "__main__":
     try:
-        {"configuration": configuration, "promotion": promotion, "import": import_evidence,
+        {"release-source": validate_release_source, "configuration": configuration, "promotion": promotion, "import": import_evidence,
          "deployment-preflight": deployment_preflight, "candidate-isolation": candidate_isolation}[sys.argv[1]]()
     except (KeyError, ValueError, TypeError, OSError, subprocess.SubprocessError, zipfile.BadZipFile):
         print("Funded Relay release evidence/configuration verification failed; production remains blocked.", file=sys.stderr)

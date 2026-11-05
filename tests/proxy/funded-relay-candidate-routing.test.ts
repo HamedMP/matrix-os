@@ -121,7 +121,7 @@ gcloud() {
 sleep() { return 1; }
 ${script}
 `], { encoding: "utf8", timeout: 10_000, env: {
-        PATH: process.env.PATH, GITHUB_SHA: sha, GITHUB_ENV: output, CANDIDATE_TAG: tag,
+        PATH: process.env.PATH, GITHUB_SHA: "d".repeat(40), RELEASE_SOURCE_SHA: sha, GITHUB_ENV: output, CANDIDATE_TAG: tag,
         IMAGE_DIGEST: `fixture@sha256:${"b".repeat(64)}`, AI_RELAY_CLOUD_RUN_SERVICE: "matrix-ai-relay",
         AI_RELAY_CLOUD_RUN_SERVICE_ACCOUNT: "fixture", GCP_PROJECT_ID: "fixture", GCP_REGION: "fixture",
         PLATFORM_INTERNAL_URL: "https://platform.fixture.invalid", CLOUDFLARE_AI_GATEWAY_URL: "https://gateway.fixture.invalid",

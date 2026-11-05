@@ -3,6 +3,10 @@ name: AI Relay Cloud Run
 on:
   workflow_dispatch:
     inputs:
+      release_source_sha:
+        description: Full immutable main ancestor SHA with successful exact-source CI (blank uses controller SHA)
+        required: false
+        type: string
       environment:
         description: GitHub environment to deploy
         required: true
@@ -59,6 +63,19 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+
+      - name: Validate immutable release source before cloud authentication
+        env:
+          REQUESTED_RELEASE_SOURCE_SHA: ${{ inputs.release_source_sha }}
+        run: python3 scripts/verify-funded-relay-evidence.py release-source
+
+      - name: Checkout validated release source
+        if: ${{ inputs.environment != 'production' || !inputs.promote }}
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ env.RELEASE_SOURCE_SHA }}
+          path: release-source
+          persist-credentials: false
 
       - name: Validate deployment configuration
         run: |
@@ -198,12 +215,12 @@ jobs:
         if: ${{ inputs.environment != 'production' || !inputs.promote }}
         run: |
           set -euo pipefail
-          image="${GCP_REGION}-docker.pkg.dev/${GCP_PROJECT_ID}/${ARTIFACT_REPOSITORY}/matrix-ai-relay:${GITHUB_SHA::12}"
+          image="${GCP_REGION}-docker.pkg.dev/${GCP_PROJECT_ID}/${ARTIFACT_REPOSITORY}/matrix-ai-relay:${RELEASE_SOURCE_SHA::12}"
           cache_image="${GCP_REGION}-docker.pkg.dev/${GCP_PROJECT_ID}/${ARTIFACT_REPOSITORY}/matrix-ai-relay:buildcache"
-          gcloud builds submit . \
+          gcloud builds submit release-source \
             --project "$GCP_PROJECT_ID" \
             --region "$GCP_REGION" \
-            --config cloudbuild.ai-relay.yaml \
+            --config release-source/cloudbuild.ai-relay.yaml \
             --substitutions "_IMAGE=$image,_CACHE_IMAGE=$cache_image" \
             --timeout=1200s
           digest="$(gcloud artifacts docker images describe "$image" \
@@ -233,7 +250,7 @@ jobs:
             --command "" \
             --args "" \
             --service-account "$AI_RELAY_CLOUD_RUN_SERVICE_ACCOUNT" \
-            --labels "matrix-source-sha=${GITHUB_SHA}" \
+            --labels "matrix-source-sha=${RELEASE_SOURCE_SHA}" \
             --platform managed \
             --port 8080 \
             --cpu 1 \

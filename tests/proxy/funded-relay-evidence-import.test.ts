@@ -34,7 +34,21 @@ if stage == "production":
     receipt["candidate"] = {"revision":"matrix-ai-relay-00001-abc", "image":"europe-west3-docker.pkg.dev/matrix-project/registry/matrix-ai-relay@sha256:" + "b" * 64}
 if scenario == "wrong-source": receipt["sourceSha"] = "c" * 40
 if scenario == "expired-review": receipt["validThrough"] = date(-0.5)
+if scenario == "fixed-check-collision": receipt["checks"]["metering"]["path"] = "release-provenance.json"
 files["receipt.json"] = json.dumps(receipt).encode()
+fixed = scenario.startswith("fixed-")
+if fixed and (operation != "import" or scenario == "fixed-collision"):
+    provenance = {"schemaVersion":1,"controllerSha":"b"*40,"releaseSourceSha":source,"repository":repository,
+        "workflowRunId":77,"workflowRunAttempt":2,"sourceCiRunId":88,"sourceCiRunAttempt":1,
+        "receiptSha256":hashlib.sha256(files["receipt.json"]).hexdigest(),"inputArchiveSha256":"d"*64}
+    mutations = {"fixed-source":("releaseSourceSha","c"*40),"fixed-controller":("controllerSha","c"*40),
+        "fixed-run":("workflowRunId",99),"fixed-attempt":("workflowRunAttempt",1),"fixed-ci":("sourceCiRunId",99),
+        "fixed-ci-attempt":("sourceCiRunAttempt",2),"fixed-receipt":("receiptSha256","f"*64),
+        "fixed-archive":("inputArchiveSha256","bad"),"fixed-repository":("repository","other/repo"),
+        "fixed-bool":("workflowRunId",True)}
+    if scenario in mutations:
+        key,value=mutations[scenario];provenance[key]=value
+    files["release-provenance.json"] = json.dumps(provenance).encode()
 stream = io.BytesIO()
 with zipfile.ZipFile(stream, "w", compression=zipfile.ZIP_DEFLATED) as archive:
     for name, body in files.items():
@@ -45,15 +59,16 @@ archive_bytes = stream.getvalue()
 if scenario == "invalid-zip": archive_bytes = b"not a ZIP"
 if scenario == "large-download": archive_bytes = b"x" * (2 * 1024 * 1024 + 1)
 
-run = {"head_sha":source, "head_branch":"main", "event":"workflow_dispatch", "status":"completed", "conclusion":"success",
+run = {"id":77,"run_attempt":1,"head_sha":source, "head_branch":"main", "event":"workflow_dispatch", "status":"completed", "conclusion":"success",
     "path":".github/workflows/funded-ai-acceptance-evidence.yml", "repository":{"full_name":repository}, "head_repository":{"full_name":repository}}
-run_changes = {"run-failed": {"conclusion":"failure"}, "run-push": {"event":"push"},
+run_changes = {"run-failed": {"conclusion":"failure"}, "run-id": {"id":78}, "run-push": {"event":"push"},
     "run-branch": {"head_branch":"feature"}, "run-source": {"head_sha":"c" * 40},
     "run-repository": {"repository":{"full_name":"another/repo"}},
     "run-fork": {"head_repository":{"full_name":"another/repo"}},
     "run-workflow": {"path":".github/workflows/unreviewed.yml"},
     "run-in-progress": {"status":"in_progress"}, "run-queued": {"status":"queued"}}
 run.update(run_changes.get(scenario, {}))
+if fixed: run.update({"head_sha":"b"*40,"id":77,"run_attempt":2})
 if scenario == "run-status-missing": run.pop("status")
 selected = {"id":55, "name":"funded-ai-production-acceptance", "expired":False, "size_in_bytes":len(archive_bytes)}
 # Underreported metadata must not defeat the actual streamed-byte cap.
@@ -89,6 +104,9 @@ class Opener:
         else:
             assert headers.get("authorization") is None
         requests.append(url)
+        if fixed and url == api_root + "/commits/" + "b"*40: return Response(json.dumps({"sha":"b"*40}).encode())
+        if fixed and url == api_root + "/compare/" + source + "..." + "b"*40 + "?per_page=1":
+            return Response(json.dumps({"status":"ahead","base_commit":{"sha":source},"merge_base_commit":{"sha":"c"*40 if scenario=="fixed-import-diverged" else source}}).encode())
         if url == api_root + "/actions/runs/77":
             return Response(b"x" * 131073 if scenario == "large-api-response" else json.dumps(run).encode())
         if url == api_root + "/actions/runs/77/artifacts?per_page=100": return Response(json.dumps(artifacts).encode())
@@ -113,6 +131,9 @@ with tempfile.TemporaryDirectory(prefix="matrix-evidence-boundary-") as temporar
         "EVIDENCE_ASSET_ID":"44", "EVIDENCE_ARCHIVE_SHA256":hashlib.sha256(archive_bytes).hexdigest(),
         "MATRIX_FUNDED_AI_ACCEPTANCE_RUN_ID":"77", "MATRIX_FUNDED_AI_ACCEPTANCE_RECEIPT_SHA256":hashlib.sha256(files["receipt.json"]).hexdigest(),
         "GITHUB_ENV":str(pathlib.Path(temporary, "github-env")), "DEPLOY_ENVIRONMENT":"production", "PROMOTE":"true" if stage == "production" else "false"})
+    if fixed:
+        os.environ.update({"GITHUB_SHA":"b"*40 if operation == "import" else "c"*40,"RELEASE_SOURCE_SHA":source,
+            "GITHUB_RUN_ID":"77","GITHUB_RUN_ATTEMPT":"2","SOURCE_CI_RUN_ID":"88","SOURCE_CI_RUN_ATTEMPT":"1"})
     os.environ.update({"GCP_PROJECT_ID":config["projectId"], "GCP_REGION":config["region"],
         "AI_RELAY_CLOUD_RUN_SERVICE":config["relayService"], "AI_RELAY_CLOUD_RUN_SERVICE_ACCOUNT":config["relayServiceAccount"],
         "PLATFORM_INTERNAL_URL":config["platformOrigin"], "CLOUDFLARE_AI_GATEWAY_URL":config["cloudflareGatewayUrl"], **pricing})
@@ -127,7 +148,13 @@ with tempfile.TemporaryDirectory(prefix="matrix-evidence-boundary-") as temporar
             if operation == "import":
                 gate.import_evidence()
                 imported = pathlib.Path("funded-ai-evidence")
-                assert {path.name:path.read_bytes() for path in imported.iterdir()} == files
+                actual = {path.name:path.read_bytes() for path in imported.iterdir()}
+                if fixed:
+                    provenance = json.loads(actual.pop("release-provenance.json"))
+                    assert provenance["controllerSha"] == "b"*40 and provenance["releaseSourceSha"] == source
+                    assert provenance["inputArchiveSha256"] == hashlib.sha256(archive_bytes).hexdigest()
+                    assert provenance["receiptSha256"] == hashlib.sha256(files["receipt.json"]).hexdigest()
+                assert actual == files
                 assert imported.stat().st_mode & 0o777 == 0o700
                 result["imported"] = len(files)
             elif operation == "configuration":
@@ -199,7 +226,7 @@ describe("actual funded evidence loader at the GitHub HTTP boundary", () => {
       expect(result.downloaded).toBe(false);
       expect(result.requestedPaths).not.toContain("/actions/artifacts/55/zip");
     });
-  it.each(["run-failed", "run-push", "run-branch", "run-source", "run-repository", "run-fork", "run-workflow",
+  it.each(["run-id", "run-failed", "run-push", "run-branch", "run-source", "run-repository", "run-fork", "run-workflow",
     "run-in-progress", "run-queued", "run-status-missing", "wrong-receipt-pin", "missing-receipt-pin", "wrong-source"])(
     "rejects untrusted run/receipt binding %s", scenario => {
       const result = execute("load", scenario);
@@ -235,4 +262,21 @@ describe("bounded evidence HTTP downloads", () => {
     expect(result.accepted).toBe(false);
     expect(result.message).toBe("Response exceeds evidence limit");
   });
+});
+
+
+describe("trusted import provenance for a fixed release across moving main", () => {
+  it("generates provenance from actual importer environment without changing receipt bytes", () => {
+    expect(execute("import", "fixed-valid").accepted).toBe(true);
+  });
+  it.each(["load", "configuration"] as const)("uses release source while %s controller advances", operation => {
+    expect(execute(operation, "fixed-valid").accepted).toBe(true);
+  });
+  it("rejects a user-supplied provenance file before creating any output", () => {
+    expect(execute("import", "fixed-collision")).toMatchObject({ accepted: false, message: "Reserved import provenance rejected" });
+  });
+  it.each(["source", "controller", "run", "attempt", "ci", "ci-attempt", "receipt", "archive", "repository", "bool", "import-diverged", "check-collision"])(
+    "rejects forged provenance %s", mutation => {
+      expect(execute("load", `fixed-${mutation}`).accepted).toBe(false);
+    });
 });
