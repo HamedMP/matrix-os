@@ -67,6 +67,8 @@ node node_modules/@playwright/test/cli.js test --config tests/e2e/collaboration.
 
 At the implementation head, `bun run typecheck`, `bun run check:patterns:diff`, and `git diff --check` pass. The repository-wide `bun run test` lane remains environment-limited on this host by real socket/HTTP restrictions, GPG/temp access, protected filesystem ancestors, and exhausted data-volume capacity; rely on CI for the unconstrained broad run and do not report the local attempt as passing.
 
+The canonical public guide is updated separately in [FinnaAI/matrix-os-site#338](https://github.com/FinnaAI/matrix-os-site/pull/338).
+
 ## Expected result
 
 Sharing is a single owner decision. Every active organization member can work in the project; only membership, project lifecycle, and invisible safety checks restrict them. Shared AI follows the owner's current global Settings and fails closed without fallback.
