@@ -17,8 +17,24 @@ function unavailable(): never {
   throw new SiteError('unavailable');
 }
 
-function dataUri(file: PrivateSiteFile): string {
-  return `data:${file.contentType};base64,${file.body.toString('base64')}`;
+const byteLength = (value: string) => Buffer.byteLength(value);
+
+/** Refuses each growth step before String.replace can materialize an oversized result. */
+class ExpansionBudget {
+  private bytes: number;
+  constructor(value: string) {
+    this.bytes = byteLength(value);
+    if (this.bytes > MAX_OUTPUT_BYTES) unavailable();
+  }
+  replacement(original: string, next: string): string {
+    this.bytes += byteLength(next) - byteLength(original);
+    if (this.bytes > MAX_OUTPUT_BYTES) unavailable();
+    return next;
+  }
+}
+
+function rawDataUri(contentType: string, body: Buffer): string {
+  return `data:${contentType};base64,${body.toString('base64')}`;
 }
 
 function localPath(specifier: string, importer: string): string | null {
@@ -32,31 +48,47 @@ function localPath(specifier: string, importer: string): string | null {
   return candidate;
 }
 
-function requiredFile(files: Map<string, PrivateSiteFile>, specifier: string, importer: string): PrivateSiteFile {
-  const path = localPath(specifier, importer);
-  if (!path) unavailable();
-  const file = files.get(path);
-  if (!file) unavailable();
-  return file;
+function resolvedPath(files: Map<string, PrivateSiteFile>, specifier: string, importer: string): string | null {
+  const relative = localPath(specifier, importer);
+  if (!relative) return null;
+  if (files.has(relative)) return relative;
+  const root = posix.normalize(specifier.split(/[?#]/, 1)[0].replace(/^\//, ''));
+  return files.has(root) ? root : relative;
 }
 
-function rewriteCss(css: string, path: string, files: Map<string, PrivateSiteFile>): string {
+function requiredPath(files: Map<string, PrivateSiteFile>, specifier: string, importer: string): string {
+  const path = resolvedPath(files, specifier, importer);
+  if (!path || !files.has(path)) unavailable();
+  return path;
+}
+
+function rewriteCss(css: string, path: string, files: Map<string, PrivateSiteFile>, uriFor: (path: string) => string): string {
+  const budget = new ExpansionBudget(css);
   return css.replace(/url\(\s*(['"]?)([^)'"\s]+)\1\s*\)/gi, (match, _quote: string, raw: string) => {
-    const resolved = localPath(raw, path);
+    const resolved = resolvedPath(files, raw, path);
     if (!resolved) return match;
-    const file = files.get(resolved);
-    if (!file) unavailable();
-    return `url("${dataUri(file)}")`;
+    if (!files.has(resolved)) unavailable();
+    return budget.replacement(match, `url("${uriFor(resolved)}")`);
   });
 }
 
-async function rewriteModule(code: string, path: string, files: Map<string, PrivateSiteFile>): Promise<string> {
-  code = code.replace(/new\s+URL\(\s*(['"])([^'"]+)\1\s*,\s*import\.meta\.url\s*\)/g, (_match, _quote: string, raw: string) => {
-    const resolved = localPath(raw, path);
-    if (!resolved) return _match;
-    const file = files.get(resolved);
-    if (!file) unavailable();
-    return JSON.stringify(dataUri(file));
+function applyReplacements(code: string, replacements: Array<{ start: number; end: number; value: string }>): string {
+  const budget = new ExpansionBudget(code);
+  for (const replacement of replacements.sort((a, b) => b.start - a.start)) {
+    const original = code.slice(replacement.start, replacement.end);
+    const value = budget.replacement(original, replacement.value);
+    code = code.slice(0, replacement.start) + value + code.slice(replacement.end);
+  }
+  return code;
+}
+
+async function rewriteModule(code: string, path: string, files: Map<string, PrivateSiteFile>, uriFor: (path: string) => string): Promise<string> {
+  let budget = new ExpansionBudget(code);
+  code = code.replace(/new\s+URL\(\s*(['"])([^'"]+)\1\s*,\s*import\.meta\.url\s*\)/g, (match, _quote: string, raw: string) => {
+    const resolved = resolvedPath(files, raw, path);
+    if (!resolved) return match;
+    if (!files.has(resolved)) unavailable();
+    return budget.replacement(match, `new URL(${JSON.stringify(uriFor(resolved))}, import.meta.url)`);
   });
   await init;
   const [imports] = parse(code);
@@ -64,38 +96,55 @@ async function rewriteModule(code: string, path: string, files: Map<string, Priv
   for (const imported of imports) {
     if (imported.d === -2) continue;
     if (imported.n === undefined) unavailable();
-    const resolved = localPath(imported.n, path);
+    const resolved = resolvedPath(files, imported.n, path);
     if (!resolved) continue;
     if (!files.has(resolved)) unavailable();
     const specifier = `${MODULE_PREFIX}${resolved}`;
     replacements.push({ start: imported.s, end: imported.e, value: imported.d >= 0 ? JSON.stringify(specifier) : specifier });
   }
-  for (const replacement of replacements.sort((a, b) => b.start - a.start))
-    code = code.slice(0, replacement.start) + replacement.value + code.slice(replacement.end);
-  return code;
+  code = applyReplacements(code, replacements);
+  // Vite's dynamic-import preload map names lazy CSS as ordinary strings rather
+  // than module imports. Convert only known non-code files; activation remains
+  // under Vite's own link creation and therefore stays lazy.
+  budget = new ExpansionBudget(code);
+  return code.replace(/(['"])(\/?[^'"\n]+)\1/g, (match, _quote: string, raw: string) => {
+    const resolved = resolvedPath(files, raw, path);
+    const file = resolved ? files.get(resolved) : undefined;
+    if (!file) return match;
+    const isCode = /(?:java|ecma)script|application\/x-javascript/.test(file.contentType) || /\.(?:m?js)$/i.test(file.path);
+    // Vite preload dependency arrays repeat lazy JS chunk paths as strings. The
+    // real dynamic import is already mapped above; preload a bounded empty data
+    // module so the helper succeeds without a private network request.
+    return budget.replacement(match, JSON.stringify(isCode ? 'data:text/javascript,export{}' : uriFor(resolved!)));
+  });
 }
 
-function moduleData(file: PrivateSiteFile, code?: string): string {
+function moduleData(file: PrivateSiteFile, uriFor: (path: string) => string, code?: string): string {
   if (code !== undefined) return `data:text/javascript;base64,${Buffer.from(code).toString('base64')}`;
   if (file.contentType === 'application/json') {
     let parsed: unknown;
     try { parsed = JSON.parse(file.body.toString('utf8')); }
-    catch { unavailable(); }
+    catch (error) {
+      if (error instanceof SyntaxError) unavailable();
+      throw error;
+    }
     return `data:text/javascript;base64,${Buffer.from(`export default ${JSON.stringify(parsed)};`).toString('base64')}`;
   }
-  if (file.contentType === 'text/css') return 'data:text/javascript,export%20default%20undefined';
-  return `data:text/javascript;base64,${Buffer.from(`export default ${JSON.stringify(dataUri(file))};`).toString('base64')}`;
+  if (file.contentType === 'text/css' || file.path.endsWith('.css')) {
+    const source = `const href=${JSON.stringify(uriFor(file.path))};const existing=document.querySelector('link[data-matrix-site-css=${JSON.stringify(file.path)}]');if(!existing){const link=document.createElement('link');link.rel='stylesheet';link.href=href;link.dataset.matrixSiteCss=${JSON.stringify(file.path)};document.head.append(link)}export default href;`;
+    return `data:text/javascript;base64,${Buffer.from(source).toString('base64')}`;
+  }
+  return `data:text/javascript;base64,${Buffer.from(`export default ${JSON.stringify(uriFor(file.path))};`).toString('base64')}`;
 }
 
-function rewriteResourceAttributes(html: string, htmlPath: string, files: Map<string, PrivateSiteFile>): string {
-  return html.replace(/<(img|source|video|audio|link)\b([^>]*)>/gi, (tag, element: string, attributes: string) => {
-    if (element.toLowerCase() === 'link' && /\brel\s*=\s*(["']?)(?:stylesheet|modulepreload)\1/i.test(attributes)) return tag;
+function rewriteResourceAttributes(html: string, htmlPath: string, files: Map<string, PrivateSiteFile>, uriFor: (path: string) => string): string {
+  const budget = new ExpansionBudget(html);
+  return html.replace(/<(img|source|video|audio|link)\b([^>]*)>/gi, tag => {
     return tag.replace(/\b(src|poster|href)\s*=\s*(["'])([^"']+)\2/gi, (attribute, name: string, quote: string, raw: string) => {
-      const resolved = localPath(raw, htmlPath);
+      const resolved = resolvedPath(files, raw, htmlPath);
       if (!resolved) return attribute;
-      const file = files.get(resolved);
-      if (!file) unavailable();
-      return `${name}=${quote}${dataUri(file)}${quote}`;
+      if (!files.has(resolved)) unavailable();
+      return budget.replacement(attribute, `${name}=${quote}${uriFor(resolved)}${quote}`);
     });
   });
 }
@@ -114,27 +163,53 @@ export async function packagePrivateSiteHtml(input: PrivateSiteFile[], entryPath
   const entry = files.get(entryPath);
   if (!entry || entry.contentType !== 'text/html') unavailable();
 
+  const uris = new Map<string, string>();
+  const resolvingCss = new Set<string>();
+  const uriFor = (path: string): string => {
+    const cached = uris.get(path);
+    if (cached) return cached;
+    const file = files.get(path);
+    if (!file) unavailable();
+    let body = file.body;
+    if (file.contentType === 'text/css' || file.path.endsWith('.css')) {
+      if (resolvingCss.has(path)) unavailable();
+      resolvingCss.add(path);
+      try { body = Buffer.from(rewriteCss(body.toString('utf8'), path, files, uriFor)); }
+      finally { resolvingCss.delete(path); }
+    }
+    const uri = rawDataUri(file.contentType, body);
+    uris.set(path, uri);
+    return uri;
+  };
+
   const imports: Record<string, string> = {};
+  let importMapBytes = 32;
   for (const file of files.values()) {
+    if (file.path === entryPath) continue;
     const isModule = /(?:java|ecma)script|application\/x-javascript/.test(file.contentType) || /\.(?:m?js)$/i.test(file.path);
-    const code = isModule ? await rewriteModule(file.body.toString('utf8'), file.path, files) : undefined;
-    imports[`${MODULE_PREFIX}${file.path}`] = moduleData(file, code);
+    const code = isModule ? await rewriteModule(file.body.toString('utf8'), file.path, files, uriFor) : undefined;
+    const key = `${MODULE_PREFIX}${file.path}`;
+    const value = moduleData(file, uriFor, code);
+    importMapBytes += byteLength(key) + byteLength(value) + 8;
+    if (importMapBytes > MAX_OUTPUT_BYTES) unavailable();
+    imports[key] = value;
   }
   let html = entry.body.toString('utf8');
-  html = html.replace(/<link\b[^>]*\brel\s*=\s*(["']?)(?:modulepreload|stylesheet)\1[^>]*>/gi, '');
+  html = html.replace(/<link\b[^>]*\brel\s*=\s*(["']?)modulepreload\1[^>]*>/gi, '');
+  const budget = new ExpansionBudget(html);
   html = html.replace(/<script\b([^>]*)\btype\s*=\s*(["']?)module\2([^>]*)\bsrc\s*=\s*(["'])([^"']+)\4([^>]*)><\/script>/gi,
-    (_tag, before: string, _typeQuote: string, middle: string, _srcQuote: string, raw: string, after: string) => {
-      const file = requiredFile(files, raw, entryPath);
-      return `<script type="module"${before}${middle}${after}>import ${JSON.stringify(`${MODULE_PREFIX}${file.path}`)};</script>`;
+    (tag, before: string, _typeQuote: string, middle: string, _srcQuote: string, raw: string, after: string) => {
+      const path = requiredPath(files, raw, entryPath);
+      return budget.replacement(tag, `<script type="module"${before}${middle}${after}>import ${JSON.stringify(`${MODULE_PREFIX}${path}`)};</script>`);
     });
-  html = rewriteResourceAttributes(html, entryPath, files);
-  const styles = [...files.values()].filter(file => file.contentType === 'text/css' || file.path.endsWith('.css'))
-    .map(file => rewriteCss(file.body.toString('utf8'), file.path, files)).join('\n');
+  html = rewriteResourceAttributes(html, entryPath, files, uriFor);
+  if (byteLength(html) + importMapBytes + 64 > MAX_OUTPUT_BYTES) unavailable();
   const importMap = JSON.stringify({ imports }).replaceAll('<', '\\u003c');
-  const sealed = `<script type="importmap">${importMap}</script>${styles ? `<style>${styles.replace(/<\/style/gi, '<\\/style')}</style>` : ''}`;
+  const sealed = `<script type="importmap">${importMap}</script>`;
+  if (byteLength(html) + byteLength(sealed) > MAX_OUTPUT_BYTES) unavailable();
   if (/<head(?:\s[^>]*)?>/i.test(html)) html = html.replace(/<head(?:\s[^>]*)?>/i, head => `${head}${sealed}`);
   else if (/<html(?:\s[^>]*)?>/i.test(html)) html = html.replace(/<html(?:\s[^>]*)?>/i, root => `${root}<head>${sealed}</head>`);
   else html = `<!doctype html><html><head>${sealed}</head><body>${html}</body></html>`;
-  if (Buffer.byteLength(html) > MAX_OUTPUT_BYTES) unavailable();
+  if (byteLength(html) > MAX_OUTPUT_BYTES) unavailable();
   return html;
 }

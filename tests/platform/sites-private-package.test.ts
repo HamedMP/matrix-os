@@ -8,7 +8,7 @@ describe('private site package', () => {
   it('embeds a Vite module graph, styles, fonts, and images without private asset requests', async () => {
     const files = [
       { path: 'index.html', contentType: 'text/html', body: bytes('<!doctype html><html><head><link rel="modulepreload" href="./assets/chunk.js"><link rel="stylesheet" href="./assets/app.css"><script type="module" src="./assets/main.js"></script></head><body><img src="./assets/logo.png"></body></html>') },
-      { path: 'assets/main.js', contentType: 'text/javascript', body: bytes('import { answer } from "./chunk.js"; const logo = new URL("./logo.png", import.meta.url); window.result = [answer, logo];') },
+      { path: 'assets/main.js', contentType: 'text/javascript', body: bytes('import { answer } from "./chunk.js"; const logo = new URL("./logo.png", import.meta.url); window.result = [answer, logo.href];') },
       { path: 'assets/chunk.js', contentType: 'text/javascript', body: bytes('export const answer = 42;') },
       { path: 'assets/app.css', contentType: 'text/css', body: bytes('@font-face{font-family:x;src:url("./font.woff2")}body{background:url(./logo.png)}') },
       { path: 'assets/logo.png', contentType: 'image/png', body: Buffer.from([1, 2, 3]) },
@@ -17,7 +17,10 @@ describe('private site package', () => {
     const html = await packagePrivateSiteHtml(files, 'index.html');
     expect(html).toContain('<script type="importmap">');
     expect(html).toContain('data:image/png;base64,AQID');
-    expect(html).toContain('data:font/woff2;base64,BAUG');
+    const stylesheet = html.match(/<link rel="stylesheet" href="data:text\/css;base64,([^"]+)">/)?.[1];
+    const css = Buffer.from(stylesheet!, 'base64').toString('utf8');
+    expect(css).toContain('data:font/woff2;base64,BAUG');
+    expect(css).toContain('data:image/png;base64,AQID');
     expect(html).not.toContain('rel="modulepreload"');
     expect(html).not.toMatch(/(?:src|href)="\.\/assets\//);
     const mapText = html.match(/<script type="importmap">([^<]+)<\/script>/)?.[1];
@@ -26,7 +29,7 @@ describe('private site package', () => {
     const main = Buffer.from(imports['matrix-site:assets/main.js']!.split(',')[1]!, 'base64').toString('utf8');
     expect(main).toContain('matrix-site:assets/chunk.js');
     expect(main).toContain('data:image/png;base64,AQID');
-    expect(main).not.toContain('import.meta.url');
+    expect(main).toContain('new URL("data:image/png;base64,AQID", import.meta.url)');
   });
 
   it('fails closed when a private module references a missing local build artifact', async () => {
@@ -46,5 +49,36 @@ describe('private site package', () => {
     const imports = JSON.parse(mapText!).imports as Record<string, string>;
     const main = Buffer.from(imports['matrix-site:main.js']!.split(',')[1]!, 'base64').toString('utf8');
     expect(main).toContain('import("matrix-site:chunk.js")');
+  });
+
+  it('preserves linked stylesheet order and does not eagerly activate unlinked lazy styles', async () => {
+    const html = await packagePrivateSiteHtml([
+      { path: 'index.html', contentType: 'text/html', body: bytes('<link rel="stylesheet" href="/assets/base.css"><link rel="stylesheet" href="/assets/override.css"><script type="module" src="/assets/main.js"></script>') },
+      { path: 'assets/lazy.css', contentType: 'text/css', body: bytes('body{color:green}') },
+      { path: 'assets/override.css', contentType: 'text/css', body: bytes('body{color:blue}') },
+      { path: 'assets/base.css', contentType: 'text/css', body: bytes('body{color:red}') },
+      { path: 'assets/lazy.js', contentType: 'text/javascript', body: bytes('export default true;') },
+      { path: 'assets/main.js', contentType: 'text/javascript', body: bytes('window.lazyHref = "assets/lazy.css"; window.lazyChunk = "assets/lazy.js"; window.loadStyle = () => import("./lazy.css");') },
+    ], 'index.html');
+    const hrefs = [...html.matchAll(/<link rel="stylesheet" href="([^"]+)">/g)].map(match => match[1]!);
+    expect(hrefs).toHaveLength(2);
+    expect(Buffer.from(hrefs[0]!.split(',')[1]!, 'base64').toString('utf8')).toBe('body{color:red}');
+    expect(Buffer.from(hrefs[1]!.split(',')[1]!, 'base64').toString('utf8')).toBe('body{color:blue}');
+    const mapText = html.match(/<script type="importmap">([^<]+)<\/script>/)?.[1];
+    const imports = JSON.parse(mapText!).imports as Record<string, string>;
+    const lazyModule = Buffer.from(imports['matrix-site:assets/lazy.css']!.split(',')[1]!, 'base64').toString('utf8');
+    expect(lazyModule).toContain("document.createElement('link')");
+    const main = Buffer.from(imports['matrix-site:assets/main.js']!.split(',')[1]!, 'base64').toString('utf8');
+    expect(main).toContain('data:text/css;base64,');
+    expect(main).toContain('data:text/javascript,export{}');
+  });
+
+  it('rejects repeated resource expansion before constructing an oversized output', async () => {
+    const image = Buffer.alloc(1024 * 1024, 1);
+    const references = Array.from({ length: 1000 }, () => '<img src="./large.png">').join('');
+    await expect(packagePrivateSiteHtml([
+      { path: 'index.html', contentType: 'text/html', body: bytes(references) },
+      { path: 'large.png', contentType: 'image/png', body: image },
+    ], 'index.html')).rejects.toMatchObject({ code: 'unavailable' });
   });
 });

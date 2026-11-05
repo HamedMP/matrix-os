@@ -48,6 +48,7 @@ it('keeps the opaque iframe without credentialed private asset requests',()=>{
  expect(frame).not.toContain('crossorigin="use-credentials"');
  expect(frame).toContain(`<base href="https://matrix.page/${site.id}/frame">`);
  expect(PRIVATE_APP_CSP).toContain("script-src 'unsafe-inline' data:");
+ expect(PRIVATE_APP_CSP).toContain("style-src 'unsafe-inline' data:");
  expect(APP_CSP).not.toContain('allow-same-origin');
 });
 it('opens guide links with no opener and preserves in-page anchors without granting private access', () => {
