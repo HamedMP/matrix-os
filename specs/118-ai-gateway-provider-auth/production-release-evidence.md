@@ -118,19 +118,36 @@ establish upstream inference readiness or GA acceptance.
 
 `AI Gateway Read-only Inspection` is a manual, main-only workflow that uses the
 existing Production `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID`. It checks
-that the account matches the configured production Gateway URL, then makes only
-bounded, non-redirecting GET requests for the fixed Preview and production
-gateways. It performs no inference, deployment, token provisioning, permission
+that the account matches the configured production Gateway URL, then verifies
+the credential with `/user/tokens/verify`, falling back to
+`/accounts/{account_id}/tokens/verify` for account-owned tokens. All requests are
+bounded, non-redirecting GETs, including the fixed Preview and production Gateway
+reads. It performs no inference, deployment, token provisioning, permission
 change, or Gateway configuration write. Runtime inference tokens and an active
 Worker deployment credential do not by themselves establish Gateway management
 access.
 
-The report contains HTTP status, safe numeric error codes, coarse configuration
+The report contains the verified token ID, ownership (`user` or `account`), and
+allowlisted status (`active`, `disabled`, or `expired`). Match that ID in the
+corresponding Cloudflare User API Tokens or Account API Tokens entry; token names
+need not match the GitHub secret name. If verification fails, both Gateway reads
+still run and the report includes only coarse verification failures. The command
+fails unless token identity is verified and active and both Gateways are readable.
+The token ID is an identifier, not a usable credential; the secret value is never
+exported. If verification cannot establish an ID, do not guess the token by name.
+
+The Gateway report contains HTTP status, safe numeric error codes, coarse configuration
 booleans, a configuration hash, and a spend-rule count. It excludes credentials,
 raw Gateway responses, and customer metadata/filter values. A successful read
 proves read access only; it does not prove write access, exercise the spend fuse,
 or satisfy an acceptance receipt. Failure remains a failure rather than a reason
 to export the encrypted GitHub secret or trigger an unrelated Worker deployment.
+
+Before changing a matching token, preserve its existing permissions: the
+Production `CLOUDFLARE_API_TOKEN` also deploys Workers. The separate
+`CLOUDFLARE_AI_GATEWAY_TOKEN` and `CLOUDFLARE_WORKERS_AI_TOKEN` credentials serve
+runtime inference. This is internal operator tooling with no changed client
+surface or public product behavior; public-site documentation is unchanged.
 
 ## Metadata packet contract
 

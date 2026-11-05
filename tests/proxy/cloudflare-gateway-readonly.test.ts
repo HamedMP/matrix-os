@@ -1,10 +1,20 @@
 import { readFileSync } from "node:fs";
+import { spawnSync } from "node:child_process";
 import { describe, expect, it, vi } from "vitest";
 import { inspectGatewayMetadata, runReadOnlyInspection } from "../../scripts/ops/cloudflare-gateway-readonly.mjs";
 
 const account = "a".repeat(32);
 const token = "private-operator-credential-".repeat(2);
 const config = { accountId: account, token, gatewayId: "matrix-funded-production" };
+const inspectionEnv = {
+  GITHUB_REF: "refs/heads/main", CLOUDFLARE_API_TOKEN: token,
+  CLOUDFLARE_ACCOUNT_ID: account,
+  CLOUDFLARE_AI_GATEWAY_URL: `https://gateway.ai.cloudflare.com/v1/${account}/matrix-funded-production/anthropic`,
+};
+
+function gatewayResponse(url: string) {
+  return Response.json({ success: true, result: { id: url.split("/").at(-1) } });
+}
 
 describe("read-only Cloudflare Gateway credential inspection", () => {
   it("reads only the official gateway endpoint and suppresses all filter values", async () => {
@@ -60,6 +70,101 @@ describe("read-only Cloudflare Gateway credential inspection", () => {
     await expect(runReadOnlyInspection(env, fetcher)).rejects.toThrow("Reviewed main source required");
     await expect(runReadOnlyInspection({ ...env, GITHUB_REF: "refs/heads/main", CLOUDFLARE_ACCOUNT_ID: "b".repeat(32) }, fetcher)).rejects.toThrow("Invalid inspection configuration");
     expect(fetcher).not.toHaveBeenCalled();
+  });
+
+  it.each(["user", "account"])("identifies the %s token without logging credentials or arbitrary response fields", async ownership => {
+    const id = "c".repeat(32);
+    const fetcher = vi.fn(async (url: string, _options?: RequestInit) => {
+      if (!url.endsWith("/tokens/verify")) return gatewayResponse(url);
+      if (ownership === "account" && url.includes("/user/")) {
+        return Response.json({ success: false, errors: [{ message: token }] }, { status: 403 });
+      }
+      return Response.json({ success: true, result: { id, status: "active", value: token, name: token } });
+    });
+    const result = await runReadOnlyInspection(inspectionEnv, fetcher);
+    expect(result.tokenIdentity).toEqual({ verified: true, ownership, id, status: "active" });
+    expect(result.results.map((gateway: { readable: boolean }) => gateway.readable)).toEqual([true, true]);
+    const verificationUrls = fetcher.mock.calls.map(([url]) => url).filter(url => url.endsWith("/tokens/verify"));
+    expect(verificationUrls).toEqual(ownership === "user"
+      ? ["https://api.cloudflare.com/client/v4/user/tokens/verify"]
+      : ["https://api.cloudflare.com/client/v4/user/tokens/verify", `https://api.cloudflare.com/client/v4/accounts/${account}/tokens/verify`]);
+    for (const [, options] of fetcher.mock.calls) {
+      expect(options).toMatchObject({ method: "GET", redirect: "error", signal: expect.any(AbortSignal),
+        headers: { authorization: `Bearer ${token}` } });
+    }
+    expect(JSON.stringify(result)).not.toMatch(/private-|Bearer|value|name/);
+  });
+
+  it.each([
+    { id: "c".repeat(32), status: token },
+    { id: token, status: "active" },
+    { id: "c".repeat(32), status: "unknown" },
+  ])("rejects malformed token identity fields while preserving gateway diagnostics", async identity => {
+    const fetcher = vi.fn(async (url: string) => url.endsWith("/tokens/verify")
+      ? Response.json({ success: true, result: identity }) : gatewayResponse(url));
+    const result = await runReadOnlyInspection(inspectionEnv, fetcher);
+    expect(result.tokenIdentity).toMatchObject({ verified: false });
+    expect(result.results).toHaveLength(2);
+    expect(JSON.stringify(result)).not.toContain(token);
+  });
+
+  it.each(["disabled", "expired"])("reports a verified %s token status without claiming gateway access", async status => {
+    const fetcher = vi.fn(async (url: string) => url.endsWith("/tokens/verify")
+      ? Response.json({ success: true, result: { id: "c".repeat(32), status } })
+      : Response.json({ success: false, errors: [{ code: 10000, message: token }] }, { status: 403 }));
+    const result = await runReadOnlyInspection(inspectionEnv, fetcher);
+    expect(result.tokenIdentity).toEqual({ verified: true, ownership: "user", id: "c".repeat(32), status });
+    expect(result.results.map((gateway: { readable: boolean }) => gateway.readable)).toEqual([false, false]);
+    expect(JSON.stringify(result)).not.toContain(token);
+  });
+
+  it.each(["network", "timeout", "oversized", "invalid-json", "denied"])("continues the gateway checks after %s token verification failures", async failure => {
+    const fetcher = vi.fn(async (url: string) => {
+      if (!url.endsWith("/tokens/verify")) return gatewayResponse(url);
+      if (failure === "network") throw new TypeError(token);
+      if (failure === "timeout") throw new DOMException(token, "TimeoutError");
+      if (failure === "oversized") return new Response("x".repeat(65537));
+      if (failure === "invalid-json") return new Response(token);
+      return Response.json({ success: false, errors: [{ message: token }] }, { status: 403 });
+    });
+    const result = await runReadOnlyInspection(inspectionEnv, fetcher);
+    expect(result.tokenIdentity).toMatchObject({ verified: false });
+    expect(fetcher).toHaveBeenCalledTimes(4);
+    expect(result.results.map((gateway: { readable: boolean }) => gateway.readable)).toEqual([true, true]);
+    expect(JSON.stringify(result)).not.toContain(token);
+  });
+
+  it("rejects an invalid credential before token verification or gateway requests", async () => {
+    const fetcher = vi.fn();
+    await expect(runReadOnlyInspection({ ...inspectionEnv, CLOUDFLARE_API_TOKEN: "" }, fetcher))
+      .rejects.toThrow("Invalid inspection configuration");
+    expect(fetcher).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    { identity: true, gateways: true, exitCode: 0 },
+    { identity: true, gateways: false, exitCode: 1 },
+    { identity: false, gateways: true, exitCode: 1 },
+  ])("prints a safe CLI report and exits $exitCode with identity=$identity and gateways=$gateways", scenario => {
+    const preload = `globalThis.fetch = async (url) => {
+      if (url.endsWith('/tokens/verify')) return Response.json({
+        success: ${scenario.identity},
+        result: { id: '${"c".repeat(32)}', status: 'active', value: process.env.CLOUDFLARE_API_TOKEN },
+        errors: [{ message: process.env.CLOUDFLARE_API_TOKEN }],
+      }, { status: ${scenario.identity ? 200 : 403} });
+      return Response.json({ success: ${scenario.gateways}, result: { id: url.split('/').at(-1) } },
+        { status: ${scenario.gateways ? 200 : 403} });
+    };`;
+    const child = spawnSync(process.execPath, [
+      "--import", `data:text/javascript;base64,${Buffer.from(preload).toString("base64")}`,
+      "scripts/ops/cloudflare-gateway-readonly.mjs",
+    ], { env: { ...process.env, ...inspectionEnv }, encoding: "utf8", timeout: 10_000 });
+    expect(child.error).toBeUndefined();
+    expect(child.status).toBe(scenario.exitCode);
+    const report = JSON.parse(child.stdout);
+    expect(report.tokenIdentity.verified).toBe(scenario.identity);
+    expect(report.results).toHaveLength(2);
+    expect(child.stdout + child.stderr).not.toContain(token);
   });
 
   it("keeps the operator workflow manual, main-only, and without deployment credentials", () => {
