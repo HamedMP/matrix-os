@@ -21,9 +21,13 @@ describe("hosted billing catalog", () => {
     expect(MATRIX_HOSTED_BILLING_REGIONS.map((region) => region.slug)).toEqual([
       "region_fsn1",
       "region_nbg1",
+      "region_hel1",
       "region_ash",
       "region_hil",
     ]);
+    expect(MATRIX_HOSTED_BILLING_REGIONS.find((region) => region.slug === "region_hel1")).toMatchObject({
+      location: "hel1", label: "Helsinki, Finland", countryLabel: "Finland", networkZone: "eu-central",
+    });
 
     expect(resolveMatrixMachineProfile("matrix_starter", "region_fsn1")).toMatchObject({
       serverType: "cpx22", vcpus: 2, memoryGb: 4, diskGb: 80,
@@ -34,6 +38,9 @@ describe("hosted billing catalog", () => {
     expect(resolveMatrixMachineProfile("matrix_max", "region_fsn1")).toMatchObject({
       serverType: "cpx52", vcpus: 12, memoryGb: 24, diskGb: 480,
     });
+    expect(resolveMatrixMachineProfile("matrix_starter", "region_hel1")).toMatchObject({ serverType: "cpx22" });
+    expect(resolveMatrixMachineProfile("matrix_builder", "region_hel1")).toMatchObject({ serverType: "cpx42" });
+    expect(resolveMatrixMachineProfile("matrix_max", "region_hel1")).toMatchObject({ serverType: "cpx52" });
     expect(resolveMatrixMachineProfile("matrix_starter", "region_ash")).toMatchObject({
       serverType: "cpx21", vcpus: 3, memoryGb: 4, diskGb: 80,
     });
