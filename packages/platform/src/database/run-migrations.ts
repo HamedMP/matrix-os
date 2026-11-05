@@ -1,3 +1,4 @@
+import { runOperatorProbeBudgetMigrations } from '../operator-probe-budget/migration.js';
 import { migratePreviewPairPublisher } from "../preview-pair/migration.js";
 import { GOOGLE_TRACKING_REVISION } from '../billing/google-tracking-revision.js';
 import { migrateGooglePurchases } from '../billing/google-tracking-migration.js';
@@ -21,6 +22,7 @@ export async function runPlatformStartupMigrations(db: Kysely<PlatformDatabase>)
   await runPlatformMigration(db, migrateFundedConservativeFence, {
     scope: FUNDED_CONSERVATIVE_FENCE_SCOPE, revision: FUNDED_CONSERVATIVE_FENCE_REVISION, deadlockAttempts: 12,
   });
+  await runOperatorProbeBudgetMigrations(db);
   // Always inspect the actual binding/body, including when its marker skips DDL.
   await assertFundedConservativeFence(db);
   await runPlatformMigration(db, migrateFundedProbeCache, {
