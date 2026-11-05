@@ -1,9 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { mkdtemp, mkdir, readFile, rename, rm, symlink, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, readdir, rename, rm, symlink, writeFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { tmpdir } from "node:os";
 import { UnsafeOwnerSystemDirError, withPinnedSystemDir } from "../../packages/gateway/src/get-started/owner-system-dir.js";
+import { writeUtf8FileAtomic } from "../../packages/gateway/src/shell/atomic-write.js";
 
 describe("withPinnedSystemDir", () => {
   let root: string;
@@ -37,6 +38,17 @@ describe("withPinnedSystemDir", () => {
     expect(await withPinnedSystemDir(homePath, (dir) => dir.readFile("edge.json", 1024))).toBe("x".repeat(1024));
     await writeFile(join(homePath, "system", "edge.json"), "x".repeat(1025));
     await expect(withPinnedSystemDir(homePath, (dir) => dir.readFile("edge.json", 1024))).rejects.toBeInstanceOf(UnsafeOwnerSystemDirError);
+  });
+
+  it("publishes a staged eligibility file without overwriting another process's completion receipt", async () => {
+    const target = join(homePath, "system/get-started.json");
+    const receipt = '{"version":1,"status":"skipped","skippedAt":"2026-10-29T10:00:00.000Z"}';
+    await expect(writeUtf8FileAtomic(target, '{"version":1,"status":"pending"}', 0o644, {
+      exclusive: true,
+      beforeCommit: async () => { await writeFile(target, receipt, { flag: "wx" }); },
+    })).rejects.toMatchObject({ code: "EEXIST" });
+    expect(await readFile(target, "utf8")).toBe(receipt);
+    expect(await readdir(join(homePath, "system"))).toEqual(["get-started.json"]);
   });
 
   it("returns null when the home has no system directory", async () => {

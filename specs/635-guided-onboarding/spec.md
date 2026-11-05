@@ -154,7 +154,7 @@ Personal Matrix Bot: at "Enter your computer", create it with `POST /api/chat-ag
 | Finding | Consequence |
 | -- | -- |
 | `BootSequence.tsx` shows provisioning on the platform-served shell before the computer exists; the gateway is not reachable then. | Asking during provisioning needs platform storage and a platform/app-shell deploy. v1 runs the wizard when the desktop first loads; "during the build" is optional Section 8. |
-| Gateway `GET /api/settings/onboarding-status` checks `system/onboarding-complete.json`, which nothing writes any more. The platform `first_run` phase depends on a record only a backfill writes. | Neither tells new users from existing ones. v1 adds its own marker, written only for newly created homes (Section 2). |
+| Gateway `GET /api/settings/onboarding-status` checks `system/onboarding-complete.json`. The platform `first_run` phase depends on a record only a backfill writes. | Wizard progress has its own marker. New homes are seeded; the [existing-owner amendment](existing-owner-enrollment.md) adds owners with no active Matrix agents. |
 | `/files/system/soul.md` has a special-cased write path with 16 KiB and control-character validation (spec 551). | P2 renders the SOUL section on the server from validated choices. |
 | Getting started has fixed step IDs (`GETTING_STARTED_STEP_IDS`) with real completion detection. | The five steps keep their checks; rows added from answers use existing signals only (connected integrations, a bot's direct chat having messages). |
 | The onboarding widget is a shared reducer plus UI (`@matrix-os/contracts`, `@matrix-os/ui`) with thin hosts per surface (ENG-191). | The wizard is built the same way, so all three desktop surfaces share one implementation. |
@@ -172,7 +172,7 @@ Personal Matrix Bot: at "Enter your computer", create it with `POST /api/chat-ag
 { "version": 1, "status": "completed", "completedAt": "2026-10-25T10:12:00.000Z", "answers": { "name": "Sam", "goals": ["code", "build"], "tools": ["github", "claude-code", "linear"], "appIdea": "habit-tracker" } }
 ```
 
-`status` is `pending`, `in_progress` (with a `draft` for resume), `completed` or `skipped`. Tools and app ideas are stable IDs from a shared catalog, never display strings. **No file means not eligible**, so existing computers never see the wizard.
+`status` is `pending`, `in_progress` (with a `draft` for resume), `completed` or `skipped`. Tools and app ideas are stable IDs from a shared catalog, never display strings. With no file, the gateway may enroll the primary computer's owner when they have no active Matrix agents and have never completed or skipped this wizard. See the [existing-owner amendment](existing-owner-enrollment.md).
 
 ### Gateway endpoint
 
@@ -185,7 +185,8 @@ A dedicated endpoint instead of generic file writes: answers are validated again
 
 | Request | Current status | Result |
 | -- | -- | -- |
-| `GET` | no file / flag off | `200 { status: "not_eligible" }` |
+| `GET` | no file, eligible primary owner with zero active agents | atomically create `pending`; `200 { status: "pending" }` |
+| `GET` | no file, other cohort / kill switch off | `200 { status: "not_eligible" }` |
 | `PUT draft` | `pending`, `in_progress` | `200`, status `in_progress` |
 | `PUT draft` | `completed`, `skipped` | `409` |
 | `PUT complete` | `pending`, `in_progress` | `200`, status `completed` |
@@ -297,7 +298,7 @@ Each section is one layer, under the 3000-line limit, tests first.
 P0:
 
 1. New account → computer ready → the wizard opens over the blurred wallpaper; it can't be closed or minimized until finished; each question can be skipped.
-   - 1a. An existing account never sees the wizard; flag off → nobody sees it.
+   - 1a. An existing owner with zero active Matrix agents is offered setup once; an owner with active agents is excluded. Completed/Skipped records stay terminal; flag off → nobody sees it.
 2. Refresh mid-wizard, or open Electron Desktop mid-wizard → resumes with the saved draft. Finish → never shown again on any surface.
 3. Skip everything → desktop opens; `get-started.json` has `status: "skipped"`; nothing else changed.
 4. "Write code with agents" + GitHub + Claude Code, connect both → Getting started opens with coding steps first and those done; the widget greets by name with the clone question.

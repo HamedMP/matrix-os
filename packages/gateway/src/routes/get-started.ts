@@ -17,9 +17,8 @@ import { OwnerFileMutationBusyError, withOwnerFileMutation } from "../owner-file
 import { applyGetStartedPersonality } from "../get-started/personality.js";
 import { GET_STARTED_MATRIX_BOT_RECIPE_ID } from "../get-started/bots.js";
 
-// Spec 635, Section 1. The state file is only ever created for new homes
-// (Section 2), so a missing file means "not eligible", never "pending". Both files
-// live in the owner's `system` directory, read and written only through its pin.
+// Spec 635: seeded new homes and eligible zero-agent owners share one durable
+// setup record. Both files live in the owner's `system` directory, through its pin.
 const STATE_FILE = "get-started.json";
 const ONBOARDING_COMPLETE_FILE = "onboarding-complete.json";
 const PUT_BODY_LIMIT = 8 * 1024;
@@ -42,6 +41,8 @@ export interface GetStartedRoutesOptions {
   now?: () => Date;
   /** The authenticated owner, for creating their Matrix Bot. */
   getOwnerId?: (c: Context) => string | null;
+  /** Primary computer owner with no active Matrix agents; inventory errors must propagate. */
+  canEnroll?: (ownerId: string) => Promise<boolean>;
   /** Creates (or replays) a bot from a recipe. Best effort: setup never fails on it. */
   ensureBot?: (ownerId: string, recipeId: string, name?: string) => Promise<void>;
   /** What a saved bot choice made: the bot it created, or "pending" while its creation never finished. */
@@ -177,13 +178,27 @@ export function createGetStartedRoutes(opts: GetStartedRoutesOptions) {
     void ensureSavedBots(ownerId, state.answers);
   }
 
-  app.get("/", async (c) => {
+  app.get("/", bodyLimit({ maxSize: PUT_BODY_LIMIT }), async (c) => {
     if (!enabled) return c.json({ status: "not_eligible" } satisfies GetStartedResponse);
     try {
-      const state = await withPinnedSystemDir(homePath, readState);
+      const state = await withOwnerFileMutation(homePath, () => withPinnedSystemDir(homePath, async (dir) => {
+        const saved = await readState(dir);
+        // Saved progress and terminal receipts always win, including after an agent is removed.
+        if (saved) return saved;
+        const ownerId = opts.getOwnerId?.(c) ?? null;
+        if (!opts.canEnroll || !ownerId) return null;
+        const marker = await dir.readFile(ONBOARDING_COMPLETE_FILE, STATE_FILE_MAX_BYTES);
+        const receipt: unknown = marker === null ? null : JSON.parse(marker);
+        if (receipt !== null && typeof receipt === "object" && "source" in receipt && receipt.source === "get-started") return null;
+        if (!await opts.canEnroll(ownerId)) return null;
+        // Exclusive atomic publication also protects against another gateway's seed/write.
+        await dir.createExclusive(STATE_FILE, `${JSON.stringify({ version: 1, status: "pending" })}\n`);
+        return readState(dir);
+      }));
       if (state) reconcileSavedBots(c, state);
       return c.json(state ? toResponse(state) : ({ status: "not_eligible" } satisfies GetStartedResponse));
     } catch (err) {
+      if (err instanceof OwnerFileMutationBusyError) return c.json({ error: LOAD_ERROR }, 503);
       console.warn("[get-started] Failed to read state:", errorName(err));
       return c.json({ error: LOAD_ERROR }, 500);
     }
