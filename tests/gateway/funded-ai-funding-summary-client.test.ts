@@ -68,8 +68,37 @@ describe("funded AI funding summary client", () => {
         authorization: `Bearer ${"p".repeat(64)}`,
         "content-type": "application/json",
       }),
-      body: JSON.stringify({ includeChatAvailability: true }),
+      body: JSON.stringify({ includeChatAvailability: true, includeUpstreamPreference: true }),
     }));
+  });
+
+  it("updates the entitled upstream preference through the derived authenticated route", async () => {
+    const preference = { selectedUpstream: "aws_bedrock", effectiveUpstream: "cloudflare", revision: 8,
+      updatedAt: NOW, validThrough: "2026-09-30T00:00:00.000Z" } as const;
+    const fetchFn = vi.fn(async () => Response.json({ contractVersion: 1, preference }));
+    const client = createFundedAiFundingSummaryClient(runtimeConfig(), { fetchFn });
+    await expect(client.setUpstreamPreference!({ idempotencyKey: "upstream_1",
+      expectedRevision: 7, selectedUpstream: "aws_bedrock" }))
+      .resolves.toEqual(preference);
+    expect(fetchFn).toHaveBeenCalledWith(
+      "https://platform.matrix-os.com/internal/containers/alice/ai/upstream-preference?runtimeSlot=primary",
+      expect.objectContaining({ method: "POST", redirect: "error", signal: expect.any(AbortSignal),
+        body: JSON.stringify({ idempotencyKey: "upstream_1", expectedRevision: 7,
+          selectedUpstream: "aws_bedrock" }),
+        headers: expect.objectContaining({ authorization: `Bearer ${"p".repeat(64)}` }) }),
+    );
+  });
+
+  it("preserves only the safe revision-conflict code from preference writes", async () => {
+    const fetchFn = vi.fn(async () => Response.json({
+      error: { code: "revision_conflict", message: "Policy changed; refresh and try again" },
+    }, { status: 409 }));
+    const client = createFundedAiFundingSummaryClient(runtimeConfig(), { fetchFn });
+    const error = await client.setUpstreamPreference!({ idempotencyKey: "upstream_conflict",
+      expectedRevision: 7, selectedUpstream: "aws_bedrock" }).catch((caught: unknown) => caught);
+    expect(error).toBeInstanceOf(FundedAiFundingSummaryClientError);
+    expect(error).toMatchObject({ code: "revision_conflict",
+      message: "Matrix AI usage is temporarily unavailable" });
   });
 
   it("reads opted-in Chat availability and rejects malformed or mismatched projections", async () => {
@@ -83,13 +112,34 @@ describe("funded AI funding summary client", () => {
     }
   });
 
-  it("retries a legacy body rejection once under the same deadline without inventing availability", async () => {
+  it("preserves Chat availability when an older platform rejects only the upstream preference field", async () => {
+    const chatAvailability = { contractVersion: 1, asOf: NOW, eligibleBalanceMicrousd: 400, availableBalanceMicrousd: 200 };
+    const fetchFn = vi.fn()
+      .mockResolvedValueOnce(Response.json({ error: { code: "invalid_request", message: "Invalid request" } }, { status: 400 }))
+      .mockResolvedValueOnce(Response.json({ contractVersion: 1, funding, policy, chatAvailability }));
+    const client = createFundedAiFundingSummaryClient(runtimeConfig(), { fetchFn });
+    await expect(client.getFundingSummary()).resolves.toEqual({ funding, policy, chatAvailability });
+    expect(fetchFn).toHaveBeenCalledTimes(2);
+    expect(fetchFn.mock.calls.map((call) => call[1]?.body)).toEqual([
+      JSON.stringify({ includeChatAvailability: true, includeUpstreamPreference: true }),
+      JSON.stringify({ includeChatAvailability: true }),
+    ]);
+    expect(fetchFn.mock.calls[1][1]?.signal).toBe(fetchFn.mock.calls[0][1]?.signal);
+  });
+
+  it("retries both negotiated summary shapes before using the legacy body", async () => {
     const fetchFn = vi.fn().mockResolvedValueOnce(Response.json({ error: { code: "invalid_request", message: "Invalid request" } }, { status: 400 }))
+      .mockResolvedValueOnce(Response.json({ error: { code: "invalid_request", message: "Invalid request" } }, { status: 400 }))
       .mockResolvedValueOnce(Response.json({ contractVersion: 1, funding, policy }));
     const client = createFundedAiFundingSummaryClient(runtimeConfig(), { fetchFn });
     await expect(client.getFundingSummary()).resolves.toEqual({ funding, policy });
-    expect(fetchFn).toHaveBeenCalledTimes(2);
-    expect(fetchFn.mock.calls[1][1]).toMatchObject({ body: "{}", signal: fetchFn.mock.calls[0][1].signal });
+    expect(fetchFn).toHaveBeenCalledTimes(3);
+    expect(fetchFn.mock.calls.map((call) => call[1]?.body)).toEqual([
+      JSON.stringify({ includeChatAvailability: true, includeUpstreamPreference: true }),
+      JSON.stringify({ includeChatAvailability: true }),
+      "{}",
+    ]);
+    expect(fetchFn.mock.calls[2][1]).toMatchObject({ signal: fetchFn.mock.calls[0][1].signal });
   });
 
   it("does not retry unrelated or malformed body denials", async () => {

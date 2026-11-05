@@ -4,6 +4,7 @@ import type {
   CanonicalChatSkillDescriptor,
   CanonicalProviderInstanceDescriptor,
 } from "@matrix-os/contracts";
+import { isEffectiveBedrockModel } from "../ai-providers/effective-bedrock-route.js";
 
 /** Project funded readiness from V3; model discovery must never acquire a credential. */
 export function managedChatInstances(
@@ -22,7 +23,8 @@ export function managedChatInstances(
     const eligible = snapshot.models.filter((model) => instance.modelIds.includes(model.id)
       && source.eligibleModelIds.includes(model.id)
       && model.eligibleAccessSourceIds.includes(source.id)
-      && model.status !== "unavailable" && model.status !== "retired");
+      && model.status !== "unavailable" && model.status !== "retired"
+      && !isEffectiveBedrockModel(snapshot, source.id, model.id));
     const policyObserved = fresh && source.checkedAt !== null && Date.parse(source.checkedAt) <= now
       && source.staleAfter !== null;
     const selectable = ready ? eligible : [];
@@ -100,15 +102,29 @@ export function managedPiChatInstances(snapshot: AiProviderSnapshotV3 | undefine
   const fundingState = fundingSources.some(source => source.safeReason === "budget_exceeded") ? "budget_exceeded" as const
     : fundingSources.some(source => source.safeReason === "credit_reserved") ? "credit_reserved" as const
     : fundingSources.some(source => source.safeReason === "credit_required") ? "credit_required" as const : "unavailable" as const;
+  const projectModel = (model: AiProviderSnapshotV3["models"][number], availability: "available" | "unavailable") => {
+    const bedrock = isEffectiveBedrockModel(snapshot, "matrix_included", model.id);
+    const capabilities = bedrock
+      ? model.capabilities.filter((capability) => capability !== "vision")
+      : model.capabilities;
+    return {
+      id: model.id,
+      displayName: model.displayName,
+      availability,
+      capabilities,
+      supportsVision: capabilities.includes("vision"),
+      supportsToolUse: true,
+    } as const;
+  };
   return [{
     id: MANAGED_PI_INSTANCE_ID, driverKind: "matrix_pi", displayName: "Matrix AI", connectionLabel: "Matrix AI",
     availability: available ? "available" : "unavailable", connectionState: available ? "ready" : fundingState,
     workspaceRequirement: "project_optional",
     // Keep catalog order stable as health receipts change. Only the exact
     // existing route resolver can make a discovery row executable.
-    models: snapshot.models.filter(model => eligible.includes(model) || discoverable.includes(model)).map(model => ({
-      id: model.id, displayName: model.displayName, availability: eligible.includes(model) ? "available" as const : "unavailable" as const,
-      capabilities: model.capabilities, supportsVision: model.capabilities.includes("vision"), supportsToolUse: true })),
+    models: snapshot.models
+      .filter(model => eligible.includes(model) || discoverable.includes(model))
+      .map(model => projectModel(model, eligible.includes(model) ? "available" : "unavailable")),
     options: [], skills: [], commands: [],
     setupActions: available ? [] : [{ id: "matrix_ai_settings", kind: "open_settings" as const, label: "Agents & providers" }],
     supports: MANAGED_PI_CHAT_SUPPORTS,

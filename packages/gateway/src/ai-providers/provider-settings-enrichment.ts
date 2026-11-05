@@ -30,6 +30,7 @@ export async function readProviderSettingsEnrichment(input: {
           fundingSummary: FundedAiFundingSummarySchema.parse(state.funding),
           fundedPolicy: FundedAiEffectivePolicySchema.parse(state.policy),
           ...(chatAvailability ? { chatAvailability } : {}),
+          ...(state.upstreamPreference ? { upstreamPreference: state.upstreamPreference } : {}),
         };
       } catch (error) {
         console.warn("[provider-settings] Matrix funding summary unavailable:",
@@ -56,7 +57,19 @@ export async function readProviderSettingsEnrichment(input: {
   ]);
   const hasMatrixSource = canonical.accessSources.some((source) =>
     source.fundingKind === "matrix_included" || source.fundingKind === "matrix_addon");
-  return { ...(hasMatrixSource ? funded : undefined), genericModelCatalog };
+  const entitledFunded = hasMatrixSource ? funded : undefined;
+  const canonicalWithPlatformTruth: AiProviderSnapshotV3 = entitledFunded?.upstreamPreference
+    ? { ...canonical, upstreamPreference: entitledFunded.upstreamPreference }
+    : canonical;
+  return {
+    ...(canonicalWithPlatformTruth !== canonical ? { canonical: canonicalWithPlatformTruth } : {}),
+    ...(entitledFunded ? {
+      fundingSummary: entitledFunded.fundingSummary,
+      fundedPolicy: entitledFunded.fundedPolicy,
+      ...(entitledFunded.chatAvailability ? { chatAvailability: entitledFunded.chatAvailability } : {}),
+    } : {}),
+    genericModelCatalog,
+  };
 }
 
 export type ProviderSettingsEnrichment = Awaited<ReturnType<typeof readProviderSettingsEnrichment>>;
