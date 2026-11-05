@@ -1,6 +1,6 @@
 import { expect, it, vi } from 'vitest';
 import { JSDOM } from 'jsdom';
-import { APP_CSP, siteFrame, sitePage } from '../../packages/platform/src/sites/renderer.js';
+import { APP_CSP, PRIVATE_APP_CSP, siteFrame, sitePage } from '../../packages/platform/src/sites/renderer.js';
 import type { SiteRecord } from '@matrix-os/contracts';
 const site: SiteRecord = { id: 'a2fd72d0-0926-49d5-b45f-bbfb167e50d2', appSlug: 'launch', title: '<script>bad()</script>', description: '', slug: null, url: 'https://matrix.page/a2fd72d0-0926-49d5-b45f-bbfb167e50d2', revision: 1, status: 'published', accessMode: 'public', activeVersion: 'cd0a12e9-18a0-4b4e-9a10-269eb5697d4f', versions: [], config: { data: {}, forms: [] } };
 it.each(['TypeError', 'Error', 'UnknownError'])('logs only a coarse %s category when public submission fails', async category => {
@@ -42,10 +42,12 @@ it('sends the site-scoped viewer cookie when a private wrapper submits a declare
     expect(page).toContain("credentials:'same-origin'");
     expect(page).not.toContain("credentials:'include'");
 });
-it('keeps the opaque iframe while credentialing private Vite module and stylesheet asset loads',()=>{
+it('keeps the opaque iframe without credentialed private asset requests',()=>{
  const privateSite={...site,accessMode:'private_link' as const};
- const frame=siteFrame('<html><head><link rel="modulepreload" href="./chunk.js"><link rel="stylesheet" href="./app.css"><script type="module" src="./app.js"></script></head></html>',privateSite);
- expect(frame.match(/crossorigin="use-credentials"/g)).toHaveLength(3);
+ const frame=siteFrame('<html><head><script type="module">import "matrix-site:app.js"</script></head></html>',privateSite,'index.html',true);
+ expect(frame).not.toContain('crossorigin="use-credentials"');
+ expect(frame).toContain(`<base href="https://matrix.page/${site.id}/frame">`);
+ expect(PRIVATE_APP_CSP).toContain("script-src 'unsafe-inline' data:");
  expect(APP_CSP).not.toContain('allow-same-origin');
 });
 it('opens guide links with no opener and preserves in-page anchors without granting private access', () => {

@@ -15,8 +15,9 @@ import { assertCurrentPublishingRuntime, createPublishAdmission } from './publis
 import { loadSiteAsset } from './asset-stream.js';
 import {
     buildSiteViewerCookie, createSiteAccessSecret, hashSiteAccessSecret,
-    readSiteAssetCookie, readSiteViewerCookie, siteAccessSecretMatches,
+    readSiteViewerCookie, siteAccessSecretMatches,
 } from './access-links.js';
+import { packagePrivateSiteHtml } from './private-package.js';
 type Storage = Omit<CustomerVpsObjectStore, 'getObject'> & {
     getObject(key: string, options?: { signal?: AbortSignal }): Promise<{ body: unknown; etag?: string; contentLength?: number }>;
     deleteObject?(key: string, options?: {
@@ -67,6 +68,9 @@ export function createSitesService(options: {
     // Separate bounded management capacity keeps revocation available while
     // publication/submission slots are occupied, without queuing owner waiters.
     const managementAdmission = createPublishAdmission();
+    const privateFrames = new Map<string, { expiresAt: number; value: Promise<string> }>();
+    const PRIVATE_FRAME_CACHE_MAX = 4;
+    const PRIVATE_FRAME_CACHE_TTL_MS = 5 * 60_000;
     async function get(owner: SiteOwner) { await db.ready; const row = await ownership(db, owner).executeTakeFirst(); return row ? project(db, row) : null; }
     async function resolve(reference: string, scoped = db) {
         await scoped.ready;
@@ -234,6 +238,46 @@ export function createSitesService(options: {
         const body = await loadSiteAsset(signal => storage.getObject(key(ownerRow.owner_id, site.id, version, path), { signal }), file.bytes);
         return { body, contentType: file.contentType, site: { ...site, activeVersion: version, config: SitePublishingSchema.parse(row.config) } };
     }
+    async function privateFrame(reference: string, version: string, path: string) {
+        if (!storage)
+            throw new SiteError('unavailable');
+        const site = await resolve(reference);
+        if (!site || site.accessMode !== 'private_link' || site.activeVersion !== version)
+            throw new SiteError('not_found');
+        const cacheKey = `${site.id}:${version}:${path}`;
+        const cached = privateFrames.get(cacheKey);
+        if (cached && cached.expiresAt > Date.now()) {
+            privateFrames.delete(cacheKey);
+            privateFrames.set(cacheKey, cached);
+            return cached.value;
+        }
+        if (cached) privateFrames.delete(cacheKey);
+        const value = (async () => {
+            const row = await db.executor.selectFrom('public_site_versions').select('files')
+                .where('site_id', '=', site.id).where('id', '=', version).executeTakeFirst();
+            if (!row || row.files.length < 1 || row.files.length > 200
+                || row.files.reduce((sum, file) => sum + file.bytes, 0) > 10 * 1024 * 1024)
+                throw new SiteError('unavailable');
+            const owner = await db.executor.selectFrom('public_sites').select('owner_id').where('id', '=', site.id).executeTakeFirst();
+            if (!owner) throw new SiteError('not_found');
+            const loaded: Array<{ path: string; contentType: string; body: Buffer }> = new Array(row.files.length);
+            let cursor = 0;
+            await Promise.all(Array.from({ length: Math.min(8, row.files.length) }, async () => {
+                while (true) {
+                    const index = cursor++;
+                    const file = row.files[index];
+                    if (!file) return;
+                    loaded[index] = { ...file, body: await loadSiteAsset(
+                        signal => storage.getObject(key(owner.owner_id, site.id, version, file.path), { signal }), file.bytes) };
+                }
+            }));
+            return packagePrivateSiteHtml(loaded, path);
+        })();
+        privateFrames.set(cacheKey, { expiresAt: Date.now() + PRIVATE_FRAME_CACHE_TTL_MS, value });
+        while (privateFrames.size > PRIVATE_FRAME_CACHE_MAX) privateFrames.delete(privateFrames.keys().next().value!);
+        try { return await value; }
+        catch (error) { privateFrames.delete(cacheKey); throw error; }
+    }
     async function admitted<T>(reference: string, work: (site: SiteRecord, trx: PlatformDB) => Promise<T>, cookieHeader?: string) {
         const initial = await resolve(reference);
         if (!initial)
@@ -275,9 +319,6 @@ export function createSitesService(options: {
     }
     async function authorize(reference: string, cookieHeader?: string, scoped = db) {
         return authorizeCredential(reference, cookieHeader, readSiteViewerCookie, scoped);
-    }
-    async function authorizeAsset(reference: string, cookieHeader?: string, scoped = db) {
-        return authorizeCredential(reference, cookieHeader, readSiteAssetCookie, scoped);
     }
     async function listAccessLinks(owner: SiteOwner) {
         await db.ready;
@@ -352,7 +393,7 @@ export function createSitesService(options: {
             return { cookie: buildSiteViewerCookie(site.id, link.id, sessionToken), link: accessLinkSummary(changed) };
         }, env));
     }
-    return { get, resolve, authorize, authorizeAsset, deploy, patch, unpublish, rollback, asset, admitted,
+    return { get, resolve, authorize, deploy, patch, unpublish, rollback, asset, privateFrame, admitted,
         listAccessLinks, createAccessLink, revokeAccessLink, claimAccessLink };
 }
 export type SitesService = ReturnType<typeof createSitesService>;

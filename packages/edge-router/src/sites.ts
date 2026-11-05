@@ -8,20 +8,16 @@ const write = new RegExp(`^/${reference}/(?:forms/[a-z][a-z0-9_]{0,63}|access/cl
 const blocked = new Set(['api', 'public', 'assets', 'frame', 'forms', 'preview', 'admin', 'auth', 'health', 'robots', 'favicon', 'index', 'sites', 'www']);
 const siteIdPattern = '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}';
 const viewerCookie = new RegExp(`^__Secure-matrix_site_viewer_([a-f0-9]{32})=${siteIdPattern}\\.[A-Za-z0-9_-]{43}$`, 'i');
-const assetCookie = new RegExp(`^__Secure-matrix_site_asset_([a-f0-9]{32})=${siteIdPattern}\\.[A-Za-z0-9_-]{43}$`, 'i');
 const viewerSetCookie = new RegExp(`^__Secure-matrix_site_viewer_([a-f0-9]{32})=${siteIdPattern}\\.[A-Za-z0-9_-]{43}; Path=\/(${siteIdPattern}); HttpOnly; Secure; SameSite=Lax; Max-Age=2592000$`, 'i');
-const assetSetCookie = new RegExp(`^__Secure-matrix_site_asset_([a-f0-9]{32})=${siteIdPattern}\\.[A-Za-z0-9_-]{43}; Path=\/(${siteIdPattern})\/assets\/; HttpOnly; Secure; SameSite=None; Max-Age=2592000$`, 'i');
 const viewerClearCookie = new RegExp(`^__Secure-matrix_site_viewer_([a-f0-9]{32})=; Path=\/(${siteIdPattern}); HttpOnly; Secure; SameSite=Lax; Max-Age=0$`, 'i');
-const assetClearCookie = new RegExp(`^__Secure-matrix_site_asset_([a-f0-9]{32})=; Path=\/(${siteIdPattern})\/assets\/; HttpOnly; Secure; SameSite=None; Max-Age=0$`, 'i');
-const matrixCookiePrefix = /^__(?:Secure-matrix_site_(?:viewer|asset)_|Host-matrix_site_viewer_)/i;
+const matrixCookiePrefix = /^__(?:Secure-matrix_site_viewer_|Host-matrix_site_viewer_)/i;
 function pathSiteId(pathname: string): string | null {
     const candidate = pathname.split('/')[1] ?? '';
     return new RegExp(`^${siteIdPattern}$`, 'i').test(candidate) ? candidate.toLowerCase() : null;
 }
 function approvedSetCookie(cookie: string, targetSiteId: string | null): boolean {
     if (!targetSiteId) return false;
-    const match = viewerSetCookie.exec(cookie) ?? assetSetCookie.exec(cookie)
-        ?? viewerClearCookie.exec(cookie) ?? assetClearCookie.exec(cookie);
+    const match = viewerSetCookie.exec(cookie) ?? viewerClearCookie.exec(cookie);
     return Boolean(match && match[1]?.toLowerCase() === targetSiteId.replaceAll('-', '') && match[2]?.toLowerCase() === targetSiteId);
 }
 function forwardedViewerCookies(raw: string | null, targetSiteId: string | null): { value: string | null; invalid: boolean } {
@@ -29,15 +25,13 @@ function forwardedViewerCookies(raw: string | null, targetSiteId: string | null)
     if (new TextEncoder().encode(raw).byteLength > 8192) return { value: null, invalid: true };
     const entries = raw.split(';').map(value => value.trim()).filter(Boolean);
     const viewerEntries = entries.filter(value => matrixCookiePrefix.test(value));
-    const parsed = viewerEntries.map(value => ({ value, match: viewerCookie.exec(value) ?? assetCookie.exec(value) }));
+    const parsed = viewerEntries.map(value => ({ value, match: viewerCookie.exec(value) }));
     if (parsed.some(value => !value.match))
         return { value: null, invalid: true };
     if (!targetSiteId) return { value: null, invalid: false };
     const suffix = targetSiteId.replaceAll('-', '');
     const matching = parsed.filter(value => value.match?.[1]?.toLowerCase() === suffix).map(value => value.value);
-    const matchingViewers = matching.filter(value => viewerCookie.test(value)).length;
-    const matchingAssets = matching.filter(value => assetCookie.test(value)).length;
-    if (matchingViewers > 1 || matchingAssets > 1) return { value: null, invalid: true };
+    if (matching.length > 1) return { value: null, invalid: true };
     return { value: matching.length ? matching.join('; ') : null, invalid: false };
 }
 async function handleSiteRequest(request: Request, env: SitesWorkerEnv): Promise<Response> {
@@ -115,8 +109,16 @@ async function handleSiteRequest(request: Request, env: SitesWorkerEnv): Promise
         try {
             const upstream = new Request(`${origin.origin}/public/sites${url.pathname}`, { method: request.method, headers, body, redirect: 'manual', signal: AbortSignal.timeout(request.method === 'POST' ? 10000 : 30000) });
             const response = await fetch(upstream, { signal: upstream.signal });
-            if (response.status >= 300 && response.status < 400)
-                throw new TypeError('Upstream redirect rejected');
+            if (response.status >= 300 && response.status < 400) {
+                const location = response.headers.get('location');
+                const canonical = request.method === 'GET' && (response.status === 307 || response.status === 308)
+                    && new RegExp(`^/${reference}$`).test(url.pathname)
+                    && Boolean(location && new RegExp(`^/${siteIdPattern}$`, 'i').test(location));
+                if (!canonical) throw new TypeError('Upstream redirect rejected');
+                return new Response(null, { status: response.status, headers: {
+                    Location: location!, 'Cache-Control': 'no-store', 'CDN-Cache-Control': 'no-store',
+                } });
+            }
             const result = new Response(response.body, { status: response.status, headers: response.headers });
             result.headers.delete('set-cookie');
             const responseHeaders = response.headers as Headers & { getSetCookie?: () => string[]; getAll?: (name: string) => string[] };

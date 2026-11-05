@@ -1026,6 +1026,9 @@ importers:
       dockerode:
         specifier: ^4.0.7
         version: 4.0.9
+      es-module-lexer:
+        specifier: 2.1.0
+        version: 2.1.0
       fflate:
         specifier: 0.8.3
         version: 0.8.3

@@ -2,7 +2,6 @@ import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
 import { SiteAccessLinkSecretSchema, SiteIdSchema, SITE_VIEWER_SESSION_TTL_MS } from '@matrix-os/contracts';
 
 const VIEWER_COOKIE_PREFIX = '__Secure-matrix_site_viewer_';
-const ASSET_COOKIE_PREFIX = '__Secure-matrix_site_asset_';
 const COOKIE_HEADER_MAX_BYTES = 8 * 1024;
 
 export function createSiteAccessSecret(): string {
@@ -24,10 +23,6 @@ export function siteViewerCookieName(siteId: string): string {
   return `${VIEWER_COOKIE_PREFIX}${SiteIdSchema.parse(siteId).replaceAll('-', '')}`;
 }
 
-export function siteAssetCookieName(siteId: string): string {
-  return `${ASSET_COOKIE_PREFIX}${SiteIdSchema.parse(siteId).replaceAll('-', '')}`;
-}
-
 export function buildSiteViewerCookie(siteId: string, linkId: string, secret: string): string {
   SiteIdSchema.parse(linkId);
   SiteAccessLinkSecretSchema.parse(secret);
@@ -37,19 +32,6 @@ export function buildSiteViewerCookie(siteId: string, linkId: string, secret: st
     'HttpOnly',
     'Secure',
     'SameSite=Lax',
-    `Max-Age=${Math.floor(SITE_VIEWER_SESSION_TTL_MS / 1000)}`,
-  ].join('; ');
-}
-
-export function buildSiteAssetCookie(siteId: string, linkId: string, secret: string): string {
-  SiteIdSchema.parse(linkId);
-  SiteAccessLinkSecretSchema.parse(secret);
-  return [
-    `${siteAssetCookieName(siteId)}=${linkId}.${secret}`,
-    `Path=/${SiteIdSchema.parse(siteId)}/assets/`,
-    'HttpOnly',
-    'Secure',
-    'SameSite=None',
     `Max-Age=${Math.floor(SITE_VIEWER_SESSION_TTL_MS / 1000)}`,
   ].join('; ');
 }
@@ -65,23 +47,8 @@ export function clearSiteViewerCookie(siteId: string): string {
   ].join('; ');
 }
 
-export function clearSiteAssetCookie(siteId: string): string {
-  return [
-    `${siteAssetCookieName(siteId)}=`,
-    `Path=/${SiteIdSchema.parse(siteId)}/assets/`,
-    'HttpOnly',
-    'Secure',
-    'SameSite=None',
-    'Max-Age=0',
-  ].join('; ');
-}
-
 export function readSiteViewerCookie(cookieHeader: string | undefined, siteId: string): { linkId: string; token: string } | null {
   return readSiteCookie(cookieHeader, siteViewerCookieName(siteId));
-}
-
-export function readSiteAssetCookie(cookieHeader: string | undefined, siteId: string): { linkId: string; token: string } | null {
-  return readSiteCookie(cookieHeader, siteAssetCookieName(siteId));
 }
 
 function readSiteCookie(cookieHeader: string | undefined, name: string): { linkId: string; token: string } | null {
@@ -97,4 +64,3 @@ function readSiteCookie(cookieHeader: string | undefined, name: string): { linkI
 }
 
 export const SITE_VIEWER_COOKIE_PREFIX = VIEWER_COOKIE_PREFIX;
-export const SITE_ASSET_COOKIE_PREFIX = ASSET_COOKIE_PREFIX;

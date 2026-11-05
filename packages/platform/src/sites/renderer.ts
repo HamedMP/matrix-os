@@ -31,21 +31,9 @@ window.addEventListener('message',async(event)=>{
  }catch(error){console.warn('[sites] submission failed',error instanceof TypeError?'TypeError':error instanceof Error?'Error':'UnknownError');port.postMessage({error:'Submissions are unavailable'})}finally{inFlight=false;port.close()}
 });</script></body></html>`;
 }
-function credentialPrivateAssets(html: string, site: SiteRecord): string {
-    if (site.accessMode !== 'private_link') return html;
-    return html.replace(/<(script|link)\b([^>]*)>/gi, (tag, element: string, attributes: string) => {
-        const moduleScript = element.toLowerCase() === 'script'
-            && /\btype\s*=\s*(?:"module"|'module'|module)(?:\s|$)/i.test(attributes);
-        const assetLink = element.toLowerCase() === 'link'
-            && /\brel\s*=\s*(?:"[^"]*\b(?:stylesheet|modulepreload)\b[^"]*"|'[^']*\b(?:stylesheet|modulepreload)\b[^']*'|(?:stylesheet|modulepreload))(?:\s|$)/i.test(attributes);
-        if (!moduleScript && !assetLink) return tag;
-        const withoutCredentials = attributes.replace(/\s+crossorigin(?:\s*=\s*(?:"[^"]*"|'[^']*'|[^\s>]+))?/gi, '');
-        return `<${element}${withoutCredentials} crossorigin="use-credentials">`;
-    });
-}
-export function siteFrame(html: string, site: SiteRecord, path = 'index.html'): string {
-    html = credentialPrivateAssets(html, site);
-    const base = new URL('./', new URL(path, `https://matrix.page/${site.id}/assets/${site.activeVersion}/`)).href;
+export function siteFrame(html: string, site: SiteRecord, path = 'index.html', packaged = false): string {
+    const base = packaged ? `https://matrix.page/${site.id}/frame`
+        : new URL('./', new URL(path, `https://matrix.page/${site.id}/assets/${site.activeVersion}/`)).href;
     const bootstrap = `<base href="${escape(base)}"><script>
 (()=>{const data=JSON.parse(new TextDecoder().decode(Uint8Array.from(atob('${encoded(site.config.data)}'),c=>c.charCodeAt(0))));
 const prepareLink=event=>{
@@ -76,4 +64,5 @@ window.MatrixOS=Object.freeze({site:Object.freeze({data,submit:(formId,fields,op
     return `<!doctype html><html><head>${bootstrap}</head><body>${html.replace(/<!doctype[^>]*>/gi, '')}</body></html>`;
 }
 export const APP_CSP = `sandbox ${SANDBOX}; default-src 'none'; script-src https://matrix.page 'unsafe-inline'; style-src https://matrix.page 'unsafe-inline'; img-src https://matrix.page data:; font-src https://matrix.page; connect-src 'none'; frame-src 'none'; worker-src 'none'; form-action 'none'; base-uri https://matrix.page; frame-ancestors https://matrix.page`;
+export const PRIVATE_APP_CSP = `sandbox ${SANDBOX}; default-src 'none'; script-src 'unsafe-inline' data:; style-src 'unsafe-inline'; img-src data:; font-src data:; media-src data:; connect-src 'none'; frame-src 'none'; worker-src 'none'; form-action 'none'; base-uri https://matrix.page; frame-ancestors https://matrix.page`;
 export const PAGE_CSP = "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; frame-src 'self'; connect-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'";

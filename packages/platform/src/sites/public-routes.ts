@@ -7,9 +7,9 @@ import { timingSafeTokenEquals } from '../platform-token.js';
 import { createBoundedRateLimiter } from '../request-admission.js';
 import { SiteError } from './types.js';
 import type { SitesService } from './service.js';
-import { APP_CSP, PAGE_CSP, siteAccessGate, siteFrame, sitePage } from './renderer.js';
+import { APP_CSP, PAGE_CSP, PRIVATE_APP_CSP, siteAccessGate, siteFrame, sitePage } from './renderer.js';
 import { createSiteReadAdmission } from './read-admission.js';
-import { buildSiteAssetCookie, clearSiteAssetCookie, clearSiteViewerCookie, readSiteViewerCookie } from './access-links.js';
+import { clearSiteViewerCookie } from './access-links.js';
 const ID = z.uuid();
 function unavailable(c: Context, error: unknown) {
     if (error instanceof SiteError)
@@ -35,17 +35,14 @@ export function createSitePublicRoutes(options: {
     const readGlobal = createBoundedRateLimiter(12000);
     function clearSiteCookies(c: Context, siteId: string) {
         c.header('Set-Cookie', clearSiteViewerCookie(siteId), { append: true });
-        c.header('Set-Cookie', clearSiteAssetCookie(siteId), { append: true });
     }
-    async function authorizedSite(c: Context, credential: 'viewer' | 'asset' = 'viewer') {
+    async function authorizedSite(c: Context) {
         const parsed = SiteReferenceSchema.safeParse(c.req.param('reference'));
         if (!parsed.success) return null;
         const reference = parsed.data;
         const site = await options.service.resolve(reference);
         if (!site || site.accessMode === 'public') return site;
-        return credential === 'asset'
-            ? options.service.authorizeAsset(reference, c.req.header('cookie'))
-            : options.service.authorize(reference, c.req.header('cookie'));
+        return options.service.authorize(reference, c.req.header('cookie'));
     }
     app.use('*', async (c, next) => {
         c.header('Cache-Control', 'no-store');
@@ -88,6 +85,8 @@ export function createSitePublicRoutes(options: {
     app.get('/:reference', async (c) => {
         const site = await options.service.resolve(c.req.param('reference'));
         if (!site) throw new SiteError('not_found');
+        if (site.accessMode === 'private_link' && c.req.param('reference') !== site.id)
+            return c.redirect(`/${site.id}`, 307);
         c.header('Content-Security-Policy', PAGE_CSP);
         if (site.accessMode === 'private_link' && !await options.service.authorize(c.req.param('reference'), c.req.header('cookie'))) {
             clearSiteCookies(c, site.id);
@@ -101,9 +100,9 @@ export function createSitePublicRoutes(options: {
     app.get('/:reference/frame', async (c) => { const reference = c.req.param('reference'); const site = await authorizedSite(c); if (!site?.activeVersion)
         throw new SiteError('not_found');
         if (site.accessMode === 'private_link') {
-            const viewer = readSiteViewerCookie(c.req.header('cookie'), site.id);
-            if (!viewer) throw new SiteError('not_found');
-            c.header('Set-Cookie', buildSiteAssetCookie(site.id, viewer.linkId, viewer.token));
+            const html = await options.service.privateFrame(reference, site.activeVersion, 'index.html');
+            c.header('Content-Security-Policy', PRIVATE_APP_CSP);
+            return c.html(siteFrame(html, site, 'index.html', true));
         }
         const asset = await options.service.asset(reference, site.activeVersion, 'index.html'); c.header('Content-Security-Policy', APP_CSP); return c.html(siteFrame(asset.body.toString('utf8'), site)); });
     app.get('/:reference/assets/:version/*', async (c) => {
@@ -111,12 +110,11 @@ export function createSitePublicRoutes(options: {
         const path = SiteAssetPathSchema.safeParse(c.req.path.split(`/assets/${c.req.param('version')}/`)[1]);
         if (!version.success || !path.success)
             throw new SiteError('not_found');
-        const authorized = await authorizedSite(c, 'asset');
-        if (!authorized) throw new SiteError('not_found');
+        const authorized = await options.service.resolve(c.req.param('reference'));
+        if (!authorized || authorized.accessMode === 'private_link') throw new SiteError('not_found');
         const asset = await options.service.asset(c.req.param('reference'), version.data, path.data);
         c.header('Content-Type', asset.contentType);
         c.header('Access-Control-Allow-Origin', 'null');
-        if (authorized.accessMode === 'private_link') c.header('Access-Control-Allow-Credentials', 'true');
         c.header('Cross-Origin-Resource-Policy', 'cross-origin');
         // Direct app HTML navigation remains sandboxed too.
         c.header('Content-Security-Policy', APP_CSP);

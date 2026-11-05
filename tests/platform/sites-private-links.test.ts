@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto';
-import { afterAll, beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createTestPlatformDb, destroyTestPlatformDb } from './platform-db-test-helper.js';
 import { insertUserMachine } from '../../packages/platform/src/db.js';
 import { SITE_ACCESS_LINK_CLAIM_TTL_MS, SITE_MAX_ACCESS_LINKS, SITE_VIEWER_SESSION_TTL_MS } from '@matrix-os/contracts';
@@ -33,6 +33,29 @@ async function publishedPrivateSite() {
 }
 
 describe('private Matrix.page access links', () => {
+  it('loads and caches an immutable sealed frame through the production site service', async () => {
+    const objects = new Map<string, Uint8Array>();
+    const getObject = vi.fn(async (key: string) => {
+      const body = objects.get(key);
+      return { body: body ? new ReadableStream({ start(controller) { controller.enqueue(body); controller.close(); } }) : null };
+    });
+    const service = createSitesService({ db: db.db, env: { NODE_ENV: 'test' }, storage: {
+      async putObject(key, body) { objects.set(key, body as Uint8Array); return {}; }, getObject,
+    } });
+    const site = await service.deploy(owner, {
+      title: 'Sealed event', accessMode: 'private_link', config: { data: {}, forms: [] }, files: [
+        { path: 'index.html', contentType: 'text/html', body: Buffer.from('<script type="module" src="./main.js"></script>').toString('base64') },
+        { path: 'main.js', contentType: 'text/javascript', body: Buffer.from('window.sealed = true;').toString('base64') },
+      ],
+    });
+    const first = await service.privateFrame(site.id, site.activeVersion!, 'index.html');
+    expect(first).toContain('<script type="importmap">');
+    expect(first).toContain('matrix-site:main.js');
+    expect(getObject).toHaveBeenCalledTimes(2);
+    await expect(service.privateFrame(site.id, site.activeVersion!, 'index.html')).resolves.toBe(first);
+    expect(getObject).toHaveBeenCalledTimes(2);
+  });
+
   it('creates multiple write-only links and projects only bounded summaries', async () => {
     const { siteId } = await publishedPrivateSite();
     const service = createSitesService({ db: db.db, env: { NODE_ENV: 'test' } });
@@ -65,10 +88,6 @@ describe('private Matrix.page access links', () => {
     expect(claim.value.cookie).toContain('SameSite=Lax');
     expect(Date.parse(claim.value.link.sessionExpiresAt!)-Date.parse(claim.value.link.claimedAt!)).toBe(SITE_VIEWER_SESSION_TTL_MS);
     expect(await service.authorize(siteId, claim.value.cookie)).toMatchObject({ id: siteId, accessMode: 'private_link' });
-    expect(await service.authorizeAsset(siteId, claim.value.cookie)).toBeNull();
-    const assetCookie = claim.value.cookie.replace('_viewer_', '_asset_');
-    expect(await service.authorizeAsset(siteId, assetCookie)).toMatchObject({ id: siteId, accessMode: 'private_link' });
-    expect(await service.authorize(siteId, assetCookie)).toBeNull();
     expect(await service.authorize(randomUUID(), claim.value.cookie)).toBeNull();
   });
 
