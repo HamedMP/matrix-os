@@ -16,7 +16,7 @@ const date = (value: string) => new Date(value).toLocaleString();
 
 
 /** Keyed by owner + Computer in the route; every read also has a view-generation fence. */
-export function SchedulesScreen({ api, resolve, onBack }: { api: BotRoutineClient; resolve: ResolveSchedule; onBack(): void }) {
+export function SchedulesScreen({ api, resolve, onBack, onOpenChat }: { api: BotRoutineClient; resolve: ResolveSchedule; onBack(): void; onOpenChat?:(chatId:string)=>void }) {
   const [archived, setArchived] = useState(false), [data, setData] = useState(EMPTY);
   const [loading, setLoading] = useState(true), [fresh, setFresh] = useState(false), [error, setError] = useState("");
   const [detail, setDetail] = useState<BotRoutineDetailResponse | null>(null), [selected, setSelected] = useState<string | null>(null);
@@ -109,7 +109,7 @@ export function SchedulesScreen({ api, resolve, onBack }: { api: BotRoutineClien
   return <TabScreen testID="schedules-screen"><ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
     <Button label="Back" variant="text" onPress={onBack} />
     <Text accessibilityRole="header" style={styles.title}>Schedules</Text>
-    <Text style={styles.note}>Your tasks on the selected Computer. Approve new schedules in a private Bot Chat. No Settings switch is required.</Text>
+    <Text style={styles.note}>Your tasks on the selected Computer. Approve persistent tasks in their source Chat or here.</Text>
     <View style={styles.row}><Button label={archived ? "Show current" : "Show archived"} variant="outline" disabled={busy} onPress={() => setArchived(value => !value)} />
       <Button label="Refresh" variant="outline" disabled={busy} onPress={() => { setError(""); void refreshAll(); }} /></View>
     {error ? <Text accessibilityRole="alert" style={styles.error}>{error}</Text> : null}
@@ -130,6 +130,8 @@ export function SchedulesScreen({ api, resolve, onBack }: { api: BotRoutineClien
             {text: "Cancel", style: "cancel"}, {text: "Archive", style: "destructive", onPress: () => void control(current, "archived")},
           ])} />
         </View> : null}
+        {current.targetAvailable&&onOpenChat?<Button label="Open execution history" variant="text" onPress={()=>onOpenChat?.(current.chatId)}/>:null}
+        {current.originChatId?current.originAvailable?onOpenChat?<Button label="Open source Chat" variant="text" onPress={()=>onOpenChat?.(current.originChatId!)}/>:null:<Text style={styles.note}>Source Chat unavailable. Execution history remains available.</Text>:null}
         {editing && current.status !== "archived" ? <ScheduleEditor key={current.routineId} routine={current} api={api} resolve={resolve}
           actionsAvailable={fresh && !busy} pending={data.pending} pendingRead={pendingRead} getReadSequence={() => listRead.current}
           onRefresh={refreshAll} onDone={() => { if (alive.current) setEditing(false); }} /> : null}
@@ -142,7 +144,7 @@ export function SchedulesScreen({ api, resolve, onBack }: { api: BotRoutineClien
       </View> : null}
     </> : <>
       {loading ? <Text style={styles.note}>Loading schedules…</Text> : null}
-      {!loading && fresh && !data.items.length ? <Text style={styles.note}>{archived ? "No archived schedules." : "No schedules yet. Ask a private Bot Chat for a timed task, then review its proposal."}</Text> : null}
+      {!loading && fresh && !data.items.length ? <Text style={styles.note}>{archived ? "No archived schedules." : "No schedules yet. Choose Persistent task in a private Chat, then review its proposal."}</Text> : null}
       {data.items.map(item => <View key={item.routineId} style={styles.card}>
         <Button label={item.proposal.name} variant="text" onPress={() => void view(item.routineId)} />
         <Text style={styles.text}>{`${status(item)} · ${routineScheduleCopy(item.proposal.schedule).frequency}`}</Text>

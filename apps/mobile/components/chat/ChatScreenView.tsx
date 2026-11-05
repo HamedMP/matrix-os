@@ -1,3 +1,4 @@
+import type {ReactNode} from "react";
 import { KeyboardAvoidingView } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { StyleSheet } from "react-native-unistyles";
@@ -37,6 +38,7 @@ export interface ChatScreenViewProps
   onReloadChat?: () => void;
   /** What a message that was not sent offers. Nothing is offered when left out. */
   unsentActions?: UnsentMessageActions | null;
+  threadFooter?:ReactNode;
   composer: Omit<ComposerProps, "keyboardOpen">;
 }
 
@@ -60,6 +62,7 @@ export function ChatScreenView({
   onReloadChat,
   unsentActions = null,
   composer,
+  threadFooter,
 }: ChatScreenViewProps) {
   const insets = useSafeAreaInsets();
   const keyboardOpen = useKeyboardVisible();
@@ -95,6 +98,7 @@ export function ChatScreenView({
       ) : (
         <UnsentMessageActionsProvider value={unsentActions}>
           <MessageList
+            footer={threadFooter}
             messages={messages}
             chatId={chatId}
             renderRequest={renderRequest}
