@@ -2,7 +2,7 @@
 
 Status: owner-approved source and isolated tests. Shared deployment and live acceptance remain separate gates. This implements the Platform half of the approved Full Access origin design; the dependent Gateway owns explicit consent, replay protection, qualified Run/native binding and live leases.
 
-Source baseline: `066c4cb8bc2779550534109215f099b0866f2283`. This combined source port includes the logical exact-operation owner-browser prerequisite from `ccdac762ff830e547d6b26ea18a98ccec6d31b3c`, originally based on `0e16ddeea89f1e66a925d5d711f07fa85da25030`; it preserves the newer baseline's preview-pair exports/imports and Clerk `issuer`/millisecond `expiresAt`. The prerequisite's `tokenExpiresAt` remains a separate verified epoch-seconds field. Deployment of this combined source is pending; prior source or image qualification does not establish that its verifier is serving.
+Source baseline: `c93724c3991619ac44b3a816198d02fe9e8a1fb9` (#3094). That main source already includes the logical exact-operation owner-browser prerequisite from `ccdac762ff830e547d6b26ea18a98ccec6d31b3c`; this change adds Full Access transport and the shared verification bounds without reintroducing that prerequisite. It preserves main's funded/model-choice behavior, preview-pair exports/imports and Clerk `issuer`/millisecond `expiresAt`. The prerequisite's `tokenExpiresAt` remains a separate verified epoch-seconds field. The prior `066c4cb8bc2779550534109215f099b0866f2283`-based port is historical source qualification. Deployment of the new combined source is pending; an earlier source or image does not establish that its verifier is serving.
 
 ## Authentication and purpose
 

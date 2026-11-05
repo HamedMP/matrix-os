@@ -48,11 +48,13 @@ const CompletionSchema = z.discriminatedUnion("executionState", [
   }).strict(),
   z.object({
     ...CompletionCostShape,
+    actualCostMicrousd: CompletionCostShape.actualCostMicrousd.nullable(),
     executionState: z.literal("failed"),
     outcomeCode: z.enum(["invalid_media", "timeout", "provider_failure"]),
   }).strict(),
   z.object({
     ...CompletionCostShape,
+    actualCostMicrousd: CompletionCostShape.actualCostMicrousd.nullable(),
     executionState: z.literal("uncertain"),
     outcomeCode: z.enum(["timeout", "provider_failure", "cancelled"]),
   }).strict(),
@@ -238,6 +240,14 @@ export function createSpeechOperationsRepository(options: {
     return query.executeTakeFirst();
   }
 
+  async function lockMachine(executor: PlatformDB["executor"], identity: SpeechOperationIdentity) {
+    // Match financial lock order without conflicting with foreign-key KEY SHARE checks.
+    const machine = await executor.selectFrom("user_machines").select("machine_id")
+      .where("machine_id", "=", identity.machineId).where("clerk_user_id", "=", identity.ownerId)
+      .where("runtime_slot", "=", identity.runtimeSlot).forNoKeyUpdate().executeTakeFirst();
+    if (!machine) throw new SpeechOperationStateError();
+  }
+
   async function get(identityInput: SpeechOperationIdentity, requestIdInput: string) {
     const identity = parseIdentity(identityInput);
     const requestId = SpeechRequestIdSchema.parse(requestIdInput);
@@ -258,6 +268,7 @@ export function createSpeechOperationsRepository(options: {
     await options.db.ready;
     return options.db.transaction(async (trx) => {
       await sql`SELECT pg_advisory_xact_lock(hashtextextended(${`funded-ai-owner:${admission.identity.ownerId}`}, 0))`.execute(trx.executor);
+      await lockMachine(trx.executor, admission.identity);
       const existing = await scopedRow(trx.executor, admission.identity, admission.requestId);
       if (existing) {
         if (existing.tombstone) return operationRecord(existing);
@@ -385,6 +396,7 @@ export function createSpeechOperationsRepository(options: {
     await options.db.ready;
     const result = await options.db.transaction(async (trx) => {
       await sql`SELECT pg_advisory_xact_lock(hashtextextended(${`funded-ai-owner:${identity.ownerId}`}, 0))`.execute(trx.executor);
+      await lockMachine(trx.executor, identity);
       const current = await scopedRow(trx.executor, identity, requestId, true);
       if (!current) throw new SpeechOperationStateError();
       if (current.execution_state !== "reserved" || current.cancellation_requested) {
@@ -421,7 +433,7 @@ export function createSpeechOperationsRepository(options: {
     settleFunding: (
       trx: Transaction<PlatformDatabase>,
       reservationId: string,
-      actualCostMicrousd: number,
+      actualCostMicrousd: number | null,
     ) => Promise<void>,
   ) {
     const identity = parseIdentity(identityInput);
@@ -433,9 +445,17 @@ export function createSpeechOperationsRepository(options: {
     await options.db.ready;
     const result = await options.db.transaction(async (trx) => {
       await sql`SELECT pg_advisory_xact_lock(hashtextextended(${`funded-ai-owner:${identity.ownerId}`}, 0))`.execute(trx.executor);
+      await lockMachine(trx.executor, identity);
       const row = await scopedRow(trx.executor, identity, requestId, true);
       if (!row) throw new SpeechOperationStateError();
-      if (["succeeded", "failed", "uncertain"].includes(row.execution_state)) return operationRecord(row);
+      if (["succeeded", "failed", "uncertain"].includes(row.execution_state)) {
+        if (row.execution_state !== completion.executionState
+          || row.safe_outcome_code !== completion.outcomeCode
+          || exactNullableInteger(row.actual_microusd) !== completion.actualCostMicrousd) {
+          throw new SpeechOperationConflictError();
+        }
+        return operationRecord(row);
+      }
       if (row.execution_state !== "dispatching" || !row.funding_reservation_id) {
         throw new SpeechOperationStateError();
       }
@@ -481,6 +501,7 @@ export function createSpeechOperationsRepository(options: {
     await options.db.ready;
     return options.db.transaction(async (trx) => {
       await sql`SELECT pg_advisory_xact_lock(hashtextextended(${`funded-ai-owner:${identity.ownerId}`}, 0))`.execute(trx.executor);
+      await lockMachine(trx.executor, identity);
       await trx.executor.insertInto("speech_operations").values({
         owner_id: identity.ownerId,
         machine_id: identity.machineId,

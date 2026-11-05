@@ -601,3 +601,49 @@ describe("Chat canonical provider state", () => {
     })));
   });
 });
+
+it.each([false, true])("keeps explicitly chosen unavailable Matrix models selectable and saved without enabling Web send (mobile=%s)", async mobile => {
+  const catalog = providerCatalog(true, true);
+  const base = catalog.instances[0]!;
+  catalog.drivers.push({ kind: "matrix_pi", displayName: "Pi", adapterVersion: "1.0.0", capabilityClass: "system_agent" });
+  catalog.instances.push({ ...base, id: "matrix_pi_default", driverKind: "matrix_pi", displayName: "Matrix AI", connectionLabel: "Matrix AI",
+    availability: "unavailable", connectionState: "unavailable", unavailabilityReason: "runtime_unavailable", options: [], defaultSelection: undefined,
+    models: base.models.map(model => ({ ...model, availability: "unavailable" as const })) });
+  vi.stubGlobal("fetch", vi.fn(async () => Response.json(catalog)));
+  const onSubmit = vi.fn();
+  const props = { messages: [], busy: false, connected: true, conversations: [], mobile, onNewChat: vi.fn(), onSwitchConversation: vi.fn(), onSubmit };
+  const view = render(<ChatApp {...props} />);
+  const trigger = await screen.findByRole("button", { name: "Choose model and provider" });
+  await waitFor(() => expect(trigger).toHaveAttribute("aria-busy", "false"));
+  fireEvent.click(trigger);
+  fireEvent.click(screen.getByRole("button", { name: "Matrix AI agent, Matrix AI unavailable" }));
+  const model = screen.getByRole("option", { name: "Claude Opus 5 via Matrix AI" });
+  expect(model).toBeEnabled();
+  fireEvent.click(model);
+  expect(trigger).toHaveAttribute("data-provider-instance", "matrix_pi_default");
+  expect(trigger).toHaveAttribute("data-model", "anthropic:claude-opus-5");
+  expect(trigger.title).toContain("Unavailable");
+  fireEvent.change(screen.getByRole("textbox", { name: "Message chat" }), { target: { value: "Keep my intended model" } });
+  expect(screen.getByRole("button", { name: "Send" })).toBeDisabled();
+  expect(onSubmit).not.toHaveBeenCalled();
+  const managed = catalog.instances.find(instance => instance.id === "matrix_pi_default")!;
+  managed.connectionState = "credit_reserved";
+  act(() => window.dispatchEvent(new CustomEvent(PROVIDER_SETTINGS_CHANGED_EVENT)));
+  await waitFor(() => expect(trigger.title).toContain("Credit reserved"));
+  expect(trigger).toHaveAttribute("data-provider-instance", "matrix_pi_default");
+  expect(trigger).toHaveAttribute("data-model", "anthropic:claude-opus-5");
+  expect(screen.getByRole("button", { name: "Send" })).toBeDisabled();
+  managed.availability = "available";
+  managed.connectionState = "ready";
+  delete managed.unavailabilityReason;
+  managed.models.forEach(model => { model.availability = "available"; });
+  managed.defaultSelection = { instanceId: managed.id, model: managed.models[0]!.id };
+  act(() => window.dispatchEvent(new CustomEvent(PROVIDER_SETTINGS_CHANGED_EVENT)));
+  await waitFor(() => expect(screen.getByRole("button", { name: "Send" })).toBeEnabled());
+  expect(trigger).toHaveAttribute("data-model", "anthropic:claude-opus-5");
+  expect(trigger.title).not.toContain("Unavailable");
+  view.unmount();
+  render(<ChatApp {...props} />);
+  await waitFor(() => expect(screen.getByRole("button", { name: "Choose model and provider" })).toHaveAttribute("data-model", "anthropic:claude-opus-5"));
+  expect(screen.getByRole("button", { name: "Choose model and provider" })).toHaveAttribute("data-provider-instance", "matrix_pi_default");
+});

@@ -215,9 +215,13 @@ describe("audited owner execution recovery without financial settlement", () => 
     expect((await send(payload(), `Bearer ${secret}`, `${origin}?ownerId=wrong`)).status).toBe(400);
   });
 
-  it("never automatically unlocks expired unknown usage", async () => {
-    await expect(repo.cleanupExpiredReservations({ limit: 10 })).resolves.toBe(0);
-    await expect(authorization("no_operator_transition")).rejects.toMatchObject({ code: "rate_limited" });
+  it("automatically releases expired AI customer charges while retaining unknown provider liability", async () => {
+    const before = await finance();
+    await expect(repo.cleanupExpiredReservations({ limit: 10 })).resolves.toBe(1);
+    expect(await rows()).toMatchObject({ status: "expired", actual_microusd: null,
+      settlement_response: null, customer_charge_release: expect.any(String) });
+    expect((await finance()).ledger).toEqual(before.ledger);
+    await expect(authorization("after_policy_release")).resolves.toMatchObject({ authorized: true });
   });
 
   it.each(["reserved", "settled", "nonusage"])("rejects %s reservations", async (state) => {

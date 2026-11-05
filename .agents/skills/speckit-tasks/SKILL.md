@@ -208,4 +208,8 @@ a "GitHub Stack Plan" section for any feature expected to exceed one small PR:
 - Each user story phase should map to one independently reviewable PR whenever possible.
 - Operations/deploy/docs polish should be the final layer unless it blocks earlier tests.
 - Keep each layer under the Matrix OS PR size limits from `docs/dev/review-pipeline.md`.
+- Plan about 5-6 layers per stack and never more than 10, including setup,
+  documentation, and rollout. If more work remains, group related phases into
+  reviewable PRs within size limits or plan sequential follow-on stacks after
+  the preceding stack merges. Record the layer count in the GitHub Stack Plan.
 - Do not instruct agents to flatten completed phases into a single PR unless explicitly requested.

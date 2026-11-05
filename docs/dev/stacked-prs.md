@@ -17,6 +17,15 @@ per PR; never exceed 3000 additions or 50 files without splitting. Follow
 [Large File Refactoring](large-file-refactoring.md) for extraction boundaries.
 Preserve Spec Kit phase boundaries in the tasks document's **GitHub Stack Plan**.
 
+Plan for about 5–6 PRs per native stack. **Ten PRs is the hard maximum** for a
+single stack, including setup, documentation, and rollout layers. Count the
+planned layers before creating branches and again before adding a layer. Combine
+closely related phases into reviewable PRs when the plan would exceed the cap;
+keep the per-PR size limits above. If the work still needs more than 10 PRs,
+finish and merge one bounded stack before starting a separate follow-on stack
+from `main`. Never extend a stack beyond 10 layers or split work into oversized
+PRs just to meet the stack cap.
+
 ## Setup
 
 Install the official extension and verify GitHub authentication:
