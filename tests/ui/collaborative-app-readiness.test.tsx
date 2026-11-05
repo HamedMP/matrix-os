@@ -25,9 +25,9 @@ const blocked = {
   status: "blocked" as const,
   revision: "2",
   checks: [{
-    code: "two_principal_round_trip" as const,
+    code: "declaration" as const,
     status: "blocked" as const,
-    action: "A second authenticated verifier is not configured yet.",
+    action: "Declare collaborative capability.",
   }],
 };
 const ready = {
@@ -397,7 +397,7 @@ describe("collaborative app owner readiness", () => {
   it("renders actionable safe summaries for every readiness outcome", () => {
     const outcomes = [
       { value: { ...blocked, status: "checking" as const, checks: [] }, text: "Checking the exact app build" },
-      { value: blocked, text: "A second authenticated verifier is not configured yet." },
+      { value: blocked, text: "Declare collaborative capability." },
       { value: ready, text: "This exact app build is ready to share." },
       { value: { ...blocked, status: "stale" as const, invalidatedAt: "2026-11-05T11:00:00.000Z" }, text: "The app changed. Run readiness again." },
       { value: { ...blocked, status: "failed" as const, checks: [{ code: "cleanup" as const, status: "failed" as const, action: "Readiness could not be verified. Try again." }] }, text: "Readiness could not be verified. Try again." },

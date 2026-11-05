@@ -1,4 +1,5 @@
 import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
+import { createHash } from "node:crypto";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -9,9 +10,10 @@ import {
   CollaborativeAppBuildResolver,
 } from "../../packages/gateway/src/collaboration/collaborative-app-build-resolver.js";
 import { appRegistryIncarnation } from "../../packages/gateway/src/collaboration/app-incarnation.js";
+import { canonicalJson } from "../../packages/gateway/src/collaboration/direct-crypto.js";
 import {
+  CollaborativeAppCapabilityVerifier,
   CollaborativeAppReadinessEvaluator,
-  UnconfiguredSecondPrincipalVerifier,
 } from "../../packages/gateway/src/collaboration/collaborative-app-readiness.js";
 
 describe("collaborative app production build resolution", () => {
@@ -68,7 +70,7 @@ describe("collaborative app production build resolution", () => {
         compatibility: {
           bridgeContractVersion: "matrix-app-bridge-v1",
           runtimeAbi: "matrix-runtime-v1",
-          schemaDigest: "d".repeat(64),
+          schemaDigest: createHash("sha256").update(canonicalJson(registration().tables)).digest("hex"),
         },
       },
     }));
@@ -150,14 +152,15 @@ describe("collaborative app production build resolution", () => {
         transition: async (input) => ({ ...checking, status: input.status, gateResults: input.gateResults, revision: 2 }),
         get: async () => null,
       } as never,
-      verifier: new UnconfiguredSecondPrincipalVerifier(),
+      verifier: new CollaborativeAppCapabilityVerifier(),
     }).check({
       ownerId: "user_owner",
       organizationId: "org_matrix_team",
       build: resolved!.build,
       artifactRef: resolved!.artifactRef,
+      declaration: resolved!.declaration ?? null,
     });
-    expect(readinessResult).toMatchObject({ status: "blocked", gateResults: [{ code: "two_principal_round_trip" }] });
+    expect(readinessResult).toMatchObject({ status: "ready" });
   });
 
   it("fails closed for a foreign owner, missing registration, or read without a catalog identity", async () => {

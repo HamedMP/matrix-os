@@ -92,6 +92,10 @@ export class CollaborativeAppBuildResolver {
       catalogId: catalog.id,
       currentBuildId: exact.buildId,
     });
-    return { build: exact, artifactRef: `objects/${exact.buildId}` };
+    return {
+      build: exact,
+      artifactRef: `objects/${exact.buildId}`,
+      declaration: declaration ?? null,
+    };
   }
 }

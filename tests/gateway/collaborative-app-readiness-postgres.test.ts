@@ -89,7 +89,7 @@ describe("collaborative app readiness persistence", () => {
     });
     const gates = [
       { code: "declaration" as const, status: "passed" as const },
-      { code: "two_principal_round_trip" as const, status: "passed" as const },
+      { code: "recipient_launch" as const, status: "passed" as const },
     ];
     const ready = await repository.transition({
       id: readinessId,

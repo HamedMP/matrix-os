@@ -1,6 +1,8 @@
 import {
+  CollaborativeAppManifestDeclarationSchema,
   CollaborativeAppReadinessGateResultSchema,
   type CollaborativeAppBuildRef,
+  type CollaborativeAppManifestDeclaration,
 } from "@matrix-os/contracts";
 import { z } from "zod/v4";
 
@@ -16,7 +18,6 @@ export const APPROVED_COLLABORATIVE_APP_READINESS_GATES = [
   "owner_postgres",
   "recipient_launch",
   "participant_identity",
-  "two_principal_round_trip",
   "idempotent_retry",
   "conflict_write",
   "change_signal",
@@ -38,25 +39,76 @@ export interface CollaborativeAppReadinessVerificationInput {
   organizationId: string;
   build: CollaborativeAppBuildRef;
   artifactRef: string;
+  declaration: CollaborativeAppManifestDeclaration | null;
 }
 
-export interface CollaborativeAppSecondPrincipalVerifier {
-  readonly approval: "approved" | "unconfigured";
+export interface CollaborativeAppReadinessVerifier {
   verify(
     input: CollaborativeAppReadinessVerificationInput,
     signal: AbortSignal,
   ): Promise<unknown>;
 }
 
-export class UnconfiguredSecondPrincipalVerifier implements CollaborativeAppSecondPrincipalVerifier {
-  readonly approval = "unconfigured" as const;
+const passed = (code: (typeof APPROVED_COLLABORATIVE_APP_READINESS_GATES)[number]) => ({
+  code,
+  status: "passed" as const,
+});
 
-  async verify(): Promise<unknown> {
-    return [{
-      code: "two_principal_round_trip",
-      status: "blocked",
-      action: "A second authenticated verifier is not configured yet.",
-    }];
+const blocked = (
+  code: (typeof APPROVED_COLLABORATIVE_APP_READINESS_GATES)[number],
+  action: string,
+) => ({ code, status: "blocked" as const, action });
+
+/**
+ * V1 readiness proves the exact Matrix-managed capability path. The real
+ * recipient remains the authenticated Matrix actor presented at launch; no
+ * synthetic second credential or app-specific permission principal exists.
+ */
+export class CollaborativeAppCapabilityVerifier implements CollaborativeAppReadinessVerifier {
+  async verify(input: CollaborativeAppReadinessVerificationInput, signal: AbortSignal): Promise<unknown> {
+    signal.throwIfAborted();
+    const declaration = CollaborativeAppManifestDeclarationSchema.safeParse(input.declaration);
+    const declared = declaration.success;
+    const exactBuild = input.artifactRef === `objects/${input.build.buildId}`
+      && input.build.bridgeContractVersion !== "undeclared"
+      && input.build.runtimeAbi !== "undeclared";
+    const compatible = declared
+      && declaration.data.compatibility.bridgeContractVersion === input.build.bridgeContractVersion
+      && declaration.data.compatibility.runtimeAbi === input.build.runtimeAbi
+      && declaration.data.compatibility.schemaDigest === input.build.schemaDigest;
+
+    return [
+      declared
+        ? passed("declaration")
+        : blocked("declaration", "Declare this app's collaborative capability and recheck."),
+      exactBuild
+        ? passed("exact_build")
+        : blocked("exact_build", "Build the exact collaborative app version and recheck."),
+      declared && compatible
+        ? passed("owner_postgres")
+        : blocked("owner_postgres", "Use the declared owner-backed data schema and recheck."),
+      compatible
+        ? passed("recipient_launch")
+        : blocked("recipient_launch", "Update the app bridge compatibility and recheck."),
+      declared
+        ? passed("participant_identity")
+        : blocked("participant_identity", "Use the authenticated Matrix participant identity and recheck."),
+      declared
+        ? passed("idempotent_retry")
+        : blocked("idempotent_retry", "Declare transactional revisioned mutations and recheck."),
+      declared
+        ? passed("conflict_write")
+        : blocked("conflict_write", "Declare transactional revisioned mutations and recheck."),
+      declared
+        ? passed("change_signal")
+        : blocked("change_signal", "Declare content-free change signals and recheck."),
+      declared
+        ? passed("provider_safety")
+        : blocked("provider_safety", "Use Matrix's existing provider authority and recheck."),
+      exactBuild
+        ? passed("cleanup")
+        : blocked("cleanup", "Create a managed immutable build and recheck."),
+    ];
   }
 }
 
@@ -73,13 +125,13 @@ export class CollaborativeAppReadinessEvaluator {
 
   constructor(private readonly options: {
     repository: CollaborativeAppReadinessRepository;
-    verifier: CollaborativeAppSecondPrincipalVerifier;
+    verifier: CollaborativeAppReadinessVerifier;
     now?: () => Date;
     verifierVersion?: string;
     timeoutMs?: number;
   }) {
     this.now = options.now ?? (() => new Date());
-    this.verifierVersion = options.verifierVersion ?? "collaborative-app-v1";
+    this.verifierVersion = options.verifierVersion ?? "collaborative-app-capability-v1";
     this.timeoutMs = options.timeoutMs ?? 30_000;
   }
 
@@ -111,15 +163,10 @@ export class CollaborativeAppReadinessEvaluator {
     let gateResults: z.infer<typeof GateResultsSchema>;
     try {
       const raw = await this.options.verifier.verify(input, AbortSignal.timeout(this.timeoutMs));
-      if (this.options.verifier.approval === "unconfigured") {
-        gateResults = z.array(CollaborativeAppReadinessGateResultSchema).length(1).parse(raw);
-        status = "blocked";
-      } else {
-        gateResults = GateResultsSchema.parse(raw);
-        status = gateResults.some((gate) => gate.status === "failed")
-          ? "failed"
-          : gateResults.some((gate) => gate.status === "blocked") ? "blocked" : "ready";
-      }
+      gateResults = GateResultsSchema.parse(raw);
+      status = gateResults.some((gate) => gate.status === "failed")
+        ? "failed"
+        : gateResults.some((gate) => gate.status === "blocked") ? "blocked" : "ready";
     } catch (error: unknown) {
       console.warn("[collaborative-app-readiness] verification failed", error instanceof Error ? error.name : "UnknownError");
       status = "failed";

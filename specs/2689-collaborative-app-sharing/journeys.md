@@ -15,7 +15,7 @@ These journeys describe colleagues using the creator's live app and existing dat
 
 ## Failure and recovery path
 
-The owner sees a technical readiness blocker before sharing if the app has browser-only storage, cannot support a real second user, or has not passed a two-account read and write round trip against the owner's database. A failed share leaves no discoverable half-created organization share. If the owner runtime later becomes unavailable, members see a retry state and retain unsaved input. If an app version changes, Matrix checks it again before allowing new shares. Existing data stays on the owner's host.
+The owner sees a technical readiness blocker before sharing if the exact app build lacks owner-backed storage, compatible Matrix bridge/runtime declarations, revisioned mutations, participant identity, safe provider policy, or change signals. A failed share leaves no discoverable half-created organization share. The live two-account qualification proves the same owner data path with normal Matrix sessions. If the owner runtime later becomes unavailable, members see a retry state and retain unsaved input. If an app version changes, Matrix checks it again before allowing new shares. Existing data stays on the owner's host.
 
 ## Product decision points
 

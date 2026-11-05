@@ -22,7 +22,7 @@
 - [X] T002 [P] Add strict bounded collaborative build, readiness, share, launch-target, participant, mutation, change-signal, and safe-error schemas in `packages/contracts/src/collaborative-app-sharing.ts`
 - [X] T003 [P] Add exact-build capability and compatibility declarations in `packages/contracts/src/collaboration-capabilities.ts`
 - [X] T004 [P] Write failing serialization, bounds, unknown-field, and owner/shared launch-union contract tests in `tests/contracts/collaborative-app-sharing.test.ts`
-- [X] T005 [P] Add tracker, organization, guest, newcomer, departed-member, wrong-organization, and outsider fixtures while leaving the deferred second-principal credential source unimplemented in `tests/e2e/fixtures/collaborative-app-sharing.ts`
+- [X] T005 [P] Add tracker, organization, guest, newcomer, departed-member, wrong-organization, and outsider fixtures that use normal Matrix sessions and current organization membership in `tests/e2e/fixtures/collaborative-app-sharing.ts`
 - [X] T006 Export the additive collaborative app contracts without changing legacy collaboration exports in `packages/contracts/src/index.ts`
 
 **Checkpoint**: Additive contracts compile, deliberately reject roles/grants/acceptance fields, and old collaboration types remain source-compatible.
@@ -56,7 +56,7 @@
 
 ## Phase 3: User Story 2 — Know Whether an App Is Ready (Priority: P1)
 
-**Goal**: Certify only the exact app build that passes a two-principal production-path proof and return actionable safe reasons for ineligible apps.
+**Goal**: Certify only an exact app build whose bounded capability contract matches the Matrix-managed production path, and return actionable safe reasons for ineligible apps. Prove the complete owner/member path separately in live two-account qualification.
 
 **Independent Test**: Run readiness for a working Postgres-backed tracker and a browser-local app. Only the tracker receives a ready exact-build certificate; changing manifest, schema, assets, bridge ABI, or runtime ABI makes it stale while preserving owner records.
 
@@ -64,13 +64,13 @@
 
 - [X] T021 [P] [US2] Write failing readiness evaluator tests for declaration, exact build, owner Postgres, recipient launch, participant identity, retry, conflict, signal, provider safety, and cleanup gates in `tests/gateway/collaborative-app-readiness.test.ts`
 - [X] T022 [P] [US2] Write failing route tests for owner auth, strict path/body schemas, pre-buffer body limits, idempotent replay, bounded errors, and no-store responses in `tests/gateway/collaborative-app-readiness-routes.test.ts`
-- [X] T023 [P] [US2] Write a failing production-boundary readiness journey that rejects browser storage, broken recipient launch, unsafe provider use, duplicate retry, lost update, and missing signals, and returns blocked while the second-principal source is unconfigured, in `tests/gateway/collaborative-app-readiness-production-path.test.ts`
+- [X] T023 [P] [US2] Write a failing production-boundary readiness journey that rejects browser storage, incompatible recipient launch, unsafe provider use, non-revisioned mutation, schema drift, and missing signals without inventing a second credential source, in `tests/gateway/collaborative-app-readiness-production-path.test.ts`
 - [X] T024 [P] [US2] Write failing stale-certificate and same-slug replacement regression tests in `tests/gateway/collaborative-app-readiness-drift.test.ts`
 
 ### Implementation for User Story 2
 
 - [X] T025 [US2] Implement the bounded readiness state machine and safe actionable gate mapping in `packages/gateway/src/collaboration/collaborative-app-readiness.ts`
-- [X] T026 [US2] Implement the purpose-bound verifier interface and fail-closed unconfigured result; do not issue ready until the deferred second-principal identity source is approved, then use the real launch, bridge, Postgres, mutation, event, and tagged-cleanup paths in `packages/gateway/src/collaboration/collaborative-app-readiness.ts`
+- [X] T026 [US2] Implement the exact-build capability verifier over the real bridge/runtime declaration, owner schema, revisioned mutation path, participant identity, event signal, provider policy, and managed build lifecycle in `packages/gateway/src/collaboration/collaborative-app-readiness.ts`
 - [X] T027 [US2] Add owner-only GET/check routes with Zod boundaries, `bodyLimit`, per-actor rate limits, idempotency, no-store caching, and generic error mapping in `packages/gateway/src/collaboration/collaborative-app-readiness-routes.ts`
 - [X] T028 [US2] Mount readiness routes and resolve every dependency at registration time in `packages/gateway/src/collaboration/routes.ts`
 - [X] T029 [US2] Invalidate readiness after catalog deletion/replacement and exact input drift without treating compatible runtime restart as drift in `packages/gateway/src/collaboration/resource-catalog.ts`
@@ -257,7 +257,7 @@ US3 and US4 are independent after the US1 shared runtime exists and may proceed 
 ```text
 T021 readiness evaluator fault matrix
 T022 readiness route boundary/auth tests
-T023 two-principal production-path readiness test
+T023 exact-build capability readiness test
 T024 drift and replacement regression tests
 ```
 

@@ -22,7 +22,7 @@ const readiness = {
   status: "ready" as const,
   revision: "2",
   checks: ["declaration", "exact_build", "owner_postgres", "recipient_launch", "participant_identity",
-    "two_principal_round_trip", "idempotent_retry", "conflict_write", "change_signal", "provider_safety", "cleanup"]
+    "idempotent_retry", "conflict_write", "change_signal", "provider_safety", "cleanup"]
     .map((code) => ({ code, status: "passed" as const })),
   verifiedAt: "2026-11-05T10:00:00.000Z",
 };

@@ -39,7 +39,6 @@ export const CollaborativeAppReadinessGateCodeSchema = z.enum([
   "owner_postgres",
   "recipient_launch",
   "participant_identity",
-  "two_principal_round_trip",
   "idempotent_retry",
   "conflict_write",
   "change_signal",

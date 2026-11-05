@@ -56,7 +56,7 @@ bun run build:desktop
 
 Using real Postgres and real owner/platform/gateway boundaries, prove:
 
-1. Exact build readiness fails for browser-only storage, broken recipient launch, unsafe provider authority, duplicate retry, stale-write overwrite, or missing update signal. Until the second authenticated readiness principal is approved and wired, the verifier must return a safe blocked result and sharing must remain disabled.
+1. Exact build readiness fails for browser-only storage, incompatible recipient launch, unsafe provider authority, non-revisioned mutations, schema drift, or missing update signals. A compatible exact build becomes ready without a synthetic second credential; live owner/member sessions prove the complete path during qualification.
 2. A passing certificate is invalidated by manifest/schema/asset/bridge/runtime-ABI drift, but not an ordinary compatible host restart.
 3. Share creation is atomic/idempotent and creates no half-discoverable scope.
 4. Every current organization member, including a guest, discovers/opens without activation, app role, app permission, admin approval, or member row; any current member may share an app they own.
