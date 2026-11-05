@@ -1,4 +1,5 @@
-import type { CollaborationReadiness } from "@matrix-os/contracts";
+import type { CollaborativeAppReadiness, CollaborationReadiness } from "@matrix-os/contracts";
+import { CollaborativeAppReadinessSummary } from "./CollaborativeAppReadinessSummary.js";
 
 const sourceLabels = {
   matrix_included: "Matrix AI included",
@@ -13,7 +14,11 @@ const setupLabels = {
 } as const;
 
 /** Renders only the authority's bounded readiness projection; never infers a provider or payer. */
-export function ReadinessSummary({ readiness, compact = false }: { readiness: CollaborationReadiness; compact?: boolean }) {
+export function ReadinessSummary({ readiness, compact = false }: {
+  readiness: CollaborationReadiness | CollaborativeAppReadiness;
+  compact?: boolean;
+}) {
+  if ("readinessId" in readiness) return <CollaborativeAppReadinessSummary readiness={readiness} compact={compact} />;
   const execution = (readiness.resourceKind === "project" || readiness.resourceKind === "chat")
     && readiness.state !== "host_offline" && readiness.state !== "unsupported";
   const gitIdentity = readiness.items.find((item) => item.item === "git_identity");

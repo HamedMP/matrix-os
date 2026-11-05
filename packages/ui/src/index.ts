@@ -158,6 +158,11 @@ export {
   type ProjectSharingController,
 } from "./collaboration/useProjectSharing.js";
 export { ReadinessSummary } from "./collaboration/ReadinessSummary.js";
+export { useCollaborativeAppSharing } from "./collaboration/useCollaborativeAppSharing.js";
+export type {
+  CollaborativeAppReadinessApi,
+  CollaborativeAppSharingState,
+} from "./collaboration/useCollaborativeAppSharing.js";
 export { ProjectSourceSummary } from "./collaboration/ProjectSourceSummary.js";
 export {
   deriveProjectPresentation,

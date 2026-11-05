@@ -11,6 +11,7 @@
     "./chat-diagram-policy": "./src/chat/diagram-policy.ts",
     ".": "./src/index.ts",
     "./collaboration-direct-client": "./src/collaboration/direct-client.ts",
+    "./collaborative-app-sharing": "./src/collaboration/collaborative-app-sharing.ts",
     "./default-organization": "./src/collaboration/default-organization.ts",
     "./feature-flags": "./src/feature-flags.ts",
     "./speech": "./src/speech/index.ts",
