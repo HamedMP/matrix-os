@@ -32,8 +32,9 @@ import type { NativeAppBridge } from "./native-app-bridge";
 import { createBrowserLabViewerAdmission, type BrowserLabViewerAuth } from "./browser-lab-viewer-admission";
 import { nativeBrowserProduct } from "../../shared/browser-products";
 import { browserProductLaunchUrl } from "./browser-product-launch";
+import type { CollaborativeAppDirectoryItem } from "@matrix-os/contracts";
 
-export type EmbedState = "loading" | "ready" | "auth-required" | "failed";
+export type EmbedState = "loading" | "ready" | "auth-required" | "host-offline" | "access-ended" | "needs-recheck" | "failed";
 
 interface EmbedServiceDeps {
   getWindow: () => BaseWindow | null;
@@ -48,9 +49,10 @@ interface EmbedServiceDeps {
 }
 
 interface OpenRequest {
-  kind: "hosted-shell" | "code-editor" | "app" | "browser";
+  kind: "hosted-shell" | "code-editor" | "app" | "shared-app" | "browser";
   slug?: string;
   appIdentity?: string;
+  target?: CollaborativeAppDirectoryItem;
   url?: string;
   bounds: Bounds;
   active?: boolean;
@@ -111,6 +113,7 @@ export class EmbedService {
         allowedOrigins,
         resolveNavigation,
         allowPublicNavigation,
+        sharedAppTarget,
         onState,
       }) => {
         const window = this.deps.getWindow();
@@ -138,6 +141,13 @@ export class EmbedService {
             ? { browserProduct: { origin: new URL(this.deps.getGatewayOrigin()).origin,
                 renew: this.deps.renewBrowserProductSession ?? (() => Promise.reject(new Error("browser unavailable"))) } } : {}),
           denyPermissions: kind === "code-editor" || kind === "browser",
+          ...(kind === "shared-app" && sharedAppTarget ? {
+            sharedAppAuth: {
+              target: sharedAppTarget,
+              getGatewayOrigin: this.deps.getGatewayOrigin,
+              getToken: this.deps.getToken,
+            },
+          } : {}),
           ...(bridge ? { appBridge: bridge } : {}),
         });
       },
@@ -159,6 +169,11 @@ export class EmbedService {
         request.bounds,
         request.active ?? true,
       );
+    }
+    if (request.kind === "shared-app") {
+      return request.target
+        ? this.openSharedApp(gatewayOrigin, request.target, request.bounds, request.active ?? true)
+        : { embedId: randomUUID(), state: "failed" };
     }
     return this.openApp(
       gatewayOrigin,
@@ -839,6 +854,26 @@ export class EmbedService {
       this.rememberPendingApp(embedId, { slug, appIdentity, bounds }, active);
       return { embedId, state: opened };
     }
+    return { embedId, state: "loading" };
+  }
+
+  private async openSharedApp(
+    gatewayOrigin: string,
+    target: CollaborativeAppDirectoryItem,
+    bounds: Bounds,
+    active: boolean,
+  ): Promise<OpenResult> {
+    const embedId = randomUUID();
+    const url = new URL(`/shared/app/${encodeURIComponent(target.scopeId)}`, gatewayOrigin);
+    url.searchParams.set("expectedBuildId", target.buildId);
+    url.searchParams.set("expectedShareRevision", target.shareRevision);
+    this.manager.open("shared-app", target.scopeId, bounds, url.toString(), {
+      id: embedId,
+      active,
+      retainOnFailure: true,
+      sharedAppTarget: target,
+      onState: (state) => this.deps.emitState(embedId, state === "failed" ? "host-offline" : state),
+    });
     return { embedId, state: "loading" };
   }
 

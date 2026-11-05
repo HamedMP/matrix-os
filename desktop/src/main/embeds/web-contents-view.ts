@@ -12,11 +12,31 @@ import { isAppGalleryIdentity, isAppGalleryInventoryIdentity } from "@matrix-os/
 import { NATIVE_APP_GALLERY_BRIDGE_ARG, NATIVE_APP_INTEGRATIONS_BRIDGE_ARG, NATIVE_APP_ACTIVITY_BRIDGE_ARG, NATIVE_APP_BROWSER_BRIDGE_ARG, isNativeAppActivityIdentity } from "../../shared/native-app-gateway";
 import { nativeBrowserProduct } from "../../shared/browser-products";
 import { createBrowserProductLifecycle } from "./browser-product-lifecycle";
+import type { CollaborativeAppDirectoryItem } from "@matrix-os/contracts";
 
 const MAX_PUBLIC_BROWSER_ORIGINS = 64;
 const MAX_EMBED_SNAPSHOT_BYTES = 3_000_000;
 const MAX_EMBED_SNAPSHOT_EDGE = 2_048;
 const EMBED_SNAPSHOT_QUALITIES = [72, 54, 36, 24] as const;
+
+export function shouldAuthorizeSharedAppRequest(input: {
+  requestUrl: string;
+  gatewayOrigin: string;
+  scopeId: string;
+  mainFrame: boolean;
+}): boolean {
+  try {
+    const request = new URL(input.requestUrl);
+    const gateway = new URL(input.gatewayOrigin);
+    if (request.origin !== gateway.origin) return false;
+    const scope = encodeURIComponent(input.scopeId);
+    if (request.pathname === `/shared/app/${scope}`) return true;
+    if (request.pathname.startsWith(`/api/collaboration/shared-apps/${scope}/runtime/`)) return true;
+    return input.mainFrame && request.pathname.startsWith("/api/collaboration/");
+  } catch {
+    return false;
+  }
+}
 
 function encodeBoundedSnapshot(source: NativeImage): string | null {
   const sourceSize = source.getSize();
@@ -55,6 +75,11 @@ export function createWebContentsView(options: {
   allowPublicNavigation?: boolean;
   onState: (state: "loading" | "ready" | "failed") => void;
   denyPermissions?: boolean;
+  sharedAppAuth?: {
+    target: CollaborativeAppDirectoryItem;
+    getGatewayOrigin: () => string;
+    getToken: () => string | null;
+  };
   appBridge?: {
     appIdentity: string;
     routeSlug: string;
@@ -84,6 +109,22 @@ export function createWebContentsView(options: {
   });
 
   const contents = view.webContents;
+  const sharedAppAuth = options.sharedAppAuth;
+  if (sharedAppAuth) {
+    contents.session.webRequest.onBeforeSendHeaders((details, callback) => {
+      const token = sharedAppAuth.getToken();
+      const gatewayOrigin = sharedAppAuth.getGatewayOrigin();
+      if (token && gatewayOrigin && shouldAuthorizeSharedAppRequest({
+        requestUrl: details.url,
+        gatewayOrigin,
+        scopeId: sharedAppAuth.target.scopeId,
+        mainFrame: details.frame?.parent === null,
+      })) {
+        details.requestHeaders.Authorization = `Bearer ${token}`;
+      }
+      callback({ requestHeaders: details.requestHeaders });
+    });
+  }
   let revokeViewerTransport = options.registerViewerTransport?.(contents);
   const product = options.browserProduct ? createBrowserProductLifecycle({
     contents, ...options.browserProduct,
@@ -150,7 +191,7 @@ export function createWebContentsView(options: {
       return false;
     }
   };
-  if (options.appBridge || options.denyPermissions) {
+  if (options.appBridge || options.sharedAppAuth || options.denyPermissions) {
     // App views receive only the explicit typed bridge. Browser capabilities
     // that could escape that permission model are denied by default.
     contents.session.setPermissionCheckHandler(() => false);
@@ -285,6 +326,7 @@ export function createWebContentsView(options: {
       product?.close();
       revokeViewerTransport?.();
       options.appBridge?.unregister(contents.id);
+      if (sharedAppAuth) contents.session.webRequest.onBeforeSendHeaders(null);
       detachFromWindow();
       // WebContentsView is GC'd once detached and dereferenced; closing the
       // contents releases the renderer process promptly.

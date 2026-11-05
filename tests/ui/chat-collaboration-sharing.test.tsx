@@ -43,7 +43,7 @@ describe("Chat collaboration sharing", () => {
     expect(await screen.findByText("Team tracker")).toBeVisible();
     expect(screen.getByText("App · shared by Nima")).toBeVisible();
     fireEvent.click(screen.getByRole("button", { name: "Open app" }));
-    expect(openApp).toHaveBeenCalledWith(appScopeId);
+    expect(openApp).toHaveBeenCalledWith(appScopeId, app);
     fireEvent.click(screen.getByRole("button", { name: "Load more shared apps" }));
     await waitFor(() => expect(api.get).toHaveBeenCalledWith(
       "/api/collaboration/shared-apps?limit=50&cursor=next-app-page",
