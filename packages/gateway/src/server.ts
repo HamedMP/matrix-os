@@ -1486,7 +1486,6 @@ export async function createGateway(config: GatewayConfig) {
       accessSourceId: "owner_openai_profile",
     }) } : {}),
   });
-  collaborationProviderSnapshots.attach(aiProviderService);
   const providerLoginCoordinator = createProviderTerminalLoginCoordinator({
     codexExecutable: codexExecutable ?? undefined,
     profileGuard: nativeProviderProfileGuard,
@@ -1522,6 +1521,9 @@ export async function createGateway(config: GatewayConfig) {
     accountLifecycle: providerAccountLifecycle,
     fundingSummaryReader: fundedAiFundingSummaryReader,
     runtimeCoordinator: providerGenericHarnessCoordinator,
+  });
+  collaborationProviderSnapshots.attach({
+    getSnapshot: (options) => providerSettingsStore!.getCanonicalCollaborationSnapshot(options),
   });
   const appAiRuntime = registerAppAiCapabilities(app, {
     homePath, ownerIds: codingAgentOwnerIds,

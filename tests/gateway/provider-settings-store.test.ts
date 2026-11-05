@@ -206,6 +206,23 @@ describe("ProviderSettingsStore", () => {
     expect(prepareSharedAiRouteChange).toHaveBeenCalledOnce();
   });
 
+  it("binds the saved Settings revision to the canonical collaboration snapshot", async () => {
+    const store = createStore();
+    const initial = await store.getSnapshot();
+    await store.mutate({
+      type: "set_gateway_budget",
+      expectedRevision: initial.revision,
+      idempotencyKey: "advance_settings_revision_for_collaboration",
+      monthlyBudgetMicrousd: 7_000_000,
+    });
+
+    const collaboration = await store.getCanonicalCollaborationSnapshot();
+
+    expect(collaboration.revision).toBe(1);
+    expect(collaboration.active).toEqual(canonical.active);
+    expect(canonical.revision).toBe(7);
+  });
+
   it("projects fresh V3 truth and persists owner configuration without readiness or usage copies", async () => {
     const store = createStore();
     const initial = await store.getSnapshot();

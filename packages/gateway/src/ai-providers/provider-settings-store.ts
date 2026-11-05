@@ -460,6 +460,37 @@ export class ProviderSettingsStore implements ProviderSettingsStoreWriter {
     throw new ProviderSettingsStoreError("projection_unavailable", 503);
   }
 
+  /**
+   * Canonical route inventory fenced by the saved Provider Settings revision.
+   * Collaboration persists that revision as route provenance instead of the
+   * raw provider service's inventory revision.
+   */
+  async getCanonicalCollaborationSnapshot(
+    options: ProviderSnapshotReadOptions = {},
+  ): Promise<AiProviderSnapshotV3> {
+    if (this.#observationScope?.() === "canonical_matrix") {
+      options = { ...options, admissionScope: "canonical_matrix" };
+    }
+    await this.#serialize(() => this.#readRuntimeRecovery(options.refresh === true));
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      const generation = await this.#serialize(async () => this.#mutationGeneration);
+      const canonical = await this.#canonical({ ...options, refresh: options.refresh === true && attempt === 0 });
+      const config = await this.#serialize(async () => generation === this.#mutationGeneration
+        ? this.#configuration(canonical)
+        : null);
+      if (!config) continue;
+      const accepted = await this.#serialize(async () => {
+        options.signal?.throwIfAborted();
+        const saved = await readSavedProviderSettingsConfiguration(this.configurationPath);
+        return generation === this.#mutationGeneration && saved?.revision === config.revision;
+      });
+      if (accepted) {
+        return AiProviderSnapshotV3Schema.parse({ ...canonical, revision: config.revision });
+      }
+    }
+    throw new ProviderSettingsStoreError("projection_unavailable", 503);
+  }
+
   async setAccountSecret(accountId: string, value: string): Promise<void> {
     await this.#serialize(async () => {
       this.#mutationGeneration += 1;
