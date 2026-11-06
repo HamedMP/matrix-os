@@ -84,4 +84,20 @@ describe("collaborative app owner sharing controls", () => {
     }));
     expect(await screen.findByText("Sharing stopped")).toBeVisible();
   });
+
+  it("keeps stop-sharing available when the rebuilt app has no current readiness", async () => {
+    const stopped = { ...share, state: "stopped" as const, shareRevision: "2", bindingRevision: "2" };
+    const api = {
+      get: vi.fn(async (path: string) => path.endsWith("/readiness") ? null : share),
+      post: vi.fn(),
+      delete: vi.fn(async () => stopped),
+    };
+    render(<CollaborativeAppShareButton appId="team-tracker" api={api}
+      organizationId="org_matrix_team" organizationName="Matrix team" />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Manage app sharing" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Stop sharing" }));
+
+    await waitFor(() => expect(api.delete).toHaveBeenCalledOnce());
+  });
 });
