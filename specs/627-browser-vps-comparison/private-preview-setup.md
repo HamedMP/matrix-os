@@ -33,6 +33,10 @@ services absent; the earlier root installer additionally accepts only `pr-*`.
   normal verified host-bundle path. Never run privileged code from owner-writable
   `app/`. One host lock serializes setup; installation has a 30-minute bound.
 - Both installation and experience updates must work from a controlling terminal.
+  Prefer installed `gnutimeout`, otherwise use `timeout`, and require its C-locale
+  version banner to identify GNU coreutils. Unsupported or missing implementations
+  fail before locks, temporary files or installation state. A similarly named
+  implementation can return137 while leaving descendants running.
   GNU `timeout` creates a separate process group and resets inherited `SIGTTOU`;
   a package manager changing terminal attributes can otherwise stop indefinitely
   until the deadline. Ignore `SIGTTOU` inside the timed child before executing
@@ -89,6 +93,9 @@ installer source commit in private acceptance evidence.
   that the original wrapper times out before that operation completes. Challenge
   the deadline with a TERM-resistant child and descendant, checking survival while
   the PTY controller remains alive so session teardown cannot hide an orphan.
+- Verify GNU selection when a different default timeout is installed, and reject
+  unsupported implementations without setup state. Repeat the actual-wrapper
+  descendant probe on Linux; a macOS pass cannot qualify a different executable.
 - On the exact engineer preview, verify installed source, app-session creation,
   Browser rendering and an agent's fresh second-turn snapshot before declaring
   the engineer unblocked. Web Desktop and Web Canvas need separate evidence;

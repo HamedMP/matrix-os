@@ -63,6 +63,28 @@ print(json.dumps(sys.argv[1:]), flush=True)
 `;
 
 describe('supported Browser preview setup command', () => {
+  it('selects installed GNU timeout when the default timeout has different group semantics', async () => {
+    const gnuTimeout = execFileSync('sh', ['-c', 'command -v gnutimeout || command -v timeout'], { encoding: 'utf8' }).trim();
+    expect(execFileSync(gnuTimeout, ['--version'], { encoding: 'utf8' })).toContain('(GNU coreutils)');
+    const f = await fixture();
+    await symlink(gnuTimeout, join(f.mocks, 'gnutimeout'));
+    await writeFile(join(f.mocks, 'timeout'), '#!/bin/sh\necho "unsupported default timeout selected" >&2\nexit 65\n');
+    await chmod(join(f.mocks, 'timeout'), 0o755);
+    f.run();
+    expect(await readFile(join(f.root, 'actions'), 'utf8')).toBe(`install:${privateArguments.join(' ')}\n`);
+  });
+  it('rejects unsupported timeout implementations before creating installation state', async () => {
+    const realTimeout = execFileSync('sh', ['-c', 'command -v gnutimeout || command -v timeout'], { encoding: 'utf8' }).trim();
+    const f = await fixture();
+    for (const name of ['timeout', 'gnutimeout']) {
+      await writeFile(join(f.mocks, name), `#!/bin/sh\nif [ "$1" = --version ]; then\n  echo 'timeout (uutils coreutils) 0.10.0'\n  exit 0\nfi\nexec '${realTimeout}' "$@"\n`);
+      await chmod(join(f.mocks, name), 0o755);
+    }
+    expect(() => f.run()).toThrow();
+    for (const path of ['actions', 'temporary-actions', 'run/matrix-browser-preview.lock', 'opt/matrix-browser-lab/.setup-complete']) {
+      await expect(readFile(join(f.root, path))).rejects.toMatchObject({ code: 'ENOENT' });
+    }
+  });
   it.each(['install', 'update-experience'])('allows %s package setup to configure its controlling terminal', async mode => {
     const f = await fixture(privateHandle, privateHandle, ttyOperation);
     if (mode === 'update-experience') {
