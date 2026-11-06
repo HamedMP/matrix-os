@@ -198,14 +198,18 @@ realDescribe("collaboration membership real PostgreSQL races", () => {
     const input = { organizationId: "org_matrix_team", actorId: collaborationActors.owner };
     const first = enforcer.membershipEnded(input);
     const reconnected = enforcer.membershipEnded(input);
+    let barrierError: unknown;
     try {
       await waitForBlockedProjectTransactions(fixture.db, lockHolderPid, 2);
+    } catch (error) {
+      barrierError = error;
     } finally {
       releaseProjectLock();
       await lockHolder;
     }
 
     const results = await Promise.allSettled([first, reconnected]);
+    if (barrierError) throw barrierError;
     const rejected = results.filter(({ status }) => status === "rejected");
     const fulfilled = results.filter(({ status }) => status === "fulfilled");
     expect(rejected.length).toBeGreaterThanOrEqual(1);
@@ -284,10 +288,18 @@ async function waitForBlockedProjectTransactions(
 ): Promise<void> {
   for (let attempt = 0; attempt < 50; attempt += 1) {
     const result = await sql<{ count: string }>`
+      with recursive blocked(pid) as (
+        select activity.pid
+        from pg_stat_activity as activity
+        where ${lockHolderPid} = any(pg_blocking_pids(activity.pid))
+        union
+        select activity.pid
+        from pg_stat_activity as activity
+        inner join blocked as blocker
+          on blocker.pid = any(pg_blocking_pids(activity.pid))
+      )
       select count(*)::text as count
-      from pg_stat_activity
-      where pid <> pg_backend_pid()
-        and ${lockHolderPid} = any(pg_blocking_pids(pid))
+      from blocked
     `.execute(db);
     if (Number(result.rows[0]?.count ?? 0) >= expected) return;
     await new Promise((resolve) => setTimeout(resolve, 20));
