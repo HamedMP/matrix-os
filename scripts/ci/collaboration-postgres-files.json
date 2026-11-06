@@ -25,6 +25,7 @@
   "tests/gateway/company-brain-owner-data.test.ts",
   "tests/gateway/company-brain-service.test.ts",
   "tests/gateway/direct-resource-policy-postgres.test.ts",
+  "tests/gateway/owned-profile-host.test.ts",
   "tests/gateway/personal-sync-share-inventory-postgres.test.ts",
   "tests/gateway/project-git-broker-postgres.test.ts",
   "tests/gateway/project-share-inventory-postgres.test.ts",
