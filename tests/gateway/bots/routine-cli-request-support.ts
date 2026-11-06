@@ -2,7 +2,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import type { Kysely } from "kysely";
-import type { RoutineCliOperation, BotRoutineProposal } from "../../../packages/contracts/src/bots/index.js";
+import type { RoutineCliOperation, BotRoutineProposal, BotRecipeRef } from "../../../packages/contracts/src/bots/index.js";
 import type { OwnerBotDatabase } from "../../../packages/gateway/src/bots/database.js";
 import type { ChatDatabase } from "../../../packages/gateway/src/chat/database.js";
 import { ChatRepository } from "../../../packages/gateway/src/chat/repository.js";
@@ -19,14 +19,14 @@ export const TARGET_A = { botId: BOT, chatId: "chat_target_a" }, TARGET_B = { bo
 export const proposal: BotRoutineProposal = { name: "Daily report", prompt: "private prompt", schedule: { kind: "interval", everyMs: 60_000 }, selection: { instanceId: "matrix_chatgpt_plan", model: "private-model" }, authorizedEffects: ["read"] };
 export const propose = (n = 100): RoutineCliOperation => ({ operation: "propose", requestId: invocation(n), proposal });
 export const routineId = (n: number) => `rt_${n.toString(16).padStart(24, "0")}`;
-export async function requestFixture(db: Kysely<OwnerBotDatabase>, options: { actualSourceOnly?: boolean } = {}) {
+export async function requestFixture(db: Kysely<OwnerBotDatabase>, options: { actualSourceOnly?: boolean; recipeRef?: BotRecipeRef } = {}) {
   const home = await mkdtemp(join(tmpdir(), "routine-cli-requests-"));
   const chats = new ChatRepository(db as unknown as Kysely<ChatDatabase>);
   const agents = new ChatAgentStore({ homePath: home, db: chats.kysely }); await agents.bootstrap();
   for (const target of [TARGET_A, TARGET_B]) {
     await insertChat(db, target.chatId);
     await agents.createRecipeBot({ type: "personal", ownerId: OWNER }, { id: target.botId, createHash: target.botId === BOT ? "a".repeat(64) : "b".repeat(64),
-      fields: { name: "Report", description: "", instructions: "Read", selection: { instanceId: "matrix_pi_default", model: "auto" } }, recipeRef: { recipeId: "report", version: "1" } });
+      fields: { name: "Report", description: "", instructions: "Read", selection: { instanceId: "matrix_pi_default", model: "auto" } }, recipeRef: options.recipeRef ?? { recipeId: "report", version: "1" } });
     await createBotBindingsRepository(db).bindDirect({ ownerId: OWNER, ...target, now: NOW });
   }
   const state = { clock: NOW, live: true, operationAllowed: true, targetAllowed: true };
