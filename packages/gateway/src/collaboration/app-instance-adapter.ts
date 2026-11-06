@@ -54,7 +54,7 @@ export interface AppInstanceDescription {
 
 export interface AppInstanceAdapter {
   describe(context: AuthorizedCollaborationContext, appId: string): Promise<AppInstanceDescription>;
-  query(context: AuthorizedCollaborationContext, appId: string, action: unknown): Promise<unknown>;
+  query(context: AuthorizedCollaborationContext, appId: string, action: unknown): Promise<{ result: unknown; revision: number }>;
   mutate(context: AuthorizedCollaborationContext, appId: string, envelope: unknown): Promise<{ result: unknown; revision: number; replayed: boolean }>;
 }
 
@@ -227,11 +227,15 @@ export function createAppInstanceAdapter(options: {
     }
   }
 
-  async function query(context: AuthorizedCollaborationContext, rawAppId: string, action: unknown): Promise<unknown> {
+  async function query(
+    context: AuthorizedCollaborationContext,
+    rawAppId: string,
+    action: unknown,
+  ): Promise<{ result: unknown; revision: number }> {
     if (context.resourceKind === "project") {
       const instance = await describe(context, rawAppId);
       if (instance.readiness !== "ready" || instance.collaborationMode !== "scoped") throw new ProjectAppAdapterError("app_unavailable");
-      return project.query(context, { appId: rawAppId, action });
+      return { result: await project.query(context, { appId: rawAppId, action }), revision: instance.revision };
     }
     const appId = AppIdSchema.safeParse(rawAppId);
     if (!appId.success) throw new ProjectAppAdapterError("invalid_action");
@@ -245,11 +249,13 @@ export function createAppInstanceAdapter(options: {
       return await options.db.transaction().execute(async (trx) => {
         await requireLiveScope(trx, current, false);
         const binding = await requireCollaborativeBinding(trx, current, "share");
-        if (!binding && !await options.catalog.get(root.id, trx)) throw new ProjectAppAdapterError("not_found");
-        return jsonValue(await options.bridge.execute({
+        const catalog = binding ? null : await options.catalog.get(root.id, trx);
+        if (!binding && !catalog) throw new ProjectAppAdapterError("not_found");
+        const result = jsonValue(await options.bridge.execute({
           namespace, appId: appId.data, storageSchema: bridgeAppId, scopeId: current.scopeId, actorId: current.actorId,
           action: { ...parsed, app: namespace } as BridgeQueryBody, transaction: trx,
         }));
+        return { result, revision: binding ? Number(binding.data_revision) : catalog!.revision };
       });
     } catch (error: unknown) {
       throw mapError(error);

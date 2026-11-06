@@ -1,18 +1,17 @@
 import {
   CollaborativeAppDirectoryItemSchema,
   CollaborativeAppLaunchResponseSchema,
+  CollaborativeAppQueryResponseSchema,
   CollaborationAppActionResponseSchema,
   type CollaborativeAppDirectoryItem,
   type CollaborativeAppLaunchResponse,
 } from "@matrix-os/contracts";
-import { z } from "zod/v4";
 
 import {
   CollaborationDirectError,
   type CollaborationDirectClient,
 } from "./direct-client.js";
 
-const QueryResponseSchema = z.object({ result: z.unknown() }).strict();
 const MAX_PENDING_MUTATIONS = 32;
 
 export type SharedAppTarget = CollaborativeAppDirectoryItem;
@@ -40,7 +39,7 @@ export interface SharedAppPlatformApi {
 export interface SharedAppTransport {
   readonly target: SharedAppTarget;
   launch(): Promise<CollaborativeAppLaunchResponse>;
-  query(action: unknown): Promise<unknown>;
+  query(action: unknown): Promise<{ result: unknown; revision: string }>;
   mutate(action: unknown, expectedRevision: string): Promise<{ result: unknown; revision: string; replayed: boolean }>;
   retryMutation(): Promise<{ result: unknown; revision: string; replayed: boolean }>;
   subscribe(handlers: { onChanged(): void | Promise<void>; onUnavailable(): void }): () => void;
@@ -85,12 +84,11 @@ export function createSharedAppTransport(input: {
     }
   };
 
-  const query = async (action: unknown): Promise<unknown> => {
+  const query = async (action: unknown): Promise<{ result: unknown; revision: string }> => {
     try {
-      const response = QueryResponseSchema.parse(await input.direct.request(
+      return CollaborativeAppQueryResponseSchema.parse(await input.direct.request(
         target.scopeId, "POST", `${base}/view`, { action },
       ));
-      return response.result;
     } catch (error: unknown) {
       throw normalize(error, "unavailable");
     }

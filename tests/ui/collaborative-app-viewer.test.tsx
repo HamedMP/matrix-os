@@ -42,7 +42,7 @@ function setup() {
   };
   const direct = {
     request: vi.fn(async (_scope: string, _method: string, path: string) => path.endsWith("/view")
-      ? { result: { rows: ["one"] } }
+      ? { result: { rows: ["one"] }, revision: "2" }
       : { result: { saved: true }, revision: 3, replayed: false }),
     subscribeEvents: vi.fn((_scope: string, handlers: typeof eventHandlers) => {
       eventHandlers = handlers;
@@ -54,6 +54,16 @@ function setup() {
 }
 
 describe("shared app transport", () => {
+  it("returns the current data revision with every restricted query", async () => {
+    const { platform, direct } = setup();
+    const transport = createSharedAppTransport({ platform, direct: direct as never, target });
+
+    await expect(transport.query({ action: "appInfo", app: target.appId })).resolves.toEqual({
+      result: { rows: ["one"] },
+      revision: "2",
+    });
+  });
+
   it("launches the exact advertised build and retries an uncertain mutation with one request id", async () => {
     const { platform, direct } = setup();
     direct.request.mockRejectedValueOnce(new CollaborationDirectError("unavailable"));
