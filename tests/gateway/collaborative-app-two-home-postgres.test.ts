@@ -97,9 +97,13 @@ describe("collaborative app owner/member common Postgres data", () => {
       collaborativeBuildId: build.buildId,
       revision: 0,
     });
+    await expect(adapter.query(member, appId, { action: "appInfo", app: appId })).resolves.toEqual({
+      result: { id: appId },
+      revision: 0,
+    });
     const find = { action: "find", app: appId, table: "tasks", orderBy: { id: "asc" } };
-    expect(await adapter.query(owner, appId, find)).toHaveLength(20);
-    expect(await adapter.query(member, appId, find)).toHaveLength(20);
+    expect(await adapter.query(owner, appId, find)).toMatchObject({ result: expect.any(Array), revision: 0 });
+    expect((await adapter.query(member, appId, find)).result).toHaveLength(20);
     const clientRequestId = randomUUID();
     const mutation = {
       clientRequestId,
@@ -112,8 +116,8 @@ describe("collaborative app owner/member common Postgres data", () => {
     await expect(adapter.mutate(member, appId, mutation)).resolves.toEqual({
       result: { id: "task-21" }, revision: 1, replayed: true,
     });
-    expect(await adapter.query(owner, appId, find)).toHaveLength(21);
-    expect(await adapter.query(member, appId, find)).toHaveLength(21);
+    expect(await adapter.query(owner, appId, find)).toMatchObject({ result: expect.any(Array), revision: 1 });
+    expect((await adapter.query(member, appId, find)).result).toHaveLength(21);
     const binding = await shares.getActiveByCatalog({ ownerId, catalogId });
     expect(binding).toMatchObject({ dataRevision: 1 });
     const events = await fixture.db.selectFrom("collaboration_events")

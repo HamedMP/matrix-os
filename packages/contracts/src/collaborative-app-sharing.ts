@@ -178,6 +178,10 @@ export const CollaborativeAppMutationRequestSchema = z.object({
   expectedRevision: CollaborationRevisionSchema,
   action: boundedJson(64 * 1024),
 }).strict();
+export const CollaborativeAppQueryResponseSchema = z.object({
+  result: boundedJson(1024 * 1024),
+  revision: CollaborationRevisionSchema,
+}).strict();
 export const CollaborativeAppMutationResponseSchema = z.object({
   result: boundedJson(1024 * 1024),
   revision: CollaborationRevisionSchema,
