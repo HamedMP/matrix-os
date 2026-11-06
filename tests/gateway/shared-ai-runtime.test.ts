@@ -97,6 +97,7 @@ describe("current owner route dispatch fence", () => {
       instanceId: "claude_shared",
       model: "claude-sonnet-5",
     });
+    expect(canonicalChatSelectionForOwnerAuthority(standalonePolicy, null)).toBeNull();
   });
 
   it("keeps cosmetic Settings revisions as provenance without changing execution authority", () => {
