@@ -105,15 +105,13 @@ export function HarnessRail({
               const harness = item.instance!;
               const source = resolveHarnessConnection(harness, accounts, sources).source;
               const observedNative = nativeClaudeConnection(harness, accounts, sources, nativeObservationTime?.now, nativeObservationTime?.observedAt);
-              const authentication = !observedNative && harness.harness === "claude" && source?.id === "owner_claude_profile"
-                ? { ...harness, authState: "unknown" as const } : harness;
               return (
                 <AgentRow
                   key={harness.id}
                   id={harness.id}
                   harness={harness.harness}
                   name={harness.harness === "claude" && harness.displayName === "Claude" ? "Claude Code" : harness.displayName}
-                  status={observedNative ? "Connected" : resolvedWorkflowRowStatus(authentication, source, statusOverride?.[harness.id])}
+                  status={observedNative ? "Connected" : resolvedWorkflowRowStatus(harness, source, statusOverride?.[harness.id])}
                   accent={harness.accentColor ?? "none"}
                   expanded={expanded}
                   onToggle={() => onSelect(harness.id)}

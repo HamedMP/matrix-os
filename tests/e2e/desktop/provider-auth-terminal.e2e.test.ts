@@ -138,8 +138,7 @@ it("keeps browser login in Settings and disconnects execution without logging ou
     expect(retained.accounts).toEqual(connected.accounts.map(account => ({
       ...account, lastCheckedAt: retained.refreshedAt,
     })));
-    expect(retained.accessSources).toEqual(connected.accessSources.map(source => ({...source, readiness: {...source.readiness, checkedAt: retained.refreshedAt},
-      usage: {...source.usage, asOf: retained.refreshedAt}})));
+    expect(retained.accessSources).toEqual(connected.accessSources);
     expect(retained.supportedActions).toEqual(connected.supportedActions);
     expect(retained.harnesses[0]).toMatchObject({ enabled: false, configuredEnabled: false, authState: "authenticated",
       selectedAccountId: connected.harnesses[0].selectedAccountId, accessSourceId: connected.harnesses[0].accessSourceId,

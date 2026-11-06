@@ -17,9 +17,11 @@ import {
   type ProviderManagedCreditObservation,
 } from "@matrix-os/contracts";
 
+const NOW = "2026-09-20T00:00:00.000Z";
+
 export function providerAuthSettingsSnapshot(authenticated: boolean, nativeClaudeProfile = false): ProviderSettingsSnapshot {
-  // Each synthetic owner read/completion represents a new native observation.
-  const NOW = new Date().toISOString();
+  // Fresh CLI identity does not refresh cached allowance/readiness observations.
+  const nativeObservedAt = nativeClaudeProfile ? new Date().toISOString() : NOW;
   const authState = authenticated ? "authenticated" as const : "unauthenticated" as const;
   const accountId = nativeClaudeProfile ? "owner_claude_profile" : "claude_account";
   const accessSourceId = nativeClaudeProfile ? "owner_claude_profile" : "claude_account_source";
@@ -28,7 +30,7 @@ export function providerAuthSettingsSnapshot(authenticated: boolean, nativeClaud
     atomicConnectSupported: false,
     projectionOf: { contract: "AiProviderSnapshotV3", contractVersion: 3, revision: authenticated ? 2 : 1 },
     revision: authenticated ? 2 : 1,
-    refreshedAt: NOW,
+    refreshedAt: nativeObservedAt,
     access: { mode: "writable" },
     supportedActions: [authenticated ? "logout_account" : "start_login", "set_harness_enabled"],
     harnessCatalog: (["hermes", "openclaw", "pi", "opencode"] as const).map((harness) => ({
@@ -66,7 +68,7 @@ export function providerAuthSettingsSnapshot(authenticated: boolean, nativeClaud
       displayName: "Claude",
       authMethod: "terminal",
       authState,
-      lastCheckedAt: NOW,
+      lastCheckedAt: nativeObservedAt,
       accessSourceId,
       dependencies: { activeChatCount: 0, resumableChatCount: 0, harnessInstanceCount: 1 },
     }],

@@ -96,9 +96,10 @@ independent of a saved legacy profile, an explicit Matrix binding or a saved API
 key. It updates existing authentication indicators for the discovered native
 account, never an unrelated selected account. Card selection, visibility, layout,
 copy and connection/adoption controls retain their existing behavior. An
-already-selected native route still requires the server's exact
-harness authentication verdict. Expired evidence cannot retain Connected through
-the selected-route fallback.
+already-selected native route retains the server's exact authenticated
+harness/source/account verdict, including optional or expired native metadata.
+The bounded metadata proof is additive discovery for other saved bindings; its
+expiry cannot create or replace canonical authentication authority.
 
 Native display time anchors to the authenticated snapshot's `refreshedAt` only
 within a 60-second receipt-clock skew bound, then advances by monotonic elapsed
@@ -119,6 +120,17 @@ active reads/mutations; hidden surfaces pause, disposal aborts and old Computer
 responses cannot replace a new controller. Native authentication changes notify
 catalog consumers after a validated snapshot is accepted; timestamp renewal alone
 does not invalidate catalogs. Retained Chat consumers do not start another poller.
+
+Automatic native observations do not block or restart the independent 45-second
+managed-credit refresh. A single validated managed-credit observation may survive
+an older native snapshot only within the same controller identity, snapshot
+revision, access mode, gateway policy, source/account and eligible-model authority.
+Existing usage-time, policy-expiry and newer-observation checks still apply.
+Replaying a retained observation also preserves its accepted effective-model
+intersection, negative managed-source readiness and suppressed credit-purchase
+action; a later wider funding policy cannot revalidate previously denied routes.
+Foreground refresh, mutation and disposal invalidate this retained observation;
+native provider quota is never retained through this managed-credit path.
 
 Read-only observation preserves source/model/enabled intent, revision, credentials
 and independent Bot/background grants. The narrow legacy **Use connected Claude

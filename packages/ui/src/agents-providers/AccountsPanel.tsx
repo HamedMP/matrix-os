@@ -332,9 +332,12 @@ export function AccountsPanel({
               (!harness.selectedAccountId && accounts[0]?.id === account.id);
             // Share the header's strict native-auth status only for this exact account.
             // Saved Off and Bot readiness do not log out an authenticated native owner.
-            const authenticatedNativeAccount = nativeClaudeConnection(harness, accounts, sources, nativeObservationTime?.now, nativeObservationTime?.observedAt)?.account.id === account.id;
-            const connected = account.id === "owner_claude_profile" && harness.harness === "claude"
-              ? authenticatedNativeAccount : hasConfiguredConnection({ ...harness, authState: account.authState }, source);
+            const authenticatedNativeAccount = nativeClaudeConnection(harness, accounts, sources, nativeObservationTime?.now, nativeObservationTime?.observedAt)?.account.id === account.id || harness.harness === "claude" && selected
+              && account.authState === "authenticated" && account.providerId === "anthropic"
+              && account.accessSourceId === harness.accessSourceId
+              && resolvedWorkflowRowStatus(harness, source) === "Connected";
+            const connected = authenticatedNativeAccount
+              || hasConfiguredConnection({ ...harness, authState: account.authState }, source);
             const status = connected ? "Connected" : "Not connected";
             const collapsed = guided && !connected && account.authState !== "expired";
             const card = (

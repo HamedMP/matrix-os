@@ -94,7 +94,8 @@ it("renews credit for six minutes through the actual maximized Settings chain", 
     expect(screen.queryByText("Chat credit unavailable")).not.toBeInTheDocument();
   }
   expect(screen.getByText("$3.92")).toBeVisible();
-  expect(api.fullReads()).toHaveLength(1);
+  expect(api.fullReads()).toHaveLength(19);
+  expect(api.fullReads().every(([path]) => new URL(path, "http://localhost").searchParams.has("refresh") === false)).toBe(true);
   expect(window.operator.invoke).toHaveBeenCalledTimes(initialNativeReads);
   expect(api.get.mock.calls.filter(([path]) => path.includes("/workflows/"))).toHaveLength(initialCapabilityReads);
 });
@@ -109,11 +110,13 @@ it("keeps visible unfocused floating Settings renewing, then pauses during Show 
   await act(async () => { useDesktopSurfaces.getState().showDesktop(); });
   await act(async () => { await vi.advanceTimersByTimeAsync(360_000); });
   expect(api.creditReads()).toHaveLength(1);
+  expect(api.fullReads()).toHaveLength(3);
   await act(async () => { useDesktopSurfaces.getState().activateSurface(tab.id); useTabs.getState().focusTab(tab.id); });
   await act(async () => {});
   expect(api.creditReads()).toHaveLength(2);
   expect(screen.queryByText("Chat credit unavailable")).not.toBeInTheDocument();
-  expect(api.fullReads()).toHaveLength(1);
+  expect(api.fullReads()).toHaveLength(4);
+  expect(api.fullReads().every(([path]) => new URL(path, "http://localhost").searchParams.has("refresh") === false)).toBe(true);
 });
 
 it("forwards retained visibility and section ownership through the real Settings view", async () => {

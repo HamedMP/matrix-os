@@ -118,6 +118,7 @@ export class ProviderSettingsController {
   private appliedOperationId = 0;
   private activeRefreshes = 0;
   private pendingMutations = 0;
+  private nativeObservationPending = false;
   private mutationTail: Promise<void> = Promise.resolve();
   private disposed = false;
   private readonly managedCredit: ManagedCreditRefresh;
@@ -158,8 +159,10 @@ export class ProviderSettingsController {
   refreshManagedCredit = (signal?: AbortSignal) => this.managedCredit.refresh(signal);
 
   refreshNativeAuthentication = async (signal: AbortSignal): Promise<void> => {
-    if (this.disposed || this.state.busy || signal.aborted) return;
-    await this.runRefresh(false, true, signal);
+    if (this.disposed || this.state.busy || this.nativeObservationPending || signal.aborted) return;
+    this.nativeObservationPending = true;
+    try { await this.runRefresh(false, true, signal); }
+    finally { this.nativeObservationPending = false; }
   };
 
   refresh = async (options: { refresh?: boolean } = { refresh: true }): Promise<void> => {
@@ -214,9 +217,10 @@ export class ProviderSettingsController {
   };
 
   private async runRefresh(refresh = true, nativeAuthOnly = false, signal?: AbortSignal): Promise<boolean> {
-    this.managedCredit.invalidate();
+    if (!nativeAuthOnly) this.managedCredit.invalidate();
     const operationId = ++this.operationClock;
-    const request = this.beginRequest("refresh");
+    const kind = nativeAuthOnly ? "observation" : "refresh";
+    const request = this.beginRequest(kind);
     const abort = () => request.abort();
     signal?.addEventListener("abort", abort, { once: true });
     try {
@@ -227,7 +231,9 @@ export class ProviderSettingsController {
       request.signal.throwIfAborted();
       const parsed = ProviderSettingsSnapshotSchema.safeParse(raw);
       if (!parsed.success) throw new ProviderSettingsTransportError("invalid_response");
-      const snapshot = parsed.data;
+      if (this.disposed || operationId < this.appliedOperationId) return false;
+      const snapshot = nativeAuthOnly
+        ? this.managedCredit.reconcileNativeSnapshot(parsed.data) : parsed.data;
       const applied = this.applySnapshot(snapshot, { operationId });
       if (applied && (refresh || nativeAuthOnly && previous
         && nativeAuthenticationFingerprint(previous) !== nativeAuthenticationFingerprint(snapshot))) this.options.onCatalogChanged?.();
@@ -239,7 +245,7 @@ export class ProviderSettingsController {
       return false;
     } finally {
       signal?.removeEventListener("abort", abort);
-      this.endRequest(request, "refresh");
+      this.endRequest(request, kind);
     }
   }
 
@@ -348,7 +354,7 @@ export class ProviderSettingsController {
     return true;
   }
 
-  private beginRequest(kind: "refresh" | "mutation"): AbortController {
+  private beginRequest(kind: "refresh" | "mutation" | "observation"): AbortController {
     if (this.requests.size >= MAX_ACTIVE_REQUESTS) {
       const oldest = this.requests.values().next().value;
       if (oldest !== undefined) {
@@ -365,7 +371,7 @@ export class ProviderSettingsController {
     return request;
   }
 
-  private endRequest(request: AbortController, kind: "refresh" | "mutation"): void {
+  private endRequest(request: AbortController, kind: "refresh" | "mutation" | "observation"): void {
     this.requests.delete(request);
     if (kind === "refresh") {
       this.activeRefreshes -= 1;

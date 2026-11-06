@@ -7,6 +7,13 @@ import {ProviderSettingsSnapshotSchema} from "@matrix-os/contracts";
 import {AgentsProvidersView} from "../../packages/ui/src/agents-providers/AgentsProvidersView.js";
 import nativeInput from "../fixtures/claude-native-authenticated-off.json";
 afterEach(cleanup);
+// Metadata-only discovery adds authentication evidence to an unselected route;
+// canonical selected-native authentication retains its pre-existing authority.
+function metadataOnlySnapshot() {
+ const snapshot=ProviderSettingsSnapshotSchema.parse(structuredClone(nativeInput));
+ Object.assign(snapshot.harnesses[0]!,{id:"harness_kernel",authState:"unknown",accessSourceId:null,selectedAccountId:null,configuredAccessSourceId:"matrix_included",enablementOrigin:"owner_configuration"});
+ return snapshot;
+}
 it.each(["legacy_profile", "owner_matrix", "saved_key"])("recognizes Terminal native authentication independently of %s without changing execution intent", async shape => {
  const snapshot=ProviderSettingsSnapshotSchema.parse(structuredClone(nativeInput));
  const native=snapshot.accounts[0]!;snapshot.refreshedAt=new Date().toISOString();native.lastCheckedAt=snapshot.refreshedAt;
@@ -44,9 +51,9 @@ it("updates the existing indicator without adding a discovered-account card or c
  expect(document.querySelector(".matrix-ap-connected")).toBeNull();
  expect(screen.queryByRole("button",{name:"Use connected Claude account"})).not.toBeInTheDocument();expect(screen.getByRole("button",{name:/^Claude.*Connected/})).toBeVisible();expect(screen.getByRole("button",{name:/^Claude account/})).toBeEnabled();expect(startConnection).not.toHaveBeenCalled();
 });
-it("expires selected native authentication without falling back to an old Connected harness label",async()=>{
+it("expires metadata-only native discovery without changing canonical connection authority",async()=>{
  vi.useFakeTimers();try{
-  vi.setSystemTime("2026-11-06T10:00:00Z");const snapshot=ProviderSettingsSnapshotSchema.parse(structuredClone(nativeInput));snapshot.refreshedAt=new Date().toISOString();snapshot.accounts[0]!.lastCheckedAt=snapshot.refreshedAt;
+  vi.setSystemTime("2026-11-06T10:00:00Z");const snapshot=metadataOnlySnapshot();snapshot.refreshedAt=new Date().toISOString();snapshot.accounts[0]!.lastCheckedAt=snapshot.refreshedAt;
   render(<AgentsProvidersView snapshot={snapshot} selectedHarnessId={snapshot.harnesses[0]!.id} onSelectHarness={vi.fn()} onRefresh={vi.fn()} onMutate={vi.fn()} onOpenTerminal={vi.fn()} onOpenBrowser={vi.fn()}/>);
   await act(async()=>{fireEvent.click(screen.getByRole("button",{name:/^Claude/}));});expect(screen.getByRole("button",{name:/^Claude.*Connected/})).toBeVisible();
   await act(async()=>vi.advanceTimersByTimeAsync(30_001));expect(screen.getByRole("button",{name:/^Claude.*Not connected/})).toBeVisible();
@@ -55,7 +62,7 @@ it("expires selected native authentication without falling back to an old Connec
 it.each([-2650,2650])("uses bounded server-relative native freshness with renderer offset %s and still expires after a wall-clock rollback",async offset=>{
  vi.useFakeTimers();try{
   const server=Date.parse("2026-11-06T10:00:00Z");vi.setSystemTime(server+offset);
-  const snapshot=ProviderSettingsSnapshotSchema.parse(structuredClone(nativeInput));
+  const snapshot=metadataOnlySnapshot();
   snapshot.refreshedAt=new Date(server).toISOString();snapshot.accounts[0]!.lastCheckedAt=snapshot.refreshedAt;
   const props={snapshot,selectedHarnessId:snapshot.harnesses[0]!.id,onSelectHarness:vi.fn(),onRefresh:vi.fn(),onMutate:vi.fn(),onOpenTerminal:vi.fn(),onOpenBrowser:vi.fn()};
   const view=render(<AgentsProvidersView {...props}/>);
@@ -74,7 +81,7 @@ it.each([-2650,2650])("uses bounded server-relative native freshness with render
 it.each(["checked_after_snapshot","excessive_clock_skew","expired_proof"])("rejects %s for native authentication",async scenario=>{
  vi.useFakeTimers();try{
   const server=Date.parse("2026-11-06T10:00:00Z");vi.setSystemTime(server+(scenario==="excessive_clock_skew"?60_001:0));
-  const snapshot=ProviderSettingsSnapshotSchema.parse(structuredClone(nativeInput));snapshot.refreshedAt=new Date(server).toISOString();
+  const snapshot=metadataOnlySnapshot();snapshot.refreshedAt=new Date(server).toISOString();
   snapshot.accounts[0]!.lastCheckedAt=new Date(server+(scenario==="checked_after_snapshot"?1:scenario==="expired_proof"?-30_001:0)).toISOString();
   render(<AgentsProvidersView snapshot={snapshot} selectedHarnessId={snapshot.harnesses[0]!.id} onSelectHarness={vi.fn()} onRefresh={vi.fn()} onMutate={vi.fn()} onOpenTerminal={vi.fn()} onOpenBrowser={vi.fn()}/>);
   await act(async()=>vi.advanceTimersByTimeAsync(100));
@@ -84,7 +91,7 @@ it.each(["checked_after_snapshot","excessive_clock_skew","expired_proof"])("reje
 it("does not resurrect native proof from a snapshot older than an already accepted stamp",async()=>{
  vi.useFakeTimers();try{
   const server=Date.parse("2026-11-06T10:00:00Z");vi.setSystemTime(server);
-  const snapshot=ProviderSettingsSnapshotSchema.parse(structuredClone(nativeInput));snapshot.refreshedAt=new Date(server).toISOString();snapshot.accounts[0]!.lastCheckedAt=snapshot.refreshedAt;
+  const snapshot=metadataOnlySnapshot();snapshot.refreshedAt=new Date(server).toISOString();snapshot.accounts[0]!.lastCheckedAt=snapshot.refreshedAt;
   const props={snapshot,selectedHarnessId:snapshot.harnesses[0]!.id,onSelectHarness:vi.fn(),onRefresh:vi.fn(),onMutate:vi.fn(),onOpenTerminal:vi.fn(),onOpenBrowser:vi.fn()};
   const view=render(<AgentsProvidersView {...props}/>);expect(screen.getByRole("button",{name:/^Claude.*Connected/})).toBeVisible();
   await act(async()=>vi.advanceTimersByTimeAsync(1000));const older=structuredClone(snapshot);older.refreshedAt=new Date(server-1).toISOString();older.accounts[0]!.lastCheckedAt=older.refreshedAt;
