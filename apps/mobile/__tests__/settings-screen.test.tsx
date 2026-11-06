@@ -52,6 +52,7 @@ describe("drawer settings hub", () => {
       "Open Account",
       "Open App settings",
       "Open Connect Apps",
+      "Open Developer access",
       "Open Billing",
       "Open Help",
       "Sign out",
@@ -63,6 +64,14 @@ describe("drawer settings hub", () => {
     render(<SettingsScreen />);
 
     expect(screen.getByText("Docs, support, privacy, and terms")).toBeTruthy();
+  });
+
+  it("opens GitHub developer access as its own Settings destination", () => {
+    render(<SettingsScreen />);
+
+    fireEvent.press(screen.getByLabelText("Open Developer access"));
+
+    expect(mockPush).toHaveBeenCalledWith("/settings-detail/developer-access");
   });
 
   it("confirms before signing out", async () => {

@@ -4,6 +4,11 @@ import {
   parseTerminalSessions,
   type MobileTerminalSession,
 } from "@/lib/terminal-state";
+import {
+  createGithubDeveloperSetupSession as createGithubDeveloperSetupSessionRequest,
+  getGithubDeveloperStatus as getGithubDeveloperStatusRequest,
+  type GithubDeveloperStatusResult,
+} from "@/lib/github-developer-access";
 import { logMobileCodingAgentWarning } from "@/lib/coding-agent-diagnostics";
 import { twoWordShellSessionName } from "@/lib/shell-session-names";
 import {
@@ -67,14 +72,6 @@ import {
   boundedListSchema,
 } from "@matrix-os/contracts";
 import { z } from "zod/v4";
-
-function randomShellSuffix(): string {
-  const c = (globalThis as { crypto?: { randomUUID?: () => string } }).crypto;
-  if (c && typeof c.randomUUID === "function") {
-    return c.randomUUID().replace(/-/g, "").slice(0, 7);
-  }
-  return Math.random().toString(36).slice(2, 9).padEnd(7, "0").slice(0, 7);
-}
 
 export type ConnectionState = "disconnected" | "connecting" | "connected" | "error";
 
@@ -1530,51 +1527,16 @@ export class GatewayClient {
     }
   }
 
+  async getGithubDeveloperStatus(): Promise<GithubDeveloperStatusResult> {
+    return getGithubDeveloperStatusRequest((path, init) => this.fetchGateway(path, init));
+  }
+
   /**
-   * Create a workspace tab that runs a provider setup command and return its
-   * serialized TerminalRef for handoff, or null on failure. The command is sent
-   * to the gateway inside the bounded foreground tab and is never stored in
-   * shell state or rendered in the UI (CLAUDE.md: provider setup stays
-   * terminal-backed and command-hidden).
+   * Create a workspace tab that runs the fixed GitHub developer login flow and
+   * return its validated serialized TerminalRef for handoff, or null on failure.
    */
-  async createProviderSetupSession(command: string): Promise<string | null> {
-    if (typeof command !== "string" || command.length === 0) return null;
-    const name = `Setup ${randomShellSuffix()}`;
-    try {
-      const ensured = await this.fetchGateway("/api/terminal/workspaces/ensure", {
-        method: "POST", body: "{}", headers: { "Content-Type": "application/json" },
-      });
-      if (!ensured.ok) return null;
-      const ensuredBody = (await ensured.json().catch((err: unknown) => {
-        logGatewayCatchWarning("provider setup workspace ensure returned invalid JSON", err);
-        return null;
-      })) as { workspace?: { id?: unknown } } | null;
-      const workspaceId = typeof ensuredBody?.workspace?.id === "string" ? ensuredBody.workspace.id : "";
-      if (!/^tws_[0-9a-f]{32}$/.test(workspaceId)) return null;
-      const res = await this.fetchGateway(`/api/terminal/workspaces/${workspaceId}/tabs`, {
-        method: "POST",
-        body: JSON.stringify({ name, cwd: "projects", command: ["sh", "-lc", command] }),
-        headers: { "Content-Type": "application/json" },
-      });
-      if (!res.ok) {
-        await res.text().catch((err: unknown) => {
-          logGatewayCatchWarning("failed to read provider setup session create error body", err);
-          return "";
-        });
-        logGatewayStatusWarning("provider setup session create failed", res.status);
-        return null;
-      }
-      const body = (await res.json().catch((err: unknown) => {
-        logGatewayCatchWarning("provider setup tab create returned invalid JSON", err);
-        return null;
-      })) as { tab?: { id?: unknown } } | null;
-      const tabId = typeof body?.tab?.id === "string" ? body.tab.id : "";
-      const created = `${workspaceId}:${tabId}`;
-      return isSafeSessionId(created) ? created : null;
-    } catch (err: unknown) {
-      logGatewayCatchWarning("provider setup tab create unavailable", err);
-      return null;
-    }
+  async createGithubDeveloperSetupSession(): Promise<string | null> {
+    return createGithubDeveloperSetupSessionRequest((path, init) => this.fetchGateway(path, init));
   }
 
   async deleteTerminalSession(refKey: string): Promise<boolean> {
