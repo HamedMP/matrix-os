@@ -62,7 +62,7 @@ it("actively connects owned controls while installed/foreign command sentinels r
 
 async function workflow(failAt = 0, denialFault?: string) {
   const base = await root(), config = { appRoot: join(base, "app"), commandSocketRoot: join(base, "c"), runtimeDirectory: join(base, "runtime"), supervisorSocket: join(base, "supervisor"), brokerSocket: join(base, "broker"), supervisorUnit: "matrix-devstack-proof-scope-runtime.service", workerUnitPrefix: "matrix-devstack-proof-scope-runtime-" };
-  const profile = { profileId: "scope-runtime-chat-v1", profileVersion: 2, profileDigest: "a".repeat(64), executionGeneration: "1", adapters: [{ adapterId: "claude-code", harnessVersion: "2.1.240" }] };
+  const profile = { profileId: "scope-runtime-chat-v1", profileVersion: 3, profileDigest: "a".repeat(64), executionGeneration: "1", adapters: [{ adapterId: "claude-code", harnessVersion: "2.1.240" }] };
   const states: Record<string, any> = {}, observations: Record<string, any> = {}, events: string[] = [], stopped: string[] = [];
   const unit = (handle: string) => config.workerUnitPrefix + handle.slice(8) + ".service";
   const state = (index: number) => ({ LoadState: "loaded", InvocationID: String(index).repeat(32), MainPID: String(40 + index), ActiveState: "active", SubState: "running", DefinitionIdentity: "definition", Transient: "yes", Description: "token", KillSignal: "9", RuntimeDirectoryPreserve: "yes", ...Object.fromEntries(CASCADE_KEYS.map(key => [key, ""])) });
@@ -96,11 +96,12 @@ async function workflow(failAt = 0, denialFault?: string) {
     events.push("configuration:" + handle);
     if (failAt && Number(handle.slice(-1)) === failAt) throw Error("security_property_drift");
     const value = states[unit(handle)];
-    return { properties: { ...value }, namespaces: { net: "net:" + handle, mnt: "mnt:" + handle }, rootIdentity: { device: "1", inode: handle }, cgroup: handle, node: { sha256: "frozen-node" } };
+    return { properties: { ...value }, namespaces: { net: "net:" + handle, mnt: "mnt:" + handle, user: "user:" + handle }, rootIdentity: { device: "1", inode: handle }, cgroup: handle, node: { sha256: "frozen-node" } };
   };
   const io = {
     request, inventory: async () => Object.keys(states).filter(name => name !== config.supervisorUnit),
-    workerConfiguration, supervisorConfiguration: async () => ({ node: "frozen-node" }),
+    workerConfiguration, supervisorConfiguration: async () => ({ node: "frozen-node", properties: {}, credentials: {} }),
+    commandCleanup: async () => ({ removed: true }),
     socketStat: async () => ({ isSocket: () => true }),
     brokerStart: async () => ({ requests: () => inference, close: async () => { events.push("broker-close"); } }),
     controlsStart: async (...args: any[]) => { controls = await startControls(...args); return controls; },
@@ -214,4 +215,26 @@ it.each(["missing_control", "duplicate_role", "missing_sdk_isolation"])("refuses
     if (gate !== "sdk_isolation" || fault !== "missing_sdk_isolation") await journal.step(gate, async () => ({}));
   }
   expect(journal.result().status).toBe("failed");
+});
+
+it("retains SDK success but refuses cleanup claims when pre-stop publication observation fails", async () => {
+  const f = await workflow(), original = f.io.workerConfiguration;
+  f.io.workerConfiguration = async (...args: Parameters<typeof original>) => {
+    if (f.events.includes("chat:" + args[1])) throw Error("command_staging_not_empty");
+    return original(...args);
+  };
+  await expect(f.run()).rejects.toThrow("command_staging_not_empty");
+  expect(f.events.some(value => value.startsWith("reconcile:"))).toBe(false);
+  expect(f.journal.result().gates.sdk.state).toBe("passed");
+  expect(f.journal.result().gates.command_cleanup).toMatchObject({ state: "failed", code: "command_staging_not_empty" });
+  expect(f.journal.result().status).toBe("failed"); await f.ledger.cleanup();
+});
+
+it("fails the cleanup gate if the supervisor credential proof changes across retained-staging removal", async () => {
+  const f = await workflow(); let observations = 0;
+  f.io.supervisorConfiguration = async () => ({ node: "frozen-node", properties: {}, credentials: { uids: [++observations > 3 ? 1 : 0] } }) as any;
+  await expect(f.run()).rejects.toThrow("process_evidence_changed");
+  expect(f.journal.result().gates.reconcile.state).toBe("passed");
+  expect(f.journal.result().gates.command_cleanup.state).toBe("failed");
+  expect(f.journal.result().status).toBe("failed"); await f.ledger.cleanup();
 });

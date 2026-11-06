@@ -71,9 +71,9 @@ it("retains completed SDK evidence after a later gate fails and strips unknown p
   expect(journal.result().gates.sdk).toMatchObject({ state: "passed", evidence: { result: "scope-sdk-ok" } });
   expect(journal.result().status).toBe("failed");
   const adapter = { adapterId: "claude-code", harnessVersion: "2.1.240" };
-  expect(() => safeCapability({ profile: { profileId: "scope-runtime-chat-v1", profileVersion: 2, profileDigest: "a".repeat(64),
+  expect(() => safeCapability({ profile: { profileId: "scope-runtime-chat-v1", profileVersion: 3, profileDigest: "a".repeat(64),
     executionGeneration: "1", adapters: [adapter, { adapterId: "codex", harnessVersion: "0.162.1" }] } })).toThrow("capability_invalid");
-  expect(safeCapability({ profile: { profileId: "scope-runtime-chat-v1", profileVersion: 2, profileDigest: "a".repeat(64), executionGeneration: "1", adapters: [{ adapterId: "claude-code", harnessVersion: "2.1.240", secret: "never-store" }] }, secret: "never-store" })).not.toHaveProperty("secret");
+  expect(safeCapability({ profile: { profileId: "scope-runtime-chat-v1", profileVersion: 3, profileDigest: "a".repeat(64), executionGeneration: "1", adapters: [{ adapterId: "claude-code", harnessVersion: "2.1.240", secret: "never-store" }] }, secret: "never-store" })).not.toHaveProperty("secret");
 });
 it("rejects two matching dependency manifests from outside the owned checkout before version execution", async () => {
   const { verifyDependencies } = await import("../../scripts/ops/devstack-native/dependencies.mjs");
