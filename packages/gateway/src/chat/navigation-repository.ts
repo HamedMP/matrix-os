@@ -1,3 +1,4 @@
+import { incomingChatMessagePredicate } from "./records.js";
 import { chatImportHarnessSql, chatImportSource } from "./import-source.js";
 import { CanonicalChatNavigationItemSchema, CanonicalChatNavigationQuerySchema,
   CanonicalChatNavigationResponseSchema, CanonicalOwnerScopeSchema,
@@ -48,7 +49,7 @@ export function createChatNavigationRepository(db: Kysely<ChatDatabase>): ChatNa
         ORDER BY r.chat_id,r.completed_at DESC,r.created_at DESC,r.id DESC
       ), incoming AS (
         SELECT m.chat_id,MAX(m.seq) AS seq FROM chat_messages m JOIN page p ON p.id=m.chat_id
-        WHERE m.role='assistant' AND m.state='committed' GROUP BY m.chat_id
+        WHERE ${incomingChatMessagePredicate("m")} GROUP BY m.chat_id
       ), bindings AS (
         SELECT DISTINCT ON (b.chat_id) b.chat_id,b.bot_id FROM bot_chat_bindings b JOIN page p ON p.id=b.chat_id
         WHERE b.owner_id=${owner.ownerId} AND b.kind='direct' AND b.removed_at IS NULL

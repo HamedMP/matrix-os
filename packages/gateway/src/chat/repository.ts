@@ -1,3 +1,4 @@
+import { appendRoutineReceiptWithin, type AppendRoutineReceiptInput } from "./routine-receipt-repository.js";
 import { readChatImportSource } from "./import-source.js";
 import { listChats, updateChat, renameChat } from "./metadata-repository.js";
 import { ownerSharedProjection, sharedBindingScopeId } from "./owner-shared-projection.js";
@@ -510,6 +511,12 @@ export class ChatRepository {
 
   async withTransaction<T>(fn: (repository: ChatRepository) => Promise<T>): Promise<T> {
     return this.transact((trx) => fn(new ChatRepository(trx, true, this.outboxDelivery)));
+  }
+
+  /** Server-only source projection, committed independently of canonical target work. */
+  async appendRoutineReceipt(ownerId: string, input: AppendRoutineReceiptInput) {
+    return this.transact(trx => appendRoutineReceiptWithin(trx, ownerId, input,
+      (executor, owner, chatId, revision, event, payload) => this.appendOutbox(executor, owner, chatId, revision, event, payload)));
   }
 
   async appendOutboxEvent(

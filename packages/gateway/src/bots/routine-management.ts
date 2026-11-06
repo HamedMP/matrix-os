@@ -1,3 +1,5 @@
+import { RoutineCliSourceContextSchema } from "./routine-cli-source-context.js";
+import { parseJson } from "../chat/records.js";
 import { sql } from "kysely";
 import { BotRoutineCenterQuerySchema, BotRoutineCenterResponseSchema, BotRoutineDetailResponseSchema } from "@matrix-os/contracts";
 import type { BotExecutor } from "./repositories/shared.js";
@@ -14,7 +16,18 @@ export function createBotRoutineManagement(db: BotExecutor, approvals: BotRoutin
     status: fire.status, attempts: fire.attempts, failureCode: fire.failureCode, updatedAt: fire.updatedAt });
   async function summary(routine: BotRoutine, history: BotRoutineFire[]) {
     const targetAvailable = await approvals.targetAvailable(routine.ownerId, routine.botId, routine.chatId);
-    return { routineId: routine.routineId, botId: routine.botId, chatId: routine.chatId, proposal: routine.proposal,
+    let origin: { originChatId: string; originAvailable: boolean } | undefined;
+    if (routine.origin) {
+      const ledger = await db.selectFrom("routine_cli_requests").select("source_context").where("owner_id", "=", routine.ownerId)
+        .where("computer_id", "=", routine.origin.computerId).where("client_request_id", "=", routine.origin.requestId).executeTakeFirst();
+      const source = RoutineCliSourceContextSchema.safeParse(ledger && parseJson(ledger.source_context));
+      if (source.success && source.data.identity.kind === "chat_run" && source.data.ownerId === routine.ownerId && source.data.computerId === routine.origin.computerId) {
+        const chat = await db.selectFrom("chats").select("id").where("id", "=", source.data.identity.chatId).where("owner_type", "=", "personal")
+          .where("owner_id", "=", routine.ownerId).where("lifecycle", "=", "active").where("collaboration", "is", null).executeTakeFirst();
+        origin = { originChatId: source.data.identity.chatId, originAvailable: Boolean(chat) };
+      }
+    }
+    return { ...origin, routineId: routine.routineId, botId: routine.botId, chatId: routine.chatId, proposal: routine.proposal,
       computerId: routine.authorization?.computerId ?? null, status: routine.status, revision: routine.revision,
       nextFireAt: routine.nextFireAt, requiresReview: history.some(f => f.status === "uncertain"), targetAvailable,
       sourceAvailable: targetAvailable && routine.status !== "archived" && await approvals.authorize({ ...routine, status: "active" }),
