@@ -12,7 +12,7 @@ import { nativeAccountPrincipalFingerprint, verifyNativeAccountMetadata, type Na
 import type { CodexNativeAccountMetadata, CodexNativeAccountMetadataReader, CodexNativeObservationState } from "./codex-native-account-metadata.js";
 import type { ProviderSnapshotReadOptions } from "./snapshot-read-options.js";
 import { createProviderRuntimeRecoveryReader } from "./provider-runtime-recovery-reader.js";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { basename, dirname, join, resolve } from "node:path";
 import {
   AiProviderSnapshotV3Schema,
@@ -159,12 +159,21 @@ function qualifyNativeCodexCollaborationRoute(
   if (!source || candidates.length !== 1 || harness?.enabled !== true || harness.authState !== "authenticated"
     || harness.accessSourceId !== saved.accessSourceId || harness.selectedAccountId !== saved.selectedAccountId
     || harness.route.providerId !== saved.route.providerId || harness.route.modelId !== saved.route.modelId
-    || projectedSource?.readiness.state !== "ready") return canonical;
+    || projectedSource?.readiness.state !== "ready" || !saved.nativeAccountGeneration
+    || saved.nativeAccountConsentRevision === undefined) return canonical;
   const readiness = projectedSource.readiness;
+  // The canonical IDs remain stable when one native Codex principal replaces
+  // another. Bind that consented principal generation into execution authority
+  // without exposing the saved fingerprint or treating cosmetic revisions as a
+  // route change.
+  const nativeAuthorityVersion = createHash("sha256")
+    .update(`${source.policyVersion}\0${saved.nativeAccountGeneration}`)
+    .digest("hex");
   return {
     ...canonical,
     accessSources: canonical.accessSources.map((candidate) => candidate.id === source.id ? {
       ...candidate,
+      policyVersion: nativeAuthorityVersion,
       state: readiness.state,
       checkedAt: readiness.checkedAt,
       staleAfter: readiness.staleAfter,

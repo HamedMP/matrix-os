@@ -21,6 +21,7 @@ import {
 import { bindNativeAccountMetadata, nativeAccountPrincipalFingerprint } from "../../packages/gateway/src/ai-providers/native-account-metadata-binding.js";
 import { normalizeCodexNativeAccountMetadata, type CodexNativeAccountMetadataReader } from "../../packages/gateway/src/ai-providers/codex-native-account-metadata.js";
 import { createProviderDriverInventoryReader } from "../../packages/gateway/src/ai-providers/provider-driver-inventory.js";
+import { resolveCurrentOwnerRoute } from "../../packages/gateway/src/collaboration/shared-run-owner-source.js";
 import type { GenericHarnessModelCatalog } from "../../packages/gateway/src/ai-providers/generic-harness-model-catalog.js";
 import {
   PROVIDER_SETTINGS_NOW as NOW,
@@ -398,10 +399,29 @@ describe("ProviderSettingsStore", () => {
     });
     await writeFile(store.configurationPath, `${JSON.stringify(saved)}\n`);
 
-    await expect(store.getCanonicalCollaborationSnapshot({ suppressFundedProbes: true })).resolves.toMatchObject({
+    const admittedSnapshot = await store.getCanonicalCollaborationSnapshot({ suppressFundedProbes: true });
+    expect(admittedSnapshot).toMatchObject({
       active: { providerInstanceId: "codex_owner", accessSourceId: "owner_openai_profile", modelId: "gpt-5" },
     });
+    const admittedRoute = resolveCurrentOwnerRoute(admittedSnapshot, NOW.getTime());
+    expect(admittedRoute).not.toBeNull();
     expect(onFundingSummaryRead).not.toHaveBeenCalled();
+
+    const replacementMetadata = bindNativeAccountMetadata(normalizeCodexNativeAccountMetadata(
+      { account: { type: "chatgpt", email: "replacement@example.test", planType: "pro" } }, {}, NOW,
+    )!, async () => true, "private-owner-principal-replacement");
+    const replacementGeneration = nativeAccountPrincipalFingerprint(replacementMetadata)!;
+    Object.assign(saved.harnesses.find((harness) => harness.harness === "codex")!, {
+      nativeAccountGeneration: replacementGeneration,
+      nativeAccountConsentRevision: saved.revision,
+    });
+    await writeFile(store.configurationPath, `${JSON.stringify(saved)}\n`);
+    const replacementStore = createStore({ codexNativeAccountMetadataReader: async () => replacementMetadata,
+      fundingSummary: new Error("Matrix funding unavailable"), onFundingSummaryRead });
+    const replacementSnapshot = await replacementStore.getCanonicalCollaborationSnapshot({ suppressFundedProbes: true });
+    const replacementRoute = resolveCurrentOwnerRoute(replacementSnapshot, NOW.getTime());
+    expect(replacementRoute).not.toBeNull();
+    expect(replacementRoute?.routeGeneration).not.toBe(admittedRoute?.routeGeneration);
 
     const codex = saved.harnesses.find((harness) => harness.harness === "codex")!;
     delete codex.nativeAccountGeneration; delete codex.nativeAccountConsentRevision;

@@ -169,3 +169,31 @@ tests/e2e/
 ## Complexity Tracking
 
 No constitution violations require an exception. Retaining inert legacy records is a temporary rollback/audit measure, not a second serving policy.
+
+### Large-file extraction plan
+
+ENG-29 records the required follow-up for the two composition files extended by
+the owner-route work. The extraction is behavior-preserving and should run
+after this stack's route/revocation checks are stable so it does not combine a
+trust-boundary change with mechanical movement.
+
+- `packages/gateway/src/chat/queue-repository.ts` (currently about 1,574 LOC):
+  extract accepted-provider-route persistence, claim-time comparison, and row
+  projection into `queue-provider-authority.ts`. Keep transaction ownership and
+  generic queue orchestration in the repository. Move the existing admission,
+  stale-route, and claim-race tests with the seam; target the repository below
+  1,500 LOC with no duplicated comparison logic.
+- `packages/gateway/src/ai-providers/provider-settings-store.ts` (currently
+  about 1,046 LOC): extract canonical collaboration snapshot projection,
+  consent-bound native Codex qualification, and saved-route selection into
+  `provider-settings-collaboration-snapshot.ts`. Keep serialization, atomic
+  persistence, mutation receipts, and lifecycle coordination in the store.
+  Move the account-replacement and no-fallback tests with the seam; target the
+  store below 1,000 LOC.
+- Sequence: characterize current public and internal contracts, introduce the
+  focused modules through typed dependency injection, move one responsibility
+  at a time, then run provider-settings, queue, collaboration PostgreSQL, and
+  full typecheck lanes after each extraction.
+- Done when: both entrypoints meet their line targets, their responsibilities
+  match the boundaries above, route-generation and transaction behavior are
+  unchanged, and no compatibility shim or duplicate serving path remains.
