@@ -1156,6 +1156,21 @@ jobs:
         if: needs.changes.outputs.should_run == 'true' && matrix.lane == 'general'
         run: bun run test:e2e:run
 
+      - name: Qualify shared Browser profile persistence
+        if: needs.changes.outputs.should_run == 'true' && matrix.lane == 'general'
+        env:
+          NODE_OPTIONS: --no-experimental-webstorage
+        run: |
+          set -euo pipefail
+          node node_modules/vitest/vitest.mjs run --config vitest.integration.config.ts tests/integration/shared-browser-profile.integration.ts --maxWorkers=1 --no-file-parallelism --reporter=default --reporter=json --outputFile=output/ci/shared-browser-profile.json
+          node --input-type=module <<'JS'
+          import { readFileSync } from 'node:fs';
+          const result = JSON.parse(readFileSync('output/ci/shared-browser-profile.json', 'utf8'));
+          if (result.success !== true || result.numTotalTests < 1 || result.numPassedTests !== result.numTotalTests || result.numPendingTests !== 0 || result.numFailedTests !== 0) {
+            throw new Error('Shared Browser profile qualification requires executed passing tests with zero skips');
+          }
+          JS
+
       - name: Run native Electron terminal presentation regression
         if: needs.changes.outputs.should_run == 'true' && matrix.lane == 'electron'
         env:

@@ -17,6 +17,7 @@ import {
 import { bundledDesktopIconForPath } from "./bundled-app-icons";
 import { useState } from "react";
 import type { Tab, TabKind } from "../../stores/tabs";
+import { nativeBrowserProduct } from "../../../../shared/browser-products";
 
 const SURFACE_ICON: Record<TabKind, LucideIcon> = {
   home: Globe2,
@@ -42,7 +43,7 @@ export default function SurfaceIcon({
   tab,
   size = 18,
 }: {
-  tab: Pick<Tab, "kind" | "icon" | "title">;
+  tab: Pick<Tab, "kind" | "icon" | "title" | "appIdentity" | "slug">;
   size?: number;
 }) {
   // Plugins and Settings reuse one settings surface; its title identifies the
@@ -50,8 +51,9 @@ export default function SurfaceIcon({
   const isPlugins = tab.kind === "settings" && (tab.title === "Plugins" || tab.title === "Connect Apps");
   const Icon = isPlugins ? Blocks : SURFACE_ICON[tab.kind];
   const explicitIcon = tab.icon && /^(?:https?:\/\/|\/|data:image\/)/.test(tab.icon) ? tab.icon : null;
+  const product = tab.kind === "app" ? nativeBrowserProduct(tab.appIdentity ?? "", tab.slug ?? "") : null;
   const paths: Partial<Record<TabKind,string>> = { home: "__browser__", browser: "__browser__", work: "__chat__", chat: "__chat__", terminal: "__terminal__", terminals: "__terminal__", files: "__file-browser__", editor: "__editor__", notes: "apps/notes/index.html", settings: "__settings__" };
-  const path = isPlugins ? "__plugins__" : paths[tab.kind];
+  const path = product?.path ?? (isPlugins ? "__plugins__" : paths[tab.kind]);
   const iconUrl = explicitIcon ?? (path ? bundledDesktopIconForPath(path) : undefined);
   if (iconUrl) return <RemoteSurfaceIcon key={iconUrl} iconUrl={iconUrl} size={size} fallback={Icon} />;
   return <Icon size={size} aria-hidden="true" />;
