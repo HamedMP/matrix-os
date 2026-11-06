@@ -177,6 +177,15 @@ export default function EmbedHost({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [active]);
 
+  // Retained WebContentsViews survive transient failures, but native views
+  // always paint above React. Detach the retained view while a recovery or
+  // terminal-state overlay is visible so the user can actually use it.
+  useEffect(() => {
+    if (state !== "failed" && state !== "host-offline" && state !== "access-ended" && state !== "needs-recheck") return;
+    const id = embedIdRef.current;
+    if (id) void invoke("embed:set-active", { embedId: id, active: false });
+  }, [state]);
+
   // ResizeObserver sees size changes but not a pure move of the renderer host.
   // Native desktop surfaces pass their layout identity so position-only drags
   // also synchronize the main-process WebContentsView bounds.
@@ -282,8 +291,11 @@ export default function EmbedHost({
             const id = embedIdRef.current;
             if (!id) return;
             setState("loading");
+            void invoke("embed:set-active", { embedId: id, active: true });
             void invoke("embed:reload", { embedId: id }).then((result) => {
-              if (embedIdRef.current === id && !result.ok) setState("host-offline");
+              if (embedIdRef.current !== id) return;
+              if (result.ok) reportBounds();
+              else setState("host-offline");
             }).catch(() => {
               if (embedIdRef.current === id) setState("host-offline");
             });
