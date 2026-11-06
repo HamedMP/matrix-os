@@ -403,7 +403,7 @@ function SandboxedAppViewer({ path, sessionId, onOpenApp, onShareApp, visible = 
   return (
     <div className="flex h-full w-full flex-col">
       {slug && visible ? <div className="flex items-start justify-end gap-2 border-b px-3 py-1.5">
-        {onShareApp ? <CollaborativeAppReadinessControls appId={slug} onShareApp={onShareApp} /> : null}
+        {onShareApp ? <CollaborativeAppReadinessControls appId={slug} buildEpoch={refreshKey} onShareApp={onShareApp} /> : null}
         <AppSiteButton key={slug} appSlug={slug} />
       </div> : null}
       <iframe
@@ -419,11 +419,12 @@ function SandboxedAppViewer({ path, sessionId, onOpenApp, onShareApp, visible = 
   );
 }
 
-function CollaborativeAppReadinessControls({ appId, onShareApp }: {
+function CollaborativeAppReadinessControls({ appId, buildEpoch, onShareApp }: {
   appId: string;
+  buildEpoch: number;
   onShareApp(appId: string): void;
 }) {
-  const sharing = useCollaborativeAppSharing({ appId, api: COLLABORATION_API });
+  const sharing = useCollaborativeAppSharing({ appId, api: COLLABORATION_API, buildEpoch });
   return <div className="flex items-start gap-2">
     {sharing.readiness
       ? <ReadinessSummary readiness={sharing.readiness} compact />
