@@ -126,6 +126,20 @@ describe("collaborative app Electron embed", () => {
       `https://platform.test/api/collaboration/scopes/${TARGET.scopeId}/apps/${TARGET.appId}/actions`,
       "POST",
     )).toBe(false);
+    expect(authorize(
+      `wss://platform.test/ws/collaboration/direct/scopes/${TARGET.scopeId}/events?ticket=signed-ticket`,
+      "GET",
+      true,
+    )).toBe(true);
+    expect(authorize(
+      `wss://platform.test/ws/collaboration/direct/scopes/${TARGET.scopeId}/events?ticket=signed-ticket`,
+      "GET",
+    )).toBe(false);
+    expect(authorize(
+      "wss://platform.test/ws/collaboration/direct/scopes/20000000-0000-4000-8000-000000000002/events",
+      "GET",
+      true,
+    )).toBe(false);
     expect(authorize("https://platform.test/api/collaboration/scopes/another/apps/inventory/actions", "POST")).toBe(false);
     expect(authorize(
       `https://platform.test/api/collaboration/scopes/${TARGET.scopeId}/apps/another/actions`,
