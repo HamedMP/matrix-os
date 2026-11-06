@@ -23,6 +23,7 @@ export function shouldAuthorizeSharedAppRequest(input: {
   requestUrl: string;
   gatewayOrigin: string;
   scopeId: string;
+  appId: string;
   method: string;
   mainFrame: boolean;
 }): boolean {
@@ -31,11 +32,15 @@ export function shouldAuthorizeSharedAppRequest(input: {
     const gateway = new URL(input.gatewayOrigin);
     if (request.origin !== gateway.origin) return false;
     const scope = encodeURIComponent(input.scopeId);
+    const app = encodeURIComponent(input.appId);
     if (input.method === "GET" && input.mainFrame && request.pathname === `/shared/app/${scope}`) return true;
     if (input.method === "GET" && request.pathname === "/api/collaboration/shared-apps") return true;
     if (input.method === "POST" && request.pathname === "/api/collaboration/connections") return true;
     if (input.method === "POST" && request.pathname === `/api/collaboration/shared-apps/${scope}/launch`) return true;
     if (input.method === "GET" && request.pathname.startsWith(`/api/collaboration/shared-apps/${scope}/runtime/`)) return true;
+    if (input.method === "POST" && input.mainFrame
+      && (request.pathname === `/api/collaboration/scopes/${scope}/apps/${app}/view`
+        || request.pathname === `/api/collaboration/scopes/${scope}/apps/${app}/actions`)) return true;
     // A platform relay can be the exact home endpoint returned by the signed
     // ticket. Session ids are UUID capabilities and the renderer never sees
     // the bearer: Electron attaches it at the network boundary.
@@ -128,6 +133,7 @@ export function createWebContentsView(options: {
         requestUrl: details.url,
         gatewayOrigin,
         scopeId: sharedAppAuth.target.scopeId,
+        appId: sharedAppAuth.target.appId,
         method: details.method,
         mainFrame: details.frame?.parent === null,
       })) {
