@@ -75,6 +75,42 @@ const CONFIG_PATH = "system/ai-providers/settings.json";
 const PRIVATE_DIRECTORY = ".matrix-private";
 const DEFAULT_PROJECTION_AGE_MS = 5 * 60_000;
 const SECRET_MAX_CHARS = 64 * 1024;
+const NO_ACTIVE_PROVIDER_ROUTE: AiProviderSnapshotV3["active"] = {
+  providerInstanceId: null,
+  accessSourceId: null,
+  modelId: null,
+};
+
+/** Project collaboration follows saved Settings intent, never the inventory's credential priority. */
+function savedCollaborationRoute(
+  canonical: AiProviderSnapshotV3,
+  config: ProviderSettingsConfiguration,
+): AiProviderSnapshotV3["active"] {
+  const inventoryActive = canonical.instances.find((instance) => instance.id === canonical.active.providerInstanceId);
+  const activeHarness = inventoryActive?.driverId === "codex"
+    ? "codex" as const
+    : inventoryActive?.driverId === "kernel" || inventoryActive?.driverId === "claude_code"
+      ? "claude" as const
+      : null;
+  if (activeHarness === null) return NO_ACTIVE_PROVIDER_ROUTE;
+  const configured = config.harnesses.filter((harness) => harness.enabled && harness.harness === activeHarness);
+  if (configured.length !== 1) return NO_ACTIVE_PROVIDER_ROUTE;
+  const harness = configured[0]!;
+  if (harness.accessSourceId === null) return NO_ACTIVE_PROVIDER_ROUTE;
+  const source = canonical.accessSources.find((candidate) => candidate.id === harness.accessSourceId);
+  const model = canonical.models.find((candidate) => candidate.id === harness.route.modelId);
+  if (!source || !model || source.vendor !== harness.route.providerId
+    || !source.eligibleModelIds.includes(model.id) || !model.eligibleAccessSourceIds.includes(source.id)) {
+    return NO_ACTIVE_PROVIDER_ROUTE;
+  }
+  const compatible = canonical.instances.filter((instance) => instance.accessSourceId === source.id
+    && instance.accountId === harness.selectedAccountId && instance.modelIds.includes(model.id)
+    && (harness.harness === "codex" ? instance.driverId === "codex"
+      : instance.driverId === "claude_code" || instance.driverId === "kernel"));
+  const exact = compatible.filter((instance) => instance.driverId === harness.driverId);
+  const instance = exact.length === 1 ? exact[0] : exact.length === 0 && compatible.length === 1 ? compatible[0] : undefined;
+  return instance ? { providerInstanceId: instance.id, accessSourceId: source.id, modelId: model.id } : NO_ACTIVE_PROVIDER_ROUTE;
+}
 export { ProviderSettingsStoreError } from "./provider-settings-errors.js";
 export type {
   CanonicalProviderSnapshotReader,
@@ -485,7 +521,11 @@ export class ProviderSettingsStore implements ProviderSettingsStoreWriter {
         return generation === this.#mutationGeneration && saved?.revision === config.revision;
       });
       if (accepted) {
-        return AiProviderSnapshotV3Schema.parse({ ...canonical, revision: config.revision });
+        return AiProviderSnapshotV3Schema.parse({
+          ...canonical,
+          revision: config.revision,
+          active: savedCollaborationRoute(canonical, config),
+        });
       }
     }
     throw new ProviderSettingsStoreError("projection_unavailable", 503);
