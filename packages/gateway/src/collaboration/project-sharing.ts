@@ -20,6 +20,7 @@ import {
 } from "./repository-shared.js";
 
 const MAX_MEMBERSHIP_EFFECTS = 1_000;
+const MAX_PENDING_UNSHARE_RECOVERY = 100;
 const ScopeIdSchema = z.uuid();
 const ActorIdSchema = z.string().min(1).max(128).regex(/^[A-Za-z0-9_-]+$/);
 const DigestSchema = z.string().regex(/^[a-f0-9]{64}$/);
@@ -105,7 +106,59 @@ export function createProjectSharingService(options: {
   /** The owner's name for a project; without it the overview is unavailable, never a guess. */
   projectName?(ownerId: string, projectId: string): Promise<string | null>;
 }) {
+  async function completeUnshareCleanup(input: {
+    scopeId: string;
+    actorId: string;
+    clientRequestId: string;
+    revision: number;
+  }): Promise<void> {
+    await completeAcceptedOperation(options.db, {
+      scopeId: input.scopeId,
+      actorId: input.actorId,
+      clientRequestId: input.clientRequestId,
+      operationKind: "project.unshare",
+    }, async (trx) => {
+      await options.onUnshared?.({ scopeId: input.scopeId, revision: input.revision }, trx);
+    });
+  }
+
+  async function pendingUnshares(scopeId?: string, actorId?: string) {
+    let query = options.db.selectFrom("collaboration_operations")
+      .select(["scope_id", "actor_id", "client_request_id", "result_ref"])
+      .where("operation_kind", "=", "project.unshare")
+      .where("status", "=", "accepted")
+      .orderBy("created_at", "asc")
+      .limit(MAX_PENDING_UNSHARE_RECOVERY);
+    if (scopeId) query = query.where("scope_id", "=", scopeId);
+    if (actorId) query = query.where("actor_id", "=", actorId);
+    return query.execute();
+  }
+
+  async function recoverUnshares(scopeId?: string, actorId?: string, failFast = false) {
+    let recovered = 0;
+    let failed = 0;
+    for (const operation of await pendingUnshares(scopeId, actorId)) {
+      try {
+        const result = UnshareResultSchema.parse(parseJson(operation.result_ref));
+        await completeUnshareCleanup({
+          scopeId: operation.scope_id,
+          actorId: operation.actor_id,
+          clientRequestId: operation.client_request_id,
+          revision: result.revision,
+        });
+        recovered += 1;
+      } catch (error: unknown) {
+        failed += 1;
+        if (failFast) throw error;
+        console.warn("[collaboration-project] pending unshare cleanup deferred",
+          error instanceof Error ? error.name : "UnknownError");
+      }
+    }
+    return { recovered, failed };
+  }
+
   async function preparePreview(scopeId: string, actorId: string) {
+    await recoverUnshares(scopeId, actorId, true);
     const scope = await loadPreparationScope(options.db, scopeId, actorId);
     const membershipEffects = await deriveProjectMembershipEffects(options.db, scope.id, scope.owner_id);
     const inventory = await options.inventory.preview({
@@ -117,6 +170,7 @@ export function createProjectSharingService(options: {
   }
 
   return {
+    recoverPendingUnshares: () => recoverUnshares(),
     async read(input: { scopeId: string }) {
       const scopeId = ScopeIdSchema.parse(input.scopeId);
       try {
@@ -342,16 +396,11 @@ export function createProjectSharingService(options: {
         return { result, drainRequired: true };
       });
       if (committed.drainRequired) {
-        await completeAcceptedOperation(options.db, {
+        await completeUnshareCleanup({
           scopeId: parsed.scopeId,
           actorId: parsed.actorId,
           clientRequestId: parsed.clientRequestId,
-          operationKind: "project.unshare",
-        }, async (trx) => {
-          await options.onUnshared?.({
-            scopeId: parsed.scopeId,
-            revision: committed.result.revision,
-          }, trx);
+          revision: committed.result.revision,
         });
       }
       return committed.result;

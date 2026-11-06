@@ -782,6 +782,16 @@ export async function createGatewayCollaboration(options: {
           };
         },
       });
+      // The privacy fence is already durable, so retry cleanup beside serving;
+      // owner preview also joins/retries the same accepted operation on demand.
+      void projectSharing.recoverPendingUnshares().then((result) => {
+        if (result.failed > 0) {
+          console.warn("[collaboration-project] startup unshare cleanup deferred", { failed: result.failed });
+        }
+      }, (error: unknown) => {
+        console.warn("[collaboration-project] startup unshare recovery unavailable",
+          error instanceof Error ? error.name : "UnknownError");
+      });
       return { available: true };
     },
     register(input: { app: Hono; upgradeWebSocket: UpgradeWebSocket }): void {

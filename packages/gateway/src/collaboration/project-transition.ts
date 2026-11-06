@@ -326,28 +326,16 @@ export function createProjectTransitionJournal(options: {
             && parsed.destinationAuthorityGeneration !== Number(scope.authority_generation) + 1)) {
           throw new ProjectTransitionError("conflict");
         }
-        // A completed unshare or owner-departure cleanup leaves the project
-        // private, but older releases retained its generation-bound bindings
-        // and derived inherited scopes. The next explicit share owns a fresh
-        // inventory and authority generation, so clear only those derived
-        // artifacts while holding the project lock. Direct scopes remain.
-        const staleInheritedScopes = await trx.selectFrom("collaboration_scopes")
-          .select("id")
-          .where("parent_scope_id", "=", scope.id)
-          .where("membership_mode", "=", "inherited")
-          .where("lifecycle", "=", "private")
-          .where("deleted_at", "is", null)
-          .orderBy("id")
-          .forUpdate()
-          .execute();
+        // A completed unshare or owner-departure cleanup leaves generation-bound
+        // bindings stale. Keep inherited scope IDs stable: queued work refers to
+        // them and the next staging pass safely rebinds their authority. A
+        // first-share binding already names the destination authority, so only
+        // retire bindings owned by the project's current source generation.
         await trx.deleteFrom("collaboration_resource_bindings")
           .where("project_scope_id", "=", scope.id)
+          .where("authority_runtime_id", "=", scope.authority_runtime_id)
+          .where("authority_generation", "=", Number(scope.authority_generation))
           .execute();
-        if (staleInheritedScopes.length > 0) {
-          await trx.deleteFrom("collaboration_scopes")
-            .where("id", "in", staleInheritedScopes.map((child) => child.id))
-            .execute();
-        }
         const updatedScope = await trx.updateTable("collaboration_scopes").set({
           lifecycle: "preparing",
           updated_at: createdAt,
@@ -712,7 +700,13 @@ export function createProjectTransitionJournal(options: {
       }
       await trx.deleteFrom("collaboration_resource_bindings")
         .where("project_scope_id", "=", scope.id).execute();
-      await trx.deleteFrom("collaboration_scopes")
+      await trx.updateTable("collaboration_scopes").set({
+        lifecycle: "private",
+        auth_epoch: sql<number>`auth_epoch + 1`,
+        execution_generation: null,
+        execution_eligibility: null,
+        updated_at: now(),
+      })
         .where("parent_scope_id", "=", scope.id)
         .where("membership_mode", "=", "inherited")
         .where("lifecycle", "in", ["preparing", "recovering"])

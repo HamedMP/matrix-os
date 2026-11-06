@@ -573,11 +573,16 @@ describe("organization project revocation races", () => {
       readiness: "ready",
     })).resolves.toMatchObject({
       authorityGeneration: 2,
-      resourceScopeId: "73000000-0000-4000-8000-000000000014",
+      resourceScopeId: ownedChat,
     });
     await expect(fixture.db.selectFrom("collaboration_scopes")
-      .select(["id", "authority_generation"])
-      .where("id", "=", ownedChat).executeTakeFirst()).resolves.toBeUndefined();
+      .select(["id", "lifecycle", "authority_runtime_id", "authority_generation"])
+      .where("id", "=", ownedChat).executeTakeFirstOrThrow()).resolves.toEqual({
+      id: ownedChat,
+      lifecycle: "preparing",
+      authority_runtime_id: "vps:revocation",
+      authority_generation: 2,
+    });
   });
 
   it("drains the project and every inherited scope after unshare commits", async () => {
