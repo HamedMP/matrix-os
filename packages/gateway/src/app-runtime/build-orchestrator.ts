@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { readFile, writeFile, stat, truncate, open } from "node:fs/promises";
+import { lstat, readFile, realpath, writeFile, stat, truncate, open } from "node:fs/promises";
 import { isAbsolute, join, relative, resolve, sep } from "node:path";
 import { existsSync } from "node:fs";
 import { BuildError } from "./errors.js";
@@ -121,6 +121,18 @@ export class BuildOrchestrator {
       const confinedPath = relative(canonicalDir, artifactRoot);
       if (!confinedPath || isAbsolute(output) || isAbsolute(confinedPath)
         || confinedPath === ".." || confinedPath.startsWith(`..${sep}`)) {
+        throw new BuildError("build_failed", "prepare", null, "manifest build output must stay within the app directory");
+      }
+      let component = canonicalDir;
+      for (const segment of confinedPath.split(sep)) {
+        component = join(component, segment);
+        if ((await lstat(component)).isSymbolicLink()) {
+          throw new BuildError("build_failed", "prepare", null, "manifest build output must not contain symlinks");
+        }
+      }
+      const [canonicalRealPath, artifactRealPath] = await Promise.all([realpath(canonicalDir), realpath(artifactRoot)]);
+      const realConfinedPath = relative(canonicalRealPath, artifactRealPath);
+      if (!realConfinedPath || realConfinedPath === ".." || realConfinedPath.startsWith(`..${sep}`)) {
         throw new BuildError("build_failed", "prepare", null, "manifest build output must stay within the app directory");
       }
       return opts.store.captureIdentified({

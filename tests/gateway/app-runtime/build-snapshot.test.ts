@@ -64,4 +64,19 @@ describe('BuildOrchestrator immutable capture', () => {
    expect(await readFile(join(result.snapshot.artifactPath, 'index.html'), 'utf8')).toBe('first');
   } finally { await store.close(); }
  });
+ it('rejects a build output with a symlinked parent outside the app directory', async () => {
+  const outside = join(root, 'outside'); await mkdir(join(outside, 'dist'), { recursive: true });
+  await symlink(outside, join(dir, 'linked'));
+  await writeFile(join(dir, 'matrix.json'), JSON.stringify({ name: 'App', slug: 'app', version: '1.0.0', runtime: 'vite', runtimeVersion: '1.0.0', build: {
+   install: 'node -e "process.exit(0)"', command: 'node -e "process.exit(0)"', output: 'linked/dist', sourceGlobs: ['input.txt', 'matrix.json'],
+  } }));
+  await writeFile(join(outside, 'dist', 'index.html'), 'outside');
+  const store = new ImmutableCollaborativeBuildStore({ rootDir: join(root, 'store'), maxSnapshots: 4, retentionMs: 60_000, cleanupIntervalMs: 60_000 });
+  try {
+   const result = await new BuildOrchestrator({ concurrency: 1 }).buildWithCollaborativeSnapshot('app', dir, {
+    store, buildIdForAssetDigest: (assetDigest) => createHash('sha256').update(assetDigest).digest('hex'),
+   });
+   expect(result).toMatchObject({ ok: false, error: { code: 'build_failed', stage: 'prepare' } });
+  } finally { await store.close(); }
+ });
 });
