@@ -158,7 +158,7 @@ export function MessageMetadata({
 }: {
   content: string;
   timestamp: number;
-  role: "Assistant" | "User";
+  role: "Assistant" | "User" | "Scheduled task";
   copyText: ConversationPresentationCallbacks["copyText"];
 }) {
   const date = Number.isFinite(timestamp) ? new Date(timestamp) : null;

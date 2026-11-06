@@ -5,6 +5,7 @@ import { useState, useCallback, useEffect, useRef, useSyncExternalStore } from "
 import { useAuth } from "@clerk/nextjs";
 import { useTheme } from "@/hooks/useTheme";
 import { useDesktopConfig } from "@/hooks/useDesktopConfig";
+import { useSourceChatBrowserEntry } from "@/hooks/useSourceChatBrowserEntry";
 import { useCanonicalChatState } from "@/hooks/useCanonicalChatState";
 import { useGlobalShortcuts } from "@/hooks/useGlobalShortcuts";
 import { useCommandStore } from "@/stores/commands";
@@ -105,6 +106,7 @@ function ShellHomeBody({
     navigationScope: createShellChatNavigationScope(cacheScope, sessionId, chatGatewayUrl),
     navigationGeneration: sessionId ?? "self-hosted",
   });
+  useSourceChatBrowserEntry({identity:JSON.stringify([userId,sessionId,runtimeSlot,chatGatewayUrl]),connected:chat.connected,switchConversation:chat.switchConversation,isCurrent:chat.isCurrentAuthority});
   const [paletteOpen, setPaletteOpen] = useState(false);
   const locationLaunchAppPath = useSyncExternalStore(
     subscribeLaunchPathNoop,
