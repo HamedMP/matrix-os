@@ -9,6 +9,19 @@ import { useConnection } from "../../desktop/src/renderer/src/stores/connection"
 import { useUi } from "../../desktop/src/renderer/src/stores/ui";
 
 const publishing = vi.hoisted(() => ({ client: { get: vi.fn(async () => null), getConfig: vi.fn(async () => ({ data: {}, forms: [] })) } }));
+const SHARED_TARGET = {
+  scopeId: "10000000-0000-4000-8000-000000000001",
+  runtimeId: "runtime_owner",
+  organizationId: "org_matrix",
+  authorityGeneration: 2,
+  appId: "team-tracker",
+  catalogId: "30000000-0000-4000-8000-000000000001",
+  readinessId: "40000000-0000-4000-8000-000000000001",
+  registrationIncarnation: "a".repeat(64),
+  buildId: "b".repeat(64),
+  shareRevision: "7",
+  owner: { actorId: "user_owner", displayName: "Nima" },
+};
 vi.mock("../../desktop/src/renderer/src/features/app-sites/site-client", () => ({ createDesktopSiteClient: () => publishing.client }));
 
 vi.mock("../../desktop/src/renderer/src/lib/operator", () => ({
@@ -292,6 +305,45 @@ describe("EmbedHost", () => {
     expect(screen.queryByRole("button", { name: "Retry sign-in" })).toBeNull();
   });
 
+  it("detaches a retained shared app while its retry overlay is visible and reattaches before reload", async () => {
+    let emitState: ((payload: { embedId: string; state: "host-offline" }) => void) | null = null;
+    vi.mocked(onEvent).mockImplementation((_channel, callback) => {
+      emitState = callback as typeof emitState;
+      return () => undefined;
+    });
+    vi.mocked(invoke).mockImplementation((channel: string) => {
+      if (channel === "embed:open") {
+        return Promise.resolve({ embedId: "shared-1", state: "loading" }) as ReturnType<typeof invoke>;
+      }
+      return Promise.resolve({ ok: true }) as ReturnType<typeof invoke>;
+    });
+
+    render(<EmbedHost kind="shared-app" target={SHARED_TARGET} />);
+    await waitFor(() => expect(invoke).toHaveBeenCalledWith(
+      "embed:set-active",
+      { embedId: "shared-1", active: true },
+    ));
+
+    act(() => emitState?.({ embedId: "shared-1", state: "host-offline" }));
+
+    await screen.findByText("The owner’s computer is offline. This app is still open.");
+    await waitFor(() => expect(invoke).toHaveBeenCalledWith(
+      "embed:set-active",
+      { embedId: "shared-1", active: false },
+    ));
+    vi.mocked(invoke).mockClear();
+
+    fireEvent.click(screen.getByRole("button", { name: "Try again" }));
+
+    await waitFor(() => {
+      const calls = vi.mocked(invoke).mock.calls;
+      expect(calls).toContainEqual(["embed:set-active", { embedId: "shared-1", active: true }]);
+      expect(calls).toContainEqual(["embed:reload", { embedId: "shared-1" }]);
+      expect(calls.findIndex(([channel]) => channel === "embed:set-active"))
+        .toBeLessThan(calls.findIndex(([channel]) => channel === "embed:reload"));
+    });
+  });
+
   it("refreshes bounds after a successful auth retry", async () => {
     vi.mocked(invoke).mockImplementation((channel: string) => {
       if (channel === "embed:open") {
@@ -381,6 +433,36 @@ describe("EmbedHost", () => {
       bounds: { x: 10, y: 20, width: 300, height: 200 },
       active: true,
     }));
+  });
+
+  it("retries an offline shared app in the retained native view", async () => {
+    let emitState: ((payload: { embedId: string; state: "host-offline" }) => void) | null = null;
+    vi.mocked(onEvent).mockImplementation((_channel, callback) => {
+      emitState = callback as typeof emitState;
+      return () => undefined;
+    });
+    vi.mocked(invoke).mockImplementation((channel: string) => {
+      if (channel === "embed:open") {
+        return Promise.resolve({ embedId: "shared-1", state: "ready" }) as ReturnType<typeof invoke>;
+      }
+      if (channel === "embed:reload") return Promise.resolve({ ok: true }) as ReturnType<typeof invoke>;
+      return Promise.resolve({ ok: true }) as ReturnType<typeof invoke>;
+    });
+
+    render(<EmbedHost kind="shared-app" target={SHARED_TARGET} />);
+    await waitFor(() => expect(invoke).toHaveBeenCalledWith("embed:open", {
+      kind: "shared-app",
+      target: SHARED_TARGET,
+      bounds: { x: 10, y: 20, width: 300, height: 200 },
+      active: true,
+    }));
+
+    act(() => emitState?.({ embedId: "shared-1", state: "host-offline" }));
+    vi.mocked(invoke).mockClear();
+    fireEvent.click(await screen.findByRole("button", { name: "Try again" }));
+
+    await waitFor(() => expect(invoke).toHaveBeenCalledWith("embed:reload", { embedId: "shared-1" }));
+    expect(invoke).not.toHaveBeenCalledWith("embed:close", expect.anything());
   });
 
   it("reopens the same runtime Browser URL after an unexpected tunnel failure", async () => {

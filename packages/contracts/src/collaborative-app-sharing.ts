@@ -128,7 +128,7 @@ export const CollaborativeAppDirectoryResponseSchema = z.object({
 
 const SameOriginPathSchema = z.string().min(1).max(1_024).refine((value) => {
   if (!value.startsWith("/") || value.startsWith("//") || value.includes("\\") || value.includes("\0")) return false;
-  const path = value.split(/[?#]/, 1)[0];
+  const [path = ""] = value.split(/[?#]/, 1);
   return path.split("/").every((segment) => segment !== "." && segment !== "..");
 }, "Expected a confined same-origin path");
 export const CollaborativeAppLaunchTargetSchema = z.discriminatedUnion("kind", [
