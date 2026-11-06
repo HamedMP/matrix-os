@@ -25,8 +25,10 @@ export type CollaborativeAppSharingState = "idle" | "loading" | "checking"
 export function useCollaborativeAppSharing(input: {
   appId: string;
   api: CollaborativeAppReadinessApi;
+  buildEpoch?: number;
 }) {
   const [readiness, setReadiness] = useState<CollaborativeAppReadiness | null>(null);
+  const [readinessRequestKey, setReadinessRequestKey] = useState<string | null>(null);
   const [phase, setPhase] = useState<"idle" | "loading" | "checking">("loading");
   const [safeMessage, setSafeMessage] = useState<string | null>(null);
   const requestGeneration = useRef(0);
@@ -34,11 +36,17 @@ export function useCollaborativeAppSharing(input: {
   const path = appId.success
     ? `/api/collaboration/apps/${encodeURIComponent(appId.data)}/readiness`
     : null;
+  const buildEpoch = Number.isSafeInteger(input.buildEpoch) && (input.buildEpoch ?? -1) >= 0
+    ? input.buildEpoch!
+    : 0;
+  const requestKey = `${path ?? "invalid"}:${buildEpoch}`;
+  const currentReadiness = readinessRequestKey === requestKey ? readiness : null;
 
-  const fail = useCallback((generation: number, error: unknown) => {
+  const fail = useCallback((generation: number, error: unknown, failedRequestKey: string) => {
     console.warn("[collaborative-app-readiness] request failed", error instanceof Error ? error.name : "UnknownError");
     if (requestGeneration.current !== generation) return;
     setReadiness(null);
+    setReadinessRequestKey(failedRequestKey);
     setPhase("idle");
     setSafeMessage(SAFE_UNAVAILABLE);
   }, []);
@@ -48,7 +56,7 @@ export function useCollaborativeAppSharing(input: {
     setPhase("loading");
     setSafeMessage(null);
     if (!path) {
-      fail(generation, new Error("InvalidAppId"));
+      fail(generation, new Error("InvalidAppId"), requestKey);
       return;
     }
     try {
@@ -56,11 +64,12 @@ export function useCollaborativeAppSharing(input: {
       const parsed = raw === null ? null : CollaborativeAppReadinessSchema.parse(raw);
       if (requestGeneration.current !== generation) return;
       setReadiness(parsed);
+      setReadinessRequestKey(requestKey);
       setPhase("idle");
     } catch (error: unknown) {
-      fail(generation, error);
+      fail(generation, error, requestKey);
     }
-  }, [fail, input.api, path]);
+  }, [fail, input.api, path, requestKey]);
 
   useEffect(() => {
     void refresh();
@@ -78,7 +87,7 @@ export function useCollaborativeAppSharing(input: {
     try {
       const parsed = RecheckInputSchema.parse(rawInput);
       const expectedRegistrationIncarnation = parsed.expectedRegistrationIncarnation
-        ?? readiness?.build.registrationIncarnation;
+        ?? currentReadiness?.build.registrationIncarnation;
       if (!path || !expectedRegistrationIncarnation) throw new Error("ReadinessUnavailable");
       const response = await input.api.post(`${path}/check`, {
         organizationId: parsed.organizationId,
@@ -88,20 +97,23 @@ export function useCollaborativeAppSharing(input: {
       const next = CollaborativeAppReadinessSchema.parse(response);
       if (requestGeneration.current !== generation) return;
       setReadiness(next);
+      setReadinessRequestKey(requestKey);
       setPhase("idle");
     } catch (error: unknown) {
-      fail(generation, error);
+      fail(generation, error, requestKey);
     }
-  }, [fail, input.api, path, readiness?.build.registrationIncarnation]);
+  }, [currentReadiness?.build.registrationIncarnation, fail, input.api, path, requestKey]);
 
-  const state: CollaborativeAppSharingState = phase === "loading" || phase === "checking"
+  const state: CollaborativeAppSharingState = readinessRequestKey !== requestKey
+    ? "loading"
+    : phase === "loading" || phase === "checking"
     ? phase
-    : readiness?.status ?? (safeMessage ? "failed" : "idle");
+    : currentReadiness?.status ?? (safeMessage ? "failed" : "idle");
   return {
-    readiness,
+    readiness: currentReadiness,
     state,
     safeMessage,
-    canShare: phase === "idle" && readiness?.status === "ready",
+    canShare: readinessRequestKey === requestKey && phase === "idle" && currentReadiness?.status === "ready",
     refresh,
     recheck,
   };

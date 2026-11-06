@@ -78,6 +78,30 @@ describe("collaborative app owner readiness", () => {
     expect(result.current.canShare).toBe(true);
   });
 
+  it("withdraws sharing immediately and reloads readiness when the same app build changes", async () => {
+    let finishReload!: (value: unknown) => void;
+    const api = {
+      get: vi.fn()
+        .mockResolvedValueOnce(ready)
+        .mockImplementationOnce(async () => new Promise((resolve) => { finishReload = resolve; })),
+      post: vi.fn(),
+    };
+    const view = renderHook(({ buildEpoch }) => useCollaborativeAppSharing({
+      appId: "team-tracker",
+      api,
+      buildEpoch,
+    }), { initialProps: { buildEpoch: 1 } });
+    await waitFor(() => expect(view.result.current.canShare).toBe(true));
+
+    view.rerender({ buildEpoch: 2 });
+
+    expect(view.result.current.canShare).toBe(false);
+    await waitFor(() => expect(api.get).toHaveBeenCalledTimes(2));
+    expect(view.result.current.state).toBe("loading");
+    await act(async () => { finishReload(blocked); await Promise.resolve(); });
+    await waitFor(() => expect(view.result.current.state).toBe("blocked"));
+  });
+
   it("uses only bounded safe copy when the response or transport is invalid", async () => {
     const api = {
       get: vi.fn(async () => { throw new Error("postgres password=private"); }),
