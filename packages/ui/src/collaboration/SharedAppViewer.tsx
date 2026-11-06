@@ -34,12 +34,15 @@ export function SharedAppViewer({ target, transport }: {
   const iframeRef = useRef<HTMLIFrameElement>(null);
   const mounted = useRef(true);
   const requestGeneration = useRef(0);
+  const pendingMutationRecovery = useRef(false);
   const entryUrl = entry?.targetKey === targetKey ? entry.url : null;
   const title = `${displayName(target.appId)} shared by ${target.owner.displayName}`;
 
   const applyFailure = useCallback((error: unknown) => {
     const code = error instanceof SharedAppTransportError ? error.code : "unavailable";
-    setState(code);
+    if (code === "uncertain") pendingMutationRecovery.current = true;
+    if (code === "conflict" || code === "access_ended") pendingMutationRecovery.current = false;
+    setState(pendingMutationRecovery.current ? "uncertain" : code);
   }, []);
 
   const launch = useCallback(async (verifyHome = false) => {
@@ -65,13 +68,15 @@ export function SharedAppViewer({ target, transport }: {
         try {
           await transport.query({ action: "appInfo", app: target.appId });
           if (!active || !mounted.current) return;
-          setState("ready");
+          setState(pendingMutationRecovery.current ? "uncertain" : "ready");
           iframeRef.current?.contentWindow?.postMessage({ type: "matrix:shared-app:changed" }, "*");
         } catch (error: unknown) {
           if (active && mounted.current) applyFailure(error);
         }
       },
-      onUnavailable: () => { if (mounted.current) setState("host_offline"); },
+      onUnavailable: () => {
+        if (mounted.current) setState(pendingMutationRecovery.current ? "uncertain" : "host_offline");
+      },
     });
     return () => {
       active = false;
@@ -106,7 +111,7 @@ export function SharedAppViewer({ target, transport }: {
   }, [applyFailure, transport]);
 
   const retry = useCallback(async () => {
-    if (state === "conflict") {
+    if (state !== "uncertain" && entryUrl) {
       const generation = ++requestGeneration.current;
       try {
         await transport.query({ action: "appInfo", app: target.appId });
@@ -126,12 +131,13 @@ export function SharedAppViewer({ target, transport }: {
     try {
       await transport.retryMutation();
       if (!mounted.current || requestGeneration.current !== generation) return;
+      pendingMutationRecovery.current = false;
       setState("ready");
       iframeRef.current?.contentWindow?.postMessage({ type: "matrix:shared-app:changed" }, "*");
     } catch (error: unknown) {
       if (mounted.current && requestGeneration.current === generation) applyFailure(error);
     }
-  }, [applyFailure, launch, state, target.appId, transport]);
+  }, [applyFailure, entryUrl, launch, state, target.appId, transport]);
 
   const retryable = state === "host_offline" || state === "unavailable" || state === "uncertain" || state === "conflict";
   return <div className="relative h-full min-h-0 w-full overflow-hidden bg-[var(--bg-primary)]">

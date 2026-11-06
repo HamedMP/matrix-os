@@ -41,4 +41,25 @@ describe("createShellApiClient", () => {
       expect.objectContaining<ClientApiError>({ category: "server", detail: undefined }),
     );
   });
+
+  it("sends a JSON body with DELETE requests used by stop sharing", async () => {
+    const fetchFn = vi.fn().mockResolvedValue(jsonResponse(200, { state: "stopped" }));
+    const api = createShellApiClient({ getGatewayUrl: () => "https://gateway.test", fetchFn });
+    const body = {
+      clientRequestId: "70000000-0000-4000-8000-000000000001",
+      expectedShareRevision: "1",
+      expectedBindingRevision: "1",
+    };
+
+    await api.delete("/api/collaboration/apps/team-tracker/share", body);
+
+    expect(fetchFn).toHaveBeenCalledWith(
+      "https://gateway.test/api/collaboration/apps/team-tracker/share",
+      expect.objectContaining({
+        method: "DELETE",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(body),
+      }),
+    );
+  });
 });
