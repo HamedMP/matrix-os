@@ -13,6 +13,7 @@ const providerControllerState = vi.hoisted(() => ({
   snapshot: {} as unknown,
   error: null as string | null,
   mutate: vi.fn(),
+  refresh: vi.fn(),
   addCredit: null as null | ((source: string, packageId: "usd_5", requestId: string) => Promise<void>),
   githubDeveloperAccess: null as null | {
     identityKey: string;
@@ -25,6 +26,7 @@ vi.mock("@matrix-os/ui", async () => ({
   ...await import("../../packages/ui/src/agents-providers/provider-workflow-client.js"),
   ...await import("../../packages/ui/src/agents-providers/matrix-anthropic-connection-client.js"),
   ...await import("../../packages/ui/src/speech/browser-client.js"),
+  ...await import("../../packages/ui/src/agents-providers/GithubDeveloperAccessCard.js"),
   AgentsProvidersView: ({
     onOpenTerminal,
     onOpenBrowser,
@@ -59,7 +61,7 @@ vi.mock("@matrix-os/ui", async () => ({
     busy: false,
     error: providerControllerState.error,
     onSelectHarness: vi.fn(),
-    refresh: vi.fn(),
+    refresh: providerControllerState.refresh,
     mutate: providerControllerState.mutate,
   }),
   ProviderSettingsTransportError: class ProviderSettingsTransportError extends Error {
@@ -76,6 +78,7 @@ afterEach(() => {
   providerControllerState.snapshot = {};
   providerControllerState.error = null;
   providerControllerState.mutate.mockReset();
+  providerControllerState.refresh.mockReset();
   providerControllerState.addCredit = null;
   providerControllerState.githubDeveloperAccess = null;
   providerControllerState.speechClient = null;
@@ -85,6 +88,33 @@ afterEach(() => {
 });
 
 describe("Canvas settings sections", () => {
+  it.each([null, "Provider settings are unavailable."])("keeps GitHub readable while initial provider permissions are unknown (%s)", async (error) => {
+    providerControllerState.snapshot = null;
+    providerControllerState.error = error;
+    const fetcher = vi.fn().mockResolvedValue(Response.json({
+      installed: true, authenticated: false, user: null, gitProtocol: null,
+      sshStatus: "setup_required", commitIdentity: { status: "missing", label: null },
+      ready: false, errorCode: null,
+    }));
+    vi.stubGlobal("fetch", fetcher);
+    const setup = vi.fn();
+
+    render(<AgentSection onOpenGithubDeveloperTerminal={setup} />);
+
+    expect(await screen.findByRole("heading", { name: "GitHub developer access" })).toBeVisible();
+    await screen.findByText("Setup is not complete");
+    const connect = screen.getByRole("button", { name: "Connect" });
+    expect(connect).toBeDisabled();
+    fireEvent.click(connect);
+    expect(setup).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "Refresh GitHub developer access" }));
+    await waitFor(() => expect(fetcher).toHaveBeenCalledTimes(2));
+    if (error) {
+      fireEvent.click(screen.getByRole("button", { name: "Retry provider settings" }));
+      expect(providerControllerState.refresh).toHaveBeenCalledOnce();
+    }
+  });
+
   it("binds GitHub developer status and fixed setup to the active web computer", async () => {
     window.history.replaceState({}, "", "/vm/alice?runtime=studio");
     const fetcher = vi.fn().mockResolvedValue(Response.json({
@@ -246,14 +276,16 @@ describe("Canvas settings sections", () => {
     expect(onOpenTerminal).toHaveBeenCalledWith("provider-login");
   });
 
-  it("shows a safe unavailable state when the first provider read fails", () => {
+  it("shows a safe unavailable state when the first provider read fails", async () => {
     providerControllerState.snapshot = null;
-    providerControllerState.error = "Provider settings are unavailable.";
+    providerControllerState.error = "Anthropic secret from /private/owner";
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(Response.json({ installed: true, authenticated: false, user: null, ready: false })));
 
     render(<AgentSection />);
 
     expect(screen.getByRole("alert")).toHaveTextContent("Provider settings are unavailable");
-    expect(screen.queryByText(/Anthropic|secret|private/i)).toBeNull();
+    expect(screen.queryByText(/Anthropic|secret|\/private\//i)).toBeNull();
+    await screen.findByText("Setup is not complete");
   });
 
   it("opens the newly returned terminal action from Sign in once, without an effect", async () => {

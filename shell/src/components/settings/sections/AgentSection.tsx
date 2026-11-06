@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef } from "react";
-import { AgentsProvidersView, useProviderSettingsController, type AgentsProvidersViewProps } from "@matrix-os/ui";
+import { AgentsProvidersView, GithubDeveloperAccessCard, useProviderSettingsController, type AgentsProvidersViewProps } from "@matrix-os/ui";
 import { getGatewayUrl } from "@/lib/gateway";
 import { openProviderAuthorizationPath } from "@/lib/provider-browser-action";
 import { boundedProviderSettingsJson, createProviderSettingsTransport, openWebProviderAgentSetup } from "@/lib/provider-settings-transport";
@@ -83,10 +83,14 @@ export function AgentSection({
     const unavailable = controller.error !== null;
     return (
       <div className="px-5 py-6" data-provider-settings-adapter="shared">
-        <div className="matrix-agents-providers" aria-busy={unavailable ? undefined : "true"}>
-          <div className="matrix-ap-empty-state" role={unavailable ? "alert" : "status"}>
+        <div className="matrix-agents-providers">
+          <GithubDeveloperAccessCard identityKey={`${identityKey}:${runtimeSlot}`} client={githubDeveloperAccessClient} readOnly />
+          <p>Setup actions require confirmed Settings permissions.</p>
+          <div className="matrix-ap-empty-state" role={unavailable ? "alert" : "status"} aria-busy={unavailable ? undefined : "true"}>
             <strong>{unavailable ? "Provider settings are unavailable" : "Loading agents & providers"}</strong>
             <span>{unavailable ? "Refresh Settings to try again." : "Checking this computer’s provider state…"}</span>
+            {unavailable ? <button type="button" className="matrix-ap-button matrix-ap-button-primary"
+              aria-label="Retry provider settings" disabled={controller.busy} onClick={() => void controller.refresh()}>Retry</button> : null}
           </div>
         </div>
       </div>
