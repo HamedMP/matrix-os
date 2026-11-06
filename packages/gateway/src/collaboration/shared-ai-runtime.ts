@@ -462,7 +462,7 @@ export async function createSharedAiRuntime(options: {
     }
     const driverKind = decision.harness === "codex" ? "codex" as const : "claude_code" as const;
     if (boundDriverKind !== null && boundDriverKind !== driverKind) return null;
-    const currentSelection = executableChatSelectionForOwnerRoute(decision);
+    const currentSelection = canonicalChatSelectionForOwnerAuthority(decision, selection);
     if (!options.providerCatalog) return null;
     const catalog = await options.providerCatalog.getCatalog({ userId: ownerId, source: "jwt" });
     const validated = validateChatProviderSelection({
@@ -824,6 +824,15 @@ export function executableChatSelectionForOwnerRoute(
     instanceId: decision.harness === "codex" ? CODEX_SHARED_INSTANCE_ID : CLAUDE_CHAT_INSTANCE_ID,
     model: decision.modelId,
   });
+}
+
+export function canonicalChatSelectionForOwnerAuthority(
+  decision: SharedRunOwnerSourceDecision,
+  selection: CanonicalChatModelSelection | null,
+): CanonicalChatModelSelection | null {
+  return decision.authorityKind === "provider_settings_active"
+    ? executableChatSelectionForOwnerRoute(decision)
+    : selection;
 }
 
 export function sharedDispatchFenceMatches(
