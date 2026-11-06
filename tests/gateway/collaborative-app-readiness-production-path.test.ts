@@ -12,6 +12,7 @@ import {
 import { appRegistryIncarnation } from "../../packages/gateway/src/collaboration/app-incarnation.js";
 import { canonicalJson } from "../../packages/gateway/src/collaboration/direct-crypto.js";
 import {
+  CollaborativeAppBuildBehaviorProbe,
   CollaborativeAppCapabilityVerifier,
   CollaborativeAppReadinessEvaluator,
 } from "../../packages/gateway/src/collaboration/collaborative-app-readiness.js";
@@ -43,7 +44,8 @@ describe("collaborative app production build resolution", () => {
     await writeFile(join(appDir, "build.mjs"), [
       "import {mkdir,readFile,writeFile} from 'node:fs/promises';",
       "await mkdir('dist',{recursive:true});",
-      "await writeFile('dist/index.html',await readFile('input.txt','utf8'));",
+      "const input=await readFile('input.txt','utf8');",
+      "await writeFile('dist/index.html',`<main>${input}</main><script>window.MatrixOS.collaboration.query({action:'appInfo'});window.MatrixOS.collaboration.mutate({action:'update'},'0');window.MatrixOS.collaboration.onChange(()=>window.MatrixOS.collaboration.query({action:'appInfo'}));</script>`);",
     ].join(""));
     await writeFile(join(appDir, "matrix.json"), JSON.stringify({
       name: "Team Tracker",
@@ -152,7 +154,7 @@ describe("collaborative app production build resolution", () => {
         transition: async (input) => ({ ...checking, status: input.status, gateResults: input.gateResults, revision: 2 }),
         get: async () => null,
       } as never,
-      verifier: new CollaborativeAppCapabilityVerifier(),
+      verifier: new CollaborativeAppCapabilityVerifier(new CollaborativeAppBuildBehaviorProbe(store)),
     }).check({
       ownerId: "user_owner",
       organizationId: "org_matrix_team",
@@ -161,6 +163,51 @@ describe("collaborative app production build resolution", () => {
       declaration: resolved!.declaration ?? null,
     });
     expect(readinessResult).toMatchObject({ status: "ready" });
+  });
+
+  it("blocks a declared exact build that never uses shared reads, writes, or change signals", async () => {
+    await writeFile(join(appDir, "build.mjs"), [
+      "import {mkdir,writeFile} from 'node:fs/promises';",
+      "await mkdir('dist',{recursive:true});",
+      "await writeFile('dist/index.html',`<script>localStorage.setItem('task','browser only')</script>`);",
+    ].join(""));
+    const resolver = new CollaborativeAppBuildResolver({
+      homePath: root,
+      ownerId: "user_owner",
+      appRegistry: { get: async () => registration() } as never,
+      catalog: {
+        getLiveByPath: async () => null,
+        register: async (candidate) => ({ ...candidate, id: catalogId, parentId: null, revision: 0, updatedAt: createdAt, deletedAt: null }),
+      } as never,
+      readiness: { invalidateDriftedBuilds: async () => 0 },
+      store,
+    });
+    const resolved = await resolver.resolve("user_owner", "team-tracker", { ensureCatalog: true });
+    const checking = {
+      id: "60000000-0000-4000-8000-000000000001", ownerId: "user_owner", build: resolved!.build,
+      artifactRef: resolved!.artifactRef, status: "checking" as const, gateResults: [], verifiedAt: null,
+      invalidatedAt: null, invalidationReason: null, verifierVersion: "collaborative-app-v1", revision: 1,
+      createdAt, updatedAt: createdAt,
+    };
+
+    const result = await new CollaborativeAppReadinessEvaluator({
+      repository: {
+        createOrGet: async () => checking,
+        transition: async (candidate) => ({ ...checking, status: candidate.status, gateResults: candidate.gateResults, revision: 2 }),
+        get: async () => null,
+      } as never,
+      verifier: new CollaborativeAppCapabilityVerifier(new CollaborativeAppBuildBehaviorProbe(store)),
+    }).check({
+      ownerId: "user_owner", organizationId: "org_matrix_team", build: resolved!.build,
+      artifactRef: resolved!.artifactRef, declaration: resolved!.declaration ?? null,
+    });
+
+    expect(result.status).toBe("blocked");
+    expect(result.gateResults).toEqual(expect.arrayContaining([
+      expect.objectContaining({ code: "owner_postgres", status: "blocked" }),
+      expect.objectContaining({ code: "conflict_write", status: "blocked" }),
+      expect.objectContaining({ code: "change_signal", status: "blocked" }),
+    ]));
   });
 
   it("fails closed for a foreign owner, missing registration, or read without a catalog identity", async () => {

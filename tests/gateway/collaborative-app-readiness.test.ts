@@ -84,6 +84,10 @@ const input = {
   declaration,
 };
 
+const capabilityVerifier = () => new CollaborativeAppCapabilityVerifier({
+  inspect: async () => ({ sharedRead: true, revisionedWrite: true, changeSignal: true }),
+});
+
 describe("collaborative app readiness evaluator", () => {
   it("blocks required creator credentials, connected providers, and AI funding without delegation", () => {
     expect(evaluateCollaborativeAppProviderSafety({
@@ -104,7 +108,7 @@ describe("collaborative app readiness evaluator", () => {
     const records = repository();
     const result = await new CollaborativeAppReadinessEvaluator({
       repository: records as never,
-      verifier: new CollaborativeAppCapabilityVerifier(),
+      verifier: capabilityVerifier(),
       now: () => new Date("2026-11-05T11:00:00.000Z"),
     }).check(input);
     expect(result).toMatchObject({
@@ -125,7 +129,7 @@ describe("collaborative app readiness evaluator", () => {
     ]) {
       const result = await new CollaborativeAppReadinessEvaluator({
         repository: repository() as never,
-        verifier: new CollaborativeAppCapabilityVerifier(),
+        verifier: capabilityVerifier(),
       }).check(candidate);
       expect(result.status).toBe("blocked");
       expect(result.gateResults.some((gate) => gate.status === "blocked")).toBe(true);
@@ -140,7 +144,7 @@ describe("collaborative app readiness evaluator", () => {
     const unsupportedBuild = { ...build, ...version };
     const result = await new CollaborativeAppReadinessEvaluator({
       repository: repository() as never,
-      verifier: new CollaborativeAppCapabilityVerifier(),
+      verifier: capabilityVerifier(),
     }).check({
       ...input,
       build: unsupportedBuild,
@@ -230,18 +234,18 @@ describe("collaborative app readiness evaluator", () => {
     records.get.mockResolvedValue(winner);
     await expect(new CollaborativeAppReadinessEvaluator({
       repository: records as never,
-      verifier: new CollaborativeAppCapabilityVerifier(),
+      verifier: capabilityVerifier(),
     }).check(input)).resolves.toEqual(winner);
 
     records.get.mockResolvedValue(null);
     await expect(new CollaborativeAppReadinessEvaluator({
       repository: records as never,
-      verifier: new CollaborativeAppCapabilityVerifier(),
+      verifier: capabilityVerifier(),
     }).check(input)).rejects.toMatchObject({ code: "conflict" });
     records.transition.mockRejectedValue(new Error("repository unavailable"));
     await expect(new CollaborativeAppReadinessEvaluator({
       repository: records as never,
-      verifier: new CollaborativeAppCapabilityVerifier(),
+      verifier: capabilityVerifier(),
     }).check(input)).rejects.toThrow("repository unavailable");
   });
 
