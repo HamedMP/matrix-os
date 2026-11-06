@@ -5,7 +5,16 @@ import { createScopeRuntimeController, SCOPE_RUNTIME_PROFILE } from "../../packa
 const scratch: string[] = [];
 afterEach(async () => { await Promise.all(scratch.splice(0).map(path => rm(path, { recursive: true, force: true }))); });
 async function root() { const value = await mkdtemp(join(process.cwd(), ".native-round2-")); scratch.push(value); return value; }
-function supervisorState() { return { LoadState: "loaded", Description: "matrix-native-token", Transient: "yes", InvocationID: "1".repeat(32), MainPID: "41", ActiveState: "active", DefinitionIdentity: "same-definition", KillSignal: "9", RuntimeDirectoryPreserve: "yes", OnFailure: "", OnSuccess: "", ExecStop: "", ExecStopPost: "", BoundBy: "", ConsistsOf: "", RequiredBy: "", RequisiteOf: "", PropagatesStopTo: "", PartOf: "", BindsTo: "" }; }
+function supervisorState() {
+  return {
+    Id: "matrix-devstack-proof-scope-runtime.service", LoadState: "loaded", Description: "matrix-native-token", Transient: "yes",
+    InvocationID: "1".repeat(32), MainPID: "41", ActiveState: "active", DefinitionIdentity: "same-definition",
+    DynamicUser: "no", RootDirectory: "", FragmentPath: "/run/systemd/transient/matrix-devstack-proof-scope-runtime.service",
+    RemainAfterExit: "yes", StandardError: "journal", LimitFSIZE: "infinity", LimitFSIZESoft: "infinity",
+    KillSignal: "9", RuntimeDirectoryPreserve: "yes", OnFailure: "", OnSuccess: "", ExecStop: "", ExecStopPost: "",
+    BoundBy: "", ConsistsOf: "", RequiredBy: "", RequisiteOf: "", PropagatesStopTo: "", PartOf: "", BindsTo: "",
+  };
+}
 
 it("never invokes the supervisor's real close drain against a replaced tracked worker", async () => {
   const { createUnitLedger } = await import("../../scripts/ops/devstack-native/ownership.mjs");
@@ -47,7 +56,7 @@ it("records a conclusively owned expected restart independently of a failed capa
   state.InvocationID = "2".repeat(32); state.MainPID = "44";
   // Health is unavailable, so normal proof never calls captureSupervisor.
   const cleanup = await ledger.cleanup();
-  expect(ledger.evidence().supervisor.invocationId).toBe("2".repeat(32));
+  expect(ledger.evidence().supervisor?.invocationId).toBe("2".repeat(32));
   expect(actions).toContain("stop-cold"); expect(cleanup.every((entry: {state: string}) => entry.state === "passed")).toBe(true);
 });
 
@@ -62,7 +71,7 @@ it.each(["replace", "sentinel"])("refuses %s in a reserved leaf before submissio
   await expect(submitSupervisor(config, "matrix-native-token", "[Service]\nProtectSystem=strict\nPrivateNetwork=yes", { submitted() {}, captureSupervisor: async () => ({}) }, async (_: string, argv: string[]) => {
     if (_.endsWith("systemd-run")) submissions++; return { code: 0, stdout: argv[0] === "show" ? "LoadState=not-found" : argv[0] === "list-unit-files" ? "matrix-gateway.service enabled enabled" : "" };
   }, placement)).rejects.toThrow(/placement/);
-  expect(submissions).toBe(0); expect((await lstat(config.commandSocketRoot)).ino).toBe(identity.ino); await placement.close();
+  expect(submissions).toBe(0); expect((await lstat(config.commandSocketRoot)).ino).toBe(identity.ino); await placement.close!();
   if (mutation === "sentinel") expect(await readFile(join(config.stateRoot, "foreign"), "utf8")).toBe("untouched");
 });
 
@@ -89,7 +98,7 @@ it("captures changed installed scope/gateway runtime bytes despite identical ser
     await writeFile(file, "before");
   }
   const missing = join(base, "missing");
-  expect((await installedArtifactEvidence([{ path: missing, required: false }]))[missing]).toEqual({ classification: "optional_absent" });
+  expect(await installedArtifactEvidence([{ path: missing, required: false }])).toEqual({ [missing]: { classification: "optional_absent" } });
   await expect(installedArtifactEvidence([{ path: missing, required: true }])).rejects.toThrow(/missing/);
 });
 
@@ -124,7 +133,7 @@ it.each(["cascade", "runtime_removal"])("blocks partial-create drain and unsafe 
   else state.RuntimeDirectoryPreserve = "no";
   const cleanup = await ledger.cleanup();
   expect(actions).toEqual([workerName]);
-  expect(cleanup.find((entry: {unit: string}) => entry.unit === config.supervisorUnit).state).toBe("failed");
+  expect(cleanup.find((entry: {unit: string}) => entry.unit === config.supervisorUnit)?.state).toBe("failed");
 });
 
 it("does not adopt an unrelated restart with changed transient definition", async () => {
@@ -137,3 +146,23 @@ it("does not adopt an unrelated restart with changed transient definition", asyn
   const cleanup = await ledger.cleanup();
   expect(actions).toEqual(["kill"]); expect(cleanup.some((entry: {state: string}) => entry.state === "failed")).toBe(true);
 });
+
+
+it.each([undefined, null, 1, {}, "", "yes\r", "yes\n", "yes\0", "x".repeat(4096)])(
+  "refuses an incomplete or malformed protected baseline and replacement (%#)", async malformed => {
+    const { createUnitLedger } = await import("../../scripts/ops/devstack-native/ownership.mjs");
+    for (const phase of ["baseline", "replacement"]) {
+      const config = { supervisorUnit: "matrix-devstack-proof-scope-runtime.service", workerUnitPrefix: "matrix-devstack-proof-scope-runtime-" };
+      const state = supervisorState(), actions: string[] = [];
+      if (phase === "baseline") Reflect.set(state, "DynamicUser", malformed);
+      const ledger = createUnitLedger(config, "matrix-native-token", {
+        observe: async () => state, mutate: async (action: string) => { actions.push(action); },
+      });
+      ledger.submitted(); await ledger.captureSupervisor(); await ledger.supervisorAction("kill");
+      const captured = ledger.evidence();
+      state.InvocationID = "2".repeat(32); state.MainPID = "44";
+      Reflect.set(state, "DynamicUser", malformed);
+      await expect(ledger.captureExpectedRestart()).rejects.toThrow("supervisor_restart_incarnation_unproven");
+      expect(ledger.evidence()).toEqual(captured); expect(actions).toEqual(["kill"]);
+    }
+  });
