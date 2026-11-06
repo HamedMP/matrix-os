@@ -9,15 +9,16 @@ import { formatSiteDate } from "./format-site-date";
 import { SiteSubmissions } from "./SiteSubmissions";
 import { SiteAccessLinks } from "./SiteAccessLinks";
 
-export function AppSitePanel(props: { appSlug: string; client: SiteClient }) {
+export function AppSitePanel(props: { appSlug: string; client: SiteClient; variant?: "default" | "share" }) {
   return <AppSitePanelSession key={props.appSlug} {...props} />;
 }
-function AppSitePanelSession({ appSlug, client }: { appSlug: string; client: SiteClient }) {
+function AppSitePanelSession({ appSlug, client, variant = "default" }: { appSlug: string; client: SiteClient; variant?: "default" | "share" }) {
   const state = useAppSite(appSlug, client);
   const formKey = `${state.loading ? "loading" : "ready"}:${state.metadataEpoch}`;
-  return <AppSiteForm key={formKey} appSlug={appSlug} client={client} state={state} />;
+  return <AppSiteForm key={formKey} appSlug={appSlug} client={client} state={state} variant={variant} />;
 }
-function AppSiteForm({ appSlug, client, state }: { appSlug: string; client: SiteClient; state: ReturnType<typeof useAppSite> }) {
+// react-doctor-disable-next-line react-doctor/no-high-complexity-react-function -- The pre-existing form coordinates one publishing draft and delegates each access, version, submission, and deployment section below; this change only adds a visual variant without altering that state machine.
+function AppSiteForm({ appSlug, client, state, variant }: { appSlug: string; client: SiteClient; state: ReturnType<typeof useAppSite>; variant: "default" | "share" }) {
   const fieldId = useId();
   const { site, loading, pending, loadFailed, action } = state;
   const [title, setTitle] = useState(site?.title ?? appSlug);
@@ -39,14 +40,21 @@ function AppSiteForm({ appSlug, client, state }: { appSlug: string; client: Site
       setConfig(declaration); setPreviewReady(true); setReviewOpen(true);
     });
   }
-  return <section className="space-y-4" aria-label="App publishing" style={{
-      "--matrix-fg": `var(--foreground, var(--text-primary, ${desktopPalette.forest}))`,
-      "--matrix-card": `var(--background, var(--bg-surface, ${desktopPalette.paper}))`,
-      "--matrix-input": "var(--border, var(--border-default))",
-      "--matrix-border": "var(--border, var(--border-default))",
-      "--matrix-primary": `var(--primary, var(--accent, ${desktopPalette.forest}))`,
-      "--matrix-primary-fg": `var(--primary-foreground, var(--text-on-accent, ${desktopPalette.paper}))`,
-      "--matrix-destructive": `var(--destructive, ${desktopPalette.danger})`,
+  const share = variant === "share";
+  return <section className={share ? "space-y-3 text-[13px] [&_div.border]:border-[#323238] [&_fieldset]:rounded-lg [&_fieldset]:border [&_fieldset]:border-[#323238] [&_fieldset]:bg-[#171717] [&_fieldset]:p-3 [&_details]:border-[#323238] [&_details]:bg-[#171717] [&_li.border]:border-[#323238] [&_pre]:border-[#323238] [&_select]:border-[#3f3f46] [&_select]:bg-[#171717] [&_select]:text-[#f4f4f5]" : "space-y-4"} aria-label="App publishing" style={{
+      "--matrix-fg": share ? "#f4f4f5" : `var(--foreground, var(--text-primary, ${desktopPalette.forest}))`,
+      "--matrix-card": share ? "#171717" : `var(--background, var(--bg-surface, ${desktopPalette.paper}))`,
+      "--matrix-input": share ? "#3f3f46" : "var(--border, var(--border-default))",
+      "--matrix-border": share ? "#3f3f46" : "var(--border, var(--border-default))",
+      "--matrix-primary": share ? "#2563eb" : `var(--primary, var(--accent, ${desktopPalette.forest}))`,
+      "--matrix-primary-fg": share ? "#ffffff" : `var(--primary-foreground, var(--text-on-accent, ${desktopPalette.paper}))`,
+      "--matrix-destructive": share ? "#ef4444" : `var(--destructive, ${desktopPalette.danger})`,
+      "--muted": share ? "#27272a" : undefined,
+      "--muted-foreground": share ? "#a1a1aa" : undefined,
+      "--bg-surface": share ? "#171717" : undefined,
+      "--border-default": share ? "#323238" : undefined,
+      "--text-primary": share ? "#f4f4f5" : undefined,
+      "--text-secondary": share ? "#a1a1aa" : undefined,
       "--matrix-radius-md": "8px", "--matrix-font-sans": desktopFonts.sans,
       color: "var(--matrix-fg)",
     } as CSSProperties}>

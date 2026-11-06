@@ -48,6 +48,7 @@ export default function EmbedHost({
   const runtimeSlot = useConnection((connection) => connection.runtimeSlot);
   const product = nativeBrowserProduct(appIdentity ?? "", slug ?? "");
   const authGeneration = useConnection((connection) => product ? connection.authGeneration : 0);
+  const [portalContainer, setPortalContainer] = useState<HTMLDivElement | null>(null);
   const hostRef = useRef<HTMLDivElement>(null);
   const embedIdRef = useRef<string | null>(null);
   const activeRef = useRef(active);
@@ -201,70 +202,78 @@ export default function EmbedHost({
   }, [active, openedEmbedRevision, refreshRequest]);
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col">
-      {slug && visible ? <div className="flex shrink-0 justify-end border-b px-3 py-1.5"><DesktopAppSiteButton key={slug} appSlug={slug} /></div> : null}
-    <div ref={hostRef} className="ph-no-capture relative min-h-0 flex-1" style={{ background: "var(--bg-app)" }}>
-      {snapshotDataUrl ? (
-        <img
-          data-testid="embed-retained-frame"
-          src={snapshotDataUrl}
-          alt=""
-          aria-hidden="true"
-          draggable={false}
-          className="pointer-events-none absolute inset-0 size-full object-fill"
-        />
-      ) : null}
-      {state === "loading" ? (
-        <div className="absolute inset-0 flex items-center justify-center">
-          <span className="status-pulse text-sm" style={{ color: "var(--text-tertiary)" }}>
-            Loading…
-          </span>
+    <div ref={setPortalContainer} data-testid="created-app-surface" className="relative isolate flex min-h-0 flex-1 flex-col overflow-hidden">
+      {slug && visible ? (
+        <div
+          data-testid="app-publishing-bar"
+          className="flex min-h-10 shrink-0 items-center justify-end px-3 py-1.5"
+          style={{ background: "#080808" }}
+        >
+          <DesktopAppSiteButton key={slug} appSlug={slug} portalContainer={portalContainer} />
         </div>
       ) : null}
-      {state === "auth-required" ? (
-        <div className="absolute inset-0 flex flex-col items-center justify-center gap-3">
-          <p className="text-sm" style={{ color: "var(--text-secondary)" }}>
-            This surface needs you to sign in again.
-          </p>
-          <Button
-            variant="primary"
-            onClick={() => {
-              const id = embedIdRef.current;
-              if (id) {
+      <div ref={hostRef} className="ph-no-capture relative min-h-0 flex-1" style={{ background: "var(--bg-app)" }}>
+        {snapshotDataUrl ? (
+          <img
+            data-testid="embed-retained-frame"
+            src={snapshotDataUrl}
+            alt=""
+            aria-hidden="true"
+            draggable={false}
+            className="pointer-events-none absolute inset-0 size-full object-fill"
+          />
+        ) : null}
+        {state === "loading" ? (
+          <div className="absolute inset-0 flex items-center justify-center">
+            <span className="status-pulse text-sm" style={{ color: "var(--text-tertiary)" }}>
+              Loading…
+            </span>
+          </div>
+        ) : null}
+        {state === "auth-required" ? (
+          <div className="absolute inset-0 flex flex-col items-center justify-center gap-3">
+            <p className="text-sm" style={{ color: "var(--text-secondary)" }}>
+              This surface needs you to sign in again.
+            </p>
+            <Button
+              variant="primary"
+              onClick={() => {
+                const id = embedIdRef.current;
+                if (id) {
+                  setState("loading");
+                  void invoke("embed:retry-auth", { embedId: id })
+                    .then((result) => {
+                      if (embedIdRef.current !== id) return;
+                      if (result.ok) reportBounds();
+                      else setState((current) => current === "loading" ? "auth-required" : current);
+                    })
+                    .catch(() => {
+                      if (embedIdRef.current === id) setState("auth-required");
+                    });
+                }
+              }}
+            >
+              Retry sign-in
+            </Button>
+          </div>
+        ) : null}
+        {state === "failed" ? (
+          <div className="absolute inset-0 flex flex-col items-center justify-center gap-3">
+            <span className="text-sm" style={{ color: "var(--text-secondary)" }}>
+              {product ? `${product.name} is unavailable on this computer.` : "Couldn't load this surface."}
+            </span>
+            <Button
+              variant="primary"
+              onClick={() => {
                 setState("loading");
-                void invoke("embed:retry-auth", { embedId: id })
-                  .then((result) => {
-                    if (embedIdRef.current !== id) return;
-                    if (result.ok) reportBounds();
-                    else setState((current) => current === "loading" ? "auth-required" : current);
-                  })
-                  .catch(() => {
-                    if (embedIdRef.current === id) setState("auth-required");
-                  });
-              }
-            }}
-          >
-            Retry sign-in
-          </Button>
-        </div>
-      ) : null}
-      {state === "failed" ? (
-        <div className="absolute inset-0 flex flex-col items-center justify-center gap-3">
-          <span className="text-sm" style={{ color: "var(--text-secondary)" }}>
-            {product ? `${product.name} is unavailable on this computer.` : "Couldn't load this surface."}
-          </span>
-          <Button
-            variant="primary"
-            onClick={() => {
-              setState("loading");
-              setRetryRevision((revision) => revision + 1);
-            }}
-          >
-            Try again
-          </Button>
-        </div>
-      ) : null}
-    </div>
+                setRetryRevision((revision) => revision + 1);
+              }}
+            >
+              Try again
+            </Button>
+          </div>
+        ) : null}
+      </div>
     </div>
   );
 }
