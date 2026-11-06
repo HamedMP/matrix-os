@@ -276,7 +276,8 @@ export function createBotTools(input: {
       const terminate = spec.terminates?.(params as Record<string, unknown>) === true;
       if (terminate) input.state.askingPerson = true;
       try {
-        const result = await untilCancelled(input.broker.tool(request), signal, input.state);
+        const pending = request.capability === "github.developer" ? input.broker.tool(request, signal) : input.broker.tool(request);
+        const result = await untilCancelled(pending, signal, input.state);
         if (!result.ok) throw new Error(REFUSAL_GUIDANCE[result.code]);
         if (terminate) input.state.waitingForPerson = true;
         return { content: result.content, details: undefined, ...(terminate ? { terminate: true } : {}) };
