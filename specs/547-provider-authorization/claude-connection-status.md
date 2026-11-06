@@ -169,3 +169,10 @@ The native probe can legitimately take its bounded read budget. Electron first
 login, principal replacement and logout must await the actual renderer response
 with exact native state before the existing short UI assertion. Keep first-focus
 acceptance free of artificial readiness sleeps and retain timeout bounds.
+
+Connection controls must own a live workflow scope at their first committed
+interaction. Initialize/reset the existing scope in the layout lifecycle before
+clicks can reach the enabled control; retain its identity-change/disposal aborts.
+A real-panel regression must dispatch the actual adoption click before passive
+effects and verify exact request admission. Strict Mode setup remains inert, and
+late old-account responses cannot update the replacement scope.
