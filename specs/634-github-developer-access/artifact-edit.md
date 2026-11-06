@@ -10,8 +10,9 @@ or change the existing default publication behavior for native recipe Bots.
 
 ## 2. Signatures
 
-- Model `read_artifact({path, withHash: true})` returns complete bounded text and
-  its exact SHA-256; existing path-only and attachment-chunk reads remain valid.
+- Model `read_artifact({path, withHash: true})` returns bounded text and its exact
+  SHA-256, or a bounded hash reference when complete encoded text cannot fit the
+  broker reply. Existing path-only and attachment-chunk reads remain valid.
 - Model `write_artifact({path, content, mimeType, expectedSha256})` maps to
   `artifact.write.args.replace = {expectedSha256}`.
 - The legacy `{replace: {baseRevision}}` contract remains refused; it is not a
@@ -21,7 +22,13 @@ or change the existing default publication behavior for native recipe Bots.
 
 The complete text/digest response has `kind: "artifact_text"`, `content`,
 `sha256`, `size` in bytes, and `untrusted: true`. Existing 192 KiB text and
-serialized broker-frame bounds remain authoritative. A missing expected hash
+serialized broker-frame bounds remain authoritative. Hash reads account for
+the broker's second JSON-escaping layer. A reply that cannot fit returns
+`kind: "artifact_text_reference"`, `sha256`, `size`, `untrusted: true` and a
+notice, with no content or silent truncation. The model reads the original
+bytes through existing bounded chunks using that exact digest, following
+`nextOffset` until `eof`; any changed file refuses the stale digest.
+A missing expected hash
 keeps managed writes create-only. A replacement requires an existing regular
 file with one link, unchanged bytes, an admitted root/source and a safe path.
 New content preserves the file mode. Git metadata and `.artifact-recovery`
