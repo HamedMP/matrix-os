@@ -30,9 +30,9 @@ const blocked = {
   artifactRef: `objects/${build.buildId}`,
   status: "blocked" as const,
   gateResults: [{
-    code: "two_principal_round_trip" as const,
+    code: "declaration" as const,
     status: "blocked" as const,
-    action: "A second authenticated verifier is not configured yet.",
+    action: "Declare collaborative capability.",
   }],
   verifiedAt: null,
   invalidatedAt: null,
@@ -132,7 +132,7 @@ describe("collaborative app readiness routes", () => {
     })).status).toBe(200);
   });
 
-  it("checks membership and persists the fail-closed result for the exact incarnation", async () => {
+  it("checks membership and persists the capability result for the exact incarnation", async () => {
     const { routes, dependencies } = setup();
     const response = await routes.request(`/api/collaboration/apps/${appId}/readiness/check`, {
       method: "POST",
@@ -146,6 +146,7 @@ describe("collaborative app readiness routes", () => {
       organizationId: "org_matrix_team",
       build,
       artifactRef: `objects/${build.buildId}`,
+      declaration: null,
     });
     expect(await response.json()).toMatchObject({ status: "blocked" });
   });

@@ -10,12 +10,14 @@ import { AppSiteButton } from "./app-sites/AppSiteButton";
 import {
   CollaborativeAppShareButton,
   ReadinessSummary,
+  SharedAppViewer,
+  createSharedAppTransport,
   useCollaborativeAppSharing,
 } from "@matrix-os/ui/collaborative-app-sharing";
 import { shellApi } from "@/api/http";
 import { useCollaborationOrganization } from "@/lib/collaboration-organization-state";
 
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useMemo, useRef } from "react";
 import { useFileWatcher } from "@/hooks/useFileWatcher";
 import { useSocket } from "@/hooks/useSocket";
 import {
@@ -30,7 +32,9 @@ import { openAppSession } from "@/lib/app-session";
 import { capturePostHogEvent } from "@/lib/posthog-client";
 import { createCoalescedBridgeDataHandler, type BridgeDataRequest } from "@/lib/app-data-write-queue";
 import { MATRIX_TELEMETRY_EVENTS } from "@matrix-os/observability/events";
-import { MAX_APP_KV_REQUEST_BYTES } from "@matrix-os/contracts";
+import { MAX_APP_KV_REQUEST_BYTES, type CollaborativeAppDirectoryItem } from "@matrix-os/contracts";
+import { useBrowserOrigin } from "@/hooks/useBrowserOrigin";
+import { createShellCollaborationApi, releaseShellCollaborationApi } from "@/lib/collaboration";
 import {
   APP_IFRAME_SANDBOX,
   extractSlug,
@@ -47,6 +51,7 @@ const BRIDGE_FETCH_TIMEOUT_MS = 10_000;
 
 interface AppViewerProps {
   path: string;
+  sharedAppTarget?: CollaborativeAppDirectoryItem;
   active?: boolean;
   sessionId?: string;
   onOpenApp?: (name: string, path: string) => void;
@@ -111,6 +116,7 @@ const requestBridgeData: BridgeDataRequest = async (action, app, key, value) => 
 const bridgeDataHandler = createCoalescedBridgeDataHandler(requestBridgeData);
 
 export function AppViewer(props: AppViewerProps) {
+  if (props.sharedAppTarget) return <SharedAppWebViewer target={props.sharedAppTarget} />;
   const surface = remoteBrowserSurfaceForPath(props.path);
   if (surface) return <RemoteBrowserView key={`${getGatewayUrl()}:${surface}`} surface={surface} active={props.active ?? true}
     onOpenCloudDesktop={props.onOpenApp ? () => props.onOpenApp!("Cloud desktop", "__cloud-desktop__") : undefined}
@@ -120,6 +126,41 @@ export function AppViewer(props: AppViewerProps) {
   // receives elevated iframe permissions; all other apps keep their sandbox.
   if (extractSlug(props.path) === "browser-lab") return <BrowserLabView key={getGatewayUrl()} />;
   return <SandboxedAppViewer {...props} />;
+}
+
+function SharedAppWebViewer({ target }: { target: CollaborativeAppDirectoryItem }) {
+  const browserOrigin = useBrowserOrigin();
+  const stableTarget = useMemo<CollaborativeAppDirectoryItem>(() => ({
+    scopeId: target.scopeId,
+    runtimeId: target.runtimeId,
+    organizationId: target.organizationId,
+    authorityGeneration: target.authorityGeneration,
+    appId: target.appId,
+    catalogId: target.catalogId,
+    readinessId: target.readinessId,
+    registrationIncarnation: target.registrationIncarnation,
+    buildId: target.buildId,
+    shareRevision: target.shareRevision,
+    owner: { actorId: target.owner.actorId, displayName: target.owner.displayName },
+  }), [
+    target.scopeId, target.runtimeId, target.organizationId, target.authorityGeneration,
+    target.appId, target.catalogId, target.readinessId, target.registrationIncarnation,
+    target.buildId, target.shareRevision, target.owner.actorId, target.owner.displayName,
+  ]);
+  const api = useMemo(
+    () => browserOrigin ? createShellCollaborationApi(browserOrigin) : null,
+    [browserOrigin],
+  );
+  const transport = useMemo(
+    () => api ? createSharedAppTransport({ platform: api, direct: api.direct, target: stableTarget }) : null,
+    [api, stableTarget],
+  );
+  useEffect(() => () => {
+    if (api) releaseShellCollaborationApi(api);
+  }, [api]);
+
+  if (!transport) return <p role="status" className="p-8">Loading shared app…</p>;
+  return <SharedAppViewer target={stableTarget} transport={transport} />;
 }
 
 function SandboxedAppViewer({ path, sessionId, onOpenApp, onShareApp, visible = true }: AppViewerProps) {

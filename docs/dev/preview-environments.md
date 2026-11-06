@@ -585,6 +585,8 @@ labels and one dispatch.
 1. **Provision.** Add `preview-vps` and `preview-collaboration` to a same-repo
    PR. The `Preview VPS` deploy job then runs in the protected
    `collaboration-e2e` environment, which waits for a required reviewer. It
+   builds native host modules on Ubuntu 24.04 so they stay compatible with the
+   customer image's glibc 2.39 ceiling, then
    provisions `pr-<N>` with `clerkUserId = PREVIEW_COLLABORATION_OWNER_USER_ID`
    and an empty `accessClerkUserIds`, so preview access proofs cannot mask
    organization checks. The job refuses an owner equal to

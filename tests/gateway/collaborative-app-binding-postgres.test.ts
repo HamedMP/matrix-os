@@ -103,7 +103,7 @@ describe("collaborative app exact binding persistence", () => {
       ownerId: "user_owner",
       expectedRevision: 1,
       status: "ready",
-      gateResults: [{ code: "two_principal_round_trip", status: "passed" }],
+      gateResults: [{ code: "recipient_launch", status: "passed" }],
       verifiedAt: now,
     });
   }

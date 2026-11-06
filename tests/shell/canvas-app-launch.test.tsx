@@ -2,7 +2,7 @@
 import React from "react";
 import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { CanvasWindow } from "../../shell/src/components/canvas/CanvasWindow";
+import { CanvasWindow, openSharedCanvasApp } from "../../shell/src/components/canvas/CanvasWindow";
 import { DesktopWindow } from "../../shell/src/components/desktop/DesktopWindow";
 import { resetWindowManagerLayoutPersistenceForTests, useWindowManager, type AppWindow } from "../../shell/src/hooks/useWindowManager";
 import { resetCanvasTransformAnimation, useCanvasTransform } from "../../shell/src/hooks/useCanvasTransform";
@@ -10,6 +10,7 @@ import { useDesktopMode } from "../../shell/src/stores/desktop-mode";
 import { getCodeEditorUrl } from "../../shell/src/lib/feature-flags";
 import { listApps } from "../../shell/src/api/apps";
 import { OS_VIEW_DESTINATION_PATHS } from "@matrix-os/contracts";
+import type { CollaborativeAppDirectoryItem } from "@matrix-os/contracts";
 
 const socket = vi.hoisted(() => ({ send: vi.fn(), subscribe: vi.fn(() => () => undefined) }));
 vi.mock("../../shell/src/hooks/useSocket", () => ({ useSocket: () => socket }));
@@ -23,6 +24,19 @@ vi.mock("../../shell/src/lib/posthog-client", () => ({ capturePostHogEvent: vi.f
 const galleryWindow: AppWindow = {
   id: "gallery", title: "App Gallery", path: "apps/app-gallery", x: 20, y: 30,
   width: 800, height: 600, minimized: false, zIndex: 1,
+};
+const sharedApp: CollaborativeAppDirectoryItem = {
+  scopeId: "10000000-0000-4000-8000-000000000001",
+  runtimeId: "vps:20000000-0000-4000-8000-000000000001",
+  organizationId: "org_matrix_team",
+  authorityGeneration: 1,
+  appId: "tracker",
+  catalogId: "30000000-0000-4000-8000-000000000001",
+  readinessId: "40000000-0000-4000-8000-000000000001",
+  registrationIncarnation: "a".repeat(64),
+  buildId: "b".repeat(64),
+  shareRevision: "1",
+  owner: { actorId: "user_owner", displayName: "Nima" },
 };
 beforeEach(() => {
   resetWindowManagerLayoutPersistenceForTests();
@@ -92,6 +106,27 @@ describe("Web Canvas app bridge launches", () => {
     const frame = await mountedGalleryFrame();
     await requestOpen(frame, "apps/focus", "different-app");
     expect(useWindowManager.getState().windows).toEqual([galleryWindow]);
+  });
+});
+
+describe("Web Canvas shared app launches", () => {
+  it.each(["new", "existing"] as const)("focuses the viewport on the %s shared window", (state) => {
+    if (state === "existing") {
+      useWindowManager.getState().openWindow("Tracker shared by Nima", `__shared-app__:${sharedApp.scopeId}`, 0, {
+        sharedAppTarget: sharedApp,
+      });
+      const existing = useWindowManager.getState().windows.find((candidate) => candidate.sharedAppTarget);
+      useWindowManager.getState().moveWindow(existing!.id, 2200, 1400);
+      useWindowManager.getState().minimizeWindow(existing!.id);
+    }
+
+    act(() => openSharedCanvasApp(sharedApp));
+
+    const opened = useWindowManager.getState().windows.find((candidate) => candidate.sharedAppTarget);
+    expect(opened).toMatchObject({ minimized: false, sharedAppTarget: sharedApp });
+    expect(useWindowManager.getState().focusedWindowId).toBe(opened!.id);
+    expect(useCanvasTransform.getState().panX).not.toBe(0);
+    expect(useCanvasTransform.getState().panY).not.toBe(0);
   });
 });
 

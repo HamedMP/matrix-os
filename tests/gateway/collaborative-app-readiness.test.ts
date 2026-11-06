@@ -2,8 +2,8 @@ import { describe, expect, it, vi } from "vitest";
 
 import {
   APPROVED_COLLABORATIVE_APP_READINESS_GATES,
+  CollaborativeAppCapabilityVerifier,
   CollaborativeAppReadinessEvaluator,
-  UnconfiguredSecondPrincipalVerifier,
 } from "../../packages/gateway/src/collaboration/collaborative-app-readiness.js";
 import { CollaborativeAppReadinessRepositoryError } from "../../packages/gateway/src/collaboration/collaborative-app-readiness-repository.js";
 import { evaluateCollaborativeAppProviderSafety } from "../../packages/gateway/src/collaboration/shared-provider-readiness.js";
@@ -19,6 +19,23 @@ const build = {
   assetDigest: "e".repeat(64),
   bridgeContractVersion: "matrix-app-bridge-v1",
   runtimeAbi: "matrix-runtime-v1",
+};
+
+const declaration = {
+  capability: {
+    version: 1 as const,
+    storage: "owner_postgres" as const,
+    audience: "current_organization_members" as const,
+    participantIdentity: "authenticated_actor" as const,
+    mutations: "transactional_revisioned" as const,
+    updates: "content_free_signal" as const,
+    providerPolicy: "existing_authority" as const,
+  },
+  compatibility: {
+    bridgeContractVersion: build.bridgeContractVersion,
+    runtimeAbi: build.runtimeAbi,
+    schemaDigest: build.schemaDigest,
+  },
 };
 
 function checking() {
@@ -64,7 +81,12 @@ const input = {
   organizationId: "org_matrix_team",
   build,
   artifactRef: `objects/${build.buildId}`,
+  declaration,
 };
+
+const capabilityVerifier = () => new CollaborativeAppCapabilityVerifier({
+  inspect: async () => ({ sharedRead: true, revisionedWrite: true, changeSignal: true }),
+});
 
 describe("collaborative app readiness evaluator", () => {
   it("blocks required creator credentials, connected providers, and AI funding without delegation", () => {
@@ -82,31 +104,71 @@ describe("collaborative app readiness evaluator", () => {
     })).toEqual({ code: "provider_safety", status: "passed" });
   });
 
-  it("fails closed with one safe actionable gate while the second principal is unconfigured", async () => {
+  it("qualifies the exact declared build using normal Matrix identity", async () => {
     const records = repository();
     const result = await new CollaborativeAppReadinessEvaluator({
       repository: records as never,
-      verifier: new UnconfiguredSecondPrincipalVerifier(),
+      verifier: capabilityVerifier(),
       now: () => new Date("2026-11-05T11:00:00.000Z"),
     }).check(input);
     expect(result).toMatchObject({
-      status: "blocked",
-      gateResults: [{
-        code: "two_principal_round_trip",
-        status: "blocked",
-        action: "A second authenticated verifier is not configured yet.",
-      }],
+      status: "ready",
+      gateResults: APPROVED_COLLABORATIVE_APP_READINESS_GATES.map((code) => ({ code, status: "passed" })),
     });
-    expect(result.verifiedAt).toBeNull();
+    expect(result.verifiedAt).toBe("2026-11-05T11:00:00.000Z");
+    expect(records.createOrGet).toHaveBeenCalledWith(expect.objectContaining({
+      verifierVersion: "collaborative-app-capability-v1",
+    }));
   });
 
-  it("issues ready only from an approved verifier that proves every production gate", async () => {
+  it("blocks undeclared and incompatible builds with bounded owner guidance", async () => {
+    for (const candidate of [
+      { ...input, declaration: null },
+      { ...input, declaration: { ...declaration, compatibility: { ...declaration.compatibility, schemaDigest: "f".repeat(64) } } },
+      { ...input, artifactRef: `objects/${"f".repeat(64)}` },
+    ]) {
+      const result = await new CollaborativeAppReadinessEvaluator({
+        repository: repository() as never,
+        verifier: capabilityVerifier(),
+      }).check(candidate);
+      expect(result.status).toBe("blocked");
+      expect(result.gateResults.some((gate) => gate.status === "blocked")).toBe(true);
+      expect(JSON.stringify(result)).not.toContain("credential");
+    }
+  });
+
+  it.each([
+    ["bridge contract", { bridgeContractVersion: "matrix-app-bridge-v9" }],
+    ["runtime ABI", { runtimeAbi: "matrix-runtime-v9" }],
+  ])("blocks a self-consistent build that requires an unsupported host %s", async (_label, version) => {
+    const unsupportedBuild = { ...build, ...version };
+    const result = await new CollaborativeAppReadinessEvaluator({
+      repository: repository() as never,
+      verifier: capabilityVerifier(),
+    }).check({
+      ...input,
+      build: unsupportedBuild,
+      artifactRef: `objects/${unsupportedBuild.buildId}`,
+      declaration: {
+        ...declaration,
+        compatibility: { ...declaration.compatibility, ...version },
+      },
+    });
+
+    expect(result.status).toBe("blocked");
+    expect(result.gateResults).toContainEqual(expect.objectContaining({
+      code: "recipient_launch",
+      status: "blocked",
+    }));
+  });
+
+  it("issues ready only from a verifier that proves every production gate", async () => {
     const records = repository();
     const verify = vi.fn(async () => APPROVED_COLLABORATIVE_APP_READINESS_GATES
       .map((code) => ({ code, status: "passed" as const })));
     const result = await new CollaborativeAppReadinessEvaluator({
       repository: records as never,
-      verifier: { approval: "approved", verify },
+      verifier: { verify },
       now: () => new Date("2026-11-05T11:00:00.000Z"),
     }).check(input);
     expect(result.status).toBe("ready");
@@ -119,20 +181,20 @@ describe("collaborative app readiness evaluator", () => {
 
     const defaultClockResult = await new CollaborativeAppReadinessEvaluator({
       repository: repository() as never,
-      verifier: { approval: "approved", verify },
+      verifier: { verify },
     }).check(input);
     expect(defaultClockResult.verifiedAt).toMatch(/^\d{4}-\d{2}-\d{2}T/);
   });
 
   it("maps incomplete proof and raw verifier failures to bounded failed results", async () => {
     for (const verifier of [
-      { approval: "approved" as const, verify: async () => [{ code: "declaration" as const, status: "passed" as const }] },
-      { approval: "approved" as const, verify: async () => [
+      { verify: async () => [{ code: "declaration" as const, status: "passed" as const }] },
+      { verify: async () => [
         { code: "declaration" as const, status: "passed" as const },
         { code: "declaration" as const, status: "passed" as const },
       ] },
-      { approval: "approved" as const, verify: async () => { throw new Error("postgres password=secret"); } },
-      { approval: "approved" as const, verify: async () => { throw "database-secret"; } },
+      { verify: async () => { throw new Error("postgres password=secret"); } },
+      { verify: async () => { throw "database-secret"; } },
     ]) {
       const records = repository();
       const result = await new CollaborativeAppReadinessEvaluator({ repository: records as never, verifier }).check(input);
@@ -155,7 +217,7 @@ describe("collaborative app readiness evaluator", () => {
       }));
       const result = await new CollaborativeAppReadinessEvaluator({
         repository: records as never,
-        verifier: { approval: "approved", verify: async () => proof },
+        verifier: { verify: async () => proof },
       }).check(input);
       expect(result).toMatchObject({ status: expectedStatus, verifiedAt: null });
     }
@@ -163,7 +225,7 @@ describe("collaborative app readiness evaluator", () => {
 
   it("returns the concurrent winner after a CAS conflict and preserves unexpected repository failures", async () => {
     const winner = { ...checking(), status: "blocked" as const, revision: 2, gateResults: [{
-      code: "two_principal_round_trip" as const,
+      code: "declaration" as const,
       status: "blocked" as const,
       action: "A concurrent check completed first.",
     }] };
@@ -172,18 +234,18 @@ describe("collaborative app readiness evaluator", () => {
     records.get.mockResolvedValue(winner);
     await expect(new CollaborativeAppReadinessEvaluator({
       repository: records as never,
-      verifier: new UnconfiguredSecondPrincipalVerifier(),
+      verifier: capabilityVerifier(),
     }).check(input)).resolves.toEqual(winner);
 
     records.get.mockResolvedValue(null);
     await expect(new CollaborativeAppReadinessEvaluator({
       repository: records as never,
-      verifier: new UnconfiguredSecondPrincipalVerifier(),
+      verifier: capabilityVerifier(),
     }).check(input)).rejects.toMatchObject({ code: "conflict" });
     records.transition.mockRejectedValue(new Error("repository unavailable"));
     await expect(new CollaborativeAppReadinessEvaluator({
       repository: records as never,
-      verifier: new UnconfiguredSecondPrincipalVerifier(),
+      verifier: capabilityVerifier(),
     }).check(input)).rejects.toThrow("repository unavailable");
   });
 
@@ -193,12 +255,12 @@ describe("collaborative app readiness evaluator", () => {
       ...checking(),
       status: "blocked",
       revision: 2,
-      gateResults: [{ code: "two_principal_round_trip", status: "blocked", action: "Configure a verifier." }],
+      gateResults: [{ code: "declaration", status: "blocked", action: "Declare collaborative capability." }],
     });
     const verify = vi.fn();
     const result = await new CollaborativeAppReadinessEvaluator({
       repository: records as never,
-      verifier: { approval: "approved", verify },
+      verifier: { verify },
     }).check(input);
     expect(result.status).toBe("blocked");
     expect(verify).not.toHaveBeenCalled();

@@ -152,6 +152,7 @@ export { CollaborativeAppShareDialog } from "./collaboration/CollaborativeAppSha
 export { SharedAppViewer } from "./collaboration/SharedAppViewer.js";
 export type {
   CollaborativeAppReadinessApi,
+  CollaborativeAppSharingActionState,
   CollaborativeAppSharingState,
 } from "./collaboration/useCollaborativeAppSharing.js";
 export { ProjectSourceSummary } from "./collaboration/ProjectSourceSummary.js";
