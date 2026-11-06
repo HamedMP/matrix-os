@@ -269,14 +269,14 @@ describe('Preview VPS provisioning workflow', () => {
         with: { ref: '${{ needs.gate.outputs.head_sha }}' },
       }),
       expect.objectContaining({
+        if: "needs.gate.outputs.action == 'deploy_existing'",
+        with: { ref: '${{ needs.execution_origin.outputs.trusted_ref }}' },
+      }),
+      expect.objectContaining({
         with: expect.objectContaining({
           ref: '${{ needs.execution_origin.outputs.trusted_ref }}',
           path: '.trusted-preview-workflow',
         }),
-      }),
-      expect.objectContaining({
-        if: "needs.gate.outputs.action == 'deploy_existing'",
-        with: { ref: '${{ needs.execution_origin.outputs.trusted_ref }}' },
       }),
     ]);
     expect(workflow.jobs.gate.steps.find((step: { name?: string }) => step.name === 'Decide action').run)
