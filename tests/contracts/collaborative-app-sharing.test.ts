@@ -10,6 +10,7 @@ import {
   CollaborativeAppMutationRequestSchema,
   CollaborativeAppMutationResponseSchema,
   CollaborativeAppParticipantSchema,
+  CollaborativeAppReadinessGateResultSchema,
   CollaborativeAppReadinessSchema,
   CollaborativeAppSafeErrorSchema,
   CollaborativeAppShareSchema,
@@ -100,6 +101,14 @@ describe("collaborative app sharing contracts", () => {
     ]) {
       expect(CollaborativeAppReadinessSchema.safeParse(invalid).success).toBe(false);
     }
+  });
+
+  it("keeps legacy two-principal readiness blockers readable after the verifier upgrade", () => {
+    expect(CollaborativeAppReadinessGateResultSchema.parse({
+      code: "two_principal_round_trip",
+      status: "blocked",
+      action: "A second authenticated verifier is not configured yet.",
+    })).toMatchObject({ code: "two_principal_round_trip", status: "blocked" });
   });
 
   it("serializes an owner-retained organization share without roles, grants, or acceptance", () => {

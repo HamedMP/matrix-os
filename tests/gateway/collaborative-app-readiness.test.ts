@@ -133,6 +133,31 @@ describe("collaborative app readiness evaluator", () => {
     }
   });
 
+  it.each([
+    ["bridge contract", { bridgeContractVersion: "matrix-app-bridge-v9" }],
+    ["runtime ABI", { runtimeAbi: "matrix-runtime-v9" }],
+  ])("blocks a self-consistent build that requires an unsupported host %s", async (_label, version) => {
+    const unsupportedBuild = { ...build, ...version };
+    const result = await new CollaborativeAppReadinessEvaluator({
+      repository: repository() as never,
+      verifier: new CollaborativeAppCapabilityVerifier(),
+    }).check({
+      ...input,
+      build: unsupportedBuild,
+      artifactRef: `objects/${unsupportedBuild.buildId}`,
+      declaration: {
+        ...declaration,
+        compatibility: { ...declaration.compatibility, ...version },
+      },
+    });
+
+    expect(result.status).toBe("blocked");
+    expect(result.gateResults).toContainEqual(expect.objectContaining({
+      code: "recipient_launch",
+      status: "blocked",
+    }));
+  });
+
   it("issues ready only from a verifier that proves every production gate", async () => {
     const records = repository();
     const verify = vi.fn(async () => APPROVED_COLLABORATIVE_APP_READINESS_GATES

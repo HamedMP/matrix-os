@@ -59,6 +59,9 @@ const blocked = (
   action: string,
 ) => ({ code, status: "blocked" as const, action });
 
+const SUPPORTED_BRIDGE_CONTRACT_VERSION = "matrix-app-bridge-v1";
+const SUPPORTED_RUNTIME_ABI = "matrix-runtime-v1";
+
 /**
  * V1 readiness proves the exact Matrix-managed capability path. The real
  * recipient remains the authenticated Matrix actor presented at launch; no
@@ -72,10 +75,13 @@ export class CollaborativeAppCapabilityVerifier implements CollaborativeAppReadi
     const exactBuild = input.artifactRef === `objects/${input.build.buildId}`
       && input.build.bridgeContractVersion !== "undeclared"
       && input.build.runtimeAbi !== "undeclared";
-    const compatible = declared
+    const buildMatchesDeclaration = declared
       && declaration.data.compatibility.bridgeContractVersion === input.build.bridgeContractVersion
       && declaration.data.compatibility.runtimeAbi === input.build.runtimeAbi
       && declaration.data.compatibility.schemaDigest === input.build.schemaDigest;
+    const compatible = buildMatchesDeclaration
+      && input.build.bridgeContractVersion === SUPPORTED_BRIDGE_CONTRACT_VERSION
+      && input.build.runtimeAbi === SUPPORTED_RUNTIME_ABI;
 
     return [
       declared

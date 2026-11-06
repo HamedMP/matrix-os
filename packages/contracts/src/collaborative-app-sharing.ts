@@ -39,6 +39,9 @@ export const CollaborativeAppReadinessGateCodeSchema = z.enum([
   "owner_postgres",
   "recipient_launch",
   "participant_identity",
+  // Legacy persisted blocker from the pre-capability verifier. New proofs do
+  // not emit it, but repositories must continue decoding saved rows.
+  "two_principal_round_trip",
   "idempotent_retry",
   "conflict_write",
   "change_signal",
