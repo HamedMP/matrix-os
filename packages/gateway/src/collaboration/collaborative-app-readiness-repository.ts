@@ -198,6 +198,33 @@ export class CollaborativeAppReadinessRepository {
     return toRecord(row);
   }
 
+  async restart(input: {
+    id: string;
+    ownerId: string;
+    expectedRevision: number;
+  }): Promise<CollaborativeAppReadinessRecord> {
+    const id = z.uuid().safeParse(input.id);
+    const owner = OwnerIdSchema.safeParse(input.ownerId);
+    if (!id.success || !owner.success || !Number.isSafeInteger(input.expectedRevision) || input.expectedRevision < 1) {
+      throw new CollaborativeAppReadinessRepositoryError("invalid");
+    }
+    const row = await this.db.updateTable("collaboration_app_readiness").set({
+      status: "checking",
+      gate_results: sql`'[]'::jsonb`,
+      verified_at: null,
+      invalidated_at: null,
+      invalidation_reason: null,
+      revision: input.expectedRevision + 1,
+      updated_at: this.now(),
+    }).where("id", "=", id.data)
+      .where("owner_id", "=", owner.data)
+      .where("revision", "=", input.expectedRevision)
+      .where("status", "in", ["stale", "failed"])
+      .returningAll().executeTakeFirst();
+    if (!row) throw new CollaborativeAppReadinessRepositoryError("conflict");
+    return toRecord(row);
+  }
+
   async get(input: { id: string; ownerId: string }): Promise<CollaborativeAppReadinessRecord | null> {
     const row = await this.db.selectFrom("collaboration_app_readiness")
       .innerJoin("collaboration_resource_catalog", "collaboration_resource_catalog.id", "collaboration_app_readiness.catalog_id")

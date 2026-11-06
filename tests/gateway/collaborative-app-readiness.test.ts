@@ -50,6 +50,11 @@ function repository() {
       verifiedAt: input.verifiedAt?.toISOString() ?? null,
       revision: 2,
     })),
+    restart: vi.fn(async (input) => ({
+      ...initial,
+      status: "checking" as const,
+      revision: input.expectedRevision + 1,
+    })),
     get: vi.fn(async () => null),
   };
 }
@@ -198,5 +203,51 @@ describe("collaborative app readiness evaluator", () => {
     expect(result.status).toBe("blocked");
     expect(verify).not.toHaveBeenCalled();
     expect(records.transition).not.toHaveBeenCalled();
+  });
+
+  it.each(["stale", "failed"] as const)("restarts a %s exact-build result through one CAS winner", async (status) => {
+    const records = repository();
+    const prior = {
+      ...checking(),
+      status,
+      revision: 2,
+      gateResults: [{ code: "cleanup" as const, status: "failed" as const, action: "Try again." }],
+      ...(status === "stale" ? {
+        invalidatedAt: "2026-11-05T10:30:00.000Z",
+        invalidationReason: "build_drift" as const,
+      } : {}),
+    };
+    records.createOrGet.mockResolvedValue(prior);
+    const verify = vi.fn(async () => APPROVED_COLLABORATIVE_APP_READINESS_GATES
+      .map((code) => ({ code, status: "passed" as const })));
+
+    const result = await new CollaborativeAppReadinessEvaluator({
+      repository: records as never,
+      verifier: { approval: "approved", verify },
+    }).check(input);
+
+    expect(records.restart).toHaveBeenCalledWith({
+      id: prior.id,
+      ownerId: prior.ownerId,
+      expectedRevision: prior.revision,
+    });
+    expect(verify).toHaveBeenCalledOnce();
+    expect(result.status).toBe("ready");
+  });
+
+  it("returns the concurrent retry winner without running a second verifier", async () => {
+    const records = repository();
+    const prior = { ...checking(), status: "failed" as const, revision: 2 };
+    const winner = { ...checking(), revision: 3 };
+    records.createOrGet.mockResolvedValue(prior);
+    records.restart.mockRejectedValue(new CollaborativeAppReadinessRepositoryError("conflict"));
+    records.get.mockResolvedValue(winner);
+    const verify = vi.fn();
+
+    await expect(new CollaborativeAppReadinessEvaluator({
+      repository: records as never,
+      verifier: { approval: "approved", verify },
+    }).check(input)).resolves.toEqual(winner);
+    expect(verify).not.toHaveBeenCalled();
   });
 });

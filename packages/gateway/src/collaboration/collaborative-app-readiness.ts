@@ -84,12 +84,27 @@ export class CollaborativeAppReadinessEvaluator {
   }
 
   async check(input: CollaborativeAppReadinessVerificationInput): Promise<CollaborativeAppReadinessRecord> {
-    const record = await this.options.repository.createOrGet({
+    let record = await this.options.repository.createOrGet({
       ownerId: input.ownerId,
       build: input.build,
       artifactRef: input.artifactRef,
       verifierVersion: this.verifierVersion,
     });
+    if (record.status === "stale" || record.status === "failed") {
+      try {
+        record = await this.options.repository.restart({
+          id: record.id,
+          ownerId: input.ownerId,
+          expectedRevision: record.revision,
+        });
+      } catch (error: unknown) {
+        if (error instanceof CollaborativeAppReadinessRepositoryError && error.code === "conflict") {
+          const current = await this.options.repository.get({ id: record.id, ownerId: input.ownerId });
+          if (current) return current;
+        }
+        throw error;
+      }
+    }
     if (record.status !== "checking") return record;
 
     let status: "ready" | "blocked" | "failed";
