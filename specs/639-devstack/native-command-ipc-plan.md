@@ -4,12 +4,12 @@
 
 **Spec:** `specs/639-devstack/native-command-ipc.md`.
 **Goal:** Let the capability-free trusted supervisor dispatch through its pinned worker socket without giving the workload trusted host groups or weakening its sandbox.
-**Architecture:** root-owned setgid command leaf, owner-published group-write-only socket, explicit host trust/active workload UID, shared semantic policy fencing.
+**Architecture:** PID1-managed setgid anchors, exclusively inherited root-owned command leaf, owner-published group-write-only socket, explicit host trust/active workload UID and shared semantic policy fencing.
 
 ## Global constraints
 
 - Preserve Main, installed Dev, old OrbStack source/data and all monetary state. No provider calls during source tests; no new cloud/VPS, credential import, merge, rollout or external message.
-- Modes02733/0620 are contingent on the actual Linux proof; preserve capabilities, DynamicUser/PrivateUsers, UMask, network and group membership. No world-writable or capability fallback.
+- Modes02733/0620 are contingent on actual Linux proof; preserve capabilities, DynamicUser/PrivateUsers, RestrictSUIDSGID, long-lived supervisor/workload UMask, network and group membership. Only the bounded trusted single-mkdir child may set its own mask to0. PID1-managed anchors use02700/02770 with the same0700/0770 permission bits. No world-writable or capability fallback.
 - Preserve O_PATH/nofollow inode dispatch, command/generation validation, source/Node/profile provenance, single-use Chat, bounded Bot controls and exact owned cleanup. No active probes of foreign installed endpoints.
 - Source/tests in this existing manual worktree and native GitHub stack. English public-safe docs; separate site documentation. Hard50files/3000added lines per PR, aim20/1000; split if required.
 - Never add behavior to a1000+LOC entry without extraction: put IPC constants, trust/permission publication and descriptor policy in focused modules; launcher should delegate.
@@ -38,6 +38,16 @@ Own focused `scripts/ops/devstack-native/{evidence,security,proof,receipt}.mjs` 
 ## Task 3: Safe native protocol rejection diagnostics
 
 Own `scripts/ops/devstack-native/proof.mjs`, focused native source tests and this diagnostic contract. Retain a schema-defined primitive rejection code only after exact version/requestId/response-type and strict negative-envelope validation; keep other replies generic and never retain raw frames. RED/GREEN must use real disposable Unix framing through the production client, production-schema-validated negative fixtures, persisted journal codes, matching success, malformed/mismatched replies and conservative partial-create quarantine. Preserve timeouts, bounds, all lifecycle/security gates and failed receipts. Source tests do not close actual Linux or SDK qualification; repeat that lane only through the controller after source review.
+
+## Task 4: Inherit directory setgid under the existing hardening
+
+Own focused directory-creation/policy/ancestry helpers, minimal launcher wiring, the supervisor unit's declared control-directory modes, owning source/native harness tests and public-safe repository/site documentation. Deliver this correction as a dependent native-stack layer.
+
+- Preserve `RestrictSUIDSGID=yes`, empty capabilities, DynamicUser/PrivateUsers, group membership, network policy and supervisor/workload masks. PID1 declares both state and runtimes anchors02700 and runtime IPC anchors02770 for legacy and namespaced layouts.
+- Preserve inherited private2700 roots without explicit setgid syscalls. A bounded trusted child performs only an exclusive0733 mkdir with child-local mask0; use the existing verified Node, sterile environment, bounded output/timeout and ownership-safe failure/descriptor cleanup. Parent identity and resulting02733 owner/group must be checked. No arbitrary helper command, permission fallback or ambient trust.
+- Fail closed on missing/wrong inheritance or existing/foreign leaves. Preserve all dispatch, generation, profile/owned-Node and quiesced cleanup fences; encode the changed creation/anchor semantics in the canonical policy digest without changing harness pins.
+- RED/GREEN covers both layouts, child/parent mask isolation, identity/mode/collision failures and bounded failed-child behavior. Advance portable fixtures explicitly without counting them as Linux proof; update native property/filesystem observations for the exact anchors.
+- Update the separate site doc without a preview or Clerk invocation. Run owning source suites/build/typecheck/syntax/diff checks, commit and obtain independent task/final review. Controller then rebuilds a fresh exact-source namespace and requires the full original native/SDK/cleanup gates.
 
 ## Controller gates after source review
 
