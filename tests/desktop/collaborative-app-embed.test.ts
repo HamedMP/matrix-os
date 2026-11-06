@@ -90,23 +90,32 @@ describe("collaborative app Electron embed", () => {
     expect(ownerLaunch).not.toHaveBeenCalled();
   });
 
-  it("injects participant authentication only for the wrapper and exact shared runtime", () => {
-    const authorize = (requestUrl: string, mainFrame: boolean) => shouldAuthorizeSharedAppRequest({
+  it("injects participant authentication only for the wrapper and exact shared-app transport", () => {
+    const authorize = (requestUrl: string, method: string, mainFrame = false) => shouldAuthorizeSharedAppRequest({
       requestUrl,
       gatewayOrigin: "https://platform.test",
       scopeId: TARGET.scopeId,
+      method,
       mainFrame,
     });
 
-    expect(authorize(`https://platform.test/shared/app/${TARGET.scopeId}`, true)).toBe(true);
-    expect(authorize("https://platform.test/api/collaboration/connections", true)).toBe(true);
+    expect(authorize(`https://platform.test/shared/app/${TARGET.scopeId}`, "GET", true)).toBe(true);
+    expect(authorize("https://platform.test/api/collaboration/shared-apps?limit=100", "GET")).toBe(true);
+    expect(authorize("https://platform.test/api/collaboration/connections", "POST")).toBe(true);
+    expect(authorize(
+      `https://platform.test/api/collaboration/shared-apps/${TARGET.scopeId}/launch`,
+      "POST",
+    )).toBe(true);
     expect(authorize(
       `https://platform.test/api/collaboration/shared-apps/${TARGET.scopeId}/runtime/launch-1/index.js`,
-      false,
+      "GET",
     )).toBe(true);
-    expect(authorize("https://platform.test/api/collaboration/scopes/another/apps/inventory/actions", false)).toBe(false);
-    expect(authorize("https://platform.test/api/apps/inventory/session-token", true)).toBe(false);
-    expect(authorize(`https://evil.test/shared/app/${TARGET.scopeId}`, true)).toBe(false);
+    expect(authorize("https://platform.test/api/collaboration/direct-sessions", "POST")).toBe(true);
+    expect(authorize("https://platform.test/api/collaboration/scopes/another/apps/inventory/actions", "POST")).toBe(false);
+    expect(authorize("https://platform.test/api/collaboration/shared-apps/20000000-0000-4000-8000-000000000002/launch", "POST")).toBe(false);
+    expect(authorize("https://platform.test/api/apps/inventory/session-token", "POST", true)).toBe(false);
+    expect(authorize(`https://evil.test/shared/app/${TARGET.scopeId}`, "GET", true)).toBe(false);
+    expect(authorize("https://platform.test/api/collaboration/shared-apps", "POST")).toBe(false);
   });
 
   it("retains and reloads the same native view after an offline load failure", async () => {

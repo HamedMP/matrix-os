@@ -305,6 +305,45 @@ describe("EmbedHost", () => {
     expect(screen.queryByRole("button", { name: "Retry sign-in" })).toBeNull();
   });
 
+  it("detaches a retained shared app while its retry overlay is visible and reattaches before reload", async () => {
+    let emitState: ((payload: { embedId: string; state: "host-offline" }) => void) | null = null;
+    vi.mocked(onEvent).mockImplementation((_channel, callback) => {
+      emitState = callback as typeof emitState;
+      return () => undefined;
+    });
+    vi.mocked(invoke).mockImplementation((channel: string) => {
+      if (channel === "embed:open") {
+        return Promise.resolve({ embedId: "shared-1", state: "loading" }) as ReturnType<typeof invoke>;
+      }
+      return Promise.resolve({ ok: true }) as ReturnType<typeof invoke>;
+    });
+
+    render(<EmbedHost kind="shared-app" target={SHARED_TARGET} />);
+    await waitFor(() => expect(invoke).toHaveBeenCalledWith(
+      "embed:set-active",
+      { embedId: "shared-1", active: true },
+    ));
+
+    act(() => emitState?.({ embedId: "shared-1", state: "host-offline" }));
+
+    await screen.findByText("The owner’s computer is offline. This app is still open.");
+    await waitFor(() => expect(invoke).toHaveBeenCalledWith(
+      "embed:set-active",
+      { embedId: "shared-1", active: false },
+    ));
+    vi.mocked(invoke).mockClear();
+
+    fireEvent.click(screen.getByRole("button", { name: "Try again" }));
+
+    await waitFor(() => {
+      const calls = vi.mocked(invoke).mock.calls;
+      expect(calls).toContainEqual(["embed:set-active", { embedId: "shared-1", active: true }]);
+      expect(calls).toContainEqual(["embed:reload", { embedId: "shared-1" }]);
+      expect(calls.findIndex(([channel]) => channel === "embed:set-active"))
+        .toBeLessThan(calls.findIndex(([channel]) => channel === "embed:reload"));
+    });
+  });
+
   it("refreshes bounds after a successful auth retry", async () => {
     vi.mocked(invoke).mockImplementation((channel: string) => {
       if (channel === "embed:open") {

@@ -23,6 +23,7 @@ export function shouldAuthorizeSharedAppRequest(input: {
   requestUrl: string;
   gatewayOrigin: string;
   scopeId: string;
+  method: string;
   mainFrame: boolean;
 }): boolean {
   try {
@@ -30,9 +31,18 @@ export function shouldAuthorizeSharedAppRequest(input: {
     const gateway = new URL(input.gatewayOrigin);
     if (request.origin !== gateway.origin) return false;
     const scope = encodeURIComponent(input.scopeId);
-    if (request.pathname === `/shared/app/${scope}`) return true;
-    if (request.pathname.startsWith(`/api/collaboration/shared-apps/${scope}/runtime/`)) return true;
-    return input.mainFrame && request.pathname.startsWith("/api/collaboration/");
+    if (input.method === "GET" && input.mainFrame && request.pathname === `/shared/app/${scope}`) return true;
+    if (input.method === "GET" && request.pathname === "/api/collaboration/shared-apps") return true;
+    if (input.method === "POST" && request.pathname === "/api/collaboration/connections") return true;
+    if (input.method === "POST" && request.pathname === `/api/collaboration/shared-apps/${scope}/launch`) return true;
+    if (input.method === "GET" && request.pathname.startsWith(`/api/collaboration/shared-apps/${scope}/runtime/`)) return true;
+    // A platform relay can be the exact home endpoint returned by the signed
+    // ticket. Session ids are UUID capabilities and the renderer never sees
+    // the bearer: Electron attaches it at the network boundary.
+    if (input.method === "POST" && request.pathname === "/api/collaboration/direct-sessions") return true;
+    const directSession = /^\/api\/collaboration\/direct-sessions\/[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}(\/renew)?$/.exec(request.pathname);
+    if (directSession) return directSession[1] ? input.method === "POST" : input.method === "DELETE";
+    return false;
   } catch {
     return false;
   }
@@ -118,6 +128,7 @@ export function createWebContentsView(options: {
         requestUrl: details.url,
         gatewayOrigin,
         scopeId: sharedAppAuth.target.scopeId,
+        method: details.method,
         mainFrame: details.frame?.parent === null,
       })) {
         details.requestHeaders.Authorization = `Bearer ${token}`;
