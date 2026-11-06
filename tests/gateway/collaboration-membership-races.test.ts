@@ -6,6 +6,7 @@ import { bootstrapCollaborationDatabase } from "../../packages/gateway/src/colla
 import { CollaborationRepository } from "../../packages/gateway/src/collaboration/repository.js";
 import { ProjectAccessRevocationEnforcer } from "../../packages/gateway/src/collaboration/revocation-enforcer.js";
 import { createProjectTransitionJournal } from "../../packages/gateway/src/collaboration/project-transition.js";
+import { createProjectInheritanceResolver } from "../../packages/gateway/src/collaboration/project-inheritance.js";
 import {
   collaborationActors,
   collaborationIds,
@@ -511,6 +512,72 @@ describe("organization project revocation races", () => {
     await expect(fixture.db.selectFrom("collaboration_scopes")
       .select("lifecycle").where("id", "=", ownedProject).executeTakeFirstOrThrow())
       .resolves.toEqual({ lifecycle: "preparing" });
+  });
+
+  it("lets a rejoined owner explicitly share again with a new authority generation", async () => {
+    await fixture.db.insertInto("collaboration_resource_bindings").values({
+      id: "73000000-0000-4000-8000-000000000010",
+      project_scope_id: ownedProject,
+      resource_scope_id: ownedChat,
+      resource_kind: "chat",
+      resource_id: "chat_owned",
+      authority_runtime_id: "vps:revocation",
+      authority_generation: 1,
+      revision: 1,
+      readiness: "ready",
+      blocker: null,
+      incarnation: null,
+      created_at: now,
+      updated_at: now,
+    }).execute();
+    const enforcer = new ProjectAccessRevocationEnforcer({
+      db: fixture.db,
+      sessions: { revoke: vi.fn(() => [] as string[]) },
+      drainScope: vi.fn(async () => undefined),
+    });
+    await enforcer.membershipEnded({ organizationId: org, actorId: departedOwner });
+
+    const transitions = createProjectTransitionJournal({
+      db: fixture.db,
+      now: () => now,
+      createTransitionId: () => "73000000-0000-4000-8000-000000000011",
+    });
+    await transitions.prepare({
+      scopeId: ownedProject,
+      ownerId: departedOwner,
+      requestedBy: departedOwner,
+      clientRequestId: "73000000-0000-4000-8000-000000000012",
+      payloadHash: "f".repeat(64),
+      expectedScopeRevision: 2,
+      inventoryRevision: 2,
+      inventoryHash: "a".repeat(64),
+      membershipHash: "b".repeat(64),
+      destinationAuthorityRuntimeId: "vps:revocation",
+      destinationAuthorityGeneration: 2,
+    });
+    const inheritance = createProjectInheritanceResolver({
+      db: fixture.db,
+      now: () => now,
+      createBindingId: () => "73000000-0000-4000-8000-000000000013",
+      createScopeId: () => "73000000-0000-4000-8000-000000000014",
+    });
+
+    await expect(inheritance.bindOwnedResource({
+      projectScopeId: ownedProject,
+      ownerId: departedOwner,
+      kind: "chat",
+      resourceId: "chat_owned",
+      authorityRuntimeId: "vps:revocation",
+      authorityGeneration: 2,
+      revision: 1,
+      readiness: "ready",
+    })).resolves.toMatchObject({
+      authorityGeneration: 2,
+      resourceScopeId: "73000000-0000-4000-8000-000000000014",
+    });
+    await expect(fixture.db.selectFrom("collaboration_scopes")
+      .select(["id", "authority_generation"])
+      .where("id", "=", ownedChat).executeTakeFirst()).resolves.toBeUndefined();
   });
 
   it("drains the project and every inherited scope after unshare commits", async () => {
