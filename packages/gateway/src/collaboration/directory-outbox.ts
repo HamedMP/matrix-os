@@ -277,7 +277,9 @@ export class CollaborationDirectoryOutbox {
           recipientEntries,
           discoveryState: row.discovery_state,
           organizationId: row.organization_id ?? null,
-          audience: !parentScopeId && ((row.kind === "project" && (row.lifecycle === "shared" || row.lifecycle === "archived")) || row.organization_grant_id)
+          audience: !parentScopeId && (row.kind === "project"
+            ? row.lifecycle === "shared" || row.lifecycle === "archived"
+            : Boolean(row.organization_grant_id))
             ? "organization" : null,
           organizationGrantId: parentScopeId || row.kind === "project" ? null : row.organization_grant_id ?? null,
           parentScopeId,
