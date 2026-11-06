@@ -92,7 +92,7 @@ describe("current owner route dispatch fence", () => {
 
     expect(canonicalChatSelectionForOwnerAuthority(standalonePolicy, {
       instanceId: "claude_shared",
-      model: "claude-sonnet-5",
+      model: "claude-opus-5",
     })).toEqual({
       instanceId: "claude_shared",
       model: "claude-sonnet-5",
