@@ -311,6 +311,14 @@ export function createProjectTransitionJournal(options: {
           if (!existing) throw new ProjectTransitionError("unavailable");
           return rowToTransition(existing);
         }
+        const pendingAccessCleanup = await trx.selectFrom("collaboration_operations")
+          .select("client_request_id")
+          .where("scope_id", "=", scope.id)
+          .where("operation_kind", "in", ["project.unshare", "membership.departure_cleanup"])
+          .where("status", "=", "accepted")
+          .limit(1)
+          .executeTakeFirst();
+        if (pendingAccessCleanup) throw new ProjectTransitionError("conflict");
         const sameRuntime = scope.authority_runtime_id === parsed.destinationAuthorityRuntimeId;
         if (scope.membership_mode !== "direct"
           || scope.lifecycle !== "private" || Number(scope.revision) !== parsed.expectedScopeRevision
@@ -318,6 +326,16 @@ export function createProjectTransitionJournal(options: {
             && parsed.destinationAuthorityGeneration !== Number(scope.authority_generation) + 1)) {
           throw new ProjectTransitionError("conflict");
         }
+        // A completed unshare or owner-departure cleanup leaves generation-bound
+        // bindings stale. Keep inherited scope IDs stable: queued work refers to
+        // them and the next staging pass safely rebinds their authority. A
+        // first-share binding already names the destination authority, so only
+        // retire bindings owned by the project's current source generation.
+        await trx.deleteFrom("collaboration_resource_bindings")
+          .where("project_scope_id", "=", scope.id)
+          .where("authority_runtime_id", "=", scope.authority_runtime_id)
+          .where("authority_generation", "=", Number(scope.authority_generation))
+          .execute();
         const updatedScope = await trx.updateTable("collaboration_scopes").set({
           lifecycle: "preparing",
           updated_at: createdAt,
@@ -682,7 +700,13 @@ export function createProjectTransitionJournal(options: {
       }
       await trx.deleteFrom("collaboration_resource_bindings")
         .where("project_scope_id", "=", scope.id).execute();
-      await trx.deleteFrom("collaboration_scopes")
+      await trx.updateTable("collaboration_scopes").set({
+        lifecycle: "private",
+        auth_epoch: sql<number>`auth_epoch + 1`,
+        execution_generation: null,
+        execution_eligibility: null,
+        updated_at: now(),
+      })
         .where("parent_scope_id", "=", scope.id)
         .where("membership_mode", "=", "inherited")
         .where("lifecycle", "in", ["preparing", "recovering"])
@@ -730,6 +754,8 @@ export function createProjectTransitionJournal(options: {
     let attempt: Promise<"activated" | "failed" | null>;
     attempt = (async () => {
       const current = await enterRecovery(value);
+      if (current.status === "active") return "activated" as const;
+      if (current.status === "failed") return "failed" as const;
       if (current.publicationMarker) {
         if (!current.stagedManifestRef) throw new ProjectTransitionError("conflict");
         await input.completePublication({

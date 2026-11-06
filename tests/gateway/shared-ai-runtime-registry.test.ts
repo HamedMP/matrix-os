@@ -66,6 +66,29 @@ describe("shared AI runtime registry", () => {
     registry.shutdown();
     expect(registry.size).toBe(0);
   });
+  it("revokes every broker binding in one scope or only the departed actor", () => {
+    const registry = new SharedAiRuntimeRegistry();
+    const bind = (index: number, scopeId: string, actorId: string) => registry.bind({
+      runtimeHandle: runtime(String(index)),
+      scopeId,
+      chatId: `chat_${index}`,
+      ownerId: "owner_1",
+      actorId,
+      executionGeneration: "7",
+      providerIdentity: { driverKind: "codex", instanceId: "codex_default" },
+    });
+    const scopeA = "10000000-0000-4000-8000-000000000001";
+    const scopeB = "10000000-0000-4000-8000-000000000002";
+    bind(1, scopeA, "actor_1");
+    bind(2, scopeA, "actor_2");
+    bind(3, scopeB, "actor_1");
+
+    expect(registry.releaseScope(scopeA, "actor_1")).toBe(1);
+    expect(registry.lookup({ runtimeHandle: runtime("1"), executionGeneration: "7" })).toBeNull();
+    expect(registry.lookup({ runtimeHandle: runtime("2"), executionGeneration: "7" })).not.toBeNull();
+    expect(registry.releaseScope(scopeA)).toBe(1);
+    expect(registry.size).toBe(1);
+  });
   it("authorizes a Codex runtime only for Responses with its exact owner-bound model", () => {
     const registry = new SharedAiRuntimeRegistry();
     registry.bind({

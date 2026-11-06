@@ -30,6 +30,8 @@ bun run vitest tests/gateway/shared-ai-runtime.test.ts
 
 Then run the collaboration regression lane and coverage required by the changed modules. Do not silently skip PostgreSQL-backed assertions.
 
+The final focused implementation lane passed 217 tests with 6 expected repository skips. A touched-module V8 run executed 200 tests with 5 expected skips; its narrowed aggregate did not meet the repository-wide 99% global threshold, so it is evidence of execution and per-module coverage rather than a passing global-coverage lane. The new revocation coordinator reached 94.37% line coverage and the shared-AI registry reached 100% line/function coverage.
+
 ## Manual scenario
 
 1. As owner, open a private project and choose **Share whole project** for the organization.
@@ -56,6 +58,16 @@ Capture Web Canvas, Web Desktop, and Electron Desktop separately at the reviewed
 - denied owner-only action
 
 Attach captures or accessible links to the PR, post the same evidence in Slack `#tech` with ENG-29 and PR links, and link the Slack permalink back to the PR. Keep credentials and private customer data out of every capture.
+
+Live qualification requires three authenticated storage states: `MATRIX_COLLABORATION_E2E_OWNER_STATE`, `MATRIX_COLLABORATION_E2E_MEMBER_STATE`, and `MATRIX_COLLABORATION_E2E_OUTSIDER_STATE`. Their absence is a hard evidence blocker, not a reason to skip assertions. Use the exact Playwright CLI from the repository configuration so only one Playwright loader is active:
+
+```bash
+node node_modules/@playwright/test/cli.js test --config tests/e2e/collaboration.playwright.config.ts
+```
+
+At the implementation head, `bun run typecheck`, `bun run check:patterns:diff`, and `git diff --check` pass. The repository-wide `bun run test` lane remains environment-limited on this host by real socket/HTTP restrictions, GPG/temp access, protected filesystem ancestors, and exhausted data-volume capacity; rely on CI for the unconstrained broad run and do not report the local attempt as passing.
+
+The canonical public guide is updated separately in [FinnaAI/matrix-os-site#338](https://github.com/FinnaAI/matrix-os-site/pull/338).
 
 ## Expected result
 

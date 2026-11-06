@@ -25,7 +25,7 @@ describe("CollaborationTerminalEventRegistry", () => {
 
     fixture.registry.notifyRevoked(scopeA, "user_alice");
     expect(closeSource).not.toHaveBeenCalled();
-    fixture.registry.notifyRevoked(scopeA, "user_bob");
+    fixture.registry.notifyScopeRevoked(scopeA);
     await vi.waitFor(() => expect(closeSource).toHaveBeenCalledTimes(1));
     fixture.registry.shutdown();
     expect(closeSource).toHaveBeenCalledTimes(1);

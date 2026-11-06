@@ -107,6 +107,18 @@ export class SharedAiRuntimeRegistry {
     const runtimeHandle = RuntimeHandleSchema.safeParse(runtimeHandleInput);
     if (runtimeHandle.success) this.entries.delete(runtimeHandle.data);
   }
+  releaseScope(scopeId: string, actorId?: string): number {
+    const parsedScopeId = z.uuid().parse(scopeId);
+    const parsedActorId = actorId === undefined ? undefined : ReferenceSchema.parse(actorId);
+    let released = 0;
+    for (const [runtimeHandle, entry] of this.entries) {
+      if (entry.scopeId === parsedScopeId && (parsedActorId === undefined || entry.actorId === parsedActorId)) {
+        this.entries.delete(runtimeHandle);
+        released += 1;
+      }
+    }
+    return released;
+  }
   shutdown(): void {
     this.entries.clear();
   }

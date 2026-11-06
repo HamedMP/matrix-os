@@ -154,6 +154,255 @@ describe("whole-project sharing coordinator", () => {
     })).rejects.toMatchObject({ code: "conflict" });
     expect(prepare).not.toHaveBeenCalled();
   });
+  it("unshares once by returning the project and inherited resources to private owner state", async () => {
+    await fixture.db.updateTable("collaboration_scopes").set({ lifecycle: "shared" })
+      .where("id", "=", PROJECT_SCOPE).execute();
+    await fixture.db.updateTable("collaboration_scopes").set({
+      parent_scope_id: PROJECT_SCOPE, membership_mode: "inherited", lifecycle: "shared",
+    }).where("id", "=", CHAT_SCOPE).execute();
+    const onUnshared = vi.fn(async () => undefined);
+    const service = serviceFixture(fixture, preview, verifyConfirmation, replayPreparation, prepare, onUnshared);
+
+    await expect(service.unshare({
+      scopeId: PROJECT_SCOPE,
+      actorId: OWNER,
+      clientRequestId: "50000000-0000-4000-8000-000000000703",
+      expectedRevision: 4,
+      payloadHash: "f".repeat(64),
+    })).resolves.toEqual({ scopeId: PROJECT_SCOPE, lifecycle: "private", revision: 5 });
+    expect(await fixture.db.selectFrom("collaboration_scopes").select(["id", "lifecycle", "auth_epoch"])
+      .where("id", "in", [PROJECT_SCOPE, CHAT_SCOPE]).orderBy("id").execute()).toEqual([
+      { id: PROJECT_SCOPE, lifecycle: "private", auth_epoch: 1 },
+      { id: CHAT_SCOPE, lifecycle: "private", auth_epoch: 1 },
+    ]);
+    expect(await fixture.db.selectFrom("collaboration_directory_outbox").select("discovery_state")
+      .where("scope_id", "=", PROJECT_SCOPE).execute()).toEqual([{ discovery_state: "revoked" }]);
+    expect(onUnshared).toHaveBeenCalledOnce();
+    expect(onUnshared).toHaveBeenCalledWith(
+      { scopeId: PROJECT_SCOPE, revision: 5 },
+      expect.anything(),
+    );
+    await service.unshare({
+      scopeId: PROJECT_SCOPE,
+      actorId: OWNER,
+      clientRequestId: "50000000-0000-4000-8000-000000000703",
+      expectedRevision: 4,
+      payloadHash: "f".repeat(64),
+    });
+    expect(onUnshared).toHaveBeenCalledOnce();
+    await fixture.db.updateTable("collaboration_scopes").set({ lifecycle: "shared", revision: 6 })
+      .where("id", "in", [PROJECT_SCOPE, CHAT_SCOPE]).execute();
+    await service.unshare({
+      scopeId: PROJECT_SCOPE,
+      actorId: OWNER,
+      clientRequestId: "50000000-0000-4000-8000-000000000703",
+      expectedRevision: 4,
+      payloadHash: "f".repeat(64),
+    });
+    expect(onUnshared).toHaveBeenCalledOnce();
+    expect(await fixture.db.selectFrom("collaboration_operations").select("status")
+      .where("scope_id", "=", PROJECT_SCOPE)
+      .where("operation_kind", "=", "project.unshare")
+      .executeTakeFirst()).toEqual({ status: "completed" });
+  });
+
+  it("retries a failed committed drain before allowing the unshare operation to complete", async () => {
+    await fixture.db.updateTable("collaboration_scopes").set({ lifecycle: "shared" })
+      .where("id", "=", PROJECT_SCOPE).execute();
+    const onUnshared = vi.fn()
+      .mockRejectedValueOnce(new Error("drain failed"))
+      .mockResolvedValueOnce(undefined);
+    const service = serviceFixture(fixture, preview, verifyConfirmation, replayPreparation, prepare, onUnshared);
+    const input = {
+      scopeId: PROJECT_SCOPE,
+      actorId: OWNER,
+      clientRequestId: "50000000-0000-4000-8000-000000000706",
+      expectedRevision: 4,
+      payloadHash: "3".repeat(64),
+    };
+
+    await expect(service.unshare(input)).rejects.toThrow("drain failed");
+    expect(await fixture.db.selectFrom("collaboration_operations").select("status")
+      .where("scope_id", "=", PROJECT_SCOPE)
+      .where("operation_kind", "=", "project.unshare")
+      .executeTakeFirst()).toEqual({ status: "accepted" });
+    const restarted = serviceFixture(fixture, preview, verifyConfirmation, replayPreparation, prepare, onUnshared);
+    await expect(restarted.unshare(input)).resolves.toMatchObject({ lifecycle: "private", revision: 5 });
+    expect(onUnshared).toHaveBeenCalledTimes(2);
+    expect(await fixture.db.selectFrom("collaboration_operations").select("status")
+      .where("scope_id", "=", PROJECT_SCOPE)
+      .where("operation_kind", "=", "project.unshare")
+      .executeTakeFirst()).toEqual({ status: "completed" });
+  });
+
+  it("recovers a failed committed drain from the next owner preview without the old request id", async () => {
+    await fixture.db.updateTable("collaboration_scopes").set({ lifecycle: "shared" })
+      .where("id", "=", PROJECT_SCOPE).execute();
+    const onUnshared = vi.fn()
+      .mockRejectedValueOnce(new Error("drain failed"))
+      .mockResolvedValueOnce(undefined);
+    const service = serviceFixture(fixture, preview, verifyConfirmation, replayPreparation, prepare, onUnshared);
+
+    await expect(service.unshare({
+      scopeId: PROJECT_SCOPE,
+      actorId: OWNER,
+      clientRequestId: "50000000-0000-4000-8000-000000000709",
+      expectedRevision: 4,
+      payloadHash: "6".repeat(64),
+    })).rejects.toThrow("drain failed");
+
+    await expect(service.preview({ scopeId: PROJECT_SCOPE, actorId: OWNER }))
+      .resolves.toMatchObject({ scopeRevision: 5 });
+    expect(onUnshared).toHaveBeenCalledTimes(2);
+    await expect(fixture.db.selectFrom("collaboration_operations").select("status")
+      .where("scope_id", "=", PROJECT_SCOPE)
+      .where("operation_kind", "=", "project.unshare")
+      .executeTakeFirstOrThrow()).resolves.toEqual({ status: "completed" });
+  });
+
+  it("does not resolve unshare until the committed subscriber drain completes", async () => {
+    await fixture.db.updateTable("collaboration_scopes").set({ lifecycle: "shared" })
+      .where("id", "=", PROJECT_SCOPE).execute();
+    let signalDrainStarted!: () => void;
+    let releaseDrain!: () => void;
+    const drainStarted = new Promise<void>((resolve) => { signalDrainStarted = resolve; });
+    const drainReleased = new Promise<void>((resolve) => { releaseDrain = resolve; });
+    const onUnshared = vi.fn(async () => {
+      signalDrainStarted();
+      await drainReleased;
+    });
+    const service = serviceFixture(fixture, preview, verifyConfirmation, replayPreparation, prepare, onUnshared);
+    let settled = false;
+    const unshare = service.unshare({
+      scopeId: PROJECT_SCOPE,
+      actorId: OWNER,
+      clientRequestId: "50000000-0000-4000-8000-000000000707",
+      expectedRevision: 4,
+      payloadHash: "4".repeat(64),
+    }).then((result) => {
+      settled = true;
+      return result;
+    });
+
+    await drainStarted;
+    expect(settled).toBe(false);
+    releaseDrain();
+    await expect(unshare).resolves.toEqual({
+      scopeId: PROJECT_SCOPE,
+      lifecycle: "private",
+      revision: 5,
+    });
+  });
+
+  it("joins overlapping idempotent unshare replays to one subscriber drain", async () => {
+    await fixture.db.updateTable("collaboration_scopes").set({ lifecycle: "shared" })
+      .where("id", "=", PROJECT_SCOPE).execute();
+    let signalDrainStarted!: () => void;
+    let releaseDrain!: () => void;
+    const drainStarted = new Promise<void>((resolve) => { signalDrainStarted = resolve; });
+    const drainReleased = new Promise<void>((resolve) => { releaseDrain = resolve; });
+    const onUnshared = vi.fn(async () => {
+      if (onUnshared.mock.calls.length === 1) {
+        signalDrainStarted();
+        await drainReleased;
+      }
+    });
+    const service = serviceFixture(fixture, preview, verifyConfirmation, replayPreparation, prepare, onUnshared);
+    const input = {
+      scopeId: PROJECT_SCOPE,
+      actorId: OWNER,
+      clientRequestId: "50000000-0000-4000-8000-000000000708",
+      expectedRevision: 4,
+      payloadHash: "5".repeat(64),
+    };
+
+    const first = service.unshare(input);
+    await drainStarted;
+    const second = service.unshare(input);
+    const replayState = await Promise.race([
+      second.then(() => "settled" as const),
+      new Promise<"waiting">((resolve) => setTimeout(() => resolve("waiting"), 50)),
+    ]);
+    try {
+      expect(replayState).toBe("waiting");
+      expect(onUnshared).toHaveBeenCalledOnce();
+    } finally {
+      releaseDrain();
+      await Promise.allSettled([first, second]);
+    }
+    await expect(Promise.all([first, second])).resolves.toEqual([
+      { scopeId: PROJECT_SCOPE, lifecycle: "private", revision: 5 },
+      { scopeId: PROJECT_SCOPE, lifecycle: "private", revision: 5 },
+    ]);
+  });
+
+  it("preserves the private project and requires a new explicit confirmation before re-sharing", async () => {
+    await fixture.db.updateTable("collaboration_scopes").set({ lifecycle: "shared" })
+      .where("id", "=", PROJECT_SCOPE).execute();
+    await fixture.db.updateTable("collaboration_scopes").set({
+      parent_scope_id: PROJECT_SCOPE,
+      membership_mode: "inherited",
+      lifecycle: "shared",
+    }).where("id", "=", CHAT_SCOPE).execute();
+    const service = serviceFixture(fixture, preview, verifyConfirmation, replayPreparation, prepare);
+    await service.unshare({
+      scopeId: PROJECT_SCOPE,
+      actorId: OWNER,
+      clientRequestId: "50000000-0000-4000-8000-000000000704",
+      expectedRevision: 4,
+      payloadHash: "1".repeat(64),
+    });
+
+    expect(await fixture.db.selectFrom("collaboration_scopes")
+      .select(["id", "resource_id", "lifecycle", "deleted_at"])
+      .where("id", "in", [PROJECT_SCOPE, CHAT_SCOPE]).orderBy("id").execute()).toEqual([
+      { id: PROJECT_SCOPE, resource_id: "proj_alpha", lifecycle: "private", deleted_at: null },
+      { id: CHAT_SCOPE, resource_id: "chat_alpha", lifecycle: "private", deleted_at: null },
+    ]);
+    expect(prepare).not.toHaveBeenCalled();
+
+    const next = await service.preview({ scopeId: PROJECT_SCOPE, actorId: OWNER });
+    await expect(service.confirm({
+      scopeId: PROJECT_SCOPE,
+      actorId: OWNER,
+      clientRequestId: "50000000-0000-4000-8000-000000000705",
+      payloadHash: "2".repeat(64),
+      expectedScopeRevision: 5,
+      expectedProjectRevision: next.projectRevision,
+      inventoryHash: next.inventoryHash,
+      membershipHash: next.membershipHash,
+      inventoryToken: next.inventoryToken,
+    })).resolves.toMatchObject({ status: "prepared" });
+    expect(prepare).toHaveBeenCalledOnce();
+  });
+
+  it("unshares after a retained private Chat was omitted from the latest project inventory", async () => {
+    await fixture.db.updateTable("collaboration_scopes").set({ lifecycle: "shared" })
+      .where("id", "=", PROJECT_SCOPE).execute();
+    await fixture.db.updateTable("collaboration_scopes").set({
+      parent_scope_id: PROJECT_SCOPE,
+      membership_mode: "inherited",
+      lifecycle: "private",
+      auth_epoch: 3,
+    }).where("id", "=", CHAT_SCOPE).execute();
+    const onUnshared = vi.fn(async () => undefined);
+    const service = serviceFixture(fixture, preview, verifyConfirmation, replayPreparation, prepare, onUnshared);
+
+    await expect(service.unshare({
+      scopeId: PROJECT_SCOPE,
+      actorId: OWNER,
+      clientRequestId: "50000000-0000-4000-8000-000000000710",
+      expectedRevision: 4,
+      payloadHash: "7".repeat(64),
+    })).resolves.toEqual({ scopeId: PROJECT_SCOPE, lifecycle: "private", revision: 5 });
+    await expect(fixture.db.selectFrom("collaboration_scopes")
+      .select(["lifecycle", "auth_epoch"])
+      .where("id", "=", CHAT_SCOPE).executeTakeFirstOrThrow()).resolves.toEqual({
+      lifecycle: "private",
+      auth_epoch: 3,
+    });
+    expect(onUnshared).toHaveBeenCalledOnce();
+  });
 });
 
 function serviceFixture(
@@ -162,6 +411,7 @@ function serviceFixture(
   verifyConfirmation: ReturnType<typeof vi.fn>,
   replayPreparation: ReturnType<typeof vi.fn>,
   prepare: ReturnType<typeof vi.fn>,
+  onUnshared?: (input: { scopeId: string; revision: number }) => Promise<void>,
 ) {
   return createProjectSharingService({
     db: fixture.db,
@@ -171,6 +421,7 @@ function serviceFixture(
       runtimeId: "runtime_project_shared",
       authorityGeneration: 2,
     }),
+    ...(onUnshared ? { onUnshared } : {}),
   });
 }
 

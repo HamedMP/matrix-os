@@ -142,11 +142,37 @@ async function inheritedResourceScope(
       // Reserving the stable scope here must not widen or end membership early.
       return existing.id;
     }
-    if (existing.parent_scope_id !== input.projectScopeId
-      || existing.authority_runtime_id !== input.authorityRuntimeId
-      || Number(existing.authority_generation) !== input.authorityGeneration) {
+    if (existing.parent_scope_id !== input.projectScopeId) {
       throw new ProjectInheritanceError("conflict");
     }
+    if (input.lifecycle === "preparing" && existing.lifecycle === "private") {
+      const member = await trx.selectFrom("collaboration_members").select("actor_id")
+        .where("scope_id", "=", existing.id).limit(1).executeTakeFirst();
+      if (member) throw new ProjectInheritanceError("conflict");
+      const rebound = await trx.updateTable("collaboration_scopes").set({
+        lifecycle: "preparing",
+        authority_runtime_id: input.authorityRuntimeId,
+        authority_generation: input.authorityGeneration,
+        ...(input.kind === "chat" ? {
+          execution_generation: input.executionCapability?.executionGeneration ?? null,
+          execution_eligibility: input.executionCapability
+            ? jsonb(input.executionCapability.eligibility)
+            : null,
+        } : {}),
+        updated_at: input.now,
+      }).where("id", "=", existing.id)
+        .where("parent_scope_id", "=", input.projectScopeId)
+        .where("membership_mode", "=", "inherited")
+        .where("lifecycle", "=", "private")
+        .where("revision", "=", Number(existing.revision))
+        .where("auth_epoch", "=", Number(existing.auth_epoch))
+        .returning("id").executeTakeFirst();
+      if (!rebound) throw new ProjectInheritanceError("conflict");
+      return rebound.id;
+    }
+    if (existing.authority_runtime_id !== input.authorityRuntimeId
+      || Number(existing.authority_generation) !== input.authorityGeneration
+      || existing.lifecycle !== input.lifecycle) throw new ProjectInheritanceError("conflict");
     return existing.id;
   }
 
