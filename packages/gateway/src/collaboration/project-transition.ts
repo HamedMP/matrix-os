@@ -315,7 +315,7 @@ export function createProjectTransitionJournal(options: {
           .select("client_request_id")
           .where("scope_id", "=", scope.id)
           .where("operation_kind", "in", ["project.unshare", "membership.departure_cleanup"])
-          .where("status", "in", ["accepted", "draining"])
+          .where("status", "=", "accepted")
           .limit(1)
           .executeTakeFirst();
         if (pendingAccessCleanup) throw new ProjectTransitionError("conflict");

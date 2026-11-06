@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import type { CollaborationProjectOverview } from "@matrix-os/contracts";
-import { sql, type Kysely } from "kysely";
+import { sql, type Kysely, type Transaction } from "kysely";
 import type { CollaborationProjectGitSetup } from "@matrix-os/contracts";
 import { z } from "zod/v4";
 import type { OwnerCollaborationDatabase } from "./database.js";
@@ -11,11 +11,15 @@ import type {
 } from "./project-inventory.js";
 import type { ProjectTransitionRecord } from "./project-transition.js";
 import { ProjectOverviewError, readProjectOverview } from "./project-chat-routes.js";
-import { appendMutationRecords, jsonb, OPERATION_RETENTION_MS, parseJson } from "./repository-shared.js";
+import {
+  appendMutationRecords,
+  completeAcceptedOperation,
+  jsonb,
+  OPERATION_RETENTION_MS,
+  parseJson,
+} from "./repository-shared.js";
 
 const MAX_MEMBERSHIP_EFFECTS = 1_000;
-const UNSHARE_DRAIN_WAIT_MS = 30_000;
-const UNSHARE_DRAIN_POLL_MS = 25;
 const ScopeIdSchema = z.uuid();
 const ActorIdSchema = z.string().min(1).max(128).regex(/^[A-Za-z0-9_-]+$/);
 const DigestSchema = z.string().regex(/^[a-f0-9]{64}$/);
@@ -84,62 +88,6 @@ export class ProjectSharingError extends Error {
   }
 }
 
-async function finishUnshareDrain(options: {
-  db: Kysely<OwnerCollaborationDatabase>;
-  scopeId: string;
-  actorId: string;
-  clientRequestId: string;
-  result: z.infer<typeof UnshareResultSchema>;
-  onUnshared?: (input: { scopeId: string; revision: number }) => Promise<void>;
-}): Promise<void> {
-  const deadline = Date.now() + UNSHARE_DRAIN_WAIT_MS;
-  while (true) {
-    const claimed = await options.db.updateTable("collaboration_operations").set({ status: "draining" })
-      .where("scope_id", "=", options.scopeId)
-      .where("actor_id", "=", options.actorId)
-      .where("client_request_id", "=", options.clientRequestId)
-      .where("operation_kind", "=", "project.unshare")
-      .where("status", "=", "accepted")
-      .returning("status")
-      .executeTakeFirst();
-    if (claimed) {
-      try {
-        await options.onUnshared?.({ scopeId: options.scopeId, revision: options.result.revision });
-      } catch (error: unknown) {
-        await options.db.updateTable("collaboration_operations").set({ status: "accepted" })
-          .where("scope_id", "=", options.scopeId)
-          .where("actor_id", "=", options.actorId)
-          .where("client_request_id", "=", options.clientRequestId)
-          .where("operation_kind", "=", "project.unshare")
-          .where("status", "=", "draining")
-          .execute();
-        throw error;
-      }
-      const completed = await options.db.updateTable("collaboration_operations").set({ status: "completed" })
-        .where("scope_id", "=", options.scopeId)
-        .where("actor_id", "=", options.actorId)
-        .where("client_request_id", "=", options.clientRequestId)
-        .where("operation_kind", "=", "project.unshare")
-        .where("status", "=", "draining")
-        .returning("status")
-        .executeTakeFirst();
-      if (!completed) throw new ProjectSharingError("unavailable");
-      return;
-    }
-    const operation = await options.db.selectFrom("collaboration_operations").select("status")
-      .where("scope_id", "=", options.scopeId)
-      .where("actor_id", "=", options.actorId)
-      .where("client_request_id", "=", options.clientRequestId)
-      .where("operation_kind", "=", "project.unshare")
-      .executeTakeFirst();
-    if (operation?.status === "completed") return;
-    if (!operation || operation.status === "failed") throw new ProjectSharingError("conflict");
-    if (operation.status === "accepted") continue;
-    if (Date.now() >= deadline) throw new ProjectSharingError("unavailable");
-    await new Promise<void>((resolve) => setTimeout(resolve, UNSHARE_DRAIN_POLL_MS));
-  }
-}
-
 export function createProjectSharingService(options: {
   db: Kysely<OwnerCollaborationDatabase>;
   inventory: ProjectInventoryPort;
@@ -150,7 +98,10 @@ export function createProjectSharingService(options: {
   }>;
   onPrepared?(transition: ProjectTransitionRecord): boolean;
   /** Runs only after the private lifecycle/auth-epoch fence commits. */
-  onUnshared?(input: { scopeId: string; revision: number }): Promise<void>;
+  onUnshared?(
+    input: { scopeId: string; revision: number },
+    executor: Transaction<OwnerCollaborationDatabase>,
+  ): Promise<void>;
   /** The owner's name for a project; without it the overview is unavailable, never a guess. */
   projectName?(ownerId: string, projectId: string): Promise<string | null>;
 }) {
@@ -336,7 +287,7 @@ export function createProjectSharingService(options: {
           }
           return {
             result: UnshareResultSchema.parse(parseJson(replay.result_ref)),
-            drainRequired: replay.status === "accepted" || replay.status === "draining",
+            drainRequired: replay.status === "accepted",
           };
         }
         const scope = await trx.selectFrom("collaboration_scopes").selectAll()
@@ -391,13 +342,16 @@ export function createProjectSharingService(options: {
         return { result, drainRequired: true };
       });
       if (committed.drainRequired) {
-        await finishUnshareDrain({
-          db: options.db,
+        await completeAcceptedOperation(options.db, {
           scopeId: parsed.scopeId,
           actorId: parsed.actorId,
           clientRequestId: parsed.clientRequestId,
-          result: committed.result,
-          ...(options.onUnshared ? { onUnshared: options.onUnshared } : {}),
+          operationKind: "project.unshare",
+        }, async (trx) => {
+          await options.onUnshared?.({
+            scopeId: parsed.scopeId,
+            revision: committed.result.revision,
+          }, trx);
         });
       }
       return committed.result;

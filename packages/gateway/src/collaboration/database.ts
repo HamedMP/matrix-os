@@ -56,7 +56,7 @@ export interface CollaborationOperationsTable {
   client_request_id: string;
   operation_kind: string;
   payload_hash: string;
-  status: "accepted" | "draining" | "completed" | "failed";
+  status: "accepted" | "completed" | "failed";
   result_ref: JsonValue | null;
   expected_revision: number | null;
   accepted_auth_epoch: number;

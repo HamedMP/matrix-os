@@ -178,7 +178,10 @@ describe("whole-project sharing coordinator", () => {
     expect(await fixture.db.selectFrom("collaboration_directory_outbox").select("discovery_state")
       .where("scope_id", "=", PROJECT_SCOPE).execute()).toEqual([{ discovery_state: "revoked" }]);
     expect(onUnshared).toHaveBeenCalledOnce();
-    expect(onUnshared).toHaveBeenCalledWith({ scopeId: PROJECT_SCOPE, revision: 5 });
+    expect(onUnshared).toHaveBeenCalledWith(
+      { scopeId: PROJECT_SCOPE, revision: 5 },
+      expect.anything(),
+    );
     await service.unshare({
       scopeId: PROJECT_SCOPE,
       actorId: OWNER,
@@ -223,7 +226,8 @@ describe("whole-project sharing coordinator", () => {
       .where("scope_id", "=", PROJECT_SCOPE)
       .where("operation_kind", "=", "project.unshare")
       .executeTakeFirst()).toEqual({ status: "accepted" });
-    await expect(service.unshare(input)).resolves.toMatchObject({ lifecycle: "private", revision: 5 });
+    const restarted = serviceFixture(fixture, preview, verifyConfirmation, replayPreparation, prepare, onUnshared);
+    await expect(restarted.unshare(input)).resolves.toMatchObject({ lifecycle: "private", revision: 5 });
     expect(onUnshared).toHaveBeenCalledTimes(2);
     expect(await fixture.db.selectFrom("collaboration_operations").select("status")
       .where("scope_id", "=", PROJECT_SCOPE)
