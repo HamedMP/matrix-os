@@ -35,6 +35,10 @@ Own focused `scripts/ops/devstack-native/{evidence,security,proof,receipt}.mjs` 
 - Document trusted inherited IPC group, no workload group membership, cold source-vs-native qualification and private operator recovery boundaries. Update existing site documentation PR without running a preview.
 - Focused suites/syntax/typecheck/diff, commit and independent task review; then broad whole-plan review. No paid call or target mutation by implementer.
 
+## Task 3: Safe native protocol rejection diagnostics
+
+Own `scripts/ops/devstack-native/proof.mjs`, focused native source tests and this diagnostic contract. Retain a schema-defined primitive rejection code only after exact version/requestId/response-type and strict negative-envelope validation; keep other replies generic and never retain raw frames. RED/GREEN must use real disposable Unix framing through the production client, production-schema-validated negative fixtures, persisted journal codes, matching success, malformed/mismatched replies and conservative partial-create quarantine. Preserve timeouts, bounds, all lifecycle/security gates and failed receipts. Source tests do not close actual Linux or SDK qualification; repeat that lane only through the controller after source review.
+
 ## Controller gates after source review
 
 Build/publish linked draft source PR(s) via native stack with invariant sections and matching ENG-432 links; do not merge. Prepare fresh exact-source owned Dev namespace, verify SDK/native/Node hashes, run uninstrumented qualification and retain compiled/version/identity/closure evidence. Fix actual failures through the same reviewed workflow. Full connected Gateway, multiple worktrees, funded Chat/ledger, authenticated previews, surfaces and CI remain distinct. Preserve all prior failed receipts and do not overwrite live projections.

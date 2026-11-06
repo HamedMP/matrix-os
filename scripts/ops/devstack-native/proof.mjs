@@ -151,7 +151,16 @@ export async function supervisorRequest(config, type, payload = {}) {
   const requestId = randomUUID();
   const reply = await exchange(config.supervisorSocket, { version: 1, type, requestId, ...payload }, type === "capability.get" ? 5000 : 60_000);
   const expected = { "capability.get": "capability.result", "runtime.create": "runtime.result", "runtime.stop": "runtime.result", "runtime.chat": "runtime.chat.result" }[type];
-  assert(reply?.version === 1 && reply.requestId === requestId && reply.type === expected && reply.ok === true, "supervisor_request_failed"); return reply;
+  assert(expected && reply?.version === 1 && reply.requestId === requestId && reply.type === expected, "supervisor_request_failed");
+  // Mirror only the strict negative variants in scope-runtime/src/protocol.ts.
+  // Never coerce or retain a frame: even a coarse rejection proves no cleanup authority.
+  const errors = {
+    "capability.result": ["invalid_request", "profile_unavailable", "runtime_unavailable"],
+    "runtime.result": ["invalid_request", "profile_unavailable", "adapter_unavailable", "capacity_exceeded", "runtime_not_found", "runtime_unavailable"],
+    "runtime.chat.result": ["invalid_request", "runtime_not_found", "runtime_unavailable", "generation_mismatch"],
+  };
+  if (reply.ok === false && Object.keys(reply).length === 5 && typeof reply.error === "string" && errors[expected].includes(reply.error)) throw new Error(reply.error);
+  assert(reply.ok === true, "supervisor_request_failed"); return reply;
 }
 export async function observeWorkers(config) {
   const text = await must("/usr/bin/systemctl", ["list-units", "--all", "--no-legend", "--plain", `${config.workerUnitPrefix}*.service`], "worker_observation_failed");
