@@ -88,12 +88,13 @@ import { cleanupExpiredReservations } from './ai-funded-reservation-cleanup.js';
 import { createAiFundedReservationCleanupWorker } from './ai-funded-reservation-cleanup-worker.js';
 import {
   createAiFundedOperatorRoutes,
-  createAiFundedRelayRoutes,
   createAiFundedRuntimeRoutes,
   loadAiFundedControlPlaneConfig,
 } from './ai-funded-policy-routes.js';
 import { loadAiCreditCheckoutConfig } from './ai-credit-checkout.js';
-import { createFundedModelProbeService, loadFundedModelProbeLimits, type FundedModelProbeService } from './ai-funded-model-probes.js';
+import { closePlatformProbeTransport, MONETARY_PLATFORM_SHUTDOWN_MS } from "./operator-probe-budget/shutdown.js";
+import { createConfiguredProbeServices } from './operator-probe-budget/startup.js';
+import type { FundedModelProbeService } from './ai-funded-model-probes.js';
 import {
   createR2CapabilityGate,
   createStorageGatedHetznerClient,
@@ -389,14 +390,10 @@ async function startPlatformServerWithCleanup(
       issueCooldownMs: fundedAiConfig.issueCooldownMs,
       policyFreshnessMs: fundedAiConfig.policyFreshnessMs,
     });
-    const probeLimits = loadFundedModelProbeLimits(process.env);
-    fundedModelProbes = createFundedModelProbeService({
-      db,
-      credentials: fundedAiRepository,
-      relayBaseUrl: process.env.MATRIX_FUNDED_AI_RELAY_URL,
-      relayControlToken: fundedAiConfig.relayControlToken,
-      ...probeLimits,
-    });
+    const probeServices = createConfiguredProbeServices(db, fundedAiRepository, fundedAiConfig.relayControlToken, runtimeConfig.platformDatabaseUrl);
+    fundedModelProbes = probeServices.probes;
+    registerCustomMcpStartupCleanup(async () => fundedModelProbes?.close?.());
+    internalFundedAiRelayRoutes = probeServices.relayRoutes;
     internalFundedAiRuntimeRoutes = createAiFundedRuntimeRoutes({
       db,
       platformSecret: fundedAiConfig.platformSecret,
@@ -406,10 +403,6 @@ async function startPlatformServerWithCleanup(
       promotionalGrant: fundedAiConfig.promotionalGrant,
       routeProbes: fundedModelProbes,
       isolatedChat: parseIsolatedChatEnvelope(process.env.MATRIX_ISOLATED_CHAT_ENVELOPE),
-    });
-    internalFundedAiRelayRoutes = createAiFundedRelayRoutes({
-      relayControlToken: fundedAiConfig.relayControlToken,
-      repository: fundedAiRepository,
     });
     internalFundedAiOperatorRoutes = createAiFundedOperatorRoutes({
       db,
@@ -1165,10 +1158,10 @@ async function startPlatformServerWithCleanup(
     const shutdownTimer = setTimeout(() => {
       console.error('[platform] Graceful shutdown timed out');
       process.exit(1);
-    }, 10_000);
+    }, fundedModelProbes?.quiesce ? MONETARY_PLATFORM_SHUTDOWN_MS : 10_000);
     shutdownTimer.unref();
 
-    (server as Server).close((err?: Error) => {
+    closePlatformProbeTransport(fundedModelProbes, () => (server as Server).close((err?: Error) => {
       let exitCode = 0;
       if (err) {
         exitCode = 1;
@@ -1187,6 +1180,7 @@ async function startPlatformServerWithCleanup(
           collaboration?.shutdown(),
           slack.close(),
           whatsappRuntime?.shutdown(),
+          fundedModelProbes?.close?.(),
           fundedReservationCleanupWorker?.shutdown(),
           Promise.resolve(speechService.shutdown()),
           containerProxyDispatcher.close(),
@@ -1210,7 +1204,7 @@ async function startPlatformServerWithCleanup(
           clearTimeout(shutdownTimer);
           process.exit(exitCode);
         });
-    });
+    }));
   };
   process.once('SIGTERM', shutdown);
   process.once('SIGINT', shutdown);

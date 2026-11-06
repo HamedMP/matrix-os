@@ -22,7 +22,7 @@ export async function startOperatorProbeAuthority(env: NodeJS.ProcessEnv = proce
   const db = createOperatorProbeBudgetDatabase(config.databaseUrl);
   try {
     await runOperatorProbeBudgetMigrations(db);
-    const app = createOperatorProbeBudgetApp({ token: config.token,
+    const app = createOperatorProbeBudgetApp({ token: config.token, budgetId: config.budgetId,
       store: createOperatorProbeBudgetRepository({ db, budgetId: config.budgetId }) });
     const server = await new Promise<ReturnType<typeof serve>>((resolve, reject) => {
       const listener = serve({ fetch: app.fetch, hostname: config.hostname, port: config.port }, () => resolve(listener));

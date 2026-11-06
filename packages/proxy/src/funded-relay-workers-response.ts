@@ -5,6 +5,19 @@ function record(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
+export function attributedWorkersAiResult(value: unknown, modelId: string) {
+  const result = record(value) && value.success === true ? value.result : value;
+  if (!record(result) || !isManagedWorkersAiResponseModel(modelId, result.model)) {
+    throw new Error("Invalid AI response");
+  }
+  return result;
+}
+export function normalizeWorkersAiCompletion(value: unknown, modelId: string) {
+  const result = attributedWorkersAiResult(value, modelId);
+  if (!Array.isArray(result.choices)) throw new Error("Invalid AI response");
+  return { ...result, model: modelId };
+}
+
 /** Workers AI's model-in-path API reports per-chunk usage deltas and a final
  * `{ response, usage }` aggregate. Only the aggregate can be billed. Convert it
  * to the OpenAI SDK's final choices:[] chunk; never expose misleading deltas.
@@ -80,9 +93,7 @@ export function normalizeWorkersAiResponse(upstream: Response, modelId: string, 
           consume(controller); if (buffer.trim()) sseBlock(buffer, controller);
         } else {
           const value: unknown = JSON.parse(buffer);
-          const result = record(value) && value.success === true ? value.result : value;
-          if (!record(result) || !isManagedWorkersAiResponseModel(modelId, result.model) || !Array.isArray(result.choices)) throw new Error("Invalid AI response");
-          controller.enqueue(encoder.encode(JSON.stringify({ ...result, model: modelId })));
+          controller.enqueue(encoder.encode(JSON.stringify(normalizeWorkersAiCompletion(value, modelId))));
         }
       } catch (error) {
         console.warn("[proxy] Workers AI response normalization failed", { errorName: error instanceof Error ? error.name : "UnknownError" });
