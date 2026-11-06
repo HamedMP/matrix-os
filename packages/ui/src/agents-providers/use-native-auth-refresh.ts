@@ -8,7 +8,7 @@ export function useNativeAuthRefresh(owner:{refreshNativeAuthentication:(signal:
   const lifetime=useRef<{owner:typeof owner;lastStarted:number}|null>(null);
   useEffect(()=>{
     const resumed=lifetime.current?.owner===owner;
-    if (!resumed) lifetime.current={owner,lastStarted:Date.now()};
+    if (!resumed) lifetime.current={owner,lastStarted:performance.now()};
     if (!enabled) return;
     const state=lifetime.current!;
     let alive=true,request:AbortController|null=null;
@@ -19,8 +19,8 @@ export function useNativeAuthRefresh(owner:{refreshNativeAuthentication:(signal:
       clearTimeout(timer);
       if(!alive || !visible()){request?.abort();return;}
       if(request)return;
-      if(Date.now()-state.lastStarted<EVENT_DEBOUNCE_MS){schedule();return;}
-      state.lastStarted=Date.now();request=new AbortController();const pending=request;
+      if(performance.now()-state.lastStarted<EVENT_DEBOUNCE_MS){schedule();return;}
+      state.lastStarted=performance.now();request=new AbortController();const pending=request;
       void owner.refreshNativeAuthentication(pending.signal).catch((error:unknown)=>{
         if(!pending.signal.aborted)console.warn("[provider-settings] Native authentication refresh failed:",error instanceof Error?error.name:typeof error);
       }).finally(()=>{

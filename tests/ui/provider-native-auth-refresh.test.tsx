@@ -61,3 +61,13 @@ it("renews valid native evidence before its 30-second expiry despite ordinary re
  const checked=Date.parse(hook.result.current.snapshot!.accounts[0]!.lastCheckedAt!);
  expect(Date.now()-checked).toBeLessThan(30_000);
 });
+it("continues bounded native observation after correcting an initially fast wall clock",async()=>{
+ const server=Date.parse("2026-11-06T10:00:00Z");vi.setSystemTime(server+3_600_000);
+ const getSnapshot=vi.fn(async()=>snapshot());const transport={getSnapshot,mutate:vi.fn()};
+ renderHook(()=>useProviderSettingsController({identityKey:"owner/main",transport,automaticNativeAuthRefreshEnabled:true}));
+ await advance();expect(getSnapshot).toHaveBeenCalledOnce();
+ vi.setSystemTime(server);
+ await advance(20_000);expect(getSnapshot).toHaveBeenCalledTimes(2);
+ await act(async()=>{window.dispatchEvent(new Event("focus"));document.dispatchEvent(new Event("visibilitychange"));});
+ expect(getSnapshot).toHaveBeenCalledTimes(2);
+});

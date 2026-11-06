@@ -110,7 +110,8 @@ and credit freshness keep their existing clocks and authority.
 Web and Electron Settings opt into `useNativeAuthRefresh` only while their
 Settings surface is active. It rechecks on focus, visibility/online return and a
 20-second visible-online cadence, before the native proof's unchanged 30-second
-expiry. Reads use the existing unforced owner snapshot
+expiry. Trigger coalescing uses monotonic elapsed time so correcting a bad client
+wall clock cannot stall future observations. Reads use the existing unforced owner snapshot
 and credential-bound provider quota cache. The controller coalesces with its
 active reads/mutations; hidden surfaces pause, disposal aborts and old Computer
 responses cannot replace a new controller. Native authentication changes notify
