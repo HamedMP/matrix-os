@@ -15,7 +15,7 @@ const exec = promisify(execFile);
 const SHA = /^[a-f0-9]{40}$/;
 const REPOSITORY = /^[A-Za-z0-9][A-Za-z0-9-]{0,38}\/[A-Za-z0-9_][A-Za-z0-9_.-]{0,99}$/;
 const DEVELOPMENT_BRANCH = /^matrix\/[A-Za-z0-9][A-Za-z0-9_/-]{0,111}$/;
-const SAFE_CONFIG = /^(?:core\.(?:repositoryformatversion|filemode|bare|logallrefupdates|ignorecase|precomposeunicode)|remote\.origin\.(?:url|fetch)|branch\.[a-z0-9_/-]+\.(?:remote|merge))$/i;
+const SAFE_CONFIG = /^(?:core\.(?:repositoryformatversion|filemode|bare|logallrefupdates|ignorecase|precomposeunicode)|remote\.origin\.(?:url|fetch)|branch\.[a-z0-9_./-]+\.(?:remote|merge))$/i;
 type Result = Record<string, unknown>;
 type RunOptions = { cwd: string; env: NodeJS.ProcessEnv; signal: AbortSignal; maxBuffer: number; killSignal: NodeJS.Signals };
 export type GithubDeveloperCommand = (command: string, args: string[], options: RunOptions) => Promise<{ stdout: string; stderr: string }>;
@@ -50,7 +50,7 @@ export function createGithubDeveloperService(deps: {
   const ownerEnv = { ...githubOwnerEnvironment(deps.homePath), GH_PROMPT_DISABLED: "1", GIT_TERMINAL_PROMPT: "0" };
   // Explicit remote argv bypasses repository rewrites. Global Git config is only
   // read to resolve identity; commands cannot execute owner/global filter hooks.
-  const gitEnv = { ...ownerEnv, GIT_CONFIG_GLOBAL: "/dev/null",
+  const gitEnv = { ...ownerEnv, GIT_CONFIG_GLOBAL: "/dev/null", GIT_ATTR_NOSYSTEM: "1",
     GIT_SSH_COMMAND: `ssh -o BatchMode=yes -o StrictHostKeyChecking=yes -o GlobalKnownHostsFile=/dev/null -o ${quote(`UserKnownHostsFile=${join(deps.homePath, ".ssh", "matrix-github-known-hosts")}`)} -o ConnectTimeout=10 -o ConnectionAttempts=1` };
   const stagingFiles = createGithubDeveloperStaging(deps.homePath);
   const locks = new Set<string>(); // <=64; released in finally, no persistent queue.
@@ -59,7 +59,8 @@ export function createGithubDeveloperService(deps: {
     return runCommand(command, args, { cwd, env, signal: AbortSignal.any([signal, AbortSignal.timeout(60_000)]), maxBuffer: 64 * 1024, killSignal: "SIGKILL" });
   }
   async function git(cwd: string, args: string[], signal: AbortSignal, identity?: {name: string;email: string}, index?: string) {
-    return run(cwd, "git", ["--no-optional-locks", "-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=false",
+    return run(cwd, "git", ["--no-optional-locks", "--literal-pathspecs", "-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=false",
+      "-c", "core.attributesFile=/dev/null",
       "-c", "protocol.file.allow=never", "-c", "protocol.ext.allow=never", "-c", "credential.helper=",
       "-c", "credential.helper=!gh auth git-credential", ...args], signal, identity ? {
         ...gitEnv, GIT_AUTHOR_NAME: identity.name, GIT_AUTHOR_EMAIL: identity.email,
@@ -109,7 +110,7 @@ export function createGithubDeveloperService(deps: {
     if (!z.string().min(1).max(200).regex(/^[^\x00-\x1f\x7f]+$/).safeParse(name).success || !z.email().max(320).safeParse(email).success) refuse();
     return { name, email };
   }
-  async function fileSnapshots(cwd: string, files: string[]) {
+  async function fileSnapshots(cwd: string, files: string[], signal: AbortSignal) {
     const snapshots = [];
     for (const file of files) {
       const target = await pathWithin(cwd, file, true);
@@ -119,7 +120,12 @@ export function createGithubDeveloperService(deps: {
         if (!info.isFile() || info.size > 1024 * 1024) refuse();
         const bytes = await handle.readFile();
         if (bytes.length > 1024 * 1024) refuse();
-        snapshots.push({ file, mode: info.mode & 0o111 ? "100755" : "100644",
+        // Bind raw owner bytes separately from Git's built-in normalization.
+        // Repository/global executable filters remain prohibited by config.
+        const attributes = (await git(cwd, ["check-attr", "-z", "--all", "--", file], signal)).stdout;
+        const cleanBlob = (await git(cwd, ["hash-object", `--path=${file}`, "--", file], signal)).stdout.trim();
+        if (!SHA.test(cleanBlob)) refuse();
+        snapshots.push({ file, attributes, cleanBlob, mode: info.mode & 0o111 ? "100755" : "100644",
           blob: createHash("sha1").update(`blob ${bytes.length}\0`).update(bytes).digest("hex") });
       } finally { await handle.close(); }
     }
@@ -141,7 +147,7 @@ export function createGithubDeveloperService(deps: {
     if ("expectedHead" in action && action.expectedHead !== repo.head) refuse();
     if (!["status", "branch"].includes(action.action) && !DEVELOPMENT_BRANCH.test(repo.branch)) refuse();
     return { account: readiness.user, repository: repo.remote, head: repo.head, branch: repo.branch,
-      ...(action.action === "commit" ? { filesFingerprint: filesFingerprint(await fileSnapshots(repo.cwd, action.files)), author: await identity(signal) } : {}) };
+      ...(action.action === "commit" ? { filesFingerprint: filesFingerprint(await fileSnapshots(repo.cwd, action.files, signal)), author: await identity(signal) } : {}) };
   }
   async function execute(root: string, input: GithubDeveloperAction, signal: AbortSignal, guard?: { plan: GithubDeveloperPlan; assertCurrent(): Promise<void> }): Promise<Result> {
     const checked = GithubDeveloperActionSchema.safeParse(input);
@@ -207,7 +213,7 @@ export function createGithubDeveloperService(deps: {
       if (action.action === "commit") {
         const author = await identity(signal);
         if (JSON.stringify(author) !== JSON.stringify(plan.author)) refuse();
-        const snapshots = await fileSnapshots(repo.cwd, action.files);
+        const snapshots = await fileSnapshots(repo.cwd, action.files, signal);
         if (filesFingerprint(snapshots) !== plan.filesFingerprint) refuse();
         const staging = await stagingFiles.create("index");
         try {
@@ -215,12 +221,15 @@ export function createGithubDeveloperService(deps: {
           await git(repo.cwd, ["read-tree", repo.head], signal, undefined, index);
           await git(repo.cwd, ["add", "--", ...action.files], signal, undefined, index);
           const staged = (await git(repo.cwd, ["ls-files", "--stage", "-z", "--", ...action.files], signal, undefined, index)).stdout;
-          for (const snapshot of snapshots) if (!staged.split("\0").includes(`${snapshot.mode} ${snapshot.blob} 0\t${snapshot.file}`)) refuse();
+          for (const snapshot of snapshots) if (!staged.split("\0").includes(`${snapshot.mode} ${snapshot.cleanBlob} 0\t${snapshot.file}`)) refuse();
           const tree = (await git(repo.cwd, ["write-tree"], signal, undefined, index)).stdout.trim();
           if (!SHA.test(tree)) refuse();
           const next = (await git(repo.cwd, ["commit-tree", tree, "-p", repo.head, "-m", action.message], signal, author, index)).stdout.trim();
           if (!SHA.test(next)) refuse();
           await guard?.assertCurrent();
+          // Recheck both raw bytes and resolved attributes after staging; a
+          // Terminal edit must not alter the approved conversion or contents.
+          if (filesFingerprint(await fileSnapshots(repo.cwd, action.files, signal)) !== plan.filesFingerprint) refuse();
           if ((await git(repo.cwd, ["symbolic-ref", "--quiet", "HEAD"], signal)).stdout.trim() !== `refs/heads/${repo.branch}`) refuse();
           // Compare-and-swap protects the approved parent even against an owner
           // Terminal commit; the in-process lock alone would not do so.

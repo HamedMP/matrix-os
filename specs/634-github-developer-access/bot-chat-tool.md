@@ -62,9 +62,16 @@ than one hour; gateway shutdown drains the sweep and clears its timer. The
 recovery scan never traverses arbitrary project trees. An interrupted publication may leave an observable
 repository requiring owner recovery.
 
-Commit staging uses a private temporary index, preserves unrelated staged paths,
+Commit staging uses literal Git pathspecs (including wildcard characters in
+real filenames) and a private temporary index, preserves unrelated staged paths,
 constructs a commit with the approved parent, and updates the development ref
-with `update-ref` compare-and-swap. In-process locks serialize this service only;
+with `update-ref` compare-and-swap. Approval binds raw working-tree bytes,
+resolved repository attributes and the normalized Git blob separately. Built-in
+text/EOL conversion is supported without executable filters; system/global
+attribute files are excluded. Staged blobs must match approved normalization,
+and raw content/attributes are rechecked before the ref moves. Safe tracking
+configuration supports dotted branch names such as `release/1.0`; only the
+existing `remote` and `merge` keys are accepted. In-process locks serialize this service only;
 Terminal writers still use Git's index/ref locks. A post-ref reconciliation
 failure or cancellation after an effect starts is an unknown effect. Unreferenced objects from a failed CAS are safe
 Git-GC orphans. Existing HTTPS origins are retained and use the owner's gh helper.
