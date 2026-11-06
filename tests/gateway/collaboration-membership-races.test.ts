@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { sql } from "kysely";
 import { bootstrapChatDatabase } from "../../packages/gateway/src/chat/database.js";
 import { CollaborationAuthority } from "../../packages/gateway/src/collaboration/authority.js";
 import { bootstrapCollaborationDatabase } from "../../packages/gateway/src/collaboration/database.js";
@@ -146,6 +147,75 @@ realDescribe("collaboration membership real PostgreSQL races", () => {
       .resolves.toMatchObject({ role: "owner", status: "accepted", revision: 1 });
   });
 
+  it("does not acknowledge a reconnected owner departure before concurrent cleanup finishes", async () => {
+    const projectScopeId = "73000000-0000-4000-8000-000000000101";
+    const childScopeId = "73000000-0000-4000-8000-000000000102";
+    await fixture.db.insertInto("collaboration_scopes").values([
+      realRevocationScope({
+        id: projectScopeId,
+        ownerId: collaborationActors.owner,
+        organizationId: "org_matrix_team",
+        kind: "project",
+        resourceId: "project_reconnected_owner",
+      }),
+      realRevocationScope({
+        id: childScopeId,
+        ownerId: collaborationActors.owner,
+        organizationId: "org_matrix_team",
+        kind: "chat",
+        resourceId: "chat_reconnected_owner",
+        parentScopeId: projectScopeId,
+      }),
+    ]).execute();
+
+    let signalLockAcquired!: (backendPid: number) => void;
+    let releaseProjectLock!: () => void;
+    const lockAcquired = new Promise<number>((resolve) => { signalLockAcquired = resolve; });
+    const projectLockReleased = new Promise<void>((resolve) => { releaseProjectLock = resolve; });
+    const lockHolder = fixture.db.transaction().execute(async (trx) => {
+      await trx.selectFrom("collaboration_scopes")
+        .select("id")
+        .where("id", "=", projectScopeId)
+        .forUpdate()
+        .executeTakeFirstOrThrow();
+      const backend = await sql<{ pid: number }>`select pg_backend_pid() as pid`.execute(trx);
+      signalLockAcquired(backend.rows[0]!.pid);
+      await projectLockReleased;
+    });
+    const lockHolderPid = await lockAcquired;
+
+    let projectDrainAttempts = 0;
+    const drainScope = vi.fn(async (scopeId: string) => {
+      if (scopeId === projectScopeId && projectDrainAttempts++ === 0) {
+        throw new Error("first drain interrupted");
+      }
+    });
+    const enforcer = new ProjectAccessRevocationEnforcer({
+      db: fixture.db,
+      sessions: { revoke: vi.fn(() => [] as string[]) },
+      drainScope,
+    });
+    const input = { organizationId: "org_matrix_team", actorId: collaborationActors.owner };
+    const first = enforcer.membershipEnded(input);
+    const reconnected = enforcer.membershipEnded(input);
+    try {
+      await waitForBlockedProjectTransactions(fixture.db, lockHolderPid, 2);
+    } finally {
+      releaseProjectLock();
+      await lockHolder;
+    }
+
+    const results = await Promise.allSettled([first, reconnected]);
+    expect(results.filter(({ status }) => status === "rejected")).toHaveLength(1);
+    expect(results.filter(({ status }) => status === "fulfilled")).toHaveLength(1);
+    expect(drainScope.mock.calls.filter(([scopeId]) => scopeId === projectScopeId)).toHaveLength(2);
+    await expect(fixture.db.selectFrom("collaboration_operations")
+      .select("status")
+      .where("scope_id", "=", projectScopeId)
+      .where("operation_kind", "=", "membership.departure_cleanup")
+      .executeTakeFirstOrThrow()).resolves.toEqual({ status: "completed" });
+  });
+
   async function inviteEditor() {
     return repository.createInvitation({
       scopeId: collaborationIds.scope,
@@ -162,6 +232,54 @@ realDescribe("collaboration membership real PostgreSQL races", () => {
 
 function uuid(index: number): string {
   return `72000000-0000-4000-8000-${index.toString().padStart(12, "0")}`;
+}
+
+function realRevocationScope(input: {
+  id: string;
+  ownerId: string;
+  organizationId: string;
+  kind: "project" | "chat";
+  resourceId: string;
+  parentScopeId?: string;
+}) {
+  return {
+    id: input.id,
+    owner_type: "personal" as const,
+    owner_id: input.ownerId,
+    organization_id: input.organizationId,
+    kind: input.kind,
+    resource_id: input.resourceId,
+    parent_scope_id: input.parentScopeId ?? null,
+    membership_mode: input.parentScopeId ? "inherited" as const : "direct" as const,
+    lifecycle: "shared" as const,
+    revision: 1,
+    auth_epoch: 1,
+    authority_runtime_id: "vps:reconnect-race",
+    authority_generation: 1,
+    execution_generation: null,
+    execution_eligibility: null,
+    deleted_at: null,
+    created_at: now,
+    updated_at: now,
+  };
+}
+
+async function waitForBlockedProjectTransactions(
+  db: CollaborationTestDatabase["db"],
+  lockHolderPid: number,
+  expected: number,
+): Promise<void> {
+  for (let attempt = 0; attempt < 50; attempt += 1) {
+    const result = await sql<{ count: string }>`
+      select count(*)::text as count
+      from pg_stat_activity
+      where pid <> pg_backend_pid()
+        and ${lockHolderPid} = any(pg_blocking_pids(pid))
+    `.execute(db);
+    if (Number(result.rows[0]?.count ?? 0) >= expected) return;
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  }
+  throw new Error(`Timed out waiting for ${expected} blocked project transactions`);
 }
 
 describe("organization project revocation races", () => {

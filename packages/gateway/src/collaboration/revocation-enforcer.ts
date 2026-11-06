@@ -315,6 +315,22 @@ export class ProjectAccessRevocationEnforcer {
 
   async membershipEnded(input: { organizationId: string; actorId: string }): Promise<void> {
     const { projects, children, ownerCleanups } = await this.options.db.transaction().execute(async (trx) => {
+      const projects = await trx.selectFrom("collaboration_scopes")
+        .selectAll()
+        .where("organization_id", "=", input.organizationId)
+        .where("kind", "=", "project")
+        .where("lifecycle", "in", ["preparing", "shared", "archived", "recovering"])
+        .where("deleted_at", "is", null)
+        .orderBy("id")
+        .limit(MAX_ORGANIZATION_PROJECTS + 1)
+        .forUpdate()
+        .execute();
+      if (projects.length > MAX_ORGANIZATION_PROJECTS) {
+        throw new Error("Organization project revocation capacity exceeded");
+      }
+      // Lock the still-shared project set before discovering accepted cleanup.
+      // A reconnect waiting on one of these rows must observe the departure
+      // operation committed by the holder after PostgreSQL rechecks the row.
       const pendingCleanupRows = await trx.selectFrom("collaboration_operations as operation")
         .innerJoin("collaboration_scopes as scope", "scope.id", "operation.scope_id")
         .select(["operation.scope_id", "operation.client_request_id", "operation.result_ref"])
@@ -334,19 +350,6 @@ export class ProjectAccessRevocationEnforcer {
         operationId: row.client_request_id,
         ...OwnerDepartureCleanupSchema.parse(parseJson(row.result_ref)),
       }));
-      const projects = await trx.selectFrom("collaboration_scopes")
-        .selectAll()
-        .where("organization_id", "=", input.organizationId)
-        .where("kind", "=", "project")
-        .where("lifecycle", "in", ["preparing", "shared", "archived", "recovering"])
-        .where("deleted_at", "is", null)
-        .orderBy("id")
-        .limit(MAX_ORGANIZATION_PROJECTS + 1)
-        .forUpdate()
-        .execute();
-      if (projects.length > MAX_ORGANIZATION_PROJECTS) {
-        throw new Error("Organization project revocation capacity exceeded");
-      }
       const children = projects.length === 0 ? [] : await trx.selectFrom("collaboration_scopes")
         .selectAll()
         .where("parent_scope_id", "in", projects.map((project) => project.id))
