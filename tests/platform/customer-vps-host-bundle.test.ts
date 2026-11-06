@@ -842,7 +842,7 @@ test "$(readlink "$MATRIX_LEGACY_HOME/.hermes")" = "$MATRIX_HOME/.hermes"
     const runtimeReader = readFileSync(join(root, 'scripts/read-preview-runtime.sh'), 'utf8');
 
     expect(workflow).toContain('Waiting for ${HANDLE} to install ${VERSION}');
-    expect(workflow).toContain('runtime="$(./scripts/read-preview-runtime.sh)"');
+    expect(workflow).toContain('runtime="$(.trusted-preview-workflow/scripts/read-preview-runtime.sh)"');
     expect(runtimeReader).toContain(
       'select(.handle == $h and .runtimeSlot == $h and .status != "deleted" and .deletedAt == null)',
     );

@@ -231,11 +231,26 @@ describe('Preview VPS provisioning workflow', () => {
 
   it('uses the bounded fleet reader for install polling', () => {
     const workflow = YAML.parse(readFileSync(join(root, '.github/workflows/preview-vps.yml'), 'utf8'));
+    const trustedReaderCheckout = workflow.jobs.deploy.steps.find(
+      (step: { name?: string }) => step.name === 'Checkout trusted preview runtime reader',
+    );
     const deployStep = workflow.jobs.deploy.steps.find(
       (step: { name?: string }) => step.name === 'Deploy preview bundle to preview VPS',
     ).run as string;
 
-    expect(deployStep).toContain('runtime="$(./scripts/read-preview-runtime.sh)"');
+    expect(trustedReaderCheckout).toMatchObject({
+      uses: 'actions/checkout@v6',
+      with: {
+        ref: '${{ needs.execution_origin.outputs.trusted_ref }}',
+        path: '.trusted-preview-workflow',
+        'sparse-checkout': 'scripts/read-preview-runtime.sh',
+        'persist-credentials': false,
+      },
+    });
+    expect(deployStep).toContain(
+      'runtime="$(.trusted-preview-workflow/scripts/read-preview-runtime.sh)"',
+    );
+    expect(deployStep).not.toContain('runtime="$(./scripts/read-preview-runtime.sh)"');
   });
 
   it('budgets the job for provisioning, bounded repair, and workflow overhead', () => {
@@ -252,6 +267,12 @@ describe('Preview VPS provisioning workflow', () => {
       expect.objectContaining({
         if: "needs.gate.outputs.action == 'deploy'",
         with: { ref: '${{ needs.gate.outputs.head_sha }}' },
+      }),
+      expect.objectContaining({
+        with: expect.objectContaining({
+          ref: '${{ needs.execution_origin.outputs.trusted_ref }}',
+          path: '.trusted-preview-workflow',
+        }),
       }),
       expect.objectContaining({
         if: "needs.gate.outputs.action == 'deploy_existing'",
