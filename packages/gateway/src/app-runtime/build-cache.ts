@@ -24,6 +24,8 @@ const COLLABORATIVE_BUILD_ID = /^[a-f0-9]{64}$/;
 const MAX_SNAPSHOT_FILES = 10_000;
 const MAX_SNAPSHOT_BYTES = 256 * 1024 * 1024;
 const MAX_ORPHAN_SWEEP_ENTRIES = 1_000;
+const INTERRUPTED_CAPTURE_RETENTION_MS = 60 * 60 * 1_000;
+const CAPTURE_DIRECTORY = /^\.capture-[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 
 export interface CollaborativeBuildSnapshot {
   buildId: string;
@@ -74,6 +76,7 @@ export class ImmutableCollaborativeBuildStore {
   private readonly objectsDir: string;
   private readonly metadataDir: string;
   private readonly timer: NodeJS.Timeout | undefined;
+  private readonly activeCaptures = new Set<string>();
   private closed = false;
   private mutationTail: Promise<void> = Promise.resolve();
 
@@ -211,8 +214,9 @@ export class ImmutableCollaborativeBuildStore {
     }
     await this.initialize();
     const temporary = join(this.objectsDir, `.capture-${randomUUID()}`);
-    await mkdir(temporary, { mode: 0o700 });
+    this.activeCaptures.add(temporary);
     try {
+      await mkdir(temporary, { mode: 0o700 });
       const assetDigest = await this.copyAndDigest(input.buildRoot, temporary);
       const buildId = input.buildIdForAssetDigest(assetDigest);
       if (!COLLABORATIVE_BUILD_ID.test(buildId)) {
@@ -252,6 +256,7 @@ export class ImmutableCollaborativeBuildStore {
         return { buildId, assetDigest, artifactPath, createdAt };
       });
     } finally {
+      this.activeCaptures.delete(temporary);
       await rm(temporary, { recursive: true, force: true });
     }
   }
@@ -322,6 +327,16 @@ export class ImmutableCollaborativeBuildStore {
       const objectEntries = (await readdir(this.objectsDir, { withFileTypes: true }))
         .slice(0, MAX_ORPHAN_SWEEP_ENTRIES);
       for (const entry of objectEntries) {
+        if (CAPTURE_DIRECTORY.test(entry.name)) {
+          const capturePath = join(this.objectsDir, entry.name);
+          if (entry.isSymbolicLink() || this.activeCaptures.has(capturePath)) continue;
+          const capture = await lstat(capturePath);
+          if (!capture.isDirectory() || capture.isSymbolicLink()
+            || this.now() - capture.mtimeMs < INTERRUPTED_CAPTURE_RETENTION_MS) continue;
+          await rm(capturePath, { recursive: true, force: true });
+          removed += 1;
+          continue;
+        }
         if (!entry.isDirectory() || entry.isSymbolicLink() || !COLLABORATIVE_BUILD_ID.test(entry.name)) continue;
         if (await this.readMetadata(entry.name)) continue;
         await rm(this.artifactPath(entry.name), { recursive: true, force: true });
