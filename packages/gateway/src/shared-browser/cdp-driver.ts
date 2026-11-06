@@ -14,7 +14,7 @@ export function createSharedBrowserCdpDriver(options: CdpConnectOptions & { home
   let generation = 0, detaching = false, recoveryRequired = false;
   const owned = new Map<string, number>(); // <=8 agent-created tabs, 24h idle-ID eviction; no owner-tab scan.
   const paused = new Map<string, Promise<void>>(); // <=16 Fetch requests, DNS 2s + CDP 8s eviction.
-  const children = new Map<string, { targetId: string; type: string; newlyPaused: boolean }>(); // <=16 related sessions, detached/run-close eviction.
+  const children = new Map<string, { targetId: string; parentSession: string; type: string; newlyPaused: boolean }>(); // <=16 related sessions, detached/run-close eviction.
   const childJobs = new Set<Promise<void>>(); // <=16 bounded initializations/duplicate detaches, settlement/close eviction.
   const blockedDownloadJobs = new Set<Promise<void>>(); // <=8 denied download cancellations, settlement/close eviction.
   const intentionalDetach = new Set<string>(); // <=17 current sessions; command settlement eviction.
@@ -77,9 +77,11 @@ export function createSharedBrowserCdpDriver(options: CdpConnectOptions & { home
   async function reconcileTargets(signal: AbortSignal) {
     for (const id of owned.keys()) await targetInfo(id, signal);
   }
-  async function detachSession(id: string, signal?: AbortSignal) {
+  async function detachSession(id: string, signal?: AbortSignal, parentSession?: string) {
     intentionalDetach.add(id);
-    try { await request('Target.detachFromTarget', { sessionId: id }, signal, true); }
+    // Flattened child IDs belong to the session that emitted attachedToTarget.
+    // Sending their detach on the browser root yields "No session with given id".
+    try { await client!.request('Target.detachFromTarget', { sessionId: id }, parentSession, signal); }
     finally { intentionalDetach.delete(id); }
   }
   async function network(event: CdpEvent) {
@@ -112,13 +114,13 @@ export function createSharedBrowserCdpDriver(options: CdpConnectOptions & { home
     if (typeof sessionId === 'string' && sessionId.length > 0 && child.length > 0 && child !== sessionId && event.sessionId === sessionId
       && info.type === 'page' && info.targetId === targetId && owned.has(info.targetId)
       && waitingForDebugger === false) {
-      const job = detachSession(child).catch(error => {
+      const job = detachSession(child, undefined, event.sessionId).catch(error => {
         report(error); handoffRequired = true; invalidateObservation();
       });
       childJobs.add(job); void job.finally(() => childJobs.delete(job));
       return;
     }
-    children.set(child, { targetId: info.targetId, type: info.type, newlyPaused: waitingForDebugger === true });
+    children.set(child, { targetId: info.targetId, parentSession: event.sessionId!, type: info.type, newlyPaused: waitingForDebugger === true });
     // Existing shared/service workers may belong to other owner tabs. Do not
     // inspect, resume, terminate or close them. Unsupported targets hand off.
     // Related-target interception is not whole-profile network isolation:
@@ -127,7 +129,10 @@ export function createSharedBrowserCdpDriver(options: CdpConnectOptions & { home
     if (!['page', 'iframe'].includes(info.type) || waitingForDebugger !== true) { handoffRequired = true; invalidateObservation(); return; }
     const job = (async () => {
       try {
-        if (info.url !== 'about:blank') await validateBrowserUrl(info.url, options.resolveHost);
+        // A newly paused iframe can precede its first committed URL. Install
+        // Fetch interception before releasing it; every subsequent request is
+        // still subject to the public-network policy.
+        if (info.url !== '' && info.url !== 'about:blank') await validateBrowserUrl(info.url, options.resolveHost);
         if (detaching) return;
         await client!.request('Page.enable', {}, child);
         await client!.request('Network.setBypassServiceWorker', { bypass: true }, child);
@@ -145,7 +150,10 @@ export function createSharedBrowserCdpDriver(options: CdpConnectOptions & { home
   }
   async function detachChildren() {
     await Promise.all(childJobs);
-    for (const [child, info] of children) {
+    // Parents are registered before their descendants. Release leaves first:
+    // disabling a parent's auto-attach also detaches all of its child sessions.
+    for (const [child, info] of [...children].reverse()) {
+      if (children.get(child) !== info) continue;
       if (['page', 'iframe'].includes(info.type)) {
         await client!.request('Fetch.disable', {}, child);
         await client!.request('Network.setBypassServiceWorker', { bypass: false }, child);
@@ -156,7 +164,7 @@ export function createSharedBrowserCdpDriver(options: CdpConnectOptions & { home
         // Never resume an existing/nonwaiting owner worker.
         await client!.request('Runtime.runIfWaitingForDebugger', {}, child);
       }
-      await detachSession(child);
+      await detachSession(child, undefined, info.parentSession);
     }
     children.clear();
   }
