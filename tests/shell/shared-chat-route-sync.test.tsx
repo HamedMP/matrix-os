@@ -106,4 +106,39 @@ describe("shared Chat route synchronization", () => {
     });
     expect(result.current.collaborationView).toBeUndefined();
   });
+
+  it("restores a shared app's pinned build and share revision from browser history", async () => {
+    const buildId = "b".repeat(64);
+    const appPath = `/shared/app/${scopeId}?expectedBuildId=${buildId}&expectedShareRevision=7`;
+    window.history.replaceState(null, "", appPath);
+    stubLegacyChatFetch(vi.fn(async (url: string) => {
+      if (url.includes("/events?")) return new Response(new ReadableStream());
+      if (url.includes("/api/chats?")) return Response.json({ items: [record] });
+      throw new Error("UnexpectedRequest");
+    }));
+
+    const { result } = renderHook(() => useCanonicalChatState({
+      initialCollaborationView: {
+        kind: "app", scopeId, expectedBuildId: buildId, expectedShareRevision: "7",
+      },
+    }));
+    await waitFor(() => expect(result.current.conversations).toHaveLength(1));
+
+    await act(async () => { await result.current.newChat(); });
+    expect(result.current.collaborationView).toBeUndefined();
+    act(() => {
+      window.history.pushState(null, "", appPath);
+      window.dispatchEvent(new PopStateEvent("popstate"));
+    });
+
+    expect(result.current.collaborationView).toEqual({
+      kind: "app", scopeId, expectedBuildId: buildId, expectedShareRevision: "7",
+    });
+
+    act(() => {
+      window.history.pushState(null, "", `/shared/app/${scopeId}?expectedBuildId=bad&expectedShareRevision=07`);
+      window.dispatchEvent(new PopStateEvent("popstate"));
+    });
+    expect(result.current.collaborationView).toBeUndefined();
+  });
 });
