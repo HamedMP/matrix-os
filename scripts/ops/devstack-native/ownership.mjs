@@ -21,6 +21,34 @@ async function snapshot(name, run, readDefinition) {
   return values;
 }
 const stopHooks = ["ExecStop", "ExecStopPost"];
+const lifecycleKeys = ["InvocationID", "MainPID", "ActiveState", "SubState", "Result", "ExecMainPID", "ExecMainCode", "ExecMainStatus"];
+const protectedKeys = IDENTITY_KEYS.filter(key => !lifecycleKeys.includes(key));
+function completeProtectedIdentity(value, omittedHooks = false) {
+  if (!value || typeof value !== "object") return false;
+  const boundedField = key => Object.hasOwn(value, key) && typeof value[key] === "string"
+    && key.length + 1 + value[key].length <= 4096 && !/[\r\n\0]/.test(value[key])
+    && (value[key].length > 0 || key === "RootDirectory" || CASCADE_KEYS.includes(key));
+  return boundedField("DefinitionIdentity") && protectedKeys.every(key => boundedField(key)
+    || omittedHooks && stopHooks.includes(key) && !Object.hasOwn(value, key));
+}
+function sameProtectedIdentity(value, known, omittedHooks = false) {
+  return completeProtectedIdentity(known) && completeProtectedIdentity(value, omittedHooks)
+    && value.DefinitionIdentity === known.DefinitionIdentity
+    && protectedKeys.every(key => value[key] === known[key]
+      || omittedHooks && stopHooks.includes(key) && !Object.hasOwn(value, key) && known[key] === "");
+}
+// This is a rejected observation, never a snapshot with accepted hook proof.
+// Only the pending restart poll may classify it against its captured owner.
+class LifecycleObservationChanged extends Error {
+  #before; #after;
+  constructor(before, after) {
+    super("unit_changed_during_hook_observation"); this.#before = before; this.#after = after;
+  }
+  matchesOwner(name, token, known) {
+    return [this.#before, this.#after].every(value => value.Id === name && value.LoadState === "loaded"
+      && value.Description === token && value.Transient === "yes" && sameProtectedIdentity(value, known, true));
+  }
+}
 export async function observeUnit(name, run = command, readDefinition = definitionIdentity) {
   assert(typeof name === "string" && name.length <= 255 && /^[a-z][a-z0-9-]*\.service$/.test(name), "unit_name_invalid");
   const before = await snapshot(name, run, readDefinition);
@@ -39,8 +67,14 @@ export async function observeUnit(name, run = command, readDefinition = definiti
   // Only attach the typed proof to the definition, invocation, PID and
   // dependency snapshot it was requested for. Never cache it across actions.
   const after = await snapshot(name, run, readDefinition);
-  assert(IDENTITY_KEYS.every(key => before[key] === after[key])
-    && before.DefinitionIdentity === after.DefinitionIdentity, "unit_changed_during_hook_observation");
+  if (!IDENTITY_KEYS.every(key => before[key] === after[key]) || before.DefinitionIdentity !== after.DefinitionIdentity) {
+    // Omission is allowed only for hooks just queried with typed empty proof;
+    // every other protected field must be present in both rejected snapshots.
+    assert(completeProtectedIdentity(before, true) && completeProtectedIdentity(after, true)
+      && protectedKeys.every(key => before[key] === after[key])
+      && before.DefinitionIdentity === after.DefinitionIdentity, "unit_changed_during_hook_observation");
+    throw new LifecycleObservationChanged(before, after);
+  }
   for (const key of missing) after[key] = "";
   return after;
 }
@@ -83,12 +117,20 @@ export function createUnitLedger(config, token, io = {}) {
     assert(quarantine.length === 0 && partialCreates.length === 0, "supervisor_drain_unproved_workers");
     for (const [handle, entry] of workers) if (!entry.released) { const current = await freshWorker(handle); cascadeSafe(current); }
   };
-  const adoptExpectedRestart = async () => {
+  const adoptExpectedRestart = async (reobserveLifecycle = false) => {
     if (!awaitingRestart || !supervisor) return false;
-    const current = await observe(config.supervisorUnit);
-    if (current.LoadState === "not-found" || current.MainPID === "0") return false;
+    let current;
+    try { current = await observe(config.supervisorUnit); }
+    catch (error) {
+      if (reobserveLifecycle && error instanceof LifecycleObservationChanged
+        && error.matchesOwner(config.supervisorUnit, token, supervisor)) return false;
+      throw error;
+    }
+    if (current.LoadState === "not-found") return false;
+    assert(sameProtectedIdentity(current, supervisor), "supervisor_restart_incarnation_unproven");
+    if (current.MainPID === "0") return false;
     checkSupervisor(current); if (same(current, supervisor)) return false;
-    assert(current.InvocationID !== supervisor.InvocationID && stableDefinition(current, supervisor), "supervisor_restart_incarnation_unproven");
+    assert(current.InvocationID !== supervisor.InvocationID, "supervisor_restart_incarnation_unproven");
     supervisor = { ...current }; awaitingRestart = false;
     return { invocationId: current.InvocationID, pid: Number(current.MainPID) };
   };
@@ -102,7 +144,7 @@ export function createUnitLedger(config, token, io = {}) {
       return { invocationId: current.InvocationID, pid: Number(current.MainPID) };
     },
     freshSupervisor,
-    captureExpectedRestart: adoptExpectedRestart,
+    captureExpectedRestart: () => adoptExpectedRestart(true),
     releaseWorker(handle, reply) {
       const entry = workers.get(handle); assert(entry, "worker_not_recorded");
       assert(reply?.state === "stopped" && reply.runtimeHandle === handle, "runtime_stop_failed");
