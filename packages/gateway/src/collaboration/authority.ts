@@ -112,6 +112,7 @@ export class CollaborationAuthority {
         authEpoch: Math.max(Number(scope.auth_epoch), Number(membershipScope.auth_epoch)),
         resourceAuthEpoch: Number(scope.auth_epoch),
         membershipAuthEpoch: Number(membershipScope.auth_epoch),
+        ...(decision.membershipEvidenceEpoch ? { membershipEvidenceEpoch: decision.membershipEvidenceEpoch } : {}),
         authorityRuntimeId: scope.authority_runtime_id,
         authorityGeneration: Number(scope.authority_generation),
         capability: input.action,
