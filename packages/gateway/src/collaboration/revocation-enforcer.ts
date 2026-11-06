@@ -15,6 +15,7 @@ import type { Kysely, Transaction } from "kysely";
 import { sql } from "kysely";
 import { z } from "zod/v4";
 import type { OwnerCollaborationDatabase } from "./database.js";
+import { ScopeRuntimeClientError } from "./scope-runtime-client.js";
 import {
   appendMutationRecords,
   completeAcceptedOperation,
@@ -154,6 +155,13 @@ export class SandboxRuntimeRegistry {
         }
         stopped += 1;
       } catch (error: unknown) {
+        if (error instanceof ScopeRuntimeClientError && error.code === "runtime_not_found") {
+          if (this.bindings.get(binding.runtimeHandle) === binding) {
+            this.bindings.delete(binding.runtimeHandle);
+          }
+          stopped += 1;
+          continue;
+        }
         failed = true;
         console.warn("[collaboration-revocation] sandbox runtime stop failed",
           error instanceof Error ? error.name : "UnknownError");
