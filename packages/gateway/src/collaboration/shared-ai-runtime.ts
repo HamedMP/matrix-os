@@ -463,6 +463,7 @@ export async function createSharedAiRuntime(options: {
     const driverKind = decision.harness === "codex" ? "codex" as const : "claude_code" as const;
     if (boundDriverKind !== null && boundDriverKind !== driverKind) return null;
     const currentSelection = canonicalChatSelectionForOwnerAuthority(decision, selection);
+    if (!currentSelection) return null;
     if (!options.providerCatalog) return null;
     const catalog = await options.providerCatalog.getCatalog({ userId: ownerId, source: "jwt" });
     const validated = validateChatProviderSelection({
