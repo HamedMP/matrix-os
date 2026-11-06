@@ -21,7 +21,7 @@ export async function admitDesktopChatTurn(options: {
     ...(options.projectId === null ? {} : { projectId: options.projectId }), currentSelection: input.selection,
   });
   if (!options.mayDispatch()) return null;
-  options.tracker.bind(attempt, record);
+  options.tracker.bind(attempt, record, options.current()?.record);
   return options.tracker.send(attempt, {
     post: request => options.client.admitTurn(record.chat.id, request, { chatScope: record.projectId ? "project" : "global" }),
     read: async () => { const detail = await options.client.getDetail(record.chat.id, { limit: 200 });

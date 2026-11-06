@@ -7,6 +7,10 @@ export class ChatAdmissionUnconfirmed extends Error {
 }
 type Input = Omit<CanonicalCreateChatTurnRequest, "clientRequestId" | "baseRevision">;
 const InputSchema = CanonicalCreateChatTurnRequestSchema.omit({ clientRequestId: true, baseRevision: true });
+const admissionContext = (record: CanonicalChatRecord) => JSON.stringify([
+  record.chat.ownerScope, record.chat.lifecycle, record.chat.currentSelection ?? null,
+  record.providerBinding ?? null, record.activeRun ?? null, record.projectId ?? null,
+]);
 export interface ChatAdmissionAttempt {
   identity: unknown; scope: string; payload: string; seed?: string; id: string;
   record?: CanonicalChatRecord; request?: CanonicalCreateChatTurnRequest;
@@ -17,6 +21,7 @@ export interface ChatAdmissionAttempt {
   resolve: (value: CanonicalChatTurnAdmissionResponse) => void;
   receipt: Promise<CanonicalChatTurnAdmissionResponse>;
   inFlight?: Promise<CanonicalChatTurnAdmissionResponse>;
+  preparations?: number;
   reading?: Promise<void>;
   read?: () => Promise<CanonicalChatDetailResponse>;
   isCurrent?: () => boolean;
@@ -90,7 +95,28 @@ export function createCanonicalChatAdmissionTracker() {
       attempts.push(attempt);
       return attempt;
     },
-    bind(attempt: ChatAdmissionAttempt, record: CanonicalChatRecord) {
+    beginPreparation(attempt: ChatAdmissionAttempt) {
+      attempt.preparations = (attempt.preparations ?? 0) + 1;
+      let finished = false;
+      return (failed = false) => {
+        if (finished) return false;
+        finished = true;
+        attempt.preparations = (attempt.preparations ?? 1) - 1;
+        // Only the last failed, provably undispatched preparation may be
+        // discarded. A concurrent preparation or any bound/unknown call stays.
+        if (!failed || attempt.preparations > 0 || attempt.request || attempt.inFlight || attempt.uncertain || attempt.accepted) return false;
+        const index = attempts.indexOf(attempt);
+        if (index < 0) return false;
+        attempts.splice(index, 1);
+        return true;
+      };
+    },
+    bind(attempt: ChatAdmissionAttempt, record: CanonicalChatRecord, acceptedCurrent?: CanonicalChatRecord | null) {
+      // Refresh only the first dispatch from an already accepted same-authority
+      // snapshot. A bound/unknown request keeps its exact original CAS payload.
+      if (!attempt.request && acceptedCurrent?.chat.id === record.chat.id
+        && admissionContext(acceptedCurrent) === admissionContext(record)
+        && acceptedCurrent.chat.revision > record.chat.revision) record = acceptedCurrent;
       attempt.record ??= record;
       attempt.request ??= { ...JSON.parse(attempt.payload), clientRequestId: attempt.id, baseRevision: record.chat.revision };
       return attempt.request;
