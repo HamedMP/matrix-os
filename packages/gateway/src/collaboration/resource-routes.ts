@@ -44,6 +44,14 @@ export interface CollaborationResourceServices {
 
 const MAX_STREAM_BYTES = 256 * 1024 * 1024;
 
+function safeResponseContentType(value: string | undefined): string {
+  if (!value) return "application/octet-stream";
+  const match = /^([a-z0-9.+-]+\/[a-z0-9.+-]+)(?:\s*;\s*charset\s*=\s*(utf-8))?$/i.exec(value);
+  if (!match) return "application/octet-stream";
+  const mediaType = match[1]!.toLowerCase();
+  return match[2] ? `${mediaType}; charset=utf-8` : mediaType;
+}
+
 function entryProjection(entry: CatalogEntryRecord) {
   return CollaborationCatalogEntrySchema.parse({
     id: entry.id,
@@ -141,7 +149,7 @@ function streamResponse(
     const session = options.directSessions?.describe(credentials.sessionId);
     return Boolean(session && new Date(session.evidenceExpiresAt).getTime() > Date.now());
   };
-  c.header("Content-Type", input.contentType && /^[a-z0-9.+-]+\/[a-z0-9.+-]+$/i.test(input.contentType) ? input.contentType : "application/octet-stream");
+  c.header("Content-Type", safeResponseContentType(input.contentType));
   c.header("Content-Length", String(input.size));
   c.header("Content-Disposition", `attachment; filename="${encodeURIComponent(fileName)}"`);
   c.header("X-Content-Type-Options", "nosniff");

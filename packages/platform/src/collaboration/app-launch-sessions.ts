@@ -38,6 +38,11 @@ interface LaunchRecord extends CollaborativeAppLaunchIdentity {
   upstream: CollaborativeAppLaunchUpstream;
 }
 
+interface PendingLaunch {
+  identity: CollaborativeAppLaunchIdentity;
+  result: Promise<{ launchId: string; expiresAt: string }>;
+}
+
 export class CollaborativeAppLaunchError extends Error {
   constructor(readonly code: "invalid" | "not_found" | "conflict" | "limit" | "host_offline" | "unavailable") {
     super("Collaborative app launch is unavailable");
@@ -48,6 +53,7 @@ export class CollaborativeAppLaunchError extends Error {
 export class CollaborativeAppLaunchSessions {
   private readonly sessions = new Map<string, LaunchRecord>();
   private readonly requests = new Map<string, string>();
+  private readonly pending = new Map<string, PendingLaunch>();
   private readonly ttlMs: number;
   private readonly maxSessions: number;
   private readonly maxPerActor: number;
@@ -56,6 +62,7 @@ export class CollaborativeAppLaunchSessions {
   private readonly createId: () => string;
   private readonly timer: ReturnType<typeof setInterval> | undefined;
   private closed = false;
+  private closing: Promise<void> | null = null;
 
   constructor(private readonly options: {
     open(identity: CollaborativeAppLaunchIdentity): Promise<CollaborativeAppLaunchUpstream>;
@@ -86,6 +93,7 @@ export class CollaborativeAppLaunchSessions {
   }> {
     if (this.closed) throw new CollaborativeAppLaunchError("unavailable");
     await this.sweep();
+    if (this.closed) throw new CollaborativeAppLaunchError("unavailable");
     const requestKey = `${input.actorId}\0${input.clientRequestId}`;
     const replayId = this.requests.get(requestKey);
     if (replayId) {
@@ -94,16 +102,41 @@ export class CollaborativeAppLaunchSessions {
       this.touch(replay);
       return { launchId: replay.launchId, expiresAt: new Date(replay.expiresAt).toISOString() };
     }
+    const pending = this.pending.get(requestKey);
+    if (pending) {
+      if (!sameIdentity(pending.identity, input)) throw new CollaborativeAppLaunchError("conflict");
+      return pending.result;
+    }
+    const pendingForActor = [...this.pending.values()]
+      .filter((record) => record.identity.actorId === input.actorId).length;
     const actorSessions = [...this.sessions.values()].filter((record) => record.actorId === input.actorId);
-    while (actorSessions.length >= this.maxPerActor) {
+    const draining: Promise<void>[] = [];
+    while (actorSessions.length + pendingForActor >= this.maxPerActor) {
       const oldest = actorSessions.shift();
-      if (oldest) await this.evict(oldest);
+      if (!oldest) throw new CollaborativeAppLaunchError("limit");
+      draining.push(this.evict(oldest));
     }
-    while (this.sessions.size >= this.maxSessions) {
+    while (this.sessions.size + this.pending.size >= this.maxSessions) {
       const oldest = this.sessions.values().next().value as LaunchRecord | undefined;
-      if (!oldest) break;
-      await this.evict(oldest);
+      if (!oldest) throw new CollaborativeAppLaunchError("limit");
+      draining.push(this.evict(oldest));
     }
+    const result = this.openReserved(input, requestKey, draining);
+    this.pending.set(requestKey, { identity: input, result });
+    try {
+      return await result;
+    } finally {
+      if (this.pending.get(requestKey)?.result === result) this.pending.delete(requestKey);
+    }
+  }
+
+  private async openReserved(
+    input: CollaborativeAppLaunchIdentity & { clientRequestId: string },
+    requestKey: string,
+    draining: Promise<void>[],
+  ): Promise<{ launchId: string; expiresAt: string }> {
+    await Promise.all(draining);
+    if (this.closed) throw new CollaborativeAppLaunchError("unavailable");
     let upstream: CollaborativeAppLaunchUpstream;
     try {
       upstream = await this.options.open(input);
@@ -111,6 +144,10 @@ export class CollaborativeAppLaunchSessions {
       if (error instanceof CollaborativeAppLaunchError) throw error;
       console.warn("[collaborative-app-launch] owner session unavailable", error instanceof Error ? error.name : "UnknownError");
       throw new CollaborativeAppLaunchError("host_offline");
+    }
+    if (this.closed) {
+      await this.closeUpstream(upstream);
+      throw new CollaborativeAppLaunchError("unavailable");
     }
     const timestamp = this.now();
     const record: LaunchRecord = {
@@ -174,6 +211,7 @@ export class CollaborativeAppLaunchSessions {
     }
     const headers = new Headers({
       "cache-control": "private, no-store",
+      "content-security-policy": "sandbox allow-scripts; base-uri 'none'; object-src 'none'",
       "content-type": contentType,
       "x-content-type-options": "nosniff",
       "referrer-policy": "no-referrer",
@@ -203,10 +241,14 @@ export class CollaborativeAppLaunchSessions {
   }
 
   async close(): Promise<void> {
-    if (this.closed) return;
+    if (this.closing) return this.closing;
     this.closed = true;
     if (this.timer) clearInterval(this.timer);
-    await Promise.all([...this.sessions.values()].map((record) => this.evict(record)));
+    this.closing = (async () => {
+      await Promise.allSettled([...this.pending.values()].map((record) => record.result));
+      await Promise.all([...this.sessions.values()].map((record) => this.evict(record)));
+    })();
+    return this.closing;
   }
 
   get size(): number {
@@ -216,8 +258,12 @@ export class CollaborativeAppLaunchSessions {
   private async evict(record: LaunchRecord): Promise<void> {
     if (!this.sessions.delete(record.launchId)) return;
     this.requests.delete(`${record.actorId}\0${record.clientRequestId}`);
+    await this.closeUpstream(record.upstream);
+  }
+
+  private async closeUpstream(upstream: CollaborativeAppLaunchUpstream): Promise<void> {
     try {
-      await record.upstream.close();
+      await upstream.close();
     } catch (error: unknown) {
       console.warn("[collaborative-app-launch] owner session close failed", error instanceof Error ? error.name : "UnknownError");
     }

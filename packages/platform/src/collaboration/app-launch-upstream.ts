@@ -4,6 +4,7 @@ import {
   CollaborationDirectSessionSchema,
   CollaborationDirectSessionRequestSchema,
   CollaborationDirectRequestSignatureSchema,
+  toLogicalRuntimeId,
 } from "@matrix-os/contracts";
 
 import {
@@ -22,11 +23,14 @@ const MAX_SESSION_RESPONSE_BYTES = 64 * 1024;
 
 export async function cancelCollaborativeAppResponseReader(
   reader: ReadableStreamDefaultReader<Uint8Array>,
+  reason?: unknown,
 ): Promise<void> {
   try {
-    await reader.cancel();
+    await reader.cancel(reason);
   } catch (error: unknown) {
     console.warn("[collaborative-app-launch] response cancellation failed", error instanceof Error ? error.name : "UnknownError");
+  } finally {
+    try { reader.releaseLock(); } catch { /* The stream may already have released the reader. */ }
   }
 }
 
@@ -51,8 +55,9 @@ export function createCollaborativeAppLaunchUpstreamFactory(options: {
       },
     });
     const ticket = issued.signedTicket.ticket;
+    const logicalRuntimeId = toLogicalRuntimeId(identity.runtimeId);
     if (ticket.actorId !== identity.actorId || ticket.resource.scopeId !== identity.scopeId
-      || ticket.organizationId !== identity.organizationId || ticket.runtime.runtimeId !== identity.runtimeId
+      || ticket.organizationId !== identity.organizationId || ticket.runtime.runtimeId !== logicalRuntimeId
       || ticket.runtime.authorityGeneration !== identity.authorityGeneration) {
       throw new CollaborativeAppLaunchError("conflict");
     }
@@ -79,7 +84,7 @@ export function createCollaborativeAppLaunchUpstreamFactory(options: {
     }
     const session = CollaborationDirectSessionSchema.safeParse(await readBoundedJson(exchange));
     if (!session.success || session.data.actorId !== identity.actorId || session.data.scopeId !== identity.scopeId
-      || session.data.organizationId !== identity.organizationId || session.data.runtimeId !== identity.runtimeId) {
+      || session.data.organizationId !== identity.organizationId || session.data.runtimeId !== logicalRuntimeId) {
       throw new CollaborativeAppLaunchError("unavailable");
     }
 
@@ -109,14 +114,7 @@ export function createCollaborativeAppLaunchUpstreamFactory(options: {
         query: "",
         headers,
         body: null,
-      }).then((response) => {
-        if (signal.aborted) {
-          void response.body?.cancel(signal.reason);
-          throw signal.reason;
-        }
-        signal.addEventListener("abort", () => { void response.body?.cancel(signal.reason); }, { once: true });
-        return response;
-      });
+      }).then((response) => bindResponseToSignal(response, signal));
     };
 
     let closed = false;
@@ -138,6 +136,49 @@ export function createCollaborativeAppLaunchUpstreamFactory(options: {
       },
     };
   };
+}
+
+async function bindResponseToSignal(response: Response, signal: AbortSignal): Promise<Response> {
+  if (!response.body) {
+    if (signal.aborted) throw signal.reason;
+    return response;
+  }
+  const reader = response.body.getReader();
+  let settled = false;
+  const release = () => {
+    signal.removeEventListener("abort", onAbort);
+    try { reader.releaseLock(); } catch { /* A concurrent cancellation owns release. */ }
+  };
+  const cancel = async (reason?: unknown) => {
+    if (settled) return;
+    settled = true;
+    signal.removeEventListener("abort", onAbort);
+    await cancelCollaborativeAppResponseReader(reader, reason);
+  };
+  const onAbort = () => { void cancel(signal.reason); };
+  if (signal.aborted) {
+    await cancel(signal.reason);
+    throw signal.reason;
+  }
+  signal.addEventListener("abort", onAbort, { once: true });
+  const body = new ReadableStream<Uint8Array>({
+    async pull(controller) {
+      try {
+        const next = await reader.read();
+        if (next.done) {
+          if (!settled) { settled = true; release(); }
+          controller.close();
+          return;
+        }
+        controller.enqueue(next.value);
+      } catch (error: unknown) {
+        if (!settled) { settled = true; release(); }
+        controller.error(new Error("Collaborative app response unavailable"));
+      }
+    },
+    async cancel(reason) { await cancel(reason); },
+  });
+  return new Response(body, { status: response.status, statusText: response.statusText, headers: response.headers });
 }
 
 function sha256(bytes: Uint8Array): string {
