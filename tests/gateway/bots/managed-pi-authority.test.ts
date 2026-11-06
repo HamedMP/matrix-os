@@ -48,7 +48,7 @@ async function setup(permissionMode = "full_access", supervisedBrowser = false) 
   const renewRuntime = vi.fn(async () => undefined);
   const host = { available: true, client: { createRuntime, renewRuntime, stopRuntime } } as unknown as ScopeRuntimeHost;
   const roots = { resolve: vi.fn(async (): Promise<ResolvedChatExecutionRoot> => { throw new Error("Unexpected project" ); }) };
-  const admission = createManagedPiAdmission({ db, homePath: home, host, registry, supervisedBrowser, toolCapabilities: ["browser.action", "mcp.call"], roots });
+  const admission = createManagedPiAdmission({ db, homePath: home, host, registry, supervisedBrowser, toolCapabilities: ["browser.action", "mcp.call", "github.developer"], roots });
   const input = { ownerId: OWNER, chatId: "chat_authority", runId: result.run.id, resolved: resolveManagedPiRoute(snapshot, selection) };
   return { db, admission, registry, input, createRuntime, renewRuntime, stopRuntime, roots, home };
 }
@@ -67,6 +67,7 @@ it("requires exact private owner/chat/run identity and refuses live bot or wrong
 it("admits a running supervisor result and registers only the managed run authority", async () => {
   const { admission, input, registry } = await setup();
   const binding = await admission.admit(input);
+  expect(binding.capabilities).toContain("github.developer");
   expect(registry.lookupRun({ runtimeHandle: binding.runtimeHandle, executionGeneration: "2", runId: input.runId }))
     .toEqual(binding);
   expect(registry.authorize({ runtimeHandle: binding.runtimeHandle, executionGeneration: "2",
@@ -169,5 +170,6 @@ it.each([false, true])("projects supervised browser capability only with wired a
  const { admission, input } = await setup("supervised", enabled); const binding = await admission.admit(input);
  expect(binding.capabilities.includes("browser.action")).toBe(enabled);
  expect(binding.capabilities).not.toContain("mcp.call");
+ expect(binding.capabilities).not.toContain("github.developer");
  await admission.release(binding.runtimeHandle);
 });
