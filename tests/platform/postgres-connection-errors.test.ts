@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import pg from 'pg';
 import { sql } from 'kysely';
 import { createPlatformDb } from '../../packages/platform/src/db.js';
+import { createOperatorProbeBudgetDatabase } from '../../packages/platform/src/operator-probe-budget/database.js';
 import { createAtsDb } from '../../packages/platform/src/ats-db.js';
 
 vi.mock('../../packages/platform/src/database/run-migrations.js', () => ({
@@ -37,6 +38,14 @@ afterEach(() => {
 });
 
 const timeout = () => Object.assign(new Error('read ETIMEDOUT'), { code: 'ETIMEDOUT' });
+
+it('keeps private operator connection errors out of authority logs', async () => {
+  const db = createOperatorProbeBudgetDatabase('postgres://fixture:fixture@localhost/fixture');
+  try {
+    pool.emit('error', new Error('synthetic private connection details'));
+    expect(log.mock.calls).toEqual([['[operator-probe-budget] Postgres connection failed']]);
+  } finally { await db.destroy(); }
+});
 
 describe.each([
   ['platform', createPlatformDb],
