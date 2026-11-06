@@ -17,6 +17,9 @@ it("starts shutdown without waiting on the watchdog, then retries a refused clos
   const before = signals.map(signal => process.rawListeners(signal));
   const owned = (index: number) => process.rawListeners(signals[index]!).filter(fn => !before[index]!.includes(fn));
   const previousExit = process.exitCode;
+  const write = process.stdout.write.bind(process.stdout);
+  const ready = vi.spyOn(process.stdout, "write").mockImplementation((chunk, ...args) =>
+    chunk === "scope_runtime_supervisor_ready\n" ? true : write(chunk, ...args));
   const log = vi.spyOn(console, "error").mockImplementation(() => {});
   const watchdog = Promise.withResolvers<void>();
   watchdogClose.mockImplementation(() => watchdog.promise);
@@ -24,6 +27,7 @@ it("starts shutdown without waiting on the watchdog, then retries a refused clos
   try {
     await import("../../packages/scope-runtime/src/main.js");
     await vi.waitFor(() => expect(owned(0)).toHaveLength(1));
+    expect(ready).toHaveBeenCalledWith("scope_runtime_supervisor_ready\n");
     owned(0)[0]!.call(process);
     expect.soft(serverClose).toHaveBeenCalledOnce();
     expect.soft(watchdogClose.mock.invocationCallOrder[0]).toBeLessThan(serverClose.mock.invocationCallOrder[0]!);
@@ -38,5 +42,6 @@ it("starts shutdown without waiting on the watchdog, then retries a refused clos
     signals.forEach((signal, index) => { for (const fn of owned(index)) process.off(signal, fn as () => void); });
     process.exitCode = previousExit;
     log.mockRestore();
+    ready.mockRestore();
   }
 });

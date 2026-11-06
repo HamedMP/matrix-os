@@ -54,8 +54,10 @@ async function fixture() {
     broker.listen(brokerSocket, resolve);
   });
   cleanup.push(() => new Promise<void>((resolve) => broker.close(() => resolve())));
+  const identity = commandIdentityFixture(root);
+  await identity.directoryOperations.prepareAnchors!({ stateRoot });
   return {
-    ...commandIdentityFixture(root), root, sdkDirectory, nativeDirectory, workerFile, brokerSocket, stateRoot, pinCommandSocket: portableCommandSocketPin,
+    ...identity, root, sdkDirectory, nativeDirectory, workerFile, brokerSocket, stateRoot, pinCommandSocket: portableCommandSocketPin,
     nodeBinary: process.execPath, codexBinary,
   };
 }

@@ -3,15 +3,27 @@ import { open, lstat, unlink } from "node:fs/promises";
 import { createServer, createConnection } from "node:net";
 import { dirname } from "node:path";
 import { assert } from "./control.mjs";
-export async function hostConnection(target) {
+const OWNED_COMMAND_ROLES = ["owned_peer_command_0", "owned_peer_command_1"];
+function connectionReason(error) {
+  return ["ECONNREFUSED", "ENOENT", "EACCES", "EPERM", "ECONNRESET", "ETIMEDOUT", "ENETUNREACH", "EHOSTUNREACH"].includes(error?.code)
+    ? error.code.toLowerCase() : "unknown";
+}
+export async function hostConnection(target, role = "owned_tcp") {
+  assert([...OWNED_COMMAND_ROLES, "owned_tcp"].includes(role), "positive_control_role_invalid");
   return new Promise((resolve, reject) => {
-    const socket = createConnection(target); const timer = setTimeout(() => finish(Error("positive_control_timeout")), 2000);
-    const finish = error => { clearTimeout(timer); socket.destroy(); error ? reject(error) : resolve(true); };
-    socket.once("connect", () => finish()); socket.once("error", () => finish(Error("positive_control_unavailable")));
+    let socket, settled = false;
+    const timer = setTimeout(() => finish("timeout"), 2000);
+    const finish = reason => {
+      if (settled) return; settled = true; clearTimeout(timer); socket?.destroy();
+      reason ? reject(Error(`positive_control_${role}_${reason}`)) : resolve(true);
+    };
+    try { socket = createConnection(target); } catch (error) { finish(connectionReason(error)); return; }
+    socket.once("connect", () => finish()); socket.once("error", error => finish(connectionReason(error)));
   });
 }
 export async function startControls(config, baseline, peerSockets, check = () => {}) {
-  const targets = peerSockets.map((path, index) => ({ path, role: `owned_peer_command_${index}` }));
+  assert(Array.isArray(peerSockets) && peerSockets.length === 2 && peerSockets[0] !== peerSockets[1], "owned_command_controls_missing");
+  const targets = peerSockets.map((path, index) => ({ path, role: OWNED_COMMAND_ROLES[index] }));
   for (const role of ["legacy_ipc", "legacy_command", "peer_ipc", "peer_command"]) {
     const entry = Object.entries(baseline.sockets).find(([, value]) => value.role === role);
     if (entry) targets.push({ path: entry[0], role });
@@ -20,11 +32,15 @@ export async function startControls(config, baseline, peerSockets, check = () =>
   const socketEvidence = [];
   for (const target of targets) {
     check();
-    const metadata = await lstat(target.path); assert(metadata.isSocket(), "positive_socket_missing");
+    let metadata;
+    try { metadata = await lstat(target.path); }
+    catch (error) { throw Error(`positive_control_${target.role}_${connectionReason(error)}`); }
+    assert(metadata.isSocket(), `positive_control_${target.role}_not_socket`);
     // A successful empty connection permanently claims a worker's command slot.
-    // Only our disposable command workers may be consumed by positive controls.
-    const connected = !["legacy_command", "peer_command"].includes(target.role);
-    if (connected) await hostConnection({ path: target.path });
+    // Only our two disposable command workers may be consumed by positives.
+    // Installed/foreign IPC and command listeners may be stale; never probe them.
+    const connected = OWNED_COMMAND_ROLES.includes(target.role);
+    if (connected) await hostConnection({ path: target.path }, target.role);
     socketEvidence.push({ ...target, connected, evidence: connected ? "connected" : "metadata_only",
       inode: metadata.ino, device: metadata.dev });
   }

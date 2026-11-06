@@ -3,7 +3,7 @@ import { resolveCommandSocketTrust, type CommandTrustResolver } from "./command-
 import { assertProtectedNodeRoot, nodeMount, nodeProfileDigest, ownedNodeForNamespace, WORKER_NODE_BINARY, type OwnedNode } from "./node-runtime.js";
 import { assertNamespaceDirectory, assertNamespaceSocket, assertRuntimeDirectoryPlacement, trustedIpcGroup, HOST_NAMESPACE_TRUST, type NamespacePathTrust } from "./namespace-ancestry.js";
 import { pinScopeRuntimeCommandSocket, type CommandSocketPinner } from "./command-socket-pin.js";
-import { cleanupOrphanedRuntimeDirectories, commandDirectoryForRuntime, createRuntimeDirectories, removeRuntimeDirectories } from "./runtime-directories.js";
+import { cleanupOrphanedRuntimeDirectories, commandDirectoryForRuntime, createRuntimeDirectories, removeRuntimeDirectories, type RuntimeDirectoryOperations } from "./runtime-directories.js";
 import { createScopeRuntimeUnitIdentity } from "./systemd-unit-identity.js";
 import { randomBytes } from "node:crypto";
 import { execFile } from "node:child_process";
@@ -85,6 +85,7 @@ export interface ScopeRuntimeCommandRunner {
 }
 
 interface LauncherPaths {
+  directoryOperations?: RuntimeDirectoryOperations;
   namespace?: string;
   useOwnedNode?: boolean;
   namespaceTrust?: NamespacePathTrust;
@@ -106,7 +107,7 @@ interface LauncherPaths {
   managedPiSandboxRoots?: readonly string[];
 }
 
-type ResolvedLauncherPaths = Required<Omit<LauncherPaths, "botRuntimeDirectory" | "namespace" | "namespaceTrust" | "commandSocketRoot" | "useOwnedNode">> & { ownedNode?: OwnedNode; botRuntimeDirectory?: string; commandSocketRoot?: string; namespaceTrust?: NamespacePathTrust };
+type ResolvedLauncherPaths = Required<Omit<LauncherPaths, "botRuntimeDirectory" | "namespace" | "namespaceTrust" | "commandSocketRoot" | "useOwnedNode" | "directoryOperations">> & { directoryOperations?: RuntimeDirectoryOperations; ownedNode?: OwnedNode; botRuntimeDirectory?: string; commandSocketRoot?: string; namespaceTrust?: NamespacePathTrust };
 
 function isPiLaunch(input: { profileId?: string }): boolean {
   return piProfileIdentity(input.profileId) !== undefined;
@@ -586,6 +587,7 @@ export function createSystemdScopeRuntimeLauncher(
   const ownedNode = input.useOwnedNode ? ownedNodeForNamespace(input.namespace) : undefined;
   const paths: ResolvedLauncherPaths = {
     ownedNode,
+    ...(input.directoryOperations ? { directoryOperations: input.directoryOperations } : {}),
     stateRoot: assertTrustedAbsolutePath(input.stateRoot),
     ...(input.namespace !== undefined || input.namespaceTrust ? { namespaceTrust: input.namespaceTrust ?? HOST_NAMESPACE_TRUST } : {}),
     ...(input.commandSocketRoot ? { commandSocketRoot: assertTrustedAbsolutePath(input.commandSocketRoot) } : {}),

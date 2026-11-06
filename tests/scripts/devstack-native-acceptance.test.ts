@@ -207,7 +207,9 @@ describe("native proof transport and fixed service profile", () => {
     expect(result).toContain("--property=CapabilityBoundingSet=");
     expect(result).toContain("--property=RestrictAddressFamilies=AF_UNIX");
     expect(result).toContain("--property=ReadWritePaths=/run/matrix-devstack/proof/scope-runtime /run/matrix-devstack/proof/c");
-    expect(result).toContain("--property=StateDirectory=matrix-devstack/proof/scope-runtime");
+    expect(result).toContain("--property=StateDirectory=matrix-devstack/proof/scope-runtime matrix-devstack/proof/scope-runtime/runtimes");
+    expect(result).toContain("--property=StateDirectoryMode=02700");
+    expect(result).toContain("--property=RuntimeDirectoryMode=02770");
     expect(result).toContain("/var/lib/matrix-devstack/proof/app/packages/scope-runtime/dist/main.js");
     expect(result.some((v: string) => v.includes("/opt/matrix/app") || v.includes("/home/matrix/home"))).toBe(false);
   });

@@ -1,4 +1,5 @@
 import { lookupIpcIdentity, observeCredentials, assertStableProcess, assertActiveUnit, assertStableUnit } from "./credential-evidence.mjs";
+import { inspectRuntimeAnchors } from "./runtime-anchor-evidence.mjs";
 import { inspectCommandIpc } from "./ipc-evidence.mjs";
 import { verifyCompiledRuntime } from "./compiled.mjs";
 import { open, readFile, readlink } from "node:fs/promises";
@@ -37,10 +38,11 @@ export async function inspectSupervisor(config, node) {
   const pid = Number(result.properties.MainPID);
   assert(Number.isSafeInteger(pid) && pid > 1, "supervisor_pid_invalid");
   const identity = await lookupIpcIdentity(), credentials = await observeCredentials(pid, identity, false);
+  const anchors = await inspectRuntimeAnchors(config, identity);
   const executable = await verifyExecutableEvidence(`/proc/${pid}/exe`, node);
   assertStableProcess(credentials, await observeCredentials(pid, identity, false));
   assertStableUnit(before, await show(config.supervisorUnit, SUPERVISOR_SECURITY_KEYS));
-  return { ...result, trustedGroup: identity.trustedGroup, credentials, node: executable };
+  return { ...result, anchors, trustedGroup: identity.trustedGroup, credentials, node: executable };
 }
 function workerExecutables(pid, host, workerBinary) {
   return { host, running: `/proc/${pid}/exe`, guest: `/proc/${pid}/root${workerBinary}` };

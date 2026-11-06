@@ -1,3 +1,5 @@
+import { lookupIpcIdentity } from "./credential-evidence.mjs";
+import { runtimeAnchorStat } from "./runtime-anchor-evidence.mjs";
 import { constants } from "node:fs";
 import { lstat, open, stat, unlink } from "node:fs/promises";
 import { dirname, join } from "node:path";
@@ -60,11 +62,13 @@ export async function createStderrCapture(path, fd2 = pid => stat(`/proc/${pid}/
 
 // Observe both trees that the real launcher removes, before and after close.
 // A missing or replaced parent must not make all descendant probes appear absent.
-export async function beginCloseEvidence(config, capture, supervisor, handles) {
+export async function beginCloseEvidence(config, capture, supervisor, handles, fixtureIdentity) {
   assert(capture && handles.length > 0 && handles.length <= 32, "close_evidence_required");
   const stderr = await capture.begin(supervisor);
   const parents = [join(config.stateRoot, "runtimes"), config.commandSocketRoot];
-  const roots = await Promise.all(parents.map(protectedParent));
+  const identity = fixtureIdentity ?? await lookupIpcIdentity();
+  const observe = (path, index) => runtimeAnchorStat(path, index === 0 ? 0o2700 : 0o2770, identity);
+  const roots = await Promise.all(parents.map(observe));
   for (const handle of handles) {
     assert(/^runtime_[a-f0-9]{32}$/.test(handle), "worker_handle_invalid");
     for (const parent of parents) {
@@ -75,7 +79,7 @@ export async function beginCloseEvidence(config, capture, supervisor, handles) {
   return async () => {
     const evidence = await stderr();
     for (const [index, parent] of parents.entries()) {
-      assert(sameObject(roots[index], await protectedParent(parent)), "worker_teardown_parent_changed");
+      assert(sameObject(roots[index], await observe(parent, index)), "worker_teardown_parent_changed");
       for (const handle of handles) assert(!await lstatIfPresent(join(parent, handle.slice(8))), "worker_teardown_incomplete");
     }
     return { stderr: evidence, workers: handles.map(handle => ({ handle, runtimeDirectoryRemoved: true, commandDirectoryRemoved: true })) };

@@ -40,7 +40,7 @@ it("reproduces empty positive-control connection consuming the real permanent sl
   expect(observed).toEqual({ connections: 2, commands: 0 });
 });
 
-it("actively connects owned controls while installed/foreign command sentinels remain metadata-only negative targets", async () => {
+it("actively connects owned controls while all installed/foreign sentinels remain metadata-only negative targets", async () => {
   const base = await root(), owned = [join(base, "a"), join(base, "b")];
   const observations = await Promise.all(owned.map(path => listener(path)));
   const baseline = { sockets: {} as Record<string, { role: string }> };
@@ -51,12 +51,12 @@ it("actively connects owned controls while installed/foreign command sentinels r
   const controls = await startControls({ appRoot: join(base, "app") }, baseline, owned);
   try {
     expect(observations.map(item => item.connections)).toEqual([1, 1]);
-    expect(external.map(item => item.connections)).toEqual([1, 0, 1, 0]);
+    expect(external.map(item => item.connections)).toEqual([0, 0, 0, 0]);
     expect(controls.targets.map((item: { role: string }) => item.role)).toEqual(["owned_peer_command_0", "owned_peer_command_1", "legacy_ipc", "legacy_command", "peer_ipc", "peer_command"]);
-    for (const role of ["legacy_command", "peer_command"]) {
+    for (const role of ["legacy_ipc", "legacy_command", "peer_ipc", "peer_command"]) {
       expect(controls.hostPositive.sockets.find(item => item.role === role)).toMatchObject({ connected: false, evidence: "metadata_only" });
     }
-    expect(controls.hostPositive.sockets.filter(item => item.connected).length).toBe(4);
+    expect(controls.hostPositive.sockets.filter(item => item.connected).length).toBe(2);
   } finally { await controls.close(); }
 });
 
@@ -188,7 +188,7 @@ it.each([1, 2, 3, 4])("cleans all owned workers when interrupted immediately aft
   expect((await readdir(f.base)).some(name => name.startsWith(".boundary-"))).toBe(false);
 });
 
-it.each(["CONNECTED", "TIMEOUT", "EIO"])("keeps failed/inconclusive %s SDK denial evidence from dispatching", async code => {
+it.each(["CONNECTED", "ECONNREFUSED", "TIMEOUT", "EIO"])("keeps failed/inconclusive %s SDK denial evidence from dispatching", async code => {
   // Let sacrificial isolation pass, then fail only the new SDK worker.
   const f = await workflow(0, code);
   await expect(f.run()).rejects.toThrow("worker_peer_socket_not_denied");
