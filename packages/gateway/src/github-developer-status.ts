@@ -5,6 +5,7 @@ import {
   type GithubDeveloperStatusErrorCode,
 } from "@matrix-os/contracts";
 import { z } from "zod/v4";
+import { githubOwnerEnvironment } from "./github-owner-environment.js";
 
 const COMMAND_TIMEOUT_MS = 10_000;
 const SSH_TIMEOUT_MS = 15_000;
@@ -17,7 +18,7 @@ const GitIdentityEmailSchema = z.email().max(320);
 export type GithubStatusCommandRunner = (
   command: string,
   args: string[],
-  options: { cwd: string; timeout: number; maxBuffer?: number },
+  options: { cwd: string; timeout: number; maxBuffer?: number; env?: NodeJS.ProcessEnv },
 ) => Promise<{ stdout: string; stderr: string }>;
 
 function commandErrorCode(error: unknown): string | number | null {
@@ -33,16 +34,19 @@ function boundedCommandOutput(error: unknown): string {
     .slice(0, STATUS_OUTPUT_BYTES);
 }
 
-function isGithubSshGreeting(value: string): boolean {
-  return /^Hi [A-Za-z0-9](?:[A-Za-z0-9-]{0,38})! You've successfully authenticated, but GitHub does not provide shell access\.$/m
-    .test(value.slice(0, STATUS_OUTPUT_BYTES));
+function isGithubSshGreeting(value: string, user: string | null): boolean {
+  const login = /^Hi ([A-Za-z0-9](?:[A-Za-z0-9-]{0,38}))! You've successfully authenticated, but GitHub does not provide shell access\.$/m
+    .exec(value.slice(0, STATUS_OUTPUT_BYTES))?.[1];
+  return user !== null && login?.toLowerCase() === user.toLowerCase();
 }
 
 export async function getGithubDeveloperStatus(input: {
   homePath: string;
   runCommand: GithubStatusCommandRunner;
 }): Promise<GithubDeveloperStatus> {
-  const { homePath, runCommand } = input;
+  const { homePath } = input;
+  const env = githubOwnerEnvironment(homePath);
+  const runCommand: GithubStatusCommandRunner = (command, args, options) => input.runCommand(command, args, { ...options, env });
   let installed = false;
   let authenticated = false;
   let user: string | null = null;
@@ -115,9 +119,9 @@ export async function getGithubDeveloperStatus(input: {
       timeout: SSH_TIMEOUT_MS,
       maxBuffer: STATUS_OUTPUT_BYTES,
     });
-    sshStatus = isGithubSshGreeting(`${result.stdout}\n${result.stderr}`) ? "verified" : "setup_required";
+    sshStatus = isGithubSshGreeting(`${result.stdout}\n${result.stderr}`, user) ? "verified" : "setup_required";
   } catch (error: unknown) {
-    if (isGithubSshGreeting(boundedCommandOutput(error))) {
+    if (commandErrorCode(error) === 1 && isGithubSshGreeting(boundedCommandOutput(error), user)) {
       sshStatus = "verified";
     } else {
       sshStatus = commandErrorCode(error) === "ENOENT" ? "unavailable" : "setup_required";
