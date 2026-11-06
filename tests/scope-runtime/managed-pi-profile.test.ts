@@ -1,3 +1,4 @@
+import { commandIdentityFixture, withCleanupUnitFixture } from "../helpers/command-ipc-fixture.js";
 import { chmod, link, mkdir, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { createServer } from "node:net";
 import { join } from "node:path";
@@ -24,6 +25,7 @@ async function setup() {
   cleanup.push(() => rm(root, { recursive: true, force: true }));
   const home = join(root, "home");
   const paths = {
+    ...commandIdentityFixture(root),
     stateRoot: join(root, "state"), sdkDirectory: join(root, "sdk"), nativeDirectory: join(root, "native"),
     workerFile: join(root, "worker.js"), brokerSocket: join(root, "broker.sock"), nodeBinary: process.execPath,
     botRuntimeDirectory: join(root, "bot-runtime"), botSandboxRoots: botSandboxRootsForHome(home),
@@ -45,7 +47,7 @@ async function setup() {
     if (args[0] === "list-units") return { stdout: `matrix-scope-runtime-${"2".repeat(32)}.service loaded active running\n` };
     return { stdout: "active\n" };
   });
-  const launcher = createSystemdScopeRuntimeLauncher({ ...paths, runCommand });
+  const launcher = createSystemdScopeRuntimeLauncher({ ...paths, runCommand: withCleanupUnitFixture(paths.stateRoot, runCommand) });
   return { root, home, paths, workspaces, runCommand, launcher };
 }
 
@@ -86,7 +88,7 @@ describe("managed Pi supervisor and actual launcher boundary", () => {
     expect(ready.client.profileCapability("scope-runtime-bot-v1")).toMatchObject({available:true});
     await expect(launcher.supportedAdapters?.("scope-runtime-forged-v1")).resolves.toEqual([]);
 
-    const botOnlyLauncher = createSystemdScopeRuntimeLauncher({ ...paths, managedPiSandboxRoots: [], runCommand });
+    const botOnlyLauncher = createSystemdScopeRuntimeLauncher({ ...paths, managedPiSandboxRoots: [], runCommand: withCleanupUnitFixture(paths.stateRoot, runCommand) });
     const botOnly = await createScopeRuntimeController({ launcher: botOnlyLauncher, executionGeneration: "7" });
     cleanup.push(() => botOnly.close());
     const botOnlyResponse = await botOnly.handle(request);
@@ -114,7 +116,7 @@ describe("managed Pi supervisor and actual launcher boundary", () => {
     expect(args).toContain("--property=ProtectHome=yes");
     expect(args).toContain("/opt/matrix/scope-sdk/bot-runtime/bot-worker.mjs");
     const provenance = JSON.parse(await readFile(join(paths.stateRoot, "runtimes", "2".repeat(32), "provenance.json"), "utf8"));
-    expect(provenance).toMatchObject({ profileId: MANAGED_PROFILE, profileVersion: 3, workload: "bot_agent" });
+    expect(provenance).toMatchObject({ profileId: MANAGED_PROFILE, profileVersion: 4, workload: "bot_agent" });
     await expect(launcher.list()).resolves.toEqual([{ runtimeHandle: RUNTIME, executionGeneration: "7", profileId: MANAGED_PROFILE }]);
     // The same pinned worker command remains reachable through the distinct managed profile.
     launcher.runBot = vi.fn(async () => ({ version: 1 as const, ok: true as const, reply: { acknowledged: true } }));

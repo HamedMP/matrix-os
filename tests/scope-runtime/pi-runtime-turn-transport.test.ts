@@ -1,3 +1,4 @@
+import { commandPublicationFixture, commandIdentityFixture } from "../helpers/command-ipc-fixture.js";
 import { portableCommandSocketPin } from "../helpers/portable-command-socket-pin.js";
 import { mkdir, rm } from "node:fs/promises";
 import { Socket } from "node:net";
@@ -19,17 +20,18 @@ afterEach(async () => { vi.useRealTimers(); vi.restoreAllMocks(); for (const clo
 async function fixture() {
   const root = await createUnixSocketTempDir();
   cleanups.push(() => rm(root, { recursive: true, force: true }));
+  const identityFixture = commandIdentityFixture(root);
   const commandDirectory = join(root, "runtimes", "2".repeat(32), "command");
   await mkdir(commandDirectory, { recursive: true });
   let resolveWorker!: (reply: Record<string, unknown>) => void;
   let entered!: () => void;
   const enteredRun = new Promise<void>(resolve => { entered = resolve; });
   const workerResult = new Promise<Record<string, unknown>>(resolve => { resolveWorker = resolve; });
-  const worker = await startBotCommandServer({ socketPath: join(commandDirectory, "worker.sock"),
+  const worker = await startBotCommandServer({ publication: await commandPublicationFixture(join(commandDirectory, "worker.sock")), socketPath: join(commandDirectory, "worker.sock"),
     invocation: { runtimeHandle: handle, scopeHandle, workload: "bot_agent", adapterId: "matrix-bot", harnessVersion: "1.0.0", executionGeneration: "4" },
     handler: { async handle(command) { if (command.kind === "bot.run") { entered(); return workerResult; } resolveWorker({ status: "cancelled" }); return { acknowledged: true }; } } });
   cleanups.push(() => worker.close());
-  const native = createSystemdScopeRuntimeLauncher({ pinCommandSocket: portableCommandSocketPin, stateRoot: root, sdkDirectory: root, nativeDirectory: root, workerFile: join(root, "unused"), brokerSocket: join(root, "broker.sock"), runCommand: vi.fn(async () => ({ stdout: "" })) });
+  const native = createSystemdScopeRuntimeLauncher({ ...identityFixture, pinCommandSocket: portableCommandSocketPin, stateRoot: root, sdkDirectory: root, nativeDirectory: root, workerFile: join(root, "unused"), brokerSocket: join(root, "broker.sock"), runCommand: vi.fn(async () => ({ stdout: "" })) });
   const stop = vi.fn(async () => { resolveWorker({ status: "cancelled" }); });
   const launcher: ScopeRuntimeLauncher = { list: async () => [], supportedAdapters: async () => SCOPE_RUNTIME_BOT_PROFILE.adapters,
     start: async () => undefined, runChat: async () => ({ text: "unused" }), runBot: native.runBot, stop };

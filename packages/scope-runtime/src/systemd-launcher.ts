@@ -1,5 +1,7 @@
+import { quiesceRuntimeUnit } from "./runtime-unit-cleanup.js";
+import { resolveCommandSocketTrust, type CommandTrustResolver } from "./command-host-identity.js";
 import { assertProtectedNodeRoot, nodeMount, nodeProfileDigest, ownedNodeForNamespace, WORKER_NODE_BINARY, type OwnedNode } from "./node-runtime.js";
-import { assertNamespaceDirectory, assertNamespaceSocket, assertRuntimeDirectoryPlacement, HOST_NAMESPACE_TRUST, type NamespacePathTrust } from "./namespace-ancestry.js";
+import { assertNamespaceDirectory, assertNamespaceSocket, assertRuntimeDirectoryPlacement, trustedIpcGroup, HOST_NAMESPACE_TRUST, type NamespacePathTrust } from "./namespace-ancestry.js";
 import { pinScopeRuntimeCommandSocket, type CommandSocketPinner } from "./command-socket-pin.js";
 import { cleanupOrphanedRuntimeDirectories, commandDirectoryForRuntime, createRuntimeDirectories, removeRuntimeDirectories } from "./runtime-directories.js";
 import { createScopeRuntimeUnitIdentity } from "./systemd-unit-identity.js";
@@ -573,27 +575,8 @@ async function waitUntilReady(
   throw new Error("Scope runtime worker readiness unavailable");
 }
 
-async function cleanupSubmittedUnit(
-  runCommand: ScopeRuntimeCommandRunner,
-  name: string,
-): Promise<boolean> {
-  let cleaned = true;
-  for (const action of ["stop", "reset-failed"] as const) {
-    try {
-      await runCommand("/usr/bin/systemctl", [action, name]);
-    } catch (error: unknown) {
-      if (!inactiveUnitError(error)) {
-        cleaned = false;
-        console.warn("[scope-runtime] submitted-unit cleanup failed:",
-          error instanceof Error ? error.name : "UnknownError");
-      }
-    }
-  }
-  return cleaned;
-}
-
 export function createSystemdScopeRuntimeLauncher(
-  input: LauncherPaths & { runCommand?: ScopeRuntimeCommandRunner; pinCommandSocket?: CommandSocketPinner },
+  input: LauncherPaths & { runCommand?: ScopeRuntimeCommandRunner; pinCommandSocket?: CommandSocketPinner; resolveCommandTrust?: CommandTrustResolver },
 ): ScopeRuntimeLauncher {
   const identity = createScopeRuntimeUnitIdentity(input.namespace);
   if (input.namespace !== undefined && !input.commandSocketRoot) throw new Error("Namespaced scope runtime requires a short command socket root");
@@ -604,7 +587,7 @@ export function createSystemdScopeRuntimeLauncher(
   const paths: ResolvedLauncherPaths = {
     ownedNode,
     stateRoot: assertTrustedAbsolutePath(input.stateRoot),
-    ...(input.namespace !== undefined ? { namespaceTrust: input.namespaceTrust ?? HOST_NAMESPACE_TRUST } : {}),
+    ...(input.namespace !== undefined || input.namespaceTrust ? { namespaceTrust: input.namespaceTrust ?? HOST_NAMESPACE_TRUST } : {}),
     ...(input.commandSocketRoot ? { commandSocketRoot: assertTrustedAbsolutePath(input.commandSocketRoot) } : {}),
     sdkDirectory: assertTrustedAbsolutePath(input.sdkDirectory),
     nativeDirectory: assertTrustedAbsolutePath(input.nativeDirectory),
@@ -629,12 +612,25 @@ export function createSystemdScopeRuntimeLauncher(
     return execute(command, args);
   };
   const pinCommandSocket = input.pinCommandSocket ?? pinScopeRuntimeCommandSocket;
+  const quiesce = (runtimeHandle: string) => quiesceRuntimeUnit(runCommand, {
+    unit: identity.workerUnit(runtimeHandle),
+    root: join(paths.stateRoot, "runtimes", RuntimeHandleSchema.parse(runtimeHandle).slice("runtime_".length), "root"),
+  });
 
-  async function dispatchCommand<T>(runtimeHandle: string, dispatch: (path: string) => Promise<T>): Promise<T> {
+  async function dispatchCommand<T>(runtimeHandle: string, executionGeneration: string, dispatch: (path: string) => Promise<T>): Promise<T> {
     const handle = RuntimeHandleSchema.parse(runtimeHandle);
     if (ownedNode) await assertProtectedNodeRoot(ownedNode.root);
     const path = join(await commandDirectoryForRuntime(paths, handle), WORKER_SOCKET_FILE);
-    const pinned = await pinCommandSocket(path);
+    const namespaceTrust = paths.namespaceTrust ?? HOST_NAMESPACE_TRUST;
+    const trust = await (input.resolveCommandTrust ?? resolveCommandSocketTrust)({
+      unit: identity.workerUnit(handle), root: join(paths.stateRoot, "runtimes", handle.slice("runtime_".length), "root"),
+      parent: { uid: namespaceTrust.uid, gid: await trustedIpcGroup(namespaceTrust) },
+      async validateProvenance() {
+        const provenance = await readRuntimeProvenance(join(paths.stateRoot, "runtimes", handle.slice("runtime_".length)), handle, paths.ownedNode);
+        if (!provenance || provenance.executionGeneration !== executionGeneration) throw new Error("Unsafe command IPC provenance");
+      },
+    });
+    const pinned = await pinCommandSocket(path, trust);
     try { return await dispatch(pinned.path); } finally { await pinned.close(); }
   }
 
@@ -725,9 +721,7 @@ export function createSystemdScopeRuntimeLauncher(
           ? await readRuntimeProvenance(join(paths.stateRoot, "runtimes", suffix), runtimeHandle, paths.ownedNode)
           : undefined;
         if (!provenance) {
-          if (!await cleanupSubmittedUnit(runCommand, name)) {
-            throw new Error("Scope runtime reconciliation cleanup unavailable");
-          }
+          await quiesce(runtimeHandle);
           await removeRuntimeDirectories(paths, runtimeHandle);
           continue;
         }
@@ -735,7 +729,7 @@ export function createSystemdScopeRuntimeLauncher(
         handles.push(provenance);
         if (handles.length > 32) throw new Error("Scope runtime reconciliation exceeds capacity");
       }
-      await cleanupOrphanedRuntimeDirectories(paths, retainedSuffixes);
+      await cleanupOrphanedRuntimeDirectories(paths, retainedSuffixes, suffix => quiesce(`runtime_${suffix}`));
       return handles;
     },
     async start(request: ScopeRuntimeLaunchRequest): Promise<void> {
@@ -774,9 +768,12 @@ export function createSystemdScopeRuntimeLauncher(
           request.runtimeHandle,
         );
       } catch (error: unknown) {
-        const cleaned = !submitted
-          || await cleanupSubmittedUnit(runCommand, identity.workerUnit(request.runtimeHandle));
-        if (cleaned) await removeRuntimeDirectories(paths, request.runtimeHandle);
+        try {
+          if (submitted) await quiesce(request.runtimeHandle);
+          await removeRuntimeDirectories(paths, request.runtimeHandle);
+        } catch (cleanupError: unknown) {
+          console.warn("[scope-runtime] submitted-unit cleanup unverified:", cleanupError instanceof Error ? cleanupError.name : "UnknownError");
+        }
         throw error;
       }
     },
@@ -784,31 +781,17 @@ export function createSystemdScopeRuntimeLauncher(
       if (!EXECUTION_GENERATION.test(input.executionGeneration)) {
         throw new Error("Invalid scope runtime generation");
       }
-      return dispatchCommand(input.runtimeHandle, (path) => runWorkerChat(path, input));
+      return dispatchCommand(input.runtimeHandle, input.executionGeneration, (path) => runWorkerChat(path, input));
     },
     async runBot(input): Promise<ScopeRuntimeBotWorkerReply> {
       if (!EXECUTION_GENERATION.test(input.executionGeneration)) {
         throw new Error("Invalid scope runtime generation");
       }
-      return dispatchCommand(input.runtimeHandle, (path) => runWorkerBotCommand(path, input));
+      return dispatchCommand(input.runtimeHandle, input.executionGeneration, (path) => runWorkerBotCommand(path, input));
     },
     async stop(runtimeHandle: string): Promise<void> {
       const handle = RuntimeHandleSchema.parse(runtimeHandle);
-      const name = identity.workerUnit(handle);
-      try {
-        await runCommand("/usr/bin/systemctl", ["is-active", "--quiet", name]);
-        await runCommand("/usr/bin/systemctl", ["stop", name]);
-      } catch (error: unknown) {
-        if (!inactiveUnitError(error)) throw error;
-      }
-      try {
-        await runCommand("/usr/bin/systemctl", ["reset-failed", name]);
-      } catch (error: unknown) {
-        if (!inactiveUnitError(error)) {
-          console.warn("[scope-runtime] failed-unit cleanup unavailable:",
-            error instanceof Error ? error.name : "UnknownError");
-        }
-      }
+      await quiesce(handle);
       await removeRuntimeDirectories(paths, handle);
     },
   };

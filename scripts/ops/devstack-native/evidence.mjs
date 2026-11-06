@@ -1,3 +1,5 @@
+import { lookupIpcIdentity, observeCredentials, assertStableProcess, assertActiveUnit, assertStableUnit } from "./credential-evidence.mjs";
+import { inspectCommandIpc } from "./ipc-evidence.mjs";
 import { verifyCompiledRuntime } from "./compiled.mjs";
 import { open, readFile, readlink } from "node:fs/promises";
 import { verifyExecutableEvidence, withVerifiedWorkerNode, runPinnedDenialProbe } from "./node-evidence.mjs";
@@ -29,19 +31,28 @@ export async function buildFacts(config, dependencies, compiled, harnessNode, ch
     native: { path: nativeExecutable, version: nativeVersion, sha256: dependencies.native.installed.members.claude }, hashes: inventory.files };
 }
 export async function inspectSupervisor(config, node) {
-  const result = validateSupervisorProperties(await show(config.supervisorUnit, SUPERVISOR_SECURITY_KEYS), config);
+  const before = await show(config.supervisorUnit, SUPERVISOR_SECURITY_KEYS);
+  assertActiveUnit(before, config.supervisorUnit);
+  const result = validateSupervisorProperties(before, config);
   const pid = Number(result.properties.MainPID);
   assert(Number.isSafeInteger(pid) && pid > 1, "supervisor_pid_invalid");
-  return { ...result, node: await verifyExecutableEvidence(`/proc/${pid}/exe`, node) };
+  const identity = await lookupIpcIdentity(), credentials = await observeCredentials(pid, identity, false);
+  const executable = await verifyExecutableEvidence(`/proc/${pid}/exe`, node);
+  assertStableProcess(credentials, await observeCredentials(pid, identity, false));
+  assertStableUnit(before, await show(config.supervisorUnit, SUPERVISOR_SECURITY_KEYS));
+  return { ...result, trustedGroup: identity.trustedGroup, credentials, node: executable };
 }
 function workerExecutables(pid, host, workerBinary) {
   return { host, running: `/proc/${pid}/exe`, guest: `/proc/${pid}/root${workerBinary}` };
 }
 export async function inspectWorkerConfiguration(config, handle, dependencies, unit, node) {
-  const properties = validateWorkerProperties(await show(unit, WORKER_SECURITY_KEYS), config, handle, dependencies);
+  const before = await show(unit, WORKER_SECURITY_KEYS);
+  assertActiveUnit(before, unit);
+  const properties = validateWorkerProperties(before, config, handle, dependencies);
   const pid = Number(properties.MainPID); assert(Number.isInteger(pid) && pid > 1, "worker_pid_invalid");
-  const status = await readFile(`/proc/${pid}/status`, "utf8"); const uid = Number(/^Uid:\s+(\d+)/m.exec(status)?.[1]), gid = Number(/^Gid:\s+(\d+)/m.exec(status)?.[1]);
-  assert(uid >= 61184 && uid <= 65519 && Number.isInteger(gid), "worker_identity_invalid");
+  const identity = await lookupIpcIdentity(true), { uid, gid } = identity.workload;
+  const credentials = await observeCredentials(pid, identity, true);
+  const commandIpc = await inspectCommandIpc(config, handle, identity);
   let actualRoot, expectedRoot, rootIdentity;
   try {
     actualRoot = await open(`/proc/${pid}/root`, constants.O_RDONLY | constants.O_DIRECTORY);
@@ -57,7 +68,9 @@ export async function inspectWorkerConfiguration(config, handle, dependencies, u
   assert(cgroup === `0::${properties.ControlGroup}` && properties.ControlGroup.endsWith(`/${unit}`), "worker_cgroup_mismatch");
   const { binary, workerBinary } = config.ownedNode;
   const observed = await withVerifiedWorkerNode(workerExecutables(pid, binary, workerBinary), node);
-  return { properties, rootIdentity, uid, gid, namespaces, cgroup, workerBinary, node: observed.node };
+  assertStableProcess(credentials, await observeCredentials(pid, identity, true));
+  assertStableUnit(before, await show(unit, WORKER_SECURITY_KEYS));
+  return { properties, rootIdentity, uid, gid, credentials, commandIpc, namespaces: { ...namespaces, user: credentials.userNamespace }, cgroup, workerBinary, node: observed.node };
 }
 export async function inspectWorker(configuration, controls, baselineNode) {
   const { uid, gid, properties } = configuration, pid = Number(properties.MainPID);
@@ -81,7 +94,7 @@ export async function inspectWorkerPair(ledger, handles, inspect) {
       && before[i].InvocationID === after[i].InvocationID, "worker_pair_incarnation_changed");
   }
   const [first, peer] = pair;
-  for (const name of ["net", "mnt"]) assert(first.namespaces[name] !== peer.namespaces[name], "worker_pair_namespace_shared");
+  for (const name of ["net", "mnt", "user"]) assert(first.namespaces[name] !== peer.namespaces[name], "worker_pair_namespace_shared");
   assert(first.cgroup !== peer.cgroup, "worker_pair_cgroup_shared");
   assert(first.rootIdentity.device !== peer.rootIdentity.device || first.rootIdentity.inode !== peer.rootIdentity.inode, "worker_pair_root_shared");
   return pair.map((worker, i) => ({ ...worker, handle: handles[i], invocationId: before[i].InvocationID }));

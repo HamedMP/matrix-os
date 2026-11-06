@@ -79,7 +79,7 @@ describe("scope runtime supervisor", () => {
       uidMax: 65_519,
     });
     expect(SCOPE_RUNTIME_PROFILE.profileDigest)
-      .toBe("78a58c7045b1083a0b1e538ae36fdc06c6a145d9aa09d36a3c75eb47ea3b1ed3");
+      .toBe("b89f556558d8c62f49d6892b79e3c159163bcd2404d292b5220685770f8ff9a4");
     expect(SCOPE_RUNTIME_PROFILE.adapters).toEqual([
       {
         adapterId: "claude-code",

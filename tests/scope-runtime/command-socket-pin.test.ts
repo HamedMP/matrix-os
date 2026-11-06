@@ -3,5 +3,5 @@ import { pinScopeRuntimeCommandSocket } from "../../packages/scope-runtime/src/c
 afterEach(() => vi.unstubAllGlobals());
 it("rejects unsupported platforms without any pathname fallback", async () => {
   vi.stubGlobal("process", { ...process, platform: "darwin" });
-  await expect(pinScopeRuntimeCommandSocket("/tmp/unused-worker.sock")).rejects.toThrow("requires Linux");
+  await expect(pinScopeRuntimeCommandSocket("/tmp/unused-worker.sock", { uid: 0, gid: 1, workloadUid: 61184 })).rejects.toThrow("requires Linux");
 });

@@ -1,3 +1,4 @@
+import { commandPublicationFixture } from "../helpers/command-ipc-fixture.js";
 import { createUnixSocketTempDir } from "../helpers/unix-socket-temp.js";
 import { execFile } from "node:child_process";
 import { rm, stat } from "node:fs/promises";
@@ -93,7 +94,7 @@ describe("bot workload worker", () => {
         return {};
       }),
     };
-    const server = await startBotCommandServer({ socketPath, invocation, handler });
+    const server = await startBotCommandServer({ publication: await commandPublicationFixture(socketPath), socketPath, invocation, handler });
     cleanup.push(() => server.close());
 
     const run = send(socketPath, frame({ version: 1, kind: "bot.run", runId: "run_one" }));
@@ -108,17 +109,17 @@ describe("bot workload worker", () => {
     await expect(run).resolves.toBe(`${JSON.stringify({ version: 1, ok: true, reply: { runId: "run_one", status: "completed" } })}\n`);
   });
 
-  it("lets the capability-free supervisor reach a DynamicUser command socket", async () => {
+  it("publishes the shared command mode in an owned portable socket fixture", async () => {
     const directory = await createUnixSocketTempDir();
     cleanup.push(() => rm(directory, { recursive: true, force: true }));
     const socketPath = join(directory, "worker.sock");
     const handler = { handle: vi.fn(async () => ({ acknowledged: true })) };
-    const server = await startBotCommandServer({ socketPath, invocation, handler });
+    const server = await startBotCommandServer({ publication: await commandPublicationFixture(socketPath), socketPath, invocation, handler });
     cleanup.push(() => server.close());
 
     // The sandbox's 0077 umask otherwise leaves this socket owner-only. The
     // supervisor has no CAP_DAC_OVERRIDE and does not share the dynamic UID.
-    expect((await stat(socketPath)).mode & 0o777).toBe(0o666);
+    expect((await stat(socketPath)).mode & 0o7777).toBe(0o620);
     await expect(send(socketPath, frame({ version: 1, kind: "bot.cancel", runId: "run_one" })))
       .resolves.toContain('"acknowledged":true');
     await expect(send(socketPath, JSON.stringify({ version: 1, type: "runtime.bot", runtimeHandle: RUNTIME,
@@ -132,7 +133,7 @@ describe("bot workload worker", () => {
     cleanup.push(() => rm(directory, { recursive: true, force: true }));
     const socketPath = join(directory, "worker.sock");
     const handler = { handle: vi.fn(() => new Promise<Record<string, unknown>>(() => undefined)) };
-    const server = await startBotCommandServer({ socketPath, invocation, handler, maxConnections: 1 });
+    const server = await startBotCommandServer({ publication: await commandPublicationFixture(socketPath), socketPath, invocation, handler, maxConnections: 1 });
     cleanup.push(() => server.close());
     void send(socketPath, frame({ version: 1, kind: "bot.run", runId: "run_one" })).catch(() => undefined);
     await vi.waitFor(() => expect(handler.handle).toHaveBeenCalledTimes(1));

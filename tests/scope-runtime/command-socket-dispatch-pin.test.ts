@@ -1,3 +1,5 @@
+import type { CommandSocketTrust } from "../../packages/scope-runtime/src/command-ipc-policy.js";
+import { commandIdentityFixture } from "../helpers/command-ipc-fixture.js";
 import { createServer } from "node:net";
 import { join } from "node:path";
 import { mkdir, rename, rm, symlink } from "node:fs/promises";
@@ -39,7 +41,7 @@ it.each(["chat", "bot"])("pins %s dispatch across the controlled validation-to-c
   const swap = async () => { await rename(socketPath, join(commandDirectory, "original.sock")); await symlink(peerPath, socketPath); };
   interleaving.leaf = socketPath; interleaving.swap = swap;
   let pinsClosed = 0;
-  const launcher = createSystemdScopeRuntimeLauncher({ stateRoot: root, sdkDirectory: root, nativeDirectory: root,
+  const launcher = createSystemdScopeRuntimeLauncher({ ...commandIdentityFixture(root), stateRoot: root, sdkDirectory: root, nativeDirectory: root,
     workerFile: join(root, "unused"), brokerSocket: join(root, "unused.sock"),
     async pinCommandSocket(path: string) {
       // Suppress the legacy lstat hook while making the fixture's immutable hardlink pin.
@@ -64,7 +66,7 @@ it.each(["malformed", "cancelled", "oversized"])("releases a pinned command sock
   await new Promise<void>((resolve, reject) => { server.once("error", reject); server.listen(join(directory, "worker.sock"), resolve); });
   cleanup.push(() => new Promise<void>((resolve) => server.close(() => resolve())));
   let closed = 0, pinnedPath = "";
-  const launcher = createSystemdScopeRuntimeLauncher({ stateRoot: root, sdkDirectory: root, nativeDirectory: root,
+  const launcher = createSystemdScopeRuntimeLauncher({ ...commandIdentityFixture(root), stateRoot: root, sdkDirectory: root, nativeDirectory: root,
     workerFile: join(root, "unused"), brokerSocket: join(root, "unused.sock"),
     async pinCommandSocket(path: string) {
       const pin = await portableCommandSocketPin(path); pinnedPath = pin.path;
@@ -77,4 +79,32 @@ it.each(["malformed", "cancelled", "oversized"])("releases a pinned command sock
   await expect(result).rejects.toThrow();
   expect(closed).toBe(1);
   await expect(import("node:fs/promises").then(({ lstat }) => lstat(pinnedPath))).rejects.toMatchObject({ code: "ENOENT" });
+});
+
+it.each(["chat", "bot", "managed-pi"])("rejects old %s provenance before pinning and binds current generation to identity", async kind => {
+  const { writeFile } = await import("node:fs/promises");
+  const { runtimeProfileIdentity } = await import("../../packages/scope-runtime/src/bot-profile.js");
+  const root = await createUnixSocketTempDir(); cleanup.push(() => rm(root, { recursive: true, force: true }));
+  const fixtureIdentity = commandIdentityFixture(root), handle = "runtime_" + "a".repeat(32);
+  const runtimeRoot = join(root, "runtimes", "a".repeat(32)); await mkdir(join(runtimeRoot, "command"), { recursive: true });
+  const profile = runtimeProfileIdentity(kind === "chat" ? undefined : kind === "bot" ? "scope-runtime-bot-v1" : "scope-runtime-managed-pi-v1");
+  const provenance = { version: 1, runtimeHandle: handle, ...profile, workload: kind === "chat" ? "chat_ai" : "bot_agent",
+    adapterId: kind === "chat" ? "claude-code" : "matrix-bot", harnessVersion: kind === "chat" ? "2.1.240" : "1.0.0", executionGeneration: "7" };
+  const pin = vi.fn(async (_path: string, _trust: CommandSocketTrust) => { throw new Error("verified pin reached"); });
+  const manager = createSystemdScopeRuntimeLauncher({ ...fixtureIdentity, stateRoot: root, sdkDirectory: root, nativeDirectory: root,
+    workerFile: join(root, "unused"), brokerSocket: join(root, "unused.sock"), pinCommandSocket: pin,
+    async resolveCommandTrust(binding) {
+      expect(binding.unit).toBe(`matrix-scope-runtime-${"a".repeat(32)}.service`);
+      expect(binding.root).toBe(join(runtimeRoot, "root"));
+      await binding.validateProvenance(); return fixtureIdentity.resolveCommandTrust(binding);
+    } });
+  const dispatch = (generation = "7") => kind === "chat"
+    ? manager.runChat({ runtimeHandle: handle, executionGeneration: generation, model: "test", prompt: "test" })
+    : manager.runBot!({ runtimeHandle: handle, executionGeneration: generation, command: { version: 1, kind: "bot.cancel", runId: "run_test" } });
+  await writeFile(join(runtimeRoot, "provenance.json"), JSON.stringify({ ...provenance, profileVersion: profile.profileVersion - 1 }));
+  await expect(dispatch()).rejects.toThrow("Unsafe command IPC provenance"); expect(pin).not.toHaveBeenCalled();
+  await writeFile(join(runtimeRoot, "provenance.json"), JSON.stringify(provenance));
+  await expect(dispatch("8")).rejects.toThrow("Unsafe command IPC provenance"); expect(pin).not.toHaveBeenCalled();
+  await expect(dispatch()).rejects.toThrow("verified pin reached"); expect(pin).toHaveBeenCalledOnce();
+  expect(pin.mock.calls[0]![1]).toEqual({ uid: process.getuid!(), gid: process.getgid!(), workloadUid: process.getuid!() });
 });

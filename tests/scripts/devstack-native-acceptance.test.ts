@@ -1,8 +1,13 @@
 import { chmod, link, lstat, mkdir, mkdtemp, open, readFile, readdir, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { createServer } from "node:net";
 import { afterEach, describe, expect, it } from "vitest";
 import { resolveScopeRuntimeHostConfig } from "../../packages/scope-runtime/src/host-config.js";
+import { ScopeRuntimeRequestSchema, ScopeRuntimeResponseSchema } from "../../packages/scope-runtime/src/protocol.js";
+import { supervisorRequest, createTrackedWorker } from "../../scripts/ops/devstack-native/proof.mjs";
+import { createJournal } from "../../scripts/ops/devstack-native/receipt.mjs";
+import { CASCADE_KEYS, createUnitLedger } from "../../scripts/ops/devstack-native/ownership.mjs";
 
 const scratch: string[] = [];
 afterEach(async () => { await Promise.all(scratch.splice(0).map(p => rm(p, { recursive: true, force: true }))); });
@@ -79,6 +84,96 @@ describe("owned native acceptance boundaries", () => {
   });
 
 
+});
+
+// Keep request/reply framing real: losing a valid rejection or trusting an
+// unrelated/malformed reply must change the private diagnostic, never authority.
+describe("native supervisor rejection diagnostics", () => {
+  const createPayload = { scopeHandle: "scope_" + "a".repeat(32), profileId: "scope-runtime-chat-v1", workload: "chat_ai", adapterId: "claude-code", harnessVersion: "2.1.240" };
+  const runtimeHandle = "runtime_" + "b".repeat(32);
+  async function peer(reply: (request: any) => unknown, action: (config: any, root: string) => Promise<void>) {
+    const root = await mkdtemp("/tmp/native-reply-"); scratch.push(root);
+    const supervisorSocket = join(root, "s"); let failure: unknown;
+    const server = createServer({ allowHalfOpen: true }, socket => {
+      let input = Buffer.alloc(0);
+      socket.setTimeout(1000, () => socket.destroy());
+      socket.on("error", error => { failure ??= error; });
+      socket.on("data", chunk => {
+        input = Buffer.concat([input, chunk]);
+        if (input.length > 4096) { failure = Error("fixture_request_capacity"); socket.destroy(); return; }
+        if (!input.includes(10)) return;
+        try {
+          const request = ScopeRuntimeRequestSchema.parse(JSON.parse(input.subarray(0, input.indexOf(10)).toString("utf8")));
+          socket.end(JSON.stringify(reply(request)) + "\n");
+        } catch (error) { failure = error; socket.destroy(); }
+      });
+    });
+    await new Promise<void>((resolve, reject) => { server.once("error", reject); server.listen(supervisorSocket, resolve); });
+    try { await action({ supervisorSocket }, root); }
+    finally { await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve())); }
+    expect(failure).toBeUndefined();
+  }
+  const negative = (request: any, error: unknown = "runtime_unavailable") => ({ version: 1, type: "runtime.result", requestId: request.requestId, ok: false, error });
+  async function persistedFailure(config: any, root: string, type: string, payload: any, code: string) {
+    const journal = createJournal();
+    await expect(journal.step("capability", () => supervisorRequest(config, type, payload))).rejects.toThrow(new Error(code));
+    const path = join(root, "receipt.json");
+    await writeFile(path, JSON.stringify(journal.result()), { mode: 0o600 });
+    const persisted = await readFile(path, "utf8");
+    expect(JSON.parse(persisted)).toMatchObject({ status: "failed", gates: { capability: { state: "failed", code } } });
+    // No reply/error object, identifiers or attacker-controlled text enters diagnostics.
+    expect(persisted).not.toMatch(/secret_marker|requestId|runtimeHandle|scopeHandle|\/private\//);
+  }
+  const cases = [
+    ["capability.get", {}, "capability.result", ["invalid_request", "profile_unavailable", "runtime_unavailable"]],
+    ["runtime.create", createPayload, "runtime.result", ["invalid_request", "profile_unavailable", "adapter_unavailable", "capacity_exceeded", "runtime_not_found", "runtime_unavailable"]],
+    ["runtime.stop", { runtimeHandle }, "runtime.result", ["invalid_request", "profile_unavailable", "adapter_unavailable", "capacity_exceeded", "runtime_not_found", "runtime_unavailable"]],
+    ["runtime.chat", { runtimeHandle, executionGeneration: "7", model: "claude-haiku-4-5-20251001", prompt: "fixture" }, "runtime.chat.result", ["invalid_request", "runtime_not_found", "runtime_unavailable", "generation_mismatch"]],
+  ] as const;
+  it.each(cases.flatMap(([type, payload, responseType, errors]) => errors.map(code => ({ type, payload, responseType, code }))))("persists matching $type rejection $code", async ({ type, payload, responseType, code }) => {
+    await peer(request => ScopeRuntimeResponseSchema.parse({ ...negative(request, code), type: responseType }), (config, root) => persistedFailure(config, root, type, payload, code));
+  });
+  it.each([
+    "request_id", "type", "version", "version_string", "ok", "extra_field", "unknown_string", "unknown_code", "object", "array", "null_error", "missing_error", "wrong_type_code", "null_reply",
+  ])("keeps %s reply generic without persisting its content", async fault => {
+    await peer(request => {
+      const reply: any = negative(request);
+      if (fault === "request_id") reply.requestId = "00000000-0000-4000-8000-000000000000";
+      if (fault === "type") reply.type = "runtime.chat.result";
+      if (fault === "version") reply.version = 2;
+      if (fault === "version_string") reply.version = "1";
+      if (fault === "ok") reply.ok = "false";
+      if (fault === "extra_field") reply.detail = "/private/secret_marker";
+      if (fault === "unknown_string") reply.error = "/private/secret_marker token=credential";
+      if (fault === "unknown_code") reply.error = "secret_marker";
+      if (fault === "object") reply.error = { message: "runtime_unavailable", secret_marker: "credential" };
+      if (fault === "array") reply.error = ["runtime_unavailable"];
+      if (fault === "null_error") reply.error = null;
+      if (fault === "missing_error") delete reply.error;
+      if (fault === "wrong_type_code") reply.error = "generation_mismatch";
+      return fault === "null_reply" ? null : reply;
+    }, (config, root) => persistedFailure(config, root, "runtime.create", createPayload, "supervisor_request_failed"));
+  });
+  it("keeps a matching success unchanged", async () => {
+    await peer(request => ScopeRuntimeResponseSchema.parse({ version: 1, type: "runtime.result", requestId: request.requestId, ok: true, runtimeHandle, executionGeneration: "7", state: "running" }), async config => {
+      const reply = await supervisorRequest(config, "runtime.create", createPayload);
+      expect(reply).toEqual({ version: 1, type: "runtime.result", requestId: expect.any(String), ok: true, runtimeHandle, executionGeneration: "7", state: "running" });
+    });
+  });
+  it("retains unknown partial-create quarantine and prevents supervisor mutation after a valid rejection", async () => {
+    await peer(request => ScopeRuntimeResponseSchema.parse(negative(request)), async config => {
+      const cfg = { ...config, supervisorUnit: "fixture.service", workerUnitPrefix: "fixture-" };
+      let mutations = 0;
+      const owner = { Description: "fixture", Transient: "yes", LoadState: "loaded", InvocationID: "a".repeat(32), MainPID: "41", DefinitionIdentity: "definition", ...Object.fromEntries(CASCADE_KEYS.map((key: string) => [key, ""])) };
+      const ledger = createUnitLedger(cfg, "fixture", { observe: async () => owner, mutate: async () => { mutations++; } });
+      ledger.submitted(); await ledger.captureSupervisor();
+      await expect(createTrackedWorker(cfg, { profileId: createPayload.profileId, executionGeneration: "7", adapter: { harnessVersion: createPayload.harnessVersion } }, ledger, async () => {}, { inventory: async () => [] })).rejects.toThrow("runtime_unavailable");
+      expect(ledger.quarantine()).toEqual([{ scopeHandle: expect.stringMatching(/^scope_[a-f0-9]{32}$/), code: "runtime_unavailable", state: "quarantined_unknown" }]);
+      expect(ledger.evidence().workers).toEqual([]);
+      await expect(ledger.supervisorAction("kill")).rejects.toThrow("supervisor_drain_unproved_workers");
+      expect(mutations).toBe(0);
+    });
+  });
 });
 
 describe("native proof transport and fixed service profile", () => {
