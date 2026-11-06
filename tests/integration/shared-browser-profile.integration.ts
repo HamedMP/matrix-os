@@ -9,18 +9,21 @@ import { createSharedBrowserCdpDriver } from '../../packages/gateway/src/shared-
 import { PROFILE_HOST, startOwnedProfileChrome, startProfileFixture, type ProfileState } from '../helpers/shared-browser-profile.js';
 
 type Chrome = Awaited<ReturnType<typeof startOwnedProfileChrome>>;
-function actor(chrome: Chrome, homePath: string) {
+function actor(chrome: Chrome, homePath: string, clock?: { now(): number; runTtlMs: number }) {
   const driver = createSharedBrowserCdpDriver({ homePath, ...chrome.options,
     resolveHost: async hostname => {
       if (hostname !== PROFILE_HOST) throw new Error('Non-fixture host rejected');
       return [{ address: '1.1.1.1', family: 4 }]; // Test seam only; Chrome's exact hostname is mapped to its loopback fixture.
     },
   });
-  const broker = createSharedBrowserBroker({ ownerId: 'fixture-owner', driver, setHumanControl: async () => {} });
-  const binding = { ownerId: 'fixture-owner', chatId: 'fixture-chat', runId: randomUUID(), harness: 'pi' as const };
-  const signal = AbortSignal.timeout(30_000);
-  const run = broker.openRun(binding, signal);
-  return { token: run.token, binding, broker, action: (action: SharedBrowserAction) => broker.execute(binding, action, signal), close: () => broker.close() };
+  const broker = createSharedBrowserBroker({ ownerId: 'fixture-owner', driver, setHumanControl: async () => {}, ...clock });
+  const register = () => {
+    const binding = { ownerId: 'fixture-owner', chatId: 'fixture-chat', runId: randomUUID(), harness: 'pi' as const };
+    const signal = AbortSignal.timeout(30_000);
+    const run = broker.openRun(binding, signal);
+    return { token: run.token, binding, broker, action: (action: SharedBrowserAction) => broker.execute(binding, action, signal), close: () => broker.close() };
+  };
+  return { ...register(), register };
 }
 type Actor = ReturnType<typeof actor>;
 async function observe(current: Actor): Promise<{ result: SharedBrowserActionResult; state: ProfileState }> {
@@ -72,13 +75,29 @@ describe('shared Chrome synthetic authentication profile', () => {
       chrome.disconnect(); // Drop only this owned browser's CDP clients after an acknowledged effect.
       await current.close(); current = undefined;
 
-      current = actor(chrome, root);
+      let leaseNow = Date.now();
+      current = actor(chrome, root, { now: () => leaseNow, runTtlMs: 30_000 });
       expect(current.broker.resolveCapability(retired.token)).toBeNull();
       await expect(current.broker.execute(retired.binding, { action: 'snapshot' }, AbortSignal.timeout(1000))).rejects.toMatchObject({ code: 'run_unavailable' });
       const reattached = await navigate(current, fixture.origin);
       expect(reattached.state).toEqual({ authenticated: true, local: true, indexed: true, tab: false, cookieReadable: false, effects: 1 });
       await expect(current.action({ action: 'click', observationId: retired.observation, ref: 'r1' })).rejects.toMatchObject({ code: 'observe_again' });
       expect(fixture.stats().effects).toBe(1);
+
+      // Expire a known lease in its issuing broker; website time/session/storage are unchanged.
+      const expiredRun = current;
+      expect(expiredRun.broker.resolveCapability(expiredRun.token)).toEqual(expiredRun.binding);
+      leaseNow += 30_001;
+      expect(expiredRun.broker.resolveCapability(expiredRun.token)).toBeNull();
+      await expect(expiredRun.action({ action: 'snapshot' })).rejects.toMatchObject({ code: 'run_unavailable' });
+      await expiredRun.broker.closeRun(expiredRun.binding.runId);
+      const authenticatedReads = fixture.stats().authenticatedReads;
+      current = { ...current, ...current.register() };
+      expect(current.broker).toBe(expiredRun.broker);
+      expect(current.broker.resolveCapability(current.token)).toEqual(current.binding);
+      const freshLease = await navigate(current, fixture.origin);
+      expect(freshLease.state).toEqual({ authenticated: true, local: true, indexed: true, tab: false, cookieReadable: false, effects: 1 });
+      expect(fixture.stats().authenticatedReads).toBeGreaterThan(authenticatedReads);
       await current.close(); current = undefined;
       await chrome.close(); chrome = undefined;
 

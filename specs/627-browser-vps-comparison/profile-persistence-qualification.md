@@ -21,6 +21,7 @@ The required general E2E job installs the known browser and invokes this lane se
 | Empty initial profile | Actual protected HTTP route rejects access; storage markers absent |
 | Explicit synthetic owner grant, then fresh agent tab | Protected HTTP route accepts the browser's HttpOnly cookie; localStorage/IndexedDB present; cookie value inaccessible to page script; tab-only sessionStorage not inherited |
 | Detach and new authorized broker/driver | Same persistent website state; old capability/reference rejected |
+| Known run expires in its issuing broker | Previously valid token and binding rejected; a fresh lease in that same broker still reads authenticated website state without login/storage renewal |
 | Clean Chrome close/restart with same profile and fixture origin | HTTP authentication and persistent storage remain available |
 | Separate empty profile while original server session is still valid | HTTP access denied and persistent storage absent |
 | Server session expires or owner logs out | HTTP access denied despite previously stored browser state |
