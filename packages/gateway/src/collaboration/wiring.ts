@@ -763,7 +763,7 @@ export async function createGatewayCollaboration(options: {
         transitions: projectTransitions,
         ...(input.projectName ? { projectName: input.projectName } : {}),
         onPrepared: (transition) => projectTransitionCoordinator!.schedule(transition.id),
-        onUnshared: (input) => projectAccessRevocations!.unshared(input),
+        onUnshared: (input, executor) => projectAccessRevocations!.unshared(input, executor),
         resolveDestination: async ({ scopeId, ownerId, projectId }) => {
           const scope = await options.db.selectFrom("collaboration_scopes")
             .select(["authority_runtime_id", "authority_generation"])

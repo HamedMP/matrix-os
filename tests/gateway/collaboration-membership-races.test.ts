@@ -250,7 +250,12 @@ describe("organization project revocation races", () => {
       .where("operation_kind", "=", "membership.departure_cleanup")
       .executeTakeFirstOrThrow()).toEqual({ status: "accepted" });
 
-    await enforcer.membershipEnded({ organizationId: org, actorId: departedOwner });
+    const restarted = new ProjectAccessRevocationEnforcer({
+      db: fixture.db,
+      sessions: { revoke: vi.fn(() => [] as string[]) },
+      drainScope,
+    });
+    await restarted.membershipEnded({ organizationId: org, actorId: departedOwner });
 
     expect(drainScope.mock.calls.filter(([scope]) => scope === ownedProject)).toHaveLength(2);
     expect(drainScope.mock.calls.filter(([scope]) => scope === ownedChat)).toHaveLength(2);
@@ -259,6 +264,42 @@ describe("organization project revocation races", () => {
       .where("scope_id", "=", ownedProject)
       .where("operation_kind", "=", "membership.departure_cleanup")
       .executeTakeFirstOrThrow()).toEqual({ status: "completed" });
+  });
+
+  it("joins overlapping owner-departure cleanup redeliveries", async () => {
+    let signalDrainStarted!: () => void;
+    let releaseDrain!: () => void;
+    const drainStarted = new Promise<void>((resolve) => { signalDrainStarted = resolve; });
+    const drainReleased = new Promise<void>((resolve) => { releaseDrain = resolve; });
+    const drainScope = vi.fn(async (scopeId: string) => {
+      if (scopeId === ownedProject && drainScope.mock.calls.filter(([scope]) => scope === ownedProject).length === 1) {
+        signalDrainStarted();
+        await drainReleased;
+      }
+    });
+    const enforcer = new ProjectAccessRevocationEnforcer({
+      db: fixture.db,
+      sessions: { revoke: vi.fn(() => [] as string[]) },
+      drainScope,
+    });
+
+    const first = enforcer.membershipEnded({ organizationId: org, actorId: departedOwner });
+    await drainStarted;
+    const second = enforcer.membershipEnded({ organizationId: org, actorId: departedOwner });
+    const replayState = await Promise.race([
+      second.then(() => "settled" as const),
+      new Promise<"waiting">((resolve) => setTimeout(() => resolve("waiting"), 50)),
+    ]);
+    try {
+      expect(replayState).toBe("waiting");
+      expect(drainScope.mock.calls.filter(([scope]) => scope === ownedProject)).toHaveLength(1);
+    } finally {
+      releaseDrain();
+      await Promise.allSettled([first, second]);
+    }
+    await expect(Promise.all([first, second])).resolves.toEqual([undefined, undefined]);
+    expect(drainScope.mock.calls.filter(([scope]) => scope === ownedProject)).toHaveLength(1);
+    expect(drainScope.mock.calls.filter(([scope]) => scope === ownedChat)).toHaveLength(1);
   });
 
   it("makes an in-progress share private before acknowledging owner departure", async () => {

@@ -11,11 +11,17 @@
 import { createHash, randomUUID } from "node:crypto";
 import type { DirectSessionEndReason } from "./direct-sessions.js";
 import type { TerminalControlCoordinator } from "./terminal-control.js";
-import type { Kysely } from "kysely";
+import type { Kysely, Transaction } from "kysely";
 import { sql } from "kysely";
 import { z } from "zod/v4";
 import type { OwnerCollaborationDatabase } from "./database.js";
-import { appendMutationRecords, jsonb, OPERATION_RETENTION_MS, parseJson } from "./repository-shared.js";
+import {
+  appendMutationRecords,
+  completeAcceptedOperation,
+  jsonb,
+  OPERATION_RETENTION_MS,
+  parseJson,
+} from "./repository-shared.js";
 
 const DEFAULT_TTL_MS = 20 * 60 * 1_000;
 const DEFAULT_MAX_ENTRIES = 4_096;
@@ -30,6 +36,7 @@ const OwnerDepartureCleanupSchema = z.object({
   scopeIds: z.array(z.uuid()).min(1).max(MAX_PROJECT_SCOPES + 1),
   revision: z.number().int().positive(),
 }).strict();
+type CollaborationExecutor = Kysely<OwnerCollaborationDatabase> | Transaction<OwnerCollaborationDatabase>;
 
 export type { DirectSessionEndReason };
 /** An exhausted action budget belongs to one session, not every session held by the actor. */
@@ -445,30 +452,31 @@ export class ProjectAccessRevocationEnforcer {
       for (const scopeId of scopes) await this.options.drainScope(scopeId, input.actorId);
     }
     for (const cleanup of ownerCleanups) {
-      const fence = await this.options.db.selectFrom("collaboration_scopes")
-        .select("id")
-        .where("id", "=", cleanup.projectScopeId)
-        .where("lifecycle", "=", "private")
-        .where("revision", "=", cleanup.revision)
-        .where("deleted_at", "is", null)
-        .executeTakeFirst();
-      if (!fence) throw new Error("Owner project departure fence is unavailable");
-      this.options.sessions.revoke({ scopeId: cleanup.projectScopeId });
-      for (const scopeId of cleanup.scopeIds) await this.options.drainScope(scopeId);
-      await this.options.db.updateTable("collaboration_operations").set({
-        status: "completed",
-        expires_at: new Date(Date.now() + OPERATION_RETENTION_MS),
-      }).where("scope_id", "=", cleanup.projectScopeId)
-        .where("actor_id", "=", input.actorId)
-        .where("client_request_id", "=", cleanup.operationId)
-        .where("operation_kind", "=", OWNER_DEPARTURE_OPERATION)
-        .where("status", "=", "accepted")
-        .execute();
+      await completeAcceptedOperation(this.options.db, {
+        scopeId: cleanup.projectScopeId,
+        actorId: input.actorId,
+        clientRequestId: cleanup.operationId,
+        operationKind: OWNER_DEPARTURE_OPERATION,
+      }, async (trx) => {
+        const fence = await trx.selectFrom("collaboration_scopes")
+          .select("id")
+          .where("id", "=", cleanup.projectScopeId)
+          .where("lifecycle", "=", "private")
+          .where("revision", "=", cleanup.revision)
+          .where("deleted_at", "is", null)
+          .executeTakeFirst();
+        if (!fence) throw new Error("Owner project departure fence is unavailable");
+        this.options.sessions.revoke({ scopeId: cleanup.projectScopeId });
+        for (const scopeId of cleanup.scopeIds) await this.options.drainScope(scopeId);
+      });
     }
   }
 
-  async unshared(input: { scopeId: string; revision: number }): Promise<void> {
-    const project = await this.options.db.selectFrom("collaboration_scopes")
+  async unshared(
+    input: { scopeId: string; revision: number },
+    executor: CollaborationExecutor = this.options.db,
+  ): Promise<void> {
+    const project = await executor.selectFrom("collaboration_scopes")
       .select("id")
       .where("id", "=", input.scopeId)
       .where("kind", "=", "project")
@@ -477,16 +485,19 @@ export class ProjectAccessRevocationEnforcer {
       .where("deleted_at", "is", null)
       .executeTakeFirst();
     if (!project) throw new Error("Project revocation fence is unavailable");
-    const children = await this.childrenFor([project.id]);
+    const children = await this.childrenFor([project.id], executor);
     this.options.sessions.revoke({ scopeId: project.id });
     for (const scopeId of [project.id, ...children.map((child) => child.id)]) {
       await this.options.drainScope(scopeId);
     }
   }
 
-  private async childrenFor(projectScopeIds: readonly string[]) {
+  private async childrenFor(
+    projectScopeIds: readonly string[],
+    executor: CollaborationExecutor = this.options.db,
+  ) {
     if (projectScopeIds.length === 0) return [];
-    const children = await this.options.db.selectFrom("collaboration_scopes")
+    const children = await executor.selectFrom("collaboration_scopes")
       .select(["id", "parent_scope_id"])
       .where("parent_scope_id", "in", projectScopeIds)
       .where("membership_mode", "=", "inherited")
