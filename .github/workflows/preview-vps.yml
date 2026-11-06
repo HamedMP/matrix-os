@@ -443,9 +443,16 @@ jobs:
         with:
           ref: ${{ needs.gate.outputs.head_sha }}
 
+      - name: Checkout trusted workflow helpers
+        if: needs.gate.outputs.action == 'deploy_existing'
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.execution_origin.outputs.trusted_ref }}
+
       # Install polling is a privileged control-plane operation. Keep its
       # implementation on the reviewed workflow revision so older PR heads do
-      # not need to contain the helper and PR code cannot replace it.
+      # not need to contain the helper and PR code cannot replace it. This must
+      # follow both root checkouts because either one can clean the workspace.
       - name: Checkout trusted preview runtime reader
         uses: actions/checkout@v6
         with:
@@ -453,12 +460,6 @@ jobs:
           path: .trusted-preview-workflow
           sparse-checkout: scripts/read-preview-runtime.sh
           persist-credentials: false
-
-      - name: Checkout trusted workflow helpers
-        if: needs.gate.outputs.action == 'deploy_existing'
-        uses: actions/checkout@v6
-        with:
-          ref: ${{ needs.execution_origin.outputs.trusted_ref }}
 
       - name: Download bundle artifact
         if: needs.gate.outputs.action == 'deploy'
