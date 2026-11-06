@@ -65,7 +65,7 @@ describe("personalised Getting started steps", () => {
   it("records which agents are signed in", () => {
     const fulfilled = (value: unknown): PromiseSettledResult<unknown> => ({ status: "fulfilled", value });
     const snapshot = deriveGettingStartedSnapshot({
-      github: fulfilled({ authenticated: false }),
+      github: fulfilled({ ready: false }),
       integrations: fulfilled([]),
       agents: fulfilled({ agents: [{ agent: "claude", status: "available" }, { agent: "codex", status: "missing" }] }),
       projects: fulfilled({ projects: [] }),
@@ -85,7 +85,7 @@ describe("Getting started rows from the owner's choices", () => {
   const fulfilled = (value: unknown): PromiseSettledResult<unknown> => ({ status: "fulfilled", value });
   function snapshot(services: string[]) {
     return deriveGettingStartedSnapshot({
-      github: fulfilled({ authenticated: false }),
+      github: fulfilled({ ready: false }),
       integrations: fulfilled(services.map((service, index) => ({ id: `c${index}`, service, status: "active" }))),
       agents: fulfilled({ agents: [] }),
       projects: fulfilled({ projects: [] }),
@@ -147,7 +147,7 @@ describe("Getting started rows close the loop", () => {
   const fulfilled = (value: unknown): PromiseSettledResult<unknown> => ({ status: "fulfilled", value });
   function snapshot(services: string[], agents: { agent: string; status: string }[] = []) {
     return deriveGettingStartedSnapshot({
-      github: fulfilled({ authenticated: false }),
+      github: fulfilled({ ready: false }),
       integrations: fulfilled(services.map((service, index) => ({ id: `c${index}`, service, status: "active" }))),
       agents: fulfilled({ agents }),
       projects: fulfilled({ projects: [] }),
@@ -159,7 +159,7 @@ describe("Getting started rows close the loop", () => {
 
   it("names the app each unfinished connect row signs in to, and nothing once done", () => {
     const { rows } = gettingStartedRows(snapshot([]), { goals: [], tools: ["linear"] });
-    expect(row(rows, "github")).toMatchObject({ connect: "github" });
+    expect(row(rows, "github")).not.toHaveProperty("connect");
     expect(row(rows, "email-calendar")).toMatchObject({ label: "Connect email & calendar", connect: "gmail" });
     expect(row(rows, "tool:linear")).toMatchObject({ connect: "linear" });
     const done = gettingStartedRows(snapshot(["github", "linear", "gmail", "google_calendar"]), { goals: [], tools: ["linear"] }).rows;
@@ -183,7 +183,7 @@ describe("Getting started try actions", () => {
   const fulfilled = (value: unknown): PromiseSettledResult<unknown> => ({ status: "fulfilled", value });
   function snapshot(services: string[], github = false) {
     return deriveGettingStartedSnapshot({
-      github: fulfilled({ authenticated: github }),
+      github: fulfilled({ ready: github }),
       integrations: fulfilled(services.map((service, index) => ({ id: `c${index}`, service, status: "active" }))),
       agents: fulfilled({ agents: [] }),
       projects: fulfilled({ projects: [] }),
