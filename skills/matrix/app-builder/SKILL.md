@@ -94,6 +94,13 @@ Use this baseline and adjust the app name, description, category, icon, and stor
 
 Valid storage column types include `text`, `boolean`, `integer`, `float`, `timestamptz`, `jsonb`, and `uuid`.
 
+## Preparing an app for collaboration
+
+For an existing app that needs multiple organization members editing the same
+data, use `matrix-app-collaboration` to assess concurrency, authenticated authors,
+and shared-runtime readiness. A build or registered app schema alone does not
+establish multiplayer support.
+
 ## Presenting apps and charts in Chat
 
 After verifying the app, link its owner-relative directory, for example
