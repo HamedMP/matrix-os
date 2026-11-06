@@ -1,3 +1,4 @@
+import { routineBrowserPurposePath, routineBrowserSession, routineBrowserTuple, mintRoutineBrowserProof } from "./routine-origin-proof.js";
 import { routineActionPathId, routineOwnerSession, mintRoutineActionProof } from "./routine-action-proof.js";
 import type { ClerkAuth } from "./clerk-auth.js";
 import { isCustomMcpApprovalSubmitPath, mintCustomMcpApprovalProof } from "./custom-mcp-approval-proof.js";
@@ -17,14 +18,17 @@ export async function authenticatedApprovalProxyProof(input: {
   clerkAuth?: ClerkAuth;
 }): Promise<string | null | { status: 408 | 413 }> {
   const routine = routineActionPathId(input.method, input.path);
+  const browserPurpose = routineBrowserPurposePath(input.method, input.path);
   // The proxy has selected/authorized this exact Computer. A fresh Clerk identity may still carry a legacy/default routing handle.
-  if (routine && (!input.machine?.machineId || input.machine.handle !== input.handle
+  if ((routine || browserPurpose) && (!input.machine?.machineId || input.machine.handle !== input.handle
     || input.machine.clerkUserId !== input.identity.userId)) return null;
+  const browserSession = browserPurpose ? await routineBrowserSession(input) : null;
+  if (browserPurpose && !browserSession) return null;
   const sessionExpiresAt = routine ? await routineOwnerSession(input) : null;
   if (routine && !sessionExpiresAt) return null;
   if (!input.platformSecret || input.identity.source !== "auth"
-    || (!routine && input.machine && isPreviewMachine(input.machine) && !hasVerifiedPreviewUserSession(input.identity))
-    || !(routine || isCustomMcpApprovalSubmitPath(input.method, input.path) || isBrowserGrantRevokePath(input.method, input.path))) return null;
+    || (!(routine || browserPurpose) && input.machine && isPreviewMachine(input.machine) && !hasVerifiedPreviewUserSession(input.identity))
+    || !(routine || browserPurpose || isCustomMcpApprovalSubmitPath(input.method, input.path) || isBrowserGrantRevokePath(input.method, input.path))) return null;
   const reader = input.request.clone().body?.getReader();
   if (!reader) return null;
   const cancel = () => {
@@ -43,10 +47,15 @@ export async function authenticatedApprovalProxyProof(input: {
       const next = await Promise.race([reader.read(), deadline]);
       if (next.done) break;
       bytes += next.value.byteLength;
-      if (bytes > 4000) { cancel(); return { status: 413 }; }
+      if (bytes > (browserPurpose ? 256 * 1024 : 4000)) { cancel(); return { status: 413 }; }
       chunks.push(next.value);
     }
     const body = new TextDecoder("utf-8", { fatal: true }).decode(Buffer.concat(chunks));
+    if (browserPurpose && input.machine && browserSession) {
+      const tuple = routineBrowserTuple({ method: input.method, path: input.path, body, handle: input.handle,
+        runtimeSlot: input.machine.runtimeSlot, machineId: input.machine.machineId!, ownerId: input.identity.userId });
+      return tuple ? mintRoutineBrowserProof({ tuple, secret: input.platformSecret, session: browserSession }) : null;
+    }
     if (routine && input.machine && sessionExpiresAt) return mintRoutineActionProof({ method: input.method, path: input.path, body, secret: input.platformSecret,
       handle: input.handle, ownerId: input.identity.userId, runtimeSlot: input.machine.runtimeSlot, machineId: input.machine.machineId!, sessionExpiresAt });
     if (input.machine && isPreviewMachine(input.machine) && !hasVerifiedPreviewUserSession(input.identity)) return null;
