@@ -69,9 +69,14 @@ function project(record: CollaborativeAppReadinessRecord) {
 
 function owner(context: Context, expectedOwnerId: string): string {
   const principal = requireRequestPrincipal(context, { isLocalDevelopment: false });
-  if (!hasVerifiedRuntimeBearer(context)) throw new MissingRequestPrincipalError();
   if (principal.userId !== expectedOwnerId) throw new ReadinessRouteError("forbidden");
   return principal.userId;
+}
+
+function readinessOwner(context: Context, expectedOwnerId: string): string {
+  const principal = owner(context, expectedOwnerId);
+  if (!hasVerifiedRuntimeBearer(context)) throw new MissingRequestPrincipalError();
+  return principal;
 }
 
 function failure(context: Context, error: unknown) {
@@ -116,7 +121,7 @@ export function registerCollaborativeAppReadinessRoutes(
   routes.get(path, async (context) => {
     context.header("Cache-Control", "private, no-store");
     try {
-      const ownerId = owner(context, dependencies.ownerId);
+      const ownerId = readinessOwner(context, dependencies.ownerId);
       const appId = AppIdSchema.parse(context.req.param("appId"));
       const current = await dependencies.resolveCurrentBuild(ownerId, appId, { ensureCatalog: false });
       if (!current) throw new ReadinessRouteError("not_found");
@@ -130,7 +135,7 @@ export function registerCollaborativeAppReadinessRoutes(
   routes.post(`${path}/check`, limit, async (context) => {
     context.header("Cache-Control", "private, no-store");
     try {
-      const ownerId = owner(context, dependencies.ownerId);
+      const ownerId = readinessOwner(context, dependencies.ownerId);
       const appId = AppIdSchema.parse(context.req.param("appId"));
       if (!limiter.check(ownerId)) return context.json({ error: "Too many readiness checks", code: "rate_limited" }, 429);
       const request = CheckRequestSchema.parse(await context.req.json());
