@@ -7,7 +7,7 @@ import {getGatewayUrl} from "@/lib/gateway";
 export function RoutineOriginCompletion({chatId,interactionId,getToken,identity}:{chatId:string;interactionId:string;getToken:()=>Promise<string|null>;identity:string}) {
  const gateway=getGatewayUrl();
  const scope=useMemo(()=>({gateway,identity}),[gateway,identity]);
- const client=useMemo(()=>{const request=createOwnerBrowserJsonRequest(scope.gateway,getToken,fetch,{cache:"no-store",allowRelative:true});return createRoutineOriginClient((path,method,body,options)=>request({path,method,body,signal:options?.signal}));},[scope,getToken]);
+ const client=useMemo(()=>{const request=createOwnerBrowserJsonRequest(scope.gateway,getToken,fetch,{cache:"no-store",allowRelative:true});return createRoutineOriginClient((path,method,body,options)=>request({path,method,body,...options}));},[scope,getToken]);
  const state=useRoutineOrigin({client,chatId,eligible:true});
  const filtered={...state,view:state.view?{...state.view,pending:state.view.pending.filter(item=>item.interaction.interactionId===interactionId)}:null};
  return <><RoutineOriginApprovals state={filtered}/>{state.fresh&&!filtered.view?.pending.length?<p role="status">This review is closed or unavailable. Return to the source Chat to check current status.</p>:!state.view&&!state.error?<p role="status">Loading scheduled task review…</p>:null}</>;
