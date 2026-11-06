@@ -1,8 +1,13 @@
 import { Hono } from "hono";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
+import { authMiddleware } from "../../packages/gateway/src/auth.js";
 import { registerCollaborativeAppReadinessRoutes } from "../../packages/gateway/src/collaboration/collaborative-app-readiness-routes.js";
-import { markAuthContextReady, setPlatformVerifiedPrincipal } from "../../packages/gateway/src/request-principal.js";
+import {
+  markAuthContextReady,
+  markVerifiedRuntimeBearer,
+  setPlatformVerifiedPrincipal,
+} from "../../packages/gateway/src/request-principal.js";
 
 const appId = "team-tracker";
 const build = {
@@ -43,7 +48,10 @@ function setup(overrides: Record<string, unknown> = {}) {
   routes.use("*", async (context, next) => {
     markAuthContextReady(context);
     const principal = context.req.header("x-test-principal");
-    if (principal) setPlatformVerifiedPrincipal(context, principal);
+    if (principal) {
+      markVerifiedRuntimeBearer(context);
+      setPlatformVerifiedPrincipal(context, principal);
+    }
     await next();
   });
   const dependencies = {
@@ -68,6 +76,8 @@ const checkBody = {
 };
 
 describe("collaborative app readiness routes", () => {
+  afterEach(() => vi.unstubAllEnvs());
+
   it("returns only the owner current exact-build projection with private no-store caching", async () => {
     const { routes } = setup();
     const response = await routes.request(`/api/collaboration/apps/${appId}/readiness`, {
@@ -105,6 +115,21 @@ describe("collaborative app readiness routes", () => {
       headers: { "x-test-principal": "user_other" },
     })).status).toBe(403);
     expect(dependencies.resolveCurrentBuild).not.toHaveBeenCalled();
+  });
+
+  it("requires the real owner bearer middleware before accepting configured-owner fallback", async () => {
+    vi.stubEnv("MATRIX_USER_ID", "user_owner");
+    const dependencies = setup().dependencies;
+    const routes = new Hono();
+    routes.use("*", authMiddleware("owner-gateway-token"));
+    registerCollaborativeAppReadinessRoutes(routes, dependencies as never);
+
+    expect((await routes.request(`/api/collaboration/apps/${appId}/readiness`)).status).toBe(401);
+    expect(dependencies.resolveCurrentBuild).not.toHaveBeenCalled();
+
+    expect((await routes.request(`/api/collaboration/apps/${appId}/readiness`, {
+      headers: { authorization: "Bearer owner-gateway-token" },
+    })).status).toBe(200);
   });
 
   it("checks membership and persists the fail-closed result for the exact incarnation", async () => {

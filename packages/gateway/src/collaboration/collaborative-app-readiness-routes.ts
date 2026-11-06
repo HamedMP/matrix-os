@@ -9,8 +9,10 @@ import { bodyLimit } from "hono/body-limit";
 import { z } from "zod/v4";
 
 import {
+  hasVerifiedRuntimeBearer,
   isRequestPrincipalError,
   mapRequestPrincipalError,
+  MissingRequestPrincipalError,
   requireRequestPrincipal,
 } from "../request-principal.js";
 import { createRateLimiter, type RateLimiter } from "../security/rate-limiter.js";
@@ -67,6 +69,7 @@ function project(record: CollaborativeAppReadinessRecord) {
 
 function owner(context: Context, expectedOwnerId: string): string {
   const principal = requireRequestPrincipal(context, { isLocalDevelopment: false });
+  if (!hasVerifiedRuntimeBearer(context)) throw new MissingRequestPrincipalError();
   if (principal.userId !== expectedOwnerId) throw new ReadinessRouteError("forbidden");
   return principal.userId;
 }
