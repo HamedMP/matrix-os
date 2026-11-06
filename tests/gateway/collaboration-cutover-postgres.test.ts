@@ -104,7 +104,7 @@ describe.skipIf(!process.env.MATRIX_TEST_POSTGRES_URL)("S18 home cutover on real
     expect(await cutover.assertRuntimeWritable(key.runtimeId)).toBeUndefined();
   });
 
-  it("never reopens an accepted legacy member row inserted after direct activation", async () => {
+  it("keeps organization-wide project access independent of retired legacy rows across rollback", async () => {
     const revivedActor = "user_revived_legacy_after_cutover";
     const authority = new CollaborationAuthority(new CollaborationRepository(fixture.db), {
       now: () => new Date(NOW), organizationPrecondition: allowAllOrganizationPrecondition,
@@ -115,12 +115,14 @@ describe.skipIf(!process.env.MATRIX_TEST_POSTGRES_URL)("S18 home cutover on real
     await cutover.stage(key);
     await cutover.verify(key);
     await cutover.activate(key);
-    await fixture.db.insertInto("collaboration_members").values(member(revivedActor, "editor", ORG)).execute();
+    await fixture.db.insertInto("collaboration_members").values(member(revivedActor, "viewer", ORG)).execute();
     await expect(authority.authorize({ scopeId: key.scopeId, actorId: revivedActor, action: "read" }))
-      .rejects.toMatchObject({ code: "not_found" });
+      .resolves.toMatchObject({ role: "editor", membershipScopeId: key.scopeId });
+    await fixture.db.updateTable("collaboration_members").set({ status: "revoked" })
+      .where("scope_id", "=", key.scopeId).where("actor_id", "=", revivedActor).execute();
     await cutover.rollbackCompatible(key, { compatibleDirectBuild: true });
     await expect(authority.authorize({ scopeId: key.scopeId, actorId: revivedActor, action: "read" }))
-      .rejects.toMatchObject({ code: "not_found" });
+      .resolves.toMatchObject({ role: "editor", membershipScopeId: key.scopeId });
   });
 
   it("never reopens a revived legacy role inside the locked shared Chat fence", async () => {
