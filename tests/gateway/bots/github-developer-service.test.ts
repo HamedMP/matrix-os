@@ -199,3 +199,72 @@ it("uses only canonical GitHub remotes and clears ambient token and Git override
     expect(run).toHaveBeenCalled();
   } finally { vi.unstubAllEnvs(); }
 });
+
+it("treats approved wildcard characters literally and preserves matching private files in the owner index", async () => {
+  const { repo, head } = await repository();
+  await exec("git", ["switch", "-c", "matrix/literal"], { cwd: repo });
+  await writeFile(join(repo, "note*.txt"), "approved\n");
+  await writeFile(join(repo, "note-private.txt"), "private\n");
+  await exec("git", ["add", "note-private.txt"], { cwd: repo });
+  const priorIndex = (await exec("git", ["ls-files", "--stage", "-z"], { cwd: repo })).stdout;
+  const service = createGithubDeveloperService({ homePath: home, status });
+  await service.execute(workspace, { action: "commit", path: "repo", expectedHead: head, files: ["note*.txt"], message: "literal only" }, signal());
+  expect((await exec("git", ["diff-tree", "--no-commit-id", "--name-only", "-r", "HEAD"], { cwd: repo })).stdout).toBe("note*.txt\n");
+  expect((await exec("git", ["ls-files", "--stage", "-z", "--", "note-private.txt"], { cwd: repo })).stdout)
+    .toBe(priorIndex.split("\0").find(row => row.endsWith("\tnote-private.txt")) + "\0");
+  expect((await exec("git", ["status", "--porcelain"], { cwd: repo })).stdout).toBe("A  note-private.txt\n");
+});
+
+it("commits approved CRLF bytes through built-in text normalization while preserving the worktree", async () => {
+  const { repo } = await repository();
+  await writeFile(join(repo, ".gitattributes"), "*.txt text eol=lf\n");
+  await exec("git", ["add", ".gitattributes"], { cwd: repo });
+  await exec("git", ["-c", "user.name=Seed", "-c", "user.email=seed@example.com", "commit", "-m", "attributes"], { cwd: repo });
+  const head = (await exec("git", ["rev-parse", "HEAD"], { cwd: repo })).stdout.trim();
+  await exec("git", ["switch", "-c", "matrix/crlf"], { cwd: repo });
+  await writeFile(join(repo, "demo.txt"), "approved\r\n");
+  const service = createGithubDeveloperService({ homePath: home, status });
+  const action = { action: "commit" as const, path: "repo", expectedHead: head, files: ["demo.txt"], message: "normalize" };
+  const plan = await service.inspect(workspace, action, signal());
+  // Equal normalized blobs do not authorize different owner working bytes.
+  await writeFile(join(repo, "demo.txt"), "approved\n");
+  await expect(service.execute(workspace, action, signal(), { plan, assertCurrent: async () => undefined })).rejects.toMatchObject({ code: "denied" });
+  await writeFile(join(repo, "demo.txt"), "approved\r\n");
+  await service.execute(workspace, action, signal(), { plan, assertCurrent: async () => undefined });
+  expect((await exec("git", ["show", "HEAD:demo.txt"], { cwd: repo })).stdout).toBe("approved\n");
+  expect(await readFile(join(repo, "demo.txt"), "utf8")).toBe("approved\r\n");
+});
+
+it("refuses attributes changed after approval or after staging before moving the ref", async () => {
+  const { repo, head } = await repository();
+  await exec("git", ["switch", "-c", "matrix/attributes"], { cwd: repo });
+  await writeFile(join(repo, "demo.txt"), "approved\n");
+  await writeFile(join(repo, ".gitattributes"), "*.txt text eol=lf\n");
+  const service = createGithubDeveloperService({ homePath: home, status });
+  const action = { action: "commit" as const, path: "repo", expectedHead: head, files: ["demo.txt"], message: "safe attrs" };
+  const plan = await service.inspect(workspace, action, signal());
+  await writeFile(join(repo, ".gitattributes"), "*.txt -text\n");
+  await expect(service.execute(workspace, action, signal(), { plan, assertCurrent: async () => undefined })).rejects.toThrow();
+  await writeFile(join(repo, ".gitattributes"), "*.txt text eol=lf\n");
+  let changed = false;
+  const run = vi.fn(async (command: string, args: string[], options: Parameters<NonNullable<Parameters<typeof createService>[0]["run"]>>[2]) => {
+    const result = await exec(command, args, options);
+    if (args.includes("write-tree")) { await writeFile(join(repo, ".gitattributes"), "*.txt -text\n"); changed = true; }
+    return result;
+  });
+  const guarded = createGithubDeveloperService({ homePath: home, status, run });
+  await expect(guarded.execute(workspace, action, signal(), { plan, assertCurrent: async () => undefined })).rejects.toThrow();
+  expect(changed).toBe(true);
+  expect((await exec("git", ["rev-parse", "HEAD"], { cwd: repo })).stdout.trim()).toBe(head);
+});
+
+it("accepts a real clone with dotted tracking branch names while still rejecting executable branch config", async () => {
+  const { repo } = await repository();
+  await exec("git", ["branch", "-m", "release/1.0"], { cwd: repo });
+  await exec("git", ["clone", "--no-local", repo, join(workspace, "cloned")]);
+  await exec("git", ["config", "remote.origin.url", "git@github.com:owner/private-test.git"], { cwd: join(workspace, "cloned") });
+  const service = createGithubDeveloperService({ homePath: home, status });
+  await expect(service.execute(workspace, { action: "status", path: "cloned" }, signal())).resolves.toMatchObject({ branch: "release/1.0", repository: "owner/private-test" });
+  await exec("git", ["config", "branch.release/1.0.command", "touch injected"], { cwd: join(workspace, "cloned") });
+  await expect(service.execute(workspace, { action: "status", path: "cloned" }, signal())).rejects.toThrow();
+});
