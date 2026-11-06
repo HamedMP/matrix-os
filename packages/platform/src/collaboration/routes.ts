@@ -226,16 +226,21 @@ export function createPlatformCollaborationRoutes(options: {
     }
   });
   app.get("/api/collaboration/shared-apps/:scopeId/runtime/:launchId/:assetPath{.+}", async (c) => {
-    const actorId = await resolveValidatedActor(c, options.resolveActor);
-    if (!actorId) return safeJson(c, "Unauthorized", 401);
     if (!options.launchSessions) return safeJson(c, "Collaboration unavailable", 503);
     const scopeId = z.uuid().safeParse(c.req.param("scopeId"));
     const launchId = z.uuid().safeParse(c.req.param("launchId"));
     const assetPath = CollaborationAppAssetPathSchema.safeParse(c.req.param("assetPath"));
     if (!scopeId.success || !launchId.success || !assetPath.success) return safeJson(c, "Invalid request", 422);
+    const opaqueAssetRequest = c.req.header("origin") === "null" && assetPath.data !== "index.html";
+    const authenticatedActorId = await resolveValidatedActor(c, options.resolveActor);
+    const capability = !authenticatedActorId && opaqueAssetRequest
+      ? options.launchSessions.describeAssetCapability(launchId.data, scopeId.data)
+      : null;
+    const actorId = authenticatedActorId ?? capability?.actorId ?? null;
+    if (!actorId) return safeJson(c, "Unauthorized", 401);
     try {
       const admitted = await admitCollaborativeApp(options, actorId, scopeId.data);
-      const launch = options.launchSessions.describe(launchId.data, actorId, scopeId.data);
+      const launch = capability ?? options.launchSessions.describe(launchId.data, actorId, scopeId.data);
       if (!admitted) {
         await options.launchSessions.revokeActor(scopeId.data, actorId);
         return safeJson(c, "Collaboration resource not found", 404);
@@ -253,7 +258,7 @@ export function createPlatformCollaborationRoutes(options: {
         assetPath: assetPath.data,
         signal: c.req.raw.signal,
       });
-      if (assetPath.data !== "index.html") return response;
+      if (assetPath.data !== "index.html") return opaqueAssetRequest ? exposeOpaqueAsset(response) : response;
       const participant = await options.resolveParticipant(actorId);
       if (!participant) {
         await response.body?.cancel();
@@ -313,6 +318,14 @@ export function createPlatformCollaborationRoutes(options: {
   registerInvitationIdentifierResolutionRoute(app, options);
 
   return app;
+}
+
+function exposeOpaqueAsset(response: Response): Response {
+  const headers = new Headers(response.headers);
+  headers.set("Access-Control-Allow-Origin", "null");
+  headers.set("Cross-Origin-Resource-Policy", "cross-origin");
+  headers.append("Vary", "Origin");
+  return new Response(response.body, { status: response.status, statusText: response.statusText, headers });
 }
 
 async function listDiscovery(

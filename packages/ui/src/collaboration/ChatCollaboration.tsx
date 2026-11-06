@@ -85,7 +85,7 @@ export function ChatCollaboration({
   }
   if (view.kind === "terminal") return <SharedTerminalView api={api} actorId={actorId} scopeId={view.scopeId} layers={layers} />;
   if (view.kind === "project") return <SharedProjectView api={api} scopeId={view.scopeId} openChat={openChat} />;
-  if (view.kind === "app") return <SharedAppScopeView api={api} scopeId={view.scopeId} />;
+  if (view.kind === "app") return <SharedAppScopeView key={view.scopeId} api={api} scopeId={view.scopeId} />;
   if (view.kind === "canonical-chat") return <CanonicalSharedChatPanel api={api} actorId={actorId}
     runtimeId={runtimeId ?? "platform"} chatId={view.chatId} storage={storage} onMetadata={onChatMetadata}
     headerContainer={headerContainer} layers={layers} />;

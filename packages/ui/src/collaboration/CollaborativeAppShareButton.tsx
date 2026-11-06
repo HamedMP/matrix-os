@@ -28,7 +28,9 @@ export function CollaborativeAppShareButton({ appId, api, organizationId, organi
     return () => { active = false; };
   }, [api, appId]);
   const active = share?.state === "active" || share?.state === "needs_recheck";
-  const canOpen = Boolean(organizationId && organizationName && readiness.readiness && (active || readiness.canShare));
+  const effectiveOrganizationId = organizationId ?? share?.organizationId ?? null;
+  const effectiveOrganizationName = organizationName ?? share?.organizationId ?? null;
+  const canOpen = active || Boolean(effectiveOrganizationId && effectiveOrganizationName && readiness.canShare);
 
   return <div className="flex items-start gap-2">
     {readiness.readiness ? <ReadinessSummary readiness={readiness.readiness} compact />
@@ -36,8 +38,8 @@ export function CollaborativeAppShareButton({ appId, api, organizationId, organi
         ? "Checking collaboration…" : readiness.safeMessage ?? "Collaboration has not been checked."}</span>}
     <button type="button" className="rounded-md border px-2.5 py-1 text-xs font-medium disabled:cursor-not-allowed disabled:opacity-50"
       disabled={!shareKnown || !canOpen} onClick={() => setOpen(true)}>{active ? "Manage app sharing" : "Share app"}</button>
-    {open && readiness.readiness && organizationId && organizationName ? <CollaborativeAppShareDialog
-      appId={appId} api={api} readiness={readiness.readiness} organizationId={organizationId}
-      organizationName={organizationName} share={share} onShareChange={setShare} onClose={() => setOpen(false)} /> : null}
+    {open && effectiveOrganizationId && effectiveOrganizationName ? <CollaborativeAppShareDialog
+      appId={appId} api={api} readiness={readiness.readiness} organizationId={effectiveOrganizationId}
+      organizationName={effectiveOrganizationName} share={share} onShareChange={setShare} onClose={() => setOpen(false)} /> : null}
   </div>;
 }

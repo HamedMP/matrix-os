@@ -28,10 +28,13 @@ export function SharedAppViewer({ target, transport }: {
   target: SharedAppTarget;
   transport: SharedAppTransport;
 }) {
-  const [entryUrl, setEntryUrl] = useState<string | null>(null);
+  const targetKey = `${target.scopeId}:${target.buildId}:${target.shareRevision}`;
+  const [entry, setEntry] = useState<{ targetKey: string; url: string } | null>(null);
   const [state, setState] = useState<ViewerState>("launching");
   const iframeRef = useRef<HTMLIFrameElement>(null);
   const mounted = useRef(true);
+  const requestGeneration = useRef(0);
+  const entryUrl = entry?.targetKey === targetKey ? entry.url : null;
   const title = `${displayName(target.appId)} shared by ${target.owner.displayName}`;
 
   const applyFailure = useCallback((error: unknown) => {
@@ -40,40 +43,44 @@ export function SharedAppViewer({ target, transport }: {
   }, []);
 
   const launch = useCallback(async (verifyHome = false) => {
+    const generation = ++requestGeneration.current;
     setState("launching");
     try {
       const launched = await transport.launch();
-      if (verifyHome) await transport.query({ type: "refresh" });
-      if (!mounted.current) return;
-      setEntryUrl((current) => current ?? launched.entryUrl);
+      if (verifyHome) await transport.query({ action: "appInfo", app: target.appId });
+      if (!mounted.current || requestGeneration.current !== generation) return;
+      setEntry({ targetKey, url: launched.entryUrl });
       setState("ready");
     } catch (error: unknown) {
-      if (mounted.current) applyFailure(error);
+      if (mounted.current && requestGeneration.current === generation) applyFailure(error);
     }
-  }, [applyFailure, transport]);
+  }, [applyFailure, target.appId, targetKey, transport]);
 
   useEffect(() => {
     mounted.current = true;
+    let active = true;
     void launch();
     const unsubscribe = transport.subscribe({
       onChanged: async () => {
         try {
-          await transport.query({ type: "refresh" });
-          if (!mounted.current) return;
+          await transport.query({ action: "appInfo", app: target.appId });
+          if (!active || !mounted.current) return;
           setState("ready");
-          iframeRef.current?.contentWindow?.postMessage({ type: "matrix:shared-app:changed" }, window.location.origin);
+          iframeRef.current?.contentWindow?.postMessage({ type: "matrix:shared-app:changed" }, "*");
         } catch (error: unknown) {
-          if (mounted.current) applyFailure(error);
+          if (active && mounted.current) applyFailure(error);
         }
       },
       onUnavailable: () => { if (mounted.current) setState("host_offline"); },
     });
     return () => {
+      active = false;
       mounted.current = false;
+      requestGeneration.current += 1;
       unsubscribe();
       transport.close();
     };
-  }, [applyFailure, launch, transport]);
+  }, [applyFailure, launch, target.appId, transport]);
 
   useEffect(() => {
     const onMessage = (event: MessageEvent) => {
@@ -85,8 +92,10 @@ export function SharedAppViewer({ target, transport }: {
       const work = request.type === "matrix:shared-app:query"
         ? transport.query(request.action)
         : transport.mutate(request.action, request.expectedRevision);
+      const generation = requestGeneration.current;
       void work.then((result) => reply(event, request.requestId, { ok: true, result }))
         .catch((error: unknown) => {
+          if (!mounted.current || requestGeneration.current !== generation) return;
           applyFailure(error);
           const failure = error instanceof SharedAppTransportError ? error : new SharedAppTransportError("unavailable", true);
           reply(event, request.requestId, { ok: false, code: failure.code, message: failure.message });
@@ -96,15 +105,31 @@ export function SharedAppViewer({ target, transport }: {
     return () => window.removeEventListener("message", onMessage);
   }, [applyFailure, transport]);
 
+  const retry = useCallback(async () => {
+    if (state !== "uncertain") {
+      await launch(true);
+      return;
+    }
+    const generation = ++requestGeneration.current;
+    try {
+      await transport.retryMutation();
+      if (!mounted.current || requestGeneration.current !== generation) return;
+      setState("ready");
+      iframeRef.current?.contentWindow?.postMessage({ type: "matrix:shared-app:changed" }, "*");
+    } catch (error: unknown) {
+      if (mounted.current && requestGeneration.current === generation) applyFailure(error);
+    }
+  }, [applyFailure, launch, state, transport]);
+
   const retryable = state === "host_offline" || state === "unavailable" || state === "uncertain";
   return <div className="relative h-full min-h-0 w-full overflow-hidden bg-[var(--bg-primary)]">
-    {entryUrl ? <iframe ref={iframeRef} title={title} src={entryUrl}
+    {entryUrl ? <iframe ref={iframeRef} key={targetKey} title={title} src={entryUrl}
       className="h-full w-full border-0" sandbox="allow-scripts allow-forms allow-modals allow-popups" /> : null}
     {state !== "ready" ? <div className="absolute inset-0 grid place-items-center bg-[color:var(--bg-primary)]/90 p-6">
       <section role={state === "launching" ? "status" : "alert"} className="max-w-sm rounded-2xl border bg-[var(--bg-primary)] p-6 text-center shadow-lg">
         <h1 className="font-semibold">{state === "launching" ? "Opening shared app…" : heading(state)}</h1>
         {state !== "launching" ? <p className="mt-2 text-sm text-[var(--text-secondary)]">{message(state)}</p> : null}
-        {retryable ? <button type="button" className="mt-4 rounded-lg border px-3 py-2 text-sm" onClick={() => void launch(true)}>Retry</button> : null}
+        {retryable ? <button type="button" className="mt-4 rounded-lg border px-3 py-2 text-sm" onClick={() => void retry()}>Retry</button> : null}
       </section>
     </div> : null}
   </div>;
@@ -112,7 +137,7 @@ export function SharedAppViewer({ target, transport }: {
 
 function reply(event: MessageEvent, requestId: string, body: Record<string, unknown>): void {
   const source = event.source as Window | null;
-  source?.postMessage({ type: "matrix:shared-app:response", requestId, ...body }, event.origin === "null" ? "*" : event.origin);
+  source?.postMessage({ type: "matrix:shared-app:response", requestId, ...body }, "*");
 }
 
 function displayName(appId: string): string {
