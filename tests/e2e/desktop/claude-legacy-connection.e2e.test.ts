@@ -4,6 +4,7 @@ import {tmpdir} from "node:os";
 import {join,resolve} from "node:path";
 import {afterAll,beforeAll,describe,expect,it} from "vitest";
 import {_electron,type ElectronApplication,type Page} from "playwright";
+import {ProviderSettingsSnapshotSchema} from "@matrix-os/contracts";
 import {startClaudeLegacyRecoveryGateway} from "./fixtures/claude-legacy-recovery";
 import {createEvidenceDirectory} from "./fixtures/evidence-directory";
 import {dismissGettingStartedOnInteraction} from "./fixtures/getting-started";
@@ -12,6 +13,37 @@ const root=resolve(__dirname,"../../..");
 const built = existsSync(join(root,"desktop/out/main/index.js"));
 if(process.env.MATRIX_DESKTOP_E2E_REQUIRED==="1"&&!built)throw new Error("Required Electron Desktop build is missing");
 const suite = built ? describe : describe.skip;
+
+async function nativeSnapshotOnFocus(page:Page,gatewayUrl:string) {
+ const receipt=await page.evaluate(async expectedOrigin=>{
+  const originalFetch=window.fetch;
+  let timer:ReturnType<typeof setTimeout>|undefined;
+  try {
+   return await new Promise<{status:number;snapshot:unknown}>((resolve,reject)=>{
+    timer=setTimeout(()=>reject(new Error("Native focus response was not received")),5000);
+    window.fetch=async(input,init)=>{
+     const response=await originalFetch(input,init);
+     const request=input instanceof Request?input:null;
+     const url=new URL(request?.url??String(input),window.location.href);
+     if(url.origin===expectedOrigin&&url.pathname==="/api/ai/provider-settings"&&(init?.method??request?.method??"GET")==="GET") {
+      // Observe the real renderer response as it arrives. A later CDP body read
+      // can lose its network buffer even though the renderer received the body.
+      // The application keeps its original Response and cancellation behavior.
+      void response.clone().json().then(snapshot=>resolve({status:response.status,snapshot}),reject);
+     }
+     return response;
+    };
+    window.dispatchEvent(new Event("focus"));
+   });
+  } finally {
+   clearTimeout(timer);
+   window.fetch=originalFetch;
+  }
+ },new URL(gatewayUrl).origin);
+ expect(receipt.status).toBe(200);
+ return ProviderSettingsSnapshotSchema.parse(receipt.snapshot);
+}
+
 suite("Electron Desktop native Claude legacy recovery (synthetic identity)",()=>{
  let app:ElectronApplication,page:Page,profile:string;
  let gateway:Awaited<ReturnType<typeof startClaudeLegacyRecoveryGateway>>;
@@ -99,10 +131,8 @@ suite("Electron Desktop Terminal-origin Claude authentication (synthetic native 
   expect(await page.getByRole("button",{name:"Use connected Claude account",exact:true}).count()).toBe(0);
   await page.screenshot({path:join(captures.path,"01-terminal-connected.png")});
   await native.setStatus("second@example.test");await page.waitForTimeout(550);
-  const replacement = page.waitForResponse(response => new URL(response.url()).pathname === "/api/ai/provider-settings" && response.request().method() === "GET");
-  await focus();
-  const replacementSnapshot = await (await replacement).json();
-  expect(replacementSnapshot.accounts.find((account:{id:string})=>account.id==="owner_claude_profile").connectionDetails.email).toBe("second@example.test");
+  const replacementSnapshot = await nativeSnapshotOnFocus(page,gateway.url);
+  expect(replacementSnapshot.accounts.find(account=>account.id==="owner_claude_profile")).toMatchObject({authState:"authenticated",connectionDetails:{email:"second@example.test"}});
   expect(await row().innerText()).toContain("Connected");
   expect(await page.locator(".matrix-ap-connected").count()).toBe(0);
   await native.setStatus(null);await page.waitForTimeout(550);await focus();await expect.poll(()=>row().innerText()).toContain("Not connected");

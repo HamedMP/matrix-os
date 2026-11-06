@@ -89,6 +89,7 @@ export function AgentSection({
       <AgentsProvidersView
         key={`${identityKey}:${runtimeSlot}`}
         snapshot={controller.snapshot}
+        capabilityRefreshRevision={controller.capabilityRefreshRevision}
         selectedHarnessId={controller.selectedHarnessId}
         connectionAttempt={controller.connectionAttempt}
         busy={controller.busy}

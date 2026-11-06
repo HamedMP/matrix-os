@@ -182,6 +182,7 @@ function ConnectedAgentsProvidersAdapter({
     <>
     <AgentsProvidersView
       snapshot={controller.snapshot}
+      capabilityRefreshRevision={controller.capabilityRefreshRevision}
       selectedHarnessId={controller.selectedHarnessId}
       connectionAttempt={controller.connectionAttempt}
       busy={controller.busy}

@@ -53,6 +53,8 @@ export interface ProviderSettingsTransport {
 export interface ProviderSettingsControllerState {
   identityKey: string;
   snapshot: ProviderSettingsSnapshot | null;
+  /** Discovery changes independently from native proof timestamp renewal. */
+  capabilityRefreshRevision: number;
   selectedHarnessId: string | null;
   connectionAttempt: ProviderConnectionAttempt | null;
   busy: boolean;
@@ -76,6 +78,7 @@ export interface ProviderSettingsMutationOptions {
 interface ApplySnapshotOptions {
   operationId: number;
   connectionAttempt?: ProviderConnectionAttempt | null;
+  refreshCapabilities?: boolean;
 }
 
 function hasErrorCode(error: unknown, code: ProviderSettingsTransportErrorCode): boolean {
@@ -133,6 +136,7 @@ export class ProviderSettingsController {
     this.state = {
       identityKey: options.identityKey,
       snapshot: null,
+      capabilityRefreshRevision: 0,
       selectedHarnessId: null,
       connectionAttempt: null,
       busy: false,
@@ -234,9 +238,11 @@ export class ProviderSettingsController {
       if (this.disposed || operationId < this.appliedOperationId) return false;
       const snapshot = nativeAuthOnly
         ? this.managedCredit.reconcileNativeSnapshot(parsed.data) : parsed.data;
-      const applied = this.applySnapshot(snapshot, { operationId });
-      if (applied && (refresh || nativeAuthOnly && previous
-        && nativeAuthenticationFingerprint(previous) !== nativeAuthenticationFingerprint(snapshot))) this.options.onCatalogChanged?.();
+      const nativeAuthChanged = previous !== null
+        && nativeAuthenticationFingerprint(previous) !== nativeAuthenticationFingerprint(snapshot);
+      const applied = this.applySnapshot(snapshot, { operationId,
+        refreshCapabilities: !nativeAuthOnly || previous?.revision !== snapshot.revision || nativeAuthChanged });
+      if (applied && (refresh || nativeAuthOnly && nativeAuthChanged)) this.options.onCatalogChanged?.();
       return applied;
     } catch (error) {
       if (request.signal.aborted) return false;
@@ -291,6 +297,7 @@ export class ProviderSettingsController {
       }
       const applied = this.applySnapshot(parsed.data.snapshot, {
         operationId,
+        refreshCapabilities: true,
         connectionAttempt: parsed.data.kind === "login_attempt" ? parsed.data.attempt : null,
       });
       if (applied) this.options.onCatalogChanged?.(intent, current);
@@ -350,7 +357,11 @@ export class ProviderSettingsController {
       && isConnectionAttemptActive(candidateAttempt, snapshot)
       ? candidateAttempt
       : null;
-    this.update({ snapshot, selectedHarnessId, connectionAttempt, error: null });
+    const nativeAuthChanged = this.state.snapshot !== null
+      && nativeAuthenticationFingerprint(this.state.snapshot) !== nativeAuthenticationFingerprint(snapshot);
+    const capabilityRefreshRevision = this.state.capabilityRefreshRevision
+      + (options.refreshCapabilities || nativeAuthChanged ? 1 : 0);
+    this.update({ snapshot, selectedHarnessId, connectionAttempt, capabilityRefreshRevision, error: null });
     return true;
   }
 

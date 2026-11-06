@@ -121,6 +121,13 @@ responses cannot replace a new controller. Native authentication changes notify
 catalog consumers after a validated snapshot is accepted; timestamp renewal alone
 does not invalidate catalogs. Retained Chat consumers do not start another poller.
 
+Native observation timestamps must not trigger unrelated capability or Bot
+discovery. Both production adapters supply a client-local capability refresh
+revision, advanced only for accepted foreground refresh/mutation, saved revision
+changes or semantic native-auth changes. Quiet proof and credit renewals leave
+this revision stable while preserving the fresh native snapshot timestamp.
+Deliberate Refresh, workflow completion and Computer changes retain discovery.
+
 Automatic native observations do not block or restart the independent 45-second
 managed-credit refresh. A single validated managed-credit observation may survive
 an older native snapshot only within the same controller identity, snapshot
@@ -148,3 +155,9 @@ cadence, hidden/offline pause, concurrent triggers and Computer replacement.
 Production Electron exercises the same external native-state transition and
 asserts zero login/adoption starts, unchanged configuration and Bot grants. These
 fixtures do not establish paid inference or a customer's deployed acceptance.
+
+Advancing-timestamp adapter regressions must exercise the real controller/view
+and assert bounded capability and Bot reads, not a frozen snapshot. Electron
+account-replacement acceptance must capture the actual renderer-received native
+snapshot and exact principal without depending on debugger response-body
+retention. Keep the original response and admission/configuration assertions.

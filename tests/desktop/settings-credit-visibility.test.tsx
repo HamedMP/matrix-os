@@ -68,7 +68,7 @@ function installApi() {
   const get = vi.fn(async (path: string) => {
     if (path === "/api/ai/provider-settings/managed-credit") return observation(4_000_000 - ++reads * 10_000);
     if (path.startsWith("/api/ai/provider-settings/workflows/")) return [];
-    if (path.startsWith("/api/ai/provider-settings?")) return initial;
+    if (path.startsWith("/api/ai/provider-settings?")) return { ...initial, refreshedAt: new Date().toISOString() };
     throw new Error(`Unexpected synthetic request: ${path}`);
   });
   const api = { get, post: vi.fn(), forRuntime: () => api } as unknown as ApiClient;

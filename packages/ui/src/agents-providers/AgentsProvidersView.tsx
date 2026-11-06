@@ -41,6 +41,7 @@ function supportedActions(snapshot: ProviderSettingsSnapshot): readonly Supporte
 
 export function AgentsProvidersView({
   snapshot,
+  capabilityRefreshRevision,
   selectedHarnessId,
   connectionAttempt = null,
   busy = false,
@@ -62,6 +63,7 @@ export function AgentsProvidersView({
   speechClient,
 }: AgentsProvidersViewProps) {
   const root = useRef<HTMLDivElement>(null);
+  const capabilityRefreshKey = capabilityRefreshRevision ?? snapshot.refreshedAt;
   const nativeObservationTime = useNativeObservationClock(snapshot.refreshedAt, snapshot.accounts);
   const [localChatgptRefreshRevision, setLocalChatgptRefreshRevision] = useState(0);
   const [subscriptionTarget, setSubscriptionTarget] = useState<string | null>(null);
@@ -101,7 +103,7 @@ export function AgentsProvidersView({
       if (caught instanceof ProviderWorkflowClientError && caught.reason === "forbidden") return;
     });
     return () => controller.abort();
-  }, [workflowClient, snapshot.refreshedAt]);
+  }, [workflowClient, capabilityRefreshKey]);
   const rememberOperation = (id: string, operation: string | null) => setOperationIds(current => {
     const next = { ...current };
     if (operation === null) delete next[id];
@@ -295,7 +297,7 @@ export function AgentsProvidersView({
             const connectionCard = (action?: ReactNode) => <ConnectedAccountCard harness={harness} account={legacyNative?.account ?? selectedAccount} source={legacyNative?.source ?? source} action={action} disabled={mutationsDisabled} onRefresh={refreshSettings} />;
             return (
               <>
-                {workflowClient?.botConnections && harness.harness === "claude" ? <BotUseAuthorizationPanel key={`${harness.id}:bot-use`} client={workflowClient.botConnections} refreshKey={snapshot.refreshedAt} harness={harness.harness} disabled={mutationsDisabled || workflowPermission === "forbidden"} /> : null}
+                {workflowClient?.botConnections && harness.harness === "claude" ? <BotUseAuthorizationPanel key={`${harness.id}:bot-use`} client={workflowClient.botConnections} refreshKey={String(capabilityRefreshKey)} harness={harness.harness} disabled={mutationsDisabled || workflowPermission === "forbidden"} /> : null}
                 {savedNativeAccount ? <ConnectedAccountCard harness={harness} account={selectedAccount} source={source} saved disabled={mutationsDisabled} onRefresh={refreshSettings} /> : null}
                 {!guided ? <ConnectionChoices
                   snapshot={snapshot}
