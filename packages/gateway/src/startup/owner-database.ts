@@ -28,6 +28,7 @@ import { createChatExecutionRootResolver, type ChatExecutionRootResolver } from 
 import { createGatewayChatEventStream } from "../chat/gateway-event-stream.js";
 import type { CanonicalChatOrchestrator } from "../chat/orchestrator.js";
 import type { OwnerToolOutputProjection } from "../chat/owner-tool-output.js";
+import type { GatewayScopeRuntimeProfilePolicy } from "../collaboration/scope-runtime-profile-policy.js";
 import { ChatRepository } from "../chat/repository.js";
 import { createDiscussionOnlyChatExecutionGuard } from "../collaboration/chat-scope.js";
 import type { GatewayCollaborationConfig, GatewayCollaborationConfigurationFailure, GatewayCollaborationRuntime } from "../collaboration/wiring.js";
@@ -89,6 +90,7 @@ export interface OwnerDatabaseServices extends OwnerDatabaseFallbackServices {
 }
 
 export interface InitializeOwnerDatabaseOptions {
+  profilePolicy?: GatewayScopeRuntimeProfilePolicy;
   databaseUrl?: string;
   homePath: string;
   collaborationConfig: GatewayCollaborationConfig | null;
@@ -144,7 +146,7 @@ export async function initializeOwnerDatabaseServices(
       const osViewStateRepository = new OsViewStateRepository(kysely as Kysely<any>);
       services.osViewStateRepository = osViewStateRepository;
       await osViewStateRepository.bootstrap();
-      const chatRepository = new ChatRepository(kysely as Kysely<any>);
+      const chatRepository = new ChatRepository(kysely as Kysely<any>, false, undefined, options.profilePolicy);
       services.chatRepository = chatRepository;
       await chatRepository.bootstrap();
       const ownerChatExecutionRoots = createChatExecutionRootResolver({

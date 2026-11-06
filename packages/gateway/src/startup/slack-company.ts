@@ -64,7 +64,7 @@ export async function startSlackCompany(options:{ownerId:string;repository:ChatR
   await bootstrapSlackCompanyDatabase(slackDb);
   const execution=collaboration.chatExecutionAdapter;
   const readers=createSlackCanonicalReaders(repository.kysely);
-  const resolveThread=createSlackThreadResolver({db,chats:repository,authority:collaboration.authority,executionRoots:options.executionRoots,
+  const resolveThread=createSlackThreadResolver({db,chats:repository,profilePolicy:repository.profilePolicy,authority:collaboration.authority,executionRoots:options.executionRoots,
     async getEligibility(){const capability=collaboration.sharedAiCapability;if(!capability)throw new Error("Company execution unavailable");return capability;},
     async resolveCompanyBot(input){
       // Dedicated definition per company Project: no employee's private bot instructions are copied.
