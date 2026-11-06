@@ -311,7 +311,9 @@ export class CollaborationDirectoryOutbox {
           organizationId: row.organization_id ?? null,
           audience: currentMembershipApp
             ? "current_membership"
-            : !parentScopeId && ((row.kind === "project" && (row.lifecycle === "shared" || row.lifecycle === "archived")) || row.organization_grant_id)
+            : !parentScopeId && (row.kind === "project"
+              ? row.lifecycle === "shared" || row.lifecycle === "archived"
+              : Boolean(row.organization_grant_id))
               ? "organization"
               : null,
           organizationGrantId: parentScopeId || currentMembershipApp || row.kind === "project"
