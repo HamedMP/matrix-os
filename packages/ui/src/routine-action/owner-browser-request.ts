@@ -1,4 +1,4 @@
-export interface OwnerBrowserJsonRequest { path: string; method: "GET" | "POST"; body?: unknown; signal?: AbortSignal }
+export interface OwnerBrowserJsonRequest { path: string; method: "GET" | "POST"; body?: unknown; signal?: AbortSignal; timeoutMs?: number }
 /** Existing bounded owner-browser transport; no request here supplies origin authority. */
 export function createOwnerBrowserJsonRequest(gatewayUrl: string, getToken: () => Promise<string | null>, fetcher: typeof fetch = fetch, options: { cache?: RequestCache; allowRelative?: boolean } = {}) {
   const gateway = gatewayUrl === "" && options.allowRelative ? null : new URL(gatewayUrl);
@@ -12,7 +12,7 @@ export function createOwnerBrowserJsonRequest(gatewayUrl: string, getToken: () =
     const controller = new AbortController(), signal = controller.signal;
     const cancel = () => controller.abort();
     callerSignal.addEventListener("abort", cancel, { once: true });
-    const timer = setTimeout(cancel, 10_000);
+    const timer = setTimeout(cancel, input.timeoutMs ?? 10_000);
     let rejectAbort!: (error: Error) => void;
     const cancelled = new Promise<never>((_resolve, reject) => { rejectAbort = reject; });
     const onAbort = () => rejectAbort(new Error("Routine confirmation unavailable"));
