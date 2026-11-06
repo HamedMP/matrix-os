@@ -129,7 +129,10 @@ describe("SharedAppViewer", () => {
     expect(screen.getByTitle("Team tracker shared by Owner")).toBe(frame);
 
     fireEvent.click(screen.getByRole("button", { name: "Retry" }));
-    await waitFor(() => expect(platform.post).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(direct.request).toHaveBeenCalledWith(scopeId, "POST",
+      `/api/collaboration/scopes/${scopeId}/apps/team-tracker/view`,
+      { action: { action: "appInfo", app: "team-tracker" } }));
+    expect(platform.post).toHaveBeenCalledTimes(1);
     expect(screen.getByTitle("Team tracker shared by Owner")).toBe(frame);
 
     window.dispatchEvent(new MessageEvent("message", {
@@ -157,6 +160,52 @@ describe("SharedAppViewer", () => {
       `/api/collaboration/scopes/${scopeId}/apps/team-tracker/view`,
       { action: { action: "appInfo", app: "team-tracker" } });
     expect(postMessage).toHaveBeenCalledWith({ type: "matrix:shared-app:changed" }, "*");
+  });
+
+  it("keeps uncertain-save recovery visible when another member changes the app", async () => {
+    const { platform, direct, eventHandlers } = setup();
+    direct.request.mockRejectedValueOnce(new CollaborationDirectError("unavailable"));
+    const transport = createSharedAppTransport({ platform, direct: direct as never, target });
+    render(<SharedAppViewer target={target} transport={transport} />);
+    const frame = await screen.findByTitle("Team tracker shared by Owner") as HTMLIFrameElement;
+    window.dispatchEvent(new MessageEvent("message", {
+      source: frame.contentWindow,
+      origin: "null",
+      data: { type: "matrix:shared-app:mutate", requestId: "req_12345678", expectedRevision: "1", action: { value: "draft" } },
+    }));
+    await screen.findByText("Change not confirmed");
+
+    await act(async () => { await eventHandlers()?.onEvent(); });
+
+    expect(screen.getByText("Change not confirmed")).toBeVisible();
+    expect(screen.getByRole("button", { name: "Retry" })).toBeVisible();
+  });
+
+  it("recovers a mounted offline app without replacing its document after launch expiry", async () => {
+    const { platform, direct, eventHandlers } = setup();
+    const transport = createSharedAppTransport({ platform, direct: direct as never, target });
+    render(<SharedAppViewer target={target} transport={transport} />);
+    const frame = await screen.findByTitle("Team tracker shared by Owner") as HTMLIFrameElement;
+    const originalUrl = frame.src;
+    platform.post.mockResolvedValueOnce({
+      target: { kind: "shared", scopeId, organizationId: target.organizationId, appId: target.appId,
+        catalogId: target.catalogId, buildId: target.buildId, name: "Team tracker", owner: target.owner,
+        shareRevision: target.shareRevision },
+      launchId: "20000000-0000-4000-8000-000000000009",
+      entryUrl: "/expired-launch-replacement/index.html",
+      expiresAt: "2026-11-05T10:10:00.000Z",
+    });
+    await act(async () => { eventHandlers()?.onUnavailable(); });
+
+    fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+
+    await waitFor(() => expect(screen.queryByText("Owner computer offline")).toBeNull());
+    expect(screen.getByTitle("Team tracker shared by Owner")).toBe(frame);
+    expect((screen.getByTitle("Team tracker shared by Owner") as HTMLIFrameElement).src).toBe(originalUrl);
+    expect(platform.post).toHaveBeenCalledTimes(1);
+    expect(direct.request).toHaveBeenLastCalledWith(scopeId, "POST",
+      `/api/collaboration/scopes/${scopeId}/apps/team-tracker/view`,
+      { action: { action: "appInfo", app: "team-tracker" } });
   });
 
   it("retries an uncertain iframe mutation through retryMutation instead of relaunching", async () => {
