@@ -106,6 +106,18 @@ export function SharedAppViewer({ target, transport }: {
   }, [applyFailure, transport]);
 
   const retry = useCallback(async () => {
+    if (state === "conflict") {
+      const generation = ++requestGeneration.current;
+      try {
+        await transport.query({ action: "appInfo", app: target.appId });
+        if (!mounted.current || requestGeneration.current !== generation) return;
+        setState("ready");
+        iframeRef.current?.contentWindow?.postMessage({ type: "matrix:shared-app:changed" }, "*");
+      } catch (error: unknown) {
+        if (mounted.current && requestGeneration.current === generation) applyFailure(error);
+      }
+      return;
+    }
     if (state !== "uncertain") {
       await launch(true);
       return;
@@ -119,9 +131,9 @@ export function SharedAppViewer({ target, transport }: {
     } catch (error: unknown) {
       if (mounted.current && requestGeneration.current === generation) applyFailure(error);
     }
-  }, [applyFailure, launch, state, transport]);
+  }, [applyFailure, launch, state, target.appId, transport]);
 
-  const retryable = state === "host_offline" || state === "unavailable" || state === "uncertain";
+  const retryable = state === "host_offline" || state === "unavailable" || state === "uncertain" || state === "conflict";
   return <div className="relative h-full min-h-0 w-full overflow-hidden bg-[var(--bg-primary)]">
     {entryUrl ? <iframe ref={iframeRef} key={targetKey} title={title} src={entryUrl}
       className="h-full w-full border-0" sandbox="allow-scripts allow-forms allow-modals allow-popups" /> : null}
@@ -129,7 +141,9 @@ export function SharedAppViewer({ target, transport }: {
       <section role={state === "launching" ? "status" : "alert"} className="max-w-sm rounded-2xl border bg-[var(--bg-primary)] p-6 text-center shadow-lg">
         <h1 className="font-semibold">{state === "launching" ? "Opening shared app…" : heading(state)}</h1>
         {state !== "launching" ? <p className="mt-2 text-sm text-[var(--text-secondary)]">{message(state)}</p> : null}
-        {retryable ? <button type="button" className="mt-4 rounded-lg border px-3 py-2 text-sm" onClick={() => void retry()}>Retry</button> : null}
+        {retryable ? <button type="button" className="mt-4 rounded-lg border px-3 py-2 text-sm" onClick={() => void retry()}>
+          {state === "conflict" ? "Review edit" : "Retry"}
+        </button> : null}
       </section>
     </div> : null}
   </div>;
