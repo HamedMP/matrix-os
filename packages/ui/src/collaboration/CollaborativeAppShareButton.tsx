@@ -17,10 +17,11 @@ export function CollaborativeAppShareButton({ appId, api, organizationId, organi
   const sharing = useCollaborativeAppSharing({ appId, api, manageShare: true });
   const [open, setOpen] = useState(false);
   const [opening, setOpening] = useState(false);
-  const active = sharing.share?.state === "active" || sharing.share?.state === "needs_recheck";
-  const effectiveOrganizationId = active ? sharing.share.organizationId : organizationId;
-  const effectiveOrganizationName = active
-    ? organizationId === sharing.share.organizationId ? organizationName ?? sharing.share.organizationId : sharing.share.organizationId
+  const activeShare = sharing.share?.state === "active" || sharing.share?.state === "needs_recheck" ? sharing.share : null;
+  const active = activeShare !== null;
+  const effectiveOrganizationId = activeShare ? activeShare.organizationId : organizationId;
+  const effectiveOrganizationName = activeShare
+    ? organizationId === activeShare.organizationId ? organizationName ?? activeShare.organizationId : activeShare.organizationId
     : organizationName;
   const canOpen = active || Boolean(effectiveOrganizationId && effectiveOrganizationName && sharing.canShare);
   const handleOpen = async () => {
