@@ -1,3 +1,5 @@
+import type {ScheduledMessagePresentation} from "@matrix-os/ui/chat-scheduled-message";
+import {NativeScheduledMessageMeta} from "./NativeScheduledMessageMeta";
 import { useEffect, useState } from "react";
 import { Pressable, Text, View } from "react-native";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
@@ -18,6 +20,7 @@ const SENDING_SPINNER_SIZE = 12;
 const ACTION_HIT_SLOP = { top: 12, bottom: 12, left: 8, right: 8 } as const;
 
 export interface UserMessageProps extends Pick<MessageAttachmentsProps, "renderComputerPhoto"> {
+  scheduledMessage?: ScheduledMessagePresentation;
   text: string;
   /** The photos and files sent with it, shown above the text. */
   attachments?: readonly TranscriptAttachment[];
@@ -47,25 +50,28 @@ export function UserMessage({
   onRetry,
   onEdit,
   retryDisabled = false,
+  scheduledMessage,
 }: UserMessageProps) {
-  const content = !attachments || attachments.length === 0 ? <Bubble text={text} chatId={chatId} /> : (
+  const content = !attachments || attachments.length === 0 ? <Bubble text={text} chatId={chatId} scheduled={Boolean(scheduledMessage)} /> : (
     <View testID="user-message-with-attachments" style={styles.group}>
       <MessageAttachments attachments={attachments} renderComputerPhoto={renderComputerPhoto} />
       {text ? <Bubble text={text} chatId={chatId} /> : null}
     </View>
   );
-  if (!delivery) return content;
+  if (!delivery&&!scheduledMessage) return content;
   return (
     <View style={styles.group}>
+      {scheduledMessage?<NativeScheduledMessageMeta {...scheduledMessage}/>:null}
       {content}
       {delivery === "failed"
         ? <UnsentStatus onRetry={onRetry} onEdit={onEdit} retryDisabled={retryDisabled} />
-        : <SendingStatus />}
+        : delivery ? <SendingStatus /> : null}
     </View>
   );
 }
 
-function Bubble({ text, chatId }: { text: string; chatId?: string | null }) {
+function Bubble({ text, chatId, scheduled=false }: { text: string; chatId?: string | null;scheduled?:boolean }) {
+  const [expanded,setExpanded]=useState(false);const collapsible=scheduled&&(text.length>200||text.split("\n").length>3);
   const { theme } = useUnistyles();
 
   return (
@@ -77,7 +83,8 @@ function Bubble({ text, chatId }: { text: string; chatId?: string | null }) {
       cornerRadius={theme.v2.radius.bubble}
     >
       <Pressable accessible={false} testID="user-message" style={styles.bubble}>
-        <Text style={styles.text}>{text}</Text>
+        <Text style={styles.text} numberOfLines={collapsible&&!expanded?3:undefined}>{text}</Text>
+        {collapsible?<Pressable accessibilityRole="button" accessibilityLabel={expanded?"Show less":"Show more"} onPress={()=>setExpanded(value=>!value)}><Text style={styles.text}>{expanded?"Show less":"Show more"}</Text></Pressable>:null}
       </Pressable>
     </ChatContextMenu>
   );

@@ -19,7 +19,7 @@ it("negotiates funding-aware catalog states without changing the authenticated r
 it("opts Native Mobile detail reads into complete owner command previews", async () => {
   await fetchChatDetail("test-token", "https://example.test/vm/test", "chat_command");
   expect(fetchAuthenticatedJson).toHaveBeenLastCalledWith(expect.objectContaining({
-    url: "https://example.test/vm/test/api/chats/chat_command?limit=200&fundingVersion=1&commandPreviewVersion=1&assistantTextVersion=1",
+    url: "https://example.test/vm/test/api/chats/chat_command?limit=200&fundingVersion=1&messageVersion=2&commandPreviewVersion=1&assistantTextVersion=1",
     token: "test-token",
   }));
 });
@@ -33,7 +33,7 @@ it("negotiates expanded assistant text for turn admission without changing the m
   };
   await admitChatTurn("test-token", "https://example.test/vm/test", "chat_command", input);
   expect(fetchAuthenticatedJson).toHaveBeenLastCalledWith(expect.objectContaining({
-    url: "https://example.test/vm/test/api/chats/chat_command/turns?fundingVersion=1&commandPreviewVersion=1&assistantTextVersion=1",
+    url: "https://example.test/vm/test/api/chats/chat_command/turns?fundingVersion=1&messageVersion=2&commandPreviewVersion=1&assistantTextVersion=1",
     token: "test-token", method: "POST", body: JSON.stringify(input),
   }));
 });
