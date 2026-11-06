@@ -2,6 +2,7 @@ import { Hono } from "hono";
 import { describe, expect, it, vi } from "vitest";
 
 import { registerCollaborativeAppReadinessRoutes } from "../../packages/gateway/src/collaboration/collaborative-app-readiness-routes.js";
+import { CollaborativeAppShareRepositoryError } from "../../packages/gateway/src/collaboration/collaborative-app-share-repository.js";
 import { markAuthContextReady, setPlatformVerifiedPrincipal } from "../../packages/gateway/src/request-principal.js";
 
 const appId = "team-tracker";
@@ -132,5 +133,15 @@ describe("collaborative app share routes", () => {
     const response = await request(failed.routes, "");
     expect(response.status).toBe(503);
     expect(JSON.stringify(await response.json())).not.toMatch(/postgres|password|private/);
+  });
+
+  it("maps optimistic share repository conflicts to a retryable 409", async () => {
+    const { routes, shareService } = setup();
+    shareService.stop.mockRejectedValue(new CollaborativeAppShareRepositoryError("conflict"));
+
+    const response = await request(routes, "", "DELETE", stop);
+
+    expect(response.status).toBe(409);
+    expect(await response.json()).toEqual({ error: "App changed; refresh and try again", code: "conflict" });
   });
 });
