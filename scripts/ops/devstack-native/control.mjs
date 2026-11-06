@@ -132,11 +132,15 @@ export async function preflight(config, attestHarness, run = command) {
   if (process.platform !== "linux" || process.arch !== "x64" || process.getuid?.() !== 0) blockers.push("linux_x64_root_required");
   const { preparePlacement } = await import("./placement.mjs");
   try { await preparePlacement(config, { readOnly: true }); await assertVacant(config, run); } catch (error) { blockers.push(safeCode(error)); }
-  for (const path of [config.ownedNode.binary, "/usr/bin/systemd-run", "/usr/bin/systemctl", "/usr/bin/nsenter", "/usr/bin/env", "/usr/bin/systemd-notify"]) {
+  for (const path of [config.ownedNode.binary, "/usr/bin/systemd-run", "/usr/bin/systemctl", "/usr/bin/busctl", "/usr/bin/nsenter", "/usr/bin/env", "/usr/bin/systemd-notify"]) {
     try { await access(path, constants.X_OK); } catch (error) {
       if (!["ENOENT", "EACCES"].includes(error.code)) throw error; blockers.push("native_dependency_missing");
     }
   }
+  // Read-only positive control before run mode is allowed to reserve or launch.
+  const bus = await run("/usr/bin/busctl", ["--system", "get-property", "org.freedesktop.systemd1", "/org/freedesktop/systemd1",
+    "org.freedesktop.systemd1.Manager", "Version"], 3000);
+  if (bus.code !== 0 || bus.stderrPresent || !/^s "[^"\r\n]{1,256}"$/.test(bus.stdout)) blockers.push("system_bus_unavailable");
   try {
     for (const name of ["main.js", "host-config.js", "systemd-unit-identity.js"]) assert((await lstat(`${config.appRoot}/packages/scope-runtime/dist/${name}`)).isFile(), "build_missing");
     const worker = await lstat(`${config.appRoot}/packages/scope-runtime/dist/worker.js`);
