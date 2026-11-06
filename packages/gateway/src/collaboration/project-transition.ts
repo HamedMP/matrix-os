@@ -326,6 +326,28 @@ export function createProjectTransitionJournal(options: {
             && parsed.destinationAuthorityGeneration !== Number(scope.authority_generation) + 1)) {
           throw new ProjectTransitionError("conflict");
         }
+        // A completed unshare or owner-departure cleanup leaves the project
+        // private, but older releases retained its generation-bound bindings
+        // and derived inherited scopes. The next explicit share owns a fresh
+        // inventory and authority generation, so clear only those derived
+        // artifacts while holding the project lock. Direct scopes remain.
+        const staleInheritedScopes = await trx.selectFrom("collaboration_scopes")
+          .select("id")
+          .where("parent_scope_id", "=", scope.id)
+          .where("membership_mode", "=", "inherited")
+          .where("lifecycle", "=", "private")
+          .where("deleted_at", "is", null)
+          .orderBy("id")
+          .forUpdate()
+          .execute();
+        await trx.deleteFrom("collaboration_resource_bindings")
+          .where("project_scope_id", "=", scope.id)
+          .execute();
+        if (staleInheritedScopes.length > 0) {
+          await trx.deleteFrom("collaboration_scopes")
+            .where("id", "in", staleInheritedScopes.map((child) => child.id))
+            .execute();
+        }
         const updatedScope = await trx.updateTable("collaboration_scopes").set({
           lifecycle: "preparing",
           updated_at: createdAt,
