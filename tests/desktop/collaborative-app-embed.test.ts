@@ -95,6 +95,7 @@ describe("collaborative app Electron embed", () => {
       requestUrl,
       gatewayOrigin: "https://platform.test",
       scopeId: TARGET.scopeId,
+      appId: TARGET.appId,
       method,
       mainFrame,
     });
@@ -111,7 +112,26 @@ describe("collaborative app Electron embed", () => {
       "GET",
     )).toBe(true);
     expect(authorize("https://platform.test/api/collaboration/direct-sessions", "POST")).toBe(true);
+    expect(authorize(
+      `https://platform.test/api/collaboration/scopes/${TARGET.scopeId}/apps/${TARGET.appId}/view`,
+      "POST",
+      true,
+    )).toBe(true);
+    expect(authorize(
+      `https://platform.test/api/collaboration/scopes/${TARGET.scopeId}/apps/${TARGET.appId}/actions`,
+      "POST",
+      true,
+    )).toBe(true);
+    expect(authorize(
+      `https://platform.test/api/collaboration/scopes/${TARGET.scopeId}/apps/${TARGET.appId}/actions`,
+      "POST",
+    )).toBe(false);
     expect(authorize("https://platform.test/api/collaboration/scopes/another/apps/inventory/actions", "POST")).toBe(false);
+    expect(authorize(
+      `https://platform.test/api/collaboration/scopes/${TARGET.scopeId}/apps/another/actions`,
+      "POST",
+      true,
+    )).toBe(false);
     expect(authorize("https://platform.test/api/collaboration/shared-apps/20000000-0000-4000-8000-000000000002/launch", "POST")).toBe(false);
     expect(authorize("https://platform.test/api/apps/inventory/session-token", "POST", true)).toBe(false);
     expect(authorize(`https://evil.test/shared/app/${TARGET.scopeId}`, "GET", true)).toBe(false);
