@@ -510,10 +510,7 @@ describe("project collaboration transition journal", () => {
     ]);
   });
 
-  it("shares a confirmed project with its whole organization as contributors, published at activation", async () => {
-    // Product default (2026-10-03): confirming "Share whole project" shares it with everyone in the
-    // organization. The owner takes no further step; before this the project was published to
-    // nobody and recipients never saw it.
+  it("shares a confirmed project with its whole organization without creating grants or execution policy", async () => {
     await fixture.db.insertInto("collaboration_members").values({
       scope_id: SCOPE_ID, actor_id: OWNER_ID, role: "owner", status: "accepted", organization_id: "org_matrix_team",
       invitation_id: null, invited_by: OWNER_ID, accepted_at: NOW, expires_at: null, revision: 1,
@@ -534,19 +531,16 @@ describe("project collaboration transition journal", () => {
     await transitions.activate(TRANSITION_ID);
     await transitions.activate(TRANSITION_ID);
 
-    const grants = await fixture.db.selectFrom("collaboration_grants")
-      .select(["id", "organization_id", "audience_kind", "audience_actor_id", "preset", "state", "policy_version", "created_by"])
-      .where("scope_id", "=", SCOPE_ID).execute();
-    expect(grants).toEqual([{
-      id: expect.any(String), organization_id: "org_matrix_team", audience_kind: "organization", audience_actor_id: null,
-      preset: "contributor", state: "active", policy_version: "v1", created_by: OWNER_ID,
-    }]);
+    expect(await fixture.db.selectFrom("collaboration_grants").select("id")
+      .where("scope_id", "=", SCOPE_ID).execute()).toEqual([]);
+    expect(await fixture.db.selectFrom("collaboration_execution_policies").select("scope_id")
+      .where("scope_id", "=", SCOPE_ID).execute()).toEqual([]);
     // The revision moves once, with the share itself.
     expect(await fixture.db.selectFrom("collaboration_scopes").select(["lifecycle", "revision"])
       .where("id", "=", SCOPE_ID).executeTakeFirstOrThrow()).toEqual({ lifecycle: "shared", revision: 5 });
     expect(await fixture.db.selectFrom("collaboration_audit").select(["action", "actor_id", "reason_code"])
       .where("scope_id", "=", SCOPE_ID).where("action", "=", "grant.created").execute())
-      .toEqual([{ action: "grant.created", actor_id: OWNER_ID, reason_code: "organization:contributor:default" }]);
+      .toEqual([]);
 
     // What the home actually sends the platform: an organization-wide share, so every member sees it.
     const sent: Array<Record<string, unknown>> = [];
@@ -565,8 +559,9 @@ describe("project collaboration transition journal", () => {
     }
     expect(sent).toEqual([expect.objectContaining({
       scopeId: SCOPE_ID, kind: "project", organizationId: "org_matrix_team",
-      audience: "organization", organizationGrantId: grants[0]!.id,
+      audience: "organization",
     })]);
+    expect(sent[0]).not.toHaveProperty("organizationGrantId");
   });
 
   it("keeps an organization grant the owner already made instead of adding a second one", async () => {
@@ -626,7 +621,7 @@ describe("project collaboration transition journal", () => {
       .toEqual([{ id: revokedGrantId, state: "revoked" }]);
   });
 
-  it("shares with exactly the members the owner chose before sharing, published at activation", async () => {
+  it("ignores historical member grants and publishes one organization-wide project event", async () => {
     await fixture.db.insertInto("collaboration_members").values({
       scope_id: SCOPE_ID, actor_id: OWNER_ID, role: "owner", status: "accepted", organization_id: "org_matrix_team",
       invitation_id: null, invited_by: OWNER_ID, accepted_at: NOW, expires_at: null, revision: 1,
@@ -668,7 +663,7 @@ describe("project collaboration transition journal", () => {
     await transitions.recordPublication(TRANSITION_ID, "publication_11111111111111111111111111111111");
     await transitions.activate(TRANSITION_ID);
 
-    // The owner chose people, so no organization-wide default is added.
+    // Historical project grants remain inert and no organization-wide grant is added.
     expect(await fixture.db.selectFrom("collaboration_grants").select("id").where("scope_id", "=", SCOPE_ID)
       .where("audience_kind", "=", "organization").execute()).toEqual([]);
     // Delivered into the real platform repository: every event must land, not only the first at a revision.
@@ -697,33 +692,32 @@ describe("project collaboration transition journal", () => {
       });
       try {
         let delivered = 0;
-        for (let round = 0; round < 10 && delivered < 3; round += 1) {
+        for (let round = 0; round < 10 && delivered < 1; round += 1) {
           delivered += await outbox.runOnce();
           clock += 120_000;
         }
-        expect(delivered).toBe(3);
+        expect(delivered).toBe(1);
       } finally {
         await outbox.shutdown();
       }
-      expect(sent.every((event) => event.audience === undefined)).toBe(true);
-      expect(sent.filter((event) => event.recipients.some((recipient) => recipient.status === "invited"))).toHaveLength(2);
+      expect(sent.every((event) => event.audience === "organization")).toBe(true);
+      expect(sent.filter((event) => event.recipients.some((recipient) => recipient.status === "invited"))).toHaveLength(0);
       for (const actorId of chosen) {
-        expect(await directory.getScopeActorEntry(SCOPE_ID, actorId)).toEqual({ status: "invited", invitationId: null, grantId: grantIds.get(actorId) });
+        expect(grantIds.get(actorId)).toBeDefined();
+        expect(await directory.getScopeActorEntry(SCOPE_ID, actorId)).toBeNull();
       }
       expect(await directory.getScopeActorEntry(SCOPE_ID, OWNER_ID)).toEqual({ status: "accepted", invitationId: null, grantId: null });
       expect(await directory.getScopeActorEntry(SCOPE_ID, "user_withdrawn_member")).toBeNull();
       // The scope revision is the last published one, so the next change publishes after all of them.
       const scope = await fixture.db.selectFrom("collaboration_scopes").select("revision").where("id", "=", SCOPE_ID).executeTakeFirstOrThrow();
       expect((await directory.getDirectoryRoute(SCOPE_ID))).not.toBeNull();
-      expect(Number(scope.revision)).toBe(revision + 3);
+      expect(Number(scope.revision)).toBe(revision + 1);
     } finally {
       await destroyPlatformCollaborationTestDatabase(platform);
     }
   });
 
-  it("replaces an expired organization grant that is still marked active", async () => {
-    // Grant expiry is applied lazily, and the outbox ignores expired grants: keeping this one
-    // would publish the project with no organization audience at all.
+  it("leaves an expired historical organization grant inert during project publication", async () => {
     await fixture.db.insertInto("collaboration_members").values({
       scope_id: SCOPE_ID, actor_id: OWNER_ID, role: "owner", status: "accepted", organization_id: "org_matrix_team",
       invitation_id: null, invited_by: OWNER_ID, accepted_at: NOW, expires_at: null, revision: 1,
@@ -750,11 +744,7 @@ describe("project collaboration transition journal", () => {
 
     const grants = await fixture.db.selectFrom("collaboration_grants").select(["id", "preset", "state"])
       .where("scope_id", "=", SCOPE_ID).orderBy("created_at").orderBy("id").execute();
-    expect(grants).toEqual(expect.arrayContaining([
-      { id: lapsedGrantId, preset: "viewer", state: "expired" },
-      { id: expect.any(String), preset: "contributor", state: "active" },
-    ]));
-    expect(grants).toHaveLength(2);
+    expect(grants).toEqual([{ id: lapsedGrantId, preset: "viewer", state: "active" }]);
   });
 
   it("invalidates stale confirmation under the fence and preserves the source authority", async () => {

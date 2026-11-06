@@ -235,7 +235,7 @@ describe("shared project Chat assignment", () => {
       .resolves.toMatchObject({ readThroughSeq: "2", pinned: true });
   });
 
-  it("lets a directly granted project contributor read and discuss in an inherited Chat", async () => {
+  it("ignores a historical direct project grant while an organization member works in an inherited Chat", async () => {
     const created = await service().create(OWNER, {
       clientRequestId: "req_direct_grant_project_transcript",
       title: "Direct grant transcript",
@@ -288,8 +288,8 @@ describe("shared project Chat assignment", () => {
       .set({ state: "revoked", revoked_at: NOW })
       .where("id", "=", "70000000-0000-4000-8000-000000000a71")
       .execute();
-    await expect(adapter.getChat(reader)).rejects.toMatchObject({ code: "not_found" });
-    await expect(adapter.getUserState(reader)).rejects.toMatchObject({ code: "forbidden" });
+    await expect(adapter.getChat(reader)).resolves.toMatchObject({ id: created.chat.id });
+    await expect(adapter.getUserState(reader)).resolves.toMatchObject({ pinned: false });
   });
 
   it("rejects an inherited Chat whose resource binding is blocked", async () => {

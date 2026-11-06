@@ -65,7 +65,8 @@ export interface CollaborationOrganizationShareEntry {
   kind: CollaborationDirectoryKind;
   authorityGeneration: number;
   organizationId: string;
-  grantId: string;
+  /** Standalone organization shares still require explicit activation; projects do not. */
+  grantId?: string;
 }
 
 /**
@@ -429,7 +430,12 @@ export class PlatformCollaborationRepository {
   async listOrganizationSharesForActorPage(
     actorId: string,
     organizationIds: readonly string[],
-    options: { limit: number; after?: { updatedAt: string; scopeId: string } },
+    options: {
+      limit: number;
+      after?: { updatedAt: string; scopeId: string };
+      projectsOnly?: boolean;
+      excludeProjectIndexStatus?: "invited" | "accepted";
+    },
   ): Promise<{ items: CollaborationOrganizationShareEntry[]; nextCursor?: { updatedAt: string; scopeId: string } }> {
     const organizations = [...new Set(organizationIds)].filter((id) => id.length > 0 && id.length <= 128).slice(0, 100);
     if (organizations.length === 0) return { items: [] };
@@ -437,13 +443,33 @@ export class PlatformCollaborationRepository {
     let query = this.db.selectFrom("collaboration_directory as directory")
       .select(["directory.scope_id", "directory.runtime_id", "directory.owner_id", "directory.kind", "directory.organization_id", "directory.organization_grant_id", "directory.authority_generation", "directory.updated_at"])
       .where("directory.audience", "=", "organization")
-      .where("directory.organization_grant_id", "is not", null)
+      .where((eb) => options.projectsOnly
+        ? eb("directory.kind", "=", "project")
+        : eb.or([
+          eb("directory.kind", "=", "project"),
+          eb("directory.organization_grant_id", "is not", null),
+        ]))
       .where("directory.organization_id", "in", organizations)
       .where("directory.owner_id", "!=", actorId)
-      .where(({ not, exists, selectFrom }) => not(exists(
-        selectFrom("collaboration_user_index as user_index").select("user_index.scope_id")
-          .whereRef("user_index.scope_id", "=", "directory.scope_id").where("user_index.actor_id", "=", actorId),
-      )));
+      .where(({ and, eb, exists, not, or, selectFrom }) => or([
+        and([
+          eb("directory.kind", "=", "project"),
+          ...(options.excludeProjectIndexStatus ? [not(exists(
+            selectFrom("collaboration_user_index as project_index").select("project_index.scope_id")
+              .whereRef("project_index.scope_id", "=", "directory.scope_id")
+              .where("project_index.actor_id", "=", actorId)
+              .where("project_index.status", "=", options.excludeProjectIndexStatus),
+          ))] : []),
+        ]),
+        and([
+          eb("directory.kind", "!=", "project"),
+          not(exists(
+            selectFrom("collaboration_user_index as user_index").select("user_index.scope_id")
+              .whereRef("user_index.scope_id", "=", "directory.scope_id")
+              .where("user_index.actor_id", "=", actorId),
+          )),
+        ]),
+      ]));
     if (options.after) {
       query = query.where(({ and, eb, or }) => or([
         eb("directory.updated_at", "<", options.after!.updatedAt),
@@ -460,7 +486,8 @@ export class PlatformCollaborationRepository {
     return {
       items: page.map((row) => ({
         scopeId: row.scope_id, runtimeId: row.runtime_id, ownerId: row.owner_id, kind: row.kind,
-        authorityGeneration: Number(row.authority_generation), organizationId: row.organization_id!, grantId: row.organization_grant_id!,
+        authorityGeneration: Number(row.authority_generation), organizationId: row.organization_id!,
+        ...(row.organization_grant_id ? { grantId: row.organization_grant_id } : {}),
       })),
       ...(last ? { nextCursor: { updatedAt: toIso(last.updated_at), scopeId: last.scope_id } } : {}),
     };

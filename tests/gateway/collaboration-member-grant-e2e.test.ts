@@ -1,6 +1,6 @@
 /**
  * S19 finding 22: a grant addressed to one organization member ("Share with
- * <person>") works end to end. Nothing here seeds an invitation id or stubs a
+ * <person>") remains available for a legacy standalone scope end to end. Nothing here seeds an invitation id or stubs a
  * resolver: the grant is created through the home's grant route, published by
  * the real directory outbox through the platform's directory route into the
  * real platform repository, listed by the platform inbox route, turned into an
@@ -56,7 +56,7 @@ const serviceToken = "s".repeat(48);
 const ticketSeed = Buffer.alloc(32, 22).toString("base64url");
 const clientOrigin = "https://app.matrix-os.com";
 
-describe("member-addressed grants end to end", () => {
+describe("standalone member-addressed grants end to end", () => {
   let home: CollaborationTestDatabase;
   let platform: PlatformCollaborationTestDatabase;
   let directSessions: DirectSessionService;
@@ -74,7 +74,7 @@ describe("member-addressed grants end to end", () => {
     await bootstrapPlatformCollaborationDatabase(platform.collaborationDb);
     await home.db.insertInto("collaboration_scopes").values({
       id: scopeId, owner_type: "personal", owner_id: ownerId, organization_id: organizationId,
-      kind: "project", resource_id: "project_member_grant", parent_scope_id: null,
+      kind: "chat", resource_id: "chat_member_grant", parent_scope_id: null,
       membership_mode: "direct", lifecycle: "shared", authority_runtime_id: runtimeId,
       authority_generation: 1, revision: 1, auth_epoch: 1, execution_generation: null,
       execution_eligibility: null, deleted_at: null, created_at: now, updated_at: now,
@@ -182,9 +182,9 @@ describe("member-addressed grants end to end", () => {
   }
 
   it("lists, accepts and opens a grant addressed to one member, and to nobody else", async () => {
-    // The owner is a directory participant once the project is shared; seed that the same way.
+    // The owner is a directory participant once the standalone Chat is shared; seed that the same way.
     await platformRepository.applyDirectoryEvent({
-      eventId: randomUUID(), scopeId, runtimeId, ownerId, kind: "project", organizationId,
+      eventId: randomUUID(), scopeId, runtimeId, ownerId, kind: "chat", organizationId,
       authorityGeneration: 1, metadataRevision: 1, recipients: [{ actorId: ownerId, status: "accepted" }],
     });
     const owner = await openSession(ownerId);
@@ -196,7 +196,7 @@ describe("member-addressed grants end to end", () => {
     expect(grant.state).toBe("pending");
     expect(await outbox.runOnce()).toBe(1);
     const pendingEntry = {
-      scopeId, runtimeId, ownerId, kind: "project", authorityGeneration: 1,
+      scopeId, runtimeId, ownerId, kind: "chat", authorityGeneration: 1,
       status: "organization_pending", organizationId, grantId: grant.id,
     };
     expect(await discovery(memberId, "inbox")).toEqual([pendingEntry]);
@@ -213,7 +213,7 @@ describe("member-addressed grants end to end", () => {
 
     // A pending member is not yet a participant: the accept-only session opens nothing else.
     const pending = await openSession(memberId);
-    expect(pending.ticket.resource).toEqual({ scopeId, kind: "project", pendingGrantId: grant.id });
+    expect(pending.ticket.resource).toEqual({ scopeId, kind: "chat", pendingGrantId: grant.id });
     expect((await pending.request("GET", `/api/collaboration/scopes/${scopeId}`)).status).toBe(401);
     // A bystander gets no ticket at all for the member's grant.
     await expect(openSession(bystanderId)).rejects.toMatchObject({ code: "not_found" });
@@ -229,9 +229,7 @@ describe("member-addressed grants end to end", () => {
       .where("actor_id", "=", memberId).execute()).toEqual([{ status: "accepted", grant_id: null }]);
     expect(await discovery(memberId, "shared")).toEqual([expect.objectContaining({ scopeId, status: "accepted" })]);
     const opened = await openSession(memberId);
-    expect(opened.ticket.resource).toEqual({ scopeId, kind: "project" });
-    const scope = await opened.request("GET", `/api/collaboration/scopes/${scopeId}`);
-    expect(scope.status).toBe(200);
+    expect(opened.ticket.resource).toEqual({ scopeId, kind: "chat" });
   });
 
   /** Publishes one directory event the way the legacy invitation paths do: an outbox row with explicit recipients. */
@@ -254,9 +252,9 @@ describe("member-addressed grants end to end", () => {
     expect(await outbox.runOnce()).toBe(1);
   }
 
-  it("keeps a member's pending grant reachable across a legacy invitation for the same project", async () => {
+  it("keeps a member's pending grant reachable across a legacy invitation for the same standalone Chat", async () => {
     await platformRepository.applyDirectoryEvent({
-      eventId: randomUUID(), scopeId, runtimeId, ownerId, kind: "project", organizationId,
+      eventId: randomUUID(), scopeId, runtimeId, ownerId, kind: "chat", organizationId,
       authorityGeneration: 1, metadataRevision: 1, recipients: [{ actorId: ownerId, status: "accepted" }],
     });
     const owner = await openSession(ownerId);
@@ -276,7 +274,7 @@ describe("member-addressed grants end to end", () => {
     }).execute();
     await publishLegacy([{ actorId: memberId, invitationId }], "invited");
     expect(await discovery(memberId, "inbox")).toEqual([expect.objectContaining({ status: "invited", invitationId })]);
-    expect((await openSession(memberId)).ticket.resource).toEqual({ scopeId, kind: "project" });
+    expect((await openSession(memberId)).ticket.resource).toEqual({ scopeId, kind: "chat" });
 
     // Settling the invitation does not hide the grant the member still has to open.
     await home.db.updateTable("collaboration_members").set({ status: "accepted", accepted_at: now, joined_at: now })
@@ -284,12 +282,12 @@ describe("member-addressed grants end to end", () => {
     // The acceptance event still names the invitation it settled.
     await publishLegacy([{ actorId: memberId, invitationId }], "accepted");
     expect(await discovery(memberId, "inbox")).toEqual([expect.objectContaining({ status: "organization_pending", grantId: grant.id })]);
-    expect((await openSession(memberId)).ticket.resource).toEqual({ scopeId, kind: "project", pendingGrantId: grant.id });
+    expect((await openSession(memberId)).ticket.resource).toEqual({ scopeId, kind: "chat", pendingGrantId: grant.id });
   });
 
   it("withdraws an expired member grant from the member's inbox", async () => {
     await platformRepository.applyDirectoryEvent({
-      eventId: randomUUID(), scopeId, runtimeId, ownerId, kind: "project", organizationId,
+      eventId: randomUUID(), scopeId, runtimeId, ownerId, kind: "chat", organizationId,
       authorityGeneration: 1, metadataRevision: 1, recipients: [{ actorId: ownerId, status: "accepted" }],
     });
     const owner = await openSession(ownerId);
@@ -319,7 +317,7 @@ describe("member-addressed grants end to end", () => {
 
   it("keeps a member's other access listed when their member grant expires", async () => {
     await platformRepository.applyDirectoryEvent({
-      eventId: randomUUID(), scopeId, runtimeId, ownerId, kind: "project", organizationId,
+      eventId: randomUUID(), scopeId, runtimeId, ownerId, kind: "chat", organizationId,
       authorityGeneration: 1, metadataRevision: 1, recipients: [{ actorId: ownerId, status: "accepted" }],
     });
     const owner = await openSession(ownerId);
@@ -329,7 +327,7 @@ describe("member-addressed grants end to end", () => {
     })).json());
     expect(await outbox.runOnce()).toBe(1);
     const joining = await openSession(memberId);
-    expect(joining.ticket.resource).toEqual({ scopeId, kind: "project", pendingGrantId: organizationGrant.id });
+    expect(joining.ticket.resource).toEqual({ scopeId, kind: "chat", pendingGrantId: organizationGrant.id });
     expect((await joining.request("POST", `/api/collaboration/scopes/${scopeId}/grants/${organizationGrant.id}/accept`, {})).status).toBe(200);
     expect(await outbox.runOnce()).toBe(1);
     // A temporary upgrade addressed to them lapses.
@@ -350,14 +348,14 @@ describe("member-addressed grants end to end", () => {
     } finally {
       await laterOutbox.shutdown();
     }
-    // The organization-wide access they still hold keeps the project listed and openable.
+    // The organization-wide access they still hold keeps the standalone Chat listed and openable.
     expect(await discovery(memberId, "shared")).toEqual([expect.objectContaining({ scopeId, status: "accepted" })]);
-    expect((await openSession(memberId)).ticket.resource).toEqual({ scopeId, kind: "project" });
+    expect((await openSession(memberId)).ticket.resource).toEqual({ scopeId, kind: "chat" });
   });
 
   it("keeps a member's open invitation listed when their member grant expires", async () => {
     await platformRepository.applyDirectoryEvent({
-      eventId: randomUUID(), scopeId, runtimeId, ownerId, kind: "project", organizationId,
+      eventId: randomUUID(), scopeId, runtimeId, ownerId, kind: "chat", organizationId,
       authorityGeneration: 1, metadataRevision: 1, recipients: [{ actorId: ownerId, status: "accepted" }],
     });
     const owner = await openSession(ownerId);
@@ -385,12 +383,12 @@ describe("member-addressed grants end to end", () => {
     }
     // The invitation they still have to answer stays listed and openable.
     expect(await discovery(memberId, "inbox")).toEqual([expect.objectContaining({ scopeId, status: "invited", invitationId })]);
-    expect((await openSession(memberId)).ticket.resource).toEqual({ scopeId, kind: "project" });
+    expect((await openSession(memberId)).ticket.resource).toEqual({ scopeId, kind: "chat" });
   });
 
   it("admits an accept-only session for a member grant only to its addressee", async () => {
     await platformRepository.applyDirectoryEvent({
-      eventId: randomUUID(), scopeId, runtimeId, ownerId, kind: "project", organizationId,
+      eventId: randomUUID(), scopeId, runtimeId, ownerId, kind: "chat", organizationId,
       authorityGeneration: 1, metadataRevision: 1, recipients: [{ actorId: ownerId, status: "accepted" }],
     });
     const owner = await openSession(ownerId);
@@ -405,7 +403,7 @@ describe("member-addressed grants end to end", () => {
       const proofPublicKey = ed25519PublicKeyRaw(key.publicKey);
       const ticket = {
         protocolVersion: COLLABORATION_DIRECT_PROTOCOL_VERSION, ticketId: randomUUID(), nonce: randomUUID().replaceAll("-", ""),
-        actorId, organizationId, resource: { scopeId, kind: "project", pendingGrantId: grant.id }, purpose: "direct_session",
+        actorId, organizationId, resource: { scopeId, kind: "chat", pendingGrantId: grant.id }, purpose: "direct_session",
         runtime: { runtimeId: logicalRuntimeId, authorityGeneration: 1 }, proofKeyThumbprint: proofKeyThumbprint(proofPublicKey),
         maxActions: 10, issuedAt: now.toISOString(), expiresAt: new Date(now.getTime() + 30_000).toISOString(),
       };

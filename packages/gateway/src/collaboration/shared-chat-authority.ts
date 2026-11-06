@@ -76,16 +76,23 @@ export async function fenceSharedChatAuthority(
     || (scope.membership_mode === "inherited" && membershipScope.kind !== "project")) {
     throw new CollaborationAuthorizationError("unavailable", "Shared Chat authority changed");
   }
-  const member = await trx.selectFrom("collaboration_members").selectAll()
-    .where("scope_id", "=", membershipScope.id).where("actor_id", "=", actorId)
-    .forUpdate().executeTakeFirst();
-  const now = clock().getTime();
-  const legacyRole = member?.status === "accepted" && member.dispositioned_at === null
-    && (member.expires_at === null || new Date(member.expires_at).getTime() > now)
-    && (actorId === membershipScope.owner_id || !await hasRetiredLegacyAuthority(trx, membershipScope.id))
-    ? member.role : null;
-  let currentRole = legacyRole;
-  if (!currentRole) {
+  let currentRole: "owner" | "editor" | "viewer" | null;
+  if (membershipScope.kind === "project") {
+    // Fresh owner/requester organization membership was checked immediately before this
+    // transaction by CollaborationAuthority. Project member/grant rows are historical and
+    // must not be allowed to narrow or revive that organization-wide decision here.
+    currentRole = actorId === membershipScope.owner_id ? "owner" : "editor";
+  } else {
+    const member = await trx.selectFrom("collaboration_members").selectAll()
+      .where("scope_id", "=", membershipScope.id).where("actor_id", "=", actorId)
+      .forUpdate().executeTakeFirst();
+    const now = clock().getTime();
+    const legacyRole = member?.status === "accepted" && member.dispositioned_at === null
+      && (member.expires_at === null || new Date(member.expires_at).getTime() > now)
+      && (actorId === membershipScope.owner_id || !await hasRetiredLegacyAuthority(trx, membershipScope.id))
+      ? member.role : null;
+    currentRole = legacyRole;
+    if (!currentRole) {
     const grants = await trx.selectFrom("collaboration_grants").selectAll()
       .where("scope_id", "=", membershipScope.id)
       .where("state", "=", "active")
@@ -105,7 +112,8 @@ export async function fenceSharedChatAuthority(
       if (grant.preset === "contributor") contributor = true;
       else viewer = true;
     }
-    currentRole = contributor ? "editor" : viewer ? "viewer" : null;
+      currentRole = contributor ? "editor" : viewer ? "viewer" : null;
+    }
   }
   if (currentRole !== context.role) {
     throw new CollaborationAuthorizationError("forbidden", "Shared Chat authority changed");
