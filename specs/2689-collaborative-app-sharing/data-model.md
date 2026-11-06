@@ -178,6 +178,15 @@ Uncertain retries reuse the same request ID/payload. Conflict never replaces loc
 4. **Mutate data**: verify live scope/binding/membership inside transaction; CAS `data_revision`; mutate declared table; persist receipt/audit/event atomically.
 5. **Read data**: verify active scope/exact binding/fresh membership, then query bounded declared owner tables.
 
+The owner rebind command supplies one stable request ID plus
+`expectedShareRevision`, `expectedBindingRevision`, `expectedResourceRevision`,
+`expectedReadinessRevision`, `expectedPreviousBuildId`, the new `readinessId`,
+and the new exact `buildId`. Its response is the updated
+`CollaborativeAppShare` projection with the new build, share revision, binding
+revision, and unchanged owner/organization identity. Exact request replays
+return that same projection; stale predicates return a conflict and preserve
+the prior `needs_recheck` binding.
+
 ## Deferred model changes
 
 - Creator departure/ownership transfer or durable organization hosting.
