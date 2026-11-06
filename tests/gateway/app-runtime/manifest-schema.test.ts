@@ -209,6 +209,46 @@ describe("AppManifestSchema", () => {
     expect(result.dev).toBe(true);
   });
 
+  it("accepts only the strict collaborative app capability and compatibility declaration", () => {
+    const input = {
+      name: "Team Tracker",
+      slug: "team-tracker",
+      version: "1.0.0",
+      runtime: "vite",
+      runtimeVersion: "^1.0.0",
+      database: "postgres",
+      build: { command: "pnpm build", output: "dist" },
+      collaboration: {
+        capability: {
+          version: 1,
+          storage: "owner_postgres",
+          audience: "current_organization_members",
+          participantIdentity: "authenticated_actor",
+          mutations: "transactional_revisioned",
+          updates: "content_free_signal",
+          providerPolicy: "existing_authority",
+        },
+        compatibility: {
+          bridgeContractVersion: "matrix-app-bridge-v1",
+          runtimeAbi: "matrix-runtime-v1",
+          schemaDigest: "a".repeat(64),
+        },
+      },
+    };
+    expect(AppManifestSchema.parse(input).collaboration).toEqual(input.collaboration);
+    expect(AppManifestSchema.safeParse({
+      ...input,
+      collaboration: { ...input.collaboration, role: "editor" },
+    }).success).toBe(false);
+    expect(AppManifestSchema.safeParse({
+      ...input,
+      collaboration: {
+        ...input.collaboration,
+        capability: { ...input.collaboration.capability, storage: "browser_local" },
+      },
+    }).success).toBe(false);
+  });
+
   it("parseManifest wraps Zod errors in typed ManifestError", async () => {
     const result = await parseManifest({ name: "X" });
     expect(result.ok).toBe(false);

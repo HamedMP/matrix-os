@@ -18,12 +18,12 @@
 
 **Purpose**: Freeze the additive contract, fixtures, and compatibility boundary before implementation.
 
-- [ ] T001 Reconcile direct ready-app sharing with the project-only rule and document legacy behavior in `specs/124-organization-collaboration/spec.md`
-- [ ] T002 [P] Add strict bounded collaborative build, readiness, share, launch-target, participant, mutation, change-signal, and safe-error schemas in `packages/contracts/src/collaboration.ts`
-- [ ] T003 [P] Add exact-build capability and compatibility declarations in `packages/contracts/src/collaboration-capabilities.ts`
-- [ ] T004 [P] Write failing serialization, bounds, unknown-field, and owner/shared launch-union contract tests in `tests/contracts/collaborative-app-sharing.test.ts`
-- [ ] T005 [P] Add tracker, organization, guest, newcomer, departed-member, wrong-organization, and outsider fixtures while leaving the deferred second-principal credential source unimplemented in `tests/e2e/fixtures/collaborative-app-sharing.ts`
-- [ ] T006 Export the additive collaborative app contracts without changing legacy collaboration exports in `packages/contracts/src/index.ts`
+- [X] T001 Reconcile direct ready-app sharing with the project-only rule and document legacy behavior in `specs/124-organization-collaboration/spec.md`
+- [X] T002 [P] Add strict bounded collaborative build, readiness, share, launch-target, participant, mutation, change-signal, and safe-error schemas in `packages/contracts/src/collaborative-app-sharing.ts`
+- [X] T003 [P] Add exact-build capability and compatibility declarations in `packages/contracts/src/collaboration-capabilities.ts`
+- [X] T004 [P] Write failing serialization, bounds, unknown-field, and owner/shared launch-union contract tests in `tests/contracts/collaborative-app-sharing.test.ts`
+- [X] T005 [P] Add tracker, organization, guest, newcomer, departed-member, wrong-organization, and outsider fixtures while leaving the deferred second-principal credential source unimplemented in `tests/e2e/fixtures/collaborative-app-sharing.ts`
+- [X] T006 Export the additive collaborative app contracts without changing legacy collaboration exports in `packages/contracts/src/index.ts`
 
 **Checkpoint**: Additive contracts compile, deliberately reject roles/grants/acceptance fields, and old collaboration types remain source-compatible.
 
@@ -35,20 +35,20 @@
 
 **⚠️ CRITICAL**: No user-story implementation begins until this phase is green.
 
-- [ ] T007 [P] Write failing exact registration/build identity tests covering same-slug replacement and manifest/schema/asset/bridge/runtime-ABI drift in `tests/gateway/collaborative-app-identity.test.ts`
-- [ ] T008 [P] Write failing immutable snapshot, content digest, reference retention, symlink-safe cleanup, and ordinary-restart stability tests in `tests/gateway/app-runtime/collaborative-build-snapshot.test.ts`
-- [ ] T009 [P] Write failing real-Postgres migration and repository tests for readiness uniqueness, state constraints, CAS revisions, and soft-delete filtering in `tests/gateway/collaborative-app-readiness-postgres.test.ts`
-- [ ] T010 [P] Write failing real-Postgres migration and repository tests for one active binding, exact certificate matching, data revision, rebind, and stop in `tests/gateway/collaborative-app-binding-postgres.test.ts`
-- [ ] T011 Add `collaboration_app_readiness` and `collaboration_app_bindings` tables, constraints, indexes, and migration revision handling in `packages/gateway/src/collaboration/database-migrations.ts`
-- [ ] T012 Implement canonical registration/build identity and bounded digest inputs in `packages/gateway/src/collaboration/collaborative-app-identity.ts`
-- [ ] T013 Capture immutable qualified build bytes under the existing build lock and expose reference-counted snapshots in `packages/gateway/src/app-runtime/build-cache.ts`
-- [ ] T014 Integrate exact snapshot capture and drift detection with the production build flow in `packages/gateway/src/app-runtime/build-orchestrator.ts`
-- [ ] T015 Add strict collaborative manifest, bridge-contract, runtime-ABI, and declared-schema validation in `packages/gateway/src/app-runtime/manifest-schema.ts`
-- [ ] T016 Implement readiness persistence with idempotent `ON CONFLICT`, CAS updates, bounded gate results, typed errors, and owner-only resource cleanup in `packages/gateway/src/collaboration/collaborative-app-readiness-repository.ts`
-- [ ] T017 Implement exact scope/build binding persistence, global data revisions, CAS rebind/stop, and ownership-aware lifecycle methods in `packages/gateway/src/collaboration/collaborative-app-share-repository.ts`
-- [ ] T018 Wire repository ownership and destruction into gateway startup/shutdown without allowing injected wrappers to close shared pools in `packages/gateway/src/startup/collaboration.ts`
-- [ ] T019 Add recurring reference-aware, symlink-safe immutable-build cleanup with bounded retention and cleared shutdown timers in `packages/gateway/src/app-runtime/build-cache.ts`
-- [ ] T020 Run the foundational contract, snapshot, and real-Postgres suites and record red/green plus migration rollback evidence using `tests/contracts/collaborative-app-sharing.test.ts`, `tests/gateway/app-runtime/collaborative-build-snapshot.test.ts`, `tests/gateway/collaborative-app-readiness-postgres.test.ts`, and `tests/gateway/collaborative-app-binding-postgres.test.ts`
+- [X] T007 [P] Write failing exact registration/build identity tests covering same-slug replacement and manifest/schema/asset/bridge/runtime-ABI drift in `tests/gateway/collaborative-app-identity.test.ts`
+- [X] T008 [P] Write failing immutable snapshot, content digest, reference retention, symlink-safe cleanup, and ordinary-restart stability tests in `tests/gateway/app-runtime/collaborative-build-snapshot.test.ts`
+- [X] T009 [P] Write failing real-Postgres migration and repository tests for readiness uniqueness, state constraints, CAS revisions, and soft-delete filtering in `tests/gateway/collaborative-app-readiness-postgres.test.ts`
+- [X] T010 [P] Write failing real-Postgres migration and repository tests for one active binding, exact certificate matching, data revision, rebind, and stop in `tests/gateway/collaborative-app-binding-postgres.test.ts`
+- [X] T011 Add `collaboration_app_readiness` and `collaboration_app_bindings` tables, constraints, indexes, and migration revision handling in `packages/gateway/src/collaboration/database-migrations.ts`
+- [X] T012 Implement canonical registration/build identity and bounded digest inputs in `packages/gateway/src/collaboration/collaborative-app-identity.ts`
+- [X] T013 Capture immutable qualified build bytes under the existing build lock and expose reference-counted snapshots in `packages/gateway/src/app-runtime/build-cache.ts`
+- [X] T014 Integrate exact snapshot capture and drift detection with the production build flow in `packages/gateway/src/app-runtime/build-orchestrator.ts`
+- [X] T015 Add strict collaborative manifest, bridge-contract, runtime-ABI, and declared-schema validation in `packages/gateway/src/app-runtime/manifest-schema.ts`
+- [X] T016 Implement readiness persistence with idempotent `ON CONFLICT`, CAS updates, bounded gate results, typed errors, and owner-only resource cleanup in `packages/gateway/src/collaboration/collaborative-app-readiness-repository.ts`
+- [X] T017 Implement exact scope/build binding persistence, global data revisions, CAS rebind/stop, and ownership-aware lifecycle methods in `packages/gateway/src/collaboration/collaborative-app-share-repository.ts`
+- [X] T018 Wire repository ownership and destruction into gateway startup/shutdown without allowing injected wrappers to close shared pools in `packages/gateway/src/startup/collaboration.ts`
+- [X] T019 Add recurring reference-aware, symlink-safe immutable-build cleanup with bounded retention and cleared shutdown timers in `packages/gateway/src/app-runtime/build-cache.ts`
+- [X] T020 Run the foundational contract, snapshot, and real-Postgres suites and record red/green plus migration rollback evidence using `tests/contracts/collaborative-app-sharing.test.ts`, `tests/gateway/app-runtime/collaborative-build-snapshot.test.ts`, `tests/gateway/collaborative-app-readiness-postgres.test.ts`, and `tests/gateway/collaborative-app-binding-postgres.test.ts`
 
 **Checkpoint**: Exact identity cannot drift or reattach by slug, qualified assets are immutable, and readiness/binding persistence is transaction-ready.
 
