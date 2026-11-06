@@ -100,7 +100,7 @@ describe("shared coding execution (S09)", () => {
       expect(await repository.listSharedQueuedTurns(owner, collaborationIds.chat)).toEqual([]);
     });
 
-    it("lets a directly granted project Contributor prompt through real authorization and the owner's saved AI policy", async () => {
+    it("lets an organization project member prompt through real authorization and the owner's saved AI policy", async () => {
       const parentId = "79000000-0000-4000-8000-000000000998";
       await fixture.db.insertInto("collaboration_scopes").values({
         id: parentId, owner_type: "personal", owner_id: collaborationActors.owner,
@@ -114,13 +114,6 @@ describe("shared coding execution (S09)", () => {
         .where("scope_id", "=", collaborationIds.scope).execute();
       await fixture.db.deleteFrom("collaboration_members")
         .where("scope_id", "=", parentId).where("actor_id", "=", collaborationActors.editor).execute();
-      await fixture.db.insertInto("collaboration_grants").values({
-        id: "79000000-0000-4000-8000-000000000997", scope_id: parentId,
-        organization_id: "org_collaboration_primary", audience_kind: "member",
-        audience_actor_id: collaborationActors.editor, preset: "contributor", state: "active",
-        policy_version: "v1", source_id: null, legacy_ceiling: null, expires_at: null,
-        revision: 1, created_by: collaborationActors.owner, created_at: now, updated_at: now, revoked_at: null,
-      }).execute();
       await fixture.db.updateTable("collaboration_scopes")
         .set({ parent_scope_id: parentId, membership_mode: "inherited" })
         .where("id", "=", collaborationIds.scope).execute();
@@ -191,7 +184,7 @@ describe("shared coding execution (S09)", () => {
       expect(requestDispatch).toHaveBeenCalledWith(collaborationIds.scope, collaborationIds.chat);
     });
 
-    it("lets a directly granted project contributor queue and control an inherited Chat prompt", async () => {
+    it("keeps inherited Chat control organization-wide when a historical member grant is narrowed", async () => {
       const parentId = "79000000-0000-4000-8000-000000000999";
       await fixture.db.insertInto("collaboration_scopes").values({
         id: parentId, owner_type: "personal", owner_id: collaborationActors.owner,
@@ -249,9 +242,7 @@ describe("shared coding execution (S09)", () => {
       await expect(repository.enqueueSharedQueuedTurn(
         owner,
         aiRequest(78, collaborationActors.editor, await revision()),
-      )).rejects.toMatchObject({ code: "forbidden" });
-      await fixture.db.updateTable("collaboration_grants").set({ preset: "contributor", updated_at: now })
-        .where("scope_id", "=", parentId).where("audience_actor_id", "=", collaborationActors.editor).execute();
+      )).resolves.toMatchObject({ requestingActorId: collaborationActors.editor, state: "queued" });
       await fixture.db.updateTable("collaboration_resource_bindings")
         .set({ readiness: "blocked", blocker: "test_blocked" })
         .where("resource_scope_id", "=", collaborationIds.scope).execute();
