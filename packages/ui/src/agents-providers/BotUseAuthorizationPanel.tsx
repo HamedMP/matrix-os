@@ -35,7 +35,8 @@ export function BotUseAuthorizationPanel({client, harness, disabled, refreshKey}
    {connection && !mayEnable && (connection.availability === "setup_required" || connection.unavailableReason === "authentication_required") ? <p role="status" className="matrix-ap-help">Connect the native account on this computer before enabling Bot use.</p> : null}
    {connection && mayEnable ? <>
      <p role="status">{connection.authorization.enabled ? "Available in Bots" : "Not enabled for Bots"}</p>
-     <label className="matrix-ap-uninstall-choice"><input type="checkbox" checked={background} disabled={disabled || pending} onChange={event => setBackground(event.target.checked)}/>Allow scheduled and background Bot tasks<span>Uses your subscription when a bot runs without a message from you.</span></label>
+     <p className="matrix-ap-help">Scheduling is available by default. Review persistent Matrix tasks in Chat.</p>
+     <label className="matrix-ap-uninstall-choice"><input type="checkbox" checked={background} disabled={disabled || pending} onChange={event => setBackground(event.target.checked)}/>Allow other background Bot tasks<span>Uses your subscription for other Bot work without a message from you.</span></label>
      <div className="matrix-ap-workflow-actions">
        <button type="button" className="matrix-ap-button" disabled={disabled || pending} onClick={() => void update(true)}>{pending ? "Updating…" : connection.authorization.enabled ? "Save Bot permissions" : harness === "codex" ? "Enable for Bots" : "Enable for Bot tasks"}</button>
        {connection.authorization.enabled ? <button type="button" className="matrix-ap-link-button" disabled={disabled || pending} onClick={() => void update(false)}>Disconnect from Bots</button> : null}
