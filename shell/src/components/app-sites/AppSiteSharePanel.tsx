@@ -14,7 +14,7 @@ export function AppSiteSharePanel({
 }) {
   return (
     <section
-      style={{ maxHeight: "inherit", background: "#111113", color: "#f4f4f5" }}
+      style={{ height: "100%", background: "#111113", color: "#f4f4f5" }}
       className="flex min-h-0 w-full flex-col overflow-hidden rounded-xl"
     >
       <header

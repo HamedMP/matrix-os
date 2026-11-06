@@ -125,7 +125,7 @@ export function Dialog({
           onCloseAutoFocus={onCloseAutoFocus}
           role={role}
           aria-describedby={undefined}
-          className={`dialog-fade-in ${contained ? "absolute" : "fixed"} left-1/2 rounded-xl border focus:outline-none ${
+          className={`dialog-fade-in ${contained ? "absolute flex min-h-0 flex-col overflow-hidden" : "fixed"} left-1/2 rounded-xl border focus:outline-none ${
             placement === "center" ? "" : "-translate-x-1/2"
           }`}
           style={{
@@ -138,6 +138,7 @@ export function Dialog({
             ...(placement === "center" ? {
               top: "50%",
               transform: "translate(-50%, -50%)",
+              ...(contained ? { height: "calc(100% - 32px)" } : {}),
               maxHeight: contained ? "calc(100% - 32px)" : "calc(100vh - 32px)",
             } : { top }),
           }}

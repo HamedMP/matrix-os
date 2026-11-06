@@ -53,6 +53,11 @@ for (const [surface, Component] of [["Web", AppSiteButton], ["Electron", Desktop
       expect(screen.getByTestId("created-app-surface").contains(dialog)).toBe(true);
       const panel = dialog.querySelector<HTMLElement>("section");
       expect(panel?.style.background).toMatch(/#111113|rgb\(17, 17, 19\)/);
+      if (surface === "Electron") {
+        expect(dialog.style.height).toBe("calc(100% - 32px)");
+        expect(dialog.className).toContain("overflow-hidden");
+        expect(panel?.style.height).toBe("100%");
+      }
       expect(document.body.style.pointerEvents).not.toBe("none");
       expect(screen.getByRole("button", { name: "Publish app", expanded: true })).toBe(trigger);
       // Exercise outside-pointer dismissal followed by click, not only click().
