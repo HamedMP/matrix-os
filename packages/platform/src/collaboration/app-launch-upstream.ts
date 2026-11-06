@@ -30,7 +30,15 @@ export async function cancelCollaborativeAppResponseReader(
   } catch (error: unknown) {
     console.warn("[collaborative-app-launch] response cancellation failed", error instanceof Error ? error.name : "UnknownError");
   } finally {
-    try { reader.releaseLock(); } catch { /* The stream may already have released the reader. */ }
+    releaseResponseReader(reader);
+  }
+}
+
+function releaseResponseReader(reader: ReadableStreamDefaultReader<Uint8Array>): void {
+  try {
+    reader.releaseLock();
+  } catch (error: unknown) {
+    console.warn("[collaborative-app-launch] response reader release failed", error instanceof Error ? error.name : "UnknownError");
   }
 }
 
@@ -147,7 +155,7 @@ async function bindResponseToSignal(response: Response, signal: AbortSignal): Pr
   let settled = false;
   const release = () => {
     signal.removeEventListener("abort", onAbort);
-    try { reader.releaseLock(); } catch { /* A concurrent cancellation owns release. */ }
+    releaseResponseReader(reader);
   };
   const cancel = async (reason?: unknown) => {
     if (settled) return;
