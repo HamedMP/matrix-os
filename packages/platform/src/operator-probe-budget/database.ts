@@ -11,5 +11,5 @@ export type OperatorProbeDatabase = {
 export function createOperatorProbeBudgetDatabase(connectionString: string, boundedService = false): Kysely<OperatorProbeDatabase> {
   return new Kysely({ dialect: new PostgresDialect({ pool: createPostgresPool({ connectionString,
     ...(boundedService ? { max: 4, connectionTimeoutMillis: 350, query_timeout: 650, statement_timeout: 350, lock_timeout: 200,
-      idle_in_transaction_session_timeout: 1000 } : { max: 8, connectionTimeoutMillis: 5000, statement_timeout: 10000, lock_timeout: 5000 }) }, 'operator-probe-budget') }) });
+      idle_in_transaction_session_timeout: 1000 } : { max: 8, connectionTimeoutMillis: 5000, statement_timeout: 10000, lock_timeout: 5000 }) }, 'operator-probe-budget', () => console.error('[operator-probe-budget] Postgres connection failed')) }) });
 }

@@ -113,9 +113,18 @@ export function parseForwardSpec(spec: string): ForwardSpec {
 }
 
 export function createForwardWebSocketUrl(gatewayUrl: string): string {
-  let end = gatewayUrl.length;
-  while (end > 0 && gatewayUrl[end - 1] === "/") end -= 1;
-  const url = new URL("/ws/forward", gatewayUrl.slice(0, end));
+  const invalid = () => Object.assign(new Error("Request failed"), { code: "invalid_forward_gateway" });
+  // Validate the literal path first: URL would silently normalize traversal and backslashes.
+  const match = /^(https?):\/\/([^/?#@%\\\s]+)(\/[^?#\\\s]*)?$/i.exec(gatewayUrl);
+  if (!match || /[\u0000-\u0020\u007f]/.test(gatewayUrl)) throw invalid();
+  const path = match[3] ?? "";
+  const root = /^\/*$/.test(path);
+  if (!root && !/^\/vm\/[A-Za-z0-9_-]{1,64}(?:\/~runtime\/[A-Za-z0-9_-]{1,32})?\/?$/.test(path)) throw invalid();
+  let url: URL;
+  try { url = new URL(gatewayUrl); }
+  catch (error) { if (error instanceof TypeError) throw invalid(); throw error; }
+  if (url.protocol === "http:" && !/^(?:localhost|127\.0\.0\.1|\[::1\])(?::\d+)?$/i.test(match[2]!)) throw invalid();
+  url.pathname = (root ? "" : path.replace(/\/$/, "")) + "/ws/forward";
   url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
   return url.toString();
 }
@@ -264,6 +273,7 @@ export async function startPortForward(options: StartPortForwardOptions): Promis
   if (!WebSocketImpl) {
     throw Object.assign(new Error("Request failed"), { code: "websocket_unavailable" });
   }
+  const forwardUrl = createForwardWebSocketUrl(options.gatewayUrl);
   let resolvedLocalPort = options.localPort;
   const eventData = (connectionId?: number, code?: string): PortForwardEventData => ({
     localHost: options.localHost,
@@ -293,7 +303,7 @@ export async function startPortForward(options: StartPortForwardOptions): Promis
     }
 
     const connectionId = nextConnectionId++;
-    const ws = new WebSocketImpl(createForwardWebSocketUrl(options.gatewayUrl), {
+    const ws = new WebSocketImpl(forwardUrl, {
       headers: { Authorization: `Bearer ${options.token}` },
     });
     ws.binaryType = "arraybuffer";

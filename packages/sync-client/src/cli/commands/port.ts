@@ -65,7 +65,9 @@ async function runForward(args: Record<string, unknown>): Promise<void> {
   const json = args.json === true;
   try {
     const spec = parseForwardSpec(String(args.spec));
-    const profile = await resolveCliProfile(args);
+    // A targeted operation must not migrate the default profile's credentials or initialize it.
+    const explicit = typeof args.profile === "string" || args.dev === true || typeof args.gateway === "string";
+    const profile = await resolveCliProfile(args, undefined, { readOnly: explicit });
     const token = await requireCliAuthToken(profile);
     const startForward = typeof args.startForward === "function"
       ? args.startForward as StartForward

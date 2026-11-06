@@ -19,8 +19,9 @@ export interface ResolvedCliProfile {
 export async function resolveCliProfile(
   flags: CliProfileFlags,
   configDir?: string,
+  options: { readOnly?: boolean } = {},
 ): Promise<ResolvedCliProfile> {
-  const profiles = await loadProfiles({ configDir });
+  const profiles = await loadProfiles({ configDir, ...options });
   const explicitProfile =
     flags.dev === true ? "local" : typeof flags.profile === "string" ? flags.profile : profiles.active;
   const profile = profiles.profiles[explicitProfile];

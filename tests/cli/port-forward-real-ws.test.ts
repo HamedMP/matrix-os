@@ -17,9 +17,9 @@ async function listen(server: Server): Promise<number> {
   return (server.address() as AddressInfo).port;
 }
 
-async function forwardTo(port: number, onEvent?: (type: string, data: PortForwardEventData) => void, idleTimeoutMs = 30_000) {
+async function forwardTo(port: number, onEvent?: (type: string, data: PortForwardEventData) => void, idleTimeoutMs = 30_000, path = "") {
   const forward = await startPortForward({
-    gatewayUrl: `http://127.0.0.1:${port}`,
+    gatewayUrl: `http://127.0.0.1:${port}${path}`,
     token: "secret-bearer-token",
     localHost: "127.0.0.1",
     localPort: 0,
@@ -91,6 +91,17 @@ describe("port forward with real ws", () => {
       "websocket_failed",
     ]);
     expect(JSON.stringify(events)).not.toContain("secret-bearer-token");
+  });
+
+  it("targets only the explicit slot in the authenticated WebSocket upgrade", async () => {
+    const gateway = createServer();
+    const upgraded = new Promise<{ path?: string; auth?: string }>(resolve => gateway.on("upgrade", (request, socket) => {
+      resolve({ path: request.url, auth: request.headers.authorization });
+      socket.destroy();
+    }));
+    const port = await listen(gateway);
+    await connect(await forwardTo(port, undefined, 30_000, "/vm/owned/~runtime/dev"));
+    expect(await upgraded).toEqual({ path: "/vm/owned/~runtime/dev/ws/forward", auth: "Bearer secret-bearer-token" });
   });
 
   it("carries normal binary tunnel traffic through a real WebSocket", async () => {

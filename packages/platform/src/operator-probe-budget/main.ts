@@ -17,10 +17,12 @@ export function readOperatorProbeAuthorityConfig(env: NodeJS.ProcessEnv) {
     hostname: env.MATRIX_FUNDED_AI_OPERATOR_PROBE_AUTHORITY_HOST ?? '127.0.0.1',
     port: env.MATRIX_FUNDED_AI_OPERATOR_PROBE_AUTHORITY_PORT ?? '19947' });
 }
-export async function startOperatorProbeAuthority(env: NodeJS.ProcessEnv = process.env) {
+export async function startOperatorProbeAuthority(env: NodeJS.ProcessEnv = process.env,
+  verifyPlacement?: (db: ReturnType<typeof createOperatorProbeBudgetDatabase>) => Promise<void>) {
   const config = readOperatorProbeAuthorityConfig(env);
   const db = createOperatorProbeBudgetDatabase(config.databaseUrl);
   try {
+    await verifyPlacement?.(db);
     await runOperatorProbeBudgetMigrations(db);
     const app = createOperatorProbeBudgetApp({ token: config.token, budgetId: config.budgetId,
       store: createOperatorProbeBudgetRepository({ db, budgetId: config.budgetId }) });
@@ -42,7 +44,7 @@ export async function startOperatorProbeAuthority(env: NodeJS.ProcessEnv = proce
 }
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   startOperatorProbeAuthority().then(service => {
-    const shutdown = () => { service.close().catch(error => { console.error('[operator-probe-budget] Shutdown failed', error); process.exitCode = 1; }); };
+    const shutdown = () => { service.close().catch(() => { console.error('[operator-probe-budget] Shutdown failed'); process.exitCode = 1; }); };
     process.once('SIGTERM', shutdown); process.once('SIGINT', shutdown);
-  }).catch(error => { console.error('[operator-probe-budget] Startup failed', error); process.exitCode = 1; });
+  }).catch(() => { console.error('[operator-probe-budget] Startup failed'); process.exitCode = 1; });
 }
