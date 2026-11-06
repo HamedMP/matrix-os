@@ -97,3 +97,12 @@ collisions and uncertain outcomes fail closed. Failed creates can retain owned
 orphans for quiesced reconciliation; no foreign leaf is chmodded or recursively
 removed by creation error recovery. Source tests model Darwin setgid explicitly
 and do not replace hardened Linux execution of the final compiled helpers.
+
+A failed launcher start fences new creates for that supervisor incarnation.
+Existing runtime controls remain available, and already-admitted work drains
+within the 32-runtime admission bound. Naturally exited runtimes release their
+slots only after ownership-checked cleanup; failed cleanup retains the slot.
+Prune, Stop, lease expiry and shutdown share at most one cleanup per handle, and
+shutdown drains admitted creates through any post-close cleanup. No timer or
+successful Stop clears the fence. A fresh controller must complete ownership-checked startup reconciliation
+before admitting creates again; failed recovery leaves the artifacts intact.

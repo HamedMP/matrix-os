@@ -1,3 +1,4 @@
+import { createRuntimeCleanupAdmission } from "./runtime-cleanup-admission.js";
 import { randomBytes } from "node:crypto";
 import {
   RuntimeHandleSchema,
@@ -186,7 +187,9 @@ export async function createScopeRuntimeController(options: {
   maxRuntimes?: number;
   createRuntimeHandle?: () => string;
 }) {
-  const maxRuntimes = Math.max(1, Math.min(Math.trunc(options.maxRuntimes ?? 32), 32));
+  const requestedCapacity = options.maxRuntimes ?? 32;
+  if (!Number.isFinite(requestedCapacity)) throw new Error("Invalid scope runtime capacity");
+  const maxRuntimes = Math.max(1, Math.min(Math.trunc(requestedCapacity), 32));
   if (!EXECUTION_GENERATION.test(options.executionGeneration)) {
     throw new Error("Invalid scope runtime execution generation");
   }
@@ -218,35 +221,21 @@ export async function createScopeRuntimeController(options: {
       profileId: value.profileId ?? SCOPE_RUNTIME_PROFILE.profileId,
     });
   }
-  const operations = new Set<Promise<void>>();
+  const operations = new Set<Promise<ScopeRuntimeResponse>>();
   let reservedCreates = 0;
+  // A rejected launch may retain artifacts or a submitted unit. Keep its
+  // uncertainty until a fresh controller completes launcher.list() above.
+  // At most 32 already-admitted creates can remain, below each 128-entry sweep.
+  let createRecoveryRequired = false;
   let closed = false;
-  const leases = createPiRuntimeLeases({ runtimes, async expire(handle, runtime) {
-    await options.launcher.stop(handle);
-    if (runtimes.get(handle) === runtime) runtimes.delete(handle);
+  const leases = createPiRuntimeLeases({ runtimes, async expire(handle) {
+    await cleanup.stop(handle);
   } });
-
-  /**
-   * Units end on their own (RuntimeMaxSec, crash, or worker exit). Drops map
-   * entries whose unit is no longer running, so exited runtimes stop holding
-   * capacity. Read-only on the host side.
-   */
-  async function pruneExited(): Promise<void> {
-    if (!options.launcher.active) return;
-    // Only handles tracked before the snapshot can be judged by it: a create
-    // that finishes while `active()` runs adds a unit the snapshot never saw.
-    const tracked = [...runtimes.keys()];
-    try {
-      const running = await options.launcher.active();
-      for (const runtimeHandle of tracked) {
-        if (!running.has(runtimeHandle)) runtimes.delete(runtimeHandle);
-      }
-      leases.changed();
-    } catch (error: unknown) {
-      console.warn("[scope-runtime] runtime liveness check failed:",
-        error instanceof Error ? error.name : "UnknownError");
-    }
-  }
+  const cleanup = createRuntimeCleanupAdmission({ runtimes,
+    stop: handle => options.launcher.stop(handle),
+    ...(options.launcher.active ? { active: () => options.launcher.active!() } : {}),
+    closed: () => closed, changed: () => leases.changed(),
+  });
 
   async function createRuntime(
     request: Extract<ScopeRuntimeRequest, { type: "runtime.create" }>,
@@ -272,7 +261,9 @@ export async function createScopeRuntimeController(options: {
     if (request.sandbox && request.sandbox.scopeHandle !== request.scopeHandle) {
       return runtimeFailure(request.requestId, "invalid_request");
     }
-    if (runtimes.size + reservedCreates >= maxRuntimes) await pruneExited();
+    if (createRecoveryRequired) return runtimeFailure(request.requestId, "runtime_unavailable");
+    if (runtimes.size + reservedCreates >= maxRuntimes) await cleanup.prune();
+    if (createRecoveryRequired || closed) return runtimeFailure(request.requestId, "runtime_unavailable");
     if (runtimes.size + reservedCreates >= maxRuntimes) {
       return runtimeFailure(request.requestId, "capacity_exceeded");
     }
@@ -288,19 +279,27 @@ export async function createScopeRuntimeController(options: {
     if (!runtimeHandle) return runtimeFailure(request.requestId, "runtime_unavailable");
 
     reservedCreates += 1;
-    const operation = options.launcher.start({
-      runtimeHandle,
-      scopeHandle: request.scopeHandle,
-      profileId: profile.profileId,
-      workload: request.workload,
-      adapterId: request.adapterId,
-      harnessVersion: request.harnessVersion,
-      executionGeneration: options.executionGeneration,
-      ...(request.sandbox ? { sandbox: request.sandbox } : {}),
-    });
+    const operation = launchRuntime(request, runtimeHandle, profile.profileId);
     operations.add(operation);
+    try { return await operation; } finally { operations.delete(operation); }
+  }
+
+  async function launchRuntime(
+    request: Extract<ScopeRuntimeRequest, { type: "runtime.create" }>,
+    runtimeHandle: string,
+    profileId: string,
+  ): Promise<ScopeRuntimeResponse> {
     try {
-      await operation;
+      await options.launcher.start({
+        runtimeHandle,
+        scopeHandle: request.scopeHandle,
+        profileId,
+        workload: request.workload,
+        adapterId: request.adapterId,
+        harnessVersion: request.harnessVersion,
+        executionGeneration: options.executionGeneration,
+        ...(request.sandbox ? { sandbox: request.sandbox } : {}),
+      });
       if (closed) {
         try {
           await options.launcher.stop(runtimeHandle);
@@ -310,8 +309,8 @@ export async function createScopeRuntimeController(options: {
         }
         return runtimeFailure(request.requestId, "runtime_unavailable");
       }
-      runtimes.set(runtimeHandle, { executionGeneration: options.executionGeneration, profileId: profile.profileId });
-      if (piProfileIdentity(profile.profileId)) leases.register(runtimeHandle);
+      runtimes.set(runtimeHandle, { executionGeneration: options.executionGeneration, profileId });
+      if (piProfileIdentity(profileId)) leases.register(runtimeHandle);
       return ScopeRuntimeResponseSchema.parse({
         version: 1,
         type: "runtime.result",
@@ -322,12 +321,12 @@ export async function createScopeRuntimeController(options: {
         state: "running",
       });
     } catch (error: unknown) {
+      createRecoveryRequired = true;
       console.warn("[scope-runtime] fixed-profile launch failed:",
         error instanceof Error ? error.name : "UnknownError");
       return runtimeFailure(request.requestId, "runtime_unavailable");
     } finally {
       reservedCreates -= 1;
-      operations.delete(operation);
     }
   }
 
@@ -340,9 +339,7 @@ export async function createScopeRuntimeController(options: {
     }
     leases.forget(request.runtimeHandle);
     try {
-      await options.launcher.stop(request.runtimeHandle);
-      runtimes.delete(request.runtimeHandle);
-      leases.changed();
+      await cleanup.stop(request.runtimeHandle);
       return ScopeRuntimeResponseSchema.parse({
         version: 1,
         type: "runtime.result",
@@ -431,7 +428,7 @@ export async function createScopeRuntimeController(options: {
     } catch (error: unknown) {
       console.warn("[scope-runtime] bot command failed:",
         error instanceof Error ? error.name : "UnknownError");
-      await pruneExited();
+      await cleanup.prune();
       return botFailure(request.requestId, "runtime_unavailable");
     }
   }
@@ -480,9 +477,10 @@ export async function createScopeRuntimeController(options: {
       closed = true;
       await leases.close();
       await Promise.allSettled([...operations]);
+      await cleanup.drain();
       const stops = [...runtimes.keys()].map(async (runtimeHandle) => {
         try {
-          await options.launcher.stop(runtimeHandle);
+          await cleanup.stop(runtimeHandle);
         } catch (error: unknown) {
           console.warn("[scope-runtime] shutdown stop failed:",
             error instanceof Error ? error.name : "UnknownError");
