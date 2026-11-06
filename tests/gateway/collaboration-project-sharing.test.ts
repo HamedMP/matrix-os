@@ -375,6 +375,34 @@ describe("whole-project sharing coordinator", () => {
     })).resolves.toMatchObject({ status: "prepared" });
     expect(prepare).toHaveBeenCalledOnce();
   });
+
+  it("unshares after a retained private Chat was omitted from the latest project inventory", async () => {
+    await fixture.db.updateTable("collaboration_scopes").set({ lifecycle: "shared" })
+      .where("id", "=", PROJECT_SCOPE).execute();
+    await fixture.db.updateTable("collaboration_scopes").set({
+      parent_scope_id: PROJECT_SCOPE,
+      membership_mode: "inherited",
+      lifecycle: "private",
+      auth_epoch: 3,
+    }).where("id", "=", CHAT_SCOPE).execute();
+    const onUnshared = vi.fn(async () => undefined);
+    const service = serviceFixture(fixture, preview, verifyConfirmation, replayPreparation, prepare, onUnshared);
+
+    await expect(service.unshare({
+      scopeId: PROJECT_SCOPE,
+      actorId: OWNER,
+      clientRequestId: "50000000-0000-4000-8000-000000000710",
+      expectedRevision: 4,
+      payloadHash: "7".repeat(64),
+    })).resolves.toEqual({ scopeId: PROJECT_SCOPE, lifecycle: "private", revision: 5 });
+    await expect(fixture.db.selectFrom("collaboration_scopes")
+      .select(["lifecycle", "auth_epoch"])
+      .where("id", "=", CHAT_SCOPE).executeTakeFirstOrThrow()).resolves.toEqual({
+      lifecycle: "private",
+      auth_epoch: 3,
+    });
+    expect(onUnshared).toHaveBeenCalledOnce();
+  });
 });
 
 function serviceFixture(

@@ -358,10 +358,10 @@ export function createProjectSharingService(options: {
           || (scope.lifecycle !== "shared" && scope.lifecycle !== "archived")) {
           throw new ProjectSharingError("conflict");
         }
-        const children = await trx.selectFrom("collaboration_scopes").select(["id", "lifecycle"])
+        const children = await trx.selectFrom("collaboration_scopes").select("id")
           .where("parent_scope_id", "=", scope.id).where("membership_mode", "=", "inherited")
+          .where("lifecycle", "=", scope.lifecycle)
           .where("deleted_at", "is", null).forUpdate().execute();
-        if (children.some((child) => child.lifecycle !== scope.lifecycle)) throw new ProjectSharingError("conflict");
         const committedDate = new Date();
         const committedAt = committedDate.toISOString();
         const revision = Number(scope.revision) + 1;
