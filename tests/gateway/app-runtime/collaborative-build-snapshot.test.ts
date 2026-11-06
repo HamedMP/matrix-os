@@ -142,6 +142,15 @@ describe("immutable collaborative build snapshots", () => {
     expect(await readFile(join(root, "outside-capture"), "utf8")).toBe("keep");
   });
 
+  it("bounds concurrent capture bookkeeping before copying another snapshot", async () => {
+    const store = createStore();
+    const activeCaptures = (store as unknown as { activeCaptures: Set<string> }).activeCaptures;
+    for (let index = 0; index < 32; index += 1) activeCaptures.add(`active-${index}`);
+
+    await expect(store.capture({ buildRoot, buildId: "4".repeat(64) }))
+      .rejects.toMatchObject({ code: "capacity" });
+  });
+
   it("rejects symlinks and never follows attacker-named links during cleanup", async () => {
     const store = createStore();
     await symlink(join(root, "outside"), join(buildRoot, "escape"));

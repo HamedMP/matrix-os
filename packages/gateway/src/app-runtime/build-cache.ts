@@ -24,6 +24,7 @@ const COLLABORATIVE_BUILD_ID = /^[a-f0-9]{64}$/;
 const MAX_SNAPSHOT_FILES = 10_000;
 const MAX_SNAPSHOT_BYTES = 256 * 1024 * 1024;
 const MAX_ORPHAN_SWEEP_ENTRIES = 1_000;
+const MAX_ACTIVE_CAPTURES = 32;
 const INTERRUPTED_CAPTURE_RETENTION_MS = 60 * 60 * 1_000;
 const CAPTURE_DIRECTORY = /^\.capture-[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 
@@ -212,10 +213,13 @@ export class ImmutableCollaborativeBuildStore {
     if (this.closed) {
       throw new CollaborativeBuildSnapshotError("invalid_snapshot");
     }
-    await this.initialize();
+    if (this.activeCaptures.size >= MAX_ACTIVE_CAPTURES) {
+      throw new CollaborativeBuildSnapshotError("capacity");
+    }
     const temporary = join(this.objectsDir, `.capture-${randomUUID()}`);
     this.activeCaptures.add(temporary);
     try {
+      await this.initialize();
       await mkdir(temporary, { mode: 0o700 });
       const assetDigest = await this.copyAndDigest(input.buildRoot, temporary);
       const buildId = input.buildIdForAssetDigest(assetDigest);
