@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { canonicalAgentFailure, canonicalChatSafeFailureReason, canonicalChatTerminalNotices } from "@matrix-os/contracts";
+import { canonicalAgentFailure, canonicalChatFailureNotice, canonicalChatSafeFailureReason, canonicalChatTerminalNotices, canonicalUnexpectedRunFailure } from "@matrix-os/contracts";
 import { createCanonicalChatFixture } from "../contracts/fixtures/canonical-chat";
 import { canonicalChatPresentation } from "@desktop/renderer/src/features/chat/canonical-chat-presentation";
 
@@ -8,6 +8,36 @@ const usageCopy = "Usage limit reached. Wait for reset or switch connection.";
 const creditCopy = "No usable agent credit. Check billing or switch connection.";
 
 describe("actionable agent failure details", () => {
+  it("states plainly when the provider reported no failure reason", () => {
+    const { snapshot } = createCanonicalChatFixture("failed");
+    const copy = "The agent stopped without reporting a reason.";
+    expect(canonicalChatPresentation(snapshot)[0]?.final?.markdown).toBe(copy);
+    expect(canonicalChatTerminalNotices(snapshot as never)[0]?.text).toBe(copy);
+    expect(canonicalChatFailureNotice("run_failed", "/home/private"))
+      .toBe("The agent could not finish. Try again.");
+  });
+  it.each([
+    [{ stage: "provider", category: "timeout" }, "The agent stopped because the operation timed out."],
+    [{ stage: "provider", category: "network" }, "The agent connection was interrupted."],
+    [{ stage: "projection", category: "validation" }, "Chat could not process the agent response."],
+    [{ stage: "persistence", category: "unknown" }, "Chat could not save the agent response."],
+    [{ stage: "persistence", category: "network" }, "Chat could not save the agent response."],
+    [{ stage: "preparation", category: "unknown" }, "Chat could not prepare the agent run."],
+  ] as const)("shows a safe %j diagnosis across Chat views", (diagnostic, copy) => {
+    const error = canonicalUnexpectedRunFailure(diagnostic);
+    expect(error).toMatchObject({ code: "run_failed", safeMessage: copy });
+    if (diagnostic.stage === "persistence" || diagnostic.category === "timeout"
+      || diagnostic.category === "validation") expect(error.retryable).toBe(false);
+    expect(canonicalChatSafeFailureReason(error.code, error.safeMessage)).toBe(copy);
+    const { snapshot } = createCanonicalChatFixture("failed");
+    const run = snapshot.runs[0]!;
+    const detail = { ...snapshot, activities: [{ id: "act_failure", chatId: run.chatId, runId: run.id,
+      type: "run.error" as const, error, sequence: 1, occurredAt: run.updatedAt }] };
+    expect(canonicalChatPresentation(detail)[0]?.final?.markdown).toBe(copy);
+    expect(canonicalChatTerminalNotices(detail)[0]?.text).toBe(copy);
+    expect(canonicalChatSafeFailureReason(error.code, `${copy} token=private`))
+      .toBe("The agent could not finish. Try again.");
+  });
   it.each([
     ["provider_unavailable", authCopy], ["run_failed", usageCopy], ["provider_unavailable", creditCopy],
     ["insufficient_credit", "Not enough Matrix AI credit. Add credit in Settings."],
