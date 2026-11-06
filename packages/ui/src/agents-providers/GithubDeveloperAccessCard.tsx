@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useState } from "react";
 
 const MAX_ACCOUNT_LABEL_LENGTH = 128;
-const MAX_IDENTITY_LABEL_LENGTH = 256;
+// Match the additive core contract, including the confirmed name and email.
+const MAX_IDENTITY_LABEL_LENGTH = 525;
 
 export interface GithubDeveloperAccessStatus {
   installed: boolean;
@@ -96,17 +97,21 @@ function identityLabel(status: GithubDeveloperAccessStatus["commitIdentity"]): s
 export function GithubDeveloperAccessCard({
   identityKey,
   client,
+  readOnly = false,
 }: {
   identityKey: string;
   client: GithubDeveloperAccessClient;
+  readOnly?: boolean;
 }) {
-  return <GithubDeveloperAccessCardForIdentity key={identityKey} client={client} />;
+  return <GithubDeveloperAccessCardForIdentity key={identityKey} client={client} readOnly={readOnly} />;
 }
 
 function GithubDeveloperAccessCardForIdentity({
   client,
+  readOnly,
 }: {
   client: GithubDeveloperAccessClient;
+  readOnly: boolean;
 }) {
   const [refreshRevision, setRefreshRevision] = useState(0);
   const [status, setStatus] = useState<GithubDeveloperAccessStatus | null>(null);
@@ -132,7 +137,7 @@ function GithubDeveloperAccessCardForIdentity({
   }, [client, refreshRevision]);
 
   const startSetup = useCallback(async () => {
-    if (setupPending) return;
+    if (readOnly || setupPending) return;
     setSetupPending(true);
     try {
       const opened = await client.startSetup();
@@ -143,7 +148,7 @@ function GithubDeveloperAccessCardForIdentity({
     } finally {
       setSetupPending(false);
     }
-  }, [client, setupPending]);
+  }, [client, readOnly, setupPending]);
 
   const connectLabel = status?.authenticated ? "Finish setup" : "Connect";
   return (
@@ -177,14 +182,14 @@ function GithubDeveloperAccessCardForIdentity({
             </span>
             {!status.ready ? (
               <button type="button" className="matrix-ap-button matrix-ap-button-primary"
-                disabled={setupPending} onClick={() => void startSetup()}>{connectLabel}</button>
+                disabled={readOnly || setupPending} onClick={() => void startSetup()}>{connectLabel}</button>
             ) : null}
           </div>
         </>
       ) : phase === "error" ? (
         <div className="matrix-ap-github-footer">
           <button type="button" className="matrix-ap-button matrix-ap-button-primary"
-            disabled={setupPending} onClick={() => void startSetup()}>Connect</button>
+            disabled={readOnly || setupPending} onClick={() => void startSetup()}>Connect</button>
         </div>
       ) : null}
     </section>

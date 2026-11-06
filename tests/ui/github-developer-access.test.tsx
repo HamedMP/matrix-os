@@ -4,6 +4,8 @@ import "@testing-library/jest-dom/vitest";
 import React from "react";
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import type { ProviderSettingsSnapshot } from "@matrix-os/contracts";
+import { AgentsProvidersView } from "../../packages/ui/src/agents-providers/AgentsProvidersView.js";
 import {
   GithubDeveloperAccessCard,
   parseGithubDeveloperAccessStatus,
@@ -35,12 +37,20 @@ describe("GitHub developer access compatibility parser", () => {
     expect(parseGithubDeveloperAccessStatus({
       ...readyStatus,
       user: "x".repeat(129),
-      commitIdentity: { status: "ready", label: "x".repeat(257) },
+      commitIdentity: { status: "ready", label: "x".repeat(526) },
     })).toMatchObject({
       user: null,
       commitIdentity: { status: "unavailable", label: null },
       ready: false,
     });
+  });
+
+  it("preserves a valid owner identity label longer than 256 characters", () => {
+    const label = `${"a".repeat(180)} <${"b".repeat(90)}@example.com>`;
+    expect(parseGithubDeveloperAccessStatus({
+      ...readyStatus,
+      commitIdentity: { status: "ready", label },
+    })).toMatchObject({ commitIdentity: { status: "ready", label }, ready: true });
   });
 
   it("fails an older or malformed gateway response closed", () => {
@@ -59,6 +69,64 @@ describe("GitHub developer access compatibility parser", () => {
 });
 
 describe("GitHub developer access card", () => {
+  it.each([
+    { state: "partial", reason: "remote_policy" as const },
+    { state: "unavailable", reason: "insufficient_permission" as const },
+  ])("keeps GitHub setup disabled for $reason when status is $state", async ({ state, reason }) => {
+    const snapshot: ProviderSettingsSnapshot = {
+      contractVersion: 1,
+      projectionOf: { contract: "AiProviderSnapshotV3", contractVersion: 3, revision: 1 },
+      revision: 1,
+      refreshedAt: "2026-11-06T00:00:00Z",
+      access: { mode: "read_only", reason },
+      supportedActions: [], harnessCatalog: [], modelProviders: [],
+      accessSources: [], accounts: [], harnesses: [], gatewayPolicy: null,
+    };
+    const startSetup = vi.fn().mockResolvedValue(true);
+    const client: GithubDeveloperAccessClient = {
+      status: state === "partial"
+        ? vi.fn().mockResolvedValue({ ...readyStatus, ready: false, sshStatus: "setup_required" })
+        : vi.fn().mockRejectedValue(new Error("unavailable")),
+      startSetup,
+    };
+    render(<AgentsProvidersView snapshot={snapshot} selectedHarnessId={null}
+      onSelectHarness={vi.fn()} onRefresh={vi.fn()} onMutate={vi.fn()}
+      onOpenTerminal={vi.fn()} onOpenBrowser={vi.fn()} onAddCredit={vi.fn()}
+      githubDeveloperAccess={{ identityKey: "alice:primary", client }} />);
+
+    const setup = await screen.findByRole("button", { name: state === "partial" ? "Finish setup" : "Connect", exact: true });
+    expect(setup).toBeDisabled();
+    fireEvent.click(setup);
+    expect(startSetup).not.toHaveBeenCalled();
+    expect(screen.getByRole("button", { name: "Refresh GitHub developer access" })).toBeEnabled();
+  });
+
+  it("allows owner GitHub setup when only provider mutations are unavailable", async () => {
+    const snapshot: ProviderSettingsSnapshot = {
+      contractVersion: 1,
+      projectionOf: { contract: "AiProviderSnapshotV3", contractVersion: 3, revision: 1 },
+      revision: 1,
+      refreshedAt: "2026-11-06T00:00:00Z",
+      access: { mode: "read_only", reason: "runtime_unavailable" },
+      supportedActions: [], harnessCatalog: [], modelProviders: [],
+      accessSources: [], accounts: [], harnesses: [], gatewayPolicy: null,
+    };
+    const startSetup = vi.fn().mockResolvedValue(true);
+    const client: GithubDeveloperAccessClient = {
+      status: vi.fn().mockResolvedValue({ ...readyStatus, ready: false, sshStatus: "setup_required" }),
+      startSetup,
+    };
+    render(<AgentsProvidersView snapshot={snapshot} selectedHarnessId={null}
+      onSelectHarness={vi.fn()} onRefresh={vi.fn()} onMutate={vi.fn()}
+      onOpenTerminal={vi.fn()} onOpenBrowser={vi.fn()} onAddCredit={vi.fn()}
+      githubDeveloperAccess={{ identityKey: "alice:primary", client }} />);
+
+    const setup = await screen.findByRole("button", { name: "Finish setup", exact: true });
+    expect(setup).toBeEnabled();
+    await act(async () => { fireEvent.click(setup); });
+    expect(startSetup).toHaveBeenCalledTimes(1);
+  });
+
   it("shows account, SSH, and commit identity readiness outside the AI provider inventory", async () => {
     const client: GithubDeveloperAccessClient = {
       status: vi.fn().mockResolvedValue(readyStatus),

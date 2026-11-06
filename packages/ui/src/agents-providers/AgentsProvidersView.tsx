@@ -194,7 +194,8 @@ export function AgentsProvidersView({
         </div>
       ) : null}
 
-      {githubDeveloperAccess ? <GithubDeveloperAccessCard {...githubDeveloperAccess} /> : null}
+      {githubDeveloperAccess ? <GithubDeveloperAccessCard {...githubDeveloperAccess}
+        readOnly={snapshot.access.mode === "read_only" && snapshot.access.reason !== "runtime_unavailable"} /> : null}
 
       {historyLoader && historyLoader === onLoadUsageHistory ? <UsageHistoryDialog load={historyLoader} onClose={() => setHistoryLoader(undefined)} /> : null}
       <div className="matrix-ap-workspace">
