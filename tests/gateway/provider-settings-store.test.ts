@@ -272,6 +272,80 @@ describe("ProviderSettingsStore", () => {
     });
   });
 
+  it("uses the saved Codex route when the live inventory still prefers Claude", async () => {
+    const profile = canonical.accessSources.find((source) => source.id === "owner_anthropic_profile")!;
+    const account = canonical.accounts.find((candidate) => candidate.id === "owner_anthropic")!;
+    const ownerInstance = canonical.instances.find((instance) => instance.id === "kernel_owner")!;
+    const model = canonical.models.find((candidate) => candidate.id === "claude-opus-5")!;
+    canonical = AiProviderSnapshotV3Schema.parse({
+      ...canonical,
+      accessSources: [...canonical.accessSources, {
+        ...profile,
+        id: "owner_openai_profile",
+        vendor: "openai",
+        eligibleModelIds: ["gpt-5"],
+      }],
+      accounts: [...canonical.accounts, {
+        ...account,
+        id: "owner_codex",
+        vendor: "openai",
+      }],
+      drivers: [...canonical.drivers, {
+        ...canonical.drivers.find((driver) => driver.id === "claude_code")!,
+        id: "codex",
+        displayName: "Codex",
+      }],
+      instances: [...canonical.instances, {
+        ...ownerInstance,
+        id: "codex_owner",
+        driverId: "codex",
+        vendor: "openai",
+        accountId: "owner_codex",
+        accessSourceId: "owner_openai_profile",
+        modelIds: ["gpt-5"],
+        defaultModelId: "gpt-5",
+      }],
+      models: [...canonical.models, {
+        ...model,
+        id: "gpt-5",
+        vendor: "openai",
+        eligibleAccessSourceIds: ["owner_openai_profile"],
+        dataPolicies: [{
+          accessSourceId: "owner_openai_profile",
+          route: "owner_direct",
+          disclosureKey: "owner-openai",
+        }],
+      }],
+      active: {
+        providerInstanceId: "kernel_owner",
+        accessSourceId: "owner_anthropic_profile",
+        modelId: "claude-opus-5",
+      },
+    });
+    const store = createStore();
+    await store.getSnapshot();
+    const saved = JSON.parse(await readFile(store.configurationPath, "utf8")) as {
+      harnesses: Array<{
+        harness: string;
+        enabled: boolean;
+        enablementOrigin?: "generated_default" | "owner_configuration";
+      }>;
+    };
+    const claude = saved.harnesses.find((harness) => harness.harness === "claude")!;
+    const codex = saved.harnesses.find((harness) => harness.harness === "codex")!;
+    Object.assign(claude, { enabled: false, enablementOrigin: "owner_configuration" });
+    Object.assign(codex, { enabled: true, enablementOrigin: "owner_configuration" });
+    await writeFile(store.configurationPath, `${JSON.stringify(saved)}\n`);
+
+    await expect(store.getCanonicalCollaborationSnapshot()).resolves.toMatchObject({
+      active: {
+        providerInstanceId: "codex_owner",
+        accessSourceId: "owner_openai_profile",
+        modelId: "gpt-5",
+      },
+    });
+  });
+
   it("keeps the provider inventory readable without falling back when the saved route expires", async () => {
     const store = createStore();
     await store.getSnapshot();

@@ -90,6 +90,7 @@ import {
   type SharedAiCapability,
   type SharedAiCapabilityProjection,
   type CanonicalSharedProviderAuthority,
+  type SharedProviderAuthorityResolver,
 } from "./queue-repository.js";
 import {
   ChatSteeringRepository,
@@ -127,6 +128,7 @@ export type {
   SharedAiCapability,
   SharedAiCapabilityProjection,
   CanonicalSharedProviderAuthority,
+  SharedProviderAuthorityResolver,
 } from "./queue-repository.js";
 export { SharedChatQueueError } from "./queue-repository.js";
 export type { BeginSteerInput, BegunSteer } from "./steering-repository.js";
@@ -417,6 +419,11 @@ export class ChatRepository {
   /** Installed by the collaboration runtime before accepting shared requests. */
   setSharedAuthorizer(authorize: import("../collaboration/shared-chat-authority.js").SharedChatAuthorizer): void {
     this.queue.setSharedAuthorizer(authorize);
+  }
+
+  /** Installed with the shared runtime so queued project work can revalidate its exact owner route. */
+  setSharedProviderAuthorityResolver(resolve: SharedProviderAuthorityResolver): void {
+    this.queue.setSharedProviderAuthorityResolver(resolve);
   }
 
   constructor(

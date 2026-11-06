@@ -86,16 +86,25 @@ function savedCollaborationRoute(
   canonical: AiProviderSnapshotV3,
   config: ProviderSettingsConfiguration,
 ): AiProviderSnapshotV3["active"] {
+  const enabledNative = config.harnesses.filter((harness) =>
+    harness.enabled && (harness.harness === "codex" || harness.harness === "claude"));
+  const ownerConfigured = enabledNative.filter((harness) => harness.enablementOrigin === "owner_configuration");
   const inventoryActive = canonical.instances.find((instance) => instance.id === canonical.active.providerInstanceId);
   const activeHarness = inventoryActive?.driverId === "codex"
     ? "codex" as const
     : inventoryActive?.driverId === "kernel" || inventoryActive?.driverId === "claude_code"
       ? "claude" as const
       : null;
-  if (activeHarness === null) return NO_ACTIVE_PROVIDER_ROUTE;
-  const configured = config.harnesses.filter((harness) => harness.enabled && harness.harness === activeHarness);
-  if (configured.length !== 1) return NO_ACTIVE_PROVIDER_ROUTE;
-  const harness = configured[0]!;
+  const harness = enabledNative.length === 1
+    ? enabledNative[0]
+    : ownerConfigured.length === 1
+      ? ownerConfigured[0]
+      : activeHarness === null
+        ? undefined
+        : enabledNative.filter((candidate) => candidate.harness === activeHarness).length === 1
+          ? enabledNative.find((candidate) => candidate.harness === activeHarness)
+          : undefined;
+  if (!harness) return NO_ACTIVE_PROVIDER_ROUTE;
   if (harness.accessSourceId === null) return NO_ACTIVE_PROVIDER_ROUTE;
   const source = canonical.accessSources.find((candidate) => candidate.id === harness.accessSourceId);
   const model = canonical.models.find((candidate) => candidate.id === harness.route.modelId);

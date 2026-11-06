@@ -369,7 +369,9 @@ export async function createSharedAiRuntime(options: {
           const executableSelection = executableChatSelectionForOwnerRoute(ownerDecision);
           if (ownerDecision.authorityKind === "provider_settings_active"
             && (executableSelection.instanceId !== execution.selection.instanceId
-              || executableSelection.model !== execution.selection.model)) {
+              || executableSelection.model !== execution.selection.model
+              || ownerDecision.providerAccessSourceId !== execution.providerAccessSourceId
+              || ownerDecision.routeGeneration !== execution.routeGeneration)) {
             throw new SharedChatRunPreparationError("unavailable");
           }
           const providerIdentity = sharedProviderIdentityFor(execution.driverKind, ownerDecision);
@@ -444,6 +446,53 @@ export async function createSharedAiRuntime(options: {
     );
   };
 
+  const resolveCanonicalProviderAuthority = async (
+    scopeId: string,
+    ownerId: string,
+    selection: CanonicalChatModelSelection | null,
+    boundDriverKind: CanonicalProviderDriverKind | null,
+  ) => {
+    const decision = await options.ownerSource.authority({ scopeId, ownerId });
+    if (selection?.instanceId === MATRIX_BOT_INSTANCE_ID) {
+      if (boundDriverKind !== null && boundDriverKind !== "matrix_bot") return null;
+      if (!options.matrixBot || selection.model !== MATRIX_BOT_MODEL
+        || !sharedAiEligibilitySupportsDriver(eligibility, "matrix_bot", MATRIX_BOT_INSTANCE_ID)
+        || await options.matrixBot.readiness?.(ownerId, selection, decision) !== "ready") return null;
+      return { driverKind: "matrix_bot" as const, selection };
+    }
+    const driverKind = decision.harness === "codex" ? "codex" as const : "claude_code" as const;
+    if (boundDriverKind !== null && boundDriverKind !== driverKind) return null;
+    const currentSelection = executableChatSelectionForOwnerRoute(decision);
+    if (!options.providerCatalog) return null;
+    const catalog = await options.providerCatalog.getCatalog({ userId: ownerId, source: "jwt" });
+    const validated = validateChatProviderSelection({
+      catalog,
+      selection: currentSelection,
+      requirements: SHARED_RUN_SELECTION_REQUIREMENTS,
+    });
+    if (!validated.ok || (validated.instance.driverKind !== driverKind
+      && !(driverKind === "claude_code" && validated.instance.driverKind === "kernel"))) return null;
+    // The owner's first binding may only name a driver this runtime can
+    // execute in isolation; the queue re-verifies the signed eligibility.
+    const adapterId = sharedAiAdapterFor(driverKind, currentSelection.instanceId);
+    if (!adapterId || !eligibility.adapters.some((adapter) => adapter.adapterId === adapterId)) {
+      return null;
+    }
+    return {
+      driverKind,
+      selection: currentSelection,
+      ...(decision.authorityKind === "provider_settings_active" ? {
+        currentOwnerRoute: true as const,
+        providerAccessSourceId: decision.providerAccessSourceId,
+        routeGeneration: decision.routeGeneration,
+      } : {}),
+    };
+  };
+  options.repository.setSharedProviderAuthorityResolver(
+    ({ scopeId, ownerId, selection, driverKind }) =>
+      resolveCanonicalProviderAuthority(scopeId, ownerId, selection, driverKind),
+  );
+
   const chatExecutionAdapter = new CollaborationChatExecutionAdapter({
     repository: options.repository,
     commands,
@@ -510,39 +559,7 @@ export async function createSharedAiRuntime(options: {
       ...(options.providerCatalog ? { providerCatalog: options.providerCatalog } : {}),
     }, ownerId, selection, boundDriverKind),
     }),
-    resolveCanonicalProviderAuthority: async (scopeId, ownerId, selection, boundDriverKind) => {
-      const decision = await options.ownerSource.authority({ scopeId, ownerId });
-      if (selection?.instanceId === MATRIX_BOT_INSTANCE_ID) {
-        if (boundDriverKind !== null && boundDriverKind !== "matrix_bot") return null;
-        if (!options.matrixBot || selection.model !== MATRIX_BOT_MODEL
-          || !sharedAiEligibilitySupportsDriver(eligibility, "matrix_bot", MATRIX_BOT_INSTANCE_ID)
-          || await options.matrixBot.readiness?.(ownerId, selection, decision) !== "ready") return null;
-        return { driverKind: "matrix_bot" as const, selection };
-      }
-      const driverKind = decision.harness === "codex" ? "codex" as const : "claude_code" as const;
-      if (boundDriverKind !== null && boundDriverKind !== driverKind) return null;
-      const currentSelection = executableChatSelectionForOwnerRoute(decision);
-      if (!options.providerCatalog) return null;
-      const catalog = await options.providerCatalog.getCatalog({ userId: ownerId, source: "jwt" });
-      const validated = validateChatProviderSelection({
-        catalog,
-        selection: currentSelection,
-        requirements: SHARED_RUN_SELECTION_REQUIREMENTS,
-      });
-      if (!validated.ok || (validated.instance.driverKind !== driverKind
-        && !(driverKind === "claude_code" && validated.instance.driverKind === "kernel"))) return null;
-      // The owner's first binding may only name a driver this runtime can
-      // execute in isolation; the queue re-verifies the signed eligibility.
-      const adapterId = sharedAiAdapterFor(driverKind, currentSelection.instanceId);
-      if (!adapterId || !eligibility.adapters.some((adapter) => adapter.adapterId === adapterId)) {
-        return null;
-      }
-      return {
-        driverKind,
-        selection: currentSelection,
-        ...(decision.authorityKind === "provider_settings_active" ? { currentOwnerRoute: true as const } : {}),
-      };
-    },
+    resolveCanonicalProviderAuthority,
     requestDispatch: dispatch,
     onCommitted: (scopeId) => options.eventRegistry.broadcastScope(scopeId),
     runLoss: options.runLoss,
