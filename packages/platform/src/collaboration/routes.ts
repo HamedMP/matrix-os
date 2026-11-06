@@ -5,6 +5,10 @@ import {
   CollaborationDiscoveryResponseSchema,
   CollaborationDirectoryEventSchema,
   CollaborationPageRequestSchema,
+  CollaborativeAppLaunchRequestSchema,
+  CollaborativeAppLaunchResponseSchema,
+  CollaborativeAppParticipantSchema,
+  CollaborationAppAssetPathSchema,
   CollaborativeAppDirectoryResponseSchema,
 } from "@matrix-os/contracts";
 import { Hono, type Context } from "hono";
@@ -12,6 +16,11 @@ import { bodyLimit } from "hono/body-limit";
 import { z } from "zod/v4";
 import { registerInvitationIdentifierResolutionRoute } from "./identifier-resolution-route.js";
 import { parseRelayRoute, type CollaborationRelay } from "./relay.js";
+import {
+  CollaborativeAppLaunchError,
+  type CollaborativeAppLaunchSessions,
+} from "./app-launch-sessions.js";
+import { cancelCollaborativeAppResponseReader } from "./app-launch-upstream.js";
 
 const DIRECT_SESSION_HEADER = "x-matrix-collaboration-session";
 const RETIRED_CONNECTION_TICKET_PATH = /^\/api\/collaboration\/scopes\/[^/]+\/connection-tickets$/;
@@ -47,6 +56,7 @@ export function createPlatformCollaborationRoutes(options: {
   repository: PlatformCollaborationRepository;
   /** S05: transparent relay for direct-protocol requests (session routes or requests carrying a direct session). */
   relay?: CollaborationRelay;
+  launchSessions?: CollaborativeAppLaunchSessions;
   /**
    * Exact browser origins allowed to send cookie-authenticated relay mutations
    * (`MATRIX_COLLABORATION_ALLOWED_ORIGINS`). Absent or empty refuses every one.
@@ -68,6 +78,9 @@ export function createPlatformCollaborationRoutes(options: {
 }): Hono {
   const app = new Hono();
   const allowedOrigins = new Set(options.allowedOrigins ?? []);
+  const routeNow = () => (options.now ?? (() => new Date()))().getTime();
+  const appDiscoveryLimit = new PerActorRateLimit({ maxActors: 10_000, maxAttempts: 120, windowMs: 60_000, now: routeNow });
+  const appLaunchLimit = new PerActorRateLimit({ maxActors: 10_000, maxAttempts: 20, windowMs: 60_000, now: routeNow });
 
   app.on(
     ["POST", "PUT", "PATCH", "DELETE"],
@@ -111,7 +124,10 @@ export function createPlatformCollaborationRoutes(options: {
         return safeJson(c, "Forbidden", 403);
       }
       try {
-        await options.repository.applyDirectoryEvent(event);
+        const applied = await options.repository.applyDirectoryEvent(event);
+        if (applied && event.kind === "app" && event.app?.state !== "active") {
+          await options.launchSessions?.revokeScope(event.scopeId);
+        }
         c.header("Cache-Control", "no-store");
         return c.body(null, 204);
       } catch (error: unknown) {
@@ -125,6 +141,7 @@ export function createPlatformCollaborationRoutes(options: {
   app.get("/api/collaboration/shared-apps", async (c) => {
     const actorId = await resolveValidatedActor(c, options.resolveActor);
     if (!actorId) return safeJson(c, "Unauthorized", 401);
+    if (!appDiscoveryLimit.allow(actorId)) return safeJson(c, "Too many collaboration requests", 429);
     const pageRequest = CollaborationPageRequestSchema.safeParse(exactDiscoveryQuery(c));
     if (!pageRequest.success) return safeJson(c, "Invalid request", 422);
     const after = pageRequest.data.cursor ? decodeAppDiscoveryCursor(pageRequest.data.cursor, actorId) : undefined;
@@ -160,6 +177,97 @@ export function createPlatformCollaborationRoutes(options: {
     } catch (error: unknown) {
       console.warn("[platform-collaboration] app discovery failed", error instanceof Error ? error.name : "UnknownError");
       return safeJson(c, "Collaboration unavailable", 503);
+    }
+  });
+  app.post("/api/collaboration/shared-apps/:scopeId/launch", async (c) => {
+    const actorId = await resolveValidatedActor(c, options.resolveActor);
+    if (!actorId) return safeJson(c, "Unauthorized", 401);
+    if (!appLaunchLimit.allow(actorId)) return safeJson(c, "Too many collaboration requests", 429);
+    if (!options.launchSessions) return safeJson(c, "Collaboration unavailable", 503);
+    const scopeId = z.uuid().safeParse(c.req.param("scopeId"));
+    const request = await parseJson(c, CollaborativeAppLaunchRequestSchema);
+    if (!scopeId.success || !request) return safeJson(c, "Invalid request", 422);
+    try {
+      const admitted = await admitCollaborativeApp(options, actorId, scopeId.data);
+      if (!admitted || admitted.app.shareRevision !== Number(request.expectedShareRevision)
+        || admitted.app.buildId !== request.expectedBuildId) return safeJson(c, "Collaboration resource not found", 404);
+      const owner = await options.resolveParticipant(admitted.ownerId);
+      if (!owner) return safeJson(c, "Collaboration unavailable", 503);
+      const launch = await options.launchSessions.create({
+        actorId,
+        clientRequestId: request.clientRequestId,
+        scopeId: admitted.scopeId,
+        organizationId: admitted.organizationId,
+        runtimeId: admitted.runtimeId,
+        authorityGeneration: admitted.authorityGeneration,
+        appId: admitted.app.appId,
+        catalogId: admitted.app.catalogId,
+        buildId: admitted.app.buildId,
+        shareRevision: admitted.app.shareRevision,
+      });
+      return c.json(CollaborativeAppLaunchResponseSchema.parse({
+        target: {
+          kind: "shared",
+          scopeId: admitted.scopeId,
+          organizationId: admitted.organizationId,
+          appId: admitted.app.appId,
+          catalogId: admitted.app.catalogId,
+          buildId: admitted.app.buildId,
+          name: admitted.app.appId,
+          owner,
+          shareRevision: String(admitted.app.shareRevision),
+        },
+        launchId: launch.launchId,
+        entryUrl: `/api/collaboration/shared-apps/${admitted.scopeId}/runtime/${launch.launchId}/index.html`,
+        expiresAt: launch.expiresAt,
+      }), 201);
+    } catch (error: unknown) {
+      return launchFailure(c, error);
+    }
+  });
+  app.get("/api/collaboration/shared-apps/:scopeId/runtime/:launchId/:assetPath{.+}", async (c) => {
+    const actorId = await resolveValidatedActor(c, options.resolveActor);
+    if (!actorId) return safeJson(c, "Unauthorized", 401);
+    if (!options.launchSessions) return safeJson(c, "Collaboration unavailable", 503);
+    const scopeId = z.uuid().safeParse(c.req.param("scopeId"));
+    const launchId = z.uuid().safeParse(c.req.param("launchId"));
+    const assetPath = CollaborationAppAssetPathSchema.safeParse(c.req.param("assetPath"));
+    if (!scopeId.success || !launchId.success || !assetPath.success) return safeJson(c, "Invalid request", 422);
+    try {
+      const admitted = await admitCollaborativeApp(options, actorId, scopeId.data);
+      const launch = options.launchSessions.describe(launchId.data, actorId, scopeId.data);
+      if (!admitted) {
+        await options.launchSessions.revokeActor(scopeId.data, actorId);
+        return safeJson(c, "Collaboration resource not found", 404);
+      }
+      if (!launch || admitted.runtimeId !== launch.runtimeId
+        || admitted.authorityGeneration !== launch.authorityGeneration
+        || admitted.app.buildId !== launch.buildId || admitted.app.shareRevision !== launch.shareRevision
+        || admitted.app.appId !== launch.appId || admitted.app.catalogId !== launch.catalogId) {
+        return safeJson(c, "Collaboration resource not found", 404);
+      }
+      const response = await options.launchSessions.request({
+        launchId: launchId.data,
+        actorId,
+        scopeId: scopeId.data,
+        assetPath: assetPath.data,
+        signal: c.req.raw.signal,
+      });
+      if (assetPath.data !== "index.html") return response;
+      const participant = await options.resolveParticipant(actorId);
+      if (!participant) {
+        await response.body?.cancel();
+        return safeJson(c, "Collaboration unavailable", 503);
+      }
+      return await injectCollaborativeAppBootstrap(response, {
+        ...participant,
+        organizationId: admitted.organizationId,
+        scopeId: admitted.scopeId,
+        shareRevision: String(admitted.app.shareRevision),
+        buildId: admitted.app.buildId,
+      }, `/api/collaboration/shared-apps/${admitted.scopeId}/runtime/${launchId.data}/`);
+    } catch (error: unknown) {
+      return launchFailure(c, error);
     }
   });
   // The CLI receives an invitation ID as an argument. Resolve only its actor-indexed
@@ -449,6 +557,99 @@ function repositoryFailure(c: RouteContext, operation: string, error: unknown) {
   }
   console.warn(`[platform-collaboration] ${operation} failed`, error instanceof Error ? error.name : "UnknownError");
   return safeJson(c, "Collaboration unavailable", 503);
+}
+
+async function admitCollaborativeApp(
+  options: Parameters<typeof createPlatformCollaborationRoutes>[0],
+  actorId: string,
+  scopeId: string,
+) {
+  const route = await options.repository.getDirectoryRoute(scopeId);
+  if (!route || route.kind !== "app" || route.audience !== "current_membership"
+    || !route.organizationId || !route.app || route.app.state !== "active") return null;
+  const organizationIds = options.listOrganizationIds ? await options.listOrganizationIds(actorId) : [];
+  return organizationIds.includes(route.organizationId) ? {
+    ...route,
+    organizationId: route.organizationId,
+    app: route.app,
+  } : null;
+}
+
+function launchFailure(c: RouteContext, error: unknown) {
+  if (error instanceof CollaborativeAppLaunchError) {
+    if (error.code === "invalid") return safeJson(c, "Invalid request", 422);
+    if (error.code === "not_found" || error.code === "conflict") return safeJson(c, "Collaboration resource not found", 404);
+    if (error.code === "limit") return safeJson(c, "Too many collaboration requests", 429);
+    if (error.code === "host_offline") return safeJson(c, "Collaboration home is offline", 503);
+  }
+  console.warn("[platform-collaboration] app launch failed", error instanceof Error ? error.name : "UnknownError");
+  return safeJson(c, "Collaboration unavailable", 503);
+}
+
+const MAX_BOOTSTRAP_HTML_BYTES = 1024 * 1024;
+
+class PerActorRateLimit {
+  private readonly attempts = new Map<string, number[]>();
+
+  constructor(private readonly options: {
+    maxActors: number;
+    maxAttempts: number;
+    windowMs: number;
+    now: () => number;
+  }) {}
+
+  allow(actorId: string): boolean {
+    const now = this.options.now();
+    const cutoff = now - this.options.windowMs;
+    for (const [actor, timestamps] of this.attempts) {
+      const live = timestamps.filter((timestamp) => timestamp > cutoff);
+      if (live.length === 0) this.attempts.delete(actor);
+      else if (live.length !== timestamps.length) this.attempts.set(actor, live);
+    }
+    let timestamps = this.attempts.get(actorId) ?? [];
+    if (!this.attempts.has(actorId) && this.attempts.size >= this.options.maxActors) {
+      this.attempts.delete(this.attempts.keys().next().value!);
+    }
+    if (timestamps.length >= this.options.maxAttempts) return false;
+    timestamps = [...timestamps, now];
+    this.attempts.delete(actorId);
+    this.attempts.set(actorId, timestamps);
+    return true;
+  }
+}
+
+async function injectCollaborativeAppBootstrap(
+  response: Response,
+  rawParticipant: unknown,
+  basePath: string,
+): Promise<Response> {
+  if (!response.ok || response.headers.get("content-type")?.toLowerCase() !== "text/html; charset=utf-8" || !response.body) {
+    await response.body?.cancel();
+    throw new CollaborativeAppLaunchError("unavailable");
+  }
+  const participant = CollaborativeAppParticipantSchema.parse(rawParticipant);
+  const reader = response.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let size = 0;
+  try {
+    while (true) {
+      const next = await reader.read();
+      if (next.done) break;
+      size += next.value.byteLength;
+      if (size > MAX_BOOTSTRAP_HTML_BYTES) throw new CollaborativeAppLaunchError("unavailable");
+      chunks.push(next.value);
+    }
+  } catch (error: unknown) {
+    await cancelCollaborativeAppResponseReader(reader);
+    throw error;
+  }
+  const context = JSON.stringify(participant).replaceAll("<", "\\u003c");
+  const bootstrap = `<base href="${basePath}"><script id="matrix-collaboration-context" type="application/json">${context}</script>`;
+  const source = Buffer.concat(chunks).toString("utf8");
+  const html = source.includes("<head>") ? source.replace("<head>", `<head>${bootstrap}`) : `${bootstrap}${source}`;
+  const headers = new Headers(response.headers);
+  headers.set("content-length", String(Buffer.byteLength(html)));
+  return new Response(html, { status: response.status, headers });
 }
 
 function safeJson(c: RouteContext, error: string, status: 401 | 403 | 404 | 409 | 413 | 422 | 429 | 503) {

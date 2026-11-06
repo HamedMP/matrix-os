@@ -29,6 +29,7 @@ import { createFileActionExecutor, type CollaborationResourceDriver } from "./re
 import { CollaborationResourceCatalog, ResourceCatalogError, type CatalogEntryRecord } from "./resource-catalog.js";
 import type { CollaborationUploadStager } from "./upload-stages.js";
 import { assertResourceIdentity } from "./resource-identity-admission.js";
+import type { ImmutableCollaborativeBuildStore } from "../app-runtime/build-cache.js";
 
 export type { CollaborationResourceDriver } from "./resource-actions.js";
 
@@ -36,11 +37,20 @@ export interface CollaborationResourceServices {
   catalog: CollaborationResourceCatalog;
   driver: CollaborationResourceDriver;
   apps?: AppInstanceAdapter;
+  builds?: ImmutableCollaborativeBuildStore;
   uploads?: CollaborationUploadStager;
   createEventId?: () => string;
 }
 
 const MAX_STREAM_BYTES = 256 * 1024 * 1024;
+
+function safeResponseContentType(value: string | undefined): string {
+  if (!value) return "application/octet-stream";
+  const match = /^([a-z0-9.+-]+\/[a-z0-9.+-]+)(?:\s*;\s*charset\s*=\s*(utf-8))?$/i.exec(value);
+  if (!match) return "application/octet-stream";
+  const mediaType = match[1]!.toLowerCase();
+  return match[2] ? `${mediaType}; charset=utf-8` : mediaType;
+}
 
 function entryProjection(entry: CatalogEntryRecord) {
   return CollaborationCatalogEntrySchema.parse({
@@ -139,7 +149,7 @@ function streamResponse(
     const session = options.directSessions?.describe(credentials.sessionId);
     return Boolean(session && new Date(session.evidenceExpiresAt).getTime() > Date.now());
   };
-  c.header("Content-Type", input.contentType && /^[a-z0-9.+-]+\/[a-z0-9.+-]+$/i.test(input.contentType) ? input.contentType : "application/octet-stream");
+  c.header("Content-Type", safeResponseContentType(input.contentType));
   c.header("Content-Length", String(input.size));
   c.header("Content-Disposition", `attachment; filename="${encodeURIComponent(fileName)}"`);
   c.header("X-Content-Type-Options", "nosniff");
@@ -239,12 +249,15 @@ export function registerResourceRoutes(routes: Hono, options: CollaborationRoute
     const context = await authorize(options, c, new Uint8Array(), "read", scopeId);
     const instance = await apps.describe(context, appId);
     if (instance.readiness !== "ready" || instance.collaborationMode !== "scoped") throw new ResourceCatalogError("unavailable");
-    const asset = await resources.driver.readAppAsset({ ...instance.assetNamespace, appId, assetPath });
+    const asset = instance.collaborativeBuildId && resources.builds
+      ? await resources.builds.readAsset(instance.collaborativeBuildId, assetPath)
+      : await resources.driver.readAppAsset({ ...instance.assetNamespace, appId, assetPath });
     try {
       // Recheck after the file is opened: a same-slug unregister/re-register
       // between authorization and open must never stream the new app's bytes.
       const current = await apps.describe(context, appId);
-      if (current.incarnation !== instance.incarnation || current.readiness !== "ready"
+      if (current.incarnation !== instance.incarnation
+        || current.collaborativeBuildId !== instance.collaborativeBuildId || current.readiness !== "ready"
         || current.collaborationMode !== "scoped") throw new ResourceCatalogError("unavailable");
     } catch (error: unknown) {
       await asset.stream.cancel().catch((cancelError: unknown) => {
