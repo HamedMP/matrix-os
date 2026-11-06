@@ -350,7 +350,9 @@ async function main() {
   });
 
   await run("gh", ["auth", "login", "--hostname", "github.com", "--web", "--git-protocol", "ssh"], {
-    env: { ...env, GH_FORCE_TTY: "100%" },
+    // The default survey cursor probe can leave quiet prompts outside Zellij's
+    // current viewport. Keep the owner's question visible without moving it.
+    env: { ...env, GH_FORCE_TTY: "100%", GH_ACCESSIBLE_PROMPTER: "1" },
     cwd: homePath,
     interactive: true,
     timeoutMs: LOGIN_TIMEOUT_MS,

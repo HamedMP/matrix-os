@@ -17,7 +17,7 @@ Web, Electron, and mobile renderers are separate ENG-378 and ENG-379 changes. Pi
 ## Owner Journey
 
 1. The owner runs `matrix-github-developer-login` in their Matrix computer terminal.
-2. The command runs `gh auth login --hostname github.com --web --git-protocol ssh`. GitHub CLI detects an existing public key or creates and uploads a new public key; Matrix never accepts or uploads a private key.
+2. The command runs `gh auth login --hostname github.com --web --git-protocol ssh` with GitHub CLI's accessible prompter fixed on for this login child. This keeps the owner's questions in the current Terminal viewport instead of relying on the default survey cursor-position probe. GitHub CLI detects an existing public key or creates and uploads a new public key; Matrix never accepts or uploads a private key.
 3. The command installs GitHub's published host keys into an owner-local pinned known-hosts file and verifies `ssh -T git@github.com` with strict checking and a bounded timeout.
 4. It configures GitHub CLI's Git credential helper for existing HTTPS remotes.
 5. If global Git identity is missing or invalid, it proposes the GitHub display name/login and `<id>+<login>@users.noreply.github.com`. The owner may confirm or edit both values before either is saved.
