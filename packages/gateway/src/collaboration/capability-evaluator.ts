@@ -50,6 +50,8 @@ export interface EffectiveAccessDecision {
   actions: ReadonlySet<CollaborationCapabilityAction>;
   ownerId: string;
   isOwner: boolean;
+  /** Fresh organization evidence for the requesting actor; owners of project scopes intentionally omit it. */
+  membershipEvidenceEpoch?: string;
 }
 
 export interface CollaborationCapabilityEvaluatorOptions {
@@ -152,6 +154,7 @@ export class CollaborationCapabilityEvaluator {
         actions: narrowed,
         ownerId: scope.owner_id,
         isOwner,
+        ...(currentMembershipEpoch ? { membershipEvidenceEpoch: currentMembershipEpoch } : {}),
       };
     };
 
