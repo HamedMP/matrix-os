@@ -206,9 +206,21 @@ realDescribe("collaboration membership real PostgreSQL races", () => {
     }
 
     const results = await Promise.allSettled([first, reconnected]);
-    expect(results.filter(({ status }) => status === "rejected").length).toBeGreaterThanOrEqual(1);
-    expect(results.filter(({ status }) => status === "fulfilled").length).toBeLessThanOrEqual(1);
-    await enforcer.membershipEnded(input);
+    const rejected = results.filter(({ status }) => status === "rejected");
+    const fulfilled = results.filter(({ status }) => status === "fulfilled");
+    expect(rejected.length).toBeGreaterThanOrEqual(1);
+    expect(fulfilled.length).toBeLessThanOrEqual(1);
+    const operationBeforeRetry = await fixture.db.selectFrom("collaboration_operations")
+      .select("status")
+      .where("scope_id", "=", projectScopeId)
+      .where("operation_kind", "=", "membership.departure_cleanup")
+      .executeTakeFirstOrThrow();
+    if (fulfilled.length > 0) {
+      expect(operationBeforeRetry).toEqual({ status: "completed" });
+    } else {
+      expect(operationBeforeRetry).toEqual({ status: "accepted" });
+      await enforcer.membershipEnded(input);
+    }
     expect(drainScope.mock.calls.filter(([scopeId]) => scopeId === projectScopeId)).toHaveLength(2);
     await expect(fixture.db.selectFrom("collaboration_operations")
       .select("status")
