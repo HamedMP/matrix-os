@@ -8,6 +8,17 @@ import YAML from "yaml";
 const root = process.cwd();
 
 describe("preview platform workflow", () => {
+  it("passes the preview environment to Cloud Run exactly once", () => {
+    const workflow = YAML.parse(readFileSync(join(root, ".github/workflows/preview-platform.yml"), "utf8"));
+    const deployStep = workflow.jobs.preview.steps.find(
+      (step: { name?: string }) => step.name === "Deploy zero-traffic tagged revision to preview service",
+    );
+    const deployScript = deployStep?.run as string;
+
+    expect(typeof deployScript).toBe("string");
+    expect(deployScript.match(/--set-env-vars/g)).toHaveLength(1);
+  });
+
   it("keeps both preview connector shell steps syntactically valid", () => {
     const workflow = YAML.parse(readFileSync(join(root, ".github/workflows/preview-platform.yml"), "utf8"));
     for (const name of ["Register only the PR preview route in staging", "Enable the existing tagged host without moving traffic"]) {
