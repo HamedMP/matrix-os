@@ -1,3 +1,4 @@
+import { resolvedWorkflowRowStatus } from "./workflow-row-status.js";
 import { type ReactNode, useState } from "react";
 import { isSupportedGenericHarnessCredentialRoute } from "@matrix-os/contracts";
 import type {
@@ -8,9 +9,9 @@ import type {
   ProviderHarnessInstance,
   ProviderHarnessKind,
 } from "@matrix-os/contracts";
-import { resolvedWorkflowRowStatus } from "./workflow-row-status.js";
 import { hasConfiguredConnection } from "./harness-connection.js";
-import {legacyClaudeNativeConnection} from "./legacy-claude-connection.js";
+import {nativeClaudeConnection} from "./legacy-claude-connection.js";
+import type {NativeObservationTime} from "./use-native-observation-clock.js";
 import { RemovalDialog } from "./RemovalDialog.js";
 import type { ProviderSettingsMutationIntent } from "./types.js";
 import { titleCase, usageLines } from "./utils.js";
@@ -71,6 +72,7 @@ export function AccountsPanel({
   guided = false,
   connectionAction,
   accounts,
+  nativeObservationTime,
   sources,
   allHarnesses,
   gatewayPolicy,
@@ -90,6 +92,7 @@ export function AccountsPanel({
   guided?: boolean;
   connectionAction?: ReactNode;
   accounts: ProviderAccount[];
+  nativeObservationTime?: NativeObservationTime;
   sources: ProviderAccessSource[];
   allHarnesses: ProviderHarnessInstance[];
   gatewayPolicy: ProviderGatewayPolicy | null;
@@ -329,12 +332,9 @@ export function AccountsPanel({
               (!harness.selectedAccountId && accounts[0]?.id === account.id);
             // Share the header's strict native-auth status only for this exact account.
             // Saved Off and Bot readiness do not log out an authenticated native owner.
-            const authenticatedNativeAccount = legacyClaudeNativeConnection(harness, accounts, sources)?.account.id === account.id || harness.harness === "claude" && selected
-              && account.authState === "authenticated" && account.providerId === "anthropic"
-              && account.accessSourceId === harness.accessSourceId
-              && resolvedWorkflowRowStatus(harness, source) === "Connected";
-            const connected = authenticatedNativeAccount
-              || hasConfiguredConnection({ ...harness, authState: account.authState }, source);
+            const authenticatedNativeAccount = nativeClaudeConnection(harness, accounts, sources, nativeObservationTime?.now, nativeObservationTime?.observedAt)?.account.id === account.id;
+            const connected = account.id === "owner_claude_profile" && harness.harness === "claude"
+              ? authenticatedNativeAccount : hasConfiguredConnection({ ...harness, authState: account.authState }, source);
             const status = connected ? "Connected" : "Not connected";
             const collapsed = guided && !connected && account.authState !== "expired";
             const card = (

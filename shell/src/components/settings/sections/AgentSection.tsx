@@ -8,6 +8,7 @@ import { createProviderSettingsTransport, openWebProviderAgentSetup } from "@/li
 import { currentAiCreditRuntimeSlot, openWebAiCreditCheckout } from "@/lib/ai-credit-checkout";
 import { createWebProviderWorkflowClient, createWebMatrixAnthropicClient, loadWebAiCreditHistory, openWebProviderWorkflowAuthorization } from "@/lib/provider-workflow-transport";
 import { createBrowserSpeechClient } from "@/lib/platform-speech-client";
+import { PROVIDER_SETTINGS_CHANGED_EVENT } from "@/lib/canonical-provider-setup";
 
 export function AgentSection({
   onOpenTerminal,
@@ -19,6 +20,11 @@ export function AgentSection({
   const transport = useMemo(() => createProviderSettingsTransport(), []);
   const identityKey = getGatewayUrl();
   const runtimeSlot = currentAiCreditRuntimeSlot();
+  const onCatalogChanged = useCallback(() => {
+    if (getGatewayUrl() === identityKey && currentAiCreditRuntimeSlot() === runtimeSlot) {
+      window.dispatchEvent(new Event(PROVIDER_SETTINGS_CHANGED_EVENT));
+    }
+  }, [identityKey, runtimeSlot]);
   const speechClient = useMemo(() => createBrowserSpeechClient({ baseUrl: identityKey }), [identityKey]);
   const workflowClient = useMemo(() => createWebProviderWorkflowClient({
     isIdentityCurrent: () => getGatewayUrl() === identityKey && currentAiCreditRuntimeSlot() === runtimeSlot,
@@ -49,8 +55,20 @@ export function AgentSection({
   const controller = useProviderSettingsController({
     identityKey: `${identityKey}:${runtimeSlot}`,
     automaticCreditRefreshEnabled,
+    automaticNativeAuthRefreshEnabled: automaticCreditRefreshEnabled,
     transport,
+    onCatalogChanged,
   });
+  const synchronizedInitialSnapshot = useRef<string | null>(null);
+  useEffect(() => {
+    if (!automaticCreditRefreshEnabled || !controller.snapshot
+      || synchronizedInitialSnapshot.current === controller.identityKey
+      || getGatewayUrl() !== identityKey || currentAiCreditRuntimeSlot() !== runtimeSlot) return;
+    // Terminal may have signed in after an open Chat cached its catalog.
+    // Notify once per Computer; catalog listeners never refresh Settings back.
+    synchronizedInitialSnapshot.current = controller.identityKey;
+    onCatalogChanged();
+  }, [automaticCreditRefreshEnabled, controller.snapshot, controller.identityKey, identityKey, runtimeSlot, onCatalogChanged]);
 
   if (controller.snapshot === null) {
     const unavailable = controller.error !== null;

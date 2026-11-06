@@ -100,11 +100,15 @@ const negatives: [string, (snapshot: ProviderSettingsSnapshot) => void][] = [
   ["a nonnative funding source", s => {s.accessSources[0]!.fundingKind = "owner_api_key";}],
   ["negative native readiness", s => {s.accessSources[0]!.readiness.state = "invalid";}],
 ];
-it.each(negatives)("does not borrow native identity for %s", async (_name, change) => {
+it.each(negatives)("preserves exact identity and explicit recovery fences for %s", async (_name, change) => {
   const snapshot = fixture(); change(snapshot); const before = structuredClone(snapshot);
   const controls = mount(snapshot);
   await waitFor(() => expect(controls.client.capabilities).toHaveBeenCalled());
   expect(screen.queryByRole("button", {name: "Use connected Claude account"})).not.toBeInTheDocument();
-  expect(screen.getByRole("button", {name: /^Claude Code/})).not.toHaveTextContent("Connected");
+  if (_name === "explicit owner route" || _name === "another saved source") {
+    expect(screen.getByRole("button", {name: /^Claude Code/})).toHaveTextContent("Connected");
+  } else {
+    expect(screen.getByRole("button", {name: /^Claude Code/})).not.toHaveTextContent("Connected");
+  }
   expect(snapshot).toEqual(before);
 });

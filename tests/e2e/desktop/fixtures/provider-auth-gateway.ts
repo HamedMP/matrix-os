@@ -17,9 +17,9 @@ import {
   type ProviderManagedCreditObservation,
 } from "@matrix-os/contracts";
 
-const NOW = "2026-09-20T00:00:00.000Z";
-
 export function providerAuthSettingsSnapshot(authenticated: boolean, nativeClaudeProfile = false): ProviderSettingsSnapshot {
+  // Each synthetic owner read/completion represents a new native observation.
+  const NOW = new Date().toISOString();
   const authState = authenticated ? "authenticated" as const : "unauthenticated" as const;
   const accountId = nativeClaudeProfile ? "owner_claude_profile" : "claude_account";
   const accessSourceId = nativeClaudeProfile ? "owner_claude_profile" : "claude_account_source";

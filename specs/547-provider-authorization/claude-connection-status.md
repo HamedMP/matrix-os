@@ -83,3 +83,53 @@ this discovery and remain required at execution admission.
 - Keep the implementation Draft for human review first. Do not equate old-head
   CI/Greptile results with this candidate or mark customer acceptance from fixtures.
   Production deployment, owner account changes and merge require separate scope.
+
+## Terminal-origin authentication synchronization
+
+A same-Computer native login can be completed outside a Settings workflow. Owner
+snapshot reads already observe the installed CLI directly; workflow receipts are
+not required to discover that login. The shared `nativeClaudeConnection` derives
+the exact native account from installed fixed-Anthropic Claude, reciprocal
+`owner_claude_profile` account/source links, terminal authentication, owner-account
+funding and the reader's 30-second identity lifetime. This observation is
+independent of a saved legacy profile, an explicit Matrix binding or a saved API
+key. It labels only the discovered native account, never an unrelated selected
+account. An already-selected native route still requires the server's exact
+harness authentication verdict. Expired evidence cannot retain Connected through
+the selected-route fallback.
+
+Native display time anchors to the authenticated snapshot's `refreshedAt` only
+within a 60-second receipt-clock skew bound, then advances by monotonic elapsed
+time. Replaying the same stamp does not restart the lifetime; a stamp older than
+the last accepted stamp is rejected. `lastCheckedAt` later than the snapshot's
+stamp, expired proof, invalid time and excessive skew cannot establish Connected.
+Wall-clock changes cannot extend the 30-second proof. Rail, account card and
+legacy adoption display share this native-only clock; generic local observations
+and credit freshness keep their existing clocks and authority.
+
+Web and Electron Settings opt into `useNativeAuthRefresh` only while their
+Settings surface is active. It rechecks on focus, visibility/online return and a
+20-second visible-online cadence, before the native proof's unchanged 30-second
+expiry. Reads use the existing unforced owner snapshot
+and credential-bound provider quota cache. The controller coalesces with its
+active reads/mutations; hidden surfaces pause, disposal aborts and old Computer
+responses cannot replace a new controller. Native authentication changes notify
+catalog consumers after a validated snapshot is accepted; timestamp renewal alone
+does not invalidate catalogs. Retained Chat consumers do not start another poller.
+
+Read-only observation preserves source/model/enabled intent, revision, credentials
+and independent Bot/background grants. The narrow legacy **Use connected Claude
+account** action retains its original safeguards. Other saved bindings retain the
+normal Claude account connection option, whose existing private native preflight
+can adopt the current login without starting another OAuth or Terminal login.
+
+Regression tests must include a synthetic native status process through the real
+reader, store and owner HTTP route with no Settings workflow: initial Terminal
+login, account replacement, logout and failed status. Shared UI tests cover
+legacy/explicit/key bindings, exact account cards, visible guided account and
+normal connection option, slow/fast client clocks, monotonic expiry under clock
+rollback, future/stale/replayed stamps and scope fences. Controller tests cover focus,
+cadence, hidden/offline pause, concurrent triggers and Computer replacement.
+Production Electron exercises the same external native-state transition and
+asserts zero login/adoption starts, unchanged configuration and Bot grants. These
+fixtures do not establish paid inference or a customer's deployed acceptance.

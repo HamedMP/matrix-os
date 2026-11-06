@@ -11,6 +11,8 @@ import {
   type ProviderWorkflow,
 } from "@matrix-os/contracts";
 import { ManagedCreditRefresh } from "./managed-credit-refresh.js";
+import { useNativeAuthRefresh } from "./use-native-auth-refresh.js";
+import { nativeAuthenticationFingerprint } from "./native-auth-refresh.js";
 import { useManagedCreditRefresh } from "./use-managed-credit-refresh.js";
 import type { ProviderSettingsMutationIntent } from "./types.js";
 
@@ -60,6 +62,7 @@ export interface ProviderSettingsControllerState {
 export interface ProviderSettingsControllerOptions {
   identityKey: string;
   automaticCreditRefreshEnabled?: boolean;
+  automaticNativeAuthRefreshEnabled?: boolean;
   transport: ProviderSettingsTransport;
   /** Called only after an explicit refresh or mutation snapshot is accepted. */
   onCatalogChanged?: (intent?: ProviderSettingsMutationIntent, previousSnapshot?: ProviderSettingsSnapshot, loginReceipt?: ProviderWorkflow) => void;
@@ -154,6 +157,11 @@ export class ProviderSettingsController {
 
   refreshManagedCredit = (signal?: AbortSignal) => this.managedCredit.refresh(signal);
 
+  refreshNativeAuthentication = async (signal: AbortSignal): Promise<void> => {
+    if (this.disposed || this.state.busy || signal.aborted) return;
+    await this.runRefresh(false, true, signal);
+  };
+
   refresh = async (options: { refresh?: boolean } = { refresh: true }): Promise<void> => {
     if (this.disposed) return;
     if (this.pendingMutations > 0) await this.mutationTail;
@@ -205,17 +213,24 @@ export class ProviderSettingsController {
     this.listeners.clear();
   };
 
-  private async runRefresh(refresh = true): Promise<boolean> {
+  private async runRefresh(refresh = true, nativeAuthOnly = false, signal?: AbortSignal): Promise<boolean> {
     this.managedCredit.invalidate();
     const operationId = ++this.operationClock;
     const request = this.beginRequest("refresh");
+    const abort = () => request.abort();
+    signal?.addEventListener("abort", abort, { once: true });
     try {
+      if (signal?.aborted) request.abort();
+      request.signal.throwIfAborted();
+      const previous = this.state.snapshot;
       const raw = await this.options.transport.getSnapshot(request.signal, { refresh });
       request.signal.throwIfAborted();
       const parsed = ProviderSettingsSnapshotSchema.safeParse(raw);
       if (!parsed.success) throw new ProviderSettingsTransportError("invalid_response");
-      const applied = this.applySnapshot(parsed.data, { operationId });
-      if (applied && refresh) this.options.onCatalogChanged?.();
+      const snapshot = parsed.data;
+      const applied = this.applySnapshot(snapshot, { operationId });
+      if (applied && (refresh || nativeAuthOnly && previous
+        && nativeAuthenticationFingerprint(previous) !== nativeAuthenticationFingerprint(snapshot))) this.options.onCatalogChanged?.();
       return applied;
     } catch (error) {
       if (request.signal.aborted) return false;
@@ -223,6 +238,7 @@ export class ProviderSettingsController {
       if (!this.disposed && operationId >= this.appliedOperationId) this.update({ error: LOAD_ERROR });
       return false;
     } finally {
+      signal?.removeEventListener("abort", abort);
       this.endRequest(request, "refresh");
     }
   }
@@ -409,6 +425,7 @@ export function useProviderSettingsController(
   const controller = lifecycle.controller;
   const state = useSyncExternalStore(controller.subscribe, controller.getState, controller.getState);
 
+  useNativeAuthRefresh(controller, options.automaticNativeAuthRefreshEnabled === true);
   useManagedCreditRefresh(controller, options.automaticCreditRefreshEnabled === true && state.snapshot !== null);
 
   useEffect(() => {

@@ -67,3 +67,42 @@ suite("Electron Desktop native Claude legacy recovery (synthetic identity)",()=>
   expect(await row().innerText()).toContain("Connected");expect(gateway.counters().completions).toBe(1);
  },30000);
 });
+
+suite("Electron Desktop Terminal-origin Claude authentication (synthetic native CLI)",()=>{
+ let app:ElectronApplication,page:Page,profile:string;
+ let gateway:Awaited<ReturnType<typeof startClaudeLegacyRecoveryGateway>>;
+ let captures:ReturnType<typeof createEvidenceDirectory>;
+ beforeAll(async()=>{
+  captures=createEvidenceDirectory(process.env.MATRIX_SETTINGS_EVIDENCE_DIR?join(process.env.MATRIX_SETTINGS_EVIDENCE_DIR,"claude-terminal-sync"):undefined);
+  gateway=await startClaudeLegacyRecoveryGateway({externalTerminal:true});profile=mkdtempSync(join(tmpdir(),"matrix-terminal-auth-electron-"));
+  app=await _electron.launch({executablePath:createRequire(join(root,"desktop/package.json"))("electron") as string,args:[join(root,"desktop/out/main/index.js")],env:{...process.env,OPERATOR_GATEWAY_URL:gateway.url,OPERATOR_USER_DATA_DIR:profile}});
+  page=await app.firstWindow();await dismissGettingStartedOnInteraction(page);
+  await app.evaluate(({shell})=>{shell.openExternal=async()=>{};});
+  await page.getByRole("button",{name:/create account/i}).waitFor();await page.evaluate(()=>window.operator.invoke("auth:start-device-flow",{}));
+  await page.getByRole("button",{name:"Terminal",exact:true}).first().waitFor({timeout:15000});
+  await page.getByRole("button",{name:"Open account menu",exact:true}).click();await page.getByRole("menuitem",{name:"Settings",exact:true}).click();
+  await page.getByRole("button",{name:"Agents & providers",exact:true}).click();
+  const row=page.locator(".matrix-ap-rail-item").filter({hasText:"Claude"}).first();await row.waitFor();await row.click();
+  const identity=await app.evaluate(({app})=>({appPath:app.getAppPath(),electron:process.versions.electron,chrome:process.versions.chrome}));
+  writeFileSync(join(captures.path,"runtime.json"),JSON.stringify({...identity,source:process.env.MATRIX_BUILD_SHA??"working-tree",backend:"synthetic native CLI process; real metadata reader/store/owner routes; no paid inference"},null,2));
+ },60000);
+ afterAll(async()=>{try{if(app)await closeElectronApp(app);}finally{try{await gateway?.close();}finally{if(profile)rmSync(profile,{recursive:true,force:true});captures?.cleanup();}}});
+ it("refreshes Terminal login, changed account and logout without a Settings login workflow or funding/grant changes",async()=>{
+  const native=gateway.terminalAuthentication;if(!native)throw new Error("Native fixture required");
+  const row=()=>page.locator(".matrix-ap-rail-item").filter({hasText:"Claude"}).first();
+  await expect.poll(()=>row().innerText()).toContain("Not connected");const before=await native.configuration();
+  const focus=()=>page.evaluate(()=>window.dispatchEvent(new Event("focus")));
+  await native.setStatus("first@example.test");await focus();await expect.poll(()=>row().innerText()).toContain("Connected");
+  await page.locator(".matrix-ap-connected").getByText("first@example.test",{exact:true}).waitFor();
+  await page.screenshot({path:join(captures.path,"01-terminal-connected.png")});
+  await native.setStatus("second@example.test");await page.waitForTimeout(550);await focus();
+  await page.locator(".matrix-ap-connected").getByText("second@example.test",{exact:true}).waitFor();
+  await native.setStatus(null);await page.waitForTimeout(550);await focus();await expect.poll(()=>row().innerText()).toContain("Not connected");
+  await page.screenshot({path:join(captures.path,"02-terminal-logged-out.png")});
+  expect(await native.configuration()).toBe(before);expect(gateway.counters()).toEqual({completions:0,browserStarts:0,terminalStarts:0});
+  const snapshot=await native.store.getSnapshot({includeNativeAccountMetadata:true});
+  expect(snapshot.harnesses.find(h=>h.id==="harness_kernel")).toMatchObject({enabled:false,configuredEnabled:false,configuredAccessSourceId:"owner_anthropic_profile",selectedAccountId:"owner_anthropic"});
+  const bot=await(await fetch(`${gateway.url}/api/bot-connections?refresh=true`,{signal:AbortSignal.timeout(5000)})).json();
+  expect(bot.connections[0].authorization).toEqual({revision:0,enabled:false,background:false});
+ },30000);
+});

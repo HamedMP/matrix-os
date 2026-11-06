@@ -3,6 +3,7 @@ import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { ProviderSettingsSnapshotSchema } from "@matrix-os/contracts";
 import { _electron, type ElectronApplication, type Page } from "playwright";
 import { startProviderAuthGateway } from "./fixtures/provider-auth-gateway";
 import { createProviderWorkflowClient, ProviderWorkflowClientError } from "../../../packages/ui/src/agents-providers/provider-workflow-client";
@@ -117,7 +118,7 @@ it("keeps browser login in Settings and disconnects execution without logging ou
     expect(await claudeRow.getAttribute("aria-expanded")).toBe("true");
     expect(await claudeRow.textContent()).toContain("Connected");
     expect(gateway.workflowEvents).toEqual(["browser-login", "cancel", "browser-login", "code-completed", "agent-enabled"]);
-    const connected = await (await fetch(`${gateway.url}/api/ai/provider-settings`, { signal: AbortSignal.timeout(5000) })).json();
+    const connected = ProviderSettingsSnapshotSchema.parse(await (await fetch(`${gateway.url}/api/ai/provider-settings`, { signal: AbortSignal.timeout(5000) })).json());
     expect(connected.harnesses[0]).toMatchObject({ enabled: true, configuredEnabled: true, authState: "authenticated" });
     await terminal.waitFor({ state: "hidden" });
     expect(gateway.commands).toHaveLength(0);
@@ -130,9 +131,15 @@ it("keeps browser login in Settings and disconnects execution without logging ou
     expect(gateway.workflowEvents).toEqual(["browser-login", "cancel", "browser-login", "code-completed", "agent-enabled", "agent-disabled"]);
     // Connected describes native authentication; Disconnect only disables execution.
     // Independent HTTP state must retain the account, source, model and action scope.
-    const retained = await (await fetch(`${gateway.url}/api/ai/provider-settings`, {signal: AbortSignal.timeout(5000)})).json();
-    expect(retained.accounts).toEqual(connected.accounts);
-    expect(retained.accessSources).toEqual(connected.accessSources);
+    const retained = ProviderSettingsSnapshotSchema.parse(await (await fetch(`${gateway.url}/api/ai/provider-settings`, {signal: AbortSignal.timeout(5000)})).json());
+    expect(Date.parse(retained.refreshedAt)).toBeGreaterThanOrEqual(Date.parse(connected.refreshedAt));
+    // Each owner GET observes the native status again. Only observation times
+    // advance; account identity, source/funding and every other field stay exact.
+    expect(retained.accounts).toEqual(connected.accounts.map(account => ({
+      ...account, lastCheckedAt: retained.refreshedAt,
+    })));
+    expect(retained.accessSources).toEqual(connected.accessSources.map(source => ({...source, readiness: {...source.readiness, checkedAt: retained.refreshedAt},
+      usage: {...source.usage, asOf: retained.refreshedAt}})));
     expect(retained.supportedActions).toEqual(connected.supportedActions);
     expect(retained.harnesses[0]).toMatchObject({ enabled: false, configuredEnabled: false, authState: "authenticated",
       selectedAccountId: connected.harnesses[0].selectedAccountId, accessSourceId: connected.harnesses[0].accessSourceId,
