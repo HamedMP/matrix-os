@@ -54,13 +54,15 @@ export type ScopeRuntimeCapability =
   | { available: false; reason: "supervisor_unavailable" | "unsupported_profile" };
 
 export class ScopeRuntimeClientError extends Error {
-  readonly code: "client_capacity" | "client_closed" | "runtime_unavailable";
+  readonly code: "client_capacity" | "client_closed" | "runtime_not_found" | "runtime_unavailable";
 
   constructor(code: ScopeRuntimeClientError["code"]) {
     super(code === "client_closed"
       ? "Scope runtime client is closed"
       : code === "client_capacity"
         ? "Scope runtime client is at capacity"
+        : code === "runtime_not_found"
+          ? "Scope runtime was not found"
         : "Scope runtime is unavailable");
     this.name = "ScopeRuntimeClientError";
     this.code = code;
@@ -342,6 +344,9 @@ export function createScopeRuntimeClient(options: {
         requestId: createRequestId(),
         runtimeHandle: input.runtimeHandle,
       });
+      if (response.type === "runtime.result" && !response.ok && response.error === "runtime_not_found") {
+        throw new ScopeRuntimeClientError("runtime_not_found");
+      }
       if (response.type !== "runtime.result" || !response.ok || response.state !== "stopped") {
         throw new ScopeRuntimeClientError("runtime_unavailable");
       }

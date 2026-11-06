@@ -22,6 +22,7 @@ import {
   CollaborationRevocationEnforcer,
   SandboxRuntimeRegistry,
 } from "../../packages/gateway/src/collaboration/revocation-enforcer.js";
+import { ScopeRuntimeClientError } from "../../packages/gateway/src/collaboration/scope-runtime-client.js";
 import { SCOPE_RUNTIME_SANDBOX_POLICY_DIGEST } from "../../packages/scope-runtime/src/sandbox.js";
 
 const scopeId = "10000000-0000-4000-8000-000000000001";
@@ -215,6 +216,19 @@ describe("revocation enforcer", () => {
     await expect(runtimes.stopForScope(scopeId)).resolves.toBe(1);
     expect(stopRuntime).toHaveBeenCalledTimes(2);
     expect(onStop).toHaveBeenCalledOnce();
+    expect(runtimes.size).toBe(0);
+    runtimes.close();
+  });
+  it("treats a confirmed absent runtime as a completed retry without accepting other failures", async () => {
+    const stopRuntime = vi.fn()
+      .mockRejectedValueOnce(new ScopeRuntimeClientError("runtime_unavailable"))
+      .mockRejectedValueOnce(new ScopeRuntimeClientError("runtime_not_found"));
+    const runtimes = new SandboxRuntimeRegistry({ client: { stopRuntime }, startTimer: false });
+    runtimes.bind({ scopeId, actorId: "actor_1", runtimeHandle: "runtime_11111111111111111111111111111111" });
+
+    await expect(runtimes.stopForScope(scopeId)).rejects.toThrow("Sandbox runtime stop failed");
+    expect(runtimes.size).toBe(1);
+    await expect(runtimes.stopForScope(scopeId)).resolves.toBe(1);
     expect(runtimes.size).toBe(0);
     runtimes.close();
   });
