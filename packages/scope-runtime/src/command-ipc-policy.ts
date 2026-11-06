@@ -10,6 +10,7 @@ export const COMMAND_IPC_POLICY = Object.freeze([
   "CommandStaging=worker:inherited-matrix/02700/exclusive-link/single-link-final",
   "CommandSocket=active-workload:inherited-matrix/0620/one-link",
   "CommandPublication=owner-pinned-fd-chmod-before-readiness",
+  "CommandCleanup=quiesced-owned-unit-cgroup/trusted-parent/empty-staging-rmdir",
   "CommandDispatch=nofollow-ancestors-pinned-inode/trusted-parent-and-unit-uid",
 ]);
 

@@ -1,4 +1,4 @@
-import { commandIdentityFixture } from "../helpers/command-ipc-fixture.js";
+import { commandIdentityFixture, withCleanupUnitFixture } from "../helpers/command-ipc-fixture.js";
 import { portableCommandSocketPin } from "../helpers/portable-command-socket-pin.js";
 import { createUnixSocketTempDir } from "../helpers/unix-socket-temp.js";
 import { chmod, lstat, mkdir, readFile, rm, stat, unlink, writeFile } from "node:fs/promises";
@@ -93,7 +93,7 @@ describe("scope runtime systemd launcher", () => {
     const paths = await fixture();
     await rm(paths.brokerSocket);
     const runCommand = vi.fn(async () => ({ stdout: "" }));
-    const launcher = createSystemdScopeRuntimeLauncher({ ...paths, runCommand });
+    const launcher = createSystemdScopeRuntimeLauncher({ ...paths, runCommand: withCleanupUnitFixture(paths.stateRoot, runCommand) });
 
     await expect(launcher.supportedAdapters?.()).resolves.toContainEqual({
       adapterId: "claude-code", harnessVersion: SCOPE_RUNTIME_HARNESS_VERSION, workloads: ["chat_ai"],
@@ -202,7 +202,7 @@ describe("scope runtime systemd launcher", () => {
       }
       return { stdout: "active\n" };
     });
-    const launcher = createSystemdScopeRuntimeLauncher({ ...paths, runCommand });
+    const launcher = createSystemdScopeRuntimeLauncher({ ...paths, runCommand: withCleanupUnitFixture(paths.stateRoot, runCommand) });
 
     await expect(launcher.list()).resolves.toEqual([{
       runtimeHandle: "runtime_33333333333333333333333333333333",
@@ -314,7 +314,7 @@ describe("scope runtime systemd launcher", () => {
       }
       return { stdout: "" };
     });
-    const failedLauncher = createSystemdScopeRuntimeLauncher({ ...failed, runCommand: failedRunner });
+    const failedLauncher = createSystemdScopeRuntimeLauncher({ ...failed, runCommand: withCleanupUnitFixture(failed.stateRoot, failedRunner) });
 
     await expect(failedLauncher.start(launch)).rejects
       .toThrow(expect.objectContaining({ name: "ScopeRuntimeActivationStatus203Error" }));
@@ -336,7 +336,7 @@ describe("scope runtime systemd launcher", () => {
       if (args[0] === "show") return { stdout: "Result=exit-code\nExecMainStatus=1\n" };
       return { stdout: "" };
     });
-    const launcher = createSystemdScopeRuntimeLauncher({ ...paths, runCommand });
+    const launcher = createSystemdScopeRuntimeLauncher({ ...paths, runCommand: withCleanupUnitFixture(paths.stateRoot, runCommand) });
 
     await expect(launcher.start(launch)).rejects
       .toThrow(expect.objectContaining({ name: "ScopeRuntimeActivationStatus1Error" }));
@@ -352,7 +352,7 @@ describe("scope runtime systemd launcher", () => {
       if (args[0] === "show") return { stdout: "Result=exit-code\nExecMainStatus=80\n" };
       return { stdout: "" };
     });
-    const launcher = createSystemdScopeRuntimeLauncher({ ...paths, runCommand });
+    const launcher = createSystemdScopeRuntimeLauncher({ ...paths, runCommand: withCleanupUnitFixture(paths.stateRoot, runCommand) });
 
     await expect(launcher.start(launch)).rejects
       .toThrow(expect.objectContaining({ name: "ScopeRuntimeBrokerError" }));
@@ -395,7 +395,7 @@ describe("scope runtime systemd launcher", () => {
       ].join("\n") };
       return { stdout: "" };
     });
-    const launcher = createSystemdScopeRuntimeLauncher({ ...paths, runCommand });
+    const launcher = createSystemdScopeRuntimeLauncher({ ...paths, runCommand: withCleanupUnitFixture(paths.stateRoot, runCommand) });
 
     await expect(launcher.list()).resolves.toEqual([{
       runtimeHandle: `runtime_${active}`,

@@ -37,9 +37,9 @@ describe("scope-runtime-bot-v1 profile", () => {
   it("pins its own digest and includes the command IPC policy in all profile identities", () => {
     expect(SCOPE_RUNTIME_BOT_PROFILE_VERSION).toBe(4);
     expect(SCOPE_RUNTIME_MANAGED_PI_PROFILE_VERSION).toBe(4);
-    expect(SCOPE_RUNTIME_BOT_PROFILE_DIGEST).toBe("c25104c7336269228a52757432b722c5da88104e1b5c25bc2bc3dd17cc3fb8d3");
-    expect(SCOPE_RUNTIME_MANAGED_PI_PROFILE_DIGEST).toBe("fba0378f5eb40b884d65bb84b01a7a5feb76c22f02b691563db0be9eb1a59825");
-    expect(SCOPE_RUNTIME_PROFILE_DIGEST).toBe("df22ff5eefdf6a4c56415f8164749f893feee3b6c6ad5acaf20eba27bde83769");
+    expect(SCOPE_RUNTIME_BOT_PROFILE_DIGEST).toBe("da19db61e22016c6fe60b9ceca2a225233b65bf1b5851602c0f53817cda0be46");
+    expect(SCOPE_RUNTIME_MANAGED_PI_PROFILE_DIGEST).toBe("d501a2cdb353cba40a85925cdb66f5caf2244214315090465c76cbc35259716d");
+    expect(SCOPE_RUNTIME_PROFILE_DIGEST).toBe("b89f556558d8c62f49d6892b79e3c159163bcd2404d292b5220685770f8ff9a4");
   });
 
   it("materializes only derived supervisor dependencies and changes no other properties", () => {

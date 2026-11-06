@@ -1,3 +1,4 @@
+import { removeQuiescedCommandStaging } from "./command-artifact-cleanup.js";
 import { assertCommandDirectory, COMMAND_DIRECTORY_MODE } from "./command-ipc-policy.js";
 import { chmod, lstat, mkdir, opendir, rm } from "node:fs/promises";
 import { join } from "node:path";
@@ -6,10 +7,10 @@ import { assertRuntimeDirectoryPlacement, trustedIpcGroup, HOST_NAMESPACE_TRUST,
 
 const MAX_ENTRIES = 128;
 
-async function assertDirectoryIfPresent(path: string): Promise<boolean> {
+async function assertDirectoryIfPresent(path: string, uid?: number): Promise<boolean> {
   try {
     const entry = await lstat(path);
-    if (!entry.isDirectory() || entry.isSymbolicLink()) throw new Error("Unsafe scope runtime directory");
+    if (!entry.isDirectory() || entry.isSymbolicLink() || (uid !== undefined && entry.uid !== uid)) throw new Error("Unsafe scope runtime directory");
     return true;
   } catch (error: unknown) {
     if (error instanceof Error && (error as NodeJS.ErrnoException).code === "ENOENT") return false;
@@ -71,24 +72,28 @@ export async function createRuntimeDirectories(paths: RuntimeDirectoryRoots, run
 
 export async function removeRuntimeDirectories(paths: RuntimeDirectoryRoots, runtimeHandle: string): Promise<void> {
   await assertRuntimeDirectoryPlacement(paths);
+  const uid = (paths.namespaceTrust ?? HOST_NAMESPACE_TRUST).uid;
   const { runtimeRoot, commandDirectory } = directoryPaths(paths, runtimeHandle);
-  await assertDirectoryIfPresent(paths.stateRoot);
-  await assertDirectoryIfPresent(join(paths.stateRoot, "runtimes"));
+  await assertDirectoryIfPresent(paths.stateRoot, uid);
+  await assertDirectoryIfPresent(join(paths.stateRoot, "runtimes"), uid);
   if (paths.commandSocketRoot) {
-    await assertDirectoryIfPresent(paths.commandSocketRoot);
-    await assertDirectoryIfPresent(commandDirectory);
+    await assertDirectoryIfPresent(paths.commandSocketRoot, uid);
   }
-  await assertDirectoryIfPresent(runtimeRoot);
+  await assertDirectoryIfPresent(runtimeRoot, uid);
+  await assertDirectoryIfPresent(commandDirectory, uid);
+  await removeQuiescedCommandStaging(commandDirectory);
   if (paths.commandSocketRoot) await rm(commandDirectory, { recursive: true, force: true });
   await rm(runtimeRoot, { recursive: true, force: true });
 }
 
 /** Sweep each owned root independently, including command orphans left by interrupted preparation. */
-export async function cleanupOrphanedRuntimeDirectories(paths: RuntimeDirectoryRoots, retainedSuffixes: ReadonlySet<string>): Promise<void> {
+export async function cleanupOrphanedRuntimeDirectories(paths: RuntimeDirectoryRoots, retainedSuffixes: ReadonlySet<string>, quiesce?: (suffix: string) => Promise<void>): Promise<void> {
   await assertRuntimeDirectoryPlacement(paths);
+  const uid = (paths.namespaceTrust ?? HOST_NAMESPACE_TRUST).uid;
+  const cleaned = new Set<string>(); // Local sweep only; capped at MAX_ENTRIES below.
   for (const root of [join(paths.stateRoot, "runtimes"), ...(paths.commandSocketRoot ? [paths.commandSocketRoot] : [])]) {
-    await assertDirectoryIfPresent(paths.stateRoot);
-    if (!await assertDirectoryIfPresent(root)) continue;
+    await assertDirectoryIfPresent(paths.stateRoot, uid);
+    if (!await assertDirectoryIfPresent(root, uid)) continue;
     const directory = await opendir(root);
     let count = 0;
     for await (const entry of directory) {
@@ -97,7 +102,12 @@ export async function cleanupOrphanedRuntimeDirectories(paths: RuntimeDirectoryR
       if (!/^[a-f0-9]{32}$/.test(entry.name) || !entry.isDirectory() || entry.isSymbolicLink()) {
         throw new Error("Unsafe reconciled scope runtime root");
       }
-      if (!retainedSuffixes.has(entry.name)) await rm(join(root, entry.name), { recursive: true, force: true });
+      if (!retainedSuffixes.has(entry.name) && !cleaned.has(entry.name)) {
+        if (!quiesce || cleaned.size >= MAX_ENTRIES) throw new Error("Scope runtime orphan cleanup authority unavailable");
+        await quiesce(entry.name);
+        await removeRuntimeDirectories(paths, `runtime_${entry.name}`);
+        cleaned.add(entry.name);
+      }
     }
   }
 }

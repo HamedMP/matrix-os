@@ -194,7 +194,7 @@ export async function startBotCommandServer(options: {
       });
     }
   });
-  const removeOwnedSocket = await listenCommandSocket(server, options.socketPath, options.publication);
+  await listenCommandSocket(server, options.socketPath, options.publication);
   return {
     server,
     async close() {
@@ -202,7 +202,6 @@ export async function startBotCommandServer(options: {
       await Promise.race([closed, new Promise<void>((resolve) => setTimeout(resolve, CLOSE_GRACE_MS).unref())]);
       for (const socket of sockets) socket.destroy();
       await closed;
-      await removeOwnedSocket();
     },
   };
 }

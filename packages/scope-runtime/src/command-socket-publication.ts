@@ -1,5 +1,5 @@
 import { dirname, join } from "node:path";
-import { chmod, link, lstat, mkdtemp, rmdir, unlink } from "node:fs/promises";
+import { chmod, link, lstat, mkdtemp, unlink } from "node:fs/promises";
 import type { Stats } from "node:fs";
 import type { Server } from "node:net";
 import { COMMAND_DIRECTORY_MODE, COMMAND_SOCKET_MODE, COMMAND_STAGING_MODE, assertCommandSocket } from "./command-ipc-policy.js";
@@ -34,30 +34,14 @@ export async function publishCommandSocket(path: string, expected: Stats, depend
 /**
  * libuv unlinks its bind pathname on close, including replacements. Bind privately,
  * then exclusively link the owned inode to the command name. The empty private
- * bind directory stays reserved until close; libuv never owns the command name.
+ * bind directory stays reserved until trusted supervisor cleanup after unit/cgroup
+ * closure. Live workers never unlink the mutable canonical path or rmdir staging.
  */
 export async function listenCommandSocket(server: Server, path: string, dependencies: CommandPublicationDependencies = {}) {
   if (Buffer.byteLength(path) > 107) throw new Error("Command socket path exceeds capacity");
   const parent = await lstat(dirname(path));
   const staging = await (dependencies.createStaging ?? mkdtemp)(join(dirname(path), ".w-"));
   const stagingIdentity = await lstat(staging), bound = join(staging, "s");
-  let original: Stats | undefined;
-  let linked = false;
-  async function cleanup(): Promise<void> {
-    if (linked && original) {
-      try {
-        const entry = await lstat(path);
-        if (sameInode(original, entry) && entry.isSocket()) await unlink(path);
-      } catch (error: unknown) {
-        if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
-      }
-    }
-    try {
-      if (sameInode(stagingIdentity, await lstat(staging))) await rmdir(staging);
-    } catch (error: unknown) {
-      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
-    }
-  }
   try {
     // Linux mkdir inherits setgid/GID. Clearing it here would lose the IPC group.
     if (!stagingIdentity.isDirectory() || stagingIdentity.uid !== process.getuid?.()
@@ -65,22 +49,19 @@ export async function listenCommandSocket(server: Server, path: string, dependen
       throw new Error("Unsafe worker command socket staging");
     }
     await new Promise<void>((resolve, reject) => { server.once("error", reject); server.listen(bound, resolve); });
-    original = await lstat(bound);
+    const original = await lstat(bound);
     if (!original.isSocket() || original.nlink !== 1 || original.uid !== process.getuid?.()) {
       throw new Error("Unsafe worker command socket binding");
     }
     await link(bound, path); // EEXIST preserves every pre-existing final entry.
-    linked = true;
     const published = await lstat(path), stillBound = await lstat(bound);
     if (!sameInode(original, published) || !sameInode(original, stillBound) || published.nlink !== 2) {
       throw new Error("Replaced worker command socket binding");
     }
     await unlink(bound);
     await publishCommandSocket(path, original, dependencies);
-    return cleanup;
   } catch (error: unknown) {
     await new Promise<void>(resolve => server.close(() => resolve()));
-    await cleanup();
     throw error;
   }
 }

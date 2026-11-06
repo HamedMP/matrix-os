@@ -1,3 +1,4 @@
+import { quiesceRuntimeUnit } from "./runtime-unit-cleanup.js";
 import { resolveCommandSocketTrust, type CommandTrustResolver } from "./command-host-identity.js";
 import { assertProtectedNodeRoot, nodeMount, nodeProfileDigest, ownedNodeForNamespace, WORKER_NODE_BINARY, type OwnedNode } from "./node-runtime.js";
 import { assertNamespaceDirectory, assertNamespaceSocket, assertRuntimeDirectoryPlacement, trustedIpcGroup, HOST_NAMESPACE_TRUST, type NamespacePathTrust } from "./namespace-ancestry.js";
@@ -574,25 +575,6 @@ async function waitUntilReady(
   throw new Error("Scope runtime worker readiness unavailable");
 }
 
-async function cleanupSubmittedUnit(
-  runCommand: ScopeRuntimeCommandRunner,
-  name: string,
-): Promise<boolean> {
-  let cleaned = true;
-  for (const action of ["stop", "reset-failed"] as const) {
-    try {
-      await runCommand("/usr/bin/systemctl", [action, name]);
-    } catch (error: unknown) {
-      if (!inactiveUnitError(error)) {
-        cleaned = false;
-        console.warn("[scope-runtime] submitted-unit cleanup failed:",
-          error instanceof Error ? error.name : "UnknownError");
-      }
-    }
-  }
-  return cleaned;
-}
-
 export function createSystemdScopeRuntimeLauncher(
   input: LauncherPaths & { runCommand?: ScopeRuntimeCommandRunner; pinCommandSocket?: CommandSocketPinner; resolveCommandTrust?: CommandTrustResolver },
 ): ScopeRuntimeLauncher {
@@ -630,6 +612,10 @@ export function createSystemdScopeRuntimeLauncher(
     return execute(command, args);
   };
   const pinCommandSocket = input.pinCommandSocket ?? pinScopeRuntimeCommandSocket;
+  const quiesce = (runtimeHandle: string) => quiesceRuntimeUnit(runCommand, {
+    unit: identity.workerUnit(runtimeHandle),
+    root: join(paths.stateRoot, "runtimes", RuntimeHandleSchema.parse(runtimeHandle).slice("runtime_".length), "root"),
+  });
 
   async function dispatchCommand<T>(runtimeHandle: string, executionGeneration: string, dispatch: (path: string) => Promise<T>): Promise<T> {
     const handle = RuntimeHandleSchema.parse(runtimeHandle);
@@ -735,9 +721,7 @@ export function createSystemdScopeRuntimeLauncher(
           ? await readRuntimeProvenance(join(paths.stateRoot, "runtimes", suffix), runtimeHandle, paths.ownedNode)
           : undefined;
         if (!provenance) {
-          if (!await cleanupSubmittedUnit(runCommand, name)) {
-            throw new Error("Scope runtime reconciliation cleanup unavailable");
-          }
+          await quiesce(runtimeHandle);
           await removeRuntimeDirectories(paths, runtimeHandle);
           continue;
         }
@@ -745,7 +729,7 @@ export function createSystemdScopeRuntimeLauncher(
         handles.push(provenance);
         if (handles.length > 32) throw new Error("Scope runtime reconciliation exceeds capacity");
       }
-      await cleanupOrphanedRuntimeDirectories(paths, retainedSuffixes);
+      await cleanupOrphanedRuntimeDirectories(paths, retainedSuffixes, suffix => quiesce(`runtime_${suffix}`));
       return handles;
     },
     async start(request: ScopeRuntimeLaunchRequest): Promise<void> {
@@ -784,9 +768,12 @@ export function createSystemdScopeRuntimeLauncher(
           request.runtimeHandle,
         );
       } catch (error: unknown) {
-        const cleaned = !submitted
-          || await cleanupSubmittedUnit(runCommand, identity.workerUnit(request.runtimeHandle));
-        if (cleaned) await removeRuntimeDirectories(paths, request.runtimeHandle);
+        try {
+          if (submitted) await quiesce(request.runtimeHandle);
+          await removeRuntimeDirectories(paths, request.runtimeHandle);
+        } catch (cleanupError: unknown) {
+          console.warn("[scope-runtime] submitted-unit cleanup unverified:", cleanupError instanceof Error ? cleanupError.name : "UnknownError");
+        }
         throw error;
       }
     },
@@ -804,21 +791,7 @@ export function createSystemdScopeRuntimeLauncher(
     },
     async stop(runtimeHandle: string): Promise<void> {
       const handle = RuntimeHandleSchema.parse(runtimeHandle);
-      const name = identity.workerUnit(handle);
-      try {
-        await runCommand("/usr/bin/systemctl", ["is-active", "--quiet", name]);
-        await runCommand("/usr/bin/systemctl", ["stop", name]);
-      } catch (error: unknown) {
-        if (!inactiveUnitError(error)) throw error;
-      }
-      try {
-        await runCommand("/usr/bin/systemctl", ["reset-failed", name]);
-      } catch (error: unknown) {
-        if (!inactiveUnitError(error)) {
-          console.warn("[scope-runtime] failed-unit cleanup unavailable:",
-            error instanceof Error ? error.name : "UnknownError");
-        }
-      }
+      await quiesce(handle);
       await removeRuntimeDirectories(paths, handle);
     },
   };

@@ -61,6 +61,13 @@ async function fixture(managerNamespaces: readonly (string | undefined)[] = name
         }
         // Deliberately return unfiltered mixed output. No launcher may trust the glob alone.
         if (args[0] === "list-units") return { stdout: [...units].map(([name, state]) => `${name} loaded ${state} running`).join("\n") };
+        if (args[0] === "show" && args.includes("--property=ControlGroup")) {
+          const name = args[1]!, state = units.get(name), id = /([a-f0-9]{32})\.service$/.exec(name)![1]!;
+          return { stdout: Object.entries({ Id: name, LoadState: state ? "loaded" : "not-found", ActiveState: state ?? "inactive",
+            SubState: state === "failed" ? "failed" : state ? "running" : "dead", MainPID: state === "active" ? "1234" : "0", ControlPID: "0",
+            ControlGroup: state ? `/system.slice/${name}` : "", KillMode: "control-group",
+            RootDirectory: state ? join(stateRoot, "runtimes", id, "root") : "" }).map(([key, value]) => `${key}=${value}`).join("\n") };
+        }
         if (args[0] === "stop") units.delete(args[1]!);
         return { stdout: "" };
       },

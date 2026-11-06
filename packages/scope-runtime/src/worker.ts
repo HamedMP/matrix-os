@@ -341,7 +341,7 @@ export async function startCommandServer(
   socketSlot: SingleUseCommandSocketSlot<Socket>,
   socketPath = COMMAND_SOCKET,
   publication?: CommandPublicationDependencies,
-): Promise<{ server: Server; removeOwnedSocket(): Promise<void> }> {
+): Promise<Server> {
   const server = createServer({ allowHalfOpen: true }, (socket: Socket) => {
     if (!socketSlot.claim(socket, (listener) => socket.once("close", listener))) return;
     let input = "";
@@ -375,8 +375,8 @@ export async function startCommandServer(
       })();
     });
   });
-  const removeOwnedSocket = await listenCommandSocket(server, socketPath, publication);
-  return { server, removeOwnedSocket };
+  await listenCommandSocket(server, socketPath, publication);
+  return server;
 }
 
 export async function runScopeRuntimeWorker(args = process.argv.slice(2)): Promise<void> {
@@ -399,13 +399,12 @@ export async function runScopeRuntimeWorker(args = process.argv.slice(2)): Promi
   const invocation = parseScopeRuntimeWorkerArguments(environment.invocationArguments ?? []);
   await verifyScopeRuntimeBoundary();
   const commandSocket = createSingleUseCommandSocketSlot<Socket>();
-  const { server: commandServer, removeOwnedSocket } = await startCommandServer(invocation, commandSocket);
+  const commandServer = await startCommandServer(invocation, commandSocket);
   try {
     await writeScopeRuntimeReadiness(invocation.runtimeHandle);
   } catch (error: unknown) {
     commandSocket.destroyActive();
     await new Promise<void>(resolve => commandServer.close(() => resolve()));
-    await removeOwnedSocket();
     if (!(error instanceof Error)) throw error;
     throw workerFailure("ScopeRuntimeReadinessError", "Scope runtime readiness unavailable");
   }
@@ -415,7 +414,6 @@ export async function runScopeRuntimeWorker(args = process.argv.slice(2)): Promi
   } finally {
     commandSocket.destroyActive();
     await new Promise<void>((resolve) => commandServer.close(() => resolve()));
-    await removeOwnedSocket();
   }
 }
 

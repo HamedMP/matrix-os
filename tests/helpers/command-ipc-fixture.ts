@@ -33,3 +33,21 @@ export async function commandPublicationFixture(path: string) {
     return staging;
   } };
 }
+
+/** PID1 fixture for legacy lifecycle tests; the focused cleanup suite owns hostile observations. */
+export function withCleanupUnitFixture(stateRoot: string, execute: (command: string, args: readonly string[]) => Promise<{ stdout: string }>) {
+  const stopped = new Set<string>(); // Test-local, explicit128-entry cap.
+  return async (command: string, args: readonly string[]) => {
+    const result = await execute(command, args);
+    if (command === "/usr/bin/systemd-run") stopped.delete(args.find(arg => arg.startsWith("--unit="))?.slice(7) ?? "");
+    if (command !== "/usr/bin/systemctl") return result;
+    if (args[0] === "stop") { if (stopped.size >= 128) throw new Error("Fixture capacity"); stopped.add(args[1]!); }
+    if (args[0] !== "show" || !args.includes("--property=ControlGroup")) return result;
+    const unit = args[1]!, suffix = /([a-f0-9]{32})\.service$/.exec(unit)?.[1];
+    if (!suffix) throw new Error("Invalid fixture unit");
+    const done = stopped.has(unit);
+    return { stdout: Object.entries({ Id: unit, LoadState: "loaded", ActiveState: done ? "inactive" : "active", SubState: done ? "dead" : "running",
+      MainPID: done ? "0" : "1234", ControlPID: "0", ControlGroup: done ? "" : `/system.slice/${unit}`, KillMode: "control-group",
+      RootDirectory: join(stateRoot, "runtimes", suffix, "root") }).map(([key, value]) => `${key}=${value}`).join("\n") };
+  };
+}

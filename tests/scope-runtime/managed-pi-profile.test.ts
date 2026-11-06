@@ -1,4 +1,4 @@
-import { commandIdentityFixture } from "../helpers/command-ipc-fixture.js";
+import { commandIdentityFixture, withCleanupUnitFixture } from "../helpers/command-ipc-fixture.js";
 import { chmod, link, mkdir, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { createServer } from "node:net";
 import { join } from "node:path";
@@ -47,7 +47,7 @@ async function setup() {
     if (args[0] === "list-units") return { stdout: `matrix-scope-runtime-${"2".repeat(32)}.service loaded active running\n` };
     return { stdout: "active\n" };
   });
-  const launcher = createSystemdScopeRuntimeLauncher({ ...paths, runCommand });
+  const launcher = createSystemdScopeRuntimeLauncher({ ...paths, runCommand: withCleanupUnitFixture(paths.stateRoot, runCommand) });
   return { root, home, paths, workspaces, runCommand, launcher };
 }
 
@@ -88,7 +88,7 @@ describe("managed Pi supervisor and actual launcher boundary", () => {
     expect(ready.client.profileCapability("scope-runtime-bot-v1")).toMatchObject({available:true});
     await expect(launcher.supportedAdapters?.("scope-runtime-forged-v1")).resolves.toEqual([]);
 
-    const botOnlyLauncher = createSystemdScopeRuntimeLauncher({ ...paths, managedPiSandboxRoots: [], runCommand });
+    const botOnlyLauncher = createSystemdScopeRuntimeLauncher({ ...paths, managedPiSandboxRoots: [], runCommand: withCleanupUnitFixture(paths.stateRoot, runCommand) });
     const botOnly = await createScopeRuntimeController({ launcher: botOnlyLauncher, executionGeneration: "7" });
     cleanup.push(() => botOnly.close());
     const botOnlyResponse = await botOnly.handle(request);
