@@ -296,7 +296,10 @@ export class CollaborativeAppShareService {
     let decoded: unknown;
     try {
       decoded = JSON.parse(Buffer.from(encoded, "base64url").toString("utf8"));
-    } catch {
+    } catch (error: unknown) {
+      if (!(error instanceof SyntaxError)) {
+        console.warn("[collaborative-app-share] token decoding failed", error instanceof Error ? error.name : "UnknownError");
+      }
       throw new CollaborativeAppShareServiceError("conflict");
     }
     const token = TokenSchema.safeParse(decoded);
