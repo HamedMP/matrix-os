@@ -198,6 +198,26 @@ describe("revocation enforcer", () => {
     expect(runtimes.size).toBe(1);
     runtimes.close();
   });
+  it("keeps failed scope stops tracked and rejects cleanup until a retry succeeds", async () => {
+    let available = false;
+    const stopRuntime = vi.fn(async () => {
+      if (!available) throw new Error("supervisor unavailable");
+    });
+    const onStop = vi.fn();
+    const runtimes = new SandboxRuntimeRegistry({ client: { stopRuntime }, startTimer: false });
+    runtimes.bind({ scopeId, actorId: "actor_1", runtimeHandle: "runtime_11111111111111111111111111111111", onStop });
+
+    await expect(runtimes.stopForScope(scopeId)).rejects.toThrow("Sandbox runtime stop failed");
+    expect(runtimes.size).toBe(1);
+    expect(onStop).toHaveBeenCalledOnce();
+
+    available = true;
+    await expect(runtimes.stopForScope(scopeId)).resolves.toBe(1);
+    expect(stopRuntime).toHaveBeenCalledTimes(2);
+    expect(onStop).toHaveBeenCalledOnce();
+    expect(runtimes.size).toBe(0);
+    runtimes.close();
+  });
   it("keeps another valid session's controller when one action budget is exhausted", async () => {
     const control = new TerminalControlCoordinator({ startTimer: false });
     const enforcer = new CollaborationRevocationEnforcer({ control });
