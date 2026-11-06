@@ -164,6 +164,31 @@ Request:
 - Result: `201 CollaborativeAppShare`, or `200` for an exact replay.
 - No project, role, invite, member, record-filter, or acceptance field is accepted.
 
+### `PUT /api/collaboration/apps/:appId/share`
+
+Owner-only exact-build rebind request for an existing `needs_recheck` share:
+
+```ts
+{
+  clientRequestId: string;
+  expectedShareRevision: string;
+  expectedBindingRevision: string;
+  expectedResourceRevision: string;
+  expectedReadinessRevision: string;
+  expectedPreviousBuildId: string;
+  readinessId: string;
+  buildId: string;
+  confirmationToken: string;
+}
+```
+
+- Authentication: owner Matrix session.
+- Authority: exact app owner and current member of the share's organization.
+- Preconditions: the scope is `needs_recheck`, the previous binding and all supplied revisions still match, and the new readiness certificate is ready for the same catalog/incarnation and exact `buildId`.
+- Transaction: CAS-replace the binding, restore the scope to `active`, bump the auth epoch and revisions, and append operation, audit, event, and directory outbox records together.
+- Result: `200 CollaborativeAppShare` containing the new exact build and revisions; an exact `clientRequestId` replay returns the same response. Any stale expected revision/build returns `409 conflict` without changing the binding.
+- After commit: revoke sessions for the previous build. No role, grant, invite, or per-member field is accepted.
+
 ### `DELETE /api/collaboration/apps/:appId/share`
 
 Request body (DELETE still receives the mutating body limit):
