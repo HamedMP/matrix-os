@@ -67,12 +67,15 @@ export const CollaborativeAppReadinessSchema = z.object({
   build: CollaborativeAppBuildRefSchema,
   status: CollaborativeAppReadinessStatusSchema,
   revision: CollaborationRevisionSchema,
-  checks: z.array(CollaborativeAppReadinessGateResultSchema).min(1).max(12),
+  checks: z.array(CollaborativeAppReadinessGateResultSchema).max(12),
   verifiedAt: z.iso.datetime().optional(),
   invalidatedAt: z.iso.datetime().optional(),
 }).strict().superRefine((readiness, context) => {
   if (new Set(readiness.checks.map((check) => check.code)).size !== readiness.checks.length) {
     context.addIssue({ code: "custom", path: ["checks"], message: "Readiness gates must be unique" });
+  }
+  if (readiness.status !== "checking" && readiness.checks.length === 0) {
+    context.addIssue({ code: "custom", path: ["checks"], message: "Completed readiness requires gate results" });
   }
   if (readiness.status === "ready"
     && (!readiness.verifiedAt || readiness.invalidatedAt || readiness.checks.some((check) => check.status !== "passed"))) {
