@@ -22,8 +22,11 @@ describe("dormant scope runtime host bundle", () => {
     expect(unit).toContain("ConditionPathExists=!/opt/matrix/app/SCOPE_RUNTIME_DISABLED");
     expect(unit).toContain("RuntimeDirectory=matrix-scope-runtime");
     expect(unit).toContain("RuntimeDirectoryPreserve=yes");
-    expect(unit).toContain("RuntimeDirectoryMode=0770");
-    expect(unit).toContain("StateDirectory=matrix-scope-runtime");
+    expect(unit).toContain("RuntimeDirectoryMode=02770");
+    expect(unit).toContain("StateDirectory=matrix-scope-runtime matrix-scope-runtime/runtimes");
+    expect(unit).toContain("StateDirectoryMode=02700");
+    expect(unit).toContain("RestrictSUIDSGID=yes");
+    expect(unit).toContain("UMask=0007");
     expect(unit).toContain("PrivateNetwork=yes");
     expect(unit).toContain("ProtectHome=tmpfs");
     // Only fixed workload roots are visible to the supervisor for mount validation.

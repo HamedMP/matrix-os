@@ -1,6 +1,6 @@
 import { beforeEach, expect, it, vi } from "vitest";
 const f = vi.hoisted(() => ({ status: "", uidMap: "", gidMap: "", entries: ["worker.sock", ".w-ABC123"], stageEntries: [] as string[],
-  parent: {} as any, socket: {} as any, stage: {} as any, properties: {} as any, group: "matrix:x:987:", passwd: "matrix-scope-workload:x:62001:62001::/:/usr/sbin/nologin", calls: [] as string[], reads: 0, change: false, absent: false }));
+  anchors: {} as Record<string, any>, parent: {} as any, socket: {} as any, stage: {} as any, properties: {} as any, group: "matrix:x:987:", passwd: "matrix-scope-workload:x:62001:62001::/:/usr/sbin/nologin", calls: [] as string[], reads: 0, change: false, absent: false }));
 vi.mock("../../scripts/ops/devstack-native/baseline.mjs", () => ({ show: async () => {
   const result = { ...f.properties }; if (f.change && ++f.reads > 1) result.InvocationID = "b".repeat(32); return result;
 } }));
@@ -22,19 +22,22 @@ vi.mock("node:fs/promises", async original => ({ ...await original<any>(),
     if (path.endsWith("/stat")) return "42 (fixture) S " + Array(18).fill("0").join(" ") + " 123 0\n";
     throw Error("unexpected_read");
   },
-  lstat: async (path: string) => { if (f.absent && path.endsWith("a".repeat(32))) throw Object.assign(Error("absent"), { code: "ENOENT" }); return path.endsWith("worker.sock") ? f.socket : path.endsWith(".w-ABC123") ? f.stage : f.parent; },
+  lstat: async (path: string) => { if (f.absent && path.endsWith("a".repeat(32))) throw Object.assign(Error("absent"), { code: "ENOENT" }); return f.anchors[path] ?? (path.endsWith("worker.sock") ? f.socket : path.endsWith(".w-ABC123") ? f.stage : path.endsWith("a".repeat(32)) ? f.parent : metadata(0o700, 0, 987)); },
   opendir: async (path: string) => ({ async *[Symbol.asyncIterator]() { for (const name of path.endsWith(".w-ABC123") ? f.stageEntries : f.entries) yield { name }; } }),
 }));
 import { inspectSupervisor, inspectWorkerConfiguration } from "../../scripts/ops/devstack-native/evidence.mjs";
 import { inspectCommandCleanup } from "../../scripts/ops/devstack-native/ipc-evidence.mjs";
 import { safeCapability } from "../../scripts/ops/devstack-native/receipt.mjs";
 const handle = "runtime_" + "a".repeat(32), unit = "fixture-" + "a".repeat(32) + ".service";
-const config = { supervisorUnit: "fixture.service", workerUnitPrefix: "fixture-", commandSocketRoot: "/owned/c", stateRoot: "/owned/state", ownedNode: { binary: "/owned/node", workerBinary: "/node" } };
+const config = { supervisorUnit: "fixture.service", workerUnitPrefix: "fixture-", commandSocketRoot: "/owned/c", runtimeDirectory: "/owned/ipc", stateRoot: "/owned/state", ownedNode: { binary: "/owned/node", workerBinary: "/node" } };
 function status(uid = 62001, gid = 62001, groups = "62001") {
   return `Name:\tfixture\nUid:\t${[uid, uid, uid, uid].join("\t")}\nGid:\t${[gid, gid, gid, gid].join("\t")}\nGroups:\t${groups}\n` + ["CapInh", "CapPrm", "CapEff", "CapBnd", "CapAmb"].map(key => key + ":\t0000000000000000\n").join("") + "NoNewPrivs:\t1\n";
 }
 const metadata = (mode: number, uid: number, gid: number, socket = false) => ({ mode, uid, gid, ino: socket ? 4 : 3, dev: 2, nlink: socket ? 1 : 2, isDirectory: () => !socket, isSocket: () => socket, isSymbolicLink: () => false });
 beforeEach(() => {
+  f.anchors = { "/owned/state": metadata(0o2700, 0, 987), "/owned/state/runtimes": metadata(0o2700, 0, 987),
+    "/owned/ipc": metadata(0o2770, 0, 987), "/owned/c": metadata(0o2770, 0, 987),
+    ["/owned/state/runtimes/" + "a".repeat(32)]: metadata(0o2700, 0, 987) };
   Object.assign(f, { status: status(), uidMap: "0 0 1\n62001 62001 1\n", gidMap: "0 0 1\n62001 62001 1\n", entries: ["worker.sock", ".w-ABC123"], stageEntries: [], group: "matrix:x:987:", passwd: "matrix-scope-workload:x:62001:62001::/:/usr/sbin/nologin", calls: [], reads: 0, change: false, absent: false,
     parent: metadata(0o2733, 0, 987), socket: metadata(0o620, 62001, 987, true), stage: metadata(0o2700, 62001, 987),
     properties: { Id: unit, User: "matrix-scope-workload", DynamicUser: "yes", PrivateUsers: "yes", MainPID: "42", InvocationID: "a".repeat(32), ActiveState: "active", SubState: "running", RootDirectory: "/owned/root", ControlGroup: "/system.slice/" + unit } });
@@ -105,4 +108,16 @@ it.each(["valid", "live", "pid", "control_pid", "cgroup", "wrong_unit", "missing
   if (fault === "retained_directory") f.absent = false;
   if (fault === "valid") expect(await inspectCommandCleanup(config, [handle])).toMatchObject({ workers: [{ handle, retainedEmptyStagingRemoved: true }], units: [{ Id: unit, ControlGroup: "" }] });
   else await expect(inspectCommandCleanup(config, [handle])).rejects.toThrow();
+});
+
+it.each(["/owned/state", "/owned/state/runtimes", "/owned/ipc", "/owned/c"])("requires inherited mode and trusted group at the declared anchor %s", async path => {
+  f.properties.User = "root"; f.properties.Id = config.supervisorUnit; f.status = status(0, 987, "987"); f.uidMap = f.gidMap = "0 0 4294967295\n";
+  f.anchors[path].mode &= 0o777;
+  await expect(inspectSupervisor(config, {})).rejects.toThrow();
+  f.anchors[path].mode |= 0o2000; f.anchors[path].gid = 999;
+  await expect(inspectSupervisor(config, {})).rejects.toThrow();
+});
+it("requires inherited private runtime2700 before accepting a worker", async () => {
+  f.anchors["/owned/state/runtimes/" + "a".repeat(32)].mode = 0o700;
+  await expect(inspect()).rejects.toThrow();
 });

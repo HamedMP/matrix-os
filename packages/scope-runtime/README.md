@@ -78,3 +78,22 @@ unit dependency shutdown, provider behavior and a packaged client. The
 production supervisor acceptance script pins both version-2 digests but its
 shared-Chat model check does not prove a long Pi turn. Public documentation
 should be updated separately in `FinnaAI/matrix-os-site` before release.
+
+## Inherited command directories
+
+The current Chat3, Bot4 and managed Pi4 command policy requires PID1-declared
+root:matrix state and `runtimes` anchors at `02700`, and runtime IPC anchors at
+`02770`. Private per-runtime roots inherit `02700`; their command leaves inherit
+`02733` from a single exclusive `0733` mkdir. The fixed `/usr/bin/mkdir` child
+uses pinned parent/executable descriptors, fixed arguments and a sterile
+environment. It does not change the supervisor's `0007` or workload's `0077`
+mask, capabilities, groups, or `RestrictSUIDSGID=yes`.
+
+Creation has one active child, at most 31 queued calls, a five-second queue
+wait, a three-second child deadline, and a 1 KiB combined output limit. Slots
+and descriptors are retained until child close; controller shutdown fences new
+requests and awaits its accepted operations. Missing/wrong inheritance,
+collisions and uncertain outcomes fail closed. Failed creates can retain owned
+orphans for quiesced reconciliation; no foreign leaf is chmodded or recursively
+removed by creation error recovery. Source tests model Darwin setgid explicitly
+and do not replace hardened Linux execution of the final compiled helpers.

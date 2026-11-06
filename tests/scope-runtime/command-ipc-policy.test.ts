@@ -11,7 +11,7 @@ afterEach(async () => { for (const close of cleanup.splice(0).reverse()) await c
 async function fixture() {
   const root = await createUnixSocketTempDir(); cleanup.push(() => rm(root, { recursive: true, force: true }));
   const identity = commandIdentityFixture(root);
-  return { root, paths: { stateRoot: join(root, "s"), commandSocketRoot: join(root, "c"), namespaceTrust: identity.namespaceTrust },
+  return { root, paths: { stateRoot: join(root, "s"), commandSocketRoot: join(root, "c"), ...identity },
     trust: { uid: identity.namespaceTrust.uid, gid: identity.namespaceTrust.ipcGid, workloadUid: process.getuid!() } };
 }
 it("exclusively creates only a trusted setgid command leaf, preserving collisions and outer roots", async () => {
@@ -20,15 +20,15 @@ it("exclusively creates only a trusted setgid command leaf, preserving collision
   const entry = await lstat(created.commandDirectory);
   expect(entry.mode & 0o7777).toBe(0o2733); expect(entry.gid).toBe(trust.gid);
   expect(() => assertCommandDirectory(entry, trust)).not.toThrow();
-  expect((await lstat(paths.commandSocketRoot)).mode & 0o7777).toBe(0o700);
+  expect((await lstat(paths.commandSocketRoot)).mode & 0o7777).toBe(0o2770);
   await writeFile(join(created.commandDirectory, "sentinel"), "owner");
   await expect(createRuntimeDirectories(paths, handle)).rejects.toMatchObject({ code: "EEXIST" });
   expect(await readFile(join(created.commandDirectory, "sentinel"), "utf8")).toBe("owner");
   const suffix = "b".repeat(32), collision = join(paths.commandSocketRoot, suffix);
   await mkdir(collision); await chmod(collision, 0o711);
-  await expect(createRuntimeDirectories(paths, "runtime_" + suffix)).rejects.toMatchObject({ code: "EEXIST" });
+  await expect(createRuntimeDirectories(paths, "runtime_" + suffix)).rejects.toThrow("creator failed");
   expect((await lstat(collision)).mode & 0o7777).toBe(0o711);
-  await expect(lstat(join(paths.stateRoot, "runtimes", suffix))).rejects.toMatchObject({ code: "ENOENT" });
+  expect((await lstat(join(paths.stateRoot, "runtimes", suffix))).isDirectory()).toBe(true);
 });
 it("rejects a wrong trusted group without broadening or leaving a runtime", async () => {
   const { paths } = await fixture(); paths.namespaceTrust.ipcGid++;

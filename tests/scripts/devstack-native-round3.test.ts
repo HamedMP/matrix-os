@@ -90,11 +90,14 @@ it.each(["warn_after_collection", "state_remains", "command_remains", "clean_wit
     const { createJournal } = await import("../../scripts/ops/devstack-native/receipt.mjs");
     const { qualifyGracefulDrain } = await import("../../scripts/ops/devstack-native/proof.mjs");
     const { vi } = await import("vitest"), { appendFileSync } = await import("node:fs");
-    const { createStderrCapture } = await import("../../scripts/ops/devstack-native/close-evidence.mjs");
+    const { createStderrCapture, beginCloseEvidence } = await import("../../scripts/ops/devstack-native/close-evidence.mjs");
     const f = fixture(), base = await mkdtemp(join(process.cwd(), ".native-close-")); scratch.push(base);
     const config = { ...f.config, commandSocketRoot: join(base, "c"), stateRoot: join(base, "state"), supervisorSocket: join(base, "socket") };
     const runtime = join(config.stateRoot, "runtimes", handle.slice(8)), command = join(config.commandSocketRoot, handle.slice(8));
     for (const path of [runtime, command]) await mkdir(path, { recursive: true, mode: 0o700 });
+    const { chmod } = await import("node:fs/promises");
+    await chmod(join(config.stateRoot, "runtimes"), 0o2700); await chmod(config.commandSocketRoot, 0o2770);
+    const fixtureIdentity = { fixtureUid: process.getuid!(), trustedGroup: { gid: (await lstat(config.commandSocketRoot)).gid } };
     const stderr = join(base, "fixture.stderr");
     Object.assign(f.states[supervisor], { StandardError: "append", LimitFSIZE: "65536", LimitFSIZESoft: "65536" });
     const capture = await createStderrCapture(stderr, async () => lstat(stderr, { bigint: true }));
@@ -117,7 +120,7 @@ it.each(["warn_after_collection", "state_remains", "command_remains", "clean_wit
     try {
       const ledger = await ledgerFor(f, async () => { await controller.close(); f.terminal(supervisor); });
       const journal = createJournal();
-      await journal.step("drain", () => qualifyGracefulDrain(config, ledger, handle, { timeout: 300, capture })).catch((error: Error) => journal.fail(error));
+      await journal.step("drain", () => qualifyGracefulDrain(config, ledger, handle, { timeout: 300, capture, beginClose: (owner: unknown, handles: string[]) => beginCloseEvidence(config, capture, owner, handles, fixtureIdentity) })).catch((error: Error) => journal.fail(error));
       const { gates } = journal.result();
       if (fault === "warn_after_collection") expect(warn).toHaveBeenCalledWith("[scope-runtime] shutdown stop failed:", "Error");
       if (fault === "clean_with_adapter_diagnostics") expect(gates.drain).toMatchObject({ state: "passed", evidence: { workers: [{ outcome: "collected_after_controller_close" }] } });

@@ -1,3 +1,5 @@
+import { lookupIpcIdentity } from "./credential-evidence.mjs";
+import { runtimeAnchorStat, anchorMetadata } from "./runtime-anchor-evidence.mjs";
 import { lstat, opendir } from "node:fs/promises";
 import { show } from "./baseline.mjs";
 import { assert, noSymlinkAncestors, stat } from "./control.mjs";
@@ -12,6 +14,7 @@ async function names(path, max) {
 // Observation only: no chmod/chgrp, connections or workload instrumentation.
 export async function inspectCommandIpc(config, handle, identity) {
   assert(/^runtime_[a-f0-9]{32}$/.test(handle), "worker_handle_invalid");
+  const privateRoot = await runtimeAnchorStat(`${config.stateRoot}/runtimes/${handle.slice(8)}`, 0o2700, identity);
   const parentPath = `${config.commandSocketRoot}/${handle.slice(8)}`;
   await noSymlinkAncestors(parentPath);
   const parent = await lstat(parentPath), entries = await names(parentPath, 3);
@@ -28,7 +31,7 @@ export async function inspectCommandIpc(config, handle, identity) {
   assert((await names(stagingPath, 1)).length === 0, "command_staging_not_empty");
   assert(same(parent, await lstat(parentPath)) && same(socket, await lstat(socketPath)) && same(staging, await lstat(stagingPath))
     && JSON.stringify(entries) === JSON.stringify(await names(parentPath, 3)), "command_publication_changed");
-  return { trustedGroup: identity.trustedGroup, parent: metadata(parent), socket: metadata(socket),
+  return { trustedGroup: identity.trustedGroup, privateRoot: anchorMetadata(privateRoot), parent: metadata(parent), socket: metadata(socket),
     staging: { ...metadata(staging), name: stage, empty: true, bindNameAbsent: true, retainedUntilQuiescence: true }, hostConnections: 0 };
 }
 // The production supervisor removes these after its exact-unit/cgroup fence.
@@ -37,10 +40,9 @@ export async function inspectCommandIpc(config, handle, identity) {
 export async function inspectCommandCleanup(config, handles) {
   assert(handles.length > 0 && handles.length <= 32 && new Set(handles).size === handles.length, "command_cleanup_handles_invalid");
   const parents = [config.commandSocketRoot, `${config.stateRoot}/runtimes`];
-  const before = [];
-  for (const path of parents) {
-    await noSymlinkAncestors(path, true); const entry = await lstat(path);
-    assert(entry.isDirectory() && entry.uid === 0 && (entry.mode & 0o022) === 0, "command_cleanup_parent_invalid"); before.push(entry);
+  const identity = await lookupIpcIdentity(), before = [];
+  for (const [index, path] of parents.entries()) {
+    before.push(await runtimeAnchorStat(path, index === 0 ? 0o2770 : 0o2700, identity));
   }
   const units = [];
   for (const handle of handles) {
@@ -54,6 +56,7 @@ export async function inspectCommandCleanup(config, handles) {
     units.push({ unit, ...terminal });
     for (const parent of parents) assert(!await stat(`${parent}/${handle.slice(8)}`), "command_cleanup_incomplete");
   }
-  for (const [index, path] of parents.entries()) assert(same(before[index], await lstat(path)), "command_cleanup_parent_changed");
+  for (const [index, path] of parents.entries()) assert(same(before[index],
+    await runtimeAnchorStat(path, index === 0 ? 0o2770 : 0o2700, identity)), "command_cleanup_parent_changed");
   return { units, workers: handles.map(handle => ({ handle, retainedEmptyStagingRemoved: true, commandDirectoryRemoved: true, runtimeDirectoryRemoved: true })), actor: "source_supervisor_after_quiesced_unit_cgroup" };
 }
