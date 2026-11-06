@@ -7,6 +7,7 @@ import { promisify } from "node:util";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { ZellijCliRuntimeAdapter } from "../../packages/terminal-runtime/src/zellij-adapter.js";
 import { createTerminalRuntimeEnvironment } from "../../packages/terminal-runtime/src/runtime-environment.js";
+import { initializeMatrixZellijConfig } from "../../packages/terminal-runtime/src/zellij-bootstrap.js";
 
 const execFileAsync = promisify(execFile);
 const binaryPath = process.env.MATRIX_TEST_ZELLIJ_BIN ?? "/usr/local/bin/zellij";
@@ -191,6 +192,64 @@ describe.runIf(available)("real bundled Zellij 0.44.3 integration", () => {
     } finally {
       await secondAttachment?.close();
       await firstAttachment.close();
+    }
+  }, 30_000);
+
+  it("keeps held-pane attachments independent with the production config and a focused scroll plugin", async () => {
+    const fixtureHome = await mkdtemp(join(tmpdir(), "matrix-zellij-held-"));
+    const fixtureSession = `matrix-w-${randomBytes(16).toString("hex")}`;
+    const fixtureEnv = createTerminalRuntimeEnvironment({
+      homePath: fixtureHome, uid: process.getuid?.() ?? 0, runtimeDir: fixtureHome,
+    });
+    const fixture = new ZellijCliRuntimeAdapter({ homePath: fixtureHome, binaryPath, env: fixtureEnv });
+    const attachments: Awaited<ReturnType<typeof fixture.openAttachment>>[] = [];
+    const outputs = ["", "", ""];
+    const marker = `matrix-held-${randomBytes(8).toString("hex")}`;
+    const command = async (...args: string[]) => (await execFileAsync(binaryPath,
+      ["--session", fixtureSession, ...args], { timeout: 5_000, env: fixtureEnv })).stdout;
+    try {
+      await initializeMatrixZellijConfig(fixtureHome);
+      await fixture.ensureSession(fixtureSession, { cols: 100, rows: 30 });
+      const panes = [];
+      for (let index = 0; index < 3; index += 1) {
+        panes.push(await fixture.createTab(fixtureSession, {
+          internalName: `matrix-tab-${randomBytes(16).toString("hex")}`, cwd: "",
+          command: [process.execPath, "-e", `console.log('${marker}-${index}');process.exit(${index === 0 ? 0 : 3})`],
+        }));
+      }
+      await expect.poll(async () => {
+        const inventory = JSON.parse(await command("action", "list-panes", "--all", "--json"));
+        return inventory.filter((pane: { is_plugin: boolean; is_held: boolean }) => !pane.is_plugin && pane.is_held).length;
+      }).toBe(3);
+      for (const [attachmentIndex, paneIndex] of [0, 2, 0].entries()) {
+        attachments.push(await fixture.openAttachment(fixtureSession, {
+          paneId: panes[paneIndex]!.paneId, size: { cols: 100, rows: 30 },
+          onData: (data) => { outputs[attachmentIndex] = `${outputs[attachmentIndex]}${new TextDecoder().decode(data)}`.slice(-64 * 1024); },
+          onExit: () => undefined,
+        }));
+        await expect.poll(() => outputs[attachmentIndex]).toContain(`${marker}-${paneIndex}`);
+        if (attachmentIndex === 0) {
+          await fixture.scrollState(fixtureSession, panes[0]!.paneId);
+          const inventory = JSON.parse(await command("action", "list-panes", "--all", "--json"));
+          const plugin = inventory.find((pane: { plugin_url?: string }) => pane.plugin_url?.endsWith("scroll-v1.wasm"));
+          expect(plugin).toBeDefined();
+          await command("action", "focus-pane-id", `plugin_${plugin.id}`);
+          const focused = JSON.parse(await command("action", "list-panes", "--all", "--json"));
+          expect(focused.find((pane: { id: number; is_plugin: boolean }) => pane.id === plugin.id && pane.is_plugin).is_focused).toBe(true);
+        }
+      }
+      // Let any delayed mirrored redraw arrive before checking isolation.
+      await new Promise<void>((resolve) => setTimeout(resolve, 250));
+      expect(outputs[0]).not.toContain(`${marker}-2`);
+      expect(outputs[1]).not.toContain(`${marker}-0`);
+      expect(outputs[2]).not.toContain(`${marker}-2`);
+      const clients = await command("action", "list-clients");
+      expect(clients).toContain(panes[0]!.paneId);
+      expect(clients).toContain(panes[2]!.paneId);
+    } finally {
+      for (const attachment of attachments.reverse()) await attachment.close();
+      try { await fixture.deleteSession(fixtureSession); }
+      finally { await rm(fixtureHome, { recursive: true, force: true }); }
     }
   }, 30_000);
 
