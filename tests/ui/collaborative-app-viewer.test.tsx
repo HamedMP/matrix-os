@@ -1,3 +1,4 @@
+// @vitest-environment jsdom
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import "@testing-library/jest-dom/vitest";
 import React from "react";
@@ -119,6 +120,65 @@ describe("SharedAppViewer", () => {
     await waitFor(() => expect(direct.request).toHaveBeenCalledWith(scopeId, "POST",
       `/api/collaboration/scopes/${scopeId}/apps/team-tracker/actions`, expect.objectContaining({ action: { value: "draft" } })));
     view.unmount();
+  });
+
+  it("uses a supported app-info refresh and notifies the exact opaque iframe with a wildcard target", async () => {
+    const { platform, direct, eventHandlers } = setup();
+    const transport = createSharedAppTransport({ platform, direct: direct as never, target });
+    render(<SharedAppViewer target={target} transport={transport} />);
+    const frame = await screen.findByTitle("Team tracker shared by Owner") as HTMLIFrameElement;
+    const postMessage = vi.spyOn(frame.contentWindow!, "postMessage");
+
+    await act(async () => { await eventHandlers()?.onEvent(); });
+
+    expect(direct.request).toHaveBeenCalledWith(scopeId, "POST",
+      `/api/collaboration/scopes/${scopeId}/apps/team-tracker/view`,
+      { action: { action: "appInfo", app: "team-tracker" } });
+    expect(postMessage).toHaveBeenCalledWith({ type: "matrix:shared-app:changed" }, "*");
+  });
+
+  it("retries an uncertain iframe mutation through retryMutation instead of relaunching", async () => {
+    const { platform, direct } = setup();
+    direct.request.mockRejectedValueOnce(new CollaborationDirectError("unavailable"));
+    const transport = createSharedAppTransport({ platform, direct: direct as never, target });
+    render(<SharedAppViewer target={target} transport={transport} />);
+    const frame = await screen.findByTitle("Team tracker shared by Owner") as HTMLIFrameElement;
+    window.dispatchEvent(new MessageEvent("message", {
+      source: frame.contentWindow,
+      origin: "null",
+      data: { type: "matrix:shared-app:mutate", requestId: "req_12345678", expectedRevision: "1", action: { value: "draft" } },
+    }));
+    await screen.findByText("Change not confirmed");
+    fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+    await waitFor(() => expect(direct.request).toHaveBeenCalledTimes(2));
+
+    expect(platform.post).toHaveBeenCalledTimes(1);
+    expect((direct.request.mock.calls[0]![3] as { clientRequestId: string }).clientRequestId)
+      .toBe((direct.request.mock.calls[1]![3] as { clientRequestId: string }).clientRequestId);
+  });
+
+  it("withdraws the old iframe immediately when the scope or exact build changes", async () => {
+    const first = setup();
+    const firstTransport = createSharedAppTransport({ platform: first.platform, direct: first.direct as never, target });
+    const view = render(<SharedAppViewer target={target} transport={firstTransport} />);
+    const oldFrame = await screen.findByTitle("Team tracker shared by Owner");
+    expect(oldFrame).toHaveAttribute("src", expect.stringContaining(launchId));
+    const nextTarget = { ...target, scopeId: "10000000-0000-4000-8000-000000000009", buildId: "c".repeat(64) };
+    const second = setup();
+    second.platform.post.mockResolvedValueOnce({
+      target: { kind: "shared", scopeId: nextTarget.scopeId, organizationId: nextTarget.organizationId,
+        appId: nextTarget.appId, catalogId: nextTarget.catalogId, buildId: nextTarget.buildId,
+        name: "Team tracker", owner: nextTarget.owner, shareRevision: nextTarget.shareRevision },
+      launchId: "20000000-0000-4000-8000-000000000009",
+      entryUrl: "/new-build/index.html",
+      expiresAt: "2026-11-05T10:05:00.000Z",
+    });
+    const secondTransport = createSharedAppTransport({ platform: second.platform, direct: second.direct as never, target: nextTarget });
+
+    view.rerender(<SharedAppViewer target={nextTarget} transport={secondTransport} />);
+
+    expect(screen.queryByTitle("Team tracker shared by Owner")).toBeNull();
+    expect(await screen.findByTitle("Team tracker shared by Owner")).toHaveAttribute("src", "/new-build/index.html");
   });
 
   it("ends access in place and never remounts or retries the iframe", async () => {

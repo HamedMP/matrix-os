@@ -34,7 +34,7 @@ export function CollaborativeAppShareDialog({
 }: {
   appId: string;
   api: CollaborativeAppShareApi;
-  readiness: CollaborativeAppReadiness;
+  readiness: CollaborativeAppReadiness | null;
   organizationId: string;
   organizationName: string;
   share: CollaborativeAppShare | null;
@@ -48,6 +48,7 @@ export function CollaborativeAppShareDialog({
   const name = displayName(appId);
 
   const create = async () => {
+    if (!readiness) return;
     setPending(true); setFailure(null); setNotice(null);
     try {
       const preflight = PreflightSchema.parse(await api.post(
@@ -112,7 +113,7 @@ export function CollaborativeAppShareDialog({
         <h2 className="mt-1 text-xl font-semibold">Share {name}</h2></div>
       <button type="button" aria-label="Close" className="rounded-lg border px-2 py-1" onClick={onClose}>×</button>
     </div>
-    <div className="mt-4"><ReadinessSummary readiness={readiness} /></div>
+    {readiness ? <div className="mt-4"><ReadinessSummary readiness={readiness} /></div> : null}
     <label className="mt-4 block text-sm font-medium">Organization
       <select aria-label="Organization" className="mt-1 w-full rounded-lg border bg-transparent px-3 py-2"
         value={organizationId} disabled>
@@ -130,7 +131,7 @@ export function CollaborativeAppShareDialog({
       <button type="button" className="rounded-lg border px-3 py-2 text-sm" onClick={onClose}>Done</button>
       {active
         ? <button type="button" className="rounded-lg border px-3 py-2 text-sm" disabled={pending} onClick={() => void stop()}>{pending ? "Stopping…" : "Stop sharing"}</button>
-        : <button type="button" className="rounded-lg border px-3 py-2 text-sm" disabled={pending || readiness.status !== "ready"} onClick={() => void create()}>{pending ? "Sharing…" : "Share with everyone"}</button>}
+        : <button type="button" className="rounded-lg border px-3 py-2 text-sm" disabled={pending || readiness?.status !== "ready"} onClick={() => void create()}>{pending ? "Sharing…" : "Share with everyone"}</button>}
     </div>
   </Dialog>;
 }
