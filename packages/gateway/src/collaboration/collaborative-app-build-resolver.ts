@@ -66,26 +66,26 @@ export class CollaborativeAppBuildResolver {
 
     const resolved = await resolveAppBySlug(join(this.options.homePath, "apps"), appId);
     if (!resolved.ok) return null;
-    const declaration = resolved.entry.manifest.collaboration;
-    const bridgeContractVersion = declaration?.compatibility.bridgeContractVersion ?? "undeclared";
-    const runtimeAbi = declaration?.compatibility.runtimeAbi ?? "undeclared";
-    const identity = (assetDigest: string) => createCollaborativeAppBuildIdentity({
-      appId,
-      catalogId: catalog.id,
-      registrationIncarnation: incarnation,
-      manifestVersion: resolved.entry.manifest.version,
-      manifest: jsonDocument(resolved.entry.manifest),
-      declaredSchema: jsonDocument(registration.tables),
-      assetDigest,
-      bridgeContractVersion,
-      runtimeAbi,
-    });
+    const identity = (assetDigest: string, manifest: typeof resolved.entry.manifest) => {
+      const declaration = manifest.collaboration;
+      return createCollaborativeAppBuildIdentity({
+        appId,
+        catalogId: catalog.id,
+        registrationIncarnation: incarnation,
+        manifestVersion: manifest.version,
+        manifest: jsonDocument(manifest),
+        declaredSchema: jsonDocument(registration.tables),
+        assetDigest,
+        bridgeContractVersion: declaration?.compatibility.bridgeContractVersion ?? "undeclared",
+        runtimeAbi: declaration?.compatibility.runtimeAbi ?? "undeclared",
+      });
+    };
     const result = await this.build.buildWithCollaborativeSnapshot(appId, resolved.entry.appDir, {
       store: this.options.store,
-      buildIdForAssetDigest: (assetDigest) => identity(assetDigest).buildId,
+      buildIdForAssetDigest: (assetDigest, manifest) => identity(assetDigest, manifest).buildId,
     });
     if (!result.ok) throw new CollaborativeAppBuildResolutionError();
-    const exact = identity(result.snapshot.assetDigest);
+    const exact = identity(result.snapshot.assetDigest, result.snapshot.manifest);
     if (exact.buildId !== result.snapshot.buildId) throw new CollaborativeAppBuildResolutionError();
     await this.options.readiness.invalidateDriftedBuilds({
       ownerId,

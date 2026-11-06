@@ -121,11 +121,52 @@ describe("collaborative app readiness persistence", () => {
     });
     expect(stale).toMatchObject({ status: "stale", revision: 3, invalidationReason: "build_drift" });
 
+    const restarted = await repository.restart({
+      id: readinessId,
+      ownerId: "user_owner",
+      expectedRevision: 3,
+    });
+    expect(restarted).toMatchObject({
+      status: "checking",
+      revision: 4,
+      gateResults: [],
+      verifiedAt: null,
+      invalidatedAt: null,
+      invalidationReason: null,
+    });
+    await expect(repository.restart({
+      id: readinessId,
+      ownerId: "user_owner",
+      expectedRevision: 3,
+    })).rejects.toMatchObject({ code: "conflict" });
+
     await expect(sql`
       UPDATE collaboration_app_readiness
       SET status = 'ready', verified_at = NULL, invalidated_at = NULL, invalidation_reason = NULL
       WHERE id = ${readinessId}
     `.execute(fixture.db)).rejects.toThrow();
+  });
+
+  it("restarts a failed exact-build attempt without creating another row", async () => {
+    await repository.createOrGet({
+      ownerId: "user_owner",
+      build,
+      artifactRef: "objects/team-tracker-build",
+      verifierVersion: "collaborative-app-v1",
+    });
+    const failed = await repository.transition({
+      id: readinessId,
+      ownerId: "user_owner",
+      expectedRevision: 1,
+      status: "failed",
+      gateResults: [{ code: "cleanup", status: "failed", action: "Try again." }],
+    });
+    await expect(repository.restart({
+      id: readinessId,
+      ownerId: "user_owner",
+      expectedRevision: failed.revision,
+    })).resolves.toMatchObject({ status: "checking", revision: 3 });
+    expect(await fixture.db.selectFrom("collaboration_app_readiness").select("id").execute()).toHaveLength(1);
   });
 
   it("filters tombstoned catalog entries from normal reads", async () => {

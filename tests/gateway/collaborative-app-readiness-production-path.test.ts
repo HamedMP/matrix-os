@@ -235,9 +235,10 @@ describe("collaborative app production build resolution", () => {
       sourceGlobs: ["input.txt", "matrix.json"],
     };
     await writeFile(join(appDir, "matrix.json"), JSON.stringify(manifest));
+    const currentManifest = JSON.parse(await import("node:fs/promises").then(({ readFile }) => readFile(join(appDir, "matrix.json"), "utf8")));
     for (const snapshot of [
       { ok: false as const, error: "build_failed" },
-      { ok: true as const, snapshot: { assetDigest: "e".repeat(64), buildId: "f".repeat(64) } },
+      { ok: true as const, snapshot: { assetDigest: "e".repeat(64), buildId: "f".repeat(64), manifest: currentManifest } },
     ]) {
       const resolver = new CollaborativeAppBuildResolver({
         ...base,
@@ -278,5 +279,46 @@ describe("collaborative app production build resolution", () => {
     });
     expect((await resolver.resolve("user_owner", "team-tracker", { ensureCatalog: false }))?.build)
       .toMatchObject({ bridgeContractVersion: "undeclared", runtimeAbi: "undeclared" });
+  });
+
+  it("derives exact identity from the manifest captured under the build lock", async () => {
+    const registered = registration();
+    const incarnation = appRegistryIncarnation(registered as never);
+    const lockedManifest = JSON.parse(await import("node:fs/promises").then(({ readFile }) => readFile(join(appDir, "matrix.json"), "utf8")));
+    lockedManifest.version = "2.0.0";
+    lockedManifest.collaboration.compatibility.bridgeContractVersion = "matrix-app-bridge-v2";
+    const assetDigest = "f".repeat(64);
+    const resolver = new CollaborativeAppBuildResolver({
+      homePath: root,
+      ownerId: "user_owner",
+      appRegistry: { get: async () => registered } as never,
+      catalog: { getLiveByPath: async () => ({
+        id: catalogId, ownerId: "user_owner", projectId: null, kind: "app", path: "team-tracker",
+        parentId: null, incarnation, revision: 0, updatedAt: createdAt, deletedAt: null,
+      }) } as never,
+      readiness: { invalidateDriftedBuilds: async () => 0 },
+      store,
+      build: {
+        buildWithCollaborativeSnapshot: async (_slug: string, _dir: string, options: {
+          buildIdForAssetDigest: (assetDigest: string, manifest: unknown) => string;
+        }) => ({
+          ok: true,
+          snapshot: {
+            assetDigest,
+            buildId: options.buildIdForAssetDigest(assetDigest, lockedManifest),
+            artifactPath: join(root, "captured"),
+            createdAt: 1,
+            manifest: lockedManifest,
+          },
+        }),
+      } as never,
+    });
+
+    await expect(resolver.resolve("user_owner", "team-tracker", { ensureCatalog: false }))
+      .resolves.toMatchObject({ build: {
+        manifestVersion: "2.0.0",
+        bridgeContractVersion: "matrix-app-bridge-v2",
+        assetDigest,
+      } });
   });
 });
