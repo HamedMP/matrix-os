@@ -6,6 +6,7 @@ import type { CollaborationAppBindingsTable, OwnerCollaborationDatabase } from "
 import { appendMutationRecords, jsonb } from "./repository-shared.js";
 
 const OwnerIdSchema = z.string().min(1).max(128).regex(/^[A-Za-z0-9_-]+$/);
+const AppIdSchema = z.string().min(1).max(256).regex(/^[A-Za-z0-9_-]+$/);
 const DigestSchema = z.string().regex(/^[a-f0-9]{64}$/);
 const RuntimeIdSchema = z.string().min(1).max(128).regex(/^[A-Za-z0-9:_-]+$/);
 const OPERATION_RETENTION_MS = 7 * 24 * 60 * 60 * 1_000;
@@ -112,6 +113,55 @@ export class CollaborativeAppShareRepository {
     this.createId = options.createId ?? randomUUID;
   }
 
+  async getCreateReplay(input: {
+    ownerId: string;
+    appId: string;
+    clientRequestId: string;
+    payloadHash: string;
+  }): Promise<AtomicCollaborativeAppShareRecord | null> {
+    if (!OwnerIdSchema.safeParse(input.ownerId).success || !AppIdSchema.safeParse(input.appId).success
+      || !z.uuid().safeParse(input.clientRequestId).success || !DigestSchema.safeParse(input.payloadHash).success) {
+      throw new CollaborativeAppShareRepositoryError("invalid");
+    }
+    const row = await this.db.selectFrom("collaboration_operations")
+      .innerJoin("collaboration_scopes", "collaboration_scopes.id", "collaboration_operations.scope_id")
+      .innerJoin("collaboration_app_bindings", "collaboration_app_bindings.scope_id", "collaboration_scopes.id")
+      .innerJoin("collaboration_resource_catalog", "collaboration_resource_catalog.id", "collaboration_app_bindings.catalog_id")
+      .select([
+        "collaboration_scopes.id as scope_id",
+        "collaboration_scopes.organization_id",
+        "collaboration_scopes.revision as scope_revision",
+        "collaboration_scopes.auth_epoch",
+        "collaboration_scopes.created_at as scope_created_at",
+        "collaboration_scopes.updated_at as scope_updated_at",
+        "collaboration_operations.payload_hash as operation_payload_hash",
+        "collaboration_operations.status as operation_status",
+      ])
+      .selectAll("collaboration_app_bindings")
+      .where("collaboration_operations.actor_id", "=", input.ownerId)
+      .where("collaboration_operations.client_request_id", "=", input.clientRequestId)
+      .where("collaboration_operations.operation_kind", "=", "app.share.create")
+      .where("collaboration_scopes.owner_id", "=", input.ownerId)
+      .where("collaboration_scopes.kind", "=", "app")
+      .where("collaboration_scopes.deleted_at", "is", null)
+      .where("collaboration_resource_catalog.owner_id", "=", input.ownerId)
+      .where("collaboration_resource_catalog.kind", "=", "app")
+      .where("collaboration_resource_catalog.path", "=", input.appId)
+      .executeTakeFirst();
+    if (!row) return null;
+    if (row.operation_payload_hash !== input.payloadHash || row.operation_status !== "completed") {
+      throw new CollaborativeAppShareRepositoryError("conflict");
+    }
+    return toShareRecord({
+      id: row.scope_id,
+      organization_id: row.organization_id,
+      revision: row.scope_revision,
+      auth_epoch: row.auth_epoch,
+      created_at: row.scope_created_at,
+      updated_at: row.scope_updated_at,
+    }, row);
+  }
+
   async createAtomic(input: {
     ownerId: string;
     organizationId: string;
@@ -161,15 +211,11 @@ export class CollaborativeAppShareRepository {
           created_at: timestamp, updated_at: timestamp, deleted_at: null,
         }).onConflict((conflict) => conflict.columns(["owner_type", "owner_id", "kind", "resource_id"])
           .where("deleted_at", "is", null).where("lifecycle", "!=", "deleted").doNothing()).execute();
-        const scope = await trx.selectFrom("collaboration_scopes").selectAll()
+        let scope = await trx.selectFrom("collaboration_scopes").selectAll()
           .where("owner_type", "=", "personal").where("owner_id", "=", input.ownerId)
           .where("kind", "=", "app").where("resource_id", "=", catalog.id)
           .where("deleted_at", "is", null).where("lifecycle", "!=", "deleted")
           .forUpdate().executeTakeFirstOrThrow();
-        if (scope.organization_id !== input.organizationId || scope.lifecycle !== "shared"
-          || scope.membership_mode !== "direct" || scope.authority_runtime_id !== input.runtimeId) {
-          throw new CollaborativeAppShareRepositoryError("conflict");
-        }
         const operation = await trx.selectFrom("collaboration_operations").select(["payload_hash", "status"])
           .where("scope_id", "=", scope.id).where("actor_id", "=", input.ownerId)
           .where("client_request_id", "=", input.clientRequestId)
@@ -182,6 +228,37 @@ export class CollaborativeAppShareRepository {
             .where("scope_id", "=", scope.id).executeTakeFirstOrThrow();
           return toShareRecord(scope, replay);
         }
+        let binding = await trx.selectFrom("collaboration_app_bindings").selectAll()
+          .where("scope_id", "=", scope.id).forUpdate().executeTakeFirst();
+        const restarting = scope.lifecycle === "archived" && binding?.state === "stopped";
+        if (scope.organization_id !== input.organizationId || scope.membership_mode !== "direct"
+          || scope.authority_runtime_id !== input.runtimeId
+          || (scope.lifecycle !== "shared" && !restarting)
+          || (binding && !restarting)) {
+          throw new CollaborativeAppShareRepositoryError("conflict");
+        }
+        if (restarting) {
+          const restartedScope = await trx.updateTable("collaboration_scopes").set({
+            lifecycle: "shared",
+            revision: Number(scope.revision) + 1,
+            auth_epoch: sql<number>`auth_epoch + 1`,
+            updated_at: timestamp,
+          }).where("id", "=", scope.id).where("revision", "=", Number(scope.revision))
+            .where("lifecycle", "=", "archived").returningAll().executeTakeFirst();
+          const restartedBinding = await trx.updateTable("collaboration_app_bindings").set({
+            registration_incarnation: catalog.incarnation,
+            readiness_id: readiness.id,
+            build_id: readiness.build_id,
+            state: "active",
+            revision: Number(binding!.revision) + 1,
+            updated_at: timestamp,
+            stopped_at: null,
+          }).where("scope_id", "=", scope.id).where("revision", "=", Number(binding!.revision))
+            .where("state", "=", "stopped").returningAll().executeTakeFirst();
+          if (!restartedScope || !restartedBinding) throw new CollaborativeAppShareRepositoryError("conflict");
+          scope = restartedScope;
+          binding = restartedBinding;
+        }
         await trx.insertInto("collaboration_members").values({
           scope_id: scope.id, actor_id: input.ownerId, organization_id: input.organizationId,
           role: "owner", status: "accepted", invitation_id: null, invited_by: input.ownerId,
@@ -193,13 +270,15 @@ export class CollaborativeAppShareRepository {
         if (!owner || owner.role !== "owner" || owner.status !== "accepted") {
           throw new CollaborativeAppShareRepositoryError("conflict");
         }
-        await trx.insertInto("collaboration_app_bindings").values({
-          scope_id: scope.id, catalog_id: catalog.id, registration_incarnation: catalog.incarnation,
-          readiness_id: readiness.id, build_id: readiness.build_id, data_revision: 0,
-          state: "active", revision: 1, created_at: timestamp, updated_at: timestamp, stopped_at: null,
-        }).onConflict((conflict) => conflict.column("scope_id").doNothing()).execute();
-        const binding = await trx.selectFrom("collaboration_app_bindings").selectAll()
-          .where("scope_id", "=", scope.id).executeTakeFirstOrThrow();
+        if (!binding) {
+          await trx.insertInto("collaboration_app_bindings").values({
+            scope_id: scope.id, catalog_id: catalog.id, registration_incarnation: catalog.incarnation,
+            readiness_id: readiness.id, build_id: readiness.build_id, data_revision: 0,
+            state: "active", revision: 1, created_at: timestamp, updated_at: timestamp, stopped_at: null,
+          }).execute();
+          binding = await trx.selectFrom("collaboration_app_bindings").selectAll()
+            .where("scope_id", "=", scope.id).executeTakeFirstOrThrow();
+        }
         if (binding.catalog_id !== catalog.id || binding.readiness_id !== readiness.id
           || binding.build_id !== readiness.build_id || binding.state === "stopped") {
           throw new CollaborativeAppShareRepositoryError("conflict");

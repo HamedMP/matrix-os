@@ -292,6 +292,7 @@ export class CollaborationDirectoryOutbox {
               ? row.app_binding_state
               : "needs_recheck" as const
           : null;
+        const currentMembershipApp = row.resource_kind === "app" && Boolean(row.active_app_scope_id) && !parentScopeId;
         // A project Chat's route event carries no recipients; member grants live on the project.
         if (!parentScopeId && (row.discovery_state === "invited" || row.discovery_state === "accepted")) {
           recipientEntries = await withPendingMemberGrants(trx, row.scope_id, recipientEntries, row.discovery_state, now);
@@ -306,10 +307,10 @@ export class CollaborationDirectoryOutbox {
           recipientEntries,
           discoveryState: row.discovery_state,
           organizationId: row.organization_id ?? null,
-          audience: row.resource_kind === "app" && row.active_app_scope_id && !parentScopeId
+          audience: currentMembershipApp
             ? "current_membership"
             : row.organization_grant_id && !parentScopeId ? "organization" : null,
-          organizationGrantId: parentScopeId ? null : row.organization_grant_id ?? null,
+          organizationGrantId: parentScopeId || currentMembershipApp ? null : row.organization_grant_id ?? null,
           parentScopeId,
           attempt,
           ...(appState && row.app_id && row.app_catalog_id && row.app_readiness_id

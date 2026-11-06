@@ -103,6 +103,12 @@ describe("collaborative app atomic share creation", () => {
 
   it("projects app shares to current organization membership without grants or recipient rows", async () => {
     await repository.createAtomic(input);
+    await fixture.db.insertInto("collaboration_grants").values({
+      id: "90000000-0000-4000-8000-000000000001", scope_id: scopeId,
+      organization_id: input.organizationId, audience_kind: "organization", audience_actor_id: null,
+      preset: "viewer", state: "active", policy_version: "v1", source_id: null, legacy_ceiling: null,
+      expires_at: null, revision: 1, created_by: input.ownerId, created_at: now, updated_at: now, revoked_at: null,
+    }).execute();
     const fetchImpl = vi.fn(async () => new Response(null, { status: 204 }));
     const worker = new CollaborationDirectoryOutbox({
       db: fixture.db,
@@ -123,7 +129,7 @@ describe("collaborative app atomic share creation", () => {
     expect(payload).toMatchObject({ kind: "app", audience: "current_membership" });
     expect(payload.organizationGrantId).toBeUndefined();
     expect(payload.recipients).toEqual([{ actorId: input.ownerId, status: "accepted" }]);
-    expect(await fixture.db.selectFrom("collaboration_grants").selectAll().execute()).toHaveLength(0);
+    expect(await fixture.db.selectFrom("collaboration_grants").selectAll().execute()).toHaveLength(1);
     await worker.shutdown();
   });
 
@@ -150,5 +156,26 @@ describe("collaborative app atomic share creation", () => {
     expect(await fixture.db.selectFrom("collaboration_directory_outbox").selectAll().execute()).toHaveLength(2);
     expect(await fixture.db.selectFrom("collaboration_resource_catalog").selectAll().execute()).toHaveLength(1);
     expect(await fixture.db.selectFrom("collaboration_app_readiness").selectAll().execute()).toHaveLength(1);
+  });
+
+  it("atomically restarts a stopped share with fresh scope and binding revisions", async () => {
+    await repository.createAtomic(input);
+    await repository.stopAtomic({
+      scopeId, ownerId: input.ownerId, expectedScopeRevision: 1, expectedBindingRevision: 1,
+      clientRequestId: "80000000-0000-4000-8000-000000000002", payloadHash: "9".repeat(64),
+    });
+
+    const restarted = await repository.createAtomic({
+      ...input,
+      clientRequestId: "80000000-0000-4000-8000-000000000003",
+      payloadHash: "8".repeat(64),
+    });
+
+    expect(restarted).toMatchObject({
+      scopeId,
+      scopeRevision: 3,
+      authEpoch: 3,
+      binding: { state: "active", revision: 3, stoppedAt: null },
+    });
   });
 });
