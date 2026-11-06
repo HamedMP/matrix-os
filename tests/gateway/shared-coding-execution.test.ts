@@ -58,6 +58,10 @@ const capabilitySnapshot = {
   approvals: true, userInput: false, resume: true, cancellation: true, steering: "none" as const,
   worktrees: "none" as const, interactionModes: ["default"], permissionModes: ["supervised"],
 };
+const acceptedOwnerRoute = {
+  providerAccessSourceId: "owner_anthropic_profile",
+  routeGeneration: "a".repeat(64),
+};
 
 describe("shared coding execution (S09)", () => {
   let fixture: CollaborationTestDatabase;
@@ -70,6 +74,12 @@ describe("shared coding execution (S09)", () => {
     await repository.bootstrap();
     await bootstrapCollaborationDatabase(fixture.db);
     await seedSharedChat(fixture);
+    repository.setSharedProviderAuthorityResolver(async ({ driverKind, selection }) => ({
+      driverKind,
+      selection,
+      currentOwnerRoute: true,
+      ...acceptedOwnerRoute,
+    }));
     loss = new CollaborationRunLossRepository(fixture.db, { now: () => new Date(now) });
   });
 
@@ -85,6 +95,26 @@ describe("shared coding execution (S09)", () => {
   });
 
   describe("run control actors", () => {
+    it("rejects queued project work when the owner switches accounts without changing the model", async () => {
+      await repository.enqueueSharedQueuedTurn(
+        owner,
+        aiRequest(67, collaborationActors.editor, 1, true),
+      );
+      repository.setSharedProviderAuthorityResolver(async ({ driverKind, selection }) => ({
+        driverKind,
+        selection,
+        currentOwnerRoute: true,
+        providerAccessSourceId: "owner_anthropic_second_profile",
+        routeGeneration: "b".repeat(64),
+      }));
+
+      await expect(claim("owner_route_changed", true)).resolves.toBeNull();
+      await expect(repository.listSharedQueuedTurns(owner, collaborationIds.chat))
+        .resolves.toMatchObject([{ state: "unavailable" }]);
+      await expect(fixture.db.selectFrom("chat_runs").select("id")
+        .where("chat_id", "=", collaborationIds.chat).execute()).resolves.toEqual([]);
+    });
+
     it("rejects member submission before queueing when the effective policy is owner-only", async () => {
       const adapter = new CollaborationChatExecutionAdapter({
         repository, commands: createCommands(),
@@ -149,6 +179,7 @@ describe("shared coding execution (S09)", () => {
           driverKind: "claude_code",
           selection: { instanceId: "claude_shared", model: "claude-opus-4-6" },
           currentOwnerRoute: true,
+          ...acceptedOwnerRoute,
         }),
         requestDispatch,
         createQueuedTurnId: () => "qturn_default_contributor_prompt",
@@ -906,6 +937,7 @@ function aiRequest(index: number, actorId: string, expectedRevision = 1, current
         driverKind: "claude_code" as const,
         selection: { instanceId: "claude_shared", model: "claude-opus-4-6" },
         currentOwnerRoute: true as const,
+        ...acceptedOwnerRoute,
       },
     } : {}),
   };

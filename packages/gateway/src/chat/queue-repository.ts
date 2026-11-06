@@ -63,6 +63,8 @@ type Executor = Kysely<ChatDatabase> | Transaction<ChatDatabase>;
 const MAX_QUEUED_TURNS = 20;
 const MAX_SHARED_PENDING_TURNS = 32;
 const ACTIVE_RUNS = ["accepted", "running", "waiting_for_approval", "waiting_for_input"] as const;
+const SAFE_PROVIDER_ACCESS_SOURCE_ID = /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$/;
+const PROVIDER_ROUTE_GENERATION = /^[a-f0-9]{64}$/;
 
 export interface EnqueueQueuedTurnInput {
   requestHash?: string;
@@ -140,6 +142,8 @@ export interface ClaimedQueuedTurn {
     executionEligibility: unknown;
     driverKind: CanonicalProviderDriverKind;
     selection: CanonicalQueueChatTurnRequest["selection"];
+    providerAccessSourceId?: string;
+    routeGeneration?: string;
   };
 }
 
@@ -163,7 +167,22 @@ export interface CanonicalSharedProviderAuthority {
   selection: CanonicalQueueChatTurnRequest["selection"];
   /** Project-only: the owner's current Provider Settings route replaces durable Chat provider binding. */
   currentOwnerRoute?: true;
+  /** Exact saved Provider Settings source accepted for a project request. */
+  providerAccessSourceId?: string;
+  /** Digest of the exact saved Provider Settings route accepted for a project request. */
+  routeGeneration?: string;
 }
+
+export interface SharedProviderAuthorityResolutionInput {
+  scopeId: string;
+  ownerId: string;
+  driverKind: CanonicalProviderDriverKind;
+  selection: CanonicalQueueChatTurnRequest["selection"];
+}
+
+export type SharedProviderAuthorityResolver = (
+  input: SharedProviderAuthorityResolutionInput,
+) => Promise<CanonicalSharedProviderAuthority | null>;
 
 export interface SharedQueuedTurn {
   id: string;
@@ -243,6 +262,7 @@ async function ownedChat(
 
 export class ChatQueueRepository {
   private sharedAuthorizer?: SharedChatAuthorizer;
+  private sharedProviderAuthorityResolver?: SharedProviderAuthorityResolver;
 
   constructor(
     private readonly kysely: Kysely<ChatDatabase>,
@@ -259,6 +279,10 @@ export class ChatQueueRepository {
 
   setSharedAuthorizer(authorize: SharedChatAuthorizer): void {
     this.sharedAuthorizer = authorize;
+  }
+
+  setSharedProviderAuthorityResolver(resolve: SharedProviderAuthorityResolver): void {
+    this.sharedProviderAuthorityResolver = resolve;
   }
 
   async findAdmission(ownerInput: ChatOwner, chatId: string, clientRequestId: string, requestHash?: string): Promise<EnqueuedQueuedTurn | null> {
@@ -299,6 +323,19 @@ export class ChatQueueRepository {
       || !Number.isSafeInteger(input.expectedRevision) || input.expectedRevision < 0
       || !/^[a-f0-9]{64}$/.test(input.payloadHash)) {
       throw new SharedChatQueueError("conflict");
+    }
+    const usesCurrentOwnerRoute = input.canonicalProviderAuthority?.currentOwnerRoute === true;
+    const acceptedProviderAccessSourceId = usesCurrentOwnerRoute
+      ? input.canonicalProviderAuthority?.providerAccessSourceId ?? null
+      : null;
+    const acceptedProviderRouteGeneration = usesCurrentOwnerRoute
+      ? input.canonicalProviderAuthority?.routeGeneration ?? null
+      : null;
+    if (usesCurrentOwnerRoute && (acceptedProviderAccessSourceId === null
+      || !SAFE_PROVIDER_ACCESS_SOURCE_ID.test(acceptedProviderAccessSourceId)
+      || acceptedProviderRouteGeneration === null
+      || !PROVIDER_ROUTE_GENERATION.test(acceptedProviderRouteGeneration))) {
+      throw new SharedChatQueueError("unavailable");
     }
 
     const authority = await this.sharedAuthorizer?.(scopeId, requestingActorId, "request_ai");
@@ -377,7 +414,9 @@ export class ChatQueueRepository {
         if (!duplicateSelection.success
           || duplicate.driver_kind !== provider.execution.driverKind
           || duplicate.instance_id !== provider.execution.selection.instanceId
-          || !sameSelection(duplicateSelection.data, provider.execution.selection)) {
+          || !sameSelection(duplicateSelection.data, provider.execution.selection)
+          || duplicate.accepted_provider_access_source_id !== acceptedProviderAccessSourceId
+          || duplicate.accepted_provider_route_generation !== acceptedProviderRouteGeneration) {
           throw new SharedChatQueueError("unavailable");
         }
         const pendingCount = await this.sharedPendingCount(executor, chatId);
@@ -410,6 +449,8 @@ export class ChatQueueRepository {
         accepted_auth_epoch: input.acceptedAuthEpoch,
         accepted_execution_generation: Number(scope.execution_generation),
         accepted_execution_eligibility: jsonb(scope.execution_eligibility),
+        accepted_provider_access_source_id: acceptedProviderAccessSourceId,
+        accepted_provider_route_generation: acceptedProviderRouteGeneration,
         retry_of_queued_turn_id: retryOfQueuedTurnId ?? null,
         position,
         status: "queued",
@@ -843,16 +884,19 @@ export class ChatQueueRepository {
     const claimedAt = new Date(input.claimedAt).toISOString();
     // Clerk membership and grant evidence must be fresh at re-admission. Do not
     // hold a Chat row lock while consulting the platform projection.
-    const preflight = this.sharedAuthorizer
+    const preflight = this.sharedAuthorizer || this.sharedProviderAuthorityResolver
       ? await this.kysely.selectFrom("chat_queued_turns")
-        .select(["id", "collaboration_scope_id", "requesting_actor_id"])
+        .select([
+          "id", "collaboration_scope_id", "requesting_actor_id", "driver_kind", "selection",
+          "accepted_provider_access_source_id", "accepted_provider_route_generation",
+        ])
         .where("chat_id", "=", chatId).where("status", "=", "queued")
         .$if(collaborationScopeId !== undefined, (query) => query.where("collaboration_scope_id", "=", collaborationScopeId!))
         .orderBy("position").executeTakeFirst()
       : undefined;
     let freshAuthority: Awaited<ReturnType<SharedChatAuthorizer>> | undefined;
     let membershipDenied = false;
-    if (preflight?.collaboration_scope_id && preflight.requesting_actor_id) {
+    if (this.sharedAuthorizer && preflight?.collaboration_scope_id && preflight.requesting_actor_id) {
       try {
         freshAuthority = await this.sharedAuthorizer!(
           preflight.collaboration_scope_id, preflight.requesting_actor_id, "request_ai",
@@ -867,11 +911,42 @@ export class ChatQueueRepository {
         }
       }
     }
+    let freshProviderAuthority: CanonicalSharedProviderAuthority | null | undefined;
+    let providerAuthorityChanged = false;
+    if (preflight?.collaboration_scope_id
+      && (preflight.accepted_provider_access_source_id !== null
+        || preflight.accepted_provider_route_generation !== null)) {
+      const driverKind = CanonicalChatRunSchema.shape.driverKind.safeParse(preflight.driver_kind);
+      const selection = CanonicalChatModelSelectionSchema.safeParse(safelyParseSharedJson(preflight.selection));
+      if (!driverKind.success || !selection.success || !this.sharedProviderAuthorityResolver) {
+        providerAuthorityChanged = true;
+      } else {
+        try {
+          freshProviderAuthority = await this.sharedProviderAuthorityResolver({
+            scopeId: preflight.collaboration_scope_id,
+            ownerId: owner.ownerId,
+            driverKind: driverKind.data,
+            selection: selection.data,
+          });
+        } catch (error: unknown) {
+          console.warn("[chat/queue] shared provider authority unavailable",
+            error instanceof Error ? error.name : "UnknownError");
+          return null;
+        }
+        providerAuthorityChanged = freshProviderAuthority === null
+          || freshProviderAuthority.currentOwnerRoute !== true
+          || freshProviderAuthority.driverKind !== driverKind.data
+          || !sameSelection(freshProviderAuthority.selection, selection.data)
+          || freshProviderAuthority.providerAccessSourceId !== preflight.accepted_provider_access_source_id
+          || freshProviderAuthority.routeGeneration !== preflight.accepted_provider_route_generation;
+      }
+    }
     return this.transact(async (trx) => {
       const candidateScope = await trx.selectFrom("chat_queued_turns")
         .select([
           "id", "collaboration_scope_id", "requesting_actor_id", "accepted_auth_epoch",
           "accepted_execution_generation", "accepted_execution_eligibility",
+          "accepted_provider_access_source_id", "accepted_provider_route_generation",
         ])
         .where("chat_id", "=", chatId)
         .where("status", "=", "queued")
@@ -903,6 +978,8 @@ export class ChatQueueRepository {
         sharedCandidateId = authorizedCandidate.id;
         if (membershipDenied) {
           sharedAdmission = "unauthorized";
+        } else if (providerAuthorityChanged) {
+          sharedAdmission = "unavailable";
         } else if (sharedScope.lifecycle !== "shared" || sharedScope.execution_generation === null
           || !Number.isSafeInteger(Number(sharedScope.execution_generation))
           || Number(sharedScope.execution_generation) < 1
@@ -983,6 +1060,12 @@ export class ChatQueueRepository {
               driverKind: candidateDriver.data,
               selection: candidateSelection.data,
               ...(sharedScope?.parent_scope_id != null ? { currentOwnerRoute: true as const } : {}),
+              ...(candidate.accepted_provider_access_source_id !== null ? {
+                providerAccessSourceId: candidate.accepted_provider_access_source_id,
+              } : {}),
+              ...(candidate.accepted_provider_route_generation !== null ? {
+                routeGeneration: candidate.accepted_provider_route_generation,
+              } : {}),
             },
           } : {}),
           currentOwnerRoute: sharedScope?.parent_scope_id != null,
@@ -1206,6 +1289,12 @@ export class ChatQueueRepository {
               executionEligibility: sharedScope.execution_eligibility,
               driverKind: run.driverKind,
               selection: run.selection,
+              ...(row.accepted_provider_access_source_id !== null ? {
+                providerAccessSourceId: row.accepted_provider_access_source_id,
+              } : {}),
+              ...(row.accepted_provider_route_generation !== null ? {
+                routeGeneration: row.accepted_provider_route_generation,
+              } : {}),
             },
           } : {}),
       };
