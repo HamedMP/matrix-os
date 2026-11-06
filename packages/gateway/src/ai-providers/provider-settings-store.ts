@@ -85,6 +85,7 @@ const NO_ACTIVE_PROVIDER_ROUTE: AiProviderSnapshotV3["active"] = {
 function savedCollaborationRoute(
   canonical: AiProviderSnapshotV3,
   config: ProviderSettingsConfiguration,
+  projected?: ProviderSettingsSnapshot,
 ): AiProviderSnapshotV3["active"] {
   const enabledNative = config.harnesses.filter((harness) =>
     harness.enabled && (harness.harness === "codex" || harness.harness === "claude"));
@@ -118,9 +119,64 @@ function savedCollaborationRoute(
       : instance.driverId === "claude_code" || instance.driverId === "kernel"));
   const exact = compatible.filter((instance) => instance.driverId === harness.driverId);
   const instance = exact.length === 1 ? exact[0] : exact.length === 0 && compatible.length === 1 ? compatible[0] : undefined;
-  return instance?.readiness.state === "ready" && source.state === "ready"
+  const nativeCodexSubscription = harness.harness === "codex"
+    && source.id === "owner_openai_profile" && source.fundingKind === "owner_account";
+  const projectedHarness = nativeCodexSubscription
+    ? projected?.harnesses.find((candidate) => candidate.id === harness.id && candidate.harness === "codex")
+    : undefined;
+  const projectedSource = nativeCodexSubscription
+    ? projected?.accessSources.find((candidate) => candidate.id === source.id)
+    : undefined;
+  const ready = nativeCodexSubscription
+    ? projectedHarness?.enabled === true && projectedHarness.authState === "authenticated"
+      && projectedHarness.accessSourceId === source.id
+      && projectedHarness.selectedAccountId === harness.selectedAccountId
+      && projectedHarness.route.providerId === harness.route.providerId
+      && projectedHarness.route.modelId === harness.route.modelId
+      && projectedSource?.readiness.state === "ready"
+    : instance?.readiness.state === "ready" && source.state === "ready";
+  return instance && ready
     ? { providerInstanceId: instance.id, accessSourceId: source.id, modelId: model.id }
     : NO_ACTIVE_PROVIDER_ROUTE;
+}
+
+/** Promote only the exact consent-bound native Codex route into canonical execution truth. */
+function qualifyNativeCodexCollaborationRoute(
+  canonical: AiProviderSnapshotV3,
+  config: ProviderSettingsConfiguration,
+  projected?: ProviderSettingsSnapshot,
+): AiProviderSnapshotV3 {
+  const saved = config.harnesses.find((harness) => harness.harness === "codex" && harness.enabled
+    && harness.accessSourceId === "owner_openai_profile" && harness.selectedAccountId !== null);
+  if (!saved) return canonical;
+  const source = canonical.accessSources.find((candidate) => candidate.id === saved.accessSourceId
+    && candidate.fundingKind === "owner_account");
+  const harness = projected?.harnesses.find((candidate) => candidate.id === saved.id && candidate.harness === "codex");
+  const projectedSource = projected?.accessSources.find((candidate) => candidate.id === saved.accessSourceId);
+  const candidates = canonical.instances.filter((instance) => instance.driverId === saved.driverId
+    && instance.accessSourceId === saved.accessSourceId && instance.accountId === saved.selectedAccountId
+    && instance.modelIds.includes(saved.route.modelId));
+  if (!source || candidates.length !== 1 || harness?.enabled !== true || harness.authState !== "authenticated"
+    || harness.accessSourceId !== saved.accessSourceId || harness.selectedAccountId !== saved.selectedAccountId
+    || harness.route.providerId !== saved.route.providerId || harness.route.modelId !== saved.route.modelId
+    || projectedSource?.readiness.state !== "ready") return canonical;
+  const readiness = projectedSource.readiness;
+  return {
+    ...canonical,
+    accessSources: canonical.accessSources.map((candidate) => candidate.id === source.id ? {
+      ...candidate,
+      state: readiness.state,
+      checkedAt: readiness.checkedAt,
+      staleAfter: readiness.staleAfter,
+      action: readiness.action,
+      safeReason: readiness.safeReason,
+    } : candidate),
+    instances: canonical.instances.map((instance) => instance.id === candidates[0]!.id ? {
+      ...instance,
+      readiness,
+      defaultModelId: saved.route.modelId,
+    } : instance),
+  };
 }
 export { ProviderSettingsStoreError } from "./provider-settings-errors.js";
 export type {
@@ -526,6 +582,20 @@ export class ProviderSettingsStore implements ProviderSettingsStoreWriter {
         ? this.#configuration(canonical)
         : null);
       if (!config) continue;
+      const nativeCodexSubscription = config.harnesses.some((harness) => harness.harness === "codex"
+        && harness.enabled && harness.accessSourceId === "owner_openai_profile");
+      let projected: ProviderSettingsSnapshot | undefined;
+      if (nativeCodexSubscription) {
+        let metadata: CodexNativeAccountMetadata | null = null;
+        try {
+          metadata = await verifyNativeAccountMetadata(await this.#nativeAccountMetadata?.());
+        } catch (error: unknown) {
+          console.warn("[provider-settings] Native collaboration route unavailable:",
+            error instanceof Error ? error.name : "UnknownError");
+        }
+        projected = await this.#project(canonical, config, false, undefined, metadata);
+      }
+      const qualified = qualifyNativeCodexCollaborationRoute(canonical, config, projected);
       const accepted = await this.#serialize(async () => {
         options.signal?.throwIfAborted();
         const saved = await readSavedProviderSettingsConfiguration(this.configurationPath);
@@ -533,9 +603,9 @@ export class ProviderSettingsStore implements ProviderSettingsStoreWriter {
       });
       if (accepted) {
         return AiProviderSnapshotV3Schema.parse({
-          ...canonical,
+          ...qualified,
           revision: config.revision,
-          active: savedCollaborationRoute(canonical, config),
+          active: savedCollaborationRoute(qualified, config, projected),
         });
       }
     }
