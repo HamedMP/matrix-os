@@ -31,7 +31,7 @@ it.each(["legacy_profile", "owner_matrix", "saved_key"])("recognizes Terminal na
  if(shape!=="owner_matrix")expect(within(screen.getByTestId("account-other_account")).getByText(/Not connected/)).toBeVisible();
  expect(snapshot).toEqual(before);expect(onMutate).not.toHaveBeenCalled();
 });
-it("shows the discovered account in the guided workflow when its saved execution route is different",async()=>{
+it("updates the existing indicator without adding a discovered-account card or changing guided controls",async()=>{
  const snapshot=ProviderSettingsSnapshotSchema.parse(structuredClone(nativeInput));const account=snapshot.accounts[0]!;
  snapshot.refreshedAt=new Date().toISOString();account.lastCheckedAt=snapshot.refreshedAt;account.connectionDetails={email:"terminal@example.test"};
  const row=snapshot.harnesses[0]!;row.id="harness_kernel";row.authState="unknown";row.accessSourceId=null;row.selectedAccountId=null;row.enablementOrigin="owner_configuration";
@@ -40,7 +40,9 @@ it("shows the discovered account in the guided workflow when its saved execution
  const startConnection=vi.fn(),client={capabilities,startConnection,start:vi.fn(),get:vi.fn(),cancel:vi.fn(),submitKey:vi.fn(),logs:vi.fn()};
  render(<AgentsProvidersView snapshot={snapshot} selectedHarnessId={row.id} onSelectHarness={vi.fn()} onRefresh={vi.fn()} onMutate={vi.fn()} onOpenTerminal={vi.fn()} onOpenBrowser={vi.fn()} workflowClient={client}/>);
  await act(async()=>{fireEvent.click(screen.getByRole("button",{name:/^Claude/}));});
- expect(await screen.findByText("terminal@example.test")).toBeVisible();expect(screen.getByRole("button",{name:/^Claude.*Connected/})).toBeVisible();expect(screen.getByRole("button",{name:/^Claude account/})).toBeEnabled();expect(startConnection).not.toHaveBeenCalled();
+ expect(screen.queryByText("terminal@example.test",{exact:true})).not.toBeInTheDocument();
+ expect(document.querySelector(".matrix-ap-connected")).toBeNull();
+ expect(screen.queryByRole("button",{name:"Use connected Claude account"})).not.toBeInTheDocument();expect(screen.getByRole("button",{name:/^Claude.*Connected/})).toBeVisible();expect(screen.getByRole("button",{name:/^Claude account/})).toBeEnabled();expect(startConnection).not.toHaveBeenCalled();
 });
 it("expires selected native authentication without falling back to an old Connected harness label",async()=>{
  vi.useFakeTimers();try{

@@ -95,6 +95,13 @@ suite("Electron Desktop idle provider Settings (synthetic gateway)", () => {
     const baseline = { reads, capabilityReads };
     await page.waitForTimeout(12_000);
     await page.screenshot({ path: join(captures.path, "idle-hermes-expired.png") });
+    writeFileSync(join(captures.path,"idle-hermes-dom-diagnostic.json"),JSON.stringify(await settings().evaluateAll(roots=>roots.map(root=>({
+      visible:root.getClientRects().length>0 && getComputedStyle(root).visibility!=="hidden",
+      rows:Array.from(root.querySelectorAll<HTMLButtonElement>(".matrix-ap-rail-item")).filter(row=>row.textContent?.includes("Hermes")).map(row=>({
+        text:row.textContent,expanded:row.getAttribute("aria-expanded"),visible:row.getClientRects().length>0 && getComputedStyle(row).visibility!=="hidden",
+        hiddenAncestor:Boolean(row.closest("[hidden],[aria-hidden=true]"))
+      }))
+    }))),null,2));
     expect(reads - baseline.reads).toBe(0);
     expect(capabilityReads - baseline.capabilityReads).toBe(0);
     expect(await refresh().isEnabled()).toBe(true);

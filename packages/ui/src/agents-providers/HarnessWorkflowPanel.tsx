@@ -49,7 +49,7 @@ export function HarnessWorkflowPanel(props: HarnessWorkflowPanelProps) {
       aria-label={`${harness.displayName} connection`}
       aria-busy={reconciling || (pending && !startingLogin)}
     >
-      {harness.installState === "installed" && (connectionPresent || props.observedClaudeAccount || props.availableClaudeAccount) ? renderConnection?.(changeAccountAction) : null}
+      {harness.installState === "installed" && (connectionPresent || props.availableClaudeAccount) ? renderConnection?.(changeAccountAction) : null}
       {adoptOption ? <>
         <p className="matrix-ap-help">Use your signed-in Claude account for this agent. Uses your Claude subscription; Matrix AI credit is separate.</p>
         <button type="button" className="matrix-ap-button" disabled={disabled || pending || connecting || reconciling

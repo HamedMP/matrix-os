@@ -93,8 +93,10 @@ the exact native account from installed fixed-Anthropic Claude, reciprocal
 `owner_claude_profile` account/source links, terminal authentication, owner-account
 funding and the reader's 30-second identity lifetime. This observation is
 independent of a saved legacy profile, an explicit Matrix binding or a saved API
-key. It labels only the discovered native account, never an unrelated selected
-account. An already-selected native route still requires the server's exact
+key. It updates existing authentication indicators for the discovered native
+account, never an unrelated selected account. Card selection, visibility, layout,
+copy and connection/adoption controls retain their existing behavior. An
+already-selected native route still requires the server's exact
 harness authentication verdict. Expired evidence cannot retain Connected through
 the selected-route fallback.
 
@@ -127,8 +129,8 @@ can adopt the current login without starting another OAuth or Terminal login.
 Regression tests must include a synthetic native status process through the real
 reader, store and owner HTTP route with no Settings workflow: initial Terminal
 login, account replacement, logout and failed status. Shared UI tests cover
-legacy/explicit/key bindings, exact account cards, visible guided account and
-normal connection option, slow/fast client clocks, monotonic expiry under clock
+legacy/explicit/key bindings, exact existing account indicators, unchanged card
+selection/visibility and connection controls, slow/fast client clocks, monotonic expiry under clock
 rollback, future/stale/replayed stamps and scope fences. Controller tests cover focus,
 cadence, hidden/offline pause, concurrent triggers and Computer replacement.
 Production Electron exercises the same external native-state transition and

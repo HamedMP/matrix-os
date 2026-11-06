@@ -42,7 +42,6 @@ export type HarnessWorkflowPanelProps = {
   renderConnection?: (changeAccountAction: ReactNode) => ReactNode;
   /** Fresh native identity on a recognized legacy row; does not authorize execution. */
   availableClaudeAccount?: boolean;
-  observedClaudeAccount?: boolean;
   renderAccountActions?: (disabled: boolean) => ReactNode;
   advancedConfiguration?: ReactNode;
   connectRequest?: number;

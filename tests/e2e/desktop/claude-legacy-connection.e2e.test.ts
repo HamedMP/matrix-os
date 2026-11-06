@@ -93,10 +93,18 @@ suite("Electron Desktop Terminal-origin Claude authentication (synthetic native 
   await expect.poll(()=>row().innerText()).toContain("Not connected");const before=await native.configuration();
   const focus=()=>page.evaluate(()=>window.dispatchEvent(new Event("focus")));
   await native.setStatus("first@example.test");await focus();await expect.poll(()=>row().innerText()).toContain("Connected");
-  await page.locator(".matrix-ap-connected").getByText("first@example.test",{exact:true}).waitFor();
+  // Automatic detection updates the existing indicator; it must not substitute
+  // a native account card for this separately saved historical execution route.
+  expect(await page.locator(".matrix-ap-connected").count()).toBe(0);
+  expect(await page.getByRole("button",{name:"Use connected Claude account",exact:true}).count()).toBe(0);
   await page.screenshot({path:join(captures.path,"01-terminal-connected.png")});
-  await native.setStatus("second@example.test");await page.waitForTimeout(550);await focus();
-  await page.locator(".matrix-ap-connected").getByText("second@example.test",{exact:true}).waitFor();
+  await native.setStatus("second@example.test");await page.waitForTimeout(550);
+  const replacement = page.waitForResponse(response => new URL(response.url()).pathname === "/api/ai/provider-settings" && response.request().method() === "GET");
+  await focus();
+  const replacementSnapshot = await (await replacement).json();
+  expect(replacementSnapshot.accounts.find((account:{id:string})=>account.id==="owner_claude_profile").connectionDetails.email).toBe("second@example.test");
+  expect(await row().innerText()).toContain("Connected");
+  expect(await page.locator(".matrix-ap-connected").count()).toBe(0);
   await native.setStatus(null);await page.waitForTimeout(550);await focus();await expect.poll(()=>row().innerText()).toContain("Not connected");
   await page.screenshot({path:join(captures.path,"02-terminal-logged-out.png")});
   expect(await native.configuration()).toBe(before);expect(gateway.counters()).toEqual({completions:0,browserStarts:0,terminalStarts:0});
