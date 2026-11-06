@@ -119,7 +119,7 @@ export async function applyCollaborationBaseSchema(db: Kysely<OwnerCollaboration
       client_request_id UUID NOT NULL,
       operation_kind TEXT NOT NULL CHECK (char_length(operation_kind) BETWEEN 1 AND 80),
       payload_hash TEXT NOT NULL CHECK (payload_hash ~ '^[a-f0-9]{64}$'),
-      status TEXT NOT NULL CHECK (status IN ('accepted', 'completed', 'failed')),
+      status TEXT NOT NULL CHECK (status IN ('accepted', 'draining', 'completed', 'failed')),
       result_ref JSONB,
       expected_revision BIGINT,
       accepted_auth_epoch BIGINT NOT NULL,
@@ -529,6 +529,21 @@ export interface CollaborationVersionedMigration {
   readonly run: (trx: Transaction<OwnerCollaborationDatabase>) => Promise<void>;
 }
 
+export const COLLABORATION_OPERATION_DRAIN_MIGRATION_VERSION = 18;
+
+export async function migrateOperationDrainStateV18(
+  trx: Transaction<OwnerCollaborationDatabase>,
+): Promise<void> {
+  await sql`ALTER TABLE collaboration_operations
+    DROP CONSTRAINT IF EXISTS collaboration_operations_status_check`.execute(trx);
+  await sql`ALTER TABLE collaboration_operations
+    ADD CONSTRAINT collaboration_operations_status_check
+    CHECK (status IN ('accepted', 'draining', 'completed', 'failed'))`.execute(trx);
+  await sql`INSERT INTO collaboration_schema_migrations (version)
+    VALUES (${COLLABORATION_OPERATION_DRAIN_MIGRATION_VERSION})
+    ON CONFLICT (version) DO NOTHING`.execute(trx);
+}
+
 /** Versioned migrations applied after the base schema, each in its own transaction, in this order. */
 export const COLLABORATION_VERSIONED_MIGRATIONS: readonly CollaborationVersionedMigration[] = [
   { version: 3, run: migrateResourceBindingsV3 },
@@ -546,4 +561,5 @@ export const COLLABORATION_VERSIONED_MIGRATIONS: readonly CollaborationVersioned
   { version: 15, run: migrateTerminalBindingsV15 },
   { version: 16, run: migrateCollaborativeAppsV16 },
   { version: 17, run: migrateProviderRouteBindingsV17 },
+  { version: 18, run: migrateOperationDrainStateV18 },
 ];

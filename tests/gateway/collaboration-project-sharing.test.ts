@@ -267,6 +267,48 @@ describe("whole-project sharing coordinator", () => {
     });
   });
 
+  it("joins overlapping idempotent unshare replays to one subscriber drain", async () => {
+    await fixture.db.updateTable("collaboration_scopes").set({ lifecycle: "shared" })
+      .where("id", "=", PROJECT_SCOPE).execute();
+    let signalDrainStarted!: () => void;
+    let releaseDrain!: () => void;
+    const drainStarted = new Promise<void>((resolve) => { signalDrainStarted = resolve; });
+    const drainReleased = new Promise<void>((resolve) => { releaseDrain = resolve; });
+    const onUnshared = vi.fn(async () => {
+      if (onUnshared.mock.calls.length === 1) {
+        signalDrainStarted();
+        await drainReleased;
+      }
+    });
+    const service = serviceFixture(fixture, preview, verifyConfirmation, replayPreparation, prepare, onUnshared);
+    const input = {
+      scopeId: PROJECT_SCOPE,
+      actorId: OWNER,
+      clientRequestId: "50000000-0000-4000-8000-000000000708",
+      expectedRevision: 4,
+      payloadHash: "5".repeat(64),
+    };
+
+    const first = service.unshare(input);
+    await drainStarted;
+    const second = service.unshare(input);
+    const replayState = await Promise.race([
+      second.then(() => "settled" as const),
+      new Promise<"waiting">((resolve) => setTimeout(() => resolve("waiting"), 50)),
+    ]);
+    try {
+      expect(replayState).toBe("waiting");
+      expect(onUnshared).toHaveBeenCalledOnce();
+    } finally {
+      releaseDrain();
+      await Promise.allSettled([first, second]);
+    }
+    await expect(Promise.all([first, second])).resolves.toEqual([
+      { scopeId: PROJECT_SCOPE, lifecycle: "private", revision: 5 },
+      { scopeId: PROJECT_SCOPE, lifecycle: "private", revision: 5 },
+    ]);
+  });
+
   it("preserves the private project and requires a new explicit confirmation before re-sharing", async () => {
     await fixture.db.updateTable("collaboration_scopes").set({ lifecycle: "shared" })
       .where("id", "=", PROJECT_SCOPE).execute();

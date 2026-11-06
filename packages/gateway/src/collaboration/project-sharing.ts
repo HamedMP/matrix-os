@@ -14,6 +14,8 @@ import { ProjectOverviewError, readProjectOverview } from "./project-chat-routes
 import { appendMutationRecords, jsonb, OPERATION_RETENTION_MS, parseJson } from "./repository-shared.js";
 
 const MAX_MEMBERSHIP_EFFECTS = 1_000;
+const UNSHARE_DRAIN_WAIT_MS = 30_000;
+const UNSHARE_DRAIN_POLL_MS = 25;
 const ScopeIdSchema = z.uuid();
 const ActorIdSchema = z.string().min(1).max(128).regex(/^[A-Za-z0-9_-]+$/);
 const DigestSchema = z.string().regex(/^[a-f0-9]{64}$/);
@@ -79,6 +81,62 @@ export class ProjectSharingError extends Error {
   constructor(public readonly code: "not_found" | "forbidden" | "conflict" | "resource_blocked" | "capacity" | "unavailable") {
     super("Whole-project sharing is unavailable");
     this.name = "ProjectSharingError";
+  }
+}
+
+async function finishUnshareDrain(options: {
+  db: Kysely<OwnerCollaborationDatabase>;
+  scopeId: string;
+  actorId: string;
+  clientRequestId: string;
+  result: z.infer<typeof UnshareResultSchema>;
+  onUnshared?: (input: { scopeId: string; revision: number }) => Promise<void>;
+}): Promise<void> {
+  const deadline = Date.now() + UNSHARE_DRAIN_WAIT_MS;
+  while (true) {
+    const claimed = await options.db.updateTable("collaboration_operations").set({ status: "draining" })
+      .where("scope_id", "=", options.scopeId)
+      .where("actor_id", "=", options.actorId)
+      .where("client_request_id", "=", options.clientRequestId)
+      .where("operation_kind", "=", "project.unshare")
+      .where("status", "=", "accepted")
+      .returning("status")
+      .executeTakeFirst();
+    if (claimed) {
+      try {
+        await options.onUnshared?.({ scopeId: options.scopeId, revision: options.result.revision });
+      } catch (error: unknown) {
+        await options.db.updateTable("collaboration_operations").set({ status: "accepted" })
+          .where("scope_id", "=", options.scopeId)
+          .where("actor_id", "=", options.actorId)
+          .where("client_request_id", "=", options.clientRequestId)
+          .where("operation_kind", "=", "project.unshare")
+          .where("status", "=", "draining")
+          .execute();
+        throw error;
+      }
+      const completed = await options.db.updateTable("collaboration_operations").set({ status: "completed" })
+        .where("scope_id", "=", options.scopeId)
+        .where("actor_id", "=", options.actorId)
+        .where("client_request_id", "=", options.clientRequestId)
+        .where("operation_kind", "=", "project.unshare")
+        .where("status", "=", "draining")
+        .returning("status")
+        .executeTakeFirst();
+      if (!completed) throw new ProjectSharingError("unavailable");
+      return;
+    }
+    const operation = await options.db.selectFrom("collaboration_operations").select("status")
+      .where("scope_id", "=", options.scopeId)
+      .where("actor_id", "=", options.actorId)
+      .where("client_request_id", "=", options.clientRequestId)
+      .where("operation_kind", "=", "project.unshare")
+      .executeTakeFirst();
+    if (operation?.status === "completed") return;
+    if (!operation || operation.status === "failed") throw new ProjectSharingError("conflict");
+    if (operation.status === "accepted") continue;
+    if (Date.now() >= deadline) throw new ProjectSharingError("unavailable");
+    await new Promise<void>((resolve) => setTimeout(resolve, UNSHARE_DRAIN_POLL_MS));
   }
 }
 
@@ -282,7 +340,7 @@ export function createProjectSharingService(options: {
           }
           return {
             result: UnshareResultSchema.parse(parseJson(replay.result_ref)),
-            drainRequired: replay.status === "accepted",
+            drainRequired: replay.status === "accepted" || replay.status === "draining",
           };
         }
         const owner = await trx.selectFrom("collaboration_members").select(["role", "status"])
@@ -333,14 +391,14 @@ export function createProjectSharingService(options: {
         return { result, drainRequired: true };
       });
       if (committed.drainRequired) {
-        await options.onUnshared?.({ scopeId: parsed.scopeId, revision: committed.result.revision });
-        await options.db.updateTable("collaboration_operations").set({ status: "completed" })
-          .where("scope_id", "=", parsed.scopeId)
-          .where("actor_id", "=", parsed.actorId)
-          .where("client_request_id", "=", parsed.clientRequestId)
-          .where("operation_kind", "=", "project.unshare")
-          .where("status", "=", "accepted")
-          .execute();
+        await finishUnshareDrain({
+          db: options.db,
+          scopeId: parsed.scopeId,
+          actorId: parsed.actorId,
+          clientRequestId: parsed.clientRequestId,
+          result: committed.result,
+          ...(options.onUnshared ? { onUnshared: options.onUnshared } : {}),
+        });
       }
       return committed.result;
     },
