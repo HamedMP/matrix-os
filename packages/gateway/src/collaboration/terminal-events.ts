@@ -493,14 +493,32 @@ function unavailableFrame(
   runtime: TerminalRuntime | undefined,
   code: "revoked" | "exited" | "unavailable",
 ): CollaborationTerminalFrame {
+  return terminalUnavailableFrame({
+    scopeId: connection.scopeId,
+    authorityGeneration: connection.authorityGeneration,
+    code,
+    ...(runtime ? { terminal: runtime.metadata } : {}),
+  });
+}
+
+/**
+ * A `terminal.unavailable` frame. Placeholders stand in when the home cannot name the
+ * terminal: no live runtime, or (for the socket routes) no shared terminal at all.
+ */
+export function terminalUnavailableFrame(input: {
+  scopeId: string;
+  authorityGeneration: number;
+  code: "revoked" | "exited" | "unavailable";
+  terminal?: Pick<CollaborationTerminalMetadata, "terminalId" | "incarnation">;
+}): CollaborationTerminalFrame {
   return {
     version: 1,
     type: "terminal.unavailable",
-    scopeId: connection.scopeId,
-    resourceId: runtime?.metadata.terminalId ?? "terminal_unavailable",
-    authorityGeneration: String(connection.authorityGeneration),
-    incarnation: runtime?.metadata.incarnation ?? "terminal-unavailable",
-    code,
+    scopeId: input.scopeId,
+    resourceId: input.terminal?.terminalId ?? "terminal_unavailable",
+    authorityGeneration: String(input.authorityGeneration),
+    incarnation: input.terminal?.incarnation ?? "terminal-unavailable",
+    code: input.code,
   };
 }
 
