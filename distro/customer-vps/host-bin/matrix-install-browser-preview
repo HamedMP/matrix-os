@@ -39,9 +39,11 @@ legacy_setup_complete() {
 }
 if [ -f /opt/matrix-browser-lab/.setup-complete ] || legacy_setup_complete; then
   # Preserve Chrome/VNC PIDs, the profile, and existing viewer credentials.
-  timeout --kill-after=30 1800 bash "$temporary/update-experience.sh" "$@"
+  # timeout resets TTOU before exec. Ignore it inside the timed process so apt
+  # can configure the inherited TTY; retain timeout's process-group deadline.
+  timeout --kill-after=30 1800 bash -c 'trap "" TTOU; exec "$@"' browser-preview bash "$temporary/update-experience.sh" "$@"
 else
-  timeout --kill-after=30 1800 bash "$temporary/install.sh" "$@"
+  timeout --kill-after=30 1800 bash -c 'trap "" TTOU; exec "$@"' browser-preview bash "$temporary/install.sh" "$@"
 fi
 touch /opt/matrix-browser-lab/.setup-complete
 echo 'Browser preview setup finished. Reopen Browser on this preview computer.'

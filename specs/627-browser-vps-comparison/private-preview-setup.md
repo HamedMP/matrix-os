@@ -32,6 +32,13 @@ services absent; the earlier root installer additionally accepts only `pr-*`.
 - Setup executes only the root-owned, non-writable payload installed through the
   normal verified host-bundle path. Never run privileged code from owner-writable
   `app/`. One host lock serializes setup; installation has a 30-minute bound.
+- Both installation and experience updates must work from a controlling terminal.
+  GNU `timeout` creates a separate process group and resets inherited `SIGTTOU`;
+  a package manager changing terminal attributes can otherwise stop indefinitely
+  until the deadline. Ignore `SIGTTOU` inside the timed child before executing
+  the reviewed payload, passing its arguments through quoted `"$@"`. Keep the
+  default timeout process group,1800-second deadline and30-second hard-kill grace.
+  Do not substitute `--foreground`: it would stop timing out descendants.
 - The build packages the React viewer and explicit native runtime files, excluding
   dependency stores, test probes, profiles and credentials. Ordinary host-bundle
   installation does not opt a computer into Chrome.
@@ -77,6 +84,11 @@ installer source commit in private acceptance evidence.
   viewer files, with no dependency stores or private state.
 - Exercise the packaged setup dispatch and existing-installation update in an
   isolated fixture. Fixture checks do not prove a live Chrome installation.
+- Execute the actual wrapper through a controlling PTY for both dispatch branches;
+  the fixture must reach a real terminal-attribute operation. Preserve red evidence
+  that the original wrapper times out before that operation completes. Challenge
+  the deadline with a TERM-resistant child and descendant, checking survival while
+  the PTY controller remains alive so session teardown cannot hide an orphan.
 - On the exact engineer preview, verify installed source, app-session creation,
   Browser rendering and an agent's fresh second-turn snapshot before declaring
   the engineer unblocked. Web Desktop and Web Canvas need separate evidence;
