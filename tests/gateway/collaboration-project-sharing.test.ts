@@ -235,6 +235,31 @@ describe("whole-project sharing coordinator", () => {
       .executeTakeFirst()).toEqual({ status: "completed" });
   });
 
+  it("recovers a failed committed drain from the next owner preview without the old request id", async () => {
+    await fixture.db.updateTable("collaboration_scopes").set({ lifecycle: "shared" })
+      .where("id", "=", PROJECT_SCOPE).execute();
+    const onUnshared = vi.fn()
+      .mockRejectedValueOnce(new Error("drain failed"))
+      .mockResolvedValueOnce(undefined);
+    const service = serviceFixture(fixture, preview, verifyConfirmation, replayPreparation, prepare, onUnshared);
+
+    await expect(service.unshare({
+      scopeId: PROJECT_SCOPE,
+      actorId: OWNER,
+      clientRequestId: "50000000-0000-4000-8000-000000000709",
+      expectedRevision: 4,
+      payloadHash: "6".repeat(64),
+    })).rejects.toThrow("drain failed");
+
+    await expect(service.preview({ scopeId: PROJECT_SCOPE, actorId: OWNER }))
+      .resolves.toMatchObject({ scopeRevision: 5 });
+    expect(onUnshared).toHaveBeenCalledTimes(2);
+    await expect(fixture.db.selectFrom("collaboration_operations").select("status")
+      .where("scope_id", "=", PROJECT_SCOPE)
+      .where("operation_kind", "=", "project.unshare")
+      .executeTakeFirstOrThrow()).resolves.toEqual({ status: "completed" });
+  });
+
   it("does not resolve unshare until the committed subscriber drain completes", async () => {
     await fixture.db.updateTable("collaboration_scopes").set({ lifecycle: "shared" })
       .where("id", "=", PROJECT_SCOPE).execute();

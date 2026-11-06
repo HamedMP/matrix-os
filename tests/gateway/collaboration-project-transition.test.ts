@@ -880,7 +880,7 @@ describe("project collaboration transition journal", () => {
     expect(cleanupStaging).not.toHaveBeenCalled();
   });
 
-  it("removes staged bindings and inherited scopes when recovery restores privacy", async () => {
+  it("removes staged bindings but preserves inherited scope identity when recovery restores privacy", async () => {
     const transitions = journal();
     await prepare();
     const childScopeId = "10000000-0000-4000-8000-000000000053";
@@ -928,7 +928,12 @@ describe("project collaboration transition journal", () => {
     await expect(fixture.db.selectFrom("collaboration_resource_bindings")
       .select("id").where("project_scope_id", "=", SCOPE_ID).execute()).resolves.toEqual([]);
     await expect(fixture.db.selectFrom("collaboration_scopes")
-      .select("id").where("id", "=", childScopeId).executeTakeFirst()).resolves.toBeUndefined();
+      .select(["id", "lifecycle", "auth_epoch"])
+      .where("id", "=", childScopeId).executeTakeFirstOrThrow()).resolves.toEqual({
+      id: childScopeId,
+      lifecycle: "private",
+      auth_epoch: 1,
+    });
   });
 
   it.each(["prepared", "staging", "fenced", "committing"] as const)(

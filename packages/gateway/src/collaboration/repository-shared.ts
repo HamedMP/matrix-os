@@ -16,12 +16,79 @@ export interface AcceptedOperationKey {
   operationKind: string;
 }
 
-const MAX_IN_FLIGHT_OPERATION_CLEANUPS = 1_024;
+const MAX_PENDING_OPERATION_CLEANUPS = 1_024;
+const MAX_CONCURRENT_OPERATION_CLEANUPS = 4;
+
+interface ScheduledCleanup {
+  key: string;
+  task: () => Promise<void>;
+  promise: Promise<void>;
+  resolve: () => void;
+  reject: (error: unknown) => void;
+}
+
+/**
+ * Deduplicates cleanup replays and keeps enough of the owner's ten-connection
+ * pool free for the drains performed by a cleanup transaction. Pending work is
+ * bounded separately from running work so a burst cannot grow memory forever.
+ */
+export class BoundedOperationCleanupScheduler {
+  private readonly operations = new Map<string, Promise<void>>();
+  private readonly queue: ScheduledCleanup[] = [];
+  private running = 0;
+
+  constructor(
+    private readonly maxConcurrent: number,
+    private readonly maxPending: number,
+  ) {
+    if (!Number.isInteger(maxConcurrent) || maxConcurrent < 1
+      || !Number.isInteger(maxPending) || maxPending < maxConcurrent) {
+      throw new RangeError("Invalid collaboration cleanup limits");
+    }
+  }
+
+  run(key: string, task: () => Promise<void>): Promise<void> {
+    const existing = this.operations.get(key);
+    if (existing) return existing;
+    if (this.operations.size >= this.maxPending) {
+      return Promise.reject(new Error("Collaboration cleanup capacity exceeded"));
+    }
+    let resolve!: () => void;
+    let reject!: (error: unknown) => void;
+    const promise = new Promise<void>((onResolve, onReject) => {
+      resolve = onResolve;
+      reject = onReject;
+    });
+    this.operations.set(key, promise);
+    this.queue.push({ key, task, promise, resolve, reject });
+    this.pump();
+    return promise;
+  }
+
+  private pump(): void {
+    while (this.running < this.maxConcurrent) {
+      const scheduled = this.queue.shift();
+      if (!scheduled) return;
+      this.running += 1;
+      void Promise.resolve().then(scheduled.task).then(
+        () => scheduled.resolve(),
+        (error: unknown) => scheduled.reject(error),
+      ).finally(() => {
+        if (this.operations.get(scheduled.key) === scheduled.promise) {
+          this.operations.delete(scheduled.key);
+        }
+        this.running -= 1;
+        this.pump();
+      });
+    }
+  }
+}
+
 // A weak database key cannot retain a closed owner database. Each live database
-// gets a separately capped registry, and every entry is removed on settlement.
-const inFlightOperationCleanups = new WeakMap<
+// gets a separately bounded scheduler, and every entry is removed on settlement.
+const operationCleanupSchedulers = new WeakMap<
   Kysely<OwnerCollaborationDatabase>,
-  Map<string, Promise<void>>
+  BoundedOperationCleanupScheduler
 >();
 
 function acceptedOperationKey(key: AcceptedOperationKey): string {
@@ -39,18 +106,16 @@ export function completeAcceptedOperation(
   key: AcceptedOperationKey,
   cleanup: (trx: Transaction<OwnerCollaborationDatabase>) => Promise<void>,
 ): Promise<void> {
-  let active = inFlightOperationCleanups.get(db);
-  if (!active) {
-    active = new Map<string, Promise<void>>();
-    inFlightOperationCleanups.set(db, active);
+  let scheduler = operationCleanupSchedulers.get(db);
+  if (!scheduler) {
+    scheduler = new BoundedOperationCleanupScheduler(
+      MAX_CONCURRENT_OPERATION_CLEANUPS,
+      MAX_PENDING_OPERATION_CLEANUPS,
+    );
+    operationCleanupSchedulers.set(db, scheduler);
   }
   const registryKey = acceptedOperationKey(key);
-  const existing = active.get(registryKey);
-  if (existing) return existing;
-  if (active.size >= MAX_IN_FLIGHT_OPERATION_CLEANUPS) {
-    throw new Error("Collaboration cleanup capacity exceeded");
-  }
-  const operation = db.transaction().execute(async (trx) => {
+  return scheduler.run(registryKey, () => db.transaction().execute(async (trx) => {
     const operation = await trx.selectFrom("collaboration_operations").select("status")
       .where("scope_id", "=", key.scopeId)
       .where("actor_id", "=", key.actorId)
@@ -73,13 +138,7 @@ export function completeAcceptedOperation(
       .returning("status")
       .executeTakeFirst();
     if (!completed) throw new Error("Collaboration cleanup operation changed");
-  });
-  active.set(registryKey, operation);
-  const release = () => {
-    if (active.get(registryKey) === operation) active.delete(registryKey);
-  };
-  void operation.then(release, release);
-  return operation;
+  }));
 }
 
 /** Once direct authority is activated, old member rows can never grant access again. */
