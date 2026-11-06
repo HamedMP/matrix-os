@@ -30,6 +30,7 @@ export function CollaborativeAppShareDialog({
   organizationName,
   share,
   onShareChange,
+  onRefreshShare,
   onClose,
 }: {
   appId: string;
@@ -39,9 +40,11 @@ export function CollaborativeAppShareDialog({
   organizationName: string;
   share: CollaborativeAppShare | null;
   onShareChange(share: CollaborativeAppShare): void;
+  onRefreshShare(): Promise<CollaborativeAppShare | null>;
   onClose(): void;
 }) {
   const [pending, setPending] = useState(false);
+  const [stopRefreshRequired, setStopRefreshRequired] = useState(false);
   const [failure, setFailure] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const active = share?.state === "active" || share?.state === "needs_recheck";
@@ -101,6 +104,13 @@ export function CollaborativeAppShareDialog({
       setNotice("Sharing stopped");
     } catch (error: unknown) {
       console.warn("[collaborative-app-share] stop failed", error instanceof Error ? error.name : "UnknownError");
+      setStopRefreshRequired(true);
+      try {
+        const refreshed = await onRefreshShare();
+        if (refreshed?.state === "active" || refreshed?.state === "needs_recheck") setStopRefreshRequired(false);
+      } catch (refreshError: unknown) {
+        console.warn("[collaborative-app-share] refresh failed", refreshError instanceof Error ? refreshError.name : "UnknownError");
+      }
       setFailure("Sharing could not be stopped. Refresh and try again.");
     } finally {
       setPending(false);
@@ -130,7 +140,7 @@ export function CollaborativeAppShareDialog({
     <div className="mt-5 flex justify-end gap-2">
       <button type="button" className="rounded-lg border px-3 py-2 text-sm" onClick={onClose}>Done</button>
       {active
-        ? <button type="button" className="rounded-lg border px-3 py-2 text-sm" disabled={pending} onClick={() => void stop()}>{pending ? "Stopping…" : "Stop sharing"}</button>
+        ? <button type="button" className="rounded-lg border px-3 py-2 text-sm" disabled={pending || stopRefreshRequired} onClick={() => void stop()}>{pending ? "Stopping…" : "Stop sharing"}</button>
         : <button type="button" className="rounded-lg border px-3 py-2 text-sm" disabled={pending || readiness?.status !== "ready"} onClick={() => void create()}>{pending ? "Sharing…" : "Share with everyone"}</button>}
     </div>
   </Dialog>;
