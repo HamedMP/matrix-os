@@ -100,6 +100,8 @@ export const CollaborativeAppShareSchema = z.object({
   readinessId: CollaborationIdSchema,
   state: z.enum(["active", "needs_recheck", "stopped"]),
   shareRevision: CollaborationRevisionSchema,
+  /** CAS token for owner stop/rebind operations; distinct from app data revision. */
+  bindingRevision: CollaborationRevisionSchema,
   dataRevision: CollaborationRevisionSchema,
   createdAt: z.iso.datetime(),
   updatedAt: z.iso.datetime(),
@@ -175,6 +177,10 @@ export const CollaborativeAppMutationRequestSchema = z.object({
   clientRequestId: CollaborationIdSchema,
   expectedRevision: CollaborationRevisionSchema,
   action: boundedJson(64 * 1024),
+}).strict();
+export const CollaborativeAppQueryResponseSchema = z.object({
+  result: boundedJson(1024 * 1024),
+  revision: CollaborationRevisionSchema,
 }).strict();
 export const CollaborativeAppMutationResponseSchema = z.object({
   result: boundedJson(1024 * 1024),

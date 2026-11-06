@@ -226,16 +226,21 @@ export function createPlatformCollaborationRoutes(options: {
     }
   });
   app.get("/api/collaboration/shared-apps/:scopeId/runtime/:launchId/:assetPath{.+}", async (c) => {
-    const actorId = await resolveValidatedActor(c, options.resolveActor);
-    if (!actorId) return safeJson(c, "Unauthorized", 401);
     if (!options.launchSessions) return safeJson(c, "Collaboration unavailable", 503);
     const scopeId = z.uuid().safeParse(c.req.param("scopeId"));
     const launchId = z.uuid().safeParse(c.req.param("launchId"));
     const assetPath = CollaborationAppAssetPathSchema.safeParse(c.req.param("assetPath"));
     if (!scopeId.success || !launchId.success || !assetPath.success) return safeJson(c, "Invalid request", 422);
+    const opaqueAssetRequest = c.req.header("origin") === "null" && assetPath.data !== "index.html";
+    const authenticatedActorId = await resolveValidatedActor(c, options.resolveActor);
+    const capability = !authenticatedActorId && opaqueAssetRequest
+      ? options.launchSessions.describeAssetCapability(launchId.data, scopeId.data)
+      : null;
+    const actorId = authenticatedActorId ?? capability?.actorId ?? null;
+    if (!actorId) return safeJson(c, "Unauthorized", 401);
     try {
       const admitted = await admitCollaborativeApp(options, actorId, scopeId.data);
-      const launch = options.launchSessions.describe(launchId.data, actorId, scopeId.data);
+      const launch = capability ?? options.launchSessions.describe(launchId.data, actorId, scopeId.data);
       if (!admitted) {
         await options.launchSessions.revokeActor(scopeId.data, actorId);
         return safeJson(c, "Collaboration resource not found", 404);
@@ -253,7 +258,7 @@ export function createPlatformCollaborationRoutes(options: {
         assetPath: assetPath.data,
         signal: c.req.raw.signal,
       });
-      if (assetPath.data !== "index.html") return response;
+      if (assetPath.data !== "index.html") return opaqueAssetRequest ? exposeOpaqueAsset(response) : response;
       const participant = await options.resolveParticipant(actorId);
       if (!participant) {
         await response.body?.cancel();
@@ -313,6 +318,14 @@ export function createPlatformCollaborationRoutes(options: {
   registerInvitationIdentifierResolutionRoute(app, options);
 
   return app;
+}
+
+function exposeOpaqueAsset(response: Response): Response {
+  const headers = new Headers(response.headers);
+  headers.set("Access-Control-Allow-Origin", "null");
+  headers.set("Cross-Origin-Resource-Policy", "cross-origin");
+  headers.append("Vary", "Origin");
+  return new Response(response.body, { status: response.status, statusText: response.statusText, headers });
 }
 
 async function listDiscovery(
@@ -587,6 +600,9 @@ function launchFailure(c: RouteContext, error: unknown) {
 }
 
 const MAX_BOOTSTRAP_HTML_BYTES = 1024 * 1024;
+// A direct request may need ticket issuance, session creation, one home call,
+// and one full re-authentication retry. Each network leg is bounded to 10s.
+const COLLABORATIVE_APP_BRIDGE_TIMEOUT_MS = 70_000;
 
 class PerActorRateLimit {
   private readonly attempts = new Map<string, number[]>();
@@ -644,12 +660,17 @@ async function injectCollaborativeAppBootstrap(
     throw error;
   }
   const context = JSON.stringify(participant).replaceAll("<", "\\u003c");
-  const bootstrap = `<base href="${basePath}"><script id="matrix-collaboration-context" type="application/json">${context}</script>`;
+  const bootstrap = `<base href="${basePath}"><script id="matrix-collaboration-context" type="application/json">${context}</script>${collaborativeAppBridgeBootstrap()}`;
   const source = Buffer.concat(chunks).toString("utf8");
   const html = source.includes("<head>") ? source.replace("<head>", `<head>${bootstrap}`) : `${bootstrap}${source}`;
   const headers = new Headers(response.headers);
   headers.set("content-length", String(Buffer.byteLength(html)));
   return new Response(html, { status: response.status, headers });
+}
+
+/** A capability-minimal iframe bridge: participant context plus scoped query/mutate only. */
+function collaborativeAppBridgeBootstrap(): string {
+  return `<script>(()=>{const c=JSON.parse(document.getElementById("matrix-collaboration-context").textContent);const p=new Map();const l=new Set();const ask=(type,action,expectedRevision)=>new Promise((resolve,reject)=>{if(p.size>=32){reject(new Error("Shared app unavailable"));return}const requestId=crypto.randomUUID();const timer=setTimeout(()=>{p.delete(requestId);reject(new Error("Shared app unavailable"))},${COLLABORATIVE_APP_BRIDGE_TIMEOUT_MS});p.set(requestId,{resolve,reject,timer});parent.postMessage({type,requestId,action,...(expectedRevision===undefined?{}:{expectedRevision})},"*")});addEventListener("message",event=>{if(event.source!==parent||event.origin!==location.origin)return;const m=event.data;if(m?.type==="matrix:shared-app:response"&&typeof m.requestId==="string"){const request=p.get(m.requestId);if(!request)return;p.delete(m.requestId);clearTimeout(request.timer);m.ok?request.resolve(m.result):request.reject(new Error(typeof m.message==="string"?m.message:"Shared app unavailable"));return}if(m?.type==="matrix:shared-app:changed")for(const listener of [...l])try{listener()}catch(error){console.warn("Matrix shared app change listener failed",error instanceof Error?error.name:"UnknownError")}});addEventListener("pagehide",()=>{for(const request of p.values()){clearTimeout(request.timer);request.reject(new Error("Shared app unavailable"))}p.clear();l.clear()},{once:true});window.MatrixOS=window.MatrixOS||{};window.MatrixOS.collaboration=Object.freeze({participant:Object.freeze(c),query:action=>ask("matrix:shared-app:query",action),mutate:(action,expectedRevision)=>ask("matrix:shared-app:mutate",action,expectedRevision),onChange:listener=>{if(typeof listener!=="function"||l.size>=32)return()=>{};l.add(listener);return()=>l.delete(listener)}})})()</script>`;
 }
 
 function safeJson(c: RouteContext, error: string, status: 401 | 403 | 404 | 409 | 413 | 422 | 429 | 503) {

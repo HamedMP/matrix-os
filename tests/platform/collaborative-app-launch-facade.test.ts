@@ -130,8 +130,32 @@ describe("collaborative app authenticated launch facade", () => {
     expect(html).toContain(`<base href="/api/collaboration/shared-apps/${scopeId}/runtime/${launchId}/">`);
     expect(html).toContain(`"actorId":"${actorId}"`);
     expect(html).toContain('"organizationId":"org_matrix_team"');
+    expect(html).toContain("matrix:shared-app:query");
+    expect(html).toContain("matrix:shared-app:mutate");
+    expect(html).toContain("matrix:shared-app:changed");
+    expect(html).toContain("MatrixOS.collaboration");
+    expect(html).toContain("},70000)");
+    expect(html).not.toContain("},10000)");
     expect(html).not.toMatch(/credential|proof|token|ownerCookie/i);
     expect(request).toHaveBeenCalledWith("index.html", expect.any(AbortSignal));
+  });
+
+  it("serves immutable module bytes to the launch-scoped opaque origin without browser credentials", async () => {
+    const created = await routes.request(`/api/collaboration/shared-apps/${scopeId}/launch`, {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-test-actor": actorId },
+      body: JSON.stringify({ clientRequestId: requestId, expectedShareRevision: "1", expectedBuildId: app.buildId }),
+    });
+    const launch = await created.json() as { launchId: string; entryUrl: string };
+    const assetUrl = `/api/collaboration/shared-apps/${scopeId}/runtime/${launch.launchId}/assets/main.js`;
+
+    const asset = await routes.request(assetUrl, { headers: { origin: "null" } });
+
+    expect(asset.status).toBe(200);
+    expect(asset.headers.get("access-control-allow-origin")).toBe("null");
+    expect(asset.headers.get("cross-origin-resource-policy")).toBe("cross-origin");
+    expect(await asset.text()).toContain("console.log");
+    expect((await routes.request(launch.entryUrl, { headers: { origin: "null" } })).status).toBe(401);
   });
 
   it("rechecks the platform session, current membership, share, build, and confined path on every request", async () => {

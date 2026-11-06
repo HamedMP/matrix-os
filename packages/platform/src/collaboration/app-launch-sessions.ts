@@ -171,6 +171,15 @@ export class CollaborativeAppLaunchSessions {
       catalogId: record.catalogId, buildId: record.buildId, shareRevision: record.shareRevision };
   }
 
+  /** A random launch id is a short-lived capability for immutable module bytes only. */
+  describeAssetCapability(launchId: string, scopeId: string): CollaborativeAppLaunchIdentity | null {
+    const record = this.sessions.get(launchId);
+    if (!record || record.scopeId !== scopeId || record.expiresAt <= this.now()) return null;
+    return { actorId: record.actorId, scopeId: record.scopeId, organizationId: record.organizationId,
+      runtimeId: record.runtimeId, authorityGeneration: record.authorityGeneration, appId: record.appId,
+      catalogId: record.catalogId, buildId: record.buildId, shareRevision: record.shareRevision };
+  }
+
   async request(input: { launchId: string; actorId: string; scopeId: string; assetPath: string; signal?: AbortSignal }): Promise<Response> {
     const segments = input.assetPath.split("/");
     if (input.assetPath.length < 1 || input.assetPath.length > 1_024 || input.assetPath.startsWith("/")

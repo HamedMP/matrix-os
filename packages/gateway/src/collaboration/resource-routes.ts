@@ -11,6 +11,7 @@ import {
   CollaborationAppAssetPathSchema,
   CollaborationAppInstanceIdSchema,
   CollaborationAppInstanceSchema,
+  CollaborativeAppQueryResponseSchema,
   CollaborationAppViewRequestSchema,
   CollaborationCatalogEntrySchema,
   CollaborationCatalogIdSchema,
@@ -237,7 +238,11 @@ export function registerResourceRoutes(routes: Hono, options: CollaborationRoute
     const { value, bytes } = await readJson(c);
     const input = CollaborationAppViewRequestSchema.parse(value);
     const context = await authorize(options, c, bytes, "read", scopeId);
-    return c.json({ result: await apps.query(context, appId, input.action) });
+    const response = await apps.query(context, appId, input.action);
+    return c.json(CollaborativeAppQueryResponseSchema.parse({
+      result: response.result,
+      revision: String(response.revision),
+    }));
   }));
 
   routes.get("/api/collaboration/scopes/:scopeId/apps/:appId/assets/:assetPath{.+}", async (c) => handle(c, async () => {
