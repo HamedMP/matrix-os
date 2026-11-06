@@ -20,6 +20,7 @@ import {
   CollaborativeAppLaunchError,
   type CollaborativeAppLaunchSessions,
 } from "./app-launch-sessions.js";
+import { cancelCollaborativeAppResponseReader } from "./app-launch-upstream.js";
 
 const DIRECT_SESSION_HEADER = "x-matrix-collaboration-session";
 const RETIRED_CONNECTION_TICKET_PATH = /^\/api\/collaboration\/scopes\/[^/]+\/connection-tickets$/;
@@ -639,7 +640,7 @@ async function injectCollaborativeAppBootstrap(
       chunks.push(next.value);
     }
   } catch (error: unknown) {
-    await reader.cancel().catch(() => undefined);
+    await cancelCollaborativeAppResponseReader(reader);
     throw error;
   }
   const context = JSON.stringify(participant).replaceAll("<", "\\u003c");
