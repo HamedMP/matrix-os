@@ -168,6 +168,22 @@ describe("collaboration capability HTTP routes", () => {
     expect((await signed({ actorId: outsiderId, method: "GET", path })).status).toBe(404);
   });
 
+  it("rejects a second grant permission model for collaborative app scopes", async () => {
+    await fixture.db.updateTable("collaboration_scopes").set({
+      kind: "app",
+      resource_id: "50000000-0000-4000-8000-000000000001",
+    }).where("id", "=", scopeId).execute();
+    const path = `/api/collaboration/scopes/${scopeId}/grants`;
+
+    const response = await signed({ actorId: ownerId, method: "POST", path, body: {
+      clientRequestId: randomUUID(), expectedRevision: "1",
+      audience: { kind: "organization" }, preset: "viewer",
+    } });
+
+    expect(response.status).toBe(404);
+    expect(await fixture.db.selectFrom("collaboration_grants").selectAll().execute()).toEqual([]);
+  });
+
   it("projects activated and explicit project access for the owner with inherited precedence", async () => {
     const now = new Date();
     const organizationGrantId = randomUUID();

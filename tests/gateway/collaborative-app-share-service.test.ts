@@ -60,6 +60,7 @@ const storedShare = {
 function setup(overrides: {
   now?: Date;
   existing?: typeof storedShare | null;
+  createReplay?: typeof storedShare | null;
   readiness?: Omit<typeof readiness, "status"> & { status: "ready" | "blocked" };
 } = {}) {
   const current = { build, artifactRef: `objects/${build.buildId}` };
@@ -68,6 +69,7 @@ function setup(overrides: {
     revision: 0, updatedAt: NOW.toISOString(), deletedAt: null };
   const shares = {
     getByCatalog: vi.fn(async () => overrides.existing ?? null),
+    getCreateReplay: vi.fn(async () => overrides.createReplay ?? null),
     createAtomic: vi.fn(async () => storedShare),
     stopAtomic: vi.fn(async () => ({
       ...storedShare,
@@ -207,6 +209,45 @@ describe("CollaborativeAppShareService", () => {
       payloadHash: expect.stringMatching(/^[a-f0-9]{64}$/),
     }));
     expect(onStopped).toHaveBeenCalledWith(scopeId);
+  });
+
+  it("allows a stopped share to preflight again without treating it as active", async () => {
+    const stopped = {
+      ...storedShare,
+      scopeRevision: 2,
+      binding: { ...binding, state: "stopped" as const, revision: 2, stoppedAt: NOW.toISOString() },
+    };
+    const { service } = setup({ existing: stopped });
+
+    const result = await service.preflight(ownerId, build.appId, {
+      organizationId,
+      expectedReadinessRevision: "2",
+      expectedBuildId: build.buildId,
+    });
+
+    expect(result).toMatchObject({ eligible: true, catalogId: build.catalogId });
+    expect(result).not.toHaveProperty("existingShare");
+  });
+
+  it("replays a completed create before expired-token and changed-build preconditions", async () => {
+    const initial = setup();
+    const preflight = await initial.service.preflight(ownerId, build.appId, {
+      organizationId, expectedReadinessRevision: "2", expectedBuildId: build.buildId,
+    });
+    if (!preflight.eligible) throw new Error("expected eligible preflight");
+    const replay = setup({ now: new Date(NOW.getTime() + 61_000), createReplay: storedShare });
+    replay.resolveCurrentBuild.mockRejectedValue(new Error("build changed"));
+
+    await expect(replay.service.create(ownerId, build.appId, {
+      organizationId,
+      clientRequestId: "80000000-0000-4000-8000-000000000001",
+      expectedResourceRevision: "0",
+      expectedReadinessRevision: "2",
+      readinessId,
+      buildId: build.buildId,
+      confirmationToken: preflight.confirmationToken,
+    })).resolves.toMatchObject({ scopeId, state: "active" });
+    expect(replay.resolveCurrentBuild).not.toHaveBeenCalled();
   });
 
   it("loads and stops the saved share without rebuilding a now-broken app", async () => {

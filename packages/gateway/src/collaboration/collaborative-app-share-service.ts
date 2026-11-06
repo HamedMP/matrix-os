@@ -87,7 +87,7 @@ export class CollaborativeAppShareService {
     preflightSecret: string;
     catalog: Pick<CollaborationResourceCatalog, "get" | "getLiveByPath">;
     readiness: Pick<CollaborativeAppReadinessRepository, "get" | "getCurrent">;
-    shares: Pick<CollaborativeAppShareRepository, "getByCatalog" | "createAtomic" | "stopAtomic">;
+    shares: Pick<CollaborativeAppShareRepository, "getByCatalog" | "getCreateReplay" | "createAtomic" | "stopAtomic">;
     resolveCurrentBuild(
       ownerId: string,
       appId: string,
@@ -136,9 +136,6 @@ export class CollaborativeAppShareService {
     if (existing && existing.organizationId !== input.organizationId) {
       return { eligible: false, reason: "organization_mismatch" };
     }
-    if (existing?.binding.state === "stopped") {
-      return { eligible: false, reason: "already_shared" };
-    }
     const token = TokenSchema.parse({
       version: 1,
       runtimeId: this.options.runtimeId,
@@ -162,7 +159,9 @@ export class CollaborativeAppShareService {
       readinessId: readiness.id,
       buildId: readiness.build.buildId,
       confirmationToken: `${encoded}.${signature}`,
-      ...(existing ? { existingShare: await this.project(existing, readiness) } : {}),
+      ...(existing && existing.binding.state !== "stopped"
+        ? { existingShare: await this.project(existing, readiness) }
+        : {}),
     };
   }
 
@@ -175,6 +174,27 @@ export class CollaborativeAppShareService {
       || !CollaborationOrganizationIdSchema.safeParse(input.organizationId).success
       || !DigestSchema.safeParse(input.buildId).success) {
       throw new CollaborativeAppShareServiceError("invalid");
+    }
+    const payloadHash = createHash("sha256").update(canonicalJson({
+      appId,
+      organizationId: input.organizationId,
+      clientRequestId: input.clientRequestId,
+      expectedResourceRevision: resourceRevision.data,
+      expectedReadinessRevision: readinessRevision.data,
+      readinessId: input.readinessId,
+      buildId: input.buildId,
+    })).digest("hex");
+    const replay = await this.options.shares.getCreateReplay({
+      ownerId,
+      appId,
+      clientRequestId: input.clientRequestId,
+      payloadHash,
+    });
+    if (replay) {
+      if (replay.organizationId !== input.organizationId) throw new CollaborativeAppShareServiceError("conflict");
+      const replayReadiness = await this.options.readiness.get({ id: replay.binding.readinessId, ownerId });
+      if (!replayReadiness) throw new CollaborativeAppShareServiceError("unavailable");
+      return this.project(replay, replayReadiness);
     }
     const token = this.verifyToken(input.confirmationToken);
     if (token.ownerId !== ownerId || token.organizationId !== input.organizationId || token.appId !== appId
@@ -192,15 +212,6 @@ export class CollaborativeAppShareService {
       || readiness.build.buildId !== token.buildId || readiness.status !== "ready" || readiness.invalidatedAt) {
       throw new CollaborativeAppShareServiceError("conflict");
     }
-    const payloadHash = createHash("sha256").update(canonicalJson({
-      appId,
-      organizationId: input.organizationId,
-      clientRequestId: input.clientRequestId,
-      expectedResourceRevision: resourceRevision.data,
-      expectedReadinessRevision: readinessRevision.data,
-      readinessId: input.readinessId,
-      buildId: input.buildId,
-    })).digest("hex");
     const created = await this.options.shares.createAtomic({
       ownerId,
       organizationId: input.organizationId,
