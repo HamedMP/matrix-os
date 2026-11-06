@@ -11,6 +11,7 @@ const BUILT_IN_APP_VALUES = [
   "__activity-monitor__",
   "__browser__",
   "__cloud-desktop__",
+  "__getting-started__",
 ] as const;
 
 const RETIRED_BUILT_IN_APP_PATHS = new Set(["__workspace__"]);
@@ -21,6 +22,12 @@ export const TERMINAL_DEFAULT_WINDOW_HEIGHT = 680;
 // Terminal collapses its sidebar below 500px; launch size is not a resize limit.
 export const TERMINAL_MIN_WINDOW_WIDTH = 440;
 export const TERMINAL_MIN_WINDOW_HEIGHT = 300;
+/** Spec 639: wide enough for the Figma layout (1080 content + 32px gutters). */
+export const GETTING_STARTED_DEFAULT_WINDOW_WIDTH = 1144;
+export const GETTING_STARTED_DEFAULT_WINDOW_HEIGHT = 880;
+/** Room kept around a new Getting started window so its title bar and edges stay on screen. */
+export const GETTING_STARTED_VIEWPORT_GUTTER_X = 64;
+export const GETTING_STARTED_VIEWPORT_GUTTER_Y = 120;
 
 const BUILT_IN_APP_ALIASES = new Map<string, string>([
   ["apps/browser/index.html", "__browser__"],
@@ -41,6 +48,7 @@ const BUILT_IN_APP_ALIASES = new Map<string, string>([
   ["system-activity", "__activity-monitor__"],
   ["apps/activity-monitor/index.html", "__activity-monitor__"],
   ["/files/apps/activity-monitor/index.html", "__activity-monitor__"],
+  ["getting-started", "__getting-started__"],
 ]);
 
 const BUILT_IN_APP_TITLES = new Map<string, string>([
@@ -51,6 +59,7 @@ const BUILT_IN_APP_TITLES = new Map<string, string>([
   ["__file-browser__", "Files"],
   ["__chat__", "Chat"],
   ["__activity-monitor__", "Activity Monitor"],
+  ["__getting-started__", "Getting started"],
 ]);
 
 export function normalizeBuiltInAppPath(path: string): string {

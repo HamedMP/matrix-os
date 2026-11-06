@@ -64,7 +64,10 @@ function namedDesktopApp(app: AppEntry | undefined, fallback: AppEntry): AppEntr
   return app ? { ...app, name: fallback.name, path: fallback.path } : fallback;
 }
 
-export function buildWebDesktopIconApps(apps: readonly AppEntry[]): AppEntry[] {
+export function buildWebDesktopIconApps(
+  apps: readonly AppEntry[],
+  options: { gettingStartedApp?: boolean } = {},
+): AppEntry[] {
   const chat = findCanonicalApp(apps, ["__chat__"]);
   const browserPaths = ["__browser__", "apps/browser/index.html", "apps/browser/dist/index.html"];
   const notesPaths = ["apps/notes/index.html", "apps/notes/dist/index.html"];
@@ -77,6 +80,8 @@ export function buildWebDesktopIconApps(apps: readonly AppEntry[]): AppEntry[] {
     { name: "VS Code", path: "__vscode__", iconUrl: "/vscode.png" },
     { name: "Settings", path: "__settings__" },
     { name: "Connect Apps", path: "__plugins__" },
+    // Spec 639: shown only when this computer serves the Getting started app.
+    ...(options.gettingStartedApp ? [{ name: "Getting started", path: "__getting-started__" }] : []),
     namedDesktopApp(findCanonicalApp(apps, browserPaths), { name: "Browser", path: "__browser__" }),
     { name: "Cloud desktop", path: REMOTE_BROWSER_PATHS.desktop },
     namedDesktopApp(findCanonicalApp(apps, notesPaths), { name: "Notes", path: "apps/notes/index.html" }),
@@ -95,6 +100,7 @@ export function buildWebDesktopIconApps(apps: readonly AppEntry[]): AppEntry[] {
 export function buildWebDesktopLauncherApps(
   apps: readonly AppEntry[],
   currentMode: DesktopMode = "desktop",
+  options: { gettingStartedApp?: boolean } = {},
 ): AppEntry[] {
   const destinationMode = otherOsViewMode(currentMode);
   const viewDestination: AppEntry = {
@@ -102,7 +108,7 @@ export function buildWebDesktopLauncherApps(
     path: OS_VIEW_DESTINATION_PATHS[destinationMode],
     iconUrl: gatewayAssetUrl(`/system-app-icons/v3/${destinationMode}.png`),
   };
-  return [viewDestination, ...buildWebDesktopIconApps(apps)];
+  return [viewDestination, ...buildWebDesktopIconApps(apps, options)];
 }
 
 

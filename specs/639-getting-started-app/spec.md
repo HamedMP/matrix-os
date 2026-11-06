@@ -28,7 +28,7 @@ The Get started wizard (spec 635) runs once, before the desktop. This app is wha
 
 ## Journey
 
-**First open.** The app opens once automatically, the first time the desktop loads after the Get started wizard finishes or is skipped (or straight away for owners who never get the wizard, see "Existing owners"). After that it opens only from its icon, the launcher or the Help popover.
+**First open.** The app opens once automatically, and its icon is placed on the desktop, the first time the desktop loads after the Get started wizard has finished or been skipped. The server claim (`/auto-open`) makes this happen once per owner across Web and Electron. Owners who never get the wizard are not auto-opened. After that it opens from its icon, the launcher or the Help popover.
 
 **Screen** (Figma "First login"):
 
@@ -59,7 +59,7 @@ The Get started wizard (spec 635) runs once, before the desktop. This app is wha
 
 **Toast.** When a task turns Done while the owner is signed in, Matrix shows "Slack connected +20 pts" (task-specific copy) in the shared shell notification stack (`ShellNotificationPortal`), whether or not the app is open. Tasks that were already Done the first time they are seen are awarded silently.
 
-**Help popover.** The popover keeps its place in the top bar but becomes a summary: "X of 10 done", the points total, and **Open Getting started**. Its own five-step list is removed, so there is one task list. Billing is not one of the 10 tasks (see open questions).
+**Help popover.** The popover gains a summary row under its progress bar: **Open Getting started**, "X of 10 done" and the points total. Its own list stays for now, because since spec 635 it also carries the wizard's bots and "Try" prompts; removing it is a product decision (open question 9). Billing is not one of the 10 tasks (see open questions).
 
 ## Points
 
@@ -75,9 +75,9 @@ The Get started wizard (spec 635) runs once, before the desktop. This app is wha
 | Contracts (`packages/contracts`) | `GETTING_STARTED_APP_TASK_IDS` and the task table (group, title, description, points, icon, destination); `deriveGettingStartedAppTasks(results)` built next to `deriveGettingStartedSnapshot`, reusing its parsers so the popover and the app agree; Zod schemas for the progress and award endpoints |
 | Gateway (`packages/gateway`) | `getting-started/` repository on owner Postgres (Kysely), `routes/getting-started.ts` with the two endpoints below, wired in `server.ts` and closed on shutdown |
 | Shared UI (`packages/ui`) | `GettingStartedApp` view (header, hero, grid, task card, footer) and a port interface `{ loadStatus, loadProgress, award, open(destination) }`, rendered by both shells |
-| Web shell | `__getting-started__` in `builtin-apps.ts` (values, aliases, title), handled in `Desktop.tsx` and `canvas/CanvasWindow.tsx`; web port; popover summary |
-| Electron | Entry in `FIXED_DESKTOP_APPS`, bundled icon in `bundledDesktopIconForPath`, Electron port; popover summary |
-| OS view (`os-view.ts`) | `getting-started` in `OS_VIEW_FIXED_APP_APPEARANCES`, `OS_VIEW_PLACEABLE_BUILTIN_APPS` and `DEFAULT_OS_VIEW_DESKTOP_APP_PATHS`; artwork at `/system-app-icons/v2/getting-started.png` |
+| Web shell | `__getting-started__` in `builtin-apps.ts` (values, aliases, title), rendered by `desktop/DesktopWindow.tsx` and `canvas/CanvasWindow.tsx`; `getting-started-app/web-getting-started-app.tsx` (port, host, toast); launcher entry only while served; popover summary |
+| Electron | `getting-started` tab kind; `GETTING_STARTED_DESKTOP_APP` added to destinations only while served (`FIXED_DESKTOP_APPS` stays the default desktop set); `features/getting-started-app/DesktopGettingStartedAppHost.tsx` (port, host, sonner toast); popover summary |
+| OS view (`os-view.ts`) | `getting-started` appearance and bundled artwork `/system-app-icons/v2/getting-started.png`. Not in `DEFAULT_OS_VIEW_DESKTOP_APP_PATHS`: the icon is placed by the first automatic open instead, so computers on older bundles never show a broken icon |
 | Status polling | The app and the toast watcher reuse the popover's existing status reads and its 15 s refresh (`GETTING_STARTED_REFRESH_MS`), one poller per window, paused while the browser tab is hidden |
 
 The `__getting-started__` path must never reach `AppViewer` (repo rule for `__…` paths). Window size defaults to the Figma frame width (about 1,000 px content) and follows normal window persistence.
@@ -185,7 +185,9 @@ Evidence: live screenshots and a short recording on Web Desktop, Web Canvas and 
 5. Which signal says the owner has **built an app** (own app in the catalog vs. any App Gallery install) and **signed in on mobile**?
 6. Billing is a popover step but not one of the 10 tasks. Drop it, or keep a billing nudge elsewhere?
 7. Existing owners: confirm the "icon yes, auto-open no, silent backfill" proposal.
-8. Icon artwork for `getting-started` in the v2 app icon family.
+8. Icon artwork for `getting-started` in the v2 app icon family. A placeholder compass ships at `shell/public/system-app-icons/v2/getting-started.png`.
+9. Should the popover's own list go away now that the app exists, and where do the wizard's bot and "Try" rows live then?
+10. The mobile download link (`https://matrix-os.com/mobile`) and the Create an agent / Build your memory chat prompts are placeholders until product confirms them.
 
 ## Deliverables
 
