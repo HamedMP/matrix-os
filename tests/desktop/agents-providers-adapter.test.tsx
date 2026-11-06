@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import React from "react";
-import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { useConnection } from "../../desktop/src/renderer/src/stores/connection";
 import type { MatrixAnthropicConnectionClient } from "../../packages/ui/src/agents-providers/matrix-anthropic-connection-client.js";
@@ -18,6 +18,7 @@ vi.mock("@matrix-os/ui", async () => ({
   ...await import("../../packages/ui/src/agents-providers/provider-workflow-client.js"),
   ...await import("../../packages/ui/src/agents-providers/matrix-anthropic-connection-client.js"),
   ...await import("../../packages/ui/src/speech/browser-client.js"),
+  ...await import("../../packages/ui/src/agents-providers/GithubDeveloperAccessCard.js"),
   AgentsProvidersView: mocks.view,
   useProviderSettingsController: mocks.controller,
 }));
@@ -56,6 +57,37 @@ describe("desktop shared agents and providers adapter", () => {
     vi.restoreAllMocks();
     vi.unstubAllGlobals();
     useConnection.setState(useConnection.getInitialState(), true);
+  });
+
+  it.each([null, "Provider settings are unavailable."])("keeps GitHub readable while initial provider permissions are unknown (%s)", async (error) => {
+    const refresh = vi.fn();
+    mocks.controller.mockReturnValue({
+      snapshot: null, selectedHarnessId: null, connectionAttempt: null,
+      busy: false, error, refresh, mutate: vi.fn(), onSelectHarness: vi.fn(),
+    });
+    const get = vi.fn().mockResolvedValue({
+      installed: true, authenticated: false, user: null, gitProtocol: null,
+      sshStatus: "setup_required", commitIdentity: { status: "missing", label: null },
+      ready: false, errorCode: null,
+    });
+    const setup = vi.spyOn(providerActions, "openDesktopGithubDeveloperSetup").mockResolvedValue(true);
+    useConnection.setState({ api: { forRuntime: vi.fn(() => ({ get, post: vi.fn() })) } as never });
+
+    render(<AgentsProvidersAdapter />);
+
+    expect(await screen.findByRole("heading", { name: "GitHub developer access" })).not.toBeNull();
+    await screen.findByText("Setup is not complete");
+    const connect = screen.getByRole("button", { name: "Connect" }) as HTMLButtonElement;
+    expect(connect.disabled).toBe(true);
+    fireEvent.click(connect);
+    expect(setup).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "Refresh GitHub developer access" }));
+    await waitFor(() => expect(get).toHaveBeenCalledTimes(2));
+    expect(get).toHaveBeenCalledWith("/api/github/status", expect.objectContaining({ cache: "no-store" }));
+    if (error) {
+      fireEvent.click(screen.getByRole("button", { name: "Retry provider settings" }));
+      expect(refresh).toHaveBeenCalledOnce();
+    }
   });
 
   it("binds the Settings dictation allowance read to the selected Electron runtime", async () => {

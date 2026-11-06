@@ -3,11 +3,12 @@ import type { ProviderSettingsMutationIntent } from "@matrix-os/ui";
 import type { ProviderSettingsSnapshot, ProviderWorkflow } from "@matrix-os/contracts";
 import {
   AgentsProvidersView,
+  GithubDeveloperAccessCard,
   createBrowserSpeechClient,
   useProviderSettingsController,
 } from "@matrix-os/ui";
 import "@matrix-os/ui/agents-providers.css";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type { ApiClient } from "../../lib/api";
 import { useConnection } from "../../stores/connection";
 import { CreditDiagnosticDisclosure } from "./CreditDiagnosticDisclosure";
@@ -29,10 +30,12 @@ function ProviderSettingsUnavailable({
   signedOut,
   failed = false,
   onRetry,
+  children,
 }: {
   signedOut: boolean;
   failed?: boolean;
   onRetry?: () => void;
+  children?: ReactNode;
 }) {
   return (
     <div className="matrix-agents-providers">
@@ -43,6 +46,7 @@ function ProviderSettingsUnavailable({
           <p>Choose which harness runs a task, which model it uses, and who funds the route.</p>
         </div>
       </header>
+      {children}
       <div className="matrix-ap-empty-state" role="status">
         <strong>
           {signedOut
@@ -188,7 +192,10 @@ function ConnectedAgentsProvidersAdapter({
         signedOut={false}
         failed={controller.error !== null}
         onRetry={() => void controller.refresh()}
-      />
+      >
+        <GithubDeveloperAccessCard identityKey={identityKey} client={githubDeveloperAccessClient} readOnly />
+        <p>Setup actions require confirmed Settings permissions.</p>
+      </ProviderSettingsUnavailable>
       </>
     );
   }
