@@ -124,9 +124,9 @@ export class PlatformCollaborationRepository {
     this.admitRuntimeWrite = options.admitRuntimeWrite;
   }
 
-  async applyDirectoryEvent(input: DirectoryEventInput): Promise<void> {
+  async applyDirectoryEvent(input: DirectoryEventInput): Promise<boolean> {
     const now = this.now().toISOString();
-    await this.db.transaction().execute(async (trx) => {
+    return this.db.transaction().execute(async (trx) => {
       await this.admitRuntimeWrite?.(trx, input);
       // A person-to-person event is legacy ingestion: it must not commit inside
       // the cutover's final inventory-to-activation interval, so it takes the
@@ -153,7 +153,7 @@ export class PlatformCollaborationRepository {
       if (existing && (existing.owner_id !== input.ownerId || existing.runtime_id !== input.runtimeId)) {
         throw new PlatformCollaborationRepositoryError("conflict", "Directory authority changed without transition");
       }
-      if (existing && Number(existing.metadata_revision) >= input.metadataRevision) return;
+      if (existing && Number(existing.metadata_revision) >= input.metadataRevision) return false;
       // A project Chat stays under its project. A directly shared Chat may join a project once,
       // when the owner shares the project that contains it.
       if (existing?.parent_scope_id && existing.parent_scope_id !== input.parentScopeId) {
@@ -206,7 +206,7 @@ export class PlatformCollaborationRepository {
         .returning("collaboration_directory.scope_id")
         .executeTakeFirst();
       // No row returned means the DO UPDATE was fenced by a newer revision: the whole event is stale.
-      if (!applied) return;
+      if (!applied) return false;
       // A project Chat has no recipients of its own; any left from a direct share no longer apply.
       if (input.parentScopeId) {
         await trx.deleteFrom("collaboration_user_index").where("scope_id", "=", input.scopeId).execute();
@@ -233,6 +233,7 @@ export class PlatformCollaborationRepository {
           updated_at: now,
         })).execute();
       }
+      return true;
     });
   }
 

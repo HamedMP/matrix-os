@@ -320,6 +320,42 @@ describe("collaborative app authenticated launch facade", () => {
     expect(sessions.size).toBe(0);
     expect(close).toHaveBeenCalledTimes(1);
   });
+
+  it("does not drain a restarted share for a delayed stale stop event", async () => {
+    await repository.applyDirectoryEvent({
+      eventId: "20000000-0000-4000-8000-000000000010", scopeId, runtimeId: "runtime_owner",
+      ownerId: platformCollaborationActors.owner, kind: "app", organizationId, audience: "current_membership",
+      authorityGeneration: 1, metadataRevision: 2, app: { ...app, state: "stopped", shareRevision: 2 },
+      recipients: [{ actorId: platformCollaborationActors.owner, status: "revoked" }],
+    });
+    await repository.applyDirectoryEvent({
+      eventId: "20000000-0000-4000-8000-000000000011", scopeId, runtimeId: "runtime_owner",
+      ownerId: platformCollaborationActors.owner, kind: "app", organizationId, audience: "current_membership",
+      authorityGeneration: 1, metadataRevision: 3, app: { ...app, shareRevision: 3 },
+      recipients: [{ actorId: platformCollaborationActors.owner, status: "accepted" }],
+    });
+    await sessions.create({ actorId, clientRequestId: requestId, scopeId, organizationId, runtimeId: "runtime_owner",
+      authorityGeneration: 1, appId: app.appId, catalogId: app.catalogId, buildId: app.buildId, shareRevision: 3 });
+
+    const response = await routes.request("/internal/collaboration/directory", {
+      method: "PUT",
+      headers: {
+        "content-type": "application/json",
+        "x-matrix-runtime-id": "runtime_owner",
+        authorization: `Bearer ${"a".repeat(32)}`,
+      },
+      body: JSON.stringify({
+        eventId: "20000000-0000-4000-8000-000000000010", scopeId, runtimeId: "runtime_owner",
+        ownerId: platformCollaborationActors.owner, kind: "app", organizationId, audience: "current_membership",
+        authorityGeneration: 1, metadataRevision: 2, app: { ...app, state: "stopped", shareRevision: 2 },
+        recipients: [{ actorId: platformCollaborationActors.owner, status: "revoked" }],
+      }),
+    });
+
+    expect(response.status).toBe(204);
+    expect(sessions.size).toBe(1);
+    expect(close).not.toHaveBeenCalled();
+  });
 });
 
 describe("collaborative app launch owner-session client", () => {
@@ -393,6 +429,14 @@ describe("collaborative app launch owner-session client", () => {
       method: "GET",
       path: `/api/collaboration/scopes/${scopeId}/apps/${app.appId}/assets/assets/main.js`,
     }));
+    await upstreamClient.request("assets/team logo?#.png", new AbortController().signal);
+    const encodedPath = `/api/collaboration/scopes/${scopeId}/apps/${app.appId}/assets/assets/team%20logo%3F%23.png`;
+    const encodedRequest = relay.forward.mock.calls.findLast(([input]) => input.method === "GET")![0];
+    expect(encodedRequest.path).toBe(encodedPath);
+    const requestProof = JSON.parse(Buffer.from(
+      encodedRequest.headers.get("x-matrix-collaboration-request")!, "base64url",
+    ).toString("utf8")) as { signature: { path: string } };
+    expect(requestProof.signature.path).toBe(encodedPath);
     await upstreamClient.close();
     expect(relay.forward).toHaveBeenCalledWith(expect.objectContaining({ method: "DELETE" }));
   });
