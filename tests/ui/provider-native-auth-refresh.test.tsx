@@ -71,3 +71,74 @@ it("continues bounded native observation after correcting an initially fast wall
  await act(async()=>{window.dispatchEvent(new Event("focus"));document.dispatchEvent(new Event("visibilitychange"));});
  expect(getSnapshot).toHaveBeenCalledTimes(2);
 });
+
+it("retains an early focus request until the remaining debounce expires",async()=>{
+ let current=snapshot("first@example.test",false);
+ const getSnapshot=vi.fn(async()=>structuredClone(current));const transport={getSnapshot,mutate:vi.fn()};
+ const hook=renderHook(()=>useProviderSettingsController({identityKey:"owner/main",transport,automaticNativeAuthRefreshEnabled:true}));
+ await advance();current=snapshot();
+ await advance(100);await act(async()=>window.dispatchEvent(new Event("focus")));
+ // Repeated focus/visibility events coalesce at the original 500ms boundary.
+ await advance(100);await act(async()=>document.dispatchEvent(new Event("visibilitychange")));
+ await advance(299);expect(getSnapshot).toHaveBeenCalledOnce();
+ await advance(1);expect(getSnapshot).toHaveBeenCalledTimes(2);
+ expect(hook.result.current.snapshot?.accounts[0]?.authState).toBe("authenticated");
+ await advance(19_999);expect(getSnapshot).toHaveBeenCalledTimes(2);
+ await advance(1);expect(getSnapshot).toHaveBeenCalledTimes(3);
+ expect(transport.mutate).not.toHaveBeenCalled();
+});
+
+it("retains focus after a recent native observation rather than postponing it to the cadence",async()=>{
+ let current=snapshot("first@example.test",false);
+ const getSnapshot=vi.fn(async()=>structuredClone(current));const transport={getSnapshot,mutate:vi.fn()};
+ const hook=renderHook(()=>useProviderSettingsController({identityKey:"owner/main",transport,automaticNativeAuthRefreshEnabled:true}));
+ await advance(1000);await act(async()=>window.dispatchEvent(new Event("focus")));
+ expect(getSnapshot).toHaveBeenCalledTimes(2);current=snapshot("replacement@example.test");
+ await advance(100);await act(async()=>window.dispatchEvent(new Event("focus")));
+ await advance(399);expect(getSnapshot).toHaveBeenCalledTimes(2);
+ await advance(1);expect(getSnapshot).toHaveBeenCalledTimes(3);
+ expect(hook.result.current.snapshot?.accounts[0]?.connectionDetails?.email).toBe("replacement@example.test");
+});
+
+it.each([200,700])("coalesces focus during a %dms native read into one bounded follow-up without overlap",async(responseDelay)=>{
+ let current=snapshot("first@example.test",false);
+ let release:((value:ProviderSettingsSnapshot)=>void)|undefined;
+ const getSnapshot=vi.fn(async()=>structuredClone(current));const transport={getSnapshot,mutate:vi.fn()};
+ const hook=renderHook(()=>useProviderSettingsController({identityKey:"owner/main",transport,automaticNativeAuthRefreshEnabled:true}));
+ await advance();
+ getSnapshot.mockImplementationOnce(()=>new Promise(resolve=>{release=resolve;}));
+ await advance(1000);await act(async()=>window.dispatchEvent(new Event("focus")));
+ expect(getSnapshot).toHaveBeenCalledTimes(2);
+ const oldObservation=structuredClone(current);current=snapshot("replacement@example.test");
+ await advance(100);await act(async()=>{window.dispatchEvent(new Event("focus"));document.dispatchEvent(new Event("visibilitychange"));});
+ await advance(responseDelay-100);expect(getSnapshot).toHaveBeenCalledTimes(2);
+ await act(async()=>release!(oldObservation));
+ if(responseDelay<500){await advance(499-responseDelay);expect(getSnapshot).toHaveBeenCalledTimes(2);await advance(1);}else await advance();
+ expect(getSnapshot).toHaveBeenCalledTimes(3);
+ expect(hook.result.current.snapshot?.accounts[0]?.connectionDetails?.email).toBe("replacement@example.test");
+ await advance(19_999);expect(getSnapshot).toHaveBeenCalledTimes(3);
+});
+
+it.each(["hidden","offline","disabled","disposed"] as const)("cleans up a trailing focus refresh when %s",async(mode)=>{
+ const getSnapshot=vi.fn(async()=>snapshot());const transport={getSnapshot,mutate:vi.fn()};
+ const hook=renderHook(({enabled})=>useProviderSettingsController({identityKey:"owner/main",transport,automaticNativeAuthRefreshEnabled:enabled}),{initialProps:{enabled:true}});
+ await advance(100);await act(async()=>window.dispatchEvent(new Event("focus")));
+ if(mode==="hidden"){
+  vi.spyOn(document,"visibilityState","get").mockReturnValue("hidden");
+  await act(async()=>document.dispatchEvent(new Event("visibilitychange")));
+ }else if(mode==="offline"){
+  vi.spyOn(navigator,"onLine","get").mockReturnValue(false);
+  await act(async()=>window.dispatchEvent(new Event("offline")));
+ }else if(mode==="disabled")hook.rerender({enabled:false});else hook.unmount();
+ await advance(60_000);expect(getSnapshot).toHaveBeenCalledOnce();
+});
+
+it("cancels the old Computer's trailing focus timer on identity replacement",async()=>{
+ const oldTransport={getSnapshot:vi.fn(async()=>snapshot("old@example.test")),mutate:vi.fn()};
+ const nextTransport={getSnapshot:vi.fn(async()=>snapshot("next@example.test")),mutate:vi.fn()};
+ const hook=renderHook(({identityKey,transport})=>useProviderSettingsController({identityKey,transport,automaticNativeAuthRefreshEnabled:true}),{initialProps:{identityKey:"old",transport:oldTransport}});
+ await advance(100);await act(async()=>window.dispatchEvent(new Event("focus")));
+ hook.rerender({identityKey:"next",transport:nextTransport});await advance(400);
+ expect(oldTransport.getSnapshot).toHaveBeenCalledOnce();expect(nextTransport.getSnapshot).toHaveBeenCalledOnce();
+ expect(hook.result.current.snapshot?.accounts[0]?.connectionDetails?.email).toBe("next@example.test");
+});

@@ -91,3 +91,23 @@ it("loads capabilities for a new Computer and aborts the old capability request"
   expect(service.capabilities).toHaveBeenCalledTimes(2); expect(signals[0]!.aborted).toBe(true);
   await advance(20_000); expect(service.capabilities).toHaveBeenCalledTimes(2);
 });
+
+it("shows Terminal login after an early Web focus without waiting for the 20-second cadence", async () => {
+  service.email = null;
+  service.getSnapshot.mockImplementation(async () => {
+    const value = snapshot();
+    // Keep the saved execution route unverified; only fresh native account
+    // evidence may update the shared authentication indicator.
+    Object.assign(value.harnesses[0]!, { authState: "unknown", accessSourceId: null,
+      selectedAccountId: null, configuredAccessSourceId: "owner_anthropic_profile" });
+    return value;
+  });
+  render(<AgentSection automaticCreditRefreshEnabled />); await advance();
+  expect(screen.getByRole("button", { name: /^Claude.*Not connected/ })).toBeVisible();
+  service.email = "terminal@example.test";
+  await advance(100); await act(async () => { window.dispatchEvent(new Event("focus")); });
+  await advance(400);
+  expect(service.getSnapshot).toHaveBeenCalledTimes(2);
+  expect(screen.getByRole("button", { name: /^Claude.*Connected/ })).toBeVisible();
+  expect(service.mutate).not.toHaveBeenCalled(); expect(service.authorizeConnection).not.toHaveBeenCalled();
+});

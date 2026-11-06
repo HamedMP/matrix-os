@@ -12,23 +12,28 @@ export function useNativeAuthRefresh(owner:{refreshNativeAuthentication:(signal:
     if (!enabled) return;
     const state=lifetime.current!;
     let alive=true,request:AbortController|null=null;
+    let pendingEvent=false;
     let timer:ReturnType<typeof setTimeout>|undefined;
     const visible=()=>document.visibilityState!=="hidden" && navigator.onLine!==false;
-    const schedule=()=>{clearTimeout(timer);if(alive && visible())timer=setTimeout(check,CADENCE_MS);};
+    const schedule=(delay=CADENCE_MS)=>{clearTimeout(timer);if(alive && visible())timer=setTimeout(check,delay);};
+    const remainingDebounce=()=>Math.max(0,EVENT_DEBOUNCE_MS-(performance.now()-state.lastStarted));
     const check=()=>{
       clearTimeout(timer);
       if(!alive || !visible()){request?.abort();return;}
-      if(request)return;
-      if(performance.now()-state.lastStarted<EVENT_DEBOUNCE_MS){schedule();return;}
+      if(request){pendingEvent=true;return;}
+      const remaining=remainingDebounce();
+      if(remaining>0){schedule(remaining);return;}
+      pendingEvent=false;
       state.lastStarted=performance.now();request=new AbortController();const pending=request;
       void owner.refreshNativeAuthentication(pending.signal).catch((error:unknown)=>{
         if(!pending.signal.aborted)console.warn("[provider-settings] Native authentication refresh failed:",error instanceof Error?error.name:typeof error);
       }).finally(()=>{
         if(!alive || request!==pending)return;
-        request=null;schedule();
+        request=null;
+        if(pendingEvent){pendingEvent=false;schedule(remainingDebounce());}else schedule();
       });
     };
-    const reconcile=()=>{if(!visible()){clearTimeout(timer);request?.abort();}else check();};
+    const reconcile=()=>{if(!visible()){pendingEvent=false;clearTimeout(timer);request?.abort();}else check();};
     window.addEventListener("focus",reconcile);window.addEventListener("online",reconcile);window.addEventListener("offline",reconcile);
     document.addEventListener("visibilitychange",reconcile);
     if(resumed)check();else schedule();

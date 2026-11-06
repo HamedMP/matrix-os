@@ -123,8 +123,10 @@ suite("Electron Desktop Terminal-origin Claude authentication (synthetic native 
   const native=gateway.terminalAuthentication;if(!native)throw new Error("Native fixture required");
   const row=()=>page.locator(".matrix-ap-rail-item").filter({hasText:"Claude"}).first();
   await expect.poll(()=>row().innerText()).toContain("Not connected");const before=await native.configuration();
-  const focus=()=>page.evaluate(()=>window.dispatchEvent(new Event("focus")));
-  await native.setStatus("first@example.test");await focus();await expect.poll(()=>row().innerText()).toContain("Connected");
+  await native.setStatus("first@example.test");
+  const loginSnapshot=await nativeSnapshotOnFocus(page,gateway.url);
+  expect(loginSnapshot.accounts.find(account=>account.id==="owner_claude_profile")).toMatchObject({authState:"authenticated",connectionDetails:{email:"first@example.test"}});
+  await expect.poll(()=>row().innerText()).toContain("Connected");
   // Automatic detection updates the existing indicator; it must not substitute
   // a native account card for this separately saved historical execution route.
   expect(await page.locator(".matrix-ap-connected").count()).toBe(0);
@@ -135,7 +137,12 @@ suite("Electron Desktop Terminal-origin Claude authentication (synthetic native 
   expect(replacementSnapshot.accounts.find(account=>account.id==="owner_claude_profile")).toMatchObject({authState:"authenticated",connectionDetails:{email:"second@example.test"}});
   expect(await row().innerText()).toContain("Connected");
   expect(await page.locator(".matrix-ap-connected").count()).toBe(0);
-  await native.setStatus(null);await page.waitForTimeout(550);await focus();await expect.poll(()=>row().innerText()).toContain("Not connected");
+  await native.setStatus(null);await page.waitForTimeout(550);
+  const logoutSnapshot=await nativeSnapshotOnFocus(page,gateway.url);
+  const loggedOutAccount=logoutSnapshot.accounts.find(account=>account.id==="owner_claude_profile");
+  expect(loggedOutAccount).toMatchObject({authState:"unknown",lastCheckedAt:null});
+  expect(loggedOutAccount?.connectionDetails).toBeUndefined();
+  await expect.poll(()=>row().innerText()).toContain("Not connected");
   await page.screenshot({path:join(captures.path,"02-terminal-logged-out.png")});
   expect(await native.configuration()).toBe(before);expect(gateway.counters()).toEqual({completions:0,browserStarts:0,terminalStarts:0});
   const snapshot=await native.store.getSnapshot({includeNativeAccountMetadata:true});

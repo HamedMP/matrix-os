@@ -114,7 +114,10 @@ Web and Electron Settings opt into `useNativeAuthRefresh` only while their
 Settings surface is active. It rechecks on focus, visibility/online return and a
 20-second visible-online cadence, before the native proof's unchanged 30-second
 expiry. Trigger coalescing uses monotonic elapsed time so correcting a bad client
-wall clock cannot stall future observations. Reads use the existing unforced owner snapshot
+wall clock cannot stall future observations. An event inside the coalescing window
+runs after its remaining delay, rather than waiting for the periodic cadence.
+Events during an active probe retain one serialized follow-up; hidden/offline
+and disposed observers clear it. Reads use the existing unforced owner snapshot
 and credential-bound provider quota cache. The controller coalesces with its
 active reads/mutations; hidden surfaces pause, disposal aborts and old Computer
 responses cannot replace a new controller. Native authentication changes notify
@@ -161,3 +164,8 @@ and assert bounded capability and Bot reads, not a frozen snapshot. Electron
 account-replacement acceptance must capture the actual renderer-received native
 snapshot and exact principal without depending on debugger response-body
 retention. Keep the original response and admission/configuration assertions.
+
+The native probe can legitimately take its bounded read budget. Electron first
+login, principal replacement and logout must await the actual renderer response
+with exact native state before the existing short UI assertion. Keep first-focus
+acceptance free of artificial readiness sleeps and retain timeout bounds.
