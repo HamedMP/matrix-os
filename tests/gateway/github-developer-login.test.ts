@@ -44,6 +44,9 @@ if (fixture.FAKE_ENV_LOG) appendFileSync(fixture.FAKE_ENV_LOG, JSON.stringify({
 }) + "\\n");
 if (command === "gh") {
   if (args[0] === "auth" && args[1] === "login") {
+    if (fixture.FAKE_REQUIRE_ACCESSIBLE_PROMPTER === "1" && process.env.GH_ACCESSIBLE_PROMPTER !== "1") {
+      process.exit(15);
+    }
     if (fixture.FAKE_PRIVATE_KEY === "1") {
       process.stdout.write("-----BEGIN OPENSSH PRIVATE KEY-----\\n");
       await new Promise((resolveChunk) => setTimeout(resolveChunk, 20));
@@ -252,6 +255,20 @@ process.exit(9);
 
     expect(result.code).toBe(0);
     expect(result.stdout).toContain("Choose an SSH key: ");
+  });
+
+  it("uses the accessible login prompter so cursor probing cannot hide the owner's question", async () => {
+    const prompt = "Generate a new SSH key to add to your GitHub account? (Y/n): ";
+    const result = await runLogin("\n\n", {
+      FAKE_REQUIRE_ACCESSIBLE_PROMPTER: "1",
+      FAKE_LOGIN_PROMPT: "1",
+      FAKE_PROMPT_TEXT: prompt,
+      GH_ACCESSIBLE_PROMPTER: "false",
+    });
+
+    expect(result.code).toBe(0);
+    expect(result.stdout).toContain(prompt);
+    expect(result.stdout).toContain("GitHub developer access is ready for octocat.");
   });
 
   it.each([
