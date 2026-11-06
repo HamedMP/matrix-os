@@ -10,6 +10,7 @@ import {
 import {
   createDefaultOsViewDocument,
   findOpenOsViewDesktopSlot,
+  placeOsViewDesktopIcon,
   normalizeOsViewDesktopAppPath,
   OsViewStateResponseSchema,
   type OsViewDesktopAddResult,
@@ -73,7 +74,8 @@ interface DesktopIconsState {
   hydrate(value: unknown, defaults: readonly DesktopIconPlacement[], expectedRevision: number): void;
   move(path: string, x: number, y: number, api: ApiClient): Promise<void>;
   remove(path: string, api: ApiClient): Promise<void>;
-  add(path: string, api: ApiClient, bounds?: OsViewDesktopBounds): Promise<OsViewDesktopAddResult>;
+  /** `first` puts the icon in the top-left slot and moves the icons below it down one slot. */
+  add(path: string, api: ApiClient, bounds?: OsViewDesktopBounds, options?: { first?: boolean }): Promise<OsViewDesktopAddResult>;
 }
 
 let loadSequence = 0;
@@ -386,7 +388,7 @@ export const useDesktopIcons = create<DesktopIconsState>()((set, get) => ({
     const next = current.filter((icon) => icon.path !== path);
     await applyOptimisticMutation(api, current, next, set);
   },
-  add: (path, api, bounds = DEFAULT_DESKTOP_BOUNDS) => {
+  add: (path, api, bounds = DEFAULT_DESKTOP_BOUNDS, options = {}) => {
     if (!path || path.length > 2048) return Promise.resolve("failed");
     const pending = pendingDesktopAdds.get(path);
     if (pending) return pending;
@@ -395,9 +397,8 @@ export const useDesktopIcons = create<DesktopIconsState>()((set, get) => ({
       const current = get().icons;
       if (current.some((icon) => icon.path === path)) return "already-present";
       if (current.length >= MAX_DESKTOP_ICONS) return "desktop-full";
-      const slot = findOpenOsViewDesktopSlot(current, bounds);
-      if (!slot) return "desktop-full";
-      const next = [...current, { path, ...slot }];
+      const next = placeOsViewDesktopIcon(current, path, bounds, options);
+      if (!next) return "desktop-full";
       return await applyOptimisticMutation(api, current, next, set, true) ? "added" : "failed";
     })();
     pendingDesktopAdds.set(path, operation);

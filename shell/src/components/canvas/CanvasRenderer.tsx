@@ -14,6 +14,7 @@ import { CanvasTextLabel } from "./CanvasTextLabel";
 import { SelectionRect } from "./SelectionRect";
 import { autoArrangeWindows } from "./canvas-auto-arrange";
 import { CanvasMinimap } from "./CanvasMinimap";
+import { webGettingStartedWindowOnScreen } from "../getting-started-app/web-getting-started-app-port";
 
 const GROUP_COLORS = ["#3b82f6", "#10b981", "#f59e0b", "#ef4444", "#8b5cf6", "#ec4899"];
 const APP_HYDRATION_MARGIN_PX = 320;
@@ -216,6 +217,9 @@ function CanvasWindowMount({
       iconUrl={iconUrl}
       hidden={win.minimized}
       deferAppContent={!(shouldHydrateNow || hydratedOnce)}
+      onScreen={win.path === "__getting-started__"
+        ? webGettingStartedWindowOnScreen(win, { zoom, panX, panY, viewportWidth, viewportHeight })
+        : true}
     />
   );
 }

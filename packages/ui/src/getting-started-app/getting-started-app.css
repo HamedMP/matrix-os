@@ -5,7 +5,7 @@
    shell's, so light and dark themes both work (same chain as
    agents-providers.css). */
 .mxo-gsa,
-.mxo-gsa-summary,
+.mxo-gsa-open,
 .mxo-gsa-toast {
   /* Page, cards (#f3f2f2 in both light themes) and the lighter tiles on cards. */
   --gsa-paper: var(--bg-app, var(--background, #fafafa));
@@ -33,7 +33,7 @@
   -webkit-font-smoothing: antialiased;
 }
 
-:is(.dark, [data-theme="dark"]) :is(.mxo-gsa, .mxo-gsa-summary) {
+:is(.dark, [data-theme="dark"]) :is(.mxo-gsa, .mxo-gsa-open) {
   --gsa-gold-bg: var(--gsa-tint-gold-bg-dark);
   --gsa-gold-border: var(--gsa-tint-gold-border-dark);
   --gsa-gold-text: var(--gsa-tint-gold-text-dark);
@@ -161,29 +161,37 @@
   color: var(--gsa-success-text);
 }
 
-/* Hero: 320px welcome panel (640 of 1080) + "Start here" card; compact once started. */
+/* Hero: the Matrix agent + Sahar's starter tasks; compact ("Up next") once a task has started. */
 .mxo-gsa__hero {
   display: grid;
-  grid-template-columns: minmax(0, 640fr) minmax(0, 424fr);
+  grid-template-columns: minmax(0, 464fr) minmax(0, 600fr);
   gap: 16px;
   min-height: 320px;
 }
 
 .mxo-gsa__hero--compact {
-  grid-template-columns: minmax(0, 280fr) minmax(0, 784fr);
+  grid-template-columns: minmax(0, 400fr) minmax(0, 664fr);
   min-height: 216px;
 }
 
-.mxo-gsa__welcome {
+/* The Matrix agent (onboarding widget's rabbit avatar) on the forest panel. */
+.mxo-gsa__agent {
   position: relative;
   overflow: hidden;
   display: flex;
   flex-direction: column;
   justify-content: space-between;
-  padding: 20px;
+  gap: 24px;
+  padding: 24px;
   border-radius: 16px;
   background: var(--gsa-brand-forest);
   color: var(--gsa-on-brand);
+}
+
+.mxo-gsa__agent .mxo-rabbit {
+  position: relative;
+  background: rgba(250, 250, 250, 0.12);
+  box-shadow: inset 0 0 0 1px rgba(250, 250, 250, 0.18);
 }
 
 .mxo-gsa__glow {
@@ -200,6 +208,7 @@
   height: 384px;
   background: var(--gsa-brand-glow);
   opacity: 0.6;
+  animation: mxo-gsa-drift 14s ease-in-out infinite alternate;
 }
 
 .mxo-gsa__glow--bottom {
@@ -209,48 +218,43 @@
   height: 320px;
   background: var(--gsa-brand-glow-soft);
   opacity: 0.35;
+  animation: mxo-gsa-drift 18s ease-in-out infinite alternate-reverse;
 }
 
-.mxo-gsa__rabbit {
-  position: relative;
-  display: block;
-  width: 25px;
-  height: 32px;
-  background: currentColor;
-  -webkit-mask: var(--gsa-rabbit-mask) center / contain no-repeat;
-  mask: var(--gsa-rabbit-mask) center / contain no-repeat;
+@keyframes mxo-gsa-drift {
+  from { transform: translate(0, 0); }
+  to { transform: translate(-24px, 16px); }
 }
 
-.mxo-gsa__welcome-caption {
+.mxo-gsa__agent-text {
   position: relative;
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 8px;
 }
 
-.mxo-gsa__welcome-title {
+.mxo-gsa__agent-greeting {
   font-family: var(--gsa-font-display);
   font-size: 28px;
   font-weight: 600;
   line-height: 35px;
 }
 
-.mxo-gsa__welcome-subtitle {
+.mxo-gsa__agent-line {
+  max-width: 44ch;
   font-size: 14px;
   line-height: 20px;
-  opacity: 0.8;
+  opacity: 0.85;
 }
 
-.mxo-gsa__welcome--compact .mxo-gsa__welcome-title {
-  font-family: inherit;
-  font-size: 14px;
-  font-weight: 500;
-  line-height: 20px;
+.mxo-gsa__hero--compact .mxo-gsa__agent-greeting {
+  font-size: 20px;
+  line-height: 26px;
 }
 
-.mxo-gsa__welcome--compact .mxo-gsa__welcome-subtitle {
-  font-size: 12px;
-  line-height: 16px;
+.mxo-gsa__hero--compact .mxo-gsa__agent-line {
+  font-size: 13px;
+  line-height: 18px;
 }
 
 .mxo-gsa__next {
@@ -262,6 +266,64 @@
   padding: 24px;
   border-radius: 16px;
   background: var(--gsa-card);
+}
+
+/* Up next and the reward: a warm gold and teal glow from the brand scales, with the task's logo large. */
+.mxo-gsa__next:has(> .mxo-gsa__next-art, > .mxo-gsa__reward) {
+  position: relative;
+  overflow: hidden;
+  isolation: isolate;
+  background:
+    radial-gradient(120% 90% at 100% 0%, color-mix(in srgb, var(--gsa-brand-gold) 38%, transparent), transparent 62%),
+    radial-gradient(90% 80% at 0% 100%, color-mix(in srgb, var(--gsa-brand-teal) 34%, transparent), transparent 68%),
+    var(--gsa-card);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--gsa-brand-gold) 35%, transparent);
+}
+
+.mxo-gsa__next-art {
+  position: absolute;
+  top: 28px;
+  right: 32px;
+  z-index: -1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 112px;
+  height: 112px;
+  border-radius: 28px;
+  background: var(--gsa-paper);
+  box-shadow:
+    0 18px 40px -16px color-mix(in srgb, var(--gsa-brand-forest) 45%, transparent),
+    0 0 0 8px color-mix(in srgb, var(--gsa-brand-gold) 12%, transparent);
+  transform: rotate(8deg);
+  animation: mxo-gsa-art-in 520ms var(--mxo-ease) backwards;
+}
+
+/* Title and description stay clear of the logo tile. */
+.mxo-gsa__next:has(> .mxo-gsa__next-art) > :is(.mxo-gsa__next-title, .mxo-gsa__next-description) {
+  max-width: calc(100% - 152px);
+}
+
+.mxo-gsa__next-art img,
+.mxo-gsa__next-art svg {
+  width: 56px;
+  height: 56px;
+}
+
+.mxo-gsa__next-art .mxo-gsa__art-pair img {
+  width: 44px;
+  height: 44px;
+}
+
+@keyframes mxo-gsa-art-in {
+  0% { opacity: 0; transform: rotate(-6deg) scale(0.8); }
+  100% { opacity: 1; transform: rotate(8deg); }
+}
+
+.mxo-gsa__primary.mxo-gsa__primary--brand {
+  background: linear-gradient(135deg, var(--gsa-brand-fill), var(--gsa-brand-forest));
+  color: var(--gsa-on-brand);
+  box-shadow: 0 6px 16px -6px color-mix(in srgb, var(--gsa-brand-forest) 70%, transparent);
 }
 
 .mxo-gsa__chips {
@@ -300,6 +362,20 @@
 .mxo-gsa__spacer {
   flex: 1 0 0;
   min-height: 0;
+}
+
+/* Sahar's starter tasks, rendered with the onboarding widget's task button. */
+.mxo-gsa__starters {
+  align-self: stretch;
+  margin: 0;
+  border: 1px solid var(--mxo-border);
+  border-radius: 12px;
+  background: var(--mxo-surface);
+}
+
+.mxo-gsa__starters .mxo-task {
+  cursor: pointer;
+  font: inherit;
 }
 
 /* Matrix DS Button primary, md (36). */
@@ -420,6 +496,108 @@
   line-height: 18px;
 }
 
+/* Real logos, sculpted app icons and the Matrix rabbit on task cards. */
+.mxo-gsa__art-logo {
+  width: 22px;
+  height: 22px;
+  object-fit: contain;
+}
+
+.mxo-gsa__art-sculpted {
+  width: 30px;
+  height: 30px;
+  object-fit: contain;
+}
+
+.mxo-gsa__art-pair {
+  display: inline-flex;
+  align-items: center;
+}
+
+.mxo-gsa__art-pair img {
+  width: 18px;
+  height: 18px;
+  object-fit: contain;
+}
+
+.mxo-gsa__art-pair img + img {
+  margin-left: -4px;
+}
+
+/* Cards rise in with the widget's stagger; a card that just turned Done pops once. */
+.mxo-gsa__grid > * {
+  animation: mxo-rise 320ms var(--mxo-ease) backwards;
+}
+
+.mxo-gsa__grid > :nth-child(2) { animation-delay: 40ms; }
+.mxo-gsa__grid > :nth-child(3) { animation-delay: 80ms; }
+.mxo-gsa__grid > :nth-child(4) { animation-delay: 120ms; }
+
+.mxo-gsa__card--celebrate {
+  animation: mxo-gsa-pop 900ms var(--mxo-ease);
+  box-shadow: 0 0 0 2px var(--gsa-success-border), 0 8px 24px -8px color-mix(in srgb, var(--gsa-brand-teal) 45%, transparent);
+}
+
+@keyframes mxo-gsa-pop {
+  0% { transform: scale(1); }
+  30% { transform: scale(1.03); }
+  100% { transform: scale(1); }
+}
+
+/* A task that pays out while the app is showing: the hero plays a reward, the total floats "+N". */
+.mxo-gsa__reward {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 12px;
+  animation: mxo-gsa-reward 520ms var(--mxo-ease) backwards;
+}
+
+.mxo-gsa__reward-burst {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
+  border-radius: 999px;
+  border: 1px solid var(--gsa-gold-border);
+  background: var(--gsa-gold-bg);
+  color: var(--gsa-gold-text);
+  box-shadow: 0 0 0 0 color-mix(in srgb, var(--gsa-gold-border) 70%, transparent);
+  animation: mxo-gsa-burst 1.2s var(--mxo-ease) 120ms backwards;
+}
+
+@keyframes mxo-gsa-reward {
+  0% { opacity: 0; transform: translateY(8px) scale(0.96); }
+  100% { opacity: 1; transform: none; }
+}
+
+@keyframes mxo-gsa-burst {
+  0% { transform: scale(0.4) rotate(-30deg); box-shadow: 0 0 0 0 color-mix(in srgb, var(--gsa-gold-border) 70%, transparent); }
+  45% { transform: scale(1.12) rotate(6deg); }
+  100% { transform: none; box-shadow: 0 0 0 14px transparent; }
+}
+
+.mxo-gsa__points {
+  position: relative;
+}
+
+.mxo-gsa__points-pop {
+  position: absolute;
+  right: 8px;
+  top: -4px;
+  font-weight: 600;
+  color: var(--gsa-gold-text);
+  pointer-events: none;
+  animation: mxo-gsa-float 1.4s var(--mxo-ease) forwards;
+}
+
+@keyframes mxo-gsa-float {
+  0% { opacity: 0; transform: translateY(6px); }
+  20% { opacity: 1; }
+  100% { opacity: 0; transform: translateY(-22px); }
+}
+
 /* Matrix DS Button ghost, sm (32). */
 .mxo-gsa__support {
   align-self: center;
@@ -453,7 +631,7 @@
     grid-template-columns: minmax(0, 1fr);
     min-height: 0;
   }
-  .mxo-gsa__welcome {
+  .mxo-gsa__agent {
     min-height: 160px;
   }
   .mxo-gsa__grid,
@@ -473,6 +651,271 @@
     font-size: 22px;
     line-height: 28px;
   }
+  .mxo-gsa__next-art {
+    top: 20px;
+    right: 20px;
+    width: 64px;
+    height: 64px;
+    border-radius: 18px;
+  }
+  .mxo-gsa__next-art img,
+  .mxo-gsa__next-art svg {
+    width: 32px;
+    height: 32px;
+  }
+  .mxo-gsa__next:has(> .mxo-gsa__next-art) > :is(.mxo-gsa__next-title, .mxo-gsa__next-description) {
+    max-width: calc(100% - 84px);
+  }
+}
+
+/* Mirror of the corner widget: a small replica of the widget's line. */
+.mxo-gsa__mirror {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  max-width: 420px;
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: var(--gsa-paper);
+  box-shadow: inset 0 0 0 1px var(--gsa-border), 0 8px 24px -16px color-mix(in srgb, var(--gsa-brand-forest) 50%, transparent);
+}
+
+.mxo-gsa__mirror-line {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  overflow: hidden;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--gsa-text);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mxo-gsa__mirror--failed .mxo-gsa__mirror-line {
+  color: var(--gsa-gold-text);
+}
+
+.mxo-gsa__mirror-spin {
+  flex-shrink: 0;
+  color: var(--gsa-brand-green);
+  animation: mxo-gsa-spin 1s linear infinite;
+}
+
+/* Matrix unlocked: takes over the hero once nothing checkable is left (the end of onboarding). */
+.mxo-gsa__unlocked {
+  position: relative;
+  overflow: hidden;
+  isolation: isolate;
+  display: grid;
+  grid-template-columns: 200px minmax(0, 1fr);
+  align-items: center;
+  gap: 32px;
+  min-height: 280px;
+  padding: 32px 40px;
+  border-radius: 16px;
+  background:
+    radial-gradient(70% 120% at 18% 50%, color-mix(in srgb, var(--gsa-brand-gold) 30%, transparent), transparent 70%),
+    linear-gradient(135deg, var(--gsa-brand-forest), var(--gsa-brand-forest-deep));
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--gsa-brand-gold) 40%, transparent);
+  color: var(--gsa-on-brand);
+  animation: mxo-gsa-unlock 640ms var(--mxo-ease) backwards;
+}
+
+.mxo-gsa__unlocked > .mxo-gsa__glow {
+  z-index: -1;
+}
+
+.mxo-gsa__confetti {
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+.mxo-gsa__confetti i {
+  position: absolute;
+  top: -16px;
+  width: 7px;
+  height: 12px;
+  border-radius: 2px;
+  opacity: 0;
+  animation: mxo-gsa-confetti 2.6s cubic-bezier(0.25, 0.6, 0.4, 1) 2 forwards;
+}
+
+.mxo-gsa__confetti i:nth-child(even) {
+  width: 9px;
+  height: 9px;
+  border-radius: 9999px;
+}
+
+.mxo-gsa__medal {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 200px;
+  height: 200px;
+}
+
+.mxo-gsa__medal-rays {
+  position: absolute;
+  inset: -12px;
+  border-radius: 9999px;
+  background: repeating-conic-gradient(
+    from 0deg,
+    color-mix(in srgb, var(--gsa-brand-gold) 34%, transparent) 0deg 9deg,
+    transparent 9deg 24deg
+  );
+  mask-image: radial-gradient(circle, black 30%, transparent 70%);
+  animation: mxo-gsa-spin 24s linear infinite;
+}
+
+.mxo-gsa__medal-ring {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 128px;
+  height: 128px;
+  border-radius: 9999px;
+  background: conic-gradient(from 200deg, var(--gsa-brand-gold-light), var(--gsa-brand-gold), var(--gsa-brand-gold-deep), var(--gsa-brand-gold-light), var(--gsa-brand-gold), var(--gsa-brand-gold-light));
+  box-shadow:
+    0 0 0 6px color-mix(in srgb, var(--gsa-brand-gold) 22%, transparent),
+    0 24px 48px -16px rgba(0, 0, 0, 0.55),
+    inset 0 2px 6px rgba(255, 255, 255, 0.5);
+  animation: mxo-gsa-medal 760ms var(--mxo-ease) 120ms backwards;
+}
+
+.mxo-gsa__medal-ring .mxo-rabbit {
+  background: var(--gsa-brand-forest);
+  box-shadow: inset 0 0 0 3px rgba(250, 250, 250, 0.2);
+}
+
+.mxo-gsa__medal-star {
+  position: absolute;
+  top: 26px;
+  right: 30px;
+  display: grid;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  border-radius: 9999px;
+  background: var(--gsa-on-brand);
+  color: var(--gsa-brand-gold);
+  box-shadow: 0 6px 16px -4px rgba(0, 0, 0, 0.4);
+  animation: mxo-gsa-pop 520ms var(--mxo-ease) 560ms backwards;
+}
+
+.mxo-gsa__medal-star svg {
+  fill: currentColor;
+}
+
+.mxo-gsa__unlocked-text {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 12px;
+  min-width: 0;
+}
+
+.mxo-gsa__unlocked-title {
+  margin: 0;
+  font-size: 30px;
+  line-height: 36px;
+  font-weight: 650;
+  letter-spacing: -0.02em;
+  background: linear-gradient(90deg, var(--gsa-on-brand), var(--gsa-brand-gold-light));
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+.mxo-gsa__unlocked-line {
+  margin: 0;
+  max-width: 560px;
+  font-size: 15px;
+  line-height: 22px;
+  color: rgba(250, 250, 250, 0.82);
+}
+
+.mxo-gsa__unlocked-stats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.mxo-gsa__unlocked-stat {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 30px;
+  padding: 0 12px;
+  border-radius: 9999px;
+  background: rgba(250, 250, 250, 0.1);
+  box-shadow: inset 0 0 0 1px rgba(250, 250, 250, 0.16);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.mxo-gsa__unlocked-stat svg {
+  color: var(--gsa-brand-gold-light);
+}
+
+.mxo-gsa__primary.mxo-gsa__primary--gold {
+  margin-top: 4px;
+  background: linear-gradient(135deg, var(--gsa-brand-gold-light), var(--gsa-brand-gold));
+  color: var(--gsa-brand-gold-ink);
+  font-weight: 650;
+  box-shadow: 0 8px 20px -8px color-mix(in srgb, var(--gsa-brand-gold) 80%, transparent);
+}
+
+.mxo-gsa__unlocked-note {
+  margin: 0;
+  font-size: 12px;
+  color: rgba(250, 250, 250, 0.6);
+}
+
+@keyframes mxo-gsa-unlock {
+  from { opacity: 0; transform: scale(0.97); }
+}
+
+@keyframes mxo-gsa-medal {
+  0% { opacity: 0; transform: scale(0.4) rotate(-30deg); }
+  70% { opacity: 1; transform: scale(1.08) rotate(4deg); }
+  100% { transform: scale(1) rotate(0); }
+}
+
+@keyframes mxo-gsa-spin {
+  to { transform: rotate(360deg); }
+}
+
+@keyframes mxo-gsa-confetti {
+  0% { opacity: 0; transform: translateY(0) rotate(0); }
+  10% { opacity: 1; }
+  100% { opacity: 0; transform: translateY(320px) rotate(540deg); }
+}
+
+@container (max-width: 760px) {
+  .mxo-gsa__unlocked {
+    grid-template-columns: minmax(0, 1fr);
+    justify-items: center;
+    gap: 16px;
+    padding: 28px 24px;
+    text-align: center;
+  }
+  .mxo-gsa__unlocked-text {
+    align-items: center;
+  }
+  .mxo-gsa__medal {
+    width: 160px;
+    height: 160px;
+  }
+  .mxo-gsa__unlocked-title {
+    font-size: 24px;
+    line-height: 30px;
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -481,53 +924,49 @@
   .mxo-gsa__primary {
     transition: none;
   }
+  .mxo-gsa__grid > *,
+  .mxo-gsa__starters > *,
+  .mxo-gsa__card--celebrate,
+  .mxo-gsa__next-art,
+  .mxo-gsa__reward,
+  .mxo-gsa__reward-burst,
+  .mxo-gsa__glow,
+  .mxo-gsa__unlocked,
+  .mxo-gsa__medal-rays,
+  .mxo-gsa__medal-ring,
+  .mxo-gsa__medal-star,
+  .mxo-gsa__mirror-spin {
+    animation: none;
+  }
+  .mxo-gsa__points-pop,
+  .mxo-gsa__confetti {
+    display: none;
+  }
 }
 
-/* Help popover summary row. */
-.mxo-gsa-summary {
-  display: flex;
+/* Help checklist header: opens the app full size, like the onboarding widget's expand button. */
+.mxo-gsa-open {
+  display: inline-flex;
   align-items: center;
-  gap: 8px;
-  width: calc(100% - 24px);
-  margin: 0 12px 10px;
-  padding: 8px 10px;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
   border: 0;
-  border-radius: 8px;
-  background: var(--gsa-card);
-  color: var(--gsa-text);
-  font: inherit;
-  font-family: var(--gsa-font-ui);
-  text-align: left;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--gsa-muted);
   cursor: pointer;
 }
 
-.mxo-gsa-summary:hover {
-  background: var(--gsa-card-hover);
+.mxo-gsa-open:hover {
+  background: var(--gsa-card);
+  color: var(--gsa-text);
 }
 
-.mxo-gsa-summary:focus-visible {
+.mxo-gsa-open:focus-visible {
   outline: 2px solid var(--gsa-focus);
   outline-offset: 2px;
-}
-
-.mxo-gsa-summary__text {
-  display: flex;
-  flex: 1;
-  min-width: 0;
-  flex-direction: column;
-  gap: 2px;
-}
-
-.mxo-gsa-summary__title {
-  font-size: 12px;
-  font-weight: 500;
-  line-height: 16px;
-}
-
-.mxo-gsa-summary__detail {
-  color: var(--gsa-muted);
-  font-size: 11px;
-  line-height: 14px;
 }
 
 /* Completion toast (Figma 1938:1226): dark pill, check, title, gold points. */

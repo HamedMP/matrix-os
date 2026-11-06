@@ -4,6 +4,7 @@ import {
   GettingStartedAppAwardResponseSchema,
   GettingStartedAppDesktopIconResponseSchema,
   GettingStartedAppProgressSchema,
+  gettingStartedAppLogos,
 } from "@matrix-os/contracts";
 import type { GettingStartedAppPort } from "@matrix-os/ui";
 import type { ApiClient } from "../../lib/api";
@@ -46,6 +47,9 @@ export function createDesktopGettingStartedAppPort(api: Pick<ApiClient, "get" | 
     },
     async markDesktopIconPlaced(signal) {
       GettingStartedAppDesktopIconResponseSchema.parse(await api.post("/api/getting-started/desktop-icon", {}, signal ? { signal } : undefined));
+    },
+    async loadLogos(signal) {
+      return gettingStartedAppLogos(await api.get("/api/integrations/available", { signal }));
     },
   };
 }

@@ -1,7 +1,6 @@
-import { desktopFonts, desktopPalette, productScales, rabbitMarkSvg } from "@matrix-os/brand";
+import { desktopFonts, desktopPalette, productScales } from "@matrix-os/brand";
 import type { CSSProperties } from "react";
 
-const rabbitMask = `url("data:image/svg+xml,${encodeURIComponent(rabbitMarkSvg("mark"))}")`;
 
 /**
  * Brand values for the Getting started app, from @matrix-os/brand (Matrix DS
@@ -17,6 +16,9 @@ export const GETTING_STARTED_APP_BRAND_VARS = {
   "--gsa-brand-glow-soft": productScales.green[300],
   "--gsa-brand-fill": productScales.green[500],
   "--gsa-brand-gold": productScales.gold[500],
+  "--gsa-brand-gold-light": productScales.gold[300],
+  "--gsa-brand-gold-deep": productScales.gold[600],
+  "--gsa-brand-gold-ink": productScales.gold[900],
   /** Text and marks on the forest and ink panels. */
   "--gsa-on-brand": productScales.neutral[25],
   "--gsa-ink": productScales.neutral[800],
@@ -40,5 +42,4 @@ export const GETTING_STARTED_APP_BRAND_VARS = {
   "--gsa-tint-success-bg-dark": productScales.teal[900],
   "--gsa-tint-success-border-dark": productScales.teal[800],
   "--gsa-tint-success-text-dark": productScales.teal[300],
-  "--gsa-rabbit-mask": rabbitMask,
 } as CSSProperties;

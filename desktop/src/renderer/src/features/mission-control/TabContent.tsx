@@ -95,7 +95,7 @@ export function TabPane({
     case "notes":
       return <NotesWorkspace active={active} />;
     case "getting-started":
-      return <DesktopGettingStartedAppWindow />;
+      return <DesktopGettingStartedAppWindow visible={visible} />;
     case "apps":
       return <AppLauncher />;
     case "projects":
