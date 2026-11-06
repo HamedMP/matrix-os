@@ -26,6 +26,7 @@ import type {
   CollaborativeAppReadinessRepository,
 } from "./collaborative-app-readiness-repository.js";
 import { CollaborativeAppShareServiceError } from "./collaborative-app-share-service.js";
+import { CollaborativeAppShareRepositoryError } from "./collaborative-app-share-repository.js";
 
 const AppIdSchema = z.string().min(1).max(256).regex(/^[A-Za-z0-9_-]+$/);
 const DigestSchema = z.string().regex(/^[a-f0-9]{64}$/);
@@ -144,6 +145,14 @@ function failure(context: Context, error: unknown) {
     }
   }
   if (error instanceof CollaborativeAppShareServiceError) {
+    switch (error.code) {
+      case "invalid": return context.json({ error: "Invalid share request", code: "invalid_request" }, 400);
+      case "not_found": return context.json({ error: "App not found", code: "not_found" }, 404);
+      case "conflict": return context.json({ error: "App changed; refresh and try again", code: "conflict" }, 409);
+      case "unavailable": break;
+    }
+  }
+  if (error instanceof CollaborativeAppShareRepositoryError) {
     switch (error.code) {
       case "invalid": return context.json({ error: "Invalid share request", code: "invalid_request" }, 400);
       case "not_found": return context.json({ error: "App not found", code: "not_found" }, 404);
