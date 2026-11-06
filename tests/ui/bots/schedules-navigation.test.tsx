@@ -290,3 +290,12 @@ it("cannot roll back an accepted pause with a late committed-result detail refre
   await act(async () => finishDetail({routine: staleOther, history: []}));
   expect(screen.queryByRole("button", {name: "Pause Other saved task"})).toBeNull();
 });
+
+it("links a routine to its immutable source separately from executor history and retains unavailable source state", async()=>{
+ const base=clientFixture(),open=vi.fn(),current={...routine,originChatId:"chat_source",originAvailable:true};
+ const api={list:vi.fn(async()=>({items:[current],pending:[],nextCursor:null})),detail:vi.fn(async()=>({routine:current,history:[]})),review:vi.fn(),control:vi.fn()};
+ render(<ScheduleCenter client={{...base,bots:{routines:api}} as unknown as ChatAgentClient} onClose={vi.fn()} onOpenBotChat={open}/>);
+ fireEvent.click(await screen.findByRole("button",{name:"View Morning brief"}));fireEvent.click(await screen.findByRole("button",{name:"Open source Chat"}));await waitFor(()=>expect(open).toHaveBeenCalledWith("chat_source"));cleanup();
+ current.originAvailable=false;render(<ScheduleCenter client={{...base,bots:{routines:api}} as unknown as ChatAgentClient} onClose={vi.fn()} onOpenBotChat={open}/>);
+ fireEvent.click(await screen.findByRole("button",{name:"View Morning brief"}));expect(await screen.findByText("Source Chat unavailable. Execution history remains available.")).toBeTruthy();expect(screen.queryByRole("button",{name:"Open source Chat"})).toBeNull();expect(screen.getByRole("button",{name:"Open execution history"})).toBeTruthy();
+});

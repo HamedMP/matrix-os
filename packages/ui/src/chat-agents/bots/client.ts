@@ -1,3 +1,4 @@
+import { createRoutineOriginClient, type RoutineOriginClient } from "../../chat/routine-origin-client.js";
 import { ROUTINE_DESTINATION_PATH, RoutineDestinationViewSchema, RoutineCliRememberTargetSchema, RoutineCliResetTargetSchema } from "@matrix-os/contracts/routine-destination";
 import type { RoutineDestinationClient } from "../../routine-destination/use-routine-destination.js";
 import { CreateManagedCustomBotRequestSchema, RecoverManagedCustomBotRequestSchema, type CreateManagedCustomBotRequest } from "@matrix-os/contracts";
@@ -46,6 +47,7 @@ function safeError(error: unknown): BotClientError {
 }
 
 export interface BotClient extends Partial<BotConnectionClient> {
+  routineOrigin?: RoutineOriginClient;
   routineDestination?: RoutineDestinationClient;
   routines?: BotRoutineClient;
   ensureDirectChat(agentId: string): Promise<string | null>;
@@ -75,6 +77,7 @@ export function createBotClient(request: BotRequest): BotClient {
   const agentPath = (agentId: string) => `/api/chat-agents/${encodeURIComponent(ChatAgentIdSchema.parse(agentId))}`;
   const chatPath = (chatId: string) => `/api/chats/${encodeURIComponent(CanonicalChatIdSchema.parse(chatId))}`;
   return {
+    routineOrigin: createRoutineOriginClient(request),
     routineDestination: {
       get: signal => call(ROUTINE_DESTINATION_PATH, "GET", RoutineDestinationViewSchema, undefined, signal),
       remember: (input, signal) => call(ROUTINE_DESTINATION_PATH, "POST", RoutineDestinationViewSchema, RoutineCliRememberTargetSchema.parse(input), signal),
