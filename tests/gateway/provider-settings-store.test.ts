@@ -272,6 +272,24 @@ describe("ProviderSettingsStore", () => {
     });
   });
 
+  it("keeps the provider inventory readable without falling back when the saved route expires", async () => {
+    const store = createStore();
+    await store.getSnapshot();
+    const savedInstance = canonical.instances.find((instance) => instance.id === "kernel_owner")!;
+    savedInstance.readiness = { ...ready, state: "expired", action: "connect", safeReason: "auth" };
+    savedInstance.defaultModelId = null;
+
+    await expect(store.getCanonicalCollaborationSnapshot()).resolves.toMatchObject({
+      active: { providerInstanceId: null, accessSourceId: null, modelId: null },
+      accessSources: expect.arrayContaining([
+        expect.objectContaining({ id: "matrix_included", state: "ready" }),
+      ]),
+      instances: expect.arrayContaining([
+        expect.objectContaining({ id: "kernel_owner", readiness: expect.objectContaining({ state: "expired" }) }),
+      ]),
+    });
+  });
+
   it("projects fresh V3 truth and persists owner configuration without readiness or usage copies", async () => {
     const store = createStore();
     const initial = await store.getSnapshot();

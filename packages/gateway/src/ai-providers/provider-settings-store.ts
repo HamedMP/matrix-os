@@ -109,7 +109,9 @@ function savedCollaborationRoute(
       : instance.driverId === "claude_code" || instance.driverId === "kernel"));
   const exact = compatible.filter((instance) => instance.driverId === harness.driverId);
   const instance = exact.length === 1 ? exact[0] : exact.length === 0 && compatible.length === 1 ? compatible[0] : undefined;
-  return instance ? { providerInstanceId: instance.id, accessSourceId: source.id, modelId: model.id } : NO_ACTIVE_PROVIDER_ROUTE;
+  return instance?.readiness.state === "ready" && source.state === "ready"
+    ? { providerInstanceId: instance.id, accessSourceId: source.id, modelId: model.id }
+    : NO_ACTIVE_PROVIDER_ROUTE;
 }
 export { ProviderSettingsStoreError } from "./provider-settings-errors.js";
 export type {
