@@ -85,6 +85,7 @@ export class CollaborativeAppBuildResolver {
       buildIdForAssetDigest: (assetDigest, manifest) => identity(assetDigest, manifest).buildId,
     });
     if (!result.ok) throw new CollaborativeAppBuildResolutionError();
+    const declaration = result.snapshot.manifest.collaboration;
     const exact = identity(result.snapshot.assetDigest, result.snapshot.manifest);
     if (exact.buildId !== result.snapshot.buildId) throw new CollaborativeAppBuildResolutionError();
     await this.options.readiness.invalidateDriftedBuilds({
