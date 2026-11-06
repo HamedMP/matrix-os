@@ -68,9 +68,11 @@ describe("collaborative app owner sharing controls", () => {
   });
 
   it("stops using both current CAS revisions and leaves owner data untouched in the copy", async () => {
-    const stopped = { ...share, state: "stopped" as const, shareRevision: "2", bindingRevision: "2" };
+    const refreshed = { ...share, shareRevision: "4", bindingRevision: "8", dataRevision: "7" };
+    const stopped = { ...refreshed, state: "stopped" as const, shareRevision: "5", bindingRevision: "9" };
+    let shareReads = 0;
     const api = {
-      get: vi.fn(async (path: string) => path.endsWith("/readiness") ? readiness : share),
+      get: vi.fn(async (path: string) => path.endsWith("/readiness") ? readiness : ++shareReads === 1 ? share : refreshed),
       post: vi.fn(),
       delete: vi.fn(async () => stopped),
     };
@@ -80,9 +82,50 @@ describe("collaborative app owner sharing controls", () => {
     expect(await screen.findByText(/does not delete or change your app data/i)).toBeVisible();
     fireEvent.click(screen.getByRole("button", { name: "Stop sharing" }));
     await waitFor(() => expect(api.delete).toHaveBeenCalledWith("/api/collaboration/apps/team-tracker/share", {
-      clientRequestId: expect.any(String), expectedShareRevision: "1", expectedBindingRevision: "1",
+      clientRequestId: expect.any(String), expectedShareRevision: "4", expectedBindingRevision: "8",
     }));
     expect(await screen.findByText("Sharing stopped")).toBeVisible();
+  });
+
+  it("refreshes stale stop tokens after a conflict before asking the owner to retry", async () => {
+    const refreshed = { ...share, shareRevision: "3", bindingRevision: "6", dataRevision: "5" };
+    const stopped = { ...refreshed, state: "stopped" as const, shareRevision: "4", bindingRevision: "7" };
+    let shareReads = 0;
+    const api = {
+      get: vi.fn(async (path: string) => {
+        if (path.endsWith("/readiness")) return readiness;
+        shareReads += 1;
+        return shareReads < 3 ? share : refreshed;
+      }),
+      post: vi.fn(),
+      delete: vi.fn().mockRejectedValueOnce(new Error("conflict")).mockResolvedValueOnce(stopped),
+    };
+    render(<CollaborativeAppShareButton appId="team-tracker" api={api}
+      organizationId="org_matrix_team" organizationName="Matrix team" />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Manage app sharing" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Stop sharing" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("Refresh and try again");
+    fireEvent.click(screen.getByRole("button", { name: "Stop sharing" }));
+
+    await waitFor(() => expect(api.delete).toHaveBeenLastCalledWith("/api/collaboration/apps/team-tracker/share", {
+      clientRequestId: expect.any(String), expectedShareRevision: "3", expectedBindingRevision: "6",
+    }));
+  });
+
+  it("shows an active share's saved organization after the owner switches organizations", async () => {
+    const api = {
+      get: vi.fn(async (path: string) => path.endsWith("/readiness") ? readiness : share),
+      post: vi.fn(),
+      delete: vi.fn(),
+    };
+    render(<CollaborativeAppShareButton appId="team-tracker" api={api}
+      organizationId="org_other_team" organizationName="Other team" />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Manage app sharing" }));
+
+    expect(await screen.findByText("Shared with org_matrix_team")).toBeVisible();
+    expect(screen.queryByText("Shared with Other team")).toBeNull();
   });
 
   it("keeps stop-sharing available when the rebuilt app has no current readiness", async () => {
