@@ -130,8 +130,8 @@ export function createPlatformCollaborationRoutes(options: {
         return safeJson(c, "Forbidden", 403);
       }
       try {
-        await options.repository.applyDirectoryEvent(event);
-        if (event.kind === "app" && event.app?.state !== "active") {
+        const applied = await options.repository.applyDirectoryEvent(event);
+        if (applied && event.kind === "app" && event.app?.state !== "active") {
           await options.launchSessions?.revokeScope(event.scopeId);
         }
         c.header("Cache-Control", "no-store");
