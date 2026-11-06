@@ -1,3 +1,4 @@
+import { ownedProfileFixture } from "./owned-profile-fixture.js";
 import { describe, expect, it, vi } from "vitest";
 import type { SharedQueuedTurn } from "../../packages/gateway/src/chat/repository.js";
 import type { AuthorizedCollaborationContext } from "../../packages/gateway/src/collaboration/authority.js";
@@ -58,6 +59,17 @@ describe("CollaborationChatExecutionAdapter", () => {
     } finally { release?.(); await work; timeout?.mockRestore(); }
     expect(outcome).toEqual({ accepted: false, code: "unavailable" });
     expect(enqueueSharedQueuedTurn).not.toHaveBeenCalled();
+  });
+  it("parses the configured proof before enqueue and rejects foreign proof", async () => {
+    const { policy } = ownedProfileFixture();
+    const resolveEligibility = vi.fn().mockResolvedValueOnce(policy.sharedEligibility)
+      .mockResolvedValueOnce(ownedProfileFixture("profile-b").policy.sharedEligibility);
+    const enqueueSharedQueuedTurn = vi.fn(async () => ({ ...queued, pendingCount: 1, alreadyAccepted: false, resourceRevision: 13 }));
+    const adapter = createAdapter({ profilePolicy: policy, resolveEligibility, enqueueSharedQueuedTurn });
+    const input = { clientRequestId: queued.clientRequestId, expectedRevision: "12", text: "Question" };
+    await expect(adapter.submit(context, input)).resolves.toHaveProperty("request.id", queued.id);
+    await expect(adapter.submit(context, input)).rejects.toThrow();
+    expect(enqueueSharedQueuedTurn).toHaveBeenCalledOnce();
   });
   it("does not resolve or enqueue an already cancelled shared request", async () => {
     const resolveExecutionRoot = vi.fn(async () => null), enqueueSharedQueuedTurn = vi.fn();
@@ -352,7 +364,8 @@ function createAdapter(overrides: Record<string, unknown> = {}) {
     resolveParticipant: async (actorId) => ({ actorId, displayName: "Ada Editor" }),
     resolveExecutionRoot: overrides.resolveExecutionRoot as never,
     resolveResourceRevision: async () => 13,
-    resolveEligibility: async () => collaborationExecutionEligibility(),
+    profilePolicy: overrides.profilePolicy as ReturnType<typeof ownedProfileFixture>["policy"] | undefined,
+    resolveEligibility: overrides.resolveEligibility as (() => Promise<unknown>) ?? (async () => collaborationExecutionEligibility()),
     // S08/S09: this suite covers admission mechanics on a scope whose owner already
     // allows member submission; the owner-only refusal has its own case below.
     resolveEffectiveSubmitMode: (overrides.resolveEffectiveSubmitMode as

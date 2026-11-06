@@ -1,3 +1,4 @@
+import { ownedProfileFixture } from "./owned-profile-fixture.js";
 import { SCOPE_RUNTIME_HARNESS_VERSION, SCOPE_RUNTIME_PROFILE_ID } from "@matrix-os/scope-runtime/profile";
 import { CanonicalProviderCatalogSchema } from "@matrix-os/contracts";
 import { describe, expect, it, vi } from "vitest";
@@ -344,6 +345,25 @@ describe("shared AI dispatch fence", () => {
     current_selection: expected.selection,
   };
 
+  it("validates both sides of the dispatch fence under only the configured deployment", () => {
+    const { policy } = ownedProfileFixture();
+    const { policy: other } = ownedProfileFixture("profile-b");
+    for (const [record, allowed] of [
+      [policy.sharedEligibility, true], [other.sharedEligibility, false], [expected.executionEligibility, false],
+      [{ ...policy.sharedEligibility, matrixBot: other.matrixBotEligibility }, false],
+    ] as const) {
+      expect(sharedDispatchFenceMatches({ ...current, execution_eligibility: record },
+        { ...expected, executionEligibility: record }, policy)).toBe(allowed);
+    }
+  });
+  it("refuses an equal but unsupported configured driver or Instance at dispatch", () => {
+    const { policy } = ownedProfileFixture();
+    const record = policy.sharedEligibility;
+    const selection = { instanceId: "codex_foreign", model: "synthetic" };
+    expect(sharedDispatchFenceMatches({ ...current, execution_eligibility: record,
+      bound_instance_id: selection.instanceId, current_selection: selection },
+      { ...expected, executionEligibility: record, selection }, policy)).toBe(false);
+  });
   it("requires current owner, generation, eligibility, provider, and model at dispatch", () => {
     expect(sharedDispatchFenceMatches(current, expected)).toBe(true);
     expect(sharedDispatchFenceMatches({ ...current, execution_generation: 8 }, expected)).toBe(false);

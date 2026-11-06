@@ -5,7 +5,9 @@ import { sql, type Kysely, type Transaction } from "kysely";
 import { toOutbox, type ChatOwner, type ChatOutboxEvent } from "../chat/records.js";
 import type { OwnerCollaborationDatabase } from "./database.js";
 import type { CollaborationScopeRecord } from "./repository.js";
-import { parseCollaborationAiEligibility } from "./chat-execution-adapter.js";
+import {
+  LEGACY_SCOPE_RUNTIME_PROFILE_POLICY, type GatewayScopeRuntimeProfilePolicy, type CollaborationAiExecutionEligibility,
+} from "./scope-runtime-profile-policy.js";
 
 const ACTIVE_RUN_STATES = ["accepted", "running", "waiting_for_approval", "waiting_for_input"] as const;
 const PREFLIGHT_LIFETIME_MS = 60_000;
@@ -29,7 +31,7 @@ export type CollaborationChatScopeErrorCode =
 
 export interface SharedChatExecutionCapability {
   executionGeneration: number;
-  eligibility: ReturnType<typeof parseCollaborationAiEligibility>;
+  eligibility: CollaborationAiExecutionEligibility;
 }
 
 export class CollaborationChatScopeError extends Error {
@@ -43,6 +45,7 @@ export class CollaborationChatScopeError extends Error {
 }
 
 export class CollaborationChatScopeService {
+  private readonly profilePolicy: GatewayScopeRuntimeProfilePolicy;
   private readonly now: () => Date;
   private readonly createScopeId: () => string;
   private executionCapability: SharedChatExecutionCapability | null = null;
@@ -51,6 +54,7 @@ export class CollaborationChatScopeService {
   constructor(
     public readonly db: Kysely<OwnerCollaborationDatabase>,
     private readonly options: {
+      profilePolicy?: GatewayScopeRuntimeProfilePolicy;
       runtimeId: string;
       preflightSecret: string;
       now?: () => Date;
@@ -61,6 +65,7 @@ export class CollaborationChatScopeService {
     if (Buffer.byteLength(options.preflightSecret) < 32) {
       throw new Error("Collaboration preflight secret is unavailable");
     }
+    this.profilePolicy = options.profilePolicy ?? LEGACY_SCOPE_RUNTIME_PROFILE_POLICY;
     this.now = options.now ?? (() => new Date());
     this.createScopeId = options.createScopeId ?? randomUUID;
   }
@@ -331,12 +336,7 @@ export class CollaborationChatScopeService {
     executionGeneration: number | null;
     eligibility: unknown | null;
   }): Promise<{ updated: number }> {
-    const capability = input.executionGeneration === null && input.eligibility === null
-      ? null
-      : {
-          executionGeneration: z.number().int().min(1).parse(input.executionGeneration),
-          eligibility: parseCollaborationAiEligibility(input.eligibility),
-        };
+    const capability = qualifyExecutionCapability(input, this.profilePolicy);
     return this.withCapabilityTransition(async () => {
       this.executionCapability = null;
       const result = await this.reconcileExecutionEligibilityUnlocked(capability);
@@ -351,7 +351,7 @@ export class CollaborationChatScopeService {
   >): boolean {
     return this.executionCapability !== null
       && scope.executionGeneration === this.executionCapability.executionGeneration
-      && eligibilityMatches(scope.executionEligibility, this.executionCapability.eligibility);
+      && this.profilePolicy.eligibilityEquals(scope.executionEligibility, this.executionCapability.eligibility);
   }
 
   /** Enter this gate before taking scope/Chat locks so new shared scopes cannot miss a capability transition. */
@@ -384,7 +384,8 @@ export class CollaborationChatScopeService {
         const nextEligibility = capability?.eligibility ?? null;
         const currentEligibility = scope.execution_eligibility;
         if (Number(scope.execution_generation ?? 0) === Number(capability?.executionGeneration ?? 0)
-          && eligibilityMatches(currentEligibility, nextEligibility)) return false;
+          && ((currentEligibility === null && nextEligibility === null)
+            || this.profilePolicy.eligibilityEquals(currentEligibility, nextEligibility))) return false;
         const chat = await trx.selectFrom("chats").select(["id", "revision"])
           .where("id", "=", scope.resource_id)
           .where("owner_type", "=", scope.owner_type)
@@ -474,19 +475,19 @@ export class CollaborationChatScopeService {
   }
 }
 
-function eligibilityMatches(current: unknown, next: unknown): boolean {
-  if (current === null || next === null) return current === next;
+function qualifyExecutionCapability(
+  input: { executionGeneration: number | null; eligibility: unknown },
+  policy: GatewayScopeRuntimeProfilePolicy,
+): SharedChatExecutionCapability | null {
+  if (input.executionGeneration === null || input.eligibility === null) return null;
   try {
-    const left = parseCollaborationAiEligibility(current);
-    const right = parseCollaborationAiEligibility(next);
-    return left.profileId === right.profileId
-      && left.profileVersion === right.profileVersion
-      && left.profileDigest === right.profileDigest
-      && JSON.stringify(left.adapters) === JSON.stringify(right.adapters);
+    return {
+      executionGeneration: z.number().int().min(1).parse(input.executionGeneration),
+      eligibility: policy.parseEligibility(input.eligibility),
+    };
   } catch (error: unknown) {
-    console.warn("[collaboration] stored execution eligibility is invalid",
-      error instanceof Error ? error.name : "UnknownError");
-    return false;
+    if (!(error instanceof z.ZodError)) throw error;
+    return null;
   }
 }
 
