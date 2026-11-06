@@ -1,17 +1,19 @@
-import { constants } from "node:fs";
+import { constants, type Stats } from "node:fs";
 import { open, type FileHandle } from "node:fs/promises";
 import { basename, dirname, isAbsolute } from "node:path";
+import { assertCommandDirectory, assertCommandSocket, type CommandSocketTrust } from "./command-ipc-policy.js";
 
-export interface PinnedCommandSocket {
-  readonly path: string;
-  close(): Promise<void>;
+export interface PinnedCommandSocket { readonly path: string; close(): Promise<void> }
+export type CommandSocketPinner = (path: string, trust: CommandSocketTrust) => Promise<PinnedCommandSocket>;
+export interface CommandSocketInodes extends PinnedCommandSocket {
+  parentStat(): Promise<Stats>;
+  socketStat(): Promise<Stats>;
 }
-export type CommandSocketPinner = (path: string) => Promise<PinnedCommandSocket>;
-// Linux UAPI O_PATH (x64 and arm64). Node accepts raw numeric open flags.
+export type CommandSocketInodePinner = (path: string) => Promise<CommandSocketInodes>;
 const LINUX_O_PATH = 0x200000;
 
-/** Pin every parent and the socket inode; never reconnect through a worker-writable pathname. */
-export const pinScopeRuntimeCommandSocket: CommandSocketPinner = async (path) => {
+/** Pin every ancestor and the socket without following worker-controlled links. */
+export const pinCommandSocketInodes: CommandSocketInodePinner = async (path) => {
   if (process.platform !== "linux") throw new Error("Scope runtime command socket pinning requires Linux");
   if (!isAbsolute(path) || path.includes("\0") || path.split("/").some((part) => part === "." || part === "..")) {
     throw new Error("Unsafe scope runtime command socket path");
@@ -29,15 +31,26 @@ export const pinScopeRuntimeCommandSocket: CommandSocketPinner = async (path) =>
       if (!(await parent.stat()).isDirectory()) throw new Error("Unsafe scope runtime command directory");
     }
     leaf = await open(`/proc/self/fd/${parent.fd}/${basename(path)}`, LINUX_O_PATH | constants.O_NOFOLLOW);
-    const entry = await leaf.stat();
-    if (!entry.isSocket() || entry.isSymbolicLink() || entry.nlink > 1) throw new Error("Unsafe scope runtime command socket");
-    await parent.close();
-    parent = undefined;
-    const pinned = leaf;
+    const pinned = leaf, directory = parent;
     leaf = undefined;
+    parent = undefined;
     let closing: Promise<void> | undefined;
-    return { path: `/proc/self/fd/${pinned.fd}`, close() { return closing ??= pinned.close(); } };
+    return { path: `/proc/self/fd/${pinned.fd}`, parentStat: () => directory.stat(), socketStat: () => pinned.stat(),
+      close() { return closing ??= (async () => { try { await pinned.close(); } finally { await directory.close(); } })(); } };
   } finally {
     try { await leaf?.close(); } finally { await parent?.close(); }
+  }
+};
+
+/** Trust comes from host launch identity, never from these filesystem objects. */
+export const pinScopeRuntimeCommandSocket: CommandSocketPinner = async (path, trust) => {
+  const pinned = await pinCommandSocketInodes(path);
+  try {
+    assertCommandDirectory(await pinned.parentStat(), trust);
+    assertCommandSocket(await pinned.socketStat(), trust);
+    return pinned;
+  } catch (error: unknown) {
+    await pinned.close();
+    throw error;
   }
 };

@@ -1,5 +1,4 @@
-import { execFile } from "node:child_process";
-import { promisify } from "node:util";
+import { lookupCommandIpcGroup } from "./command-host-identity.js";
 import { lstat } from "node:fs/promises";
 import { dirname, join, relative, resolve } from "node:path";
 
@@ -8,17 +7,8 @@ export interface NamespacePathTrust { readonly root: string; readonly uid: numbe
 export const HOST_NAMESPACE_TRUST: NamespacePathTrust = Object.freeze({ root: "/", uid: 0 });
 
 // Only the systemd-declared IPC leaf is shared with Gateway's matrix group.
-const exec = promisify(execFile);
-let matrixGroup: Promise<number> | undefined;
-function trustedIpcGroup(trust: NamespacePathTrust): Promise<number> {
-  if (trust.ipcGid !== undefined) return Promise.resolve(trust.ipcGid);
-  return matrixGroup ??= exec("/usr/bin/getent", ["group", "matrix"], {
-    env: { PATH: "/usr/bin:/bin", LANG: "C" }, timeout: 2000, maxBuffer: 4096,
-  }).then(({ stdout }) => {
-    const match = /^matrix:[^:\n]*:([0-9]{1,10}):[^:\n]*$/.exec(stdout.trim());
-    if (!match) throw new Error("Unsafe namespace IPC group");
-    return Number(match[1]);
-  });
+export function trustedIpcGroup(trust: NamespacePathTrust): Promise<number> {
+  return trust.ipcGid !== undefined ? Promise.resolve(trust.ipcGid) : lookupCommandIpcGroup();
 }
 
 export async function assertNamespaceDirectory(path: string, trust: NamespacePathTrust, ipcLeaf = false): Promise<void> {

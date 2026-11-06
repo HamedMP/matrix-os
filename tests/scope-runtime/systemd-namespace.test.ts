@@ -1,3 +1,5 @@
+import { commandPublicationFixture } from "../helpers/command-ipc-fixture.js";
+import { commandIdentityFixture } from "../helpers/command-ipc-fixture.js";
 import { portableCommandSocketPin } from "../helpers/portable-command-socket-pin.js";
 import { chmod, mkdir, readFile, rm, stat, symlink, writeFile } from "node:fs/promises";
 import { startInferenceBridge } from "../../packages/scope-runtime/src/inference-bridge.js";
@@ -45,7 +47,7 @@ async function fixture(managerNamespaces: readonly (string | undefined)[] = name
     const commandSocketRoot = namespace === undefined ? undefined : join(root, namespace + "x".repeat(Math.max(0, 54 - Buffer.byteLength(root) - namespace.length)));
     let failNext = false;
     const launcher = createSystemdScopeRuntimeLauncher({
-      namespaceTrust: { root, uid: process.getuid!() }, pinCommandSocket: portableCommandSocketPin, namespace, commandSocketRoot, stateRoot, sdkDirectory, nativeDirectory, workerFile, brokerSocket, nodeBinary: process.execPath, codexBinary,
+      ...commandIdentityFixture(root), pinCommandSocket: portableCommandSocketPin, namespace, commandSocketRoot, stateRoot, sdkDirectory, nativeDirectory, workerFile, brokerSocket, nodeBinary: process.execPath, codexBinary,
       async runCommand(command, args) {
         calls.push({ owner: namespace, command, args });
         if (command === codexBinary) return { stdout: "codex-cli 0.162.1\n" };
@@ -209,7 +211,7 @@ it("round-trips real worker commands at the 32-character namespace socket limit 
       const request = httpRequest({ socketPath: inferenceSocket, path: "/denied", timeout: 2000 }, (response) => { response.resume(); resolve(response.statusCode); });
       request.once("error", reject); request.once("timeout", () => request.destroy(new Error("Timed out"))); request.end();
     })).resolves.toBe(404);
-    const worker = await startBotCommandServer({ socketPath,
+    const worker = await startBotCommandServer({ publication: await commandPublicationFixture(socketPath), socketPath,
       invocation: { runtimeHandle: handle, scopeHandle: request.scopeHandle, workload: "bot_agent", adapterId: "matrix-bot", harnessVersion: "1.0.0", executionGeneration: "7" },
       handler: { async handle() { return { namespace: manager.namespace }; } } });
     cleanup.push(() => worker.close()); workers.push(worker);
@@ -282,7 +284,7 @@ it("refuses a symlinked short command root before writing through it or submitti
 it.each(["root", "runtime", "socket"])("refuses dispatch through a foreign %s symlink even when the peer has the same handle and generation", async (target) => {
   const { managers } = await fixture(); const own = managers[1]!, peer = managers[2]!;
   await own.launcher.start(request); await peer.launcher.start(request);
-  const peerWorker = await startBotCommandServer({ socketPath: join(peer.commandSocketRoot!, suffix, "worker.sock"),
+  const peerWorker = await startBotCommandServer({ publication: await commandPublicationFixture(join(peer.commandSocketRoot!, suffix, "worker.sock")), socketPath: join(peer.commandSocketRoot!, suffix, "worker.sock"),
     invocation: { runtimeHandle: handle, scopeHandle: request.scopeHandle, workload: "bot_agent", adapterId: "matrix-bot", harnessVersion: "1.0.0", executionGeneration: "7" },
     handler: { async handle() { return { namespace: "peer" }; } } });
   cleanup.push(() => peerWorker.close());

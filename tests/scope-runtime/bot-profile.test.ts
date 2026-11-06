@@ -34,12 +34,12 @@ describe("scope-runtime-bot-v1 profile", () => {
     }
   });
 
-  it("pins its own digest and retains the current shared-chat qualification", () => {
-    expect(SCOPE_RUNTIME_BOT_PROFILE_VERSION).toBe(3);
-    expect(SCOPE_RUNTIME_MANAGED_PI_PROFILE_VERSION).toBe(3);
-    expect(SCOPE_RUNTIME_BOT_PROFILE_DIGEST).toBe("484ec0191600d71f8c7f72ba9d9b16b13921bc2a6838a98faa50f0e4b61822dc");
-    expect(SCOPE_RUNTIME_MANAGED_PI_PROFILE_DIGEST).toBe("24673fc7807247a93f9b103512421658a5417a4fbede2753c0ee278a3dda80b3");
-    expect(SCOPE_RUNTIME_PROFILE_DIGEST).toBe("78a58c7045b1083a0b1e538ae36fdc06c6a145d9aa09d36a3c75eb47ea3b1ed3");
+  it("pins its own digest and includes the command IPC policy in all profile identities", () => {
+    expect(SCOPE_RUNTIME_BOT_PROFILE_VERSION).toBe(4);
+    expect(SCOPE_RUNTIME_MANAGED_PI_PROFILE_VERSION).toBe(4);
+    expect(SCOPE_RUNTIME_BOT_PROFILE_DIGEST).toBe("c25104c7336269228a52757432b722c5da88104e1b5c25bc2bc3dd17cc3fb8d3");
+    expect(SCOPE_RUNTIME_MANAGED_PI_PROFILE_DIGEST).toBe("fba0378f5eb40b884d65bb84b01a7a5feb76c22f02b691563db0be9eb1a59825");
+    expect(SCOPE_RUNTIME_PROFILE_DIGEST).toBe("df22ff5eefdf6a4c56415f8164749f893feee3b6c6ad5acaf20eba27bde83769");
   });
 
   it("materializes only derived supervisor dependencies and changes no other properties", () => {

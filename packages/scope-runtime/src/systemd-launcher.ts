@@ -1,5 +1,6 @@
+import { resolveCommandSocketTrust, type CommandTrustResolver } from "./command-host-identity.js";
 import { assertProtectedNodeRoot, nodeMount, nodeProfileDigest, ownedNodeForNamespace, WORKER_NODE_BINARY, type OwnedNode } from "./node-runtime.js";
-import { assertNamespaceDirectory, assertNamespaceSocket, assertRuntimeDirectoryPlacement, HOST_NAMESPACE_TRUST, type NamespacePathTrust } from "./namespace-ancestry.js";
+import { assertNamespaceDirectory, assertNamespaceSocket, assertRuntimeDirectoryPlacement, trustedIpcGroup, HOST_NAMESPACE_TRUST, type NamespacePathTrust } from "./namespace-ancestry.js";
 import { pinScopeRuntimeCommandSocket, type CommandSocketPinner } from "./command-socket-pin.js";
 import { cleanupOrphanedRuntimeDirectories, commandDirectoryForRuntime, createRuntimeDirectories, removeRuntimeDirectories } from "./runtime-directories.js";
 import { createScopeRuntimeUnitIdentity } from "./systemd-unit-identity.js";
@@ -593,7 +594,7 @@ async function cleanupSubmittedUnit(
 }
 
 export function createSystemdScopeRuntimeLauncher(
-  input: LauncherPaths & { runCommand?: ScopeRuntimeCommandRunner; pinCommandSocket?: CommandSocketPinner },
+  input: LauncherPaths & { runCommand?: ScopeRuntimeCommandRunner; pinCommandSocket?: CommandSocketPinner; resolveCommandTrust?: CommandTrustResolver },
 ): ScopeRuntimeLauncher {
   const identity = createScopeRuntimeUnitIdentity(input.namespace);
   if (input.namespace !== undefined && !input.commandSocketRoot) throw new Error("Namespaced scope runtime requires a short command socket root");
@@ -604,7 +605,7 @@ export function createSystemdScopeRuntimeLauncher(
   const paths: ResolvedLauncherPaths = {
     ownedNode,
     stateRoot: assertTrustedAbsolutePath(input.stateRoot),
-    ...(input.namespace !== undefined ? { namespaceTrust: input.namespaceTrust ?? HOST_NAMESPACE_TRUST } : {}),
+    ...(input.namespace !== undefined || input.namespaceTrust ? { namespaceTrust: input.namespaceTrust ?? HOST_NAMESPACE_TRUST } : {}),
     ...(input.commandSocketRoot ? { commandSocketRoot: assertTrustedAbsolutePath(input.commandSocketRoot) } : {}),
     sdkDirectory: assertTrustedAbsolutePath(input.sdkDirectory),
     nativeDirectory: assertTrustedAbsolutePath(input.nativeDirectory),
@@ -630,11 +631,20 @@ export function createSystemdScopeRuntimeLauncher(
   };
   const pinCommandSocket = input.pinCommandSocket ?? pinScopeRuntimeCommandSocket;
 
-  async function dispatchCommand<T>(runtimeHandle: string, dispatch: (path: string) => Promise<T>): Promise<T> {
+  async function dispatchCommand<T>(runtimeHandle: string, executionGeneration: string, dispatch: (path: string) => Promise<T>): Promise<T> {
     const handle = RuntimeHandleSchema.parse(runtimeHandle);
     if (ownedNode) await assertProtectedNodeRoot(ownedNode.root);
     const path = join(await commandDirectoryForRuntime(paths, handle), WORKER_SOCKET_FILE);
-    const pinned = await pinCommandSocket(path);
+    const namespaceTrust = paths.namespaceTrust ?? HOST_NAMESPACE_TRUST;
+    const trust = await (input.resolveCommandTrust ?? resolveCommandSocketTrust)({
+      unit: identity.workerUnit(handle), root: join(paths.stateRoot, "runtimes", handle.slice("runtime_".length), "root"),
+      parent: { uid: namespaceTrust.uid, gid: await trustedIpcGroup(namespaceTrust) },
+      async validateProvenance() {
+        const provenance = await readRuntimeProvenance(join(paths.stateRoot, "runtimes", handle.slice("runtime_".length)), handle, paths.ownedNode);
+        if (!provenance || provenance.executionGeneration !== executionGeneration) throw new Error("Unsafe command IPC provenance");
+      },
+    });
+    const pinned = await pinCommandSocket(path, trust);
     try { return await dispatch(pinned.path); } finally { await pinned.close(); }
   }
 
@@ -784,13 +794,13 @@ export function createSystemdScopeRuntimeLauncher(
       if (!EXECUTION_GENERATION.test(input.executionGeneration)) {
         throw new Error("Invalid scope runtime generation");
       }
-      return dispatchCommand(input.runtimeHandle, (path) => runWorkerChat(path, input));
+      return dispatchCommand(input.runtimeHandle, input.executionGeneration, (path) => runWorkerChat(path, input));
     },
     async runBot(input): Promise<ScopeRuntimeBotWorkerReply> {
       if (!EXECUTION_GENERATION.test(input.executionGeneration)) {
         throw new Error("Invalid scope runtime generation");
       }
-      return dispatchCommand(input.runtimeHandle, (path) => runWorkerBotCommand(path, input));
+      return dispatchCommand(input.runtimeHandle, input.executionGeneration, (path) => runWorkerBotCommand(path, input));
     },
     async stop(runtimeHandle: string): Promise<void> {
       const handle = RuntimeHandleSchema.parse(runtimeHandle);

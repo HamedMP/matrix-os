@@ -1,7 +1,8 @@
+import { assertCommandDirectory, COMMAND_DIRECTORY_MODE } from "./command-ipc-policy.js";
 import { chmod, lstat, mkdir, opendir, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { RuntimeHandleSchema } from "./protocol.js";
-import { assertRuntimeDirectoryPlacement, type RuntimeDirectoryRoots } from "./namespace-ancestry.js";
+import { assertRuntimeDirectoryPlacement, trustedIpcGroup, HOST_NAMESPACE_TRUST, type RuntimeDirectoryRoots } from "./namespace-ancestry.js";
 
 const MAX_ENTRIES = 128;
 
@@ -48,12 +49,15 @@ export async function createRuntimeDirectories(paths: RuntimeDirectoryRoots, run
   await ensurePrivateDirectory(runtimesRoot);
   if (paths.commandSocketRoot) await ensurePrivateDirectory(paths.commandSocketRoot, true);
   const { runtimeRoot, commandDirectory } = directoryPaths(paths, runtimeHandle);
+  const trust = paths.namespaceTrust ?? HOST_NAMESPACE_TRUST;
+  const gid = await trustedIpcGroup(trust);
   await mkdir(runtimeRoot, { mode: 0o700 });
   let commandCreated = false;
   try {
-    await mkdir(commandDirectory, { mode: 0o733 });
+    await mkdir(commandDirectory, { mode: COMMAND_DIRECTORY_MODE });
     commandCreated = true;
-    await chmod(commandDirectory, 0o733);
+    await chmod(commandDirectory, COMMAND_DIRECTORY_MODE);
+    assertCommandDirectory(await lstat(commandDirectory), { uid: trust.uid, gid });
     const root = join(runtimeRoot, "root");
     await mkdir(root, { mode: 0o755 });
     await chmod(root, 0o755);
