@@ -1,5 +1,5 @@
 import { mkdtempSync, rmSync } from "node:fs";
-import { createServer, Socket, type Server } from "node:net";
+import { connect, createServer, Socket, type Server } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -15,7 +15,9 @@ function broker(reply: (frame: Record<string, unknown>) => string | null): { soc
   const dir = mkdtempSync(join(tmpdir(), "bot-broker-"));
   const socketPath = join(dir, "broker.sock");
   const frames: Record<string, unknown>[] = [];
+  const sockets = new Set<Socket>();
   const server: Server = createServer({ allowHalfOpen: true }, (socket) => {
+    sockets.add(socket); socket.once("close", () => sockets.delete(socket));
     let buffered = "";
     socket.on("data", (chunk) => {
       buffered += chunk.toString("utf8");
@@ -28,7 +30,7 @@ function broker(reply: (frame: Record<string, unknown>) => string | null): { soc
     });
   });
   server.listen(socketPath);
-  cleanups.push(() => { server.close(); rmSync(dir, { recursive: true, force: true }); });
+  cleanups.push(() => { for (const socket of sockets) socket.destroy(); server.close(); rmSync(dir, { recursive: true, force: true }); });
   return { socketPath, frames };
 }
 
@@ -37,6 +39,90 @@ const client = (socketPath: string, timeoutMs = 2_000) => createBotBrokerClient(
 });
 
 describe("bot broker client", () => {
+  it("keeps a real GitHub broker socket alive beyond thirty seconds and validates its reply", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "github-broker-wait-"));
+    const socketPath = join(dir, "broker.sock");
+    const sockets = new Set<Socket>();
+    const timers = new Set<ReturnType<typeof setTimeout>>();
+    const server = createServer({ allowHalfOpen: true }, socket => {
+      sockets.add(socket); socket.once("close", () => sockets.delete(socket));
+      socket.on("data", () => {
+        const timer = setTimeout(() => socket.end(`${JSON.stringify({ version: 1, requestId: REQUEST_ID, ok: true,
+          result: { ok: true, content: [{ type: "text", text: "approved and confirmed" }] } })}\n`), 31_000);
+        timers.add(timer);
+      });
+    });
+    server.listen(socketPath);
+    cleanups.push(() => { for (const timer of timers) clearTimeout(timer); for (const socket of sockets) socket.destroy(); server.close(); rmSync(dir, { recursive: true, force: true }); });
+    const defaultClient = createBotBrokerClient({ socketPath, runtimeHandle: RUNTIME, executionGeneration: "3", runId: "run_abc", requestIdFactory: () => REQUEST_ID });
+    await expect(defaultClient.tool({ toolCallId: "call_github", capability: "github.developer", args: { action: "clone", path: "repo", repository: "owner/repo" } }))
+      .resolves.toMatchObject({ ok: true, content: [{ text: "approved and confirmed" }] });
+  }, 40_000);
+
+  it("cancels a pending GitHub socket and retains explicit timeout overrides", async () => {
+    const { socketPath } = broker(() => null);
+    const controller = new AbortController();
+    const sockets: Socket[] = [];
+    const options = { socketPath, runtimeHandle: RUNTIME, executionGeneration: "3", runId: "run_abc",
+      connectFn: (path: string) => { const socket = connect({ path }); sockets.push(socket); return socket; } };
+    const remove = vi.spyOn(controller.signal, "removeEventListener");
+    const pending = createBotBrokerClient(options)
+      .tool({ toolCallId: "call_github", capability: "github.developer", args: { action: "status" } }, controller.signal);
+    controller.abort();
+    await expect(pending).rejects.toMatchObject({ code: "stale_generation" });
+    expect(sockets[0]?.destroyed).toBe(true);
+    expect(remove).toHaveBeenCalledWith("abort", expect.any(Function));
+    await expect(createBotBrokerClient({ ...options, timeoutMs: 25 }).tool({ toolCallId: "call_override", capability: "github.developer", args: { action: "status" } }))
+      .rejects.toMatchObject({ code: "timeout" });
+    expect(sockets[1]?.destroyed).toBe(true);
+  });
+  it("observes cancellation that occurs while the socket is being created", async () => {
+    const controller = new AbortController();
+    const socket = new Socket();
+    const request = createBotBrokerClient({ socketPath: "unused", runtimeHandle: RUNTIME,
+      executionGeneration: "3", runId: "run_abc", timeoutMs: 25,
+      connectFn: () => { controller.abort(); return socket; } })
+      .tool({ toolCallId: "call_cancel_connect", capability: "github.developer", args: { action: "status" } }, controller.signal);
+    await expect(request).rejects.toMatchObject({ code: "stale_generation" });
+    expect(socket.destroyed).toBe(true);
+  });
+  it("bounds total GitHub reply time even if a peer keeps sending partial data", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "github-broker-drip-"));
+    const socketPath = join(dir, "broker.sock");
+    const sockets = new Set<Socket>();
+    const timers: Array<ReturnType<typeof setTimeout>> = [];
+    const intervals: Array<ReturnType<typeof setInterval>> = [];
+    const server = createServer({ allowHalfOpen: true }, socket => {
+      sockets.add(socket); socket.once("close", () => sockets.delete(socket));
+      socket.once("data", () => {
+        intervals.push(setInterval(() => socket.write(" "), 15));
+        timers.push(setTimeout(() => socket.end(`${JSON.stringify({ version: 1, requestId: REQUEST_ID, ok: true,
+          result: { ok: true, content: [{ type: "text", text: "late" }] } })}\n`), 200));
+      });
+    });
+    server.listen(socketPath);
+    cleanups.push(() => { for (const timer of timers) clearTimeout(timer); for (const interval of intervals) clearInterval(interval);
+      for (const socket of sockets) socket.destroy(); server.close(); rmSync(dir, { recursive: true, force: true }); });
+    await expect(createBotBrokerClient({ socketPath, runtimeHandle: RUNTIME, executionGeneration: "3", runId: "run_abc",
+      timeoutMs: 80, requestIdFactory: () => REQUEST_ID }).tool({ toolCallId: "call_drip", capability: "github.developer", args: { action: "status" } }))
+      .rejects.toMatchObject({ code: "timeout" });
+  });
+  it("clears the GitHub absolute deadline and abort listener after a valid reply", async () => {
+    const { socketPath } = broker(() => JSON.stringify({ version: 1, requestId: REQUEST_ID, ok: true,
+      result: { ok: true, content: [{ type: "text", text: "ready" }] } }));
+    const controller = new AbortController();
+    const scheduled = vi.spyOn(globalThis, "setTimeout");
+    const cleared = vi.spyOn(globalThis, "clearTimeout");
+    const removed = vi.spyOn(controller.signal, "removeEventListener");
+    try {
+      await createBotBrokerClient({ socketPath, runtimeHandle: RUNTIME, executionGeneration: "3", runId: "run_abc",
+        requestIdFactory: () => REQUEST_ID }).tool({ toolCallId: "call_cleanup", capability: "github.developer", args: { action: "status" } }, controller.signal);
+      const timerIndex = scheduled.mock.calls.findIndex(call => call[1] === 725_000);
+      expect(timerIndex).toBeGreaterThanOrEqual(0);
+      expect(cleared).toHaveBeenCalledWith(scheduled.mock.results[timerIndex]?.value);
+      expect(removed).toHaveBeenCalledWith("abort", expect.any(Function));
+    } finally { scheduled.mockRestore(); cleared.mockRestore(); removed.mockRestore(); }
+  });
   it("allows a bounded browser pause without widening ordinary tools or explicit timeouts", async () => {
     const { socketPath } = broker(() => JSON.stringify({ version: 1, requestId: REQUEST_ID, ok: true,
       result: { ok: true, content: [{ type: "text", text: "resumed; observe again" }] } }));

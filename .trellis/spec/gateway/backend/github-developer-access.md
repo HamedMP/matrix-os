@@ -13,6 +13,7 @@ Pipedream retirement have separate acceptance gates.
 - `githubOwnerEnvironment(homePath: string): NodeJS.ProcessEnv`.
 - Model tool `github_developer`, broker capability `github.developer`, shared
   `GithubDeveloperActionSchema`: status, clone, branch, commit, push, pull_request.
+- Worker `BotBrokerClient.tool(request, signal?)` accepts caller cancellation.
 
 ## 3. Contracts
 
@@ -32,6 +33,14 @@ author and admitted owner/run/root/generation. A receipt is bounded, expiring
 and single-use. Push sends an explicit approved SHA; PR is draft with actor and
 head readback. Clone/index staging is owned, bounded, periodically recovered and
 closed at shutdown. Workers never receive an owner shell or credentials.
+Git paths are literal. Approval binds raw bytes, resolved repository attributes
+and the Git-normalized blob separately; CRLF conversion does not loosen drift
+checks. Ordinary dotted tracking branches remain valid.
+
+The GitHub worker exchange has a 725-second absolute deadline: ten minutes for
+approval, 90 seconds for host work and 35 seconds of transport grace. Explicit
+timeout overrides remain authoritative. Partial replies cannot renew this
+budget; settlement destroys the socket and clears its timer and abort listener.
 
 ## 4. Validation and error matrix
 

@@ -9,8 +9,9 @@ it("advertises bounded owner GitHub actions only after capability admission", as
   expect(createBotTools({ capabilities: [], broker: { tool: call } as never, state })).toEqual([]);
   const [tool] = createBotTools({ capabilities: ["github.developer"] as never, broker: { tool: call } as never, state });
   expect(tool?.name).toBe("github_developer");
-  await tool!.execute("github_1", { action: "status" }, new AbortController().signal);
-  expect(call).toHaveBeenCalledWith(expect.objectContaining({ capability: "github.developer", args: { action: "status" } }));
+  const signal = new AbortController().signal;
+  await tool!.execute("github_1", { action: "status" }, signal);
+  expect(call).toHaveBeenCalledWith(expect.objectContaining({ capability: "github.developer", args: { action: "status" } }), signal);
 });
 
 it("rejects arbitrary commands, secrets, remote hosts, unsafe branches and metadata paths", () => {
