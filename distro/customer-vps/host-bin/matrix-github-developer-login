@@ -16,7 +16,7 @@ const GITHUB_LOGIN = /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})$/;
 const IDENTITY_NAME = /^[^\x00-\x1f\x7f]{1,200}$/;
 // Mirrors Zod's default email validation used by status and coding-agent commits.
 const IDENTITY_EMAIL = /^(?=.{3,320}$)(?!\.)(?!.*\.\.)([A-Za-z0-9_'+\-.]*)[A-Za-z0-9_+\-]@([A-Za-z0-9][A-Za-z0-9\-]*\.)+[A-Za-z]{2,}$/;
-const SSH_GREETING = /^Hi [A-Za-z0-9](?:[A-Za-z0-9-]{0,38})! You've successfully authenticated, but GitHub does not provide shell access\.$/m;
+const SSH_GREETING = /^Hi ([A-Za-z0-9](?:[A-Za-z0-9-]{0,38}))! You've successfully authenticated, but GitHub does not provide shell access\.$/m;
 
 // Verified against GitHub's official published host-key entries on 2026-10-24:
 // https://docs.github.com/en/authentication/keeping-your-account-and-data-secure/githubs-ssh-key-fingerprints
@@ -51,6 +51,19 @@ function redact(value) {
     .replace(/-----BEGIN [^-\r\n]*PRIVATE KEY-----[\s\S]*?-----END [^-\r\n]*PRIVATE KEY-----/g, "[redacted private key]");
 }
 
+function writeSanitized(destination, state, text) {
+  const plain = text.replace(/\u001b\[[0-9;]*m/g, "");
+  const beginsKey = /-----BEGIN [^-\r\n]*PRIVATE KEY-----/.test(plain);
+  if (state.privateKey || beginsKey) {
+    if (!state.privateKey) destination.write("[redacted private key]\n");
+    // Suppress every body line, including an unfinished final chunk, until the
+    // matching PEM boundary closes. Header-only redaction exposes key bytes.
+    state.privateKey = !/-----END [^-\r\n]*PRIVATE KEY-----/.test(plain);
+    return;
+  }
+  destination.write(redact(text));
+}
+
 function streamSanitized(stream, destination, state, onLimit) {
   stream.on("data", (chunk) => {
     state.bytes += chunk.length;
@@ -63,14 +76,17 @@ function streamSanitized(stream, destination, state, onLimit) {
     state.pending += text;
     let newline;
     while ((newline = state.pending.indexOf("\n")) !== -1) {
-      destination.write(redact(state.pending.slice(0, newline + 1)));
+      writeSanitized(destination, state, state.pending.slice(0, newline + 1));
       state.pending = state.pending.slice(newline + 1);
     }
     // Interactive programs commonly wait after a prompt without writing a
     // newline. Forward only prompt-shaped, already-sanitized text; everything
     // else remains line-buffered so secret patterns can span data chunks.
+    const prompt = state.pending.replace(/\u001b\[[0-9;]*m/g, "");
     if (
-      /(?:[:?]|\[[^\]\r\n]{0,80}\]|\([^()\r\n]{0,80}\)) $/.test(state.pending)
+      !state.privateKey
+      && (/(?:[:?]|\[[^\]\r\n]{0,80}\]|\([^()\r\n]{0,80}\)) $/.test(prompt)
+        || /^Press Enter to open https:\/\/github\.com\/login\/device in your browser\.\.\. $/.test(prompt))
       && redact(state.pending) === state.pending
       && !/(?:ghp_|github_pat_|bearer\s|PRIVATE KEY)/i.test(state.pending)
     ) {
@@ -90,8 +106,8 @@ async function run(command, args, options = {}) {
       env: options.env,
       stdio: [interactive ? "inherit" : "ignore", "pipe", "pipe"],
     });
-    const stdout = { bytes: 0, output: "", pending: "" };
-    const stderr = { bytes: 0, output: "", pending: "" };
+    const stdout = { bytes: 0, output: "", pending: "", privateKey: false };
+    const stderr = { bytes: 0, output: "", pending: "", privateKey: false };
     let forceTimer;
     const terminate = () => {
       child.kill("SIGTERM");
@@ -135,8 +151,8 @@ async function run(command, args, options = {}) {
       process.off("SIGINT", forwardInterrupt);
       process.off("SIGTERM", forwardTermination);
       if (interactive) {
-        if (stdout.pending) process.stdout.write(redact(stdout.pending));
-        if (stderr.pending) process.stderr.write(redact(stderr.pending));
+        if (stdout.pending) writeSanitized(process.stdout, stdout, stdout.pending);
+        if (stderr.pending) writeSanitized(process.stderr, stderr, stderr.pending);
       }
       const output = `${stdout.output}\n${stderr.output}`.slice(0, COMMAND_OUTPUT_BYTES);
       if (stdout.bytes > COMMAND_OUTPUT_BYTES || stderr.bytes > COMMAND_OUTPUT_BYTES) {
@@ -302,14 +318,26 @@ async function main() {
   if (process.argv.length !== 2) throw new Error("unexpected arguments");
   const requestedHome = resolve(process.env.MATRIX_HOME || process.env.HOME || "/home/matrix/home");
   const homePath = await realpath(requestedHome);
-  const env = {
-    ...process.env,
+  // This command ships standalone; mirror the gateway's metadata-only owner environment.
+  const env = {};
+  for (const key of [
+    "PATH", "LANG", "LC_ALL", "LC_CTYPE", "TERM", "COLORTERM", "NO_COLOR",
+    "TMPDIR", "TMP", "TEMP", "SSH_AUTH_SOCK", "SSH_AGENT_PID",
+    "HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "NO_PROXY",
+    "http_proxy", "https_proxy", "all_proxy", "no_proxy",
+    "SSL_CERT_FILE", "SSL_CERT_DIR", "NODE_EXTRA_CA_CERTS", "CURL_CA_BUNDLE",
+  ]) {
+    if (typeof process.env[key] === "string") env[key] = process.env[key];
+  }
+  Object.assign(env, {
     HOME: homePath,
     MATRIX_HOME: homePath,
     XDG_CONFIG_HOME: join(homePath, ".config"),
     GH_CONFIG_DIR: join(homePath, ".config", "gh"),
     GIT_CONFIG_GLOBAL: join(homePath, ".gitconfig"),
-  };
+    GIT_CONFIG_NOSYSTEM: "1",
+    GH_HOST: "github.com",
+  });
 
   await run("gh", ["auth", "login", "--hostname", "github.com", "--web", "--git-protocol", "ssh"], {
     env: { ...env, GH_FORCE_TTY: "100%" },
@@ -330,7 +358,8 @@ async function main() {
     "-o", "ConnectionAttempts=1",
     "git@github.com",
   ], { env, cwd: homePath, acceptExitCodes: [0, 1] });
-  if (!SSH_GREETING.test(`${ssh.stdout}\n${ssh.stderr}`.slice(0, COMMAND_OUTPUT_BYTES))) {
+  const sshLogin = SSH_GREETING.exec(`${ssh.stdout}\n${ssh.stderr}`.slice(0, COMMAND_OUTPUT_BYTES))?.[1];
+  if (!sshLogin) {
     throw new Error("ssh verification failed");
   }
 
@@ -346,6 +375,7 @@ async function main() {
   ) {
     throw new Error("invalid GitHub profile");
   }
+  if (sshLogin.toLowerCase() !== profile.login.toLowerCase()) throw new Error("GitHub account mismatch");
   await configureIdentity(env, homePath, profile);
   process.stdout.write(`GitHub developer access is ready for ${profile.login}.\n`);
 }

@@ -88,6 +88,23 @@ describe("project-manager", () => {
     });
   });
 
+  it("uses the selected owner environment for managed private clone commands", async () => {
+    vi.stubEnv("GH_TOKEN", "synthetic-token");
+    vi.stubEnv("GIT_SSH_COMMAND", "synthetic-command");
+    try {
+      const runCommand = vi.fn(async (command: string, args: string[], options: { cwd: string; timeout: number; env?: NodeJS.ProcessEnv }) => {
+        expect(options.env).toMatchObject({ HOME: homePath, GH_CONFIG_DIR: join(homePath, ".config", "gh"), GIT_CONFIG_GLOBAL: join(homePath, ".gitconfig") });
+        expect(options.env?.GH_TOKEN).toBeUndefined();
+        expect(options.env?.GIT_SSH_COMMAND).toBeUndefined();
+        if (command === "git" && args[0] === "clone") await mkdir(join(args.at(-1)!, ".git"), { recursive: true });
+        return { stdout: "", stderr: "" };
+      });
+      const result = await createProjectManager({ homePath, runCommand }).createProject({ url: "https://github.com/owner/private", slug: "private", ownerScope: { type: "user", id: "owner" } });
+      expect(result.ok).toBe(true);
+      expect(runCommand).toHaveBeenCalled();
+    } finally { vi.unstubAllEnvs(); }
+  });
+
   it("reports bounded partial setup state without leaking command errors", async () => {
     const secret = "ghp_this_must_not_escape";
     const runCommand = vi.fn(async (command: string, args: string[]) => {

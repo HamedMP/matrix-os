@@ -23,12 +23,21 @@ Web, Electron, and mobile renderers are separate ENG-378 and ENG-379 changes. Pi
 5. If global Git identity is missing or invalid, it proposes the GitHub display name/login and `<id>+<login>@users.noreply.github.com`. The owner may confirm or edit both values before either is saved.
 6. Status becomes ready only when GitHub auth, SSH, and commit identity are all ready.
 
+The browser-wait instruction must be visible before GitHub CLI waits for Enter,
+including styled and chunked output. SSH must authenticate the same GitHub
+account as the owner's GitHub CLI API identity; a different account remains
+setup-required and must not announce readiness or save identity suggestions.
+
 ## Source Of Truth And Credentials
 
 - GitHub CLI auth remains in the owner's `.config/gh` directory.
 - SSH public/private key material remains in the owner's `.ssh` directory. Matrix reads no private-key bytes and accepts no private-key input.
 - Git identity remains in the owner's global `.gitconfig`.
 - The platform stores no GitHub token, OAuth callback, SSH key, or developer identity.
+- Login, readiness, managed clone, and coding-agent source control bind the
+  owner's home and configuration explicitly. Child commands receive only
+  process metadata (path, locale, temp, proxy/TLS and SSH-agent settings), not
+  gateway secrets, inherited GitHub tokens or Git command/config overrides.
 - Managed project config stores the canonical GitHub SSH remote for newly cloned projects. Existing project remotes are not rewritten.
 
 ## Host-Key Trust
@@ -59,6 +68,9 @@ The terminal command is not an HTTP endpoint. It executes as the Matrix computer
 
 - Every non-interactive child command has a timeout and bounded output.
 - Browser login has a finite overall timeout and forwards cancellation signals to GitHub CLI.
+- Interactive output redaction tracks private-key blocks per stream across
+  chunks and line boundaries, including an unfinished block at process exit;
+  suppressing only PEM headers is insufficient.
 - A cancelled or failed login leaves any GitHub CLI-owned partial state recoverable by rerunning the command.
 - Identity values are validated before writes. A failed Git config write is reported generically and setup remains not ready.
 - Host-key files are written atomically with restrictive modes; symlink targets are rejected.

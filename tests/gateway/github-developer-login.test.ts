@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { chmod, mkdtemp, mkdir, readFile, rm, symlink, writeFile } from "node:fs/promises";
+import { chmod, mkdtemp, mkdir, readFile, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -29,19 +29,41 @@ describe("matrix-github-developer-login", () => {
     ]);
     const fake = join(binPath, "fake-command.mjs");
     await writeFile(fake, `#!/usr/bin/env node
-import { appendFileSync } from "node:fs";
-import { basename } from "node:path";
+import { appendFileSync, readFileSync } from "node:fs";
+import { basename, dirname, join } from "node:path";
 const command = basename(process.argv[1]);
 const args = process.argv.slice(2);
-appendFileSync(process.env.FAKE_COMMAND_LOG, JSON.stringify({ command, args }) + "\\n");
+const fixtureRoot = join(dirname(process.argv[1]), "..");
+const fixture = JSON.parse(readFileSync(join(fixtureRoot, "fixture.json"), "utf8"));
+appendFileSync(join(fixtureRoot, "commands.jsonl"), JSON.stringify({ command, args }) + "\\n");
+if (fixture.FAKE_ENV_LOG) appendFileSync(fixture.FAKE_ENV_LOG, JSON.stringify({
+  HOME: process.env.HOME, GH_CONFIG_DIR: process.env.GH_CONFIG_DIR, GIT_CONFIG_GLOBAL: process.env.GIT_CONFIG_GLOBAL,
+  GH_TOKEN: process.env.GH_TOKEN, GITHUB_TOKEN: process.env.GITHUB_TOKEN, GIT_SSH_COMMAND: process.env.GIT_SSH_COMMAND,
+  GIT_CONFIG_COUNT: process.env.GIT_CONFIG_COUNT, GIT_CONFIG_KEY_0: process.env.GIT_CONFIG_KEY_0,
+  GIT_EXEC_PATH: process.env.GIT_EXEC_PATH, GH_REPO: process.env.GH_REPO, GATEWAY_SECRET: process.env.GATEWAY_SECRET,
+}) + "\\n");
 if (command === "gh") {
   if (args[0] === "auth" && args[1] === "login") {
-    if (process.env.FAKE_CANCEL_LOGIN === "1") {
+    if (fixture.FAKE_PRIVATE_KEY === "1") {
+      process.stdout.write("-----BEGIN OPENSSH PRIVATE KEY-----\\n");
+      await new Promise((resolveChunk) => setTimeout(resolveChunk, 20));
+      process.stdout.write("c3ludGhldGljX3ByaXZhdGVfa2V5X2JvZHk=\\n");
+      process.stdout.write("-----END OPENSSH PRIVATE KEY-----\\n");
+      process.stderr.write("-----BEGIN RSA PRIVATE KEY-----\\n");
+      process.stderr.write("c3ludGhldGljX3N0ZGVycl9rZXlfYm9keQ==");
+      process.exit(130);
+    }
+    if (fixture.FAKE_CANCEL_LOGIN === "1") {
       console.error("cancelled ghp_secret_that_must_not_escape");
       process.exit(130);
     }
-    if (process.env.FAKE_LOGIN_PROMPT === "1") {
-      process.stdout.write("Choose an SSH key: ");
+    if (fixture.FAKE_LOGIN_PROMPT === "1") {
+      const prompt = fixture.FAKE_PROMPT_TEXT || "Choose an SSH key: ";
+      if (fixture.FAKE_SPLIT_PROMPT === "1") {
+        process.stdout.write(prompt.slice(0, 11));
+        await new Promise((resolveChunk) => setTimeout(resolveChunk, 30));
+        process.stdout.write(prompt.slice(11));
+      } else process.stdout.write(prompt);
       await new Promise((resolvePrompt) => {
         const timer = setTimeout(() => process.exit(12), 2_000);
         process.stdin.once("data", () => {
@@ -60,13 +82,13 @@ if (command === "gh") {
   }
 }
 if (command === "ssh") {
-  console.error("Hi octocat! You've successfully authenticated, but GitHub does not provide shell access.");
+  console.error("Hi " + (fixture.FAKE_SSH_LOGIN || "octocat") + "! You've successfully authenticated, but GitHub does not provide shell access.");
   process.exit(1);
 }
 if (command === "git") {
   const key = args.at(-1);
   if (args.includes("--get")) {
-    if (process.env.FAKE_IDENTITY_READY === "1") {
+    if (fixture.FAKE_IDENTITY_READY === "1") {
       console.log(key === "user.name" ? "Existing Owner" : "owner@example.com");
       process.exit(0);
     }
@@ -89,6 +111,7 @@ process.exit(9);
   });
 
   async function runLogin(input = "", extraEnv: NodeJS.ProcessEnv = {}): Promise<RunResult> {
+    await writeFile(join(root, "fixture.json"), JSON.stringify(extraEnv));
     return new Promise((resolveRun, rejectRun) => {
       const child = spawn(process.execPath, [SCRIPT], {
         cwd: homePath,
@@ -110,7 +133,7 @@ process.exit(9);
         if (
           !promptAnswered
           && extraEnv.FAKE_LOGIN_PROMPT === "1"
-          && stdout.includes("Choose an SSH key: ")
+          && stdout.includes(extraEnv.FAKE_PROMPT_TEXT || "Choose an SSH key: ")
         ) {
           promptAnswered = true;
           child.stdin.write("\n");
@@ -118,6 +141,9 @@ process.exit(9);
       });
       child.stderr.on("data", (chunk: Buffer) => { stderr += chunk.toString("utf8"); });
       child.on("error", rejectRun);
+      child.stdin.on("error", (error: NodeJS.ErrnoException) => {
+        if (error.code !== "EPIPE") rejectRun(error);
+      });
       const inputTimer = setInterval(async () => {
         try {
           const log = await readFile(logPath, "utf8");
@@ -212,6 +238,40 @@ process.exit(9);
     expect(result.stdout).toContain("Choose an SSH key: ");
   });
 
+  it.each([
+    ["plain", "Press Enter to open https://github.com/login/device in your browser... ", "0"],
+    ["split", "Press Enter to open https://github.com/login/device in your browser... ", "1"],
+    ["ANSI", "\u001b[1mPress Enter\u001b[0m to open https://github.com/login/device in your browser... ", "1"],
+  ])("shows the actual %s browser-wait prompt before accepting input", async (_kind, prompt, split) => {
+    const result = await runLogin("\n\n", {
+      FAKE_LOGIN_PROMPT: "1", FAKE_PROMPT_TEXT: prompt, FAKE_SPLIT_PROMPT: split,
+    });
+    expect(result.code).toBe(0);
+    expect(result.stdout).toContain(prompt);
+  });
+
+  it("refuses readiness and identity writes when SSH authenticates a different account", async () => {
+    const result = await runLogin("\n\n", { FAKE_SSH_LOGIN: "other-owner" });
+    expect(result.code).toBe(3);
+    expect(result.stdout).not.toContain("developer access is ready");
+    expect((await commands()).some((call) => call.command === "git" && call.args.includes("--replace-all"))).toBe(false);
+  });
+
+  it("uses owner files rather than inherited token, Git config or SSH command overrides", async () => {
+    const environmentLog = join(root, "environment.jsonl");
+    const result = await runLogin("\n\n", {
+      FAKE_ENV_LOG: environmentLog, GH_TOKEN: "synthetic-token", GITHUB_TOKEN: "synthetic-token",
+      GIT_SSH_COMMAND: "synthetic-command", GIT_CONFIG_COUNT: "1", GIT_CONFIG_KEY_0: "user.email",
+      GH_CONFIG_DIR: "/different-gh", GIT_CONFIG_GLOBAL: "/different-git",
+      GIT_EXEC_PATH: "/different-git", GH_REPO: "another/repository", GATEWAY_SECRET: "synthetic-service-secret",
+    });
+    expect(result.code).toBe(0);
+    const canonicalHome = await realpath(homePath);
+    for (const line of (await readFile(environmentLog, "utf8")).trim().split("\n")) {
+      expect(JSON.parse(line)).toEqual({ HOME: canonicalHome, GH_CONFIG_DIR: join(canonicalHome, ".config", "gh"), GIT_CONFIG_GLOBAL: join(canonicalHome, ".gitconfig") });
+    }
+  });
+
   it("rejects an email that readiness and coding-agent commits reject", async () => {
     const result = await runLogin("Octo Owner\nfirst..last@example.com\n");
 
@@ -244,5 +304,14 @@ process.exit(9);
       args: ["auth", "login", "--hostname", "github.com", "--web", "--git-protocol", "ssh"],
     }]);
     expect(`${result.stdout}\n${result.stderr}`).not.toContain("ghp_secret_that_must_not_escape");
+  });
+
+  it("redacts multiline private-key bodies across chunks and an unterminated final line", async () => {
+    const result = await runLogin("", { FAKE_PRIVATE_KEY: "1" });
+
+    expect(result.code).toBe(3);
+    expect(`${result.stdout}\n${result.stderr}`).not.toContain("c3ludGhldGljX3ByaXZhdGVfa2V5X2JvZHk=");
+    expect(`${result.stdout}\n${result.stderr}`).not.toContain("c3ludGhldGljX3N0ZGVycl9rZXlfYm9keQ==");
+    expect(result.stdout).toContain("[redacted private key]");
   });
 });

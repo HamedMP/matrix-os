@@ -1,6 +1,6 @@
 import { execFile, spawn } from "node:child_process";
 import { lstat, realpath } from "node:fs/promises";
-import { isAbsolute, join, relative, resolve } from "node:path";
+import { isAbsolute, relative, resolve } from "node:path";
 import { promisify } from "node:util";
 import { z } from "zod/v4";
 import {
@@ -15,6 +15,7 @@ import {
 } from "@matrix-os/contracts";
 import type { RequestPrincipal } from "../request-principal.js";
 import { resolveOwnedWorktree, type OwnerScopedWorktreeSource } from "./owned-worktree.js";
+import { githubOwnerEnvironment } from "../github-owner-environment.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -153,12 +154,7 @@ export function createCodingAgentSourceControlStore(options: {
   const maxQueueDepth = Math.max(1, Math.min(options.maxQueueDepth ?? DEFAULT_MAX_QUEUE_DEPTH, 64));
   const locks = new Map<string, SourceControlLockState>();
   const ownerCommandEnv: NodeJS.ProcessEnv = {
-    ...process.env,
-    HOME: homePath,
-    XDG_CONFIG_HOME: join(homePath, ".config"),
-    GH_CONFIG_DIR: join(homePath, ".config", "gh"),
-    GIT_CONFIG_NOSYSTEM: "1",
-    GIT_CONFIG_GLOBAL: join(homePath, ".gitconfig"),
+    ...githubOwnerEnvironment(homePath),
     GH_PROMPT_DISABLED: "1",
   };
 

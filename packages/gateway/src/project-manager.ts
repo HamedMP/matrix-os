@@ -13,6 +13,7 @@ import { removeValidatedLegacyProjectState } from "./legacy-project-state.js";
 import { projectStateRecoveryDir } from "./bounded-json-file.js";
 import { reconcileProjectIdentityIndex } from "./project-identity-index.js";
 import { getGithubDeveloperStatus } from "./github-developer-status.js";
+import { githubOwnerEnvironment } from "./github-owner-environment.js";
 
 export { PROJECT_SLUG_REGEX } from "./project-registry.js";
 
@@ -90,7 +91,7 @@ export interface WorkspaceError {
 type CommandRunner = (
   command: string,
   args: string[],
-  options: { cwd: string; timeout: number; maxBuffer?: number },
+  options: { cwd: string; timeout: number; maxBuffer?: number; env?: NodeJS.ProcessEnv },
 ) => Promise<{ stdout: string; stderr: string }>;
 
 type Result<T> = { ok: true; status?: number } & T;
@@ -160,6 +161,7 @@ const defaultRunCommand: CommandRunner = async (command, args, options) => {
     timeout: options.timeout,
     encoding: "utf-8",
     maxBuffer: options.maxBuffer ?? 2 * 1024 * 1024,
+    env: options.env,
   });
   return { stdout, stderr };
 };
@@ -386,7 +388,9 @@ export function createProjectManager(options: {
   now?: () => string;
 }) {
   const homePath = resolve(options.homePath);
-  const runCommand = options.runCommand ?? defaultRunCommand;
+  const commandRunner = options.runCommand ?? defaultRunCommand;
+  const env = githubOwnerEnvironment(homePath);
+  const runCommand: CommandRunner = (command, args, commandOptions) => commandRunner(command, args, { ...commandOptions, env });
   const registry = createProjectRegistry({ homePath });
 
   return {

@@ -2,7 +2,7 @@ import { execFileSync } from "node:child_process";
 import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { Hono } from "hono";
 import { RuntimeSummarySchema } from "../../packages/contracts/src/index.js";
 import { createCodingAgentRoutes } from "../../packages/gateway/src/coding-agents/routes.js";
@@ -198,6 +198,29 @@ describe("coding agent source-control route", () => {
       }).trim()).toBe(before);
       expect(JSON.stringify(await response.json())).not.toMatch(/Matrix OS|matrix-os@|\/tmp|\.gitconfig/i);
     } finally {
+      await rm(harness.homePath, { recursive: true, force: true });
+    }
+  });
+
+  it("does not pass gateway credential or Git routing overrides into owner source control", async () => {
+    vi.stubEnv("GH_TOKEN", "synthetic-service-token");
+    vi.stubEnv("GITHUB_TOKEN", "synthetic-service-token");
+    vi.stubEnv("GIT_SSH_COMMAND", "synthetic-command");
+    const harness = await createRouteHarness({
+      ownerIds: [testPrincipal.userId],
+      gitCommandFactory: (homePath) => createFakeGit(homePath, 'if [ -n "${GH_TOKEN:-}${GITHUB_TOKEN:-}${GIT_SSH_COMMAND:-}" ]; then exit 37; fi'),
+    });
+    try {
+      await writeFile(join(harness.worktreeRoot, "src", "index.ts"), "export const answer = 99;\n");
+      const response = await harness.app.request("/api/coding-agents/source-control/prepare-commit", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ projectId, worktreeId, message: "fix: owner environment", paths: ["src/index.ts"], clientRequestId: "req_owner_environment" }),
+      });
+      expect(response.status).toBe(201);
+      expect(execFileSync("git", ["log", "-1", "--format=%an <%ae>|%cn <%ce>"], { cwd: harness.worktreeRoot, encoding: "utf8" }).trim())
+        .toBe("Owner Example <owner@example.com>|Owner Example <owner@example.com>");
+    } finally {
+      vi.unstubAllEnvs();
       await rm(harness.homePath, { recursive: true, force: true });
     }
   });
