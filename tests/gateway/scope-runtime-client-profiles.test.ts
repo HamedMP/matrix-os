@@ -1,3 +1,6 @@
+import { resolveScopeRuntimeHostConfig } from "@matrix-os/scope-runtime/host-config";
+import { runtimeProfileIdentity } from "@matrix-os/scope-runtime/bot-profile";
+import { createGatewayScopeRuntimeProfilePolicy } from "../../packages/gateway/src/collaboration/scope-runtime-profile-policy.js";
 import { mkdtemp, rm } from "node:fs/promises";
 import { createServer, type Server } from "node:net";
 import { tmpdir } from "node:os";
@@ -21,7 +24,10 @@ afterEach(async () => {
   await Promise.allSettled(cleanup.splice(0).map((remove) => remove()));
 });
 
-async function supervisor(response: () => Omit<Extract<ScopeRuntimeResponse, { type: "capability.result"; ok: true }>, "requestId">) {
+async function supervisor(
+  response: () => Omit<Extract<ScopeRuntimeResponse, { type: "capability.result"; ok: true }>, "requestId">,
+  profileCatalog = catalog,
+) {
   const root = await mkdtemp(join(tmpdir(), "scope-client-profiles-"));
   cleanup.push(() => rm(root, { recursive: true, force: true }));
   const socketPath = join(root, "supervisor.sock");
@@ -36,7 +42,7 @@ async function supervisor(response: () => Omit<Extract<ScopeRuntimeResponse, { t
   });
   await new Promise<void>((resolve) => server.listen(socketPath, resolve));
   cleanup.push(() => new Promise<void>((resolve) => server.close(() => resolve())));
-  const client = createScopeRuntimeClient({ socketPath, profileCatalog: catalog, createRequestId: () => REQUEST_ID });
+  const client = createScopeRuntimeClient({ socketPath, profileCatalog, createRequestId: () => REQUEST_ID });
   cleanup.push(() => client.close());
   return client;
 }
@@ -44,6 +50,27 @@ async function supervisor(response: () => Omit<Extract<ScopeRuntimeResponse, { t
 const base = { version: 1 as const, type: "capability.result" as const, ok: true as const, supervisorVersion: "1.0.0", profile: chat };
 
 describe("scope runtime client profiles", () => {
+  it("admits all three configured identities only with their pinned sandbox and UID range", async () => {
+    const root = "/var/lib/matrix-devstack/profiles";
+    const deployment = resolveScopeRuntimeHostConfig({ env: {
+      MATRIX_SCOPE_RUNTIME_NAMESPACE: "profiles", MATRIX_HOME: root + "/home",
+      MATRIX_SCOPE_RUNTIME_APP_ROOT: root + "/app", MATRIX_SCOPE_RUNTIME_NODE_ROOT: root + "/runtime/node",
+    } });
+    const expected = createGatewayScopeRuntimeProfilePolicy(deployment).catalog;
+    const owned = [chat, bot, managed].map((profile) => ({
+      ...profile, ...runtimeProfileIdentity(profile.profileId, deployment.ownedNode),
+    }));
+    let profiles = owned;
+    const client = await supervisor(() => ({ ...base, profile: profiles[0]!, profiles }), expected);
+    await client.refreshCapability();
+    for (const profile of owned) expect(client.profileCapability(profile.profileId).available).toBe(true);
+    profiles = owned.map((p) => ({ ...p, sandbox: { ...p.sandbox!, policyDigest: "0".repeat(64) } }));
+    await client.refreshCapability();
+    for (const profile of owned) expect(client.profileCapability(profile.profileId).available).toBe(false);
+    profiles = owned.map((p) => ({ ...p, identity: { mode: "dynamic", uidMin: 61_185, uidMax: 65_519 } }));
+    await client.refreshCapability();
+    for (const profile of owned) expect(client.profileCapability(profile.profileId).available).toBe(false);
+  });
   it("pins managed Chat independently from recipe Bot and rejects old/digest-drifted supervisors", async () => {
     const client = await supervisor(() => ({ ...base, profiles: [chat, bot, managed] }));
     await client.refreshCapability();

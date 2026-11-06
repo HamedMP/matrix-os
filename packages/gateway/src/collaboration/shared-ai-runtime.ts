@@ -4,17 +4,8 @@ import {
   type CanonicalChatModelSelection,
   type CanonicalProviderDriverKind,
 } from "@matrix-os/contracts";
-import {
-  SCOPE_RUNTIME_HARNESS_VERSION,
-  SCOPE_RUNTIME_CODEX_VERSION,
-  SCOPE_RUNTIME_PROFILE_DIGEST,
-  SCOPE_RUNTIME_PROFILE_ID,
-  SCOPE_RUNTIME_PROFILE_VERSION,
-} from "@matrix-os/scope-runtime/profile";
-import {
-  SCOPE_RUNTIME_SANDBOX_POLICY_DIGEST,
-  SCOPE_RUNTIME_SANDBOX_POLICY_VERSION,
-} from "@matrix-os/scope-runtime/sandbox";
+import { SCOPE_RUNTIME_PROFILE_ID } from "@matrix-os/scope-runtime/profile";
+import { LEGACY_SCOPE_RUNTIME_PROFILE_POLICY } from "./scope-runtime-profile-policy.js";
 import type { ScopeRuntimeSandboxManifest, ScopeRuntimeWorkload } from "@matrix-os/scope-runtime";
 import type { Kysely } from "kysely";
 import type { CanonicalChatOrchestrator } from "../chat/orchestrator.js";
@@ -84,41 +75,10 @@ import { MATRIX_BOT_INSTANCE_ID, MATRIX_BOT_MODEL } from "../bots/selection.js";
 export { prepareSharedMatrixBotAdapter, resolveSharedMatrixBotReadiness, type SharedMatrixBotExtension } from "./shared-matrix-bot.js";
 const QUEUE_WAKE_INTERVAL_MS = 10_000;
 const QUEUE_WAKE_LIMIT = 64;
-/**
- * S07: the production profile pins the sandbox policy, so a supervisor that
- * does not advertise exactly this policy is an unsupported profile and no
- * shared run launches wider than the sandbox.
- */
 export const SHARED_AI_PROFILE_CATALOG: ScopeRuntimeProfileCatalog = {
-  [SCOPE_RUNTIME_PROFILE_ID]: {
-    profileVersion: SCOPE_RUNTIME_PROFILE_VERSION,
-    profileDigest: SCOPE_RUNTIME_PROFILE_DIGEST,
-    identity: { mode: "dynamic", uidMin: 61_184, uidMax: 65_519 },
-    sandbox: {
-      policyVersion: SCOPE_RUNTIME_SANDBOX_POLICY_VERSION,
-      policyDigest: SCOPE_RUNTIME_SANDBOX_POLICY_DIGEST,
-    },
-    supportedAdapters: {
-      "claude-code": {
-        harnessVersions: [SCOPE_RUNTIME_HARNESS_VERSION],
-        workloads: ["chat_ai"],
-      },
-      codex: {
-        harnessVersions: [SCOPE_RUNTIME_CODEX_VERSION],
-        workloads: ["chat_ai"],
-      },
-    },
-  },
+  [SCOPE_RUNTIME_PROFILE_ID]: LEGACY_SCOPE_RUNTIME_PROFILE_POLICY.catalog[SCOPE_RUNTIME_PROFILE_ID]!,
 };
-const ELIGIBILITY: CollaborationAiExecutionEligibility = {
-  profileId: SCOPE_RUNTIME_PROFILE_ID,
-  profileVersion: SCOPE_RUNTIME_PROFILE_VERSION,
-  profileDigest: SCOPE_RUNTIME_PROFILE_DIGEST,
-  adapters: [
-    { adapterId: "claude-code", harnessVersion: SCOPE_RUNTIME_HARNESS_VERSION },
-    { adapterId: "codex", harnessVersion: SCOPE_RUNTIME_CODEX_VERSION },
-  ],
-};
+const ELIGIBILITY: CollaborationAiExecutionEligibility = LEGACY_SCOPE_RUNTIME_PROFILE_POLICY.sharedEligibility;
 /** S07: supplies the authoritative sandbox manifest for one shared Chat run, or null when it cannot be mounted. */
 export interface SharedChatSandboxManifestSource {
   resolve(input: {
