@@ -35,7 +35,7 @@ export async function composeManagedCustomDefinition(
     description: definition.description,
     instructions: [definition.instructions, ...(recipe?.skills.map(recipeSkillPrompt) ?? []),
       ...(integrationIntent ? [integrationIntent] : [])].join("\n\n"),
-    capabilities: ["artifact.read", "artifact.write", "interaction.create", "memory.propose", "memory.search",
+    capabilities: ["artifact.read", "artifact.write", "interaction.create", "memory.propose", "memory.search", "github.developer",
       ...(recipe?.integrations.length ? ["integration.inventory", "integration.call"] as const : [])],
     // The current grants and exact-action approvals still authorize each effect.
     integrations: (recipe?.integrations ?? []).map(item => ({ service: item.service, effects: ["read", "write", "send"], required: false })),

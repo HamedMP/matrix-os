@@ -76,6 +76,12 @@ The terminal command is not an HTTP endpoint. It executes as the Matrix computer
 - Host-key files are written atomically with restrictive modes; symlink targets are rejected.
 - Setup is idempotent: reruns preserve valid identity and let GitHub CLI reuse existing keys.
 - Status probes are read-only and classify missing setup separately from unavailable executables or command failures.
+- Status probing shares one 7.5-second aggregate subprocess budget, leaving
+  response headroom inside Web/Electron's ten-second request deadline. Every
+  child receives only the remaining budget; expired probes are not started.
+  Local identity checks run independently so a dropped SSH connection still
+  returns an accurate, safe partial status. Interactive CLI setup retains its
+  separate longer login and verification timeouts.
 - No in-memory collection, database row, temporary clone, or platform credential is added. Existing clone staging cleanup remains authoritative.
 
 ## Integration Wiring

@@ -57,6 +57,7 @@ const EFFECTS: Record<BotToolRequest["capability"], BotEffectClass> = {
   "routine.control":"write",
   "agent.task": "write",
   "browser.action": "write",
+  "github.developer": "write",
   "artifact.read": "read",
   "artifact.write": "write",
   "jev.inbox": "write",
@@ -82,7 +83,7 @@ function isPrivateStaging(info: Stats): boolean {
 
 function segments(relPath: string): string[] {
   const parts = relPath.split("/");
-  if (parts.length === 0 || parts.length > 16 || !parts.every((part) => SEGMENT.test(part)) || parts[0] === BOT_SAVE_STAGING) {
+  if (parts.length === 0 || parts.length > 16 || !parts.every((part) => SEGMENT.test(part) && ![".git", ".matrix-github-staging"].includes(part.toLowerCase()) && !part.toLowerCase().startsWith(".github-clone-")) || parts[0] === BOT_SAVE_STAGING) {
     throw new BotBrokerActionError("invalid_arguments");
   }
   return parts;
@@ -194,6 +195,7 @@ function textResult(text: string): BotToolResult {
 
 export function createBotToolDispatcher(deps: {
   homePath: string;
+  githubDeveloper?: import("./github-developer-tools.js").BotGithubDeveloperTools;
   routines?: Pick<import("./routine-execution.js").BotRoutineExecution,"propose"|"list"|"control">;
   submittedArtifact?(binding: PiRuntimeBinding, args: Extract<BotToolRequest, { capability: "artifact.read" }>["args"]): Promise<string | undefined>;
   jev?: Pick<import("./jev-tools.js").BotJevTools, "call">;
@@ -322,10 +324,15 @@ export function createBotToolDispatcher(deps: {
     if (request.args.selection.model !== binding.route.modelId) throw new BotBrokerActionError("invalid_arguments");
   }
   return {
-    effectClass: (request) => request.capability === "routine.control" && request.args.operation === "list" ? "read" : request.capability === "jev.inbox" && ["discover", "select", "batch_status"].includes(request.args.operation) ? "read" : request.capability === "integration.call" && getAction(request.args.service, request.args.action)?.risk === "read" ? "read" : EFFECTS[request.capability],
+    effectClass: (request) => request.capability === "github.developer" ? request.args.action === "status" ? "read" : ["push", "pull_request"].includes(request.args.action) ? "send" : "write" : request.capability === "routine.control" && request.args.operation === "list" ? "read" : request.capability === "jev.inbox" && ["discover", "select", "batch_status"].includes(request.args.operation) ? "read" : request.capability === "integration.call" && getAction(request.args.service, request.args.action)?.risk === "read" ? "read" : EFFECTS[request.capability],
     async prepare(binding, request, signal) {
       // Pure binding validation precedes the broker's dispatched checkpoint.
       validateRoutineProposal(binding, request);
+      if (request.capability === "github.developer") {
+        if (!deps.githubDeveloper) throw new BotBrokerActionError("not_granted");
+        await deps.githubDeveloper.prepare(binding, await workspace(binding), request, signal);
+        return;
+      }
       if (request.capability === 'agent.task') {
         if (!deps.nativeTask || isManagedPiBinding(binding)) throw new BotBrokerActionError('not_granted');
         await deps.nativeTask.prepare(binding); return;
@@ -337,6 +344,14 @@ export function createBotToolDispatcher(deps: {
     },
     async dispatch(binding, request, signal) {
       validateRoutineProposal(binding, request);
+      if (request.capability === "github.developer") {
+        if (!deps.githubDeveloper) throw new BotBrokerActionError("not_granted");
+        const root = await workspace(binding);
+        return { result: await deps.githubDeveloper.dispatch(binding, root, request, signal, async () => {
+          if (await workspace(binding) !== root) throw new BotBrokerActionError("stale_generation");
+          await deps.assertSource?.(binding, signal);
+        }) };
+      }
       if (request.capability === "routine.propose" || request.capability === "routine.control") {
         if (!deps.routines || binding.group || isManagedPiBinding(binding) || binding.requestClass!=="interactive") throw new BotBrokerActionError("not_granted");
         if(request.capability==="routine.propose") return {result:textResult(JSON.stringify(await deps.routines.propose(binding,request.args)))};
