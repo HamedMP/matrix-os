@@ -20,6 +20,16 @@ const REQUEST_HEADER = "x-matrix-collaboration-request";
 const REQUEST_DOMAIN = "matrix-collaboration-request-v2";
 const MAX_SESSION_RESPONSE_BYTES = 64 * 1024;
 
+export async function cancelCollaborativeAppResponseReader(
+  reader: ReadableStreamDefaultReader<Uint8Array>,
+): Promise<void> {
+  try {
+    await reader.cancel();
+  } catch (error: unknown) {
+    console.warn("[collaborative-app-launch] response cancellation failed", error instanceof Error ? error.name : "UnknownError");
+  }
+}
+
 export function createCollaborativeAppLaunchUpstreamFactory(options: {
   issuer: CollaborationTicketIssuer | null;
   relay: CollaborationRelay;
@@ -154,7 +164,7 @@ async function readBoundedJson(response: Response): Promise<unknown> {
     }
     return JSON.parse(Buffer.concat(chunks).toString("utf8"));
   } catch (error: unknown) {
-    await reader.cancel().catch(() => undefined);
+    await cancelCollaborativeAppResponseReader(reader);
     if (error instanceof CollaborativeAppLaunchError) throw error;
     throw new CollaborativeAppLaunchError("unavailable");
   }
