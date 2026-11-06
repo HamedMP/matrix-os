@@ -85,7 +85,7 @@ export class CollaborativeAppShareService {
     ownerId: string;
     runtimeId: string;
     preflightSecret: string;
-    catalog: Pick<CollaborationResourceCatalog, "get">;
+    catalog: Pick<CollaborationResourceCatalog, "get" | "getLiveByPath">;
     readiness: Pick<CollaborativeAppReadinessRepository, "get" | "getCurrent">;
     shares: Pick<CollaborativeAppShareRepository, "getByCatalog" | "createAtomic" | "stopAtomic">;
     resolveCurrentBuild(
@@ -218,9 +218,9 @@ export class CollaborativeAppShareService {
 
   async get(ownerId: string, appId: string): Promise<CollaborativeAppShare | null> {
     this.assertOwnerAndApp(ownerId, appId);
-    const current = await this.options.resolveCurrentBuild(ownerId, appId, { ensureCatalog: false });
-    if (!current) return null;
-    const existing = await this.options.shares.getByCatalog({ ownerId, catalogId: current.build.catalogId });
+    const catalog = await this.savedCatalog(ownerId, appId);
+    if (!catalog) return null;
+    const existing = await this.options.shares.getByCatalog({ ownerId, catalogId: catalog.id });
     if (!existing) return null;
     const readiness = await this.options.readiness.get({ id: existing.binding.readinessId, ownerId });
     if (!readiness) throw new CollaborativeAppShareServiceError("unavailable");
@@ -235,9 +235,9 @@ export class CollaborativeAppShareService {
       || !z.uuid().safeParse(input.clientRequestId).success) {
       throw new CollaborativeAppShareServiceError("invalid");
     }
-    const current = await this.options.resolveCurrentBuild(ownerId, appId, { ensureCatalog: false });
-    if (!current) throw new CollaborativeAppShareServiceError("not_found");
-    const existing = await this.options.shares.getByCatalog({ ownerId, catalogId: current.build.catalogId });
+    const catalog = await this.savedCatalog(ownerId, appId);
+    if (!catalog) throw new CollaborativeAppShareServiceError("not_found");
+    const existing = await this.options.shares.getByCatalog({ ownerId, catalogId: catalog.id });
     if (!existing) throw new CollaborativeAppShareServiceError("not_found");
     const payloadHash = createHash("sha256").update(canonicalJson({
       appId,
@@ -270,6 +270,19 @@ export class CollaborativeAppShareService {
       || !AppIdSchema.safeParse(appId).success) {
       throw new CollaborativeAppShareServiceError("not_found");
     }
+  }
+
+  private async savedCatalog(ownerId: string, appId: string) {
+    const catalog = await this.options.catalog.getLiveByPath({
+      ownerId,
+      projectId: null,
+      kind: "app",
+      path: appId,
+    });
+    return catalog?.ownerId === ownerId && catalog.projectId === null
+      && catalog.kind === "app" && catalog.path === appId
+      ? catalog
+      : null;
   }
 
   private async resolveExact(ownerId: string, appId: string, ensureCatalog: boolean) {

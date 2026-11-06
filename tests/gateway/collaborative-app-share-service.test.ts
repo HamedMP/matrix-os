@@ -78,22 +78,26 @@ function setup(overrides: {
     })),
   };
   const onStopped = vi.fn(async () => undefined);
+  const resolveCurrentBuild = vi.fn(async () => current);
   const service = new CollaborativeAppShareService({
     ownerId,
     runtimeId: "runtime_owner",
     preflightSecret: "s".repeat(32),
-    catalog: { get: vi.fn(async () => catalog) },
+    catalog: {
+      get: vi.fn(async () => catalog),
+      getLiveByPath: vi.fn(async () => catalog),
+    },
     readiness: {
       getCurrent: vi.fn(async () => overrides.readiness ?? readiness),
       get: vi.fn(async () => overrides.readiness ?? readiness),
     },
     shares,
-    resolveCurrentBuild: vi.fn(async () => current),
+    resolveCurrentBuild,
     resolveOwner: vi.fn(async () => ({ actorId: ownerId, displayName: "Owner" })),
     onStopped,
     now: () => overrides.now ?? NOW,
   });
-  return { service, shares, onStopped };
+  return { service, shares, onStopped, resolveCurrentBuild };
 }
 
 describe("CollaborativeAppShareService", () => {
@@ -203,5 +207,18 @@ describe("CollaborativeAppShareService", () => {
       payloadHash: expect.stringMatching(/^[a-f0-9]{64}$/),
     }));
     expect(onStopped).toHaveBeenCalledWith(scopeId);
+  });
+
+  it("loads and stops the saved share without rebuilding a now-broken app", async () => {
+    const { service, resolveCurrentBuild } = setup({ existing: storedShare });
+    resolveCurrentBuild.mockRejectedValue(new Error("broken matrix.json"));
+
+    await expect(service.get(ownerId, build.appId)).resolves.toMatchObject({ scopeId, state: "active" });
+    await expect(service.stop(ownerId, build.appId, {
+      clientRequestId: "80000000-0000-4000-8000-000000000003",
+      expectedShareRevision: "1",
+      expectedBindingRevision: "1",
+    })).resolves.toMatchObject({ scopeId, state: "stopped" });
+    expect(resolveCurrentBuild).not.toHaveBeenCalled();
   });
 });
