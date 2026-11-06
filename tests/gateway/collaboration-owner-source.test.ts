@@ -122,8 +122,19 @@ function ownerSnapshot(overrides: Partial<AiProviderSnapshotV3> = {}): AiProvide
       { id: "inst_codex", driverId: "codex", vendor: "openai", accountId: "acct_openai", accessSourceId: "src_openai_key", label: "Codex", readiness: readiness(), capabilitySnapshot: [], modelIds: ["gpt-5.6"], defaultModelId: "gpt-5.6", catalogVersion: "catalog-1" },
       { id: "inst_hermes", driverId: "hermes", vendor: "openrouter", accountId: null, accessSourceId: "src_openai_key", label: "Hermes", readiness: readiness(), capabilitySnapshot: [], modelIds: ["gpt-5.6"], defaultModelId: null, catalogVersion: "catalog-1" },
     ],
-    models: [],
-    active: { providerInstanceId: "inst_claude", accessSourceId: "src_claude_sub", modelId: "claude-opus-5" },
+    models: [
+      { id: "claude-opus-5", vendor: "anthropic", displayName: "Claude Opus 5", status: "current", capabilities: ["tools"], effortControls: [], eligibleAccessSourceIds: ["owner_anthropic_profile", "src_claude_sub"], dataPolicies: [
+        { accessSourceId: "owner_anthropic_profile", route: "owner_direct", disclosureKey: "owner-claude-profile" },
+        { accessSourceId: "src_claude_sub", route: "owner_direct", disclosureKey: "owner-claude-subscription" },
+      ], aliases: [], catalogVersion: "catalog-1" },
+      { id: "claude-sonnet-5", vendor: "anthropic", displayName: "Claude Sonnet 5", status: "current", capabilities: ["tools"], effortControls: [], eligibleAccessSourceIds: ["src_claude_sub"], dataPolicies: [
+        { accessSourceId: "src_claude_sub", route: "owner_direct", disclosureKey: "owner-claude-subscription" },
+      ], aliases: [], catalogVersion: "catalog-1" },
+      { id: "gpt-5.6", vendor: "openai", displayName: "GPT 5.6", status: "current", capabilities: ["tools"], effortControls: [], eligibleAccessSourceIds: ["src_openai_key"], dataPolicies: [
+        { accessSourceId: "src_openai_key", route: "owner_direct", disclosureKey: "owner-openai-key" },
+      ], aliases: [], catalogVersion: "catalog-1" },
+    ],
+    active: { providerInstanceId: "inst_claude_profile", accessSourceId: "owner_anthropic_profile", modelId: "claude-opus-5" },
     ...overrides,
   };
 }
@@ -409,6 +420,36 @@ describe("S08 owner-selected AI source", () => {
       };
     }
 
+    it("persists immutable current-route provenance without a project execution policy", async () => {
+      const ownerSource = new SharedRunOwnerSource({
+        policies, eligibility, bindings, db: fixture.db, snapshots, now: () => clock,
+      });
+      const decision = await ownerSource.prepare({
+        scopeId: PROJECT_CHAT_SCOPE,
+        chatId: collaborationIds.chat,
+        ownerId: collaborationActors.owner,
+        requestingActorId: collaborationActors.editor,
+        driverKind: "claude_code",
+      });
+      const binding = await bindings.admitCurrentRoute(
+        admission(collaborationActors.editor, decision.settingsRevision),
+        decision,
+      );
+      expect(binding).toMatchObject({
+        source: {
+          accessSourceId: "owner_anthropic_profile",
+          providerInstanceId: "inst_claude_profile",
+          harness: "claude_code",
+          modelId: "claude-opus-5",
+        },
+        providerSettingsRevision: "4",
+        routeGeneration: decision.routeGeneration,
+      });
+      snapshot = ownerSnapshot({ revision: 5 });
+      expect(await bindings.get(binding.runId)).toEqual(binding);
+      expect(await policies.resolve(PROJECT_SCOPE)).toBeNull();
+    });
+
     it("pins the owner's source, payer and policy revision for every member using one source", async () => {
       const policy = await ownerPolicy();
       const first = await bindings.admit(admission(collaborationActors.editor, policy.revision));
@@ -586,42 +627,51 @@ describe("S08 owner-selected AI source", () => {
   });
 
   describe("shared run owner source (T044)", () => {
-    const source = () => new SharedRunOwnerSource({ policies, eligibility, bindings });
+    const source = () => new SharedRunOwnerSource({ policies, eligibility, bindings, db: fixture.db, snapshots, now: () => clock });
     const run = (requestingActorId: string, driverKind: "codex" | "claude_code" = "claude_code") => ({
       scopeId: PROJECT_CHAT_SCOPE, chatId: collaborationIds.chat, ownerId: collaborationActors.owner, requestingActorId, driverKind,
     });
 
-    it("refuses a scope without a policy as unavailable instead of falling back to the owner's default source", async () => {
-      await expect(source().prepare(run(collaborationActors.owner))).rejects.toMatchObject({ requestState: "unavailable" });
-      await expect(source().prepare(run(collaborationActors.editor))).rejects.toMatchObject({ requestState: "unavailable" });
+    it("uses the owner's current global route for a project without any project policy", async () => {
+      await expect(source().prepare(run(collaborationActors.owner))).resolves.toMatchObject({
+        authorityKind: "provider_settings_active", providerInstanceId: "inst_claude_profile",
+      });
+      await expect(source().prepare(run(collaborationActors.editor))).resolves.toMatchObject({
+        effectiveSubmitMode: "members", modelId: "claude-opus-5",
+      });
     });
 
-    it("reports admission missing without a policy, paused while the source is unavailable and ready otherwise", async () => {
+    it("reports admission from the current active route and fails closed without selecting another ready source", async () => {
       const scope = { scopeId: PROJECT_CHAT_SCOPE, ownerId: collaborationActors.owner };
-      expect(await source().admission(scope)).toBe("missing");
-      await ownerPolicy();
       expect(await source().admission(scope)).toBe("ready");
-      snapshot = withSourceState("src_claude_sub", "unavailable");
-      expect(await source().admission(scope)).toBe("paused");
+      snapshot = withSourceState("owner_anthropic_profile", "unavailable");
+      expect(await source().admission(scope)).toBe("missing");
       expect(await source().admission({ ...scope, ownerId: collaborationActors.editor })).toBe("missing");
     });
 
-    it("maps the owner's Claude source to the kernel access source and pins the policy revision", async () => {
-      const policy = await ownerPolicy(PROJECT_SCOPE, collaborationActors.owner, { accessSourceId: "owner_anthropic_profile", providerInstanceId: "inst_claude_profile" });
+    it("maps the current Claude route to the kernel access source and pins settings freshness", async () => {
+      await ownerPolicy(PROJECT_SCOPE, collaborationActors.owner, CODEX, { allowedModelIds: ["gpt-5.6"] });
       const decision = await source().prepare(run(collaborationActors.editor));
-      expect(decision).toEqual({
-        policyRevision: policy.revision,
+      expect(decision).toMatchObject({
+        policyRevision: "4",
+        authorityKind: "provider_settings_active",
+        settingsRevision: "4",
         harness: "claude_code",
         providerInstanceId: "inst_claude_profile",
+        providerAccessSourceId: "owner_anthropic_profile",
         accessSourceId: "owner_anthropic_profile",
         allowedModelIds: ["claude-opus-5"],
         modelId: "claude-opus-5",
         effectiveSubmitMode: "members",
       });
+      expect(decision.routeGeneration).toMatch(/^[a-f0-9]{64}$/);
     });
 
-    it("gives Codex no kernel access source and refuses a run whose harness differs from the policy", async () => {
-      await ownerPolicy(PROJECT_SCOPE, collaborationActors.owner, CODEX, { allowedModelIds: ["gpt-5.6"] });
+    it("uses a later current Codex route without project reconfirmation and refuses a mismatched harness", async () => {
+      snapshot = ownerSnapshot({
+        revision: 5,
+        active: { providerInstanceId: "inst_codex", accessSourceId: "src_openai_key", modelId: "gpt-5.6" },
+      });
       const decision = await source().prepare(run(collaborationActors.editor, "codex"));
       expect(decision?.accessSourceId).toBeNull();
       expect(decision?.harness).toBe("codex");
@@ -629,11 +679,11 @@ describe("S08 owner-selected AI source", () => {
         .rejects.toMatchObject({ requestState: "unavailable" });
     });
 
-    it("treats a legacy owner-only value as compatibility data and never falls back from an unavailable source", async () => {
+    it("ignores a legacy project owner-only value and never falls back from the unavailable active route", async () => {
       await ownerPolicy(PROJECT_SCOPE, collaborationActors.owner, CLAUDE, { submitMode: "owner_only" });
       expect(await source().prepare(run(collaborationActors.editor))).toMatchObject({ effectiveSubmitMode: "members" });
       expect(await source().prepare(run(collaborationActors.owner))).toMatchObject({ effectiveSubmitMode: "members" });
-      snapshot = withSourceState("src_claude_sub", "expired");
+      snapshot = withSourceState("owner_anthropic_profile", "expired");
       await expect(source().prepare(run(collaborationActors.owner))).rejects.toMatchObject({ requestState: "unavailable" });
     });
   });

@@ -1512,7 +1512,6 @@ export async function createGateway(config: GatewayConfig) {
       accessSourceId: "owner_openai_profile",
     }) } : {}),
   });
-  collaborationProviderSnapshots.attach(aiProviderService);
   const providerLoginCoordinator = createProviderTerminalLoginCoordinator({
     codexExecutable: codexExecutable ?? undefined,
     profileGuard: nativeProviderProfileGuard,
@@ -1542,11 +1541,15 @@ export async function createGateway(config: GatewayConfig) {
     homePath,
     codexNativeAccountMetadataReader: nativeCodexRuntime.readAccount,
     prepareNativeCodexRevocation: () => nativeCodexRuntime.admission.prepareRevocation(),
+    prepareSharedAiRouteChange: () => gatewayCollaboration?.prepareOwnerAiRouteChange() ?? Promise.resolve(),
     providerSnapshotReader: aiProviderService,
     loginCoordinator: providerLoginCoordinator,
     accountLifecycle: providerAccountLifecycle,
     fundingSummaryReader: fundedAiFundingSummaryReader,
     runtimeCoordinator: providerGenericHarnessCoordinator,
+  });
+  collaborationProviderSnapshots.attach({
+    getSnapshot: (options) => providerSettingsStore!.getCanonicalCollaborationSnapshot(options),
   });
   const appAiRuntime = registerAppAiCapabilities(app, {
     homePath, ownerIds: codingAgentOwnerIds,
