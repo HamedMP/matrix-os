@@ -215,9 +215,6 @@ describe("web getting started status", () => {
     expect(onOpenSettings).toHaveBeenCalledWith("agents-providers");
     expect(screen.getByRole("dialog", { name: "Getting started" })).toBeTruthy();
 
-    fireEvent.click(screen.getByRole("button", { name: "Connect GitHub" }));
-    expect(onOpenSettings).toHaveBeenCalledWith("agents-providers");
-
     fireEvent.click(trigger);
     await waitFor(() => expect(screen.queryByRole("dialog", { name: "Getting started" })).toBeNull());
   });
@@ -231,7 +228,7 @@ describe("web getting started status", () => {
           : url.endsWith("/api/workspace/projects") ? { projects: [] }
             : url.endsWith("/api/chats?limit=1") ? { items: [] }
               : url.includes("/billing/status") ? { access: { runtimeProxyAllowed: false } }
-                : { authenticated: false };
+                : { ready: false };
       return new Response(JSON.stringify(body), { status: 200 });
     });
 
@@ -250,7 +247,7 @@ describe("web getting started status", () => {
             : url.endsWith("/api/workspace/projects") ? { projects: [] }
               : url.endsWith("/api/chats?limit=1") ? { items: [] }
                 : url.includes("/billing/status") ? { access: { runtimeProxyAllowed: true } }
-                  : { authenticated: false };
+                  : { ready: false };
         return new Response(JSON.stringify(body), { status: 200 });
       });
     }
@@ -267,13 +264,13 @@ describe("web getting started status", () => {
       connections.connectApp.mockReset();
     });
 
-    it("starts GitHub's own sign-in and reloads the moment a connection changes", async () => {
+    it("opens GitHub developer access and still reloads when other connections change", async () => {
       const fetcher = installFetch([]);
       const onOpenSettings = vi.fn();
       const dialog = await openPopover(vi.fn(), onOpenSettings);
       fireEvent.click(await within(dialog).findByRole("button", { name: "Connect GitHub" }));
-      expect(connections.connectApp).toHaveBeenCalledWith("github");
-      expect(onOpenSettings).not.toHaveBeenCalled();
+      expect(connections.connectApp).not.toHaveBeenCalled();
+      expect(onOpenSettings).toHaveBeenCalledWith("agents-providers");
       const reads = () => fetcher.mock.calls.filter(([input]) => String(input).endsWith("/api/integrations")).length;
       const before = reads();
       act(() => connections.onChanged?.());
@@ -282,7 +279,7 @@ describe("web getting started status", () => {
 
     it("says when a sign-in did not finish", async () => {
       installFetch([]);
-      connections.failedServices = new Set(["github"]);
+      connections.failedServices = new Set(["gmail"]);
       try {
         const dialog = await openPopover();
         expect(await within(dialog).findByText("Sign-in didn't finish. Click to try again.")).toBeTruthy();
@@ -325,7 +322,7 @@ describe("web getting started status", () => {
             : url.endsWith("/api/workspace/projects") ? { projects: [] }
               : url.endsWith("/api/chats?limit=1") ? { items: [] }
                 : url.includes("/billing/status") ? { access: { runtimeProxyAllowed: false } }
-                  : { authenticated: false };
+                  : { ready: false };
         return new Response(JSON.stringify(body), { status: 200 });
       });
     }
@@ -371,7 +368,7 @@ describe("web getting started status", () => {
                 : url.endsWith("/api/workspace/projects") ? { projects: [] }
                   : url.endsWith("/api/chats?limit=1") ? { items: [] }
                     : url.includes("/billing/status") ? { access: { runtimeProxyAllowed: false } }
-                      : { authenticated: false };
+                      : { ready: false };
         return new Response(JSON.stringify(body), { status: 200 });
       });
       const onOpenSettings = vi.fn();
@@ -414,7 +411,7 @@ describe("web getting started status", () => {
                 : url.endsWith("/api/workspace/projects") ? { projects: [] }
                   : url.endsWith("/api/chats?limit=1") ? { items: [] }
                     : url.includes("/billing/status") ? { access: { runtimeProxyAllowed: false } }
-                      : { authenticated: false };
+                      : { ready: false };
         return new Response(JSON.stringify(body), { status: 200 });
       });
       render(
@@ -452,7 +449,7 @@ describe("web getting started status", () => {
           : url.endsWith("/api/workspace/projects") ? { projects: [] }
             : url.endsWith("/api/chats?limit=1") ? { items: [] }
               : url.includes("/billing/status") ? { access: { runtimeProxyAllowed: false } }
-                : { authenticated: false };
+                : { ready: false };
       return new Response(JSON.stringify(body), { status: 200 });
     });
     function WidgetShowing() {
