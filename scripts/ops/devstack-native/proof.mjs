@@ -168,51 +168,67 @@ export async function createTrackedWorker(config, profile, ledger, assertInvento
   check(); // The submitted create is now conclusively recorded.
   return reply;
 }
-export async function nativeProof(config, identity, context) {
+export async function nativeProof(config, identity, context, io = {}) {
+  const { request = supervisorRequest, inventory = observeWorkers, workerConfiguration = inspectWorkerConfiguration,
+    supervisorConfiguration = inspectSupervisor, workerIsolation = inspectWorker, brokerStart = startBroker,
+    controlsStart = startControls, brokerExchange = exchange, gracefulDrain = qualifyGracefulDrain, socketStat = stat } = io;
   const { journal, ledger, dependencies, baseline, expectedProfile, node, check } = context;
   const capability = async () => {
     check();
-    const safe = safeCapability(await supervisorRequest(config, "capability.get"));
+    const safe = safeCapability(await request(config, "capability.get"));
     assert(safe.profileDigest === expectedProfile.profileDigest && safe.adapter.harnessVersion === dependencies.sdk.claudeCodeVersion, "source_profile_mismatch"); return safe;
   };
-  const assertInventory = async () => assert(ledger.inventory(await observeWorkers(config)).length === 0, "unowned_worker_quarantined");
+  const assertInventory = async () => assert(ledger.inventory(await inventory(config)).length === 0, "unowned_worker_quarantined");
   const create = async (profile, role) => {
-    const reply = await createTrackedWorker(config, profile, ledger, assertInventory, { check });
-    await journal.resourceStep(reply.runtimeHandle, role, () => inspectWorkerConfiguration(config, reply.runtimeHandle, dependencies, identity.workerUnit(reply.runtimeHandle), node));
-    return reply.runtimeHandle;
+    const reply = await createTrackedWorker(config, profile, ledger, assertInventory, { check, request, inventory });
+    const configuration = await journal.resourceStep(reply.runtimeHandle, role, () => workerConfiguration(config, reply.runtimeHandle, dependencies, identity.workerUnit(reply.runtimeHandle), node));
+    return { handle: reply.runtimeHandle, configuration };
   };
   let broker, controls;
   try {
     const before = await journal.step("capability", async () => waitFor(async () => {
-      if (!(await stat(config.supervisorSocket))?.isSocket()) return false; return capability();
+      if (!(await socketStat(config.supervisorSocket))?.isSocket()) return false; return capability();
     }, "supervisor_not_ready"));
-    await journal.step("supervisor_security", () => inspectSupervisor(config, node));
+    await journal.step("supervisor_security", () => supervisorConfiguration(config, node));
     check();
-    broker = await startBroker(config.brokerSocket, dirname(config.runtimeDirectory), check);
-    const first = await create(before, "sdk"), peer = await create(before, "peer_control");
+    broker = await brokerStart(config.brokerSocket, dirname(config.runtimeDirectory), check);
+    const { handle: first } = await create(before, "isolation_control"), { handle: peer } = await create(before, "peer_control");
     const peerSockets = [first, peer].map(handle => `${config.commandSocketRoot}/${handle.slice(8)}/worker.sock`);
     await journal.step("isolation", async () => {
       const pair = await inspectWorkerPair(ledger, [first, peer], handle =>
-        inspectWorkerConfiguration(config, handle, dependencies, identity.workerUnit(handle), node));
+        workerConfiguration(config, handle, dependencies, identity.workerUnit(handle), node));
       check();
-      controls = await startControls(config, baseline, peerSockets, check);
+      controls = await controlsStart(config, baseline, peerSockets, check);
       check();
       const current = await ledger.freshWorker(first);
       assert(current.MainPID === pair[0].properties.MainPID, "worker_pair_pid_changed");
       check();
-      const isolation = await inspectWorker(pair[0], controls, node);
+      const isolation = await workerIsolation(pair[0], controls, node);
       await ledger.freshWorker(first); // Recheck the recorded incarnation across the namespace probe.
       return { ...isolation, pair: pair.map(({ handle, invocationId, properties, namespaces, rootIdentity, cgroup }) =>
         ({ handle, invocationId, pid: Number(properties.MainPID), namespaces, rootIdentity, cgroup })) };
     });
+    // The positive controls above consume both command slots. Never reconnect
+    // either one: qualify a fresh SDK worker against the existing control targets.
+    const { handle: sdkHandle, configuration: sdkConfiguration } = await create(before, "sdk");
+    await journal.step("sdk_isolation", async () => {
+      const current = await ledger.freshWorker(sdkHandle);
+      assert(current.ActiveState === "active" && current.SubState === "running", "worker_sdk_not_live");
+      assert(current.MainPID === sdkConfiguration.properties.MainPID, "worker_sdk_pid_changed");
+      check();
+      const isolation = await workerIsolation(sdkConfiguration, controls, node);
+      const afterProbe = await ledger.freshWorker(sdkHandle);
+      assert(afterProbe.ActiveState === "active" && afterProbe.SubState === "running", "worker_sdk_not_live");
+      return { ...isolation, handle: sdkHandle, invocationId: current.InvocationID, commandSocketUntouchedByHostControls: true };
+    });
     await journal.step("sdk", async () => {
-      const sdk = await ledger.protocolAction(first, () => supervisorRequest(config, "runtime.chat", { runtimeHandle: first, executionGeneration: before.executionGeneration, model: MODEL, prompt: "Return the bounded acceptance response." }));
-      assert(sdk.runtimeHandle === first && sdk.executionGeneration === before.executionGeneration && sdk.text === "scope-sdk-ok" && broker.requests() > 0, "actual_sdk_result_missing");
-      return { result: "scope-sdk-ok", transport: "unix_socket_fake_broker", providerCall: false, observedInferenceRequests: broker.requests() };
+      const sdk = await ledger.protocolAction(sdkHandle, () => request(config, "runtime.chat", { runtimeHandle: sdkHandle, executionGeneration: before.executionGeneration, model: MODEL, prompt: "Return the bounded acceptance response." }));
+      assert(sdk.runtimeHandle === sdkHandle && sdk.executionGeneration === before.executionGeneration && sdk.text === "scope-sdk-ok" && broker.requests() > 0, "actual_sdk_result_missing");
+      return { runtimeHandle: sdkHandle, result: "scope-sdk-ok", transport: "unix_socket_fake_broker", providerCall: false, observedInferenceRequests: broker.requests() };
     });
     await journal.step("broker_mock", async () => {
       check();
-      const denied = await exchange(config.brokerSocket, { version: 1, requestId: randomUUID(), action: "host.fetch" });
+      const denied = await brokerExchange(config.brokerSocket, { version: 1, requestId: randomUUID(), action: "host.fetch" });
       assert(denied?.ok === false && denied.error === "action_denied", "broker_mock_action_failed");
       return { lane: "host_fake_broker_protocol_only", workerAccessClaim: false, actionDenied: true };
     });
@@ -224,21 +240,21 @@ export async function nativeProof(config, identity, context) {
         try { const value = await capability(); return value.executionGeneration !== before.executionGeneration && value; }
         catch (error) { if (["socket_unavailable", "socket_closed", "supervisor_request_failed"].includes(error.message)) return false; throw error; }
       }, "own_restart_failed");
-      return { ...profile, incarnation, security: await inspectSupervisor(config, node) };
+      return { ...profile, incarnation, security: await supervisorConfiguration(config, node) };
     });
     await journal.step("reconcile", async () => {
       await assertInventory();
-      for (const handle of [first, peer]) {
+      for (const handle of [first, peer, sdkHandle]) {
         await ledger.freshWorker(handle);
-        const stopped = await ledger.protocolAction(handle, () => supervisorRequest(config, "runtime.stop", { runtimeHandle: handle }));
+        const stopped = await ledger.protocolAction(handle, () => request(config, "runtime.stop", { runtimeHandle: handle }));
         ledger.releaseWorker(handle, stopped);
       }
-      return { originalIncarnationsPreserved: true, stoppedHandles: [first, peer] };
+      return { originalIncarnationsPreserved: true, stoppedHandles: [first, peer, sdkHandle] };
     });
     check();
-    broker = await startBroker(config.brokerSocket, dirname(config.runtimeDirectory), check); const second = await create(after, "drain");
+    broker = await brokerStart(config.brokerSocket, dirname(config.runtimeDirectory), check); const { handle: second } = await create(after, "drain");
     await journal.step("drain", async () => {
-      await assertInventory(); return qualifyGracefulDrain(config, ledger, second, { capture: context.capture });
+      await assertInventory(); return gracefulDrain(config, ledger, second, { capture: context.capture });
     });
   } finally {
     const failures = [];
