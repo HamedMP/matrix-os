@@ -163,6 +163,7 @@ describe("ProviderSettingsStore", () => {
     withRuntime?: boolean;
     snapshot?: () => AiProviderSnapshotV3;
     fundingSummary?: { funding: FundedAiFundingSummary; policy: FundedAiEffectivePolicy } | Error;
+    onFundingSummaryRead?: () => void;
     genericModelCatalog?: GenericHarnessModelCatalog | Error;
     prepareSharedAiRouteChange?: () => Promise<void>;
     codexNativeAccountMetadataReader?: CodexNativeAccountMetadataReader;
@@ -182,6 +183,7 @@ describe("ProviderSettingsStore", () => {
       ...(options.codexNativeAccountMetadataReader ? { codexNativeAccountMetadataReader: options.codexNativeAccountMetadataReader } : {}),
       fundingSummaryReader: options.fundingSummary === undefined ? undefined : {
         getFundingSummary: vi.fn(async () => {
+          options.onFundingSummaryRead?.();
           if (options.fundingSummary instanceof Error) throw options.fundingSummary;
           return options.fundingSummary!;
         }),
@@ -376,8 +378,11 @@ describe("ProviderSettingsStore", () => {
     const metadata = bindNativeAccountMetadata(normalizeCodexNativeAccountMetadata(
       { account: { type: "chatgpt", email: "owner@example.test", planType: "pro" } }, {}, NOW,
     )!, async () => true, "private-owner-principal");
-    const store = createStore({ codexNativeAccountMetadataReader: async () => metadata });
+    const onFundingSummaryRead = vi.fn();
+    const store = createStore({ codexNativeAccountMetadataReader: async () => metadata,
+      fundingSummary: new Error("Matrix funding unavailable"), onFundingSummaryRead });
     await store.getSnapshot();
+    onFundingSummaryRead.mockClear();
     const saved = JSON.parse(await readFile(store.configurationPath, "utf8")) as {
       revision: number;
       harnesses: Array<{ harness: string; enabled: boolean; enablementOrigin?: "generated_default" | "owner_configuration";
@@ -393,14 +398,15 @@ describe("ProviderSettingsStore", () => {
     });
     await writeFile(store.configurationPath, `${JSON.stringify(saved)}\n`);
 
-    await expect(store.getCanonicalCollaborationSnapshot()).resolves.toMatchObject({
+    await expect(store.getCanonicalCollaborationSnapshot({ suppressFundedProbes: true })).resolves.toMatchObject({
       active: { providerInstanceId: "codex_owner", accessSourceId: "owner_openai_profile", modelId: "gpt-5" },
     });
+    expect(onFundingSummaryRead).not.toHaveBeenCalled();
 
     const codex = saved.harnesses.find((harness) => harness.harness === "codex")!;
     delete codex.nativeAccountGeneration; delete codex.nativeAccountConsentRevision;
     await writeFile(store.configurationPath, `${JSON.stringify(saved)}\n`);
-    await expect(store.getCanonicalCollaborationSnapshot()).resolves.toMatchObject({
+    await expect(store.getCanonicalCollaborationSnapshot({ suppressFundedProbes: true })).resolves.toMatchObject({
       active: { providerInstanceId: null, accessSourceId: null, modelId: null },
     });
   });

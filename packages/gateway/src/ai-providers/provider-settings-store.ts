@@ -593,7 +593,22 @@ export class ProviderSettingsStore implements ProviderSettingsStoreWriter {
           console.warn("[provider-settings] Native collaboration route unavailable:",
             error instanceof Error ? error.name : "UnknownError");
         }
-        projected = await this.#project(canonical, config, false, undefined, metadata);
+        try {
+          // Owner-paid native readiness is independent of Matrix funding and
+          // generic catalogs. This hot admission path must honor suppressed
+          // funded probes and project only canonical inventory + saved consent.
+          projected = await projectProviderSettings({
+            canonical,
+            config,
+            codexNativeAccountMetadata: metadata,
+            now: this.#now(),
+            supportedActions: [],
+          });
+        } catch (error: unknown) {
+          console.warn("[provider-settings] Native collaboration projection unavailable:",
+            error instanceof Error ? error.name : "UnknownError");
+          throw new ProviderSettingsStoreError("projection_unavailable", 503);
+        }
       }
       const qualified = qualifyNativeCodexCollaborationRoute(canonical, config, projected);
       const accepted = await this.#serialize(async () => {
