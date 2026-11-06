@@ -51,8 +51,14 @@ function redact(value) {
     .replace(/-----BEGIN [^-\r\n]*PRIVATE KEY-----[\s\S]*?-----END [^-\r\n]*PRIVATE KEY-----/g, "[redacted private key]");
 }
 
+function terminalText(text) {
+  // gh's survey prompts move/erase the cursor, save/restore its position and
+  // query terminal dimensions. Strip only these CSI controls for recognition.
+  return text.replace(/\u001b(?:\[[0-9;?]*[A-HJKfhlmn]|[78])/g, "");
+}
+
 function writeSanitized(destination, state, text) {
-  const plain = text.replace(/\u001b\[[0-9;]*m/g, "");
+  const plain = terminalText(text);
   const beginsKey = /-----BEGIN [^-\r\n]*PRIVATE KEY-----/.test(plain);
   if (state.privateKey || beginsKey) {
     if (!state.privateKey) destination.write("[redacted private key]\n");
@@ -82,13 +88,17 @@ function streamSanitized(stream, destination, state, onLimit) {
     // Interactive programs commonly wait after a prompt without writing a
     // newline. Forward only prompt-shaped, already-sanitized text; everything
     // else remains line-buffered so secret patterns can span data chunks.
-    const prompt = state.pending.replace(/\u001b\[[0-9;]*m/g, "");
+    const prompt = terminalText(state.pending);
+    // Cursor reports are a request/response protocol: buffering a standalone
+    // query deadlocks gh before it can accept the owner's answer.
+    const terminalControlFrame = state.pending.length > 0 && prompt.length === 0;
     if (
       !state.privateKey
-      && (/(?:[:?]|\[[^\]\r\n]{0,80}\]|\([^()\r\n]{0,80}\)) $/.test(prompt)
+      && (terminalControlFrame || /(?:[:?]|\[[^\]\r\n]{0,80}\]|\([^()\r\n]{0,80}\)) $/.test(prompt)
         || /^Press Enter to open https:\/\/github\.com\/login\/device in your browser\.\.\. $/.test(prompt))
       && redact(state.pending) === state.pending
-      && !/(?:ghp_|github_pat_|bearer\s|PRIVATE KEY)/i.test(state.pending)
+      && redact(prompt) === prompt
+      && !/(?:ghp_|github_pat_|bearer\s|PRIVATE KEY)/i.test(prompt)
     ) {
       destination.write(state.pending);
       state.pending = "";
