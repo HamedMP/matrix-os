@@ -1,4 +1,4 @@
-import { createRoutineOriginClient, type RoutineOriginClient } from "../../chat/routine-origin-client.js";
+import { createRoutineOriginClient, type RoutineOriginClient, type RoutineOriginRequestOptions } from "../../chat/routine-origin-client.js";
 import { ROUTINE_DESTINATION_PATH, RoutineDestinationViewSchema, RoutineCliRememberTargetSchema, RoutineCliResetTargetSchema } from "@matrix-os/contracts/routine-destination";
 import type { RoutineDestinationClient } from "../../routine-destination/use-routine-destination.js";
 import { CreateManagedCustomBotRequestSchema, RecoverManagedCustomBotRequestSchema, type CreateManagedCustomBotRequest } from "@matrix-os/contracts";
@@ -19,7 +19,7 @@ import { botCreationFailureReason, type BotCreationFailureReason } from "../crea
 
 import { createBotRoutineClient, type BotRoutineClient } from "./routine-client.js";
 
-type BotRequest = (path: string, method: "GET" | "POST" | "DELETE", body?: unknown, options?: { signal?: AbortSignal }) => Promise<unknown>;
+type BotRequest = (path: string, method: "GET" | "POST" | "DELETE", body?: unknown, options?: RoutineOriginRequestOptions) => Promise<unknown>;
 
 const safeMessages: Record<number, string> = {
   400: "The request is invalid.",
