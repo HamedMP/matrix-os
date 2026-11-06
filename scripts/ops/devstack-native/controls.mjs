@@ -42,12 +42,18 @@ export async function startControls(config, baseline, peerSockets, check = () =>
 }
 // Only fixed fixture data and endpoint names are inputs. No credentials or
 // environments are read; a timeout/unknown errno is a failure, never a denial.
+// Self-contained so the pinned worker executable can use it inside its root.
+export async function fileReadResult(path, fs) {
+  try { await fs.access(path, fs.constants.R_OK); return { path, code: "READABLE" }; }
+  catch (error) { return { path, code: error.code }; }
+}
 export const DENIAL_PROBE = `
-import {access,readFile} from 'node:fs/promises'; import {connect} from 'node:net'; import {networkInterfaces} from 'node:os';
+import * as fs from 'node:fs/promises'; const {readFile}=fs; import {connect} from 'node:net'; import {networkInterfaces} from 'node:os';
 const input=JSON.parse(process.argv[1]);
 const attempt=target=>new Promise(resolve=>{const s=connect(target);let done=false;const timer=setTimeout(()=>finish('TIMEOUT'),1500);const finish=code=>{if(done)return;done=true;clearTimeout(timer);s.destroy();resolve(code)};s.once('connect',()=>finish('CONNECTED'));s.once('error',e=>finish(e.code));});
 const unix=[];for(const target of input.targets)unix.push({role:target.role,path:target.path,code:await attempt({path:target.path})});
-const files=[];for(const path of [input.filePath,'/opt/matrix/env/host.env','/home/matrix/home','/root']){let code='READABLE';try{await access(path)}catch(e){code=e.code}files.push({path,code});}
+const fileReadResult=${fileReadResult.toString()};
+const files=[];for(const path of [input.filePath,'/opt/matrix/env/host.env','/home/matrix/home','/root'])files.push(await fileReadResult(path,fs));
 const broker=await new Promise((resolve,reject)=>{const s=connect({path:'/run/matrix-scope/broker.sock'});let text='';const t=setTimeout(()=>{s.destroy();reject(Error('broker_control_timeout'))},2000);s.once('connect',()=>s.end(JSON.stringify({version:1,requestId:'boundary-positive',action:'inference.messages',method:'HEAD',path:'/api/hello'})+'\\n'));s.on('data',b=>{text+=b;if(text.length>4096)s.destroy()});s.once('error',reject);s.once('end',()=>{clearTimeout(t);s.destroy();try{const r=JSON.parse(text);resolve(r.ok===true&&r.status===200)}catch(e){reject(e)}})});
 const ipv4=(await readFile('/proc/self/net/route','utf8')).trim().split('\\n').slice(1).filter(Boolean).every(line=>line.trim().split(/\\s+/)[0]==='lo');
 const ipv6=(await readFile('/proc/self/net/ipv6_route','utf8')).trim().split('\\n').filter(Boolean).every(line=>line.trim().split(/\\s+/).at(-1)==='lo');
