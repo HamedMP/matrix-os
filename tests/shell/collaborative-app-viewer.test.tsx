@@ -9,6 +9,7 @@ const mocks = vi.hoisted(() => ({
   createApi: vi.fn(),
   releaseApi: vi.fn(),
   createTransport: vi.fn(),
+  sharedViewer: vi.fn(),
 }));
 
 vi.mock("@/hooks/useBrowserOrigin", () => ({ useBrowserOrigin: () => "https://app.matrix-os.test" }));
@@ -21,9 +22,10 @@ vi.mock("@matrix-os/ui/collaborative-app-sharing", () => ({
   ReadinessSummary: () => null,
   useCollaborativeAppSharing: () => ({ readiness: null }),
   createSharedAppTransport: mocks.createTransport,
-  SharedAppViewer: ({ target }: { target: CollaborativeAppDirectoryItem }) => (
-    <div data-testid="shared-app-viewer">{target.scopeId}</div>
-  ),
+  SharedAppViewer: (props: { target: CollaborativeAppDirectoryItem; transport: unknown }) => {
+    mocks.sharedViewer(props);
+    return <div data-testid="shared-app-viewer">{props.target.scopeId}</div>;
+  },
 }));
 vi.mock("@/api/http", () => ({ shellApi: {} }));
 vi.mock("@/lib/collaboration-organization-state", () => ({
@@ -82,5 +84,24 @@ describe("collaborative app web viewer", () => {
 
     view.unmount();
     expect(mocks.releaseApi).toHaveBeenCalledWith(api);
+  });
+
+  it("keeps the transport and mounted viewer stable when discovery returns an equivalent target", () => {
+    const direct = { request: vi.fn(), subscribeEvents: vi.fn(), close: vi.fn() };
+    const api = { direct };
+    const transport = { target };
+    mocks.createApi.mockReturnValue(api);
+    mocks.createTransport.mockReturnValue(transport);
+    const view = render(
+      <AppViewer path={`__shared-app__:${target.scopeId}`} sharedAppTarget={target} />,
+    );
+
+    view.rerender(<AppViewer path={`__shared-app__:${target.scopeId}`} sharedAppTarget={{
+      ...target,
+      owner: { ...target.owner },
+    }} />);
+
+    expect(mocks.createTransport).toHaveBeenCalledTimes(1);
+    expect(mocks.sharedViewer).toHaveBeenLastCalledWith({ target, transport });
   });
 });

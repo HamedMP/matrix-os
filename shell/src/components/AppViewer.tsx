@@ -130,20 +130,37 @@ export function AppViewer(props: AppViewerProps) {
 
 function SharedAppWebViewer({ target }: { target: CollaborativeAppDirectoryItem }) {
   const browserOrigin = useBrowserOrigin();
+  const stableTarget = useMemo<CollaborativeAppDirectoryItem>(() => ({
+    scopeId: target.scopeId,
+    runtimeId: target.runtimeId,
+    organizationId: target.organizationId,
+    authorityGeneration: target.authorityGeneration,
+    appId: target.appId,
+    catalogId: target.catalogId,
+    readinessId: target.readinessId,
+    registrationIncarnation: target.registrationIncarnation,
+    buildId: target.buildId,
+    shareRevision: target.shareRevision,
+    owner: { actorId: target.owner.actorId, displayName: target.owner.displayName },
+  }), [
+    target.scopeId, target.runtimeId, target.organizationId, target.authorityGeneration,
+    target.appId, target.catalogId, target.readinessId, target.registrationIncarnation,
+    target.buildId, target.shareRevision, target.owner.actorId, target.owner.displayName,
+  ]);
   const api = useMemo(
     () => browserOrigin ? createShellCollaborationApi(browserOrigin) : null,
     [browserOrigin],
   );
   const transport = useMemo(
-    () => api ? createSharedAppTransport({ platform: api, direct: api.direct, target }) : null,
-    [api, target],
+    () => api ? createSharedAppTransport({ platform: api, direct: api.direct, target: stableTarget }) : null,
+    [api, stableTarget],
   );
   useEffect(() => () => {
     if (api) releaseShellCollaborationApi(api);
   }, [api]);
 
   if (!transport) return <p role="status" className="p-8">Loading shared app…</p>;
-  return <SharedAppViewer target={target} transport={transport} />;
+  return <SharedAppViewer target={stableTarget} transport={transport} />;
 }
 
 function SandboxedAppViewer({ path, sessionId, onOpenApp, onShareApp, visible = true }: AppViewerProps) {
