@@ -219,8 +219,57 @@ describe("ProviderSettingsStore", () => {
     const collaboration = await store.getCanonicalCollaborationSnapshot();
 
     expect(collaboration.revision).toBe(1);
-    expect(collaboration.active).toEqual(canonical.active);
+    expect(collaboration.active).toEqual({
+      providerInstanceId: "kernel_owner",
+      accessSourceId: "owner_anthropic_profile",
+      modelId: "claude-opus-5",
+    });
     expect(canonical.revision).toBe(7);
+  });
+
+  it("uses the saved Claude subscription instead of credential-priority owner key inventory", async () => {
+    const profile = canonical.accessSources.find((source) => source.id === "owner_anthropic_profile")!;
+    const account = canonical.accounts.find((candidate) => candidate.id === "owner_anthropic")!;
+    const ownerInstance = canonical.instances.find((instance) => instance.id === "kernel_owner")!;
+    canonical.accessSources.push(
+      { ...profile, id: "owner_claude_profile" },
+      { ...profile, id: "owner_anthropic_key", fundingKind: "owner_api_key" },
+    );
+    canonical.accounts.push({ ...account, id: "owner_claude_profile" });
+    canonical.instances.push(
+      { ...ownerInstance, id: "claude_native", driverId: "claude_code", accountId: "owner_claude_profile", accessSourceId: "owner_claude_profile" },
+      { ...ownerInstance, id: "kernel_key", accessSourceId: "owner_anthropic_key" },
+    );
+    for (const model of canonical.models) {
+      model.eligibleAccessSourceIds.push("owner_claude_profile", "owner_anthropic_key");
+      const policy = model.dataPolicies.find((candidate) => candidate.accessSourceId === "owner_anthropic_profile")!;
+      model.dataPolicies.push(
+        { ...policy, accessSourceId: "owner_claude_profile" },
+        { ...policy, accessSourceId: "owner_anthropic_key" },
+      );
+    }
+    canonical.active = {
+      providerInstanceId: "kernel_key",
+      accessSourceId: "owner_anthropic_key",
+      modelId: "claude-opus-5",
+    };
+    const store = createStore();
+    await store.getSnapshot();
+    const saved = JSON.parse(await readFile(store.configurationPath, "utf8")) as {
+      harnesses: Array<{ harness: string; accessSourceId: string | null; selectedAccountId: string | null }>;
+    };
+    const claude = saved.harnesses.find((harness) => harness.harness === "claude")!;
+    claude.accessSourceId = "owner_claude_profile";
+    claude.selectedAccountId = "owner_claude_profile";
+    await writeFile(store.configurationPath, `${JSON.stringify(saved)}\n`);
+
+    await expect(store.getCanonicalCollaborationSnapshot()).resolves.toMatchObject({
+      active: {
+        providerInstanceId: "claude_native",
+        accessSourceId: "owner_claude_profile",
+        modelId: "claude-opus-5",
+      },
+    });
   });
 
   it("projects fresh V3 truth and persists owner configuration without readiness or usage copies", async () => {
