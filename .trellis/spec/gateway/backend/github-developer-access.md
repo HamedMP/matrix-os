@@ -76,3 +76,7 @@ stale approval; interpret a post-effect abort as a definite refusal.
 
 Correct: recognize sanitized prompt text plus bounded terminal control frames;
 push the approved SHA; retain uncertain effects for owner reconciliation.
+
+Guarded existing-file edits use the separate executable contract in
+`specs/634-github-developer-access/artifact-edit.md`, including retained owner
+recovery, its 64-slot bound and the deliberate capture/publication window.

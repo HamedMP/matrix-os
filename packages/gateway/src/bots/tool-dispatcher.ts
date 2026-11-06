@@ -12,6 +12,7 @@ import { link, lstat, mkdir, open, opendir, rename, unlink } from "node:fs/promi
 import { join } from "node:path";
 import { type BotToolRequest, type BotToolResult } from "@matrix-os/contracts";
 import { readBotArtifact } from "./artifact-read.js";
+import { ARTIFACT_RECOVERY_DIRECTORY, replaceBotArtifact } from "./artifact-replacement.js";
 import { BotAdmissionError } from "./admission.js";
 import { ChatExecutionRootError } from "../chat/execution-root.js";
 import { resolveBotWorkspaceRoot } from "../chat/bot-workspace-root.js";
@@ -83,7 +84,7 @@ function isPrivateStaging(info: Stats): boolean {
 
 function segments(relPath: string): string[] {
   const parts = relPath.split("/");
-  if (parts.length === 0 || parts.length > 16 || !parts.every((part) => SEGMENT.test(part) && ![".git", ".matrix-github-staging"].includes(part.toLowerCase()) && !part.toLowerCase().startsWith(".github-clone-")) || parts[0] === BOT_SAVE_STAGING) {
+  if (parts.length === 0 || parts.length > 16 || !parts.every((part) => SEGMENT.test(part) && ![".git", ".matrix-github-staging", ARTIFACT_RECOVERY_DIRECTORY].includes(part.toLowerCase()) && !part.toLowerCase().startsWith(".github-clone-")) || parts[0] === BOT_SAVE_STAGING) {
     throw new BotBrokerActionError("invalid_arguments");
   }
   return parts;
@@ -231,8 +232,8 @@ export function createBotToolDispatcher(deps: {
   }
 
   async function write(binding: PiRuntimeBinding, request: Extract<BotToolRequest, { capability: "artifact.write" }>, signal: AbortSignal): Promise<BotToolResult> {
-    // Revision-checked replacement needs artifact revisions; a plain save overwrites.
-    if (request.args.replace) throw new BotBrokerActionError("invalid_arguments");
+    // Legacy revision replacement stays unsupported; hash-checked edits are explicit.
+    if (request.args.replace && !("expectedSha256" in request.args.replace)) throw new BotBrokerActionError("invalid_arguments");
     const parts = segments(request.args.relPath);
     const root = await workspace(binding);
     const directory = await directoryFor(root, parts, true);
@@ -264,14 +265,22 @@ export function createBotToolDispatcher(deps: {
     await sweepStaging(staging, Date.now(), managed);
     const temp = join(staging, `${randomUUID()}.tmp`);
     const file = await open(temp, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW, 0o640);
+    let recoveryId: string | undefined;
     try {
       try {
         await file.writeFile(request.args.content, "utf8");
-        if (managed) await file.sync();
+        if (managed || request.args.replace) await file.sync();
       } finally {
         await file.close();
       }
-      if (managed) {
+      if (request.args.replace && "expectedSha256" in request.args.replace) {
+        recoveryId = await replaceBotArtifact({ homePath: deps.homePath, target, staged: temp, relPath: request.args.relPath,
+          expectedSha256: request.args.replace.expectedSha256, revalidate: async () => {
+            if (signal.aborted || await workspace(binding) !== root || await directoryFor(root, parts, false) !== directory) throw new BotBrokerActionError("stale_generation");
+            await deps.assertSource?.(binding, signal);
+            if (signal.aborted) throw new BotBrokerActionError("stale_generation");
+          } });
+      } else if (managed) {
         // Revalidate authority/root after staging, before the first owner-visible effect.
         if (await workspace(binding) !== root || await directoryFor(root, parts, false) !== directory) {
           throw new BotBrokerActionError("stale_generation");
@@ -296,8 +305,8 @@ export function createBotToolDispatcher(deps: {
       await removeStagedSave(temp);
       throw error;
     }
-    if (managed) await removeStagedSave(temp);
-    return textResult(`Saved ${request.args.relPath} (${Buffer.byteLength(request.args.content, "utf8")} bytes).`);
+    if (managed || recoveryId) await removeStagedSave(temp);
+    return textResult(`Saved ${request.args.relPath} (${Buffer.byteLength(request.args.content, "utf8")} bytes).${recoveryId ? ` Previous inode retained in owner recovery ${recoveryId}.` : ""}`);
   }
 
   async function read(binding: PiRuntimeBinding, request: Extract<BotToolRequest, { capability: "artifact.read" }>): Promise<BotToolResult> {
