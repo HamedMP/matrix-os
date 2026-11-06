@@ -59,11 +59,24 @@ it("uses the qualified existing native workflow only after an explicit adoption 
 it("retains the legacy route and allows retry after adoption fails", async () => {
   const snapshot = fixture(), before = structuredClone(snapshot);
   const controls = mount(snapshot, true);
-  fireEvent.click(await screen.findByRole("button", {name: "Use connected Claude account"}));
-  expect(await screen.findByRole("alert")).toHaveTextContent("The connection could not be updated. Try again.");
+  const adopt = await screen.findByRole("button", {name: "Use connected Claude account"});
+  expect(adopt).toBeEnabled();
+  // The local rejected promise must settle and commit inside React's async
+  // boundary before querying error state; no polling timeout is involved.
+  await act(async () => {fireEvent.click(adopt);});
+  expect(controls.startConnection).toHaveBeenCalledOnce();
+  expect(screen.getByRole("alert")).toHaveTextContent("The connection could not be updated. Try again.");
+  const retry = screen.getByRole("button", {name: "Use connected Claude account"});
+  expect(retry).toBeVisible();
+  expect(retry).toBeEnabled();
+  expect(snapshot).toEqual(before);
+  await act(async () => {fireEvent.click(retry);});
+  expect(controls.startConnection).toHaveBeenCalledTimes(2);
+  expect(screen.getByRole("alert")).toHaveTextContent("The connection could not be updated. Try again.");
   expect(screen.getByRole("button", {name: "Use connected Claude account"})).toBeEnabled();
   expect(snapshot).toEqual(before);
   expect(controls.onMutate).not.toHaveBeenCalled();
+  expect(controls.onRefreshForConnection).not.toHaveBeenCalled();
 });
 it("waits for an existing operation to resume before offering another adoption start", async () => {
   const controls = mount(fixture(), false, true);
