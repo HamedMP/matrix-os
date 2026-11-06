@@ -9,6 +9,7 @@ export function createPlanCatalogRefresh() {
         mutate<R>(operation: () => Promise<R>): Promise<R>;
         apply(value: T): void;
         invalidate(): Promise<void>;
+        retain?(error: unknown): boolean;
     }): Promise<void> {
         const attempt = ++revision;
         const current = () => attempt === revision && deps.current();
@@ -24,7 +25,7 @@ export function createPlanCatalogRefresh() {
                 // its drain keeps token-refresh mutations free to settle after abort.
                 // An unfinished newer read is not fresh authority. Only a newer
                 // successfully qualified catalog may protect against an older failure.
-                return attempt >= qualifiedRevision && deps.current() ? { drain: deps.invalidate() } : null;
+                return attempt >= qualifiedRevision && deps.current() && !deps.retain?.(error) ? { drain: deps.invalidate() } : null;
             });
             await invalidated?.drain;
             throw error;

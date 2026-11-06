@@ -1,4 +1,6 @@
 import { createPlanCatalogRefresh } from './catalog-refresh';
+import { createPlanCatalogValidity } from './catalog-validity';
+import { catalogTransport } from './catalog-transport';
 import { rejectedPlanCredential } from './credential-failure';
 import { logPlanFailure, PlanFailure } from './diagnostics';
 import { randomUUID } from 'node:crypto';
@@ -38,7 +40,8 @@ export function createNativeChatgptPlanService(deps: Dependencies) {
         task: Promise<void>;
     } | null = null;
     let models: ChatgptPlanModel[] = [];
-    let catalogAt = 0;
+    let credentialEpoch = 0;
+    let peerEpoch = 0;
     let state: ChatgptPlanStatus['state'] = 'disconnected';
     let revocation: ChatgptPlanStatus['revocation'] = 'none';
     let bridgeConnected = false;
@@ -59,6 +62,18 @@ export function createNativeChatgptPlanService(deps: Dependencies) {
     let lifecycleTask: Promise<void> | null = null;
     const refreshCatalog = createPlanCatalogRefresh();
     const requests = new Set<AbortController>(); // <=4 native calls; peer enforces admission.
+    const catalog = createPlanCatalogValidity(invalidateCatalog);
+    function invalidateCatalog() {
+        catalog.clear();
+        models = [];
+        state = pending ? 'connecting' : 'error';
+        for (const controller of requests) controller.abort();
+        return peer.stop();
+    }
+    function catalogAuthority(value: Bound) {
+        const permission = grant(value.computerId);
+        return JSON.stringify([generation, active()?.id, credentialEpoch, permission.revision, permission.enabled, permission.background]);
+    }
     function bound(input: ChatgptPlanSession): Bound {
         const live = deps.auth.getStatus();
         const bearer = deps.auth.getToken();
@@ -97,9 +112,9 @@ export function createNativeChatgptPlanService(deps: Dependencies) {
         return {
             state, scope: 'this_device', ...(account ? { account: {
                     id: account.id, label: account.label
-                } } : {}), models: account?.tokens && !disconnecting ? models : [], grant: {
+                } } : {}), models: account?.tokens && !disconnecting && catalog.fresh() ? models : [], grant: {
                 revision: permission.revision, enabled: !!account?.tokens && !disconnecting && permission.enabled, background: !!account?.tokens && !disconnecting && permission.enabled && permission.background
-            }, bridgeConnected, ...(bridgeFailure ? { bridgeFailure } : {}), revocation,
+            }, bridgeConnected: bridgeConnected && catalog.fresh(), ...(bridgeFailure ? { bridgeFailure } : {}), revocation,
             ...(unconfirmedRecords.has(value.ownerId) ? { grantSaveUnconfirmed: true } : {})
         };
     }
@@ -117,7 +132,8 @@ export function createNativeChatgptPlanService(deps: Dependencies) {
             await peer.stop();
             record = null;
             models = [];
-            catalogAt = 0;
+            catalog.clear();
+            credentialEpoch++;
             loadedOwner = null;
             loadedScope = null;
             revocation = 'none';
@@ -159,6 +175,7 @@ export function createNativeChatgptPlanService(deps: Dependencies) {
         // A disconnect can install a stronger downgrade while this write waits.
         // An older confirmed record must not restore it or release its fence.
         if (unconfirmedRecords.get(value.ownerId) === fence) {
+            if (active()?.tokens !== next.accounts.find(account => account.id === next.activeAccountId)?.tokens) credentialEpoch++;
             record = next;
             unconfirmedRecords.delete(value.ownerId);
         }
@@ -209,23 +226,30 @@ export function createNativeChatgptPlanService(deps: Dependencies) {
     async function readCatalog(value: Bound, signal: AbortSignal) {
         const epoch = generation;
         const accountId = active()?.id;
+        const connectionEpoch = peerEpoch;
+        const wasConnected = bridgeConnected;
+        const transport = catalogTransport(fetchFn, signal);
         await refreshCatalog({
             current: () => epoch === generation && active()?.id === accountId && current(value),
             read: async () => {
                 const tokens = await freshTokens(value, signal);
-                return planCatalog(await planJson(fetchFn, 'models', {
+                if (active()?.tokens !== tokens) throw new Error('source changed');
+                const authority = catalogAuthority(value);
+                const next = planCatalog(await planJson(transport.fetchCatalog, 'models', {
                     headers: { authorization: `Bearer ${tokens.accessToken}` }, signal
                 }));
+                return { models: next, authority };
             },
             mutate,
-            apply: next => { signal.throwIfAborted(); models = next; catalogAt = Date.now(); state = pending ? 'connecting' : 'connected'; },
-            invalidate: () => {
-                models = [];
-                catalogAt = 0;
-                state = pending ? 'connecting' : 'error';
-                for (const controller of requests) controller.abort();
-                return peer.stop();
+            apply: next => {
+                signal.throwIfAborted();
+                if (next.authority !== catalogAuthority(value)) throw new Error('source changed');
+                models = next.models; catalog.qualify(next.authority); state = pending ? 'connecting' : 'connected';
             },
+            invalidate: invalidateCatalog,
+            retain: error => error instanceof PlanFailure && error.stage === 'catalog'
+                && (error.category === 'timeout' || error.category === 'network_error') && transport.transient()
+                && wasConnected && bridgeConnected && connectionEpoch === peerEpoch && catalog.matches(catalogAuthority(value)),
         });
         if (epoch !== generation || active()?.id !== accountId || !current(value))
             throw new Error('connection changed');
@@ -251,7 +275,7 @@ export function createNativeChatgptPlanService(deps: Dependencies) {
             const account = active();
             const permission = grant(value.computerId);
             const epoch = generation;
-            if (!account?.tokens || !models.length) {
+            if (!account?.tokens || !models.length || !catalog.fresh()) {
                 await peer.stop();
                 return;
             }
@@ -260,7 +284,7 @@ export function createNativeChatgptPlanService(deps: Dependencies) {
             };
             const catalogSignature = JSON.stringify(models);
             const qualified = () => authorized() && current(value) && epoch === generation && active()?.id === account.id
-                && JSON.stringify(models) === catalogSignature && catalogAt > 0 && grant(value.computerId).revision === permission.revision;
+                && JSON.stringify(models) === catalogSignature && catalog.fresh() && grant(value.computerId).revision === permission.revision;
             const signature = JSON.stringify(next);
             if (bridgeConnected && peerSignature === signature)
                 return;
@@ -305,7 +329,7 @@ export function createNativeChatgptPlanService(deps: Dependencies) {
         const epoch = generation;
         const validate = () => {
             signal.throwIfAborted();
-            if (!current(value) || epoch !== generation || !account?.tokens || active()?.id !== request.accountId || request.computerId !== value.computerId || permission.revision !== request.grantRevision || !permission.enabled || !models.some(model => model.id === request.model) || Date.now() - catalogAt > 5 * 60000)
+            if (!current(value) || epoch !== generation || !account?.tokens || active()?.id !== request.accountId || request.computerId !== value.computerId || permission.revision !== request.grantRevision || !permission.enabled || !models.some(model => model.id === request.model) || !catalog.fresh())
                 throw new Error('source changed');
             if (request.requestClass === 'background' && !permission.background
                 && (!request.approvedRoutine || request.approvedRoutine.ownerId !== value.ownerId || request.approvedRoutine.runId !== request.runId))
@@ -352,12 +376,15 @@ export function createNativeChatgptPlanService(deps: Dependencies) {
         approvedRoutines: true,
         fetchFn, current: currentPeer, infer, inferStream, connected: value => {
             bridgeConnected = value;
-            if (!value)
+            if (!value) {
+                peerEpoch++;
                 peerSignature = null;
+            }
         }
     });
     function cancelAll() {
         generation += 1;
+        catalog.clear();
         pending?.controller.abort();
         pending = null;
         for (const controller of requests)
@@ -371,7 +398,7 @@ export function createNativeChatgptPlanService(deps: Dependencies) {
         const value = bound(input);
         await ensure(value);
         const epoch = generation;
-        if (active()?.tokens && (!catalogAt || Date.now() - catalogAt > 5 * 60000)) {
+        if (!disconnecting && active()?.tokens && !catalog.fresh()) {
             try {
                 await readCatalog(value, AbortSignal.timeout(15000));
                 await restartPeer(value);
@@ -461,7 +488,7 @@ export function createNativeChatgptPlanService(deps: Dependencies) {
                             id: accountId, clientId: tokens.clientId, subject: tokens.subject, label: tokens.email ?? `ChatGPT account ${record.accounts.length + 1}`, tokens
                         };
                         models = [];
-                        catalogAt = 0;
+                        catalog.clear();
                         const oldGrant = grant(value.computerId);
                         const nextGrant = {
                             ...oldGrant, revision: oldGrant.revision + 1, enabled: true, background: false
@@ -574,7 +601,7 @@ export function createNativeChatgptPlanService(deps: Dependencies) {
         await peer.stop();
         state = 'disconnected';
         models = [];
-        catalogAt = 0;
+        catalog.clear();
         try {
             if (!captured)
                 throw new Error('vault unavailable');
@@ -626,7 +653,7 @@ export function createNativeChatgptPlanService(deps: Dependencies) {
         if (!active()?.tokens)
             return;
         lifecycleTask = (async () => {
-            if (Date.now() - catalogAt > 4 * 60000)
+            if (Date.now() - catalog.at() > 4 * 60000)
                 await readCatalog(value, AbortSignal.timeout(15000));
             await restartPeer(value);
         })().catch((error: unknown) => { logPlanFailure('source_refresh', error); }).finally(() => { lifecycleTask = null; });
