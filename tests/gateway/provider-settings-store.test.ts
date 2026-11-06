@@ -18,6 +18,8 @@ import {
   type ProviderLoginCoordinator,
   type ProviderSettingsRuntimeCoordinator,
 } from "../../packages/gateway/src/ai-providers/provider-settings-store.js";
+import { bindNativeAccountMetadata, nativeAccountPrincipalFingerprint } from "../../packages/gateway/src/ai-providers/native-account-metadata-binding.js";
+import { normalizeCodexNativeAccountMetadata, type CodexNativeAccountMetadataReader } from "../../packages/gateway/src/ai-providers/codex-native-account-metadata.js";
 import { createProviderDriverInventoryReader } from "../../packages/gateway/src/ai-providers/provider-driver-inventory.js";
 import type { GenericHarnessModelCatalog } from "../../packages/gateway/src/ai-providers/generic-harness-model-catalog.js";
 import {
@@ -163,6 +165,7 @@ describe("ProviderSettingsStore", () => {
     fundingSummary?: { funding: FundedAiFundingSummary; policy: FundedAiEffectivePolicy } | Error;
     genericModelCatalog?: GenericHarnessModelCatalog | Error;
     prepareSharedAiRouteChange?: () => Promise<void>;
+    codexNativeAccountMetadataReader?: CodexNativeAccountMetadataReader;
   } = {}) {
     let nextId = 0;
     return new ProviderSettingsStore({
@@ -176,6 +179,7 @@ describe("ProviderSettingsStore", () => {
       loginCoordinator: options.withLogin === false ? undefined : login,
       runtimeCoordinator: options.withRuntime === false ? undefined : runtime,
       ...(options.prepareSharedAiRouteChange ? { prepareSharedAiRouteChange: options.prepareSharedAiRouteChange } : {}),
+      ...(options.codexNativeAccountMetadataReader ? { codexNativeAccountMetadataReader: options.codexNativeAccountMetadataReader } : {}),
       fundingSummaryReader: options.fundingSummary === undefined ? undefined : {
         getFundingSummary: vi.fn(async () => {
           if (options.fundingSummary instanceof Error) throw options.fundingSummary;
@@ -283,6 +287,7 @@ describe("ProviderSettingsStore", () => {
         ...profile,
         id: "owner_openai_profile",
         vendor: "openai",
+        fundingKind: "owner_api_key",
         eligibleModelIds: ["gpt-5"],
       }],
       accounts: [...canonical.accounts, {
@@ -343,6 +348,60 @@ describe("ProviderSettingsStore", () => {
         accessSourceId: "owner_openai_profile",
         modelId: "gpt-5",
       },
+    });
+  });
+
+  it("uses a verified consent-bound Codex subscription when raw inventory readiness is unknown", async () => {
+    const profile = canonical.accessSources.find((source) => source.id === "owner_anthropic_profile")!;
+    const account = canonical.accounts.find((candidate) => candidate.id === "owner_anthropic")!;
+    const ownerInstance = canonical.instances.find((instance) => instance.id === "kernel_owner")!;
+    const model = canonical.models.find((candidate) => candidate.id === "claude-opus-5")!;
+    const unknown = { state: "unknown" as const, checkedAt: null, staleAfter: null,
+      action: "retry" as const, safeReason: "unknown" as const };
+    canonical = AiProviderSnapshotV3Schema.parse({
+      ...canonical,
+      accessSources: [...canonical.accessSources, { ...profile, ...unknown, id: "owner_openai_profile",
+        vendor: "openai", fundingKind: "owner_account", eligibleModelIds: ["gpt-5"] }],
+      accounts: [...canonical.accounts, { ...account, ...unknown, id: "owner_codex", vendor: "openai",
+        authMethod: "provider_profile" }],
+      drivers: [...canonical.drivers, { ...canonical.drivers.find((driver) => driver.id === "claude_code")!,
+        id: "codex", displayName: "Codex" }],
+      instances: [...canonical.instances, { ...ownerInstance, id: "codex_owner", driverId: "codex", vendor: "openai",
+        accountId: "owner_codex", accessSourceId: "owner_openai_profile", modelIds: ["gpt-5"],
+        defaultModelId: null, readiness: unknown }],
+      models: [...canonical.models, { ...model, id: "gpt-5", vendor: "openai",
+        eligibleAccessSourceIds: ["owner_openai_profile"], dataPolicies: [{ accessSourceId: "owner_openai_profile",
+          route: "owner_direct", disclosureKey: "owner-openai" }] }],
+    });
+    const metadata = bindNativeAccountMetadata(normalizeCodexNativeAccountMetadata(
+      { account: { type: "chatgpt", email: "owner@example.test", planType: "pro" } }, {}, NOW,
+    )!, async () => true, "private-owner-principal");
+    const store = createStore({ codexNativeAccountMetadataReader: async () => metadata });
+    await store.getSnapshot();
+    const saved = JSON.parse(await readFile(store.configurationPath, "utf8")) as {
+      revision: number;
+      harnesses: Array<{ harness: string; enabled: boolean; enablementOrigin?: "generated_default" | "owner_configuration";
+        nativeAccountGeneration?: string; nativeAccountConsentRevision?: number }>;
+    };
+    Object.assign(saved.harnesses.find((harness) => harness.harness === "claude")!, {
+      enabled: false, enablementOrigin: "owner_configuration",
+    });
+    Object.assign(saved.harnesses.find((harness) => harness.harness === "codex")!, {
+      enabled: true, enablementOrigin: "owner_configuration",
+      nativeAccountGeneration: nativeAccountPrincipalFingerprint(metadata)!,
+      nativeAccountConsentRevision: saved.revision,
+    });
+    await writeFile(store.configurationPath, `${JSON.stringify(saved)}\n`);
+
+    await expect(store.getCanonicalCollaborationSnapshot()).resolves.toMatchObject({
+      active: { providerInstanceId: "codex_owner", accessSourceId: "owner_openai_profile", modelId: "gpt-5" },
+    });
+
+    const codex = saved.harnesses.find((harness) => harness.harness === "codex")!;
+    delete codex.nativeAccountGeneration; delete codex.nativeAccountConsentRevision;
+    await writeFile(store.configurationPath, `${JSON.stringify(saved)}\n`);
+    await expect(store.getCanonicalCollaborationSnapshot()).resolves.toMatchObject({
+      active: { providerInstanceId: null, accessSourceId: null, modelId: null },
     });
   });
 
