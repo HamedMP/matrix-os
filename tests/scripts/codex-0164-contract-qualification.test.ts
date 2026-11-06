@@ -15,6 +15,8 @@ const previous = JSON.parse(previousBytes.toString("utf8"));
 const historicalExecContract = { ...execContract, latestVerifiedVersion: "0.164.0" };
 const historicalAppServerContract = { ...appServerContract, latestVerifiedVersion: "0.164.0",
   requiredServerProtocolSchemaDigests: { ...appServerContract.requiredServerProtocolSchemaDigests,
+    "item/started": "554ed510ef9adc011a14b1d0045b2741c536a0f6a4728b07723537c31f088cb5",
+    "item/completed": "7f57001a4be1380e4d2d183ae76dafc2beb274a9e4401edc4bd676cc59e7d2a3",
     "turn/completed": "2417c2c44801a090d921300b88a225c379a80fb559cdc96a72f6861514e1351a" } };
 const sha256 = (bytes: Buffer) => createHash("sha256").update(bytes).digest("hex");
 
