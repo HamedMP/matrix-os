@@ -125,6 +125,7 @@ describe("collaborative app authenticated launch facade", () => {
     expect(asset.headers.get("content-type")).toBe("text/html; charset=utf-8");
     expect(asset.headers.get("x-content-type-options")).toBe("nosniff");
     expect(asset.headers.get("cache-control")).toBe("private, no-store");
+    expect(asset.headers.get("content-security-policy")).toContain("sandbox allow-scripts");
     const html = await asset.text();
     expect(html).toContain(`<base href="/api/collaboration/shared-apps/${scopeId}/runtime/${launchId}/">`);
     expect(html).toContain(`"actorId":"${actorId}"`);
@@ -213,6 +214,59 @@ describe("collaborative app authenticated launch facade", () => {
     await lru.close();
   });
 
+  it("shares one in-flight idempotent open and reserves capacity before awaiting it", async () => {
+    let finishOpen!: () => void;
+    const opened = vi.fn(async () => {
+      await new Promise<void>((resolve) => { finishOpen = resolve; });
+      return upstream;
+    });
+    const bounded = new CollaborativeAppLaunchSessions({
+      open: opened,
+      now: () => currentTime,
+      createId: () => launchId,
+      startTimer: false,
+      maxSessions: 1,
+      maxPerActor: 1,
+    });
+    const identity = { actorId, scopeId, organizationId, runtimeId: "runtime_owner", authorityGeneration: 1,
+      appId: app.appId, catalogId: app.catalogId, buildId: app.buildId, shareRevision: 1 };
+    const first = bounded.create({ ...identity, clientRequestId: requestId });
+    await vi.waitFor(() => expect(opened).toHaveBeenCalledOnce());
+    const replay = bounded.create({ ...identity, clientRequestId: requestId });
+    await expect(bounded.create({ ...identity, scopeId: "10000000-0000-4000-8000-000000000002",
+      clientRequestId: "40000000-0000-4000-8000-000000000002" })).rejects.toMatchObject({ code: "limit" });
+    expect(opened).toHaveBeenCalledOnce();
+    finishOpen();
+    await expect(Promise.all([first, replay])).resolves.toEqual([
+      { launchId, expiresAt: new Date(currentTime + 4 * 60_000).toISOString() },
+      { launchId, expiresAt: new Date(currentTime + 4 * 60_000).toISOString() },
+    ]);
+    await bounded.close();
+  });
+
+  it("waits for an in-flight open during close and refuses its late session", async () => {
+    let finishOpen!: () => void;
+    const lateClose = vi.fn(async () => undefined);
+    const draining = new CollaborativeAppLaunchSessions({
+      open: async () => {
+        await new Promise<void>((resolve) => { finishOpen = resolve; });
+        return { request: async () => new Response("late"), close: lateClose };
+      },
+      startTimer: false,
+    });
+    const create = draining.create({ actorId, scopeId, organizationId, runtimeId: "runtime_owner",
+      authorityGeneration: 1, appId: app.appId, catalogId: app.catalogId, buildId: app.buildId,
+      shareRevision: 1, clientRequestId: requestId });
+    await vi.waitFor(() => expect(finishOpen).toBeTypeOf("function"));
+    const closing = draining.close();
+    finishOpen();
+
+    await expect(create).rejects.toMatchObject({ code: "unavailable" });
+    await closing;
+    expect(lateClose).toHaveBeenCalledOnce();
+    expect(draining.size).toBe(0);
+  });
+
   it("rate limits launch creation per authenticated actor", async () => {
     for (let index = 1; index <= 20; index += 1) {
       const response = await routes.request(`/api/collaboration/shared-apps/${scopeId}/launch`, {
@@ -270,6 +324,9 @@ describe("collaborative app authenticated launch facade", () => {
 
 describe("collaborative app launch owner-session client", () => {
   it("keeps the proof key server-side and signs every immutable asset request through the relay", async () => {
+    const machineId = "11111111-1111-4111-8111-111111111111";
+    const enrolledRuntimeId = `vps:${machineId}`;
+    const logicalRuntimeId = `vps-${machineId}`;
     const relay = { forward: vi.fn() };
     const issuer = { issue: vi.fn(async ({ actorId: requestedActor, request: raw }: { actorId: string; request: unknown }) => {
       const proofPublicKey = (raw as { proofPublicKey: string }).proofPublicKey;
@@ -283,7 +340,7 @@ describe("collaborative app launch owner-session client", () => {
             organizationId,
             resource: { scopeId, kind: "app_instance" },
             purpose: "direct_session",
-            runtime: { runtimeId: "runtime_owner", authorityGeneration: 1 },
+            runtime: { runtimeId: logicalRuntimeId, authorityGeneration: 1 },
             proofKeyThumbprint: proofKeyThumbprint(proofPublicKey),
             maxActions: 100,
             issuedAt: nowDate.toISOString(),
@@ -304,7 +361,7 @@ describe("collaborative app launch owner-session client", () => {
           actorId,
           organizationId,
           scopeId,
-          runtimeId: "runtime_owner",
+          runtimeId: logicalRuntimeId,
           authorityGeneration: 1,
           purpose: "direct_session",
           proofKeyThumbprint: thumbprint,
@@ -328,7 +385,7 @@ describe("collaborative app launch owner-session client", () => {
       clientOrigin: "https://app.matrix-os.com",
       now: () => nowDate,
     });
-    const upstreamClient = await open({ actorId, scopeId, organizationId, runtimeId: "runtime_owner",
+    const upstreamClient = await open({ actorId, scopeId, organizationId, runtimeId: enrolledRuntimeId,
       authorityGeneration: 1, appId: app.appId, catalogId: app.catalogId, buildId: app.buildId, shareRevision: 1 });
     const response = await upstreamClient.request("assets/main.js", new AbortController().signal);
     expect(await response.text()).toBe("immutable");
@@ -338,5 +395,47 @@ describe("collaborative app launch owner-session client", () => {
     }));
     await upstreamClient.close();
     expect(relay.forward).toHaveBeenCalledWith(expect.objectContaining({ method: "DELETE" }));
+  });
+
+  it("owns and safely cancels an in-flight relay body when the caller aborts", async () => {
+    const cancelled = vi.fn(async () => undefined);
+    const relay = { forward: vi.fn() };
+    const issuer = { issue: vi.fn(async ({ actorId: requestedActor, request: raw }: { actorId: string; request: unknown }) => ({
+      signedTicket: { ticket: {
+        protocolVersion: 2, ticketId: "80000000-0000-4000-8000-000000000002", nonce: "b".repeat(64),
+        actorId: requestedActor, organizationId, resource: { scopeId, kind: "app_instance" }, purpose: "direct_session",
+        runtime: { runtimeId: "runtime_owner", authorityGeneration: 1 },
+        proofKeyThumbprint: proofKeyThumbprint((raw as { proofPublicKey: string }).proofPublicKey), maxActions: 100,
+        issuedAt: nowDate.toISOString(), expiresAt: new Date(nowDate.getTime() + 30_000).toISOString(),
+      }, keyId: "platform-key", signature: "s".repeat(86) },
+      endpoint: { origin: "https://app.matrix-os.com", protocolVersion: 2 },
+    })) };
+    relay.forward.mockImplementation(async (input: { method: string; path: string }) => {
+      if (input.path === "/api/collaboration/direct-sessions") return new Response(JSON.stringify({
+        protocolVersion: 2, id: "90000000-0000-4000-8000-000000000002", actorId, organizationId, scopeId,
+        runtimeId: "runtime_owner", authorityGeneration: 1, purpose: "direct_session",
+        proofKeyThumbprint: (await issuer.issue.mock.results[0]!.value).signedTicket.ticket.proofKeyThumbprint,
+        issuedAt: nowDate.toISOString(), expiresAt: new Date(nowDate.getTime() + 300_000).toISOString(),
+        evidenceExpiresAt: new Date(nowDate.getTime() + 20_000).toISOString(), renewAfter: new Date(nowDate.getTime() + 240_000).toISOString(),
+      }), { status: 201, headers: { "content-type": "application/json" } });
+      if (input.method === "GET") return new Response(new ReadableStream<Uint8Array>({
+        pull: async () => new Promise<void>(() => undefined),
+        cancel: cancelled,
+      }), { headers: { "content-type": "text/javascript; charset=utf-8" } });
+      return new Response(null, { status: 204 });
+    });
+    const open = createCollaborativeAppLaunchUpstreamFactory({
+      issuer: issuer as never, relay: relay as never, clientOrigin: "https://app.matrix-os.com", now: () => nowDate,
+    });
+    const upstreamClient = await open({ actorId, scopeId, organizationId, runtimeId: "runtime_owner",
+      authorityGeneration: 1, appId: app.appId, catalogId: app.catalogId, buildId: app.buildId, shareRevision: 1 });
+    const controller = new AbortController();
+    const response = await upstreamClient.request("assets/main.js", controller.signal);
+    const reader = response.body!.getReader();
+    const reading = reader.read();
+    controller.abort(new Error("client gone"));
+
+    await expect(reading).resolves.toMatchObject({ done: true });
+    expect(cancelled).toHaveBeenCalledOnce();
   });
 });
