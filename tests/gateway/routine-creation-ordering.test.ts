@@ -5,7 +5,7 @@ import { createRoutineCreationLatch } from '../../packages/gateway/src/chat/rout
 import { createClaudeRoutineExecution } from '../../packages/gateway/src/chat/claude-routine-execution.js';
 import { createChatRoutineSourceProducer } from '../../packages/gateway/src/chat/routine-chat-source.js';
 import { routineActionPolicy } from '../../packages/gateway/src/bots/routine-action-source-registry.js';
-import { proposal } from './bots/routine-cli-claude-support.js';
+import { proposal } from './bots/routine-cli-request-support.js';
 import { input,setup,ready } from './claude-native-session-fixture.js';
 const closers:Array<()=>Promise<void>>=[];
 afterEach(async()=>{for(const close of closers.splice(0).reverse())await close();});
