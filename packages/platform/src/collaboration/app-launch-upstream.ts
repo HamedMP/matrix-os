@@ -127,11 +127,14 @@ export function createCollaborativeAppLaunchUpstreamFactory(options: {
 
     let closed = false;
     return {
-      request: (assetPath, signal) => signedRequest(
-        "GET",
-        `/api/collaboration/scopes/${identity.scopeId}/apps/${identity.appId}/assets/${assetPath}`,
-        signal,
-      ),
+      request: (assetPath, signal) => {
+        const encodedAssetPath = assetPath.split("/").map((segment) => encodeURIComponent(segment)).join("/");
+        return signedRequest(
+          "GET",
+          `/api/collaboration/scopes/${identity.scopeId}/apps/${identity.appId}/assets/${encodedAssetPath}`,
+          signal,
+        );
+      },
       close: async () => {
         if (closed) return;
         closed = true;
