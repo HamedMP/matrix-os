@@ -119,11 +119,12 @@ export function createForwardWebSocketUrl(gatewayUrl: string): string {
   if (!match || /[\u0000-\u0020\u007f]/.test(gatewayUrl)) throw invalid();
   const path = match[3] ?? "";
   const root = /^\/*$/.test(path);
-  if (!root && !/^\/vm\/[A-Za-z0-9_-]{1,64}(?:\/~runtime\/[A-Za-z0-9_-]{1,32})?\/?$/.test(path)) throw invalid();
+  // Match Platform HANDLE_PATTERN and RuntimeSlotSchema, including their length boundaries.
+  if (!root && !/^\/vm\/[a-z0-9][a-z0-9-]{1,62}(?:\/~runtime\/[a-z0-9](?:[a-z0-9-]{0,30}[a-z0-9])?)?\/?$/.test(path)) throw invalid();
   let url: URL;
   try { url = new URL(gatewayUrl); }
   catch (error) { if (error instanceof TypeError) throw invalid(); throw error; }
-  if (url.protocol === "http:" && !/^(?:localhost|127\.0\.0\.1|\[::1\])(?::\d+)?$/i.test(match[2]!)) throw invalid();
+  if (url.protocol === "http:" && !/^(?:127\.0\.0\.1|\[::1\])(?::\d+)?$/i.test(match[2]!)) throw invalid();
   url.pathname = (root ? "" : path.replace(/\/$/, "")) + "/ws/forward";
   url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
   return url.toString();

@@ -10,7 +10,7 @@ import { FUNDED_PRICING_VERSIONS } from '../../packages/proxy/src/funded-pricing
 import { createOperatorProbeBudgetRepository } from '../../packages/platform/src/operator-probe-budget/repository.js';
 import { postgresFixture, beginInput } from './operator-probe-budget-fixture.js';
 
-it.skipIf(!process.env.MATRIX_TEST_POSTGRES_URL)('validates dedicated placement before DDL, verifies forwarded identity and survives explicit bootstrap replay/restart', async () => {
+it.skipIf(!process.env.MATRIX_TEST_POSTGRES_URL)('validates dedicated placement before DDL, verifies direct authority identity and survives explicit bootstrap replay/restart', async () => {
   const fixture = await postgresFixture();
   const dir = await realpath(await mkdtemp(join(tmpdir(), 'operator-cli-pg-')));
   let service: { close(): Promise<void> } | undefined;

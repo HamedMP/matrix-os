@@ -108,7 +108,7 @@ describe("matrix port forward", () => {
   });
 
   it("preserves explicit VM and slot routes, rejects ambiguous inputs before binding", async () => {
-    for (const path of ["/vm/dev", "/vm/dev/~runtime/slot_1"]) {
+    for (const path of ["/vm/dev", "/vm/dev/~runtime/slot-1"]) {
       expect(createForwardWebSocketUrl("https://gateway.example" + path + "/")).toBe("wss://gateway.example" + path + "/ws/forward");
     }
     for (const base of ["https://gateway.example/vm/dev/../main", "https://gateway.example/vm/dev/%2e%2e",
@@ -120,6 +120,54 @@ describe("matrix port forward", () => {
     }
     await expect(startPortForward({ ...parseForwardSpec("3000"), localPort: 0, gatewayUrl: "https://gateway.example?token=secret", token: "secret" }))
       .rejects.toThrowError(expect.objectContaining({ code: "invalid_forward_gateway" }));
+  });
+
+  it.each([
+    "/vm/ab",
+    "/vm/a-",
+    "/vm/" + "a".repeat(63),
+    "/vm/ab/~runtime/a",
+    "/vm/ab/~runtime/a-b",
+    "/vm/ab/~runtime/" + "a".repeat(32),
+  ])("accepts Platform route boundary %s", (path) => {
+    expect(createForwardWebSocketUrl("https://gateway.example" + path))
+      .toBe("wss://gateway.example" + path + "/ws/forward");
+  });
+
+  it.each([
+    "/vm/a",
+    "/vm/" + "a".repeat(64),
+    "/vm/-a",
+    "/vm/a_b",
+    "/vm/Ab",
+    "/vm/ab/~runtime/slot_1",
+    "/vm/ab/~runtime/Dev",
+    "/vm/ab/~runtime/-dev",
+    "/vm/ab/~runtime/dev-",
+    "/vm/ab/~runtime/" + "a".repeat(33),
+  ])("rejects unsupported Platform route %s before binding", async (path) => {
+    const onEvent = vi.fn();
+    const result = startPortForward({ ...parseForwardSpec("3000"), localPort: 0,
+      gatewayUrl: "https://gateway.example" + path, token: "synthetic", onEvent })
+      .then(async handle => { await handle.close(); return handle; });
+    await expect(result).rejects.toMatchObject({ code: "invalid_forward_gateway" });
+    expect(onEvent).not.toHaveBeenCalled();
+  });
+
+  it.each(["localhost", "LOCALHOST", "localhost.", "127.1", "2130706433"])(
+    "rejects plaintext nonliteral host %s before binding without DNS lookup", async (host) => {
+      const onEvent = vi.fn();
+      const result = startPortForward({ ...parseForwardSpec("3000"), localPort: 0,
+        gatewayUrl: "http://" + host + ":4000", token: "synthetic", onEvent })
+        .then(async handle => { await handle.close(); return handle; });
+      await expect(result).rejects.toMatchObject({ code: "invalid_forward_gateway" });
+      expect(onEvent).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each(["127.0.0.1", "[::1]"])("allows literal-loopback HTTP host %s", (host) => {
+    expect(createForwardWebSocketUrl("http://" + host + ":4000/vm/ab/~runtime/dev"))
+      .toBe("ws://" + host + ":4000/vm/ab/~runtime/dev/ws/forward");
   });
 
   it("uses profile auth and gateway resolution for the command", async () => {
