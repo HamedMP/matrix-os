@@ -13,6 +13,7 @@ import {
 } from "./direct-client.js";
 
 const QueryResponseSchema = z.object({ result: z.unknown() }).strict();
+const MAX_PENDING_MUTATIONS = 32;
 
 export type SharedAppTarget = CollaborativeAppDirectoryItem;
 export type SharedAppFailureCode =
@@ -60,7 +61,8 @@ export function createSharedAppTransport(input: {
   const target = CollaborativeAppDirectoryItemSchema.parse(input.target);
   const base = `/api/collaboration/scopes/${target.scopeId}/apps/${encodeURIComponent(target.appId)}`;
   let launchRequestId: string | null = null;
-  let uncertain: PendingMutation | null = null;
+  let uncertain: PendingMutation[] = [];
+  const inFlight = new Set<string>();
 
   const launch = async () => {
     launchRequestId ??= crypto.randomUUID();
@@ -95,6 +97,7 @@ export function createSharedAppTransport(input: {
   };
 
   const sendMutation = async (attempt: PendingMutation) => {
+    inFlight.add(attempt.clientRequestId);
     try {
       const response = CollaborationAppActionResponseSchema.parse(await input.direct.request(
         target.scopeId,
@@ -102,16 +105,20 @@ export function createSharedAppTransport(input: {
         `${base}/actions`,
         attempt,
       ));
-      uncertain = null;
+      uncertain = uncertain.filter((candidate) => candidate.clientRequestId !== attempt.clientRequestId);
       return { ...response, revision: String(response.revision) };
     } catch (error: unknown) {
       const normalized = normalize(error, "unavailable");
       if (normalized.code === "host_offline" || normalized.code === "unavailable") {
-        uncertain = attempt;
+        if (!uncertain.some((candidate) => candidate.clientRequestId === attempt.clientRequestId)) {
+          uncertain.push(attempt);
+        }
         throw new SharedAppTransportError("uncertain", true);
       }
-      uncertain = null;
+      uncertain = uncertain.filter((candidate) => candidate.clientRequestId !== attempt.clientRequestId);
       throw normalized;
+    } finally {
+      inFlight.delete(attempt.clientRequestId);
     }
   };
 
@@ -120,13 +127,18 @@ export function createSharedAppTransport(input: {
     launch,
     query,
     mutate(action, expectedRevision) {
+      if (uncertain.length + inFlight.size >= MAX_PENDING_MUTATIONS) {
+        return Promise.reject(new SharedAppTransportError("unavailable", true));
+      }
       const attempt = { clientRequestId: crypto.randomUUID(), expectedRevision, action };
-      uncertain = attempt;
       return sendMutation(attempt);
     },
-    retryMutation() {
-      if (!uncertain) return Promise.reject(new SharedAppTransportError("conflict", false));
-      return sendMutation(uncertain);
+    async retryMutation() {
+      const [first, ...remaining] = uncertain;
+      if (!first) throw new SharedAppTransportError("conflict", false);
+      let result = await sendMutation(first);
+      for (const attempt of remaining) result = await sendMutation(attempt);
+      return result;
     },
     subscribe(handlers) {
       return input.direct.subscribeEvents(target.scopeId, {

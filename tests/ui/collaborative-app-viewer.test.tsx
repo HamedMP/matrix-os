@@ -73,6 +73,28 @@ describe("shared app transport", () => {
       .toBe((direct.request.mock.calls[1]![3] as { clientRequestId: string }).clientRequestId);
   });
 
+  it("keeps an earlier uncertain retry when an overlapping mutation succeeds", async () => {
+    const { platform, direct } = setup();
+    let rejectFirst!: (error: unknown) => void;
+    let resolveSecond!: (value: { result: unknown; revision: number; replayed: boolean }) => void;
+    direct.request
+      .mockImplementationOnce(() => new Promise((_resolve, reject) => { rejectFirst = reject; }))
+      .mockImplementationOnce(() => new Promise((resolve) => { resolveSecond = resolve; }));
+    const transport = createSharedAppTransport({ platform, direct: direct as never, target });
+
+    const first = transport.mutate({ type: "rename", value: "First" }, "2");
+    const second = transport.mutate({ type: "rename", value: "Second" }, "2");
+    rejectFirst(new CollaborationDirectError("unavailable"));
+    await expect(first).rejects.toMatchObject({ code: "uncertain" });
+    resolveSecond({ result: { saved: true }, revision: 3, replayed: false });
+    await expect(second).resolves.toMatchObject({ revision: "3" });
+
+    await expect(transport.retryMutation()).resolves.toMatchObject({ revision: "3" });
+    expect(direct.request).toHaveBeenCalledTimes(3);
+    expect((direct.request.mock.calls[0]![3] as { clientRequestId: string }).clientRequestId)
+      .toBe((direct.request.mock.calls[2]![3] as { clientRequestId: string }).clientRequestId);
+  });
+
   it("maps conflict, host-offline, recheck and ended-access states without leaking raw errors", async () => {
     const cases = [
       [new CollaborationDirectError("invalid_request"), "conflict"],
@@ -155,6 +177,30 @@ describe("SharedAppViewer", () => {
     expect(platform.post).toHaveBeenCalledTimes(1);
     expect((direct.request.mock.calls[0]![3] as { clientRequestId: string }).clientRequestId)
       .toBe((direct.request.mock.calls[1]![3] as { clientRequestId: string }).clientRequestId);
+  });
+
+  it("lets a member reread current data and review a retained edit after a conflict", async () => {
+    const { platform, direct } = setup();
+    direct.request.mockRejectedValueOnce(new CollaborationDirectError("invalid_request"));
+    const transport = createSharedAppTransport({ platform, direct: direct as never, target });
+    render(<SharedAppViewer target={target} transport={transport} />);
+    const frame = await screen.findByTitle("Team tracker shared by Owner") as HTMLIFrameElement;
+    const postMessage = vi.spyOn(frame.contentWindow!, "postMessage");
+    window.dispatchEvent(new MessageEvent("message", {
+      source: frame.contentWindow,
+      origin: "null",
+      data: { type: "matrix:shared-app:mutate", requestId: "req_12345678", expectedRevision: "1", action: { value: "draft" } },
+    }));
+
+    await screen.findByText("The app changed");
+    fireEvent.click(screen.getByRole("button", { name: "Review edit" }));
+
+    await waitFor(() => expect(screen.queryByText("The app changed")).toBeNull());
+    expect(screen.getByTitle("Team tracker shared by Owner")).toBe(frame);
+    expect(direct.request).toHaveBeenLastCalledWith(scopeId, "POST",
+      `/api/collaboration/scopes/${scopeId}/apps/team-tracker/view`,
+      { action: { action: "appInfo", app: "team-tracker" } });
+    expect(postMessage).toHaveBeenCalledWith({ type: "matrix:shared-app:changed" }, "*");
   });
 
   it("withdraws the old iframe immediately when the scope or exact build changes", async () => {
