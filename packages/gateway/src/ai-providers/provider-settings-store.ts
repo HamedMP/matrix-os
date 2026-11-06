@@ -187,6 +187,56 @@ function qualifyNativeCodexCollaborationRoute(
     } : instance),
   };
 }
+
+/** Promote only the exact saved Claude subscription backed by a fresh native principal proof. */
+function qualifyNativeClaudeCollaborationRoute(
+  canonical: AiProviderSnapshotV3,
+  config: ProviderSettingsConfiguration,
+  projected?: ProviderSettingsSnapshot,
+  metadata?: ClaudeNativeAccountMetadata | null,
+): AiProviderSnapshotV3 {
+  const saved = config.harnesses.find((harness) => harness.harness === "claude" && harness.enabled
+    && harness.accessSourceId === "owner_claude_profile" && harness.selectedAccountId !== null);
+  if (!saved || !metadata) return canonical;
+  const source = canonical.accessSources.find((candidate) => candidate.id === saved.accessSourceId
+    && candidate.vendor === "anthropic" && candidate.fundingKind === "owner_account");
+  const harness = projected?.harnesses.find((candidate) => candidate.id === saved.id && candidate.harness === "claude");
+  const candidates = canonical.instances.filter((instance) => instance.driverId === saved.driverId
+    && instance.vendor === "anthropic" && instance.accessSourceId === saved.accessSourceId
+    && instance.accountId === saved.selectedAccountId && instance.modelIds.includes(saved.route.modelId));
+  const nativeAccountGeneration = nativeAccountPrincipalFingerprint(metadata);
+  if (!source || candidates.length !== 1 || harness?.enabled !== true || harness.authState !== "authenticated"
+    || harness.accessSourceId !== saved.accessSourceId || harness.selectedAccountId !== saved.selectedAccountId
+    || harness.route.providerId !== saved.route.providerId || harness.route.modelId !== saved.route.modelId
+    || !nativeAccountGeneration) return canonical;
+  const readiness = {
+    state: "ready" as const,
+    checkedAt: metadata.checkedAt,
+    staleAfter: metadata.staleAfter,
+    action: "none" as const,
+    safeReason: null,
+  };
+  const nativeAuthorityVersion = createHash("sha256")
+    .update(`${source.policyVersion}\0${nativeAccountGeneration}`)
+    .digest("hex");
+  return {
+    ...canonical,
+    accessSources: canonical.accessSources.map((candidate) => candidate.id === source.id ? {
+      ...candidate,
+      policyVersion: nativeAuthorityVersion,
+      state: readiness.state,
+      checkedAt: readiness.checkedAt,
+      staleAfter: readiness.staleAfter,
+      action: readiness.action,
+      safeReason: readiness.safeReason,
+    } : candidate),
+    instances: canonical.instances.map((instance) => instance.id === candidates[0]!.id ? {
+      ...instance,
+      readiness,
+      defaultModelId: saved.route.modelId,
+    } : instance),
+  };
+}
 export { ProviderSettingsStoreError } from "./provider-settings-errors.js";
 export type {
   CanonicalProviderSnapshotReader,
@@ -593,11 +643,19 @@ export class ProviderSettingsStore implements ProviderSettingsStoreWriter {
       if (!config) continue;
       const nativeCodexSubscription = config.harnesses.some((harness) => harness.harness === "codex"
         && harness.enabled && harness.accessSourceId === "owner_openai_profile");
+      const nativeClaudeSubscription = config.harnesses.some((harness) => harness.harness === "claude"
+        && harness.enabled && harness.accessSourceId === "owner_claude_profile");
       let projected: ProviderSettingsSnapshot | undefined;
-      if (nativeCodexSubscription) {
-        let metadata: CodexNativeAccountMetadata | null = null;
+      let codexMetadata: CodexNativeAccountMetadata | null = null;
+      let claudeMetadata: ClaudeNativeAccountMetadata | null = null;
+      if (nativeCodexSubscription || nativeClaudeSubscription) {
         try {
-          metadata = await verifyNativeAccountMetadata(await this.#nativeAccountMetadata?.());
+          if (nativeCodexSubscription) {
+            codexMetadata = await verifyNativeAccountMetadata(await this.#nativeAccountMetadata?.());
+          }
+          if (nativeClaudeSubscription) {
+            claudeMetadata = await verifyNativeAccountMetadata(await this.#claudeAccountMetadata?.());
+          }
         } catch (error: unknown) {
           console.warn("[provider-settings] Native collaboration route unavailable:",
             error instanceof Error ? error.name : "UnknownError");
@@ -609,7 +667,8 @@ export class ProviderSettingsStore implements ProviderSettingsStoreWriter {
           projected = await projectProviderSettings({
             canonical,
             config,
-            codexNativeAccountMetadata: metadata,
+            claudeNativeAccountMetadata: claudeMetadata,
+            codexNativeAccountMetadata: codexMetadata,
             now: this.#now(),
             supportedActions: [],
           });
@@ -619,7 +678,8 @@ export class ProviderSettingsStore implements ProviderSettingsStoreWriter {
           throw new ProviderSettingsStoreError("projection_unavailable", 503);
         }
       }
-      const qualified = qualifyNativeCodexCollaborationRoute(canonical, config, projected);
+      const codexQualified = qualifyNativeCodexCollaborationRoute(canonical, config, projected);
+      const qualified = qualifyNativeClaudeCollaborationRoute(codexQualified, config, projected, claudeMetadata);
       const accepted = await this.#serialize(async () => {
         options.signal?.throwIfAborted();
         const saved = await readSavedProviderSettingsConfiguration(this.configurationPath);

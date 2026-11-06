@@ -20,6 +20,7 @@ import {
 } from "../../packages/gateway/src/ai-providers/provider-settings-store.js";
 import { bindNativeAccountMetadata, nativeAccountPrincipalFingerprint } from "../../packages/gateway/src/ai-providers/native-account-metadata-binding.js";
 import { normalizeCodexNativeAccountMetadata, type CodexNativeAccountMetadataReader } from "../../packages/gateway/src/ai-providers/codex-native-account-metadata.js";
+import type { ClaudeNativeAccountMetadataReader } from "../../packages/gateway/src/ai-providers/claude-native-account-metadata.js";
 import { createProviderDriverInventoryReader } from "../../packages/gateway/src/ai-providers/provider-driver-inventory.js";
 import { resolveCurrentOwnerRoute } from "../../packages/gateway/src/collaboration/shared-run-owner-source.js";
 import type { GenericHarnessModelCatalog } from "../../packages/gateway/src/ai-providers/generic-harness-model-catalog.js";
@@ -167,6 +168,7 @@ describe("ProviderSettingsStore", () => {
     onFundingSummaryRead?: () => void;
     genericModelCatalog?: GenericHarnessModelCatalog | Error;
     prepareSharedAiRouteChange?: () => Promise<void>;
+    claudeNativeAccountMetadataReader?: ClaudeNativeAccountMetadataReader;
     codexNativeAccountMetadataReader?: CodexNativeAccountMetadataReader;
   } = {}) {
     let nextId = 0;
@@ -181,6 +183,7 @@ describe("ProviderSettingsStore", () => {
       loginCoordinator: options.withLogin === false ? undefined : login,
       runtimeCoordinator: options.withRuntime === false ? undefined : runtime,
       ...(options.prepareSharedAiRouteChange ? { prepareSharedAiRouteChange: options.prepareSharedAiRouteChange } : {}),
+      ...(options.claudeNativeAccountMetadataReader ? { claudeNativeAccountMetadataReader: options.claudeNativeAccountMetadataReader } : {}),
       ...(options.codexNativeAccountMetadataReader ? { codexNativeAccountMetadataReader: options.codexNativeAccountMetadataReader } : {}),
       fundingSummaryReader: options.fundingSummary === undefined ? undefined : {
         getFundingSummary: vi.fn(async () => {
@@ -238,13 +241,16 @@ describe("ProviderSettingsStore", () => {
     const profile = canonical.accessSources.find((source) => source.id === "owner_anthropic_profile")!;
     const account = canonical.accounts.find((candidate) => candidate.id === "owner_anthropic")!;
     const ownerInstance = canonical.instances.find((instance) => instance.id === "kernel_owner")!;
+    const unknown = { state: "unknown" as const, checkedAt: null, staleAfter: null,
+      action: "retry" as const, safeReason: "unknown" as const };
     canonical.accessSources.push(
-      { ...profile, id: "owner_claude_profile" },
+      { ...profile, ...unknown, id: "owner_claude_profile" },
       { ...profile, id: "owner_anthropic_key", fundingKind: "owner_api_key" },
     );
-    canonical.accounts.push({ ...account, id: "owner_claude_profile" });
+    canonical.accounts.push({ ...account, ...unknown, id: "owner_claude_profile" });
     canonical.instances.push(
-      { ...ownerInstance, id: "claude_native", driverId: "claude_code", accountId: "owner_claude_profile", accessSourceId: "owner_claude_profile" },
+      { ...ownerInstance, id: "claude_native", driverId: "claude_code", accountId: "owner_claude_profile",
+        accessSourceId: "owner_claude_profile", readiness: unknown, defaultModelId: null },
       { ...ownerInstance, id: "kernel_key", accessSourceId: "owner_anthropic_key" },
     );
     for (const model of canonical.models) {
@@ -260,7 +266,14 @@ describe("ProviderSettingsStore", () => {
       accessSourceId: "owner_anthropic_key",
       modelId: "claude-opus-5",
     };
-    const store = createStore();
+    const metadata = bindNativeAccountMetadata({
+      accountLabel: "owner@example.test",
+      authMethod: "terminal",
+      connectionDetails: { email: "owner@example.test", planName: "Claude Max" },
+      checkedAt: NOW.toISOString(),
+      staleAfter: new Date(NOW.getTime() + 30_000).toISOString(),
+    }, async () => true, "claude-owner-principal");
+    const store = createStore({ claudeNativeAccountMetadataReader: async () => metadata });
     await store.getSnapshot();
     const saved = JSON.parse(await readFile(store.configurationPath, "utf8")) as {
       harnesses: Array<{ harness: string; accessSourceId: string | null; selectedAccountId: string | null }>;
@@ -270,13 +283,23 @@ describe("ProviderSettingsStore", () => {
     claude.selectedAccountId = "owner_claude_profile";
     await writeFile(store.configurationPath, `${JSON.stringify(saved)}\n`);
 
-    await expect(store.getCanonicalCollaborationSnapshot()).resolves.toMatchObject({
+    const collaboration = await store.getCanonicalCollaborationSnapshot();
+    expect(collaboration).toMatchObject({
       active: {
         providerInstanceId: "claude_native",
         accessSourceId: "owner_claude_profile",
         modelId: "claude-opus-5",
       },
+      accessSources: expect.arrayContaining([expect.objectContaining({
+        id: "owner_claude_profile",
+        state: "ready",
+      })]),
+      instances: expect.arrayContaining([expect.objectContaining({
+        id: "claude_native",
+        readiness: expect.objectContaining({ state: "ready" }),
+      })]),
     });
+    expect(resolveCurrentOwnerRoute(collaboration, NOW.getTime())).not.toBeNull();
   });
 
   it("uses the saved Codex route when the live inventory still prefers Claude", async () => {
