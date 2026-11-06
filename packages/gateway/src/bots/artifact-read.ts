@@ -27,8 +27,9 @@ export async function readBotArtifact(file: FileHandle, args: ReadArgs): Promise
 export function readBotArtifactBytes(bytes: Buffer, args: ReadArgs, binaryMaximum = BOT_ARTIFACT_BINARY_MAX_BYTES): string {
   if (bytes.length > (args.chunk ? binaryMaximum : BOT_ARTIFACT_MAX_BYTES)) throw new BotBrokerActionError("invalid_arguments");
   const length = bytes.length;
-  if (!args.chunk) return bytes.toString("utf8");
+  if (!args.chunk && !args.withHash) return bytes.toString("utf8");
   const sha256 = createHash("sha256").update(bytes).digest("hex");
+  if (!args.chunk) return JSON.stringify({ kind: "artifact_text", content: bytes.toString("utf8"), sha256, size: length, untrusted: true });
   if (sha256 !== args.chunk.sha256) throw new BotBrokerActionError("artifact_digest_mismatch");
   if (args.chunk.offset > length) throw new BotBrokerActionError("invalid_arguments");
   const nextOffset = Math.min(length, args.chunk.offset + args.chunk.length);

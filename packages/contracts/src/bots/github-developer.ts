@@ -3,7 +3,7 @@ import { canonicalBoundedText, canonicalOwnerRelativePath } from "#canonical-cha
 
 /** Git metadata and server staging are never model-addressable workspace paths. */
 export const GithubDeveloperPathSchema = canonicalOwnerRelativePath(256, 1024).refine(path =>
-  path.split("/").length <= 16 && path.split("/").every(part => ![".git", ".bot-save", ".managed-chat-save", ".matrix-github-staging"].includes(part.toLowerCase()) && !part.toLowerCase().startsWith(".github-clone-")),
+  path.split("/").length <= 16 && path.split("/").every(part => ![".git", ".bot-save", ".managed-chat-save", ".matrix-github-staging", ".artifact-recovery"].includes(part.toLowerCase()) && !part.toLowerCase().startsWith(".github-clone-")),
 { message: "Reserved workspace path" });
 const RepositorySchema = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9-]{0,38}\/[A-Za-z0-9_][A-Za-z0-9_.-]{0,99}$/)
   .refine(value => !value.endsWith(".git") && !value.includes(".."));
