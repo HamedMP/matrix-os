@@ -40,7 +40,6 @@ import {
   type CanonicalChatMessagePart,
   type CanonicalChatRecord,
   type CanonicalChatRunCancellationResponse,
-  type CanonicalChatTurnAdmissionResponse,
   type CanonicalCreateChatRequest,
   type CanonicalCreateChatTurnRequest,
   type CanonicalUpdateChatTitleRequest,
@@ -74,6 +73,8 @@ export interface CanonicalShellChatClient {
   /** Permanently deletes the Chat; retrying with the same request id is idempotent. */
   delete(chatId: string, clientRequestId: string): Promise<CanonicalShellChatDeletion>;
   admitTurn(chatId: string, input: CanonicalCreateChatTurnRequest): Promise<CanonicalChatClientAdmission>;
+  /** Finish existing browser scope reads before the caller seals its first CAS request. */
+  prepareTurnAdmission?(chatId: string, input: CanonicalCreateChatTurnRequest): Promise<(request: CanonicalCreateChatTurnRequest) => Promise<CanonicalChatClientAdmission>>;
   queueTurn(chatId: string, input: CanonicalCreateChatTurnRequest): Promise<CanonicalChatQueueAdmissionResponse>;
   cancelQueuedTurn(chatId: string, queuedTurnId: string, input: CanonicalCancelQueuedChatTurnRequest): Promise<CanonicalChatQueueCancellationResponse>;
   /** Moves a queued turn into the active run when it reports same-run steering. */
@@ -214,7 +215,38 @@ export function createCanonicalShellChatClient(options: {
   };
   const createId = options.createId ?? (() => globalThis.crypto.randomUUID().replaceAll("-", ""));
   const routineFullAccess = createRoutineFullAccessBrowserClient(options.gatewayUrl, fetchFn);
+  const prepareTurnAdmission: NonNullable<CanonicalShellChatClient['prepareTurnAdmission']> = async (chatId, input) => {
+    const id = CanonicalChatIdSchema.parse(chatId);
+    const prepared = CanonicalCreateChatTurnRequestSchema.parse(input);
+    const current = options.captureAuthority?.(id);
+    const routineHeaders = await routineFullAccessTurnHeaders(routineFullAccess, id, prepared, current);
+    const semantic = (value: CanonicalCreateChatTurnRequest) => JSON.stringify(Object.fromEntries(
+      Object.entries(value).filter(([key]) => key !== 'clientRequestId' && key !== 'baseRevision'),
+    ));
+    return async requestBody => {
+      const body = CanonicalCreateChatTurnRequestSchema.parse(requestBody);
+      if (semantic(body) !== semantic(prepared)) throw new Error('Chat intent changed');
+      if (body.permissionMode === 'full_access' && current && !current()) throw new Error('Chat context changed');
+      try {
+        return CanonicalChatTurnAdmissionResponseSchema.parse(await request(chatMessageVersionUrl(`/api/chats/${encodeURIComponent(id)}/turns`), {
+          method: 'POST', headers: { 'Content-Type': 'application/json', ...routineHeaders }, body: JSON.stringify(body),
+        }));
+      } catch (error: unknown) {
+        const ambiguous = error instanceof TypeError
+          || error instanceof DOMException && (error.name === 'TimeoutError' || error.name === 'AbortError')
+          || error instanceof CanonicalShellChatRequestError && error.status >= 500;
+        if (ambiguous) {
+          const recovered = await recoverCanonicalChatAdmission(id, body,
+            requestHash => request(chatMessageVersionUrl(`/api/chats/${encodeURIComponent(id)}/turn-admissions/${encodeURIComponent(body.clientRequestId)}?requestHash=${requestHash}`)),
+            () => request(chatMessageVersionUrl(`/api/chats/${encodeURIComponent(id)}?limit=200`)));
+          if (recovered) return recovered;
+        }
+        throw error;
+      }
+    };
+  };
   return {
+    prepareTurnAdmission,
     routineFullAccess,
     browserPermissions: createBrowserPermissionClient((path, method, body) => request(path, { method, ...(body === undefined ? {} : { headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) }) })),
     agents: createChatAgentClient((path, method, body, requestOptions) => request(path, { method,
@@ -297,27 +329,7 @@ export function createCanonicalShellChatClient(options: {
       }));
     },
     async admitTurn(chatId, input) {
-      const id = CanonicalChatIdSchema.parse(chatId);
-      const body = CanonicalCreateChatTurnRequestSchema.parse(input);
-      const current = options.captureAuthority?.(id);
-      const routineHeaders = await routineFullAccessTurnHeaders(routineFullAccess, id, body, current);
-      if (body.permissionMode === "full_access" && current && !current()) throw new Error("Chat context changed");
-      try {
-        return CanonicalChatTurnAdmissionResponseSchema.parse(await request(chatMessageVersionUrl(`/api/chats/${encodeURIComponent(id)}/turns`), {
-          method: "POST", headers: { "Content-Type": "application/json", ...routineHeaders }, body: JSON.stringify(body),
-        }));
-      } catch (error: unknown) {
-        const ambiguous = error instanceof TypeError
-          || error instanceof DOMException && (error.name === "TimeoutError" || error.name === "AbortError")
-          || error instanceof CanonicalShellChatRequestError && error.status >= 500;
-        if (ambiguous) {
-          const recovered = await recoverCanonicalChatAdmission(id, body,
-            requestHash => request(chatMessageVersionUrl(`/api/chats/${encodeURIComponent(id)}/turn-admissions/${encodeURIComponent(body.clientRequestId)}?requestHash=${requestHash}`)),
-            () => request(chatMessageVersionUrl(`/api/chats/${encodeURIComponent(id)}?limit=200`)));
-          if (recovered) return recovered;
-        }
-        throw error;
-      }
+      return (await prepareTurnAdmission(chatId, input))(input);
     },
     async queueTurn(chatId, input) {
       const id = CanonicalChatIdSchema.parse(chatId);
