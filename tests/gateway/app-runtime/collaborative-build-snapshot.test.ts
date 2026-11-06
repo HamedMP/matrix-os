@@ -1,4 +1,4 @@
-import { mkdtemp, mkdir, readFile, rm, symlink, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, rm, symlink, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -120,6 +120,26 @@ describe("immutable collaborative build snapshots", () => {
     expect(await store.cleanup()).toEqual({ removed: 1 });
     await expect(readFile(join(storeRoot, "objects", orphanId, "index.html"), "utf8"))
       .rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("sweeps only aged interrupted captures without following symlinks", async () => {
+    const store = createStore();
+    const staleCapture = join(storeRoot, "objects", `.capture-${"1".repeat(8)}-${"2".repeat(4)}-4${"3".repeat(3)}-8${"4".repeat(3)}-${"5".repeat(12)}`);
+    const recentCapture = join(storeRoot, "objects", `.capture-${"6".repeat(8)}-${"7".repeat(4)}-4${"8".repeat(3)}-8${"9".repeat(3)}-${"a".repeat(12)}`);
+    const linkedCapture = join(storeRoot, "objects", `.capture-${"b".repeat(8)}-${"c".repeat(4)}-4${"d".repeat(3)}-8${"e".repeat(3)}-${"f".repeat(12)}`);
+    await mkdir(staleCapture, { recursive: true });
+    await writeFile(join(staleCapture, "partial.js"), "stale");
+    await mkdir(recentCapture, { recursive: true });
+    await writeFile(join(recentCapture, "partial.js"), "recent");
+    await writeFile(join(root, "outside-capture"), "keep");
+    await symlink(join(root, "outside-capture"), linkedCapture);
+    await utimes(staleCapture, new Date(now - 3_600_001), new Date(now - 3_600_001));
+
+    expect(await store.cleanup()).toEqual({ removed: 1 });
+    await expect(readFile(join(staleCapture, "partial.js"), "utf8"))
+      .rejects.toMatchObject({ code: "ENOENT" });
+    expect(await readFile(join(recentCapture, "partial.js"), "utf8")).toBe("recent");
+    expect(await readFile(join(root, "outside-capture"), "utf8")).toBe("keep");
   });
 
   it("rejects symlinks and never follows attacker-named links during cleanup", async () => {
