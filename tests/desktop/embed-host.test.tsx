@@ -70,11 +70,13 @@ describe("EmbedHost", () => {
     useConnection.setState({ api: {} as NonNullable<ReturnType<typeof useConnection.getState>["api"]> });
     useUi.getState().acquireRendererOverlay(); // A separate surface owns this lease.
     const view = render(<EmbedHost kind="app" slug="notes" active />);
+    expect(getComputedStyle(screen.getByTestId("app-publishing-bar")).backgroundColor).toBe("rgb(8, 8, 8)");
     fireEvent.click(screen.getByRole("button", { name: "Publish app" }));
-    await screen.findByRole("dialog", { name: "Publish app" });
+    const dialog = await screen.findByRole("dialog", { name: "Share app" });
+    expect(screen.getByTestId("created-app-surface").contains(dialog)).toBe(true);
     expect(useUi.getState().rendererOverlayCount).toBe(2);
     // Overlay-adjusted native activity is false, but the owning surface is still visible.
-    expect(screen.getByRole("dialog", { name: "Publish app" })).toBeTruthy();
+    expect(screen.getByRole("dialog", { name: "Share app" })).toBeTruthy();
 
     view.rerender(<EmbedHost kind="app" slug="notes" active={false} />);
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
@@ -82,7 +84,7 @@ describe("EmbedHost", () => {
     view.rerender(<EmbedHost kind="app" slug="notes" active />);
     expect(screen.queryByRole("dialog")).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "Publish app" }));
-    await screen.findByRole("dialog", { name: "Publish app" });
+    await screen.findByRole("dialog", { name: "Share app" });
     expect(useUi.getState().rendererOverlayCount).toBe(2);
     view.unmount();
     expect(useUi.getState().rendererOverlayCount).toBe(1);

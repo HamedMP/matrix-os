@@ -86,6 +86,7 @@ export function Dialog({
   modal = true,
   trigger,
   onOpenChange,
+  portalContainer,
 }: {
   open: boolean;
   onClose: () => void;
@@ -100,20 +101,22 @@ export function Dialog({
   modal?: boolean;
   trigger?: ReactNode;
   onOpenChange?: (open: boolean) => void;
+  portalContainer?: HTMLElement | null;
 }) {
+  const contained = Boolean(portalContainer);
   return (
     <RadixDialog.Root modal={modal} open={open} onOpenChange={(next) => { if (onOpenChange) onOpenChange(next); else if (!next) onClose(); }}>
       {trigger ? <RadixDialog.Trigger asChild>{trigger}</RadixDialog.Trigger> : null}
-      <RadixDialog.Portal>
+      <RadixDialog.Portal container={portalContainer ?? undefined}>
         {preserveTitlebar && open ? (
           <div
             aria-hidden="true"
             data-dialog-titlebar
-            className="titlebar-drag fixed inset-x-0 top-0"
+            className={`titlebar-drag ${contained ? "absolute" : "fixed"} inset-x-0 top-0`}
             style={{ height: "var(--titlebar-height)", pointerEvents: "auto", zIndex: DESKTOP_Z_INDEX.dialog }}
           />
         ) : null}
-        <RadixDialog.Overlay className="fixed inset-0" style={{
+        <RadixDialog.Overlay className={`${contained ? "absolute" : "fixed"} inset-0`} style={{
           zIndex: DESKTOP_Z_INDEX.dialog,
           background: "var(--overlay-dim)",
           ...(preserveTitlebar ? { top: "var(--titlebar-height)" } : {}),
@@ -122,20 +125,20 @@ export function Dialog({
           onCloseAutoFocus={onCloseAutoFocus}
           role={role}
           aria-describedby={undefined}
-          className={`dialog-fade-in fixed left-1/2 rounded-xl border focus:outline-none ${
+          className={`dialog-fade-in ${contained ? "absolute" : "fixed"} left-1/2 rounded-xl border focus:outline-none ${
             placement === "center" ? "" : "-translate-x-1/2"
           }`}
           style={{
             zIndex: DESKTOP_Z_INDEX.dialog,
             width,
-            maxWidth: "calc(100vw - 32px)",
+            maxWidth: contained ? "calc(100% - 32px)" : "calc(100vw - 32px)",
             background: "var(--bg-overlay)",
             borderColor: "var(--border-default)",
             boxShadow: "var(--shadow-3)",
             ...(placement === "center" ? {
               top: "50%",
               transform: "translate(-50%, -50%)",
-              maxHeight: "calc(100vh - 32px)",
+              maxHeight: contained ? "calc(100% - 32px)" : "calc(100vh - 32px)",
             } : { top }),
           }}
         >

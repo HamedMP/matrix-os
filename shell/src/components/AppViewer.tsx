@@ -113,9 +113,11 @@ export function AppViewer(props: AppViewerProps) {
   return <SandboxedAppViewer {...props} />;
 }
 
+// react-doctor-disable-next-line react-doctor/no-giant-component -- The pre-existing app runtime owns bridge injection, session recovery, file watching, and message routing as one coupled lifecycle; this change only adds the contained publishing portal host. Splitting that lifecycle belongs in a focused refactor.
 function SandboxedAppViewer({ path, sessionId, onOpenApp, visible = true }: AppViewerProps) {
   const [refreshKey, setRefreshKey] = useState(0);
   const [iframeHtml, setIframeHtml] = useState<string | null>(null);
+  const [portalContainer, setPortalContainer] = useState<HTMLDivElement | null>(null);
   const iframeRef = useRef<HTMLIFrameElement>(null);
   const { send, subscribe } = useSocket();
   // react-doctor-disable-next-line react-doctor/no-event-handler -- pure derived value computed from the `path` prop during render, not a DOM event handler or effect-driven side effect.
@@ -394,8 +396,16 @@ function SandboxedAppViewer({ path, sessionId, onOpenApp, visible = true }: AppV
   }
 
   return (
-    <div className="flex h-full w-full flex-col">
-      {slug && visible ? <div className="flex items-center justify-end border-b px-3 py-1.5"><AppSiteButton key={slug} appSlug={slug} /></div> : null}
+    <div ref={setPortalContainer} data-created-app-surface="true" className="relative isolate flex h-full w-full flex-col overflow-hidden">
+      {slug && visible ? (
+        <div
+          data-testid="app-publishing-bar"
+          className="flex min-h-10 shrink-0 items-center justify-end px-3 py-1.5"
+          style={{ background: "#080808" }}
+        >
+          <AppSiteButton key={slug} appSlug={slug} portalContainer={portalContainer} />
+        </div>
+      ) : null}
       <iframe
         ref={iframeRef}
         key={refreshKey}

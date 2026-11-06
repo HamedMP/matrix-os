@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import React from "react";
+import React, { useState } from "react";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { AppSiteButton } from "../../shell/src/components/app-sites/AppSiteButton";
@@ -21,10 +21,24 @@ beforeEach(() => {
 });
 afterEach(cleanup);
 
-it("keeps Web publishing above a maximized app window", async () => {
-  render(<div style={{ position:"fixed",zIndex:SHELL_Z_INDEX.fullscreenWindow }}><AppSiteButton appSlug="launch" /></div>);
+function ContainedTrigger({
+  Component,
+  appSlug = "launch",
+}: {
+  Component: typeof AppSiteButton | typeof DesktopAppSiteButton;
+  appSlug?: string;
+}) {
+  const [portalContainer, setPortalContainer] = useState<HTMLDivElement | null>(null);
+  return <div ref={setPortalContainer} data-testid="created-app-surface" className="relative">
+    <Component appSlug={appSlug} portalContainer={portalContainer} />
+  </div>;
+}
+
+it("keeps Web sharing inside a maximized app window", async () => {
+  render(<div style={{ position:"fixed",zIndex:SHELL_Z_INDEX.fullscreenWindow }}><ContainedTrigger Component={AppSiteButton} /></div>);
   fireEvent.click(screen.getByRole("button",{name:"Publish app"}));
-  const dialog=await screen.findByRole("dialog",{name:"Publish app"});
+  const dialog=await screen.findByRole("dialog",{name:"Share app"});
+  expect(screen.getByTestId("created-app-surface").contains(dialog)).toBe(true);
   expect(Number(getComputedStyle(dialog).zIndex)).toBeGreaterThan(SHELL_Z_INDEX.fullscreenWindow);
   expect(Number(getComputedStyle(dialog).zIndex)).toBe(SHELL_Z_INDEX.appDialog);
 });
@@ -32,10 +46,13 @@ it("keeps Web publishing above a maximized app window", async () => {
 for (const [surface, Component] of [["Web", AppSiteButton], ["Electron", DesktopAppSiteButton]] as const) {
   describe(`${surface} Publish app trigger`, () => {
     it("stays accessible and toggles closed on the second pointer click, then supports Escape and reopen", async () => {
-      render(<Component appSlug="launch" />);
+      render(<ContainedTrigger Component={Component} />);
       const trigger = screen.getByRole("button", { name: "Publish app" });
       fireEvent.click(trigger);
-      await screen.findByRole("dialog", { name: "Publish app" });
+      const dialog = await screen.findByRole("dialog", { name: "Share app" });
+      expect(screen.getByTestId("created-app-surface").contains(dialog)).toBe(true);
+      const panel = dialog.querySelector<HTMLElement>("section");
+      expect(panel?.style.background).toMatch(/#111113|rgb\(17, 17, 19\)/);
       expect(document.body.style.pointerEvents).not.toBe("none");
       expect(screen.getByRole("button", { name: "Publish app", expanded: true })).toBe(trigger);
       // Exercise outside-pointer dismissal followed by click, not only click().
@@ -55,12 +72,12 @@ for (const [surface, Component] of [["Web", AppSiteButton], ["Electron", Desktop
       }
     });
     it("resets the visible app identity and releases the Electron overlay on unmount", async () => {
-      const view = render(<Component appSlug="launch" />);
+      const view = render(<ContainedTrigger Component={Component} />);
       fireEvent.click(screen.getByRole("button", { name: "Publish app" }));
       await screen.findByText("This app is private.");
       fireEvent.change(screen.getByLabelText("Title"), { target: { value: "Unsaved previous app" } });
       fixture.connection.runtimeSlot = "other"; fixture.connection.authGeneration += 1;
-      view.rerender(<Component appSlug="other" />);
+      view.rerender(<ContainedTrigger Component={Component} appSlug="other" />);
       await screen.findByText("This app is private.");
       expect(screen.getByLabelText("Title")).toHaveProperty("value", "other");
       view.unmount();

@@ -60,19 +60,20 @@ describe("app publishing through the owning desktop surface", () => {
   ] as const)("keeps the %s %s publishing dialog mounted across its own overlay and closes it when hidden", async (presentation, mode) => {
     const view = render(<ParentSurface presentation={presentation} mode={mode} />);
     fireEvent.click(screen.getByRole("button", { name: "Publish app" }));
-    await waitFor(() => expect(screen.queryByRole("dialog", { name: "Publish app" })).not.toBeNull());
+    const dialog = await screen.findByRole("dialog", { name: "Share app" });
+    expect(dialog.closest("[data-os-window]")).not.toBeNull();
     expect(useUi.getState().rendererOverlayCount).toBe(1);
     // Preserve another surface's independent lease when this owner disappears.
     act(() => useUi.getState().acquireRendererOverlay());
     expect(useUi.getState().rendererOverlayCount).toBe(2);
     view.rerender(<ParentSurface presentation={presentation} mode={mode} shown={false} />);
-    await waitFor(() => expect(screen.queryByRole("dialog", { name: "Publish app" })).toBeNull());
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: "Share app" })).toBeNull());
     expect(useUi.getState().rendererOverlayCount).toBe(1);
     act(() => useUi.getState().releaseRendererOverlay());
     view.rerender(<ParentSurface presentation={presentation} mode={mode} />);
-    expect(screen.queryByRole("dialog", { name: "Publish app" })).toBeNull();
+    expect(screen.queryByRole("dialog", { name: "Share app" })).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "Publish app" }));
-    await waitFor(() => expect(screen.queryByRole("dialog", { name: "Publish app" })).not.toBeNull());
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: "Share app" })).not.toBeNull());
     expect(useUi.getState().rendererOverlayCount).toBe(1);
     view.unmount();
     expect(useUi.getState().rendererOverlayCount).toBe(0);

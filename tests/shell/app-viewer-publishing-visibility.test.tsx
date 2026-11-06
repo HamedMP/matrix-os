@@ -23,6 +23,9 @@ afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
 it("unmounts portal-backed publishing controls while the owning app is hidden", () => {
   const view = render(<AppViewer path="apps/demo/index.html" visible />);
   expect(screen.getByTestId("publish-app").textContent).toBe("demo");
+  const bar = screen.getByTestId("app-publishing-bar");
+  expect(getComputedStyle(bar).backgroundColor).toBe("rgb(8, 8, 8)");
+  expect(bar.parentElement?.getAttribute("data-created-app-surface")).toBe("true");
 
   view.rerender(<AppViewer path="apps/demo/index.html" visible={false} />);
   expect(screen.queryByTestId("publish-app")).toBeNull();
