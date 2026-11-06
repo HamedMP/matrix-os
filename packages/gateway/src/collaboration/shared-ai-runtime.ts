@@ -833,7 +833,9 @@ export function canonicalChatSelectionForOwnerAuthority(
 ): CanonicalChatModelSelection | null {
   return decision.authorityKind === "provider_settings_active"
     ? executableChatSelectionForOwnerRoute(decision)
-    : selection;
+    : selection === null
+      ? null
+      : CanonicalChatModelSelectionSchema.parse({ ...selection, model: decision.modelId });
 }
 
 export function sharedDispatchFenceMatches(
