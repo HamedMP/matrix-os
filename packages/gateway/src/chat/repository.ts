@@ -1,3 +1,5 @@
+import { lockRunCollaborationScope } from "./run-scope-lock.js";
+import { assertPrivateRoutineTurn } from "./private-routine-authority.js";
 import { readChatImportSource } from "./import-source.js";
 import { listChats, updateChat, renameChat } from "./metadata-repository.js";
 import { ownerSharedProjection, sharedBindingScopeId } from "./owner-shared-projection.js";
@@ -802,11 +804,6 @@ export class ChatRepository {
         .executeTakeFirst();
       if (!binding) return false;
       if (runId) {
-        const count = await trx.selectFrom("chat_run_events")
-          .select(({ fn }) => fn.countAll().as("count"))
-          .where("run_id", "=", runId)
-          .executeTakeFirstOrThrow();
-        if (Number(count.count) >= 500) throw new ChatConflictError(chatId, Number(chat.revision));
         const activity = CanonicalChatRunActivitySchema.parse({
           id: `activity_${randomUUID()}`,
           chatId,
@@ -962,6 +959,7 @@ export class ChatRepository {
     const parsedRunId = CanonicalChatRunIdSchema.parse(runId);
 
     return this.transact(async (trx) => {
+      await lockRunCollaborationScope(trx, owner, chatId, parsedRunId);
       const chat = await selectOwnedChat(trx, owner, chatId, true);
       if (!chat) throw new ChatNotFoundError(chatId);
       const completedRun = await trx.selectFrom("chat_runs")
@@ -1065,9 +1063,21 @@ export class ChatRepository {
       .where("chats.owner_type", "=", owner.type)
       .where("chats.owner_id", "=", owner.ownerId)
       .where("queued.collaboration_scope_id", "=", scopeId)
+      .where(sql<string>`events.event ->> 'type'`, "=", "approval.requested")
+      .where(sql<boolean>`NOT EXISTS (
+        SELECT 1 FROM chat_approval_outcomes outcomes
+        WHERE outcomes.run_id = events.run_id
+          AND outcomes.approval_id = (events.event ->> 'approvalId')
+      )`)
+      .where(sql<boolean>`NOT EXISTS (
+        SELECT 1 FROM chat_run_events resolved
+        WHERE resolved.run_id = events.run_id
+          AND (resolved.event ->> 'type') = 'approval.resolved'
+          AND (resolved.event ->> 'approvalId') = (events.event ->> 'approvalId')
+      )`)
       .orderBy("events.occurred_at", "desc")
       .orderBy("events.run_seq", "desc")
-      .limit(500)
+      .limit(100)
       .execute();
     const pending: SharedPendingApproval[] = [];
     for (const row of rows.reverse()) {
@@ -1123,8 +1133,8 @@ export class ChatRepository {
     return this.queue.claimNext(owner, input);
   }
 
-  async listQueuedChatIds(owner: ChatOwner, limit?: number): Promise<string[]> {
-    return this.queue.listQueuedChatIds(owner, limit);
+  async listQueuedChatIds(owner: ChatOwner, limit?: number, afterChatId?: string): Promise<string[]> {
+    return this.queue.listQueuedChatIds(owner, limit, afterChatId);
   }
 
   async beginSteer(owner: ChatOwner, input: BeginSteerInput): Promise<BegunSteer> {
@@ -1195,6 +1205,7 @@ export class ChatRepository {
     return this.transact(async (trx) => {
       const current = await selectOwnedChat(trx, owner, chatId, true);
       if (!current) throw new ChatNotFoundError(chatId);
+      await assertPrivateRoutineTurn(trx, owner, chatId, turnId);
       const existing = await trx.selectFrom("chat_runs").selectAll()
         .where("turn_id", "=", turnId)
         .where("client_request_id", "=", clientRequestId)

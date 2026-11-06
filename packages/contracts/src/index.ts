@@ -1,3 +1,4 @@
+export * from "#preview-pair";
 import { MatrixComputerRuntimeSlotSchema } from "#contract-primitives";
 export * from "#browser-chat-approval";
 export { MatrixComputerRuntimeSlotSchema } from "#contract-primitives";
@@ -87,6 +88,13 @@ export * from "#provider-managed-credit";
 export * from "#funded-ai";
 export * from "#jev";
 export * from "#jev-inbox";
+export * from "#get-started";
+export * from "#get-started-arrival";
+export * from "#get-started-bot";
+export * from "#get-started-bot-names";
+export * from "#get-started-recipe-bots";
+export * from "#get-started-connect";
+export * from "#get-started-wizard";
 export * from "#getting-started";
 export * from "#github-developer-access";
 export * from "#integration-connections";
@@ -1470,6 +1478,8 @@ export { AiCreditHistoryQuerySchema, AiCreditHistoryEntrySchema, AiCreditHistory
 
 export * from "#provider-workflows";
 export * from '#chatgpt-plan-peer';
+export * from '#chatgpt-plan-poll-delivery';
+export * from '#inference-response-limits';
 export * from '#chatgpt-plan-wire';
 export * from '#matrix-anthropic-connection';
 
@@ -1479,3 +1489,6 @@ export * from "#remote-browser";
 export * from "#shared-browser";
 export { createBrowserGrantUndoTracker, reconcileBrowserGrantObservation, browserPermissionChoices, browserPermissionRequest, browserPermissionOutcome, browserPermissionErrorKind, type BrowserPermissionChoice } from "#browser-permission-presentation";
 export * from "#funded-host-activation";
+export * from "#routine-action";
+export * from "#routine-full-access";
+export * from "#routine-full-access-view";

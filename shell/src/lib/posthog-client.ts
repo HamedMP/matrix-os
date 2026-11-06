@@ -2,6 +2,7 @@
 
 import "posthog-js/dist/conversations";
 import posthog from "posthog-js";
+import { toast } from "sonner";
 import {
   getPostHogClientConfig,
   resolvePostHogClientApiHost,
@@ -10,10 +11,12 @@ import {
   buildSupportChatProperties,
   type SupportChatProperties,
 } from "@matrix-os/contracts";
+import { subscribePostHogFlag, type FeatureFlagSource } from "@matrix-os/ui/feature-flags";
+import { buildClientErrorReport, type ClientErrorProperties } from "./client-error-report";
 import { getGatewayUrl } from "./gateway";
 import { getMarketingAttributionProperties } from "./marketing-attribution";
 
-type ClientProperties = Record<string, string | number | boolean | undefined>;
+type ClientProperties = ClientErrorProperties;
 type PostHogInitOptions = Parameters<typeof posthog.init>[1];
 type PostHogLogLevel = "trace" | "debug" | "info" | "warn" | "error" | "fatal";
 type PostHogWithLogger = typeof posthog & {
@@ -61,17 +64,11 @@ export function reportClientError(error: unknown, properties: ClientProperties =
   if (typeof window === "undefined") return;
 
   try {
-    const payload = {
-      errorId: typeof properties.errorId === "string" ? properties.errorId : undefined,
-      source: typeof properties.source === "string" ? properties.source : undefined,
-      digest: typeof properties.digest === "string" ? properties.digest : undefined,
-      name: error instanceof Error ? error.name : typeof error,
-      message: (error instanceof Error ? error.message : String(error)).slice(0, 1_000),
-      stack: error instanceof Error ? error.stack?.slice(0, 4_000) : undefined,
-      path: `${window.location.pathname}${window.location.search}`.slice(0, 512),
-      userAgent: window.navigator.userAgent.slice(0, 512),
+    const payload = buildClientErrorReport(error, properties, {
+      path: `${window.location.pathname}${window.location.search}`,
+      userAgent: window.navigator.userAgent,
       buildSha: process.env.NEXT_PUBLIC_MATRIX_BUILD_SHA,
-    };
+    });
 
     if (!payload.errorId) return;
 
@@ -103,7 +100,7 @@ export function capturePostHogEvent(event: string, properties: ClientProperties 
 }
 
 export async function openShellSupport(currentConfig: typeof config = config): Promise<boolean> {
-  if (!currentConfig) return false;
+  if (!currentConfig) return reportSupportUnavailable();
   try {
     ensurePostHogInitialized(currentConfig);
     const properties = await loadShellSupportProperties();
@@ -115,21 +112,28 @@ export async function openShellSupport(currentConfig: typeof config = config): P
         let closeButton = findPostHogButton(POSTHOG_CLOSE_SELECTOR);
         if (!closeButton) {
           const launcher = await waitForPostHogButton(POSTHOG_LAUNCHER_SELECTOR, deadline);
-          if (!launcher) return false;
+          if (!launcher) return reportSupportUnavailable();
           launcher.click();
           closeButton = await waitForPostHogButton(POSTHOG_CLOSE_SELECTOR, deadline);
         }
-        if (!closeButton) return false;
+        if (!closeButton) return reportSupportUnavailable();
         posthog.capture("shell_support_chat_opened", properties);
         return true;
       }
       await new Promise((resolve) => globalThis.setTimeout(resolve, 100));
     }
-    return false;
+    return reportSupportUnavailable();
   } catch (err: unknown) {
     console.warn("[posthog] Failed to open support chat:", err instanceof Error ? err.name : typeof err);
-    return false;
+    return reportSupportUnavailable();
   }
+}
+
+function reportSupportUnavailable(): false {
+  toast.error("Support chat is unavailable", {
+    description: "Email support@matrix-os.com for help.",
+  });
+  return false;
 }
 
 async function loadShellSupportProperties(): Promise<SupportChatProperties> {
@@ -324,6 +328,23 @@ export function initializeShellPostHog(
   // window/launcher shortcuts underneath it.
   if (typeof window !== "undefined") window.addEventListener("keydown", closeSupportOnEscape, true);
   initialized = true;
+}
+
+/** The shell's PostHog flags; undefined in builds without a PostHog project, where the gateway decides. */
+export function getShellFeatureFlagSource(currentConfig: typeof config = config): FeatureFlagSource | undefined {
+  if (!currentConfig) return undefined;
+  return {
+    subscribe(key, listener) {
+      try {
+        initializeShellPostHog(currentConfig);
+      } catch (err: unknown) {
+        console.warn("[posthog] Failed to initialize for flags:", err instanceof Error ? err.name : typeof err);
+        listener(undefined);
+        return () => undefined;
+      }
+      return subscribePostHogFlag(posthog, key, listener);
+    },
+  };
 }
 
 function migrateLegacyPostHogConsent(): void {

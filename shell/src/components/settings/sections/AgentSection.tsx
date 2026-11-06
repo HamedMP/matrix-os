@@ -7,6 +7,7 @@ import { openProviderAuthorizationPath } from "@/lib/provider-browser-action";
 import { createProviderSettingsTransport, openWebProviderAgentSetup } from "@/lib/provider-settings-transport";
 import { currentAiCreditRuntimeSlot, openWebAiCreditCheckout } from "@/lib/ai-credit-checkout";
 import { createWebProviderWorkflowClient, createWebMatrixAnthropicClient, loadWebAiCreditHistory, openWebProviderWorkflowAuthorization } from "@/lib/provider-workflow-transport";
+import { createBrowserSpeechClient } from "@/lib/platform-speech-client";
 
 export function AgentSection({
   onOpenTerminal,
@@ -18,6 +19,7 @@ export function AgentSection({
   const transport = useMemo(() => createProviderSettingsTransport(), []);
   const identityKey = getGatewayUrl();
   const runtimeSlot = currentAiCreditRuntimeSlot();
+  const speechClient = useMemo(() => createBrowserSpeechClient({ baseUrl: identityKey }), [identityKey]);
   const workflowClient = useMemo(() => createWebProviderWorkflowClient({
     isIdentityCurrent: () => getGatewayUrl() === identityKey && currentAiCreditRuntimeSlot() === runtimeSlot,
   }), [identityKey, runtimeSlot]);
@@ -75,9 +77,9 @@ export function AgentSection({
         error={controller.error}
         onSelectHarness={controller.onSelectHarness}
         onRefresh={() => { void controller.refresh(); }}
-        onRefreshForConnection={async () => {
+        onRefreshForConnection={async (receipt) => {
           if (getGatewayUrl() !== identityKey) return null;
-          const snapshot = await controller.refreshForConnection();
+          const snapshot = await controller.refreshForConnection(receipt);
           return getGatewayUrl() === identityKey ? snapshot : null;
         }}
         onMutate={(intent) => controller.mutate(intent, {
@@ -101,6 +103,7 @@ export function AgentSection({
           if (!openWebProviderWorkflowAuthorization(url)) throw new Error("Browser unavailable");
         }}
         onLoadUsageHistory={loadUsageHistory}
+        speechClient={speechClient}
         onAddCredit={addCredit}
       />
     </div>

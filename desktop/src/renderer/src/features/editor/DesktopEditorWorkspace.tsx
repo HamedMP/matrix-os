@@ -18,6 +18,7 @@ export default function DesktopEditorWorkspace() {
   const runtimeSlot = useConnection((state) => state.runtimeSlot);
   const authGeneration = useConnection((state) => state.authGeneration);
   const paths = useDesktopEditor((state) => state.paths);
+  const resources = useDesktopEditor((state) => state.resources);
   const activePath = useDesktopEditor((state) => state.activePath);
   const dirtyPaths = useDesktopEditor((state) => state.dirtyPaths);
   const error = useDesktopEditor((state) => state.error);
@@ -88,7 +89,8 @@ export default function DesktopEditorWorkspace() {
             return (
               <RetainedPane key={path} active={active} visible={active} className="absolute inset-0 min-h-0 min-w-0">
                 <MonacoEditorHost
-                  path={path}
+                  path={resources[path]?.path ?? path}
+                  resource={resources[path]}
                   active={active}
                   onDirtyChange={(dirty) => setDirty(path, dirty)}
                 />

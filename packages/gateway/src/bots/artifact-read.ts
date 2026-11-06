@@ -24,8 +24,8 @@ export async function readBotArtifact(file: FileHandle, args: ReadArgs): Promise
 }
 
 /** Same bounded reader for immutable submitted-upload snapshots. */
-export function readBotArtifactBytes(bytes: Buffer, args: ReadArgs): string {
-  if (bytes.length > (args.chunk ? BOT_ARTIFACT_BINARY_MAX_BYTES : BOT_ARTIFACT_MAX_BYTES)) throw new BotBrokerActionError("invalid_arguments");
+export function readBotArtifactBytes(bytes: Buffer, args: ReadArgs, binaryMaximum = BOT_ARTIFACT_BINARY_MAX_BYTES): string {
+  if (bytes.length > (args.chunk ? binaryMaximum : BOT_ARTIFACT_MAX_BYTES)) throw new BotBrokerActionError("invalid_arguments");
   const length = bytes.length;
   if (!args.chunk) return bytes.toString("utf8");
   const sha256 = createHash("sha256").update(bytes).digest("hex");

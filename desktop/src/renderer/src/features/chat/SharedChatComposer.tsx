@@ -6,8 +6,8 @@ import type {
   CanonicalProviderInstanceDescriptor,
   CanonicalProviderSetupAction,
 } from "@matrix-os/contracts";
-import * as Popover from "@radix-ui/react-popover";
-import { Box, ChevronDown, Plus, SlidersHorizontalIcon, SquareTerminal } from "@renderer/lib/hugeicons";
+import { ChatComposerAttachButton, ChatComposerOptionControls, chatPermissionModeLabel, type ChatComposerOptionControl } from "@matrix-os/ui";
+import { Box, SquareTerminal } from "@renderer/lib/hugeicons";
 import { useEffect, useMemo, useRef, useState, type ReactNode, type Ref } from "react";
 import { PromptInput } from "./elements/prompt-input";
 import { ComposerPromptEditor, type ComposerPromptEditorHandle } from "./ComposerPromptEditor";
@@ -39,91 +39,6 @@ function selectedOptionValue(
   optionId: string,
 ): string | boolean | undefined {
   return selection.options.find((option) => option.id === optionId)?.value;
-}
-
-function permissionModeLabel(mode: string): string {
-  return mode
-    .split("_")
-    .map((word) => `${word.charAt(0).toLocaleUpperCase()}${word.slice(1)}`)
-    .join(" ");
-}
-
-function CompactSelect({
-  openRequest = 0,
-  label,
-  value,
-  options,
-  menuSide,
-  onChange,
-}: {
-  openRequest?: number;
-  label: string;
-  value: string;
-  options: Array<{ value: string; label: string }>;
-  menuSide: "top" | "bottom";
-  onChange: (value: string) => void;
-}) {
-  const [open, setOpen] = useState(false);
-  const trigger = useRef<HTMLButtonElement>(null);
-  useEffect(() => { if (openRequest > 0 && trigger.current?.getClientRects().length) setOpen(true); }, [openRequest]);
-  if (options.length <= 1) return null;
-  const selected = options.find((option) => option.value === value) ?? options[0]!;
-  return (
-    <Popover.Root open={open} onOpenChange={setOpen}>
-      <Popover.Trigger asChild>
-        <button
-          type="button"
-          ref={trigger}
-          aria-label={label}
-          aria-haspopup="menu"
-          aria-expanded={open}
-          className="flex h-8 max-w-[9rem] items-center gap-1.5 truncate rounded-lg px-2 text-sm outline-none hover:bg-[var(--bg-hover)] focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
-          style={{ color: "var(--text-secondary)" }}
-          onKeyDown={(event) => {
-            if (event.key === "Escape") setOpen(false);
-          }}
-        >
-          <span className="truncate">{selected.label}</span>
-          <ChevronDown size={12} aria-hidden className="shrink-0" style={{ color: "var(--text-tertiary)" }} />
-        </button>
-      </Popover.Trigger>
-      {open ? (
-        <Popover.Portal>
-          <Popover.Content
-            role="menu"
-            aria-label={`${label} options`}
-            side={menuSide}
-            align="end"
-            sideOffset={8}
-            collisionPadding={16}
-            data-preferred-side={menuSide}
-            className="z-50 min-w-48 rounded-xl border p-1.5 shadow-xl"
-            style={{ borderColor: "var(--border-default)", background: "var(--bg-overlay)" }}
-          >
-            <span className="block px-2 py-1 text-[11px] font-semibold uppercase tracking-[0.12em]" style={{ color: "var(--text-tertiary)" }}>
-              {label}
-            </span>
-            {options.map((option) => (
-              <button
-                key={option.value}
-                type="button"
-                role="menuitemradio"
-                aria-checked={option.value === selected.value}
-                className="flex min-h-9 w-full items-center rounded-lg px-2 text-left text-sm hover:bg-[var(--bg-hover)] aria-checked:bg-[var(--bg-active)]"
-                style={{ color: "var(--text-primary)" }}
-                onClick={() => {
-                  onChange(option.value);
-                  setOpen(false);
-                }}
-              >
-                {option.label}
-              </button>
-            ))}
-          </Popover.Content>
-        </Popover.Portal>
-      ) : null}
-    </Popover.Root>
-  );
 }
 
 function SuggestionMenu({
@@ -236,9 +151,6 @@ export function SharedChatComposer({
   layout?: "default" | "narrow";
   speech?: { scopeKey: string; onDraft: (text: string) => void };
 }) {
-  const [settingsMenuOpen, setSettingsMenuOpen] = useState(false);
-  const settingsTrigger = useRef<HTMLButtonElement>(null);
-  useEffect(() => { if (permissionModeRequest > 0 && settingsTrigger.current?.getClientRects().length) setSettingsMenuOpen(true); }, [permissionModeRequest]);
   const [dismissedSuggestionKey, setDismissedSuggestionKey] = useState<string | null>(null);
   const suggestionMenuRef = useRef<HTMLDivElement>(null);
   const editorRef = useRef<ComposerPromptEditorHandle>(null);
@@ -398,12 +310,23 @@ export function SharedChatComposer({
   const composerOptions = selection
     ? instance?.options.filter((option) => option.placement === "composer") ?? []
     : [];
-  const permissionModeOptions = (instance?.supports.permissionModes ?? []).map((mode) => ({
-    value: mode,
-    label: permissionModeLabel(mode),
-  }));
-  const hasSecondaryControls = composerOptions.some((option) => option.kind === "enum" && (option.values?.length ?? 0) > 1)
-    || (instance?.supports.permissionModes.length ?? 0) > 1;
+  const optionControls: ChatComposerOptionControl[] = selection ? [
+    ...composerOptions.flatMap((option) => option.kind === "enum" ? [{
+      id: option.id,
+      label: option.label,
+      value: String(selectedOptionValue(selection, option.id) ?? option.values?.[0]?.value ?? ""),
+      options: (option.values ?? []).map((candidate) => ({ value: candidate.value, label: candidate.label })),
+      onChange: (next: string) => onSelectionChange(updateCanonicalComposerOption(catalog, selection, option.id, next)),
+    }] : []),
+    {
+      id: "permission-mode",
+      label: "Permission mode",
+      value: selection.permissionMode,
+      options: (instance?.supports.permissionModes ?? []).map((mode) => ({ value: mode, label: chatPermissionModeLabel(mode) })),
+      openRequest: permissionModeRequest,
+      onChange: (permissionMode: string) => onSelectionChange({ ...selection, permissionMode }),
+    },
+  ] : [];
   useEffect(() => {
     if (!slashMenuOpen && !resourceMenuOpen) return;
     const dismissOutside = (event: PointerEvent) => {
@@ -502,19 +425,7 @@ export function SharedChatComposer({
         footer={footer}
         controls={(
           <>
-            {canAttach ? (
-              <button
-                type="button"
-                aria-label="Attach files"
-                title="Attach files"
-                disabled={disabled}
-                className="flex h-7 w-8 items-center justify-center rounded-[8px] border outline-none hover:bg-[var(--bg-hover)] focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
-                style={{ color: "var(--text-secondary)", borderColor: "var(--border-subtle)" }}
-                onClick={onAttach}
-              >
-                <Plus data-slot="attachment-plus-icon" size={15} aria-hidden />
-              </button>
-            ) : null}
+            {canAttach ? <ChatComposerAttachButton disabled={disabled} onClick={() => onAttach?.()} /> : null}
             {leadingControls}
           </>
         )}
@@ -541,83 +452,7 @@ export function SharedChatComposer({
               onNewChat={onNewChat}
               onChange={onSelectionChange}
             />}
-            <div data-slot="composer-secondary-controls" className="contents @max-[42rem]/chat-composer:hidden">
-              {selection ? composerOptions.map((option) => option.kind === "enum" ? (
-                <CompactSelect
-                  key={option.id}
-                  label={option.label}
-                  value={String(selectedOptionValue(selection, option.id) ?? option.values?.[0]?.value ?? "")}
-                  options={(option.values ?? []).map((candidate) => ({ value: candidate.value, label: candidate.label }))}
-                  menuSide={menuSide}
-                  onChange={(next) => onSelectionChange(updateCanonicalComposerOption(catalog, selection, option.id, next))}
-                />
-              ) : null) : null}
-              {selection && (instance?.supports.permissionModes.length ?? 0) > 1 ? (
-                <CompactSelect
-                  openRequest={permissionModeRequest}
-                  label="Permission mode"
-                  value={selection.permissionMode}
-                  options={permissionModeOptions}
-                  menuSide={menuSide}
-                  onChange={(permissionMode) => onSelectionChange({ ...selection, permissionMode })}
-                />
-              ) : null}
-            </div>
-            {selection && hasSecondaryControls ? (
-              <Popover.Root open={settingsMenuOpen} onOpenChange={setSettingsMenuOpen}>
-                <Popover.Trigger asChild>
-                  <button
-                    type="button"
-                    ref={settingsTrigger}
-                    aria-label="Chat settings"
-                    aria-haspopup="dialog"
-                    aria-expanded={settingsMenuOpen}
-                    className="hidden size-8 shrink-0 items-center justify-center rounded-lg outline-none hover:bg-[var(--bg-hover)] focus-visible:ring-2 focus-visible:ring-[var(--accent)] @max-[42rem]/chat-composer:flex"
-                    style={{ color: "var(--text-secondary)" }}
-                  >
-                    <SlidersHorizontalIcon size={15} aria-hidden />
-                  </button>
-                </Popover.Trigger>
-                {settingsMenuOpen ? (
-                  <Popover.Portal>
-                    <Popover.Content
-                      role="dialog"
-                      aria-label="Chat settings"
-                      side={menuSide}
-                      align="end"
-                      sideOffset={8}
-                      collisionPadding={16}
-                      className="z-50 flex min-w-56 flex-col gap-1 rounded-xl border p-2 shadow-xl"
-                      style={{ borderColor: "var(--border-default)", background: "var(--bg-overlay)" }}
-                    >
-                      <span className="px-2 py-1 text-[11px] font-semibold uppercase tracking-[0.12em]" style={{ color: "var(--text-tertiary)" }}>
-                        Chat settings
-                      </span>
-                      {composerOptions.map((option) => option.kind === "enum" ? (
-                        <CompactSelect
-                          key={option.id}
-                          label={option.label}
-                          value={String(selectedOptionValue(selection, option.id) ?? option.values?.[0]?.value ?? "")}
-                          options={(option.values ?? []).map((candidate) => ({ value: candidate.value, label: candidate.label }))}
-                          menuSide={menuSide}
-                          onChange={(next) => onSelectionChange(updateCanonicalComposerOption(catalog, selection, option.id, next))}
-                        />
-                      ) : null)}
-                      {(instance?.supports.permissionModes.length ?? 0) > 1 ? (
-                        <CompactSelect
-                          openRequest={permissionModeRequest}
-                  label="Permission mode"
-                          value={selection.permissionMode}
-                          options={permissionModeOptions}
-                          menuSide={menuSide}
-                          onChange={(permissionMode) => onSelectionChange({ ...selection, permissionMode })}
-                        />
-                      ) : null}
-                    </Popover.Content>
-                  </Popover.Portal>
-                ) : null}
-              </Popover.Root>
-            ) : null}
+            <ChatComposerOptionControls controls={optionControls} openRequest={permissionModeRequest} menuSide={menuSide} />
           </>
         )}
       />

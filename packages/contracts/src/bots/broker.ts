@@ -1,4 +1,5 @@
 import { BotToolDisplaySchema } from "#bots/tool-display";
+import {BotRoutineProposalSchema,BotRoutineToolControlSchema} from "#bots/routines";
 import { z } from "zod/v4";
 import { SharedBrowserActionSchema } from "#shared-browser";
 import { canonicalBoundedText, canonicalEncodedByteLength, canonicalOwnerRelativePath, canonicalReferenceId } from "#canonical-chat-primitives";
@@ -11,6 +12,8 @@ import { JevInboxInputSchema } from "#jev-inbox";
 export const BOT_ARTIFACT_MAX_BYTES = 192 * 1024;
 /** Binary imports stay in the workspace; each explicit read returns at most 32 KiB. */
 export const BOT_ARTIFACT_BINARY_MAX_BYTES = 1024 * 1024;
+/** Explicitly submitted uploads have their own bound; workspace/integration imports stay unchanged. */
+export const BOT_INPUT_FILE_MAX_BYTES = 10 * 1024 * 1024;
 export const BOT_ARTIFACT_CHUNK_MAX_BYTES = 32 * 1024;
 const MAX_INTEGRATION_PARAMS_BYTES = 32 * 1024;
 /** Saved bot transcripts; the runtime compacts well before this cap. */
@@ -24,6 +27,8 @@ const textEncoder = new TextEncoder();
 
 /** M1 capabilities. Later milestones add handoffs and computer actions. */
 export const BotToolCapabilitySchema = z.enum([
+  "routine.propose",
+  "routine.control",
   "agent.task",
   "browser.action",
   "integration.inventory",
@@ -48,6 +53,8 @@ const capability = <Name extends z.infer<typeof BotToolCapabilitySchema>, Args e
 
 const BotToolRequestUnionSchema = z.discriminatedUnion("capability", [
   capability("browser.action", SharedBrowserActionSchema),
+  capability("routine.propose",BotRoutineProposalSchema),
+  capability("routine.control",BotRoutineToolControlSchema),
   capability("agent.task", z.object({ prompt: canonicalBoundedText(16 * 1024, 32 * 1024) }).strict()),
   capability("jev.inbox", JevInboxInputSchema),
   capability("integration.inventory", z.object({ service: BotIntegrationServiceSchema.optional() }).strict()),
@@ -89,7 +96,7 @@ const BotToolRequestUnionSchema = z.discriminatedUnion("capability", [
   capability("artifact.read", z.object({
     relPath: ArtifactPathSchema,
     chunk: z.object({
-      offset: z.number().int().min(0).max(BOT_ARTIFACT_BINARY_MAX_BYTES),
+      offset: z.number().int().min(0).max(BOT_INPUT_FILE_MAX_BYTES),
       length: z.number().int().min(1).max(BOT_ARTIFACT_CHUNK_MAX_BYTES),
       sha256: z.string().regex(/^[a-f0-9]{64}$/),
     }).strict().optional(),

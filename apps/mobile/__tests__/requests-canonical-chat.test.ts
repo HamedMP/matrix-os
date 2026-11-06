@@ -1,8 +1,11 @@
+import { projectChatMessageResponse } from "@matrix-os/contracts";
+import { longClaudeQuestion } from "../../../tests/fixtures/long-claude-question";
 import {
   cancelChatRun,
   chatActivityAt,
   retryChatTurn,
   fetchChats,
+  fetchChatDetail,
   fetchProjectChats,
   isChatUnread,
   searchChats,
@@ -399,5 +402,30 @@ describe("retryChatTurn", () => {
       clientRequestId: "req_retry1",
       baseRevision: 3,
     })).rejects.toThrow("Could not retry. Try again.");
+  });
+});
+
+
+describe("complete question detail", () => {
+  beforeEach(() => jest.restoreAllMocks());
+  afterEach(() => jest.restoreAllMocks());
+
+  it("requests and parses full question explanations through the gateway projection", async () => {
+    const activity = {
+      type: "input.requested" as const, id: "activity_question", chatId: "chat_one", runId: "run_one",
+      requestId: "question", title: "Input needed", occurredAt: at,
+      questions: [{ ...longClaudeQuestion, questionId: "q0", allowOther: true, secret: false }],
+    };
+    const detail = { record: chatRecord("chat_one"), messages: [], turns: [], runs: [], activities: [activity] };
+    const fetchMock = jest.spyOn(global, "fetch").mockImplementation(async (input) => {
+      const query = new URL(String(input)).searchParams;
+      return respond(projectChatMessageResponse(detail, "2", query.get("inputVersion") === "1" ? "1" : "0", "1", "1",
+        query.get("questionDescriptionVersion") === "1" ? "1" : "0"));
+    });
+
+    const parsed = await fetchChatDetail(token, `${gatewayUrl}?runtime=primary`, "chat_one");
+
+    expect(requestedUrl(fetchMock).searchParams.get("runtime")).toBe("primary");
+    expect(parsed.activities).toEqual([activity]);
   });
 });

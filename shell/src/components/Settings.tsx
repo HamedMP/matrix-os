@@ -51,18 +51,18 @@ import OrganizationSection from "./settings/sections/OrganizationSection";
 
 
 const sections = [
-  { id: "appearance", label: "Appearance", icon: PaletteIcon },
-  { id: "organization", label: "Organization", icon: UsersIcon },
   { id: "agents-providers", label: "Agents & providers", icon: SparklesIcon },
-  { id: "identity-personality", label: "Identity & personality", icon: UserIcon },
-  { id: "channels", label: "Channels", icon: MessageSquareIcon },
   { id: "integrations", label: "Connect Apps", icon: CableIcon },
+  { id: "channels", label: "Channels", icon: MessageSquareIcon },
   { id: "skills", label: "Skills", icon: SparklesIcon },
   { id: "chat-import", label: "Import chats", icon: UploadIcon },
+  { id: "plugins", label: "Plugins", icon: PuzzleIcon },
+  { id: "appearance", label: "Appearance", icon: PaletteIcon },
+  { id: "organization", label: "Organization", icon: UsersIcon },
+  { id: "identity-personality", label: "Identity & personality", icon: UserIcon },
   { id: "security", label: "Security", icon: ShieldIcon },
   { id: "billing", label: "Billing", icon: CreditCardIcon },
   { id: "cron", label: "Cron", icon: ClockIcon },
-  { id: "plugins", label: "Plugins", icon: PuzzleIcon },
   { id: "system", label: "System", icon: MonitorIcon },
 ] as const;
 
@@ -189,7 +189,7 @@ interface SettingsFrameProps extends SettingsProps {
 function SettingsFrame({
   open,
   onOpenChange,
-  defaultSection = "appearance",
+  defaultSection = "agents-providers",
   lockedSection,
   closeDisabled = false,
   billingMode = "settings",
@@ -211,7 +211,7 @@ function SettingsFrame({
   const resolvedDefaultSection = onboardingMode
     ? "default-installs"
     : !showBillingSection && canonicalDefaultSection === "billing"
-      ? "appearance"
+      ? "agents-providers"
       : canonicalDefaultSection;
   const resolvedLockedSection = !showBillingSection && canonicalLockedSection === "billing"
     ? undefined

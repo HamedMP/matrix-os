@@ -29,4 +29,3 @@ export const GithubDeveloperStatusSchema = z.object({
 
 export type GithubDeveloperStatus = z.infer<typeof GithubDeveloperStatusSchema>;
 export type GithubDeveloperStatusErrorCode = z.infer<typeof GithubDeveloperStatusErrorCodeSchema>;
-

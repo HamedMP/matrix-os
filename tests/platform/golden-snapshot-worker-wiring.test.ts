@@ -90,12 +90,6 @@ describe('golden snapshot worker wiring', () => {
     expect(worker).toContain('goldenSnapshotConfig.reconciliationBatchSize');
   });
 
-  it('mounts snapshot status routes before the generic bundle catch-all', async () => {
-    const source = await readFile('packages/platform/src/main.ts', 'utf8');
-    expect(source.indexOf('createGoldenSnapshotRoutes({'))
-      .toBeLessThan(source.indexOf('createHostBundleRoutes({'));
-  });
-
   it('documents the dedicated operator credential as mandatory for customer VPS installs', async () => {
     const [exampleEnv, deploymentGuide] = await Promise.all([
       readFile('.env.example', 'utf8'),

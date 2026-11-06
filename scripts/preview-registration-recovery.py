@@ -42,7 +42,10 @@ def recover(root, handle, machine_id, version, address, actual_address):
         raise ValueError("Preview host identity mismatch")
     if read_regular(root / "app/BUNDLE_VERSION", 256).strip() != version:
         raise ValueError("Preview version mismatch")
-    marker = root / "register-complete"
+    marker = Path(os.environ.get(
+        "MATRIX_REGISTER_FLAG",
+        "/var/lib/matrix-vps-registration/register-complete",
+    ))
     if marker.is_symlink():
         raise ValueError("Registration marker must not be a symlink")
     try:

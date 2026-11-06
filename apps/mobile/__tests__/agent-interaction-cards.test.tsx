@@ -1,3 +1,6 @@
+// This card never renders a modal Sheet; isolate its unrelated Expo native bridge.
+jest.mock("../components/ui/Sheet", () => ({ Sheet: () => null }));
+
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react-native";
 
 import { PendingInteraction, type PendingInteractionProps } from "../components/agents/interactions/PendingInteraction";
@@ -63,6 +66,14 @@ function renderInteraction(interaction: unknown, overrides: Partial<PendingInter
 const card = () => screen.getByTestId("interaction-in_abcdefgh");
 
 describe("an agent's other requests", () => {
+  it("restores a saved answer Resume action without asking for the answer again", async () => {
+    const onResolve = jest.fn(async () => ({ interaction: { interactionId: base.interactionId, status: "resolved" as const, revision: 2 } }));
+    renderInteraction({ ...question, status: "resolved", revision: 2, recoveryAvailable: true }, { onResolve });
+    fireEvent.press(screen.getByRole("button", { name: "Resume" }));
+    await waitFor(() => expect(onResolve).toHaveBeenCalledWith(base.interactionId, { kind: "resume", baseRevision: 2 }));
+    expect(screen.queryByLabelText("Answer Target")).toBeNull();
+  });
+
   let warn: jest.SpyInstance;
 
   beforeEach(() => {

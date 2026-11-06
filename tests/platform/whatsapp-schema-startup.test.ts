@@ -7,6 +7,7 @@ import { runPlatformMigration } from '../../packages/platform/src/migration-runn
 import { migratePlatformSchema } from '../../packages/platform/src/database/migrate.js';
 import { PLATFORM_SCHEMA_REVISION } from '../../packages/platform/src/database/migration-revision.js';
 import { runPlatformStartupMigrations } from '../../packages/platform/src/database/run-migrations.js';
+import { FUNDED_CONSERVATIVE_FENCE_REVISION } from '../../packages/platform/src/database/funded-conservative-fence-revision.js';
 import { FUNDED_PROBE_CACHE_REVISION } from '../../packages/platform/src/database/funded-probe-cache-revision.js';
 import { WHATSAPP_SCHEMA_REVISION } from '../../packages/platform/src/database/whatsapp-migration-revision.js';
 import { GOOGLE_TRACKING_REVISION } from '../../packages/platform/src/billing/google-tracking-revision.js';
@@ -14,6 +15,24 @@ import { createHash } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 
 describe('WhatsApp schema startup', () => {
+  it('upgrades existing public sites to explicit public access without changing their publication state',async()=>{
+    const instance=await KyselyPGlite.create();
+    const db=new Kysely<PlatformDatabase>({dialect:instance.dialect});
+    try{
+      await runPlatformMigration(db,async trx=>{
+        await sql`CREATE TABLE public_sites (id TEXT PRIMARY KEY, owner_id TEXT NOT NULL, machine_id TEXT NOT NULL,
+          app_slug TEXT NOT NULL,title TEXT NOT NULL,description TEXT NOT NULL,slug TEXT,revision INTEGER NOT NULL DEFAULT 0,
+          status TEXT NOT NULL,active_version TEXT,created_at TEXT NOT NULL,UNIQUE(owner_id,machine_id,app_slug))`.execute(trx);
+        await sql`CREATE TABLE public_site_versions (id TEXT PRIMARY KEY,site_id TEXT NOT NULL REFERENCES public_sites(id) ON DELETE CASCADE,created_at TEXT NOT NULL,config JSONB NOT NULL,files JSONB NOT NULL)`.execute(trx);
+        await sql`CREATE TABLE public_site_aliases (slug TEXT PRIMARY KEY,site_id TEXT REFERENCES public_sites(id) ON DELETE SET NULL)`.execute(trx);
+        await sql`INSERT INTO public_sites (id,owner_id,machine_id,app_slug,title,description,revision,status,created_at)
+          VALUES ('11111111-1111-4111-8111-111111111111','user_existing','machine-existing','launch','Launch','',3,'published','2026-11-01')`.execute(trx);
+      },{scope:'sites',revision:{generation:1,fingerprint:'public-app-sites-v1'}});
+      await runPlatformStartupMigrations(db);
+      expect((await sql`SELECT id,status,access_mode FROM public_sites`.execute(db)).rows).toEqual([{id:'11111111-1111-4111-8111-111111111111',status:'published',access_mode:'public'}]);
+      expect((await sql<{name:string}>`SELECT to_regclass('public_site_access_links')::text AS name`.execute(db)).rows).toEqual([{name:'public_site_access_links'}]);
+    }finally{await db.destroy();}
+  });
   it.each([8, 9, 10])('upgrades deployed core generation %s without overwriting owner data or additive columns', async (generation) => {
     const instance = await KyselyPGlite.create();
     const db = new Kysely<PlatformDatabase>({ dialect: instance.dialect });
@@ -65,8 +84,10 @@ describe('WhatsApp schema startup', () => {
       expect(revisions.rows).toEqual([
         { scope: 'billing-google-purchases', ...GOOGLE_TRACKING_REVISION },
         { scope: 'core', ...PLATFORM_SCHEMA_REVISION },
+        { scope: 'funded-conservative-fence', ...FUNDED_CONSERVATIVE_FENCE_REVISION },
         { scope: 'funded-probe-cache', ...FUNDED_PROBE_CACHE_REVISION },
-        { scope: 'sites', generation: 1, fingerprint: 'public-app-sites-v1' },
+        { scope: 'preview-pairs', generation: 5, fingerprint: 'collaboration-preview-pair-publisher-v5' },
+        { scope: 'sites', generation: 2, fingerprint: 'public-app-sites-private-links-v2' },
         { scope: 'whatsapp', ...WHATSAPP_SCHEMA_REVISION },
       ]);
       await runPlatformStartupMigrations(db);

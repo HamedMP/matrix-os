@@ -34,10 +34,10 @@ function fixture(cancel: () => void | Promise<void> = () => undefined, model = M
   let reservation = 0;
   const control = {
     check: vi.fn(async () => ({ identity: IDENTITY })),
-    authorize: vi.fn(async (input: { requestId: string; modelId: string }) => {
+    authorize: vi.fn(async (input: { requestId: string; modelId: string; maxCostMicrousd: number }) => {
       requestId = input.requestId;
       reservationId = `reservation_${++reservation}`;
-      return { identity: IDENTITY, reservation: { reservationId, requestId, modelId: input.modelId, reservedMicrousd: 1, billingMode: "usage" } };
+      return { identity: IDENTITY, reservation: { reservationId, requestId, modelId: input.modelId, reservedMicrousd: 0, billingMode: "usage", billingPolicy: "postpaid", maxCostMicrousd: input.maxCostMicrousd } };
     }),
     start: vi.fn(async (input: { executionId?: string }) => ({ executionId: input.executionId, contractVersion: 1, status: "in_flight",
       startedAt: NOW.toISOString(), expiresAt: "2026-09-10T12:10:00.000Z", reservationId, requestId, tokenId: IDENTITY.tokenId })),
@@ -45,11 +45,15 @@ function fixture(cancel: () => void | Promise<void> = () => undefined, model = M
     finalize: vi.fn(async () => ({})), release: vi.fn(async () => ({})),
   };
   const upstream = vi.fn(async () => new Response(new ReadableStream<Uint8Array>({ cancel }), { headers: { "content-type": "application/json" } }));
+  const fetchWithCount = vi.fn<typeof fetch>().mockImplementation(async (input) =>
+    String(input).endsWith("/v1/messages/count_tokens")
+      ? Response.json({ input_tokens: 100 })
+      : upstream());
   const config = { ...resolveFundedRelayConfig({ MATRIX_FUNDED_AI_ENABLED: "true", MATRIX_FUNDED_AI_RESERVATION_MODE: "usage",
     CLOUDFLARE_AI_GATEWAY_URL: "https://gateway.ai.cloudflare.com/v1/0123456789abcdef0123456789abcdef/offline/anthropic",
     CLOUDFLARE_AI_GATEWAY_TOKEN: "g".repeat(32), CLOUDFLARE_WORKERS_AI_TOKEN: "w".repeat(32),
     PLATFORM_INTERNAL_URL: "https://platform.example.test", AI_RELAY_CONTROL_TOKEN: "c".repeat(32), AI_RELAY_METADATA_SECRET: "m".repeat(32) })!,
-    fetch: upstream, platformClient: control as unknown as FundedPlatformClient, now: () => NOW };
+    fetch: fetchWithCount, platformClient: control as unknown as FundedPlatformClient, now: () => NOW };
   const service = createFundedRelayService(config);
   const send = () => service.app.request(model === MODEL ? "/v1/chat/completions" : "/v1/messages", { method: "POST", headers: {
     authorization: `Bearer ${CREDENTIAL}`, "content-type": "application/json" },

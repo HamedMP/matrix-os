@@ -41,6 +41,7 @@ describe("collaboration PostgreSQL CI inventory", () => {
   it("covers the complete registered PostgreSQL cohort", () => {
     const files = collaborationPostgresFiles(process.cwd());
     expect(files.length).toBeGreaterThanOrEqual(39);
+    expect(files).toContain("tests/platform/collaboration-registration-recovery.test.ts");
     expect(files).toContain("tests/gateway/direct-resource-policy-postgres.test.ts");
     expect(files).toContain("tests/platform/platform-migration-revision-db.test.ts");
     expect(files).toEqual([...files].sort());
@@ -81,9 +82,13 @@ describe("collaboration PostgreSQL CI execution", () => {
     const root = process.cwd(); const execute = passingRunner(root);
     const output = mkdtempSync(join(tmpdir(), "collaboration-pg-output-")); roots.push(output);
     expect(runCollaborationPostgres(root, env, execute, output)).toBe(0);
-    expect(execute).toHaveBeenCalledTimes(Math.ceil(collaborationPostgresFiles(root).length / 9));
+    const files = collaborationPostgresFiles(root);
+    expect(execute).toHaveBeenCalledTimes(Math.ceil(files.length / 9));
     const selected = execute.mock.calls.flatMap(([, args]) => args.slice(3, args.indexOf("--maxWorkers=1")));
-    expect(selected).toEqual(collaborationPostgresFiles(root));
+    expect(selected).toEqual(files);
+    const batches = execute.mock.calls.map(([, args]) => args.slice(3, args.indexOf("--maxWorkers=1")));
+    expect(batches.slice(0, -1).every(batch => batch.length === 9)).toBe(true);
+    expect(batches.at(-1)?.length).toBe(files.length % 9 || 9);
     for (const [command, args] of execute.mock.calls) {
       expect(command).toBe("pnpm");
       expect(args.slice(0, 3)).toEqual(["exec", "vitest", "run"]);
@@ -92,7 +97,7 @@ describe("collaboration PostgreSQL CI execution", () => {
       expect(args.some(arg => /timeout|skip|passWithNoTests/.test(arg))).toBe(false);
     }
     const receipt = JSON.parse(readFileSync(join(output, "inventory.json"), "utf8"));
-    expect(receipt).toMatchObject({ files: selected, verifiedPassedAssertions: selected.length, qualified: true });
+    expect(receipt).toMatchObject({ files: selected, verifiedPassedAssertions: files.length, qualified: true });
   });
   it("continues the remaining batches after a failed test process", () => {
     const root = fixture();
@@ -145,20 +150,30 @@ describe("required collaboration PostgreSQL workflow", () => {
     expect(selected.stdout.trim().split("\n")).toContain("tests/platform/account-deletion-slack-postgres.test.ts");
   });
 
-  it("retains the existing required job, exact-source checkout, commands and ten-minute bound", () => {
+  it("retains required jobs, exact-source checkout and all commands within measured bounded qualification windows", () => {
     const workflow = parse(readFileSync(".github/workflows/ci.yml", "utf8")); const job = workflow.jobs["funded-postgres"];
-    expect(job.needs).toBe("changes"); expect(job["timeout-minutes"]).toBe(10);
+    expect(job.needs).toBe("changes");
+    expect(job["timeout-minutes"]).toBeGreaterThanOrEqual(20);
+    expect(job["timeout-minutes"]).toBeLessThanOrEqual(30);
     expect(job.if).not.toMatch(/dedicated|ci-backend/);
     expect(job.steps[0].with.ref).toBe("${{ needs.changes.outputs.source_sha }}");
     const fundedTestSteps = job.steps.filter((step: { run?: string }) => step.run?.includes("pnpm exec vitest run"));
-    expect(fundedTestSteps).toHaveLength(6);
+    expect(fundedTestSteps.length).toBeGreaterThanOrEqual(6);
+    expect(new Set(fundedTestSteps.map((step: { run?: string }) => step.run)).size).toBe(fundedTestSteps.length);
+    for (const suite of ["deployed-v9-schema-postgres", "routine-fencing-postgres", "routine-process-postgres"]) {
+      expect(fundedTestSteps.filter((step: { run?: string }) => step.run?.includes(`tests/gateway/bots/${suite}.test.ts`))).toHaveLength(1);
+    }
     expect(fundedTestSteps[5].run).toContain("tests/gateway/browser-approval-repository.test.ts --maxWorkers=1 --no-file-parallelism");
     expect(job.steps.find((step: { name?: string }) => step.name === "Build test prerequisites once").run).toBe("bun run test:prepare");
     const collaboration = workflow.jobs["collaboration-postgres"];
     expect(collaboration).toBeDefined();
     expect(collaboration.needs).toBe("changes");
     expect(collaboration.if).toBe(job.if);
-    expect(collaboration["timeout-minutes"]).toBe(10);
+    // Run41112133779 completed67 selected files at9m55, then hit the10m
+    // job limit before completion/upload. Keep margin above observed runtime;
+    // the collaboration budget must not be frozen to the shorter funded lane.
+    const observedQualificationSeconds = 9 * 60 + 55;
+    expect(collaboration["timeout-minutes"] * 60).toBeGreaterThan(observedQualificationSeconds + 120);
     expect(collaboration.services).toEqual(job.services);
     expect(collaboration.env).toEqual(job.env);
     expect(collaboration.steps.slice(0, 6)).toEqual(job.steps.slice(0, 6));

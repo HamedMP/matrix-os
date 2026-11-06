@@ -44,6 +44,19 @@ it("keeps Agents on management while both creation entries open the same scratch
   expect(bots.instantiate).not.toHaveBeenCalled(); expect(bots.createCustom).not.toHaveBeenCalled();
 });
 
+it("opens custom Agent creation from the host catalog without waiting on duplicate discovery", async () => {
+  const { client } = fixture();
+  const catalog = await client.catalog();
+  client.catalog.mockClear();
+  client.catalog.mockImplementation(() => new Promise(() => {}));
+  render(<ChatAgentsPanel client={client} view="recipes" onClose={vi.fn()}
+    providerCatalog={{ catalog, loading: false, error: "", refresh: vi.fn() }} />);
+  await waitFor(() => expect(scratch()).toBeEnabled());
+  fireEvent.click(scratch());
+  expect(screen.getByRole("dialog", { name: "New Agent" })).toBeVisible();
+  expect(client.catalog).not.toHaveBeenCalled();
+});
+
 it.each([
   { entry: "management", revoked: false },
   { entry: "sidebar +", revoked: false },
@@ -228,6 +241,18 @@ it.each([false, true])("keeps in-card catalog retry keyboard-focusable and respe
   fireEvent.click(retry);
   expect(refresh).toHaveBeenCalledTimes(blocked ? 0 : 1);
   expect(start).not.toHaveBeenCalled();
+});
+
+it("keeps custom creation available when a host refresh fails after a trusted catalog loaded", async () => {
+  const start = vi.fn();
+  const catalog = await clientFixture({ matrix: true }).catalog();
+  render(<AgentRecipesPanel onStartFromScratch={start} catalog={catalog}
+    catalogError="Models could not be refreshed. Your draft is still here."/>);
+  const entry = screen.getByRole("button", { name: "Start from scratch" });
+  expect(entry).toBeEnabled();
+  fireEvent.click(entry);
+  expect(start).toHaveBeenCalledOnce();
+  expect(screen.queryByRole("button", { name: "Retry models" })).toBeNull();
 });
 
 

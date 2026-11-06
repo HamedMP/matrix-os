@@ -4,8 +4,9 @@ LANES = ('unit','mechanical','web','e2e')
 ELECTRON = {
  'grid':['tests/e2e/terminal-soft-grid.e2e.test.ts'],
  'electron-download':['tests/e2e/desktop/file-download.e2e.test.ts'],
- 'electron-input':['tests/e2e/desktop/canonical-input.e2e.test.ts'],
- 'electron-providers':['tests/e2e/provider-authorization-electron.e2e.test.ts','tests/e2e/desktop/provider-auth-terminal.e2e.test.ts','tests/e2e/desktop/agents-providers-figma.e2e.test.ts','tests/e2e/desktop/agents-providers-button-contrast.e2e.test.ts','tests/e2e/desktop/provider-settings-idle.e2e.test.ts'],
+ 'electron-input':['tests/e2e/desktop/canonical-input.e2e.test.ts','tests/e2e/desktop/account-organization-picker.e2e.test.ts'],
+ 'electron-preview-pair':['tests/e2e/desktop/preview-pair.e2e.test.ts'],
+ 'electron-providers':['tests/e2e/provider-authorization-electron.e2e.test.ts','tests/e2e/desktop/provider-auth-terminal.e2e.test.ts','tests/e2e/desktop/agents-providers-figma.e2e.test.ts','tests/e2e/desktop/agents-providers-button-contrast.e2e.test.ts','tests/e2e/desktop/provider-settings-idle.e2e.test.ts','tests/e2e/desktop/claude-legacy-connection.e2e.test.ts'],
  'electron-folder':['tests/e2e/desktop/project-folder-picker-layout.e2e.test.ts'],
  'electron-deletion':['tests/e2e/desktop/project-deletion.e2e.test.ts'],
  'electron-clipboard':['tests/e2e/desktop/terminal-clipboard.e2e.test.ts'],
@@ -19,7 +20,7 @@ PHASES = {
  'unit':('unit','docs-parity-proof','source-coverage-proof','source-after-unit'),
  'mechanical':('typecheck','sync-build','sync-test','sync-publish','sdk-install','sdk','source-after-mechanical'),
  'web':('shell','source-after-web'),
- 'e2e':('general','grid','source-before-desktop','desktop-build','electron-download','electron-input','electron-providers','electron-folder','electron-deletion','electron-clipboard','electron-drop','electron-snapshot','source-before-release','electron-release','electron-title','source-after-e2e'),
+ 'e2e':('general','grid','source-before-desktop','desktop-build','electron-download','electron-input','electron-preview-pair','electron-providers','electron-folder','electron-deletion','electron-clipboard','electron-drop','electron-snapshot','source-before-release','electron-release','electron-title','source-after-e2e'),
  'cleanup':('postgres-stop',),'smoke':('icons',),
 }
 PROVENANCE = tuple('source-'+lane+'-'+stage+'.json' for lane in LANES for stage in ('postinstall','after-prerequisites','after-lane'))+('source-e2e-before-desktop.json','source-e2e-before-release.json')

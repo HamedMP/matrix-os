@@ -944,8 +944,8 @@ describe("funded AI policy routes", () => {
     expect(invalidRelease.status).toBe(400);
   });
 
-  it("finalizes ambiguous post-start usage at the reserved amount", async () => {
-    const { app } = await createTestApp();
+  it("refuses invented post-start usage while releasing the customer hold and retaining unknown expense", async () => {
+    const { app, repository } = await createTestApp();
     const issuedResponse = await app.request(fundedCredentialPath(), {
       method: "POST",
       headers: { authorization: `Bearer ${bearerFor("alice")}`, "content-type": "application/json" },
@@ -971,9 +971,14 @@ describe("funded AI policy routes", () => {
       headers: { authorization: `Bearer ${relayControlToken}`, "content-type": "application/json" },
       body: JSON.stringify({ ...locator, mode: "conservative" }),
     });
-    expect(finalized.status).toBe(200);
-    expect(FundedAiFinalizationResponseSchema.parse(await finalized.json()))
-      .toMatchObject({ finalizationMode: "conservative", actualCostMicrousd: 100, releasedMicrousd: 0 });
+    expect(finalized.status).toBe(503);
+    const retained = await db.executor.selectFrom("ai_funded_usage_reservations").selectAll()
+      .where("reservation_id", "=", locator.reservationId).executeTakeFirstOrThrow();
+    expect(retained).toMatchObject({ status: "expired", actual_microusd: null, settlement_response: null });
+    expect(JSON.parse(retained.customer_charge_release!)).toMatchObject({ reason: "usage_unknown",
+      reservedMicrousd: 100, releasedMicrousd: 100 });
+    expect(await repository.getFundingSummary({ ownerId: "user_alice", machineId: "machine_123", runtimeSlot: "primary" }))
+      .toMatchObject({ reservedMicrousd: 0, reservedThisMonthMicrousd: 0, settledThisMonthMicrousd: 0 });
   });
 
   it("limits no-dispatch zero settlement to the trusted relay and bound Jev request", async () => {

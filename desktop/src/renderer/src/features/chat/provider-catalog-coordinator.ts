@@ -15,6 +15,7 @@ function reconcile(): void {
   desktopProviderCatalogCache.observe(api && typeof api.get === "function" ? {
     identityKey: desktopProviderIdentityKey(current), generation: current.providerCatalogGeneration, api,
     affectedInstanceIds: current.providerCatalogAffectedInstanceIds,
+    forceRefresh: current.providerCatalogForceRefresh,
   } : null);
 }
 

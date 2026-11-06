@@ -29,6 +29,12 @@ describe("AttachmentPreviewRow", () => {
     expect(screen.getAllByRole("button", { name: /remove/i })).toHaveLength(8);
   });
 
+  it("announces rejected additions without hiding accepted attachments", () => {
+    render(<AttachmentPreviewRow items={[item(1)]} selectionError="You can attach up to 8 files. 1 file was not added." onRemove={vi.fn()} onRetry={vi.fn()} />);
+    expect(screen.getByRole("alert").textContent).toBe("You can attach up to 8 files. 1 file was not added.");
+    expect(screen.getByRole("button", { name: "Remove file-1.txt" })).toBeTruthy();
+  });
+
   it("uses safe raster thumbnails and gives Retry and Remove equal-size actions", () => {
     const onRemove = vi.fn();
     const onRetry = vi.fn();

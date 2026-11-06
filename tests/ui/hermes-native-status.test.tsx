@@ -15,12 +15,15 @@ afterEach(() => { cleanup(); vi.useRealTimers(); });
 it("shows unknown as a check connection action, not a failed check", () => {
   show(harness); expect(screen.getByRole("button", { name: /Hermes.*Not connected/ })).toBeVisible();
 });
-it("expires native connection presentation without promoting canonical authentication", () => {
+it("keeps native connection presentation stable across passive observation expiry", () => {
   vi.useFakeTimers(); vi.setSystemTime(new Date("2026-09-26T00:00:00Z"));
-  show({ ...harness, localObservation: { state: "present_unverified", checkedAt: new Date().toISOString(), staleAfter: new Date(Date.now()+5000).toISOString() } });
-  expect(screen.getByRole("button", { name: /Hermes.*Connected/ })).toBeVisible();
+  const localObservation = { state: "present_unverified" as const, checkedAt: new Date().toISOString(), staleAfter: new Date(Date.now()+5000).toISOString() };
+  const source = { id: "native_hermes", kind: "harness_profile", harness: "hermes", providerId: "openai-codex", accountId: null,
+    readiness: { state: "unknown" }, localObservation } as ProviderAccessSource;
+  show({ ...harness, accessSourceId: source.id, route: { kind: "configurable", providerId: "openai-codex", modelId: "openai-codex:gpt-5.6-sol" }, localObservation }, [source]);
+  expect(screen.getByRole("button", { name: /Hermes.*Configured/ })).toBeVisible();
   act(() => vi.advanceTimersByTime(5001));
-  expect(screen.getByRole("button", { name: /Hermes.*Not connected/ })).toBeVisible();
+  expect(screen.getByRole("button", { name: /Hermes.*Configured/ })).toBeVisible();
 });
 it.each(["failed", "expired"] as const)("preserves explicit %s over local positive evidence", (authState) => {
   show({ ...harness, authState, localObservation: { state: "present_unverified", checkedAt: new Date().toISOString(), staleAfter: new Date(Date.now()+5000).toISOString() } });
@@ -64,7 +67,7 @@ it.each([0, 10_000])("preserves authoritative Connected over local evidence aged
   expect(screen.getByRole("button", { name: /Hermes.*Connected/ })).toBeVisible();
   expect(screen.queryByText(/Local login/)).not.toBeInTheDocument();
 });
-it.each(["auth_unknown", "offline", "degraded", "source_unknown", "source_stale", "source_unavailable", "disabled", "missing_source"] as const)("keeps configured connection independent of inference state %s", (state) => {
+it.each(["auth_unknown", "offline", "degraded", "source_unknown", "source_stale", "source_unavailable", "disabled", "missing_source"] as const)("keeps configured connection truthful across inference state %s", (state) => {
   const { value, source } = observedReadyRoute();
   if (state === "auth_unknown") value.authState = "unknown";
   if (state === "offline" || state === "degraded") value.connectivity = state;
@@ -72,7 +75,7 @@ it.each(["auth_unknown", "offline", "degraded", "source_unknown", "source_stale"
   if (state === "disabled") value.enabled = false;
   if (state === "missing_source") value.accessSourceId = null;
   show(value, state === "missing_source" ? [] : [source]);
-  expect(screen.getByRole("button", { name: /Hermes.*Connected/ })).toBeVisible();
+  expect(screen.getByRole("button", { name: state === "auth_unknown" ? /Hermes.*Configured/ : /Hermes.*Connected/ })).toBeVisible();
 });
 it.each(["source_invalid", "source_expired", "install_unknown"] as const)("retains disconnection for %s", state => {
   const { value, source } = observedReadyRoute();

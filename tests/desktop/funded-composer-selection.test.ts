@@ -3,7 +3,7 @@ import { act, cleanup, renderHook, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import type { CanonicalProviderCatalog } from "@matrix-os/contracts";
 import { useCanonicalComposerSelection } from "@desktop/renderer/src/features/chat/use-canonical-composer-selection";
-import { canonicalComposerSelectionIsAvailable } from "../../packages/ui/src/canonical-composer-selection.js";
+import { canonicalComposerSelectionIsAvailable, createCanonicalComposerSelection } from "../../packages/ui/src/canonical-composer-selection.js";
 import { useConnection } from "@desktop/renderer/src/stores/connection";
 import { useProviderPreferences } from "@desktop/renderer/src/features/settings/provider-preferences";
 import { resetProviderPreferences } from "./provider-preferences-test-utils";
@@ -48,4 +48,26 @@ it("preserves the chosen funded model across peer health changes and enables it 
   rerender({ current: catalog(selected) });
   expect(result.current.selection?.model).toBe(selected);
   expect(canonicalComposerSelectionIsAvailable(catalog(selected), result.current.selection)).toBe(true);
+});
+
+
+it("remembers an explicit model first chosen during a probe outage across refresh and cold reopen", async () => {
+  resetProviderPreferences({ hydrated: true });
+  const outage = catalog(null);
+  outage.instances[0]!.connectionState = "unavailable";
+  outage.instances[0]!.unavailabilityReason = "runtime_unavailable";
+  const first = renderHook(({ current }) => useCanonicalComposerSelection({ catalog: current,
+    catalogReady: true, initializeImmediately: true, chatId: null }), { initialProps: { current: outage } });
+  expect(first.result.current.selection).toBeNull();
+  const intent = { ...createCanonicalComposerSelection(outage, instanceId)!, model: peer };
+  act(() => first.result.current.onSelectionChange(intent));
+  expect(first.result.current.selection?.model).toBe(peer);
+  expect(canonicalComposerSelectionIsAvailable(outage, first.result.current.selection)).toBe(false);
+  first.rerender({ current: catalog(selected) });
+  expect(first.result.current.selection?.model).toBe(peer);
+  first.unmount();
+  const reopened = renderHook(() => useCanonicalComposerSelection({ catalog: outage,
+    catalogReady: true, initializeImmediately: true, chatId: null }));
+  await waitFor(() => expect(reopened.result.current.selection?.model).toBe(peer));
+  expect(useProviderPreferences.getState().lastComposerInstanceId).toBe(instanceId);
 });

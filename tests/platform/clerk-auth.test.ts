@@ -3,6 +3,7 @@ import {
   CLERK_SESSION_REVOKE_TIMEOUT_MS,
   createClerkAuth,
   createClerkSessionRevoker,
+  resolveClerkVerificationConfig,
   type ClerkAuth,
 } from "../../packages/platform/src/clerk-auth.js";
 
@@ -80,6 +81,37 @@ describe("T800: Clerk JWT verification on subdomain proxy", () => {
     expect(auth.isPublicPath("/ws")).toBe(false);
   });
 
+  it("uses a secret key for verification and session revocation when available", () => {
+    expect(resolveClerkVerificationConfig({
+      CLERK_SECRET_KEY: "sk_live_matrix",
+      CLERK_JWT_KEY: "public-key",
+    })).toEqual({
+      verifyTokenOptions: { secretKey: "sk_live_matrix" },
+      sessionRevocationSecret: "sk_live_matrix",
+    });
+  });
+
+  it("uses the public JWT key for verification without enabling session revocation", () => {
+    expect(resolveClerkVerificationConfig({
+      CLERK_SECRET_KEY: "",
+      CLERK_JWT_KEY: "public-key",
+    })).toEqual({
+      verifyTokenOptions: { jwtKey: "public-key" },
+      sessionRevocationSecret: undefined,
+    });
+  });
+
+  it.each([" sk_fixture_with_whitespace\n", " "])("preserves the existing production secret value verbatim: %j", (secretKey) => {
+    expect(resolveClerkVerificationConfig({ CLERK_SECRET_KEY: secretKey })).toEqual({
+      verifyTokenOptions: { secretKey },
+      sessionRevocationSecret: secretKey,
+    });
+  });
+
+  it("does not initialize Clerk auth without a verification key", () => {
+    expect(resolveClerkVerificationConfig({})).toBeNull();
+  });
+
   it("extracts the Clerk session id from verified JWT claims", async () => {
     const verifyFn = vi.fn().mockResolvedValue({ sub: "user_abc123", sid: "sess_123" });
     auth = createClerkAuth({ verifyToken: verifyFn });
@@ -91,6 +123,23 @@ describe("T800: Clerk JWT verification on subdomain proxy", () => {
       userId: "user_abc123",
       sessionId: "sess_123",
     });
+  });
+
+  it("preserves the verified token expiry for both owner-session verification entry points", async () => {
+    const exp = Math.floor(Date.now() / 1000) + 120;
+    const issuer = "https://clerk.fixture.invalid";
+    auth = createClerkAuth({ verifyToken: async () => ({ sub: "user_owner", sid: "sess_owner", exp, iss: issuer }) });
+    const expected = { authenticated: true, userId: "user_owner", sessionId: "sess_owner", tokenExpiresAt: exp, issuer, expiresAt: exp * 1000 };
+    expect(await auth.verify("fixture-token")).toEqual(expected);
+    expect(await auth.verifyAndMatchOwner("fixture-token", "user_owner")).toEqual(expected);
+    expect(await auth.verifyAndMatchOwner("fixture-token", "user_foreign")).toEqual({ authenticated: false, error: "User mismatch" });
+  });
+
+  it.each([undefined, 0, -1, 1.5, NaN, Infinity, "not-an-epoch"])("does not invent an expiry for malformed verified exp %s", async exp => {
+    auth = createClerkAuth({ verifyToken: async () => ({ sub: "user_owner", sid: "sess_owner", exp }) });
+    const result = await auth.verify("fixture-token");
+    expect(result).toMatchObject({ authenticated: true, userId: "user_owner", sessionId: "sess_owner" });
+    expect(result).not.toHaveProperty("tokenExpiresAt");
   });
 
   it("revokes Clerk sessions with a bounded direct Backend API fetch", async () => {

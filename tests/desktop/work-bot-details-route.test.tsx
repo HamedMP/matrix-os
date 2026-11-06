@@ -26,7 +26,7 @@ function routeApi(): ApiClient {
       if (path === `/api/chat-agents/${bot.id}/direct-chat`) return { chatId: record.chat.id };
       if (path === `/api/chat-agents/${bot.id}/authority`) return { agentId: bot.id, revision: 1, grants: [], connections: [], routines: [], pendingInteractions: [], memory: { items: [] } };
       if (path === `/api/chats/${record.chat.id}/bot`) return { agentId: bot.id };
-      if (path === `/api/chats/${record.chat.id}/interactions`) return { interactions: [] };
+      if (path === `/api/chats/${record.chat.id}/interactions?includeRecovery=true`) return { interactions: [] };
       if (path === `/api/chats/${record.chat.id}/bot-tasks`) return { tasks: [] };
       if (path.startsWith(`/api/chats/${record.chat.id}?`)) return { record, messages: fixture.snapshot.messages, turns: fixture.snapshot.turns, runs: fixture.snapshot.runs, activities: fixture.snapshot.activities };
       if (path.startsWith("/api/chats?")) return { items: [record] };

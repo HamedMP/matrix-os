@@ -1,3 +1,4 @@
+import type { CollaborationRuntimeWriteAdmission } from "./runtime-write-admission.js";
 import type { Context, Hono } from "hono";
 import type { Kysely } from "kysely";
 import { bootstrapPlatformCollaborationDatabase, type CollaborationPlatformDatabase } from "./database.js";
@@ -72,9 +73,10 @@ export async function createPlatformCollaboration(options: {
   resolveParticipant(actorId: string): Promise<{ actorId: string; displayName: string } | null>;
   resolveInvitationIdentifier(identifier: string, organizationId: string): Promise<{ actorId: string; displayName: string } | null>;
   now?: () => Date;
+  admitRuntimeWrite?: CollaborationRuntimeWriteAdmission;
 }) {
   await bootstrapPlatformCollaborationDatabase(options.db);
-  const repository = new PlatformCollaborationRepository(options.db, { now: options.now });
+  const repository = new PlatformCollaborationRepository(options.db, { now: options.now, admitRuntimeWrite: options.admitRuntimeWrite });
   // S06 / T032: discovery is metadata-only; organization-wide shares are listed for current members.
   const organizations = options.organizations;
   const listOrganizationIds = organizations

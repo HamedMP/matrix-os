@@ -7,10 +7,11 @@ describe("Chat rail presentation order", () => {
     expect(orderRailItems(items, "lastUpdated", ["older", "newer"]).map(item=>item.id)).toEqual(["newer", "older"]);
     expect(items.map(item=>item.id)).toEqual(["older", "newer"]);
   });
-  it("keeps saved manual IDs stable and appends new IDs deterministically", () => {
-    const newlyObserved = {id:"latest", updatedAt:"2026-10-04T00:00:00Z", createdAt:"2026-10-04T00:00:00Z"};
-    expect(orderRailItems([newlyObserved,...items], "manual", ["older", "newer"]).map(item=>item.id)).toEqual(["older", "newer", "latest"]);
-    expect(orderRailItems([...items].reverse(), "manual", []).map(item=>item.id)).toEqual(["older", "newer"]);
+  it("keeps saved manual IDs stable and puts newly created chats first, newest on top", () => {
+    const latest = {id:"latest", updatedAt:"2026-10-04T00:00:00Z", createdAt:"2026-10-04T00:00:00Z"};
+    const later = {id:"later", updatedAt:"2026-10-03T12:00:00Z", createdAt:"2026-10-03T12:00:00Z"};
+    expect(orderRailItems([later,latest,...items], "manual", ["older", "newer"]).map(item=>item.id)).toEqual(["latest", "later", "older", "newer"]);
+    expect(orderRailItems([...items].reverse(), "manual", []).map(item=>item.id)).toEqual(["newer", "older"]);
   });
   it("moves only known sibling IDs, without duplicates or stale references", () => {
     expect(moveRailItem(["a", "b", "c"], "c", "a")).toEqual(["c", "a", "b"]);

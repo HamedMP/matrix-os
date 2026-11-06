@@ -86,7 +86,10 @@ describe("generic funded model pricing reviews", () => {
     const config = requireFundedRelayServiceConfig({ ...env(), ...reviewEnv(model) });
     let now = new Date("2026-10-02T12:00:00.000Z");
     const control = platformControl();
-    const fetchFn = vi.fn<typeof fetch>().mockImplementation(async () => {
+    const fetchFn = vi.fn<typeof fetch>().mockImplementation(async (input) => {
+      if (String(input).endsWith("/v1/messages/count_tokens")) {
+        return Response.json({ input_tokens: 1_000 });
+      }
       // An already-started request may finish beyond the review horizon.
       now = new Date(Date.parse(validThrough) + 1);
       return inferenceReply(model);
@@ -107,7 +110,9 @@ describe("generic funded model pricing reviews", () => {
     const config = requireFundedRelayServiceConfig({ ...env(), ...reviewEnv(model) });
     let now = new Date(Date.parse(validThrough) - 1);
     const control = platformControl(() => { now = new Date(Date.parse(validThrough) + 1); });
-    const fetchFn = vi.fn<typeof fetch>().mockImplementation(async () => inferenceReply(model));
+    const fetchFn = vi.fn<typeof fetch>().mockImplementation(async (input) => String(input).endsWith("/v1/messages/count_tokens")
+      ? Response.json({ input_tokens: 1_000 })
+      : inferenceReply(model));
     const relay = createFundedRelay({ ...config, now: () => now, fetch: fetchFn, requestIdFactory: () => "request_1",
       platformClient: control as unknown as FundedPlatformClient });
     const app = new Hono(); relay.register(app);
@@ -134,9 +139,9 @@ function platformControl(afterAuthorize?: () => void) {
   const identity = { tokenId: "credential_123", ownerId: "owner_123", machineId: "machine_123", runtimeSlot: "preview", audience: "matrix-funded-relay", scope: "ai:invoke", expiresAt: "2026-11-01T00:10:00.000Z" };
   return {
     check: vi.fn(async () => ({ identity })),
-    authorize: vi.fn(async (input: { requestId: string; modelId: string }) => {
+    authorize: vi.fn(async (input: { requestId: string; modelId: string; maxCostMicrousd: number }) => {
       afterAuthorize?.();
-      return { identity, reservation: { reservationId: "reservation_1", requestId: input.requestId, modelId: input.modelId, reservedMicrousd: 1, billingMode: "usage" } };
+      return { identity, reservation: { reservationId: "reservation_1", requestId: input.requestId, modelId: input.modelId, reservedMicrousd: 0, billingMode: "usage", billingPolicy: "postpaid", maxCostMicrousd: input.maxCostMicrousd } };
     }),
     start: vi.fn(async (input: { executionId?: string }) => ({ executionId: input.executionId, reservationId: "reservation_1", requestId: "request_1", tokenId: identity.tokenId })),
     release: vi.fn(async () => ({})), finalize: vi.fn(async () => ({})),

@@ -71,7 +71,7 @@ export function createProductionJevInboxRuntime(options: {
     resolveCredentials: createJevHermesCredentialResolver(options),
     verifyRuntime: async (root, signal, apiMode) => {
       await verifyJevHermesRuntimePin(root, signal);
-      await verifyJevHermesDependencies(root, apiMode, signal);
+      return await verifyJevHermesDependencies(root, apiMode, signal);
     },
     ...botWorkflow, fundedPolicyReady, fundedReady,
   });

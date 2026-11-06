@@ -12,6 +12,7 @@ import type { CollaborationRevocationEnforcer, SandboxRuntimeRegistry } from "..
 import { lstat, realpath } from "node:fs/promises";
 import { isAllowedSandboxRoot } from "../collaboration/shared-ai-runtime.js";
 import { createHash } from "node:crypto";
+import { isDeepStrictEqual } from "node:util";
 import type { CanonicalChatExecutionRootRef, BotModelRoute, BotToolCapability } from "@matrix-os/contracts";
 import {
   SCOPE_RUNTIME_BOT_ADAPTER_ID,
@@ -26,7 +27,8 @@ import type { BotCredentialAccessSourceId } from "./credentials.js";
 import type { ScopeRuntimeHost } from "../scope-runtime-host/index.js";
 import { ScopeRuntimeClientError } from "../collaboration/scope-runtime-client.js";
 import type { BotExecutor } from "./repositories/shared.js";
-import { requireGroupBotAuthority, type GroupBotAuthorizer, BotRuntimeRegistry, BotRuntimeRegistryError } from "./runtime-registry.js";
+import { requireGroupBotAuthority, type GroupBotAuthorizer, BotRuntimeRegistry, BotRuntimeRegistryError, isManagedPiBinding, type BotRuntimeBinding } from "./runtime-registry.js";
+import { startRuntimeHeartbeat } from "./runtime-heartbeat.js";
 
 export type BotAdmissionErrorCode = "not_found" | "invalid_root" | "root_changed" | "unavailable" | "capacity_exceeded";
 
@@ -94,7 +96,8 @@ export function createPrivateBotAdmission(deps: {
   /** Trusted owner home; group mounts are restricted to its managed shared roots. */
   homePath?: string;
 }) {
-  async function ownsChat(input: { ownerId: string; botId: string; chatId: string; group?: GroupBotRunRequest }): Promise<boolean> {
+  const heartbeats = new Map<string, ReturnType<typeof startRuntimeHeartbeat>>();
+  async function ownsChat(input: { ownerId: string; botId: string; chatId: string; group?: { scopeId: string } }): Promise<boolean> {
     let query = deps.db.selectFrom("bot_chat_bindings as binding")
       .innerJoin("chats as chat", "chat.id", "binding.chat_id")
       .select("binding.chat_id")
@@ -107,9 +110,82 @@ export function createPrivateBotAdmission(deps: {
     return await query.executeTakeFirst() !== undefined;
   }
 
-  /** Unbinds first so no frame is authorized, then stops the workload. */
+  async function renew(binding: BotRuntimeBinding, renewalSignal?: AbortSignal, executionRoot?: CanonicalChatExecutionRootRef): Promise<void> {
+    const assertActive = () => { if (renewalSignal?.aborted) throw new BotAdmissionError("not_found"); };
+    assertActive();
+    const owned = deps.registry.lookupRun(binding);
+    if (!owned || isManagedPiBinding(owned) || !isDeepStrictEqual(owned, binding)) throw new BotAdmissionError("not_found");
+    const pinned: BotRuntimeBinding = owned;
+    if (pinned.group && (!executionRoot || !["project", "worktree"].includes(executionRoot.kind))) throw new BotAdmissionError("invalid_root");
+    const revocation = pinned.group ? deps.getGroupRevocation?.() : undefined;
+    const groupSignal = pinned.group ? AbortSignal.any([AbortSignal.timeout(10_000), ...(renewalSignal ? [renewalSignal] : [])]) : undefined;
+    const wait = <T>(work: () => Promise<T>): Promise<T> => groupSignal ? untilAborted(work(), groupSignal) : work();
+    async function assertChat(): Promise<void> {
+      if (!await wait(() => ownsChat(pinned))) throw new BotAdmissionError("not_found");
+      if (pinned.group) {
+        const current = deps.getGroupRevocation?.();
+        if (!current || current.runtimes !== revocation?.runtimes || current.revocations !== revocation?.revocations) throw new BotAdmissionError("unavailable");
+        if (current.revocations.isRevoked(pinned.group.scopeId, pinned.group.actorId)) throw new BotAdmissionError("not_found");
+        try { await wait(() => requireGroupBotAuthority({ ownerId: pinned.ownerId, chatId: pinned.chatId, runId: pinned.runId, group: pinned.group! }, deps.authorizeGroup)); }
+        catch (error: unknown) {
+          if (error instanceof BotAdmissionError) throw error;
+          console.warn("[bots] group renewal denied:", error instanceof Error ? error.name : "UnknownError");
+          throw new BotAdmissionError("not_found");
+        }
+      }
+      assertActive();
+    }
+    const inferenceSignal = deps.registry.inferenceSignal(pinned);
+    if (!inferenceSignal || inferenceSignal.aborted) throw new BotAdmissionError("not_found");
+    if (!deps.host.available) throw new BotAdmissionError("unavailable");
+    async function assertRoot(): Promise<void> {
+      try {
+        const root = await wait(() => deps.roots.resolve({ type: "personal", ownerId: pinned.ownerId }, pinned.group ? executionRoot! : { kind: "bot_workspace", botId: pinned.botId }));
+        if (pinned.group) {
+          if (!deps.homePath) throw new BotAdmissionError("unavailable");
+          const [home, candidate, stats] = await wait(() => Promise.all([realpath(deps.homePath!), realpath(root.primaryWorkspaceRoot), lstat(root.primaryWorkspaceRoot)]));
+          if (!stats.isDirectory() || stats.isSymbolicLink() || candidate !== root.primaryWorkspaceRoot || !isAllowedSandboxRoot(home, candidate)) throw new BotAdmissionError("invalid_root");
+        }
+        assertActive();
+        if (root.fingerprint !== pinned.rootFingerprint) throw new BotAdmissionError("root_changed");
+      } catch (error: unknown) {
+        if (error instanceof ChatExecutionRootError) {
+          throw new BotAdmissionError(error.code === "validation_unavailable" ? "unavailable" : "invalid_root");
+        }
+        throw error;
+      }
+    }
+    await assertChat();
+    assertActive();
+    await assertRoot();
+    assertActive();
+    await assertChat();
+    assertActive();
+    if (inferenceSignal.aborted) throw new BotAdmissionError("not_found");
+    try {
+      await deps.host.client.renewRuntime({ runtimeHandle: pinned.runtimeHandle, executionGeneration: pinned.executionGeneration,
+        ...(renewalSignal ? { signal: renewalSignal } : {}) });
+    } catch (error: unknown) {
+      assertActive();
+      if (error instanceof ScopeRuntimeClientError) throw new BotAdmissionError("unavailable");
+      throw error;
+    }
+    assertActive();
+    if (inferenceSignal.aborted) throw new BotAdmissionError("not_found");
+    await assertRoot();
+    assertActive();
+    await assertChat();
+    assertActive();
+    if (inferenceSignal.aborted || !deps.registry.renew(pinned)) throw new BotAdmissionError("not_found");
+  }
+
+  /** Abort renewal and unbind immediately, then drain briefly before host stop. */
   async function release(runtimeHandle: string): Promise<void> {
+    const heartbeat = heartbeats.get(runtimeHandle);
+    heartbeats.delete(runtimeHandle);
+    const stopped = heartbeat?.stop();
     deps.registry.release(runtimeHandle);
+    await stopped;
     try {
       await deps.host.client.stopRuntime({ runtimeHandle });
     } catch (error: unknown) {
@@ -133,6 +209,25 @@ export function createPrivateBotAdmission(deps: {
   }
 
   return {
+    renew,
+    startRenewal(binding: BotRuntimeBinding, onFailure: (error: unknown) => void, executionRoot?: CanonicalChatExecutionRootRef): { stop(): Promise<void> } {
+      const owned = deps.registry.lookupRun(binding);
+      if (!owned || isManagedPiBinding(owned) || !isDeepStrictEqual(owned, binding)
+        || deps.registry.inferenceSignal(owned)?.aborted !== false) throw new BotAdmissionError("not_found");
+      if (heartbeats.has(binding.runtimeHandle)) throw new BotAdmissionError("unavailable");
+      if (heartbeats.size >= 64) throw new BotAdmissionError("capacity_exceeded");
+      const heartbeat = startRuntimeHeartbeat(signal => renew(binding, signal, executionRoot), error => {
+        if (heartbeats.get(binding.runtimeHandle) === heartbeat) heartbeats.delete(binding.runtimeHandle);
+        onFailure(error);
+      });
+      heartbeats.set(binding.runtimeHandle, heartbeat);
+      return {
+        async stop() {
+          if (heartbeats.get(binding.runtimeHandle) === heartbeat) heartbeats.delete(binding.runtimeHandle);
+          await heartbeat.stop();
+        },
+      };
+    },
     /**
      * Launches a sandboxed bot runtime for one run. On any failure after the
      * runtime starts, it is stopped before the error is returned, so no

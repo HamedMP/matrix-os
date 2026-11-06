@@ -27,8 +27,7 @@ function fixture(reservationMode: "usage" | "cloudflare-count" = "usage") {
     authorize: vi.fn(async (input: { requestId: string; modelId: string; maxCostMicrousd: number }) => ({
       identity: IDENTITY, reservation: {
         reservationId: "reservation_1", requestId: input.requestId, modelId: input.modelId,
-        reservedMicrousd: reservationMode === "usage" ? 1 : input.maxCostMicrousd,
-        ...(reservationMode === "usage" ? { billingMode: "usage" } : {}),
+        reservedMicrousd: 0, billingMode: "usage", billingPolicy: "postpaid", maxCostMicrousd: input.maxCostMicrousd,
       },
     })),
     start: vi.fn(async (input: { executionId?: string }) => ({ executionId: input.executionId, reservationId: "reservation_1", requestId: "request_1", tokenId: IDENTITY.tokenId })),
@@ -98,7 +97,7 @@ describe("funded generation metadata-only logging", () => {
     const response = await f.request(model);
     expect(response.status).toBe(200); await response.text(); await f.relay.close();
     expect(f.dispatches).toHaveLength(1);
-    const { headers } = f.dispatches[0]!;
+    const { headers } = f.dispatches.at(-1)!;
     expect(headers.get("cf-aig-collect-log")).toBe("true");
     expectPrivateMetadata(headers, model);
     expect(headers.get("authorization")).toBe(model === GLM ? `Bearer ${CONFIG.workersAiToken}` : null);

@@ -1,4 +1,4 @@
-import { isLegacyMatrixSdkProvider } from "@matrix-os/contracts";
+import { canonicalProviderModelCanBeSelected, isLegacyMatrixSdkProvider } from "@matrix-os/contracts";
 import type {
   CanonicalChatSummary,
   CanonicalProviderCatalog,
@@ -46,13 +46,17 @@ function optionsForInstance(
 
 function selectionForInstance(
   instance: CanonicalProviderInstanceDescriptor,
+  allowUnavailableManagedModels = false,
 ): CanonicalComposerSelection | null {
-  if (isLegacyMatrixSdkProvider(instance) || instance.availability !== "available") return null;
+  if (isLegacyMatrixSdkProvider(instance) || (!allowUnavailableManagedModels && instance.availability !== "available")) return null;
+  const canSelect = (modelId: string) => allowUnavailableManagedModels
+    ? canonicalProviderModelCanBeSelected(instance, modelId)
+    : instance.models.some(model => model.id === modelId && model.availability === "available");
   const availableModel = instance.defaultSelection
     ? instance.models.find((model) => (
-        model.id === instance.defaultSelection?.model && model.availability === "available"
+        model.id === instance.defaultSelection?.model && canSelect(model.id)
       ))
-    : instance.models.find((model) => model.availability === "available");
+    : instance.models.find((model) => canSelect(model.id));
   if (!availableModel || !instance.supports.rootChat
     || !canonicalChatSubscriptionSelectionMatches(instance, optionsForInstance(instance, instance.defaultSelection?.options))) return null;
   return {
@@ -81,7 +85,7 @@ export function createCanonicalComposerSelection(
   const preferred = preferredInstanceId
     ? catalog.instances.find((instance) => instance.id === preferredInstanceId)
     : undefined;
-  const preferredSelection = preferred ? selectionForInstance(preferred) : null;
+  const preferredSelection = preferred ? selectionForInstance(preferred, true) : null;
   if (preferredSelection) return preferredSelection;
   if (preferredInstanceId && !canonicalProviderChoiceCanBeDefault({ instanceId: preferredInstanceId })) return null;
   for (const instance of orderCanonicalProviderInstancesForDefault(catalog.instances)) {
@@ -98,7 +102,7 @@ export function changeCanonicalComposerInstance(
   instanceId: string,
 ): CanonicalComposerSelection {
   const instance = catalog.instances.find((candidate) => candidate.id === instanceId);
-  return (instance ? selectionForInstance(instance) : null) ?? current;
+  return (instance ? selectionForInstance(instance, true) : null) ?? current;
 }
 
 export function updateCanonicalComposerOption(
@@ -132,7 +136,7 @@ export function applyCanonicalComposerPreference(
   if (!instance) return current;
   const preferredModel = preference.model
     ? instance.models.find((model) => (
-        model.id === preference.model && model.availability === "available"
+        model.id === preference.model && canonicalProviderModelCanBeSelected(instance, model.id)
       ))
     : undefined;
   let next = preferredModel ? { ...current, model: preferredModel.id } : current;

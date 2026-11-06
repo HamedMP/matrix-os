@@ -71,6 +71,27 @@ describe("Preview speech no-charge funding", () => {
     expect(paid.reserve).toHaveBeenCalledOnce();
   });
 
+  it("keeps Preview failed expense unknown without refunding its request quota", async () => {
+    const funding = createPreviewAwareSpeechFundingPort({ paid, previewSecret: "p".repeat(32), now: () => new Date(now) });
+    const operations = createSpeechOperationsRepository({ db, now: () => new Date(now) });
+    const requestId = `sp_${now.getTime()}_previewfailedone`;
+    const input = { identity: preview, requestId, policyRevision: "speech-1", modelId: "gpt-4o-transcribe",
+      maximumCostMicrousd: 100 };
+    await operations.admit({ ...input, sourceKind: "dictation", contentFingerprint: "a".repeat(64),
+      adapterId: "openai-file", audioDurationMs: 1000 }, trx => funding.reserve(trx, input));
+    await operations.claimDispatch(preview, requestId, funding.start);
+    await operations.complete(preview, requestId, { executionState: "uncertain", outcomeCode: "timeout",
+      actualCostMicrousd: null }, (trx, id) => funding.settle(trx, id, { mode: "conservative" }));
+    expect(await operations.get(preview, requestId)).toMatchObject({ executionState: "uncertain",
+      reservedMicrousd: 0, actualCostMicrousd: null });
+    expect(await db.executor.selectFrom("preview_runtime_allocations").select("speech_requests_used")
+      .where("machine_id", "=", preview.machineId).executeTakeFirstOrThrow()).toEqual({ speech_requests_used: 1 });
+    await reserve(preview, "remainingrequest");
+    await expect(reserve(preview, "overrequestcap")).rejects.toMatchObject({ code: "allowance_exhausted" });
+    expect(paid.reserve).not.toHaveBeenCalled();
+    expect(paid.settle).not.toHaveBeenCalled();
+  });
+
   it("uses the bounded no-charge path for an owner-only Private Preview", async () => {
     const runtimeSlot = "pv-2383-deadbeef";
     await db.executor.updateTable("user_machines").set({

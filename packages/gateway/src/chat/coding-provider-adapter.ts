@@ -44,7 +44,7 @@ const MAX_ACTIVE_STEER_RUNS = 64;
 
 type CodingThreads = Pick<
   CodingAgentThreadStore & CodingAgentTurnStore,
-  "createThread" | "acceptTurn" | "steerTurn" | "getThread" | "abortThread" | "submitApproval" | "submitInput" | "registerEventSink"
+  "createThread" | "acceptTurn" | "steerTurn" | "getThread" | "latestTurnRequestId" | "abortThread" | "submitApproval" | "submitInput" | "registerEventSink"
 >;
 
 type CodingState = CodingChatState;
@@ -482,6 +482,9 @@ export function createCanonicalCodingChatProviderAdapter(options: {
       const state = CodingChatStateSchema.parse(input.state);
       const recovered = await recoverCodingRun({ ...input, state, includePending: options.providerId === "codex",
         read: (cursor) => options.threads.getThread(principal(input.owner.ownerId), state.conversationId, cursor),
+        ...(typeof options.threads.latestTurnRequestId === "function" ? {
+          latestRequestId: () => options.threads.latestTurnRequestId(principal(input.owner.ownerId), state.conversationId),
+        } : {}),
       });
       if (!recovered) return null;
       // Recovery reads a complete native transcript. The Chat repository's
@@ -624,7 +627,12 @@ export function createCanonicalCodingChatProviderAdapter(options: {
         // provider establishes resumable state. Replace only that stale seam;
         // ordinary admission and capacity failures must continue to fail closed.
         if (error instanceof CodingAgentTurnError && error.code === "thread_not_resumable") {
-          restartFresh = true;
+          // Lost native history requires an explicit new chat, not a silent fork.
+          if (error.reason === "history_unavailable") {
+            yield { type: "run.completed", outcome: "failed", error: canonicalAgentFailure("history_unavailable")! };
+          } else {
+            restartFresh = true;
+          }
         } else {
           throw error;
         }

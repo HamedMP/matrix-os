@@ -408,6 +408,7 @@ write_files:
       {{updateManifestBaseUrlEnv}}
       {{collaborationDisabledEnv}}
       {{previewRuntimeEnv}}
+      {{collaborationPairEnv}}
       UPGRADE_TOKEN={{platformVerificationToken}}
       MATRIX_AUTH_TOKEN={{platformVerificationToken}}
       MATRIX_SYNC_RUNTIME_TOKEN={{syncRuntimeToken}}
@@ -418,6 +419,7 @@ write_files:
       MATRIX_CODE_PROXY_TOKEN={{platformVerificationToken}}
       MATRIX_FUNDED_AI_ENABLED={{fundedAiEnabled}}
       MATRIX_FUNDED_AI_RELAY_URL={{fundedAiRelayUrl}}
+      MATRIX_GET_STARTED_ENABLED={{getStartedEnabled}}
       MATRIX_HOST_BUNDLE_URL={{hostBundleUrl}}
       POSTHOG_TOKEN={{posthogToken}}
       POSTHOG_PROJECT_TOKEN={{posthogProjectToken}}
@@ -448,7 +450,7 @@ runcmd:
     rm -f /var/lib/matrix/golden-snapshot-sanitized
     systemd-machine-id-setup
     ssh-keygen -A
-    # Restart Docker disabled by snapshot sanitation.
+    # Snapshot disables Docker.
     . /opt/matrix/env/host.env
     if [ "${MATRIX_IMAGE_SOURCE:-clean_image}" = "snapshot" ]; then
       systemctl enable --now docker.service containerd.service
@@ -569,7 +571,6 @@ runcmd:
     printf 'matrix ALL=(ALL) NOPASSWD:ALL\n' >/etc/sudoers.d/matrix
     chmod 0440 /etc/sudoers.d/matrix
     visudo -cf /etc/sudoers.d/matrix
-    # Quiesce matrix before moving home.
     matrix_uid="$(id -u matrix)"
     timeout --kill-after=5 30 loginctl disable-linger matrix >/dev/null 2>&1 || true
     timeout --kill-after=5 30 loginctl terminate-user matrix >/dev/null 2>&1 || true
@@ -584,7 +585,7 @@ runcmd:
     fi
     usermod -d /home/matrix/home matrix
     usermod -aG docker matrix
-    install -d -o matrix -g matrix -m 0750 /home/matrix/home /home/matrix/home/projects /home/matrix/home/bots /home/matrix/home/agent-workspaces /home/matrix/home/worktrees /home/matrix/projects /var/lib/matrix/db /var/lib/matrix/db/snapshots /var/lib/matrix/logs
+    install -d -o matrix -g matrix -m 0750 /opt/matrix/staging /home/matrix/home /home/matrix/home/projects /home/matrix/home/bots /home/matrix/home/agent-workspaces /home/matrix/home/worktrees /home/matrix/projects /var/lib/matrix/db /var/lib/matrix/db/snapshots /var/lib/matrix/logs
     ensure_owner_link() {
       local name="$1" mode="$2" legacy="/home/matrix/$1" target="/home/matrix/home/$1"
       install -d -o matrix -g matrix -m "$mode" "$target"

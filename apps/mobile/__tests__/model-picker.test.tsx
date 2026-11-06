@@ -1,12 +1,13 @@
 import type { ReactNode } from "react";
-import { cleanup, screen } from "@testing-library/react-native";
+import { cleanup, fireEvent, screen } from "@testing-library/react-native";
 
 import { ProviderLogo } from "@/components/ui/ProviderLogo";
+import { ModelPicker } from "@/components/ModelPicker";
 
 import { createCanonicalProviderCatalogFixture } from "../../../tests/contracts/fixtures/canonical-chat";
 
-import { openSheet, renderPicker, trigger, triggerValue } from "./model-picker-test-utils";
-import { GLM, SONNET, catalogOf, matrixInstance } from "./model-test-catalog";
+import { models, openSheet, renderPicker, trigger, triggerValue } from "./model-picker-test-utils";
+import { GLM, SONNET, catalogOf, matrixInstance, unavailableMatrixInstance } from "./model-test-catalog";
 import { flat } from "./ui-test-utils";
 
 jest.mock("micromark", () => ({ micromark: jest.fn() }));
@@ -36,6 +37,35 @@ beforeEach(() => {
 afterEach(cleanup);
 
 describe("the model trigger in the composer", () => {
+  it("opens and explicitly chooses an unavailable policy-discovered Matrix AI model", () => {
+    const change = renderPicker(catalogOf(unavailableMatrixInstance()), null);
+
+    expect(trigger().props.accessibilityState.disabled).toBe(false);
+    openSheet();
+    expect(mockSheet.isPresented).toBe(true);
+    const glm = models().getByRole("button", { name: /^GLM Flash,/ });
+    expect(glm.props.accessibilityLabel).toContain("unavailable");
+    expect(glm.props.accessibilityState.disabled).toBe(false);
+    fireEvent.press(glm);
+    expect(change).toHaveBeenCalledWith(GLM);
+    expect(mockSheet.isPresented).toBe(false);
+  });
+
+  it("keeps the chosen model and its options when readiness becomes unavailable and the same row is tapped", () => {
+    const selection = { ...SONNET, options: [{ id: "effort", value: "high" }] };
+    const change = renderPicker(catalogOf(matrixInstance()), selection);
+
+    screen.rerender(<ModelPicker catalog={catalogOf(unavailableMatrixInstance())} selection={selection} onSelectionChange={change} />);
+    expect(triggerValue()).toBe("Matrix AI · Sonnet 5 · unavailable");
+    expect(change).not.toHaveBeenCalled();
+    openSheet();
+    const current = models().getByRole("button", { name: /^Sonnet 5,/ });
+    expect(current.props.accessibilityState).toMatchObject({ selected: true, disabled: false });
+    fireEvent.press(current);
+    expect(mockSheet.isPresented).toBe(false);
+    expect(change).not.toHaveBeenCalled();
+  });
+
   it("shows the engine's logo and name before the model", () => {
     renderPicker(catalogOf(matrixInstance()), SONNET);
 

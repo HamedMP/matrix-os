@@ -36,3 +36,19 @@ child tasks, tool-mediated model work, readiness probes and other independent
 inference paths do not consume it. Cost acceptance must separately qualify
 those paths, live pricing, output bounds and the exact number of authorized
 turns. A source/test result is not proof of installed runtime configuration.
+
+Native ChatGPT subscription control delivery has a separately negotiated receipt
+ledger (see `chat-run-limits.md`). A repeated poll re-delivers commands, not a new
+generation: Native keeps the original inference and consumes no extra model-call
+allowance for a duplicate. Cancel/ACK, source authorization and the original
+inference/funding guards remain independent. This transport correction does not
+raise tool, token, context, funding or per-worker-invocation budgets.
+
+Worker progress projection uses a separate encoded-text budget (8 MiB per turn),
+a 12 KiB encoded buffer and a serial awaited broker send. Timed updates continue
+at 250 ms initially and one second after 1,600 text publications; they no longer
+stop at a lifetime event count or wait for a full chunk. All 60 potential tool
+lifecycles retain their own bounded progress allocation. Canonical Matrix Agent
+output uses existing continuation messages under its same 8 MiB text budget.
+These presentation/request guards do not refill the model session, context,
+inference-call or funding allowance. See `chat-run-limits.md` for exact bounds.

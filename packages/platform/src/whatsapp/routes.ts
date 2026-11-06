@@ -22,7 +22,10 @@ export function createWhatsAppRoutes(deps: {
   const app = new Hono<{ Variables: { whatsappOwner: string } }>();
   const log = deps.logError ?? ((error) => console.error('[whatsapp] Request failed', error));
   app.use('/whatsapp/*', async (c, next) => { c.header('Cache-Control', 'no-store'); c.header('Referrer-Policy', 'no-referrer'); await next(); });
-  app.use('/api/whatsapp/*', bodyLimit({ maxSize: 4096 }));
+  app.use('/api/whatsapp/*', bodyLimit({ maxSize: 4096, onError: (c) => {
+    c.header('Cache-Control', 'no-store');
+    return c.json({ error: 'Request too large' }, 413);
+  } }));
   app.use('/api/whatsapp/*', async (c, next) => {
     c.header('Cache-Control', 'no-store');
     if (c.req.method !== 'GET' && c.req.header('Origin') !== deps.config.publicUrl) return c.json({ error: 'Request denied' }, 403);

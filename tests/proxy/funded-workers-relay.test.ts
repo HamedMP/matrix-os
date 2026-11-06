@@ -25,7 +25,7 @@ function upstream(model:string,stream:boolean,missingUsage=false){
  return new Response(`data: ${JSON.stringify({...event,usage:{prompt_tokens:1,completion_tokens:1,total_tokens:2}})}\n\n${missingUsage?'':`data: ${JSON.stringify({response:'',usage})}\n\n`}data: [DONE]\n\n`,{headers:{'content-type':'text/event-stream'}});
 }
 function platform(){return{
- check:vi.fn(async()=>({identity})),authorize:vi.fn(async(input:{modelId:string,requestId:string})=>({identity,reservation:{reservationId:'reservation_test',requestId:input.requestId,modelId:input.modelId,reservedMicrousd:1,billingMode:'usage'}})),
+ check:vi.fn(async()=>({identity})),authorize:vi.fn(async(input:{modelId:string,requestId:string,maxCostMicrousd:number})=>({identity,reservation:{reservationId:'reservation_test',requestId:input.requestId,modelId:input.modelId,reservedMicrousd:0,billingMode:'usage',billingPolicy:'postpaid',maxCostMicrousd:input.maxCostMicrousd}})),
  start:vi.fn(async(input: { executionId?: string })=>({ executionId: input.executionId,contractVersion:1,status:'in_flight',startedAt:now.toISOString(),expiresAt:'2026-10-15T12:10:00.000Z',reservationId:'reservation_test',requestId:'request_test',tokenId:identity.tokenId})),release:vi.fn(),terminal:vi.fn(async()=>({})),finalize:vi.fn(async()=>({})),
 };}
 

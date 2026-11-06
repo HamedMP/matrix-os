@@ -11,7 +11,7 @@ const names = ['bots', 'agent-workspaces', 'projects', 'worktrees'];
 const cleanup: string[] = [];
 afterEach(async () => { for (const root of cleanup.splice(0)) await rm(root, { recursive: true, force: true }); });
 
-async function fixture(account: boolean | 'lookup-error' = true) {
+async function fixture(account: boolean | 'lookup-error' = true, migrationStatus = 0) {
   const root = await mkdtemp(join(await realpath(tmpdir()), 'matrix-prereq-roots-'));
   cleanup.push(root);
   const home = join(root, 'home/matrix/home');
@@ -28,8 +28,25 @@ async function fixture(account: boolean | 'lookup-error' = true) {
   }
   await writeFile(join(bin, 'getent'), `#!/bin/sh\n${account === 'lookup-error' ? 'exit 1' : account ? `printf 'matrix:x:${process.getuid!()}:${process.getgid!()}:Matrix:/home/matrix:/bin/bash\\n'` : 'exit 2'}\n`);
   await chmod(join(bin, 'getent'), 0o755);
-  // Replace only the unrelated external cryptography probe. Root-preparation Python runs unmodified.
-  const source = (await readFile(sourcePath, 'utf8')).replaceAll("/usr/bin/python3 -I -c 'import cryptography'", `"${bin}/crypto-present"`);
+  // Stub only unrelated system dependencies. The production workload-root
+  // Python and its no-follow filesystem operations remain unchanged. This
+  // component lane uses exec's 10s deadline, not the Linux timeout binary;
+  // the real timeout/nginx path belongs to a separate Linux integration lane.
+  const migration = join(bin, 'sites-migration');
+  await writeFile(migration, `#!/bin/sh
+[ "$#" = 7 ] && [ "$1" = --kill-after=5 ] && [ "$2" = 30 ] &&
+  [ "$3" = /usr/bin/python3 ] && [ "$4" = -I ] &&
+  [ "$5" = "$MATRIX_HOST_PREREQUISITES_ROOT/matrix-configure-sites-nginx" ] &&
+  [ "$6" = --root ] && [ "$7" = "$MATRIX_HOST_PREREQUISITES_ROOT" ] || exit 63
+printf '%s\\n' "$6" "$7" >> "$MATRIX_HOST_PREREQUISITES_ROOT/sites-migration-args"
+exit ${migrationStatus}
+`, { mode: 0o755 });
+  const timeoutCommand = '/usr/bin/timeout --kill-after=5 30 /usr/bin/python3 -I';
+  const original = await readFile(sourcePath, 'utf8');
+  if (original.split(timeoutCommand).length !== 2) throw new Error('Expected one external Sites migration command');
+  const source = original
+    .replaceAll("/usr/bin/python3 -I -c 'import cryptography'", `"${bin}/crypto-present"`)
+    .replace(timeoutCommand, `"${migration}" --kill-after=5 30 /usr/bin/python3 -I`);
   const script = join(root, 'prerequisites');
   await writeFile(script, source);
   await writeFile(join(root, 'matrix-configure-sites-nginx'), await readFile('distro/customer-vps/host-bin/matrix-configure-sites-nginx'));
@@ -109,4 +126,11 @@ describe('first upgrade workload-root preparation', () => {
     await expect(run()).rejects.toMatchObject({ code: 64 });
     for (const name of names) await expect(stat(join(home, name))).rejects.toMatchObject({ code: 'ENOENT' });
   });
+});
+
+it('propagates an unrelated migration failure after preparing the workload roots', async () => {
+  const { root, home, run } = await fixture(true, 37);
+  await expect(run()).rejects.toMatchObject({ code: 37 });
+  for (const name of names) expect((await stat(join(home, name))).isDirectory()).toBe(true);
+  expect(await readFile(join(root, 'sites-migration-args'), 'utf8')).toBe(`--root\n${root}\n`);
 });

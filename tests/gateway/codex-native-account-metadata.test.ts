@@ -60,6 +60,45 @@ describe("native Codex account metadata", () => {
     const spawnProcess = vi.fn(() => child as never);
     return { child, methods, spawnProcess };
   }
+  it("reads fresh Chat identity without waiting for optional quota", async () => {
+    const f = fixture(false, false, account, undefined, undefined, 3, "file");
+    const reader = createCodexNativeAccountMetadataReader({ executable: "codex", cwd: "/runtime/home", environment: { HOME: "/runtime/home" }, now: () => now, timeoutMs: 30, spawnProcess: f.spawnProcess, readCredentialFileProof: async () => "stable-proof" });
+    const value = await reader({ includeUsage: false });
+    expect(value?.authMethod).toBe("terminal");
+    expect(f.methods).not.toContainEqual(expect.objectContaining({ method: "account/rateLimits/read" }));
+    expect(value?.usage).toBeUndefined();
+  });
+  it("retains independently checked identity when optional quota never responds", async () => {
+    const f = fixture(false, false, account, undefined, undefined, 3, "file");
+    const reader = createCodexNativeAccountMetadataReader({ executable: "codex", cwd: "/runtime/home", environment: { HOME: "/runtime/home" }, now: () => now, timeoutMs: 40, spawnProcess: f.spawnProcess, readCredentialFileProof: async () => "stable-proof" });
+    expect(await reader()).toMatchObject({ authMethod: "terminal", accountLabel: "owner@example.test" });
+    expect(f.methods).toContainEqual(expect.objectContaining({ method: "account/rateLimits/read" }));
+    expect(f.methods).toContainEqual({ id: 4, method: "account/read", params: { refreshToken: false } });
+  });
+  it("distinguishes a confirmed missing account from a failed identity observation", async () => {
+    const signedOut = fixture(false, false, { account: null });
+    const timedOut = fixture(false, false, account, undefined, undefined, 2);
+    const read = (spawnProcess: typeof signedOut.spawnProcess) => createCodexNativeAccountMetadataReader({ executable: "codex", cwd: "/runtime/home", environment: { HOME: "/runtime/home" }, now: () => now, timeoutMs: 20, spawnProcess });
+    expect(await read(signedOut.spawnProcess).observeIdentity!()).toEqual({ state: "signed_out", metadata: null });
+    expect(await read(timedOut.spawnProcess).observeIdentity!()).toEqual({ state: "unavailable", metadata: null });
+  });
+  it("classifies a private credential replacement as changed rather than checking", async () => {
+    const f = fixture(false, false, account, undefined, undefined, undefined, "file");
+    let reads = 0;
+    const reader = createCodexNativeAccountMetadataReader({ executable: "codex", cwd: "/runtime/home", environment: { HOME: "/runtime/home" }, now: () => now, spawnProcess: f.spawnProcess, readCredentialFileProof: async () => ++reads <= 2 ? "first-proof" : "changed-proof" });
+    expect(await reader.observeIdentity!()).toEqual({ state: "changed", metadata: null });
+  });
+  it.each(["signed_out", "changed"] as const)("retains confirmed %s from the final private revalidation", async state => {
+    const first = fixture(false, false, account, undefined, undefined, undefined, "file");
+    const nextAccount = state === "signed_out" ? { account: null } : { account: { type: "chatgpt", email: "changed@example.test", planType: "plus" } };
+    const current = fixture(false, false, nextAccount, undefined, undefined, undefined, "file");
+    const reader = createCodexNativeAccountMetadataReader({ executable: "codex", cwd: "/runtime/home", environment: { HOME: "/runtime/home" }, now: () => now,
+      spawnProcess: vi.fn().mockImplementationOnce(first.spawnProcess).mockImplementationOnce(current.spawnProcess), readCredentialFileProof: async () => "stable-private-proof" });
+    const observation = await reader.observeIdentity!();
+    expect(observation.state).toBe("observed");
+    expect(await verifyNativeAccountMetadata(observation.metadata)).toBeNull();
+    expect(reader.identityFailureState!(observation.metadata!)).toBe(state);
+  });
   it.each(["file", "keyring", "auto", undefined])("requires credential-specific API-key proof for destructive lifecycle with %s backend", async backend => {
     const f = fixture(false, false, { account: { type: "apiKey" } }, undefined, undefined, undefined, backend);
     const read = createCodexNativeAccountMetadataReader({ executable: "codex", cwd: "/runtime/home", environment: { HOME: "/runtime/home" }, spawnProcess: f.spawnProcess, readCredentialFileProof: async () => "synthetic-specific-key-proof" });
@@ -186,7 +225,7 @@ describe("native Codex account metadata", () => {
     expect(value?.usage?.usedBasisPoints).toBe(2500);
     expect(JSON.stringify(value)).not.toContain("private-current-id");
   });
-  it.each([3, 4])("drops identity when sequence times out before final equality (id %i)", async omitId => {
+  it.each([4])("drops identity when sequence times out before final equality (id %i)", async omitId => {
     const f = fixture(false, false, account, undefined, undefined, omitId);
     const reader = createCodexNativeAccountMetadataReader({ executable: "codex", cwd: "/runtime/home", environment: { HOME: "/runtime/home" }, timeoutMs: 10, now: () => now, spawnProcess: f.spawnProcess });
     expect(await reader()).toBeNull();

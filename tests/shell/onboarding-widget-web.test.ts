@@ -536,6 +536,8 @@ describe("web onboarding app connect", () => {
     const subscribeConnectionChanges = vi.fn((listener: () => void) => { onChange = listener; return unsubscribe; });
     const { result, unmount } = renderHook(() => useShellOnboardingIntegrations(vi.fn(), { gatewayUrl: GATEWAY, fetchFn, subscribeConnectionChanges }));
     await waitFor(() => expect(result.current.available).toHaveLength(1));
+    // An empty list that was actually read is loaded; Get started can trust it.
+    await waitFor(() => expect(result.current.connectionsLoaded).toBe(true));
     expect(result.current.connections).toEqual([]);
 
     connected = [{ id: "conn_1", service: "github", account_label: "sahar", status: "active" }];

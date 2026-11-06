@@ -1,22 +1,28 @@
 "use client";
 
-import { useGettingStartedVisibility, useGettingStartedPopoverFocus, DesktopHelpMenu } from "@matrix-os/ui";
+import {
+  useGettingStartedVisibility, useGettingStartedPopoverFocus, DesktopHelpMenu, useGetStartedAnswers, useGetStartedEnded,
+  openGettingStartedBotChat, retryGettingStartedBots, useGettingStartedBots, gettingStartedRowAction, gettingStartedRowView, type GettingStartedRequest, type GettingStartedRowAction, type GettingStartedRowView,
+} from "@matrix-os/ui";
 import { onboardingChecklist } from "@matrix-os/brand";
 import {
   deriveGettingStartedSnapshot,
   emptyGettingStartedSnapshot,
-  GETTING_STARTED_STEP_IDS,
+  getStartedAppGalleryLabel,
+  gettingStartedRows,
+  type GetStartedRecipeBotId,
+  type GettingStartedRow,
   type GettingStartedSnapshot,
-  type GettingStartedStep,
   type GettingStartedStepId,
+  type GettingStartedStepStatus,
 } from "@matrix-os/contracts";
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Popover as PopoverPrimitive } from "radix-ui";
-import { CheckIcon, ClipboardCheck, DownloadIcon, Github } from "@/lib/hugeicons";
+import { Bot, CheckIcon, ClipboardCheck, CreditCard, DownloadIcon, Folder, Github, KeyRound, MailIcon, Plug, Sparkles } from "@/lib/hugeicons";
 import { getGatewayUrl } from "@/lib/gateway";
 import { SHELL_Z_INDEX } from "@/lib/shell-layering";
+import { useGettingStartedConnections } from "./use-getting-started-connections";
 
-const TOTAL_STEPS = GETTING_STARTED_STEP_IDS.length;
 const STATUS_TIMEOUT_MS = 10_000;
 const BRAND_COLORS = onboardingChecklist.colors;
 
@@ -78,11 +84,43 @@ export function resolveDesktopDownloadSuggestion(
   return fallback;
 }
 
+/** Each row's icon, chosen in JSX so the React Compiler sees a fixed component. */
+function RowIconGlyph({ row }: { row: GettingStartedRow }) {
+  const props = { className: "size-4 shrink-0", "aria-hidden": true, style: { color: BRAND_COLORS.subtleText } } as const;
+  if (row.kind === "tool") return <Plug {...props} />;
+  if (row.kind === "bot") return <Bot {...props} />;
+  switch (row.id) {
+    case "github": return <Github {...props} />;
+    case "email-calendar": return <MailIcon {...props} />;
+    case "agent": return <KeyRound {...props} />;
+    case "first-work": return <Folder {...props} />;
+    case "billing": return <CreditCard {...props} />;
+  }
+}
+
+/** Where a Getting started row leads besides Settings: Chat (a bot's own chat, or a ready prompt) or App Gallery. */
+export type GettingStartedDestination = { kind: "chat"; chatId?: string; prompt?: string } | { kind: "app-gallery" };
+
+/** Bot status reads and opening a bot's chat, on the owner's gateway. */
+const webGettingStartedRequest: GettingStartedRequest = async (path, method, body) => {
+  const response = await fetch(`${getGatewayUrl()}${path}`, {
+    method,
+    cache: "no-store",
+    credentials: "include",
+    headers: { accept: "application/json", ...(body === undefined ? {} : { "content-type": "application/json" }) },
+    ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+    signal: AbortSignal.timeout(STATUS_TIMEOUT_MS),
+  });
+  if (!response.ok) throw new Error("getting_started_request_failed");
+  return response.json();
+};
+
 export type GettingStartedSettingsSection = "integrations" | "agents-providers" | "billing";
 
 interface GettingStartedPopoverProps {
   onOpenSettings: (section: GettingStartedSettingsSection) => void;
-  onOpenFirstWork: () => void;
+  /** Opens Chat (a bot's own chat when given) or App Gallery. */
+  onOpenFirstWork: (destination?: GettingStartedDestination) => void;
   triggerClassName?: string;
   helpMenu?: { onSupport(): void; discordIcon: ReactNode };
 }
@@ -155,7 +193,44 @@ export async function loadWebGettingStartedSnapshot(
   return deriveGettingStartedSnapshot({ github, integrations, agents, projects, chats, billing });
 }
 
-function StepIndicator({ step }: { step: GettingStartedStep }) {
+/** One checklist row: label (or its try action), optional help line, and its icon or "Try". */
+function ChecklistRow({ row, view, onActivate }: { row: GettingStartedRow; view: GettingStartedRowView; onActivate(): void }) {
+  return (
+    <button
+      type="button"
+      onClick={onActivate}
+      aria-busy={view.trailing === "waiting"}
+      className="flex w-full items-center gap-3 px-3 py-2 text-left outline-none transition-colors hover:bg-muted/70 focus-visible:bg-muted/70"
+      title={row.status === "unavailable" ? "Status is temporarily unavailable" : undefined}
+    >
+      <StepIndicator step={row} />
+      <span className="min-w-0 flex-1">
+        <span
+          className="block truncate"
+          style={{
+            color: view.struck ? BRAND_COLORS.subtleText : BRAND_COLORS.text,
+            fontSize: 11,
+            fontWeight: 400,
+            lineHeight: "normal",
+            textDecoration: view.struck ? "line-through" : "none",
+          }}
+        >
+          {view.label}
+        </span>
+        {view.detail ? (
+          <span className="mt-0.5 block truncate" style={{ color: BRAND_COLORS.subtleText, fontSize: 10 }}>{view.detail}</span>
+        ) : null}
+      </span>
+      {view.trailing === "icon" ? (
+        <RowIconGlyph row={row} />
+      ) : view.trailing === "try" ? (
+        <span className="shrink-0 rounded-full border px-2 py-0.5" style={{ borderColor: BRAND_COLORS.border, color: BRAND_COLORS.text, fontSize: 10 }}>Try</span>
+      ) : null}
+    </button>
+  );
+}
+
+function StepIndicator({ step }: { step: { status: GettingStartedStepStatus } }) {
   const complete = step.status === "complete";
   return (
     <span
@@ -169,6 +244,34 @@ function StepIndicator({ step }: { step: GettingStartedStep }) {
     >
       {complete ? <CheckIcon className="size-3" style={{ color: BRAND_COLORS.border }} /> : null}
     </span>
+  );
+}
+
+/**
+ * A bot row opens that bot's own chat. A bot that failed to create (`create`) is created again
+ * from the saved choices instead, and the rows reload with the result.
+ */
+function activateBotRow(
+  action: Extract<GettingStartedRowAction, { type: "bot" | "create-bots" }>,
+  agentIds: Partial<Record<GetStartedRecipeBotId, string>>,
+  onOpenFirstWork: GettingStartedPopoverProps["onOpenFirstWork"],
+  reload: () => void,
+): void {
+  if (action.type === "create-bots") {
+    retryGettingStartedBots(webGettingStartedRequest, reload);
+    return;
+  }
+  const agentId = agentIds[action.recipeId];
+  if (!agentId) {
+    onOpenFirstWork({ kind: "chat" });
+    return;
+  }
+  void openGettingStartedBotChat(webGettingStartedRequest, agentId).then(
+    (chatId) => onOpenFirstWork({ kind: "chat", ...(chatId ? { chatId } : {}) }),
+    (error: unknown) => {
+      console.warn("[getting-started] unable to open bot chat:", error instanceof Error ? error.name : typeof error);
+      onOpenFirstWork({ kind: "chat" });
+    },
   );
 }
 
@@ -189,7 +292,20 @@ function GettingStartedPopoverContent({
   const { markManualOpen, onOpenAutoFocus, onCloseAutoFocus } = useGettingStartedPopoverFocus();
   const helpTriggerRef = useRef<HTMLButtonElement>(null);
   const [refreshRequest, setRefreshRequest] = useState(0);
+  const requestRefresh = useCallback(() => setRefreshRequest((request) => (request + 1) % 1_000_000), []);
+  // Rows start an app's own sign-in, like the onboarding widget, and reload when any connection changes.
+  const { connectApp, connectingService, failedServices, appsUnavailable } = useGettingStartedConnections(requestRefresh);
   const [snapshot, setSnapshot] = useState(emptyGettingStartedSnapshot);
+  // Spec 635: lead with the steps that fit the owner's Get started answers.
+  const getStartedAnswers = useGetStartedAnswers();
+  const bots = useGettingStartedBots(webGettingStartedRequest, getStartedAnswers?.bots, refreshRequest);
+  const { rows, completedCount, total } = useMemo(
+    () => gettingStartedRows(snapshot, getStartedAnswers, bots.statuses),
+    [getStartedAnswers, snapshot, bots.statuses],
+  );
+  // After Get started, the checklist reopens on every load until done, but only once per load.
+  const getStartedEnded = useGetStartedEnded();
+  const autoOpenedThisLoad = useRef(false);
   const [downloadSuggestion, setDownloadSuggestion] = useState<DesktopDownloadSuggestion>({
     href: DESKTOP_APP_DOWNLOAD_URL,
     label: "Choose desktop download",
@@ -242,17 +358,16 @@ function GettingStartedPopoverContent({
       || isBlocked()
       || autoOpenSuppressed
       || isAutoOpenSuppressed()
-      || snapshot.completedCount === TOTAL_STEPS
-      || hasAutoOpened(autoOpenKey)
+      || completedCount === total
+      || autoOpenedThisLoad.current
+      || (!getStartedEnded && hasAutoOpened(autoOpenKey))
     ) return;
+    autoOpenedThisLoad.current = true;
     setOpen(true);
-  }, [autoOpenKey, snapshot.completedCount, snapshot.loaded, blocked, isBlocked, autoOpenSuppressed, isAutoOpenSuppressed, setOpen]);
+  }, [autoOpenKey, getStartedEnded, completedCount, total, snapshot.loaded, blocked, isBlocked, autoOpenSuppressed, isAutoOpenSuppressed, setOpen]);
 
   useEffect(() => {
     if (!open) return;
-    const requestRefresh = () => {
-      setRefreshRequest((request) => (request + 1) % 1_000_000);
-    };
     const handleVisibilityChange = () => {
       if (document.visibilityState === "visible") requestRefresh();
     };
@@ -264,13 +379,13 @@ function GettingStartedPopoverContent({
       window.removeEventListener("focus", requestRefresh);
       document.removeEventListener("visibilitychange", handleVisibilityChange);
     };
-  }, [open]);
+  }, [open, requestRefresh]);
 
   const handleRadixOpenChange = (nextOpen: boolean) => {
     if (!nextOpen || blocked) return;
     markManualOpen();
     setOpen(true);
-    setRefreshRequest((request) => (request + 1) % 1_000_000);
+    requestRefresh();
   };
 
   const activateStep = (id: GettingStartedStepId) => {
@@ -291,6 +406,27 @@ function GettingStartedPopoverContent({
     }
   };
 
+  const activateRow = (row: GettingStartedRow) => {
+    const action = gettingStartedRowAction(row, { canConnect: !appsUnavailable });
+    switch (action.type) {
+      case "try":
+        onOpenFirstWork({ kind: "chat", prompt: action.prompt });
+        return;
+      case "connect":
+        connectApp(action.service);
+        return;
+      case "step":
+        activateStep(action.id);
+        return;
+      case "settings":
+        onOpenSettings("integrations");
+        return;
+      case "create-bots":
+      case "bot":
+        activateBotRow(action, bots.agentIds, onOpenFirstWork, () => setRefreshRequest((request) => (request + 1) % 1_000_000));
+    }
+  };
+
   useEffect(() => {
     // A manual opening counts too, even while status is loading: a later
     // response must not undo the user's explicit dismissal.
@@ -299,8 +435,8 @@ function GettingStartedPopoverContent({
     }
   }, [open, isBlocked, autoOpenKey]);
 
-  const label = `Getting started — ${snapshot.completedCount} of ${TOTAL_STEPS}`;
-  const progress = `${(snapshot.completedCount / TOTAL_STEPS) * 100}%`;
+  const label = `Getting started — ${completedCount} of ${total}`;
+  const progress = `${(completedCount / total) * 100}%`;
 
   const trigger = (closeHelp?: () => void) => <PopoverPrimitive.Trigger asChild>
         <button
@@ -315,15 +451,15 @@ function GettingStartedPopoverContent({
           }}
         >
           <ClipboardCheck className="size-4" aria-hidden="true" />
-          {helpMenu ? <><span className="flex-1">Getting started</span><span className="text-xs">{snapshot.completedCount} of {TOTAL_STEPS}</span><span className="h-1 w-full overflow-hidden rounded" style={{ background: BRAND_COLORS.progressTrack }}><span className="block h-full" style={{ width: progress, background: BRAND_COLORS.progressFill }} /></span></> : null}
-          {!helpMenu && snapshot.completedCount < TOTAL_STEPS ? (
+          {helpMenu ? <><span className="flex-1">Getting started</span><span className="text-xs">{completedCount} of {total}</span><span className="h-1 w-full overflow-hidden rounded" style={{ background: BRAND_COLORS.progressTrack }}><span className="block h-full" style={{ width: progress, background: BRAND_COLORS.progressFill }} /></span></> : null}
+          {!helpMenu && completedCount < total ? (
             <span aria-hidden="true" className="absolute right-0.5 top-0.5 size-1.5 rounded-full bg-primary" />
           ) : null}
         </button>
       </PopoverPrimitive.Trigger>;
   return (
     <PopoverPrimitive.Root open={open} onOpenChange={handleRadixOpenChange}>
-      {helpMenu ? <DesktopHelpMenu {...helpMenu} incomplete={snapshot.completedCount < TOTAL_STEPS} gettingStarted={trigger}
+      {helpMenu ? <DesktopHelpMenu {...helpMenu} incomplete={completedCount < total} gettingStarted={trigger}
         gettingStartedOpen={requestedOpen} onGettingStartedClose={() => setOpen(false)} triggerRef={helpTriggerRef}
         anchorTrigger={(helpTrigger) => <PopoverPrimitive.Anchor asChild>{helpTrigger}</PopoverPrimitive.Anchor>} /> : trigger()}
       <PopoverPrimitive.Portal>
@@ -361,7 +497,7 @@ function GettingStartedPopoverContent({
               data-testid="getting-started-counter"
               style={{ color: BRAND_COLORS.subtleText, fontSize: 11, fontWeight: 500, lineHeight: "normal" }}
             >
-              {snapshot.completedCount} of {TOTAL_STEPS}
+              {completedCount} of {total}
             </span>
           </div>
           <div className="px-3 pb-4">
@@ -394,35 +530,20 @@ function GettingStartedPopoverContent({
                 ) : null}
               </span>
             </a>
-            {snapshot.steps.map((step) => {
-              const complete = step.status === "complete";
-              return (
-                <button
-                  key={step.id}
-                  type="button"
-                  onClick={() => activateStep(step.id)}
-                  className="flex w-full items-center gap-3 px-3 py-2 text-left outline-none transition-colors hover:bg-muted/70 focus-visible:bg-muted/70"
-                  title={step.status === "unavailable" ? "Status is temporarily unavailable" : undefined}
-                >
-                  <StepIndicator step={step} />
-                  <span
-                    className="min-w-0 flex-1 truncate"
-                    style={{
-                      color: complete ? BRAND_COLORS.subtleText : BRAND_COLORS.text,
-                      fontSize: 11,
-                      fontWeight: 400,
-                      lineHeight: "normal",
-                      textDecoration: complete ? "line-through" : "none",
-                    }}
-                  >
-                    {step.label}
-                  </span>
-                  {step.id === "github" ? (
-                    <Github className="size-4" aria-hidden="true" style={{ color: BRAND_COLORS.subtleText }} />
-                  ) : null}
-                </button>
-              );
-            })}
+            {/* A link, not a step: building an app has no completion check. */}
+            <button
+              type="button"
+              data-testid="getting-started-app-gallery"
+              onClick={() => onOpenFirstWork({ kind: "app-gallery" })}
+              className="flex w-full items-center gap-3 px-3 py-2 text-left outline-none transition-colors hover:bg-muted/70 focus-visible:bg-muted/70"
+              style={{ color: BRAND_COLORS.text, fontSize: 11 }}
+            >
+              <Sparkles className="size-4 shrink-0" aria-hidden="true" />
+              <span className="min-w-0 flex-1 truncate">{getStartedAppGalleryLabel(getStartedAnswers)} in App Gallery</span>
+            </button>
+            {rows.map((row) => (
+              <ChecklistRow key={row.id} row={row} view={gettingStartedRowView(row, connectingService, failedServices)} onActivate={() => activateRow(row)} />
+            ))}
           </div>
         </PopoverPrimitive.Content>
       </PopoverPrimitive.Portal>

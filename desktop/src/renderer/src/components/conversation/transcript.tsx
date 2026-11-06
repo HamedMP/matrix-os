@@ -1,6 +1,6 @@
-import { BrowserPermissionCard } from "@matrix-os/ui";
+import { BrowserPermissionCard, useRoutineMessageState, routineMessageTimeline, RoutineOccurrenceMessage, RoutineMessageReadNotice, type RoutineOccurrence } from "@matrix-os/ui";
 import { ConversationNotice } from "./notice";
-import { BotRunMessageBody, BotUnassignedMessageBody, ChatAttachments, ChatContextReceipt, CanonicalChatInputForm, SupervisedToolApprovalCard, type ChatMessageAttachment } from "@matrix-os/ui";
+import { BotRunMessageBody, BotUnassignedMessageBody, ChatContextReceipt, CanonicalChatInputForm, SupervisedToolApprovalCard } from "@matrix-os/ui";
 import { UserMessage } from "./user-message";
 import {
   ChevronRight,
@@ -13,17 +13,16 @@ import {
 } from "./conversation";
 import { ConversationActivityGroup } from "./activity";
 import { RequestApprovalOutcome, RequestStatusIcon } from "./request-outcome";
-import { Bubble, BubbleContent } from "./bubble";
 import { Marker, MarkerContent } from "./marker";
 import { conversationTurnVisibility } from "./turn-visibility";
-import { Message, MessageContent, MessageMetadata, MessageResponse } from "./message";
+import { ResponseMessage } from "./response-message";
 import type {
   ConversationActionPresentation,
-  ConversationMessagePresentation,
   ConversationPresentationCallbacks,
   ConversationRequestPresentation,
   ConversationTurnPresentation,
   ConversationWorkPresentation,
+  ConversationTurnTimelinePresentation,
 } from "./presentation";
 import { supervisedToolApproval, type SupervisedToolApproval } from "@matrix-os/contracts";
 import { offeredApprovalAction, offeredBrowserApprovalAction } from "./approval-actions";
@@ -84,94 +83,6 @@ function TurnReceipt({
     </ConversationItem>
   );
 }
-
-function ResponseMessage({
-  message,
-  callbacks,
-  showMetadata,
-  streaming,
-  animateOnMount,
-}: {
-  message: ConversationMessagePresentation;
-  callbacks: ConversationPresentationCallbacks;
-  showMetadata: boolean;
-  streaming: boolean;
-  animateOnMount: boolean;
-}) {
-  const previousMessageId = useRef(message.id);
-  const previousStreaming = useRef(streaming);
-  const [visibleMarkdown, setVisibleMarkdown] = useState(() => (
-    streaming || animateOnMount ? "" : message.markdown
-  ));
-  const attachments = (message.content ?? []).flatMap<ChatMessageAttachment>((segment) => segment.kind === "image"
-    ? [{ ...segment, kind: "image" as const }]
-    : segment.kind === "reference" && segment.referenceKind === "file"
-      ? [{ ...segment, kind: "file" as const }]
-      : []);
-
-  useEffect(() => {
-    if (previousMessageId.current === message.id) return;
-    previousMessageId.current = message.id;
-    setVisibleMarkdown(streaming || animateOnMount ? "" : message.markdown);
-  }, [animateOnMount, message.id, message.markdown, streaming]);
-
-  useEffect(() => {
-    const terminalized = previousStreaming.current && !streaming;
-    previousStreaming.current = streaming;
-    if (terminalized) setVisibleMarkdown(message.markdown);
-  }, [message.markdown, streaming]);
-
-  useEffect(() => {
-    if (visibleMarkdown === message.markdown) return;
-    if (!message.markdown.startsWith(visibleMarkdown)) {
-      setVisibleMarkdown(message.markdown);
-      return;
-    }
-    const frame = window.requestAnimationFrame(() => {
-      setVisibleMarkdown((current) => {
-        if (!message.markdown.startsWith(current)) return message.markdown;
-        const targetCharacters = Array.from(message.markdown);
-        const currentLength = Array.from(current).length;
-        const remaining = targetCharacters.length - currentLength;
-        const step = Math.max(1, Math.min(8, Math.ceil(remaining / 12)));
-        return targetCharacters.slice(0, currentLength + step).join("");
-      });
-    });
-    return () => window.cancelAnimationFrame(frame);
-  }, [message.markdown, visibleMarkdown]);
-
-  return (
-    <ConversationItem messageId={`${message.role}:${message.id}`}>
-      <Message>
-        <MessageContent className="gap-0">
-          {attachments.length > 0 ? (
-            <ChatAttachments
-              attachments={attachments}
-              align="start"
-              open={callbacks.openAttachment} openImportedAsset={callbacks.openImportedAsset}
-              loadImage={callbacks.loadImage}
-            />
-          ) : null}
-          <Bubble variant="ghost">
-            <BubbleContent className="w-full max-w-full overflow-visible">
-              <MessageResponse className="text-md leading-relaxed" copyText={callbacks.copyText} openFile={callbacks.openFile} openWebLink={callbacks.openWebLink} loadFileImage={callbacks.loadFileImage} resolveApp={callbacks.resolveApp} openApp={callbacks.openApp}
-                renderCredentialMarker={callbacks.renderCredentialMarker ? (offset, marker, number) => callbacks.renderCredentialMarker?.(message, offset, marker, number) : undefined}>{visibleMarkdown}</MessageResponse>
-            </BubbleContent>
-          </Bubble>
-          {showMetadata ? (
-            <MessageMetadata
-              content={message.copyText}
-              timestamp={message.timestamp}
-              role="Assistant"
-              copyText={callbacks.copyText}
-            />
-          ) : null}
-        </MessageContent>
-      </Message>
-    </ConversationItem>
-  );
-}
-
 
 function supervisedToolView(request: ConversationRequestPresentation): SupervisedToolApproval | null {
   if (request.requestKind !== "approval") return null;
@@ -385,12 +296,16 @@ function ConversationTurn({
   initialFinalIds,
   visibility,
   onToggle,
+  scheduled,
+  scheduledEvents=[],
 }: {
   turn: ConversationTurnPresentation;
   callbacks: ConversationPresentationCallbacks;
   initialFinalIds: ReadonlySet<string>;
   visibility: ReturnType<typeof conversationTurnVisibility>;
   onToggle: () => void;
+  scheduled?: RoutineOccurrence;
+  scheduledEvents?:RoutineOccurrence[];
 }) {
   const rootKind = turn.executionRoot?.kind;
   const rootProjectId = turn.executionRoot && turn.executionRoot.kind !== "bot_workspace" ? turn.executionRoot.projectId : undefined;
@@ -411,12 +326,12 @@ function ConversationTurn({
     ...(callbacks.resolveApp ? { resolveApp: resolveRunApp } : {}),
     ...(callbacks.openApp ? { openApp: openRunApp } : {}),
   };
-  const { showWork, visibleWork, visibleTimeline, pendingRequestIds } = visibility;
+  const { showWork, visibleWork, visibleTimeline, pendingRequestIds, partialCopyMessageId } = visibility;
   const hasWork = turn.work.length > 0;
   const timeline = turn.timeline;
   return (
     <>
-      {turn.user ? <UserMessage message={turn.user} callbacks={scopedCallbacks} /> : null}
+      {turn.user ? <UserMessage message={turn.user} callbacks={scopedCallbacks} scheduled={scheduled}/> : null}
       <ChatContextReceipt context={turn.runContext} />
       <div data-agent-message-body={turn.id} className="min-w-0">
       {hasWork || turn.final || turn.active ? (
@@ -429,18 +344,20 @@ function ConversationTurn({
           onToggle={onToggle}
         />
       ) : null}
-      {timeline ? (
+      {scheduledEvents.length?<ScheduledTurnContent turn={turn} callbacks={scopedCallbacks} visibility={visibility} occurrences={scheduledEvents} initialFinalIds={initialFinalIds}/>:<>{timeline ? (
         visibleTimeline && visibleTimeline.length > 0 ? (
           <div data-turn-timeline className="flex min-w-0 flex-col gap-0.5">
             {visibleTimeline.map((entry) => entry.kind === "user-followup"
               ? <UserMessage key={entry.message.id} message={entry.message} callbacks={scopedCallbacks} />
-              : <PresentationItem key={entry.item.id} item={entry.item} callbacks={scopedCallbacks} />)}
+              : <PresentationItem key={entry.item.id} item={entry.item} callbacks={scopedCallbacks}
+                  showMetadata={entry.item.id === partialCopyMessageId} />)}
           </div>
         ) : null
       ) : visibleWork.length > 0 ? (
         <div data-work-items className="flex min-w-0 flex-col gap-0.5">
           {visibleWork.map((item) => (
-            <PresentationItem key={item.id} item={item} callbacks={scopedCallbacks} />
+            <PresentationItem key={item.id} item={item} callbacks={scopedCallbacks}
+              showMetadata={item.id === partialCopyMessageId} />
           ))}
         </div>
       ) : null}
@@ -454,15 +371,31 @@ function ConversationTurn({
           showMetadata={!turn.active}
           streaming={turn.active}
           animateOnMount={
-            !initialFinalIds.has(turn.final.id)
+            turn.active && !initialFinalIds.has(turn.final.id)
             && !(turn.final.kind === "message" && turn.final.wasStreamed)
           }
         />
-      ) : null}
+      ) : null}</>}
       <BotRunMessageBody runIds={turn.runIds ?? []} requestIds={pendingRequestIds}/>
       </div>
     </>
   );
+}
+
+/** Interleave neutral saved events within a long turn without changing its ordinary rendering path. */
+function ScheduledTurnContent({turn,callbacks,visibility,occurrences,initialFinalIds}:{turn:ConversationTurnPresentation;callbacks:ConversationPresentationCallbacks;visibility:ReturnType<typeof conversationTurnVisibility>;occurrences:RoutineOccurrence[];initialFinalIds:ReadonlySet<string>}){
+  const {visibleWork,visibleTimeline,partialCopyMessageId}=visibility;
+  const body:Array<ConversationTurnTimelinePresentation&{final?:boolean}>=turn.timeline?visibleTimeline??[]:[
+    ...visibleWork.map(item=>({kind:"work" as const,item})),...(turn.userFollowups??[]).map(message=>({kind:"user-followup" as const,message})),
+  ];
+  const flow=[...body,...(turn.final?[{kind:"work" as const,item:turn.final,final:true}]:[])];
+  return <>{routineMessageTimeline(flow,occurrences,()=>undefined,row=>row.kind==="user-followup"?row.message.timestamp:row.item.timestamp??turn.startedAt).map(row=>{
+    if(row.kind==="occurrence")return <RoutineOccurrenceMessage key={`scheduled:${row.occurrence.fire.fireId}`} occurrence={row.occurrence}/>;
+    const entry=row.value;
+    return entry.kind==="user-followup"?<UserMessage key={entry.message.id} message={entry.message} callbacks={callbacks}/>
+      :<PresentationItem key={entry.item.id} item={entry.item} callbacks={callbacks} showMetadata={entry.final?!turn.active:entry.item.id===partialCopyMessageId}
+        streaming={entry.final&&turn.active} animateOnMount={Boolean(entry.final&&turn.active&&!initialFinalIds.has(entry.item.id)&&!(entry.item.kind==="message"&&entry.item.wasStreamed))}/>;
+  })}</>;
 }
 
 export function ConversationTranscript({
@@ -472,6 +405,7 @@ export function ConversationTranscript({
   turns: ConversationTurnPresentation[];
   callbacks: ConversationPresentationCallbacks;
 }) {
+  const routines=useRoutineMessageState();
   const [initialFinalIds] = useState(() => new Set(
     turns.flatMap((turn) => turn.final ? [turn.final.id] : []),
   ));
@@ -487,21 +421,32 @@ export function ConversationTranscript({
     // Evict removed turns on interaction so expansion state stays bounded by this transcript.
     return [turn.id, turn.id === turnId ? !expanded : expanded];
   })));
+  const nested:RoutineOccurrence[][]=visibleTurns.map(()=>[]);
+  const rows=routineMessageTimeline(visibleTurns,routines?.occurrences??[],row=>row.turn.user?row.turn.routineRequestId:undefined,row=>row.turn.user?.timestamp??row.turn.startedAt).filter(row=>{
+    if(row.kind!=="occurrence")return true;
+    const at=Date.parse(row.occurrence.fire.scheduledFor);
+    const index=visibleTurns.findIndex(({turn})=>(turn.user?.timestamp??turn.startedAt)<=at&&at<=(turn.active?Date.now():turn.endedAt));
+    if(index<0)return true;
+    nested[index]!.push(row.occurrence);return false;
+  });
   return (
     <Conversation>
       <ConversationContent className="justify-start pt-8 sm:pt-12">
-        {visibleTurns.map(({ turn, visibility }) => (
+        {rows.map(row => row.kind==="occurrence" ? <RoutineOccurrenceMessage key={`scheduled:${row.occurrence.fire.fireId}`} occurrence={row.occurrence}/> : (
           <ConversationTurn
-            key={turn.id}
-            turn={turn}
+            key={row.value.turn.id}
+            turn={row.value.turn}
             callbacks={callbacks}
             initialFinalIds={initialFinalIds}
-            visibility={visibility}
-            onToggle={() => toggleTurn(turn.id)}
+            visibility={row.value.visibility}
+            scheduled={row.occurrence}
+            scheduledEvents={nested[visibleTurns.indexOf(row.value)]}
+            onToggle={() => toggleTurn(row.value.turn.id)}
           />
         ))}
         <BotUnassignedMessageBody runIds={turns.flatMap(turn => turn.runIds ?? [])}
           requestIds={visibleTurns.flatMap(({ visibility }) => visibility.pendingRequestIds)}/>
+        <RoutineMessageReadNotice/>
       </ConversationContent>
     </Conversation>
   );

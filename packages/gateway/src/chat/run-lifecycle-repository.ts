@@ -1,8 +1,11 @@
+import { lockRunCollaborationScope } from "./run-scope-lock.js";
+import { assertPrivateRoutineRun } from "./private-routine-authority.js";
 import { assertInputClaim, getChatInputState, pendingInputTransition } from "./input-submission.js";
 import {
   CanonicalChatIdSchema,
   AgentAttachmentSchema,
   CanonicalChatMessagePartSchema,
+  CanonicalChatAssistantTextPartSchema,
   CanonicalChatMessageSchema,
   CanonicalChatRunActivitySchema,
   CanonicalOwnerScopeSchema,
@@ -49,7 +52,7 @@ const ACTIVE_RUNS = ["accepted", "running", "waiting_for_approval", "waiting_for
 function recoveredTextParts(text: string) {
   if (Buffer.byteLength(text) > 96 * 1024) throw new RangeError("Recovered output limit exceeded");
   return (text.match(/[\s\S]{1,4000}/gu) ?? [""]).map((chunk) =>
-    CanonicalChatMessagePartSchema.parse({ type: "text", text: chunk }));
+    CanonicalChatAssistantTextPartSchema.parse({ type: "text", text: chunk }));
 }
 const SAFE_INTERNAL_REF = z.string().min(1).max(200).regex(/^[A-Za-z0-9][A-Za-z0-9_.:-]*$/);
 const encoded = new TextEncoder();
@@ -64,21 +67,7 @@ function requireSafeRef(value: string): string {
 
 function preview(message: CanonicalChatMessage): string | null {
   const text = message.parts.find((part) => part.type === "text");
-  return text?.type === "text" ? text.text.slice(0, 280) : null;
-}
-
-function isTerminalActivity(activity: CanonicalChatRunActivity): boolean {
-  return activity.type === "run.error"
-    || (activity.type === "run.status"
-      && ["completed", "failed", "aborted"].includes(activity.status));
-}
-
-function isRetentionProtectedActivity(
-  activity: CanonicalChatRunActivity,
-  resolvedApprovalIds: readonly string[],
-): boolean {
-  return isTerminalActivity(activity)
-    || (activity.type === "approval.requested" && !resolvedApprovalIds.includes(activity.approvalId));
+  return text?.type === "text" ? text.text.trim().slice(0, 280) || null : null;
 }
 
 function railTransitionForActivity(activity: CanonicalChatRunActivity): {
@@ -115,7 +104,9 @@ async function selectOwnedChat(
   owner: ChatOwner,
   chatId: string,
   lock = false,
+  runId?: string,
 ): Promise<Selectable<ChatsTable> | undefined> {
+  if (lock && runId) await lockRunCollaborationScope(executor, owner, chatId, runId);
   let query = executor.selectFrom("chats").selectAll()
     .where("id", "=", chatId)
     .where("owner_type", "=", owner.type)
@@ -265,8 +256,14 @@ export class ChatRunLifecycleRepository {
       .where("chat_runs.chat_id", "=", chatId)
       .where("chat_runs.id", "=", input.runId)
       .where("chat_runs.status", "in", [...ACTIVE_RUNS])
+      .where(sql<string>`chat_run_events.event ->> 'approvalId'`, "=", input.approvalId)
+      .where(sql<string>`chat_run_events.event ->> 'type'`, "in", ["approval.requested", "approval.resolved"])
+      .where(sql<boolean>`NOT EXISTS (
+        SELECT 1 FROM chat_approval_outcomes outcomes
+        WHERE outcomes.run_id = chat_run_events.run_id
+          AND outcomes.approval_id = ${input.approvalId}
+      )`)
       .orderBy("chat_run_events.run_seq")
-      .limit(500)
       .execute();
     let pending: Extract<CanonicalChatRunActivity, { type: "approval.requested" }> | null = null;
     for (const row of rows) {
@@ -288,7 +285,7 @@ export class ChatRunLifecycleRepository {
     const owner = validateOwner(ownerInput);
     const startedAt = new Date(input.startedAt).toISOString();
     return this.transact(async (trx) => {
-      const chat = await selectOwnedChat(trx, owner, CanonicalChatIdSchema.parse(input.chatId), true);
+      const chat = await selectOwnedChat(trx, owner, CanonicalChatIdSchema.parse(input.chatId), true, input.runId);
       if (!chat) throw new ChatNotFoundError(input.chatId);
       const current = await trx.selectFrom("chat_runs").selectAll()
         .where("id", "=", requireSafeRef(input.runId))
@@ -296,6 +293,7 @@ export class ChatRunLifecycleRepository {
         .forUpdate()
         .executeTakeFirst();
       if (!current) throw new ChatNotFoundError(input.chatId);
+      await assertPrivateRoutineRun(trx, owner, input.chatId, input.runId);
       if (current.status !== "accepted") {
         if (ACTIVE_RUNS.includes(current.status as typeof ACTIVE_RUNS[number])) return toRun(current);
         throw new ChatRunNotActiveError(input.chatId, input.runId);
@@ -332,7 +330,7 @@ export class ChatRunLifecycleRepository {
       throw new ChatConflictError(input.chatId, 0);
     }
     await this.transact(async (trx) => {
-      const chat = await selectOwnedChat(trx, owner, CanonicalChatIdSchema.parse(input.chatId), true);
+      const chat = await selectOwnedChat(trx, owner, CanonicalChatIdSchema.parse(input.chatId), true, input.runId);
       if (!chat) throw new ChatNotFoundError(input.chatId);
       const run = await trx.selectFrom("chat_runs").select(["status", "driver_kind", "instance_id"])
         .where("id", "=", input.runId)
@@ -340,6 +338,7 @@ export class ChatRunLifecycleRepository {
         .forUpdate()
         .executeTakeFirst();
       if (!run) throw new ChatNotFoundError(input.chatId);
+      await assertPrivateRoutineRun(trx, owner, input.chatId, input.runId);
       if (!ACTIVE_RUNS.includes(run.status as typeof ACTIVE_RUNS[number])) {
         throw new ChatRunNotActiveError(input.chatId, input.runId);
       }
@@ -377,7 +376,7 @@ export class ChatRunLifecycleRepository {
     }
     if (activities.length === 0) return 0;
     return this.transact(async (trx) => {
-      const current = await selectOwnedChat(trx, owner, CanonicalChatIdSchema.parse(chatId), true);
+      const current = await selectOwnedChat(trx, owner, CanonicalChatIdSchema.parse(chatId), true, runId);
       if (!current) throw new ChatNotFoundError(chatId);
       const run = await trx.selectFrom("chat_runs").select("id")
         .where("id", "=", runId).where("chat_id", "=", chatId)
@@ -386,67 +385,16 @@ export class ChatRunLifecycleRepository {
         .where("id", "=", runId).where("chat_id", "=", chatId).executeTakeFirst();
       if (existingRun && !run) throw new ChatRunNotActiveError(chatId, runId);
       if (!run) throw new ChatNotFoundError(chatId);
+      await assertPrivateRoutineRun(trx, owner, chatId, runId);
       if (expectedInputClaim) {
         const state = await getChatInputState(trx, owner, { chatId, runId, requestId: expectedInputClaim.requestId });
         if (state.resolved || state.submitted?.id !== expectedInputClaim.submissionId) throw new ChatConflictError(chatId, Number(current.revision));
       }
-      const count = await trx.selectFrom("chat_run_events").select(({ fn }) => fn.countAll().as("count"))
-        .where("run_id", "=", runId).executeTakeFirstOrThrow();
       const activityIds = [...new Set(activities.map((activity) => activity.id))];
       const existing = await trx.selectFrom("chat_run_events").select(["id", "chat_id", "run_id", "run_seq", "event"])
         .where("id", "in", activityIds).execute();
       if (existing.some((row) => row.chat_id !== chatId || row.run_id !== runId)) {
         throw new ChatConflictError(chatId, Number(current.revision));
-      }
-      const unseenCount = activityIds.length - existing.length;
-      const overflow = Number(count.count) + unseenCount - 500;
-      let removedActivityIds: string[] = [];
-      if (overflow > 0) {
-        if (!activities.some(isTerminalActivity)) {
-          throw new ChatConflictError(chatId, Number(current.revision));
-        }
-        const candidates = await trx.selectFrom("chat_run_events")
-          .select(["id", "event"])
-          .where("run_id", "=", runId)
-          .orderBy("occurred_at")
-          .orderBy("run_seq")
-          .orderBy("id")
-          .execute();
-        const parsedCandidates = candidates.map((row) => ({
-          id: row.id,
-          activity: CanonicalChatRunActivitySchema.safeParse(row.event),
-        }));
-        // Bounded by the 500 persisted events plus at most 100 incoming events.
-        const resolvedApprovalIds = activities.flatMap((activity) =>
-          activity.type === "approval.resolved" ? [activity.approvalId] : []);
-        const requestedApprovalIds = parsedCandidates.flatMap(({ activity }) =>
-          activity.success && activity.data.type === "approval.requested" ? [activity.data.approvalId] : []);
-        for (const { activity } of parsedCandidates) {
-          if (activity.success && activity.data.type === "approval.resolved"
-            && !resolvedApprovalIds.includes(activity.data.approvalId)) {
-            resolvedApprovalIds.push(activity.data.approvalId);
-          }
-        }
-        if (requestedApprovalIds.length > 0) {
-          const outcomes = await trx.selectFrom("chat_approval_outcomes")
-            .select("approval_id")
-            .where("run_id", "=", runId)
-            .where("approval_id", "in", requestedApprovalIds)
-            .execute();
-          for (const outcome of outcomes) {
-            if (!resolvedApprovalIds.includes(outcome.approval_id)) {
-              resolvedApprovalIds.push(outcome.approval_id);
-            }
-          }
-        }
-        const evictedIds = parsedCandidates.flatMap(({ id, activity }) => {
-          return activity.success && !isRetentionProtectedActivity(activity.data, resolvedApprovalIds) ? [id] : [];
-        }).slice(0, overflow);
-        if (evictedIds.length !== overflow) {
-          throw new ChatConflictError(chatId, Number(current.revision));
-        }
-        await trx.deleteFrom("chat_run_events").where("id", "in", evictedIds).execute();
-        removedActivityIds = evictedIds;
       }
       const latestSequence = await trx.selectFrom("chat_run_events")
         .select(({ fn }) => fn.max("run_seq").as("sequence"))
@@ -536,7 +484,10 @@ export class ChatRunLifecycleRepository {
           ...(railTransition ? { attention: railTransition.attention } : {}),
           updated_at: sql`now()`,
         }).where("id", "=", chatId).execute();
-        await this.appendOutbox(trx, owner, chatId, revision, "run.activity", { runId, activityIds, removedActivityIds });
+        await this.appendOutbox(trx, owner, chatId, revision, "run.activity", {
+          runId,
+          activityIds,
+        });
       }
       return changed;
     });
@@ -558,7 +509,7 @@ export class ChatRunLifecycleRepository {
     const createdAt = new Date(input.createdAt).toISOString();
     return this.transact(async (trx) => {
       let delta = input.delta;
-      const chat = await selectOwnedChat(trx, owner, chatId, true);
+      const chat = await selectOwnedChat(trx, owner, chatId, true, input.runId);
       if (!chat) throw new ChatNotFoundError(chatId);
       const run = await trx.selectFrom("chat_runs").selectAll()
         .where("id", "=", input.runId)
@@ -566,6 +517,7 @@ export class ChatRunLifecycleRepository {
         .forUpdate()
         .executeTakeFirst();
       if (!run) throw new ChatNotFoundError(chatId);
+      await assertPrivateRoutineRun(trx, owner, chatId, input.runId);
       if (!ACTIVE_RUNS.includes(run.status as typeof ACTIVE_RUNS[number])) {
         throw new ChatRunNotActiveError(chatId, input.runId);
       }
@@ -594,13 +546,13 @@ export class ChatRunLifecycleRepository {
           delta = input.delta.slice(persisted.length);
           if (delta.length === 0) return current;
         }
-        const combined = CanonicalChatMessagePartSchema.safeParse({
+        const combined = CanonicalChatAssistantTextPartSchema.safeParse({
           type: "text",
           text: `${last.text}${delta}`,
         });
         const parts = input.snapshot ? recoveredTextParts(input.delta) : combined.success
           ? [...textParts.slice(0, -1), combined.data]
-          : [...textParts, CanonicalChatMessagePartSchema.parse({ type: "text", text: delta })];
+          : [...textParts, CanonicalChatAssistantTextPartSchema.parse({ type: "text", text: delta })];
         next = CanonicalChatMessageSchema.parse({
           ...current,
           parts,
@@ -697,12 +649,13 @@ export class ChatRunLifecycleRepository {
       resource: { kind: "home", path: attachment.path },
     });
     return this.transact(async (trx) => {
-      const chat = await selectOwnedChat(trx, owner, chatId, true);
+      const chat = await selectOwnedChat(trx, owner, chatId, true, input.runId);
       if (!chat) throw new ChatNotFoundError(chatId);
       const run = await trx.selectFrom("chat_runs").selectAll()
         .where("id", "=", input.runId).where("chat_id", "=", chatId)
         .forUpdate().executeTakeFirst();
       if (!run) throw new ChatNotFoundError(chatId);
+      await assertPrivateRoutineRun(trx, owner, chatId, input.runId);
       if (!ACTIVE_RUNS.includes(run.status as typeof ACTIVE_RUNS[number])) {
         throw new ChatRunNotActiveError(chatId, input.runId);
       }
@@ -816,11 +769,12 @@ export class ChatRunLifecycleRepository {
     const completedAt = new Date(input.completedAt).toISOString();
     const output = input.output === undefined ? undefined : CanonicalChatMessageSchema.parse(input.output);
     return this.transact(async (trx) => {
-      const chat = await selectOwnedChat(trx, owner, CanonicalChatIdSchema.parse(input.chatId), true);
+      const chat = await selectOwnedChat(trx, owner, CanonicalChatIdSchema.parse(input.chatId), true, input.runId);
       if (!chat) throw new ChatNotFoundError(input.chatId);
       const current = await trx.selectFrom("chat_runs").selectAll()
         .where("id", "=", input.runId).where("chat_id", "=", input.chatId).forUpdate().executeTakeFirst();
       if (!current) throw new ChatNotFoundError(input.chatId);
+      if (output) await assertPrivateRoutineRun(trx, owner, input.chatId, input.runId);
       if (!ACTIVE_RUNS.includes(current.status as typeof ACTIVE_RUNS[number])) {
         return { run: toRun(current), transitioned: false };
       }

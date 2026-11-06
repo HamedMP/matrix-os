@@ -168,6 +168,8 @@ The OS is complex and self-modifying. TDD is mandatory to prevent regressions as
 - **Test isolation**: Integration tests use haiku model to keep costs under $0.10 per suite run
 - **Coverage target**: 99-100% for kernel and gateway packages. Measure with `vitest --coverage`.
 - **No implementation without a failing test**: If a test can't be written for it, question whether it's needed
+- **Effectiveness**: Follow `docs/dev/testing-effectiveness.md`. Tests must exercise production behavior and detect a named fault. Regression tests must fail with the original fault and pass with the fix; fixture/setup failures do not establish regression protection. Coverage and test counts alone do not establish a working user journey.
+- **Boundary fidelity**: Keep the producer/consumer, database, runtime, or surface boundary responsible for a failure real. Required integration/E2E lanes must fail on missing prerequisites, empty collection, or skipped required assertions. Remove tests only with evidence of no production protection or equivalent retained coverage.
 
 ### X. Worktree, PR, and Greptile 5/5 (NON-NEGOTIABLE)
 
@@ -192,9 +194,11 @@ This principle exists because PR review discipline plus an automated quality flo
 
 This constitution supersedes all other development practices for Matrix OS. Amendments require updating this file with rationale. If a principle conflicts with implementation reality (e.g., SDK limitation), document the deviation in SDK-VERIFICATION.md and propose the simplest workaround.
 
-**Version**: 2.3.0 | **Ratified**: 2026-02-11 | **Last Amended**: 2026-07-19
+**Version**: 2.4.0 | **Ratified**: 2026-02-11 | **Last Amended**: 2026-10-25
 
 ### Amendment Log
+
+- **2.4.0** (2026-10-25): Added test-effectiveness and boundary-fidelity requirements to TDD. The suite audit found tests exercising local replicas and fixtures accepting invalid production messages; require named fault detection, regression red/green evidence, real failing boundaries, and non-skipping qualification. Existing coverage targets remain unchanged. Canonical guidance: `docs/dev/testing-effectiveness.md`.
 
 - **1.1.0** (2026-02-11): Added TDD principle (VI). Changed AI Kernel from V2 to V1 `query()` with `resume` based on spike testing. Added Vitest, pnpm/bun to tech constraints.
 - **1.2.0** (2026-02-11): Added prompt caching strategy (90% input cost savings), 1M context window beta, compaction API, 99-100% test coverage target.

@@ -15,8 +15,8 @@ export function ChatAgentRailRow({agent, status, current, opening, disabled, onO
       className="matrix-chat-agent-rail-row" onClick={() => onOpen(false)}>
       <AgentAvatar id={agent.id} name={agent.name} size="small" />
       <span className="matrix-chat-agent-rail-copy"><span data-slot="chat-agent-name" className="matrix-chat-agent-rail-name" title={agent.name}>{agent.name}</span>
-        <span data-slot="chat-agent-status" className="matrix-chat-agent-rail-status" title={status?.label}>{status?.label}</span></span>
-      <span aria-hidden="true" data-slot="chat-agent-indicator" className="matrix-chat-agent-rail-indicator" data-state={status?.state}/>
+        {status ? <span data-slot="chat-agent-status" className="matrix-chat-agent-rail-status" title={status.label}>{status.label}</span> : null}</span>
+      {status ? <span aria-hidden="true" data-slot="chat-agent-indicator" className="matrix-chat-agent-rail-indicator" data-state={status.state}/> : null}
     </button>
     <DropdownMenu.Root open={menuOpen} onOpenChange={setMenuOpen}>
       <DropdownMenu.Trigger asChild><button type="button" aria-label={`Actions for ${agent.name}`} disabled={disabled} className="matrix-chat-agent-rail-more">

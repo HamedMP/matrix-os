@@ -1,4 +1,5 @@
 import {
+  chatMessageVersionUrl,
   CanonicalChatTransportFrameSchema,
   type CanonicalChatContentFrame,
   type CanonicalChatStreamEvent,
@@ -261,7 +262,7 @@ export function createCanonicalChatEventSource(options: {
     },
     connect() {
       try {
-        streamUrl = buildGatewayRequestUrl(options.gatewayUrl, "/api/chats/events", { fundingVersion: "1", commandPreviewVersion: "1" });
+        streamUrl = chatMessageVersionUrl(buildGatewayRequestUrl(options.gatewayUrl, "/api/chats/events", { fundingVersion: "1" }));
         assertSecureTokenTransport(streamUrl);
       } catch (error: unknown) {
         console.warn(

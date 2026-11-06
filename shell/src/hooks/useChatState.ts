@@ -42,11 +42,19 @@ export interface ChatState {
   browserPermissions?: BrowserPermissionClient;
   agentSummaryClient?: ChatAgentClient;
   authorityKey?: string;
+  gatewayUrl?: string;
   composerIdentity?: object;
   isCurrentAuthority?: () => boolean;
   botEventRevision?: number;
   queuedTurns?: CanonicalChatQueuedTurn[];
   cancelQueuedTurn?: (id: string) => Promise<boolean>;
+  steerQueuedTurn?: (id: string) => Promise<boolean>;
+  /** The active run accepts queued turns as same-run steering. */
+  canSteerQueuedTurns?: boolean;
+  /** The open Chat's project, or the project a new Chat will be created in. */
+  chatProjectId?: string;
+  /** Picks the project for a new Chat or moves the open Chat; resolves false when it was not saved. */
+  setChatProject?: (projectId: string | null) => Promise<boolean>;
   messages: ChatMessage[];
   sessionId: string | undefined;
   busy: boolean;
@@ -63,8 +71,11 @@ export interface ChatState {
   conversations: ReturnType<typeof useConversation>["conversations"];
   activeConversationTitle?: string;
   renameConversation?: (id: string, title: string) => Promise<boolean>;
-  composerDraftRequest: { id: number; text: string } | null;
-  requestComposerDraft: (text: string) => void;
+  /** Permanently deletes a Chat; resolves false when the server refused it. */
+  deleteConversation?: (id: string) => Promise<boolean>;
+  composerDraftRequest: { id: number; text: string; merge?: boolean } | null;
+  /** `merge` keeps the owner's own text and adds the request below it. */
+  requestComposerDraft: (text: string, options?: { merge?: boolean }) => void;
   consumeComposerDraft: (id: number) => void;
   submitMessage: (
     text: string,
@@ -85,6 +96,7 @@ export interface ChatState {
 }
 
 export interface ChatSubmitOptions {
+  onAccepted?: () => void;
   resources?: CanonicalChatResourceReference[];
   clientRequestId?: string;
   displayText?: string;
@@ -104,7 +116,7 @@ export function useChatState(): ChatState {
   const [busy, setBusy] = useState(false);
   const [currentTool, setCurrentTool] = useState<string | null>(null);
   const [queue, setQueue] = useState<QueuedMessage[]>([]);
-  const [composerDraftRequest, setComposerDraftRequest] = useState<{ id: number; text: string } | null>(null);
+  const [composerDraftRequest, setComposerDraftRequest] = useState<{ id: number; text: string; merge?: boolean } | null>(null);
   const composerDraftSequence = useRef(0);
   const { connected, connectionEpoch, subscribe, send } = useSocket();
   const { conversations, load } = useConversation();
@@ -299,8 +311,8 @@ export function useChatState(): ChatState {
     // show a "stopping..." pending state in the meantime if needed.
   }, [send]);
 
-  const requestComposerDraft = useCallback((text: string) => {
-    setComposerDraftRequest({ id: ++composerDraftSequence.current, text });
+  const requestComposerDraft = useCallback((text: string, options?: { merge?: boolean }) => {
+    setComposerDraftRequest({ id: ++composerDraftSequence.current, text, ...(options?.merge ? { merge: true } : {}) });
   }, []);
 
   const consumeComposerDraft = useCallback((id: number) => {

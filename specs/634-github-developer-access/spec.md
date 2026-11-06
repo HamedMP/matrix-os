@@ -42,7 +42,7 @@ setup-required and must not announce readiness or save identity suggestions.
 
 ## Host-Key Trust
 
-The pinned `github.com` Ed25519, ECDSA, and RSA host-key entries are copied from GitHub's official “GitHub's SSH key fingerprints” documentation and were verified on 2026-10-24. Runtime setup never downloads or trusts host keys from the network. SSH verification uses only the pinned owner-local file, strict host-key checking, no global known-hosts fallback, batch mode, one connection attempt, and a bounded connection timeout.
+The pinned `github.com` Ed25519, ECDSA, and RSA host-key entries are copied from GitHub's official “GitHub's SSH key fingerprints” documentation and were verified on 2026-11-06. Runtime setup never downloads or trusts host keys from the network. SSH verification uses only the pinned owner-local file, strict host-key checking, no global known-hosts fallback, batch mode, one connection attempt, and a bounded connection timeout.
 
 ## API Contract
 
@@ -90,4 +90,3 @@ The host bundle copies `distro/customer-vps/host-bin/matrix-github-developer-log
 - Source-control tests prove commits use configured owner identity and fail safely when it is absent or invalid.
 - A disposable VPS and private test repository must prove browser login → SSH verification → private clone → correctly attributed commit → pushed branch → PR.
 - Public docs ship separately in `FinnaAI/matrix-os-site` under ENG-380.
-

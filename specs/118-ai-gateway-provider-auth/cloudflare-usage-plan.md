@@ -1,11 +1,14 @@
 # Cloudflare-only usage metering and starter defaults
 
-Status: active. Supersedes the exact pre-count / full-context reservation approach
-for the new opt-in usage mode. Existing strict funded requests remain compatible.
+Status: active. Usage mode uses a request-grounded preflight count where the
+provider exposes a trusted counting contract, and a reviewed model ceiling only
+where it does not. Existing strict funded requests remain compatible.
 
 ## Approved product decisions
 
-- Cloudflare only: no Anthropic counting key or counting dependency for generation.
+- Cloudflare-routed only: Anthropic requests use the existing gateway
+  `count_tokens` contract without a separate Anthropic key; Workers AI has no
+  trusted preflight count and retains its reviewed model-ceiling fallback.
 - Settle real response usage; reject new requests when credit/monthly allowance is
   exhausted. One in-flight funded request per owner across runtimes and replicas.
 - Matrix absorbs the final in-flight overrun; never recover it from later user
@@ -20,10 +23,10 @@ for the new opt-in usage mode. Existing strict funded requests remain compatible
 
 ### U1: Durable usage admission and settlement (test-first)
 
-Goal: opt-in usage admission succeeds with positive remaining credit without a
-token pre-count or requiring the worst possible cost to be available. Actual
-provider cost is audited; user debit is capped at the available credit/budget
-committed for this request; excess is Matrix-funded and never customer debt.
+Goal: opt-in usage admission succeeds with positive remaining credit without
+requiring the worst possible model-context cost to be available. Actual provider
+cost is audited; user debit is capped at the available credit/budget committed
+for this request; excess is Matrix-funded and never customer debt.
 
 Own: `packages/contracts/src/funded-ai.ts`, platform metering repository and new
 extracted modules, related platform DB types/migrations if required, and focused
@@ -53,9 +56,10 @@ Own: `packages/proxy/src/funded-relay*.ts`, new proxy protocol modules, focused
 proxy tests; `.github/workflows/ai-relay-cloud-run.yml` configuration wiring.
 
 Goal: retain Anthropic Sonnet support and add `/v1/chat/completions` for the exact
-GLM Flash model through Cloudflare. Usage mode does not call count_tokens. Limit
-request bytes/output/lifetime; validate tools/messages and reject unknown fields;
-request streaming usage and settle it once. Fixed upstream origins only.
+GLM Flash model through Cloudflare. Usage-mode Sonnet calls `count_tokens` before
+authorization; Workers AI does not because it has no trusted preflight count.
+Limit request bytes/output/lifetime; validate tools/messages and reject unknown
+fields; request streaming usage and settle it once. Fixed upstream origins only.
 
 Use `MATRIX_FUNDED_AI_RESERVATION_MODE=usage` opt-in (replace unshipped model-context
 mode). Apply U1 billingMode protocol. In usage mode accept platform's positive
@@ -66,8 +70,32 @@ must stay centralized. Verify supported prepaid Workers AI route/settings in
 Cloudflare docs; no credential output. Do not change live cloud settings.
 
 Tests: synthetic GLM SSE including reasoning/tool calls/final usage, malformed or
-missing usage, duplicate events, count never called in usage mode, policy/credit
-denial before inference, caller authority stripped, safe errors and bounds.
+missing usage, duplicate events, count never called for Workers AI, request-grounded
+Sonnet admission, policy/credit denial before inference, caller authority stripped,
+safe errors and bounds.
+
+### ENG-386: Request-grounded Sonnet holds
+
+For `POST /v1/messages`, Relay MUST call the provider's bounded `count_tokens`
+endpoint after policy validation and before financial authorization. The
+authorization liability ceiling is calculated from that trusted input count,
+the validated request output cap, the current reviewed model price, the
+worst-case supported cache-write rate, and the existing safety margin. Relay
+MUST fail closed before reservation and generation when counting fails, times
+out, or returns an invalid bounded response.
+
+The count preflight reuses the existing fixed Cloudflare gateway origin,
+credential stripping, pseudonymous metadata, redirect rejection, response-size
+limit, and timeout. It adds no endpoint or auth method. Platform remains the
+transactional source of truth for the affordable hold and may reserve no more
+than Relay's request-grounded ceiling. Settlement and unresolved-usage recovery
+remain unchanged.
+
+Workers AI requests retain the reviewed model-input ceiling because no trusted
+preflight counting contract is available. Replacing that fallback requires a
+separately verified provider contract and red-first tests. Public documentation
+for the changed hold behavior is a separate `FinnaAI/matrix-os-site` PR
+deliverable.
 
 ### U3: Starter credit and shared GLM default (test-first)
 

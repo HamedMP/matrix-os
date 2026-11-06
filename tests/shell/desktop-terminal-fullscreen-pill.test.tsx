@@ -10,6 +10,7 @@ import { createShellQueryClient } from "../../shell/src/api/query-client.js";
 
 vi.mock("@clerk/nextjs", () => ({
   useAuth: () => ({ userId: null }),
+  useUser: () => ({ user: null }),
   useOrganization: () => ({ organization: null }),
   useOrganizationList: () => ({ isLoaded: false, setActive: undefined }),
 }));

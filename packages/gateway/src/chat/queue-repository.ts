@@ -1,4 +1,7 @@
+import { assertPrivateRoutineRequest, hasNonPrivateChatScope, cancelNonPrivateRoutineQueue } from "./private-routine-authority.js";
+import { listQueuedChatCandidates } from "./queued-chat-candidates.js";
 import {associateAdmittedDriveChat} from "./drive-project-database.js";
+import { releaseTerminalQueuedSteer } from "./queued-steer-cleanup.js";
 import {admittedContextReferenceParts} from "./context-reference-parts.js";
 import { chatContextRequestHash } from "./agent-context.js";
 import { queuedRunContext, validateQueuedAgentDriver } from "./queued-context.js";
@@ -553,6 +556,7 @@ export class ChatQueueRepository {
       if (chat.lifecycle !== "active") {
         throw new ChatConflictError(chatId, Number(chat.revision));
       }
+      await assertPrivateRoutineRequest(trx, owner, chatId, clientRequestId);
       if (chat.collaboration !== null) {
         throw new ChatConflictError(chatId, Number(chat.revision));
       }
@@ -652,11 +656,7 @@ export class ChatQueueRepository {
         .forUpdate()
         .executeTakeFirst();
       if (!queued) throw new ChatNotFoundError(chatId);
-      const pendingSteer = await trx.selectFrom("chat_run_steers").select("id")
-        .where("queued_turn_id", "=", queuedTurnId)
-        .where("status", "=", "pending")
-        .executeTakeFirst();
-      if (pendingSteer) throw new ChatConflictError(chatId, Number(chat.revision));
+      await releaseTerminalQueuedSteer(trx, { chatId, queuedTurnId, revision: Number(chat.revision), cancelledAt });
       if (queued.status === "cancelled") {
         return {
           queuedTurnId,
@@ -950,6 +950,13 @@ export class ChatQueueRepository {
         .orderBy("position")
         .executeTakeFirst();
       if (!candidate) return null;
+      if (candidate.client_request_id.startsWith("req_routine_") && (owner.type !== "personal"
+        || chat.collaboration !== null || await hasNonPrivateChatScope(trx, owner, chatId))) {
+        const revision = await cancelNonPrivateRoutineQueue(trx, { chatId, queuedTurnId: candidate.id,
+          position: Number(candidate.position), baseRevision: Number(chat.revision), at: claimedAt });
+        await this.appendOutbox(trx, owner, chatId, revision, "queue.cancelled", { queuedTurnId: candidate.id, position: Number(candidate.position) });
+        return null;
+      }
       if (candidate.collaboration_scope_id && candidate.id !== sharedCandidateId) return null;
       if (candidate.collaboration_scope_id && sharedAdmission === "allowed") {
         const candidateSelection = CanonicalChatModelSelectionSchema.safeParse(
@@ -1190,20 +1197,8 @@ export class ChatQueueRepository {
     });
   }
 
-  async listQueuedChatIds(ownerInput: ChatOwner, limit = MAX_QUEUED_TURNS): Promise<string[]> {
-    const owner = CanonicalOwnerScopeSchema.parse(ownerInput);
-    const boundedLimit = Math.max(1, Math.min(Math.trunc(limit), MAX_QUEUED_TURNS));
-    const rows = await this.kysely.selectFrom("chat_queued_turns as queued")
-      .innerJoin("chats as chat", "chat.id", "queued.chat_id")
-      .select("queued.chat_id")
-      .where("queued.status", "=", "queued")
-      .where("chat.owner_type", "=", owner.type)
-      .where("chat.owner_id", "=", owner.ownerId)
-      .groupBy("queued.chat_id")
-      .orderBy("queued.chat_id")
-      .limit(boundedLimit)
-      .execute();
-    return rows.map((row) => row.chat_id);
+  async listQueuedChatIds(ownerInput: ChatOwner, limit = MAX_QUEUED_TURNS, afterChatId?: string): Promise<string[]> {
+    return listQueuedChatCandidates(this.kysely, ownerInput, limit, afterChatId);
   }
 
   private async queueDepth(executor: Executor, chatId: string): Promise<number> {

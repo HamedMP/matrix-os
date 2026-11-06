@@ -254,9 +254,9 @@ describe("chat attachments", () => {
 
   it("says what was left out and why, each reason once", () => {
     expect(rejectionNotice([])).toBeNull();
-    expect(rejectionNotice(["too_large"])).toBe("1 item is larger than 5 MB.");
+    expect(rejectionNotice(["too_large"])).toBe("1 item exceeds its attachment size limit.");
     expect(rejectionNotice(["too_large", "unreadable", "too_large", "over_limit", "over_limit"]))
-      .toBe("2 items are larger than 5 MB. 1 item could not be read. A message carries up to 8 attachments.");
+      .toBe("2 items exceed their attachment size limits. 1 item could not be read. A message carries up to 8 attachments.");
     expect(rejectionNotice(["unsupported", "unsupported"])).toBe("This model cannot read 2 of the items.");
   });
 

@@ -45,7 +45,7 @@ function engine(id: string, label: string, selected = false): ModelEngine {
     label,
     logo: "matrix",
     note: null,
-    models: [{ key: `${id}::model`, name: `${label} model`, detail: label, logo: "matrix", selected, available: true }],
+    models: [{ key: `${id}::model`, name: `${label} model`, detail: label, logo: "matrix", selected, available: true, selectable: true }],
   };
 }
 

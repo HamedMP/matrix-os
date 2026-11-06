@@ -78,7 +78,7 @@ jobs:
     if: always() && (needs.redirect.result == 'success' || needs.redirect.result == 'skipped')
     name: Detect CI-relevant changes
     runs-on: ubuntu-latest
-    timeout-minutes: 3
+    timeout-minutes: 12
     outputs:
       routed: ${{ needs.redirect.outputs.routed }}
       source_sha: ${{ steps.refresh.outputs.sourceSha || github.sha }}
@@ -149,11 +149,12 @@ jobs:
               {sha:context.sha,ref:context.ref,workflowRef:process.env.CI_WORKFLOW_REF,workflowSha:process.env.CI_WORKFLOW_SHA,controllerSha:process.env.CONTROLLER_SHA},context.payload.inputs);
             core.setOutput('snapshot',JSON.stringify(source));core.setOutput('sourceSha',source.sourceSha);
       - name: Checkout with bounded retry
+        id: checkout
         if: needs.redirect.outputs.routed != 'true'
         env:
           CHECKOUT_BACKOFF_SECONDS: "5"
           CHECKOUT_MAX_ATTEMPTS: "3"
-          CHECKOUT_TIMEOUT_SECONDS: "30"
+          CHECKOUT_TIMEOUT_SECONDS: "120"
           GH_TOKEN: ${{ github.token }}
           SOURCE_SHA: ${{ steps.refresh.outputs.sourceSha || github.sha }}
         run: |
@@ -164,15 +165,25 @@ jobs:
           git init .
           git remote add origin "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY.git"
           git config --local gc.auto 0
+          # Coverage needs complete commit/tree history, but never historical blobs.
+          # Materialize only the helpers used by this classification job.
+          git config --local remote.origin.promisor true
+          git config --local remote.origin.partialclonefilter blob:none
+          git sparse-checkout set --no-cone '/scripts/ci/'
           auth_header="$(printf 'x-access-token:%s' "$GH_TOKEN" | base64 | tr -d '\n')"
 
           for attempt in $(seq 1 "$CHECKOUT_MAX_ATTEMPTS"); do
             echo "Checkout fetch attempt $attempt/$CHECKOUT_MAX_ATTEMPTS"
-            if timeout --foreground --kill-after=5s "${CHECKOUT_TIMEOUT_SECONDS}s" \
-              git -c http.extraheader="AUTHORIZATION: basic $auth_header" \
-                fetch --no-tags --prune --no-recurse-submodules \
-                origin "$SOURCE_SHA" \
-              && git checkout --force --detach "$SOURCE_SHA"; then
+            # One deadline bounds both the fetch and lazy blob hydration at checkout.
+            # Pass auth to both commands without persisting it in repository config.
+            if timeout --kill-after=5s "${CHECKOUT_TIMEOUT_SECONDS}s" \
+              bash -c '
+                set -euo pipefail
+                git -c http.extraheader="AUTHORIZATION: basic $1" \
+                  fetch --filter=blob:none --no-tags --prune --no-recurse-submodules origin "$2"
+                git -c http.extraheader="AUTHORIZATION: basic $1" checkout --force --detach "$2"
+                test "$(git rev-parse HEAD)" = "$2"
+              ' checkout "$auth_header" "$SOURCE_SHA"; then
               echo "Checkout fetch succeeded on attempt $attempt/$CHECKOUT_MAX_ATTEMPTS"
               exit 0
             fi
@@ -261,7 +272,7 @@ jobs:
           if-no-files-found: error
           retention-days: 1
       - name: Clean temporary main coverage decision
-        if: always() && github.event_name == 'push' && github.ref == 'refs/heads/main'
+        if: always() && steps.checkout.outcome == 'success' && github.event_name == 'push' && github.ref == 'refs/heads/main'
         run: node scripts/ci/main-ci-decision.mjs --cleanup
 
   isolated-ci-backend:
@@ -710,11 +721,11 @@ jobs:
     needs: [changes, ci-backend]
     if: always() && needs.changes.result == 'success' && needs.changes.outputs.should_run == 'true' && (needs.changes.outputs.dedicated_eligible != 'true' || needs.ci-backend.outputs.provider == 'hosted')
     runs-on: ubuntu-latest
-    # Shard 4 has outgrown the previous ceilings: run 35911423904 hit 20 minutes,
-    # and main run 37587908679 hit 30 minutes without a failing assertion. Keep a
-    # bounded 40-minute window for runner variance and cleanup; split the shards if
-    # normal runs approach this ceiling too.
-    timeout-minutes: 40
+    # Full-source runs 41831133861/41831147916/41831159991/41831164971
+    # exhausted 40m on shard 1 while assertions kept passing. Allow collection,
+    # runner variance and cleanup within a bounded 55m window; test deadlines
+    # and required shards stay unchanged. Rebalance if normal runs approach it.
+    timeout-minutes: 55
     strategy:
       fail-fast: false
       matrix:
@@ -830,7 +841,9 @@ jobs:
     needs: changes
     if: always() && !cancelled() && needs.changes.result == 'success' && (needs.changes.outputs.should_run == 'true')
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    # Run 41831154874 finished every PG batch but exhausted 14m during cache
+    # cleanup. Keep the 120s runner budget and allow bounded job-level headroom.
+    timeout-minutes: 20
     services:
       postgres:
         # ECR Public anonymous pulls hit "toomanyrequests: Data limit exceeded" on shared runner IPs,
@@ -869,7 +882,7 @@ jobs:
         run: |
           set -euo pipefail
           : "${MATRIX_TEST_POSTGRES_URL:?Disposable PostgreSQL test URL required}"
-          pnpm exec vitest run tests/platform/ai-funded-usage-postgres.test.ts tests/platform/ai-funded-model-probes-postgres.test.ts tests/platform/ai-funded-recovery-migration.test.ts tests/platform/ai-funded-terminal-concurrency.test.ts tests/platform/ai-funded-usage-waiver.test.ts tests/platform/ai-funded-usage-waiver-cli.test.ts tests/platform/ai-funded-usage-waiver-locks-postgres.test.ts --maxWorkers=1 --no-file-parallelism
+          pnpm exec vitest run tests/platform/ai-funded-usage-postgres.test.ts tests/platform/ai-funded-model-probes-postgres.test.ts tests/platform/ai-funded-recovery-migration.test.ts tests/platform/ai-funded-terminal-concurrency.test.ts tests/platform/ai-funded-usage-waiver.test.ts tests/platform/ai-funded-usage-waiver-cli.test.ts tests/platform/ai-funded-usage-waiver-locks-postgres.test.ts tests/platform/ai-funded-postpaid-postgres.test.ts tests/platform/speech-postpaid-postgres.test.ts tests/platform/ai-funded-conservative-fence-postgres.test.ts --maxWorkers=1 --no-file-parallelism
 
       - name: Verify reviewed paid starter recovery on PostgreSQL
         run: |
@@ -897,12 +910,50 @@ jobs:
           : "${MATRIX_TEST_POSTGRES_URL:?Disposable PostgreSQL test URL required}"
           pnpm exec vitest run tests/gateway/browser-approval-repository.test.ts --maxWorkers=1 --no-file-parallelism
 
+      - name: Routine migration and deployed-history PostgreSQL contracts
+        run: |
+          : "${MATRIX_TEST_POSTGRES_URL:?Disposable PostgreSQL test URL required}"
+          pnpm exec vitest run tests/gateway/bots/deployed-v9-schema-postgres.test.ts tests/gateway/bots/routine-migration-postgres.test.ts tests/gateway/bots/v9-dual-history-postgres.test.ts tests/gateway/bots/v9-dual-history-upgrade.test.ts --maxWorkers=1 --no-file-parallelism
+
+      - name: Routine lifecycle PostgreSQL races
+        run: |
+          : "${MATRIX_TEST_POSTGRES_URL:?Disposable PostgreSQL test URL required}"
+          pnpm exec vitest run tests/gateway/bots/deployed-v9-entry-postgres.test.ts tests/gateway/bots/routine-concurrency-postgres.test.ts tests/gateway/bots/routine-fencing-postgres.test.ts tests/gateway/bots/routine-recovery-postgres.test.ts tests/gateway/bots/thread-guard-postgres.test.ts --maxWorkers=1 --no-file-parallelism
+
+      - name: Routine acceptance capture and preflight contracts
+        run: node --test tests/gateway/bots/routine-acceptance-capture.test.mjs tests/gateway/bots/routine-acceptance-preflight.test.mjs
+
+      - name: Build exact-source routine process qualification artifact
+        run: |
+          node scripts/testing/build-routine-validation.mjs "$RUNNER_TEMP/eng93-routine-validation"
+          echo "MATRIX_ROUTINE_PROCESS_BUILD=$RUNNER_TEMP/eng93-routine-validation" >> "$GITHUB_ENV"
+
+      - name: Routine built-process PostgreSQL qualification
+        run: |
+          : "${MATRIX_TEST_POSTGRES_URL:?Disposable PostgreSQL test URL required}"
+          : "${MATRIX_ROUTINE_PROCESS_BUILD:?Exact-source process artifact required}"
+          pnpm exec vitest run tests/gateway/bots/routine-process-postgres.test.ts --maxWorkers=1 --no-file-parallelism
+
+      - name: Qualify remaining real PostgreSQL suites
+        run: node scripts/ci/remaining-postgres.mjs
+
+      - name: Upload remaining PostgreSQL qualification
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: remaining-postgres-qualification
+          path: output/ci/remaining-postgres/*.json
+          if-no-files-found: error
+          retention-days: 7
+
   collaboration-postgres:
     name: Collaboration PostgreSQL
     needs: changes
     if: always() && !cancelled() && needs.changes.result == 'success' && (needs.changes.outputs.should_run == 'true')
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    # The expanded preview-pair inventory exceeded the old 10m budget;
+    # retain qualification, evidence-upload and cleanup margin.
+    timeout-minutes: 30
     services:
       postgres:
         # ECR Public anonymous pulls hit "toomanyrequests: Data limit exceeded" on shared runner IPs,
@@ -1028,8 +1079,10 @@ jobs:
     name: E2E Tests (${{ matrix.lane }})
     needs: [changes, ci-backend]
     if: always() && needs.changes.result == 'success' && needs.changes.outputs.should_run == 'true' && (needs.changes.outputs.dedicated_eligible != 'true' || needs.ci-backend.outputs.provider == 'hosted')
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
+    # Playwright 1.60 cannot install Chromium on the Ubuntu 26.04 image now
+    # selected by ubuntu-latest. Keep browser-dependent lanes on 24.04.
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
     env:
       LANG: C.UTF-8
       LC_ALL: C.UTF-8
@@ -1069,6 +1122,10 @@ jobs:
 
       - run: pnpm install --frozen-lockfile
         if: needs.changes.outputs.should_run == 'true'
+
+      - name: Build node-pty for E2E runtime
+        if: needs.changes.outputs.should_run == 'true'
+        run: node scripts/build-node-pty.mjs
 
       - name: Build test prerequisites once
         run: bun run test:prepare
@@ -1119,6 +1176,28 @@ jobs:
           DESKTOP_SOURCE_SHA: ${{ needs.changes.outputs.source_sha || github.sha }}
         run: GITHUB_SHA="$DESKTOP_SOURCE_SHA" bun run build:desktop
 
+      - name: Run required Desktop account organization picker
+        if: needs.changes.outputs.should_run == 'true' && matrix.lane == 'electron'
+        env:
+          MATRIX_DESKTOP_E2E_REQUIRED: "1"
+        run: xvfb-run --auto-servernum bun run test:e2e:run -- tests/e2e/desktop/account-organization-picker.e2e.test.ts
+
+      - name: Run required collaboration preview pair
+        if: needs.changes.outputs.should_run == 'true' && matrix.lane == 'electron'
+        env:
+          MATRIX_DESKTOP_E2E_REQUIRED: "1"
+          MATRIX_PREVIEW_PAIR_EVIDENCE_DIR: output/playwright/preview-pair
+        run: xvfb-run --auto-servernum bun run test:e2e:run -- tests/e2e/desktop/preview-pair.e2e.test.ts --maxWorkers=1
+
+      - name: Upload collaboration preview pair evidence
+        if: always() && needs.changes.outputs.should_run == 'true' && matrix.lane == 'electron'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: desktop-preview-pair-evidence
+          path: output/playwright/preview-pair
+          if-no-files-found: error
+          retention-days: 7
+
       - name: Run required Desktop file download regression
         if: needs.changes.outputs.should_run == 'true' && matrix.lane == 'electron'
         env:
@@ -1130,6 +1209,21 @@ jobs:
         env:
           MATRIX_DESKTOP_E2E_REQUIRED: "1"
         run: xvfb-run --auto-servernum bun run test:e2e:run -- tests/e2e/desktop/canonical-input.e2e.test.ts
+
+      - name: Run required Electron Desktop large Chat regression
+        if: needs.changes.outputs.should_run == 'true' && matrix.lane == 'electron'
+        env:
+          MATRIX_DESKTOP_E2E_REQUIRED: "1"
+        run: xvfb-run --auto-servernum bun run test:e2e:run -- tests/e2e/desktop/chat-large-transcript.e2e.test.ts
+
+      - name: Upload Electron Desktop large Chat evidence
+        if: always() && needs.changes.outputs.should_run == 'true' && matrix.lane == 'electron'
+        uses: actions/upload-artifact@v7
+        with:
+          name: desktop-large-chat-evidence
+          path: output/chat-large-transcript/
+          if-no-files-found: ignore
+          retention-days: 14
 
       - name: Upload Desktop Chat input evidence
         if: always() && needs.changes.outputs.should_run == 'true' && matrix.lane == 'electron'
@@ -1145,8 +1239,9 @@ jobs:
         env:
           MATRIX_DESKTOP_E2E_REQUIRED: "1"
           MATRIX_PROVIDER_AUTH_ELECTRON: "1"
+          MATRIX_BUILD_SHA: ${{ needs.changes.outputs.source_sha || github.sha }}
           MATRIX_SETTINGS_EVIDENCE_DIR: output/playwright/settings-providers
-        run: xvfb-run --auto-servernum bun run test:e2e:run -- tests/e2e/provider-authorization-electron.e2e.test.ts tests/e2e/desktop/provider-auth-terminal.e2e.test.ts tests/e2e/desktop/agents-providers-figma.e2e.test.ts tests/e2e/desktop/agents-providers-button-contrast.e2e.test.ts tests/e2e/desktop/provider-settings-idle.e2e.test.ts
+        run: xvfb-run --auto-servernum bun run test:e2e:run -- tests/e2e/provider-authorization-electron.e2e.test.ts tests/e2e/desktop/provider-auth-terminal.e2e.test.ts tests/e2e/desktop/agents-providers-figma.e2e.test.ts tests/e2e/desktop/agents-providers-button-contrast.e2e.test.ts tests/e2e/desktop/provider-settings-idle.e2e.test.ts tests/e2e/desktop/claude-legacy-connection.e2e.test.ts
 
       - name: Upload Desktop provider auth evidence
         if: always() && needs.changes.outputs.should_run == 'true' && matrix.lane == 'electron'
