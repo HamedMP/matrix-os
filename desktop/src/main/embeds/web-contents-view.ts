@@ -30,9 +30,14 @@ export function shouldAuthorizeSharedAppRequest(input: {
   try {
     const request = new URL(input.requestUrl);
     const gateway = new URL(input.gatewayOrigin);
-    if (request.origin !== gateway.origin) return false;
     const scope = encodeURIComponent(input.scopeId);
     const app = encodeURIComponent(input.appId);
+    const websocketOrigin = `${gateway.protocol === "https:" ? "wss:" : "ws:"}//${gateway.host}`;
+    if (request.protocol === "ws:" || request.protocol === "wss:") {
+      return request.origin === websocketOrigin && input.method === "GET" && input.mainFrame
+        && request.pathname === `/ws/collaboration/direct/scopes/${scope}/events`;
+    }
+    if (request.origin !== gateway.origin) return false;
     if (input.method === "GET" && input.mainFrame && request.pathname === `/shared/app/${scope}`) return true;
     if (input.method === "GET" && request.pathname === "/api/collaboration/shared-apps") return true;
     if (input.method === "POST" && request.pathname === "/api/collaboration/connections") return true;
