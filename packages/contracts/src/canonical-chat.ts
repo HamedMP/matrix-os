@@ -1,3 +1,4 @@
+import { RoutineChatReceiptPartSchema } from "#routine-chat-receipt";
 import { BrowserApprovalLifecycleSchema, BrowserGrantViewSchema } from "#browser-chat-approval";
 import { CanonicalChatCommandPreviewSchema } from "#command-preview";
 export { CanonicalChatCommandPreviewSchema } from "#command-preview";
@@ -279,6 +280,7 @@ export const CanonicalChatApprovalDecisionSchema = z.enum([
 ]);
 
 export const CanonicalChatMessagePartSchema = z.discriminatedUnion("type", [
+  RoutineChatReceiptPartSchema,
   ImportedChatProvenancePartSchema,
   ImportedChatReferencePartSchema,
   z.object({
@@ -371,6 +373,9 @@ export const CanonicalChatMessageSchema = z.object({
 }).strict().superRefine((message, ctx) => {
   if (canonicalEncodedByteLength(message) > 128 * 1024) {
     ctx.addIssue({ code: "custom", path: ["parts"], message: "Message exceeds encoded byte limit" });
+  }
+  if (message.parts.some(part => part.type === "routine_receipt") && (message.role !== "system" || message.state !== "committed" || message.runId !== undefined || message.turnId !== undefined)) {
+    ctx.addIssue({ code: "custom", path: ["parts"], message: "Routine receipts require a committed server system message" });
   }
   if (message.role === "user") {
     message.parts.forEach((part, index) => {

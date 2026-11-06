@@ -241,10 +241,16 @@ export interface BotDatabase {
   bot_chat_bindings: BotChatBindingsTable;
   bot_agent_sessions: BotAgentSessionsTable;
   bot_tasks: BotTasksTable;
+  routine_chat_deliveries: {
+    owner_id: string; source_chat_id: string; routine_id: string; fire_id: string; attempt: number; kind: "status" | "output";
+    message_id: string; receipt: Json<import("@matrix-os/contracts").RoutineChatReceiptPart>; created_at: Timestamp;
+  };
   bot_routines: {
     routine_id: string; owner_id: string; bot_id: string; chat_id: string;
     proposal: Json<import("@matrix-os/contracts").BotRoutineProposal>;
     approved_source: Json<import("./routine-authorization.js").RoutineAuthorization> | null; approval_id: string | null;
+    origin_computer_id: ColumnType<string | null, string | null | undefined, string | null>;
+    origin_request_id: ColumnType<string | null, string | null | undefined, string | null>;
     status: import("@matrix-os/contracts").BotRoutineStatus;
     next_fire_at: NullableTimestamp; revision: Revision; created_at: Timestamp; updated_at: Timestamp;
   };
