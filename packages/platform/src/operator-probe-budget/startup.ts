@@ -6,8 +6,8 @@ import { configureOperatorProbes } from './adapter.js';
 
 /** Compose both sides of the source Platform from one configured wallet. */
 export function createConfiguredProbeServices(db: PlatformDB, repository: AiFundedPolicyRepository,
-  relayControlToken: string, env = process.env) {
-  const operator = configureOperatorProbes(env, db, relayControlToken);
+  relayControlToken: string, platformDatabaseUrl: string, env = process.env) {
+  const operator = configureOperatorProbes(env, platformDatabaseUrl, relayControlToken);
   return {
     probes: createFundedModelProbeService({ db, operator, credentials: repository,
       relayBaseUrl: env.MATRIX_FUNDED_AI_RELAY_URL, relayControlToken, ...loadFundedModelProbeLimits(env) }),

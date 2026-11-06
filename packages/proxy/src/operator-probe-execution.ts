@@ -14,7 +14,7 @@ export function createOperatorProbeExecutor(config: FundedRelayConfig, fetchFn: 
   const control = createOperatorProbeControlClient(config, fetchFn);
   const active = new Set<Promise<void>>();
   const shutdown = new AbortController();
-  async function execute({ model, probeId, protocolVersion }: z.infer<typeof OperatorProbeRequestSchema>, caller: AbortSignal) {
+  async function execute({ model, probeId, protocolVersion, walletBinding }: z.infer<typeof OperatorProbeRequestSchema>, caller: AbortSignal) {
     const policy = operatorProbePolicy(model, now(), config.pricingReviews);
     const executionId = randomUUID();
     const providerReferenceHash = createHmac('sha256', config.metadataSecret)
@@ -36,10 +36,10 @@ export function createOperatorProbeExecutor(config: FundedRelayConfig, fetchFn: 
     }
     const signal = AbortSignal.any([caller, shutdown.signal]);
     signal.throwIfAborted();
-    const grant = await control.begin({ protocolVersion, probeId, executionId, policy });
+    const grant = await control.begin({ protocolVersion, probeId, executionId, policy }, walletBinding);
     if (!grant.dispatchGranted) return;
     const { attempt } = grant;
-    if (attempt.probeId !== probeId || attempt.executionId !== executionId || attempt.status !== 'started'
+    if (attempt.walletBinding !== walletBinding || attempt.probeId !== probeId || attempt.executionId !== executionId || attempt.status !== 'started'
       || attempt.receipt !== null || !isDeepStrictEqual(policy, attempt.policy)) throw new Error('Invalid probe grant');
     let evidence: Pick<OperatorProbeFinalizeInput, 'outcome' | 'usage'> = { outcome: 'unknown', usage: null };
     let providerLogId: string | undefined;
@@ -55,7 +55,7 @@ export function createOperatorProbeExecutor(config: FundedRelayConfig, fetchFn: 
     }
     // An independent control deadline preserves known expense after caller disconnect.
     await control.finalize({ protocolVersion, probeId, executionId, economicHash: attempt.economicHash,
-      ...evidence, providerReferenceHash, ...(providerLogId ? { providerLogId } : {}) });
+      ...evidence, providerReferenceHash, ...(providerLogId ? { providerLogId } : {}) }, walletBinding);
   }
   return {
     async run(input: z.infer<typeof OperatorProbeRequestSchema>, signal: AbortSignal) {

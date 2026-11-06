@@ -1,3 +1,4 @@
+import { z } from 'zod/v4';
 import { createHash } from 'node:crypto';
 import { sql, type Kysely, type Transaction } from 'kysely';
 import {
@@ -18,6 +19,7 @@ function canonical(value: unknown): string {
 }
 function hash(value: unknown) { return createHash('sha256').update(canonical(value)).digest('hex'); }
 interface WalletRow {
+  instance_nonce: string;
   config: OperatorProbeBudgetConfig; config_hash: string; held_microusd: string;
   settled_microusd: string; frozen: boolean; attempt_count: number;
 }
@@ -38,9 +40,15 @@ export function createOperatorProbeBudgetRepository<DB extends OperatorProbeData
   const { db, budgetId } = options;
   if (!budgetId || budgetId.length > 160) throw new Error('Operator probe budget configuration is required');
   const now = options.now ?? (() => new Date());
-  async function wallet(tx: Transaction<DB>) {
+  const nonce = z.uuidv4();
+  function binding(row: WalletRow) {
+    if (!nonce.safeParse(row.instance_nonce).success) throw new OperatorProbeBudgetError('unavailable');
+    return hash(['operator-wallet-instance-v1', budgetId, row.instance_nonce]);
+  }
+  async function wallet(tx: Transaction<DB>, expectedBinding?: string) {
     const result = await sql<WalletRow>`SELECT * FROM operator_probe_wallets WHERE budget_id=${budgetId} FOR UPDATE`.execute(tx);
     if (!result.rows[0]) throw new OperatorProbeBudgetError('unavailable');
+    if (expectedBinding !== undefined && expectedBinding !== binding(result.rows[0])) throw new OperatorProbeBudgetError('conflict');
     return result.rows[0];
   }
   async function attempt(connection: Kysely<DB>, probeId: string) {
@@ -48,12 +56,26 @@ export function createOperatorProbeBudgetRepository<DB extends OperatorProbeData
       WHERE budget_id=${budgetId} AND probe_id=${probeId}`.execute(connection);
     return result.rows[0]?.attempt ?? null;
   }
+  // Includes acquisition time. Reject an expired transaction before work or commit; SQL timeouts
+  // on the service pool bound individual waits. An error here rolls back all economic writes.
+  function mutation<T>(work: (tx: Transaction<DB>) => Promise<T>) {
+    const deadline = performance.now() + 2500;
+    const check = () => {
+      if (performance.now() >= deadline) throw new OperatorProbeBudgetError('unavailable');
+    };
+    return db.transaction().execute(async tx => {
+      check();
+      const result = await work(tx);
+      check();
+      return result;
+    });
+  }
   return {
-    async begin(raw) {
+    async begin(raw, expectedBinding) {
       const input = OperatorProbeBeginSchema.parse(raw);
       const economicHash = hash({ protocolVersion: input.protocolVersion, policy: input.policy });
-      return db.transaction().execute(async tx => {
-        const row = await wallet(tx);
+      return mutation(async tx => {
+        const row = await wallet(tx, expectedBinding);
         const existing = await attempt(tx, input.probeId);
         if (existing) {
           if (existing.economicHash !== economicHash) throw new OperatorProbeBudgetError('conflict');
@@ -68,7 +90,7 @@ export function createOperatorProbeBudgetRepository<DB extends OperatorProbeData
           || BigInt(row.held_microusd) + BigInt(row.settled_microusd) + BigInt(row.config.historicalReserveMicrousd) + hold > BigInt(row.config.allocationMicrousd)) {
           throw new OperatorProbeBudgetError('unavailable');
         }
-        const created: OperatorProbeAttempt = { protocolVersion: 1, probeId: input.probeId, executionId: input.executionId,
+        const created: OperatorProbeAttempt = { protocolVersion: 1, walletBinding: binding(row), probeId: input.probeId, executionId: input.executionId,
           policy, economicHash, status: 'started', startedAt: timestamp.toISOString(), receipt: null };
         await sql`UPDATE operator_probe_wallets SET held_microusd=held_microusd+${hold.toString()}::bigint,
           attempt_count=attempt_count+1 WHERE budget_id=${budgetId}`.execute(tx);
@@ -77,10 +99,10 @@ export function createOperatorProbeBudgetRepository<DB extends OperatorProbeData
         return { dispatchGranted: true, attempt: created };
       });
     },
-    async finalize(raw) {
+    async finalize(raw, expectedBinding) {
       const input = OperatorProbeFinalizeSchema.parse(raw), payloadHash = hash(input);
-      return db.transaction().execute(async tx => {
-        await wallet(tx);
+      return mutation(async tx => {
+        await wallet(tx, expectedBinding);
         const existing = await attempt(tx, input.probeId);
         if (!existing || existing.executionId !== input.executionId || existing.economicHash !== input.economicHash) {
           throw new OperatorProbeBudgetError('conflict');
@@ -131,7 +153,7 @@ export function createOperatorProbeBudgetRepository<DB extends OperatorProbeData
       const result = await sql<WalletRow>`SELECT * FROM operator_probe_wallets WHERE budget_id=${budgetId}`.execute(db);
       const row = result.rows[0];
       if (!row) return null;
-      return { ...row.config, heldMicrousd: Number(row.held_microusd), settledMicrousd: Number(row.settled_microusd),
+      return { ...row.config, walletBinding: binding(row), heldMicrousd: Number(row.held_microusd), settledMicrousd: Number(row.settled_microusd),
         frozen: row.frozen, attemptCount: row.attempt_count,
         availableMicrousd: Number(BigInt(row.config.allocationMicrousd) - BigInt(row.config.historicalReserveMicrousd)
           - BigInt(row.held_microusd) - BigInt(row.settled_microusd)) };

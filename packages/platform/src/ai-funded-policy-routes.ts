@@ -1,4 +1,4 @@
-import { OperatorProbeBeginSchema, OperatorProbeFinalizeSchema, type OperatorProbeBudgetStore } from "@matrix-os/contracts/funded-operator-probe";
+import { BoundOperatorBegin, BoundOperatorFinalize, type OperatorProbeBudgetStore } from "@matrix-os/contracts/funded-operator-probe";
 import {
   FundedAiAuthorizationRequestSchema,
   FundedAiTerminalOutcomeRequestSchema, FundedAiExecutionRecoveryBatchRequestSchema,
@@ -627,15 +627,17 @@ export function createAiFundedRelayRoutes(options: {
   if (options.operatorStore) {
     const store = options.operatorStore;
     app.post("/operator-probe/begin", bodyLimit({ maxSize: RELAY_BODY_LIMIT }), async c => {
-      const request = OperatorProbeBeginSchema.safeParse(await readStrictJson(c));
+      const request = BoundOperatorBegin.safeParse(await readStrictJson(c));
       if (!request.success || new URL(c.req.url).search) return c.json(safeError("invalid_request"), 400);
-      try { return c.json(await store.begin(request.data)); }
+      const { walletBinding, operation } = request.data;
+      try { return c.json({ walletBinding, result: await store.begin(operation, walletBinding) }); }
       catch (error) { return policyErrorResponse(c, error); }
     });
     app.post("/operator-probe/finalize", bodyLimit({ maxSize: RELAY_BODY_LIMIT }), async c => {
-      const request = OperatorProbeFinalizeSchema.safeParse(await readStrictJson(c));
+      const request = BoundOperatorFinalize.safeParse(await readStrictJson(c));
       if (!request.success || new URL(c.req.url).search) return c.json(safeError("invalid_request"), 400);
-      try { return c.json(await store.finalize(request.data)); }
+      const { walletBinding, operation } = request.data;
+      try { return c.json({ walletBinding, result: await store.finalize(operation, walletBinding) }); }
       catch (error) { return policyErrorResponse(c, error); }
     });
   }

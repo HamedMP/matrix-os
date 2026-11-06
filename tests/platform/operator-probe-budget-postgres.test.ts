@@ -114,20 +114,22 @@ describe.skipIf(!process.env.MATRIX_TEST_POSTGRES_URL)('lifetime operator wallet
     const service = await authority();
     const origin = `http://127.0.0.1:${service.port}/ai/operator-probe-budget`;
     const headers = { authorization: `Bearer ${'s'.repeat(32)}` };
+    const walletBinding = (await store().getStatus())!.walletBinding;
+    const wire = (operation: unknown) => JSON.stringify({ walletBinding, operation });
     try {
       for (const invalid of [-1, 1.5, '10000001']) {
         const rejected = await fetch(`${origin}/finalize`, { method: 'POST', headers,
-          body: JSON.stringify({ ...finalize(attempt), usage: { ...usage, [bucket]: invalid } }), signal: AbortSignal.timeout(5000), redirect: 'error' });
+          body: wire({ ...finalize(attempt), usage: { ...usage, [bucket]: invalid } }), signal: AbortSignal.timeout(5000), redirect: 'error' });
         expect(rejected.status).toBe(400);
       }
       expect(await store().getStatus()).toMatchObject({ frozen: false, heldMicrousd: policy.maximumCostMicrousd });
       const response = await fetch(`${origin}/finalize`, { method: 'POST', headers,
-        body: JSON.stringify({ ...finalize(attempt), outcome: 'unknown', usage: { ...usage, [bucket]: bucket === 'inputTokens' ? 10_000_001 : Number.MAX_SAFE_INTEGER } }),
+        body: wire({ ...finalize(attempt), outcome: 'unknown', usage: { ...usage, [bucket]: bucket === 'inputTokens' ? 10_000_001 : Number.MAX_SAFE_INTEGER } }),
         signal: AbortSignal.timeout(5000), redirect: 'error' });
-      expect(response.status).toBe(200); expect(await response.json()).toMatchObject({ status: 'discrepancy' });
+      expect(response.status).toBe(200); expect(await response.json()).toMatchObject({ walletBinding, result: { status: 'discrepancy' } });
       expect((await store().getAttempt(attempt.probeId))?.status).toBe('discrepancy');
       expect(await store().getStatus()).toMatchObject({ frozen: true, heldMicrousd: policy.maximumCostMicrousd, settledMicrousd: 0 });
-      const next = await fetch(`${origin}/begin`, { method: 'POST', headers, body: JSON.stringify(beginInput()), signal: AbortSignal.timeout(5000), redirect: 'error' });
+      const next = await fetch(`${origin}/begin`, { method: 'POST', headers, body: wire(beginInput()), signal: AbortSignal.timeout(5000), redirect: 'error' });
       expect(next.status).toBe(503);
     } finally { await service.close(); }
   });
@@ -228,5 +230,65 @@ describe.skipIf(!process.env.MATRIX_TEST_POSTGRES_URL)('lifetime operator wallet
       expect((await sql<{ generation: number }>`SELECT generation FROM platform_schema_revisions WHERE scope='core'`.execute(db)).rows[0].generation).toBe(Math.max(generation, PLATFORM_SCHEMA_REVISION.generation));
     }
     await seed(); expect((await store().begin(beginInput())).dispatchGranted).toBe(true);
+  });
+});
+
+describe.skipIf(!process.env.MATRIX_TEST_POSTGRES_URL)('operator store instance and lock isolation', () => {
+  it('preserves the immutable binding when migrating populated wallets and replaying initialization', async () => {
+    const f = await postgresFixture();
+    try {
+      const db = f.connect();
+      await runOperatorProbeBudgetMigrations(db);
+      await initializeOperatorProbeBudget(db, config);
+      const repo = createOperatorProbeBudgetRepository({ db, budgetId: config.budgetId, now: () => new Date('2026-11-06') });
+      const started = await repo.begin(beginInput());
+      // Task 1 attempts lack walletBinding. Preserve their historical JSON and the original held amount.
+      await sql`UPDATE operator_probe_attempts SET attempt=attempt-'walletBinding'`.execute(db);
+      const previous = await repo.getAttempt(started.attempt.probeId);
+      const before = await repo.getStatus();
+      // Recreate the accepted Task 1 schema/marker without touching existing economic data.
+      await sql`ALTER TABLE operator_probe_wallets DROP COLUMN IF EXISTS instance_nonce CASCADE`.execute(db);
+      await expect(repo.getStatus()).rejects.toThrow(); // A stale schema must never derive binding from budget ID alone.
+      await sql`UPDATE platform_schema_revisions SET generation=1, fingerprint='operator-probe-lifetime-wallet-v1' WHERE scope='operator-probe-budget'`.execute(db);
+      await runOperatorProbeBudgetMigrations(db);
+      const migrated = await repo.getStatus();
+      expect(migrated?.walletBinding).toMatch(/^[0-9a-f]{64}$/);
+      expect(migrated).toEqual({ ...before, walletBinding: migrated!.walletBinding });
+      expect(await repo.getAttempt(started.attempt.probeId)).toEqual(previous);
+      await runOperatorProbeBudgetMigrations(db); await initializeOperatorProbeBudget(db, config);
+      expect((await repo.getStatus())?.walletBinding).toBe(migrated!.walletBinding);
+      await expect(sql`UPDATE operator_probe_wallets SET instance_nonce=gen_random_uuid()`.execute(db)).rejects.toThrow();
+    } finally { await f.destroy(); }
+  });
+  it('does not consume ordinary connections, wait for held locks at shutdown or leave a late reservation', async () => {
+    const { createPlatformDb } = await import('../../packages/platform/src/db.js');
+    const { configureOperatorProbes } = await import('../../packages/platform/src/operator-probe-budget/adapter.js');
+    const f = await postgresFixture(), db = createPlatformDb(f.databaseUrl);
+    const release = Promise.withResolvers<void>(), locked = Promise.withResolvers<void>();
+    let blocking: Promise<unknown> | undefined;
+    try {
+      await db.ready; const admin = f.connect();
+      const admission = { ...beginInput(), policy: { ...policy } };
+      admission.policy.pricingValidThrough = new Date(Date.now() + 120_000).toISOString();
+      await initializeOperatorProbeBudget(admin, { ...config, policies: [admission.policy], expiresAt: admission.policy.pricingValidThrough });
+      const placement = configureOperatorProbes({ MATRIX_FUNDED_AI_OPERATOR_PROBE_RELAY_URL: 'http://127.0.0.1:1123',
+        MATRIX_FUNDED_AI_OPERATOR_PROBE_BUDGET_ID: config.budgetId }, f.databaseUrl, 't'.repeat(32))!;
+      const binding = (await placement.store.getStatus())?.walletBinding;
+      blocking = admin.transaction().execute(async tx => {
+        await sql`SELECT * FROM operator_probe_wallets FOR UPDATE`.execute(tx); locked.resolve(); await release.promise;
+      });
+      await locked.promise;
+      const attempts = Promise.allSettled(Array.from({ length: 16 }, () => placement.store.begin({ ...admission, probeId: randomUUID() }, binding)));
+      await new Promise(resolve => setTimeout(resolve, 100));
+      const ordinary = sql`SELECT 1 AS ok`.execute(db.executor);
+      try {
+        expect(await Promise.race([ordinary.then(() => 'served'), new Promise(resolve => setTimeout(() => resolve('starved'), 650))])).toBe('served');
+        expect((await attempts).every(result => result.status === 'rejected')).toBe(true);
+        expect(await Promise.race([placement.close().then(() => 'closed'), new Promise(resolve => setTimeout(() => resolve('stalled'), 650))])).toBe('closed');
+        expect((await sql`SELECT 1 AS ok`.execute(db.executor)).rows[0]).toEqual({ ok: 1 });
+      } finally { release.resolve(); await attempts; await placement.close(); }
+      await blocking;
+      expect((await sql`SELECT attempt_count,held_microusd FROM operator_probe_wallets`.execute(admin)).rows[0]).toMatchObject({ attempt_count: 0, held_microusd: '0' });
+    } finally { release.resolve(); await blocking; await db.destroy(); await f.destroy(); }
   });
 });

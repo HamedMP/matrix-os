@@ -67,19 +67,27 @@ export const OperatorProbeReceiptSchema = z.strictObject({
   providerReferenceHash: OperatorProbeHashSchema.nullable(), providerLogId, finalizedAt: z.iso.datetime(),
 });
 export type OperatorProbeReceipt = z.infer<typeof OperatorProbeReceiptSchema>;
-export const OperatorProbeAttemptSchema = OperatorProbeBeginSchema.extend({ economicHash: OperatorProbeHashSchema,
+export const OperatorProbeAttemptSchema = OperatorProbeBeginSchema.extend({ walletBinding: OperatorProbeHashSchema.optional(), economicHash: OperatorProbeHashSchema,
   status: z.enum(['started', 'unknown', 'settled', 'discrepancy']), startedAt: z.iso.datetime(),
   receipt: OperatorProbeReceiptSchema.nullable() });
 export type OperatorProbeAttempt = z.infer<typeof OperatorProbeAttemptSchema>;
 export const OperatorProbeGrantSchema = z.strictObject({ dispatchGranted: z.boolean(), attempt: OperatorProbeAttemptSchema });
 export const OperatorProbeBudgetStatusSchema = OperatorProbeBudgetConfigSchema.safeExtend({
-  heldMicrousd: amount, settledMicrousd: amount, frozen: z.boolean(), attemptCount: amount, availableMicrousd: amount,
+  walletBinding: OperatorProbeHashSchema, heldMicrousd: amount, settledMicrousd: amount, frozen: z.boolean(), attemptCount: amount, availableMicrousd: amount,
 });
 export type OperatorProbeBudgetStatus = z.infer<typeof OperatorProbeBudgetStatusSchema>;
-export const OperatorProbeRequestSchema = z.strictObject({ protocolVersion: z.literal(1), probeId: z.uuid(), model: identifier });
+export const OperatorProbeRequestSchema = z.strictObject({ protocolVersion: z.literal(1), probeId: z.uuid(), model: identifier, walletBinding: OperatorProbeHashSchema });
+export const BoundOperatorBegin = z.strictObject({ walletBinding: OperatorProbeHashSchema, operation: OperatorProbeBeginSchema });
+export const BoundOperatorFinalize = z.strictObject({ walletBinding: OperatorProbeHashSchema, operation: OperatorProbeFinalizeSchema });
+export const BoundOperatorGrant = z.strictObject({ walletBinding: OperatorProbeHashSchema, result: OperatorProbeGrantSchema });
+export const BoundOperatorReceipt = z.strictObject({ walletBinding: OperatorProbeHashSchema, result: OperatorProbeReceiptSchema });
+export function assertOperatorReply<T>(response: { walletBinding: string; result: T }, expectedBinding: string): T {
+  if (response.walletBinding !== expectedBinding) throw new Error('Operator wallet precondition failed');
+  return response.result;
+}
 export interface OperatorProbeBudgetStore {
-  begin(input: OperatorProbeBeginInput): Promise<{ dispatchGranted: boolean; attempt: OperatorProbeAttempt }>;
-  finalize(input: OperatorProbeFinalizeInput): Promise<OperatorProbeReceipt>;
+  begin(input: OperatorProbeBeginInput, expectedBinding?: string): Promise<{ dispatchGranted: boolean; attempt: OperatorProbeAttempt }>;
+  finalize(input: OperatorProbeFinalizeInput, expectedBinding?: string): Promise<OperatorProbeReceipt>;
   getAttempt(probeId: string): Promise<OperatorProbeAttempt | null>;
   getStatus(): Promise<OperatorProbeBudgetStatus | null>;
 }

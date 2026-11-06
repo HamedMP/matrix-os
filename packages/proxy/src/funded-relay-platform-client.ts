@@ -1,4 +1,4 @@
-import { operatorProbeRpc, OperatorProbeGrantSchema, OperatorProbeReceiptSchema,
+import { operatorProbeRpc, assertOperatorReply, BoundOperatorGrant, BoundOperatorReceipt,
   type OperatorProbeBeginInput, type OperatorProbeFinalizeInput } from "@matrix-os/contracts/funded-operator-probe";
 
 import {
@@ -161,7 +161,9 @@ export function createFundedPlatformClient(options: Pick<
 export function createOperatorProbeControlClient(config: FundedRelayConfig, fetchFn: typeof fetch) {
   const rpc = operatorProbeRpc(config.platformBaseUrl, '/internal/ai/funded/operator-probe', config.relayControlToken, fetchFn);
   return {
-    begin: (input: OperatorProbeBeginInput) => rpc('begin', input, OperatorProbeGrantSchema),
-    finalize: (input: OperatorProbeFinalizeInput) => rpc('finalize', input, OperatorProbeReceiptSchema),
+    begin: async (operation: OperatorProbeBeginInput, walletBinding: string) =>
+      assertOperatorReply(await rpc('begin', { walletBinding, operation }, BoundOperatorGrant), walletBinding),
+    finalize: async (operation: OperatorProbeFinalizeInput, walletBinding: string) =>
+      assertOperatorReply(await rpc('finalize', { walletBinding, operation }, BoundOperatorReceipt), walletBinding),
   };
 }

@@ -10,8 +10,8 @@ describe('operator probe protocol', () => {
     const service = createFundedRelayService(config, { fetchFn: network, now });
     try {
       expect((await service.app.request('/ready?model=' + model, { headers })).status).toBe(405);
-      const probe = { protocolVersion: 1, model, probeId: randomUUID() };
-      for (const body of [{ ...probe, protocolVersion: 0 }, { ...probe, max_tokens: 100 }]) {
+      const probe = { protocolVersion: 1, model, probeId: randomUUID(), walletBinding: "f".repeat(64) };
+      for (const body of [{ ...probe, walletBinding: undefined }, { ...probe, protocolVersion: 0 }, { ...probe, max_tokens: 100 }]) {
         expect((await service.app.request('/ready', { method: 'POST', headers, body: JSON.stringify(body) })).status).toBe(400);
       }
       expect((await service.app.request('/ready', { method: 'POST', body: JSON.stringify(probe) })).status).toBe(401);
@@ -57,4 +57,32 @@ describe('terminal billing evidence', () => {
     expect((await operatorProbeEvidence(glm, Response.json({ ...result, choices: [{ ...choice, finish_reason: null }] }))).outcome).toBe('unknown');
     expect((await operatorProbeEvidence(glm, Response.json({ ...result, choices: [{ ...choice, finish_reason: 'content_filter' }] }))).outcome).toBe('not_ready');
   });
+});
+
+it.each([{ choices: [] }, { choices: [{}] }, { choices: null }])('retains model-attributable overrun evidence with unusable GLM choices $choices', async ({ choices }) => {
+  const { operatorProbeEvidence } = await import('../../packages/proxy/src/operator-probe-usage.js');
+  const payload = { success: true, result: { model: glm, choices, usage: { prompt_tokens: 4, completion_tokens: 2, total_tokens: 6 } } };
+  expect(await operatorProbeEvidence(glm, Response.json(payload))).toMatchObject({ outcome: 'unknown', usage: { inputTokens: 4, outputTokens: 2 } });
+});
+
+it.each(['bare', 'wrong-binding', 'wrong-attempt'])('rejects a %s control grant before provider dispatch', async mutation => {
+  const binding = 'b'.repeat(64);
+  const fetchFn = vi.fn<typeof fetch>(async (_url, init) => {
+    const { operation } = JSON.parse(String(init?.body));
+    const attempt = { ...operation, walletBinding: mutation === 'wrong-attempt' ? 'c'.repeat(64) : binding,
+      economicHash: 'a'.repeat(64), startedAt: now().toISOString(), receipt: null, status: 'started' };
+    const result = { dispatchGranted: true, attempt };
+    return Response.json(mutation === 'bare' ? result : { walletBinding: mutation === 'wrong-binding' ? 'c'.repeat(64) : binding, result });
+  });
+  const service = createFundedRelayService(config, { fetchFn, now });
+  try {
+    const response = await service.app.request('/ready', { method: 'POST', headers,
+      body: JSON.stringify({ protocolVersion: 1, model, probeId: randomUUID(), walletBinding: binding }) });
+    expect(response.status).toBe(503);
+    expect(fetchFn.mock.calls.map(([url]) => url)).toEqual(['https://control.invalid/internal/ai/funded/operator-probe/begin']);
+    const request = JSON.parse(String(fetchFn.mock.calls[0][1]?.body));
+    expect(request.walletBinding).toBe(binding);
+    const { OperatorProbeBeginSchema } = await import('../../packages/contracts/src/funded-operator-probe.js');
+    expect(OperatorProbeBeginSchema.safeParse(request).success).toBe(false); // legacy facade rejects this request
+  } finally { await service.close(); }
 });

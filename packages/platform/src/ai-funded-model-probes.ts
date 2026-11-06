@@ -22,7 +22,7 @@ const ReadyEvidenceSchema = z.object({ ready: z.literal(true), priceValidThrough
 
 export interface FundedModelProbeResult { ready: boolean; checkedAt: string; staleAfter: string; priceValidThrough?: string }
 export interface FundedModelProbeCall { receiptId?: string; signal?: AbortSignal; deadlineAtMs?: number; runtime?: JevProbeRuntime }
-export interface FundedModelProbeService { close?(): Promise<void>; readCached?(modelId: string, call?: FundedModelProbeCall): Promise<FundedModelProbeResult>; probe(modelId: string, call?: FundedModelProbeCall): Promise<FundedModelProbeResult> }
+export interface FundedModelProbeService { quiesce?(): Promise<void>; close?(): Promise<void>; readCached?(modelId: string, call?: FundedModelProbeCall): Promise<FundedModelProbeResult>; probe(modelId: string, call?: FundedModelProbeCall): Promise<FundedModelProbeResult> }
 
 export function loadFundedModelProbeLimits(env: NodeJS.ProcessEnv): { dailyLimit: number; minuteLimit: number } | undefined {
   const dailyLimit = Number(env.MATRIX_FUNDED_AI_MODEL_PROBE_DAILY_LIMIT);
@@ -215,6 +215,10 @@ export function createFundedModelProbeService(input: {
     });
   }
   return {
+    ...(input.operator ? { quiesce: async () => {
+      closed = true;
+      await Promise.all([input.operator!.quiesce(), Promise.allSettled([...work])]);
+    } } : {}),
     async close() {
       closed = true;
       for (const pending of inFlight.values()) pending.controller.abort();
@@ -252,7 +256,7 @@ export function createFundedModelProbeService(input: {
       };
       inFlight.set(model, entry);
       entry.promise = (async (): Promise<FundedModelProbeResult> => {
-        const performProbe = async (cacheScope?: string): Promise<FundedModelProbeResult> => {
+        const performProbe = async (snapshot?: Awaited<ReturnType<typeof currentOperatorPolicy>>): Promise<FundedModelProbeResult> => {
           const admitted = await (input.reserveProbe ?? reserveFundedModelProbe)({ db: input.db,
             dailyLimit: input.dailyLimit!, minuteLimit: input.minuteLimit!, deadlineMs: input.budgetDeadlineMs });
           if (entry.controller.signal.aborted || !hasActiveWaiter(entry)) return unavailable();
@@ -271,10 +275,10 @@ export function createFundedModelProbeService(input: {
                 relayControlToken: input.relayControlToken!, signal,
                 fetchFn: input.fetchFn ?? fetch, readReady: response => readPriceValidThrough(response, signal) });
             } else if (input.operator) {
-              if (!cacheScope) return unavailable();
+              if (!snapshot) return unavailable();
               entry.probeId = probeId;
               const result = await runOperatorProbe({ operator: input.operator, model, probeId: probeId!,
-                token: input.relayControlToken!, fetchFn: input.fetchFn ?? fetch, now, signal: entry.controller.signal, cacheScope });
+                token: input.relayControlToken!, fetchFn: input.fetchFn ?? fetch, now, signal: entry.controller.signal, cacheScope: snapshot.cacheScope, walletBinding: snapshot.walletBinding });
               priceValidThrough = result?.policy.pricingValidThrough;
               walletExpiry = Date.parse(result?.walletExpiry ?? "");
             } else {
@@ -309,7 +313,7 @@ export function createFundedModelProbeService(input: {
         if (runtime) return performProbe();
         const context = await cacheContext(model, entry.controller.signal);
         if (!context) return unavailable();
-        return shared.probe(context.key, entry.controller.signal, () => performProbe(context.snapshot?.cacheScope), unavailable);
+        return shared.probe(context.key, entry.controller.signal, () => performProbe(context.snapshot), unavailable);
       })().finally(() => {
         work.delete(entry.promise);
         if (inFlight.get(model) === entry) inFlight.delete(model);

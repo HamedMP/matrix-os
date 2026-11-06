@@ -112,7 +112,7 @@ it("keeps owner-specific Jev observations at thirty seconds and outside the shar
 
 it("keeps Jev on the owner credential and ordinary Relay when operator monetary mode is active", async () => {
   const store = { getStatus: vi.fn(), getAttempt: vi.fn(), begin: vi.fn(), finalize: vi.fn() };
-  const f = await fixture({ store, budgetId: "synthetic", namespace: "test", relayOrigin: "https://operator.invalid", close: vi.fn() });
+  const f = await fixture({ store, budgetId: "synthetic", namespace: "test", quiesce: vi.fn(), relayOrigin: "https://operator.invalid", close: vi.fn() });
   expect((await f.service.probe(JEV_MODEL_ID, { runtime: f.runtime("a") })).ready).toBe(true);
   expect(f.fetchFn.mock.calls[0][0]).toBe("https://relay.example.test/v1/jev-readiness");
   expect(f.issue).toHaveBeenCalledOnce();

@@ -5,11 +5,16 @@ function record(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-export function normalizeWorkersAiCompletion(value: unknown, modelId: string) {
+export function attributedWorkersAiResult(value: unknown, modelId: string) {
   const result = record(value) && value.success === true ? value.result : value;
-  if (!record(result) || !isManagedWorkersAiResponseModel(modelId, result.model) || !Array.isArray(result.choices)) {
+  if (!record(result) || !isManagedWorkersAiResponseModel(modelId, result.model)) {
     throw new Error("Invalid AI response");
   }
+  return result;
+}
+export function normalizeWorkersAiCompletion(value: unknown, modelId: string) {
+  const result = attributedWorkersAiResult(value, modelId);
+  if (!Array.isArray(result.choices)) throw new Error("Invalid AI response");
   return { ...result, model: modelId };
 }
 

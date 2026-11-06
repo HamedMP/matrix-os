@@ -92,6 +92,7 @@ import {
   loadAiFundedControlPlaneConfig,
 } from './ai-funded-policy-routes.js';
 import { loadAiCreditCheckoutConfig } from './ai-credit-checkout.js';
+import { closePlatformProbeTransport, MONETARY_PLATFORM_SHUTDOWN_MS } from "./operator-probe-budget/shutdown.js";
 import { createConfiguredProbeServices } from './operator-probe-budget/startup.js';
 import type { FundedModelProbeService } from './ai-funded-model-probes.js';
 import {
@@ -389,8 +390,9 @@ async function startPlatformServerWithCleanup(
       issueCooldownMs: fundedAiConfig.issueCooldownMs,
       policyFreshnessMs: fundedAiConfig.policyFreshnessMs,
     });
-    const probeServices = createConfiguredProbeServices(db, fundedAiRepository, fundedAiConfig.relayControlToken);
+    const probeServices = createConfiguredProbeServices(db, fundedAiRepository, fundedAiConfig.relayControlToken, runtimeConfig.platformDatabaseUrl);
     fundedModelProbes = probeServices.probes;
+    registerCustomMcpStartupCleanup(async () => fundedModelProbes?.close?.());
     internalFundedAiRelayRoutes = probeServices.relayRoutes;
     internalFundedAiRuntimeRoutes = createAiFundedRuntimeRoutes({
       db,
@@ -1156,10 +1158,10 @@ async function startPlatformServerWithCleanup(
     const shutdownTimer = setTimeout(() => {
       console.error('[platform] Graceful shutdown timed out');
       process.exit(1);
-    }, 10_000);
+    }, fundedModelProbes?.quiesce ? MONETARY_PLATFORM_SHUTDOWN_MS : 10_000);
     shutdownTimer.unref();
 
-    (server as Server).close((err?: Error) => {
+    closePlatformProbeTransport(fundedModelProbes, () => (server as Server).close((err?: Error) => {
       let exitCode = 0;
       if (err) {
         exitCode = 1;
@@ -1202,7 +1204,7 @@ async function startPlatformServerWithCleanup(
           clearTimeout(shutdownTimer);
           process.exit(exitCode);
         });
-    });
+    }));
   };
   process.once('SIGTERM', shutdown);
   process.once('SIGINT', shutdown);

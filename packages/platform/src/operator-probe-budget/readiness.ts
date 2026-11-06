@@ -12,12 +12,12 @@ export async function currentOperatorPolicy(operator: OperatorProbePlacement, mo
     || Date.parse(wallet.expiresAt) <= +now() || Date.parse(price.pricingValidThrough) <= +now()) return undefined;
   // Zod supplies deterministic field order for both jsonb and HTTP rows.
   const policy = OperatorProbePolicySchema.parse(price);
-  const cacheScope = createHash('sha256').update(JSON.stringify([operator.namespace, wallet.revision, wallet.expiresAt, policy])).digest('hex');
-  return { policy, cacheScope, walletExpiry: wallet.expiresAt };
+  const cacheScope = createHash('sha256').update(JSON.stringify([operator.namespace, wallet.walletBinding, wallet.revision, wallet.expiresAt, policy])).digest('hex');
+  return { policy, cacheScope, walletBinding: wallet.walletBinding, walletExpiry: wallet.expiresAt };
 }
 export async function runOperatorProbe(input: {
   operator: OperatorProbePlacement; model: string; probeId: string; token: string;
-  fetchFn: typeof fetch; now: () => Date; signal: AbortSignal; cacheScope: string;
+  fetchFn: typeof fetch; now: () => Date; signal: AbortSignal; cacheScope: string; walletBinding: string;
 }) {
   const { operator, model, probeId, signal } = input;
   const relaySignal = AbortSignal.any([signal, AbortSignal.timeout(25_000)]);
@@ -25,7 +25,7 @@ export async function runOperatorProbe(input: {
     const response = await probeWithSignal(() => input.fetchFn(operator.relayOrigin + '/ready', {
       method: 'POST', redirect: 'error', signal: relaySignal,
       headers: { authorization: 'Bearer ' + input.token, 'content-type': 'application/json' },
-      body: JSON.stringify({ protocolVersion: 1, model, probeId }),
+      body: JSON.stringify({ protocolVersion: 1, model, probeId, walletBinding: input.walletBinding }),
     }), relaySignal);
     cancelProbeBody(response.body);
   } catch (error: unknown) {
@@ -39,7 +39,7 @@ export async function runOperatorProbe(input: {
   ]);
   const receipt = attempt?.receipt;
   if (!context || context.cacheScope !== input.cacheScope || attempt?.protocolVersion !== 1 || attempt.probeId !== probeId
-    || attempt.status !== 'settled' || receipt?.status !== 'settled' || receipt.outcome !== 'ready'
+    || attempt.walletBinding !== input.walletBinding || context.walletBinding !== input.walletBinding || attempt.status !== 'settled' || receipt?.status !== 'settled' || receipt.outcome !== 'ready'
     || !receipt.usage || receipt.costMicrousd === null || !receipt.providerReferenceHash
     || !isDeepStrictEqual(attempt.policy, context.policy)) return undefined;
   return context;
