@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { createCollaborationDirectClient } from "../../packages/ui/src/collaboration/direct-client";
 import { WebSocket as NodeWebSocket } from "ws";
 import { expect, collaborationTest as test } from "./fixtures/collaboration";
+import { authenticatedPlatformHeaders } from "./helpers/authenticated-platform-headers";
 
 test("owner shares once, organization members work immediately, outsiders stay denied, and unshare revokes", async ({ collaborationJourney }) => {
   const config = collaborationJourney;
@@ -116,9 +117,12 @@ async function authenticatedDirectClient(
     .map((cookie) => `${cookie.name}=${cookie.value}`)
     .join("; ");
   const fetchImpl: typeof fetch = async (input, init) => {
-    const url = new URL(typeof input === "string" || input instanceof URL ? input : input.url);
-    const headers = new Headers(init?.headers);
-    if (url.origin === platformOrigin && cookieHeader) headers.set("cookie", cookieHeader);
+    const headers = authenticatedPlatformHeaders({
+      request: input,
+      headers: init?.headers,
+      platformOrigin,
+      cookieHeader,
+    });
     return fetch(input, { ...init, headers });
   };
   return createCollaborationDirectClient({
