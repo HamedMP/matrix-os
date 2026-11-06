@@ -58,7 +58,7 @@ interface RuntimeBinding {
  * runtime never outlives its revocation tracking (fail closed).
  */
 export class SandboxRuntimeRegistry {
-  private readonly bindings = new Map<string, RuntimeBinding & { boundAt: number }>();
+  private readonly bindings = new Map<string, RuntimeBinding & { boundAt: number; stopNotified: boolean }>();
   private readonly maxEntries: number;
   private readonly maxAgeMs: number;
   private readonly now: () => Date;
@@ -99,7 +99,7 @@ export class SandboxRuntimeRegistry {
       console.warn("[collaboration-revocation] sandbox runtime registry at capacity; stopping oldest runtime");
       this.evict(oldest);
     }
-    this.bindings.set(binding.runtimeHandle, { ...binding, boundAt: this.now().getTime() });
+    this.bindings.set(binding.runtimeHandle, { ...binding, boundAt: this.now().getTime(), stopNotified: false });
   }
 
   release(runtimeHandle: string): void {
@@ -121,60 +121,45 @@ export class SandboxRuntimeRegistry {
 
   async stopForActor(scopeId: string, actorId: string): Promise<number> {
     const matching = [...this.bindings.values()].filter(binding => binding.scopeId === scopeId && binding.actorId === actorId);
-    // Revoke all model/frame authority before any asynchronous worker stop.
-    for (const binding of matching) {
-      this.bindings.delete(binding.runtimeHandle);
-      this.notifyStop(binding);
-    }
-    let stopped = 0;
-    for (const binding of matching) {
-      try {
-        await this.options.client.stopRuntime({ runtimeHandle: binding.runtimeHandle });
-        stopped += 1;
-      } catch (error: unknown) {
-        console.warn("[collaboration-revocation] sandbox runtime stop failed",
-          error instanceof Error ? error.name : "UnknownError");
-      }
-    }
-    return stopped;
+    return this.stopTracked(matching);
   }
 
   async stopForScope(scopeId: string): Promise<number> {
     const matching = [...this.bindings.values()].filter(binding => binding.scopeId === scopeId);
-    for (const binding of matching) {
-      this.bindings.delete(binding.runtimeHandle);
-      this.notifyStop(binding);
-    }
-    let stopped = 0;
-    for (const binding of matching) {
-      try {
-        await this.options.client.stopRuntime({ runtimeHandle: binding.runtimeHandle });
-        stopped += 1;
-      } catch (error: unknown) {
-        console.warn("[collaboration-revocation] sandbox runtime stop failed",
-          error instanceof Error ? error.name : "UnknownError");
-      }
-    }
-    return stopped;
+    return this.stopTracked(matching);
   }
 
   /** Revokes and stops every shared runtime before owner provider authority changes. */
   async stopAll(): Promise<number> {
     const all = [...this.bindings.values()];
-    for (const binding of all) {
-      this.bindings.delete(binding.runtimeHandle);
+    return this.stopTracked(all);
+  }
+
+  private async stopTracked(
+    bindings: Array<RuntimeBinding & { boundAt: number; stopNotified: boolean }>,
+  ): Promise<number> {
+    // Revoke all model/frame authority before any asynchronous worker stop.
+    for (const binding of bindings) {
+      if (binding.stopNotified) continue;
+      binding.stopNotified = true;
       this.notifyStop(binding);
     }
     let stopped = 0;
-    for (const binding of all) {
+    let failed = false;
+    for (const binding of bindings) {
       try {
         await this.options.client.stopRuntime({ runtimeHandle: binding.runtimeHandle });
+        if (this.bindings.get(binding.runtimeHandle) === binding) {
+          this.bindings.delete(binding.runtimeHandle);
+        }
         stopped += 1;
       } catch (error: unknown) {
+        failed = true;
         console.warn("[collaboration-revocation] sandbox runtime stop failed",
           error instanceof Error ? error.name : "UnknownError");
       }
     }
+    if (failed) throw new Error("Sandbox runtime stop failed");
     return stopped;
   }
 
