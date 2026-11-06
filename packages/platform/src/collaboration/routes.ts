@@ -5,6 +5,7 @@ import {
   CollaborationDiscoveryResponseSchema,
   CollaborationDirectoryEventSchema,
   CollaborationPageRequestSchema,
+  CollaborativeAppDirectoryResponseSchema,
 } from "@matrix-os/contracts";
 import { Hono, type Context } from "hono";
 import { bodyLimit } from "hono/body-limit";
@@ -33,6 +34,11 @@ const DiscoveryCursorSchema = z.discriminatedUnion("version", [
     after: z.object({ updatedAt: z.iso.datetime(), scopeId: z.uuid() }).strict().optional(),
   }).strict(),
 ]);
+const AppDiscoveryCursorSchema = z.object({
+  version: z.literal(1),
+  actorId: CollaborationActorIdSchema,
+  after: z.object({ updatedAt: z.iso.datetime(), scopeId: z.uuid() }).strict(),
+}).strict();
 type DiscoveryPageCursor = { phase: "indexed" | "pending"; after?: { updatedAt: string; scopeId: string } };
 
 type RouteContext = Context;
@@ -116,6 +122,46 @@ export function createPlatformCollaborationRoutes(options: {
 
   app.get("/api/collaboration/inbox", async (c) => listDiscovery(c, "invited", options));
   app.get("/api/collaboration/shared", async (c) => listDiscovery(c, "accepted", options));
+  app.get("/api/collaboration/shared-apps", async (c) => {
+    const actorId = await resolveValidatedActor(c, options.resolveActor);
+    if (!actorId) return safeJson(c, "Unauthorized", 401);
+    const pageRequest = CollaborationPageRequestSchema.safeParse(exactDiscoveryQuery(c));
+    if (!pageRequest.success) return safeJson(c, "Invalid request", 422);
+    const after = pageRequest.data.cursor ? decodeAppDiscoveryCursor(pageRequest.data.cursor, actorId) : undefined;
+    if (pageRequest.data.cursor && !after) return safeJson(c, "Invalid request", 422);
+    try {
+      const organizationIds = options.listOrganizationIds ? await options.listOrganizationIds(actorId) : [];
+      const page = await options.repository.listCurrentMembershipAppsForActorPage(actorId, organizationIds, {
+        limit: pageRequest.data.limit,
+        ...(after ? { after } : {}),
+      });
+      const items = await Promise.all(page.items.map(async (entry) => {
+        const owner = await options.resolveParticipant(entry.ownerId);
+        if (!owner) throw new Error("CollaborativeAppOwnerUnavailable");
+        return {
+          scopeId: entry.scopeId,
+          runtimeId: entry.runtimeId,
+          organizationId: entry.organizationId,
+          authorityGeneration: entry.authorityGeneration,
+          appId: entry.appId,
+          catalogId: entry.catalogId,
+          readinessId: entry.readinessId,
+          registrationIncarnation: entry.registrationIncarnation,
+          buildId: entry.buildId,
+          shareRevision: String(entry.shareRevision),
+          owner,
+        };
+      }));
+      c.header("Cache-Control", "private, no-store");
+      return c.json(CollaborativeAppDirectoryResponseSchema.parse({
+        items,
+        ...(page.nextCursor ? { nextCursor: encodeAppDiscoveryCursor(actorId, page.nextCursor) } : {}),
+      }));
+    } catch (error: unknown) {
+      console.warn("[platform-collaboration] app discovery failed", error instanceof Error ? error.name : "UnknownError");
+      return safeJson(c, "Collaboration unavailable", 503);
+    }
+  });
   // The CLI receives an invitation ID as an argument. Resolve only its actor-indexed
   // scope pointer here; invitation content and acceptance stay on the owner's home.
   app.get("/api/collaboration/invitations/:invitationId/location", async (c) => {
@@ -309,6 +355,23 @@ function decodeDiscoveryCursor(
       console.warn("[platform-collaboration] cursor decode failed", error instanceof Error ? error.name : "UnknownError");
     }
     return null;
+  }
+}
+
+function encodeAppDiscoveryCursor(actorId: string, after: { updatedAt: string; scopeId: string }): string {
+  return Buffer.from(JSON.stringify({ version: 1, actorId, after })).toString("base64url");
+}
+
+function decodeAppDiscoveryCursor(value: string, actorId: string): { updatedAt: string; scopeId: string } | undefined {
+  if (!/^[A-Za-z0-9_-]+$/.test(value)) return undefined;
+  try {
+    const parsed = AppDiscoveryCursorSchema.safeParse(JSON.parse(Buffer.from(value, "base64url").toString("utf8")) as unknown);
+    return parsed.success && parsed.data.actorId === actorId ? parsed.data.after : undefined;
+  } catch (error: unknown) {
+    if (!(error instanceof SyntaxError)) {
+      console.warn("[platform-collaboration] app cursor decode failed", error instanceof Error ? error.name : "UnknownError");
+    }
+    return undefined;
   }
 }
 
