@@ -8,7 +8,19 @@ export interface VerifyResult {
   authenticated: boolean;
   userId?: string;
   sessionId?: string;
+  /** Verified Clerk JWT epoch seconds, when exposed by the verifier. */
+  tokenExpiresAt?: number;
+  issuer?: string;
+  expiresAt?: number;
   error?: string;
+}
+
+/** Positive human-session evidence only; ordinary user routing stays unchanged. */
+export function hasVerifiedClerkBrowserSession(result: VerifyResult, expectedUserId: string, now = Math.floor(Date.now() / 1000)):
+  result is VerifyResult & { sessionId: string; tokenExpiresAt: number } {
+  return expectedUserId.trim().length > 0 && result.authenticated && result.userId === expectedUserId && typeof result.sessionId === "string"
+    && result.sessionId.trim().length > 0 && result.tokenExpiresAt !== undefined && Number.isSafeInteger(result.tokenExpiresAt)
+    && result.tokenExpiresAt > 0 && result.tokenExpiresAt > now;
 }
 
 export const CLERK_SESSION_REVOKE_TIMEOUT_MS = 10_000;
@@ -16,6 +28,33 @@ export const CLERK_SESSION_REVOKE_TIMEOUT_MS = 10_000;
 export interface ClerkAuthDeps {
   verifyToken: (token: string) => Promise<ClerkTokenPayload>;
   revokeSession?: (sessionId: string) => Promise<void>;
+}
+
+export type ClerkVerificationConfig = {
+  verifyTokenOptions: { secretKey: string } | { jwtKey: string };
+  sessionRevocationSecret: string | undefined;
+};
+
+export function resolveClerkVerificationConfig(
+  env: NodeJS.ProcessEnv,
+): ClerkVerificationConfig | null {
+  // Preserve the existing production input, including malformed values. Local
+  // JWT-key support must not change verification or revocation credentials.
+  const secretKey = env.CLERK_SECRET_KEY;
+  if (secretKey) {
+    return {
+      verifyTokenOptions: { secretKey },
+      sessionRevocationSecret: secretKey,
+    };
+  }
+
+  const jwtKey = env.CLERK_JWT_KEY?.trim();
+  return jwtKey
+    ? {
+        verifyTokenOptions: { jwtKey },
+        sessionRevocationSecret: undefined,
+      }
+    : null;
 }
 
 export interface ClerkAuth {
@@ -63,6 +102,9 @@ function verifiedResultFromPayload(payload: ClerkTokenPayload): VerifyResult {
   return {
     authenticated: true,
     userId: payload.sub,
+    ...(typeof payload.exp === "number" && Number.isSafeInteger(payload.exp) && payload.exp > 0 ? { tokenExpiresAt: payload.exp } : {}),
+    ...(typeof payload.iss === "string" ? { issuer: payload.iss } : {}),
+    ...(typeof payload.exp === "number" && Number.isSafeInteger(payload.exp) ? { expiresAt: payload.exp * 1000 } : {}),
     ...(typeof payload.sid === "string" && payload.sid.length > 0
       ? { sessionId: payload.sid }
       : {}),

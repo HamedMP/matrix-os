@@ -25,6 +25,7 @@ import {
   planAgentInstance,
   planBinding,
   planInstance,
+  unavailableMatrixInstance,
 } from "./model-test-catalog";
 
 jest.mock("micromark", () => ({ micromark: jest.fn() }));
@@ -34,6 +35,39 @@ const hermes = () => engineInstance("hermes_default", "hermes", "Hermes", [["her
 const heldMatrix = () => matrixInstance([[SONNET.model, "Sonnet 5", "unavailable"]], {
   availability: "unavailable",
   connectionState: "credit_reserved",
+});
+
+describe("policy-discovered Matrix AI choices during a readiness outage", () => {
+  const unavailable = catalogOf(unavailableMatrixInstance());
+
+  it("offers every discovered model for explicit selection while reporting unavailable execution", () => {
+    expect(modelTrigger(unavailable, null, false).canChoose).toBe(true);
+    expect(modelEngines(unavailable, GLM)[0]!.models).toEqual([
+      expect.objectContaining({ key: "matrix_pi_default::anthropic:claude-sonnet-5", available: false, selectable: true }),
+      expect.objectContaining({ key: "matrix_pi_default::cloudflare:@cf/zai-org/glm-5.3-flash", available: false, selectable: true, selected: true }),
+    ]);
+    expect(chosenSelection(unavailable, modelKey(GLM.instanceId, GLM.model))).toEqual(GLM);
+    expect(selectionCanRun(unavailable, GLM)).toBe(false);
+    expect(modelTrigger(unavailable, GLM, false).label).toContain("unavailable");
+  });
+
+  it.each(["credit_required", "credit_reserved", "budget_exceeded"] as const)(
+    "does not turn %s into a selectable readiness outage",
+    (connectionState) => {
+      const catalog = catalogOf({ ...unavailableMatrixInstance(), connectionState });
+      expect(modelTrigger(catalog, null, false).canChoose).toBe(false);
+      expect(chosenSelection(catalog, modelKey(GLM.instanceId, GLM.model))).toBeNull();
+    },
+  );
+
+  it.each(["disabled_in_settings", "settings_unavailable", "authentication_required"] as const)(
+    "does not turn %s into a selectable readiness outage",
+    (unavailabilityReason) => {
+      const catalog = catalogOf({ ...unavailableMatrixInstance(), unavailabilityReason });
+      expect(modelTrigger(catalog, null, false).canChoose).toBe(false);
+      expect(chosenSelection(catalog, modelKey(GLM.instanceId, GLM.model))).toBeNull();
+    },
+  );
 });
 
 describe("the engines of the model sheet", () => {
@@ -154,6 +188,7 @@ describe("the engines of the model sheet", () => {
         logo: "matrix",
         selected: true,
         available: false,
+        selectable: false,
       },
       expect.objectContaining({ name: "Sonnet 5", selected: false, available: true }),
     ]);
@@ -342,4 +377,16 @@ describe("a saved model run through the person's own subscription", () => {
     expect(modelNotices(keyed, API_KEY, false).recovery)
       .toBe("Connection changed. Choose the model again or check Agents & providers.");
   });
+});
+
+
+it("keeps a checking Codex model selected and inspectable but never selectable or runnable", () => {
+  const catalog = catalogOf(codexInstance([[GPT.model, "GPT-5.6-Sol", "unavailable"]], {
+    availability: "unavailable", unavailabilityReason: "runtime_unavailable", observationState: "checking",
+  }), matrixInstance());
+  const native = modelEngines(catalog, GPT).find(engine => engine.id === GPT.instanceId)!;
+  expect(native.note).toBe("Checking Codex access…");
+  expect(native.models).toEqual([expect.objectContaining({ name: "GPT-5.6-Sol", selected: true, available: false, selectable: false, detail: expect.stringContaining("Checking Codex access…") })]);
+  expect(chosenSelection(catalog, native.models[0]!.key)).toBeNull();
+  expect(selectionCanRun(catalog, GPT)).toBe(false);
 });

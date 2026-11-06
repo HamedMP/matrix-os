@@ -3,7 +3,7 @@ import {
   PinIcon,
   PinOffIcon,
 } from "lucide-react";
-import { isChatUnread, ChatContextMenu, ChatImportSourceIcon } from "@matrix-os/ui";
+import { isChatUnread, ChatContextMenu, ChatImportSourceIcon, chatStartTitle, compactChatStartLabel } from "@matrix-os/ui";
 import { OverflowingChatTitle } from "../OverflowingChatTitle";
 import { ChatTitleEditor } from "../../chat/ChatTitleEditor";
 import {
@@ -40,6 +40,7 @@ export function WorkRailChatRow({
   onDelete,
   moveItems,
   moving = false,
+  nowMs,
 }: {
   record: ChatNavigationRecord;
   active: boolean;
@@ -59,6 +60,8 @@ export function WorkRailChatRow({
   onDelete: () => void;
   moveItems?: {label: string; disabled?: boolean; onSelect: () => void}[];
   moving?: boolean;
+  /** When set, the row shows when the Chat started. */
+  nowMs?: number;
 }) {
   const [menuOpen, setMenuOpen] = useState(false);
   const [contextMenuOpen, setContextMenuOpen] = useState(false);
@@ -136,6 +139,9 @@ export function WorkRailChatRow({
             <span className={isChatUnread(record) ? "flex min-w-0 font-semibold" : "flex min-w-0"}><OverflowingChatTitle title={record.chat.title} /></span>
             {agentState !== "idle" ? <span className="block text-[11px] leading-[14.3px] font-normal" style={{ color: "var(--matrix-chat-rail-muted, var(--text-secondary))" }}>{railStateLabel[agentState]}</span> : null}
           </span>
+          {nowMs !== undefined ? <time dateTime={record.chat.createdAt} title={chatStartTitle(record.chat.createdAt)}
+            className="shrink-0 text-[11px] tabular-nums group-hover/chat:invisible group-focus-within/chat:invisible"
+            style={{ color: "var(--matrix-chat-rail-muted, var(--text-secondary))" }}>{compactChatStartLabel(record.chat.createdAt, nowMs)}</time> : null}
           {isChatUnread(record) && (record.readState || agentState !== "unseen_completion") ? <span aria-label={`Unread ${record.chat.title}`} className="size-2 shrink-0 rounded-full bg-[var(--accent)]" /> : null}
           <ChatAgentStateIndicator state={record.readState && agentState === "unseen_completion" ? "idle" : agentState} title={record.chat.title} fresh={fresh} />
         </button>}

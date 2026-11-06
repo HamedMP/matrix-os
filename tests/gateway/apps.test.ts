@@ -213,6 +213,20 @@ describe("T711: GET /api/apps", () => {
     expect(direct.ok).toBe(false);
   });
 
+  it("skips oversized app manifests during discovery", async () => {
+    mkdirSync(join(homePath, "apps/oversized"), { recursive: true });
+    writeFileSync(join(homePath, "apps/oversized/matrix.json"), JSON.stringify({
+      name: "Oversized",
+      slug: "oversized",
+      description: "x".repeat(1024 * 1024),
+      version: "1.0.0",
+      runtimeVersion: "^1.0.0",
+      runtime: "static",
+    }));
+
+    expect(await listApps(homePath)).toEqual([]);
+  });
+
   it("does not warn for ordinary nested directories without manifests", async () => {
     mkdirSync(join(homePath, "apps/generated/app/api/health"), { recursive: true });
     mkdirSync(join(homePath, "apps/generated/src/components"), { recursive: true });

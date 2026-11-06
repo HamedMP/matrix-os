@@ -11,8 +11,7 @@ import { projectBotToolDisplay } from "./tool-event-display.js";
  * found afterwards is failed, its runtime stopped, and nothing is replayed.
  */
 import { createHash } from "node:crypto";
-import { assertTextOnlySteering } from "../chat/steer-delivery-error.js";
-import type { BotEvent } from "@matrix-os/contracts";
+import { BOT_ATTACHMENT_UNAVAILABLE_MESSAGE, type BotEvent } from "@matrix-os/contracts";
 import { z } from "zod/v4";
 import {
   CanonicalProviderRunEventSchema,
@@ -93,15 +92,16 @@ const FAILURES: Partial<Record<NonNullable<BotTurnResult["blockedReason"]>, { co
   budget_exhausted: { code: "run_failed", message: "The bot reached its action limit for this task." },
 };
 
-function completion(result: BotTurnResult): CanonicalProviderRunEvent {
+function completion(result: BotTurnResult,scheduled=false): CanonicalProviderRunEvent {
+  if(scheduled && result.status==="uncertain") return {type:"run.completed",outcome:"failed",error:{code:"run_failed",safeMessage:"This routine's result is unknown. Review it before running it again.",retryable:false,recoveryActions:[]}};
   if (result.status === "completed" || result.status === "waiting_person") return { type: "run.completed", outcome: "completed" };
   if (result.status === "cancelled") return { type: "run.completed", outcome: "aborted" };
-  const failure = result.inputUnavailable ? { code: "resource_unavailable" as const, message: "The attachments could not be read. Attach the files again, using PNG, JPEG or WebP images up to 2 MiB, or files up to 1 MiB." } : (result.blockedReason && FAILURES[result.blockedReason])
+  const failure = result.inputUnavailable ? { code: "resource_unavailable" as const, message: BOT_ATTACHMENT_UNAVAILABLE_MESSAGE } : (result.blockedReason && FAILURES[result.blockedReason])
     ?? { code: "run_failed" as const, message: "The bot could not finish this request." };
   return {
     type: "run.completed",
     outcome: "failed",
-    error: { code: failure.code, safeMessage: failure.message, retryable: true, recoveryActions: ["retry"] },
+    error: { code: failure.code, safeMessage: failure.message, retryable: !scheduled, recoveryActions: scheduled ? [] : ["retry"] },
   };
 }
 
@@ -112,6 +112,7 @@ function messageText(parts: readonly { type: string; text?: string }[]): string 
 export function createMatrixBotChatProviderAdapter(options: {
   orchestrator: Pick<BotTaskOrchestrator, "start" | "steer" | "cancel" | "abandon">;
   stopRuntime(runtimeHandle: string): Promise<void>;
+  routines?: Pick<import("./routine-execution.js").BotRoutineExecution,"prepareRun"|"completeRun">;
 }): CanonicalChatProviderAdapter<BotChatState> {
   return {
     driverKind: "matrix_bot",
@@ -121,16 +122,39 @@ export function createMatrixBotChatProviderAdapter(options: {
     async *start(inputValue) {
       const input = parseCanonicalProviderRunInput(inputValue);
       if (input.owner.type !== "personal") throw new Error("Bots run only for a personal owner");
-      const handle = options.orchestrator.start({
+      let scheduled: Awaited<ReturnType<NonNullable<typeof options.routines>["prepareRun"]>>;
+      let handle: ReturnType<typeof options.orchestrator.start>;
+      try {
+        scheduled = await options.routines?.prepareRun(input);
+        handle = options.orchestrator.start({
         ownerId: input.owner.ownerId, chatId: input.chatId, runId: input.runId,
-        selection: input.selection, text: messageText(input.parts), parts: input.parts, signal: input.signal,
-      });
+        selection: scheduled?.selection??input.selection, text: scheduled?.text??messageText(input.parts), parts: scheduled ? [{type:"text",text:scheduled.text}] : input.parts, signal: input.signal,
+        ...(scheduled ? {backgroundTaskId:scheduled.backgroundTaskId} : {}),
+        });
+      } catch (error: unknown) {
+        let finalized: BotTurnResult | void;
+        try { finalized = await options.routines?.completeRun(input, { status: "failed" }, { beforeTaskState: true }); }
+        catch (settlementError: unknown) {
+          console.warn("[bots] Bot start settlement unconfirmed", settlementError instanceof Error ? settlementError.name : "UnknownError");
+          if (!scheduled) throw settlementError;
+          finalized = { status: "uncertain" };
+        }
+        if (scheduled || finalized) {
+          console.warn("[bots] scheduled Bot start failed", error instanceof Error ? error.name : "UnknownError");
+          yield CanonicalProviderRunEventSchema.parse(completion(finalized ?? { status: "failed" }, true));
+          return;
+        }
+        throw error;
+      }
       let result: BotTurnResult;
       let drained = false;
       let activities = 0;
+      let ownsScheduledTask = false;
+      let resultUnconfirmed = false;
       try {
         for await (const item of handle.events) {
           if (item.kind === "state") {
+            if(scheduled && item.state.taskId===scheduled.backgroundTaskId) ownsScheduledTask=true;
             yield CanonicalProviderRunEventSchema.parse({ type: "state.updated", state: BotChatStateSchema.parse(item.state) });
             continue;
           }
@@ -150,20 +174,40 @@ export function createMatrixBotChatProviderAdapter(options: {
           }
         }
         drained = true;
+      } catch (error: unknown) {
+        if (!scheduled) throw error;
+        console.warn("[bots] routine event stream unconfirmed", error instanceof Error ? error.name : "UnknownError");
+        resultUnconfirmed = true;
       } finally {
         // A consumer that stopped reading early must not leave the bot running for its whole turn.
-        if (!drained) await options.orchestrator.cancel(input.runId);
+        if (!drained) try { await options.orchestrator.cancel(input.runId); }
+        catch (error: unknown) {
+          if (!scheduled) throw error;
+          console.warn("[bots] routine cancellation unconfirmed", error instanceof Error ? error.name : "UnknownError");
+          resultUnconfirmed = true;
+        }
         result = await handle.result.catch((error: unknown) => {
           console.warn("[bots] bot turn failed:", error instanceof Error ? error.name : "UnknownError");
-          return { status: "failed" as const };
+          return { status: scheduled ? "uncertain" as const : "failed" as const };
         });
+        if (resultUnconfirmed) result = { status: "uncertain" };
+        if (scheduled) {
+          try {
+            const finalized = ownsScheduledTask
+              ? await options.routines!.completeRun(input, result)
+              : await options.routines!.completeRun(input, result, { beforeTaskState: true });
+            if (finalized && !resultUnconfirmed) result = finalized;
+          } catch (error: unknown) {
+            console.warn("[bots] routine settlement unconfirmed", error instanceof Error ? error.name : "UnknownError");
+            result = { status: "uncertain" };
+          }
+        }
       }
-      yield CanonicalProviderRunEventSchema.parse(completion(result));
+      yield CanonicalProviderRunEventSchema.parse(completion(result,Boolean(scheduled)));
     },
     async steer(input) {
-      assertTextOnlySteering(input.parts);
       const text = messageText(input.parts) || input.prompt;
-      if (!await options.orchestrator.steer(input.runId, text)) throw new Error("Bot run is not accepting messages");
+      if (!await options.orchestrator.steer(input.runId, text, input.parts)) throw new Error("Bot run is not accepting messages");
     },
     async cancel(input) {
       await options.orchestrator.cancel(input.runId);

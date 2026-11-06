@@ -7,7 +7,7 @@ import type { ChatGptPlanPeerRequest } from '@matrix-os/contracts';
 import type { AuthService } from '../auth/auth-service';
 import { CHATGPT_PLAN_INVOKE, type ChatgptPlanSession, type ChatgptPlanStatus, type ChatgptPlanModel } from '../../shared/chatgpt-plan-ipc';
 import { PLAN_RESOURCE, planJson, validatePlanTokens } from './oauth';
-import { requestPlanResponse } from './responses';
+import { requestPlanResponse, requestPlanResponseStream } from './responses';
 import { planCatalog, planJwks, revokePlanAccount } from './provider';
 import { startPlanLoopback } from './loopback';
 import { createPlanNativePeer, type PlanPeerBinding } from './peer';
@@ -28,6 +28,9 @@ interface Dependencies {
 export function createNativeChatgptPlanService(deps: Dependencies) {
     const fetchFn = deps.fetchFn ?? fetch;
     let record: PlanVaultRecord | null = null;
+    // <=8 owners with unconfirmed downgrades. Confirmed full-record saves or
+    // dispose release entries; capacity rejects a new owner, never evicts a fence.
+    const unconfirmedRecords = new Map<string, PlanVaultRecord>();
     let loadedOwner: string | null = null;
     let loadedScope: Bound | null = null;
     let loadTask: {
@@ -96,7 +99,8 @@ export function createNativeChatgptPlanService(deps: Dependencies) {
                     id: account.id, label: account.label
                 } } : {}), models: account?.tokens && !disconnecting ? models : [], grant: {
                 revision: permission.revision, enabled: !!account?.tokens && !disconnecting && permission.enabled, background: !!account?.tokens && !disconnecting && permission.enabled && permission.background
-            }, bridgeConnected, ...(bridgeFailure ? { bridgeFailure } : {}), revocation
+            }, bridgeConnected, ...(bridgeFailure ? { bridgeFailure } : {}), revocation,
+            ...(unconfirmedRecords.has(value.ownerId) ? { grantSaveUnconfirmed: true } : {})
         };
     }
     async function ensure(value: Bound): Promise<void> {
@@ -118,7 +122,9 @@ export function createNativeChatgptPlanService(deps: Dependencies) {
             loadedScope = null;
             revocation = 'none';
             bridgeFailure = undefined;
-            const loaded = await deps.vault.load(value.ownerId);
+            if (unconfirmedRecords.size >= 8 && !unconfirmedRecords.has(value.ownerId))
+                throw new Error('grant recovery required');
+            const loaded = unconfirmedRecords.get(value.ownerId) ?? await deps.vault.load(value.ownerId);
             if (!current(value))
                 throw new Error('connection changed');
             record = loaded;
@@ -146,10 +152,16 @@ export function createNativeChatgptPlanService(deps: Dependencies) {
     async function save(value: Bound, next: PlanVaultRecord) {
         if (!current(value))
             throw new Error('connection changed');
+        const fence = unconfirmedRecords.get(value.ownerId);
         await deps.vault.save(value.ownerId, next);
         if (!current(value))
             throw new Error('connection changed');
-        record = next;
+        // A disconnect can install a stronger downgrade while this write waits.
+        // An older confirmed record must not restore it or release its fence.
+        if (unconfirmedRecords.get(value.ownerId) === fence) {
+            record = next;
+            unconfirmedRecords.delete(value.ownerId);
+        }
     }
     async function freshTokens(value: Bound, signal: AbortSignal) {
         const account = active();
@@ -244,10 +256,11 @@ export function createNativeChatgptPlanService(deps: Dependencies) {
                 return;
             }
             const next = {
-                deviceId: record.deviceId, accountId: account.id, grantRevision: permission.revision, enabled: permission.enabled, background: false, models
+                deviceId: record.deviceId, accountId: account.id, grantRevision: permission.revision, enabled: permission.enabled, background: permission.enabled && permission.background, models
             };
+            const catalogSignature = JSON.stringify(models);
             const qualified = () => authorized() && current(value) && epoch === generation && active()?.id === account.id
-                && models === next.models && catalogAt > 0 && grant(value.computerId).revision === permission.revision;
+                && JSON.stringify(models) === catalogSignature && catalogAt > 0 && grant(value.computerId).revision === permission.revision;
             const signature = JSON.stringify(next);
             if (bridgeConnected && peerSignature === signature)
                 return;
@@ -282,9 +295,9 @@ export function createNativeChatgptPlanService(deps: Dependencies) {
                 peerSyncTask = null;
         }
     }
-    async function infer(request: Extract<ChatGptPlanPeerRequest, {
+    function prepareInference(request: Extract<ChatGptPlanPeerRequest, {
         action: 'infer';
-    }>, signal: AbortSignal) {
+    }>, signal: AbortSignal, streaming = false) {
         const live = deps.auth.getStatus();
         const value = bound(live);
         const permission = grant(value.computerId);
@@ -294,7 +307,8 @@ export function createNativeChatgptPlanService(deps: Dependencies) {
             signal.throwIfAborted();
             if (!current(value) || epoch !== generation || !account?.tokens || active()?.id !== request.accountId || request.computerId !== value.computerId || permission.revision !== request.grantRevision || !permission.enabled || !models.some(model => model.id === request.model) || Date.now() - catalogAt > 5 * 60000)
                 throw new Error('source changed');
-            if (request.requestClass === 'background' && !permission.background)
+            if (request.requestClass === 'background' && !permission.background
+                && (!request.approvedRoutine || request.approvedRoutine.ownerId !== value.ownerId || request.approvedRoutine.runId !== request.runId))
                 throw new Error('background not permitted');
         };
         validate();
@@ -302,19 +316,41 @@ export function createNativeChatgptPlanService(deps: Dependencies) {
             throw new Error('request capacity');
         const controller = new AbortController();
         requests.add(controller);
-        const operationSignal = AbortSignal.any([signal, controller.signal, AbortSignal.timeout(120000)]);
-        try {
-            return await requestPlanResponse({
+        const operationSignal = AbortSignal.any(streaming ? [signal, controller.signal]
+            : [signal, controller.signal, AbortSignal.timeout(120000)]);
+        return {
+            controller,
+            input: {
                 fetchFn, body: request.body, model: request.model, signal: operationSignal, validate,
                 accessToken: async () => (await freshTokens(value, operationSignal)).accessToken,
-            });
+            },
+        };
+    }
+    async function infer(request: Extract<ChatGptPlanPeerRequest, {
+        action: 'infer';
+    }>, signal: AbortSignal) {
+        const { controller, input } = prepareInference(request, signal);
+        try {
+            return await requestPlanResponse(input);
         }
         finally {
             requests.delete(controller);
         }
     }
+    async function* inferStream(request: Extract<ChatGptPlanPeerRequest, {
+        action: 'infer';
+    }>, signal: AbortSignal, progress: () => void): AsyncGenerator<string> {
+        const { controller, input } = prepareInference(request, signal, true);
+        try {
+            yield* requestPlanResponseStream(input, true, progress);
+        } finally {
+            requests.delete(controller);
+        }
+    }
     const peer = createPlanNativePeer({
-        fetchFn, current: currentPeer, infer, connected: value => {
+        deliveryVersion: 2,
+        approvedRoutines: true,
+        fetchFn, current: currentPeer, infer, inferStream, connected: value => {
             bridgeConnected = value;
             if (!value)
                 peerSignature = null;
@@ -373,7 +409,7 @@ export function createNativeChatgptPlanService(deps: Dependencies) {
                 // may replace rejected credentials through the existing PKCE flow.
             }
             if (retryQualified) {
-                if (!grant(value.computerId).enabled)
+                if (!grant(value.computerId).enabled || grant(value.computerId).background)
                     return setGrant({ runtimeSlot: value.runtimeSlot, authGeneration: value.authGeneration, enabled: true, background: false }, expected);
                 await restartPeer(value);
                 return snapshot(value);
@@ -484,9 +520,13 @@ export function createNativeChatgptPlanService(deps: Dependencies) {
         await ensure(value);
         if (disconnecting)
             throw new Error('disconnect in progress');
-        if (parsed.background)
-            throw new Error('background not permitted');
-        if (parsed.enabled && (!active()?.tokens || !models.length))
+        const accountId = active()?.id;
+        const permission = grant(value.computerId);
+        const baseRevision = permission.revision;
+        if (parsed.accountId !== undefined && parsed.accountId !== accountId
+            || parsed.baseRevision !== undefined && parsed.baseRevision !== baseRevision)
+            throw new Error('stale authorization');
+        if ((parsed.background || parsed.enabled && !permission.enabled) && (!active()?.tokens || !models.length))
             throw new Error('not connected');
         if (expected && (expected.generation !== generation || active()?.id !== expected.accountId || !current(value)))
             throw new Error('source changed');
@@ -496,16 +536,26 @@ export function createNativeChatgptPlanService(deps: Dependencies) {
             controller.abort();
         await peer.stop();
         await mutate(async () => {
-            if (!record || pending || !current(value) || expected && (epoch !== generation || active()?.id !== expected.accountId))
+            if (!record || pending || !current(value) || epoch !== generation || active()?.id !== accountId
+                || grant(value.computerId).revision !== baseRevision)
                 throw new Error('connection changed');
             const existing = grant(value.computerId);
             const next = {
                 computerId: value.computerId, revision: existing.revision + 1, enabled: parsed.enabled, background: parsed.background
             };
-            await save(value, {
+            const nextRecord = {
                 ...record, grants: [...record.grants.filter(item => item.computerId !== value.computerId), next].slice(-16)
-            });
+            };
+            // A failed downgrade remains an error, but must not let the peer's
+            // automatic recovery restore the old in-memory authority.
+            if (existing.enabled && (!next.enabled || !next.background)) {
+                record = nextRecord;
+                unconfirmedRecords.set(value.ownerId, nextRecord);
+            }
+            await save(value, nextRecord);
         });
+        if (!current(value) || epoch !== generation || active()?.id !== accountId)
+            throw new Error('source changed');
         await restartPeer(value);
         return snapshot(value);
     }
@@ -513,6 +563,8 @@ export function createNativeChatgptPlanService(deps: Dependencies) {
     async function disconnect(input: ChatgptPlanSession) {
         const value = bound(input);
         await ensure(value);
+        if (!current(value) || loadedOwner !== value.ownerId || record?.ownerId !== value.ownerId)
+            throw new Error('connection changed');
         if (disconnecting)
             throw new Error('disconnect in progress');
         disconnecting = true;
@@ -536,9 +588,14 @@ export function createNativeChatgptPlanService(deps: Dependencies) {
             };
             // Local sign-out is irrevocable for the captured owner even if Matrix switches
             // owners during remote revocation. Never restore the cleared refresh token.
-            if (loadedOwner === value.ownerId)
+            if (loadedOwner === value.ownerId) {
                 record = cleared;
-            await mutate(async () => { await deps.vault.save(value.ownerId, cleared); });
+                unconfirmedRecords.set(value.ownerId, cleared);
+            }
+            await mutate(async () => {
+                await deps.vault.save(value.ownerId, cleared);
+                unconfirmedRecords.delete(value.ownerId);
+            });
             const resultRevocation = await revokePlanAccount(fetchFn, selected);
             if (!current(value))
                 throw new Error('connection changed');
@@ -592,6 +649,7 @@ export function createNativeChatgptPlanService(deps: Dependencies) {
             await Promise.allSettled([
                 mutationTail, refreshTask, lifecycleTask, loadTask?.task, peerSyncTask, rebindTask
             ].filter((task): task is Promise<unknown> => !!task));
+            unconfirmedRecords.clear();
         }
     };
 }

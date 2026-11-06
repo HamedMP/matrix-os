@@ -1,6 +1,10 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { MATRIX_TELEMETRY_EVENTS } from "../../packages/observability/src/events.js";
 
+// Socket tests stub only the document APIs the socket uses; Sonner's injected
+// stylesheet needs a full DOM and is unrelated to the connection behavior.
+vi.mock("sonner", () => ({ toast: { error: vi.fn() } }));
+
 class MockWebSocket {
   static instances: MockWebSocket[] = [];
   readyState = 1; // OPEN

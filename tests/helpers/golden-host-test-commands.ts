@@ -54,7 +54,16 @@ try {
         const python = stdout.trim();
         if (!isAbsolute(python)) throw new Error("Fixture requires an absolute Python interpreter");
         await access(python, constants.X_OK);
-        const script = await readFile(source, "utf8");
+        let script = await readFile(source, "utf8");
+        if (script.includes("/usr/bin/timeout")) {
+          // Preserve the real GNU deadline/exit contract in the copied fixture;
+          // never install a fake timeout or change the host's system paths.
+          const { stdout } = await execFileAsync("/usr/bin/which", ["gtimeout"], { timeout: 1000 });
+          const timeout = stdout.trim();
+          if (!isAbsolute(timeout)) throw new Error("Fixture requires an absolute GNU timeout command");
+          await access(timeout, constants.X_OK);
+          script = script.replaceAll("/usr/bin/timeout", shellQuote(timeout));
+        }
         await writeFile(target, script.replaceAll("/usr/bin/python3", shellQuote(python)), { mode: 0o755 });
       },
       cleanup: () => rm(directory, { recursive: true, force: true }),

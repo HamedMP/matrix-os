@@ -61,7 +61,7 @@ it.each(["pin", "catalog", "profile"])("real production resolver → SettingsSto
   const f = await fixture();
   try {
     await f.runtime.admit(baseInput.owner.ownerId, f.agent);
-    const launch = { ...f.runtime.launch, verifyRuntime: async () => { if (mode === "pin") throw new Error("synthetic pin denial"); } };
+    const launch = { ...f.runtime.launch, verifyRuntime: async () => { if (mode === "pin") throw new Error("synthetic pin denial"); return "/synthetic/.hermes/hermes-agent/venv/bin/python"; } };
     const adapter = createHermesChatProviderAdapter({ homePath: "/synthetic", spawnFn: f.primary.spawnFn, jev: launch });
     const completed = (async () => { const events = []; for await (const event of adapter.start({ ...baseInput, context: f.context, selection: f.agent.selection })) events.push(event); return events; })();
     const rejection = mode === "pin" ? expect(completed).rejects.toThrow() : completed;

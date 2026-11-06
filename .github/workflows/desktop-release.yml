@@ -108,6 +108,7 @@ jobs:
   build:
     needs: prepare
     permissions:
+      actions: read
       contents: read
       id-token: write
     uses: ./.github/workflows/desktop-build.yml

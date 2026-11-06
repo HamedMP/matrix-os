@@ -14,6 +14,8 @@ import { z } from "zod/v4";
 import { safeHttpStatus } from "../safe-http-status.js";
 import { botCreationFailureReason, type BotCreationFailureReason } from "../creation-error.js";
 
+import { createBotRoutineClient, type BotRoutineClient } from "./routine-client.js";
+
 type BotRequest = (path: string, method: "GET" | "POST" | "DELETE", body?: unknown) => Promise<unknown>;
 
 const safeMessages: Record<number, string> = {
@@ -42,6 +44,7 @@ function safeError(error: unknown): BotClientError {
 }
 
 export interface BotClient extends Partial<BotConnectionClient> {
+  routines?: BotRoutineClient;
   ensureDirectChat(agentId: string): Promise<string | null>;
   directChat(agentId: string): Promise<string | null>;
   directBot(chatId: string): Promise<string | null>;
@@ -70,6 +73,7 @@ export function createBotClient(request: BotRequest): BotClient {
   const chatPath = (chatId: string) => `/api/chats/${encodeURIComponent(CanonicalChatIdSchema.parse(chatId))}`;
   return {
     ...createBotConnectionClient((path, method, body) => request(path, method, body)),
+    routines: createBotRoutineClient((path, method, body) => call(path, method, z.unknown(), body)),
     ensureDirectChat: async (agentId) => (await call(`${agentPath(agentId)}/direct-chat`, "POST", BotChatBindingResponseSchema, {})).chatId,
     directChat: async (agentId) => (await call(`${agentPath(agentId)}/direct-chat`, "GET", BotChatBindingResponseSchema)).chatId,
     directBot: async (chatId) => (await call(`${chatPath(chatId)}/bot`, "GET", BotDirectChatResponseSchema)).agentId,
@@ -77,10 +81,10 @@ export function createBotClient(request: BotRequest): BotClient {
     createCustom: (input) => call("/api/chat-agents/managed-custom", "POST", InstantiateBotResponseSchema, CreateManagedCustomBotRequestSchema.parse(input)),
     recoverManagedCustom: (agentId, input) => call(`${agentPath(agentId)}/recover-managed-custom`, "POST", InstantiateBotResponseSchema, RecoverManagedCustomBotRequestSchema.parse(input)),
     instantiate: (input) => call("/api/chat-agents/instantiate", "POST", InstantiateBotResponseSchema, InstantiateBotRequestSchema.parse(input)),
-    interactions: async (chatId) => (await call(`${chatPath(chatId)}/interactions`, "GET", z.object({ interactions: z.array(BotInteractionSchema).max(32) }).strict())).interactions,
+    interactions: async (chatId) => (await call(`${chatPath(chatId)}/interactions?includeRecovery=true`, "GET", z.object({ interactions: z.array(BotInteractionSchema).max(32) }).strict())).interactions,
     tasks: async (chatId) => (await call(`${chatPath(chatId)}/bot-tasks?includeRunIds=true`, "GET", BotTaskListResponseSchema)).tasks,
     resolve: (chatId, interactionId, input) => call(
-      `${chatPath(chatId)}/interactions/${encodeURIComponent(BotInteractionIdSchema.parse(interactionId))}/resolve`,
+      `${chatPath(chatId)}/interactions/${encodeURIComponent(BotInteractionIdSchema.parse(interactionId))}/resolve?includeRecovery=true`,
       "POST", ResolveBotInteractionResponseSchema, ResolveBotInteractionRequestSchema.parse(input)),
     authority: (agentId) => call(`${agentPath(agentId)}/authority`, "GET", BotAuthorityViewSchema),
     revoke: async (agentId, grantId) => {

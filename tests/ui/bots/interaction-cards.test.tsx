@@ -22,6 +22,27 @@ describe("bot interaction cards", () => {
       structuredAnswers: { target: ["Acme"] } }));
   });
 
+  it("shows saved-but-not-resumed feedback and retries only the saved continuation", async () => {
+    const onResolve = vi.fn().mockResolvedValueOnce({ interaction: { interactionId: base.interactionId, status: "resolved", revision: 2 }, continuationPending: true })
+      .mockResolvedValueOnce({ interaction: { interactionId: base.interactionId, status: "resolved", revision: 2 } });
+    render(<InteractionCard interaction={base} onResolve={onResolve} />);
+    fireEvent.change(screen.getByRole("textbox", { name: "Answer Target" }), { target: { value: "Acme" } });
+    fireEvent.click(screen.getByRole("button", { name: "Answer" }));
+    await waitFor(() => expect(screen.getByText("Your answer is saved. Resuming work is pending confirmation.")).toBeTruthy());
+    expect(screen.queryByRole("textbox", { name: "Answer Target" })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Resume" }));
+    await waitFor(() => expect(onResolve).toHaveBeenLastCalledWith({ kind: "resume", baseRevision: 2 }));
+    expect(onResolve).toHaveBeenCalledTimes(2);
+  });
+
+  it("restores a saved-only Resume action after refresh and blocks it when authority is unavailable", () => {
+    const { rerender } = render(<InteractionCard interaction={{ ...base, status: "resolved", revision: 2, recoveryAvailable: true }} onResolve={vi.fn()} />);
+    expect(screen.getByRole("button", { name: "Resume" })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Answer" })).toBeNull();
+    rerender(<InteractionCard interaction={{ ...base, status: "resolved", revision: 2, recoveryAvailable: true }} actionsAvailable={false} onResolve={vi.fn()} />);
+    expect((screen.getByRole("button", { name: "Resume" }) as HTMLButtonElement).disabled).toBe(true);
+  });
+
   it("sends each answer with its question ID and supports selected options", async () => {
     const resolve = vi.fn(async () => undefined);
     const card: BotInteraction = { ...base, payload: { kind: "question", questions: [

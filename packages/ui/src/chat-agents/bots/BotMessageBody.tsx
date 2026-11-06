@@ -1,4 +1,4 @@
-import type { BotInteraction, BotTaskSummary, ResolveBotInteractionRequest, ResolveBotInteractionResponse } from "@matrix-os/contracts";
+import { botSavedAnswerRecovery, type BotInteraction, type BotTaskSummary, type ResolveBotInteractionRequest, type ResolveBotInteractionResponse } from "@matrix-os/contracts";
 import { createContext, useContext } from "react";
 import { InteractionCard } from "./InteractionCard.js";
 import { BotCurrentTaskStatus, currentBotAttentionTask } from "./BotCurrentTaskStatus.js";
@@ -6,6 +6,7 @@ import { BotCurrentTaskStatus, currentBotAttentionTask } from "./BotCurrentTaskS
 export interface BotMessageState {
   chatId: string;
   agentId: string;
+  agentName?: string;
   interactions: readonly BotInteraction[];
   interactionsFresh: boolean;
   tasks: readonly BotTaskSummary[];
@@ -19,10 +20,12 @@ export const BotMessageStateContext = createContext<BotMessageState | null>(null
 function selectBody(state: BotMessageState, runIds: readonly string[], unassigned: boolean) {
   const tasks = state.tasks.filter(task => task.chatId === state.chatId && task.agentId === state.agentId);
   const matches = (runId?: string) => unassigned ? !runId || !runIds.includes(runId) : !!runId && runIds.includes(runId);
+  const now = new Date().toISOString();
   return {
     tasks: tasks.filter(task => matches(task.runId)),
     interactions: state.interactions.filter(interaction => interaction.chatId === state.chatId && interaction.agentId === state.agentId
-      && interaction.status === "pending" && matches(tasks.find(task => task.taskId === interaction.taskId)?.runId)),
+      && (interaction.status === "pending" || interaction.status === "resolved" && botSavedAnswerRecovery(interaction, now) !== null)
+      && matches(tasks.find(task => task.taskId === interaction.taskId)?.runId)),
   };
 }
 function MessageBody({ runIds, requestIds = [], unassigned = false }: {
@@ -38,6 +41,7 @@ function MessageBody({ runIds, requestIds = [], unassigned = false }: {
   if (!interactions.length && !currentBotAttentionTask(body.tasks) && !error) return null;
   return <div data-bot-message-state className="grid min-w-0 gap-3 py-2">
     {interactions.map(interaction => <InteractionCard key={interaction.interactionId} interaction={interaction}
+      agentName={state.agentName}
       actionsAvailable={state.interactionsFresh} onResolve={input => state.resolve(interaction.interactionId, input)} onResolved={state.refresh}/>)}
     <BotCurrentTaskStatus tasks={body.tasks}/>
     {error ? <p role="alert" className="text-xs">{state.error}</p> : null}

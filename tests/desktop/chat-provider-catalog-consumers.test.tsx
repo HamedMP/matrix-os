@@ -39,6 +39,14 @@ function draft(runtimeSummary = summary) {
     canonicalClient={client} />;
 }
 const client = createCanonicalChatWorkspaceClient();
+async function cleanupProviderCatalogConsumers() {
+  cleanup();
+  // Radix defers unmount autofocus. Finish it before jsdom restores another Event realm.
+  await act(async () => new Promise((resolve) => setTimeout(resolve, 0)));
+  stopDesktopProviderCatalogCoordinator();
+  useConnection.setState(useConnection.getInitialState(), true);
+  vi.restoreAllMocks();
+}
 beforeEach(() => {
   globalThis.ResizeObserver = class { observe() {} unobserve() {} disconnect() {} } as typeof ResizeObserver;
   resetProviderPreferences({ hydrated: true });
@@ -49,8 +57,22 @@ beforeEach(() => {
     on: vi.fn(() => () => undefined),
   } });
 });
-afterEach(() => { cleanup(); stopDesktopProviderCatalogCoordinator(); useConnection.setState(useConnection.getInitialState(), true); vi.restoreAllMocks(); });
+afterEach(cleanupProviderCatalogConsumers);
 describe("native catalog consumer wiring", () => {
+  it("settles deferred model-picker focus cleanup before the test environment is released", async () => {
+    useConnection.setState({ api: { get: vi.fn().mockResolvedValue(providerCatalog) } as never });
+    render(draft());
+    await screen.findByRole("button", { name: "Choose model and provider" });
+    openPicker();
+    const picker = await screen.findByRole("searchbox");
+    const onUnmountAutoFocus = vi.fn();
+    picker.closest('[role="dialog"]')?.addEventListener("focusScope.autoFocusOnUnmount", onUnmountAutoFocus);
+
+    await cleanupProviderCatalogConsumers();
+
+    expect(onUnmountAutoFocus).toHaveBeenCalledTimes(1);
+  });
+
   it("keeps Project draft usable after a failed background read without refetching for summary presentation changes", async () => {
     const pending = deferred<typeof providerCatalog>();
     const get = vi.fn().mockResolvedValueOnce(providerCatalog).mockRejectedValueOnce(new Error("read_failed")).mockReturnValue(pending.promise);

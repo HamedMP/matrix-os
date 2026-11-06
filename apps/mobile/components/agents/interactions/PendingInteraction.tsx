@@ -1,7 +1,8 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Text } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
 import {
+  botSavedAnswerRecovery,
   botIntegrationAccessCopy,
   botInteractionCard,
   type BotInteraction,
@@ -9,6 +10,10 @@ import {
   type ResolveBotInteractionRequest,
   type ResolveBotInteractionResponse,
 } from "@matrix-os/contracts";
+
+import { Button } from "@/components/ui";
+import { routineApprovalPreview } from "@matrix-os/ui/bot-routine-presentation";
+import { RoutineApprovalCard } from "./RoutineApprovalCard";
 
 import { approvalTitle, serviceLabel } from "../agent-copy";
 
@@ -31,6 +36,8 @@ const CLOSED_NOTES = {
 } as const;
 
 export interface PendingInteractionProps {
+  /** When supplied by Schedules, an old edit may be denied but not approved. */
+  currentRoutineRevision?: number | null;
   interaction: BotInteraction;
   /** False while the agent's status could not be read again, so what is shown may be out of date. */
   actionsAvailable?: boolean;
@@ -64,11 +71,22 @@ export function PendingInteraction({
   onResolve,
   onRefresh,
   onConnectUrl,
+  currentRoutineRevision,
 }: PendingInteractionProps) {
   const [sending, setSending] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [settled, setSettled] = useState<{ connectUrl: string | null } | null>(null);
   const inFlight = useRef(false);
+  const [savedRevision, setSavedRevision] = useState<number | null>(null);
+  const [now, setNow] = useState(() => new Date().toISOString());
+  const recovery = !settled ? botSavedAnswerRecovery(interaction, now, savedRevision) : null;
+  useEffect(() => {
+    if (!interaction.recoveryAvailable && savedRevision === null) return;
+    const delay = Date.parse(interaction.expiresAt) - Date.now();
+    if (delay <= 0) { setNow(new Date().toISOString()); return; }
+    const timer = setTimeout(() => setNow(new Date().toISOString()), Math.min(delay + 1, 2_147_483_647));
+    return () => clearTimeout(timer);
+  }, [interaction.expiresAt, interaction.recoveryAvailable, savedRevision]);
 
   const card = botInteractionCard(interaction, new Date().toISOString());
   const { payload, revision: baseRevision } = interaction;
@@ -77,7 +95,11 @@ export function PendingInteraction({
   const testID = `interaction-${interaction.interactionId}`;
 
   const resolve = async (action: string, input: ResolveBotInteractionRequest) => {
-    if (inFlight.current || settled) return;
+    if (input.kind !== "resume" && (!actionsAvailable || botInteractionCard(interaction, new Date().toISOString()).state !== "actionable")) {
+      setNow(new Date().toISOString());
+      return;
+    }
+    if (inFlight.current || settled || (input.kind === "resume" && (!recovery || recovery.expired || !actionsAvailable))) return;
     inFlight.current = true;
     setSending(action);
     setError(null);
@@ -86,13 +108,14 @@ export function PendingInteraction({
       response = await onResolve(interaction.interactionId, input);
     } catch (failure: unknown) {
       console.warn("[mobile] agent interaction failed", failure instanceof Error ? failure.name : "unknown");
-      setError(SAVE_FAILED);
+      setError(input.kind === "resume" ? "Your answer is saved. Work could not resume. Try again." : SAVE_FAILED);
       return;
     } finally {
       inFlight.current = false;
       setSending(null);
     }
-    setSettled({ connectUrl: response.connectUrl ?? null });
+    if (response.continuationPending) setSavedRevision(response.interaction.revision);
+    else { setSavedRevision(null); setSettled({ connectUrl: response.connectUrl ?? null }); }
     try {
       await onRefresh();
     } catch (failure: unknown) {
@@ -111,6 +134,15 @@ export function PendingInteraction({
     }
   };
 
+  if (recovery) return (
+    <InteractionCard testID={testID} label="Saved answer" error={error}>
+      <InteractionNote>Your answer is saved. Resuming work is pending confirmation.</InteractionNote>
+      {recovery.expired ? <InteractionNote>This request has expired.</InteractionNote> : null}
+      <Button label="Resume" disabled={recovery.expired || !actionsAvailable || sending !== null}
+        onPress={() => void resolve("resume", { kind: "resume", baseRevision: recovery.revision })} />
+    </InteractionCard>
+  );
+
   if (settled) {
     const { connectUrl } = settled;
     // Connecting is finished on a page of its own, so that card stays to open it.
@@ -127,6 +159,9 @@ export function PendingInteraction({
   }
 
   if (!payload || card.state !== "actionable") {
+    if (payload?.kind === "approval" && payload.tool === "routine.activate") return <RoutineApprovalCard
+      testID={testID} botId={interaction.agentId} preview={payload.preview} sending={null} error={null} stale={false}
+      closed={CLOSED_NOTES[card.state === "actionable" ? "unavailable" : card.state]} onAllow={() => {}} onDeny={() => {}} />;
     return (
       <InteractionCard testID={testID} label={label}>
         <InteractionNote>{CLOSED_NOTES[card.state === "actionable" ? "unavailable" : card.state]}</InteractionNote>
@@ -136,6 +171,9 @@ export function PendingInteraction({
   }
 
   if (!actionsAvailable) {
+    if (payload.kind === "approval" && payload.tool === "routine.activate") return <RoutineApprovalCard
+      testID={testID} botId={interaction.agentId} preview={payload.preview} sending={null} error={null} stale={false}
+      closed={STATUS_OUT_OF_DATE} onAllow={() => {}} onDeny={() => {}} />;
     return (
       <InteractionCard testID={testID} label={label} title={titleOf(payload)}>
         <InteractionNote>{STATUS_OUT_OF_DATE}</InteractionNote>
@@ -153,6 +191,14 @@ export function PendingInteraction({
 
   switch (payload.kind) {
     case "approval":
+      if (payload.tool === "routine.activate") {
+        const routine = routineApprovalPreview(payload.preview);
+        const stale = Boolean(routine?.source.routineId && currentRoutineRevision !== undefined
+          && routine.source.baseRoutineRevision !== currentRoutineRevision);
+        return <RoutineApprovalCard testID={testID} botId={interaction.agentId} preview={payload.preview} sending={sending} error={error} stale={stale}
+          onAllow={() => { if (routine && !stale) void resolve("approve", { kind: "approval", baseRevision, decision: "approve" }); }}
+          onDeny={() => void resolve("deny", { kind: "approval", baseRevision, decision: "deny" })} />;
+      }
       return (
         <ApprovalCard
           testID={testID}

@@ -46,16 +46,16 @@ export type SettingsSectionId =
   | "system";
 
 const SECTIONS: { id: SettingsSectionId; label: string; icon: React.ReactNode; group: string }[] = [
-  { id: "account", label: "Account", icon: <UserRound size={15} />, group: "You" },
-  { id: "billing", label: "Billing", icon: <CreditCard size={15} />, group: "You" },
-  { id: "appearance", label: "Appearance", icon: <Palette size={15} />, group: "You" },
-  { id: "organization", label: "Organization", icon: <UsersIcon size={15} />, group: "Organization" },
+  { id: "agents-providers", label: "Agents & providers", icon: <Bot size={15} />, group: "AI" },
   { id: "services", label: "Connect Apps", icon: <Blocks size={15} />, group: "Integrations" },
   { id: "mcps", label: "MCPs", icon: <Server size={15} />, group: "Integrations" },
   { id: "skills", label: "Skills", icon: <Sparkles size={15} />, group: "Integrations" },
   { id: "chat-import", label: "Import chats", icon: <Upload size={15} />, group: "Integrations" },
   { id: "cli", label: "CLI", icon: <SquareTerminal size={15} />, group: "Integrations" },
-  { id: "agents-providers", label: "Agents & providers", icon: <Bot size={15} />, group: "Machine" },
+  { id: "appearance", label: "Appearance", icon: <Palette size={15} />, group: "You" },
+  { id: "account", label: "Account", icon: <UserRound size={15} />, group: "You" },
+  { id: "billing", label: "Billing", icon: <CreditCard size={15} />, group: "You" },
+  { id: "organization", label: "Organization", icon: <UsersIcon size={15} />, group: "Organization" },
   { id: "identity-personality", label: "Identity & personality", icon: <Sparkles size={15} />, group: "Machine" },
   { id: "runtime", label: "Computers", icon: <Server size={15} />, group: "Machine" },
   { id: "cron", label: "Schedules", icon: <Clock size={15} />, group: "Machine" },
@@ -102,6 +102,7 @@ export function SettingsSidebar({
                 key={s.id}
                 type="button"
                 onClick={() => onSectionChange(s.id)}
+                aria-current={active ? "page" : undefined}
                 className={`flex items-center gap-2.5 rounded-md px-2.5 py-1.5 text-left text-sm font-medium transition-colors duration-100 ${active ? "bg-[var(--sidebar-accent)]" : "hover:bg-[var(--sidebar-accent)]"}`}
                 style={{ color: active ? "var(--sidebar-accent-foreground)" : "var(--text-secondary)" }}
               >
@@ -125,7 +126,7 @@ export default function SettingsView({
   section?: SettingsSectionId;
   onSectionChange?: (section: SettingsSectionId) => void;
 } = {}) {
-  const [localSection, setLocalSection] = useState<SettingsSectionId>("account");
+  const [localSection, setLocalSection] = useState<SettingsSectionId>("agents-providers");
   const requestedSection = useUi((s) => s.requestedSettingsSection);
   const section = controlledSection ?? localSection;
   const selectSection = onSectionChange ?? setLocalSection;

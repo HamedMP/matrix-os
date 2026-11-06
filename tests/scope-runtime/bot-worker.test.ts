@@ -33,7 +33,10 @@ function send(socketPath: string, body: string): Promise<string> {
     const socket = connect({ path: socketPath });
     let output = "";
     socket.setEncoding("utf8");
-    socket.once("connect", () => socket.end(body));
+    socket.once("connect", () => {
+      if (body.includes('"kind":"bot.run"')) socket.write(body);
+      else socket.end(body);
+    });
     socket.on("data", (chunk) => { output += chunk; });
     socket.once("close", () => resolve(output));
     socket.once("error", reject);

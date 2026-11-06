@@ -165,7 +165,8 @@ describe("Figma semantic surface tokens", () => {
 
 describe("composer focus presentation", () => {
   it("suppresses the global focus ring inside the rich prompt editor", () => {
-    expect(readRendererFile("design", "index.css")).toMatch(
+    expect(readRendererFile("design", "index.css")).toContain('@import "@matrix-os/ui/chat-composer.css";');
+    expect(readFileSync(path.resolve(import.meta.dirname, "../../packages/ui/src/chat/composer/chat-composer.css"), "utf8")).toMatch(
       /\.prompt-card \[data-slot="prompt-input-content"\]:focus-visible\s*\{[^}]*box-shadow:\s*none;/,
     );
   });

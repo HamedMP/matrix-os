@@ -23,6 +23,7 @@ import {
   piProfileIdentity,
 } from "./bot-profile.js";
 import { SCOPE_RUNTIME_SANDBOX_CAPABILITY } from "./sandbox.js";
+import { createPiRuntimeLeases, type LeasedRuntime } from "./pi-runtime-leases.js";
 import {
   SCOPE_RUNTIME_HARNESS_VERSION,
   SCOPE_RUNTIME_CODEX_VERSION,
@@ -129,6 +130,7 @@ export interface ScopeRuntimeLauncher {
     runtimeHandle: string;
     executionGeneration: string;
     command: ScopeRuntimeBotCommand;
+    signal?: AbortSignal;
   }): Promise<ScopeRuntimeBotWorkerReply>;
   stop(runtimeHandle: string): Promise<void>;
 }
@@ -199,13 +201,15 @@ export async function createScopeRuntimeController(options: {
   const availableProfile = availableProfiles[0]!;
   const existing = await options.launcher.list();
   if (existing.length > maxRuntimes) throw new Error("Scope runtime reconciliation exceeds capacity");
-  const runtimes = new Map<string, { executionGeneration: string; profileId: string }>();
+  const runtimes = new Map<string, LeasedRuntime>();
   for (const value of existing) {
     const runtimeHandle = RuntimeHandleSchema.parse(value.runtimeHandle);
     if (!EXECUTION_GENERATION.test(value.executionGeneration)) {
       throw new Error("Invalid reconciled scope runtime generation");
     }
     if (runtimes.has(runtimeHandle)) throw new Error("Duplicate reconciled scope runtime");
+    // A restarted supervisor cannot prove an old Pi run still has a live gateway owner.
+    if (piProfileIdentity(value.profileId)) { await options.launcher.stop(runtimeHandle); continue; }
     runtimes.set(runtimeHandle, {
       executionGeneration: value.executionGeneration,
       profileId: value.profileId ?? SCOPE_RUNTIME_PROFILE.profileId,
@@ -214,6 +218,10 @@ export async function createScopeRuntimeController(options: {
   const operations = new Set<Promise<void>>();
   let reservedCreates = 0;
   let closed = false;
+  const leases = createPiRuntimeLeases({ runtimes, async expire(handle, runtime) {
+    await options.launcher.stop(handle);
+    if (runtimes.get(handle) === runtime) runtimes.delete(handle);
+  } });
 
   /**
    * Units end on their own (RuntimeMaxSec, crash, or worker exit). Drops map
@@ -230,6 +238,7 @@ export async function createScopeRuntimeController(options: {
       for (const runtimeHandle of tracked) {
         if (!running.has(runtimeHandle)) runtimes.delete(runtimeHandle);
       }
+      leases.changed();
     } catch (error: unknown) {
       console.warn("[scope-runtime] runtime liveness check failed:",
         error instanceof Error ? error.name : "UnknownError");
@@ -299,6 +308,7 @@ export async function createScopeRuntimeController(options: {
         return runtimeFailure(request.requestId, "runtime_unavailable");
       }
       runtimes.set(runtimeHandle, { executionGeneration: options.executionGeneration, profileId: profile.profileId });
+      if (piProfileIdentity(profile.profileId)) leases.register(runtimeHandle);
       return ScopeRuntimeResponseSchema.parse({
         version: 1,
         type: "runtime.result",
@@ -325,9 +335,11 @@ export async function createScopeRuntimeController(options: {
     if (executionGeneration === undefined) {
       return runtimeFailure(request.requestId, "runtime_not_found");
     }
+    leases.forget(request.runtimeHandle);
     try {
       await options.launcher.stop(request.runtimeHandle);
       runtimes.delete(request.runtimeHandle);
+      leases.changed();
       return ScopeRuntimeResponseSchema.parse({
         version: 1,
         type: "runtime.result",
@@ -380,6 +392,7 @@ export async function createScopeRuntimeController(options: {
 
   async function runBot(
     request: Extract<ScopeRuntimeRequest, { type: "runtime.bot" }>,
+    signal?: AbortSignal,
   ): Promise<ScopeRuntimeResponse> {
     const runtime = runtimes.get(request.runtimeHandle);
     if (runtime === undefined || !piProfileIdentity(runtime.profileId) || !options.launcher.runBot) {
@@ -388,12 +401,17 @@ export async function createScopeRuntimeController(options: {
     if (runtime.executionGeneration !== request.executionGeneration) {
       return botFailure(request.requestId, "generation_mismatch");
     }
+    if (!leases.active(request.runtimeHandle, request.executionGeneration)) return botFailure(request.requestId, "runtime_unavailable");
     try {
       const result = await options.launcher.runBot({
         runtimeHandle: request.runtimeHandle,
         executionGeneration: runtime.executionGeneration,
         command: request.command,
+        ...(signal ? { signal } : {}),
       });
+      if (closed || runtimes.get(request.runtimeHandle) !== runtime || !leases.active(request.runtimeHandle, request.executionGeneration)) {
+        return botFailure(request.requestId, "runtime_unavailable");
+      }
       if (!result.ok) {
         return botFailure(request.requestId, result.error === "busy" ? "busy"
           : result.error === "invalid_command" ? "invalid_request" : "runtime_unavailable");
@@ -416,7 +434,7 @@ export async function createScopeRuntimeController(options: {
   }
 
   return {
-    async handle(input: ScopeRuntimeRequest): Promise<ScopeRuntimeResponse> {
+    async handle(input: ScopeRuntimeRequest, context?: { signal: AbortSignal }): Promise<ScopeRuntimeResponse> {
       const request = ScopeRuntimeRequestSchema.parse(input);
       if (closed) {
         return request.type === "capability.get"
@@ -444,7 +462,11 @@ export async function createScopeRuntimeController(options: {
       }
       if (request.type === "runtime.create") return createRuntime(request);
       if (request.type === "runtime.chat") return runChat(request);
-      if (request.type === "runtime.bot") return runBot(request);
+      if (request.type === "runtime.bot") return runBot(request, context?.signal);
+      if (request.type === "runtime.renew") return leases.renew(request.runtimeHandle, request.executionGeneration)
+        ? ScopeRuntimeResponseSchema.parse({ version: 1, type: "runtime.result", requestId: request.requestId, ok: true,
+          runtimeHandle: request.runtimeHandle, executionGeneration: request.executionGeneration, state: "running" })
+        : runtimeFailure(request.requestId, "runtime_not_found");
       return stopRuntime(request);
     },
     size(): number {
@@ -453,6 +475,7 @@ export async function createScopeRuntimeController(options: {
     async close(): Promise<void> {
       if (closed) return;
       closed = true;
+      await leases.close();
       await Promise.allSettled([...operations]);
       const stops = [...runtimes.keys()].map(async (runtimeHandle) => {
         try {

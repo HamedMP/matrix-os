@@ -18,6 +18,11 @@ import {
 import { BotHttpsUrlSchema } from "#bots/memory";
 
 const MAX_PAYLOAD_BYTES = 16 * 1024;
+export const BOT_ROUTINE_APPROVAL_PREVIEW_LIMIT = 32 * 1024;
+/** Only the exact routine envelope needs room for a 4096-character escaped prompt. */
+export function botInteractionPayloadByteLimit(payload: { kind?: unknown; tool?: unknown }): number {
+  return payload.kind === "approval" && payload.tool === "routine.activate" ? 24 * 1024 : MAX_PAYLOAD_BYTES;
+}
 
 export const BotInteractionKindSchema = z.enum(["question", "account_choice", "connect_request", "approval"]);
 export const BotInteractionStatusSchema = z.enum(["pending", "resolved", "expired", "cancelled"]);
@@ -56,16 +61,18 @@ const ApprovalPayloadSchema = z.object({
   argsDigest: z.string().regex(/^[a-f0-9]{64}$/),
   account: z.object({ service: BotIntegrationServiceSchema, label: BotAccountLabelSchema }).strict().optional(),
   audience: BotAudienceSchema,
-  preview: canonicalBoundedText(4_096, 16 * 1024),
+  preview: canonicalBoundedText(BOT_ROUTINE_APPROVAL_PREVIEW_LIMIT, BOT_ROUTINE_APPROVAL_PREVIEW_LIMIT),
   policyRevision: BotRevisionSchema,
-}).strict();
+}).strict().refine(payload => payload.tool === "routine.activate"
+  || payload.preview.length <= 4096 && new TextEncoder().encode(payload.preview).byteLength <= 16 * 1024,
+  { message: "Approval preview is too large" });
 
 export const BotInteractionPayloadSchema = z.discriminatedUnion("kind", [
   QuestionPayloadSchema,
   AccountChoicePayloadSchema,
   ConnectRequestPayloadSchema,
   ApprovalPayloadSchema,
-]).refine((payload) => canonicalEncodedByteLength(payload) <= MAX_PAYLOAD_BYTES, { message: "Interaction payload is too large" });
+]).refine((payload) => canonicalEncodedByteLength(payload) <= botInteractionPayloadByteLimit(payload), { message: "Interaction payload is too large" });
 
 /** Responder-facing projection. The payload is present only for the designated responder. */
 export const BotInteractionSchema = z.object({
@@ -79,6 +86,8 @@ export const BotInteractionSchema = z.object({
   expiresAt: IsoTimestampSchema,
   revision: BotRevisionSchema,
   payload: BotInteractionPayloadSchema.optional(),
+  /** Saved blocking question whose original continuation was never admitted. */
+  recoveryAvailable: z.literal(true).optional(),
 }).strict().refine((interaction) => interaction.payload === undefined || interaction.payload.kind === interaction.kind, {
   message: "Payload kind must match the interaction kind",
 });
@@ -86,6 +95,7 @@ export const BotInteractionSchema = z.object({
 const answerShape = CanonicalSubmitChatInputRequestSchema.shape;
 
 export const ResolveBotInteractionRequestSchema = z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("resume"), baseRevision: BotBaseRevisionSchema }).strict(),
   z.object({
     kind: z.literal("question"),
     baseRevision: BotBaseRevisionSchema,
@@ -118,6 +128,8 @@ export const ResolveBotInteractionResponseSchema = z.object({
     revision: BotRevisionSchema,
   }).strict(),
   connectUrl: BotHttpsUrlSchema.optional(),
+  /** Answer committed; no confirmed continuation admission yet. */
+  continuationPending: z.literal(true).optional(),
 }).strict();
 
 export type BotInteractionKind = z.infer<typeof BotInteractionKindSchema>;

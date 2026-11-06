@@ -18,6 +18,8 @@ export interface ComposerAddOptions {
   room: number;
   /** Those of the waiting attachments the model does not read. */
   unreadable: readonly ComposerAttachment[];
+  /** Safe preflight copy, including a failed message held back under a changed selection. */
+  attachmentNotice?: string | null;
   onAdd: (attachments: readonly ComposerAttachment[]) => void;
   onRemove: (id: string) => void;
   draft: string;
@@ -40,6 +42,7 @@ export function composerAddProps({
   attachments,
   room,
   unreadable,
+  attachmentNotice,
   onAdd,
   onRemove,
   draft,
@@ -50,7 +53,7 @@ export function composerAddProps({
   return {
     attachments,
     onRemoveAttachment: onRemove,
-    attachmentNotice: unreadableNotice(unreadable),
+    attachmentNotice: attachmentNotice ?? unreadableNotice(unreadable),
     addControl: (
       <ComposerAddControl
         kinds={kinds}

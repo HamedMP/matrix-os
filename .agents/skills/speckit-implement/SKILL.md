@@ -150,6 +150,7 @@ You **MUST** consider the user input before proceeding (if not empty).
    - **File-based coordination**: Tasks affecting the same files must run sequentially
    - **Validation checkpoints**: Verify each phase completion before proceeding
    - **Stack boundaries**: For Matrix OS repositories with `docs/dev/stacked-prs.md`, preserve completed phases as reviewable GitHub native stack layers. Commit at each phase checkpoint and avoid mixing unrelated future-phase work into that layer.
+   - **Stack count**: Follow the GitHub Stack Plan's 5-6 layer target and 10-layer hard maximum. Count before `gh stack add`; if the next layer would exceed 10, finish the current stack and plan a follow-on stack after it merges. Keep each PR within its size limits.
 
 7. Implementation execution rules:
    - **Setup first**: Initialize project structure, dependencies, configuration

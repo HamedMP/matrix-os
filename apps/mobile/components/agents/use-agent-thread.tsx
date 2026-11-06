@@ -24,6 +24,10 @@ import { HOSTED_GATEWAY_URL } from "@/lib/storage";
 import { useChatComposer } from "@/lib/use-chat-composer";
 import { useSessionTokenWarmup } from "@/lib/use-session-token-warmup";
 
+import {useNativeRoutineMessages} from "./schedules/use-routine-messages";
+import {NativeRoutineMessageReadNotice} from "./schedules/RoutineMessage";
+import {routineMessageTimeline,routineOccurrenceOutcome} from "@matrix-os/ui/bot-routine-transcript";
+import type {TranscriptMessage} from "@/lib/canonical-chat-transcript";
 import { PendingInteractions } from "./interactions/PendingInteractions";
 import { useAgentChatSync } from "./use-agent-chat-sync";
 
@@ -57,7 +61,7 @@ export function agentTurnSetup({ agent, fromTemplate, detail, catalog }: {
  * An agent's chat, read and sent to by its id. Nothing here reads or changes
  * the Chats tab's active chat. `chatId` is null until the chat is found.
  */
-export function useAgentThread({ agent, chatId }: { agent: ChatAgent | null; chatId: string | null }) {
+export function useAgentThread({ agent, chatId, showRoutineHistory = false, readOnly = false }: { agent: ChatAgent | null; chatId: string | null; showRoutineHistory?: boolean; readOnly?: boolean }) {
   const { isSignedIn, userId } = useAuth();
   const warmSessionToken = useSessionTokenWarmup();
   const { detail, computer, refresh, isError: chatReadFailed, reload: reloadChat } = useCanonicalChatDetail(chatId);
@@ -70,23 +74,25 @@ export function useAgentThread({ agent, chatId }: { agent: ChatAgent | null; cha
   const { selection, turnModes } = agentTurnSetup({ agent, fromTemplate: Boolean(botChat.snapshot), detail, catalog });
   const attachmentKinds = supportedAttachmentKinds(catalog, selection);
   const {
-    draft, setDraft, attachments, addAttachments, removeAttachment, attachmentRoom, unreadableAttachments,
+    draft, setDraft, attachments, addAttachments, removeAttachment, attachmentRoom, unreadableAttachments, attachmentNotice,
     sentAttachments, canSend, send, isSending, optimisticMessages, retrySend, editUnsent,
   } = useChatComposer({
     scope: computer ? `${userId ?? ""}:${computer.handle}:${computer.runtimeSlot}` : null,
     activeChatId: chatId,
     detail,
     selection,
+    catalog,
+    recipeAutomatic: Boolean(botChat.snapshot || agent?.recipeRef),
     turnModes,
     projectId: null,
     attachmentKinds,
     // Without a chat id a send would start a new chat, which is not this
     // agent's; a chat is sent to at the revision it was read at; and the
     // computer refuses a turn while another runs.
-    disabled: chatId === null || !detail || activeChatRun(detail) !== undefined,
+    disabled: readOnly || chatId === null || !detail || activeChatRun(detail) !== undefined,
   });
 
-  const { messages, running, onStop, renderRequest, renderResults, renderComputerPhoto } = useChatThread({
+  const { messages:threadMessages, running, onStop, renderRequest, renderResults, renderComputerPhoto } = useChatThread({
     chatId,
     detail,
     gatewayUrl,
@@ -94,6 +100,13 @@ export function useAgentThread({ agent, chatId }: { agent: ChatAgent | null; cha
     optimisticMessages,
     sentAttachments,
   });
+  const routineMessages=useNativeRoutineMessages(chatId,Boolean(showRoutineHistory||agent?.recipeRef));
+  const messages=useMemo(()=>routineMessageTimeline(threadMessages,routineMessages.occurrences,
+    message=>message.role==="user"?detail?.turns.find(turn=>turn.inputMessageId===message.id)?.clientRequestId:undefined,
+    message=>message.createdAt,true).map((row):TranscriptMessage=>row.kind==="message"?{...row.value,...(row.occurrence?{scheduled:row.occurrence}:{})}:{
+      id:`scheduled:${row.occurrence.fire.fireId}`,role:"user",text:routineOccurrenceOutcome(row.occurrence),
+      toolCalls:[],activities:[],isRunning:false,createdAt:Date.parse(row.occurrence.fire.scheduledFor),scheduled:row.occurrence,scheduleEvent:true,
+    }),[threadMessages,routineMessages.occurrences,detail]);
   const busy = isSending || running;
   const signedIn = Boolean(isSignedIn);
   const unsentActions = useMemo(() => ({ onRetry: retrySend, onEdit: editUnsent }), [retrySend, editUnsent]);
@@ -127,7 +140,7 @@ export function useAgentThread({ agent, chatId }: { agent: ChatAgent | null; cha
     /** What a message that was not sent offers. */
     unsentActions,
     /** What the agent is waiting on the person for, drawn after the newest message. */
-    footer: interactions.length > 0 ? (
+    footer: interactions.length > 0 || routineMessages.failed || routineMessages.incomplete ? <> {interactions.length > 0 ? (
       <PendingInteractions
         interactions={interactions}
         actionsAvailable={!botChat.isError}
@@ -135,13 +148,13 @@ export function useAgentThread({ agent, chatId }: { agent: ChatAgent | null; cha
         onRefresh={botChat.refresh}
         onConnectUrl={openConsentPage}
       />
-    ) : null,
+    ) : null}<NativeRoutineMessageReadNotice failed={routineMessages.failed} incomplete={routineMessages.incomplete} loading={routineMessages.loading} retry={routineMessages.retry}/></> : null,
     composer: {
       draft,
       onChangeDraft: handleDraftChange,
-      editable: signedIn,
+      editable: signedIn && !readOnly,
       onFocus: warmSessionToken,
-      canSend: canSend && signedIn,
+      canSend: canSend && signedIn && !readOnly,
       onSend: send,
       running: busy,
       onStop,
@@ -153,6 +166,7 @@ export function useAgentThread({ agent, chatId }: { agent: ChatAgent | null; cha
         attachments,
         room: attachmentRoom,
         unreadable: unreadableAttachments,
+        attachmentNotice,
         onAdd: addAttachments,
         onRemove: removeAttachment,
         draft,

@@ -43,3 +43,10 @@ describe("registerWindowsProtocolClients", () => {
     ).toEqual(["matrix-os"]);
   });
 });
+
+import { verifiedPreviewPairTestContext } from "./preview-pair-test-context.js";
+it("does not let verified pair startup replace the normal app's global protocol ownership", async () => {
+  const setAsDefaultProtocolClient = vi.fn(() => true), context = await verifiedPreviewPairTestContext();
+  expect(registerWindowsProtocolClients({ isPackaged: true, setAsDefaultProtocolClient }, "win32", context)).toEqual([]);
+  expect(setAsDefaultProtocolClient).not.toHaveBeenCalled();
+});

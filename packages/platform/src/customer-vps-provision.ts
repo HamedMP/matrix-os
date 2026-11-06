@@ -1,3 +1,4 @@
+import { isPreviewPairBundle } from "@matrix-os/contracts/preview-pair";
 import { withAccountDeletionAdmission } from './account-deletion/admission.js';
 /** Customer VPS provisioning requests, split from customer-vps.ts. */
 import type { PlatformDB, UserMachineProvisioningClass, UserMachineRecord } from './db.js';
@@ -50,14 +51,19 @@ export function createCustomerVpsProvisioner(
   dispatcher: CustomerVpsProvisioningDispatcher,
 ) {
   const { deps, machineIdFactory, provisioningJobIdFactory, enqueueProvisioningJob, tokenFactory, postgresPasswordFactory, now, enqueueProviderDeletionTx } = context;
-  const { dispatchProvisioningJobForRequest } = dispatcher;
 
   async function provision(
     input: ProvisionRequest | PreviewProvisionRequest,
     provisioningClass: UserMachineProvisioningClass,
-    dispatch: NonNullable<ProvisionOptions['dispatch']>,
+    dispatch: NonNullable<ProvisionOptions['dispatch']> | 'prepare',
     prebillingIntentId?: string,
   ): Promise<ProvisionResponse> {
+    if (dispatch === 'prepare' && !deps.db.executor.isTransaction) {
+      throw new Error('Preview pair preparation requires an active transaction');
+    }
+    const dispatchProvisioningJobForRequest = async (jobId: string, _mode: typeof dispatch): Promise<void> => {
+      if (dispatch !== 'prepare') await dispatcher.dispatchProvisioningJobForRequest(jobId, dispatch);
+    };
     const hasExplicitDeveloperTools = input.developerTools !== undefined;
     const testSnapshotId = provisioningClass === 'preview' && 'testSnapshotId' in input
       ? input.testSnapshotId
@@ -65,6 +71,9 @@ export function createCustomerVpsProvisioner(
     const previewBundleVersion = provisioningClass === 'preview' && 'bundleVersion' in input
       ? input.bundleVersion
       : undefined;
+    if (dispatch !== 'prepare' && [previewBundleVersion, deps.config.imageVersion].some(version => version && isPreviewPairBundle(version))) {
+      throw new CustomerVpsError(409, 'invalid_state', 'Provisioning unavailable');
+    }
     const request = {
       ...input,
       runtimeSlot: input.runtimeSlot ?? 'primary',
@@ -338,6 +347,9 @@ export function createCustomerVpsProvisioner(
       return { existing: null };
       });
     } catch (err: unknown) {
+      // The outer pair transaction owns rollback; convergence outside it could
+      // hide the second member failure or reuse an aborted transaction.
+      if (dispatch === 'prepare') throw err;
       const errorCode = err instanceof Error
         ? (err as Error & { code?: unknown }).code
         : undefined;

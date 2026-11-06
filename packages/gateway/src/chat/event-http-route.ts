@@ -4,6 +4,8 @@ import { projectChatFundingErrors } from "./funding-error-wire.js";
 import { ChatFundingWireVersionSchema } from "@matrix-os/contracts";
 import { ChatReadStateWireVersionSchema, projectChatReadStateResponse } from "@matrix-os/contracts";
 import {
+  ChatAssistantTextWireVersionSchema,
+  ChatQuestionDescriptionWireVersionSchema,
   ChatEventWireVersionSchema,
   ChatInputWireVersionSchema,
   ChatMessageWireVersionSchema,
@@ -69,6 +71,10 @@ export function registerCanonicalChatEventHttpRoute(options: {
 
     const importSourceVersion = ChatImportSourceVersionSchema.safeParse(context.req.query("importSourceVersion"));
     if (!importSourceVersion.success || (context.req.queries("importSourceVersion")?.length ?? 0) > 1) return context.json({ error: "Unsupported import source version" }, 400);
+    const assistantTextVersion = ChatAssistantTextWireVersionSchema.safeParse(context.req.query("assistantTextVersion"));
+    if (!assistantTextVersion.success || (context.req.queries("assistantTextVersion")?.length ?? 0) > 1) return context.json({ error: "Unsupported assistant text version" }, 400);
+    const questionDescriptionVersion = ChatQuestionDescriptionWireVersionSchema.safeParse(context.req.query("questionDescriptionVersion"));
+    if (!questionDescriptionVersion.success || (context.req.queries("questionDescriptionVersion")?.length ?? 0) > 1) return context.json({ error: "Unsupported question description version" }, 400);
     const messageVersion = ChatMessageWireVersionSchema.safeParse(context.req.query("messageVersion"));
     if (!messageVersion.success) return context.json({ error: "Unsupported message version" }, 400);
     const inputVersion = ChatInputWireVersionSchema.safeParse(context.req.query("inputVersion"));
@@ -124,7 +130,7 @@ export function registerCanonicalChatEventHttpRoute(options: {
       send(frame: CanonicalChatTransportFrame): boolean {
         if (closed || (controller.desiredSize ?? 0) <= 0) return false;
         try {
-          const projected = projectChatMessageFrame(projectChatEventFrame(frame, eventVersion.data), messageVersion.data, inputVersion.data, commandPreviewVersion.data);
+          const projected = projectChatMessageFrame(projectChatEventFrame(frame, eventVersion.data), messageVersion.data, inputVersion.data, commandPreviewVersion.data, assistantTextVersion.data, questionDescriptionVersion.data);
           const readProjected = projected.type === "chat.content" ? {
             ...projected, content: projectChatReadStateResponse(projected.content, readStateVersion.data),
           } : projected;

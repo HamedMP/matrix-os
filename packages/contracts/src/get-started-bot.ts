@@ -11,7 +11,6 @@ export const GET_STARTED_SOUL_START = "<!-- matrix:get-started:start -->";
 export const GET_STARTED_SOUL_END = "<!-- matrix:get-started:end -->";
 export const GET_STARTED_BOT_NAME_MAX_CHARS = 24;
 export const GET_STARTED_BOT_RULES_MAX_CHARS = 500;
-export const GET_STARTED_BOT_NAMES = ["Matrix", "Atlas", "Nova", "Ada", "Sage"] as const;
 
 export const GET_STARTED_PERSONALITIES = [
   { id: "friendly-helper", label: "Friendly helper", rule: "warm and encouraging; explain what you're doing as you go.", sample: "Happy to help! I'll walk you through it as I go." },

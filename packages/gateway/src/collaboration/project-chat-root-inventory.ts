@@ -1,5 +1,6 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
+import { isAbsolute, resolve } from "node:path";
 import { CanonicalChatExecutionRootRefSchema, canonicalExecutionRootProjectId, type CanonicalChatExecutionRootRef } from "@matrix-os/contracts";
 import type { Kysely } from "kysely";
 import { z } from "zod/v4";
@@ -57,6 +58,15 @@ async function probeGitRoot(path: string, args: string[]): Promise<GitProbe> {
 }
 
 async function inspectGitRoot(path: string): Promise<{ branch?: string; dirty?: boolean }> {
+  // Git walks ancestors for scratch directories. Only the canonical workspace's
+  // own repository may supply metadata; parent status can expose unrelated
+  // state and exceed the output cap before the project can be shared.
+  const discovered = await probeGitRoot(path, ["rev-parse", "--show-toplevel"]);
+  if (discovered.status === "exit" && discovered.code === 128) return {};
+  if (discovered.status !== "ok") throw new ProjectChatRootInventoryError();
+  const topLevel = discovered.stdout.replace(/\r?\n$/, "");
+  if (!isAbsolute(topLevel)) throw new ProjectChatRootInventoryError();
+  if (resolve(topLevel) !== resolve(path)) return {};
   const [branch, status] = await Promise.all([
     probeGitRoot(path, ["symbolic-ref", "--quiet", "--short", "HEAD"]),
     probeGitRoot(path, ["status", "--porcelain=v1", "--untracked-files=normal"]),

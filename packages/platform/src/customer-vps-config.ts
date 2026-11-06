@@ -130,7 +130,8 @@ export function loadCustomerVpsConfig(env: NodeJS.ProcessEnv = process.env): Cus
     posthogApiHost: env.NEXT_PUBLIC_POSTHOG_API_HOST ?? '',
     ...fundedAiRuntime,
     platformSpeechEnabled: enabledFromEnv(env.MATRIX_PLATFORM_SPEECH_RUNTIME_ENABLED),
-    getStartedEnabled: enabledFromEnv(env.MATRIX_GET_STARTED_ENABLED),
+    // Kill switch only: new computers are seeded by default and the PostHog flag decides who sees the wizard.
+    getStartedEnabled: env.MATRIX_GET_STARTED_ENABLED !== 'false',
     provisionEtaSeconds: numberFromEnv(env.CUSTOMER_VPS_PROVISION_ETA_SECONDS, 90),
     // Clean-image bootstrap allows 15 minutes for the host bundle download
     // and 30 minutes for prerequisite preparation before Gateway can register.

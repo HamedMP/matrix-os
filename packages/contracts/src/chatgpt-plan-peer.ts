@@ -1,7 +1,8 @@
 import { BOT_IMAGE_INFERENCE_MAX_BYTES, validateBotImageInferenceBody } from "#bots/image-inference";
+import { INFERENCE_RESPONSE_BODY_MAX_BYTES, INFERENCE_RESPONSE_CHUNK_MAX_BYTES } from "#inference-response-limits";
 import { z } from 'zod/v4';
 // Raw SSE bytes and its worst-case JSON encoding (control characters expand 6x).
-export const CHATGPT_PLAN_RESPONSE_BYTE_LIMIT = 1024 * 1024;
+export const CHATGPT_PLAN_RESPONSE_BYTE_LIMIT = INFERENCE_RESPONSE_BODY_MAX_BYTES;
 export const CHATGPT_PLAN_PEER_REPLY_BYTE_LIMIT = 6 * CHATGPT_PLAN_RESPONSE_BYTE_LIMIT + 1024;
 export const CHATGPT_PLAN_PEER_REQUEST_LIFETIME_MS = 120000;
 // Bound small device/host clock skew; the Gateway still expires pending work at 120s.
@@ -15,6 +16,12 @@ export function chatGptPlanPeerRequestId(sessionId: string, sequence: number): s
     return `${sessionId.slice(0, 24)}${sequence.toString(16).padStart(12, '0')}`;
 }
 const reference = z.string().min(1).max(160).regex(/^[A-Za-z0-9][A-Za-z0-9_.:-]*$/).refine(v => !v.includes('..'));
+/** Only the Gateway's durable occurrence authorizer constructs this projection. */
+export const ChatGptPlanApprovedRoutineSchema = z.object({
+    ownerId: reference, botId: reference, chatId: reference, taskId: reference, runId: reference,
+    routineId: reference, fireId: reference, approvalId: reference,
+}).strict();
+export type ChatGptPlanApprovedRoutine = z.infer<typeof ChatGptPlanApprovedRoutineSchema>;
 export const ChatGptPlanPeerModelSchema = z.object({ id: reference, displayName: z.string().min(1).max(160),
     input: z.array(z.enum(['text', 'image'])).min(1).max(2).refine(input => input.includes('text') && new Set(input).size === input.length), contextWindow: z.number().int().min(1024).max(2000000), maxOutputTokens: z.number().int().min(16).max(128000) }).strict();
 export const ChatGptPlanPeerSnapshotSchema = z.object({ deviceId: z.string().regex(/^[a-f0-9]{64}$/), accountId: reference.nullable(),
@@ -30,13 +37,20 @@ export const ChatGptPlanPeerConnectSchema = z.object({ version: z.literal(1), ch
 export const ChatGptPlanPeerSessionSchema = z.object({ version: z.literal(1), sessionId: z.uuid() }).strict();
 export const ChatGptPlanPeerRequestSchema = z.discriminatedUnion('action', [
     z.object({ version: z.literal(1), action: z.literal('infer'), id: z.uuid(), sequence: z.number().int().min(1).max(CHATGPT_PLAN_PEER_MAX_SEQUENCE), expiresAt: z.string().datetime(), accountId: reference, grantRevision: z.number().int().min(1).max(Number.MAX_SAFE_INTEGER),
-        computerId: reference, requestClass: z.enum(['interactive', 'background']), runId: reference, model: reference, body: z.string().max(BOT_IMAGE_INFERENCE_MAX_BYTES).refine(body => validateBotImageInferenceBody(body, 512000).valid) }).strict(),
+        computerId: reference, requestClass: z.enum(['interactive', 'background']), runId: reference, model: reference, body: z.string().max(BOT_IMAGE_INFERENCE_MAX_BYTES).refine(body => validateBotImageInferenceBody(body, 512000).valid), responseMode: z.literal('stream').optional(),
+        approvedRoutine: ChatGptPlanApprovedRoutineSchema.optional() }).strict().refine(request => !request.approvedRoutine
+            || request.requestClass === 'background' && request.approvedRoutine.runId === request.runId),
     z.object({ version: z.literal(1), action: z.literal('cancel'), id: z.uuid() }).strict(),
 ]);
-export const ChatGptPlanPeerReplySchema = z.discriminatedUnion('ok', [
+export const ChatGptPlanPeerReplySchema = z.union([
     ChatGptPlanPeerSessionSchema.extend({ id: z.uuid(), ok: z.literal(true), status: z.literal(200),
         headers: z.object({ 'content-type': z.literal('text/event-stream') }).strict(), body: z.string().max(CHATGPT_PLAN_RESPONSE_BYTE_LIMIT).refine(value => new TextEncoder().encode(value).byteLength <= CHATGPT_PLAN_RESPONSE_BYTE_LIMIT) }).strict(),
     ChatGptPlanPeerSessionSchema.extend({ id: z.uuid(), ok: z.literal(false), error: z.enum(['unavailable', 'cancelled']) }).strict(),
+    ChatGptPlanPeerSessionSchema.extend({ id: z.uuid(), ok: z.literal(true), stream: z.literal('chunk'),
+        sequence: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER),
+        body: z.string().max(INFERENCE_RESPONSE_CHUNK_MAX_BYTES).refine(value => new TextEncoder().encode(value).byteLength <= INFERENCE_RESPONSE_CHUNK_MAX_BYTES) }).strict(),
+    ChatGptPlanPeerSessionSchema.extend({ id: z.uuid(), ok: z.literal(true), stream: z.literal('end'),
+        sequence: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER) }).strict(),
 ]);
 export type ChatGptPlanPeerSnapshot = z.infer<typeof ChatGptPlanPeerSnapshotSchema>;
 export type ChatGptPlanPeerRequest = z.infer<typeof ChatGptPlanPeerRequestSchema>;

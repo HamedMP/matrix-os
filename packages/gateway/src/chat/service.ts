@@ -11,6 +11,7 @@ import {
   CanonicalChatIdSchema,
   CanonicalChatListResponseSchema,
   CanonicalChatRecordSchema,
+  CanonicalChatRequestIdSchema,
   CanonicalChatRunCancellationResponseSchema,
   CanonicalChatRunSteeringResponseSchema,
   CanonicalChatRunAdmissionResponseSchema,
@@ -100,7 +101,7 @@ type ChatServiceRepository = Pick<ChatRepository,
   | "cancelQueuedTurn"
   | "reorderQueuedTurns"
   | "updateQueuedTurn"
->;
+> & Partial<Pick<ChatRepository, "findTurnAdmission">>;
 
 function encodeCursor(value: CursorEnvelope): string {
   return CanonicalChatApiCursorSchema.parse(
@@ -338,6 +339,20 @@ export function createCanonicalChatService(
       });
     },
 
+    async getTurnAdmission(owner, chatId, clientRequestId, requestHash) {
+      const parsedChatId = CanonicalChatIdSchema.parse(chatId);
+      const parsedRequestId = CanonicalChatRequestIdSchema.parse(clientRequestId);
+      const parsedHash = z.string().regex(/^[a-f0-9]{64}$/).parse(requestHash);
+      if (!repository.findTurnAdmission) throw new Error("Canonical Chat admission lookup unavailable");
+      // This acknowledges durable work only: mutable execution dependencies must
+      // never be reconciled, revalidated, or dispatched by recovery reads.
+      const admitted = await repository.findTurnAdmission(owner, parsedChatId, parsedRequestId, parsedHash);
+      return admitted ? CanonicalChatTurnAdmissionResponseSchema.parse({
+        record: admitted.chat, message: admitted.message, turn: admitted.turn,
+        run: admitted.run, admission: "already_accepted",
+      }) : null;
+    },
+
     async admitTurn(
       principal: RequestPrincipal,
       owner: ChatOwner,
@@ -552,6 +567,7 @@ export function createUnavailableCanonicalChatService(): CanonicalChatRouteServi
     list: unavailable,
     search: unavailable,
     getDetail: unavailable,
+    getTurnAdmission: unavailable,
     admitTurn: unavailable,
     enqueueQueuedTurn: unavailable,
     cancelQueuedTurn: unavailable,

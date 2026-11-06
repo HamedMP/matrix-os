@@ -40,7 +40,7 @@ export function ActiveChatScreen({ onBack, onNewChat }: ActiveChatScreenProps) {
     catalog, directBot, providerCatalogChecking, selection, setSelectionOverride, attachmentKinds, composer,
   } = useActiveChat();
   const {
-    draft, setDraft, attachments, addAttachments, removeAttachment, attachmentRoom, unreadableAttachments,
+    draft, setDraft, attachments, addAttachments, removeAttachment, attachmentRoom, unreadableAttachments, attachmentNotice,
     sentAttachments, canSend: composerCanSend, send, isSending, optimisticMessages, retrySend, editUnsent,
   } = composer;
   const unsentActions = useMemo(() => ({ onRetry: retrySend, onEdit: editUnsent }), [retrySend, editUnsent]);
@@ -139,6 +139,7 @@ export function ActiveChatScreen({ onBack, onNewChat }: ActiveChatScreenProps) {
           attachments,
           room: attachmentRoom,
           unreadable: unreadableAttachments,
+          attachmentNotice,
           onAdd: addAttachments,
           onRemove: removeAttachment,
           draft,

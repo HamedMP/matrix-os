@@ -11,6 +11,7 @@ import {
   timingSafeTokenEquals,
 } from './platform-token.js';
 import { PREVIEW_TERMINAL_ACCESS_HEADER } from './preview-terminal-access.js';
+import { ROUTINE_ACTION_PROOF_HEADER, ROUTINE_FULL_ACCESS_PROOF_HEADER } from '@matrix-os/contracts';
 
 type HeaderValue = string | string[] | undefined;
 
@@ -88,6 +89,8 @@ export function buildPlatformWebSocketUpgradeHeaders(opts: {
       k.toLowerCase() !== 'x-platform-user-id' &&
       k.toLowerCase() !== 'x-platform-verified' &&
       k.toLowerCase() !== PREVIEW_TERMINAL_ACCESS_HEADER &&
+      k.toLowerCase() !== ROUTINE_FULL_ACCESS_PROOF_HEADER &&
+      k.toLowerCase() !== ROUTINE_ACTION_PROOF_HEADER &&
       k !== 'host' &&
       k !== 'authorization' &&
       k !== 'cookie' &&

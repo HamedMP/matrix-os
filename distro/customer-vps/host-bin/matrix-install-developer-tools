@@ -180,6 +180,21 @@ for tool in $TOOLS; do
   esac
 
   if is_tool_installed "$tool"; then
+    # A healthy/newer executable does not prove that a previous npm-prefix
+    # repair completed. Retry only that owner repair, without reinstalling or
+    # downgrading the managed CLI.
+    if [ "$tool" = "codex" ] && [ -f "${MATRIX_APP_DIR:-/opt/matrix/app}/scripts/reconcile-agent-npm-prefix.mjs" ] && \
+      ! /opt/matrix/bin/matrix-install-tool-pack codex --reconcile-only >>"$STATE_DIR/${tool}.log" 2>&1; then
+      failed=1
+      printf '%s\n' "$tool" >>"$FAILED_FILE"
+      log "optional developer tool ${tool} npm repair failed; systemd will retry"
+      continue
+    fi
+    # A failed first installation may have skipped the global link. Restore
+    # only an absent link; preserve an existing owner-selected command.
+    if [ "$tool" = "codex" ] && [ ! -e /usr/local/bin/codex ] && [ ! -L /usr/local/bin/codex ]; then
+      link_tool "$tool"
+    fi
     if { [ "$tool" = "claude-code" ] || [ "$tool" = "codex" ]; } && ! grep -qxF "$tool" "$INSTALLED_FILE"; then
       printf '%s\n' "$tool" >>"$INSTALLED_FILE"
     fi

@@ -34,10 +34,10 @@ function fixture(cancel: () => void | Promise<void> = () => undefined, model = M
   let reservation = 0;
   const control = {
     check: vi.fn(async () => ({ identity: IDENTITY })),
-    authorize: vi.fn(async (input: { requestId: string; modelId: string }) => {
+    authorize: vi.fn(async (input: { requestId: string; modelId: string; maxCostMicrousd: number }) => {
       requestId = input.requestId;
       reservationId = `reservation_${++reservation}`;
-      return { identity: IDENTITY, reservation: { reservationId, requestId, modelId: input.modelId, reservedMicrousd: 1, billingMode: "usage" } };
+      return { identity: IDENTITY, reservation: { reservationId, requestId, modelId: input.modelId, reservedMicrousd: 0, billingMode: "usage", billingPolicy: "postpaid", maxCostMicrousd: input.maxCostMicrousd } };
     }),
     start: vi.fn(async (input: { executionId?: string }) => ({ executionId: input.executionId, contractVersion: 1, status: "in_flight",
       startedAt: NOW.toISOString(), expiresAt: "2026-09-10T12:10:00.000Z", reservationId, requestId, tokenId: IDENTITY.tokenId })),

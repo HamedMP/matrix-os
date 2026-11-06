@@ -496,8 +496,9 @@ export function CanvasWindow({ win, iconUrl, hidden = false, deferAppContent = f
               onSwitchConversation={chatState.switchConversation}
               activeConversationTitle={chatState.activeConversationTitle}
               onRenameConversation={chatState.renameConversation}
+              onDeleteConversation={chatState.deleteConversation}
               onSubmit={chatState.submitMessage}
-              agentClient={chatState.agentClient} agentSummaryClient={chatState.agentSummaryClient} authorityKey={chatState.authorityKey} composerIdentity={chatState.composerIdentity} isCurrentAuthority={chatState.isCurrentAuthority} navigationFresh={chatState.navigationFresh} navigationClassifications={chatState.navigationClassifications} botEventRevision={chatState.botEventRevision} queuedTurns={chatState.queuedTurns} onCancelQueuedTurn={chatState.cancelQueuedTurn}
+              agentClient={chatState.agentClient} agentSummaryClient={chatState.agentSummaryClient} authorityKey={chatState.authorityKey} gatewayUrl={chatState.gatewayUrl} composerIdentity={chatState.composerIdentity} isCurrentAuthority={chatState.isCurrentAuthority} navigationFresh={chatState.navigationFresh} navigationClassifications={chatState.navigationClassifications} botEventRevision={chatState.botEventRevision} queuedTurns={chatState.queuedTurns} onCancelQueuedTurn={chatState.cancelQueuedTurn} onSteerQueuedTurn={chatState.steerQueuedTurn} canSteerQueuedTurns={chatState.canSteerQueuedTurns} chatProjectId={chatState.chatProjectId} onSetChatProject={chatState.setChatProject}
               onSubmitApproval={chatState.submitApproval}
                 browserPermissions={chatState.browserPermissions}
               onSubmitInput={chatState.submitInput}

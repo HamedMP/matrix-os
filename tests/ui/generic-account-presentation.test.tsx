@@ -32,7 +32,7 @@ describe("harness-owned account presentation", () => {
     expect(screen.queryByText("No account connected.")).not.toBeInTheDocument();
     const card = within(screen.getByTestId(`native-account-${selected.id}`));
     expect(card.getByText(`${harness} account`)).toBeVisible();
-    expect(card.getByText("Connected")).toBeVisible();
+    expect(card.getByText("Configured")).toBeVisible();
     expect(card.getByText("Usage unavailable")).toBeVisible();
     expect(screen.queryByText(/in Terminal/)).not.toBeInTheDocument();
     expect(screen.queryByTestId("account-owner_codex")).not.toBeInTheDocument();

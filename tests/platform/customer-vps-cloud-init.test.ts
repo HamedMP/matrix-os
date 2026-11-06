@@ -601,7 +601,7 @@ exit 99
     expect(toolPackInstaller).toContain('install_codex_package()');
     expect(toolPackInstaller).toContain('install_opencode_package()');
     expect(toolPackInstaller).toContain('install_pi_package()');
-    expect(toolPackInstaller).toMatch(/install_coding_agents\(\) \{\n  log "installing coding agent CLIs"\n  install_claude_code_package\n  install_codex_package\n  install_opencode_package\n  install_pi_package\n  finish_agent_install\n  log "coding agent CLIs installed"\n\}/);
+    expect(toolPackInstaller).toMatch(/install_coding_agents\(\) \{\n  log "installing coding agent CLIs"\n  install_claude_code_package\n  install_codex_package\n  install_opencode_package\n  install_pi_package\n  reconcile_agent_npm_prefix\n  finish_agent_install\n  log "coding agent CLIs installed"\n\}/);
     expect(toolPackInstaller).toContain('claude-code|codex|opencode|pi|coding-agents|code-server|hermes|linux-tools|all');
     expect(toolPackInstaller).toContain('claude-code) with_pack_lock "$pack" install_claude_code ;;');
     expect(toolPackInstaller).toContain('codex) with_pack_lock "$pack" install_codex ;;');
@@ -792,6 +792,14 @@ exit 99
     expect(registration).toContain('After=network-online.target matrix-gateway.service');
     expect(registration).not.toContain('Requires=matrix-gateway.service');
     expect(registration).toContain('ConditionPathExists=/opt/matrix/bin/matrix-register-vps');
+    expect(registration).toContain('StateDirectory=matrix-vps-registration');
+    expect(registration).toContain(
+      'Environment=MATRIX_REGISTER_FLAG=/var/lib/matrix-vps-registration/register-complete',
+    );
+    expect(registration).toContain(
+      'ConditionPathExists=!/var/lib/matrix-vps-registration/register-complete',
+    );
+    expect(registration).not.toContain('ConditionPathExists=!/opt/matrix/register-complete');
     expect(registration).toContain('ExecStart=/opt/matrix/bin/matrix-register-vps');
     expect(registration).toContain('Restart=on-failure');
     expect(registration).toContain('SuccessExitStatus=64');

@@ -6,10 +6,27 @@ import validate as v
 from contract import ARTIFACTS,PHASES,PROVENANCE
 
 class IndependentValidation(unittest.TestCase):
+ def test_preview_pair_report_requires_a_complete_unskipped_native_journey(self):
+  inv=inventory();phase='electron-preview-pair'
+  good=report(['tests/e2e/desktop/preview-pair.e2e.test.ts'],phase)
+  self.assertEqual(v.report_counts(good,phase,inv)['passed'],1)
+  for fault in ('missing','empty','skipped','partial-skip','wrong-file'):
+   data=copy.deepcopy(good)
+   if fault=='missing':data['testResults']=[]
+   elif fault=='empty':
+    data['testResults'][0]['assertionResults']=[];data['numTotalTests']=0;data['numPassedTests']=0
+   elif fault=='skipped':
+    data['testResults'][0]['status']='skipped';data['testResults'][0]['assertionResults'][0]['status']='skipped'
+    data['numPassedTests']=0;data['numPendingTests']=1
+   elif fault=='partial-skip':
+    skipped=copy.deepcopy(data['testResults'][0]['assertionResults'][0]);skipped['status']='skipped'
+    data['testResults'][0]['assertionResults'].append(skipped);data['numTotalTests']=2;data['numPendingTests']=1
+   else:data['testResults'][0]['name']='/work/e2e/tests/e2e/desktop/unrelated.e2e.test.ts'
+   with self.subTest(fault=fault),self.assertRaises(ValueError):v.report_counts(data,phase,inv)
  def test_complete_dynamic_evidence_passes_without_historical_counts(self):
   with tempfile.TemporaryDirectory() as td:
    root=Path(td);inv,req=evidence(root);result=v.validate(root,inv,req)
-   self.assertEqual((result['phaseCount'],result['guardCount']),(56,14));self.assertEqual(len(result['requiredElectronFiles']),15);self.assertNotIn('containerGone',result)
+   self.assertEqual((result['phaseCount'],result['guardCount']),(57,14));self.assertEqual(len(result['requiredElectronFiles']),17);self.assertNotIn('containerGone',result)
  def test_each_artifact_is_required(self):
   for name in ARTIFACTS:
    with self.subTest(name=name),tempfile.TemporaryDirectory() as td:

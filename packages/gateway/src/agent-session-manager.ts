@@ -37,6 +37,7 @@ import type { BackgroundAgentRuntime, BackgroundAgentRef } from "./background-ag
 import { agentLaunchTerminalCommand } from "./coding-agents/agent-launch-environment.js";
 import type { NativeCodexSubscriptionLaunch } from "./coding-agents/native-codex-launch-policy.js";
 import { startBackgroundSession } from "./background-session-lifecycle.js";
+import { confirmStoppedCodexSession } from "./coding-agents/confirm-stopped-codex-session.js";
 
 export type SessionKind = "shell" | "agent";
 export type RuntimeStatus = "starting" | "running" | "idle" | "waiting" | "exited" | "failed" | "degraded";
@@ -712,6 +713,12 @@ export function createAgentSessionManager(options: {
       const updated = { ...session, lastActivityAt: nowIso(options.now) };
       await writeSession(homePath, updated);
       return { ok: true, session: decorateSession(updated) };
+    },
+
+    /** Internal only; the caller holds withSessionStart for this exact session. */
+    confirmStoppedSession(ownerId: string, sessionId: string, expectedRef: BackgroundAgentRef) {
+      return confirmStoppedCodexSession({ ownerId, sessionId, expectedRef,
+        readSession: () => readSession(homePath, sessionId), runtime: options.backgroundRuntime });
     },
 
     async killSession(sessionId: string, lockedRuntime?: BackgroundAgentRuntime): Promise<{ ok: true; session: WorkspaceSessionView } | Failure> {

@@ -16,6 +16,8 @@ import {
   GetStartedStateSchema,
   GetStartedUpdateSchema,
   getStartedToolGroupsForGoals,
+  getStartedToolForAgent,
+  GET_STARTED_AGENTS,
 } from "../../packages/contracts/src/index.js";
 
 describe("get started catalog", () => {
@@ -34,19 +36,22 @@ describe("get started catalog", () => {
   });
 
   it("offers only choices that are not integrations on the connect step, in goal order", () => {
-    // Integrations are connected through the marketplace on the same step.
-    const groups = getStartedToolGroupsForGoals(["assistant", "build", "code"]);
-    expect(groups.map((group) => group.kind)).toEqual(["tools"]);
-    const coding = groups.find((group) => group.kind === "tools");
-    expect(coding).toMatchObject({ goal: "code", title: "Your coding agent" });
-    expect(coding?.kind === "tools" ? coding.tools.map((tool) => tool.id) : []).toEqual(["claude-code", "codex"]);
+    // Integrations are connected through the marketplace on the same step, and coding agents
+    // sign in on their own screen before it (spec 636).
+    expect(getStartedToolGroupsForGoals(["assistant", "build", "code"])).toEqual([]);
     expect(getStartedToolGroupsForGoals(["business"])).toEqual([]);
+    expect(getStartedToolGroupsForGoals(["code", "explore"]).map((group) => group.kind)).toEqual(["starter"]);
     // The first app idea is picked on the App Gallery step, not here.
     expect(getStartedToolGroupsForGoals(["build"])).toEqual([]);
   });
 
   it("falls back to the exploring group when no goals are chosen", () => {
     expect(getStartedToolGroupsForGoals([]).map((group) => group.goal)).toEqual(["explore"]);
+  });
+
+  it("signs in Claude Code and Codex on the coding agents screen, saved as their tool ids", () => {
+    expect(GET_STARTED_AGENTS).toEqual(["claude", "codex"]);
+    expect(GET_STARTED_AGENTS.map(getStartedToolForAgent)).toEqual(["claude-code", "codex"]);
   });
 });
 

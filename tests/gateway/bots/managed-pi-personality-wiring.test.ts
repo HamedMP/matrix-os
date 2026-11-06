@@ -55,6 +55,7 @@ it("carries Settings SOUL saves through admitted run specs into the real Pi Agen
   const host = { available: true, client: {
     createRuntime: async () => ({ runtimeHandle: `runtime_${(++serial).toString(16).padStart(32, "0")}`, executionGeneration: "1" }),
     stopRuntime: vi.fn(async () => undefined),
+    renewRuntime: vi.fn(async () => undefined),
     runBot: async (request: { runtimeHandle: string; executionGeneration: string; command: { runId: string } }) => {
       const call = async (body: Record<string, unknown>) => {
         const reply = await actions.handleFrame({ version: 1, requestId: randomUUID(), runtimeHandle: request.runtimeHandle,

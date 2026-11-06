@@ -12,6 +12,7 @@ import { useShellSessions } from "../../stores/shell-sessions";
 import { captureRuntimeGeneration, isCurrentRuntimeGeneration } from "../../stores/runtime-generation";
 import { providerSupportsSetupAction } from "./provider-readiness";
 import { openProviderSettings } from "../settings/open-provider-settings";
+import { openCodexTerminalLogin } from "./codex-terminal-login";
 
 const MAX_PROVIDER_SETUP_ACTIONS = 10;
 
@@ -84,6 +85,9 @@ export async function executeProviderSetupAction(input: {
   const foregroundAction = input.action;
 
   if (!providerSupportsSetupAction(input.provider, foregroundAction)) return false;
+  if (input.provider.id === "codex" && ["codex_connect", "codex_reconnect"].includes(foregroundAction.id)) {
+    return openCodexTerminalLogin(input.api);
+  }
   const setup = {
     key: `${input.provider.id}:${foregroundAction.id}`,
     label: foregroundAction.label,
@@ -129,6 +133,9 @@ export async function executeCatalogProviderSetupAction(input: {
   if (!input.api) return false;
   const prefix = catalogActionPrefix(input.instance);
   if (!input.action.id.startsWith(`${prefix}_`)) return false;
+  if (input.instance.driverKind === "codex" && ["codex_connect", "codex_reconnect"].includes(input.action.id)) {
+    return openCodexTerminalLogin(input.api);
+  }
   return await openProviderSetupTerminal(input.api, {
     key: `${input.instance.id}:${input.action.id}`,
     label: input.action.label,

@@ -3,12 +3,37 @@ import {PassThrough} from 'node:stream';
 import {createHash} from 'node:crypto';
 import {describe,expect,it,vi} from 'vitest';
 import * as helpers from '../../scripts/ci/dedicated-admission.mjs';
+import {verifyLeaseReceipt} from '../../scripts/ci/dedicated-ssh.mjs';
 const canonical=(value:unknown):string=>JSON.stringify(value&&typeof value==='object'?Array.isArray(value)?value.map(x=>JSON.parse(canonical(x))):Object.fromEntries(Object.entries(value).sort().map(([k,v])=>[k,JSON.parse(canonical(v))])):value);
 const request={repository:'HamedMP/matrix-os',prNumber:2454,headSha:'a'.repeat(40),baseSha:'b'.repeat(40),baseRef:'stack/parent',mergeSha:'c'.repeat(40),mergeParents:['b'.repeat(40),'a'.repeat(40)],requestingRunId:321,requestingRunAttempt:1,controllerRunId:123,controllerRunAttempt:1,controllerSha:'d'.repeat(40),controllerRef:'refs/heads/main',controllerWorkflow:'.github/workflows/ci-dedicated.yml',imageDigest:'sha256:'+'e'.repeat(64),harnessDigest:'f'.repeat(64),mode:'shadow',suite:'qualification',limits:{unitWorkers:16,cpu:30,memoryMiB:114688,workMiB:65536,tmpMiB:8192,homeMiB:1024,pids:4096,shmMiB:2048}};
 const leaseId='1'.repeat(32),capability='2'.repeat(64),digest=createHash('sha256').update(canonical(request)).digest('hex');
-const files=['account-organization-picker','file-download','canonical-input','provider-auth-terminal','agents-providers-figma','agents-providers-button-contrast','provider-settings-idle','project-folder-picker-layout','project-deletion','terminal-file-drop','terminal-snapshot','release-alignment','chat-title-layout','terminal-clipboard'].map(x=>`tests/e2e/desktop/${x}.e2e.test.ts`).concat('tests/e2e/provider-authorization-electron.e2e.test.ts').sort();
-function receipt(){return{schemaVersion:1,leaseId,requestDigest:digest,request,qualified:true,exitCode:0,sourceSha:request.mergeSha,parents:request.mergeParents,imageDigest:request.imageDigest,harnessDigest:request.harnessDigest,lockSha256:'3'.repeat(64),inventorySha256:'4'.repeat(64),startedUtc:'2026-10-11T01:00:00Z',finishedUtc:'2026-10-11T01:01:00Z',queueSeconds:1,wallSeconds:60,phaseCount:56,guardCount:14,independentHostSourceChecks:4,allPhasesPassed:true,allGuardsClean:true,containerGone:true,reports:Object.fromEntries(['unit','general','grid','electron-download','electron-input','electron-providers','electron-folder','electron-deletion','electron-clipboard','electron-drop','electron-snapshot','electron-release','electron-title'].map(name=>[name,{files:name==='electron-providers'?5:name==='electron-input'?2:1,total:2,passed:1,skipped:1,failed:0,inventoryComplete:true}])),requiredElectronFiles:files,smoke:{comparedExports:264,svgRenderComparisons:264,distinctIconModules:216,missingExportControl:'rejected',negativeAliasControl:'rejected'}};}
+const files=['account-organization-picker','preview-pair','file-download','canonical-input','provider-auth-terminal','agents-providers-figma','agents-providers-button-contrast','provider-settings-idle','claude-legacy-connection','project-folder-picker-layout','project-deletion','terminal-file-drop','terminal-snapshot','release-alignment','chat-title-layout','terminal-clipboard'].map(x=>`tests/e2e/desktop/${x}.e2e.test.ts`).concat('tests/e2e/provider-authorization-electron.e2e.test.ts').sort();
+function receipt(){return{schemaVersion:1,leaseId,requestDigest:digest,request,qualified:true,exitCode:0,sourceSha:request.mergeSha,parents:request.mergeParents,imageDigest:request.imageDigest,harnessDigest:request.harnessDigest,lockSha256:'3'.repeat(64),inventorySha256:'4'.repeat(64),startedUtc:'2026-10-11T01:00:00Z',finishedUtc:'2026-10-11T01:01:00Z',queueSeconds:1,wallSeconds:60,phaseCount:57,guardCount:14,independentHostSourceChecks:4,allPhasesPassed:true,allGuardsClean:true,containerGone:true,reports:Object.fromEntries(['unit','general','grid','electron-download','electron-input','electron-preview-pair','electron-providers','electron-folder','electron-deletion','electron-clipboard','electron-drop','electron-snapshot','electron-release','electron-title'].map(name=>[name,{files:name==='electron-providers'?6:name==='electron-input'?2:1,total:name==='electron-preview-pair'?1:2,passed:1,skipped:name==='electron-preview-pair'?0:1,failed:0,inventoryComplete:true}])),requiredElectronFiles:files,smoke:{comparedExports:264,svgRenderComparisons:264,distinctIconModules:216,missingExportControl:'rejected',negativeAliasControl:'rejected'}};}
 function fake(){const child=Object.assign(new EventEmitter(),{stdin:new PassThrough(),stdout:new PassThrough(),stderr:new PassThrough(),kill:vi.fn()});return child;}
+it('requires Claude legacy recovery in the exact six-file provider qualification',()=>{
+ const qualified=receipt();
+ expect(verifyLeaseReceipt(qualified,{request,leaseId})).toBe(qualified);
+ const missing=structuredClone(qualified);
+ missing.requiredElectronFiles=missing.requiredElectronFiles.filter(file=>!file.endsWith('/claude-legacy-connection.e2e.test.ts'));
+ expect(()=>verifyLeaseReceipt(missing,{request,leaseId})).toThrow(/qualification receipt/);
+ const incomplete=structuredClone(qualified);
+ incomplete.reports['electron-providers'].files=5;
+ expect(()=>verifyLeaseReceipt(incomplete,{request,leaseId})).toThrow(/evidence counts/);
+});
+it('requires a complete preview-pair native report and rejects omitted or partially skipped receipt evidence',()=>{
+ const preview='tests/e2e/desktop/preview-pair.e2e.test.ts',qualified=receipt();
+ qualified.phaseCount=57;qualified.requiredElectronFiles=[...new Set([...files,preview])].sort();
+ qualified.reports['electron-preview-pair']={files:1,total:1,passed:1,skipped:0,failed:0,inventoryComplete:true};
+ expect(verifyLeaseReceipt(qualified,{request,leaseId})).toBe(qualified);
+ for(const fault of ['old-phase-count','missing-file','missing-report','skipped','partial-skip']){
+  const invalid=structuredClone(qualified);
+  if(fault==='old-phase-count')invalid.phaseCount=56;
+  else if(fault==='missing-file')invalid.requiredElectronFiles=files.filter(file=>file!==preview);
+  else if(fault==='missing-report')delete invalid.reports['electron-preview-pair'];
+  else Object.assign(invalid.reports['electron-preview-pair'],{total:fault==='partial-skip'?2:1,passed:fault==='partial-skip'?1:0,skipped:1});
+  expect(()=>verifyLeaseReceipt(invalid,{request,leaseId}),fault).toThrow();
+ }
+});
 async function run(child:ReturnType<typeof fake>,revalidate=vi.fn(async(_request:unknown,_cycle:unknown)=>{})){const fn=(helpers as Record<string,unknown>).runDedicatedLeaseSession as Function;expect(fn).toBeTypeOf('function');return fn(child,{protocolVersion:1,leaseId,capability,request},{revalidate,maxMilliseconds:1000});}
 function emit(child:ReturnType<typeof fake>,type:string,extra:Record<string,unknown>={}){child.stdout.write(JSON.stringify({protocolVersion:1,type,leaseId,requestDigest:digest,...extra})+'\n');}
 async function admitted(child:ReturnType<typeof fake>){emit(child,'queued');emit(child,'locked',{challenge:'5'.repeat(64),deadlineUnixMs:Date.now()+30000});await new Promise(r=>setImmediate(r));emit(child,'running');}

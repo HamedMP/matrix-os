@@ -498,6 +498,7 @@ four PRs became unrecoverable-closed, requiring reland PRs). Preserve these merg
 
 - **All changes ship via PR from a manual `git worktree`** -- no direct commits to `main`, no exceptions. Create the worktree with `git worktree add -b <kebab-branch> ../<dir-name> origin/main` and do all work there. Applies to code AND docs.
 - **Standalone PRs require a verified task ticket; stacked PRs may share the stack ticket** -- link the relevant ticket before creation, merge, or auto-merge, and include the stack name/link for each layer. Never require a new ticket solely because it is another PR in the same stack. See **Linear Ticket Check** above.
+- **Keep native PR stacks bounded** -- plan for about 5-6 PRs per stack; 10 is the hard maximum, including setup, docs, and rollout layers. Count before planning or adding layers. Consolidate closely related work within per-PR size limits or use sequential follow-on stacks after the previous stack merges. See `docs/dev/stacked-prs.md`.
 - **No PR merge until Greptile reports 5/5** on the current head, or on an earlier head that `node scripts/review/review-carryover.mjs check <pr>` accepts (exit 0) -- every finding must be fixed in the diff or explicitly deferred in the PR body with a linked follow-up issue. A review carries over only when the head is exactly the reviewed change replayed onto its new base: base merges, stack restacks, retargets after a parent lands, and message-only amends keep it; new PR work, conflict resolutions, moved edits, base edits next to the PR's lines, and retargets that pull parent commits into the PR need a fresh review (exit 1). Exit 3 means the check could not decide (GitHub, git, or tool failure): fix it and rerun instead of requesting a review. The Review Receipt workflow records each reviewed commit's base when Greptile reviews, so carry-over works across force-pushed restacks; `check` recomputes everything from git and fails closed on anything it cannot resolve. See `docs/dev/review-pipeline.md`.
 - **Request Greptile explicitly for each published head with `@greptileai please review`.** Automatic creation reviews may be disabled, and pushes do not guarantee a new review. Check for an existing review in flight first; request once when no review names the new head and the carry-over check does not accept the earlier review, including initial PR creation. After a push an older score stays stale until the new head is reviewed.
 - **Read `Last reviewed commit` from the summary body, not the timestamp.** Greptile edits that comment in place, so `created_at` stays at the first review while `updated_at` moves, and neither says which commit was read. Compare the reviewed SHA to the PR's `headRefOid` and act on this table:
@@ -585,6 +586,8 @@ Read these on demand, not every session:
 - No new storage; reads existing owner-scoped Matrix CLI profile/auth files and Matrix computer data (120-remote-computer-mcp)
 - TypeScript 5.9 strict ES modules on Node.js 24 + `@earendil-works/pi-agent-core`/`pi-ai` 1.0.0 pinned exactly (bot runtime inside a no-network scope-runtime bot profile), Hono, Zod 4, Kysely/Postgres, scope-runtime loopback inference bridge (536-conversational-bots)
 - Owner Postgres bot tables via versioned `bot_schema_migrations`; bot definition files via `agent-store.ts`; bot workspaces under `~/bots/<botId>/`; platform `ai_funded_priority_claims` and credential `request_class` (536-conversational-bots)
+- TypeScript 5.9 strict on Node 24; Bash/Python 3 for existing Spec Kit helpers; native workflow YAML. + Existing Hono, Zod 4, Kysely, pg, jose, Electron 41, official GitHub Actions and `github/gh-stack`; no new persistence engine or credential store. (codex/eng-418-preview-pair-foundation)
+- Platform Postgres for pair/generation/fixture leases; owner Postgres remains collaboration authority; credential-free local context/profile files use the existing Electron stores. (codex/eng-418-preview-pair-foundation)
 
 - TypeScript 5.5+ strict, ES modules + node-pty (backend), @xterm/xterm + addon-webgl + addon-search + addon-serialize + addon-fit (frontend), Hono WebSocket (gateway), Zod 4 (validation) (056-terminal-upgrade)
 - Files — `~/system/terminal-sessions.json` (session metadata), `~/system/terminal-layout.json` (layout with sessionId) (056-terminal-upgrade)
@@ -642,5 +645,5 @@ Five canonical roles using default label names. See `docs/agents/triage-labels.m
 Single-context: `CONTEXT.md` + `docs/adr/` at repo root. See `docs/agents/domain.md`.
 
 <!-- SPECKIT START -->
-Current feature plan: specs/536-conversational-bots/plan.md
+Current feature plan: specs/2689-collaboration-preview-pair/plan.md
 <!-- SPECKIT END -->

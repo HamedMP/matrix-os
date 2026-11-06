@@ -354,6 +354,21 @@ export function createPlatformSpeechService(options: {
           }
           throw new SpeechServiceError("result_not_replayable");
         }
+        let verifiedResult: SpeechTranscriptionResponse | undefined;
+        const finishSuccess = async (result: SpeechTranscriptionResponse) => {
+          // Durable completion is the delivery boundary, including a lost commit acknowledgement.
+          completionCommitted = true;
+          signal.removeEventListener("abort", requestCancellation);
+          if (cancellationAttempt) await cancellationAttempt;
+          if (cancellationFailure
+            && !(cancellationFailure.error instanceof SpeechOperationStateError)) {
+            console.warn(
+              "[platform-speech] late cancellation persistence failed",
+              cancellationFailure.error instanceof Error ? cancellationFailure.error.name : "UnknownError",
+            );
+          }
+          return result;
+        };
         try {
           const beforeDispatch = await options.operations.get(input.identity, parsedRequestId.data);
           if (!beforeDispatch || beforeDispatch.cancellationRequested
@@ -374,6 +389,11 @@ export function createPlatformSpeechService(options: {
             throw new SpeechServiceError("transcription_failed");
           }
           if (await persistCancellationIfAborted(signal)) throw new SpeechServiceError("cancelled");
+          verifiedResult = text.length > 0
+            ? { contractVersion: SPEECH_CONTRACT_VERSION, requestId: parsedRequestId.data,
+                status: "succeeded", outcome: "transcript", text, audioDurationMs: durationMs }
+            : { contractVersion: SPEECH_CONTRACT_VERSION, requestId: parsedRequestId.data,
+                status: "succeeded", outcome: "no_speech", audioDurationMs: durationMs };
           await options.operations.complete(input.identity, parsedRequestId.data, {
             executionState: "succeeded",
             outcomeCode: text.length > 0 ? "transcript" : "no_speech",
@@ -382,36 +402,26 @@ export function createPlatformSpeechService(options: {
             mode: "exact",
             actualCostMicrousd,
           }));
-          // A durable successful completion is the delivery boundary. An abort
-          // observed after this point cannot rewrite or suppress that result.
-          completionCommitted = true;
-          signal.removeEventListener("abort", requestCancellation);
-          if (cancellationAttempt) await cancellationAttempt;
-          if (cancellationFailure
-            && !(cancellationFailure.error instanceof SpeechOperationStateError)) {
-            console.warn(
-              "[platform-speech] late cancellation persistence failed",
-              cancellationFailure.error instanceof Error ? cancellationFailure.error.name : "UnknownError",
-            );
-          }
-          return text.length > 0
-            ? {
-                contractVersion: SPEECH_CONTRACT_VERSION,
-                requestId: parsedRequestId.data,
-                status: "succeeded",
-                outcome: "transcript",
-                text,
-                audioDurationMs: durationMs,
-              }
-            : {
-                contractVersion: SPEECH_CONTRACT_VERSION,
-                requestId: parsedRequestId.data,
-                status: "succeeded",
-                outcome: "no_speech",
-                audioDurationMs: durationMs,
-              };
+          return finishSuccess(verifiedResult);
         } catch (error: unknown) {
           let current = await options.operations.get(input.identity, parsedRequestId.data);
+          if (current?.executionState === "succeeded") {
+            // Only this invocation's validated local result can accompany an exact durable receipt.
+            if (!verifiedResult || current.actualCostMicrousd !== actualCostMicrousd
+              || current.requestId !== parsedRequestId.data
+              || current.identity.ownerId !== input.identity.ownerId
+              || current.identity.machineId !== input.identity.machineId
+              || current.identity.runtimeSlot !== input.identity.runtimeSlot
+              || current.outcomeCode !== verifiedResult.outcome
+              || current.contentFingerprint !== fingerprint
+              || current.policyRevision !== admitted.policyRevision
+              || current.modelId !== admitted.modelId || current.adapterId !== admitted.adapterId
+              || current.fundingReservationId !== admitted.fundingReservationId
+              || current.sourceKind !== admitted.sourceKind || current.audioDurationMs !== durationMs) {
+              throw new SpeechServiceError("result_not_replayable");
+            }
+            return finishSuccess(verifiedResult);
+          }
           const cancelled = current?.cancellationRequested === true
             || signal.aborted
             || (error instanceof SpeechAdapterError && error.code === "cancelled")
@@ -428,7 +438,7 @@ export function createPlatformSpeechService(options: {
             await options.operations.complete(input.identity, parsedRequestId.data, {
               executionState: "uncertain",
               outcomeCode: cancelled ? "cancelled" : timedOut ? "timeout" : "provider_failure",
-              actualCostMicrousd: current.reservedMicrousd ?? maximumCostMicrousd,
+              actualCostMicrousd: null,
             }, (trx, reservationId) => options.funding.settle(trx, reservationId, { mode: "conservative" }));
           }
           if (cancelled) throw new SpeechServiceError("cancelled");

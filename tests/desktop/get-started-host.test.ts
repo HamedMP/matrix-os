@@ -19,6 +19,16 @@ describe("Electron Get started port", () => {
     expect(api.get).not.toHaveBeenCalled();
     expect(api.put).not.toHaveBeenCalled();
   });
+
+  it("asks the wizard's runtime for bot name suggestions", async () => {
+    const bound = { get: vi.fn(), put: vi.fn(), post: vi.fn(async () => ({ names: [] })) };
+    const api = { forRuntime: vi.fn(() => bound) } as unknown as ApiClient;
+    const port = createDesktopGetStartedPort(api, "vm-2");
+    const request = { goals: ["code" as const], personality: "calm-mentor" as const, exclude: [] };
+    const signal = new AbortController().signal;
+    await expect(port.suggestBotNames!(request, signal)).resolves.toEqual({ names: [] });
+    expect(bound.post).toHaveBeenCalledWith("/api/settings/get-started/bot-names", request, expect.objectContaining({ signal, timeoutMs: 12_000, omitErrorBody: true }));
+  });
 });
 
 describe("Electron Get started gallery port", () => {

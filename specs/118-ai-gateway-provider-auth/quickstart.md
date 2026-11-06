@@ -120,6 +120,21 @@ authenticated owner Chat
 
 Repeat for disconnect, timeout, oversized/malformed stream, rejected model, disabled policy, revoked runtime, rate limit, refusal, and safe errors. Assert that canary prompt/secret strings never occur in errors, logs, analytics, or usage metadata.
 
+In Relay `usage` mode, generation uses the reviewed model's provider-enforced
+input ceiling for worst-case liability instead of requiring a remote token-count
+preflight. Some Gateway authentication/billing configurations can serve generation
+without supporting that count endpoint. This ceiling is neither an actual token
+count nor a customer credit hold. Confirmed successful usage still determines
+settlement; failed or unconfirmed requests remain uncharged under the postpaid
+policy. Legacy `cloudflare-count` generation and explicit `/v1/messages/count_tokens`
+requests retain their genuine remote counting behavior and fail closed on errors.
+Clients that require explicit counting need their own live acceptance; a generation
+regression test does not establish that those clients work end to end.
+
+An operator's paid canary budget is independent of the customer's zero-hold policy.
+Account for all potential dispatches and unknown outcomes across Preview and
+production; a large liability ceiling does not authorize exceeding that budget.
+
 ## 6. Verify Cloudflare with a non-production gateway
 
 - Use a dedicated development gateway and low spend limit.

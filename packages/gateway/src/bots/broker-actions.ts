@@ -171,6 +171,14 @@ export function createBotBrokerActions(deps: {
   }
 
   async function reauthorize(binding: PiRuntimeBinding, childSignal?: AbortSignal, finalDelivery = false): Promise<void> {
+    if (!isManagedPiBinding(binding) && binding.requestClass === "background") {
+      const signal = AbortSignal.any([deps.inference.lifetime, AbortSignal.timeout(AUTHORIZATION_TIMEOUT_MS), ...(childSignal ? [childSignal] : [])]);
+      if (signal.aborted || !deps.inference.revalidateBinding
+        || !await untilAborted(Promise.resolve(deps.inference.revalidateBinding(binding)), signal)) {
+        throw new BotBrokerActionError("not_granted");
+      }
+    }
+    if (!deps.registry.lookupRun(binding)) throw new BotBrokerActionError("stale_generation");
     if (!binding.group) return;
     const runSignal = deps.registry.inferenceSignal(binding);
     if (!runSignal || (!finalDelivery && runSignal.aborted) || childSignal?.aborted) throw new BotBrokerActionError("stale_generation");
@@ -263,15 +271,16 @@ export function createBotBrokerActions(deps: {
      * Handles one frame from a bot workload. Returns undefined for a frame
      * that is not a valid bot frame, so the server drops the connection.
      */
-    async handleFrame(raw: unknown): Promise<Record<string, unknown> | undefined> {
+    async handleFrame(raw: unknown, transportSignal?: AbortSignal): Promise<Record<string, unknown> | undefined> {
       const action = raw && typeof raw === "object" ? (raw as { action?: unknown }).action : undefined;
       if (typeof action === "string" && action.startsWith("inference.")) {
         const request = ScopeRuntimeBotInferenceRequestSchema.safeParse(raw);
         if (!request.success) return undefined;
         const binding = deps.registry.lookup(request.data);
         if (!binding) return { version: 1, requestId: request.data.requestId, ok: false, error: "action_denied" };
-        const runSignal = deps.registry.inferenceSignal(binding);
-        if (!runSignal) return { version: 1, requestId: request.data.requestId, ok: false, error: "action_denied" };
+        const registeredSignal = deps.registry.inferenceSignal(binding);
+        if (!registeredSignal) return { version: 1, requestId: request.data.requestId, ok: false, error: "action_denied" };
+        const runSignal = transportSignal ? AbortSignal.any([registeredSignal, transportSignal]) : registeredSignal;
         return forwardBotInference(request.data, binding, async (modelId) => {
           try { await reauthorize(binding); } catch (error: unknown) {
             if (!(error instanceof BotBrokerActionError)) console.warn("[bots] inference reauthorization failed:", error instanceof Error ? error.name : "UnknownError");

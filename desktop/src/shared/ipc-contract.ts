@@ -1,3 +1,4 @@
+import { DesktopPreviewSummarySchema } from "./preview-pair";
 // Single source of truth for the renderer ↔ trusted-core IPC contract
 // (specs/094-electron-macos-shell/contracts/ipc-contract.md). Both main and
 // preload import this module; every channel is validated on both sides
@@ -8,6 +9,7 @@ import { NAVIGATION_CACHE_INVOKE } from "./navigation-cache-ipc";
 import { CHATGPT_PLAN_INVOKE } from "./chatgpt-plan-ipc";
 import { LOCAL_CHAT_IMPORT_INVOKE, LOCAL_CHAT_IMPORT_EVENTS } from "./local-chat-import-ipc";
 import { NativeAppOpenEventSchema } from "./native-app-open";
+import { NativeAppChatCancellationSchema, NativeAppChatCompletionSchema, NativeAppOpenChatEventSchema } from "./native-app-chat";
 import {
   AppGenerateEventSchema,
   OrganizationDriveUploadFolderSchema,
@@ -135,7 +137,8 @@ const BoundedJsonValue = z.unknown().refine(
   (value) => {
     try {
       return JSON.stringify(value).length <= MAX_STATE_VALUE_BYTES;
-    } catch {
+    } catch (error: unknown) {
+      if (!(error instanceof TypeError)) console.warn("[ipc] state value validation failed", error instanceof Error ? error.name : "UnknownError");
       return false;
     }
   },
@@ -148,6 +151,7 @@ export const INVOKE_CHANNELS = {
   ...LOCAL_CHAT_IMPORT_INVOKE,
   "terminal:read-clipboard-files": { request: Empty, response: TerminalClipboardResultSchema },
   "analytics:flush-complete": { request: Empty, response: Ok },
+  "app:open-chat-complete": { request: NativeAppChatCompletionSchema, response: Ok },
   "auth:start-device-flow": {
     request: z.strictObject({ intent: z.enum(["sign-up", "sign-in"]).optional() }),
     response: z
@@ -163,6 +167,7 @@ export const INVOKE_CHANNELS = {
     response: z
       .object({
         status: z.enum(["pending", "authorized", "expired"]),
+        reason: z.literal("preview_account_mismatch").optional(),
         profile: ProfileSchema.optional(),
       })
       .strict(),
@@ -353,6 +358,7 @@ export const INVOKE_CHANNELS = {
   // App-wide UI zoom: the renderer owns the persisted factor; main applies it
   // to the sender's webContents and reports menu-driven steps back via the
   // app:zoom-changed event.
+  "app:get-preview": { request: Empty, response: DesktopPreviewSummarySchema.nullable() },
   "app:get-version": { request: Empty, response: NativeAppVersionResultSchema },
   "app:get-zoom": { request: Empty, response: ZoomFactorResultSchema },
   "app:set-zoom": {
@@ -470,8 +476,9 @@ export const INVOKE_CHANNELS = {
           .refine((value) => {
             try {
               return new URL(value).protocol === "https:";
-            } catch {
-              return false;
+            } catch (error: unknown) {
+              if (error instanceof TypeError) return false;
+              throw error;
             }
           }, "https urls only"),
       })
@@ -509,6 +516,8 @@ export const EVENT_CHANNELS = {
   ...LOCAL_CHAT_IMPORT_EVENTS,
   "app:generate": AppGenerateEventSchema,
   "app:open": NativeAppOpenEventSchema,
+  "app:open-chat": NativeAppOpenChatEventSchema,
+  "app:open-chat-cancel": NativeAppChatCancellationSchema,
   "analytics:capture": DesktopAnalyticsDetailSchema,
   "analytics:flush-requested": Empty,
   "auth:changed": z

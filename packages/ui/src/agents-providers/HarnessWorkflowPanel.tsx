@@ -17,9 +17,13 @@ export function HarnessWorkflowPanel(props: HarnessWorkflowPanelProps) {
   const codexDeviceOperation = codexDevice && isCodexDeviceOption(operation?.connectionOption);
   const codexTerminalOperation = codexTerminal && isCodexTerminalOption(operation?.connectionOption);
   const terminalOnly = !capability.connectionOptions && capability.loginMethods.includes("terminal") && !inlineLogin;
+  const adoptOption = props.availableClaudeAccount && harness.harness === "claude" && client.startConnection
+    ? capability.connectionOptions?.find(option => option.providerId === "anthropic" && option.authKind === "subscription"
+      && option.executionKind === "native" && option.billingKind === "subscription" && option.availability === "available"
+      && (option.method === "browser" || option.method === "terminal")) : undefined;
   const showConnectionChoices = harness.harness === "codex"
     ? !connectionPresent && (!onConnectSaved || failed)
-    : !connectionPresent || method !== null || failed;
+    : !adoptOption && (!connectionPresent || method !== null || failed);
   const canChangeAccount = capability.connectionOptions
     ? capability.connectionOptions.some(option => option.availability === "available" && (option.authKind === "api_key" ? Boolean(client.submitConnectionKey) : Boolean(client.startConnection)))
     : inlineLogin || terminalOnly || (capability.apiKeyProviders.length > 0 && Boolean(client.submitKey));
@@ -45,7 +49,13 @@ export function HarnessWorkflowPanel(props: HarnessWorkflowPanelProps) {
       aria-label={`${harness.displayName} connection`}
       aria-busy={reconciling || (pending && !startingLogin)}
     >
-      {harness.installState === "installed" && connectionPresent ? renderConnection?.(changeAccountAction) : null}
+      {harness.installState === "installed" && (connectionPresent || props.availableClaudeAccount) ? renderConnection?.(changeAccountAction) : null}
+      {adoptOption ? <>
+        <p className="matrix-ap-help">Use your signed-in Claude account for this agent. Uses your Claude subscription; Matrix AI credit is separate.</p>
+        <button type="button" className="matrix-ap-button" disabled={disabled || pending || connecting || reconciling
+          || (operationId !== null && operation?.id !== operationId)}
+          onClick={() => void start("login", adoptOption.method === "terminal", adoptOption)}>Use connected Claude account</button>
+      </> : null}
       {renderAccountActions?.(disabled || pending || connecting || reconciling
         || (operationId !== null && operation?.id !== operationId))}
       {onConnectSaved && !connected ? <button type="button" className="matrix-ap-button"
@@ -215,7 +225,7 @@ export function HarnessWorkflowPanel(props: HarnessWorkflowPanelProps) {
                   setFailure(null);
                   if (active(next)) restartPolling();
                   if (next.state === "succeeded") {
-                    if (next.kind === "login") void refreshAfterLogin();
+                    if (next.kind === "login") void refreshAfterLogin(next);
                     else onRefresh();
                   }
                 }
@@ -244,7 +254,8 @@ export function HarnessWorkflowPanel(props: HarnessWorkflowPanelProps) {
                   if (["cancelled", "succeeded"].includes(result.state)) {
                     pendingStartRef.current = null;
                     onOperationId?.(null);
-                    onRefresh();
+                    if (result.kind === "login" && result.state === "succeeded") void refreshAfterLogin(result);
+                    else if (result.kind !== "login") onRefresh();
                   }
                 }
               })
@@ -253,7 +264,7 @@ export function HarnessWorkflowPanel(props: HarnessWorkflowPanelProps) {
             Cancel
           </button>
         ) : null}
-        {terminalAvailable && operation?.terminalSessionId && (operation.kind !== "login" || (harness.harness === "codex" ? state.canContinueInTerminal && codexTerminalOperation : active(operation) && harness.harness === "claude" && operation.connectionOption?.method === "terminal")) ? (
+        {terminalAvailable && operation?.terminalSessionId && (operation.kind !== "login" || (harness.harness === "codex" ? state.canContinueInTerminal && codexTerminalOperation : active(operation) && ["claude", "hermes"].includes(harness.harness) && operation.connectionOption?.method === "terminal")) ? (
           <button
             type="button"
             className="matrix-ap-link-button"

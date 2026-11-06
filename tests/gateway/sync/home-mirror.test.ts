@@ -142,6 +142,10 @@ describe("createHomeMirror", () => {
   }
 
   beforeEach(async () => {
+    // Native notifications can be absent after chokidar's ready event on macOS
+    // under filesystem churn. Polling still exercises real watch -> policy ->
+    // publication behavior without changing Linux or production watcher defaults.
+    if (process.platform === "darwin") vi.stubEnv("CHOKIDAR_USEPOLLING", "true");
     tmpRoot = await mkdtemp(join(tmpdir(), "home-mirror-test-"));
     r2 = createFakeR2();
     db = createFakeManifestDb();
@@ -150,19 +154,23 @@ describe("createHomeMirror", () => {
   });
 
   afterEach(async () => {
-    let stopError: unknown;
-    for (const mirror of [...activeMirrors].reverse()) {
-      try {
-        await mirror.stop();
-      } catch (err: unknown) {
-        stopError ??= err;
+    try {
+      let stopError: unknown;
+      for (const mirror of [...activeMirrors].reverse()) {
+        try {
+          await mirror.stop();
+        } catch (err: unknown) {
+          stopError ??= err;
+        }
       }
-    }
-    activeMirrors = [];
-    await rm(tmpRoot, { recursive: true, force: true });
-    vi.restoreAllMocks();
-    if (stopError) {
-      throw stopError;
+      activeMirrors = [];
+      await rm(tmpRoot, { recursive: true, force: true });
+      if (stopError) {
+        throw stopError;
+      }
+    } finally {
+      vi.restoreAllMocks();
+      vi.unstubAllEnvs();
     }
   });
 
@@ -172,6 +180,12 @@ describe("createHomeMirror", () => {
       const content = Buffer.from("hello from laptop");
       const key = `matrixos-sync/alice/files/notes/foo.md`;
       r2.store.set(key, content);
+      const getObject = r2.getObject.bind(r2);
+      // A remote download need not finish within a fixed event-loop tick.
+      vi.spyOn(r2, "getObject").mockImplementation(async (objectKey) => {
+        if (objectKey === key) await settle(150);
+        return getObject(objectKey);
+      });
 
       const mirror = createHomeMirror({
         r2,
@@ -193,11 +207,11 @@ describe("createHomeMirror", () => {
         manifestVersion: 2,
       });
 
-      // Give the async enqueue a tick to process.
-      await settle(80);
-
-      const written = await readFile(join(tmpRoot, "notes/foo.md"));
-      expect(written.equals(content)).toBe(true);
+      // Observe the actual download result; fixed sleeps race slow I/O.
+      await vi.waitFor(async () => {
+        const written = await readFile(join(tmpRoot, "notes/foo.md"));
+        expect(written.equals(content)).toBe(true);
+      }, { timeout: 2000 });
 
       await mirror.stop();
     });

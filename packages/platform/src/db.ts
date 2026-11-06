@@ -169,6 +169,7 @@ export interface AiFundedPriorityClaimsTable {
 export interface AiFundedUsageReservationsTable {
   terminal_outcome: Generated<string | null>;
   charge_waiver: Generated<string | null>;
+  customer_charge_release: Generated<string | null>;
   execution_admission_release: Generated<string | null>;
   execution_recovery_slot: Generated<0 | 1>;
   reservation_id: string;
@@ -827,12 +828,18 @@ export interface AccountDeletionJobsTable {
 import type { GooglePurchaseTable, GoogleCheckoutAttributionTable } from './billing/google-tracking-migration.js';
 
 export interface PlatformDatabase {
+  preview_pairs: import('./preview-pair/types.js').PreviewPairsTable;
+  preview_pair_fixtures: import('./preview-pair/types.js').PreviewPairFixturesTable;
+  preview_pair_generations: import('./preview-pair/types.js').PreviewPairGenerationsTable;
+  preview_pair_members: import('./preview-pair/types.js').PreviewPairMembersTable;
+  preview_pair_cloud_intents: import('./preview-pair/types.js').PreviewPairCloudIntentsTable;
   billing_google_purchases: GooglePurchaseTable;
   billing_google_checkout_attribution: GoogleCheckoutAttributionTable;
   preview_drive_grants: PreviewDriveGrantsTable;
   public_sites: import('./sites/types.js').SitesTable;
   public_site_versions: import('./sites/types.js').SiteVersionsTable;
   public_site_aliases: import('./sites/types.js').SiteAliasesTable;
+  public_site_access_links: import('./sites/types.js').SiteAccessLinksTable;
   account_deletion_jobs: AccountDeletionJobsTable;
   users: UsersTable;
   containers: ContainersTable;

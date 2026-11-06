@@ -49,6 +49,10 @@ describe('gateway/app-fork', () => {
     });
 
     it('adds forked_from metadata to matrix.json', () => {
+      writeFileSync(
+        join(sourceDir, 'matrix.json'),
+        JSON.stringify({ name: 'Chess', slug: 'chess', runtime: 'static', runtimeVersion: '^1.0.0', version: '1.0.0', listingTrust: 'first_party' }),
+      );
       forkApp({
         sourceDir,
         homePath,
@@ -63,6 +67,7 @@ describe('gateway/app-fork', () => {
         slug: 'chess',
         version: '1.0.0',
       });
+      expect(manifest.listingTrust).toBe('first_party');
     });
 
     it('fails if target directory already exists', () => {
@@ -97,6 +102,10 @@ describe('gateway/app-fork', () => {
 
   describe('installApp', () => {
     it('copies app files without forked_from metadata', () => {
+      writeFileSync(
+        join(sourceDir, 'matrix.json'),
+        JSON.stringify({ name: 'Chess', slug: 'chess', runtime: 'static', runtimeVersion: '^1.0.0', version: '1.0.0', listingTrust: 'first_party' }),
+      );
       const result = installApp({
         sourceDir,
         homePath,
@@ -107,6 +116,7 @@ describe('gateway/app-fork', () => {
       const manifest = JSON.parse(readFileSync(join(homePath, 'apps', 'chess', 'matrix.json'), 'utf-8'));
       expect(manifest.forked_from).toBeUndefined();
       expect(manifest.installed_from).toBeTruthy();
+      expect(manifest.listingTrust).toBe('first_party');
     });
 
     it('copies all files including subdirectories', () => {
@@ -114,6 +124,15 @@ describe('gateway/app-fork', () => {
 
       expect(existsSync(join(homePath, 'apps', 'chess', 'index.html'))).toBe(true);
       expect(existsSync(join(homePath, 'apps', 'chess', 'assets', 'style.css'))).toBe(true);
+    });
+
+    it('fails closed and removes the copy when import provenance cannot be stamped', () => {
+      writeFileSync(join(sourceDir, 'matrix.json'), '{ invalid');
+
+      const result = installApp({ sourceDir, homePath, slug: 'chess' });
+
+      expect(result.success).toBe(false);
+      expect(existsSync(join(homePath, 'apps', 'chess'))).toBe(false);
     });
   });
 });
