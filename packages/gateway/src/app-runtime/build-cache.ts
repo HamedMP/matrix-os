@@ -23,6 +23,7 @@ const STAMP_FILE = ".build-stamp";
 const COLLABORATIVE_BUILD_ID = /^[a-f0-9]{64}$/;
 const MAX_SNAPSHOT_FILES = 10_000;
 const MAX_SNAPSHOT_BYTES = 256 * 1024 * 1024;
+const MAX_ORPHAN_SWEEP_ENTRIES = 1_000;
 
 export interface CollaborativeBuildSnapshot {
   buildId: string;
@@ -74,6 +75,7 @@ export class ImmutableCollaborativeBuildStore {
   private readonly metadataDir: string;
   private readonly timer: NodeJS.Timeout | undefined;
   private closed = false;
+  private mutationTail: Promise<void> = Promise.resolve();
 
   constructor(private readonly options: {
     rootDir: string;
@@ -107,6 +109,18 @@ export class ImmutableCollaborativeBuildStore {
       mkdir(this.objectsDir, { recursive: true }),
       mkdir(this.metadataDir, { recursive: true }),
     ]);
+  }
+
+  private async withMutationLock<T>(operation: () => Promise<T>): Promise<T> {
+    const previous = this.mutationTail;
+    let release!: () => void;
+    this.mutationTail = new Promise<void>((resolve) => { release = resolve; });
+    await previous;
+    try {
+      return await operation();
+    } finally {
+      release();
+    }
   }
 
   private artifactPath(buildId: string): string {
@@ -204,30 +218,39 @@ export class ImmutableCollaborativeBuildStore {
       if (!COLLABORATIVE_BUILD_ID.test(buildId)) {
         throw new CollaborativeBuildSnapshotError("invalid_snapshot");
       }
-      const existing = await this.readMetadata(buildId);
-      if (existing) {
-        if (existing.assetDigest !== assetDigest) throw new CollaborativeBuildSnapshotError("build_id_collision");
-        return publicSnapshot(existing, this.artifactPath(buildId));
-      }
-      try {
-        await rename(temporary, this.artifactPath(buildId));
-      } catch (error: unknown) {
-        if ((error as NodeJS.ErrnoException).code !== "EEXIST"
-          && (error as NodeJS.ErrnoException).code !== "ENOTEMPTY") throw error;
-        const raced = await this.readMetadata(buildId);
-        if (!raced || raced.assetDigest !== assetDigest) throw new CollaborativeBuildSnapshotError("build_id_collision");
-        return publicSnapshot(raced, this.artifactPath(buildId));
-      }
-      const createdAt = this.now();
-      const metadata: SnapshotMetadata = {
-        buildId,
-        assetDigest,
-        createdAt,
-        lastReleasedAt: createdAt,
-        references: [],
-      };
-      await this.writeMetadata(metadata);
-      return { buildId, assetDigest, artifactPath: this.artifactPath(buildId), createdAt };
+      return await this.withMutationLock(async () => {
+        const existing = await this.readMetadata(buildId);
+        if (existing) {
+          if (existing.assetDigest !== assetDigest) throw new CollaborativeBuildSnapshotError("build_id_collision");
+          return publicSnapshot(existing, this.artifactPath(buildId));
+        }
+        const artifactPath = this.artifactPath(buildId);
+        try {
+          const orphan = await lstat(artifactPath);
+          if (!orphan.isDirectory() || orphan.isSymbolicLink()) {
+            throw new CollaborativeBuildSnapshotError("invalid_snapshot");
+          }
+          await rm(artifactPath, { recursive: true, force: true });
+        } catch (error: unknown) {
+          if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+        }
+        await rename(temporary, artifactPath);
+        const createdAt = this.now();
+        const metadata: SnapshotMetadata = {
+          buildId,
+          assetDigest,
+          createdAt,
+          lastReleasedAt: createdAt,
+          references: [],
+        };
+        try {
+          await this.writeMetadata(metadata);
+        } catch (error: unknown) {
+          await rm(artifactPath, { recursive: true, force: true });
+          throw error;
+        }
+        return { buildId, assetDigest, artifactPath, createdAt };
+      });
     } finally {
       await rm(temporary, { recursive: true, force: true });
     }
@@ -249,55 +272,70 @@ export class ImmutableCollaborativeBuildStore {
 
   async retain(buildId: string, reference: string): Promise<void> {
     if (reference.length < 1 || reference.length > 256) throw new CollaborativeBuildSnapshotError("invalid_snapshot");
-    const metadata = await this.readMetadata(buildId);
-    if (!metadata) throw new CollaborativeBuildSnapshotError("invalid_snapshot");
-    if (!metadata.references.includes(reference)) metadata.references.push(reference);
-    if (metadata.references.length > 1_000) throw new CollaborativeBuildSnapshotError("capacity");
-    await this.writeMetadata(metadata);
+    await this.withMutationLock(async () => {
+      const metadata = await this.readMetadata(buildId);
+      if (!metadata) throw new CollaborativeBuildSnapshotError("invalid_snapshot");
+      if (!metadata.references.includes(reference)) metadata.references.push(reference);
+      if (metadata.references.length > 1_000) throw new CollaborativeBuildSnapshotError("capacity");
+      await this.writeMetadata(metadata);
+    });
   }
 
   async release(buildId: string, reference: string): Promise<void> {
-    const metadata = await this.readMetadata(buildId);
-    if (!metadata) return;
-    metadata.references = metadata.references.filter((candidate) => candidate !== reference);
-    if (metadata.references.length === 0) metadata.lastReleasedAt = this.now();
-    await this.writeMetadata(metadata);
+    await this.withMutationLock(async () => {
+      const metadata = await this.readMetadata(buildId);
+      if (!metadata) return;
+      metadata.references = metadata.references.filter((candidate) => candidate !== reference);
+      if (metadata.references.length === 0) metadata.lastReleasedAt = this.now();
+      await this.writeMetadata(metadata);
+    });
   }
 
   async cleanup(): Promise<{ removed: number }> {
     await this.initialize();
-    const metadata: SnapshotMetadata[] = [];
-    for (const entry of await readdir(this.metadataDir, { withFileTypes: true })) {
-      if (!entry.isFile() || entry.isSymbolicLink() || !/^[a-f0-9]{64}\.json$/.test(entry.name)) continue;
-      const item = await this.readMetadata(entry.name.slice(0, 64));
-      if (item) metadata.push(item);
-    }
-    metadata.sort((left, right) => left.createdAt - right.createdAt || left.buildId.localeCompare(right.buildId));
-    let excess = Math.max(0, metadata.length - this.options.maxSnapshots);
-    let removed = 0;
-    for (const item of metadata) {
-      if (item.references.length > 0) continue;
-      const expired = this.now() - item.lastReleasedAt >= this.options.retentionMs;
-      if (!expired && excess <= 0) continue;
-      let artifact;
-      try {
-        artifact = await lstat(this.artifactPath(item.buildId));
-      } catch (error: unknown) {
-        if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    return this.withMutationLock(async () => {
+      const metadata: SnapshotMetadata[] = [];
+      for (const entry of await readdir(this.metadataDir, { withFileTypes: true })) {
+        if (!entry.isFile() || entry.isSymbolicLink() || !/^[a-f0-9]{64}\.json$/.test(entry.name)) continue;
+        const item = await this.readMetadata(entry.name.slice(0, 64));
+        if (item) metadata.push(item);
       }
-      if (artifact?.isSymbolicLink()) continue;
-      if (artifact) await rm(this.artifactPath(item.buildId), { recursive: true, force: true });
-      await rm(this.metadataPath(item.buildId), { force: true });
-      removed += 1;
-      excess = Math.max(0, excess - 1);
-    }
-    return { removed };
+      metadata.sort((left, right) => left.createdAt - right.createdAt || left.buildId.localeCompare(right.buildId));
+      let excess = Math.max(0, metadata.length - this.options.maxSnapshots);
+      let removed = 0;
+      for (const item of metadata) {
+        if (item.references.length > 0) continue;
+        const expired = this.now() - item.lastReleasedAt >= this.options.retentionMs;
+        if (!expired && excess <= 0) continue;
+        let artifact;
+        try {
+          artifact = await lstat(this.artifactPath(item.buildId));
+        } catch (error: unknown) {
+          if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+        }
+        if (artifact?.isSymbolicLink()) continue;
+        if (artifact) await rm(this.artifactPath(item.buildId), { recursive: true, force: true });
+        await rm(this.metadataPath(item.buildId), { force: true });
+        removed += 1;
+        excess = Math.max(0, excess - 1);
+      }
+      const objectEntries = (await readdir(this.objectsDir, { withFileTypes: true }))
+        .slice(0, MAX_ORPHAN_SWEEP_ENTRIES);
+      for (const entry of objectEntries) {
+        if (!entry.isDirectory() || entry.isSymbolicLink() || !COLLABORATIVE_BUILD_ID.test(entry.name)) continue;
+        if (await this.readMetadata(entry.name)) continue;
+        await rm(this.artifactPath(entry.name), { recursive: true, force: true });
+        removed += 1;
+      }
+      return { removed };
+    });
   }
 
   async close(): Promise<void> {
     if (this.closed) return;
     this.closed = true;
     if (this.timer) clearInterval(this.timer);
+    await this.mutationTail;
   }
 }
 

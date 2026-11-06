@@ -1,7 +1,7 @@
 import { mkdtemp, mkdir, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
   CollaborativeBuildSnapshotError,
@@ -26,6 +26,7 @@ beforeEach(async () => {
 });
 
 afterEach(async () => {
+  vi.restoreAllMocks();
   await Promise.all(stores.map((store) => store.close()));
   await rm(root, { recursive: true, force: true });
 });
@@ -83,6 +84,42 @@ describe("immutable collaborative build snapshots", () => {
     expect(await store.cleanup()).toEqual({ removed: 1 });
     expect(await store.resolve(retained.buildId)).not.toBeNull();
     expect(await store.resolve(unreferenced.buildId)).toBeNull();
+  });
+
+  it("serializes concurrent reference changes with cleanup", async () => {
+    const store = createStore();
+    const snapshot = await store.capture({ buildRoot, buildId: "1".repeat(64) });
+
+    await Promise.all([
+      store.retain(snapshot.buildId, "binding:one"),
+      store.retain(snapshot.buildId, "binding:two"),
+    ]);
+    expect((await (store as any).readMetadata(snapshot.buildId)).references.sort())
+      .toEqual(["binding:one", "binding:two"]);
+
+    now += 2_000;
+    const retained = store.retain(snapshot.buildId, "binding:three");
+    const cleanup = store.cleanup();
+    await retained;
+    expect(await cleanup).toEqual({ removed: 0 });
+    expect(await store.resolve(snapshot.buildId)).not.toBeNull();
+  });
+
+  it("recovers a capture whose metadata write was interrupted and sweeps orphan objects", async () => {
+    const store = createStore();
+    const writeMetadata = vi.spyOn(store as any, "writeMetadata").mockRejectedValueOnce(new Error("interrupted"));
+    await expect(store.capture({ buildRoot, buildId: "2".repeat(64) })).rejects.toThrow("interrupted");
+    writeMetadata.mockRestore();
+
+    await expect(store.capture({ buildRoot, buildId: "2".repeat(64) }))
+      .resolves.toMatchObject({ buildId: "2".repeat(64) });
+
+    const orphanId = "3".repeat(64);
+    await mkdir(join(storeRoot, "objects", orphanId), { recursive: true });
+    await writeFile(join(storeRoot, "objects", orphanId, "index.html"), "orphan");
+    expect(await store.cleanup()).toEqual({ removed: 1 });
+    await expect(readFile(join(storeRoot, "objects", orphanId, "index.html"), "utf8"))
+      .rejects.toMatchObject({ code: "ENOENT" });
   });
 
   it("rejects symlinks and never follows attacker-named links during cleanup", async () => {
