@@ -517,8 +517,6 @@ export function createAiFundedMeteringRepository(options: AiFundedMeteringReposi
     input: z.input<typeof FundedAiStartRequestSchema>,
   ): Promise<FundedAiStartResponse> {
     const request = FundedAiStartRequestSchema.parse(input);
-    const checked = options.now();
-    const checkedAt = checked.toISOString();
     await options.db.ready;
     return options.db.transaction(async (trx) => {
       const locator = await trx.executor.selectFrom("ai_funded_usage_reservations").select("owner_id")
@@ -537,6 +535,10 @@ export function createAiFundedMeteringRepository(options: AiFundedMeteringReposi
         return saved;
       }
       if (reservation.status !== "reserved") throw new AiFundedPolicyError("reservation_closed");
+      // Owner/row lock waits can outlive admission. Use the locked instant for
+      // expiry and the immutable start evidence consumed by terminal recovery.
+      const checked = options.now();
+      const checkedAt = checked.toISOString();
       if (Date.parse(reservation.expires_at) <= checked.getTime()) {
         throw new AiFundedPolicyError("reservation_expired");
       }

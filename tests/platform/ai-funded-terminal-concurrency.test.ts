@@ -105,6 +105,43 @@ describe.skipIf(!url)("funded terminal owner lock with independent PostgreSQL po
     }
     expect(waiting).toBe(true);
   }
+  it.each([false, true])("checks the locked start time after waiting (reservation expires: %s)", async (expires) => {
+    const old = (await rows())[0];
+    await repoA.finalizeReservation({ reservationId: old.reservation_id, tokenId: old.token_id,
+      mode: "exact", actualCostMicrousd: 0 });
+    const authorized = await authorize(repoA, "waiting-start");
+    const request = { reservationId: authorized.reservation.reservationId, tokenId: credential.tokenId,
+      executionId: "attempt-waiting-start" };
+    const reserved = (await rows()).find(row => row.reservation_id === request.reservationId)!;
+    const before = await financial();
+    const locked = Promise.withResolvers<void>(); const release = Promise.withResolvers<void>();
+    const blocker = a.transaction(async trx => {
+      await sql`SELECT pg_advisory_xact_lock(hashtextextended(${`funded-ai-owner:${identity.ownerId}`}, 0))`.execute(trx.executor);
+      locked.resolve(); await release.promise;
+    });
+    await locked.promise;
+    const result = Promise.allSettled([repoB.startReservation(request)]);
+    try {
+      await waitForPoolBLock();
+      clock = expires ? new Date(reserved.expires_at) : new Date(clock.getTime() + 5_000);
+    } finally { release.resolve(); await blocker; }
+    const [outcome] = await result;
+    expect(await financial()).toEqual(before);
+    const saved = (await rows()).find(row => row.reservation_id === request.reservationId)!;
+    if (expires) {
+      expect(outcome).toMatchObject({ status: "rejected", reason: { code: "reservation_expired" } });
+      expect(saved).toMatchObject({ status: "reserved", started_at: null, start_response: null });
+    } else {
+      expect(outcome).toMatchObject({ status: "fulfilled", value: { startedAt: clock.toISOString(),
+        expiresAt: new Date(clock.getTime() + 60_000).toISOString(), executionId: request.executionId } });
+      expect(saved.started_at).toBe(clock.toISOString());
+      if (outcome.status !== "fulfilled") throw new Error("Start missing");
+      clock = new Date(clock.getTime() + 120_000);
+      expect(await repoA.startReservation(request)).toEqual(outcome.value);
+      await expect(repoA.startReservation({ ...request, executionId: "different-attempt" }))
+        .rejects.toMatchObject({ code: "idempotency_conflict" });
+    }
+  });
   it("refreshes receipt/release chronology after owner-lock wait and serializes immediate admission", async () => {
     const started = await strongStart("immediate-a");
     clock = new Date(clock.getTime() + 30_000); const terminal = proof(started);
