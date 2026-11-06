@@ -58,6 +58,17 @@ if (command === "gh") {
       process.exit(130);
     }
     if (fixture.FAKE_LOGIN_PROMPT === "1") {
+      if (fixture.FAKE_TERMINAL_QUERY === "1") {
+        process.stdout.write("\\u001b[?25l\\u001b7\\u001b[999;999f\\u001b[6n");
+        await new Promise((resolveQuery) => {
+          const timer = setTimeout(() => process.exit(13), 2_000);
+          process.stdin.once("data", (input) => {
+            if (input.toString() !== "\\u001b[24;80R") process.exit(14);
+            clearTimeout(timer);
+            resolveQuery();
+          });
+        });
+      }
       const prompt = fixture.FAKE_PROMPT_TEXT || "Choose an SSH key: ";
       if (fixture.FAKE_SPLIT_PROMPT === "1") {
         process.stdout.write(prompt.slice(0, 11));
@@ -128,8 +139,13 @@ process.exit(9);
       let stdout = "";
       let stderr = "";
       let promptAnswered = false;
+      let queryAnswered = false;
       child.stdout.on("data", (chunk: Buffer) => {
         stdout += chunk.toString("utf8");
+        if (!queryAnswered && extraEnv.FAKE_TERMINAL_QUERY === "1" && stdout.includes("\u001b[6n")) {
+          queryAnswered = true;
+          child.stdin.write("\u001b[24;80R");
+        }
         if (
           !promptAnswered
           && extraEnv.FAKE_LOGIN_PROMPT === "1"
@@ -255,6 +271,28 @@ process.exit(9);
     expect(result.code).toBe(3);
     expect(result.stdout).not.toContain("developer access is ready");
     expect((await commands()).some((call) => call.command === "git" && call.args.includes("--replace-all"))).toBe(false);
+  });
+
+  it("forwards the real gh key-generation prompt when cursor controls share its chunk", async () => {
+    const prompt = "\u001b[0G\u001b[2K\u001b[0;1;92m? \u001b[0m\u001b[0;1;99mGenerate a new SSH key to add to your GitHub account? \u001b[0m\u001b[0;39m(Y/n) \u001b[0m\u001b[?25l\u001b7\u001b[999;999f\u001b[6n";
+    const result = await runLogin("\n\n", { FAKE_LOGIN_PROMPT: "1", FAKE_PROMPT_TEXT: prompt });
+    expect(result.code).toBe(0);
+    expect(result.stdout).toContain(prompt);
+  });
+
+  it("forwards a standalone terminal cursor query before gh waits for its report", async () => {
+    const result = await runLogin("\n\n", { FAKE_LOGIN_PROMPT: "1", FAKE_TERMINAL_QUERY: "1" });
+    expect(result.code).toBe(0);
+    expect(result.stdout).toContain("\u001b[999;999f\u001b[6n");
+    expect(result.stdout).toContain("Choose an SSH key: ");
+  });
+
+  it("keeps token-bearing prompts buffered even when terminal controls follow them", async () => {
+    const prompt = "Choose ghp_synthetic_secret: \u001b[?25l\u001b7\u001b[999;999f\u001b[6n";
+    const result = await runLogin("", { FAKE_LOGIN_PROMPT: "1", FAKE_PROMPT_TEXT: prompt });
+    expect(result.code).toBe(3);
+    expect(result.stdout).not.toContain("ghp_synthetic_secret");
+    expect(result.stdout).toContain("[redacted]");
   });
 
   it("uses owner files rather than inherited token, Git config or SSH command overrides", async () => {
