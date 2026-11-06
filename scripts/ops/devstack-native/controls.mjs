@@ -17,7 +17,17 @@ export async function startControls(config, baseline, peerSockets, check = () =>
     if (entry) targets.push({ path: entry[0], role });
   }
   assert(targets.some(item => item.role === "legacy_ipc"), "required_legacy_endpoint_missing");
-  for (const target of targets) { assert((await lstat(target.path)).isSocket(), "positive_socket_missing"); await hostConnection({ path: target.path }); }
+  const socketEvidence = [];
+  for (const target of targets) {
+    check();
+    const metadata = await lstat(target.path); assert(metadata.isSocket(), "positive_socket_missing");
+    // A successful empty connection permanently claims a worker's command slot.
+    // Only our disposable command workers may be consumed by positive controls.
+    const connected = !["legacy_command", "peer_command"].includes(target.role);
+    if (connected) await hostConnection({ path: target.path });
+    socketEvidence.push({ ...target, connected, evidence: connected ? "connected" : "metadata_only",
+      inode: metadata.ino, device: metadata.dev });
+  }
   check();
   const path = `${dirname(config.appRoot)}/.boundary-${randomUUID()}`; const file = await open(path, "wx", 0o600);
   await file.writeFile("synthetic native boundary fixture\n"); const identity = await file.stat(); await file.close();
@@ -37,7 +47,7 @@ export async function startControls(config, baseline, peerSockets, check = () =>
     await new Promise((resolve, reject) => { server.once("error", reject); server.listen(0, "127.0.0.1", resolve); });
     const address = server.address(); assert(address && typeof address === "object", "positive_tcp_unavailable");
     await hostConnection({ host: "127.0.0.1", port: address.port });
-    return { targets, filePath: path, port: address.port, hostPositive: { tcp: true, sockets: targets.map(item => ({ ...item, connected: true })), syntheticFilePresent: true }, close };
+    return { targets, filePath: path, port: address.port, hostPositive: { tcp: true, sockets: socketEvidence, syntheticFilePresent: true }, close };
   } catch (error) { await close(); throw error; }
 }
 // Only fixed fixture data and endpoint names are inputs. No credentials or
