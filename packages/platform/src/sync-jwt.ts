@@ -16,6 +16,8 @@ export interface SyncJwtClaims extends JWTPayload {
   gateway_url: string;
   runtime_slot?: string;
   session_provenance?: UserSessionProvenance;
+  /** Server-issued positive human provenance, never inferred from an older label. */
+  verified_human_browser?: true;
   aud?: string | string[];
   iat: number;
   exp: number;
@@ -29,6 +31,7 @@ export interface IssueOpts {
   gatewayUrl: string;
   runtimeSlot?: string;
   sessionProvenance?: UserSessionProvenance;
+  verifiedHumanBrowser?: true;
   expiresInSec?: number;
   now?: number; // epoch seconds; defaults to current time
 }
@@ -60,10 +63,16 @@ export async function issueSyncJwt(opts: IssueOpts): Promise<IssuedJwt> {
   if (opts.sessionProvenance !== undefined && !isUserSessionProvenance(opts.sessionProvenance)) {
     throw new Error('Invalid sync JWT claims');
   }
+  if (opts.verifiedHumanBrowser !== undefined && (opts.verifiedHumanBrowser !== true || opts.sessionProvenance !== 'clerk-browser')) {
+    throw new Error('Invalid sync JWT claims');
+  }
   const key = secretToKey(opts.secret);
   const now = opts.now ?? Math.floor(Date.now() / 1000);
   const expiresInSec = opts.expiresInSec ?? DEFAULT_EXPIRES_IN_SEC;
   const exp = now + expiresInSec;
+  if (opts.verifiedHumanBrowser === true && (!Number.isSafeInteger(exp) || exp <= 0 || exp <= now)) {
+    throw new Error('Invalid sync JWT claims');
+  }
 
   const claims: SyncJwtClaims = {
     sub: opts.clerkUserId,
@@ -71,6 +80,7 @@ export async function issueSyncJwt(opts: IssueOpts): Promise<IssuedJwt> {
     gateway_url: opts.gatewayUrl,
     ...(opts.runtimeSlot ? { runtime_slot: opts.runtimeSlot } : {}),
     ...(opts.sessionProvenance ? { session_provenance: opts.sessionProvenance } : {}),
+    ...(opts.verifiedHumanBrowser === true ? { verified_human_browser: true as const } : {}),
     aud: SYNC_JWT_AUDIENCE,
     iat: now,
     exp,
@@ -83,6 +93,13 @@ export async function issueSyncJwt(opts: IssueOpts): Promise<IssuedJwt> {
     .sign(key);
 
   return { token, expiresAt: exp * 1000, claims };
+}
+
+export function isSyncJwtConfigError(err: unknown): boolean {
+  return err instanceof Error && (
+    err.message === 'verifySyncJwt requires either secret or publicKey' ||
+    err.message.includes('PLATFORM_JWT_SECRET must be at least 32 characters')
+  );
 }
 
 export async function verifySyncJwt(
@@ -111,6 +128,8 @@ export async function verifySyncJwt(
     typeof payload.gateway_url !== 'string' ||
     (payload.runtime_slot !== undefined && typeof payload.runtime_slot !== 'string') ||
     (payload.session_provenance !== undefined && !isUserSessionProvenance(payload.session_provenance)) ||
+    (payload.verified_human_browser !== undefined && (payload.verified_human_browser !== true || payload.session_provenance !== 'clerk-browser'
+      || !Number.isSafeInteger(payload.exp) || (payload.exp as number) <= 0)) ||
     typeof payload.iat !== 'number' ||
     typeof payload.exp !== 'number'
   ) {

@@ -98,6 +98,11 @@ export function Composer({
             {speech.error}
           </Text>
         ) : null}
+        {speech?.previewQuotaLabel ? (
+          <Text testID="composer-speech-quota" accessibilityLiveRegion="polite" style={styles.speechQuota}>
+            {speech.previewQuotaLabel}
+          </Text>
+        ) : null}
         {/* Return starts a new line; only the button sends. */}
         <TextInput
           ref={inputRef}
@@ -249,6 +254,12 @@ const styles = StyleSheet.create((theme) => ({
   speechError: {
     ...theme.v2.text.footnote,
     color: theme.v2.colors.danger,
+    paddingTop: theme.v2.space[8],
+    paddingHorizontal: theme.v2.space[14],
+  },
+  speechQuota: {
+    ...theme.v2.text.footnote,
+    color: theme.v2.colors.textSubtle,
     paddingTop: theme.v2.space[8],
     paddingHorizontal: theme.v2.space[14],
   },

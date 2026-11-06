@@ -1,14 +1,14 @@
 import { EventEmitter } from "node:events";
 import { describe, expect, it, vi } from "vitest";
 import { createOpenCodeServerProcess, OPENCODE_READ_ONLY_PERMISSIONS } from "../../packages/gateway/src/coding-agents/opencode-server-process.js";
-function fixture(resume = false, ignorePermissions = false) {
+function fixture(resume = false, ignorePermissions = false, stallEvent = false) {
   const child = new EventEmitter() as EventEmitter & { stdout: EventEmitter; stderr: EventEmitter; kill: ReturnType<typeof vi.fn> };
   child.stdout = new EventEmitter(); child.stderr = new EventEmitter();
   child.kill = vi.fn(() => { queueMicrotask(() => child.emit("exit", 0)); });
   const spawn = vi.fn(() => { queueMicrotask(() => child.stdout.emit("data", Buffer.from("opencode server listening on http://127.0.0.1:42101\n"))); return child; });
   let stream!: ReadableStreamDefaultController<Uint8Array>;
   let complete!: (response: Response) => void;
-  const send = (type: string, properties: unknown) => stream.enqueue(new TextEncoder().encode(`data: ${JSON.stringify({ type, properties })}\n\n`));
+  const send = (type: string, properties: unknown) => { if (stream.desiredSize === null) return false; stream.enqueue(new TextEncoder().encode(`data: ${JSON.stringify({ type, properties })}\n\n`)); return true; };
   let permissions = resume ? [...OPENCODE_READ_ONLY_PERMISSIONS] : [];
   const fetch = vi.fn(async (url: string, init: RequestInit) => {
     const path = new URL(url).pathname;
@@ -21,6 +21,7 @@ function fixture(resume = false, ignorePermissions = false) {
       return Response.json({ id: "ses_test" });
     }
     if (path === "/session/ses_test" && init.method === "GET") return Response.json({ id: "ses_test", directory: "/work/repo", permission: ignorePermissions ? [] : permissions.map(rule => ({ action: rule.action, pattern: rule.pattern, permission: rule.permission })) });
+    if (path === "/event" && stallEvent) return new Promise<Response>(() => undefined);
     if (path === "/event") return new Response(new ReadableStream({ start(controller) { stream = controller; } }), { headers: { "content-type": "text/event-stream" } });
     if (path === "/session/ses_test/message") {
       queueMicrotask(() => send("question.asked", { id: "que_test", sessionID: "ses_test", questions: [{ header: "Color", question: "Choose colors", options: [{ label: "Red", description: "Red" }, { label: "Blue", description: "Blue" }], multiple: true, custom: false }] }));
@@ -77,4 +78,50 @@ describe("OpenCode local server transport", () => {
     run.process.kill("SIGTERM");
     await run.exited;
   });
+});
+
+
+it("keeps a connected busy OpenCode stream and message alive beyond ten minutes", async () => {
+  vi.useFakeTimers();
+  vi.spyOn(AbortSignal, "timeout").mockImplementation(ms => { const controller = new AbortController(); setTimeout(() => controller.abort(new DOMException("Timeout", "TimeoutError")), ms); return controller.signal; });
+  const run = fixture();
+  try {
+    await vi.waitFor(() => expect(run.lines.some(line => line.type === "matrix.input.requested")).toBe(true));
+    await vi.advanceTimersByTimeAsync(31 * 60_000);
+    const executing = run.fetch.mock.calls.filter(([url]) => url.endsWith("/event") || url.endsWith("/message"));
+    expect(executing).toHaveLength(2);
+    expect(executing.every(([, init]) => !init.signal?.aborted)).toBe(true);
+    const question = run.lines.find(line => line.type === "matrix.input.requested")!;
+    await run.process.submitInput!(question.requestId, { answer: "", structuredAnswers: { q0: ["Red", "Blue"] }, clientRequestId: "req_long_answer", correlationId: question.correlationId });
+    expect(await run.exited).toBe(0);
+  } finally { run.process.kill("SIGTERM"); vi.clearAllTimers(); vi.useRealTimers(); vi.restoreAllMocks(); }
+});
+
+it("still bounds an OpenCode event connection that never returns headers", async () => {
+  vi.useFakeTimers();
+  vi.spyOn(AbortSignal, "timeout").mockImplementation(ms => { const controller = new AbortController(); setTimeout(() => controller.abort(new DOMException("Timeout", "TimeoutError")), ms); return controller.signal; });
+  const run = fixture(false, false, true);
+  try {
+    await vi.waitFor(() => expect(run.fetch.mock.calls.some(([url]) => url.endsWith("/event"))).toBe(true));
+    await vi.advanceTimersByTimeAsync(10_001);
+    expect(run.child.kill).toHaveBeenCalled();
+    expect(await run.exited).toBe(1);
+  } finally { run.process.kill("SIGTERM"); vi.clearAllTimers(); vi.useRealTimers(); vi.restoreAllMocks(); }
+});
+
+
+it("keeps consuming ordinary SSE records past the former total count and still answers input", async () => {
+  const run = fixture();
+  try {
+    await vi.waitFor(() => expect(run.lines.some(line => line.type === "matrix.input.requested")).toBe(true));
+    for (let index = 0; index < 4097 && !run.child.kill.mock.calls.length; index += 1) {
+      if (!run.send("session.status", { sessionID: "ses_test", status: { type: "busy" } })) break;
+      await Promise.resolve();
+    }
+    await new Promise<void>(resolve => setImmediate(resolve));
+    expect(run.child.kill).not.toHaveBeenCalled();
+    const question = run.lines.find(line => line.type === "matrix.input.requested")!;
+    await run.process.submitInput!(question.requestId, { answer: "", structuredAnswers: { q0: ["Red", "Blue"] }, clientRequestId: "req_record_answer", correlationId: question.correlationId });
+    expect(await run.exited).toBe(0);
+  } finally { run.process.kill("SIGTERM"); }
 });

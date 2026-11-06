@@ -33,8 +33,11 @@ async function registryExists(db: PlatformDB): Promise<boolean> {
 export async function eraseOwnerSites(db: PlatformDB, owner: string, store: AccountDeletionObjectStore | undefined, env: NodeJS.ProcessEnv = process.env): Promise<void> {
     const present = await registryExists(db);
     await withAccountDeletionOwnerLock(db, owner, async (trx) => {
-        if (present)
+        if (present) {
+            await trx.executor.deleteFrom('public_site_access_links').where('site_id', 'in',
+                trx.executor.selectFrom('public_sites').select('id').where('owner_id', '=', owner)).execute();
             await trx.executor.updateTable('public_sites').set({ status: 'unpublished', revision: sql `revision + 1` }).where('owner_id', '=', owner).where('status', '=', 'published').execute();
+        }
     }, env);
     const known = present ? await db.executor.selectFrom('public_sites').select('id').where('owner_id', '=', owner).limit(1).executeTakeFirst() : undefined;
     if (!store) {

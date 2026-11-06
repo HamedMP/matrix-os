@@ -310,6 +310,42 @@ afterEach(() => {
 });
 
 describe("AgentsProvidersView", () => {
+  it("shows and refreshes the separate Preview dictation allowance in Settings", async () => {
+    const next = snapshot();
+    const source = next.accessSources.find(item => item.id === "matrix_included");
+    if (!source || source.usage.kind !== "managed_credit") throw new Error("fixture");
+    source.usage.previewQuota = {
+      mode: "preview", requestLimit: 25, requestsUsed: 1, requestsRemaining: 24, maxConcurrency: 1,
+      expiresAt: "2026-10-20T16:45:00.000Z",
+    };
+    const speechCapabilities = (requestsUsed: number) => ({
+      contractVersion: 1 as const,
+      previewQuota: {
+        mode: "preview" as const, requestLimit: 25, requestsUsed,
+        requestsRemaining: 25 - requestsUsed, maxConcurrency: 1 as const,
+        expiresAt: "2026-10-20T16:45:00.000Z",
+      },
+      fileTranscription: {
+        status: "ready" as const,
+        dictation: { enabled: true as const, maxBytes: 1_024, maxDurationMs: 120_000,
+          maxTranscriptChars: 32_000, supportedMediaTypes: ["audio/wav" as const], languageHints: false },
+        ownerAudio: { enabled: false as const },
+      },
+    });
+    const capabilities = vi.fn()
+      .mockResolvedValueOnce(speechCapabilities(1))
+      .mockResolvedValueOnce(speechCapabilities(2));
+    setup({ snapshot: next, speechClient: { capabilities } });
+
+    const allowances = await screen.findByRole("group", { name: "Preview allowances" });
+    expect(allowances).toHaveTextContent("Preview Chat24 of 25 requests remaining");
+    expect(allowances).toHaveTextContent("Preview dictation24 of 25 requests remaining");
+
+    fireEvent.click(screen.getByRole("button", { name: "Refresh provider status" }));
+    await waitFor(() => expect(capabilities).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(allowances).toHaveTextContent("Preview dictation23 of 25 requests remaining"));
+  });
+
   it("shows Codex credential connection without promoting canonical authentication", () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-09-26T00:00:00.000Z"));
@@ -327,7 +363,7 @@ describe("AgentsProvidersView", () => {
       route: { kind: "fixed", providerId: "openai", modelId: "openai/gpt-5.6" },
     }];
     const { rerender, props } = setup({ snapshot: next, selectedHarnessId: "harness_codex" });
-    expect(screen.getByRole("button", { name: /Codex.*Connected/ })).toBeVisible();
+    expect(screen.getByRole("button", { name: /Codex.*Configured/ })).toBeVisible();
     expect(screen.queryByText(/Local login|visible Terminal flow/)).not.toBeInTheDocument();
     expect(screen.queryByText("Authenticated · Oauth")).not.toBeInTheDocument();
     act(() => vi.advanceTimersByTime(5_001));
@@ -350,7 +386,7 @@ describe("AgentsProvidersView", () => {
       enabled: true, configuredEnabled: true, authState: "unknown", connectivity: "unknown",
       selectedAccountId: null, accountIds: [], accessSourceId: source.id }];
     setup({ snapshot: next, selectedHarnessId: `harness_${harness}` });
-    expect(screen.getByRole("button", { name: new RegExp(`${harness}.*Connected`) })).toBeVisible();
+    expect(screen.getByRole("button", { name: new RegExp(`${harness}.*Configured`) })).toBeVisible();
     expect(screen.queryByText(/Local login|visible Terminal flow/)).not.toBeInTheDocument();
     act(() => vi.advanceTimersByTime(5001));
     expect(screen.queryByText("Local login found; access not verified")).not.toBeInTheDocument();

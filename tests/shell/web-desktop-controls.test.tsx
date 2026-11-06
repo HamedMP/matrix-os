@@ -29,18 +29,19 @@ describe("shared Web Desktop top bar", () => {
    expect(screen.getByRole("button", { name: "Change computer, currently Preview Computer" })).toBeTruthy();
   } finally { window.history.replaceState({}, "", oldUrl); }
  });
- it("has Search, app/task Inbox, Help and a validated computer dropdown in the same order as Electron", async () => {
+ it("shows Support in the OS view beside Help and opens it directly", async () => {
   const settings=vi.fn(), search=vi.fn(), support=vi.fn(), work=vi.fn();
   render(<WebDesktopControls onOpenSettings={settings} onOpenCommandPalette={search} onOpenSupport={support} onOpenFirstWork={work} />);
   const computer = await screen.findByRole("button", { name: "Change computer, currently Main Computer" });
-  expect(screen.getAllByRole("button").map(b => b.getAttribute("aria-label") ?? b.textContent)).toEqual(["Search", "Inbox", "Help", "Change computer, currently Main Computer", "Account"]);
+  expect(screen.getAllByRole("button").map(b => b.getAttribute("aria-label") ?? b.textContent)).toEqual(["Search", "Inbox", "Help", "Support", "Change computer, currently Main Computer", "Account"]);
   fireEvent.click(screen.getByRole("button", { name: "Search" }));expect(search).toHaveBeenCalledOnce();
+  fireEvent.click(screen.getByRole("button", { name: "Support", exact: true }));expect(support).toHaveBeenCalledOnce();
   fireEvent.pointerDown(computer, { button: 0, ctrlKey: false });
   const link=screen.getByRole("menuitem", { name: /Preview Computer/ });expect(link.getAttribute("href")).toBe("/vm/neo?runtime=review");
   fireEvent.keyDown(link, { key: "Escape" });
   fireEvent.click(screen.getByRole("button", { name: "Help" }));
   expect(screen.getByRole("link", { name: "Join Discord" }).getAttribute("href")).toBe("https://discord.gg/WHbvTG33w");
-  fireEvent.click(screen.getByRole("button", { name: "Support chat" }));expect(support).toHaveBeenCalledOnce();
+  fireEvent.click(screen.getByRole("button", { name: "Support chat" }));expect(support).toHaveBeenCalledTimes(2);
  });
  it("retains validated choices and All computers when the installed slot is outside the bounded list", async () => {
   const bounded = { ...inventory, items: [inventory.items[0]], hasMore: true };

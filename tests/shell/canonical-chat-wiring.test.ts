@@ -6,7 +6,9 @@ describe("Canvas and web desktop canonical Chat wiring", () => {
   it("provides one canonical Chat state to every shared shell renderer", () => {
     const shellHome = readFileSync(join(process.cwd(), "shell/src/components/ShellHome.tsx"), "utf8");
     const canonicalState = readFileSync(join(process.cwd(), "shell/src/hooks/useCanonicalChatState.ts"), "utf8");
+    const turnAdmission = readFileSync(join(process.cwd(), "shell/src/hooks/canonical-chat-turn-admission.ts"), "utf8");
     const providerState = readFileSync(join(process.cwd(), "shell/src/components/chat-app-provider-setup.tsx"), "utf8");
+    const composerControls = readFileSync(join(process.cwd(), "shell/src/components/chat/WebChatComposerControls.tsx"), "utf8");
     const desktop = readFileSync(join(process.cwd(), "shell/src/components/Desktop.tsx"), "utf8");
     const mobile = readFileSync(join(process.cwd(), "shell/src/components/mobile/MobileShell.tsx"), "utf8");
     const sharedChat = readFileSync(join(process.cwd(), "shell/src/components/chat/ShellChatCollaboration.tsx"), "utf8");
@@ -21,19 +23,24 @@ describe("Canvas and web desktop canonical Chat wiring", () => {
     expect(mobile).toContain("collaborationView={chat.collaborationView}");
     expect(mobile).toContain("onOpenSharedChat={chat.openSharedChat}");
     expect(userButton).toContain("showSharedWithMe={!isMobile}");
-    expect(canonicalState).toContain("client.admitTurn(");
+    expect(canonicalState).toContain("admitShellChatTurn({");
+    expect(turnAdmission).toContain("options.client.admitTurn(");
     expect(canonicalState).toContain("client.uploadAttachment(");
     expect(canonicalState).toContain("activeChatId && detailRef.current?.record.chat.id !== activeChatId");
     expect(canonicalState).not.toContain('type: "message"');
     expect(providerState).toMatch(/import\s*\{[^}]*\bcanonicalChatProviderCatalogPath\b[^}]*\}\s*from "@matrix-os\/ui";/);
     expect(providerState).toContain("canonicalChatProviderCatalogPath(forceRefresh)");
-    expect(providerState).toContain("const onSettingsChange = () => { void refresh(true); };");
+    // Keep authority invalidation and the forced refresh wired together while allowing
+    // independent recovery bookkeeping, such as resetting the observation retry budget.
+    const settingsChangeHandler = providerState.match(/const onSettingsChange = \(\) => \{([\s\S]*?)\n    \};/)?.[1];
+    expect(settingsChangeHandler).toMatch(/authorityGeneration \+= 1;\s*authoritySuspended = true;\s*setHasTrustedCatalog\(false\);\s*void refresh\(true\);/);
+    expect(providerState).toContain("window.addEventListener(PROVIDER_SETTINGS_CHANGED_EVENT, onSettingsChange)");
     expect(providerState).not.toContain("/api/ai/providers");
     // The setup action used to be invoked from an inline arrow in the shell component. It is now
-    // handed to the shared picker, which invokes it, so assert both halves. A mixed-funding
+    // handed to the shared composer model picker, which invokes it, so assert both halves. A mixed-funding
     // category can be available while the selected source needs recovery: its own setup actions
     // must receive that source, rather than the category's available representative instance.
-    expect(providerState).toContain("onSetupAction={onSetupAction}");
+    expect(composerControls).toContain("onSetupAction={onSetupAction}");
     expect(providerChoices).toContain("recoveryInstance.setupActions.map");
     expect(providerChoices).toContain("onSetupAction(recoveryInstance, action)");
     expect(providerChoices).not.toContain("onSetupAction(activeInstance, action)");

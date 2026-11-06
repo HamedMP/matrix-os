@@ -1,7 +1,8 @@
 import { constants, type BigIntStats } from "node:fs";
-import { lstat, open, realpath, type FileHandle } from "node:fs/promises";
+import { lstat, open, opendir, realpath, type FileHandle } from "node:fs/promises";
 import { basename, extname, isAbsolute, relative, resolve } from "node:path";
 import {
+  FilePathSchema,
   FilePreviewDescriptorSchema,
   FileResourceRefSchema,
   classifyFilePreview,
@@ -12,7 +13,7 @@ import {
 import type { RequestPrincipal } from "./request-principal.js";
 import { getMimeType } from "./file-utils.js";
 import { parseByteRange } from "./file-download-stream.js";
-import { resolveExistingFileApiPath } from "./path-security.js";
+import { isDeniedFileApiPath, resolveExistingFileApiPath } from "./path-security.js";
 
 const READ_CHUNK_BYTES = 64 * 1024;
 const SNIFF_BYTES = 512;
@@ -39,6 +40,10 @@ export class FilePreviewError extends Error {
 }
 
 export interface FilePreviewService {
+  // Optional for older injected adapters; the route fails closed if unavailable.
+  listArchiveDirectory?(principal: RequestPrincipal, ref: FileResourceRef, signal?: AbortSignal): Promise<{
+    complete: true; entries: Array<{ path: string; kind: "file" | "directory" }>;
+  }>;
   resolvePreview(principal: RequestPrincipal, ref: FileResourceRef): Promise<FilePreviewDescriptor>;
   openPreviewContent(
     principal: RequestPrincipal,
@@ -112,6 +117,7 @@ async function safeResolvedPath(
   options: FilePreviewServiceOptions,
   principal: RequestPrincipal,
   ref: FileResourceRef,
+  directory = false,
 ): Promise<{ path: string; root?: string }> {
   if (ref.kind === "home") {
     if (!options.canAccessHome(principal)
@@ -137,7 +143,7 @@ async function safeResolvedPath(
   if (!isWithin(rootReal, target)) throw new FilePreviewError("not_found");
   try {
     const lexical = await lstat(target);
-    if (lexical.isSymbolicLink() || !lexical.isFile()) throw new FilePreviewError("not_found");
+    if (lexical.isSymbolicLink() || !(directory ? lexical.isDirectory() : lexical.isFile())) throw new FilePreviewError("not_found");
     const targetReal = await realpath(target);
     if (!isWithin(rootReal, targetReal)) throw new FilePreviewError("not_found");
     return { path: targetReal, root: rootReal };
@@ -209,6 +215,41 @@ export function createFilePreviewService(options: FilePreviewServiceOptions): Fi
   const idleTimeoutMs = Math.max(1_000, Math.min(options.idleTimeoutMs ?? DEFAULT_IDLE_TIMEOUT_MS, 5 * 60_000));
 
   return {
+    async listArchiveDirectory(principal, rawRef, requestSignal) {
+      if (active >= maxConcurrent) throw new FilePreviewError("busy");
+      active += 1;
+      const signal = requestSignal ? AbortSignal.any([requestSignal, AbortSignal.timeout(10_000)]) : AbortSignal.timeout(10_000);
+      try {
+        signal.throwIfAborted();
+        const ref = FileResourceRefSchema.parse(rawRef);
+        if (ref.kind === "artifact") throw new FilePreviewError("not_found");
+        const { path, root } = await safeResolvedPath(options, principal, ref, true);
+        if (ref.kind === "home" && isDeniedFileApiPath(options.homePath, relative(root ?? options.homePath, await realpath(path)))) throw new FilePreviewError("not_found");
+        const before = await lstat(path, { bigint: true });
+        if (!before.isDirectory() || before.isSymbolicLink()) throw new FilePreviewError("not_found");
+        const entries: Array<{ path: string; kind: "file" | "directory" }> = [];
+        // opendir includes dotfiles and does not truncate the listing. The iterator
+        // closes its handle on every completion/error; unsupported entries abort.
+        for await (const entry of await opendir(path)) {
+          signal.throwIfAborted();
+          if (entries.length >= 1000 || (!entry.isFile() && !entry.isDirectory())) throw new FilePreviewError("unavailable");
+          const childPath = FilePathSchema.parse(`${ref.path}/${entry.name}`);
+          if (ref.kind === "home" && isDeniedFileApiPath(options.homePath, childPath)) throw new FilePreviewError("unavailable");
+          entries.push({ path: childPath, kind: entry.isDirectory() ? "directory" : "file" });
+        }
+        signal.throwIfAborted();
+        const currentReal = await realpath(path);
+        const after = await lstat(path, { bigint: true });
+        if (root && !isWithin(root, currentReal) || after.dev !== before.dev || after.ino !== before.ino
+          || after.mtimeNs !== before.mtimeNs || after.ctimeNs !== before.ctimeNs) throw new FilePreviewError("unavailable");
+        return { complete: true, entries };
+      } catch (error: unknown) {
+        if (error instanceof FilePreviewError) throw error;
+        if (unavailableFileError(error)) throw new FilePreviewError("not_found");
+        throw new FilePreviewError("unavailable");
+      } finally { active -= 1; }
+    },
+
     async resolvePreview(principal, ref) {
       const opened = await openResolvedFile(options, principal, ref);
       try {

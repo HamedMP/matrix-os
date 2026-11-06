@@ -2,6 +2,8 @@
 
 Status: implementation; ENG-107. Dependencies: pinned Pi runtime from PR #2048.
 
+Credit-policy extension (2026-11-04): [AI Gateway availability and customer credit recovery](../639-managed-model-selection/spec.md#customer-credit-policy-2026-11-04-scope-extension) supersedes monetary-hold requirements below for explicitly negotiated postpaid managed AI requests. They retain request/admission records and provider liability ceilings, reserve no customer funds, and charge successful exact usage only. Failed or unconfirmed usage is Matrix expense. Legacy captured authorizations remain distinguishable during rollout.
+
 ## Product behavior
 
 Users select an eligible Matrix AI Gateway model in Chat and execute text and artifact

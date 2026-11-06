@@ -104,7 +104,12 @@ vi.mock("../../shell/src/components/DotGrid.js", () => ({
 }));
 
 vi.mock("../../shell/src/components/Settings.js", () => ({
-  Settings: () => null,
+  Settings: ({ open, defaultSection, onOpenChange }: { open: boolean; defaultSection: string; onOpenChange: (open: boolean) => void }) => open ? (
+    <section aria-label="Settings destination">
+      <span>{defaultSection}</span>
+      <button onClick={() => onOpenChange(false)}>Close Settings dialog</button>
+    </section>
+  ) : null,
 }));
 
 // Organization authentication is covered by organization-management-ui.test.tsx;
@@ -267,6 +272,32 @@ describe("Desktop launcher dock button by mode", () => {
     vi.useRealTimers();
     queryClient.clear();
     vi.unstubAllGlobals();
+  });
+
+  it.each(["command", "canvas dock"])("opens agent setup from the %s after closing Connect Apps", async (entry) => {
+    resetShellMode("canvas", true);
+    renderDesktop();
+    const openConnectApps = async () => {
+      fireEvent.click(await screen.findByTestId("dock-tasks"));
+      fireEvent.click(within(screen.getByTestId("launcher-destinations")).getByRole("button", { name: "Connect Apps" }));
+    };
+    await openConnectApps();
+    const destination = await screen.findByRole("region", { name: "Settings destination" });
+    expect(destination.textContent).toContain("integrations");
+    fireEvent.click(screen.getByRole("button", { name: "Close Settings dialog" }));
+
+    const commandStore = (await import("../../shell/src/stores/commands.js")).useCommandStore;
+    const toggle = () => {
+      if (entry === "command") act(() => commandStore.getState().commands.get("action:open-settings")!.execute());
+      else fireEvent.click(screen.getByTestId("dock-settings"));
+    };
+    toggle();
+    expect(screen.getByRole("region", { name: "Settings destination" }).textContent).toContain("agents-providers");
+    toggle();
+    expect(screen.queryByRole("region", { name: "Settings destination" })).toBeNull();
+
+    await openConnectApps();
+    expect(screen.getByRole("region", { name: "Settings destination" }).textContent).toContain("integrations");
   });
 
   it("opens one Chat after normal startup and never reopens it after manual close or a presentation switch", async () => {

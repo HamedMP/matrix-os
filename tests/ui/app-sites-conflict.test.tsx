@@ -5,7 +5,7 @@ import { afterEach, expect, it, vi } from "vitest";
 import { AppSitePanel } from "../../shell/src/components/app-sites/AppSitePanel";
 import { SiteClientError, type SiteClient } from "../../shell/src/lib/site-client";
 
-const site = { id: "11111111-1111-4111-8111-111111111111", appSlug: "launch", title: "Launch", description: "Old details", slug: null, url: "https://matrix.page/11111111-1111-4111-8111-111111111111", revision: 1, status: "published" as const, activeVersion: null, versions: [], config: { data: {}, forms: [] } };
+const site = { id: "11111111-1111-4111-8111-111111111111", appSlug: "launch", title: "Launch", description: "Old details", slug: null, url: "https://matrix.page/11111111-1111-4111-8111-111111111111", revision: 1, status: "published" as const, accessMode: "public" as const, activeVersion: null, versions: [], config: { data: {}, forms: [] } };
 function client(overrides: Partial<SiteClient> = {}): SiteClient {
   return { get: vi.fn(async () => site), getConfig: vi.fn(async () => site.config), update: vi.fn(async () => { throw new SiteClientError(409); }), deploy: vi.fn(async () => ({ ...site, revision: 3 })), ...overrides } as unknown as SiteClient;
 }
@@ -36,7 +36,7 @@ it("recovers the latest revision deliberately, preserves all draft metadata, and
   fireEvent.click(await screen.findByLabelText("I reviewed this deployment"));
   fireEvent.click(screen.getByRole("button", { name: "Publish update" }));
   await screen.findByText("Published successfully.");
-  expect(api.deploy).toHaveBeenCalledWith("launch", { title: "My launch", description: "My draft details", slug: "my-launch", baseRevision: 2, reviewedConfig: site.config }, expect.any(AbortSignal));
+  expect(api.deploy).toHaveBeenCalledWith("launch", { title: "My launch", description: "My draft details", slug: "my-launch", accessMode: "public", baseRevision: 2, reviewedConfig: site.config }, expect.any(AbortSignal));
 });
 it("keeps recovery retryable and draft metadata intact when publication refresh fails", async () => {
   const api = client({ get: vi.fn().mockResolvedValueOnce(site).mockRejectedValueOnce(new Error("private database failure")) });
@@ -87,7 +87,7 @@ it("binds the first publication to revision zero and preserves the draft on a co
   await screen.findByRole("alert");
   expect(api.deploy).toHaveBeenCalledWith("launch", {
     title: "My first publication", description: "Keep this optimistic draft", slug: null,
-    baseRevision: 0, reviewedConfig: site.config,
+    accessMode: "public", baseRevision: 0, reviewedConfig: site.config,
   }, expect.any(AbortSignal));
   expect(screen.getByLabelText("Title")).toHaveProperty("value", "My first publication");
   expect(screen.getByLabelText("Description")).toHaveProperty("value", "Keep this optimistic draft");

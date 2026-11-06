@@ -21,6 +21,8 @@ export const CodingAgentProviderResumeStateSchema = z.object({
   conversationId: z.string().trim().min(1).max(512),
   backgroundRef: BackgroundAgentRefSchema.optional(),
   eventOffset: z.number().int().min(0).max(16 * 1024 * 1024).optional(),
+  eventGeneration: z.uuid().optional(),
+  eventStreamInterrupted: z.boolean().optional(),
   providerThreadId: z.string().trim().min(1).max(512)
     .regex(/^[A-Za-z0-9][A-Za-z0-9_-]{0,511}$/)
     .optional(),
@@ -52,12 +54,16 @@ const CodingAgentProviderRunResultSchema = z.object({
 export type CodingAgentProviderResumeState = z.infer<typeof CodingAgentProviderResumeStateSchema>;
 export type CodingAgentProviderRunResult = z.infer<typeof CodingAgentProviderRunResultSchema>;
 export type CodingAgentProviderEventBatch = z.infer<typeof CodingAgentProviderEventBatchSchema>;
+/** The canonical backing store acknowledges an active-turn write with true.
+ * Legacy publishers may return void; authorization adoption requires true.
+ */
 export type CodingAgentProviderEventPublisher = (
   batch: CodingAgentProviderEventBatch,
-) => Promise<void>;
+) => Promise<void | boolean>;
 
 export interface CodingAgentProviderAdapter {
   providerId: string;
+  prepareHistoryResume?(input: { principal: RequestPrincipal; thread: AgentThreadSummary; resumeState: CodingAgentProviderResumeState; signal: AbortSignal }): Promise<void>;
   /** Long-running initial executions are dispatched after durable thread creation. */
   initialRunExecution?: "background";
   /** Native service execution and uncertain delivery survive gateway shutdown. */

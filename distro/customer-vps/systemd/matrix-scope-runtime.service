@@ -9,6 +9,10 @@ ConditionPathExists=!/opt/matrix/app/SCOPE_RUNTIME_DISABLED
 
 [Service]
 Type=simple
+# The root supervisor's fixed systemd-notify child belongs to this cgroup.
+# Workload units remain separate and cannot satisfy this watchdog.
+NotifyAccess=all
+WatchdogSec=60
 # The system-owned supervisor needs the systemd manager to create transient
 # workload units. Its IPC accepts only source-controlled fixed-profile fields;
 # every spawned workload uses DynamicUser and the isolated profile.

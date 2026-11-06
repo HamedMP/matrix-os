@@ -16,8 +16,25 @@ export function resolvedWorkflowRowStatus(harness: ProviderHarnessInstance, sour
   if (harness.installState === "unknown") return "Checking installation";
   if (harness.installState === "failed") return "Install failed";
   if (harness.installState === "installing") return "Installing";
+  // Verified native identity is independent of saved Off and Bot capability.
+  // Do not borrow an account label or another source's authentication.
+  if (harness.harness === "claude" && harness.authState === "authenticated"
+    && harness.route.providerId === "anthropic" && source?.id === "owner_claude_profile"
+    && source.kind === "provider_account" && source.providerId === "anthropic" && source.fundingKind === "owner_account"
+    && source.accountId !== null && harness.selectedAccountId === source.accountId && harness.accessSourceId === source.id) return "Connected";
   if (override === "Connecting" || harness.authState === "authenticating") return "Connecting";
-  if (hasConfiguredConnection(harness, source)) return "Connected";
-  if (hasStaleHermesConnection(harness, source)) return "Checking connection";
+  const configured = hasConfiguredConnection(harness, source);
+  if (configured && harness.authState === "authenticated") return "Connected";
+  if (configured || hasStaleHermesConnection(harness, source)) return "Configured";
   return override === "Couldn't connect" ? override : "Not connected";
+}
+
+/** An agent detected or offered on this computer that has no harness instance yet. */
+export function capabilityRowStatus(installState: string, override?: string): string {
+  if (override && (installState === "installed" || override === "Installing" || override === "Uninstalling")) return override;
+  if (installState === "missing") return "Not installed";
+  if (installState === "installing") return "Installing";
+  if (installState === "failed") return "Install failed";
+  if (installState === "unknown") return "Checking installation";
+  return "Not connected";
 }

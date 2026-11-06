@@ -28,6 +28,16 @@ export function botInteractionCard(interaction: BotInteraction, now: string): {
   };
 }
 
+/** Shared recovery derivation; a hidden question never becomes a recovery action. */
+export function botSavedAnswerRecovery(interaction: BotInteraction, now: string, savedRevision: number | null = null): {
+  revision: number; expired: boolean;
+} | null {
+  if (interaction.status === "cancelled" || interaction.status === "expired") return null;
+  if ((!interaction.recoveryAvailable && savedRevision === null) || interaction.kind !== "question"
+    || !interaction.blocking || interaction.payload?.kind !== "question") return null;
+  return { revision: savedRevision ?? interaction.revision, expired: Date.parse(interaction.expiresAt) <= Date.parse(now) };
+}
+
 /** Keep the server's connection order, then show any grant with a missing inventory row. */
 export function groupBotAuthority(view: BotAuthorityView): Array<BotConnectionState & { grants: BotGrant[] }> {
   const connections = view.connections.map((connection) => ({

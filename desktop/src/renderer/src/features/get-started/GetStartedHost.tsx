@@ -1,5 +1,5 @@
 import { GetStartedGate } from "@matrix-os/ui";
-import { useMemo, type ReactNode } from "react";
+import { useMemo, useState, type ReactNode } from "react";
 import { DESKTOP_Z_INDEX } from "../../design/layering";
 import type { ApiClient } from "../../lib/api";
 import { useConnection } from "../../stores/connection";
@@ -7,6 +7,7 @@ import { createDesktopGetStartedGalleryPort, createDesktopGetStartedPort } from 
 import { useOnboardingOverlayLease } from "../onboarding-widget/use-onboarding-overlay-lease";
 import { DesktopGetStartedAgentLogin } from "./DesktopGetStartedAgentLogin";
 import { DesktopGetStartedConnector } from "./DesktopGetStartedConnector";
+import { createDesktopFeatureFlagSource } from "../support/desktop-feature-flags";
 
 /** Native app views paint above the renderer, so the open wizard holds the overlay lease like the widget does. */
 function GetStartedOverlayLease() {
@@ -22,8 +23,9 @@ function DesktopGetStartedGate({ api, runtimeSlot, platformHost, children }: { a
   const displayName = useConnection((state) => state.displayName);
   const port = useMemo(() => createDesktopGetStartedPort(api, runtimeSlot), [api, runtimeSlot]);
   const gallery = useMemo(() => createDesktopGetStartedGalleryPort(api, runtimeSlot, platformHost), [api, runtimeSlot, platformHost]);
+  const [featureFlags] = useState(createDesktopFeatureFlagSource);
   return (
-    <GetStartedGate port={port} zIndex={DESKTOP_Z_INDEX.getStarted} connector={DesktopGetStartedConnector} whileActive={GetStartedOverlayLease} gallery={gallery} backdropSource={desktopBackdrop} suggestedName={displayName} agentLogin={DesktopGetStartedAgentLogin}>
+    <GetStartedGate port={port} zIndex={DESKTOP_Z_INDEX.getStarted} connector={DesktopGetStartedConnector} whileActive={GetStartedOverlayLease} gallery={gallery} backdropSource={desktopBackdrop} suggestedName={displayName} agentLogin={DesktopGetStartedAgentLogin} featureFlags={featureFlags}>
       {children}
     </GetStartedGate>
   );

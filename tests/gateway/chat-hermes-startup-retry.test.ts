@@ -4,6 +4,12 @@ import { createHermesChatProviderAdapter } from "../../packages/gateway/src/chat
 import type { CanonicalProviderRunEvent } from "../../packages/gateway/src/chat/provider-adapter";
 import { hermesStartupInput, hermesStartupProcesses } from "../helpers/hermes-startup-process";
 
+// This suite controls process deadlines, not disk discovery. Real PM/legacy
+// interpreter resolution is exercised in hermes-python-environment.test.ts.
+vi.mock("../../packages/gateway/src/chat/hermes-python-environment.js", () => ({
+  resolveHermesPython: async () => "/safe/home/.hermes/hermes-agent/venv/bin/python",
+}));
+
 afterEach(() => vi.useRealTimers());
 
 function start(options: Parameters<typeof hermesStartupProcesses>[0] = {}, runOptions: {

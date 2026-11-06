@@ -1,11 +1,13 @@
 // @vitest-environment jsdom
-import { act, cleanup, renderHook, waitFor } from "@testing-library/react";
+import React from "react";
+import { act, cleanup, render, renderHook, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { BotInteraction, BotTaskSummary, ChatAgent } from "@matrix-os/contracts";
 import type { ChatAgentClient } from "../../../packages/ui/src/chat-agents/client.js";
 import { IsoTimestampSchema } from "@matrix-os/contracts";
 import { botRailStatus, latestBotTask } from "../../../packages/ui/src/chat-agents/bots/bot-rail-status.js";
 import { useBotRailStatuses } from "../../../packages/ui/src/chat-agents/bots/use-bot-rail-statuses.js";
+import { ChatAgentRailRow } from "../../../packages/ui/src/chat-agents/ChatAgentRailRow.js";
 import { clientFixture, saved } from "../../desktop/chat-agents-fixture.js";
 afterEach(() => { cleanup(); vi.restoreAllMocks(); vi.useRealTimers(); });
 const agent: ChatAgent = { ...saved, recipeRef: { recipeId: "writer", version: "1" } };
@@ -65,21 +67,25 @@ describe("Agent rail status", () => {
     await waitFor(() => expect(result.current[agent.id]?.state).toBe("completed"));
     expect(first.bots!.instantiate).not.toHaveBeenCalled(); expect(next.bots!.instantiate).not.toHaveBeenCalled();
   });
-  it("keeps custom Bot task status neutral without recipe reads and refreshes when recipe applicability changes", async () => {
+  it("keeps legacy custom Bots visually silent without recipe reads and refreshes when recipe applicability changes", async () => {
     const client = fixture();
-    const custom = { ...saved, recipeRef: undefined };
+    const custom = { ...saved, recipe: { skills: ["matrix-integrations"],
+      integrations: [{ service: "gmail", accountLabel: "Work" }], output: "Email briefing" }, recipeRef: undefined } as ChatAgent;
     const { result, rerender } = renderHook(({ currentAgent }) => useBotRailStatuses(client, [currentAgent], "chat_one"),
-      { initialProps: { currentAgent: custom as ChatAgent } });
-    await waitFor(() => expect(result.current[custom.id]).toEqual({ state: "unavailable", label: "Status unavailable" }));
+      { initialProps: { currentAgent: custom } });
+    expect(result.current[custom.id]).toBeUndefined();
+    const row = render(<ChatAgentRailRow agent={custom} status={result.current[custom.id]} current={false} opening={false}
+      disabled={false} menuZIndex={100} onOpen={() => {}} />);
+    expect(row.container.querySelector('[data-slot="chat-agent-status"]')).toBeNull();
+    expect(row.container.querySelector('[data-slot="chat-agent-indicator"]')).toBeNull();
     expect(client.bots!.directChat).not.toHaveBeenCalled();
     expect(client.bots!.tasks).not.toHaveBeenCalled();
     expect(client.bots!.interactions).not.toHaveBeenCalled();
-    rerender({ currentAgent: agent });
+    act(() => rerender({ currentAgent: agent }));
     expect(result.current[agent.id]?.state).toBe("loading");
     await waitFor(() => expect(result.current[agent.id]?.state).toBe("working"));
-    rerender({ currentAgent: custom });
-    expect(result.current[custom.id]?.state).toBe("loading");
-    await waitFor(() => expect(result.current[custom.id]?.state).toBe("unavailable"));
+    act(() => rerender({ currentAgent: custom }));
+    expect(result.current[custom.id]).toBeUndefined();
   });
   it("does not show successful task evidence when status reads fail", async () => {
     const client = fixture(); vi.mocked(client.bots!.interactions).mockRejectedValue(new Error("private runtime failure"));

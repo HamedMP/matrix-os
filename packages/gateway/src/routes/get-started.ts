@@ -1,8 +1,11 @@
 import { Hono, type Context } from "hono";
 import { bodyLimit } from "hono/body-limit";
 import {
+  GetStartedBotNamesRequestSchema,
   GetStartedStateSchema,
   GetStartedUpdateSchema,
+  type GetStartedBotNamesRequest,
+  type GetStartedBotNamesResponse,
   type GetStartedAnswers,
   type GetStartedResponse,
   type GetStartedSavedBot,
@@ -20,11 +23,13 @@ import { GET_STARTED_MATRIX_BOT_RECIPE_ID } from "../get-started/bots.js";
 const STATE_FILE = "get-started.json";
 const ONBOARDING_COMPLETE_FILE = "onboarding-complete.json";
 const PUT_BODY_LIMIT = 8 * 1024;
+const BOT_NAMES_BODY_LIMIT = 2 * 1024;
 const STATE_FILE_MAX_BYTES = 16 * 1024;
 
 const LOAD_ERROR = "Unable to load your setup";
 const SAVE_ERROR = "Unable to save your setup";
 const BOTS_ERROR = "Bots are unavailable on this computer";
+const BOT_NAMES_ERROR = "Name suggestions are unavailable";
 
 // A finished setup retries its saved bots when read, at most this often per owner.
 const BOT_RECONCILE_COOLDOWN_MS = 10 * 60 * 1000;
@@ -41,6 +46,8 @@ export interface GetStartedRoutesOptions {
   ensureBot?: (ownerId: string, recipeId: string, name?: string) => Promise<void>;
   /** What a saved bot choice made: the bot it created, or "pending" while its creation never finished. */
   botStatus?: (ownerId: string, recipeId: string) => Promise<GetStartedSavedBot>;
+  /** Spec 636: asks the platform for bot name suggestions; absent without a platform link. */
+  suggestBotNames?: (request: GetStartedBotNamesRequest, signal: AbortSignal) => Promise<GetStartedBotNamesResponse>;
 }
 
 class GetStartedStateCorruptError extends Error {
@@ -179,6 +186,36 @@ export function createGetStartedRoutes(opts: GetStartedRoutesOptions) {
     } catch (err) {
       console.warn("[get-started] Failed to read state:", errorName(err));
       return c.json({ error: LOAD_ERROR }, 500);
+    }
+  });
+
+  // Spec 636, Part B: only while setup is open; the wizard falls back to built-in names on any error.
+  app.post("/bot-names", bodyLimit({ maxSize: BOT_NAMES_BODY_LIMIT, onError: (c) => c.json({ error: "Request too large" }, 413) }), async (c) => {
+    if (!enabled) return c.json({ error: "Get started is not available" }, 404);
+    let state: GetStartedState | null;
+    try {
+      state = await withPinnedSystemDir(homePath, readState);
+    } catch (err) {
+      console.warn("[get-started] Failed to read state:", errorName(err));
+      return c.json({ error: LOAD_ERROR }, 500);
+    }
+    if (!state) return c.json({ error: "Get started is not available" }, 404);
+    if (isTerminal(state)) return c.json({ error: "Setup is already finished" }, 409);
+    let raw: unknown;
+    try {
+      raw = await c.req.json();
+    } catch (err) {
+      if (!(err instanceof SyntaxError)) throw err;
+      return c.json({ error: "Invalid request" }, 400);
+    }
+    const parsed = GetStartedBotNamesRequestSchema.safeParse(raw);
+    if (!parsed.success) return c.json({ error: "Invalid request" }, 400);
+    if (!opts.suggestBotNames) return c.json({ error: BOT_NAMES_ERROR }, 503);
+    try {
+      return c.json(await opts.suggestBotNames(parsed.data, c.req.raw.signal));
+    } catch (err) {
+      console.warn("[get-started] Bot name suggestions unavailable:", errorName(err));
+      return c.json({ error: BOT_NAMES_ERROR }, 503);
     }
   });
 

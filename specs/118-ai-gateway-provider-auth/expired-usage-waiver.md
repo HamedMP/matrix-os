@@ -1,5 +1,7 @@
 # Audited waiver of expired unknown usage
 
+Scope update (2026-11-04): this document describes the legacy, individually reviewed operator waiver. The new [customer credit policy](../639-managed-model-selection/spec.md#customer-credit-policy-2026-11-04-scope-extension) separately removes monetary holds for negotiated postpaid AI requests and introduces an audited policy release for stale legacy AI holds. Do not reuse this operator audit's human-review fields, age limits or inventory caps as the recurring customer failure policy. Unknown provider usage remains unknown under both policies; neither invents zero expense.
+
 ## Contract and authorization
 
 An expired started usage request retains unknown provider cost. Elapsed time,

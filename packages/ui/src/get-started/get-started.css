@@ -314,12 +314,49 @@
   .mxo-gs__bot { animation: none; }
 }
 
-/* Step 3: a signed-in coding agent. */
-.mxo-gs__agent-connected {
+/* Spec 636: the coding agents screen, Settings' rows inside the wizard card. */
+.matrix-agents-providers.mxo-gs__agents {
   display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 8px;
+  flex-direction: column;
+  gap: 16px;
+  max-width: none;
+  margin-inline: 0;
+}
+
+.mxo-gs__credit {
+  margin: 0;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--mxo-green) 10%, transparent);
+  color: inherit;
+  font-size: 13px;
+  line-height: 1.45;
 }
 
 .mxo-dot--on { background: var(--mxo-green); }
+
+/* Spec 636, Part B: suggested bot names, with placeholders the size of a chip while they load. */
+.mxo-gs__names-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.mxo-chip--placeholder {
+  display: inline-block;
+  width: 76px;
+  height: 29px;
+  background: var(--mxo-border);
+  border-color: transparent;
+  animation: mxo-gs-pulse 1.2s ease-in-out infinite;
+}
+
+@keyframes mxo-gs-pulse {
+  0%, 100% { opacity: 0.55; }
+  50% { opacity: 1; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .mxo-chip--placeholder { animation: none; }
+}

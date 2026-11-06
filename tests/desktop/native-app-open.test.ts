@@ -1,7 +1,10 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { EventEmitter } from "node:events";
 import { NativeAppBridge } from "@desktop/main/embeds/native-app-bridge";
 import { createNativeAppOpenResolver } from "@desktop/main/embeds/native-app-open";
+import { createNativeAppChatNavigationBroker } from "@desktop/main/embeds/native-app-chat-navigation";
 import { createNativeAppOpenClient, NATIVE_APP_OPEN_CHANNEL } from "@desktop/shared/native-app-open";
+import { createNativeAppOpenChatClient, NATIVE_APP_OPEN_CHAT_CHANNEL } from "@desktop/shared/native-app-chat";
 
 const sender = { id: 1, url: "https://gateway.test/apps/gallery/" };
 const request = { name: "Forged display name", path: "/files/apps/planner/index.html" };
@@ -15,9 +18,121 @@ function fixture() {
   bridge.register(1, "gallery");
   return { bridge, openApp, resolveApp, advance: () => { generation++; } };
 }
-afterEach(() => vi.restoreAllMocks());
+afterEach(() => { vi.useRealTimers(); vi.restoreAllMocks(); });
+
+describe("acknowledged native Chat navigation", () => {
+  it("records a safe diagnostic when renderer delivery fails", async () => {
+    const warning = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const broker = createNativeAppChatNavigationBroker({ emit: () => { throw new TypeError("private renderer detail"); } });
+    await expect(broker.request({ view: "recipes" }, { runtimeSlot: "primary", authGeneration: 4 }))
+      .rejects.toThrow("could not be delivered");
+    expect(warning).toHaveBeenCalledWith("[native-app-chat] delivery failed:", "TypeError");
+  });
+  it("resolves only the matching renderer acknowledgement and bounds pending requests", async () => {
+    const emit = vi.fn();
+    const broker = createNativeAppChatNavigationBroker({ emit });
+    const pending = broker.request({ view: "recipes", recipeId: "company-brain" }, { runtimeSlot: "primary", authGeneration: 4 });
+    const event = emit.mock.calls[0]![0];
+    expect(event).toMatchObject({ view: "recipes", recipeId: "company-brain", runtimeSlot: "primary", authGeneration: 4 });
+    expect(() => broker.complete({ requestId: "wrong", ok: true })).toThrow("Unknown Chat navigation request");
+    await expect(broker.request({ view: "recipes" }, { runtimeSlot: "primary", authGeneration: 4 })).rejects.toThrow("busy");
+    broker.complete({ requestId: event.requestId, ok: true });
+    await expect(pending).resolves.toBeUndefined();
+  });
+
+  it("rejects unavailable recipes, lifecycle cancellation, and timeouts", async () => {
+    vi.useFakeTimers();
+    const emit = vi.fn();
+    const broker = createNativeAppChatNavigationBroker({ emit, timeoutMs: 1_000 });
+    const unavailable = broker.request({ view: "recipes", recipeId: "missing" }, { runtimeSlot: "primary", authGeneration: 4 });
+    broker.complete({ requestId: emit.mock.calls[0]![0].requestId, ok: false, error: "recipe_unavailable" });
+    await expect(unavailable).rejects.toThrow("failed");
+    const canceled = broker.request({ view: "recipes" }, { runtimeSlot: "primary", authGeneration: 4 });
+    broker.cancelAll();
+    await expect(canceled).rejects.toThrow("canceled");
+    const timedOut = broker.request({ view: "recipes" }, { runtimeSlot: "primary", authGeneration: 4 });
+    const timedOutExpectation = expect(timedOut).rejects.toThrow("timed out");
+    await vi.advanceTimersByTimeAsync(1_000);
+    await timedOutExpectation;
+  });
+
+  it("removes a queued renderer request when its app-document authority aborts", async () => {
+    const cancel = vi.fn();
+    const broker = createNativeAppChatNavigationBroker({ emit: vi.fn(), cancel, timeoutMs: 1_000 });
+    const controller = new AbortController();
+    const pending = broker.request(
+      { view: "recipes", recipeId: "company-brain" },
+      { runtimeSlot: "primary", authGeneration: 4 },
+      controller.signal,
+    );
+    try {
+      controller.abort();
+      expect(cancel).toHaveBeenCalledWith(expect.objectContaining({ requestId: expect.stringMatching(/^chat_/) }));
+      await expect(pending).rejects.toThrow("canceled");
+    } finally {
+      broker.cancelAll();
+      await pending.catch(() => undefined);
+    }
+  });
+});
 
 describe("native installed-app opening", () => {
+  it("keeps Chat recipe navigation out of the installed-app path contract", async () => {
+    const invoke = vi.fn(async () => ({ ok: true }));
+    const openChat = createNativeAppOpenChatClient(invoke);
+    await expect(openChat({ view: "recipes", recipeId: "company-brain" })).resolves.toBeUndefined();
+    expect(invoke).toHaveBeenCalledWith({ view: "recipes", recipeId: "company-brain" });
+    await expect(openChat({ view: "library" } as never)).rejects.toThrow("Invalid Chat navigation");
+    await expect(openChat({ view: "recipes", recipeId: "../company-brain" })).rejects.toThrow("Invalid Chat navigation");
+    expect(invoke).toHaveBeenCalledTimes(1);
+  });
+  it("records a safe app-side diagnostic while keeping invocation failures generic", async () => {
+    const warning = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const openChat = createNativeAppOpenChatClient(vi.fn(async () => { throw new TypeError("private bridge detail"); }));
+    await expect(openChat({ view: "recipes" })).rejects.toThrow("Chat navigation is unavailable");
+    expect(warning).toHaveBeenCalledWith("[native-app-chat] invocation failed:", "TypeError");
+  });
+  it("acknowledges authorized Chat recipe navigation and returns generic failures", async () => {
+    const openChat = vi.fn(async () => undefined);
+    const f = fixture();
+    const bridge = new NativeAppBridge({
+      authGeneration: () => 1, generate: vi.fn(), aiRequest: vi.fn(), request: vi.fn(), gatewayRequest: vi.fn(),
+      gatewayOrigin: () => "https://gateway.test", resolveApp: f.resolveApp, openApp: f.openApp, openChat,
+    });
+    bridge.register(1, "gallery");
+    await bridge.openChat(sender, { view: "recipes", recipeId: "company-brain" });
+    expect(openChat).toHaveBeenCalledWith({ view: "recipes", recipeId: "company-brain" }, expect.any(AbortSignal));
+    expect(f.resolveApp).not.toHaveBeenCalled();
+
+    const handle = vi.fn(); bridge.registerIpc({ handle });
+    const handler = handle.mock.calls.find(([channel]) => channel === NATIVE_APP_OPEN_CHAT_CHANNEL)![1];
+    const frame = {};
+    const event = { senderFrame: frame, sender: { id: 1, mainFrame: frame, getURL: () => sender.url, isDestroyed: () => false } };
+    openChat.mockRejectedValueOnce(new Error("private catalog detail"));
+    await expect(handler(event, { view: "recipes", recipeId: "missing" })).rejects.toThrow(/^Chat navigation is unavailable$/);
+  });
+  it.each(["navigation", "destruction"] as const)("cancels queued Chat navigation on app-document %s", async change => {
+    const lifetime = Object.assign(new EventEmitter(), { isDestroyed: () => false });
+    const cancel = vi.fn();
+    const broker = createNativeAppChatNavigationBroker({ emit: vi.fn(), cancel, timeoutMs: 1_000 });
+    const bridge = new NativeAppBridge({
+      authGeneration: () => 1, generate: vi.fn(), aiRequest: vi.fn(), request: vi.fn(), gatewayRequest: vi.fn(),
+      gatewayOrigin: () => "https://gateway.test", getSenderLifecycle: () => lifetime,
+      openChat: (chatRequest, signal) => broker.request(chatRequest, { runtimeSlot: "primary", authGeneration: 1 }, signal),
+    });
+    bridge.register(1, "gallery");
+    const pending = bridge.openChat(sender, { view: "recipes", recipeId: "company-brain" });
+    try {
+      if (change === "navigation") lifetime.emit("did-start-navigation", { isMainFrame: true, isSameDocument: false });
+      else lifetime.emit("destroyed");
+      expect(cancel).toHaveBeenCalledWith(expect.objectContaining({ requestId: expect.stringMatching(/^chat_/) }));
+      await expect(pending).rejects.toThrow();
+    } finally {
+      broker.cancelAll();
+      bridge.clear();
+      await pending.catch(() => undefined);
+    }
+  });
   it.each([["matrix-browser", "Browser"], ["matrix-cloud-desktop", "Cloud desktop"]])("opens fixed %s aliases only from a product sender", async (appIdentity, name) => {
     const f = fixture(); f.bridge.register(1, "matrix-browser", "browser-lab");
     await f.bridge.openApp({ id: 1, url: "https://gateway.test/apps/browser-lab/?surface=browser" }, { name: "ignored", path: `matrix-app:${appIdentity}` });

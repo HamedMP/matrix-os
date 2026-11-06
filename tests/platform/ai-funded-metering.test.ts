@@ -83,36 +83,34 @@ describe("funded AI metering", () => {
     status: "reserved" | "in_flight";
     expiresAt: string;
   }) {
-    await db.transaction(async (trx) => {
+    // Frozen legacy captures retain identity/liability but predate per-source attribution.
+    const snapshot = await repo.getRuntimeFundingSummary(identity);
+    const credential = await db.executor.selectFrom("ai_runtime_credentials").selectAll()
+      .where("token_id", "=", input.tokenId).executeTakeFirstOrThrow();
+    const capture = { contractVersion: 1, authorized: true, identity: { ...identity,
+      tokenId: input.tokenId, audience: credential.audience, scope: credential.scope, expiresAt: credential.expires_at },
+      policy: snapshot.policy, funding: snapshot.funding, reservation: {
+        reservationId: input.reservationId, requestId: input.requestId, modelId,
+        reservedMicrousd: input.reservedMicrousd, remainingBalanceMicrousd: snapshot.funding.remainingBalanceMicrousd,
+        remainingBudgetMicrousd: snapshot.funding.remainingBudgetMicrousd,
+        periodStart: "2026-08-01T00:00:00.000Z", expiresAt: input.expiresAt, status: "reserved" } };
+    await db.transaction(async trx => {
       await trx.executor.updateTable("ai_funded_runtime_balances").set({
         reserved_microusd: sql<number>`reserved_microusd + ${input.reservedMicrousd}`,
         month_reserved_microusd: sql<number>`month_reserved_microusd + ${input.reservedMicrousd}`,
-      }).where("machine_id", "=", identity.machineId).executeTakeFirstOrThrow();
+      }).where("machine_id", "=", identity.machineId).execute();
       await trx.executor.insertInto("ai_funded_usage_reservations").values({
-        reservation_id: input.reservationId,
-        request_id: input.requestId,
-        payload_hash: "a".repeat(64),
-        authorization_response: "{}",
-        settlement_response: null,
-        start_response: input.status === "in_flight" ? "{}" : null,
-        release_response: null,
-        release_reason: null,
-        token_id: input.tokenId,
-        owner_id: identity.ownerId,
-        machine_id: identity.machineId,
-        runtime_slot: identity.runtimeSlot,
-        model_id: modelId,
-        reserved_microusd: input.reservedMicrousd,
-        promotional_reserved_microusd: null,
-        addon_reserved_microusd: null,
-        actual_microusd: null,
-        period_start: "2026-08-01T00:00:00.000Z",
-        status: input.status,
-        created_at: clock.toISOString(),
-        started_at: input.status === "in_flight" ? clock.toISOString() : null,
-        expires_at: input.expiresAt,
-        settled_at: null,
-        released_at: null,
+        reservation_id: input.reservationId, request_id: input.requestId, payload_hash: "a".repeat(64),
+        authorization_response: JSON.stringify(capture), settlement_response: null,
+        start_response: input.status === "in_flight" ? JSON.stringify({ contractVersion: 1,
+          reservationId: input.reservationId, requestId: input.requestId, tokenId: input.tokenId,
+          startedAt: clock.toISOString(), expiresAt: input.expiresAt, status: "in_flight" }) : null,
+        release_response: null, release_reason: null, token_id: input.tokenId,
+        owner_id: identity.ownerId, machine_id: identity.machineId, runtime_slot: identity.runtimeSlot, model_id: modelId,
+        reserved_microusd: input.reservedMicrousd, promotional_reserved_microusd: null, addon_reserved_microusd: null,
+        actual_microusd: null, period_start: "2026-08-01T00:00:00.000Z", status: input.status,
+        created_at: clock.toISOString(), started_at: input.status === "in_flight" ? clock.toISOString() : null,
+        expires_at: input.expiresAt, settled_at: null, released_at: null,
       }).execute();
     });
   }
@@ -228,7 +226,7 @@ describe("funded AI metering", () => {
     })).rejects.toMatchObject({ code: "over_settlement" });
   });
 
-  it("finalizes ambiguous post-start usage at the full reservation", async () => {
+  it("releases ambiguous post-start usage without inventing provider cost", async () => {
     const credential = await enableAndFund({ budget: 200, credit: 200 });
     const authorization = await repo.authorize({
       credential: credential.token, requestId: "request_ambiguous", modelId, maxCostMicrousd: 100,
@@ -238,14 +236,15 @@ describe("funded AI metering", () => {
       tokenId: credential.tokenId,
     };
     await repo.startReservation(locator);
-    const finalized = await repo.finalizeReservation({ ...locator, mode: "conservative" });
-    expect(finalized).toMatchObject({ actualCostMicrousd: 100, releasedMicrousd: 0, status: "settled" });
-    expect(await db.executor.selectFrom("ai_funded_usage_reservations").select("finalization_mode")
-      .where("reservation_id", "=", locator.reservationId).executeTakeFirstOrThrow())
-      .toEqual({ finalization_mode: "conservative" });
-    await expect(repo.finalizeReservation({ ...locator, mode: "conservative" })).resolves.toEqual(finalized);
+    await expect(repo.finalizeReservation({ ...locator, mode: "conservative" })).rejects.toMatchObject({ code: "unavailable" });
+    const unknown = await db.executor.selectFrom("ai_funded_usage_reservations").selectAll()
+      .where("reservation_id", "=", locator.reservationId).executeTakeFirstOrThrow();
+    expect(unknown).toMatchObject({ status: "expired", actual_microusd: null, settlement_response: null });
+    expect(unknown.customer_charge_release).not.toBeNull();
+    expect(await repo.getFundingSummary(identity)).toMatchObject({ reservedMicrousd: 0, remainingBalanceMicrousd: 200 });
+    await expect(repo.finalizeReservation({ ...locator, mode: "conservative" })).rejects.toMatchObject({ code: "unavailable" });
     await expect(repo.finalizeReservation({ ...locator, mode: "exact", actualCostMicrousd: 60 }))
-      .rejects.toMatchObject({ code: "idempotency_conflict" });
+      .resolves.toMatchObject({ actualCostMicrousd: 60, chargedCostMicrousd: 0, matrixAbsorbedMicrousd: 60 });
   });
 
   it("enforces zero balance, model allowlist, monthly budget, and the global kill switch before reservation", async () => {
@@ -305,7 +304,7 @@ describe("funded AI metering", () => {
       reservationId: first.reservation.reservationId,
       tokenId: credential.tokenId,
       actualCostMicrousd: 10,
-    })).rejects.toMatchObject({ code: "reservation_expired" });
+    })).rejects.toMatchObject({ code: "reservation_closed" });
     await expect(repo.authorize({
       credential: credential.token, requestId: "after-expiry", modelId, maxCostMicrousd: 100,
     })).resolves.toMatchObject({ authorized: true });
@@ -346,9 +345,8 @@ describe("funded AI metering", () => {
       { reservation_id: "cleanup_valid_sibling", status: "expired" },
     ]);
     expect(warning).toHaveBeenCalledWith(
-      "[funded-ai] reservation cleanup candidate failed",
-      "cleanup_broken_balance",
-      "Error",
+      "[funded-ai] Customer credit cleanup retained invalid request accounting",
+      { reservationId: "cleanup_broken_balance", errorName: "Error" },
     );
   });
 
@@ -386,9 +384,8 @@ describe("funded AI metering", () => {
       { reservation_id: "cleanup_malformed_identity", status: "in_flight" },
     ]);
     expect(warning).toHaveBeenCalledWith(
-      "[funded-ai] reservation cleanup candidate failed",
-      "cleanup_malformed_identity",
-      "AiFundedPolicyError",
+      "[funded-ai] Customer credit cleanup retained invalid request accounting",
+      { reservationId: "cleanup_malformed_identity", errorName: "AiFundedPolicyError" },
     );
   });
 
@@ -445,13 +442,13 @@ describe("funded AI metering", () => {
     await expect(repo.cleanupExpiredReservations({ limit: 2 })).resolves.toBe(0);
     await expect(repo.cleanupExpiredReservations({ limit: 2 })).resolves.toBe(1);
 
-    expect(transactions).toHaveBeenCalledTimes(4);
+    expect(transactions).toHaveBeenCalledTimes(2);
     expect(await db.executor.selectFrom("ai_funded_usage_reservations")
       .select("status").where("reservation_id", "=", "cleanup_after_poison")
       .executeTakeFirstOrThrow()).toEqual({ status: "expired" });
   });
 
-  it("conservatively charges the full reservation when in-flight usage expires", async () => {
+  it("releases expired in-flight AI holds while preserving unknown provider expense", async () => {
     const credential = await enableAndFund({ budget: 100, credit: 100 });
     const authorization = await repo.authorize({
       credential: credential.token, requestId: "in_flight_expiry", modelId, maxCostMicrousd: 100,
@@ -465,25 +462,25 @@ describe("funded AI metering", () => {
       tokenId: credential.tokenId,
     })).resolves.toEqual(started);
     clock = new Date("2026-08-30T20:31:00.000Z");
-    const cleanupCounts = await Promise.all([
-      repo.cleanupExpiredReservations({ limit: 10 }),
-      repo.cleanupExpiredReservations({ limit: 10 }),
-    ]);
+    // Independent PostgreSQL pools cover cleanup/settlement contention in the
+    // postpaid suite; this fallback fixture verifies once-only cleanup replay.
+    const cleanupCounts = [await repo.cleanupExpiredReservations({ limit: 10 }),
+      await repo.cleanupExpiredReservations({ limit: 10 })];
     expect(cleanupCounts.reduce((sum, count) => sum + count, 0)).toBe(1);
     const reservation = await db.executor.selectFrom("ai_funded_usage_reservations")
       .selectAll().where("reservation_id", "=", authorization.reservation.reservationId)
       .executeTakeFirstOrThrow();
     expect(reservation).toMatchObject({
-      status: "settled", actual_microusd: 100, finalization_mode: "conservative",
+      status: "expired", actual_microusd: null, finalization_mode: null,
     });
     expect(await db.executor.selectFrom("ai_funded_credit_ledger").select("amount_microusd")
       .where("reservation_id", "=", reservation.reservation_id).execute())
-      .toEqual([{ amount_microusd: -100 }]);
+      .toEqual([]);
     await expect(repo.settleReservation({
       reservationId: reservation.reservation_id,
       tokenId: credential.tokenId,
       actualCostMicrousd: 100,
-    })).resolves.toMatchObject({ status: "settled", actualCostMicrousd: 100, releasedMicrousd: 0 });
+    })).resolves.toMatchObject({ status: "settled", actualCostMicrousd: 100, chargedCostMicrousd: 0, matrixAbsorbedMicrousd: 100, releasedMicrousd: 0 });
   });
 
   it("keeps grants immutable and idempotent by explicit billing/admin entry ID", async () => {
@@ -1033,8 +1030,8 @@ describe("funded AI metering", () => {
       .select(["status", "actual_microusd", "promotional_reserved_microusd", "addon_reserved_microusd"])
       .where("reservation_id", "=", "legacy_unfunded_inflight").executeTakeFirstOrThrow();
     expect(reservation).toEqual({
-      status: "settled",
-      actual_microusd: 4,
+      status: "expired",
+      actual_microusd: null,
       promotional_reserved_microusd: null,
       addon_reserved_microusd: null,
     });
@@ -1043,14 +1040,14 @@ describe("funded AI metering", () => {
       promotionalBalanceMicrousd: 0,
       addonBalanceMicrousd: 0,
       reservedMicrousd: 0,
-      settledThisMonthMicrousd: 4,
-      fundingShortfallMicrousd: 4,
+      settledThisMonthMicrousd: 0,
+      fundingShortfallMicrousd: 0,
       remainingBalanceMicrousd: 0,
     });
     expect(await db.executor.selectFrom("ai_funded_credit_ledger")
       .select(["kind", "amount_microusd"])
       .where("reservation_id", "=", "legacy_unfunded_inflight").execute())
-      .toEqual([{ kind: "usage_shortfall", amount_microusd: -4 }]);
+      .toEqual([]);
     expect(await db.executor.selectFrom("ai_funded_usage_reservations")
       .select("status").where("reservation_id", "=", "legacy_batch_sibling").executeTakeFirstOrThrow())
       .toEqual({ status: "expired" });
@@ -1184,7 +1181,7 @@ describe("funded AI metering", () => {
     })).resolves.toMatchObject({ authorized: true });
   });
 
-  it("records full provider usage and durable shortfall during partial legacy cleanup", async () => {
+  it("releases partial legacy holds without debiting protected sources or creating debt", async () => {
     const credential = await enableAndFund({ budget: 20, credit: 0 });
     await repo.grantCredit({
       entryId: "cleanup_protected_addon_credit",
@@ -1222,30 +1219,27 @@ describe("funded AI metering", () => {
     expect(await db.executor.selectFrom("ai_funded_usage_reservations")
       .select(["status", "actual_microusd"])
       .where("reservation_id", "=", "cleanup_legacy_partial_backing").executeTakeFirstOrThrow())
-      .toEqual({ status: "settled", actual_microusd: 5 });
+      .toEqual({ status: "expired", actual_microusd: null });
     expect(await db.executor.selectFrom("ai_funded_credit_ledger")
       .select(["kind", "amount_microusd"])
       .where("reservation_id", "=", "cleanup_legacy_partial_backing")
       .orderBy("kind").execute())
-      .toEqual([
-        { kind: "addon_debit", amount_microusd: -2 },
-        { kind: "usage_shortfall", amount_microusd: -3 },
-      ]);
+      .toEqual([]);
     expect(await repo.getFundingSummary(identity)).toMatchObject({
-      creditBalanceMicrousd: 5,
+      creditBalanceMicrousd: 7,
       promotionalBalanceMicrousd: 0,
-      addonBalanceMicrousd: 5,
+      addonBalanceMicrousd: 7,
       reservedMicrousd: 5,
-      settledThisMonthMicrousd: 5,
-      fundingShortfallMicrousd: 3,
-      remainingBalanceMicrousd: 0,
-      remainingBudgetMicrousd: 10,
+      settledThisMonthMicrousd: 0,
+      fundingShortfallMicrousd: 0,
+      remainingBalanceMicrousd: 2,
+      remainingBudgetMicrousd: 15,
     });
     await expect(repo.cleanupExpiredReservations({ limit: 10 })).resolves.toBe(0);
     expect(await repo.getFundingSummary(identity)).toMatchObject({
-      fundingShortfallMicrousd: 3,
-      settledThisMonthMicrousd: 5,
-      remainingBalanceMicrousd: 0,
+      fundingShortfallMicrousd: 0,
+      settledThisMonthMicrousd: 0,
+      remainingBalanceMicrousd: 2,
     });
   });
 
@@ -1272,7 +1266,7 @@ describe("funded AI metering", () => {
       .executeTakeFirstOrThrow()).toEqual({ remaining_microusd: 1_000_000 });
     expect(await db.executor.selectFrom("ai_funded_runtime_balances")
       .select("funding_shortfall_microusd").where("machine_id", "=", identity.machineId)
-      .executeTakeFirstOrThrow()).toEqual({ funding_shortfall_microusd: 5 });
+      .executeTakeFirstOrThrow()).toEqual({ funding_shortfall_microusd: 0 });
   });
 
   it("charges an in-flight reservation before retiring its expired promotional backing", async () => {

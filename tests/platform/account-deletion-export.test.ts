@@ -71,12 +71,16 @@ describe('portable account exports',()=>{
        ('dddddddd-dddd-4ddd-8ddd-dddddddddddd','cccccccc-cccc-4ccc-8ccc-cccccccccccc','2026-10-01',${JSON.stringify({data:{message:'private other site'},forms:[]})}::jsonb,${JSON.stringify([])}::jsonb)`.execute(db.executor);
      await sql`INSERT INTO public_site_aliases (slug,site_id) VALUES
        ('launch','aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'),('private','cccccccc-cccc-4ccc-8ccc-cccccccccccc')`.execute(db.executor);
+     await sql`INSERT INTO public_site_access_links (id,site_id,claim_token_hash,session_token_hash,created_at,claim_expires_at,claimed_at,session_expires_at) VALUES
+       ('eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee','aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',${'a'.repeat(64)},${'b'.repeat(64)},'2026-10-02','2026-10-09','2026-10-03','2026-11-02'),
+       ('ffffffff-ffff-4fff-8fff-ffffffffffff','cccccccc-cccc-4ccc-8ccc-cccccccccccc',${'c'.repeat(64)},null,'2026-10-02','2026-10-09',null,null)`.execute(db.executor);
      const result=await exportOwnerPlatformData(db,'user_a');
      expect(result.profile).toHaveLength(1);expect(result.posts.map(post=>post.content)).toEqual(['portable']);
      expect(result.publicSites.sites.map(site=>site.id)).toEqual(['aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa']);
      expect(result.publicSites.versions.map(version=>version.config)).toEqual([{data:{message:'portable site data'},forms:[]}]);
      expect(result.publicSites.aliases).toEqual([{slug:'launch',site_id:'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'}]);
-     expect(JSON.stringify(result)).not.toMatch(/private-runtime-token|secret-integration-id|other-secret|private other data|private other site/);
+     expect(result.publicSites.accessLinks).toEqual([{id:'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee',site_id:'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',created_at:'2026-10-02',claim_expires_at:'2026-10-09',claimed_at:'2026-10-03',session_expires_at:'2026-11-02'}]);
+     expect(JSON.stringify(result)).not.toMatch(/private-runtime-token|secret-integration-id|other-secret|private other data|private other site|a{64}|b{64}|c{64}/);
      await expect(exportOwnerPlatformData(db,'user_b/../user_a')).rejects.toThrow();
    }finally{await db.destroy();}
  });

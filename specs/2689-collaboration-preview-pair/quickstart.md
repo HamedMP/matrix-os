@@ -1,0 +1,109 @@
+# Collaboration preview pair: implementation and qualification guide
+
+Tracking: ENG-418. Control, workflow and two-app launcher code are implemented in
+the native stack. Protected activation and a real two-VPS collaboration journey
+remain unfinished. Spec PR #3022 is the bottom native stack layer.
+
+First-use check: the existing normal cloud profile's setup request currently
+returns 404; the protected pair workflow, execution ref and configuration have
+not been installed. An isolated Clerk development instance and reviewed Source/
+controller bootstrap are required before creating a usable pair. Two ordinary
+Private Previews cannot substitute: those runtimes exclude collaboration.
+
+## Prerequisites
+
+- A same-repository open candidate PR, normal authorized maintainer and exact SHA.
+- Reviewed trusted Preview controller and configured two-account fixture set in an
+  approved isolated Preview identity/service/signing/data boundary; a third real
+  outsider account has no test-org membership. Never use customer account copies.
+- Existing bounded Preview inference allowance enabled and unexpired for the exact
+  machines; report its expiry separately from the72h pair lifetime.
+- Matching existing desktop artifact for the actual local OS/architecture, normal
+  GitHub/Matrix authentication and a local desktop session for Electron.
+
+No prerequisites are satisfied merely because their code or secret names exist.
+The unfinished spec530 wildcard route stays off. Provisioning and production
+activation require the reviewed workflow's normal operator/environment gates.
+
+## Developer sequence
+
+1. Use the existing implementation worktree on `codex/eng-418-preview-pair-foundation`.
+   Run `bash .specify/scripts/bash/check-prerequisites.sh --json --paths-only` to
+   confirm the spec pointer; helper regressions use real Git/Bash fixtures.
+2. Read research, data model and contracts. Generate dependency-ordered tasks,
+   verify the16-item requirements checklist, then implement with tests first.
+3. Commit each complete phase to its native layer and publish through `gh stack
+   submit --auto`. Every PR includes ENG-418, stack/spec and truthful validation.
+4. After completing protected bootstrap, `preview:pair:create` produces one canonical pair
+   report/manifest. Confirm both real owners/members, exact running candidate,
+   fresh control registrations, source-pinned platform and supported desktop bytes.
+5. On the local machine, run `bun run preview:pair:open -- --pair <id>
+   --profile <trusted-control-profile>`. The launcher is implemented; its live
+   operation still depends on the protected bootstrap and actual target artifact.
+6. Sign in normally as the expected owner and member, using separate browser
+   sessions if needed. Verify visible role/computer/organization/source in each
+   app. A wrong account must fail closed; do not force headers or inject sessions.
+
+## Implemented control commands
+
+After the reviewed Source/controller foundation and protected setup are available,
+use the normal Matrix profile and its linked GitHub identity:
+
+```bash
+bun run preview:pair:create -- --pr <number> --profile cloud
+bun run preview:pair:report -- --pair <uuid> --profile cloud
+bun run preview:pair:update -- --pair <uuid> --profile cloud
+bun run preview:pair:stop -- --pair <uuid> --profile cloud
+```
+
+Create/update returns the exact GitHub workflow and request report. The workflow
+summary reports a canonical pair reused by a concurrent/existing request. A new
+head never replaces an active reproduction until explicit update. Before a
+request is admitted, cancel its recorded workflow; normal stop targets the
+canonical admitted pair. Use `--help` without login/network effects. No command
+merges code or updates customer computers.
+
+The [implementation validation](control-workflow-validation.md) records setup
+requirements and limitations. The launcher provides `preview:pair:open`; see
+[the command guide](../../docs/dev/collaboration-preview-pairs.md). Actual runtime and surface acceptance remains
+required after protected setup, not established by local fixtures.
+
+## Required acceptance
+
+| Case | Starting point | Pass evidence |
+| --- | --- | --- |
+| Local isolation | Two preview apps plus normal app | Distinct actual actors/profile cookies/runtime selection; sign-out/relaunch leaves other sessions unchanged |
+| Share during creation | New private scratch project A | Creation opt-in observed; dialog/publication/indicator results recorded; failure remains private |
+| First later Share | Different new private project B | Dialog opens on first attempt; no retry or preaccepted grant; explicit publish |
+| Member journey | Pending member invitation | Shared with me → actual acceptance → inherited Chat prompt → actual persisted response on reopen |
+| Outsider | Third authenticated account outside org | Discovery/link/prompt denied; no owner-side execution |
+| Recovery | Active project and owner restart | Fresh control reconnect, member reopen, no duplicated/widened access |
+| Failed publication/revocation | Injected bounded failure or explicit test grant revoke | No partial publication; revoked caller denied through real current authorization |
+| Cleanup | Stop, close, request removal or expiry | Access retired; both exact provider servers absent; fixture/capacity released only after proof |
+
+Capture Electron Desktop and Web Desktop separately, with exact artifact/source,
+run/generation, real versus simulated boundaries and any not-run case. Attach or
+link screenshots and recordings in PR evidence; keep them out of the repository.
+Share evidence only through review channels explicitly authorized by the requester.
+
+## Diagnosis and updates
+
+An environment-ready pair is not a collaboration pass. Inspect the failed stage,
+actual owner-session/preflight/inventory/publication results and scoped logs. Do
+not initialize customer Git, change org policy, inject a grant or widen permissions
+to turn a red candidate green. Preserve the reproduction while its hard expiry
+allows it. A new PR push only marks currency outdated; explicit update is a clean
+reset/new generation in V1 and requires both computers and desktop source to agree.
+
+## Cleanup and limitations
+
+Closing apps stops only owned local children. Stop the cloud pair explicitly or
+let close/expiry trigger its durable cleanup. Do not delete baseline fixture
+accounts/orgs, other test runs, customer Shared with me entries or personal profiles.
+Provider uncertainty stays cleanup-pending and retains capacity. Windows/macOS
+native behavior requires actual target qualification; Linux/Xvfb alone does not
+qualify native keychain/protocol behavior on another OS.
+
+Public docs deliverable: separate `FinnaAI/matrix-os-site` PR under `content/docs/`
+for request, exact builds, dual-app login, update/reset, readiness, evidence and
+cleanup. No private actor IDs, credentials, customer hosts or operator shortcuts.

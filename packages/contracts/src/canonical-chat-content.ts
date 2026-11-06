@@ -118,6 +118,7 @@ const AGENT_FAILURE_COPY = {
   policy_blocked: { code: "authorization_failed", safeMessage: "Request blocked by policy. Change your request.", retryable: false, recoveryActions: [] },
   invalid_request: { code: "capability_mismatch", safeMessage: "Request not supported. Change it and try again.", retryable: false, recoveryActions: [] },
   environment_failed: { code: "provider_unavailable", safeMessage: "Agent environment failed. Check setup or switch connection.", retryable: false, recoveryActions: ["open_setup_terminal"] },
+  transcript_interrupted: { code: "run_failed", safeMessage: "Response interrupted. You can continue in this chat.", retryable: false, recoveryActions: [] },
   history_unavailable: { code: "run_not_resumable", safeMessage: "Conversation could not be restored. Start a new chat.", retryable: false, recoveryActions: ["start_new_chat"] },
 } satisfies Record<string, AgentFailureDefinition>;
 

@@ -37,7 +37,7 @@ get_current_branch() {
         for dir in "$specs_dir"/*; do
             if [[ -d "$dir" ]]; then
                 local dirname=$(basename "$dir")
-                if [[ "$dirname" =~ ^([0-9]{3})- ]]; then
+                if [[ "$dirname" =~ ^([0-9]{3,})- ]]; then
                     local number=${BASH_REMATCH[1]}
                     number=$((10#$number))
                     if [[ "$number" -gt "$highest" ]]; then
@@ -72,7 +72,12 @@ check_feature_branch() {
         return 0
     fi
 
-    if [[ ! "$branch" =~ ^[0-9]{3}- ]]; then
+    # A validated directory selection is independent of a stack branch's name.
+    if [[ "${FEATURE_SELECTION_EXPLICIT:-false}" == "true" ]]; then
+        return 0
+    fi
+
+    if [[ ! "$branch" =~ ^[0-9]{3,}- ]]; then
         echo "ERROR: Not on a feature branch. Current branch: $branch" >&2
         echo "Feature branches should be named like: 001-feature-name" >&2
         return 1
@@ -91,7 +96,7 @@ find_feature_dir_by_prefix() {
     local specs_dir="$repo_root/specs"
 
     # Extract numeric prefix from branch (e.g., "004" from "004-whatever")
-    if [[ ! "$branch_name" =~ ^([0-9]{3})- ]]; then
+    if [[ ! "$branch_name" =~ ^([0-9]{3,})- ]]; then
         # If branch doesn't have numeric prefix, fall back to exact match
         echo "$specs_dir/$branch_name"
         return
@@ -120,8 +125,51 @@ find_feature_dir_by_prefix() {
         # Multiple matches - this shouldn't happen with proper naming convention
         echo "ERROR: Multiple spec directories found with prefix '$prefix': ${matches[*]}" >&2
         echo "Please ensure only one spec directory exists per numeric prefix." >&2
-        echo "$specs_dir/$branch_name"  # Return something to avoid breaking the script
+        return 1
     fi
+}
+
+# Exit 3 means no explicit selection; malformed selections must never fall back.
+resolve_specified_feature_dir() {
+    node - "$1" <<'JS'
+const fs = require('node:fs');
+const path = require('node:path');
+const root = fs.realpathSync(process.argv[2]);
+const metadata = path.join(root, '.specify', 'feature.json');
+let value = process.env.SPECIFY_FEATURE_DIRECTORY;
+try {
+    if (!value && process.env.SPECIFY_FEATURE) {
+        const match = /^([0-9]{3,})-[a-zA-Z0-9_-]+$/.exec(process.env.SPECIFY_FEATURE);
+        if (!match) throw new Error('selector');
+        const specs = path.join(root, 'specs');
+        const matches = fs.readdirSync(specs).filter(name => name.startsWith(match[1] + '-')
+            && fs.statSync(path.join(specs, name)).isDirectory());
+        if (matches.length !== 1) throw new Error('selector');
+        value = path.join(specs, matches[0]);
+    }
+    if (!value) {
+        let stat;
+        try { stat = fs.lstatSync(metadata); }
+        catch (error) { if (error.code === 'ENOENT') process.exit(3); throw error; }
+        if (!stat.isFile() || stat.isSymbolicLink() || stat.size > 65536) throw new Error('metadata');
+        value = JSON.parse(fs.readFileSync(metadata, 'utf8')).feature_directory;
+    }
+    if (typeof value !== 'string' || !value || value.length > 4096
+        || /[\0\n\r]/.test(value) || value.split(/[\\/]/).includes('..')) throw new Error('directory');
+    const specs = fs.realpathSync(path.join(root, 'specs'));
+    const selected = fs.realpathSync(path.resolve(root, value));
+    const inside = (base, target) => {
+        const relative = path.relative(base, target);
+        return relative && relative !== '..' && !relative.startsWith('..' + path.sep) && !path.isAbsolute(relative);
+    };
+    if (!inside(root, specs) || !inside(specs, selected) || !fs.statSync(selected).isDirectory()
+        || !fs.statSync(path.join(selected, 'spec.md')).isFile()) throw new Error('boundary');
+    process.stdout.write(selected + '\n');
+} catch (error) {
+    process.stderr.write('ERROR: Invalid feature directory; select an existing specification inside specs/\n');
+    process.exit(1);
+}
+JS
 }
 
 get_feature_paths() {
@@ -133,22 +181,24 @@ get_feature_paths() {
         has_git_repo="true"
     fi
 
-    # Use prefix-based lookup to support multiple branches per spec
-    local feature_dir=$(find_feature_dir_by_prefix "$repo_root" "$current_branch")
+    local feature_dir selection_status=0 explicit=false
+    feature_dir=$(resolve_specified_feature_dir "$repo_root") || selection_status=$?
+    if [[ "$selection_status" == 0 ]]; then
+        explicit=true
+    elif [[ "$selection_status" == 3 ]]; then
+        feature_dir=$(find_feature_dir_by_prefix "$repo_root" "$current_branch") || return 1
+    else
+        return "$selection_status"
+    fi
 
-    cat <<EOF
-REPO_ROOT='$repo_root'
-CURRENT_BRANCH='$current_branch'
-HAS_GIT='$has_git_repo'
-FEATURE_DIR='$feature_dir'
-FEATURE_SPEC='$feature_dir/spec.md'
-IMPL_PLAN='$feature_dir/plan.md'
-TASKS='$feature_dir/tasks.md'
-RESEARCH='$feature_dir/research.md'
-DATA_MODEL='$feature_dir/data-model.md'
-QUICKSTART='$feature_dir/quickstart.md'
-CONTRACTS_DIR='$feature_dir/contracts'
-EOF
+    # Callers evaluate these assignments; quote values rather than executable text.
+    printf '%s=%q\n' \
+        REPO_ROOT "$repo_root" CURRENT_BRANCH "$current_branch" HAS_GIT "$has_git_repo" \
+        FEATURE_SELECTION_EXPLICIT "$explicit" FEATURE_DIR "$feature_dir" \
+        FEATURE_SPEC "$feature_dir/spec.md" IMPL_PLAN "$feature_dir/plan.md" \
+        TASKS "$feature_dir/tasks.md" RESEARCH "$feature_dir/research.md" \
+        DATA_MODEL "$feature_dir/data-model.md" QUICKSTART "$feature_dir/quickstart.md" \
+        CONTRACTS_DIR "$feature_dir/contracts"
 }
 
 check_file() { [[ -f "$1" ]] && echo "  ✓ $2" || echo "  ✗ $2"; }

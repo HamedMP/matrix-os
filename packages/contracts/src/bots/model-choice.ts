@@ -65,6 +65,31 @@ export function isLegacyMatrixSdkProvider(instance: { id: string; driverKind: st
   return instance.id === "kernel_matrix_included" && instance.driverKind === "kernel";
 }
 
+/**
+ * A catalog-backed model intent, never permission to execute. The managed outage
+ * projection retains only policy-discovered models; generic unavailable routes,
+ * funding blocks and disabled settings must not gain this exception.
+ */
+export function canonicalProviderModelCanBeSelected(
+  instance: CanonicalProviderInstanceDescriptor | undefined,
+  modelId: string | undefined,
+): boolean {
+  if (!instance || isLegacyMatrixSdkProvider(instance)
+    || instance.connectionState === "credit_required"
+    || instance.connectionState === "credit_reserved"
+    || instance.connectionState === "budget_exceeded") return false;
+  const model = instance.models.find(candidate => candidate.id === modelId);
+  if (!model) return false;
+  if (instance.availability === "available" && model.availability === "available") return true;
+  return isManagedPiBotRoute({ instanceId: instance.id, driverKind: instance.driverKind })
+    && instance.supports.rootChat
+    && instance.availability === "unavailable"
+    && instance.connectionState === "unavailable"
+    && instance.unavailabilityReason === "runtime_unavailable"
+    && instance.defaultSelection === undefined
+    && model.availability === "unavailable";
+}
+
 /** Discovery reflects the authenticated catalog; it never acquires credentials or admits a run. */
 export function managedPiBotModelChoices(catalog?: CanonicalProviderCatalog | null): Array<{ label: string; selection: CanonicalChatModelSelection }> {
   return catalog?.instances.flatMap((instance) => isManagedPiBotRoute({ instanceId: instance.id, ...instance })
@@ -132,6 +157,7 @@ export function canonicalProviderFundingState(
 export function canonicalProviderAvailabilityReasonLabel(
   instance: CanonicalProviderInstanceDescriptor,
 ): string {
+  if (instance.observationState === "checking") return "Checking Codex access…";
   const fundingState = canonicalProviderFundingState(instance);
   if (fundingState === "credit_required") return "Matrix AI credit required";
   if (fundingState === "credit_reserved") return "Matrix AI credit reserved";

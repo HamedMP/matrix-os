@@ -1,4 +1,4 @@
-import { BOT_IMAGE_INFERENCE_MAX_BYTES, validateBotImageInferenceBody } from "@matrix-os/contracts";
+import { BOT_IMAGE_INFERENCE_MAX_BYTES, INFERENCE_RESPONSE_BODY_MAX_BYTES, INFERENCE_RESPONSE_FRAME_MAX_BYTES, validateBotImageInferenceBody } from "@matrix-os/contracts";
 /**
  * Loopback inference bridge shared by scope-runtime workloads. Model SDKs
  * inside the sandbox call this HTTP server on 127.0.0.1; each request becomes
@@ -8,9 +8,11 @@ import { BOT_IMAGE_INFERENCE_MAX_BYTES, validateBotImageInferenceBody } from "@m
 import { randomUUID } from "node:crypto";
 import { createServer as createHttpServer, type IncomingMessage, type Server as HttpServer } from "node:http";
 import { connect } from "node:net";
+import { brokerStreamRequest } from "./inference-stream.js";
 
 export const MAX_BRIDGE_REQUEST_BYTES = 256 * 1024;
-export const MAX_BRIDGE_RESPONSE_BYTES = 512 * 1024;
+export const MAX_BRIDGE_RESPONSE_BYTES = INFERENCE_RESPONSE_BODY_MAX_BYTES;
+export const MAX_BRIDGE_RESPONSE_FRAME_BYTES = INFERENCE_RESPONSE_FRAME_MAX_BYTES;
 const BROKER_TIMEOUT_MS = 30_000;
 /** Upper bound for a caller-chosen broker wait (a funded background request may queue for minutes). */
 const MAX_BROKER_TIMEOUT_MS = 11 * 60_000;
@@ -37,7 +39,7 @@ export function inferenceActionForPath(path: string | undefined): ScopeInference
 export function brokerRequest(
   socketPath: string,
   frame: Record<string, unknown>,
-  maxResponseBytes = MAX_BRIDGE_RESPONSE_BYTES,
+  maxResponseBytes = MAX_BRIDGE_RESPONSE_FRAME_BYTES,
   timeoutMs = BROKER_TIMEOUT_MS,
 ): Promise<Record<string, unknown>> {
   const timeout = Math.max(1, Math.min(Math.trunc(timeoutMs), MAX_BROKER_TIMEOUT_MS));
@@ -57,11 +59,11 @@ export function brokerRequest(
     socket.once("connect", () => socket.end(`${JSON.stringify(frame)}\n`));
     socket.on("data", (chunk) => {
       const bytes = Buffer.from(chunk);
-      response = Buffer.concat([response, bytes], response.length + bytes.length);
-      if (response.length > maxResponseBytes) {
+      if (response.length + bytes.length > maxResponseBytes) {
         finish(new ScopeRuntimeBrokerError("Broker response exceeded capacity"));
         return;
       }
+      response = Buffer.concat([response, bytes], response.length + bytes.length);
       const newline = response.indexOf(0x0a);
       if (newline < 0) return;
       try {
@@ -125,10 +127,11 @@ export async function startInferenceBridge(options: ScopeInferenceBridgeOptions)
       }
       const body = await readHttpBody(request, options.botImages ? BOT_IMAGE_INFERENCE_MAX_BYTES : MAX_BRIDGE_REQUEST_BYTES);
       if (options.botImages && !validateBotImageInferenceBody(body).valid) throw new ScopeRuntimeBrokerError("Invalid Bot inference input");
-      const brokerResponse = await brokerRequest(options.brokerSocket, {
+      const frame = {
         version: 1,
         action,
         requestId: randomUUID(),
+        ...(options.botImages ? { responseMode: "stream" } : {}),
         runtimeHandle: options.runtimeHandle,
         executionGeneration: options.executionGeneration,
         method: request.method,
@@ -140,9 +143,16 @@ export async function startInferenceBridge(options: ScopeInferenceBridgeOptions)
             ? { "anthropic-beta": request.headers["anthropic-beta"] } : {}),
         },
         body,
-      }, MAX_BRIDGE_RESPONSE_BYTES, options.brokerTimeoutMs);
+      };
+      if (options.botImages) {
+        const timeoutMs = Math.max(1, Math.min(Math.trunc(options.brokerTimeoutMs ?? BROKER_TIMEOUT_MS), MAX_BROKER_TIMEOUT_MS));
+        await brokerStreamRequest(options.brokerSocket, frame, response, timeoutMs);
+        return;
+      }
+      const brokerResponse = await brokerRequest(options.brokerSocket, frame, MAX_BRIDGE_RESPONSE_FRAME_BYTES, options.brokerTimeoutMs);
       if (brokerResponse.ok !== true || typeof brokerResponse.status !== "number"
-        || typeof brokerResponse.body !== "string" || !brokerResponse.headers
+        || typeof brokerResponse.body !== "string"
+        || Buffer.byteLength(brokerResponse.body, "utf8") > MAX_BRIDGE_RESPONSE_BYTES || !brokerResponse.headers
         || typeof brokerResponse.headers !== "object") {
         response.writeHead(502).end();
         return;
@@ -152,7 +162,8 @@ export async function startInferenceBridge(options: ScopeInferenceBridgeOptions)
     } catch (error: unknown) {
       console.warn("[scope-runtime] inference bridge failed:",
         error instanceof Error ? error.name : "UnknownError");
-      response.writeHead(502).end();
+      if (response.headersSent || response.destroyed) response.destroy();
+      else response.writeHead(502).end();
     }
   });
   await new Promise<void>((resolve, reject) => {

@@ -162,7 +162,7 @@ export function MobileShell({ launchAppPath, sharedTerminalScopeId, onOpenComman
   const [openStack, setOpenStack] = useState<OpenApp[]>([]);
   const [view, setView] = useState<"launcher" | "app" | "switcher">("launcher");
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const [settingsDefaultSection, setSettingsDefaultSection] = useState<"appearance" | "agents-providers">("appearance");
+  const [settingsDefaultSection, setSettingsDefaultSection] = useState<"appearance" | "agents-providers">("agents-providers");
   const [time, setTime] = useState("--:--");
   const [terminalInputActiveId, setTerminalInputActiveId] = useState<string | null>(null);
   const stackRef = useRef(openStack);
@@ -509,7 +509,7 @@ export function MobileShell({ launchAppPath, sharedTerminalScopeId, onOpenComman
                 apps={displayApps}
                 onOpen={openApp}
                 onOpenSettings={() => {
-                  setSettingsDefaultSection("appearance");
+                  setSettingsDefaultSection("agents-providers");
                   setSettingsOpen(true);
                 }}
                 openStackCount={openStack.length}
@@ -657,7 +657,7 @@ function MobileAppFrame({
         activeConversationTitle={chat.activeConversationTitle}
         onRenameConversation={chat.renameConversation}
         onSubmit={chat.submitMessage}
-              agentClient={chat.agentClient} agentSummaryClient={chat.agentSummaryClient} authorityKey={chat.authorityKey} composerIdentity={chat.composerIdentity} isCurrentAuthority={chat.isCurrentAuthority} navigationFresh={chat.navigationFresh} navigationClassifications={chat.navigationClassifications} botEventRevision={chat.botEventRevision} queuedTurns={chat.queuedTurns} onCancelQueuedTurn={chat.cancelQueuedTurn}
+              agentClient={chat.agentClient} agentSummaryClient={chat.agentSummaryClient} authorityKey={chat.authorityKey} gatewayUrl={chat.gatewayUrl} composerIdentity={chat.composerIdentity} isCurrentAuthority={chat.isCurrentAuthority} navigationFresh={chat.navigationFresh} navigationClassifications={chat.navigationClassifications} botEventRevision={chat.botEventRevision} queuedTurns={chat.queuedTurns} onCancelQueuedTurn={chat.cancelQueuedTurn} onSteerQueuedTurn={chat.steerQueuedTurn} canSteerQueuedTurns={chat.canSteerQueuedTurns} chatProjectId={chat.chatProjectId} onSetChatProject={chat.setChatProject}
         onSubmitApproval={chat.submitApproval}
                 browserPermissions={chat.browserPermissions}
         onSubmitInput={chat.submitInput}

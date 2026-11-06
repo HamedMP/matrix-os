@@ -11,7 +11,7 @@ describe("Settings catalog connection-label negotiation", () => {
     const fetcher = vi.fn(async () => Response.json({ revision: "revision", drivers: [], instances: [] }));
     vi.stubGlobal("fetch", fetcher);
     expect(await openWebProviderAgentSetup("pi", vi.fn())).toBe(false);
-    expect(fetcher).toHaveBeenCalledWith(expect.stringContaining("/api/chat-providers?refresh=true&includeConnectionLabels=true&includeConnectionState=true&includeFundingState=true&includeChatFunding=true"), expect.any(Object));
+    expect(fetcher).toHaveBeenCalledWith(expect.stringContaining("/api/chat-providers?refresh=true&includeConnectionLabels=true&includeConnectionState=true&includeFundingState=true&includeChatFunding=true&includeObservationState=true"), expect.any(Object));
     expect(fetcher).toHaveBeenCalledOnce();
   });
   it.each(["identity_switch", "terminal_failure"])("does not report setup as opened after %s", async scenario => {
@@ -33,7 +33,7 @@ describe("Settings catalog connection-label negotiation", () => {
   it("opts Electron Settings into labels without losing bounded response and timeout", async () => {
     const api = { get: vi.fn(async () => ({ revision: "revision", drivers: [], instances: [] })) };
     expect(await openDesktopProviderAgentSetup(api as never, "pi", () => true)).toBe(false);
-    expect(api.get).toHaveBeenCalledWith("/api/chat-providers?refresh=true&includeConnectionLabels=true&includeConnectionState=true&includeFundingState=true&includeChatFunding=true&includeSettingsSetupActions=true",
+    expect(api.get).toHaveBeenCalledWith("/api/chat-providers?refresh=true&includeConnectionLabels=true&includeConnectionState=true&includeFundingState=true&includeChatFunding=true&includeObservationState=true&includeSettingsSetupActions=true",
       expect.objectContaining({ maxBytes: 1024 * 1024, signal: expect.any(AbortSignal), timeoutMs: FUNDED_AI_READINESS_TIMEOUTS.rendererRequestMs }));
     expect(api.get).toHaveBeenCalledOnce();
   });

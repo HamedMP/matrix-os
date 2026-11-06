@@ -7,6 +7,7 @@ import { useConnection } from "../../stores/connection";
 import { createFilesApi, openFile } from "./editor-save";
 export { safeUrlTransform } from "../../lib/markdown";
 import { safeUrlTransform } from "../../lib/markdown";
+import { MermaidDiagram } from "../../components/markdown/MermaidDiagram";
 
 type PreviewState =
   | { path: string; status: "loading" }
@@ -24,6 +25,14 @@ export function MarkdownContent({ content }: { content: string }) {
           remarkPlugins={[remarkGfm]}
           rehypePlugins={[[rehypeHighlight, { ignoreMissing: true }]]}
           urlTransform={safeUrlTransform}
+          components={{
+            pre: ({ children }) => <>{children}</>,
+            code: ({ node: _node, className, children, ...props }) => {
+              if (className?.split(/\s+/).includes("language-mermaid")) return <MermaidDiagram source={String(children).replace(/\n$/, "")} />;
+              if (className?.includes("language-") || String(children).endsWith("\n")) return <pre><code {...props} className={className}>{children}</code></pre>;
+              return <code {...props} className={className}>{children}</code>;
+            },
+          }}
         >
           {content}
         </ReactMarkdown>

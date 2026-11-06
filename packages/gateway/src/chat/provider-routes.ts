@@ -15,7 +15,8 @@ export function createChatProviderRoutes(options: {
   routes.get("/api/chat-providers", async (context) => {
     const principal = options.getPrincipal(context);
     try {
-      if ((context.req.queries("includeSettingsSetupActions")?.length ?? 0) > 1) {
+      if ((context.req.queries("includeSettingsSetupActions")?.length ?? 0) > 1
+        || (context.req.queries("includeObservationState")?.length ?? 0) > 1) {
         return context.json({ error: "Invalid request" }, 400);
       }
       const query = z.object({
@@ -25,6 +26,7 @@ export function createChatProviderRoutes(options: {
         includeFundingState: z.enum(["true", "false"]).optional(),
         includeChatFunding: z.enum(["true", "false"]).optional(),
         includeSettingsSetupActions: z.enum(["true", "false"]).optional(),
+        includeObservationState: z.enum(["true", "false"]).optional(),
       }).strict().safeParse({
         refresh: context.req.query("refresh"),
         includeConnectionLabels: context.req.query("includeConnectionLabels"),
@@ -32,6 +34,7 @@ export function createChatProviderRoutes(options: {
         includeFundingState: context.req.query("includeFundingState"),
         includeChatFunding: context.req.query("includeChatFunding"),
         includeSettingsSetupActions: context.req.query("includeSettingsSetupActions"),
+        includeObservationState: context.req.query("includeObservationState"),
       });
       if (!query.success) return context.json({ error: "Invalid request" }, 400);
       const readOptions = query.data.includeSettingsSetupActions === "true"
@@ -45,8 +48,9 @@ export function createChatProviderRoutes(options: {
       // negotiated on the wire, without modifying the authoritative admission catalog.
       return context.json({
         ...catalog,
-        instances: catalog.instances.map(({ connectionLabel, connectionState, ...legacy }) => ({
+        instances: catalog.instances.map(({ connectionLabel, connectionState, observationState, ...legacy }) => ({
           ...legacy,
+          ...(query.data.includeObservationState === "true" && observationState ? { observationState } : {}),
           ...(query.data.includeConnectionLabels === "true" && connectionLabel !== undefined ? { connectionLabel } : {}),
           ...(query.data.includeConnectionState === "true" && connectionState !== undefined ? {
             connectionState: connectionState === "budget_exceeded" && query.data.includeChatFunding !== "true"

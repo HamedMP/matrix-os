@@ -58,6 +58,9 @@ export function registerProjectRoutes(routes: Hono, options: CollaborationRouteO
     })));
     return c.json(CollaborationProjectInventorySchema.parse({
       ...inventory,
+      // Files have metadata fingerprints, not database revisions. Keep the full fingerprint
+      // in the signed inventory hash; expose the same decimal sentinel as file bindings.
+      ownedItems: inventory.ownedItems.map((item) => item.kind === "file" ? { ...item, revision: "0" } : item),
       projectRevision: String(inventory.projectRevision),
       scopeRevision: String(inventory.scopeRevision),
       membershipEffects,

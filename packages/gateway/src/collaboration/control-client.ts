@@ -86,6 +86,8 @@ export class CollaborationControlClient {
   static readonly MAX_PENDING_CONTROL_FRAMES = MAX_PENDING_CONTROL_FRAMES;
   private keys: DirectSigningKey[] = [];
   private generation = 1;
+  /** Last successful endpoint registration, distinct from membership-denial acknowledgment epochs. */
+  private registeredGeneration: number | null = null;
   private snapshotExpiresAt = 0;
   private closed = false;
   private stream: ControlStreamHandle | undefined;
@@ -140,6 +142,11 @@ export class CollaborationControlClient {
     return this.generation;
   }
 
+  /** The generation the platform currently puts in owner tickets, only while this control is fresh. */
+  registeredAuthorityGeneration(): number | null {
+    return !this.closed && this.controlFresh() ? this.registeredGeneration : null;
+  }
+
   /** True while the last control snapshot is within its fixed lifetime. */
   controlFresh(): boolean {
     return this.snapshotExpiresAt > this.now().getTime();
@@ -163,6 +170,7 @@ export class CollaborationControlClient {
     // would make a runtime that has stopped serving look registered and control-fresh.
     if (this.closed) throw new Error("Control client is shutting down");
     this.keys = registration.platformSigningKeys;
+    this.registeredGeneration = registration.runtime.authorityGeneration;
     this.generation = Math.max(this.generation, registration.runtime.authorityGeneration);
     this.snapshotExpiresAt = this.now().getTime() + CONTROL_SNAPSHOT_TTL_MS;
     return registration;

@@ -232,6 +232,7 @@ export async function createGatewayCollaboration(options: {
     ? new OwnerRuntimeSessionService({
         verifier: directVerifier, ownerId: options.config.ownerId,
         runtimeId: options.config.runtimeId, organizationPrecondition,
+        runtimeGeneration: () => controlClient?.registeredAuthorityGeneration() ?? null,
       })
     : undefined;
   // S07 / T039: lease loss also releases terminal control, stops bound sandbox runtimes and refuses input.
@@ -262,6 +263,7 @@ export async function createGatewayCollaboration(options: {
   });
   const projectTransitions = createProjectTransitionJournal({
     db: options.db,
+    chatScope,
     onChatShared: (ownerId, event) => options.chatRepository.publishCommittedExternalOutbox(
       { type: "personal", ownerId }, event),
   });
@@ -654,6 +656,7 @@ export async function createGatewayCollaboration(options: {
       projectChatAssignments = createProjectChatAssignmentCoordinator({
         db: options.db,
         chatRepository: options.chatRepository,
+        chatScope,
         shouldContinue: () => !closing,
         onScopeEnded: (scopeId) => { directSessions.revoke({ scopeId }); },
       });

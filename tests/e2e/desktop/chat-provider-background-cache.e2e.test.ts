@@ -16,6 +16,7 @@ const built = existsSync(main) && existsSync(renderer);
 if (process.env.MATRIX_DESKTOP_E2E_REQUIRED === "1" && !built) throw new Error("Required Electron build is missing");
 const suite = built ? describe : describe.skip;
 const output = join(root, "output/playwright/chat-provider-background-cache");
+const evidenceOutput = join(tmpdir(), "matrix-os-pr-evidence/eng-407");
 const executablePath = createRequire(join(root, "desktop/package.json"))("electron") as string;
 const freshnessMs = 5 * 60_000;
 
@@ -30,6 +31,18 @@ suite("Electron Desktop application-owned provider background cache", () => {
   let pendingCatalog: ServerResponse | undefined;
   const reads: Array<{ query: string; authenticated: boolean }> = [];
   const catalog = pickerCatalog();
+  const matrixBase = catalog.instances[0]!;
+  catalog.drivers.push({ kind: "matrix_pi", displayName: "Matrix AI", adapterVersion: "1.0.0", capabilityClass: "system_agent" });
+  catalog.instances.push({
+    ...matrixBase,
+    id: "matrix_pi_default",
+    driverKind: "matrix_pi",
+    displayName: "Matrix AI",
+    connectionLabel: "Matrix AI",
+    models: [{ ...matrixBase.models[0]!, id: "claude-sonnet-5", displayName: "Claude Sonnet 5" }],
+    defaultSelection: { instanceId: "matrix_pi_default", model: "claude-sonnet-5" },
+    supports: { ...matrixBase.supports, rootChat: false, interactionModes: ["default"], permissionModes: ["full_access"] },
+  });
   const server = createServer((req, res) => {
     const url = new URL(req.url ?? "/", "http://localhost");
     if (url.pathname === "/api/chat-providers") {
@@ -48,6 +61,14 @@ suite("Electron Desktop application-owned provider background cache", () => {
       res.end(JSON.stringify(catalog));
       return;
     }
+    const json = (body: unknown) => {
+      res.writeHead(200, { "content-type": "application/json", "cache-control": "no-store" });
+      res.end(JSON.stringify(body));
+    };
+    if (req.method === "GET" && url.pathname === "/api/chat-agents") return json({ enabled: true, agents: [] });
+    if (req.method === "GET" && url.pathname === "/api/chat-agents/recipe-catalog") return json({ enabled: false, skills: [], services: [] });
+    if (req.method === "GET" && url.pathname === "/api/chat-agents/bot-recipes") return json({ recipes: [] });
+    if (req.method === "GET" && url.pathname === "/api/integrations") return json([]);
     const upstream = httpRequest(new URL(req.url ?? "/", gateway.url), {
       method: req.method, headers: req.headers, timeout: 10_000,
     }, response => {
@@ -92,6 +113,7 @@ suite("Electron Desktop application-owned provider background cache", () => {
 
   beforeAll(async () => {
     mkdirSync(output, { recursive: true });
+    mkdirSync(evidenceOutput, { recursive: true });
     gateway = await startProviderAuthGateway({ catalog, settings: connectedOtherProvider });
     await new Promise<void>(done => server.listen(0, "127.0.0.1", done));
     const platformUrl = `http://127.0.0.1:${(server.address() as { port: number }).port}`;
@@ -216,5 +238,86 @@ suite("Electron Desktop application-owned provider background cache", () => {
     await expect.poll(() => Boolean(pendingCatalog)).toBe(false);
     await usablePicker();
     expect(reads.length).toBe(baseline + 1);
+  }, 40_000);
+
+  it("retains disabled Codex models and recovers the same selection after a short access-check retry", async () => {
+    const nativeIndex = catalog.instances.findIndex(instance => instance.driverKind === "codex");
+    const original = catalog.instances[nativeIndex]!;
+    const healthy = { ...original, availability: "available" as const, unavailabilityReason: undefined,
+      models: matrixBase.models.map(model => ({ ...model, availability: "available" as const })),
+      defaultSelection: { instanceId: original.id, model: "gpt-5.6-sol" } };
+    const baseline = reads.length;
+    try {
+      catalog.instances[nativeIndex] = healthy;
+      await page.clock.fastForward(freshnessMs + 1_000);
+      await expect.poll(() => reads.length).toBe(baseline + 1);
+      await picker().click();
+      const choices = page.locator('[data-slot="provider-model-picker"]');
+      await choices.getByRole("button", { name: /Codex agent/ }).click();
+      await choices.getByRole("option", { name: /gpt-5.6-sol via Codex/i }).click();
+      await draft().fill("Keep this Codex draft during access checking");
+      expect(await send().isEnabled()).toBe(true);
+      catalog.instances[nativeIndex] = { ...healthy, availability: "unavailable", unavailabilityReason: "runtime_unavailable",
+        observationState: "checking", defaultSelection: undefined,
+        setupActions: [{ id: "codex_settings", kind: "open_settings", label: "Agents & providers" }],
+        models: healthy.models.map(model => ({ ...model, availability: "unavailable" as const })) };
+      await page.clock.fastForward(freshnessMs + 1_000);
+      await expect.poll(() => picker().getAttribute("title")).toContain("Checking Codex access…");
+      expect(await picker().getAttribute("data-model")).toBe("gpt-5.6-sol");
+      expect(await send().isEnabled()).toBe(false);
+      expect(await draft().innerText()).toBe("Keep this Codex draft during access checking");
+      await picker().click();
+      await choices.getByRole("button", { name: /Codex agent/ }).click();
+      const checkingModel = choices.getByRole("option", { name: /gpt-5.6-sol via Codex/i });
+      expect(await checkingModel.isVisible()).toBe(true);
+      expect(await checkingModel.isDisabled()).toBe(true);
+      expect(await checkingModel.innerText()).toContain("Checking Codex access…");
+      expect(await choices.getByRole("button", { name: "Agents & providers", exact: true }).isVisible()).toBe(true);
+      await page.screenshot({ path: join(output, "codex-checking-access.png") });
+      await page.keyboard.press("Escape");
+      catalog.instances[nativeIndex] = healthy;
+      const beforeRetry = reads.length;
+      await page.clock.fastForward(5_000);
+      await expect.poll(() => reads.length).toBe(beforeRetry + 1);
+      await expect.poll(() => send().isEnabled()).toBe(true);
+      expect(await picker().getAttribute("data-model")).toBe("gpt-5.6-sol");
+      expect(await draft().innerText()).toBe("Keep this Codex draft during access checking");
+      await page.screenshot({ path: join(output, "codex-access-recovered.png") });
+      expect(reads.at(-1)?.query).toContain("includeObservationState=true");
+    } finally { catalog.instances[nativeIndex] = original; }
+  }, 40_000);
+
+  it("opens native Agents from the warm catalog and keeps its model control usable during refresh", async () => {
+    const baseline = reads.length;
+    await chat().getByRole("button", { name: "Add new agent", exact: true }).click({ force: true });
+    const startFromScratch = chat().getByRole("button", { name: "Start from scratch", exact: true });
+    await startFromScratch.waitFor();
+    expect(await startFromScratch.isEnabled()).toBe(true);
+    expect(reads.length).toBe(baseline);
+
+    holdCatalog = true;
+    try {
+      await startFromScratch.click();
+      await expect.poll(() => reads.length).toBe(baseline + 1);
+      await expect.poll(() => Boolean(pendingCatalog)).toBe(true);
+      const model = chat().getByRole("combobox", { name: "Model", exact: true });
+      await model.waitFor();
+      expect(await model.isEnabled()).toBe(true);
+      expect(await model.locator("option:checked").innerText()).toContain("Claude Sonnet 5");
+      await page.screenshot({ path: join(evidenceOutput, "desktop-warm-agent-models.png") });
+      writeFileSync(join(output, "agents-warm-catalog-evidence.json"), JSON.stringify({
+        catalogReadsBefore: baseline,
+        catalogReadsAfterOpen: baseline,
+        catalogReadsDuringRefresh: reads.length,
+        refreshPending: Boolean(pendingCatalog),
+        modelEnabled: await model.isEnabled(),
+        selectedModel: await model.locator("option:checked").innerText(),
+      }, null, 2));
+    } finally {
+      holdCatalog = false;
+      pendingCatalog?.writeHead(200, { "content-type": "application/json", "cache-control": "no-store" });
+      pendingCatalog?.end(JSON.stringify(catalog));
+    }
+    await expect.poll(() => Boolean(pendingCatalog)).toBe(false);
   }, 40_000);
 });

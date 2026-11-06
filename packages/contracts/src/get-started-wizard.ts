@@ -1,8 +1,12 @@
 import {
+  GET_STARTED_AGENTS,
   GET_STARTED_NAME_MAX_CHARS,
   GET_STARTED_TOOL_IDS,
   GetStartedAnswersSchema,
+  getStartedAgentForTool,
+  getStartedToolForAgent,
   getStartedToolGroupsForGoals,
+  type GetStartedAgentKind,
   type GetStartedAnswers,
   type GetStartedAppIdeaId,
   type GetStartedDraft,
@@ -23,7 +27,7 @@ import { getStartedRecipeBotIdsForGoals, type GetStartedRecipeBotId } from "#get
 // Spec 635, Section 3: the wizard's client state machine. It is shared by
 // every desktop surface so they cannot drift; hosts only load and save.
 
-export const GET_STARTED_WIZARD_STEPS = ["name", "goals", "tools", "ai", "gallery", "bots", "summary"] as const;
+export const GET_STARTED_WIZARD_STEPS = ["name", "goals", "agents", "tools", "ai", "gallery", "bots", "summary"] as const;
 export type GetStartedWizardStep = (typeof GET_STARTED_WIZARD_STEPS)[number];
 
 export interface GetStartedWizardState {
@@ -31,6 +35,7 @@ export interface GetStartedWizardState {
   /** Raw text while typing; trimmed and validated only when it becomes an answer. */
   name: string;
   goals: GetStartedGoalId[];
+  /** Tools from a saved draft: they stand in for agents and connections until the surface reads those. */
   tools: GetStartedToolId[];
   appIdea?: GetStartedAppIdeaId;
   starter?: GetStartedStarterId;
@@ -44,6 +49,8 @@ export interface GetStartedWizardState {
    * null until the surface has read them, so a resumed draft keeps its saved tools meanwhile.
    */
   connected: string[] | null;
+  /** Coding agents connected right now, reported by the agents screen like `connected` (spec 636). */
+  agents: GetStartedAgentKind[] | null;
 }
 
 export type GetStartedWizardEvent =
@@ -52,12 +59,12 @@ export type GetStartedWizardEvent =
   | { type: "skip" }
   | { type: "name"; value: string }
   | { type: "toggle-goal"; goal: GetStartedGoalId }
-  | { type: "toggle-tool"; tool: GetStartedToolId }
   | { type: "pick-app-idea"; id: GetStartedAppIdeaId }
   | { type: "pick-starter"; id: GetStartedStarterId }
   | { type: "bot"; patch: Partial<GetStartedBot> }
   | { type: "toggle-bot"; id: GetStartedRecipeBotId }
-  | { type: "connected"; services: readonly string[] };
+  | { type: "connected"; services: readonly string[] }
+  | { type: "agents-connected"; agents: readonly GetStartedAgentKind[] };
 
 const QUESTION_COUNT = GET_STARTED_WIZARD_STEPS.indexOf("summary");
 
@@ -75,7 +82,9 @@ function clearStep(state: GetStartedWizardState): GetStartedWizardState {
   switch (state.step) {
     case "name": return { ...state, name: "" };
     case "goals": return { ...state, goals: [] };
-    case "tools": return { ...state, tools: [], starter: undefined };
+    // Agents and integrations are real sign-ins, not answers; skipping never signs anything out.
+    case "agents": return state;
+    case "tools": return { ...state, starter: undefined };
     case "ai": return { ...state, bot: DEFAULT_GET_STARTED_BOT, botChosen: false };
     case "gallery": return { ...state, appIdea: undefined };
     case "bots": return { ...state, bots: [] };
@@ -107,6 +116,7 @@ export function initialGetStartedWizard(draft?: GetStartedDraft): GetStartedWiza
     botChosen: Boolean(draft?.bot),
     bots: [...(draft?.bots ?? [])],
     connected: null,
+    agents: null,
   };
 }
 
@@ -117,11 +127,11 @@ export function reduceGetStartedWizard(state: GetStartedWizardState, event: GetS
     case "skip": return move(clearStep(state), 1);
     case "name": return { ...state, name: event.value.slice(0, GET_STARTED_NAME_MAX_CHARS) };
     case "toggle-goal": return { ...state, goals: toggle(state.goals, event.goal) };
-    case "toggle-tool": return { ...state, tools: toggle(state.tools, event.tool) };
     case "pick-app-idea": return { ...state, appIdea: state.appIdea === event.id ? undefined : event.id };
     case "pick-starter": return { ...state, starter: state.starter === event.id ? undefined : event.id };
     case "toggle-bot": return { ...state, bots: toggle(state.bots, event.id) };
     case "connected": return { ...state, connected: [...event.services] };
+    case "agents-connected": return { ...state, agents: [...event.agents] };
     case "bot": {
       const bot = { ...state.bot, ...event.patch };
       bot.name = bot.name.slice(0, GET_STARTED_BOT_NAME_MAX_CHARS);
@@ -134,19 +144,19 @@ export function reduceGetStartedWizard(state: GetStartedWizardState, event: GetS
 /** Answers limited to what is still on screen for the chosen goals, in the server's shape. */
 export function getStartedAnswersFromWizard(state: GetStartedWizardState): GetStartedAnswers {
   const groups = getStartedToolGroupsForGoals(state.goals);
-  const visibleTools = new Set(groups.flatMap((group) => (group.kind === "tools" ? group.tools.map((tool) => tool.id) : [])));
   const name = state.name.replace(/\p{Cc}/gu, "").replaceAll("<!--", "").replaceAll("-->", "").trim();
-  // Picked coding agents, then every connected integration the catalog knows, in catalog order.
-  // Until the surface has read its connections, the saved integration tools stand in for them.
+  // Connected coding agents, then every connected integration the catalog knows, in catalog order.
+  // Until the surface has read its agents or connections, the saved tools stand in for them.
+  const agents = new Set(state.agents ?? state.tools.flatMap((tool) => getStartedAgentForTool(tool) ?? []));
   const connectedTools = new Set(state.connected
     ? state.connected.map(getStartedToolForService)
     : state.tools.filter((tool) => getStartedToolConnect(tool).kind === "app"));
   const answers: GetStartedAnswers = {
     goals: [...state.goals],
-    tools: [...new Set([
-      ...state.tools.filter((tool) => visibleTools.has(tool)),
+    tools: [
+      ...GET_STARTED_AGENTS.filter((agent) => agents.has(agent)).map(getStartedToolForAgent),
       ...GET_STARTED_TOOL_IDS.filter((tool) => connectedTools.has(tool)),
-    ])],
+    ],
   };
   if (name) answers.name = name;
   // App Gallery shows the ideas to everyone, so a pick stands whatever the goals.

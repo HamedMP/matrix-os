@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
-  SiteDeploymentSchema, SitePublishingSchema, SiteSlugSchema,
+  SiteAccessClaimSchema, SiteAccessLinkCreateResponseSchema, SiteAccessLinkSummarySchema,
+  SiteAccessModeSchema, SiteDeploymentSchema, SitePublishingSchema, SiteSlugSchema,
   SiteSubmissionCursorSchema, SiteSubmissionsQuerySchema, validateSiteForm, SiteOwnerMutationSchema, SiteSubmitCapabilitySchema, SiteRecordSchema,
 } from "../../packages/contracts/src/sites.js";
 
@@ -41,6 +42,31 @@ describe("public site contracts", () => {
     }
     expect(SiteDeploymentSchema.safeParse({ ...deploy, files: [deploy.files[0], deploy.files[0]] }).success).toBe(false);
     expect(SiteOwnerMutationSchema.safeParse({ title: "Launch", ownerId: "another" }).success).toBe(false);
+    expect(SiteOwnerMutationSchema.parse({ accessMode: "private_link" })).toEqual({ accessMode: "private_link" });
+    expect(SiteAccessModeSchema.safeParse("private_link").success).toBe(true);
+    expect(SiteAccessModeSchema.safeParse("email").success).toBe(false);
+  });
+
+  it("keeps one-time claim secrets write-only and bounds their public contracts", () => {
+    const id = "550e8400-e29b-41d4-a716-446655440000";
+    const token = "A".repeat(43);
+    expect(SiteAccessClaimSchema.parse({ linkId: id, token })).toEqual({ linkId: id, token });
+    for (const value of ["short", "A".repeat(42), "A".repeat(44), `${"A".repeat(42)}+`]) {
+      expect(SiteAccessClaimSchema.safeParse({ linkId: id, token: value }).success).toBe(false);
+    }
+    const link = {
+      id, status: "unclaimed", createdAt: "2026-11-05T00:00:00.000Z",
+      claimExpiresAt: "2026-11-12T00:00:00.000Z", claimedAt: null, sessionExpiresAt: null,
+    };
+    expect(SiteAccessLinkSummarySchema.parse(link)).toEqual(link);
+    expect(SiteAccessLinkSummarySchema.safeParse({ ...link, token }).success).toBe(false);
+    const response = { link, url: `https://matrix.page/${id}#access=${id}.${token}` };
+    expect(SiteAccessLinkCreateResponseSchema.parse(response)).toEqual(response);
+    for (const url of [
+      `https://matrix.page/${id}?access=${token}`,
+      `https://evil.example/${id}#access=${id}.${token}`,
+      `https://matrix.page/${id}#other=${id}.${token}`,
+    ]) expect(SiteAccessLinkCreateResponseSchema.safeParse({ link, url }).success).toBe(false);
   });
   it("accepts a valid large asset without overflowing the validator", () => {
     const files = [
@@ -63,7 +89,7 @@ describe("public site contracts", () => {
   });
   it("allows publication links only on the fixed sites origin with a valid path", () => {
     const record = { id: "550e8400-e29b-41d4-a716-446655440000", appSlug: "launch", title: "Launch", description: "", slug: "matrix-launch", revision: 1, status: "published", activeVersion: null, versions: [], config: {} };
-    expect(SiteRecordSchema.safeParse({ ...record, url: "https://matrix.page/matrix-launch" }).success).toBe(true);
+    expect(SiteRecordSchema.parse({ ...record, url: "https://matrix.page/matrix-launch" }).accessMode).toBe("public");
     for (const url of ["javascript:alert(1)", "https://evil.example/matrix-launch", "https://matrix.page@evil.example/matrix-launch", "http://matrix.page/matrix-launch", "https://matrix.page/api", "https://matrix.page/matrix-launch?token=secret"]) {
       expect(SiteRecordSchema.safeParse({ ...record, url }).success).toBe(false);
     }

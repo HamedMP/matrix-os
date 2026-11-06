@@ -1,3 +1,4 @@
+import { PreviewPairBanner } from "./features/preview/PreviewPairBanner";
 import { startDesktopProviderCatalogCoordinator } from "./features/chat/provider-catalog-coordinator";
 import { NativeChatBadge } from "./features/chat/NativeChatBadge";
 import RuntimeCompatibilityGate from "./features/updates/RuntimeCompatibilityGate";
@@ -39,6 +40,7 @@ export default function App() {
     <GetStartedAnswersProvider scope={scope}>
     <Tooltip.Provider delayDuration={400} skipDelayDuration={200}>
       <div className="flex h-full flex-col" style={{ background: "var(--bg-app)" }}>
+        <PreviewPairBanner />
         {status === "loading" ? (
           <MatrixBootScreen label="Connecting to your Matrix computer" />
         ) : status === "signed-out" ? (

@@ -20,6 +20,7 @@
 @import "./brand-fonts.css";
 @import "@matrix-os/ui/chat-agents.css";
 @import "@matrix-os/ui/styles.css";
+@import "@matrix-os/ui/chat-composer.css";
 @import "@matrix-os/ui/chat-import.css";
 
 @keyframes native-desktop-window-hide {
@@ -189,25 +190,6 @@ textarea,
 .hljs-variable,
 .hljs-meta {
   color: var(--text-secondary);
-}
-
-/* ── Composer card: brand focus-within, no inner ring ─────────── */
-.prompt-card {
-  border-color: var(--border-default);
-  box-shadow: var(--shadow-2);
-  transition:
-    border-color var(--duration-fast) var(--ease-out),
-    box-shadow var(--duration-fast) var(--ease-out);
-}
-.prompt-card:focus-within {
-  border-color: var(--accent);
-  box-shadow:
-    0 0 0 3px var(--accent-muted),
-    var(--shadow-2);
-}
-.prompt-card textarea:focus-visible,
-.prompt-card [data-slot="prompt-input-content"]:focus-visible {
-  box-shadow: none;
 }
 
 /* ── Scrollbars ───────────────────────────────────────────────── */

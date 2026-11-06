@@ -1,3 +1,4 @@
+import { providerCatalogObservationRetryDelay } from "@matrix-os/ui";
 import { AppError } from "../../../../shared/app-error";
 import type { CanonicalProviderCatalog } from "@matrix-os/contracts";
 import type { QueryClient } from "@tanstack/react-query";
@@ -16,6 +17,8 @@ export interface ProviderCatalogBinding {
   api: Pick<ApiClient, "get">;
   /** null means the change's authority scope is unknown. */
   affectedInstanceIds?: readonly string[] | null;
+  /** Login completion already renewed its source; only reproject the catalog. */
+  forceRefresh?: boolean;
 }
 export interface ProviderCatalogSnapshot {
   identityKey: string | null;
@@ -41,10 +44,13 @@ function semanticCatalog(catalog: CanonicalProviderCatalog): string {
 export class ProviderCatalogCache {
   private binding: ProviderCatalogBinding | null = null;
   private request: AbortController | null = null;
+  private requestForced = false;
   private timer: ReturnType<typeof setTimeout> | null = null;
   private epoch = 0;
-  private queuedForce = false;
+  private queuedRefresh: "cached" | "force" | null = null;
+  private readonly loginReceipts = new Set<string>(); // 64 receipts, FIFO eviction; cleared on identity change.
   private failures = 0;
+  private observationRetries = 0;
   private nextReadAt = 0;
   private online = true;
 
@@ -71,6 +77,7 @@ export class ProviderCatalogCache {
     const changed = this.binding.generation !== binding.generation;
     this.binding = binding; // New ApiClient objects do not invalidate same-scope display data.
     if (!changed) return;
+    this.observationRetries = 0;
     this.epoch += 1;
     const current = this.getSnapshot();
     const affected = binding.affectedInstanceIds ?? null;
@@ -79,25 +86,43 @@ export class ProviderCatalogCache {
         : current.catalog?.instances.filter(i => current.suspendedInstanceIds?.includes(i.id) || affected.includes(i.id)).map(i => i.id) ?? []
       : affected;
     this.publish({ ...current, generation: binding.generation, authoritySuspended: true, suspendedInstanceIds });
-    this.refresh();
+    this.requestRefresh(binding.forceRefresh !== false, binding.forceRefresh === false);
   }
 
-  refresh = (): void => {
+  /** Deduplicate accepted nonsecret login receipts for this runtime's cache lifetime. */
+  acceptLoginReceipt(identityKey: string, receiptId: string): boolean {
+    if (this.binding?.identityKey !== identityKey || this.loginReceipts.has(receiptId)) return false;
+    if (this.loginReceipts.size >= 64) this.loginReceipts.delete(this.loginReceipts.values().next().value!);
+    this.loginReceipts.add(receiptId);
+    return true;
+  }
+
+  refresh = (): void => { this.observationRetries = 0; this.requestRefresh(true); };
+
+  private requestRefresh(force: boolean, supersede = false): void {
     if (!this.binding) return;
     this.clearTimer();
+    if (supersede && this.request) {
+      // A completed login must not wait behind pre-login discovery. The
+      // request identity/epoch checks also fence transports that ignore abort.
+      this.request.abort();
+      this.request = null;
+      force ||= this.requestForced || this.queuedRefresh === "force";
+      this.queuedRefresh = null;
+    }
     if (this.request || !this.online) {
-      this.queuedForce = true;
+      if (force || this.queuedRefresh !== "force") this.queuedRefresh = force ? "force" : "cached";
       // A post-change observation supersedes the older pending result.
       if (this.request) this.epoch += 1;
       return;
     }
-    this.read(true);
-  };
+    this.read(force);
+  }
 
   setOnline(online: boolean): void {
     this.online = online;
     if (!online) { this.clearTimer(); return; }
-    if (this.queuedForce) this.read(true);
+    if (this.queuedRefresh) this.read(this.queuedRefresh === "force");
     else if (Date.now() >= this.nextReadAt) this.read(false);
     else this.schedule();
   }
@@ -107,9 +132,12 @@ export class ProviderCatalogCache {
     this.epoch += 1;
     this.request?.abort();
     this.request = null;
+    this.requestForced = false;
     this.binding = null;
-    this.queuedForce = false;
+    this.queuedRefresh = null;
+    this.loginReceipts.clear();
     this.failures = 0;
+    this.observationRetries = 0;
     this.nextReadAt = 0;
     this.client.removeQueries({ queryKey: QUERY_KEY, exact: true });
   }
@@ -128,40 +156,50 @@ export class ProviderCatalogCache {
     // starts one due read on wake, without focus/visibility listeners.
     this.timer = setTimeout(() => {
       this.timer = null;
-      if (this.queuedForce || Date.now() >= this.nextReadAt) this.read(this.queuedForce);
+      if (this.queuedRefresh || Date.now() >= this.nextReadAt) this.read(this.queuedRefresh === "force");
       else this.schedule();
     }, Math.min(PROVIDER_CATALOG_WAKE_CHECK_MS, Math.max(0, this.nextReadAt - Date.now())));
   }
   private read(force: boolean): void {
     if (!this.binding || this.request || !this.online) return;
     this.clearTimer();
-    this.queuedForce = false;
+    this.queuedRefresh = null;
     const binding = this.binding;
     const epoch = this.epoch;
     const request = new AbortController();
     this.request = request;
+    this.requestForced = force;
     this.publish({ ...this.getSnapshot(), refreshing: true });
     void fetchCanonicalProviderCatalog(binding.api, force, request.signal).then(catalog => {
       if (this.request !== request || this.epoch !== epoch || request.signal.aborted) return;
       const previous = this.getSnapshot();
       const unchanged = previous.catalog && semanticCatalog(previous.catalog) === semanticCatalog(catalog);
       this.failures = 0;
-      this.nextReadAt = Date.now() + PROVIDER_CATALOG_FRESH_MS;
+      const checking = catalog.instances.some(instance => instance.observationState === "checking");
+      const delay = providerCatalogObservationRetryDelay(catalog, this.observationRetries);
+      this.observationRetries = checking ? Math.min(3, this.observationRetries + 1) : 0;
+      this.nextReadAt = Date.now() + (delay ?? PROVIDER_CATALOG_FRESH_MS);
       this.publish({ identityKey: binding.identityKey, generation: binding.generation,
         catalog: unchanged ? previous.catalog : catalog, refreshing: false,
-        lastSuccessAt: Date.now(), refreshError: null, authoritySuspended: false, suspendedInstanceIds: null });
+        lastSuccessAt: checking ? previous.lastSuccessAt : Date.now(), refreshError: null, authoritySuspended: false, suspendedInstanceIds: null });
     }).catch((error: unknown) => {
       if (this.request !== request || this.epoch !== epoch || request.signal.aborted) return;
       console.warn("[chat] Provider catalog unavailable:", error instanceof Error ? error.name : "UnknownError");
-      const delay = RETRY_DELAYS[Math.min(this.failures++, RETRY_DELAYS.length - 1)] ?? PROVIDER_CATALOG_FRESH_MS;
-      this.nextReadAt = Date.now() + delay + Math.floor(Math.random() * delay * 0.1);
-      this.publish({ ...this.getSnapshot(), refreshing: false, refreshError: REFRESH_ERROR,
+      const previous = this.getSnapshot();
+      const checkingCatalog = previous.catalog?.instances.some(instance => instance.observationState === "checking") ? previous.catalog : null;
+      const delay = checkingCatalog
+        ? providerCatalogObservationRetryDelay(checkingCatalog, this.observationRetries) ?? PROVIDER_CATALOG_FRESH_MS
+        : RETRY_DELAYS[Math.min(this.failures++, RETRY_DELAYS.length - 1)] ?? PROVIDER_CATALOG_FRESH_MS;
+      if (checkingCatalog) this.observationRetries = Math.min(3, this.observationRetries + 1);
+      this.nextReadAt = Date.now() + delay + (checkingCatalog ? 0 : Math.floor(Math.random() * delay * 0.1));
+      this.publish({ ...previous, refreshing: false, refreshError: REFRESH_ERROR,
         ...(error instanceof AppError && error.category === "unauthorized"
           ? { authoritySuspended: true, suspendedInstanceIds: null } : {}) });
     }).finally(() => {
       if (this.request !== request) return;
       this.request = null;
-      if (this.queuedForce && this.online) this.read(true);
+      this.requestForced = false;
+      if (this.queuedRefresh && this.online) this.read(this.queuedRefresh === "force");
       else {
         this.publish({ ...this.getSnapshot(), refreshing: false });
         this.schedule();

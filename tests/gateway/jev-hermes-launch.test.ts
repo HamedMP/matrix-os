@@ -1,12 +1,15 @@
 import { describe, expect, it, vi } from "vitest";
-import { access, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { access, mkdir, mkdtemp, readFile, realpath, rename, rm, writeFile } from "node:fs/promises";
+import { accessSync, constants } from "node:fs";
+import { createHash } from "node:crypto";
 import { spawn, execFileSync } from "node:child_process";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { tmpdir } from "node:os";
 import { ChatRunContextSchema } from "@matrix-os/contracts";
 import { ChatAgentContextError } from "../../packages/gateway/src/chat/agent-context.js";
 import { createHermesChatProviderAdapter } from "../../packages/gateway/src/chat/hermes-provider-adapter.js";
-import { createHermesStdioClient } from "../../packages/gateway/src/chat/hermes-stdio-client.js";
+import { verifyJevHermesDependencies } from "../../packages/gateway/src/chat/jev-hermes-runtime-pin.js";
+import { createHermesStdioClient, type HermesGatewaySpawn } from "../../packages/gateway/src/chat/hermes-stdio-client.js";
 import { createJevHermesCredentialResolver } from "../../packages/gateway/src/chat/jev-hermes-credentials.js";
 import { normalizeHermesRuntimeSnapshot } from "../../packages/gateway/src/agent-config/hermes-source.js";
 import { jevReadySettingsSnapshot } from "../fixtures/jev-inbox.js";
@@ -24,7 +27,7 @@ const collect = async (iterable: AsyncIterable<CanonicalProviderRunEvent>) => { 
 function fixture() {
   const gateway = fakeGateway();
   const resolveCredentials = vi.fn(async () => credentials);
-  const verifyRuntime = vi.fn(async () => undefined);
+  const verifyRuntime = vi.fn(async (root: string) => join(root, "venv/bin/python"));
   const preflight = vi.fn(async () => undefined); const clearRun = vi.fn();
   const activitySummary = vi.fn<(_owner: string, _scope: unknown) => string | null>(() => null);
   const summary = vi.fn<(_owner: string, _scope: unknown) => string | null>(() => null);
@@ -52,7 +55,7 @@ describe("production isolated Hermes recipe launch", () => {
     const resolveCredentials = createJevHermesCredentialResolver({ homePath: home, ownerId: input.owner.ownerId,
       settings: { getSnapshot: async () => jevReadySettingsSnapshot(Date.now()) }, runtimeSource });
     const gateway = fakeGateway(); const preflight = vi.fn(async () => undefined);
-    const verifyRuntime = vi.fn(async () => undefined);
+    const verifyRuntime = vi.fn(async (root: string) => join(root, "venv/bin/python"));
     const adapter = createHermesChatProviderAdapter({ homePath: home, spawnFn: gateway.spawnFn,
       jev: { resolveCredentials, verifyRuntime, preflight, clearRun: vi.fn(), summary: () => null } });
     try {
@@ -102,7 +105,7 @@ describe("production isolated Hermes recipe launch", () => {
     await writeFile(join(root, "tui_gateway/entry.py"), `import json, fixture_dependency, fixture_source\nassert fixture_source.VALUE == 'verified-source'\nopen(${JSON.stringify(reached)}, 'w').write(fixture_dependency.VALUE)\nprint(json.dumps({'jsonrpc':'2.0','method':'event','params':{'type':'gateway.ready','payload':{}}}), flush=True)\n`);
     const adapter = createHermesChatProviderAdapter({ homePath: directory, readyTimeoutMs: 1000, requestTimeoutMs: 1000,
       spawnFn: (command, args, options) => spawn(command, args, options),
-      jev: { resolveCredentials: async () => credentials, verifyRuntime: async () => undefined,
+      jev: { resolveCredentials: async () => credentials, verifyRuntime: async () => join(root, "venv/bin/python"),
         preflight: async () => undefined, clearRun: () => undefined, summary: () => null } });
     try {
       try { await collect(adapter.start(input)); } catch (error) { expect(error).toBeInstanceOf(Error); }
@@ -205,5 +208,77 @@ describe("production isolated Hermes recipe launch", () => {
     expect(completed).toContainEqual(expect.objectContaining({ type: "run.completed", outcome: "aborted" }));
     expect(f.gateway.requests.some(request => request.method === "prompt.submit")).toBe(false);
     expect(f.clearRun).toHaveBeenCalledWith(input.owner.ownerId, input.runId);
+  });
+});
+
+describe("restricted Hermes verified PM generation", () => {
+  it.each(["switch", "remove"] as const)("keeps the checked generation when PM facts change (%s)", async change => {
+    const temporary = await mkdtemp(join(tmpdir(), "jev-generation-launch-"));
+    const home = await realpath(temporary);
+    const source = join(home, ".hermes/hermes-agent");
+    await mkdir(source, { recursive: true });
+    const key = createHash("sha256").update(await realpath(source)).digest("hex").slice(0, 16);
+    const state = join(dirname(source), "installs", key);
+    const first = join(state, "environments", "generation-a");
+    const second = join(state, "environments", "generation-b");
+    for (const generation of [first, second]) {
+      await mkdir(join(generation, "bin"), { recursive: true });
+      await writeFile(join(generation, "pyvenv.cfg"), "version = 3.14.7\n");
+      // Never executed: dependency checks and the gateway process are injected.
+      await writeFile(join(generation, "bin/python"), "synthetic interpreter", { mode: 0o755 });
+    }
+    const facts = join(state, "facts.json");
+    const record = (generation: string) => JSON.stringify({ packages: { venv: { environment: generation } } });
+    await writeFile(facts, record(first));
+    const checked: string[] = [];
+    const gateway = fakeGateway();
+    const spawnFn = vi.fn<HermesGatewaySpawn>((command, args, options) => {
+      accessSync(command, constants.X_OK);
+      return gateway.spawnFn(command, args, options);
+    });
+    const verifyRuntime = async (root: string, signal: AbortSignal, mode: Parameters<typeof verifyJevHermesDependencies>[1]) =>
+      verifyJevHermesDependencies(root, mode, signal, async executable => {
+        checked.push(executable);
+        const next = join(state, "next-facts.json");
+        await writeFile(next, record(second));
+        await rename(next, facts);
+        if (change === "remove") await rm(first, { recursive: true, force: true });
+        return "2.24.0\n0.87.0\n";
+      });
+    const controller = new AbortController();
+    const adapter = createHermesChatProviderAdapter({ homePath: home, spawnFn,
+      readyTimeoutMs: 100, requestTimeoutMs: 100, timeoutMs: 2000,
+      jev: { resolveCredentials: async () => credentials, verifyRuntime,
+        preflight: async () => undefined, clearRun: vi.fn(), summary: () => null } });
+    const result = collect(adapter.start({ ...input, signal: controller.signal }));
+    const settled = result.catch(() => []);
+    try {
+      if (change === "switch") {
+        await vi.waitFor(() => expect(gateway.requests.some(r => r.method === "session.create")).toBe(true));
+        gateway.event("session.info", { provider: credentials.provider, model: credentials.model, lazy: false,
+          tools: { matrix_jev_recipe: ["mcp__matrix_jev_recipe__jev_inbox_preview"] } });
+        await vi.waitFor(() => expect(gateway.requests.some(r => r.method === "prompt.submit")).toBe(true));
+        gateway.event("message.complete", { text: "Read-only proposal", status: "complete" });
+        expect(await result).toContainEqual({ type: "run.completed", outcome: "completed" });
+      } else {
+        const events = await settled;
+        expect(events.some(event => event.type === "run.completed" && event.outcome === "completed")).toBe(false);
+        expect(gateway.requests).toEqual([]);
+      }
+      const python = join(first, "bin/python");
+      expect(checked).toEqual([python]);
+      expect(JSON.parse(await readFile(facts, "utf8")).packages.venv.environment).toBe(second);
+      expect(spawnFn).toHaveBeenCalled();
+      for (const [command, args] of spawnFn.mock.calls) {
+        expect(command).toBe(python);
+        expect(args).toContain("-I"); expect(args).toContain("-S");
+        expect(args.join(" ")).toContain(JSON.stringify(first));
+        expect(args.join(" ")).not.toContain(JSON.stringify(second));
+      }
+    } finally {
+      controller.abort();
+      await settled;
+      await rm(temporary, { recursive: true, force: true });
+    }
   });
 });

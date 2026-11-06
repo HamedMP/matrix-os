@@ -5,8 +5,11 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { productScales } from "@matrix-os/brand/tokens";
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import "@testing-library/jest-dom/vitest";
-import type { GetStartedUpdate } from "../../packages/contracts/src/index.js";
-import { GetStartedGate, type GetStartedPort } from "../../packages/ui/src/get-started/index.js";
+import { GET_STARTED_WIZARD_STEPS, type GetStartedUpdate, type GetStartedWizardStep, type ProviderSettingsSnapshot, type ProviderWorkflowCapability } from "../../packages/contracts/src/index.js";
+import type { ProviderWorkflowClient } from "../../packages/ui/src/agents-providers/types";
+import { GetStartedGate, type GetStartedAgentLoginPort, type GetStartedPort } from "../../packages/ui/src/get-started/index.js";
+
+const stepAt = (step: GetStartedWizardStep) => GET_STARTED_WIZARD_STEPS.indexOf(step);
 
 const AT = "2026-10-25T10:12:00.000Z";
 
@@ -47,6 +50,59 @@ afterEach(() => {
 });
 
 describe("GetStartedGate", () => {
+  it("blocks shortcuts as soon as the setup DOM is committed", async () => {
+    const shortcut = vi.fn();
+    window.addEventListener("keydown", shortcut);
+    const observed: KeyboardEvent[] = [];
+    const observer = new MutationObserver(() => {
+      const name = document.querySelector<HTMLInputElement>('input[placeholder="Your first name"]');
+      if (!name || observed.length) return;
+      for (const [target, modifiers] of [
+        [document.body, { metaKey: true }],
+        [name, { ctrlKey: true }],
+        [name, { altKey: true }],
+      ] as const) {
+        const event = new KeyboardEvent("keydown", { key: "k", bubbles: true, cancelable: true, ...modifiers });
+        observed.push(event);
+        target.dispatchEvent(event);
+      }
+    });
+    observer.observe(document.body, { childList: true, subtree: true });
+    try {
+      renderGate(makePort({ status: "pending" }).port);
+      await screen.findByPlaceholderText("Your first name");
+      expect(observed).toHaveLength(3);
+      expect(observed.every((event) => !event.defaultPrevented)).toBe(true);
+      expect(shortcut).not.toHaveBeenCalled();
+    } finally {
+      observer.disconnect();
+      window.removeEventListener("keydown", shortcut);
+    }
+  });
+
+  it("restores shortcuts as soon as the setup DOM disappears", async () => {
+    renderGate(makePort({ status: "pending" }).port);
+    await screen.findByPlaceholderText("Your first name");
+    const shortcut = vi.fn();
+    window.addEventListener("keydown", shortcut);
+    let restored = false;
+    const observer = new MutationObserver(() => {
+      if (restored || !screen.queryByTestId("desktop-widget")) return;
+      restored = true;
+      document.body.dispatchEvent(new KeyboardEvent("keydown", { key: "k", metaKey: true, bubbles: true }));
+    });
+    observer.observe(document.body, { childList: true, subtree: true });
+    try {
+      fireEvent.click(screen.getByRole("button", { name: "Skip setup" }));
+      await screen.findByTestId("desktop-widget");
+      expect(restored).toBe(true);
+      expect(shortcut).toHaveBeenCalledTimes(1);
+    } finally {
+      observer.disconnect();
+      window.removeEventListener("keydown", shortcut);
+    }
+  });
+
   it("keeps background shortcuts like the command palette away while setup is open", async () => {
     const shortcut = vi.fn();
     window.addEventListener("keydown", shortcut);
@@ -59,7 +115,10 @@ describe("GetStartedGate", () => {
       // Plain keys still reach the page, so typing, Tab and Enter keep working.
       fireEvent.keyDown(name, { key: "a" });
       expect(shortcut).toHaveBeenCalledTimes(1);
-      fireEvent.click(screen.getByRole("button", { name: "Skip setup" }));
+      // Saving the skip is async; flush the gate's effect cleanup before keys.
+      await act(async () => {
+        fireEvent.click(screen.getByRole("button", { name: "Skip setup" }));
+      });
       expect(await screen.findByTestId("desktop-widget")).toBeInTheDocument();
       fireEvent.keyDown(document.body, { key: "k", metaKey: true });
       expect(shortcut).toHaveBeenCalledTimes(2);
@@ -106,7 +165,7 @@ describe("GetStartedGate", () => {
     const { port, saves } = makePort({ status: "pending" });
     renderGate(port);
     const name = await screen.findByPlaceholderText("Your first name");
-    expect(name).toHaveFocus();
+    await waitFor(() => expect(name).toHaveFocus());
     fireEvent.change(name, { target: { value: "Sam" } });
     // Enter that confirms an IME composition (Chinese, Japanese) must not leave the step.
     fireEvent.keyDown(name, { key: "Enter", isComposing: true });
@@ -119,9 +178,13 @@ describe("GetStartedGate", () => {
     expect(screen.getByRole("button", { name: "Write code with agents" })).toHaveAttribute("aria-pressed", "true");
     fireEvent.click(screen.getByRole("button", { name: "Next" }));
 
+    // Spec 636: coding agents sign in on their own screen, before the integrations.
+    expect(await screen.findByRole("heading", { name: "Sign in to your coding agents" })).toBeInTheDocument();
+    expect(screen.getByText("You can sign in to Claude Code or Codex later in Settings > Agents & providers.")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Next" }));
+
     expect(await screen.findByRole("heading", { name: "Connect the tools you use" })).toBeInTheDocument();
-    expect(screen.getByText("Your coding agent")).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Codex" }));
+    expect(screen.queryByText("Your coding agent")).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Next" }));
     fireEvent.click(await screen.findByRole("button", { name: "Skip" }));
     fireEvent.click(await screen.findByRole("button", { name: "Next" }));
@@ -134,7 +197,7 @@ describe("GetStartedGate", () => {
 
     expect(await screen.findByTestId("desktop-widget")).toBeInTheDocument();
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
-    expect(saves.at(-1)).toEqual({ type: "complete", answers: { name: "Sam", goals: ["code"], tools: ["codex"] } });
+    expect(saves.at(-1)).toEqual({ type: "complete", answers: { name: "Sam", goals: ["code"], tools: [] } });
   });
 
   it("lets every question be skipped and goes back without losing answers", async () => {
@@ -142,14 +205,16 @@ describe("GetStartedGate", () => {
     fireEvent.change(await screen.findByPlaceholderText("Your first name"), { target: { value: "Sam" } });
     fireEvent.click(screen.getByRole("button", { name: "Next" }));
     fireEvent.click(await screen.findByRole("button", { name: "Skip" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Skip" }));
     expect(await screen.findByText("Sounds fun")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Back" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Back" }));
     fireEvent.click(await screen.findByRole("button", { name: "Back" }));
     expect(await screen.findByPlaceholderText("Your first name")).toHaveValue("Sam");
   });
 
   it("resumes a saved draft on the step it was left", async () => {
-    renderGate(makePort({ status: "in_progress", updatedAt: AT, draft: { step: 4, name: "Sam", goals: ["build"], tools: [] } }).port);
+    renderGate(makePort({ status: "in_progress", updatedAt: AT, draft: { step: stepAt("gallery"), name: "Sam", goals: ["build"], tools: [] } }).port);
     expect(await screen.findByRole("button", { name: /Habit tracker/ })).toHaveAttribute("aria-pressed", "false");
   });
 
@@ -181,17 +246,29 @@ describe("GetStartedGate", () => {
     expect(name).toHaveValue("");
   });
 
-  it("shows the Settings sign-in under each coding agent the owner picks on step 3", async () => {
-    const AgentLogin = ({ agent }: { agent: "claude" | "codex" }) => <p>Sign in to {agent}</p>;
-    const { port } = makePort({ status: "in_progress", updatedAt: AT, draft: { step: 2, goals: ["code"], tools: ["claude-code"] } });
+  it("shows the coding agents screen for every goal, through the surface's sign-in host, and saves a connected agent as a tool", async () => {
+    const codexConnected = {
+      harnesses: [{ id: "codex", harness: "codex", displayName: "Codex", installState: "installed", authState: "authenticated", connectivity: "online", enabled: true, configuredEnabled: true, accessSourceId: "src_codex", accountIds: ["acct_codex"], selectedAccountId: "acct_codex", loginMethods: ["device_code"] }],
+      accounts: [{ id: "acct_codex", accessSourceId: "src_codex", providerId: "openai", authMethod: "subscription", authState: "authenticated", displayName: "sam@example.com" }],
+      accessSources: [{ id: "src_codex", kind: "provider_account", providerId: "openai", fundingKind: "owner_subscription", readiness: { state: "ready" }, usage: { kind: "unavailable", reason: "not_reported" } }],
+      modelProviders: [], gatewayPolicy: null, configurationHarnessKinds: [], supportedActions: [], access: { mode: "writable" }, refreshedAt: AT,
+    } as unknown as ProviderSettingsSnapshot;
+    const codex = { harnessInstanceId: "codex", harness: "codex", displayName: "Codex", installState: "installed", loginMethods: ["device_code"], apiKeyProviders: [], install: false, uninstall: false, logs: false } as ProviderWorkflowCapability;
+    const agentPort: GetStartedAgentLoginPort = {
+      snapshot: codexConnected, failed: false, refresh: vi.fn(), openAuthorizationUrl: vi.fn(),
+      workflowClient: { capabilities: vi.fn(async () => [codex]) } as unknown as ProviderWorkflowClient,
+    };
+    const AgentLogin = ({ children }: { children: (port: GetStartedAgentLoginPort) => React.ReactNode }) => <>{children(agentPort)}</>;
+    const { port, saves } = makePort({ status: "in_progress", updatedAt: AT, draft: { step: stepAt("agents"), goals: ["business"], tools: [] } });
     render(<GetStartedGate port={port} zIndex={690} agentLogin={AgentLogin}><div /></GetStartedGate>);
-    expect(await screen.findByText("Sign in to claude")).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Codex" }));
-    expect(screen.getByText("Sign in to codex")).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Claude Code" }));
-    expect(screen.queryByText("Sign in to claude")).not.toBeInTheDocument();
-    // OpenCode has no sign-in yet, so step 3 does not offer it.
-    expect(screen.queryByRole("button", { name: "OpenCode" })).not.toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "Sign in to your coding agents" })).toBeInTheDocument();
+    await waitFor(() => expect(screen.getByRole("button", { name: /^Codex/ })).toHaveTextContent("Connected"));
+    expect(screen.getByRole("button", { name: /^Claude Code/ })).toBeInTheDocument();
+    // OpenCode has no sign-in yet, so the screen does not offer it.
+    expect(screen.queryByRole("button", { name: /^OpenCode/ })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Next" }));
+    expect(await screen.findByRole("heading", { name: "Connect the tools you use" })).toBeInTheDocument();
+    await waitFor(() => expect(saves.at(-1)).toEqual({ type: "draft", draft: { step: stepAt("tools"), goals: ["business"], tools: ["codex"] } }));
   });
 
   it("skips the whole setup from the first question", async () => {
@@ -205,7 +282,7 @@ describe("GetStartedGate", () => {
   it("keeps the answers and offers a retry when finishing fails", async () => {
     vi.spyOn(console, "warn").mockImplementation(() => undefined);
     let fail = true;
-    const { port, saves } = makePort({ status: "in_progress", updatedAt: AT, draft: { step: 6, name: "Sam", goals: [], tools: [] } });
+    const { port, saves } = makePort({ status: "in_progress", updatedAt: AT, draft: { step: stepAt("summary"), name: "Sam", goals: [], tools: [] } });
     const save = port.save;
     port.save = vi.fn(async (update: GetStartedUpdate) => {
       if (update.type === "complete" && fail) throw new Error("Postgres said no at /home/matrix");
@@ -242,8 +319,11 @@ describe("GetStartedGate", () => {
     }
     renderGateWith(makePort({ status: "pending" }).port, Lease);
     await screen.findByRole("dialog");
-    expect(events).toEqual(["acquire"]);
-    fireEvent.click(screen.getByRole("button", { name: "Skip setup" }));
+    await waitFor(() => expect(events).toEqual(["acquire"]));
+    // Desktop DOM can commit before passive effects release the native overlay.
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Skip setup" }));
+    });
     await screen.findByTestId("desktop-widget");
     expect(events).toEqual(["acquire", "release"]);
   });

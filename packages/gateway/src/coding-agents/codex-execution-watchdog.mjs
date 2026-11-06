@@ -1,3 +1,4 @@
+// Monitor individual execution requests, never the lifetime or silence of a busy turn.
 // Runs in the persistent Node runner, not the short-lived HTTP dispatch.
 const HOUR = 60 * 60_000;
 function budget(env, key, fallback) {
@@ -13,13 +14,10 @@ export function createCodexExecutionWatchdog({ expire, waitingForHuman, env = pr
   const toolDeadline = budget(env, "MATRIX_CODEX_TOOL_DEADLINE_MS", 10 * 60_000);
   const commandDeadline = budget(env, "MATRIX_CODEX_COMMAND_DEADLINE_MS", 8 * HOUR);
   const idleDeadline = budget(env, "MATRIX_CODEX_NO_PROGRESS_MS", 30 * 60_000);
-  const turnDeadline = budget(env, "MATRIX_CODEX_TURN_DEADLINE_MS", 24 * HOUR);
   // Capacity matches the owning runner. Active tools are never silently evicted.
   const tools = new Map();
   let timer;
   let active = false;
-  let elapsed = 0;
-  let idle = 0;
   let lastTick = 0;
 
   function stop() {
@@ -36,8 +34,6 @@ export function createCodexExecutionWatchdog({ expire, waitingForHuman, env = pr
     // Approval/input has its own expiry policy. It is neither execution nor
     // progress; exclude that time instead of silently refreshing tool budgets.
     if (waitingForHuman()) return false;
-    elapsed += delta;
-    idle += delta;
     for (const tool of tools.values()) {
       tool.elapsed += delta;
       tool.idle += delta;
@@ -54,9 +50,6 @@ export function createCodexExecutionWatchdog({ expire, waitingForHuman, env = pr
         break;
       }
     }
-    if (!failure && (elapsed >= turnDeadline || idle >= idleDeadline)) {
-      failure = { phase: elapsed >= turnDeadline ? "turn_deadline" : "turn_no_progress", durationMs: Math.round(elapsed) };
-    }
     if (failure) {
       stop();
       expire(failure);
@@ -67,10 +60,8 @@ export function createCodexExecutionWatchdog({ expire, waitingForHuman, env = pr
     start() {
       stop();
       active = true;
-      elapsed = 0;
-      idle = 0;
       lastTick = performance.now();
-      timer = setInterval(tick, Math.min(1000, toolDeadline, commandDeadline, idleDeadline, turnDeadline));
+      timer = setInterval(tick, Math.min(1000, toolDeadline, commandDeadline, idleDeadline));
       timer.unref?.();
     },
     stop,
@@ -80,17 +71,14 @@ export function createCodexExecutionWatchdog({ expire, waitingForHuman, env = pr
       if (tools.size >= 500) throw new Error("Execution tracking capacity exceeded");
       tools.set(id, { elapsed: 0, idle: 0,
         deadline: kind === "commandExecution" || kind === "collabAgentToolCall" ? commandDeadline : toolDeadline });
-      idle = 0;
     },
     toolCompleted(id) {
       advance();
       tools.delete(id);
-      idle = 0;
     },
     progress(id) {
       if (!active) return;
       advance();
-      idle = 0;
       if (id && tools.has(id)) tools.get(id).idle = 0;
     },
   };

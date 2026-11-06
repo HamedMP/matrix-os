@@ -13,9 +13,6 @@ import { useUi } from "@desktop/renderer/src/stores/ui";
 vi.mock("@desktop/renderer/src/features/runtime/RuntimeComputerMenu", () => ({
   default: () => <button type="button">Main computer</button>,
 }));
-vi.mock("@desktop/renderer/src/features/support/DesktopSupportButton", () => ({
-  default: () => <button type="button">Support</button>,
-}));
 
 describe("Desktop mode controls", () => {
   beforeEach(() => {
@@ -48,6 +45,7 @@ describe("Desktop mode controls", () => {
       "Search",
       "Inbox",
       "Help",
+      "Support",
       "Main computer",
       "Update Matrix OS to 1.2.3",
       "Open account menu",

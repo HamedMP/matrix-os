@@ -1,9 +1,8 @@
-import { validateBotImageInferenceBody } from "@matrix-os/contracts";
+import { INFERENCE_RESPONSE_BODY_MAX_BYTES, INFERENCE_RESPONSE_CHUNK_MAX_BYTES, validateBotImageInferenceBody } from "@matrix-os/contracts";
 import { z } from "zod/v4";
 import { RuntimeHandleSchema } from "./protocol.js";
 
 const MAX_PROVIDER_BODY_BYTES = 256 * 1024;
-const MAX_BROKER_BODY_BYTES = 512 * 1024;
 const RequestIdSchema = z.string().uuid();
 const GenerationSchema = z.string().regex(/^(0|[1-9][0-9]{0,19})$/);
 const BoundedBodySchema = z.string().refine(
@@ -83,6 +82,7 @@ const BotInferenceBase = {
   executionGeneration: GenerationSchema,
   method: z.literal("POST"),
   body: z.string().refine(body => validateBotImageInferenceBody(body).valid, "Invalid Bot inference body"),
+  responseMode: z.literal("stream").optional(),
 };
 
 export const ScopeRuntimeBotInferenceRequestSchema = z.discriminatedUnion("action", [
@@ -110,7 +110,7 @@ const SuccessResponseSchema = z.object({
     "cache-control": z.string().min(1).max(128).optional(),
   }).strict(),
   body: z.string().refine(
-    (value) => Buffer.byteLength(value, "utf8") <= MAX_BROKER_BODY_BYTES,
+    (value) => Buffer.byteLength(value, "utf8") <= INFERENCE_RESPONSE_BODY_MAX_BYTES,
     "Broker response exceeds limit",
   ),
 }).strict();
@@ -137,3 +137,28 @@ export const ScopeRuntimeBrokerResponseSchema = z.union([
 
 export type ScopeRuntimeBrokerRequest = z.infer<typeof ScopeRuntimeBrokerRequestSchema>;
 export type ScopeRuntimeBrokerResponse = z.infer<typeof ScopeRuntimeBrokerResponseSchema>;
+
+const StreamHeadersSchema = z.object({
+  'content-type': z.string().min(1).max(128).optional(),
+  'cache-control': z.string().min(1).max(128).optional(),
+}).strict();
+const StreamFrameBase = { version: z.literal(1), requestId: RequestIdSchema };
+const StreamSequence = z.number().int().min(0).max(Number.MAX_SAFE_INTEGER);
+/** Every NDJSON frame is bounded independently; success requires the final end frame. */
+export const ScopeRuntimeInferenceStreamFrameSchema = z.discriminatedUnion('stream', [
+  z.object({ ...StreamFrameBase, stream: z.literal('start'), status: z.number().int().min(200).max(299), headers: StreamHeadersSchema }).strict(),
+  z.object({ ...StreamFrameBase, stream: z.literal('chunk'), sequence: StreamSequence,
+    body: z.string().max(INFERENCE_RESPONSE_CHUNK_MAX_BYTES).refine(value => Buffer.byteLength(value, 'utf8') <= INFERENCE_RESPONSE_CHUNK_MAX_BYTES) }).strict(),
+  z.object({ ...StreamFrameBase, stream: z.literal('end'), sequence: StreamSequence }).strict(),
+]);
+export type ScopeRuntimeInferenceStreamFrame = z.infer<typeof ScopeRuntimeInferenceStreamFrameSchema>;
+/** In-process result only. The broker serializes it into bounded NDJSON frames. */
+export type ScopeRuntimeInferenceStreamResponse = {
+  version: 1;
+  requestId: string;
+  ok: true;
+  status: number;
+  headers: z.infer<typeof StreamHeadersSchema>;
+  body: AsyncIterable<string>;
+};
+export type ScopeRuntimeBrokerResult = ScopeRuntimeBrokerResponse | ScopeRuntimeInferenceStreamResponse;

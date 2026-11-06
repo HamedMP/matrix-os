@@ -1,12 +1,19 @@
+import { claimPreviewProfile } from "./preview-pair-profile-lease";
+import { createPreviewStartupAcknowledgement } from "./preview-pair-startup-ack";
+import { acknowledgeReopenedPreview } from "./preview-pair-reopen";
+import { createPreviewWindowReopener } from "./preview-pair-window";
+import { initializeDesktopPreview } from "./preview-pair-startup";
 import { app, BrowserWindow, clipboard, dialog, ipcMain, Notification, safeStorage, screen, session, shell, webContents, type IpcMainInvokeEvent } from "electron";
-import { join } from "node:path";
+import { join, dirname } from "node:path";
 import { createFileDownloadService } from "./files/file-download-service";
 import { createOrganizationDriveTransferService } from "./files/organization-drive-transfer";
 import { readDriveUploadFile, saveDriveDownloadFile } from "./files/organization-drive-file-io";
 import { registerTerminalClipboardIpc } from "./files/terminal-clipboard";
 import { pathToFileURL } from "node:url";
 import { createNativeChatgptPlanService } from "./chatgpt-plan/service";
+import { fetchNativePlan } from "./chatgpt-plan/transport";
 import { createPlanVault } from "./chatgpt-plan/vault";
+import { createPlanDiagnosticStore, planDiagnosticDirectory } from "./chatgpt-plan/diagnostic-store";
 import { createNavigationCache } from "./persistence/navigation-cache";
 import { registerNavigationCacheIpc } from "./ipc/navigation-cache";
 import { registerChatgptPlanIpc } from "./ipc/chatgpt-plan";
@@ -77,32 +84,49 @@ import { EVENT_CHANNELS, type EventChannel, type EventPayload } from "../shared/
 import { createNativeAppCapabilityRequester, createNativeAppAiRoutesRequester } from "./embeds/native-app-capabilities";
 import { createNativeAppOpenResolver } from "./embeds/native-app-open";
 import { installBrowserProductSessionCookie } from "./embeds/browser-product-session";
+import { createNativeAppChatNavigationBroker, registerNativeAppChatCompletionIpc } from "./embeds/native-app-chat-navigation";
+import { configureDesktopIdentity } from "./desktop-identity";
 
 const DEFAULT_PLATFORM_HOST = "https://app.matrix-os.com";
-const DESKTOP_APP_NAME = "Matrix OS";
 const desktopRendererUrl = resolveDesktopRendererUrl(process.env.ELECTRON_RENDERER_URL);
 
-app.setName(DESKTOP_APP_NAME);
+configureDesktopIdentity(app, {
+  qaIdentity: process.env.MATRIX_DESKTOP_QA_IDENTITY,
+  userDataDir: process.env.OPERATOR_USER_DATA_DIR,
+});
 if (desktopRendererUrl && desktopRendererUrl !== process.env.ELECTRON_RENDERER_URL) {
   app.commandLine.appendSwitch("host-resolver-rules", desktopDevHostResolverRules());
 }
 
-// Test isolation: e2e runs point userData at a temp dir so they never touch
-// the real profile or credential.
-if (process.env.OPERATOR_USER_DATA_DIR) {
-  app.setPath("userData", process.env.OPERATOR_USER_DATA_DIR);
-}
+// ESM top-level await is required: sessionData and the singleton lock must be
+// selected before Electron emits ready. Normal startup does not add an await.
+const previewContext = process.env.MATRIX_PREVIEW_PAIR_CONTEXT === undefined ? null
+  : await initializeDesktopPreview(app, process.env, { buildSource: readDesktopBuildSource() }).catch((error: unknown) => {
+    console.warn("[preview-pair] startup unavailable", error instanceof Error ? error.name : "UnknownError");
+    app.exit(1);
+    throw new Error("Preview startup is unavailable");
+  });
+
+const bindPreviewStartupAcknowledgement = createPreviewStartupAcknowledgement(previewContext,
+  process.env.MATRIX_PREVIEW_PAIR_READY_PORT, (error: unknown) => {
+    logMainError("preview launcher acknowledgement failed", error); app.quit();
+  });
 
 let mainWindow: BrowserWindow | null = null;
+let reopenPreviewWindow: (() => Promise<void>) | undefined;
 let navigationCache: ReturnType<typeof createNavigationCache> | null = null;
 let chatgptPlan: ReturnType<typeof createNativeChatgptPlanService> | null = null;
 let navigationCacheDrained = false;
 let drainingNavigationCache = false;
+let planDiagnostics: ReturnType<typeof createPlanDiagnosticStore> | null = null;
+let planDiagnosticsDrained = false;
+let drainingPlanDiagnostics = false;
 let planDrained = false;
 let drainingPlan = false;
 let updateCheckTimer: ReturnType<typeof setInterval> | null = null;
 let fileDownloads: ReturnType<typeof createFileDownloadService> | null = null;
 let localChatImports:ReturnType<typeof createNativeChatImportService>|null=null;
+let nativeAppChatNavigation: ReturnType<typeof createNativeAppChatNavigationBroker> | null = null;
 let importsDrained=false;
 let drainingImports=false;
 let organizationDriveTransfers: ReturnType<typeof createOrganizationDriveTransferService> | null = null;
@@ -117,8 +141,9 @@ function isMatrixOsDeepLink(value: string): boolean {
   try {
     const url = new URL(value);
     return url.protocol === "matrixos:" || url.protocol === "matrix-os:";
-  } catch {
-    return false;
+  } catch (error: unknown) {
+    if (error instanceof TypeError) return false;
+    throw error;
   }
 }
 
@@ -169,6 +194,7 @@ function createWindow(bounds: FittedWindowBounds): BrowserWindow {
   installMainRendererMediaPermissions(win.webContents.session, win.webContents, trustedRendererUrl);
 
   win.once("ready-to-show", () => win.show());
+  bindPreviewStartupAcknowledgement(win.webContents);
 
   // window.open / target=_blank from the renderer goes to the system browser only.
   win.webContents.setWindowOpenHandler(({ url }) => {
@@ -198,11 +224,26 @@ function logMainError(label: string, err: unknown): void {
 }
 
 // Single instance: second launches focus the existing window (FR-092).
-const gotLock = app.requestSingleInstanceLock();
+const gotLock = app.requestSingleInstanceLock(previewContext ? {
+  previewPair: { proof: process.env.MATRIX_PREVIEW_PAIR_CONTEXT, port: process.env.MATRIX_PREVIEW_PAIR_READY_PORT },
+} : undefined);
+const previewLease = previewContext && gotLock ? await claimPreviewProfile(dirname(app.getPath("userData"))).catch((error: unknown) => {
+  logMainError("preview profile unavailable", error); app.exit(1); throw new Error("Preview profile is unavailable");
+}) : null;
+if (previewLease) app.once("will-quit", () => { void previewLease.release().catch((error: unknown) => logMainError("preview profile release failed", error)); });
 if (!gotLock) {
   app.quit();
 } else {
-  app.on("second-instance", (_event, argv) => {
+  app.on("second-instance", (_event, argv, _workingDirectory, additionalData) => {
+    if (previewContext) {
+      void acknowledgeReopenedPreview(previewContext,
+        additionalData && typeof additionalData === "object" && "previewPair" in additionalData ? additionalData.previewPair : null,
+        readDesktopBuildSource(), async () => {
+          if (!reopenPreviewWindow) throw new Error("Preview window is unavailable");
+          await reopenPreviewWindow();
+        }).catch((error: unknown) => logMainError("preview reopen refused", error));
+      return;
+    }
     const deepLink = argv.find(isMatrixOsDeepLink);
     if (deepLink) {
       handleDeepLink(deepLink);
@@ -219,7 +260,7 @@ if (!gotLock) {
   void app
     .whenReady()
     .then(async () => {
-      const failedProtocolRegistrations = registerWindowsProtocolClients(app);
+      const failedProtocolRegistrations = registerWindowsProtocolClients(app, process.platform, previewContext ?? undefined);
       if (failedProtocolRegistrations.length > 0) {
         console.warn(
           `[main] could not register Windows URL schemes: ${failedProtocolRegistrations.join(", ")}`,
@@ -243,12 +284,13 @@ if (!gotLock) {
       const store = createLocalStore({ dir: userData });
       const credentialStore = createCredentialStore({ dir: userData, safeStorage });
 
-      const platformHost = process.env.OPERATOR_GATEWAY_URL ?? DEFAULT_PLATFORM_HOST;
-      const runtimeSelectionOrigin = process.env.MATRIX_API_ORIGIN
+      const platformHost = previewContext?.apiOrigin ?? process.env.OPERATOR_GATEWAY_URL ?? DEFAULT_PLATFORM_HOST;
+      const runtimeSelectionOrigin = previewContext?.apiOrigin ?? process.env.MATRIX_API_ORIGIN
         ?? (platformHost === DEFAULT_PLATFORM_HOST ? "https://api.matrix-os.com" : platformHost);
 
       let invalidateAppCapabilities: (() => void) | undefined;
       const auth = new AuthService({
+        ...(previewContext ? { previewContext } : {}),
         credentialStore,
         platformHost,
         runtimeSelectionOrigin,
@@ -257,6 +299,7 @@ if (!gotLock) {
         clearProfile: () => store.delete("profile"),
         onAuthChanged: (status) => {
           invalidateAppCapabilities?.();
+          nativeAppChatNavigation?.cancelAll();
           navigationCache?.observe(status);
           chatgptPlan?.cancelAll();
           chatgptPlan?.resume();
@@ -282,8 +325,16 @@ if (!gotLock) {
         return !!contents && !contents.isDestroyed() && event.sender === contents
           && event.senderFrame === contents.mainFrame && contents.getURL() === rendererUrl;
       });
+      // Failure-only metadata stays in this app/profile's logs; no credential
+      // profile files or other applications' logs are read by the recorder.
+      try {
+        planDiagnostics = createPlanDiagnosticStore({ directory: planDiagnosticDirectory(app.getPath("logs"), userData) });
+      } catch (error: unknown) {
+        console.warn("[chatgpt-plan] diagnostic_start_failed");
+      }
       chatgptPlan = createNativeChatgptPlanService({
         auth, vault: createPlanVault({ dir: userData, safeStorage }),
+        fetchFn: fetchNativePlan,
         openBrowser: async url => {
           const authorizationUrl = safeChatgptAuthorizationUrl(url);
           if (!authorizationUrl) throw new Error("invalid authorization URL");
@@ -319,6 +370,18 @@ if (!gotLock) {
         (detail) => sendEvent("analytics:capture", detail),
       );
 
+      nativeAppChatNavigation = createNativeAppChatNavigationBroker({
+        emit: (event) => sendEvent("app:open-chat", event),
+        cancel: (event) => sendEvent("app:open-chat-cancel", event),
+      });
+      registerNativeAppChatCompletionIpc(ipcMain, nativeAppChatNavigation, rawEvent => {
+        const event = rawEvent as IpcMainInvokeEvent;
+        const contents = mainWindow?.webContents;
+        const rendererUrl = desktopRendererUrl ?? pathToFileURL(join(__dirname, "../renderer/index.html")).toString();
+        return !!contents && !contents.isDestroyed() && event.sender === contents
+          && event.senderFrame === contents.mainFrame && contents.getURL() === rendererUrl;
+      });
+
       const nativeAppBridge = new NativeAppBridge({
         getSenderLifecycle: (senderId) => webContents.fromId(senderId) ?? undefined,
         resolveApp: createNativeAppOpenResolver({ getGatewayOrigin: () => auth.getGatewayOrigin(), getToken: () => auth.getToken() }),
@@ -326,6 +389,17 @@ if (!gotLock) {
           const status = auth.getStatus();
           if (!status.signedIn || !mainWindow || mainWindow.isDestroyed()) throw new Error("App launch is unavailable");
           sendEvent("app:open", { ...app, runtimeSlot: status.runtimeSlot, authGeneration: status.authGeneration });
+        },
+        openChat: async (request, signal) => {
+          const status = auth.getStatus();
+          if (!status.signedIn || !mainWindow || mainWindow.isDestroyed() || !nativeAppChatNavigation) {
+            throw new Error("Chat navigation is unavailable");
+          }
+          focusMainWindow();
+          await nativeAppChatNavigation.request(request, {
+            runtimeSlot: status.runtimeSlot,
+            authGeneration: status.authGeneration,
+          }, signal);
         },
         authGeneration: () => auth.getStatus().authGeneration,
         generate: (app, context) => {
@@ -398,7 +472,7 @@ if (!gotLock) {
             silent: false,
           }).show();
         },
-      });
+      }, { previewContext: previewContext ?? undefined });
       handleUpdateBeforeQuit = createUpdateAwareBeforeQuit({
         status: () => updater.status(),
         isInstallStarted: () => updater.isInstallStarted(),
@@ -511,6 +585,7 @@ if (!gotLock) {
           downloads.cancelAll();
           driveTransfers.cancelAll();
           localChatImports?.cancelAll();
+          nativeAppChatNavigation?.cancelAll();
           // Switching runtime invalidates embed cookies/tokens; tear them down so
           // they re-handshake against the new slot (Integration Wiring rule).
           embeds.closeAll();
@@ -540,6 +615,8 @@ if (!gotLock) {
           if (version !== app.getVersion()) return;
           await store.acknowledgeDesktopUpdateRelease(version);
         },
+        getPreviewContext: () => previewContext ? { role: previewContext.role, pr: previewContext.pr,
+          sourceSha: previewContext.sourceSha, handle: previewContext.handle, organizationId: previewContext.organizationId } : null,
         getAppVersion: () => app.getVersion(),
         buildSource: readDesktopBuildSource(),
         completeAnalyticsFlush: () => {
@@ -616,11 +693,15 @@ if (!gotLock) {
           if (boundsSaveTimer) clearTimeout(boundsSaveTimer);
           embeds.closeAll();
           codingAgentThreadEvents.closeAll();
+          nativeAppChatNavigation?.cancelAll();
           mainWindow = null;
         });
       };
 
       await openMainWindow();
+      if (previewContext) reopenPreviewWindow = createPreviewWindowReopener({
+        current: () => mainWindow, open: openMainWindow, focus: focusMainWindow,
+      });
       installAppMenu(
         () => mainWindow,
         () => {
@@ -636,7 +717,8 @@ if (!gotLock) {
 
       app.on("activate", () => {
         if (BrowserWindow.getAllWindows().length === 0) {
-          void openMainWindow();
+          void (reopenPreviewWindow ? reopenPreviewWindow() : openMainWindow())
+            .catch((error: unknown) => logMainError("window restore failed", error));
         }
       });
     })
@@ -646,6 +728,7 @@ if (!gotLock) {
 
   app.on("before-quit", (event) => {
     organizationDriveTransfers?.cancelAll();
+    nativeAppChatNavigation?.cancelAll();
     if (handleAnalyticsBeforeQuit?.(event)) return;
     if (!navigationCacheDrained && navigationCache) {
       event.preventDefault();
@@ -662,6 +745,18 @@ if (!gotLock) {
         drainingPlan = true;
         void chatgptPlan.dispose().catch((error: unknown) => logMainError("subscription cleanup failed", error))
           .finally(() => { planDrained = true; app.quit(); });
+      }
+      return;
+    }
+    // Dispose the subscription first so peer shutdown failures can still be
+    // recorded, then drain diagnostics for at most the store's one-second cap.
+    if (!planDiagnosticsDrained && planDiagnostics) {
+      event.preventDefault();
+      if (!drainingPlanDiagnostics) {
+        drainingPlanDiagnostics = true;
+        void planDiagnostics.close().catch((error: unknown) => {
+          console.warn("[chatgpt-plan] diagnostic_close_failed");
+        }).finally(() => { planDiagnosticsDrained = true; app.quit(); });
       }
       return;
     }

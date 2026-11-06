@@ -32,6 +32,8 @@ it('cleans all owner objects including failed candidates and removes owner regis
     const objects = new Map<string, Uint8Array>();
     const service = createSitesService({ db, env, storage: { async putObject(key, body) { objects.set(key, body as Uint8Array); return {}; }, async getObject() { return { body: null }; } } });
     const site = await service.deploy(owner, deployment);
+    const privateSite=await service.patch(owner,{accessMode:'private_link',baseRevision:site.revision});
+    await service.createAccessLink(owner,{baseRevision:privateSite.revision});
     expect([...objects.keys()][0]).toContain(`sites/owners/${owner.ownerId}/${site.id}/`);
     objects.set(`sites/owners/${owner.ownerId}/orphan/candidate/index.html`, new Uint8Array([1]));
     objects.set('sites/owners/user_other/private/index.html', new Uint8Array([2]));
@@ -40,6 +42,7 @@ it('cleans all owner objects including failed candidates and removes owner regis
         async listObjects(prefix) { return { keys: [...objects.keys()].filter(k => k.startsWith(prefix)), nextCursor: null }; },
         async deleteObject(key) { objects.delete(key); }, async abortOwnerMultipartUploads(prefix) { aborted.push(prefix); },
     }, env);
+    expect(await db.executor.selectFrom('public_site_access_links').selectAll().execute()).toEqual([]);
     expect(aborted).toContain(`sites/owners/${owner.ownerId}/`);
     expect([...objects.keys()]).toEqual(['sites/owners/user_other/private/index.html']);
     expect(await service.resolve(site.id)).toBeNull();

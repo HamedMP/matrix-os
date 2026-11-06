@@ -19,6 +19,8 @@ const posthogMock = vi.hoisted(() => ({
   reset: vi.fn(),
   captureException: vi.fn(),
 }));
+const toastMock = vi.hoisted(() => ({ error: vi.fn() }));
+vi.mock("sonner", () => ({ toast: toastMock }));
 
 vi.mock("posthog-js", () => ({
   default: posthogMock,
@@ -38,6 +40,7 @@ describe("shell PostHog same-origin proxy", () => {
     document.getElementById("ph-conversations-widget-container")?.remove();
     document.getElementById("unrelated-close")?.remove();
     posthogMock.conversations.show.mockReset();
+    toastMock.error.mockClear();
     vi.unstubAllGlobals();
   });
 
@@ -199,6 +202,36 @@ describe("shell PostHog same-origin proxy", () => {
     expect(posthogMock.capture).toHaveBeenCalledWith("shell_support_chat_opened", {
       matrix_client: "web",
     });
+  });
+
+  it("gives a contact path when Support chat has no client configuration", async () => {
+    const { openShellSupport } = await import("../../shell/src/lib/posthog-client");
+
+    await expect(openShellSupport(null)).resolves.toBe(false);
+    expect(toastMock.error).toHaveBeenCalledWith("Support chat is unavailable", {
+      description: "Email support@matrix-os.com for help.",
+    });
+  });
+
+  it("gives the same contact path when a configured chat throws while opening", async () => {
+    const warning = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    vi.stubGlobal("fetch", vi.fn(async () => ({ ok: false })));
+    posthogMock.conversations.show.mockImplementationOnce(() => {
+      throw new Error("private provider failure");
+    });
+    const { openShellSupport } = await import("../../shell/src/lib/posthog-client");
+
+    await expect(openShellSupport({
+      token: "phc_test",
+      apiHost: "/relay",
+      uiHost: "https://eu.posthog.com",
+    })).resolves.toBe(false);
+
+    expect(warning).toHaveBeenCalledWith("[posthog] Failed to open support chat:", "Error");
+    expect(toastMock.error).toHaveBeenCalledWith("Support chat is unavailable", {
+      description: "Email support@matrix-os.com for help.",
+    });
+    warning.mockRestore();
   });
 
   it("defaults the shell api host to the /relay same-origin proxy", () => {

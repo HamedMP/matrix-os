@@ -74,10 +74,11 @@ export const ProviderModelViewSchema = z.object({
   enabled: z.boolean(),
   capabilities: z.array(z.enum(["tools", "vision", "reasoning", "long_context", "audio"])).max(5).refine(unique).optional(),
 }).strict();
+export const MAX_PROVIDER_SETTINGS_MODELS = 256;
 export const ProviderModelProviderSchema = z.object({
   id: ProviderIdSchema,
   displayName: DisplayNameSchema,
-  models: z.array(ProviderModelViewSchema).max(256),
+  models: z.array(ProviderModelViewSchema).max(MAX_PROVIDER_SETTINGS_MODELS),
 }).strict().superRefine((provider, ctx) => {
   if (!unique(provider.models.map((model) => model.id))) {
     ctx.addIssue({ code: "custom", path: ["models"], message: "Duplicate model id" });

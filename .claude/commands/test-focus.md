@@ -17,7 +17,12 @@ Target: $ARGUMENTS
    vitest run <resolved-path> --reporter=verbose
    ```
 
-3. If all pass: report count and duration. Done.
+3. If all pass: report executed assertions, skips, selected runner/lane and
+   duration. Passing is execution evidence, not proof of complete behavior.
+   Follow `docs/dev/testing-effectiveness.md`: for changed behavior identify the
+   user outcome, fault detected, real/mocked boundary, and relevant journey gap.
+   For bug fixes record the intended red assertion on the original fault and
+   green result with the fix. Do not add duplicate or test-local-replica cases.
 
 4. If any fail:
    - Read the failing test file

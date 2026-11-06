@@ -23,14 +23,14 @@ describe("get started wizard", () => {
     const state = initialGetStartedWizard();
     expect(state.step).toBe("name");
     expect(getStartedAnswersFromWizard(state)).toEqual({ goals: [], tools: [] });
-    expect(GET_STARTED_WIZARD_STEPS).toEqual(["name", "goals", "tools", "ai", "gallery", "bots", "summary"]);
+    expect(GET_STARTED_WIZARD_STEPS).toEqual(["name", "goals", "agents", "tools", "ai", "gallery", "bots", "summary"]);
   });
 
   it("walks forward and back through every step without passing the ends", () => {
     let state = initialGetStartedWizard();
     state = run(state, { type: "back" });
     expect(state.step).toBe("name");
-    state = run(state, { type: "next" }, { type: "next" }, { type: "next" }, { type: "next" }, { type: "next" }, { type: "next" }, { type: "next" });
+    state = run(state, ...Array.from({ length: GET_STARTED_WIZARD_STEPS.length }, () => ({ type: "next" }) as const));
     expect(state.step).toBe("summary");
     state = run(state, { type: "back" });
     expect(state.step).toBe("bots");
@@ -51,49 +51,58 @@ describe("get started wizard", () => {
     expect(getStartedAnswersFromWizard(run(initialGetStartedWizard(), { type: "name", value: "Sa\u0007m" })).name).toBe("Sam");
   });
 
-  it("toggles goals and tools in the order they were picked", () => {
+  it("toggles goals in the order they were picked", () => {
     const state = run(
       initialGetStartedWizard(),
       { type: "toggle-goal", goal: "build" },
       { type: "toggle-goal", goal: "code" },
-      { type: "toggle-tool", tool: "github" },
-      { type: "toggle-tool", tool: "linear" },
-      { type: "toggle-tool", tool: "github" },
+      { type: "toggle-goal", goal: "assistant" },
+      { type: "toggle-goal", goal: "build" },
     );
-    expect(state.goals).toEqual(["build", "code"]);
-    expect(state.tools).toEqual(["linear"]);
+    expect(state.goals).toEqual(["code", "assistant"]);
   });
 
   it("only keeps answers that belong to the goals still chosen", () => {
     const state = run(
       initialGetStartedWizard(),
+      { type: "toggle-goal", goal: "explore" },
       { type: "toggle-goal", goal: "code" },
-      { type: "toggle-goal", goal: "build" },
-      { type: "toggle-tool", tool: "codex" },
       { type: "pick-app-idea", id: "habit-tracker" },
       { type: "pick-starter", id: "ask-anything" },
-      { type: "toggle-goal", goal: "build" },
     );
-    // The app idea is also App Gallery's own answer, so it stays.
-    expect(getStartedAnswersFromWizard(state)).toEqual({ goals: ["code"], tools: ["codex"], appIdea: "habit-tracker" });
-    expect(getStartedAnswersFromWizard(run(state, { type: "toggle-goal", goal: "code" })).tools).toEqual([]);
+    expect(getStartedAnswersFromWizard(state)).toEqual({ goals: ["explore", "code"], tools: [], appIdea: "habit-tracker", starter: "ask-anything" });
+    // The app idea is also App Gallery's own answer, so it stays; the starter goes with exploring.
+    expect(getStartedAnswersFromWizard(run(state, { type: "toggle-goal", goal: "explore" }))).toEqual({ goals: ["code"], tools: [], appIdea: "habit-tracker" });
   });
 
   it("keeps saved tools until the surface has actually read its connections", () => {
-    // Resumed at the summary: tools saved earlier, connections not read yet.
-    const resumed = initialGetStartedWizard({ step: 6, goals: ["code"], tools: ["codex", "github", "linear"] });
+    // Resumed at the summary: tools saved earlier, connections and agents not read yet.
+    const resumed = initialGetStartedWizard({ step: GET_STARTED_WIZARD_STEPS.indexOf("summary"), goals: ["code"], tools: ["codex", "github", "linear"] });
     expect(getStartedAnswersFromWizard(resumed).tools).toEqual(["codex", "github", "linear"]);
     // Once read, the real connections replace the saved ones.
     expect(getStartedAnswersFromWizard(run(resumed, { type: "connected", services: ["github"] })).tools).toEqual(["codex", "github"]);
     expect(getStartedAnswersFromWizard(run(resumed, { type: "connected", services: [] })).tools).toEqual(["codex"]);
+    expect(getStartedAnswersFromWizard(run(resumed, { type: "agents-connected", agents: [] })).tools).toEqual(["github", "linear"]);
   });
 
-  it("records connected integrations as tools, after the coding agents picked", () => {
-    let state = run(initialGetStartedWizard(), { type: "toggle-goal", goal: "code" }, { type: "toggle-tool", tool: "codex" });
+  it("records a coding agent as a tool when it is connected, not when it is picked", () => {
+    // Spec 636: the coding agents screen has no picks; a saved chip pick from before is not an answer
+    // once the screen has read this computer's agents.
+    let state = run(initialGetStartedWizard({ goals: ["code"], tools: ["codex"] }), { type: "agents-connected", agents: [] });
+    expect(getStartedAnswersFromWizard(state).tools).toEqual([]);
+    state = run(state, { type: "agents-connected", agents: ["codex", "claude"] });
+    // Coding agents lead in catalog order, whatever order they were reported in.
+    expect(getStartedAnswersFromWizard(state).tools).toEqual(["claude-code", "codex"]);
+    expect(state.agents).toEqual(["codex", "claude"]);
+  });
+
+  it("records connected integrations as tools, after the connected coding agents", () => {
+    let state = run(initialGetStartedWizard(), { type: "toggle-goal", goal: "code" }, { type: "agents-connected", agents: ["codex"] });
     state = run(state, { type: "connected", services: ["linear", "github", "twitter"] });
     expect(getStartedAnswersFromWizard(state).tools).toEqual(["codex", "github", "linear"]);
-    // Skipping the step clears picks, never real connections.
-    expect(getStartedAnswersFromWizard(run({ ...state, step: "tools" }, { type: "skip" })).tools).toEqual(["github", "linear"]);
+    // Skipping a step clears picks, never real connections or sign-ins.
+    expect(getStartedAnswersFromWizard(run({ ...state, step: "tools" }, { type: "skip" })).tools).toEqual(["codex", "github", "linear"]);
+    expect(run({ ...state, step: "agents" }, { type: "skip" })).toMatchObject({ step: "tools", agents: ["codex"] });
   });
 
   it("keeps a starter only when exploring is on screen", () => {
@@ -123,7 +132,9 @@ describe("get started wizard", () => {
     let state = run(initialGetStartedWizard(), { type: "name", value: "Sam" }, { type: "skip" });
     expect(state).toMatchObject({ step: "goals", name: "" });
     state = run(state, { type: "toggle-goal", goal: "code" }, { type: "skip" });
-    expect(state).toMatchObject({ step: "tools", goals: [] });
+    expect(state).toMatchObject({ step: "agents", goals: [] });
+    state = run(state, { type: "skip" });
+    expect(state.step).toBe("tools");
     state = run(state, { type: "pick-starter", id: "ask-anything" }, { type: "skip" });
     expect(state.step).toBe("ai");
     state = run(state, { type: "bot", patch: { name: "Atlas" } }, { type: "skip" });
@@ -142,8 +153,9 @@ describe("get started wizard", () => {
       { type: "next" },
       { type: "toggle-goal", goal: "code" },
       { type: "next" },
-      { type: "toggle-tool", tool: "claude-code" },
+      { type: "agents-connected", agents: ["claude"] },
     );
+    expect(state.step).toBe("agents");
     expect(GetStartedAnswersSchema.parse(getStartedAnswersFromWizard(state))).toEqual({
       name: "Sam", goals: ["code"], tools: ["claude-code"],
     });
@@ -153,8 +165,13 @@ describe("get started wizard", () => {
   });
 
   it("resumes from a saved draft", () => {
-    const state = initialGetStartedWizard({ step: 2, name: "Sam", goals: ["build"], tools: [], appIdea: "recipe-box" });
-    expect(state).toMatchObject({ step: "tools", name: "Sam", goals: ["build"], appIdea: "recipe-box" });
+    const state = initialGetStartedWizard({ step: 3, name: "Sam", goals: ["build"], tools: [], appIdea: "recipe-box" });
+    expect(state).toMatchObject({ step: "tools", name: "Sam", goals: ["build"], appIdea: "recipe-box", agents: null });
+  });
+
+  it("resumes a draft saved before the coding agents step at most one step earlier", () => {
+    // Saved as "tools" (index 2) before spec 636: the owner sees the new step, then tools, answers kept.
+    expect(initialGetStartedWizard({ step: 2, goals: ["code"], tools: ["github"] })).toMatchObject({ step: "agents", tools: ["github"] });
   });
 
   it("resumes an unknown or missing step at the start", () => {
@@ -162,8 +179,8 @@ describe("get started wizard", () => {
   });
 
   it("reports progress across the questions only", () => {
-    expect(getStartedQuestionProgress(initialGetStartedWizard())).toEqual({ current: 0, total: 6 });
-    expect(getStartedQuestionProgress(initialGetStartedWizard({ step: 6, goals: [], tools: [] }))).toEqual({ current: 6, total: 6 });
+    expect(getStartedQuestionProgress(initialGetStartedWizard())).toEqual({ current: 0, total: 7 });
+    expect(getStartedQuestionProgress(initialGetStartedWizard({ step: 7, goals: [], tools: [] }))).toEqual({ current: 7, total: 7 });
   });
 
   it("suggests the first name from the sign-in account, only when it is a plain name", () => {

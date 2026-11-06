@@ -44,7 +44,7 @@ export const sourceChangeScript=[
   "",
   "echo \"trigger_requested=true\" >> \"$GITHUB_OUTPUT\"",
   "git fetch --no-tags --depth=1 origin \"$GITHUB_BASE_REF\"",
-  "changed_files=\"$(git diff --name-only \"origin/$GITHUB_BASE_REF\" \"$GITHUB_SHA\")\"",
+  "changed_files=\"$(git diff --no-renames --name-only \"origin/$GITHUB_BASE_REF\" \"$GITHUB_SHA\")\"",
   "os_view_parity_tests=\"$(printf '%s\\n' \"$changed_files\" | node scripts/ci/os-view-parity-plan.mjs)\"",
   "",
   "should_run=false",

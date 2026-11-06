@@ -26,6 +26,19 @@ describe("shell Get started port", () => {
     expect(init.signal).toBeInstanceOf(AbortSignal);
   });
 
+  it("asks the gateway for bot name suggestions with POST, bounded by a timeout", async () => {
+    const names = { names: [] };
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify(names), { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+    const request = { goals: ["code" as const], personality: "calm-mentor" as const, exclude: ["Luna"] };
+    const signal = new AbortController().signal;
+    await expect(createShellGetStartedPort("https://gw.example").suggestBotNames!(request, signal)).resolves.toEqual(names);
+    const [url, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
+    expect(url).toBe("https://gw.example/api/settings/get-started/bot-names");
+    expect(init).toMatchObject({ method: "POST", body: JSON.stringify(request) });
+    expect(init.signal).toBeInstanceOf(AbortSignal);
+  });
+
   it("rejects non-2xx responses without exposing their body", async () => {
     vi.stubGlobal("fetch", vi.fn(async () => new Response("pg: connection refused at /home/matrix", { status: 500 })));
     const error = await createShellGetStartedPort("https://gw.example").load(new AbortController().signal).catch((err: unknown) => err);

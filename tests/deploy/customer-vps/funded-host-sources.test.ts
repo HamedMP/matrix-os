@@ -28,6 +28,7 @@ describe.skipIf(!disposableRootLinux)("protected funded host root contracts (exp
     "funded-host-restoration.test.py",
     "funded-host-artifact-repair.test.py",
     "funded-host-speech-recovery.test.py",
+    "funded-host-browser-recovery.test.py",
     "funded-host-install-serialization.test.py",
   ])("executes %s without skipped cases", fixture => execute(fixture));
 });

@@ -28,7 +28,7 @@ describe("Chat Agent recipe client", () => {
   it("requests funding-aware model states through the existing shared transport", async () => {
     const request = vi.fn(async () => createCanonicalProviderCatalogFixture());
     await createChatAgentClient(request).catalog();
-    expect(request).toHaveBeenCalledExactlyOnceWith("/api/chat-providers?includeConnectionLabels=true&includeConnectionState=true&includeFundingState=true&includeChatFunding=true", "GET", undefined,
+    expect(request).toHaveBeenCalledExactlyOnceWith("/api/chat-providers?includeConnectionLabels=true&includeConnectionState=true&includeFundingState=true&includeChatFunding=true&includeObservationState=true", "GET", undefined,
       { timeoutMs: FUNDED_AI_READINESS_TIMEOUTS.rendererRequestMs });
   });
   it("loads recipe capabilities and keeps only bounded display metadata for connections", async () => {

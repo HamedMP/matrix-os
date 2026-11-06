@@ -17,6 +17,7 @@ function parseFixtureInt8(value: string): number | bigint {
   return integer >= Number.MIN_SAFE_INTEGER && integer <= Number.MAX_SAFE_INTEGER ? Number(integer) : integer;
 }
 interface Dependencies {
+  createFallback: typeof createPGliteDb;
   createPool(config: PoolConfig): Pool;
   createPlatformDb(options: { dialect: unknown }): PlatformDB;
 }
@@ -78,9 +79,10 @@ function validateUrl(url: string): string {
 export type NativePlatformFixtureManager = NativeFixtureManager<PlatformDB>;
 
 export function createNativePlatformFixtureManager(overrides: Partial<Dependencies> = {}): NativePlatformFixtureManager {
-  const dependencies: Dependencies = { createPool: config => new pg.Pool(config), createPlatformDb, ...overrides };
+  const dependencies: Dependencies = { createPool: config => new pg.Pool(config), createPlatformDb,
+    createFallback: createPGliteDb, ...overrides };
   return createNativeFixtureManager({ createPool: dependencies.createPool,
-    createDb: dependencies.createPlatformDb, createFallback: createPGliteDb, destroyFallback: destroyPGliteDb });
+    createDb: dependencies.createPlatformDb, createFallback: dependencies.createFallback, destroyFallback: destroyPGliteDb });
 }
 
 /** One isolated test module owns one closed template and four reusable clone name slots. */

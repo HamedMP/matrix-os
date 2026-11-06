@@ -2,6 +2,59 @@ const DEV_PLATFORM_SECRET = 'dev-secret';
 const DEV_PLATFORM_JWT_SECRET = 'dev-platform-jwt-secret-please-change-32';
 const DEFAULT_SYNC_BUCKET = 'matrixos-sync';
 
+export function checkPublicSitesEnv(
+  env: Record<string, string | undefined> = process.env,
+  log: (msg: string) => void = console.error,
+): string[] {
+  if (env.MATRIX_PUBLIC_SITES_ENABLED !== 'true') return [];
+  const problems: string[] = [];
+  const add = (name: string) => { if (!problems.includes(name)) problems.push(name); };
+  for (const name of ['SITES_EDGE_SECRET', 'SITES_EDGE_SECRET_PREVIOUS'] as const) {
+    const value = env[name];
+    if (!value || value.length < 32 || value !== value.trim() || /[\r\n]/.test(value)) {
+      problems.push(name);
+    }
+  }
+  const accountId = env.R2_SITES_ACCOUNT_ID?.trim();
+  const endpoint = env.R2_SITES_ENDPOINT?.trim();
+  if (!(accountId || endpoint)) {
+    problems.push('R2_SITES_ACCOUNT_ID/R2_SITES_ENDPOINT');
+  }
+  if (accountId && !/^[a-f0-9]{32}$/.test(accountId)) add('R2_SITES_ACCOUNT_ID');
+  if (endpoint) {
+    try {
+      const parsed = new URL(endpoint);
+      const expectedHosts = accountId
+        ? [`${accountId}.r2.cloudflarestorage.com`, `${accountId}.eu.r2.cloudflarestorage.com`]
+        : [];
+      if (parsed.protocol !== 'https:'
+        || (accountId ? !expectedHosts.includes(parsed.hostname)
+          : !/^[a-f0-9]{32}(?:\.eu)?\.r2\.cloudflarestorage\.com$/.test(parsed.hostname))
+        || parsed.port || parsed.pathname !== '/' || parsed.username || parsed.password
+        || parsed.search || parsed.hash) add('R2_SITES_ENDPOINT');
+    } catch (error: unknown) {
+      if (error instanceof TypeError) add('R2_SITES_ENDPOINT');
+      else throw error;
+    }
+  }
+  if (!env.R2_SITES_BUCKET?.trim()
+    || !/^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$/.test(env.R2_SITES_BUCKET.trim())) {
+    add('R2_SITES_BUCKET');
+  }
+  if (!env.R2_SITES_ACCESS_KEY_ID?.trim()) problems.push('R2_SITES_ACCESS_KEY_ID');
+  if (!env.R2_SITES_SECRET_ACCESS_KEY?.trim()) problems.push('R2_SITES_SECRET_ACCESS_KEY');
+  const sitesBucket = env.R2_SITES_BUCKET?.trim();
+  const syncBucket = (env.S3_BUCKET ?? env.R2_BUCKET ?? DEFAULT_SYNC_BUCKET).trim();
+  const bundleBucket = (env.S3_BUNDLES_BUCKET ?? env.R2_BUNDLES_BUCKET)?.trim();
+  if (sitesBucket && (sitesBucket === syncBucket || sitesBucket === bundleBucket)) {
+    add('R2_SITES_BUCKET');
+  }
+  if (problems.length > 0) {
+    log(`[platform] Public Sites are enabled without complete dedicated edge/storage configuration: ${problems.join(', ')}.`);
+  }
+  return problems;
+}
+
 const TENANT_PUBLIC_TELEMETRY_ENV_KEYS = [
   'POSTHOG_TOKEN',
   'POSTHOG_PROJECT_TOKEN',

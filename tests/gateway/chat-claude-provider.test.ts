@@ -77,6 +77,7 @@ describe("Claude canonical Chat Provider adapter", () => {
       })();
       await vi.advanceTimersByTimeAsync(0);
       expect(spawnFn).toHaveBeenCalledOnce();
+      stdout.emit("data", Buffer.from(`${JSON.stringify({ type: "system", subtype: "init", session_id: "long_session" })}\n`));
 
       const progress = JSON.stringify({ type: "stream_event", event: {
         type: "content_block_delta", delta: { type: "text_delta", text: "working" },

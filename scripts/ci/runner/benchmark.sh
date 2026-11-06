@@ -89,6 +89,7 @@ general_native_suites=(
   agents-providers-figma
   bot-visual
   canonical-input
+  chat-large-transcript
   chat-dock-badge
   chat-onboarding
   chat-picker-responsive
@@ -109,6 +110,7 @@ general_native_suites=(
   project-folder-picker-layout
   provider-auth-terminal
   provider-settings-idle
+  claude-legacy-connection
   release-alignment
   shared-chat
   signin-brand
@@ -175,18 +177,23 @@ run_suite() {
       if [[ $desktop_prepared != true ]]; then step "desktop-build-$pass" bun run build:desktop; fi
       step "terminal-grid-$pass" env MATRIX_GRID_ELECTRON=1 xvfb-run --auto-servernum \
         pnpm exec vitest run --config vitest.e2e.config.ts tests/e2e/terminal-soft-grid.e2e.test.ts --maxWorkers=1
-      step "e2e-electron-$pass" env MATRIX_DESKTOP_E2E_REQUIRED=1 MATRIX_PROVIDER_AUTH_ELECTRON=1 \
+      step "e2e-electron-$pass" env MATRIX_BUILD_SHA="$sha" MATRIX_DESKTOP_E2E_REQUIRED=1 MATRIX_PROVIDER_AUTH_ELECTRON=1 \
         MATRIX_SETTINGS_EVIDENCE_DIR=output/playwright/settings-providers xvfb-run --auto-servernum \
         pnpm exec vitest run --config vitest.e2e.config.ts --maxWorkers=2 \
         tests/e2e/desktop/account-organization-picker.e2e.test.ts \
         tests/e2e/desktop/file-download.e2e.test.ts tests/e2e/desktop/canonical-input.e2e.test.ts \
+        tests/e2e/desktop/chat-large-transcript.e2e.test.ts \
         tests/e2e/provider-authorization-electron.e2e.test.ts tests/e2e/desktop/provider-auth-terminal.e2e.test.ts \
         tests/e2e/desktop/agents-providers-figma.e2e.test.ts tests/e2e/desktop/agents-providers-button-contrast.e2e.test.ts \
-        tests/e2e/desktop/provider-settings-idle.e2e.test.ts tests/e2e/desktop/project-folder-picker-layout.e2e.test.ts \
+        tests/e2e/desktop/provider-settings-idle.e2e.test.ts tests/e2e/desktop/claude-legacy-connection.e2e.test.ts tests/e2e/desktop/project-folder-picker-layout.e2e.test.ts \
         tests/e2e/desktop/project-deletion.e2e.test.ts \
         tests/e2e/desktop/terminal-file-drop.e2e.test.ts \
         tests/e2e/desktop/terminal-snapshot.e2e.test.ts tests/e2e/desktop/release-alignment.e2e.test.ts \
         tests/e2e/desktop/chat-title-layout.e2e.test.ts
+      step "e2e-preview-pair-$pass" env MATRIX_DESKTOP_E2E_REQUIRED=1 \
+        MATRIX_PREVIEW_PAIR_EVIDENCE_DIR=output/playwright/preview-pair xvfb-run --auto-servernum \
+        pnpm exec vitest run --config vitest.e2e.config.ts \
+        tests/e2e/desktop/preview-pair.e2e.test.ts --maxWorkers=1
       # Hosted CI gives clipboard its own display. A different Electron window
       # can blur a held mouse drag and cancel its edge-scroll selection timer.
       step "e2e-clipboard-$pass" env MATRIX_DESKTOP_E2E_REQUIRED=1 xvfb-run --auto-servernum \
