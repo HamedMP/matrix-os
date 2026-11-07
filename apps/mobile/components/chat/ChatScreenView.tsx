@@ -1,4 +1,3 @@
-import type {ReactNode} from "react";
 import { KeyboardAvoidingView } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { StyleSheet } from "react-native-unistyles";
@@ -12,6 +11,7 @@ import { ChatMessagesSkeleton, ChatUnavailable } from "./ChatLoadState";
 import type { ChatLoadState } from "./chat-screen-state";
 import { Composer, type ComposerProps } from "./Composer";
 import { MessageList, type MessageListProps } from "./MessageList";
+import { NativeSourceChatRoutines, type NativeSourceChatRoutineScope, type NativeSourceChatRoutineSlots } from "./NativeSourceChatRoutines";
 import { UnsentMessageActionsProvider, type UnsentMessageActions } from "./unsent-message-actions";
 
 export interface ChatScreenViewProps
@@ -38,7 +38,7 @@ export interface ChatScreenViewProps
   onReloadChat?: () => void;
   /** What a message that was not sent offers. Nothing is offered when left out. */
   unsentActions?: UnsentMessageActions | null;
-  threadFooter?:ReactNode;
+  routineScope?: NativeSourceChatRoutineScope;
   composer: Omit<ComposerProps, "keyboardOpen">;
 }
 
@@ -62,10 +62,14 @@ export function ChatScreenView({
   onReloadChat,
   unsentActions = null,
   composer,
-  threadFooter,
+  routineScope,
 }: ChatScreenViewProps) {
   const insets = useSafeAreaInsets();
   const keyboardOpen = useKeyboardVisible();
+  const renderThread = (slots: NativeSourceChatRoutineSlots = {}) => (
+    <MessageList {...slots} messages={messages} chatId={chatId} renderRequest={renderRequest}
+      renderResults={renderResults} renderComputerPhoto={renderComputerPhoto} />
+  );
 
   return (
     // The keyboard is drawn over the screen on both platforms (Android does not
@@ -97,14 +101,9 @@ export function ChatScreenView({
         <ChatUnavailable onRetry={onReloadChat} />
       ) : (
         <UnsentMessageActionsProvider value={unsentActions}>
-          <MessageList
-            footer={threadFooter}
-            messages={messages}
-            chatId={chatId}
-            renderRequest={renderRequest}
-            renderResults={renderResults}
-            renderComputerPhoto={renderComputerPhoto}
-          />
+          {routineScope ? <NativeSourceChatRoutines {...routineScope} messages={messages}>
+            {renderThread}
+          </NativeSourceChatRoutines> : renderThread()}
         </UnsentMessageActionsProvider>
       )}
       <Composer {...composer} keyboardOpen={keyboardOpen} />
