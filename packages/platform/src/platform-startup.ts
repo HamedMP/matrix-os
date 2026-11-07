@@ -69,6 +69,8 @@ import type { PreviewDriveIntegration } from './preview-drive-routes.js';
 import { createCustomMcpProjection } from './custom-mcp-projection.js';
 import { listActivePrivatePreviewsForOwner } from './database/private-previews.js';
 import { createPrivatePreviewAccess } from './private-preview-wiring.js';
+import { parseInternalOrganizationId } from './private-preview-access.js';
+import { ClerkOrganizationUpstreamClient } from './organizations/clerk-resolver.js';
 import {
   createGranolaPresetBroker,
   type ManagedMcpPresetBroker,
@@ -350,11 +352,23 @@ async function startPlatformServerWithCleanup(
   let runtimeConfig;
   let speechConfig;
   let devstackRunConfig;
+  let isDevstackMember: ((actorId: string) => Promise<boolean>) | undefined;
   const clerkVerificationConfig = resolveClerkVerificationConfig(process.env);
   try {
     runtimeConfig = loadPlatformRuntimeConfig();
     devstackRunConfig = loadDevstackRunConfig(process.env.MATRIX_DEVSTACK_RUN_CONFIG, runtimeConfig.registeredRuntimeInstance);
-    if (devstackRunConfig && (!clerkVerificationConfig || platformSecret.length < 32)) throw new DevstackRunConfigError();
+    if (devstackRunConfig) {
+      const organizationId = parseInternalOrganizationId(process.env.MATRIX_INTERNAL_CLERK_ORG_ID);
+      const secretKey = clerkVerificationConfig?.sessionRevocationSecret;
+      if (!organizationId || !secretKey?.trim() || platformSecret.length < 32) {
+        throw new DevstackRunConfigError();
+      }
+      const clerkOrganizations = new ClerkOrganizationUpstreamClient({ secretKey });
+      // Registered runtimes intentionally omit the collaboration projection.
+      // Read the same internal Clerk organization directly without enabling it.
+      isDevstackMember = async actorId =>
+        (await clerkOrganizations.listOrganizationsForActor(actorId)).includes(organizationId);
+    }
     speechConfig = loadPlatformSpeechConfig(process.env);
     if (speechConfig.enabled && platformSecret.length < 32) throw new PlatformSpeechConfigError();
   } catch (err: unknown) {
@@ -505,10 +519,11 @@ async function startPlatformServerWithCleanup(
     });
   }
 
-  const devstackRunRoutes = devstackRunConfig && clerkAuth
+  const devstackRunRoutes = devstackRunConfig && clerkAuth && isDevstackMember
     ? createDevstackRunRoutes({
         config: devstackRunConfig,
         clerkAuth,
+        isMember: isDevstackMember,
         store: createDevstackRunStore(db.kysely),
         resolve: target => resolveRegisteredRuntimeEndpoint(
           db, devstackRunConfig.instance,

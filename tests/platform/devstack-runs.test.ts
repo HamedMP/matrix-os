@@ -13,10 +13,12 @@ import { loadDevstackRunConfig } from '../../packages/platform/src/devstack-runs
 import { createDevstackRunRoutes } from '../../packages/platform/src/devstack-runs/routes.js';
 import { executeDevstackRun } from '../../packages/platform/src/devstack-runs/execute.js';
 import type { DevstackRunStore } from '../../packages/platform/src/devstack-runs/store.js';
+import { ClerkOrganizationUpstreamClient } from '../../packages/platform/src/organizations/clerk-resolver.js';
 
 const owner = 'user_devstack_owner';
 const peer = 'user_devstack_peer';
 const issuer = 'https://clerk.example.test';
+const internalOrganizationId = 'org_PrivatePreview';
 const target = {
   runtime: 'dev-runtime', worktree: 'feature-a', owner, handle: 'devstack-fixture',
   containerId: 'a'.repeat(64), cwd: 'projects/feature-a', revision: 'b'.repeat(40),
@@ -30,17 +32,15 @@ function config() {
   return loadDevstackRunConfig(JSON.stringify(input), 'stage-two')!;
 }
 
-function setup(clerk?: ClerkAuth) {
+function setup(clerk?: ClerkAuth, isMember = vi.fn<(actorId: string) => Promise<boolean>>().mockResolvedValue(true)) {
   const payload = {
     sub: owner, sid: 'sess_fixture', exp: Math.floor(Date.now() / 1000) + 600, iss: issuer,
-    devstack_operator: true,
   };
   const defaultClerk = createClerkAuth({
     verifyToken: async token => {
       if (token === 'sync-token') throw new Error('Invalid Clerk signature');
       return {
         ...payload, ...(token === 'unlisted' ? { sub: 'user_unlisted' } : {}),
-        ...(token === 'missing-permission' ? { devstack_operator: 'true' } : {}),
         ...(token === 'wrong-issuer' ? { iss: 'https://foreign.example.test' } : {}),
         ...(token === 'impersonated' ? { act: { sub: 'user_actor' } } : {}),
         ...(token === 'pending' ? { sts: 'pending' } : {}),
@@ -57,14 +57,14 @@ function setup(clerk?: ClerkAuth) {
     handle: target.handle, clerkUserId: owner, containerId: target.containerId, host: 'matrixos-devstack-fixture', port: 4000,
   });
   const execute = vi.fn().mockResolvedValue({ status: 'succeeded', exitCode: 0, logs: [], truncated: false });
-  const app = createDevstackRunRoutes({ config: config(), clerkAuth: clerk ?? defaultClerk, store, resolve, execute });
+  const app = createDevstackRunRoutes({ config: config(), clerkAuth: clerk ?? defaultClerk, isMember, store, resolve, execute });
   function dispatch(token = 'allowed', body: object = command, runKey = key) {
     return app.request('/', {
       method: 'POST', headers: { 'content-type': 'application/json', authorization: 'Bearer ' + token, 'x-devstack-run-key': runKey },
       body: JSON.stringify(body),
     });
   }
-  return { app, store, resolve, execute, dispatch };
+  return { app, store, resolve, execute, dispatch, isMember };
 }
 
 describe('recoverable DevStack run config', () => {
@@ -84,36 +84,64 @@ describe('recoverable DevStack run config', () => {
 });
 
 describe('recoverable DevStack run HTTP boundary', () => {
-  it('accepts the permission only when Clerk verifies the signature on the actual claims', async () => {
+  it('uses the verified Clerk subject to check the existing internal organization without a custom claim', async () => {
     const { publicKey, privateKey } = generateKeyPairSync('rsa', { modulusLength: 2048 });
     const jwtKey = publicKey.export({ type: 'spki', format: 'pem' }).toString();
     const clerk = createClerkAuth({ verifyToken: async token => await verifyToken(token, { jwtKey }) as ClerkTokenPayload });
-    const { app, store } = setup(clerk);
-    const signed = (permission: boolean) => new SignJWT({ sid: 'sess_fixture', devstack_operator: permission })
-      .setProtectedHeader({ alg: 'RS256', kid: 'devstack-test' }).setIssuer(issuer).setSubject(owner)
+    const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(Response.json({
+      data: [{ id: 'orgmem_fixture', organization: { id: internalOrganizationId } }], total_count: 1,
+    }));
+    const upstream = new ClerkOrganizationUpstreamClient({ secretKey: 'fixture', fetchImpl });
+    const isMember = vi.fn(async (actorId: string) => (await upstream.listOrganizationsForActor(actorId)).includes(internalOrganizationId));
+    const { app, store } = setup(clerk, isMember);
+    const signed = (subject: string) => new SignJWT({ sid: 'sess_fixture' })
+      .setProtectedHeader({ alg: 'RS256', kid: 'devstack-test' }).setIssuer(issuer).setSubject(subject)
       .setIssuedAt().setExpirationTime('1m').sign(privateKey);
     const result = (token: string) => app.request('/' + runId, {
       headers: { authorization: 'Bearer ' + token, 'x-devstack-run-key': key },
     });
-    const withoutPermission = await signed(false);
-    const [header, payload, signature] = withoutPermission.split('.');
+    const unlisted = await signed('user_unlisted');
+    const [header, payload, signature] = unlisted.split('.');
     const claims = JSON.parse(Buffer.from(payload, 'base64url').toString('utf8'));
-    claims.devstack_operator = true;
+    claims.sub = owner;
     const forged = [header, Buffer.from(JSON.stringify(claims)).toString('base64url'), signature].join('.');
     expect((await result(forged)).status).toBe(401);
-    expect((await result(withoutPermission)).status).toBe(403);
+    expect((await result(unlisted)).status).toBe(403);
+    expect(fetchImpl).not.toHaveBeenCalled();
     expect(store.read).not.toHaveBeenCalled();
-    expect((await result(await signed(true))).status).toBe(404);
+
+    expect((await result(await signed(owner))).status).toBe(404);
+    expect(fetchImpl).toHaveBeenCalledOnce();
+    expect(fetchImpl).toHaveBeenCalledWith(
+      'https://api.clerk.com/v1/users/user_devstack_owner/organization_memberships?limit=100&offset=0',
+      expect.objectContaining({ method: 'GET', redirect: 'error', signal: expect.any(AbortSignal) }),
+    );
     expect(store.read).toHaveBeenCalledTimes(1);
   });
 
-  it('checks the signed boolean permission, subject, issuer and live session before touching storage', async () => {
-    const { dispatch, store, app } = setup();
-    for (const token of ['unlisted', 'missing-permission', 'wrong-issuer', 'impersonated', 'pending', 'expired']) {
+  it('checks the signed subject, issuer, live session and recovery key before requesting membership', async () => {
+    const { dispatch, store, app, isMember } = setup();
+    for (const token of ['unlisted', 'wrong-issuer', 'impersonated', 'pending', 'expired']) {
       expect((await dispatch(token)).status).toBe(403);
     }
     expect((await dispatch('sync-token')).status).toBe(401);
+    expect((await dispatch('allowed', command, 'bad-key')).status).toBe(404);
     expect((await app.request('/' + runId, { headers: { cookie: '__session=allowed', 'x-devstack-run-key': key } })).status).toBe(401);
+    expect(isMember).not.toHaveBeenCalled();
+    expect(store.read).not.toHaveBeenCalled();
+    expect(store.admit).not.toHaveBeenCalled();
+  });
+
+  it('fails closed if the allowlisted subject loses membership or membership lookup is unavailable', async () => {
+    const { app, dispatch, isMember, store } = setup();
+    isMember.mockResolvedValueOnce(false).mockRejectedValueOnce(new Error('private upstream failure'));
+    expect((await dispatch()).status).toBe(403);
+    const failure = await app.request('/' + runId, {
+      headers: { authorization: 'Bearer allowed', 'x-devstack-run-key': key },
+    });
+    expect(failure.status).toBe(503);
+    expect(await failure.json()).toEqual({ error: 'DevStack run service unavailable' });
+    expect(isMember.mock.calls).toEqual([[owner], [owner]]);
     expect(store.read).not.toHaveBeenCalled();
     expect(store.admit).not.toHaveBeenCalled();
   });

@@ -37,8 +37,8 @@ idle past TTL.
 
 Use a prepared isolated DevStack Platform for this workflow. The operator
 provides the Platform origin and registered runtime and worktree IDs. Use a
-short-lived Clerk session bearer from an approved account with the DevStack
-permission. Supply it as `DEVSTACK_CLERK_TOKEN` in the command environment.
+short-lived Clerk session bearer from a whitelisted member of the internal
+Private Preview Clerk organization. Supply it as `DEVSTACK_CLERK_TOKEN` in the command environment.
 Keep the bearer out of command arguments, shell history, files and chat.
 
 Set `DEVSTACK_API_URL` to the exact Platform origin. HTTPS is required except

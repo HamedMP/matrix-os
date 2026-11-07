@@ -12,8 +12,8 @@ export interface VerifyResult {
   tokenExpiresAt?: number;
   issuer?: string;
   expiresAt?: number;
-  /** Signed, backend-managed permission for the isolated DevStack pilot. */
-  devstackOperator?: true;
+  /** A verified token for an impersonated or non-active Clerk session. */
+  restrictedSession?: true;
   error?: string;
 }
 
@@ -107,8 +107,8 @@ function verifiedResultFromPayload(payload: ClerkTokenPayload): VerifyResult {
     ...(typeof payload.exp === "number" && Number.isSafeInteger(payload.exp) && payload.exp > 0 ? { tokenExpiresAt: payload.exp } : {}),
     ...(typeof payload.iss === "string" ? { issuer: payload.iss } : {}),
     ...(typeof payload.exp === "number" && Number.isSafeInteger(payload.exp) ? { expiresAt: payload.exp * 1000 } : {}),
-    ...(payload.devstack_operator === true && payload.act === undefined
-      && (payload.sts === undefined || payload.sts === "active") ? { devstackOperator: true as const } : {}),
+    ...(payload.act !== undefined || (payload.sts !== undefined && payload.sts !== "active")
+      ? { restrictedSession: true as const } : {}),
     ...(typeof payload.sid === "string" && payload.sid.length > 0
       ? { sessionId: payload.sid }
       : {}),

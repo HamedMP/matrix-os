@@ -48,6 +48,7 @@ function resultPage(record: DevstackRunRecord, cursor = 0) {
 interface DevstackRunRoutesDeps {
   config: DevstackRunConfig;
   clerkAuth: ClerkAuth;
+  isMember(actorId: string): Promise<boolean>;
   store: DevstackRunStore;
   resolve(target: DevstackRunTarget): Promise<RegisteredRuntimeEndpoint | null>;
   execute(endpoint: RegisteredRuntimeEndpoint, target: DevstackRunTarget, command: string[]): Promise<DevstackRunResult>;
@@ -77,12 +78,15 @@ export function createDevstackRunRoutes(deps: DevstackRunRoutesDeps) {
     const claims = await clerkAuth.verify(bearer.slice(7));
     if (!claims.authenticated) return c.json({ error: 'Authentication required' }, 401);
     const owner = claims.userId;
-    if (!owner || !config.operators.includes(owner) || claims.issuer !== config.issuer || !claims.devstackOperator
+    if (!owner || !config.operators.includes(owner) || claims.issuer !== config.issuer || claims.restrictedSession
       || !hasVerifiedClerkBrowserSession(claims, owner) || !/^sess_[A-Za-z0-9_]{1,128}$/.test(claims.sessionId)) {
       return c.json({ error: 'DevStack operator access required' }, 403);
     }
     const key = c.req.header('x-devstack-run-key');
     if (!key || !/^[0-9a-f]{64}$/.test(key) || key.length !== 64) return unavailable(c);
+    if (!await deps.isMember(owner) || !hasVerifiedClerkBrowserSession(claims, owner)) {
+      return c.json({ error: 'DevStack operator access required' }, 403);
+    }
     c.set('owner', owner);
     c.set('keyDigest', digest(key));
     await next();

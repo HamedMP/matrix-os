@@ -34,7 +34,7 @@ const env = {
   NODE_ENV: 'test',
 };
 
-async function startFixture(override: NodeJS.ProcessEnv, inspect: StartPlatformServerOptions['createApp']): Promise<void> {
+async function startFixture(override: NodeJS.ProcessEnv, inspect: StartPlatformServerOptions['createApp'], platformSecret = 'fixture'): Promise<void> {
   const previous = process.env;
   const container = new Agent();
   const vps = new Agent();
@@ -42,7 +42,7 @@ async function startFixture(override: NodeJS.ProcessEnv, inspect: StartPlatformS
   process.env = { ...env, ...override };
   try {
     await startPlatformServer({
-      port: 0, platformSecret: 'fixture', platformJwtSecret: 'fixture', codeServerPort: 8080,
+      port: 0, platformSecret, platformJwtSecret: 'fixture', codeServerPort: 8080,
       containerProxyDispatcher: container, customerVpsProxyDispatcher: vps,
       createApp: inspect,
       checkUnsafeDefaultSecrets: () => [], checkCustomerVpsPrimaryStorageEnv: () => [],
@@ -121,6 +121,32 @@ describe('registered DevStack production startup', () => {
     })).rejects.toBe(stopped);
     expect.soft(startup.createDb).not.toHaveBeenCalled();
     expect.soft(compose).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    { label: 'missing organization', org: undefined, secretKey: 'sk_test_fixture' },
+    { label: 'invalid organization', org: 'user_fixture', secretKey: 'sk_test_fixture' },
+    { label: 'missing Clerk backend credential', org: 'org_Fixture', secretKey: undefined },
+  ])('rejects DevStack runs with $label before opening the pool', async ({ org, secretKey }) => {
+    const stopped = new Error('startup rejected');
+    vi.spyOn(process, 'exit').mockImplementation(() => { throw stopped; });
+    const poolAttempt = new Error('startup attempted to open a pool');
+    startup.createDb.mockImplementation(() => { throw poolAttempt; });
+    const compose = vi.fn();
+    await expect(startFixture({
+      MATRIX_DEVSTACK_RUN_CONFIG: JSON.stringify({
+        issuer: 'https://clerk.example.test', previewOrigin: 'https://preview.example.test', operators: ['user_fixture'],
+        targets: [{
+          runtime: 'fixture', worktree: 'feature-a', owner: 'user_fixture', handle: 'fixture',
+          containerId: 'a'.repeat(64), cwd: 'projects/feature-a', revision: 'b'.repeat(40),
+        }],
+      }),
+      MATRIX_INTERNAL_CLERK_ORG_ID: org,
+      CLERK_SECRET_KEY: secretKey,
+      CLERK_JWT_KEY: 'fixture-jwt-key',
+    }, compose, 'a'.repeat(32))).rejects.toBe(stopped);
+    expect(startup.createDb).not.toHaveBeenCalled();
+    expect(compose).not.toHaveBeenCalled();
   });
 
   it('rejects an inherited ATS connection before opening either pool', async () => {
