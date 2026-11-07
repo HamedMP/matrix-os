@@ -114,6 +114,7 @@ import {
   resolveContainerEndpoint,
 } from './container-endpoint.js';
 import { scopeExplicitVmAppSessionCookie } from './session-routing-cookie-rewrite.js';
+import { resolveRegisteredRuntimeEndpoint } from './devstack-registered-runtime.js';
 
 export function isPlatformRuntimeShellPath(path: string): boolean {
   return path === '/runtime' || path === '/onboarding/computer';
@@ -138,6 +139,7 @@ export function shouldServePlatformRuntimeShell(input: {
 interface CreateSessionRoutingMiddlewareOpts {
   db: PlatformDB;
   docker?: Dockerode;
+  registeredRuntimeInstance?: string;
   orchestrator: Orchestrator;
   clerkAuth?: ClerkAuth;
   appEnv: NodeJS.ProcessEnv;
@@ -231,6 +233,7 @@ export function createSessionRoutingMiddleware(opts: CreateSessionRoutingMiddlew
   const {
     db,
     docker,
+    registeredRuntimeInstance,
     orchestrator,
     clerkAuth,
     appEnv,
@@ -403,6 +406,9 @@ export function createSessionRoutingMiddleware(opts: CreateSessionRoutingMiddlew
     const isCodeDomain = isCodeDomainHost(host);
     if (!isAppDomain && !isCodeDomain) return next();
     const previewHostHandle = previewHandleFromHost(host);
+    if (registeredRuntimeInstance && (isCodeDomain || previewHostHandle)) {
+      return c.text('Matrix OS computer unavailable', 404);
+    }
 
     // Device-flow paths are served directly by the platform's auth-routes.ts
     // (registered above). In normal dispatch they never reach this middleware,
@@ -410,6 +416,7 @@ export function createSessionRoutingMiddleware(opts: CreateSessionRoutingMiddlew
     // a future refactor can't accidentally proxy them into a user container.
     const reqPath = c.req.path;
     if (isAppDomain && parseChatShareRoute(reqPath)) {
+      if (registeredRuntimeInstance) return c.text('Matrix OS computer unavailable', 404);
       return proxyChatShare(c, db, customerVpsProxyDispatcher, appEnv.EDGE_ROUTER_SECRET, host);
     }
     if (isAppDomain && reqPath === '/service-worker.js') {
@@ -469,6 +476,7 @@ export function createSessionRoutingMiddleware(opts: CreateSessionRoutingMiddlew
       return next();
     }
     if (isAppDomain && reqPath === '/voice/webhook/twilio') {
+      if (registeredRuntimeInstance) return c.json({ error: 'VPS unavailable' }, 404);
       const webhookUrl = new URL(c.req.url);
       const handle = webhookUrl.searchParams.get('handle') ?? '';
       if (!HANDLE_PATTERN.test(handle)) {
@@ -554,7 +562,9 @@ export function createSessionRoutingMiddleware(opts: CreateSessionRoutingMiddlew
         : cookieRuntimeSlot ?? runtimeSelection.slot
     );
 
-    const isGatewayPath = isAppDomain && isAppDomainGatewayPath(path);
+    const isGatewayPath = isAppDomain && isAppDomainGatewayPath(
+      (registeredRuntimeInstance && explicitVmRoute?.upstreamPath) || path,
+    );
     const signupBillingHandoff = isAppDomain && isSignupBillingHandoff(c.req.url);
     const allowAuthShellUnroutedIdentity = shouldProxyAuthShellForUnroutedUser({
       isAppDomain,
@@ -578,6 +588,7 @@ export function createSessionRoutingMiddleware(opts: CreateSessionRoutingMiddlew
       db,
       platformJwtSecret,
       legacyContainerRoutingEnabled,
+      registeredRuntimeOnly: Boolean(registeredRuntimeInstance),
       allowUnroutedClerkIdentity: Boolean(explicitVmRoute) || allowAuthShellUnroutedIdentity,
       requestedHandle: requestedRouteHandle,
       runtimeSlot: requestRuntimeSlot,
@@ -672,7 +683,7 @@ export function createSessionRoutingMiddleware(opts: CreateSessionRoutingMiddlew
     if (isAppDomain && path.startsWith('/vm/') && !explicitVmRoute) {
       return c.text('Invalid Matrix OS computer', 400);
     }
-    if (isAppDomain && explicitVmRoute) {
+    if (isAppDomain && explicitVmRoute && !registeredRuntimeInstance) {
       if ((!identity.userId || identity.source === 'mobile-session' || identity.source === 'static-route') && !explicitVmRouteHasCredentiallessCapability) {
         applyNoStoreHeaders(c);
         return c.text('Unauthorized', 401);
@@ -824,7 +835,7 @@ export function createSessionRoutingMiddleware(opts: CreateSessionRoutingMiddlew
       return next();
     }
 
-    if (isAppDomain && path === '/api/auth/ws-token') {
+    if (!registeredRuntimeInstance && isAppDomain && path === '/api/auth/ws-token') {
       return issueWebSocketTokenResponse(c, {
         clerkUserId: identity.userId,
         handle: identity.handle,
@@ -842,12 +853,21 @@ export function createSessionRoutingMiddleware(opts: CreateSessionRoutingMiddlew
       return proxyAuthShell(c, host, { redirectToBillingOnFailure: false });
     }
 
+    const registeredEndpoint = registeredRuntimeInstance
+      ? await resolveRegisteredRuntimeEndpoint(db, registeredRuntimeInstance, identity, explicitVmRoute?.handle, requestRuntimeSlot)
+      : null;
+    if (registeredRuntimeInstance && !registeredEndpoint) {
+      applyNoStoreHeaders(c);
+      return c.text('Matrix OS computer unavailable', 404);
+    }
+    const upstreamPath = registeredEndpoint && explicitVmRoute ? explicitVmRoute.upstreamPath : path;
+
     let runtimeSlot = identity.runtimeSlot ?? requestRuntimeSlot;
     let requestedActiveMachine: UserMachineRecord | undefined;
-    let runningMachine = identity.userId
+    let runningMachine = registeredEndpoint ? undefined : identity.userId
       ? await getAccessibleRunningUserMachineByClerkId(db, identity.userId, runtimeSlot)
       : await getRunningUserMachineByHandle(db, identity.handle);
-    if (!runningMachine && identity.userId) {
+    if (!registeredEndpoint && !runningMachine && identity.userId) {
       requestedActiveMachine = await getAccessibleActiveUserMachineByClerkId(db, identity.userId, runtimeSlot);
       if (requestedActiveMachine && isCustomerVpsProxyMachineRoutable(requestedActiveMachine)) {
         runningMachine = requestedActiveMachine;
@@ -882,7 +902,9 @@ export function createSessionRoutingMiddleware(opts: CreateSessionRoutingMiddlew
           requestedActiveMachine.runtimeSlot,
           requestedActiveMachine.provisioningClass,
         )
-        : getRuntimeEntitlementDecision(appEnv);
+        : registeredEndpoint
+          ? await getRuntimeEntitlementDecisionForUser(db, registeredEndpoint.clerkUserId, appEnv, 'primary')
+          : getRuntimeEntitlementDecision(appEnv);
     if (runningMachine) {
       const qs = buildForwardedQueryString(c.req.url, APP_ASSET_ROUTE_OMITTED_QUERY_PARAMS);
       if (!entitlement.runtimeProxyAllowed) {
@@ -1039,7 +1061,7 @@ export function createSessionRoutingMiddleware(opts: CreateSessionRoutingMiddlew
       }
     }
 
-    const activeMachine = requestedActiveMachine ?? (identity.userId
+    const activeMachine = registeredEndpoint ? undefined : requestedActiveMachine ?? (identity.userId
       ? await getAccessibleActiveUserMachineByClerkId(db, identity.userId, runtimeSlot)
       : await getActiveUserMachineByHandle(db, identity.handle));
     if (activeMachine) {
@@ -1099,11 +1121,11 @@ export function createSessionRoutingMiddleware(opts: CreateSessionRoutingMiddlew
       return c.html(getNoContainerPage(), 503);
     }
 
-    const record = await getContainer(db, identity.handle);
+    const record = registeredEndpoint ?? await getContainer(db, identity.handle);
     if (!record) return c.html(getNoContainerPage());
 
     if (!entitlement.runtimeProxyAllowed) {
-      const recovery = await maybeServeBillingRecoveryShell(c, host, identity, path);
+      const recovery = await maybeServeBillingRecoveryShell(c, host, identity, upstreamPath);
       if (recovery) return recovery;
     }
     if (
@@ -1111,14 +1133,22 @@ export function createSessionRoutingMiddleware(opts: CreateSessionRoutingMiddlew
       !shouldProxyShellForBillingGate({
         isAppDomain,
         method: c.req.method,
-        upstreamPath: path,
+        upstreamPath,
       })
     ) {
       applyNoStoreHeaders(c);
       return c.json({ error: 'Paid beta access required' }, 402);
     }
 
-    if (record.status === 'stopped') {
+    if (registeredEndpoint && upstreamPath === '/api/auth/ws-token') {
+      return issueWebSocketTokenResponse(c, {
+        clerkUserId: registeredEndpoint.clerkUserId,
+        handle: registeredEndpoint.handle,
+        runtimeSlot: 'primary',
+      });
+    }
+
+    if (!registeredEndpoint && record.status === 'stopped') {
       try {
         await orchestrator.start(record.handle);
       } catch (err: unknown) {
@@ -1127,12 +1157,15 @@ export function createSessionRoutingMiddleware(opts: CreateSessionRoutingMiddlew
       }
     }
 
-    await updateLastActive(db, record.handle);
+    if (!registeredEndpoint) await updateLastActive(db, record.handle);
 
     const qs = buildForwardedQueryString(c.req.url, APP_ASSET_ROUTE_OMITTED_QUERY_PARAMS);
-    const targetPort = isCodeDomain ? codeServerPort : (isGatewayPath || path === '/apps' || path.startsWith('/apps/')) ? 4000 : 3000;
+    const useGatewayPort = isAppDomainGatewayPath(upstreamPath) || upstreamPath === '/apps' || upstreamPath.startsWith('/apps/');
+    const targetPort = isCodeDomain ? codeServerPort : useGatewayPort
+      ? registeredEndpoint?.port ?? 4000
+      : registeredEndpoint?.shellPort ?? 3000;
     const approvalProof = await authenticatedApprovalProxyProofs({ request: c.req.raw,
-      method: c.req.method, path, handle: record.handle, identity, platformSecret, machine: undefined, clerkAuth, browserApprovalsEnabled: false });
+      method: c.req.method, path: upstreamPath, handle: record.handle, identity, platformSecret, machine: undefined, clerkAuth, browserApprovalsEnabled: false });
     if (!Array.isArray(approvalProof)) return c.json({ error: 'Approval request unavailable' }, approvalProof.status);
     const body = ['GET', 'HEAD'].includes(c.req.method) ? undefined : await c.req.blob();
     const headers = isCodeDomain
@@ -1169,7 +1202,7 @@ export function createSessionRoutingMiddleware(opts: CreateSessionRoutingMiddlew
       headers.set('accept-encoding', 'identity');
       headers.set('connection', 'close');
     }
-    if (platformSecret && isAppDomain) {
+    if (platformSecret && isAppDomain && !(registeredEndpoint && explicitVmRouteHasNativeAppStreamCapability)) {
       headers.set('authorization', `Bearer ${buildPlatformVerificationToken(record.handle, platformSecret)}`);
       const platformUserId =
         identity.source === 'static-route' ? record.clerkUserId : identity.userId;
@@ -1186,7 +1219,7 @@ export function createSessionRoutingMiddleware(opts: CreateSessionRoutingMiddlew
 
     let lastErr: unknown = null;
     for (let attempt = 0; attempt < 2; attempt += 1) {
-      const endpoint = await resolveContainerEndpoint(docker, db, record.handle, record.containerId);
+      const endpoint = registeredEndpoint ?? await resolveContainerEndpoint(docker, db, record.handle, record.containerId);
       if (!endpoint) {
         console.warn(
           `[platform] session-domain proxy unresolved handle=${record.handle} attempt=${attempt + 1} path=${path} targetPort=${targetPort}`,
@@ -1194,7 +1227,7 @@ export function createSessionRoutingMiddleware(opts: CreateSessionRoutingMiddlew
         return c.json({ error: 'Container unreachable' }, 502);
       }
 
-      const targetUrl = `http://${endpoint.host}:${targetPort}${path}${qs}`;
+      const targetUrl = `http://${endpoint.host}:${targetPort}${upstreamPath}${qs}`;
       try {
         const upstream = await fetchRuntimeProxy(targetUrl, {
           signal: c.req.raw.signal,
@@ -1204,15 +1237,16 @@ export function createSessionRoutingMiddleware(opts: CreateSessionRoutingMiddlew
           body,
           dispatcher: containerProxyDispatcher,
         } as RequestInit & { dispatcher: Agent }, proxyTimeoutMs,
-        shouldReleaseRuntimeProxyTimeout(c.req.method, path));
+        shouldReleaseRuntimeProxyTimeout(c.req.method, upstreamPath));
 
         const responseHeaders = sanitizeProxyResponseHeaders(upstream.headers);
-        applySandboxedAppAssetCorsHeaders(responseHeaders, path, c.req.header('origin'));
+        if (registeredEndpoint && explicitVmRoute) scopeExplicitVmAppSessionCookie(responseHeaders, explicitVmRoute);
+        applySandboxedAppAssetCorsHeaders(responseHeaders, upstreamPath, c.req.header('origin'));
         if ((identity.source === 'static-route' || isCookieRoutedShellAsset) && isAppDomainStaticAssetPath(path)) {
           applyCookieRoutedShellAssetCacheHeaders(responseHeaders);
         }
         applyAppDomainRuntimeAssetCacheHeaders(
-          responseHeaders, path, c.req.url, upstream.headers.get('cache-control') ?? undefined,
+          responseHeaders, upstreamPath, c.req.url, upstream.headers.get('cache-control') ?? undefined,
         );
         if (identity.source === 'mobile-session') {
           const routeCookie = buildAppRouteCookie(record.handle, path);
@@ -1242,7 +1276,7 @@ export function createSessionRoutingMiddleware(opts: CreateSessionRoutingMiddlew
           return await buildAppDomainProxyResponse({
             upstream,
             responseHeaders,
-            path,
+            path: upstreamPath,
             handle: record.handle,
             runtimeSlot: 'primary',
             platformSecret,
