@@ -22,6 +22,7 @@ export const REMAINING_POSTGRES_FILES = [
   'tests/gateway/sites-bootstrap-postgres.test.ts',
   'tests/gateway/slack-pi-integration.test.ts',
   'tests/platform/devstack-bootstrap-postgres.test.ts',
+  'tests/platform/devstack-runs-postgres.test.ts',
   'tests/platform/sites-postgres.test.ts',
   'tests/platform/sites-publish-admission-postgres.test.ts',
   'tests/platform/sites-recovery-postgres.test.ts',
