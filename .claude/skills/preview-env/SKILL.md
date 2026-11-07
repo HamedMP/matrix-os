@@ -1,6 +1,6 @@
 ---
 name: preview-env
-description: Spin up, observe, and tear down Matrix OS preview environments — per-PR preview VPSes, platform Cloud Run preview revisions, HMR staging slots — and query their centralized logs. Use when a change needs to be seen running (shell/gateway/onboarding/CLI/macOS features), when asked to deploy a branch for testing, or when you need logs from any preview, staging, or fleet VPS.
+description: Spin up, observe, and tear down Matrix OS preview environments — per-PR preview VPSes, platform Cloud Run preview revisions, HMR staging slots — recover isolated DevStack runs and query centralized logs. Use when a change needs to be seen running (shell/gateway/onboarding/CLI/macOS features), when asked to deploy a branch for testing, or when you need logs from any preview, staging, or fleet VPS.
 ---
 
 # Preview Environments
@@ -32,6 +32,43 @@ Run from the ops VPS, repo root or any checkout:
 
 4 slots max. Always `down` your slot when finished; `status --reap` frees slots
 idle past TTL.
+
+## Recoverable DevStack runs
+
+Use a prepared isolated DevStack Platform for this workflow. The operator
+provides the Platform origin and registered runtime and worktree IDs. Use a
+short-lived Clerk session bearer from an approved account with the DevStack
+permission. Supply it as `DEVSTACK_CLERK_TOKEN` in the command environment.
+Keep the bearer out of command arguments, shell history, files and chat.
+
+Set `DEVSTACK_API_URL` to the exact Platform origin. HTTPS is required except
+for isolated Stage 2 access over `http://127.0.0.1`. Use a canonical absolute
+`DEVSTACK_STATE_DIR` dedicated to the originating agent with owner-only
+permissions. Keep the same directory across connections. The CLI creates an
+owner-only recovery record in its `runs/` directory before sending the request.
+The record holds the original command and recovery key. Pass only nonsecret
+command arguments and share only the run ID.
+
+```bash
+./scripts/staging-slot.sh local dispatch <runtime> <worktree> test -- bun run test
+./scripts/staging-slot.sh local result <runId>
+./scripts/staging-slot.sh local result <runId> <nextCursor>
+```
+
+Use `exec` for a command and `test` for a test invocation. Pass both target
+IDs on every dispatch. Check the returned revision and keep the `runId`.
+After disconnecting, use the same state directory and a fresh Clerk session
+bearer for the original account. If the submit response was lost, query the
+saved run ID first. Within five minutes of dispatch, `local retry <runId>`
+resends the exact saved request with its original ID and key. If the CLI
+process exits before printing the ID, find it in the private record filename.
+
+Poll the result while the run is active. The finite runner publishes retained
+logs at completion. Read successive pages with `nextCursor` while `hasMore` is
+true. Report the final status, `exitCode`, test result, log truncation if
+present and the preview link. Open the link with the authorized runtime
+owner's session. Archive finished recovery records privately when the local
+retention limit is reached.
 
 ## Preview VPS (verify loop)
 
