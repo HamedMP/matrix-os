@@ -14,43 +14,49 @@ const previousBytes = gunzipSync(readFileSync(new URL("../fixtures/codex-0165/ap
 const schema = JSON.parse(schemaBytes.toString("utf8"));
 const previous = JSON.parse(previousBytes.toString("utf8"));
 const sha256 = (bytes: Buffer) => createHash("sha256").update(bytes).digest("hex");
+const historicalExecContract = { ...execContract, latestVerifiedVersion: "0.166.0" };
+const historicalAppServerContract = {
+  ...appServerContract,
+  latestVerifiedVersion: "0.166.0",
+  requiredServerProtocolSchemaDigests: {
+    "item/commandExecution/requestApproval": "ef803ac64161397389bc35428803c3ec8dcc94757c93d758a9fdf0ae6b5a944f",
+    "item/fileChange/requestApproval": "ac5be166d6a7668792b810a97be8bdfb02b2107320d93d0c4d783a11d32d8cf9",
+    "item/tool/requestUserInput": "f998a4ecef0e0d5dfc1bf5a093ee77663ec0b9f4dc71c41e02b8c13136f439c2",
+    "item/permissions/requestApproval": "a264aef4e3b05a7725eedc504148c96d2200c35a326463d5058b4c134e3890cf",
+    "mcpServer/elicitation/request": "d164b1519690cfb0b5f353c8e6eb37087f720e7dcd81df4c145bc964f9416d05",
+    "item/started": "bedd6a6e59c26dba37deec380efa34ef88a4fa65902440f7b5c9977f33302529",
+    "item/completed": "8ec2ff52d10fe877ce3353550dd0cbd9f4ca7358f8f47a572807994ae08a16c7",
+    "item/agentMessage/delta": "427d58ea4e1b0fd7afce1035cefd40df96d7dc48b82cbe293a2f69ed4e803bf9",
+    "item/commandExecution/outputDelta": "aa94a86bcbf20ceca1672b7c476c3472ef5e507b831ceb26561c2785a97a5dc4",
+    "thread/tokenUsage/updated": "5dbf1e2a382453af89a44bf72660aade96c8a549068d5bb55ca56951a30505d7",
+    "turn/completed": "e8d4a5e2287d87bfcea1fc04428f44545ce243ef56381cbf6c8102f423f63dde",
+  },
+};
 
 describe("exact published Codex 0.166.0 qualification", () => {
   it.each(["linux-x64", "darwin-arm64"])("verifies official bytes and consumed payloads on %s", runtimeTarget => {
     expect(sha256(execBytes)).toBe("dafa872d7e86a099e56e28a329dcb9c03db90ed768c3b88cca8c91d46dc1d0e5");
     expect(sha256(schemaBytes)).toBe("8aabf260bb66e9ca9ae5d20253f443971834644fe4659c85f8b1cc9e1d22dd5c");
-    expect(() => verifyCodexProviderContracts({ version: "0.166.0", execContract, appServerContract,
+    expect(() => verifyCodexProviderContracts({ version: "0.166.0", execContract: historicalExecContract, appServerContract: historicalAppServerContract,
       execSchemaBytes: execBytes, appServerSchemaBytes: schemaBytes, runtimeTarget })).not.toThrow();
     expect(Object.fromEntries([
       ...appServerContract.requiredServerMethods.map(method => [method,
         codexProtocolMethodDigest(schema, "ServerRequest", method)]),
       ...appServerContract.requiredServerNotifications.map(method => [method,
         codexProtocolMethodDigest(schema, "ServerNotification", method)]),
-    ])).toEqual({
-      "item/commandExecution/requestApproval": "ef803ac64161397389bc35428803c3ec8dcc94757c93d758a9fdf0ae6b5a944f",
-      "item/fileChange/requestApproval": "ac5be166d6a7668792b810a97be8bdfb02b2107320d93d0c4d783a11d32d8cf9",
-      "item/tool/requestUserInput": "f998a4ecef0e0d5dfc1bf5a093ee77663ec0b9f4dc71c41e02b8c13136f439c2",
-      "item/permissions/requestApproval": "a264aef4e3b05a7725eedc504148c96d2200c35a326463d5058b4c134e3890cf",
-      "mcpServer/elicitation/request": "d164b1519690cfb0b5f353c8e6eb37087f720e7dcd81df4c145bc964f9416d05",
-      "item/started": "bedd6a6e59c26dba37deec380efa34ef88a4fa65902440f7b5c9977f33302529",
-      "item/completed": "8ec2ff52d10fe877ce3353550dd0cbd9f4ca7358f8f47a572807994ae08a16c7",
-      "item/agentMessage/delta": "427d58ea4e1b0fd7afce1035cefd40df96d7dc48b82cbe293a2f69ed4e803bf9",
-      "item/commandExecution/outputDelta": "aa94a86bcbf20ceca1672b7c476c3472ef5e507b831ceb26561c2785a97a5dc4",
-      "thread/tokenUsage/updated": "5dbf1e2a382453af89a44bf72660aade96c8a549068d5bb55ca56951a30505d7",
-      "turn/completed": "e8d4a5e2287d87bfcea1fc04428f44545ce243ef56381cbf6c8102f423f63dde",
-    });
+    ])).toEqual(historicalAppServerContract.requiredServerProtocolSchemaDigests);
   });
 
   it("keeps unknown releases and older gaps fail closed", () => {
     expect(codexContractStatus("codex-cli 0.166.0", execContract)).toEqual({ status: "verified", version: "0.166.0" });
-    expect(codexContractStatus("codex-cli 0.166.1", execContract)).toEqual({ status: "unverified_newer", version: "0.166.1" });
+    expect(codexContractStatus("codex-cli 0.166.1", historicalExecContract)).toEqual({ status: "unverified_newer", version: "0.166.1" });
     expect(codexContractStatus("codex-cli 0.165.1", execContract)).toEqual({ status: "unverified_older", version: "0.165.1" });
-    expect(() => verifyCodexProviderContracts({ version: "0.166.1", execContract, appServerContract,
+    expect(() => verifyCodexProviderContracts({ version: "0.166.1", execContract: historicalExecContract, appServerContract: historicalAppServerContract,
       execSchemaBytes: execBytes, appServerSchemaBytes: schemaBytes, runtimeTarget: "linux-x64" })).toThrow("Codex 0.166.1 is not verified");
   });
 
   it("rejects a changed published schema after version qualification", () => {
-    expect(() => verifyCodexProviderContracts({ version: "0.166.0", execContract, appServerContract,
+    expect(() => verifyCodexProviderContracts({ version: "0.166.0", execContract: historicalExecContract, appServerContract: historicalAppServerContract,
       execSchemaBytes: execBytes, appServerSchemaBytes: Buffer.concat([schemaBytes, Buffer.from("\n")]),
       runtimeTarget: "darwin-arm64" })).toThrow("Codex app-server schema digest changed");
   });

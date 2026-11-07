@@ -1,6 +1,6 @@
 {
   "packageName": "@openai/codex",
-  "latestVerifiedVersion": "0.166.0",
+  "latestVerifiedVersion": "0.167.0",
   "experimental": true,
   "verifiedVersions": {
     "0.144.3": {
@@ -173,6 +173,12 @@
         "darwin-arm64": "8aabf260bb66e9ca9ae5d20253f443971834644fe4659c85f8b1cc9e1d22dd5c",
         "linux-x64": "8aabf260bb66e9ca9ae5d20253f443971834644fe4659c85f8b1cc9e1d22dd5c"
       }
+    },
+    "0.167.0": {
+      "schemaSha256ByTarget": {
+        "darwin-arm64": "486c7c8daa5dc7f3ab2a1fb56de5316804caf7a4210fda1dc28d3f0f4e90cfe1",
+        "linux-x64": "486c7c8daa5dc7f3ab2a1fb56de5316804caf7a4210fda1dc28d3f0f4e90cfe1"
+      }
     }
   },
   "requiredServerMethods": [
@@ -193,19 +199,19 @@
   "requiredServerProtocolSchemaDigests": {
     "item/commandExecution/requestApproval": {
       "schemaSha256ByTarget": {
-        "darwin-arm64": "ef803ac64161397389bc35428803c3ec8dcc94757c93d758a9fdf0ae6b5a944f",
-        "linux-x64": "ef803ac64161397389bc35428803c3ec8dcc94757c93d758a9fdf0ae6b5a944f"
+        "darwin-arm64": "4305e3c4d4828ca41a134cae982cf47f59d70e56390e1f07d33691f5d701c890",
+        "linux-x64": "4305e3c4d4828ca41a134cae982cf47f59d70e56390e1f07d33691f5d701c890"
       }
     },
     "item/fileChange/requestApproval": "ac5be166d6a7668792b810a97be8bdfb02b2107320d93d0c4d783a11d32d8cf9",
     "item/tool/requestUserInput": "f998a4ecef0e0d5dfc1bf5a093ee77663ec0b9f4dc71c41e02b8c13136f439c2",
     "item/permissions/requestApproval": "a264aef4e3b05a7725eedc504148c96d2200c35a326463d5058b4c134e3890cf",
     "mcpServer/elicitation/request": "d164b1519690cfb0b5f353c8e6eb37087f720e7dcd81df4c145bc964f9416d05",
-    "item/started": "bedd6a6e59c26dba37deec380efa34ef88a4fa65902440f7b5c9977f33302529",
-    "item/completed": "8ec2ff52d10fe877ce3353550dd0cbd9f4ca7358f8f47a572807994ae08a16c7",
+    "item/started": "91a60058ca9e9b9dee61f91aa674d5577f48ab94ecd80833b7500573ed19d644",
+    "item/completed": "091914fa7fb2f8aa285ce5c2452b3abbd7177c6d7193d56d7bb3e8c0f1dcddff",
     "item/agentMessage/delta": "427d58ea4e1b0fd7afce1035cefd40df96d7dc48b82cbe293a2f69ed4e803bf9",
     "item/commandExecution/outputDelta": "aa94a86bcbf20ceca1672b7c476c3472ef5e507b831ceb26561c2785a97a5dc4",
     "thread/tokenUsage/updated": "5dbf1e2a382453af89a44bf72660aade96c8a549068d5bb55ca56951a30505d7",
-    "turn/completed": "e8d4a5e2287d87bfcea1fc04428f44545ce243ef56381cbf6c8102f423f63dde"
+    "turn/completed": "a422130287e89c148ef74c9c38773df548c11153e68cfd57409705154ca16940"
   }
 }
