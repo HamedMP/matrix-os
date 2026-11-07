@@ -238,6 +238,7 @@ type CreatePlatformApp = (deps: {
   db: PlatformDB;
   atsDb?: AtsDB;
   docker?: Dockerode;
+  registeredRuntimeInstance?: string;
   orchestrator: Orchestrator;
   clerkAuth?: ClerkAuth;
   matrixProvisioner?: MatrixProvisioner;
@@ -358,7 +359,12 @@ async function startPlatformServerWithCleanup(
     process.exit(1);
   }
 
+  const { registeredRuntimeInstance } = runtimeConfig;
   const atsDatabaseUrl = resolveAtsDatabaseUrl(process.env);
+  if (registeredRuntimeInstance && atsDatabaseUrl) {
+    console.error('[platform] Registered DevStack routing requires the ATS database to be disabled.');
+    process.exit(1);
+  }
   const db = createPlatformDb(runtimeConfig.platformDatabaseUrl);
   let primaryDbClosing: Promise<void> | undefined;
   const closePrimaryDb = () => primaryDbClosing ??= db.destroy();
@@ -464,7 +470,9 @@ async function startPlatformServerWithCleanup(
       db,
       image: process.env.PLATFORM_IMAGE ?? 'customer-vps',
     });
-    console.log('[platform] Cloud Run mode enabled; legacy Docker container orchestration is disabled');
+    console.log(registeredRuntimeInstance
+      ? '[platform] Registered DevStack routing enabled; legacy Docker container orchestration is disabled'
+      : '[platform] Cloud Run mode enabled; legacy Docker container orchestration is disabled');
   }
 
   let clerkAuth: ClerkAuth | undefined;
@@ -486,7 +494,7 @@ async function startPlatformServerWithCleanup(
     });
   }
 
-  const collaboration = await bootstrapPlatformCollaboration({
+  const collaboration = registeredRuntimeInstance ? undefined : await bootstrapPlatformCollaboration({
     env: process.env,
     db,
     platformSecret,
@@ -631,13 +639,15 @@ async function startPlatformServerWithCleanup(
 
   // Authorizations are durable across Cloud Run instances; recurring cleanup
   // keeps the control-plane table bounded even after a Preview disappears.
-  const previewDriveStore = createPreviewDriveStore(db);
-  previewDriveSweepInterval = setInterval(() => {
-    void previewDriveStore.sweep().catch(error => {
-      console.warn('[preview-drive] Grant cleanup failed', error instanceof Error ? error.name : typeof error);
-    });
-  }, 5 * 60_000);
-  previewDriveSweepInterval.unref();
+  if (!registeredRuntimeInstance) {
+    const previewDriveStore = createPreviewDriveStore(db);
+    previewDriveSweepInterval = setInterval(() => {
+      void previewDriveStore.sweep().catch(error => {
+        console.warn('[preview-drive] Grant cleanup failed', error instanceof Error ? error.name : typeof error);
+      });
+    }, 5 * 60_000);
+    previewDriveSweepInterval.unref();
+  }
 
   if (process.env.CUSTOM_MCP_ENABLED === 'true') {
     const oauthClientId = process.env.MCP_OAUTH_CLIENT_ID;
@@ -768,9 +778,11 @@ async function startPlatformServerWithCleanup(
     ]).catch((error: unknown) => {
       console.error('[custom-mcp] pending sweep failed:', error instanceof Error ? error.message : String(error));
     });
-    void sweepPending();
-    customMcpSweepInterval = setInterval(sweepPending, 60 * 60 * 1_000);
-    customMcpSweepInterval.unref();
+    if (!registeredRuntimeInstance) {
+      void sweepPending();
+      customMcpSweepInterval = setInterval(sweepPending, 60 * 60 * 1_000);
+      customMcpSweepInterval.unref();
+    }
   }
 
   let internalSyncRoutes: Hono | undefined;
@@ -1101,6 +1113,7 @@ async function startPlatformServerWithCleanup(
     db,
     atsDb,
     docker,
+    registeredRuntimeInstance,
     orchestrator,
     clerkAuth,
     matrixProvisioner,
@@ -1219,6 +1232,7 @@ async function startPlatformServerWithCleanup(
     app,
     db,
     docker,
+    registeredRuntimeInstance,
     clerkAuth,
     env: appEnv,
     platformSecret,

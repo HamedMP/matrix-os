@@ -1,3 +1,4 @@
+import { Client } from 'pg';
 import { describe, expect, it } from 'vitest';
 import {
   PlatformStartupConfigError,
@@ -69,5 +70,73 @@ describe('platform/runtime-mode', () => {
       PLATFORM_RUNTIME_MODE: 'kubernetes',
       PLATFORM_DATABASE_URL: 'postgres://postgres:postgres@db:5432/matrixos_platform',
     })).toThrow(new PlatformStartupConfigError('PLATFORM_RUNTIME_MODE must be one of: cloud_run, compose, local'));
+  });
+});
+
+const registeredRuntimeEnv = {
+  MATRIX_DEVSTACK_REGISTERED_RUNTIMES_ONLY: 'true',
+  MATRIX_DEVSTACK_INSTANCE: 'demo-a',
+  MATRIX_LEGACY_CONTAINER_ROUTING_ENABLED: 'true',
+  PLATFORM_RUNTIME_MODE: 'local',
+  PLATFORM_BACKGROUND_WORKERS_ENABLED: 'false',
+  PLATFORM_DATABASE_URL: 'postgres://fixture:fixture@127.0.0.1/matrixos_devstack_demo_a',
+};
+
+describe('registered DevStack runtime startup admission', () => {
+  it.each([
+    [registeredRuntimeEnv.PLATFORM_DATABASE_URL, '127.0.0.1'],
+    ['postgresql://fixture:fixture@[::1]/matrixos_devstack_demo_a', '::1'],
+    [`${registeredRuntimeEnv.PLATFORM_DATABASE_URL}?host=%2Frun%2Fmatrix-devstack%2Fdemo-a%2Fpg-proxy`, '/run/matrix-devstack/demo-a/pg-proxy'],
+  ])('admits an instance-owned database without Docker or a VPS provisioner', (databaseUrl, host) => {
+    const config = loadPlatformRuntimeConfig({ ...registeredRuntimeEnv, PLATFORM_DATABASE_URL: databaseUrl });
+    expect(config).toMatchObject({
+      mode: 'local', customerVpsEnabled: false,
+      legacyContainerOrchestrationEnabled: false, registeredRuntimeInstance: 'demo-a',
+    });
+    // Construct the real driver without connecting so the test observes its target parsing.
+    const client = new Client({ connectionString: config.platformDatabaseUrl });
+    expect({ host: client.host, database: client.database }).toEqual({ host, database: 'matrixos_devstack_demo_a' });
+  });
+
+  it.each([
+    { MATRIX_DEVSTACK_REGISTERED_RUNTIMES_ONLY: '' },
+    { MATRIX_DEVSTACK_REGISTERED_RUNTIMES_ONLY: 'True' },
+    { MATRIX_DEVSTACK_INSTANCE: '../demo-a' },
+    { PLATFORM_RUNTIME_MODE: 'compose' },
+    { PLATFORM_RUNTIME_MODE: 'cloud_run' },
+    { PLATFORM_BACKGROUND_WORKERS_ENABLED: undefined },
+    { PLATFORM_BACKGROUND_WORKERS_ENABLED: 'true' },
+    { MATRIX_LEGACY_CONTAINER_ROUTING_ENABLED: 'false' },
+    { PLATFORM_DATABASE_URL: undefined, POSTGRES_URL: 'postgres://fixture:secret-marker@127.0.0.1' },
+    { CUSTOMER_VPS_ENABLED: 'true' },
+    { ...candidateRuntimeEnvironment() },
+    { MATRIX_PREVIEW_PAIR_ENABLED: 'true' },
+    { MATRIX_PREVIEW_PAIR_MAINTENANCE_ENABLED: 'true' },
+    { PLATFORM_DATABASE_URL: 'postgres://fixture:secret-marker@remote.test/matrixos_devstack_demo_a' },
+    { PLATFORM_DATABASE_URL: 'postgres://fixture:secret-marker@127.0.0.1/matrixos_devstack_demo_b' },
+    { PLATFORM_DATABASE_URL: 'postgres://fixture:secret-marker value@127.0.0.1/matrixos_devstack_demo_a?%68%6F%73%74=%2Frun%2Fmatrix-devstack%2Fdemo-a%2Fpg-proxy' },
+    { PLATFORM_DATABASE_URL: 'postgres://fixture:secret-marker%zz@127.0.0.1/matrixos_devstack_demo_a?host=%2Frun%2Fmatrix-devstack%2Fdemo-a%2Fpg-proxy' },
+    ...[
+      'host=/run/matrix-devstack/demo-b/pg-proxy',
+      'host=/run/matrix-devstack/demo-a/other/../pg-proxy',
+      'host=/run/matrix-devstack/demo-a/pg-proxy&host=/run/matrix-devstack/demo-a/pg-proxy',
+      'host=/run/matrix-devstack/demo-a/pg-proxy&sslmode=disable',
+      'options=-c%20search_path=other',
+    ].map(query => ({ PLATFORM_DATABASE_URL: `${registeredRuntimeEnv.PLATFORM_DATABASE_URL}?${query}` })),
+  ])('rejects incompatible settings or out-of-instance connection options (%#)', override => {
+    expect(() => loadPlatformRuntimeConfig({ ...registeredRuntimeEnv, ...override })).toThrow(/DevStack|Preview pairs/);
+    try {
+      loadPlatformRuntimeConfig({ ...registeredRuntimeEnv, ...override });
+    } catch (error: unknown) {
+      expect(String(error)).not.toContain('secret-marker');
+    }
+  });
+
+  it('keeps ordinary local orchestration with explicit false', () => {
+    expect(loadPlatformRuntimeConfig({
+      ...registeredRuntimeEnv,
+      MATRIX_DEVSTACK_REGISTERED_RUNTIMES_ONLY: 'false',
+      PLATFORM_DATABASE_URL: 'postgres://fixture:fixture@db/shared',
+    }).legacyContainerOrchestrationEnabled).toBe(true);
   });
 });

@@ -44,6 +44,7 @@ import {
   getTrustedSessionRoutedWebSocketHost,
 } from './session-routing-websocket.js';
 import { resolveContainerEndpoint } from './container-endpoint.js';
+import { resolveRegisteredRuntimeEndpoint, type RegisteredRuntimeEndpoint } from './devstack-registered-runtime.js';
 import { describeError } from './platform-route-utils.js';
 import { isRejectingWebSocketUpgrade, rejectWebSocketUpgrade, type WebSocketUpgradeRejectionStatus } from './websocket-upgrade-rejection.js';
 import { shouldVerifyCustomerVpsTls } from './customer-vps-tls.js';
@@ -65,6 +66,7 @@ export interface RegisterPlatformWebSocketUpgradeHandlerOpts {
   app: PlatformWebSocketTelemetry;
   db: PlatformDB;
   docker?: Dockerode;
+  registeredRuntimeInstance?: string;
   clerkAuth?: ClerkAuth;
   env: PlatformWebSocketEnv;
   platformSecret: string;
@@ -94,6 +96,7 @@ export function registerPlatformWebSocketUpgradeHandler(
     app,
     db,
     docker,
+    registeredRuntimeInstance,
     clerkAuth,
     env,
     platformSecret,
@@ -115,7 +118,7 @@ export function registerPlatformWebSocketUpgradeHandler(
       else rejectWebSocketUpgrade(socket, status);
     };
     // S05: control-stream upgrades authenticate the enrolled runtime themselves.
-    if (collaborationDirect) {
+    if (collaborationDirect && !registeredRuntimeInstance) {
       try {
         if (await collaborationDirect.handleUpgrade(req, socket as Socket, head)) return;
       } catch (err: unknown) {
@@ -159,9 +162,13 @@ export function registerPlatformWebSocketUpgradeHandler(
     const isCodeDomain = isCodeDomainHost(host);
     const isAppDomain = isAppDomainHost(host);
     const previewHostHandle = previewHandleFromHost(host);
+    if (registeredRuntimeInstance && (isCodeDomain || previewHostHandle)) {
+      refuse(404);
+      return;
+    }
     const isCollaborationCandidate = isCollaborationWebSocketCandidate(path);
     // S05: direct sockets are relayed as bytes; the home verifies the ticket in the first frame.
-    const isDirectSocket = isAppDomain && Boolean(collaborationDirect) && Boolean(parseRelaySocketPath(path));
+    const isDirectSocket = !registeredRuntimeInstance && isAppDomain && Boolean(collaborationDirect) && Boolean(parseRelaySocketPath(path));
     if (isCollaborationCandidate && !isDirectSocket) {
       refuse(404);
       return;
@@ -196,6 +203,7 @@ export function registerPlatformWebSocketUpgradeHandler(
         db,
         platformJwtSecret,
         legacyContainerRoutingEnabled,
+        registeredRuntimeOnly: Boolean(registeredRuntimeInstance),
         allowUnroutedClerkIdentity: Boolean(explicitVmRoute),
         requestedHandle: explicitVmRoute?.handle ?? previewHostHandle ?? undefined,
         runtimeSlot: requestRuntimeSlot,
@@ -241,6 +249,26 @@ export function registerPlatformWebSocketUpgradeHandler(
       return;
     }
 
+    let registeredEndpoint: RegisteredRuntimeEndpoint | null = null;
+    let registeredEntitlement: EntitlementAccessDecision | undefined;
+    if (registeredRuntimeInstance) {
+      try {
+        registeredEndpoint = await resolveRegisteredRuntimeEndpoint(
+          db, registeredRuntimeInstance, identity, explicitVmRoute?.handle, requestRuntimeSlot,
+        );
+        if (!registeredEndpoint) {
+          refuse(404);
+          return;
+        }
+        registeredEntitlement = await getRuntimeEntitlementDecisionForUser(
+          db, registeredEndpoint.clerkUserId, env, 'primary',
+        );
+      } catch (err: unknown) {
+        console.warn('[platform] registered WebSocket lookup failed:', describeError(err));
+        refuse(503);
+        return;
+      }
+    }
     let directUpgrade: Awaited<ReturnType<NonNullable<typeof collaborationDirect>["relay"]["prepareSocket"]>> | undefined;
     let runtimeSlot = identity.runtimeSlot ?? requestRuntimeSlot;
     let requestedActiveMachine: UserMachineRecord | undefined;
@@ -275,7 +303,7 @@ export function registerPlatformWebSocketUpgradeHandler(
       runningMachine = authorityMachine;
       runtimeSlot = authorityMachine.runtimeSlot;
       webSocketProxyPath = directUpgrade.upstreamPath;
-    } else if (explicitVmRoute) {
+    } else if (!registeredEndpoint && explicitVmRoute) {
       const explicitMachine = await getRunningUserMachineByHandle(
         db,
         explicitVmRoute.handle,
@@ -287,12 +315,12 @@ export function registerPlatformWebSocketUpgradeHandler(
         return;
       }
       runningMachine = explicitMachine;
-    } else {
+    } else if (!registeredEndpoint) {
       runningMachine = identity.userId
         ? await getAccessibleRunningUserMachineByClerkId(db, identity.userId, runtimeSlot)
         : await getRunningUserMachineByHandle(db, identity.handle);
     }
-    if (!runningMachine && identity.userId) {
+    if (!registeredEndpoint && !runningMachine && identity.userId) {
       requestedActiveMachine = await getAccessibleActiveUserMachineByClerkId(db, identity.userId, runtimeSlot);
       if (!requestedActiveMachine) {
         const handleMachine = await getRunningUserMachineByHandle(db, identity.handle);
@@ -313,11 +341,11 @@ export function registerPlatformWebSocketUpgradeHandler(
       refuse(404);
       return;
     }
-    const record = legacyContainerRoutingEnabled
+    const record = registeredEndpoint ?? (legacyContainerRoutingEnabled
       ? await getContainer(db, identity.handle)
-      : undefined;
+      : undefined);
     if (!runningMachine && !record) { refuse(404); return; }
-    const entitlement = runningMachine
+    const entitlement = registeredEntitlement ?? (runningMachine
       ? await getRuntimeEntitlementDecisionForUser(
         db,
         runningMachine.clerkUserId,
@@ -333,7 +361,7 @@ export function registerPlatformWebSocketUpgradeHandler(
           requestedActiveMachine.runtimeSlot,
           requestedActiveMachine.provisioningClass,
         )
-        : getRuntimeEntitlementDecision(env);
+        : getRuntimeEntitlementDecision(env));
     let activeUpstream: Socket | null = null;
     // A relayed socket is a pair. `socket.destroy()` emits `close`, not `error`, so relay
     // eviction and the shutdown drain reached only the client half; both events now tear
@@ -463,7 +491,7 @@ export function registerPlatformWebSocketUpgradeHandler(
       return;
     }
     const connectUpstream = async (attempt: number): Promise<void> => {
-      const endpoint = await resolveContainerEndpoint(docker, db, record.handle, record.containerId);
+      const endpoint = registeredEndpoint ?? await resolveContainerEndpoint(docker, db, record.handle, record.containerId);
       if (!endpoint) {
         console.warn(
           `[platform] websocket upstream unresolved handle=${record.handle} attempt=${attempt + 1} pathClass=${pathClass}`,
@@ -473,7 +501,7 @@ export function registerPlatformWebSocketUpgradeHandler(
       }
 
       let connected = false;
-      const targetPort = isCodeDomain ? codeServerPort : 4000;
+      const targetPort = isCodeDomain ? codeServerPort : registeredEndpoint?.port ?? 4000;
       const upstream = createConnection({ host: endpoint.host, port: targetPort }, () => {
         connected = true;
         if (!adoptUpstream(upstream)) return;
@@ -481,7 +509,8 @@ export function registerPlatformWebSocketUpgradeHandler(
         writeUpgradeRequest(
           upstream,
           upstreamHostHeader,
-          buildUpgradeHeaders(record.handle, !isCodeDomain),
+          buildUpgradeHeaders(record.handle, !isCodeDomain
+            && !(registeredEndpoint && explicitVmRoute && isNativeAppStreamPath(explicitVmRoute.upstreamPath))),
         );
       });
 

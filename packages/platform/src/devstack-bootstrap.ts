@@ -5,6 +5,12 @@ import {
 } from './db.js';
 import { z } from 'zod/v4';
 import { HANDLE_PATTERN } from './platform-route-utils.js';
+import {
+  DevstackBootstrapError, DevstackClerkUserIdSchema, DevstackContainerIdSchema,
+  DevstackInstanceSchema, DevstackPortSchema, devstackOwnerMarker,
+} from './devstack-identity.js';
+
+export { assertLocalDevstackDatabase, DevstackBootstrapError } from './devstack-identity.js';
 
 export interface DevstackBootstrapInput {
   instance: string;
@@ -17,47 +23,21 @@ export interface DevstackBootstrapInput {
   shellPort: number;
 }
 
-export class DevstackBootstrapError extends Error {
-  constructor(message: string) { super(message); this.name = 'DevstackBootstrapError'; }
-}
-
-const InstanceSchema = z.string().regex(/^[a-z0-9](?:[a-z0-9-]{0,30}[a-z0-9])?$/);
 const InputSchema = z.strictObject({
-  instance: InstanceSchema,
-  clerkUserId: z.string().regex(/^user_[A-Za-z0-9_]{1,128}$/),
+  instance: DevstackInstanceSchema,
+  clerkUserId: DevstackClerkUserIdSchema,
   handle: z.string().regex(HANDLE_PATTERN),
   email: z.email().max(320),
   displayName: z.string().trim().min(1).max(128).optional(),
-  containerId: z.string().regex(/^[0-9a-f]{64}$/),
-  gatewayPort: z.number().int().min(1).max(65535),
-  shellPort: z.number().int().min(1).max(65535),
+  containerId: DevstackContainerIdSchema,
+  gatewayPort: DevstackPortSchema,
+  shellPort: DevstackPortSchema,
 });
 
 export function parseDevstackBootstrapInput(input: unknown): DevstackBootstrapInput {
   const parsed = InputSchema.safeParse(input);
   if (!parsed.success) throw new DevstackBootstrapError('Invalid DevStack identity registration; check the required CLI fields and ports.');
   return parsed.data;
-}
-
-/** Validate before constructing any pool: createPlatformDb starts migrations. */
-export function assertLocalDevstackDatabase(databaseUrl: string, instance: string, mode: string | undefined): string {
-  if (mode !== 'local' || !InstanceSchema.safeParse(instance).success) {
-    throw new DevstackBootstrapError('DevStack bootstrap requires local mode and a valid instance slug.');
-  }
-  let url: URL;
-  try { url = new URL(databaseUrl); }
-  catch (error: unknown) {
-    if (!(error instanceof TypeError)) throw error;
-    throw new DevstackBootstrapError('DevStack bootstrap requires a valid local Postgres URL.');
-  }
-  if (databaseUrl.length > 4096 || databaseUrl !== databaseUrl.trim()
-    || !['postgres:', 'postgresql:'].includes(url.protocol)
-    || !['127.0.0.1', '[::1]'].includes(url.hostname)
-    || url.pathname !== `/matrixos_devstack_${instance.replaceAll('-', '_')}`
-    || url.search || url.hash) {
-    throw new DevstackBootstrapError('DevStack bootstrap requires its instance-specific literal-loopback Postgres database without URL options.');
-  }
-  return databaseUrl;
 }
 
 function assertOwnedRoute(route: ContainerRecord, input: DevstackBootstrapInput): void {
@@ -71,7 +51,7 @@ function assertOwnedRoute(route: ContainerRecord, input: DevstackBootstrapInput)
 /** Call only after the CLI has admitted an isolated local database. */
 export async function bootstrapDevstackIdentity(db: PlatformDB, rawInput: DevstackBootstrapInput) {
   const input = parseDevstackBootstrapInput(rawInput);
-  const ownerMarker = `devstack:${input.instance}:${input.clerkUserId}`;
+  const ownerMarker = devstackOwnerMarker(input.instance, input.clerkUserId);
   return db.transaction(async (transaction) => {
     await lockUserMachineProvisioning(transaction, input.clerkUserId);
     // This offline local initializer must not adopt a concurrently projected
