@@ -65,10 +65,6 @@ export interface AgentsProvidersViewProps {
   /** Hosts with receipt-driven catalog invalidation only need a cached Settings projection. */
   onLocalChatgptChanged?: () => void;
   matrixAnthropicClient?: import("./matrix-anthropic-connection-client.js").MatrixAnthropicConnectionClient;
-  githubDeveloperAccess?: {
-    identityKey: string;
-    client: import("./GithubDeveloperAccessCard.js").GithubDeveloperAccessClient;
-  };
   onOpenAuthorizationUrl?: (url: string) => void;
   onLoadUsageHistory?: (cursor: string | null, signal: AbortSignal) => Promise<import("@matrix-os/contracts").AiCreditHistoryResponse>;
   speechClient?: {

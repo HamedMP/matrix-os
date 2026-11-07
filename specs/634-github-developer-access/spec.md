@@ -117,6 +117,21 @@ The manual command runs inside an authorized owner Terminal session. Settings in
 
 The host bundle copies `distro/customer-vps/host-bin/matrix-github-developer-login` into `/opt/matrix/bin`. Web and Electron in ENG-378 use the owner-bound Settings operation. ENG-379 remains a separate Mobile delivery. The gateway status route calls the project manager, which probes the same owner-local GitHub CLI, SSH, and Git configuration. Managed project creation clones the validated repository using its canonical SSH URL. Coding-agent source control resolves and validates the repository's effective owner identity before committing, then uses the existing GitHub CLI path for push and PR creation.
 
+## Web and Electron setup entry (ENG-378)
+
+In Web Canvas, Web Desktop, and Electron Desktop, show **GitHub Developer**
+as its own card in **Connect Apps**. Getting Started opens that section with
+the card at the top. The card reports readiness for the selected computer,
+independently of the app catalog and any existing GitHub connection.
+
+Show **Connect** for missing setup and **Finish setup** for incomplete setup.
+Open the same owner Terminal command from either action once Settings permissions
+are confirmed. Recheck status on return to the app. A ready card reports its
+state and offers no setup action. Retry failed status or permission checks
+from the card. Electron also retries a failed Terminal handoff there. Web
+uses its existing Terminal recovery path. Discard results from a previously
+selected computer.
+
 ## Acceptance And Tests
 
 - Fake-executable tests cover exact login sequencing, cancellation, existing-key delegation, strict SSH verification, identity confirmation/editing, validation, and redaction.

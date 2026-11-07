@@ -239,7 +239,7 @@ describe("GettingStartedPopover", () => {
       const { dialog } = await openWith({});
       fireEvent.click(await within(dialog).findByRole("button", { name: "Connect GitHub" }));
       expect(startConnect).not.toHaveBeenCalled();
-      expect(useUi.getState().requestedSettingsSection).toBe("agents-providers");
+      expect(useUi.getState().requestedSettingsSection).toBe("services");
       expect(useTabs.getState().tabs.some((tab) => tab.kind === "settings")).toBe(true);
     });
 

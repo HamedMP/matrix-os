@@ -421,14 +421,13 @@ function SettingsFrame({
               {activeSection === "appearance" && <AppearanceSection />}
               {activeSection === "organization" && <OrganizationSection />}
               {activeSection === "agents-providers" && (
-                <AgentSection automaticCreditRefreshEnabled={open} onOpenTerminal={onOpenProviderTerminalSession}
-                  onOpenGithubDeveloperTerminal={onOpenAgentTerminal
-                    ? openGithubDeveloperTerminal
-                    : undefined} />
+                <AgentSection automaticCreditRefreshEnabled={open} onOpenTerminal={onOpenProviderTerminalSession} />
               )}
               {activeSection === "identity-personality" && <IdentityPersonalitySection />}
               {activeSection === "channels" && <ChannelsSection />}
-              {activeSection === "integrations" && <IntegrationsSection />}
+              {activeSection === "integrations" && (
+                <IntegrationsSection active={open} onOpenGithubDeveloperTerminal={onOpenAgentTerminal ? openGithubDeveloperTerminal : undefined} />
+              )}
               {activeSection === "skills" && <SkillsSection />}
               {activeSection === "chat-import" && <ChatImportSection onOpenChat={onOpenImportedChat} />}
               {activeSection === "cron" && <CronSection />}

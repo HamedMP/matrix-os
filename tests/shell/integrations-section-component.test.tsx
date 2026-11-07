@@ -12,11 +12,16 @@ vi.mock("@/lib/websocket-auth", () => ({
   buildAuthenticatedWebSocketUrl,
 }));
 
-vi.mock("@/lib/gateway", () => ({
-  getGatewayUrl: () => "http://gateway.test",
-  getGatewayWs: () => "ws://gateway.test/ws",
-}));
+vi.mock("@/lib/gateway", async (importOriginal) => {
+  const gateway = await importOriginal<typeof import("@/lib/gateway")>();
+  return {
+    ...gateway,
+    getGatewayUrl: () => window.location.pathname.startsWith("/vm/") ? gateway.getGatewayUrl() : "http://gateway.test",
+    getGatewayWs: () => "ws://gateway.test/ws",
+  };
+});
 
+import * as providerTransport from "../../shell/src/lib/provider-settings-transport.js";
 import { IntegrationsSection } from "../../shell/src/components/settings/sections/IntegrationsSection.js";
 
 function createDeferred<T>() {
@@ -143,5 +148,51 @@ describe("Connect Apps consent window", () => {
     expect(await screen.findByText("Could not open sign-in. Allow popups and try again.")).toBeTruthy();
     expect(fetchMock.mock.calls.some(([url]) => String(url).endsWith("/connect"))).toBe(false);
     expect((screen.getByRole("button", { name: "Connect Asana" }) as HTMLButtonElement).disabled).toBe(false);
+  });
+});
+
+describe("Connect Apps GitHub Developer entry", () => {
+  afterEach(() => {
+    cleanup();
+    window.history.replaceState({}, "", "/");
+    vi.restoreAllMocks();
+    vi.unstubAllGlobals();
+  });
+
+  it("uses the explicit computer and rechecks when Settings returns from Terminal", async () => {
+    window.history.replaceState({}, "", "/vm/alice?runtime=studio");
+    buildAuthenticatedWebSocketUrl.mockReturnValue(new Promise(() => {}));
+    vi.spyOn(providerTransport, "createProviderSettingsTransport").mockReturnValue({
+      getSnapshot: vi.fn().mockResolvedValue({ access: { mode: "writable" } }),
+    } as never);
+    let ready = false;
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      if (String(input).endsWith("/api/github/status")) {
+        return Response.json({
+          installed: true, authenticated: ready, user: ready ? "octocat" : null,
+          gitProtocol: ready ? "ssh" : null, sshStatus: ready ? "verified" : "setup_required",
+          commitIdentity: { status: ready ? "ready" : "missing", label: ready ? "Octocat" : null },
+          ready,
+        });
+      }
+      return new Response(null, { status: 503 });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const setup = vi.fn();
+    const view = render(<IntegrationsSection onOpenGithubDeveloperTerminal={setup} />);
+    const connect = await screen.findByRole("button", { name: "Connect GitHub Developer", exact: true });
+    await waitFor(() => expect((connect as HTMLButtonElement).disabled).toBe(false));
+    expect(fetchMock).toHaveBeenCalledWith(
+      expect.stringMatching(/\/vm\/alice\/~runtime\/studio\/api\/github\/status$/),
+      expect.objectContaining({ cache: "no-store" }),
+    );
+    fireEvent.click(connect);
+    expect(setup).toHaveBeenCalledOnce();
+
+    view.rerender(<IntegrationsSection active={false} onOpenGithubDeveloperTerminal={setup} />);
+    ready = true;
+    view.rerender(<IntegrationsSection active onOpenGithubDeveloperTerminal={setup} />);
+    expect(await screen.findByText("Ready")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Connect GitHub Developer", exact: true })).toBeNull();
   });
 });

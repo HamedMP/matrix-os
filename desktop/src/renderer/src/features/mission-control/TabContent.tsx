@@ -112,7 +112,7 @@ export function TabPane({
         ? <TerminalView sessionName={tab.sessionName} active={active} visualScale={visualScale} />
         : null;
     case "settings":
-      return <SettingsView automaticCreditRefreshEnabled={visible} section={settingsSection} onSectionChange={onSettingsSectionChange} />;
+      return <SettingsView automaticCreditRefreshEnabled={visible} active={active && visible} section={settingsSection} onSectionChange={onSettingsSectionChange} />;
     case "shared":
       return <DesktopChatCollaboration />;
     default:

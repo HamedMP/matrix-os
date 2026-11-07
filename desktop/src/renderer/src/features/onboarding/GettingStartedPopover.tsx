@@ -234,7 +234,7 @@ function GettingStartedPopoverContent({ helpMenu }: { helpMenu?: { onSupport(): 
   const activateStep = useCallback((id: GettingStartedStepId) => {
     switch (id) {
       case "github":
-        openSettings("providers");
+        openSettings("services");
         break;
       case "email-calendar":
         openSettings("services");

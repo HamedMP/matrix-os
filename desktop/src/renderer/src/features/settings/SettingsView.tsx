@@ -121,8 +121,10 @@ export default function SettingsView({
   section: controlledSection,
   onSectionChange,
   automaticCreditRefreshEnabled = false,
+  active = true,
 }: {
   automaticCreditRefreshEnabled?: boolean;
+  active?: boolean;
   section?: SettingsSectionId;
   onSectionChange?: (section: SettingsSectionId) => void;
 } = {}) {
@@ -155,7 +157,7 @@ export default function SettingsView({
           {section === "runtime" ? <RuntimeSection /> : null}
           {section === "agents-providers" ? <AgentsProvidersAdapter automaticCreditRefreshEnabled={automaticCreditRefreshEnabled} /> : null}
           {section === "identity-personality" ? <IdentityPersonalitySection /> : null}
-          {section === "services" ? <IntegrationsSettingsSection /> : null}
+          {section === "services" ? <IntegrationsSettingsSection active={active} /> : null}
           {section === "mcps" ? <McpServersSection /> : null}
           {section === "skills" ? <SkillsSection /> : null}
           {section === "chat-import" ? <ChatImportSection /> : null}

@@ -13,6 +13,7 @@ import { RefreshButton } from "../settings/sections/ProvidersSection";
 import { useConnection } from "../../stores/connection";
 import { captureRuntimeGeneration, isCurrentRuntimeGeneration } from "../../stores/runtime-generation";
 import { IntegrationMarketplace } from "@matrix-os/ui";
+import { GithubDeveloperIntegration } from "./GithubDeveloperIntegration";
 import { AvailableServiceCard } from "./AvailableServiceCard";
 import { ConnectPendingBanner } from "./ConnectPendingBanner";
 import { DEFAULT_CONNECT_POLL_INTERVALS_MS, startConnectPoll } from "@matrix-os/ui";
@@ -27,9 +28,10 @@ const GENERIC_ERROR = categoryMessage("server");
 export interface IntegrationsSettingsSectionProps {
   // Test-only hook: override the connect poll backoff schedule.
   pollIntervals?: number[];
+  active?: boolean;
 }
 
-export function IntegrationsSettingsSection({ pollIntervals }: IntegrationsSettingsSectionProps = {}) {
+export function IntegrationsSettingsSection({ pollIntervals, active = true }: IntegrationsSettingsSectionProps = {}) {
   const api = useConnection((s) => s.api);
   const available = useIntegrations((s) => s.available);
   const connections = useIntegrations((s) => s.connections);
@@ -274,6 +276,8 @@ export function IntegrationsSettingsSection({ pollIntervals }: IntegrationsSetti
         />
         {status === "ready" ? <RefreshButton onClick={refresh} /> : null}
       </div>
+
+      <GithubDeveloperIntegration active={active} />
 
       {body}
 

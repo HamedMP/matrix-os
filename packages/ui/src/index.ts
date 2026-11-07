@@ -29,11 +29,11 @@ export { AgentsProvidersView } from "./agents-providers/AgentsProvidersView.js";
 export {
   GithubDeveloperAccessCard,
   parseGithubDeveloperAccessStatus,
-} from "./agents-providers/GithubDeveloperAccessCard.js";
+} from "./integrations/GithubDeveloperAccessCard.js";
 export type {
   GithubDeveloperAccessClient,
   GithubDeveloperAccessStatus,
-} from "./agents-providers/GithubDeveloperAccessCard.js";
+} from "./integrations/GithubDeveloperAccessCard.js";
 export type {
   AgentsProvidersViewProps,
   ProviderSettingsMutationIntent,

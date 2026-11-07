@@ -53,7 +53,7 @@ function mapTransportError(error: unknown): DesktopProviderSettingsTransportErro
   return new DesktopProviderSettingsTransportError("unavailable");
 }
 
-export function createDesktopProviderSettingsTransport(api: ApiClient): ProviderSettingsTransport & {
+export function createDesktopProviderSettingsTransport(api: ApiClient): Omit<ProviderSettingsTransport, "getSnapshot" | "mutate"> & {
   getSnapshot(signal: AbortSignal, options?: { refresh?: boolean }): Promise<ProviderSettingsSnapshot>;
   mutate(mutation: ProviderSettingsMutation, signal: AbortSignal): Promise<ProviderSettingsMutationResponse>;
 } {

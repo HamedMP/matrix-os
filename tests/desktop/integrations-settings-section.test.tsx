@@ -14,6 +14,7 @@ import {
 } from "../../desktop/src/renderer/src/features/integrations";
 import { AppError } from "../../desktop/src/shared/app-error";
 import { useConnection } from "../../desktop/src/renderer/src/stores/connection";
+import * as providerActions from "../../desktop/src/renderer/src/features/settings/provider-settings-desktop-adapter";
 import { advanceRuntimeGeneration } from "../../desktop/src/renderer/src/stores/runtime-generation";
 import type { ApiClient } from "../../desktop/src/renderer/src/lib/api";
 
@@ -63,6 +64,7 @@ function makeApi(opts: FakeApiOptions = {}) {
   } = opts;
   return {
     baseUrl: "https://app.matrix-os.com",
+    forRuntime() { return this; },
     get: vi.fn(async (path: string) => {
       const err = getError?.(path);
       if (err) throw err;
@@ -108,6 +110,35 @@ describe("desktop integrations settings section", () => {
   afterEach(() => {
     cleanup();
     vi.restoreAllMocks();
+  });
+
+  it("renders GitHub Developer separately and scopes setup to the selected computer", async () => {
+    const pendingCatalog = makeApi({ getError: (path) => path.endsWith("/available") ? new AppError("notFound") : null });
+    const runtime = {
+      get: vi.fn(async (path: string) => {
+        if (path === "/api/github/status") return { installed: true, authenticated: false, user: null };
+        throw new AppError("notFound");
+      }),
+    };
+    const forRuntime = vi.fn(() => runtime);
+    vi.spyOn(providerActions, "createDesktopProviderSettingsTransport").mockReturnValue({
+      getSnapshot: vi.fn().mockResolvedValue({ access: { mode: "writable" } }),
+    } as never);
+    const setup = vi.spyOn(providerActions, "openDesktopGithubDeveloperSetup").mockResolvedValue(true);
+    useConnection.setState({
+      api: { ...pendingCatalog, forRuntime } as never,
+      runtimeSlot: "preview",
+    });
+    render(<IntegrationsSettingsSection />);
+
+    expect(await screen.findByRole("heading", { name: "GitHub Developer" })).not.toBeNull();
+    const connect = await screen.findByRole("button", { name: "Connect GitHub Developer", exact: true });
+    await waitFor(() => expect((connect as HTMLButtonElement).disabled).toBe(false));
+    expect(forRuntime).toHaveBeenCalledWith("preview");
+    expect(runtime.get).toHaveBeenCalledWith("/api/github/status", expect.objectContaining({ cache: "no-store" }));
+    fireEvent.click(connect);
+    await waitFor(() => expect(setup).toHaveBeenCalledWith(runtime, expect.any(Function)));
+    expect(pendingCatalog.post).not.toHaveBeenCalledWith("/api/integrations/connect", expect.anything());
   });
 
   it("renders a loading skeleton while the proxy responds", () => {
@@ -263,7 +294,7 @@ describe("desktop integrations settings section", () => {
       expect(screen.getByText("Can't reach Matrix OS. Check your connection.")).not.toBeNull(),
     );
 
-    fireEvent.click(screen.getByRole("button", { name: /Retry/i }));
+    fireEvent.click(screen.getByRole("button", { name: "Retry", exact: true }));
     await waitFor(() => expect(screen.getByText("Gmail")).not.toBeNull());
   });
 

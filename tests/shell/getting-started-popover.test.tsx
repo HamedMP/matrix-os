@@ -270,7 +270,7 @@ describe("web getting started status", () => {
       const dialog = await openPopover(vi.fn(), onOpenSettings);
       fireEvent.click(await within(dialog).findByRole("button", { name: "Connect GitHub" }));
       expect(connections.connectApp).not.toHaveBeenCalled();
-      expect(onOpenSettings).toHaveBeenCalledWith("agents-providers");
+      expect(onOpenSettings).toHaveBeenCalledWith("integrations");
       const reads = () => fetcher.mock.calls.filter(([input]) => String(input).endsWith("/api/integrations")).length;
       const before = reads();
       act(() => connections.onChanged?.());

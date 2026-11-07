@@ -15,10 +15,6 @@ const providerControllerState = vi.hoisted(() => ({
   mutate: vi.fn(),
   refresh: vi.fn(),
   addCredit: null as null | ((source: string, packageId: "usd_5", requestId: string) => Promise<void>),
-  githubDeveloperAccess: null as null | {
-    identityKey: string;
-    client: { status(signal: AbortSignal): Promise<unknown>; startSetup(): Promise<boolean> };
-  },
   speechClient: null as BrowserSpeechClient | null,
 }));
 
@@ -26,24 +22,20 @@ vi.mock("@matrix-os/ui", async () => ({
   ...await import("../../packages/ui/src/agents-providers/provider-workflow-client.js"),
   ...await import("../../packages/ui/src/agents-providers/matrix-anthropic-connection-client.js"),
   ...await import("../../packages/ui/src/speech/browser-client.js"),
-  ...await import("../../packages/ui/src/agents-providers/GithubDeveloperAccessCard.js"),
   AgentsProvidersView: ({
     onOpenTerminal,
     onOpenBrowser,
     onMutate,
     onAddCredit,
-    githubDeveloperAccess,
     speechClient,
   }: {
     onOpenTerminal: (sessionId: string) => void;
     onOpenBrowser: (path: string) => void;
     onMutate: (intent: unknown) => Promise<boolean>;
     onAddCredit: (source: string, packageId: "usd_5", requestId: string) => Promise<void>;
-    githubDeveloperAccess: NonNullable<typeof providerControllerState.githubDeveloperAccess>;
     speechClient: BrowserSpeechClient;
   }) => {
     providerControllerState.addCredit = onAddCredit;
-    providerControllerState.githubDeveloperAccess = githubDeveloperAccess;
     providerControllerState.speechClient = speechClient;
     return (
     <div>
@@ -80,7 +72,6 @@ afterEach(() => {
   providerControllerState.mutate.mockReset();
   providerControllerState.refresh.mockReset();
   providerControllerState.addCredit = null;
-  providerControllerState.githubDeveloperAccess = null;
   providerControllerState.speechClient = null;
   window.history.replaceState({}, "", "/");
   vi.unstubAllGlobals();
@@ -88,56 +79,14 @@ afterEach(() => {
 });
 
 describe("Canvas settings sections", () => {
-  it.each([null, "Provider settings are unavailable."])("keeps GitHub readable while initial provider permissions are unknown (%s)", async (error) => {
+  it("keeps provider recovery in Agents & providers", () => {
     providerControllerState.snapshot = null;
-    providerControllerState.error = error;
-    const fetcher = vi.fn().mockResolvedValue(Response.json({
-      installed: true, authenticated: false, user: null, gitProtocol: null,
-      sshStatus: "setup_required", commitIdentity: { status: "missing", label: null },
-      ready: false, errorCode: null,
-    }));
-    vi.stubGlobal("fetch", fetcher);
-    const setup = vi.fn();
+    providerControllerState.error = "Provider settings are unavailable.";
+    render(<AgentSection />);
 
-    render(<AgentSection onOpenGithubDeveloperTerminal={setup} />);
-
-    expect(await screen.findByRole("heading", { name: "GitHub developer access" })).toBeVisible();
-    await screen.findByText("Setup is not complete");
-    const connect = screen.getByRole("button", { name: "Connect" });
-    expect(connect).toBeDisabled();
-    fireEvent.click(connect);
-    expect(setup).not.toHaveBeenCalled();
-    fireEvent.click(screen.getByRole("button", { name: "Refresh GitHub developer access" }));
-    await waitFor(() => expect(fetcher).toHaveBeenCalledTimes(2));
-    if (error) {
-      fireEvent.click(screen.getByRole("button", { name: "Retry provider settings" }));
-      expect(providerControllerState.refresh).toHaveBeenCalledOnce();
-    }
-  });
-
-  it("binds GitHub developer status and fixed setup to the active web computer", async () => {
-    window.history.replaceState({}, "", "/vm/alice?runtime=studio");
-    const fetcher = vi.fn().mockResolvedValue(Response.json({
-      installed: true, authenticated: false, user: null, gitProtocol: null,
-      sshStatus: "setup_required", commitIdentity: { status: "missing", label: null },
-      ready: false, errorCode: null,
-    }));
-    vi.stubGlobal("fetch", fetcher);
-    const openGithubSetup = vi.fn();
-    render(<AgentSection onOpenGithubDeveloperTerminal={openGithubSetup} />);
-    const access = providerControllerState.githubDeveloperAccess!;
-
-    await expect(access.client.status(new AbortController().signal)).resolves.toMatchObject({ ready: false });
-    expect(fetcher).toHaveBeenCalledWith(
-      expect.stringMatching(/\/vm\/alice\/~runtime\/studio\/api\/github\/status$/),
-      expect.objectContaining({ cache: "no-store", signal: expect.any(AbortSignal) }),
-    );
-    await expect(access.client.startSetup()).resolves.toBe(true);
-    expect(openGithubSetup).toHaveBeenCalledTimes(1);
-
-    window.history.replaceState({}, "", "/vm/bob?runtime=other");
-    await expect(access.client.startSetup()).resolves.toBe(false);
-    expect(openGithubSetup).toHaveBeenCalledTimes(1);
+    expect(screen.queryByRole("heading", { name: "GitHub Developer" })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Retry provider settings" }));
+    expect(providerControllerState.refresh).toHaveBeenCalledOnce();
   });
 
   it("binds the Settings dictation allowance read to the explicit Preview computer", async () => {
@@ -276,7 +225,7 @@ describe("Canvas settings sections", () => {
     expect(onOpenTerminal).toHaveBeenCalledWith("provider-login");
   });
 
-  it("shows a safe unavailable state when the first provider read fails", async () => {
+  it("shows a safe unavailable state when the first provider read fails", () => {
     providerControllerState.snapshot = null;
     providerControllerState.error = "Anthropic secret from /private/owner";
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(Response.json({ installed: true, authenticated: false, user: null, ready: false })));
@@ -285,7 +234,6 @@ describe("Canvas settings sections", () => {
 
     expect(screen.getByRole("alert")).toHaveTextContent("Provider settings are unavailable");
     expect(screen.queryByText(/Anthropic|secret|\/private\//i)).toBeNull();
-    await screen.findByText("Setup is not complete");
   });
 
   it("opens the newly returned terminal action from Sign in once, without an effect", async () => {
