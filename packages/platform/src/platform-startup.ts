@@ -34,6 +34,11 @@ import { startAtsBackgroundWorker } from './ats-background-worker.js';
 import { startGooglePurchaseWorker } from './billing/google-purchases.js';
 import type { Orchestrator } from './orchestrator.js';
 import type { ClerkAuth } from './clerk-auth.js';
+import { DevstackRunConfigError, loadDevstackRunConfig } from './devstack-runs/config.js';
+import { createDevstackRunStore, migrateDevstackRuns } from './devstack-runs/store.js';
+import { createDevstackRunRoutes } from './devstack-runs/routes.js';
+import { executeDevstackRun } from './devstack-runs/execute.js';
+import { resolveRegisteredRuntimeEndpoint } from './devstack-registered-runtime.js';
 import {
   createClerkAuth,
   createClerkSessionRevoker,
@@ -240,6 +245,7 @@ type CreatePlatformApp = (deps: {
   atsDb?: AtsDB;
   docker?: Dockerode;
   registeredRuntimeInstance?: string;
+  devstackRunRoutes?: ReturnType<typeof createDevstackRunRoutes>;
   orchestrator: Orchestrator;
   clerkAuth?: ClerkAuth;
   matrixProvisioner?: MatrixProvisioner;
@@ -343,12 +349,16 @@ async function startPlatformServerWithCleanup(
   const backgroundWorkersEnabled = shouldEnablePlatformBackgroundWorkers(process.env);
   let runtimeConfig;
   let speechConfig;
+  let devstackRunConfig;
+  const clerkVerificationConfig = resolveClerkVerificationConfig(process.env);
   try {
     runtimeConfig = loadPlatformRuntimeConfig();
+    devstackRunConfig = loadDevstackRunConfig(process.env.MATRIX_DEVSTACK_RUN_CONFIG, runtimeConfig.registeredRuntimeInstance);
+    if (devstackRunConfig && (!clerkVerificationConfig || platformSecret.length < 32)) throw new DevstackRunConfigError();
     speechConfig = loadPlatformSpeechConfig(process.env);
     if (speechConfig.enabled && platformSecret.length < 32) throw new PlatformSpeechConfigError();
   } catch (err: unknown) {
-    if (err instanceof PlatformStartupConfigError || err instanceof PlatformSpeechConfigError) {
+    if (err instanceof PlatformStartupConfigError || err instanceof PlatformSpeechConfigError || err instanceof DevstackRunConfigError) {
       console.error(`[platform] ${err.message}`);
       process.exit(1);
     }
@@ -371,6 +381,7 @@ async function startPlatformServerWithCleanup(
   const closePrimaryDb = () => primaryDbClosing ??= db.destroy();
   registerCustomMcpStartupCleanup(closePrimaryDb);
   await db.ready;
+  if (devstackRunConfig) await migrateDevstackRuns(db.kysely);
   const fundedAiConfig = loadAiFundedControlPlaneConfig({
     ...process.env,
     PLATFORM_SECRET: platformSecret,
@@ -477,7 +488,6 @@ async function startPlatformServerWithCleanup(
   }
 
   let clerkAuth: ClerkAuth | undefined;
-  const clerkVerificationConfig = resolveClerkVerificationConfig(process.env);
   if (clerkVerificationConfig) {
     const { verifyToken } = await import('@clerk/backend');
     clerkAuth = createClerkAuth({
@@ -494,6 +504,22 @@ async function startPlatformServerWithCleanup(
         : {}),
     });
   }
+
+  const devstackRunRoutes = devstackRunConfig && clerkAuth
+    ? createDevstackRunRoutes({
+        config: devstackRunConfig,
+        clerkAuth,
+        store: createDevstackRunStore(db.kysely),
+        resolve: target => resolveRegisteredRuntimeEndpoint(
+          db, devstackRunConfig.instance,
+          { source: 'auth', userId: target.owner, handle: target.handle, runtimeSlot: 'primary' },
+          target.handle, 'primary',
+        ),
+        execute: (endpoint, target, command) => executeDevstackRun({
+          endpoint, instance: devstackRunConfig.instance, target, command, platformSecret,
+        }),
+      })
+    : undefined;
 
   const collaboration = registeredRuntimeInstance ? undefined : await bootstrapPlatformCollaboration({
     env: process.env,
@@ -1115,6 +1141,7 @@ async function startPlatformServerWithCleanup(
     atsDb,
     docker,
     registeredRuntimeInstance,
+    devstackRunRoutes,
     orchestrator,
     clerkAuth,
     matrixProvisioner,

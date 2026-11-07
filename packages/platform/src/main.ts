@@ -135,6 +135,7 @@ import {
 } from './session-routing-identity.js';
 import { createSessionRoutingMiddleware } from './session-routing-middleware.js';
 import { startPlatformServer } from './platform-startup.js';
+import type { createDevstackRunRoutes } from './devstack-runs/routes.js';
 import {
   checkCustomerVpsPrimaryStorageEnv,
   checkHomeMirrorS3Env,
@@ -259,6 +260,7 @@ export function createApp(deps: {
   atsDb?: AtsDB;
   docker?: Dockerode;
   registeredRuntimeInstance?: string;
+  devstackRunRoutes?: ReturnType<typeof createDevstackRunRoutes>;
   orchestrator: Orchestrator;
   clerkAuth?: ClerkAuth;
   matrixProvisioner?: MatrixProvisioner;
@@ -703,6 +705,10 @@ export function createApp(deps: {
   // guard so the route-specific limits remain authoritative.
   if (deps.internalSyncRoutes) {
     app.route('/internal/containers/:handle/sync', deps.internalSyncRoutes);
+  }
+
+  if (registeredRuntimeInstance && deps.devstackRunRoutes) {
+    app.route('/api/devstack/runs', deps.devstackRunRoutes);
   }
 
   // Session-based routing:
