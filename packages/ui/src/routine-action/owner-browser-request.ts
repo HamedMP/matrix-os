@@ -1,6 +1,6 @@
 import { ROUTINE_CHAT_ORIGIN_RESPONSE_MAX_BYTES } from "@matrix-os/contracts";
 
-const ROUTINE_CHAT_ORIGIN_LIST_PATH = /^\/api\/chats\/chat_[A-Za-z0-9_-]{1,128}\/routine-origin$/;
+const ROUTINE_CHAT_ORIGIN_LIST_PATH = /^\/api\/chats\/chat_[A-Za-z0-9_-]{1,128}\/routine-origin(?:\?timeline=1)?$/;
 
 export interface OwnerBrowserJsonRequest { path: string; method: "GET" | "POST"; body?: unknown; signal?: AbortSignal; timeoutMs?: number }
 /** Existing bounded owner-browser transport; no request here supplies origin authority. */
@@ -32,7 +32,11 @@ export function createOwnerBrowserJsonRequest(gatewayUrl: string, getToken: () =
         headers: { ...(token ? { authorization: `Bearer ${token}` } : {}), ...(input.body ? { "content-type": "application/json" } : {}) },
         ...(input.body ? { body: JSON.stringify(input.body) } : {}) }), cancelled]);
       requireLive();
-      if (!response.ok || !response.body || Number(response.headers.get("content-length")) > responseLimit) {
+      if (!response.ok) {
+        await response.body?.cancel();
+        throw Object.assign(new Error("Routine confirmation unavailable"), { httpStatus: response.status });
+      }
+      if (!response.body || Number(response.headers.get("content-length")) > responseLimit) {
         await response.body?.cancel(); throw new Error("Routine confirmation unavailable");
       }
       const reader = response.body.getReader(), chunks: Uint8Array[] = []; let bytes = 0;

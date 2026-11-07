@@ -1,9 +1,11 @@
 import {openRoutineHistory} from "../lib/open-routine-history";
 import type {BotInteraction,RoutineChatOriginView} from "@matrix-os/contracts";
-import {act,cleanup,fireEvent,render,screen,waitFor} from "@testing-library/react-native";
-import {Linking} from "react-native";
+import {act,cleanup,fireEvent,render,screen,waitFor,within} from "@testing-library/react-native";
+import {FlatList,Linking,Text} from "react-native";
 import {NativeSourceChatRoutines} from "../components/chat/NativeSourceChatRoutines";
 import {NativeRoutineReceipt} from "../components/chat/NativeRoutineReceipt";
+import {MessageList} from "../components/chat/MessageList";
+import type {TranscriptMessage} from "../lib/canonical-chat-transcript";
 const mockShowChat=jest.fn();
 const mockSelectChat=jest.fn(),mockGetToken=jest.fn(async()=>"fixture-token");
 const emptyView=():RoutineChatOriginView=>({sourceChatId:"chat_source",pending:[],deliveries:[],hasMore:false,deliveryPending:false});
@@ -54,4 +56,55 @@ it("shows the source view's overflow notice in Native Mobile",async()=>{
  mockClient.get.mockResolvedValueOnce({...emptyView(),hasMore:true});
  render(<NativeSourceChatRoutines gatewayUrl="https://app.matrix-os.com/vm/fixture" chatId="chat_source" eligible/>);
  expect(await screen.findByText(/More scheduled task items are available in Schedules/)).toBeTruthy();
+});
+
+const transcriptRow=(id:string,role:TranscriptMessage["role"],createdAt:number):TranscriptMessage=>({
+ id,role,createdAt,text:id,toolCalls:[],activities:[],isRunning:false,
+});
+const resultRow:TranscriptMessage={...transcriptRow("msg_result","system",3),routineReceipt:{
+ type:"routine_receipt",engine:"matrix",kind:"output",routineId:`rt_${"a".repeat(24)}`,fireId:`fire_${"b".repeat(24)}`,
+ attempt:1,status:"completed",scheduledFor:"2026-11-06T09:00:00.000Z",canonicalChatId:"chat_executor",
+ canonicalTaskId:"task_execution",model:"gpt-6-luna",
+}};
+const proposalRows=[transcriptRow("msg_later","user",4),resultRow,transcriptRow("msg_reply","assistant",2),transcriptRow("msg_source","user",1)];
+function renderRoutineThread(messages:TranscriptMessage[]) {
+ return render(<NativeSourceChatRoutines gatewayUrl="https://app.matrix-os.com/vm/fixture" chatId="chat_source" eligible messages={messages}>
+  {slots=><MessageList {...slots} messages={messages} renderRequest={message=><Text testID={message.id}>{message.text}</Text>}/>}
+ </NativeSourceChatRoutines>);
+}
+
+it("keeps resolved schedule approval inside the original reply cell and omits review controls",async()=>{
+ mockClient.get.mockResolvedValueOnce({...emptyView(),history:[{...pendingView().pending[0]!,decision:"approve",interaction:{...interaction,status:"resolved",revision:8}}]});
+ renderRoutineThread(proposalRows);
+ await screen.findByText("Approved");
+ let cell=screen.getByTestId("origin-in_abcdefgh").parent;
+ while(cell&&!within(cell).queryByTestId("msg_reply"))cell=cell.parent;
+ expect(cell).not.toBeNull();
+ expect(within(cell!).queryByTestId("msg_result")).toBeNull();
+ expect(within(cell!).queryByTestId("msg_later")).toBeNull();
+ expect(screen.queryByText("Needs your approval")).toBeNull();
+ expect(screen.queryByRole("button",{name:"Review in browser"})).toBeNull();
+});
+
+it("labels an off-page pending approval and hides off-page resolved history",async()=>{
+ mockClient.get.mockResolvedValueOnce({...pendingView(),history:[{...pendingView().pending[0]!,decision:"deny",
+  interaction:{...interaction,interactionId:"in_resolved",status:"resolved",revision:8}}]});
+ renderRoutineThread([proposalRows[0]!]);
+ expect(await screen.findByText("From an earlier message in this Chat.")).toBeTruthy();
+ expect(screen.getAllByText("Schedule Morning brief")).toHaveLength(1);
+ expect(screen.getByRole("button",{name:"Review in browser"})).toBeTruthy();
+});
+
+it("offers a current Schedules edit in the newest end of the inverted transcript",async()=>{
+ const payload=interaction.payload;
+ if(payload?.kind!=="approval")throw new Error("Expected the approval fixture");
+ const preview=JSON.parse(payload.preview);
+ preview.source={...preview.source,routineId:`rt_${"a".repeat(24)}`,baseRoutineRevision:1};
+ mockClient.get.mockResolvedValueOnce({...emptyView(),pending:[{...pendingView().pending[0]!,
+  interaction:{...interaction,payload:{...payload,preview:JSON.stringify(preview)}}}]});
+ renderRoutineThread(proposalRows);
+ await screen.findByText("Update schedule Morning brief");
+ expect(screen.UNSAFE_getByType(FlatList).props.ListHeaderComponent).toBeTruthy();
+ expect(screen.UNSAFE_getByType(FlatList).props.ListFooterComponent).toBeUndefined();
+ expect(screen.getByRole("button",{name:"Review in browser"})).toBeTruthy();
 });

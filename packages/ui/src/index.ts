@@ -346,6 +346,7 @@ export { routineFullAccessChatPresentationEligible } from "./routine-action/full
 export { isRoutineOriginPath, createRoutineOriginClient, type RoutineOriginClient } from "./chat/routine-origin-client.js";
 export { useRoutineOrigin } from "./chat/use-routine-origin.js";
 export { RoutineOriginApprovals } from "./chat/RoutineOriginApprovals.js";
+export { routineApprovalPlacement, routineOriginHistoryStatus } from "./chat/routine-approval-placement.js";
 export { RoutineReceipt } from "./chat/RoutineReceipt.js";
 export { routineReceiptMessage, routineReceiptOutcome } from "./chat/routine-receipt.js";
 

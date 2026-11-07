@@ -5,7 +5,7 @@ import { UserMessage } from "./user-message";
 import {
   ChevronRight,
 } from "@renderer/lib/hugeicons";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import {
   Conversation,
   ConversationContent,
@@ -402,9 +402,15 @@ function ScheduledTurnContent({turn,callbacks,visibility,occurrences,initialFina
 export function ConversationTranscript({
   turns,
   callbacks,
+  beforeTurns,
+  renderAfterTurn,
+  afterTurns,
 }: {
   turns: ConversationTurnPresentation[];
   callbacks: ConversationPresentationCallbacks;
+  beforeTurns?: ReactNode;
+  renderAfterTurn?: (turnId: string) => ReactNode;
+  afterTurns?: ReactNode;
 }) {
   const routines=useRoutineMessageState();
   const [initialFinalIds] = useState(() => new Set(
@@ -433,21 +439,25 @@ export function ConversationTranscript({
   return (
     <Conversation>
       <ConversationContent className="justify-start pt-8 sm:pt-12">
-        {rows.map(row => row.kind==="occurrence" ? <RoutineOccurrenceMessage key={`scheduled:${row.occurrence.fire.fireId}`} occurrence={row.occurrence}/> : (
-          <ConversationTurn
-            key={row.value.turn.id}
-            turn={row.value.turn}
-            callbacks={callbacks}
-            initialFinalIds={initialFinalIds}
-            visibility={row.value.visibility}
-            scheduled={row.occurrence}
-            scheduledEvents={nested[visibleTurns.indexOf(row.value)]}
-            onToggle={() => toggleTurn(row.value.turn.id)}
-          />
+        {beforeTurns}
+        {rows.map(row => row.kind === "occurrence" ? <RoutineOccurrenceMessage key={`scheduled:${row.occurrence.fire.fireId}`} occurrence={row.occurrence}/> : (
+          <Fragment key={row.value.turn.id}>
+            <ConversationTurn
+              turn={row.value.turn}
+              callbacks={callbacks}
+              initialFinalIds={initialFinalIds}
+              visibility={row.value.visibility}
+              scheduled={row.occurrence}
+              scheduledEvents={nested[visibleTurns.indexOf(row.value)]}
+              onToggle={() => toggleTurn(row.value.turn.id)}
+            />
+            {renderAfterTurn?.(row.value.turn.id)}
+          </Fragment>
         ))}
         <BotUnassignedMessageBody runIds={turns.flatMap(turn => turn.runIds ?? [])}
           requestIds={visibleTurns.flatMap(({ visibility }) => visibility.pendingRequestIds)}/>
         <RoutineMessageReadNotice/>
+        {afterTurns}
       </ConversationContent>
     </Conversation>
   );

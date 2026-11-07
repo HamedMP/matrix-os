@@ -92,7 +92,10 @@ export interface BotInteractionHandlers {
   }>;
 }
 
-export function projectBotInteraction(interaction: BotInteractionRecord, viewerId: string): BotInteraction {
+export function projectBotInteraction(
+  interaction: BotInteractionRecord, viewerId: string, { estimateRoutineNextFire = true } = {},
+): BotInteraction {
+    const payload = interaction.payload as BotInteraction["payload"];
     return {
       interactionId: interaction.interactionId,
       chatId: interaction.chatId,
@@ -104,7 +107,7 @@ export function projectBotInteraction(interaction: BotInteractionRecord, viewerI
       expiresAt: interaction.expiresAt,
       revision: interaction.revision,
       // Only the designated responder sees what was asked.
-      ...(interaction.responderActorId === viewerId ? { payload: presentRoutineApproval(interaction.payload as BotInteraction["payload"]) } : {}),
+      ...(interaction.responderActorId === viewerId ? { payload: estimateRoutineNextFire ? presentRoutineApproval(payload) : payload } : {}),
     };
 }
 
