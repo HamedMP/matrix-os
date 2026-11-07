@@ -7,14 +7,13 @@ import type { CanonicalProviderRunInput, CanonicalProviderRunEvent } from "./pro
 export interface NativeRoutineCliPort { runtime: Pick<RoutineCliRuntime, "registerChat">; binPath: string; endpoint: string }
 /** Actual execute closure owns the source, fixed child and display lifecycle. Callback completion never ends the source. */
 export function createClaudeRoutineExecution(options: NativeRoutineCliPort & { input: CanonicalProviderRunInput; signal: AbortSignal;
-  creationPolicy?: import("./routine-creation-latch.js").RoutineCreationLatch;
   current(): boolean; publish(event: CanonicalProviderRunEvent): void; cwd: string; homePath: string }) {
   let source: ReturnType<RoutineCliRuntime["registerChat"]> | undefined, closed = false;
   let nativePlan = false;
   let invoker: ReturnType<typeof createFixedNativeRoutineCliInvoker> | undefined;
   let artifacts: ReturnType<typeof createRoutineResultArtifacts> | undefined;
   const open = () => {
-    source ??= options.runtime.registerChat({ input: options.input, signal: options.signal, current: () => !closed && options.current(), publish: options.publish, creationPolicy: options.creationPolicy });
+    source ??= options.runtime.registerChat({ input: options.input, signal: options.signal, current: () => !closed && options.current(), publish: options.publish });
     return source;
   };
   return {
@@ -25,7 +24,7 @@ export function createClaudeRoutineExecution(options: NativeRoutineCliPort & { i
       if (closed || options.signal.aborted || signal.aborted) throw new Error("Routine source unavailable");
       invoker ??= createFixedNativeRoutineCliInvoker({ binPath: options.binPath, endpoint: options.endpoint, cwd: options.cwd, homePath: options.homePath,
         authorize: async call => {
-          if (call.operation.operation === "propose" && options.creationPolicy && !options.creationPolicy.claim("matrix")) return false;
+          if (call.operation.operation === "propose") return false;
           return registered.authorize(call);
         }, issue: registered.issue, cancel: registered.cancel, timeoutMs: ROUTINE_CLI_INVOCATION_TIMEOUT_MS });
       const result = await invoker.invoke({ ...parsed, signal: AbortSignal.any([signal, options.signal]) });

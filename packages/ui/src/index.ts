@@ -336,7 +336,5 @@ export { useRoutineOrigin } from "./chat/use-routine-origin.js";
 export { RoutineOriginApprovals } from "./chat/RoutineOriginApprovals.js";
 export { RoutineReceipt } from "./chat/RoutineReceipt.js";
 export { routineReceiptMessage, routineReceiptOutcome } from "./chat/routine-receipt.js";
-export { usePersistentTaskSelection } from "./chat/use-persistent-task-selection.js";
 
 export { ScheduledInputText } from "./chat/ScheduledInputText.js";
-export { PersistentTaskControl } from "./chat/PersistentTaskControl.js";
