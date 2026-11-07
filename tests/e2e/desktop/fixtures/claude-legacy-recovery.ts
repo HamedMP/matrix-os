@@ -1,3 +1,4 @@
+import {createTerminalClaudeFixture} from "../../../gateway/fixtures/claude-terminal-auth";
 import {createServer, request} from "node:http";
 import {connect} from "node:net";
 import {Hono} from "hono";
@@ -9,7 +10,8 @@ import type {ProviderSettingsStoreWriter} from "../../../../packages/gateway/src
 import {providerAuthSettingsSnapshot, startProviderAuthGateway} from "./provider-auth-gateway";
 
 /** Synthetic account identity and owner store; real native adoption and HTTP workflow routing. */
-export async function startClaudeLegacyRecoveryGateway() {
+export async function startClaudeLegacyRecoveryGateway(options: { externalTerminal?: boolean } = {}) {
+  const terminalAuthentication = options.externalTerminal ? await createTerminalClaudeFixture() : null;
   let adopted = false, revision = 6, completions = 0, browserStarts = 0, terminalStarts = 0;
   let failAdoption = false;
   const snapshot = () => {
@@ -46,6 +48,10 @@ export async function startClaudeLegacyRecoveryGateway() {
         authorization:{revision:0,enabled:false,background:false},coordinatorFunding:"separate"}]});
       res.writeHead(200,{"content-type":"application/json"});res.end(JSON.stringify(connections));return;
     }
+    if(terminalAuthentication && req.method === "GET" && req.url?.startsWith("/api/ai/provider-settings") && !req.url.startsWith("/api/ai/provider-settings/workflows")) {
+      const response = await terminalAuthentication.routes.request("http://fixture"+req.url.replace("/api/ai", ""));
+      res.writeHead(response.status,Object.fromEntries(response.headers));res.end(await response.text());return;
+    }
     if(req.url?.startsWith("/api/ai/provider-settings/workflows")) {
       try {
         const chunks:Buffer[]=[];let bytes=0;
@@ -67,8 +73,8 @@ export async function startClaudeLegacyRecoveryGateway() {
     target.on("error",()=>socket.destroy());socket.on("error",()=>target.destroy());socket.on("close",()=>target.destroy());
   });
   await new Promise<void>(resolve=>server.listen(0,"127.0.0.1",resolve));
-  return {url:`http://127.0.0.1:${(server.address() as {port:number}).port}`,snapshot,
+  return {terminalAuthentication,url:`http://127.0.0.1:${(server.address() as {port:number}).port}`,snapshot,
     counters:()=>({completions,browserStarts,terminalStarts}),setFailAdoption:(value:boolean)=>{failAdoption=value;},
-    async close(){await service.close();server.closeAllConnections();await upstream.close();await new Promise<void>(resolve=>server.close(()=>resolve()));},
+    async close(){await terminalAuthentication?.close();await service.close();server.closeAllConnections();await upstream.close();await new Promise<void>(resolve=>server.close(()=>resolve()));},
   };
 }

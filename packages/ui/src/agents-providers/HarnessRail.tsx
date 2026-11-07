@@ -2,7 +2,8 @@ import { useLocalObservationExpiry } from "../local-observation-expiry.js";
 import { capabilityRowStatus, resolvedWorkflowRowStatus } from "./workflow-row-status.js";
 import { AgentRow } from "./AgentRow.js";
 import { resolveHarnessConnection } from "./harness-connection.js";
-import {legacyClaudeNativeConnection, nativeClaudeAuthenticationExpiry} from "./legacy-claude-connection.js";
+import {nativeClaudeConnection, nativeClaudeAuthenticationExpiry} from "./legacy-claude-connection.js";
+import type {NativeObservationTime} from "./use-native-observation-clock.js";
 import type { ReactNode } from "react";
 import type {
   ProviderAccessSource,
@@ -19,6 +20,7 @@ export function HarnessRail({
   harnesses,
   sources,
   accounts = [],
+  nativeObservationTime,
   selectedId,
   onSelect,
   renderDetails,
@@ -35,6 +37,7 @@ export function HarnessRail({
   renderInventory?: (item: ProviderWorkflowCapability) => ReactNode;
   sources: ProviderAccessSource[];
   accounts?: ProviderAccount[];
+  nativeObservationTime?: NativeObservationTime;
   selectedId: string | null;
   disabled: boolean;
   statusOverride?: Record<string, string>;
@@ -101,13 +104,14 @@ export function HarnessRail({
               }
               const harness = item.instance!;
               const source = resolveHarnessConnection(harness, accounts, sources).source;
+              const observedNative = nativeClaudeConnection(harness, accounts, sources, nativeObservationTime?.now, nativeObservationTime?.observedAt);
               return (
                 <AgentRow
                   key={harness.id}
                   id={harness.id}
                   harness={harness.harness}
                   name={harness.harness === "claude" && harness.displayName === "Claude" ? "Claude Code" : harness.displayName}
-                  status={legacyClaudeNativeConnection(harness, accounts, sources) ? "Connected" : resolvedWorkflowRowStatus(harness, source, statusOverride?.[harness.id])}
+                  status={observedNative ? "Connected" : resolvedWorkflowRowStatus(harness, source, statusOverride?.[harness.id])}
                   accent={harness.accentColor ?? "none"}
                   expanded={expanded}
                   onToggle={() => onSelect(harness.id)}

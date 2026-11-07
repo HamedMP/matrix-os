@@ -68,7 +68,7 @@ function installApi() {
   const get = vi.fn(async (path: string) => {
     if (path === "/api/ai/provider-settings/managed-credit") return observation(4_000_000 - ++reads * 10_000);
     if (path.startsWith("/api/ai/provider-settings/workflows/")) return [];
-    if (path.startsWith("/api/ai/provider-settings?")) return initial;
+    if (path.startsWith("/api/ai/provider-settings?")) return { ...initial, refreshedAt: new Date().toISOString() };
     throw new Error(`Unexpected synthetic request: ${path}`);
   });
   const api = { get, post: vi.fn(), forRuntime: () => api } as unknown as ApiClient;
@@ -94,7 +94,8 @@ it("renews credit for six minutes through the actual maximized Settings chain", 
     expect(screen.queryByText("Chat credit unavailable")).not.toBeInTheDocument();
   }
   expect(screen.getByText("$3.92")).toBeVisible();
-  expect(api.fullReads()).toHaveLength(1);
+  expect(api.fullReads()).toHaveLength(19);
+  expect(api.fullReads().every(([path]) => new URL(path, "http://localhost").searchParams.has("refresh") === false)).toBe(true);
   expect(window.operator.invoke).toHaveBeenCalledTimes(initialNativeReads);
   expect(api.get.mock.calls.filter(([path]) => path.includes("/workflows/"))).toHaveLength(initialCapabilityReads);
 });
@@ -109,11 +110,13 @@ it("keeps visible unfocused floating Settings renewing, then pauses during Show 
   await act(async () => { useDesktopSurfaces.getState().showDesktop(); });
   await act(async () => { await vi.advanceTimersByTimeAsync(360_000); });
   expect(api.creditReads()).toHaveLength(1);
+  expect(api.fullReads()).toHaveLength(3);
   await act(async () => { useDesktopSurfaces.getState().activateSurface(tab.id); useTabs.getState().focusTab(tab.id); });
   await act(async () => {});
   expect(api.creditReads()).toHaveLength(2);
   expect(screen.queryByText("Chat credit unavailable")).not.toBeInTheDocument();
-  expect(api.fullReads()).toHaveLength(1);
+  expect(api.fullReads()).toHaveLength(4);
+  expect(api.fullReads().every(([path]) => new URL(path, "http://localhost").searchParams.has("refresh") === false)).toBe(true);
 });
 
 it("forwards retained visibility and section ownership through the real Settings view", async () => {

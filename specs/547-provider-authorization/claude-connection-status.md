@@ -83,3 +83,96 @@ this discovery and remain required at execution admission.
 - Keep the implementation Draft for human review first. Do not equate old-head
   CI/Greptile results with this candidate or mark customer acceptance from fixtures.
   Production deployment, owner account changes and merge require separate scope.
+
+## Terminal-origin authentication synchronization
+
+A same-Computer native login can be completed outside a Settings workflow. Owner
+snapshot reads already observe the installed CLI directly; workflow receipts are
+not required to discover that login. The shared `nativeClaudeConnection` derives
+the exact native account from installed fixed-Anthropic Claude, reciprocal
+`owner_claude_profile` account/source links, terminal authentication, owner-account
+funding and the reader's 30-second identity lifetime. This observation is
+independent of a saved legacy profile, an explicit Matrix binding or a saved API
+key. It updates existing authentication indicators for the discovered native
+account, never an unrelated selected account. Card selection, visibility, layout,
+copy and connection/adoption controls retain their existing behavior. An
+already-selected native route retains the server's exact authenticated
+harness/source/account verdict, including optional or expired native metadata.
+The bounded metadata proof is additive discovery for other saved bindings; its
+expiry cannot create or replace canonical authentication authority.
+
+Native display time anchors to the authenticated snapshot's `refreshedAt` only
+within a 60-second receipt-clock skew bound, then advances by monotonic elapsed
+time. Replaying the same stamp does not restart the lifetime; a stamp older than
+the last accepted stamp is rejected. `lastCheckedAt` later than the snapshot's
+stamp, expired proof, invalid time and excessive skew cannot establish Connected.
+Wall-clock changes cannot extend the 30-second proof. Rail, account card and
+legacy adoption display share this native-only clock; generic local observations
+and credit freshness keep their existing clocks and authority.
+
+Web and Electron Settings opt into `useNativeAuthRefresh` only while their
+Settings surface is active. It rechecks on focus, visibility/online return and a
+20-second visible-online cadence, before the native proof's unchanged 30-second
+expiry. Trigger coalescing uses monotonic elapsed time so correcting a bad client
+wall clock cannot stall future observations. An event inside the coalescing window
+runs after its remaining delay, rather than waiting for the periodic cadence.
+Events during an active probe retain one serialized follow-up; hidden/offline
+and disposed observers clear it. Reads use the existing unforced owner snapshot
+and credential-bound provider quota cache. The controller coalesces with its
+active reads/mutations; hidden surfaces pause, disposal aborts and old Computer
+responses cannot replace a new controller. Native authentication changes notify
+catalog consumers after a validated snapshot is accepted; timestamp renewal alone
+does not invalidate catalogs. Retained Chat consumers do not start another poller.
+
+Native observation timestamps must not trigger unrelated capability or Bot
+discovery. Both production adapters supply a client-local capability refresh
+revision, advanced only for accepted foreground refresh/mutation, saved revision
+changes or semantic native-auth changes. Quiet proof and credit renewals leave
+this revision stable while preserving the fresh native snapshot timestamp.
+Deliberate Refresh, workflow completion and Computer changes retain discovery.
+
+Automatic native observations do not block or restart the independent 45-second
+managed-credit refresh. A single validated managed-credit observation may survive
+an older native snapshot only within the same controller identity, snapshot
+revision, access mode, gateway policy, source/account and eligible-model authority.
+Existing usage-time, policy-expiry and newer-observation checks still apply.
+Replaying a retained observation also preserves its accepted effective-model
+intersection, negative managed-source readiness and suppressed credit-purchase
+action; a later wider funding policy cannot revalidate previously denied routes.
+Foreground refresh, mutation and disposal invalidate this retained observation;
+native provider quota is never retained through this managed-credit path.
+
+Read-only observation preserves source/model/enabled intent, revision, credentials
+and independent Bot/background grants. The narrow legacy **Use connected Claude
+account** action retains its original safeguards. Other saved bindings retain the
+normal Claude account connection option, whose existing private native preflight
+can adopt the current login without starting another OAuth or Terminal login.
+
+Regression tests must include a synthetic native status process through the real
+reader, store and owner HTTP route with no Settings workflow: initial Terminal
+login, account replacement, logout and failed status. Shared UI tests cover
+legacy/explicit/key bindings, exact existing account indicators, unchanged card
+selection/visibility and connection controls, slow/fast client clocks, monotonic expiry under clock
+rollback, future/stale/replayed stamps and scope fences. Controller tests cover focus,
+cadence, hidden/offline pause, concurrent triggers and Computer replacement.
+Production Electron exercises the same external native-state transition and
+asserts zero login/adoption starts, unchanged configuration and Bot grants. These
+fixtures do not establish paid inference or a customer's deployed acceptance.
+
+Advancing-timestamp adapter regressions must exercise the real controller/view
+and assert bounded capability and Bot reads, not a frozen snapshot. Electron
+account-replacement acceptance must capture the actual renderer-received native
+snapshot and exact principal without depending on debugger response-body
+retention. Keep the original response and admission/configuration assertions.
+
+The native probe can legitimately take its bounded read budget. Electron first
+login, principal replacement and logout must await the actual renderer response
+with exact native state before the existing short UI assertion. Keep first-focus
+acceptance free of artificial readiness sleeps and retain timeout bounds.
+
+Connection controls must own a live workflow scope at their first committed
+interaction. Initialize/reset the existing scope in the layout lifecycle before
+clicks can reach the enabled control; retain its identity-change/disposal aborts.
+A real-panel regression must dispatch the actual adoption click before passive
+effects and verify exact request admission. Strict Mode setup remains inert, and
+late old-account responses cannot update the replacement scope.
