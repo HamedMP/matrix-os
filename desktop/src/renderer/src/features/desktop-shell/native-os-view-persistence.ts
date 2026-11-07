@@ -2,7 +2,7 @@ import type { OsViewMode, OsViewStatePatch, OsViewWindowGeometry } from "@matrix
 import type { MatrixApp } from "../apps/apps.api";
 import type { DesktopSurface } from "../../stores/desktop-surfaces";
 import type { Tab } from "../../stores/tabs";
-import { FIXED_DESKTOP_APPS } from "./desktop-apps";
+import { FIXED_DESKTOP_APPS, GETTING_STARTED_DESKTOP_APP } from "./desktop-apps";
 import { nativeBrowserProduct } from "../../../../shared/browser-products";
 
 export function nativeTabOsViewPath(tab: Tab, installedApps: readonly MatrixApp[]): string | null {
@@ -18,7 +18,7 @@ export function nativeTabOsViewPath(tab: Tab, installedApps: readonly MatrixApp[
   // URLs must not restore as the distinct VPS Chrome destination.
   if (tab.kind === "browser") return null;
   if (tab.kind === "settings" && (tab.title === "Plugins" || tab.title === "Connect Apps")) return "__plugins__";
-  return FIXED_DESKTOP_APPS.find((app) => app.kind === tab.kind)?.path
+  return [...FIXED_DESKTOP_APPS, GETTING_STARTED_DESKTOP_APP].find((app) => app.kind === tab.kind)?.path
     ?? (tab.kind === "terminal" ? "__terminal__" : null);
 }
 

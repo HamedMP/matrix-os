@@ -67,6 +67,7 @@ export const OS_VIEW_FIXED_APP_APPEARANCES = {
     foreground: "white",
   },
   whiteboard: { icon: "brush", iconSource: "app", background: "#D46A92", foreground: "white" },
+  "getting-started": { icon: "rocket", iconSource: "fixed", background: "#0E3422", foreground: "#E2B55A" },
 } as const;
 
 export const OS_VIEW_CREATE_APP_APPEARANCE = {
@@ -90,6 +91,7 @@ const OS_VIEW_FIXED_APP_ID_BY_PATH: Readonly<Record<string, OsViewFixedAppId>> =
   __browser__: "browser",
   "__cloud-desktop__": "cloud-desktop",
   __notes__: "notes",
+  "__getting-started__": "getting-started",
   "apps/browser/index.html": "browser",
   "apps/browser/dist/index.html": "browser",
   "apps/notes/index.html": "notes",

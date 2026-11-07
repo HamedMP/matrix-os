@@ -17,6 +17,7 @@
 @import "./tokens.css";
 @import "@matrix-os/ui/onboarding-widget.css";
 @import "@matrix-os/ui/get-started.css";
+@import "@matrix-os/ui/getting-started-app.css";
 @import "./brand-fonts.css";
 @import "@matrix-os/ui/chat-agents.css";
 @import "@matrix-os/ui/styles.css";
