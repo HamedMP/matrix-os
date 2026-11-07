@@ -125,6 +125,7 @@ function MarketplaceRow({ service, connected, connecting, failed, disabled, addA
   const button = ROW_BUTTON[state];
   const action = presentation ? presentation.action : { label: button.label(service.name), text: button.text, disabled, onClick: onConnect };
   const detail = presentation?.detail ?? (auth === "keys" ? "API key required" : auth === "oauth" ? "Sign in securely" : "Connect your account");
+  const showStatusPill = connected && (!addAccount || presentation?.ready);
   return (
     <div className="flex min-w-0 items-center gap-3 py-4" data-testid={`integration-card-${service.id}`}>
       <MarketplaceIcon key={service.logoUrl} name={service.name} logoUrl={service.logoUrl} />
@@ -135,18 +136,18 @@ function MarketplaceRow({ service, connected, connecting, failed, disabled, addA
           title={presentation?.detail} role={presentation?.detailIsError ? "alert" : undefined}
           style={presentation?.detailIsError ? { color: "var(--surface-danger-emphasis, var(--destructive))" } : muted}>{detail}</p>
       </div>
-      {connected && (!addAccount || presentation?.ready) ? (
-        <span className="inline-flex shrink-0 items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-medium" style={connectedPill}>
-          <span aria-hidden="true" className="size-1.5 rounded-full" style={{ background: "var(--surface-success-emphasis, var(--primary))" }} />{presentation?.ready ? "Ready" : "Connected"}
-        </span>
-      ) : <div className="flex shrink-0 flex-col items-end gap-1.5">
-        {connected ? <span className="text-xs" style={{ color: "var(--surface-success-emphasis, var(--primary))" }}>✓ Connected</span> : null}
+      <div className={showStatusPill ? "flex shrink-0 items-center gap-2" : "flex shrink-0 flex-col items-end gap-1.5"}>
+        {showStatusPill ? (
+          <span className="inline-flex shrink-0 items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-medium" style={connectedPill}>
+            <span aria-hidden="true" className="size-1.5 rounded-full" style={{ background: "var(--surface-success-emphasis, var(--primary))" }} />{presentation?.ready ? "Ready" : "Connected"}
+          </span>
+        ) : connected ? <span className="text-xs" style={{ color: "var(--surface-success-emphasis, var(--primary))" }}>✓ Connected</span> : null}
         {state === "failed" ? <span className="text-xs" role="status" style={{ color: "var(--surface-danger-emphasis, var(--destructive))" }}>Sign-in didn't finish</span> : null}
-        {action ? <button type="button" aria-label={action.label} disabled={action.disabled} onClick={action.onClick}
+        {action && (presentation || !showStatusPill) ? <button type="button" aria-label={action.label} disabled={action.disabled} onClick={action.onClick}
           className="rounded-full px-4 py-2 text-sm transition-opacity hover:opacity-75 disabled:opacity-50 focus-visible:outline-2" style={pill}>
           {action.text}
         </button> : null}
-      </div>}
+      </div>
     </div>
   );
 }

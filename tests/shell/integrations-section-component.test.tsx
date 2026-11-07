@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import React from "react";
-import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const { buildAuthenticatedWebSocketUrl } = vi.hoisted(() => ({
@@ -160,13 +160,17 @@ describe("Connect Apps GitHub Developer entry", () => {
   });
 
   it("uses the explicit computer and rechecks when Settings returns from Terminal", async () => {
+    HTMLDialogElement.prototype.showModal = function () { this.setAttribute("open", ""); };
+    HTMLDialogElement.prototype.close = function () { this.removeAttribute("open"); };
     window.history.replaceState({}, "", "/vm/alice?runtime=studio");
     buildAuthenticatedWebSocketUrl.mockReturnValue(new Promise(() => {}));
     vi.spyOn(providerTransport, "createProviderSettingsTransport").mockReturnValue({
       getSnapshot: vi.fn().mockResolvedValue({ access: { mode: "writable" } }),
     } as never);
     let ready = false;
-    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+    const workspaceId = `tws_${"a".repeat(32)}`;
+    const tabId = `tt_${"b".repeat(32)}`;
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, _init?: RequestInit) => {
       if (String(input).endsWith("/api/github/status")) {
         return Response.json({
           installed: true, authenticated: ready, user: ready ? "octocat" : null,
@@ -183,11 +187,18 @@ describe("Connect Apps GitHub Developer entry", () => {
         ] });
       }
       if (String(input).endsWith("/api/integrations")) return Response.json({ connections: [] });
+      if (String(input).endsWith("/api/terminal/workspaces/ensure")) return Response.json({ workspace: { id: workspaceId } });
+      if (String(input).endsWith(`/api/terminal/workspaces/${workspaceId}/tabs`)) return Response.json({ tab: { id: tabId } });
       return new Response(null, { status: 503 });
     });
     vi.stubGlobal("fetch", fetchMock);
     const setup = vi.fn();
-    const view = render(<IntegrationsSection onOpenGithubDeveloperTerminal={setup} />);
+    const disconnect = vi.fn();
+    const terminalCallbacks = {
+      onOpenGithubDeveloperTerminal: setup,
+      onOpenGithubDisconnectTerminal: disconnect,
+    };
+    const view = render(<IntegrationsSection {...terminalCallbacks} />);
     const connect = await screen.findByRole("button", { name: "Connect GitHub Developer", exact: true });
     await waitFor(() => expect((connect as HTMLButtonElement).disabled).toBe(false));
     const github = await screen.findByTestId("integration-card-github");
@@ -203,13 +214,32 @@ describe("Connect Apps GitHub Developer entry", () => {
     expect(setup).toHaveBeenCalledOnce();
     expect(fetchMock).not.toHaveBeenCalledWith(expect.stringMatching(/integrations\/connect$/), expect.anything());
 
-    view.rerender(<IntegrationsSection active={false} onOpenGithubDeveloperTerminal={setup} />);
+    view.rerender(<IntegrationsSection active={false} {...terminalCallbacks} />);
     ready = true;
-    view.rerender(<IntegrationsSection active onOpenGithubDeveloperTerminal={setup} />);
+    view.rerender(<IntegrationsSection active {...terminalCallbacks} />);
     expect(await screen.findByText("Ready")).toBeTruthy();
     expect(screen.queryByRole("button", { name: "Connect GitHub Developer", exact: true })).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "Connected (1)" }));
     expect(screen.getByTestId("integration-card-github-developer")).toBeTruthy();
     expect(screen.queryByTestId("integration-card-github")).toBeNull();
+
+    const disconnectButton = await screen.findByRole("button", { name: "Disconnect GitHub Developer" });
+    fireEvent.click(disconnectButton);
+    const dialog = within(screen.getByRole("dialog", { name: "Disconnect GitHub Developer?" }));
+    fireEvent.click(dialog.getByRole("button", { name: "Disconnect", exact: true }));
+    await waitFor(() => expect(disconnect).toHaveBeenCalledExactlyOnceWith(`${workspaceId}:${tabId}`));
+    const commandRequest = fetchMock.mock.calls.find(([url]) => String(url).endsWith(`/workspaces/${workspaceId}/tabs`));
+    expect(commandRequest?.[0]).toMatch(/\/vm\/alice\/~runtime\/studio\/api\/terminal\/workspaces/);
+    expect(JSON.parse(String(commandRequest?.[1]?.body)).command).toEqual([
+      "/bin/sh", "-c", expect.stringContaining('auth logout --hostname github.com --user "$1"'), "matrix-github-developer-disconnect", "octocat",
+    ]);
+    expect(fetchMock).not.toHaveBeenCalledWith(expect.stringMatching(/\/api\/integrations\/connect$/), expect.anything());
+
+    view.rerender(<IntegrationsSection active={false} {...terminalCallbacks} />);
+    ready = false;
+    view.rerender(<IntegrationsSection active {...terminalCallbacks} />);
+    expect(await screen.findByText("No integrations found")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "All apps" }));
+    expect(await screen.findByRole("button", { name: "Connect GitHub Developer", exact: true })).toBeTruthy();
   });
 });

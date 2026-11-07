@@ -4,6 +4,8 @@ import {
   ProviderSettingsMutationResponseSchema,
   ProviderSettingsMutationSchema,
   ProviderSettingsSnapshotSchema,
+  TerminalTabIdSchema,
+  TerminalWorkspaceIdSchema,
   FUNDED_AI_READINESS_TIMEOUTS,
   FUNDED_AI_CHECKOUT_TIMEOUT_MS,
   type ProviderSettingsMutation,
@@ -11,7 +13,7 @@ import {
   type ProviderSettingsSnapshot,
   type ProviderHarnessKind,
 } from "@matrix-os/contracts";
-import { openProviderAgentSetup, canonicalChatProviderCatalogPath, providerSettingsSnapshotPath, providerSettingsActionsPath, providerSettingsManagedCreditPath } from "@matrix-os/ui";
+import { githubDeveloperDisconnectCommand, openProviderAgentSetup, canonicalChatProviderCatalogPath, providerSettingsSnapshotPath, providerSettingsActionsPath, providerSettingsManagedCreditPath } from "@matrix-os/ui";
 import type {
   ProviderSettingsTransport,
   ProviderSettingsTransportErrorCode,
@@ -19,6 +21,7 @@ import type {
 import { AppError } from "../../../../shared/app-error";
 import { buildGatewayUrl, type ApiClient } from "../../lib/api";
 import { invoke } from "../../lib/operator";
+import { terminalRefKey } from "../../lib/terminal-workspaces";
 import { isValidShellSessionName, readShellSessions, useShellSessions, type ShellSessionSummary } from "../../stores/shell-sessions";
 import { captureRuntimeGeneration, isCurrentRuntimeGeneration } from "../../stores/runtime-generation";
 import { useTabs } from "../../stores/tabs";
@@ -208,6 +211,29 @@ export async function openDesktopGithubDeveloperSetup(
   });
   if (!session || !isIdentityCurrent()) return false;
   return openExistingProviderTerminalSession(api, session.name, isIdentityCurrent);
+}
+
+export async function openDesktopGithubDeveloperDisconnect(
+  api: ApiClient,
+  account: string,
+  isIdentityCurrent: () => boolean,
+  signal: AbortSignal,
+): Promise<boolean> {
+  const isCurrent = () => !signal.aborted && isIdentityCurrent();
+  const command = githubDeveloperDisconnectCommand(account);
+  if (!isCurrent() || !command) return false;
+  const ensured = await api.post<{ workspace?: { id?: unknown } }>("/api/terminal/workspaces/ensure", {},
+    { signal, maxBytes: 64 * 1024, timeoutMs: 10_000, omitErrorBody: true });
+  const workspaceId = TerminalWorkspaceIdSchema.safeParse(ensured?.workspace?.id);
+  if (!isCurrent() || !workspaceId.success) return false;
+  const response = await api.post<{ tab?: { id?: unknown } }>(`/api/terminal/workspaces/${workspaceId.data}/tabs`, {
+    name: `disconnect-github-${crypto.randomUUID().slice(0, 8)}`,
+    cwd: "projects",
+    command,
+  }, { signal, maxBytes: 64 * 1024, timeoutMs: 10_000, omitErrorBody: true });
+  const tabId = TerminalTabIdSchema.safeParse(response?.tab?.id);
+  if (!isCurrent() || !tabId.success) return false;
+  return openExistingProviderTerminalSession(api, terminalRefKey({ workspaceId: workspaceId.data, tabId: tabId.data }), isCurrent);
 }
 
 type OpenExternal = (url: string) => Promise<unknown>;

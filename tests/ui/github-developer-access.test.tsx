@@ -3,10 +3,11 @@
 import "@testing-library/jest-dom/vitest";
 import React from "react";
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   GITHUB_DEVELOPER_SERVICE_ID,
   GithubDeveloperAccess,
+  githubDeveloperDisconnectCommand,
   withGithubDeveloperCatalogEntry,
   parseGithubDeveloperAccessStatus,
   type GithubDeveloperAccessClient,
@@ -27,6 +28,11 @@ const readyStatus = {
   ready: true,
   errorCode: null,
 };
+
+beforeEach(() => {
+  HTMLDialogElement.prototype.showModal = function () { this.setAttribute("open", ""); };
+  HTMLDialogElement.prototype.close = function () { this.removeAttribute("open"); };
+});
 
 afterEach(() => {
   cleanup();
@@ -98,6 +104,7 @@ describe("GitHub Developer card", () => {
       status: vi.fn().mockResolvedValue(partialStatus),
       setupAccess: vi.fn().mockResolvedValue({ mode: "read_only", reason }),
       startSetup,
+      startDisconnect: vi.fn(),
     };
     render(<GithubDeveloperAccessCard identityKey="alice:primary" client={client} />);
 
@@ -115,6 +122,7 @@ describe("GitHub Developer card", () => {
       status: vi.fn().mockResolvedValue(partialStatus),
       setupAccess: vi.fn().mockResolvedValue({ mode: "read_only", reason: "runtime_unavailable" }),
       startSetup,
+      startDisconnect: vi.fn(),
     };
     render(<GithubDeveloperAccessCard identityKey="alice:primary" client={client} />);
 
@@ -124,19 +132,99 @@ describe("GitHub Developer card", () => {
     expect(startSetup).toHaveBeenCalledTimes(1);
   });
 
-  it("shows readiness and owner identity without an action", async () => {
+  it("disconnects only after confirmation and shows Connect after a fresh signed-out status", async () => {
     const client: GithubDeveloperAccessClient = {
-      status: vi.fn().mockResolvedValue(readyStatus),
-      setupAccess: vi.fn(),
+      status: vi.fn().mockResolvedValueOnce(readyStatus).mockResolvedValueOnce({
+        ...readyStatus, authenticated: false, user: null, ready: false,
+      }),
+      setupAccess: vi.fn().mockResolvedValue(writable),
       startSetup: vi.fn(),
+      startDisconnect: vi.fn().mockResolvedValue(true),
     };
-    render(<GithubDeveloperAccessCard identityKey="alice:primary" client={client} />);
+    const view = render(<GithubDeveloperAccessCard identityKey="alice:primary" client={client} />);
 
-    expect(developerRow().getByText("GitHub Developer")).toBeVisible();
     expect(await screen.findByText("Ready")).toBeVisible();
     expect(screen.getByText("octocat · SSH verified · The Octocat <octocat@users.noreply.github.com>")).toBeVisible();
+    const disconnect = await screen.findByRole("button", { name: "Disconnect GitHub Developer" });
+    await waitFor(() => expect(disconnect).toBeEnabled());
+    fireEvent.click(disconnect);
+    let dialog = within(screen.getByRole("dialog", { name: "Disconnect GitHub Developer?" }));
+    expect(dialog.getByText(/SSH keys and Git commit identity/)).toBeVisible();
+    fireEvent.click(dialog.getByRole("button", { name: "Cancel" }));
+    expect(client.startDisconnect).not.toHaveBeenCalled();
+    fireEvent.click(disconnect);
+    dialog = within(screen.getByRole("dialog", { name: "Disconnect GitHub Developer?" }));
+    await act(async () => { fireEvent.click(dialog.getByRole("button", { name: "Disconnect" })); });
+    expect(client.startDisconnect).toHaveBeenCalledExactlyOnceWith("octocat", expect.any(AbortSignal));
+    expect(client.startSetup).not.toHaveBeenCalled();
+    expect(screen.getByText("Ready")).toBeVisible();
+
+    view.rerender(<GithubDeveloperAccessCard identityKey="alice:primary" client={client} active={false} />);
+    view.rerender(<GithubDeveloperAccessCard identityKey="alice:primary" client={client} active />);
+    expect(await screen.findByRole("button", { name: "Connect GitHub Developer" })).toBeVisible();
+    expect(screen.queryByText("Ready")).toBeNull();
+  });
+
+  it("never offers disconnect on a ready computer without writable owner settings", async () => {
+    const client: GithubDeveloperAccessClient = {
+      status: vi.fn().mockResolvedValue(readyStatus),
+      setupAccess: vi.fn().mockResolvedValue({ mode: "read_only", reason: "runtime_unavailable" }),
+      startSetup: vi.fn(),
+      startDisconnect: vi.fn(),
+    };
+    render(<GithubDeveloperAccessCard identityKey="alice:primary" client={client} />);
+    expect(await screen.findByText("Ready")).toBeVisible();
+    await waitFor(() => expect(client.setupAccess).toHaveBeenCalledTimes(1));
     expect(developerRow().queryByRole("button")).toBeNull();
-    expect(client.setupAccess).not.toHaveBeenCalled();
+    expect(client.startDisconnect).not.toHaveBeenCalled();
+  });
+
+  it("abandons an open disconnect confirmation when the computer changes", async () => {
+    const alice: GithubDeveloperAccessClient = {
+      status: vi.fn().mockResolvedValue(readyStatus),
+      setupAccess: vi.fn().mockResolvedValue(writable),
+      startSetup: vi.fn(),
+      startDisconnect: vi.fn(),
+    };
+    const bob: GithubDeveloperAccessClient = {
+      ...alice, status: vi.fn().mockResolvedValue({ ...readyStatus, user: "hubot" }),
+      startDisconnect: vi.fn(),
+    };
+    const view = render(<GithubDeveloperAccessCard identityKey="alice:primary" client={alice} />);
+    fireEvent.click(await screen.findByRole("button", { name: "Disconnect GitHub Developer" }));
+    expect(screen.getByRole("dialog", { name: "Disconnect GitHub Developer?" })).toBeVisible();
+    view.rerender(<GithubDeveloperAccessCard identityKey="bob:primary" client={bob} />);
+    expect(screen.queryByRole("dialog", { name: "Disconnect GitHub Developer?" })).toBeNull();
+    expect(alice.startDisconnect).not.toHaveBeenCalled();
+    expect(bob.startDisconnect).not.toHaveBeenCalled();
+  });
+
+  it("rechecks owner permission at confirmation before dispatching disconnect", async () => {
+    const client: GithubDeveloperAccessClient = {
+      status: vi.fn().mockResolvedValue(readyStatus),
+      setupAccess: vi.fn().mockResolvedValueOnce(writable)
+        .mockResolvedValueOnce({ mode: "read_only", reason: "insufficient_permission" }),
+      startSetup: vi.fn(),
+      startDisconnect: vi.fn(),
+    };
+    render(<GithubDeveloperAccessCard identityKey="alice:primary" client={client} />);
+    fireEvent.click(await screen.findByRole("button", { name: "Disconnect GitHub Developer" }));
+    const dialog = within(screen.getByRole("dialog", { name: "Disconnect GitHub Developer?" }));
+    await act(async () => { fireEvent.click(dialog.getByRole("button", { name: "Disconnect" })); });
+    expect(client.startDisconnect).not.toHaveBeenCalled();
+    expect(developerRow().queryByRole("button")).toBeNull();
+    expect(screen.getByText("Ready")).toBeVisible();
+  });
+
+  it("separates the selected account from the fixed, isolated terminal script", () => {
+    const octocat = githubDeveloperDisconnectCommand("octocat");
+    const hubot = githubDeveloperDisconnectCommand("hubot");
+    expect(octocat?.slice(0, 4)).toEqual(hubot?.slice(0, 4));
+    expect(octocat?.at(-1)).toBe("octocat");
+    expect(octocat?.[2]).toContain('/usr/bin/env -i HOME="$owner_home"');
+    expect(octocat?.[2]).toContain('GH_CONFIG_DIR="$owner_home/.config/gh"');
+    expect(octocat?.[2]).toContain('auth logout --hostname github.com --user "$1"');
+    expect(githubDeveloperDisconnectCommand("--all")).toBeNull();
   });
 
   it("locks setup while a terminal handoff is pending and reports a retry after failure", async () => {
@@ -146,6 +234,7 @@ describe("GitHub Developer card", () => {
       status: vi.fn().mockResolvedValue(partialStatus),
       setupAccess: vi.fn().mockResolvedValue(writable),
       startSetup,
+      startDisconnect: vi.fn(),
     };
     render(<GithubDeveloperAccessCard identityKey="alice:primary" client={client} />);
 
@@ -166,6 +255,7 @@ describe("GitHub Developer card", () => {
       status: vi.fn().mockResolvedValueOnce(partialStatus).mockResolvedValueOnce(readyStatus),
       setupAccess: vi.fn().mockResolvedValue(writable),
       startSetup: vi.fn().mockResolvedValue(true),
+      startDisconnect: vi.fn(),
     };
     const view = render(<GithubDeveloperAccessCard identityKey="alice:primary" client={client} />);
     const finish = await screen.findByRole("button", { name: finishSetup });
@@ -185,13 +275,15 @@ describe("GitHub Developer card", () => {
     let releaseBob!: (value: unknown) => void;
     const alice: GithubDeveloperAccessClient = {
       status: vi.fn(() => new Promise((resolve) => { releaseAlice = resolve; })),
-      setupAccess: vi.fn(),
+      setupAccess: vi.fn().mockResolvedValue(writable),
       startSetup: vi.fn(),
+      startDisconnect: vi.fn(),
     };
     const bob: GithubDeveloperAccessClient = {
       status: vi.fn(() => new Promise((resolve) => { releaseBob = resolve; })),
-      setupAccess: vi.fn(),
+      setupAccess: vi.fn().mockResolvedValue(writable),
       startSetup: vi.fn(),
+      startDisconnect: vi.fn(),
     };
     const view = render(<GithubDeveloperAccessCard identityKey="alice:primary" client={alice} />);
     view.rerender(<GithubDeveloperAccessCard identityKey="bob:primary" client={bob} />);
@@ -209,8 +301,9 @@ describe("GitHub Developer card", () => {
     const client: GithubDeveloperAccessClient = {
       status: vi.fn().mockRejectedValueOnce(new Error("token leaked from /home/alice/.config/gh/hosts.yml"))
         .mockResolvedValueOnce(readyStatus),
-      setupAccess: vi.fn(),
+      setupAccess: vi.fn().mockResolvedValue(writable),
       startSetup: vi.fn(),
+      startDisconnect: vi.fn(),
     };
     render(<GithubDeveloperAccessCard identityKey="alice:primary" client={client} />);
 

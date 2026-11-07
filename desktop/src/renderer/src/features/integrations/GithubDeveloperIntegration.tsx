@@ -4,6 +4,7 @@ import { desktopProviderIdentityKey } from "../../lib/provider-settings-identity
 import { useConnection } from "../../stores/connection";
 import {
   createDesktopProviderSettingsTransport,
+  openDesktopGithubDeveloperDisconnect,
   openDesktopGithubDeveloperSetup,
 } from "../settings/provider-settings-desktop-adapter";
 
@@ -38,6 +39,7 @@ export function GithubDeveloperIntegration({ active, children }: {
       return access;
     },
     startSetup: () => openDesktopGithubDeveloperSetup(runtimeApi, isIdentityCurrent),
+    startDisconnect: (account, signal) => openDesktopGithubDeveloperDisconnect(runtimeApi, account, isIdentityCurrent, signal),
   }) : null, [isIdentityCurrent, runtimeApi]);
   return signedIn && client
     ? <GithubDeveloperAccess identityKey={identityKey} client={client} active={active}>{children}</GithubDeveloperAccess>

@@ -29,6 +29,7 @@ export { AgentsProvidersView } from "./agents-providers/AgentsProvidersView.js";
 export {
   GITHUB_DEVELOPER_SERVICE_ID,
   GithubDeveloperAccess,
+  githubDeveloperDisconnectCommand,
   withGithubDeveloperCatalogEntry,
   parseGithubDeveloperAccessStatus,
 } from "./integrations/GithubDeveloperAccess.js";

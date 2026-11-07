@@ -1,9 +1,14 @@
 import type { ProviderSettingsAccess } from "@matrix-os/contracts";
 import type { IntegrationCatalogItem } from "@matrix-os/contracts/integration-marketplace";
 import { useEffect, useRef, useState, type ReactNode } from "react";
+import { Button } from "../Button.js";
+import { Dialog } from "../Dialog.js";
+import { DialogFooter } from "../DialogFooter.js";
+import { DialogTitle } from "../DialogTitle.js";
 import type { IntegrationRowPresentation } from "./IntegrationMarketplace.js";
 
 const MAX_ACCOUNT_LABEL_LENGTH = 128;
+const GITHUB_ACCOUNT_PATTERN = /^[A-Za-z0-9][A-Za-z0-9-]{0,38}$/;
 // Match the additive core contract, including the confirmed name and email.
 const MAX_IDENTITY_LABEL_LENGTH = 525;
 
@@ -25,6 +30,7 @@ export interface GithubDeveloperAccessClient {
   status(signal: AbortSignal): Promise<unknown>;
   setupAccess(signal: AbortSignal): Promise<ProviderSettingsAccess>;
   startSetup(): Promise<boolean>;
+  startDisconnect?(account: string, signal: AbortSignal): Promise<boolean>;
 }
 
 function boundedLabel(value: unknown, maxLength: number): string | null {
@@ -100,6 +106,24 @@ function identityLabel(status: GithubDeveloperAccessStatus["commitIdentity"]): s
 
 export const GITHUB_DEVELOPER_SERVICE_ID = "github-developer";
 
+// Match the owner login's canonical gh configuration and ignore inherited tokens.
+const githubLogoutScript = [
+  'owner_home="$(/usr/bin/realpath "${MATRIX_HOME:-$HOME}")" &&',
+  '/usr/bin/env -i HOME="$owner_home" XDG_CONFIG_HOME="$owner_home/.config"',
+  'GH_CONFIG_DIR="$owner_home/.config/gh" GH_HOST=github.com',
+  'GH_ACCESSIBLE_PROMPTER=1 TERM="${TERM:-xterm-256color}"',
+  '/opt/matrix/runtime/node/bin/gh auth logout --hostname github.com --user "$1";',
+  'result=$?;',
+  "printf '\\nPress Enter to close.\\n';",
+  '/usr/bin/timeout --foreground 120 /bin/sh -c "read -r reply";',
+  'exit "$result"',
+].join(" ");
+
+export function githubDeveloperDisconnectCommand(account: string): string[] | null {
+  if (!GITHUB_ACCOUNT_PATTERN.test(account)) return null;
+  return ["/bin/sh", "-c", githubLogoutScript, "matrix-github-developer-disconnect", account];
+}
+
 export function withGithubDeveloperCatalogEntry(services: readonly IntegrationCatalogItem[]): IntegrationCatalogItem[] {
   const github = services.find(service => service.id === "github");
   const developer: IntegrationCatalogItem = {
@@ -140,10 +164,22 @@ function GithubDeveloperAccessForIdentity({
   const [refreshRevision, setRefreshRevision] = useState(0);
   const [status, setStatus] = useState<GithubDeveloperAccessStatus | null>(null);
   const [statusFailed, setStatusFailed] = useState(false);
-  const [setupAccess, setSetupAccess] = useState<"checking" | "allowed" | "denied" | "unavailable">("checking");
+  const [setupAccess, setSetupAccess] = useState<"checking" | "allowed" | "setup_only" | "denied" | "unavailable">("checking");
   const [setupPending, setSetupPending] = useState(false);
-  const [setupFailed, setSetupFailed] = useState(false);
+  const [failedOperation, setFailedOperation] = useState<"setup" | "disconnect" | null>(null);
+  const [confirmDisconnect, setConfirmDisconnect] = useState<string | null>(null);
   const setupInFlight = useRef(false);
+  const lifetime = useRef<AbortController | null>(null);
+
+  useEffect(() => {
+    if (!active) return;
+    const controller = new AbortController();
+    lifetime.current = controller;
+    return () => {
+      controller.abort();
+      lifetime.current = null;
+    };
+  }, [active, client]);
 
   useEffect(() => {
     if (!active) return;
@@ -178,12 +214,13 @@ function GithubDeveloperAccessForIdentity({
       if (signal.aborted) return;
       setStatus(parsed);
       setStatusFailed(parsed === null);
-      if (!parsed || parsed.ready) return;
+      if (!parsed || (parsed.ready && !client.startDisconnect)) return;
       try {
         const access = await client.setupAccess(signal);
         if (!signal.aborted) {
-          const allowed = access.mode === "writable" || access.reason === "runtime_unavailable";
-          setSetupAccess(allowed ? "allowed" : "denied");
+          if (access.mode === "writable") setSetupAccess("allowed");
+          else if (access.reason === "runtime_unavailable") setSetupAccess("setup_only");
+          else setSetupAccess("denied");
         }
       } catch (error: unknown) {
         if (signal.aborted) return;
@@ -196,15 +233,46 @@ function GithubDeveloperAccessForIdentity({
   }, [active, client, refreshRevision]);
 
   async function startSetup() {
-    if (!active || setupAccess !== "allowed" || setupInFlight.current) return;
+    if (!active || (setupAccess !== "allowed" && setupAccess !== "setup_only") || setupInFlight.current) return;
     setupInFlight.current = true;
     setSetupPending(true);
-    setSetupFailed(false);
+    setFailedOperation(null);
     try {
-      setSetupFailed(!await client.startSetup());
+      if (!await client.startSetup()) setFailedOperation("setup");
     } catch (error: unknown) {
       console.warn("[github-developer-access] Setup handoff unavailable:", error instanceof Error ? error.name : typeof error);
-      setSetupFailed(true);
+      setFailedOperation("setup");
+    } finally {
+      setupInFlight.current = false;
+      setSetupPending(false);
+    }
+  }
+
+  async function startDisconnect() {
+    const signal = lifetime.current?.signal;
+    const start = client.startDisconnect;
+    if (!signal || signal.aborted || !active || setupAccess !== "allowed" || !status?.ready
+      || !confirmDisconnect || confirmDisconnect !== status.user || setupInFlight.current || !start) return;
+    setupInFlight.current = true;
+    setSetupPending(true);
+    setFailedOperation(null);
+    setConfirmDisconnect(null);
+    try {
+      const access = await client.setupAccess(signal);
+      if (signal.aborted) return;
+      if (access.mode !== "writable") {
+        setSetupAccess(access.reason === "runtime_unavailable" ? "setup_only" : "denied");
+        return;
+      }
+      if (!await start(confirmDisconnect, signal) && !signal.aborted) {
+        setFailedOperation("disconnect");
+        setRefreshRevision((revision) => revision + 1);
+      }
+    } catch (error: unknown) {
+      if (signal.aborted) return;
+      console.warn("[github-developer-access] Disconnect handoff unavailable:", error instanceof Error ? error.name : typeof error);
+      setFailedOperation("disconnect");
+      setRefreshRevision((revision) => revision + 1);
     } finally {
       setupInFlight.current = false;
       setSetupPending(false);
@@ -214,24 +282,50 @@ function GithubDeveloperAccessForIdentity({
   const connectLabel = status?.authenticated ? "Finish setup" : "Connect";
   const retryStatus = statusFailed || setupAccess === "unavailable";
   const ready = status?.ready === true;
-  const setupError = setupFailed && !ready && setupAccess === "allowed";
+  const canSetup = setupAccess === "allowed" || setupAccess === "setup_only";
+  const setupError = failedOperation === "setup" && !ready && canSetup;
+  const disconnectError = failedOperation === "disconnect" && ready && setupAccess === "allowed";
+  const refresh = () => setRefreshRevision((revision) => revision + 1);
   let detail = "Sign in securely";
   if (statusFailed) detail = "GitHub developer access is unavailable.";
   else if (!status) detail = "Checking developer access…";
-  else if (setupAccess === "denied") detail = "Setup requires permission on this computer.";
+  else if (setupAccess === "denied" && !ready) detail = "Setup requires permission on this computer.";
   else if (setupAccess === "unavailable") detail = "Could not verify setup permission.";
   else if (setupError) detail = "Could not open setup in Terminal.";
+  else if (disconnectError) detail = "Could not open disconnect in Terminal.";
   else if (status.authenticated) detail = `${status.user} · ${readinessLabel(status.sshStatus)} · ${identityLabel(status.commitIdentity)}`;
 
-  return children({
-    detail,
-    detailIsError: retryStatus || setupError,
-    ready,
-    action: retryStatus || (status && !ready) ? {
+  let action: IntegrationRowPresentation["action"];
+  if (retryStatus || (status && !ready)) {
+    action = {
       label: retryStatus ? "Retry GitHub Developer status" : setupError ? "Retry GitHub Developer setup" : `${connectLabel} GitHub Developer`,
       text: retryStatus || setupError ? "Retry" : setupPending ? "Opening Terminal…" : connectLabel,
-      disabled: !retryStatus && (!active || setupAccess !== "allowed" || setupPending),
-      onClick: retryStatus ? () => setRefreshRevision((revision) => revision + 1) : () => void startSetup(),
-    } : undefined,
-  });
+      disabled: !active || (!retryStatus && (!canSetup || setupPending)),
+      onClick: retryStatus ? refresh : () => void startSetup(),
+    };
+  } else if (ready && status.user && GITHUB_ACCOUNT_PATTERN.test(status.user)
+    && setupAccess === "allowed" && client.startDisconnect) {
+    action = {
+      label: disconnectError ? "Retry GitHub Developer disconnect" : "Disconnect GitHub Developer",
+      text: setupPending ? "Opening Terminal…" : disconnectError ? "Retry" : "Disconnect",
+      disabled: !active || setupPending,
+      onClick: () => setConfirmDisconnect(status?.user ?? null),
+    };
+  }
+
+  return (
+    <>
+      {children({ detail, detailIsError: retryStatus || setupError || disconnectError, ready, action })}
+      {active && ready && setupAccess === "allowed" && confirmDisconnect && confirmDisconnect === status?.user ? (
+        <Dialog open onClose={() => setConfirmDisconnect(null)} aria-label="Disconnect GitHub Developer?">
+          <DialogTitle>Disconnect GitHub Developer?</DialogTitle>
+          <p className="text-sm">This signs {confirmDisconnect} out of GitHub CLI on this computer. Existing SSH keys and Git commit identity are preserved.</p>
+          <DialogFooter>
+            <Button variant="secondary" onClick={() => setConfirmDisconnect(null)} autoFocus>Cancel</Button>
+            <Button variant="destructive" onClick={() => void startDisconnect()}>Disconnect</Button>
+          </DialogFooter>
+        </Dialog>
+      ) : null}
+    </>
+  );
 }

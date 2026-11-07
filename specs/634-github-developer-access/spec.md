@@ -128,11 +128,15 @@ remain independent of any existing GitHub connection.
 
 Show **Connect** for missing setup and **Finish setup** for incomplete setup.
 Open the same owner Terminal command from either action once Settings permissions
-are confirmed. Recheck status on return to the app. A ready card reports its
-state and offers no setup action. Retry failed status or permission checks
-from the card. Electron also retries a failed Terminal handoff there. Web
-uses its existing Terminal recovery path. Discard results from a previously
-selected computer.
+are confirmed. When ready, keep the same compact card and offer **Disconnect**
+to authorized owners. After confirmation, open the selected owner's Terminal
+to sign out of GitHub CLI on that computer. Existing SSH keys and Git commit
+identity stay available, so direct SSH Git operations may still work. Sign
+out the GitHub account shown in the confirmation. Recheck actual status
+after returning from Terminal.
+Retry failed status or permission checks from the card. Electron also retries
+a failed Terminal handoff there. Web uses its existing Terminal recovery path.
+Discard results from a previously selected computer.
 
 ## Acceptance And Tests
 
