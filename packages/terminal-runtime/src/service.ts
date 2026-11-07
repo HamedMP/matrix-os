@@ -1,5 +1,5 @@
 import { lstat, readFile, readdir } from "node:fs/promises";
-import { join, resolve } from "node:path";
+import { join } from "node:path";
 import { z } from "zod/v4";
 import { migrateTerminalWorkspaces, rollbackTerminalWorkspaceMigration } from "./migration.js";
 import { initializeMatrixZellijConfig } from "./zellij-bootstrap.js";
@@ -16,6 +16,12 @@ import {
   loadInstalledTerminalRuntimeGeneration,
 } from "./user-systemd-controller.js";
 import { createUserSystemdWorkspaceLifecycle } from "./user-systemd-workspace.js";
+import { createTerminalCapacityAdmission } from "./user-systemd-capacity.js";
+import {
+  assertIsolatedTerminalGeneration,
+  assertIsolatedTerminalPlacement,
+  resolveTerminalRuntimeDeployment,
+} from "./runtime-deployment.js";
 import {
   assertTerminalRuntimeDirectory,
   createTerminalRuntimeEnvironment,
@@ -52,30 +58,36 @@ async function listProjects(homePath: string): Promise<Array<{ id: string; cwd: 
 }
 
 async function main(): Promise<void> {
-  const homePath = resolve(process.env.MATRIX_HOME ?? process.env.HOME ?? "/home/matrix/home");
-  const socketPath = process.env.MATRIX_TERMINAL_RUNTIME_SOCKET ?? "/run/matrix/terminal-runtime.sock";
+  const deployment = resolveTerminalRuntimeDeployment(process.env);
+  const { homePath, socketPath, appDir, terminalRuntimeRoot, generationLockHelperPath } = deployment;
   const mode = process.argv[2];
   if (mode === "--health-check") {
     const client = new TerminalRuntimeSocketClient({ socketPath, timeoutMs: 5_000 });
     await client.listWorkspaces();
     return;
   }
-  const appDir = resolve(process.env.MATRIX_APP_DIR ?? "/opt/matrix/app");
-  const terminalRuntimeRoot = resolve(process.env.MATRIX_TERMINAL_RUNTIME_ROOT ?? "/opt/matrix/terminal-runtime");
   const uid = process.getuid?.();
   if (uid == null) throw new Error("terminal_runtime_uid_unavailable");
-  const runtimeEnvironment = createTerminalRuntimeEnvironment({ homePath, uid });
+  const isolatedProfile = deployment.mode === "isolated" ? deployment.profile : undefined;
+  const runtimeEnvironment = deployment.mode === "isolated"
+    ? deployment.environment : createTerminalRuntimeEnvironment({ homePath, uid });
   await assertTerminalRuntimeDirectory(runtimeEnvironment.XDG_RUNTIME_DIR!, uid);
-  const generation = await loadInstalledTerminalRuntimeGeneration(appDir, { terminalRuntimeRoot });
+  if (isolatedProfile) await assertIsolatedTerminalPlacement(isolatedProfile, runtimeEnvironment, uid);
+  const generation = await loadInstalledTerminalRuntimeGeneration(appDir, {
+    terminalRuntimeRoot,
+    userUnitRoot: isolatedProfile?.userUnitRoot,
+  });
+  if (isolatedProfile) await assertIsolatedTerminalGeneration(isolatedProfile, generation);
   const controller = createUserSystemdTerminalRuntime({
     homePath,
     uid,
     env: runtimeEnvironment,
     generation,
     terminalRuntimeRoot,
-    generationLockHelperPath: "/opt/matrix/bin/matrix-terminal-generation-gc.py",
+    generationLockHelperPath,
+    capacityAdmission: isolatedProfile && createTerminalCapacityAdmission({ root: isolatedProfile.cgroupRoot }),
   });
-  await controller.assertInstallationReady();
+  if (!isolatedProfile) await controller.assertInstallationReady();
   const zellij = new ZellijCliRuntimeAdapter({
     homePath,
     env: runtimeEnvironment,
@@ -98,7 +110,7 @@ async function main(): Promise<void> {
   const runtime = new TerminalRuntime({
     store: new TerminalWorkspaceStore({ homePath }),
     zellij,
-    ...resolveTerminalRuntimeLimits(process.env),
+    ...resolveTerminalRuntimeLimits(isolatedProfile ? runtimeEnvironment : process.env),
   });
   await runtime.restoreAll();
   const server = new TerminalRuntimeSocketServer({ socketPath, runtime });

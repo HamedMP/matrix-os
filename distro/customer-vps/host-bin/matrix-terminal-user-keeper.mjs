@@ -3,7 +3,7 @@
 import { spawn } from "node:child_process";
 import { constants, lstatSync, readFileSync, realpathSync } from "node:fs";
 import { open } from "node:fs/promises";
-import { isAbsolute, join, relative, resolve, sep } from "node:path";
+import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const MAX_DESCRIPTOR_BYTES = 64 * 1024;
@@ -19,6 +19,8 @@ const ENVIRONMENT_KEYS = new Set(["HOME", "MATRIX_HOME", "MATRIX_NODE_PREFIX", "
 const runtimeId = process.argv[2] ?? "";
 const homePath = resolve(process.env.MATRIX_HOME || process.env.HOME || "/home/matrix/home");
 const runtimeRoot = resolve(process.env.MATRIX_TERMINAL_RUNTIME_ROOT || "/opt/matrix/terminal-runtime");
+const namespace = process.env.MATRIX_TERMINAL_RUNTIME_NAMESPACE;
+const isolated = namespace !== undefined;
 
 function fail(code) {
   process.stderr.write(`matrix-terminal-user-keeper: ${code}\n`);
@@ -52,6 +54,10 @@ function hasExactDescriptorKeys(value) {
 }
 
 if (!RUNTIME_ID_PATTERN.test(runtimeId)) fail("runtime_id_invalid");
+if (isolated && (process.env.MATRIX_NODE_BIN !== process.execPath
+  || !process.env.XDG_RUNTIME_DIR || !process.env.ZELLIJ_SOCKET_DIR)) {
+  fail("keeper_profile_invalid");
+}
 
 const descriptorPath = join(homePath, "system", "terminal-runtimes", `${runtimeId}.json`);
 let descriptor;
@@ -90,8 +96,12 @@ const pinnedKeeperPath = join(
 try {
   const currentKeeper = realpathSync(fileURLToPath(import.meta.url));
   const pinnedKeeper = realpathSync(pinnedKeeperPath);
+  if (isolated && (pinnedKeeper !== pinnedKeeperPath || !lstatSync(pinnedKeeperPath).isFile())) {
+    fail("keeper_generation_unavailable");
+  }
   if (currentKeeper !== pinnedKeeper) {
-    const pinned = spawn("/opt/matrix/runtime/node/bin/node", [pinnedKeeper, runtimeId], {
+    const nodeBinary = isolated ? process.execPath : "/opt/matrix/runtime/node/bin/node";
+    const pinned = spawn(nodeBinary, [pinnedKeeper, runtimeId], {
       env: process.env,
       stdio: "inherit",
     });
@@ -153,21 +163,37 @@ try {
 }
 
 const configDir = join(homePath, "system", "zellij");
+const nodeDirectory = dirname(process.execPath);
+const isolatedEnvironment = {
+  MATRIX_TERMINAL_RUNTIME_NAMESPACE: namespace,
+  MATRIX_NODE_PREFIX: dirname(nodeDirectory),
+  XDG_CONFIG_HOME: join(homePath, ".config"),
+  XDG_DATA_HOME: join(homePath, ".local", "share"),
+  XDG_CACHE_HOME: join(homePath, ".cache"),
+  ZELLIJ_SOCKET_DIR: process.env.ZELLIJ_SOCKET_DIR,
+  DBUS_SESSION_BUS_ADDRESS: process.env.DBUS_SESSION_BUS_ADDRESS,
+  USER: process.env.USER,
+  LOGNAME: process.env.LOGNAME,
+  LANG: "C.UTF-8",
+  SHELL: "/bin/bash",
+};
 // Let Zellij load the owner config when present and use defaults on first boot.
-const inheritedEnvironment = { ...process.env };
+const inheritedEnvironment = isolated ? isolatedEnvironment : { ...process.env };
 delete inheritedEnvironment.ZELLIJ_CONFIG_FILE;
 const childOptions = {
   cwd,
   env: {
     ...inheritedEnvironment,
-    ...launchEnvironment,
+    ...(isolated ? {} : launchEnvironment),
     HOME: homePath,
     MATRIX_HOME: homePath,
     ZELLIJ_CONFIG_DIR: configDir,
     TERM: "xterm-256color",
     COLORTERM: "truecolor",
     XDG_RUNTIME_DIR: process.env.XDG_RUNTIME_DIR || `/run/user/${process.getuid()}`,
-    PATH: typeof launchEnvironment.PATH === "string"
+    PATH: isolated
+      ? [join(homePath, ".local", "bin"), nodeDirectory, "/usr/local/bin", "/usr/bin", "/bin"].join(":")
+      : typeof launchEnvironment.PATH === "string"
       ? launchEnvironment.PATH
       : `${homePath}/.local/bin:/opt/matrix/bin:/opt/matrix/runtime/node/bin:/usr/local/bin:/usr/bin:/bin`,
   },
