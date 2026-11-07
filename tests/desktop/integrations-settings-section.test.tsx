@@ -163,6 +163,32 @@ describe("desktop integrations settings section", () => {
     expect(screen.getByTestId("integration-card-github-developer")).toBeTruthy();
   });
 
+  it("puts GitHub Developer disconnect next to account details using the existing account control", async () => {
+    const githubConnection = { ...GMAIL_CONNECTION, service: "github", account_label: "Legacy GitHub" };
+    const api = makeApi({ connections: [githubConnection] });
+    const get = api.get;
+    api.get = vi.fn((path) => path === "/api/github/status"
+      ? Promise.resolve({
+        installed: true, authenticated: true, user: "octocat", gitProtocol: "ssh", sshStatus: "verified",
+        commitIdentity: { status: "ready", label: "Octocat" }, ready: true,
+      })
+      : get(path)) as ApiClient["get"];
+    vi.spyOn(providerActions, "createDesktopProviderSettingsTransport").mockReturnValue({
+      getSnapshot: vi.fn().mockResolvedValue({ access: { mode: "writable" } }),
+    } as never);
+    useConnection.setState({ api });
+    render(<IntegrationsSettingsSection />);
+
+    const disconnect = await screen.findByRole("button", { name: "Disconnect GitHub Developer" });
+    const legacyDisconnect = screen.getByTestId(`integration-disconnect-${CONN_ID}`);
+    const details = screen.getByText("octocat · SSH verified · Octocat");
+    const cardActions = screen.getByTestId("integration-action-github-developer");
+    expect(disconnect.parentElement).toBe(details.parentElement);
+    expect(disconnect.className).toBe(legacyDisconnect.className);
+    expect(cardActions.contains(disconnect)).toBe(false);
+    expect(cardActions.contains(screen.getByLabelText("GitHub Developer ready"))).toBe(true);
+  });
+
   it("renders a loading skeleton while the proxy responds", () => {
     const pending = new Promise<unknown>(() => undefined);
     useConnection.setState({

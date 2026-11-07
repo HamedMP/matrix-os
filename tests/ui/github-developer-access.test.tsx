@@ -144,8 +144,12 @@ describe("GitHub Developer card", () => {
     const view = render(<GithubDeveloperAccessCard identityKey="alice:primary" client={client} />);
 
     expect(await screen.findByText("Ready")).toBeVisible();
-    expect(screen.getByText("octocat · SSH verified · The Octocat <octocat@users.noreply.github.com>")).toBeVisible();
     const disconnect = await screen.findByRole("button", { name: "Disconnect GitHub Developer" });
+    const identity = screen.getByText("octocat · SSH verified · The Octocat <octocat@users.noreply.github.com>");
+    expect(identity).toBeVisible();
+    expect(identity.parentElement).toBe(disconnect.parentElement);
+    expect(disconnect.className).toContain("border-border/60");
+    expect(disconnect.className).not.toContain("rounded-full");
     await waitFor(() => expect(disconnect).toBeEnabled());
     fireEvent.click(disconnect);
     let dialog = within(screen.getByRole("dialog", { name: "Disconnect GitHub Developer?" }));

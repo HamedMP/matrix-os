@@ -35,6 +35,7 @@ export function AvailableServiceCard({
   const description = integrationDescription(service);
   const auth = integrationAuthType(service);
   const detail = presentation?.detail ?? (auth === "keys" ? "API key required" : auth === "oauth" ? "Sign in securely" : "Connect your account");
+  const accountAction = presentation?.accountAction;
   const action = presentation ? presentation.action : {
     label: connected ? `Add another ${service.name} account` : connecting ? `Connecting ${service.name}` : `Connect ${service.name}`,
     text: connecting ? "Connecting…" : connected ? "Add account" : "Connect",
@@ -55,9 +56,17 @@ export function AvailableServiceCard({
         <p className="truncate text-sm" style={{ color: "var(--text-tertiary)" }}>
           {description}
         </p>
-        <p className={presentation ? "mt-1 truncate text-xs" : "mt-1 text-xs"}
-          title={presentation?.detail} role={presentation?.detailIsError ? "alert" : undefined}
-          style={{ color: presentation?.detailIsError ? "var(--surface-danger-emphasis, var(--destructive))" : "var(--text-tertiary)" }}>{detail}</p>
+        {accountAction ? (
+          <div className="mt-1 flex min-w-0 items-center gap-1.5 text-xs" style={{ color: "var(--text-secondary)" }}>
+            <span className="min-w-0 truncate" title={detail} role={presentation?.detailIsError ? "alert" : undefined}
+              style={presentation?.detailIsError ? { color: "var(--surface-danger-emphasis, var(--destructive))" } : undefined}>{detail}</span>
+            <AccountDisconnectButton {...accountAction} testId={`integration-disconnect-${service.id}`} />
+          </div>
+        ) : (
+          <p className={presentation ? "mt-1 truncate text-xs" : "mt-1 text-xs"}
+            title={presentation?.detail} role={presentation?.detailIsError ? "alert" : undefined}
+            style={{ color: presentation?.detailIsError ? "var(--surface-danger-emphasis, var(--destructive))" : "var(--text-tertiary)" }}>{detail}</p>
+        )}
         <span className="sr-only">
           <span>Category: </span>
           <span>{service.category}</span>
@@ -70,17 +79,13 @@ export function AvailableServiceCard({
                 {account.accountEmail ? <span className="truncate">{account.accountEmail}</span> : null}
                 <span className="capitalize" style={{ color: "var(--surface-success-emphasis, #288A5B)" }}>{account.status}</span>
                 {onDisconnect ? (
-                  <button
-                    type="button"
-                    data-testid={`integration-disconnect-${account.id}`}
-                    className="ml-auto shrink-0 rounded border px-1.5 py-0.5"
-                    style={{ borderColor: "var(--border-subtle)" }}
-                    aria-label={`Disconnect ${displayIntegrationName(account.accountLabel)}`}
+                  <AccountDisconnectButton
+                    testId={`integration-disconnect-${account.id}`}
+                    label={`Disconnect ${displayIntegrationName(account.accountLabel)}`}
+                    text="Disconnect"
                     disabled={disabled}
                     onClick={() => onDisconnect(account)}
-                  >
-                    Disconnect
-                  </button>
+                  />
                 ) : null}
               </div>
             ))}
@@ -118,5 +123,23 @@ export function AvailableServiceCard({
       </div>
       {connecting ? <span className="sr-only">Connecting...</span> : null}
     </div>
+  );
+}
+
+function AccountDisconnectButton({
+  label, text, disabled, onClick, testId,
+}: NonNullable<IntegrationRowPresentation["accountAction"]> & { testId: string }) {
+  return (
+    <button
+      type="button"
+      data-testid={testId}
+      className="ml-auto shrink-0 rounded border px-1.5 py-0.5"
+      style={{ borderColor: "var(--border-subtle)" }}
+      aria-label={label}
+      disabled={disabled}
+      onClick={onClick}
+    >
+      {text}
+    </button>
   );
 }

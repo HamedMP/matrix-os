@@ -6,16 +6,19 @@ import { buildIntegrationSections, integrationAuthType, integrationDescription, 
 const muted = { color: "var(--text-tertiary, var(--muted-foreground))" };
 const pill = { background: "var(--bg-surface-hover, var(--muted))" };
 
+interface IntegrationRowAction {
+  label: string;
+  text: string;
+  disabled: boolean;
+  onClick: () => void;
+}
+
 export interface IntegrationRowPresentation {
   detail: string;
   detailIsError?: boolean;
   ready: boolean;
-  action?: {
-    label: string;
-    text: string;
-    disabled: boolean;
-    onClick: () => void;
-  };
+  action?: IntegrationRowAction;
+  accountAction?: IntegrationRowAction;
 }
 
 
@@ -124,6 +127,7 @@ function MarketplaceRow({ service, connected, connecting, failed, disabled, addA
   const state = rowState(connected, connecting, failed);
   const button = ROW_BUTTON[state];
   const action = presentation ? presentation.action : { label: button.label(service.name), text: button.text, disabled, onClick: onConnect };
+  const accountAction = presentation?.accountAction;
   const detail = presentation?.detail ?? (auth === "keys" ? "API key required" : auth === "oauth" ? "Sign in securely" : "Connect your account");
   const showStatusPill = connected && (!addAccount || presentation?.ready);
   return (
@@ -132,9 +136,20 @@ function MarketplaceRow({ service, connected, connecting, failed, disabled, addA
       <div className="min-w-0 flex-1">
         <p className="truncate text-sm font-medium">{service.name}</p>
         <p className="mt-1 truncate text-sm" style={muted} title={integrationDescription(service)}>{integrationDescription(service)}</p>
-        <p className={presentation ? "mt-1 truncate text-xs" : "mt-1 text-xs"}
-          title={presentation?.detail} role={presentation?.detailIsError ? "alert" : undefined}
-          style={presentation?.detailIsError ? { color: "var(--surface-danger-emphasis, var(--destructive))" } : muted}>{detail}</p>
+        {accountAction ? (
+          <div className="mt-1 flex min-w-0 items-center gap-1.5 text-xs">
+            <span className="min-w-0 truncate" title={detail} role={presentation?.detailIsError ? "alert" : undefined}
+              style={presentation?.detailIsError ? { color: "var(--surface-danger-emphasis, var(--destructive))" } : muted}>{detail}</span>
+            <button type="button" aria-label={accountAction.label} disabled={accountAction.disabled} onClick={accountAction.onClick}
+              className="ml-auto shrink-0 rounded-md border border-border/60 px-1.5 py-0.5 text-xs text-muted-foreground transition-colors hover:border-red-500/40 hover:text-red-400 disabled:opacity-50">
+              {accountAction.text}
+            </button>
+          </div>
+        ) : (
+          <p className={presentation ? "mt-1 truncate text-xs" : "mt-1 text-xs"}
+            title={presentation?.detail} role={presentation?.detailIsError ? "alert" : undefined}
+            style={presentation?.detailIsError ? { color: "var(--surface-danger-emphasis, var(--destructive))" } : muted}>{detail}</p>
+        )}
       </div>
       <div className={showStatusPill ? "flex shrink-0 items-center gap-2" : "flex shrink-0 flex-col items-end gap-1.5"}>
         {showStatusPill ? (

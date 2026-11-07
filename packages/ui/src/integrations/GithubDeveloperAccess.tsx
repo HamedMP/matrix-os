@@ -296,6 +296,7 @@ function GithubDeveloperAccessForIdentity({
   else if (status.authenticated) detail = `${status.user} · ${readinessLabel(status.sshStatus)} · ${identityLabel(status.commitIdentity)}`;
 
   let action: IntegrationRowPresentation["action"];
+  let accountAction: IntegrationRowPresentation["accountAction"];
   if (retryStatus || (status && !ready)) {
     action = {
       label: retryStatus ? "Retry GitHub Developer status" : setupError ? "Retry GitHub Developer setup" : `${connectLabel} GitHub Developer`,
@@ -305,7 +306,7 @@ function GithubDeveloperAccessForIdentity({
     };
   } else if (ready && status.user && GITHUB_ACCOUNT_PATTERN.test(status.user)
     && setupAccess === "allowed" && client.startDisconnect) {
-    action = {
+    accountAction = {
       label: disconnectError ? "Retry GitHub Developer disconnect" : "Disconnect GitHub Developer",
       text: setupPending ? "Opening Terminal…" : disconnectError ? "Retry" : "Disconnect",
       disabled: !active || setupPending,
@@ -315,7 +316,7 @@ function GithubDeveloperAccessForIdentity({
 
   return (
     <>
-      {children({ detail, detailIsError: retryStatus || setupError || disconnectError, ready, action })}
+      {children({ detail, detailIsError: retryStatus || setupError || disconnectError, ready, action, accountAction })}
       {active && ready && setupAccess === "allowed" && confirmDisconnect && confirmDisconnect === status?.user ? (
         <Dialog open onClose={() => setConfirmDisconnect(null)} aria-label="Disconnect GitHub Developer?">
           <DialogTitle>Disconnect GitHub Developer?</DialogTitle>

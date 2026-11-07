@@ -454,7 +454,7 @@ export function Desktop({ launchAppPath, sharedTerminalScopeId, onOpenCommandPal
   const openSettingsTerminal = useCallback((sessionId: string) => {
     setSettingsOpen(false);
     openExistingProviderTerminal(sessionId);
-  }, [openExistingProviderTerminal]);
+  }, [openExistingProviderTerminal, setSettingsOpen]);
 
   useEffect(() => {
     const openProviderSettings = () => {
