@@ -161,8 +161,14 @@ it("keeps the saved details visible if history navigation fails", async () => {
   expect(screen.queryByText("secret /home/path")).toBeNull();
 });
 
-it("opens the exact source through the owning navigation callback instead of only changing hidden Chat state",async()=>{
- const client=api(),onOpenChat=jest.fn();client.detail.mockResolvedValue({routine:{...routine,originChatId:"chat_source",originAvailable:true},history:[]});
- render(<SchedulesScreen api={client} resolve={jest.fn()} onBack={jest.fn()} onOpenChat={onOpenChat}/>);
- fireEvent.press(await screen.findByRole("button",{name:"Private ping"}));fireEvent.press(await screen.findByRole("button",{name:"Open source Chat"}));expect(onOpenChat).toHaveBeenCalledWith("chat_source");
+it("keeps run history out of the definition view and opens the exact source Chat", async () => {
+  const client = api(), onOpenChat = jest.fn();
+  client.detail.mockResolvedValue({routine: {...routine, originChatId: "chat_source", originAvailable: true}, history: []});
+  render(<SchedulesScreen api={client} resolve={jest.fn()} onBack={jest.fn()} onOpenChat={onOpenChat}/>);
+  fireEvent.press(await screen.findByRole("button", {name: "Private ping"}));
+  const source = await screen.findByRole("button", {name: "Open source Chat"});
+  expect(screen.queryByText("Recent runs")).toBeNull();
+  expect(screen.queryByRole("button", {name: "Open execution history"})).toBeNull();
+  fireEvent.press(source);
+  expect(onOpenChat).toHaveBeenCalledWith("chat_source");
 });
