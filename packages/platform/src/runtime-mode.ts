@@ -1,4 +1,5 @@
 import { z } from 'zod/v4';
+import { assertLocalDevstackDatabase, DevstackBootstrapError } from './devstack-identity.js';
 import { loadPreviewPairCandidateRuntimeProfile } from './preview-pair/candidate-profile.js';
 
 const PlatformRuntimeModeSchema = z.enum(['cloud_run', 'compose', 'local']);
@@ -16,6 +17,7 @@ export interface PlatformRuntimeConfig {
   platformDatabaseUrl: string;
   customerVpsEnabled: boolean;
   legacyContainerOrchestrationEnabled: boolean;
+  registeredRuntimeInstance?: string;
 }
 
 export class PlatformStartupConfigError extends Error {
@@ -44,8 +46,40 @@ function isLocalDatabaseUrl(value: string): boolean {
   return LOCAL_DATABASE_HOSTS.has(hostname) || hostname.startsWith('127.');
 }
 
+function loadRegisteredRuntimeProfile(env: NodeJS.ProcessEnv): { instance: string; databaseUrl: string } | undefined {
+  const flag = env.MATRIX_DEVSTACK_REGISTERED_RUNTIMES_ONLY;
+  if (flag === undefined || flag === 'false') return undefined;
+  if (flag !== 'true') {
+    throw new PlatformStartupConfigError('MATRIX_DEVSTACK_REGISTERED_RUNTIMES_ONLY must be true or false (DevStack).');
+  }
+  if (env.PLATFORM_RUNTIME_MODE !== 'local'
+    || env.PLATFORM_BACKGROUND_WORKERS_ENABLED !== 'false'
+    || env.MATRIX_LEGACY_CONTAINER_ROUTING_ENABLED !== 'true'
+    || env.CUSTOMER_VPS_ENABLED === 'true'
+    || env.MATRIX_PREVIEW_PAIR_RUNTIME_ONLY === 'true'
+    || env.MATRIX_PREVIEW_PAIR_ENABLED === 'true'
+    || env.MATRIX_PREVIEW_PAIR_MAINTENANCE_ENABLED === 'true') {
+    throw new PlatformStartupConfigError(
+      'Registered DevStack routing requires local legacy routing with background workers, customer VPS and Preview pairs disabled.',
+    );
+  }
+  if (!env.MATRIX_DEVSTACK_INSTANCE || !env.PLATFORM_DATABASE_URL) {
+    throw new PlatformStartupConfigError('Registered DevStack routing requires an instance slug and PLATFORM_DATABASE_URL.');
+  }
+  try {
+    return {
+      instance: env.MATRIX_DEVSTACK_INSTANCE,
+      databaseUrl: assertLocalDevstackDatabase(env.PLATFORM_DATABASE_URL, env.MATRIX_DEVSTACK_INSTANCE, 'local', true),
+    };
+  } catch (error: unknown) {
+    if (!(error instanceof DevstackBootstrapError)) throw error;
+    throw new PlatformStartupConfigError(error.message);
+  }
+}
+
 export function loadPlatformRuntimeConfig(env: NodeJS.ProcessEnv = process.env): PlatformRuntimeConfig {
   // Validate isolation before startup may construct provider clients or workers.
+  const registeredRuntime = loadRegisteredRuntimeProfile(env);
   const candidateRuntime = loadPreviewPairCandidateRuntimeProfile(env);
   const rawMode = env.PLATFORM_RUNTIME_MODE ?? 'compose';
   const parsedMode = PlatformRuntimeModeSchema.safeParse(rawMode);
@@ -55,7 +89,7 @@ export function loadPlatformRuntimeConfig(env: NodeJS.ProcessEnv = process.env):
 
   const mode = parsedMode.data;
   const customerVpsEnabled = env.CUSTOMER_VPS_ENABLED === 'true';
-  const platformDatabaseUrl = resolvePlatformDatabaseUrl(env);
+  const platformDatabaseUrl = registeredRuntime?.databaseUrl ?? resolvePlatformDatabaseUrl(env);
 
   if (mode === 'cloud_run') {
     if (!customerVpsEnabled && !candidateRuntime) {
@@ -77,6 +111,7 @@ export function loadPlatformRuntimeConfig(env: NodeJS.ProcessEnv = process.env):
     mode,
     platformDatabaseUrl,
     customerVpsEnabled,
-    legacyContainerOrchestrationEnabled: mode !== 'cloud_run' && !candidateRuntime,
+    legacyContainerOrchestrationEnabled: mode !== 'cloud_run' && !candidateRuntime && !registeredRuntime,
+    ...(registeredRuntime ? { registeredRuntimeInstance: registeredRuntime.instance } : {}),
   };
 }

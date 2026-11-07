@@ -275,6 +275,7 @@ export async function resolveAppDomainIdentity(opts: {
   allowUnroutedClerkIdentity?: boolean;
   clerkPrincipalOnly?: boolean;
   legacyContainerRoutingEnabled?: boolean;
+  registeredRuntimeOnly?: boolean;
   requestedHandle?: string | null;
   runtimeSlot: string;
   wsToken?: string | null;
@@ -308,7 +309,7 @@ export async function resolveAppDomainIdentity(opts: {
         : undefined;
       // Browser app sessions establish the principal; shell cookies may select
       // an owned computer or an explicitly shared preview for that principal.
-      if (bearerToken === appSessionToken && opts.requestedHandle && !opts.clerkPrincipalOnly) {
+      if (bearerToken === appSessionToken && opts.requestedHandle && !opts.clerkPrincipalOnly && !opts.registeredRuntimeOnly) {
         let requestedMachine = await getActiveUserMachineByHandle(
           opts.db,
           opts.requestedHandle,
@@ -349,6 +350,7 @@ export async function resolveAppDomainIdentity(opts: {
         return {
           handle: record.handle,
           userId: record.clerkUserId,
+          ...(opts.registeredRuntimeOnly ? { runtimeSlot } : {}),
           source: 'auth',
           verifiedSyncBearer,
           sessionProvenance,
@@ -356,6 +358,7 @@ export async function resolveAppDomainIdentity(opts: {
           ...verifiedHumanBrowser,
         };
       }
+      if (opts.registeredRuntimeOnly) return null;
       const machine = await getRunningUserMachineByHandle(opts.db, claims.handle, runtimeSlot);
       if (machine && canClerkUserAccessMachine(machine, claims.sub)) {
         return {
@@ -417,7 +420,7 @@ export async function resolveAppDomainIdentity(opts: {
     };
   }
 
-  if (opts.requestedHandle) {
+  if (opts.requestedHandle && !opts.registeredRuntimeOnly) {
     let requestedMachine = await getActiveUserMachineByHandle(
       opts.db,
       opts.requestedHandle,
@@ -450,25 +453,17 @@ export async function resolveAppDomainIdentity(opts: {
       ...verifiedHumanBrowser,
     };
   }
+  const unroutedClerkIdentity: AppDomainIdentity | null = opts.allowUnroutedClerkIdentity
+    ? { handle: '', userId: result.userId, source: 'auth', sessionProvenance: 'clerk-browser', ...verifiedHumanBrowser }
+    : null;
+  if (opts.registeredRuntimeOnly) return unroutedClerkIdentity;
   let machine = opts.runtimeSlot !== 'primary'
     ? await getAccessibleActiveUserMachineByClerkId(opts.db, result.userId, opts.runtimeSlot)
     : undefined;
   if (!machine) {
     machine = await getAccessibleActiveUserMachineByClerkId(opts.db, result.userId);
   }
-  if (!machine) {
-    if (opts.allowUnroutedClerkIdentity) {
-      return {
-        handle: '',
-        userId: result.userId,
-        source: 'auth',
-        sessionProvenance: 'clerk-browser',
-        ...verifiedHumanBrowser,
-      };
-    }
-    return null;
-  }
-
+  if (!machine) return unroutedClerkIdentity;
   return {
     handle: machine.handle,
     userId: result.userId,
