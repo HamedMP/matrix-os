@@ -70,7 +70,7 @@ export function ScheduleCenter({ client, onClose, onOpenBotChat, onNewSchedule, 
       const result = await operation();
       if (generation !== lifetime.current || current.current !== client) return;
       after?.(result);
-      if (refresh) await load();
+      if (refresh) await refreshCommitted();
     } catch (failure: unknown) {
       console.warn("[schedules] Action unavailable:", failure instanceof Error ? failure.name : "UnknownError");
       if (generation === lifetime.current) setError("Could not complete this action. Refresh before trying again; your edits are kept.");
@@ -121,7 +121,7 @@ export function ScheduleCenter({ client, onClose, onOpenBotChat, onNewSchedule, 
   const ownerGeneration = lifetime.current;
   const refreshCommitted = () => {
     if (ownerGeneration !== lifetime.current || current.current !== client) return;
-    void refreshSelected().catch((failure: unknown) => {
+    return refreshSelected().catch((failure: unknown) => {
       console.warn("[schedules] Saved response refresh unavailable:", failure instanceof Error ? failure.name : "UnknownError");
       if (ownerGeneration === lifetime.current) setError("Your response was saved. Schedules could not refresh. Try Refresh.");
     });

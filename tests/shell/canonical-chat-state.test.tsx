@@ -190,6 +190,22 @@ describe("canonical shell Chat state", () => {
     expect(result.current.activeConversationTitle).toBe("New title");
   });
 
+  it("preserves the transcript when a link opens the already selected Chat", async () => {
+    const source = detail("chat_source", "Scheduled reply");
+    stubLegacyChatFetch(vi.fn(async (url: string) => {
+      if (url.includes("/api/chats?")) return Response.json({ items: [source.record] });
+      if (url.includes("/api/chats/chat_source?")) return Response.json(source);
+      throw new Error(`Unexpected request: ${url}`);
+    }));
+
+    const { result } = renderHook(() => useCanonicalChatState());
+    await waitFor(() => expect(result.current.messages[0]?.content).toBe("Scheduled reply"));
+    act(() => result.current.switchConversation("chat_source"));
+
+    expect(result.current.sessionId).toBe("chat_source");
+    expect(result.current.messages[0]?.content).toBe("Scheduled reply");
+  });
+
   it("deletes a Chat and leaves it when it was the active Chat", async () => {
     let deleteUrl: string | undefined;
     stubLegacyChatFetch(vi.fn(async (url: string, init?: RequestInit) => {
