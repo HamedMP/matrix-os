@@ -59,13 +59,13 @@ export function AvailableServiceCard({
         {accountAction ? (
           <div className="mt-1 flex min-w-0 items-center gap-1.5 text-xs" style={{ color: "var(--text-secondary)" }}>
             <span className="min-w-0 truncate" title={detail} role={presentation?.detailIsError ? "alert" : undefined}
-              style={presentation?.detailIsError ? { color: "var(--surface-danger-emphasis, var(--destructive))" } : undefined}>{detail}</span>
+              style={presentation?.detailIsError ? { color: "var(--text-danger)" } : undefined}>{detail}</span>
             <AccountDisconnectButton {...accountAction} testId={`integration-disconnect-${service.id}`} />
           </div>
         ) : (
           <p className={presentation ? "mt-1 truncate text-xs" : "mt-1 text-xs"}
             title={presentation?.detail} role={presentation?.detailIsError ? "alert" : undefined}
-            style={{ color: presentation?.detailIsError ? "var(--surface-danger-emphasis, var(--destructive))" : "var(--text-tertiary)" }}>{detail}</p>
+            style={{ color: presentation?.detailIsError ? "var(--text-danger)" : "var(--text-tertiary)" }}>{detail}</p>
         )}
         <span className="sr-only">
           <span>Category: </span>
