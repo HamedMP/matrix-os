@@ -1,4 +1,4 @@
-import { chmod, mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdtemp, mkdir, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { tmpdir } from "node:os";
@@ -50,6 +50,81 @@ it.each([0, 1])("publishes readiness only after a successful background launch (
   const result = runtime.create({ runtimeId, scope: "workspace", kind: "agent", displayName: "Chat", cwd: homePath, layoutPath });
   if (exitCode === 0) await expect(result).resolves.toMatchObject({ lifecycle: "running" });
   else await expect(result).rejects.toThrow("Terminal runtime unavailable");
+});
+
+it("reexecutes an older isolated keeper with owned Node and starts Zellij with the owned environment", async () => {
+  const root = await realpath(await mkdtemp(join(tmpdir(), "matrix-keeper-handoff-")));
+  paths.push(root);
+  const home = join(root, "home");
+  const runtimeRoot = join(root, "terminal-runtime");
+  const descriptorRoot = join(home, "system", "terminal-runtimes");
+  const old = join(runtimeRoot, "generations", generation);
+  const current = join(runtimeRoot, "generations", "gen_" + "d".repeat(64));
+  await Promise.all([old, current, descriptorRoot].map(path => mkdir(path, { recursive: true })));
+  const keeper = await readFile("distro/customer-vps/host-bin/matrix-terminal-user-keeper.mjs");
+  const keeperName = "matrix-terminal-user-keeper.mjs";
+  await Promise.all([old, current].map(path => writeFile(join(path, keeperName), keeper)));
+  await writeFile(join(old, "zellij"), "fixture binary\n", { mode: 0o755 });
+  const layoutPath = join(home, "layout.kdl");
+  const descriptorPath = join(descriptorRoot, runtimeId + ".json");
+  await writeFile(layoutPath, "layout { pane }\n");
+  await writeFile(descriptorPath, JSON.stringify({
+    version: 1, runtimeId, sessionName: "matrix-" + runtimeId, scope: "workspace", kind: "shell",
+    displayName: "Terminal", cwd: home, layoutPath, generation, createdAt: "2026-11-07T00:00:00Z",
+  }));
+  const preloadPath = join(root, "script-fixture.mjs");
+  const observedPath = join(root, "zellij-launch.json");
+  await writeFile(preloadPath, [
+    "import cp from 'node:child_process';",
+    "import { EventEmitter } from 'node:events';",
+    "import { writeFileSync } from 'node:fs';",
+    "import { syncBuiltinESMExports } from 'node:module';",
+    "const spawn = cp.spawn;",
+    "cp.spawn = (command, args, options) => {",
+    "  if (command !== '/usr/bin/script') return spawn(command, args, options);",
+    "  const child = new EventEmitter(); child.exitCode = null; child.signalCode = null;",
+    "  child.kill = () => true;",
+    "  if (args[1].includes('--create-background')) {",
+    "    writeFileSync(" + JSON.stringify(observedPath) + ", JSON.stringify({ execPath: process.execPath,",
+    "      keeper: process.argv[1], command: args[1], env: options.env }));",
+    "    queueMicrotask(() => { child.exitCode = 0; child.emit('exit', 0, null); });",
+    "  }",
+    "  return child;",
+    "};",
+    "syncBuiltinESMExports();",
+  ].join("\n"));
+  const runtimeDirectory = join(root, "run");
+  await promisify(execFile)(process.execPath, [join(current, keeperName), runtimeId], {
+    timeout: 5_000,
+    env: {
+      MATRIX_TERMINAL_RUNTIME_NAMESPACE: "keeper-test",
+      MATRIX_NODE_BIN: process.execPath,
+      MATRIX_HOME: home,
+      MATRIX_TERMINAL_RUNTIME_ROOT: runtimeRoot,
+      XDG_RUNTIME_DIR: runtimeDirectory,
+      ZELLIJ_SOCKET_DIR: join(runtimeDirectory, "zellij"),
+      DBUS_SESSION_BUS_ADDRESS: "unix:path=" + join(runtimeDirectory, "bus"),
+      PATH: "/opt/matrix/bin:/usr/bin:/bin",
+      ANTHROPIC_API_KEY: "must-not-reach-zellij",
+      XDG_CACHE_HOME: "/home/matrix/.cache",
+      INVOCATION_ID: invocationId,
+      NODE_OPTIONS: "--import=" + preloadPath,
+    },
+  });
+  const observed = JSON.parse(await readFile(observedPath, "utf8"));
+  expect(observed).toMatchObject({
+    execPath: process.execPath, keeper: join(old, keeperName),
+    command: expect.stringContaining(join(old, "zellij")),
+    env: {
+      HOME: home, XDG_CACHE_HOME: join(home, ".cache"), XDG_RUNTIME_DIR: runtimeDirectory,
+      ZELLIJ_SOCKET_DIR: join(runtimeDirectory, "zellij"),
+      PATH: [join(home, ".local/bin"), join(process.execPath, ".."), "/usr/local/bin", "/usr/bin", "/bin"].join(":"),
+    },
+  });
+  expect(observed.env.ANTHROPIC_API_KEY).toBeUndefined();
+  expect(observed.env.NODE_OPTIONS).toBeUndefined();
+  expect(JSON.parse(await readFile(join(descriptorRoot, runtimeId + ".ready.json"), "utf8")))
+    .toMatchObject({ invocationId, generation });
 });
 
 it.each(["old invocation", "old generation", "old descriptor", "partial write", "oversized", "missing"])(
