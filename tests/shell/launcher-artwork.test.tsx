@@ -7,7 +7,7 @@ import { AppTile } from "@/components/AppTile";
 import { DockIcon } from "@/components/desktop/DockIcon";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { MobileDock } from "@/components/mobile/MobileDock";
-import { buildWebDesktopLauncherApps, webShellIconUrlForApp, webGalleryLauncherIconUrl } from "@/lib/web-desktop-app-launch";
+import { buildWebDesktopLauncherApps, webShellIconUrlForApp, webAppLauncherIconUrl } from "@/lib/web-desktop-app-launch";
 afterEach(cleanup);
 describe("launcher artwork across Web Canvas and Web Mobile", () => {
  it.each([false,true])("keeps Canvas art transparent, including open=%s", isOpen => {
@@ -31,12 +31,13 @@ describe("launcher artwork across Web Canvas and Web Mobile", () => {
  it.each(["desktop","canvas"] as const)("uses new presentation art when leaving %s", mode => {
   const destination=buildWebDesktopLauncherApps([],mode)[0];expect(destination.iconUrl).toContain(`/system-app-icons/v3/${mode === "desktop" ? "canvas" : "desktop"}.png`);
  });
- it("uses Gallery art in the mobile Apps control and preserves the supplied built-in images", () => {
+ it("uses distinct launcher art in the mobile Apps control and preserves app artwork", () => {
   const icon=webShellIconUrlForApp({path:"__terminal__"})!;
   render(<MobileDock apps={[{id:"terminal",path:"__terminal__",name:"Terminal",iconSlug:"terminal",iconUrl:icon}]} view="launcher" hidden={false} openCount={0} onOpen={vi.fn()} onShowApps={vi.fn()} onShowSwitcher={vi.fn()} />);
   expect(screen.getByRole("button",{name:"Terminal"}).querySelector("img")?.getAttribute("src")).toBe(icon);
-  expect(screen.getByRole("button",{name:"Apps"}).querySelector("img")?.getAttribute("src")).toContain("v3-app-gallery.png");
-  expect(webGalleryLauncherIconUrl([{name:"App Gallery",path:"apps/app-gallery/index.html",iconUrl:"/owner-gallery.png"}])).toBe("/owner-gallery.png");
+  expect(screen.getByRole("button",{name:"Apps"}).querySelector("img")?.getAttribute("src")).toContain("v3-launcher.svg");
+  expect(webAppLauncherIconUrl()).toContain("/icons/v3-launcher.svg");
+  expect(webShellIconUrlForApp({path:"apps/app-gallery/index.html",iconUrl:"/owner-gallery.png"})).toBe("/owner-gallery.png");
  });
 });
 
