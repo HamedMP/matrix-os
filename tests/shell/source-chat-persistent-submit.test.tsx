@@ -9,20 +9,29 @@ vi.mock("@clerk/nextjs",()=>({useOrganization:()=>({organization:null}),useAuth:
 vi.mock("../../shell/src/components/chat-provider-onboarding",()=>({ChatProviderOnboarding:({children}:{children:React.ReactNode})=><>{children}</>}));
 beforeEach(()=>{const data=new Map<string,string>();vi.stubGlobal("localStorage",{getItem:(k:string)=>data.get(k)??null,setItem:(k:string,v:string)=>data.set(k,v),removeItem:(k:string)=>data.delete(k),clear:()=>data.clear()});vi.stubGlobal("fetch",vi.fn(async()=>Response.json(createCanonicalProviderCatalogFixture())));vi.stubGlobal("ResizeObserver",class{observe(){}unobserve(){}disconnect(){}});});
 afterEach(()=>{cleanup();vi.unstubAllGlobals();});
-it("defaults ordinary Web submits to native, sends explicit Matrix choice once, then resets",async()=>{
- const submit=vi.fn<React.ComponentProps<typeof ChatApp>["onSubmit"]>(async()=>true),api={bots:{directBot:vi.fn(async()=>null),routineOrigin:{get:vi.fn(async()=>({sourceChatId:"chat_source",pending:[],deliveries:[],hasMore:false})),resolve:vi.fn()},routineDestination:{get:vi.fn(async()=>({availability:"available",preference:{revision:1,target:{botId:"bot_existing",chatId:"chat_executor",bindingCreatedAt:"2026-11-06T00:00:00.000Z"},updatedAt:"2026-11-06T00:00:00.000Z"}})),remember:vi.fn(),reset:vi.fn()},tasks:vi.fn(async()=>[]),interactions:vi.fn(async()=>[])},list:vi.fn(async()=>({enabled:true,agents:[]}))} as unknown as ChatAgentClient;
+it("submits scheduling requests as conversation without a scheduler selector or client route flag",async()=>{
+ const submit=vi.fn<React.ComponentProps<typeof ChatApp>["onSubmit"]>(async()=>true),directBot=vi.fn(async()=>null);
+ const originRead=vi.fn(async()=>({sourceChatId:"chat_source",pending:[],deliveries:[],hasMore:false}));
+ const api={bots:{directBot,routineOrigin:{get:originRead,resolve:vi.fn()},tasks:vi.fn(async()=>[]),interactions:vi.fn(async()=>[])},list:vi.fn(async()=>({enabled:true,agents:[]}))} as unknown as ChatAgentClient;
  render(<ChatApp messages={[{id:"msg_source",role:"assistant",content:"Ready",timestamp:0}]} sessionId="chat_source" agentClient={api} busy={false} connected navigationFresh isCurrentAuthority={()=>true} conversations={[]} onNewChat={vi.fn()} onSwitchConversation={vi.fn()} onSubmit={submit} routineFullAccessChat={{id:"chat_source",ownerScope:{type:"personal",ownerId:"owner"},lifecycle:"active"}}/>);
- const control=await screen.findByRole("button",{name:"Persistent task"});const input=screen.getByRole("textbox",{name:"Message chat"});
+ const input=screen.getByRole("textbox",{name:"Message chat"});
  await waitFor(()=>expect((input as HTMLTextAreaElement).disabled).toBe(false));
- fireEvent.change(input,{target:{value:"Ordinary request"}});fireEvent.click(screen.getByRole("button",{name:"Send"}));await waitFor(()=>expect(submit).toHaveBeenCalledTimes(1));expect(submit.mock.calls[0]![2]).not.toHaveProperty("routineCreation");
- fireEvent.click(control);await screen.findByText("Existing Bot destination selected.");fireEvent.change(input,{target:{value:"Schedule a persistent brief"}});fireEvent.click(screen.getByRole("button",{name:"Send"}));await waitFor(()=>expect(submit).toHaveBeenCalledTimes(2));expect(submit.mock.calls[1]![2]).toMatchObject({routineCreation:"matrix"});expect(control.getAttribute("aria-pressed")).toBe("false");
- fireEvent.change(input,{target:{value:"Next ordinary request"}});fireEvent.click(screen.getByRole("button",{name:"Send"}));await waitFor(()=>expect(submit).toHaveBeenCalledTimes(3));expect(submit.mock.calls[2]![2]).not.toHaveProperty("routineCreation");
+ await waitFor(()=>expect(originRead).toHaveBeenCalled());
+ expect(screen.queryByRole("button",{name:"Persistent task"})).toBeNull();
+ expect(screen.queryByRole("combobox",{name:"Routine destination"})).toBeNull();
+ const request="Every morning at 9, summarize my tasks.";
+ fireEvent.change(input,{target:{value:request}});fireEvent.click(screen.getByRole("button",{name:"Send"}));
+ await waitFor(()=>expect(submit).toHaveBeenCalledTimes(1));
+ expect(submit.mock.calls[0]![0]).toBe(request);expect(submit.mock.calls[0]![2]).not.toHaveProperty("routineCreation");
+ fireEvent.change(input,{target:{value:"What is on my calendar?"}});fireEvent.click(screen.getByRole("button",{name:"Send"}));
+ await waitFor(()=>expect(submit).toHaveBeenCalledTimes(2));expect(submit.mock.calls[1]![2]).not.toHaveProperty("routineCreation");
 });
-it("does not expose the other Chat's creation control from a mismatched private detail",async()=>{
- const directBot=vi.fn(async()=>null);const client={bots:{directBot,routineOrigin:{get:vi.fn(async()=>({sourceChatId:"chat_current",pending:[],deliveries:[],hasMore:false}))}},list:vi.fn(async()=>({enabled:true,agents:[]}))} as unknown as ChatAgentClient;
+it("does not read source approvals from a mismatched private Chat detail",async()=>{
+ const directBot=vi.fn(async()=>null),get=vi.fn(async()=>({sourceChatId:"chat_current",pending:[],deliveries:[],hasMore:false}));
+ const client={bots:{directBot,routineOrigin:{get}},list:vi.fn(async()=>({enabled:true,agents:[]}))} as unknown as ChatAgentClient;
  render(<ChatApp messages={[{id:"msg_current",role:"assistant",content:"Ready",timestamp:0}]} sessionId="chat_current" agentClient={client} busy={false} connected navigationFresh isCurrentAuthority={()=>true} conversations={[]} onNewChat={vi.fn()} onSwitchConversation={vi.fn()} onSubmit={vi.fn()}
   routineFullAccessChat={{id:"chat_previous",ownerScope:{type:"personal",ownerId:"owner"},lifecycle:"active"}}/>);
- await waitFor(()=>expect(directBot).toHaveBeenCalled());expect(screen.queryByRole("button",{name:"Persistent task"})).toBeNull();
+ await waitFor(()=>expect(directBot).toHaveBeenCalled());expect(get).not.toHaveBeenCalled();
 });
 it("the canonical Web Chat client reaches the strict origin API for reads and exact decisions",async()=>{
  const {createCanonicalShellChatClient}=await import("../../shell/src/lib/canonical-chat-client");

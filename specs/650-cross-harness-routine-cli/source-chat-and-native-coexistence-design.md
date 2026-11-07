@@ -1,5 +1,7 @@
 # Source-Chat routines and native Claude scheduling
 
+The button and explicit creation-route UX below are historical. See [conversational scheduling](./conversational-scheduling-design.md) for the approved 2026-11-07 replacement. The trusted origin, independent approval and canonical result delivery sections remain applicable.
+
 Status: approved by the owner's 2026-11-06 reply, "采用原生默认＋显式持久任务（推荐）".
 The independent existing-wait-budget compatibility repair is
 covered by `native-scheduler-compatibility.md` and does not wait on this policy.

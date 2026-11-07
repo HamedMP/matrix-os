@@ -23,6 +23,14 @@ const editReview = (baseRevision: number, name: string) => ({interaction: {inter
       preview: JSON.stringify({proposal: {...routine.proposal, name}, source: {accountId: "account_fixture", computerId: "computer_fixture", grantRevision: 3,
         definitionRevision: 1, routineId: routine.routineId, baseRoutineRevision: baseRevision}})}}});
 
+it("directs an empty schedule list to a conversational request in a private Chat",async()=>{
+  const base=clientFixture();base.list.mockResolvedValue({enabled:true,agents:[]});
+  const routines={list:vi.fn(async()=>({items:[],pending:[],nextCursor:null})),detail:vi.fn(),review:vi.fn(),control:vi.fn()};
+  render(<ScheduleCenter client={{...base,bots:{routines}} as unknown as ChatAgentClient} onClose={vi.fn()}/>);
+  expect(await screen.findByRole("heading",{name:"No schedules yet"})).toBeTruthy();
+  expect(screen.getByText(/Ask in a private Chat to schedule a task/)).toBeTruthy();
+});
+
 it("opens an owner schedule center from Chat, manages the exact task revision and preserves the retained chat", async () => {
   const base = clientFixture(); base.list.mockResolvedValue({ enabled: true, agents: [saved] });
   let current = routine;

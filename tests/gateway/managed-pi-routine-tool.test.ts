@@ -7,6 +7,10 @@ it("offers only strict routine intent through the existing typed worker broker",
   const tools = createBotTools({ capabilities: ["routine.cli"], broker: { tool } as never,
     state: { waitingForPerson: false, effectUnknown: false } });
   expect(tools.map(item => item.name)).toEqual(["matrix_routines"]);
+  expect(tools[0]!.description).toMatch(/person explicitly asks to schedule/i);
+  expect(tools[0]!.description).toContain("this Chat");
+  expect(tools[0]!.description).toContain("original requestId");
+  expect(tools[0]!.description).toContain("current revision");
   const signal = new AbortController().signal;
   const result = await tools[0]!.execute("call_routine", { operation: "list" }, signal);
   expect(tool).toHaveBeenCalledExactlyOnceWith({ toolCallId: "call_routine", capability: "routine.cli", args: { operation: "list" } }, signal);
