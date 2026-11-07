@@ -147,7 +147,7 @@ export function SchedulesScreen({ api, resolve, onBack, onOpenChat, onNewSchedul
       </View> : null}
     </> : <>
       {loading ? <Text style={styles.note}>Loading schedules…</Text> : null}
-      {!loading && fresh && !data.items.length ? <Text style={styles.note}>{archived ? "No archived schedules." : "No schedules yet. Choose Persistent task in a private Chat, then review its proposal."}</Text> : null}
+      {!loading && fresh && !data.items.length ? <Text style={styles.note}>{archived ? "No archived schedules." : "No schedules yet. Ask in a private Chat to schedule a task, then review its proposal in that Chat."}</Text> : null}
       {data.items.map(item => <View key={item.routineId} style={styles.card}>
         <Button label={item.proposal.name} variant="text" onPress={() => void view(item.routineId)} />
         <Text style={styles.text}>{`${status(item)} · ${routineScheduleCopy(item.proposal.schedule).frequency}`}</Text>

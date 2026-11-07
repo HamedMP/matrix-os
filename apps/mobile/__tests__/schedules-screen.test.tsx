@@ -20,6 +20,11 @@ function draw(client = api()) {
   render(<SchedulesScreen api={client} resolve={jest.fn()} onBack={jest.fn()} />);
   return client;
 }
+it("directs an empty schedule list to a conversational request in a private Chat",async()=>{
+  const client=api();client.list.mockResolvedValue({items:[],pending:[],nextCursor:null});draw(client);
+  await screen.findByText(/Ask in a private Chat to schedule a task/);
+});
+
 it("shows bounded owner DTOs, timing, Computer and revision-bound pause without model text", async () => {
   const client = draw();
   fireEvent.press(await screen.findByRole("button", {name: "Private ping"}));

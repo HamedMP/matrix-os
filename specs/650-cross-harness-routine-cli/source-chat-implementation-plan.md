@@ -1,5 +1,7 @@
 # Source Chat Routine Flow Implementation Plan
 
+The user-facing creation control and explicit route selection in this historical plan were superseded by the [conversational scheduling implementation plan](./conversational-scheduling-plan.md). The source-Chat approval/delivery interfaces and legacy request identity remain part of the current implementation.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development or superpowers:executing-plans to implement this plan task-by-task. Trellis auto dispatch is the owner's preserved execution method.
 
 **Goal:** Preserve native Claude scheduling by default and offer explicitly selected durable routines whose review and results stay in the originating Chat.

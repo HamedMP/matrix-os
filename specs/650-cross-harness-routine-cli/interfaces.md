@@ -1,5 +1,7 @@
 # Routine CLI interfaces
 
+[Conversational scheduling](./conversational-scheduling-design.md) is the current Chat creation flow. New clients send an ordinary message. Claude Code creates schedules natively and retains authorized existing Matrix routine reads/controls; a qualified source without native scheduling can use the same CLI to propose, with approval and results in the original Chat. Historical explicit route fields remain part of existing request identity.
+
 Task6c adds the [managed Matrix Pi source boundary](./managed-pi-sources.md), with its own actual registered managed worker/broker path and no source Bot task.
 
 Task6b adds the [native Pi source boundary](./pi-sources.md), separately from managed Pi and native account qualification.

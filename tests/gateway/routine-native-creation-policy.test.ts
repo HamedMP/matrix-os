@@ -1,4 +1,3 @@
-import { createRoutineCreationLatch } from "../../packages/gateway/src/chat/routine-creation-latch.js";
 import { expect, it, vi } from 'vitest';
 import { input, setup, ready } from './claude-native-session-fixture.js';
 import { createChatRoutineSourceProducer } from '../../packages/gateway/src/chat/routine-chat-source.js';
@@ -11,12 +10,23 @@ it('blocks native CronCreate before its effect for an explicit Matrix creation f
  expect(child.frames.find(f=>f.response?.request_id?.startsWith('callback_wrong_engine')).response.response.hookSpecificOutput?.permissionDecision).toBe('deny');
  child.result();await phase.promise;
 });
-it('prevents a native-claimed Claude flow from proposing Matrix, while keeping reads and existing controls',()=>{
- const creationPolicy=createRoutineCreationLatch(input());creationPolicy.claim('native');
- const binding=createChatRoutineSourceProducer({input:input(),computerId:'computer',signal:new AbortController().signal,publish:()=>{},current:()=>true,creationPolicy} as Parameters<typeof createChatRoutineSourceProducer>[0]);
- expect(routineActionPolicy(binding.producer.source,binding.producer.readPolicy(),'propose')).toBe('deny');
- expect(routineActionPolicy(binding.producer.source,binding.producer.readPolicy(),'read')).toBe('allow');
- expect(routineActionPolicy(binding.producer.source,binding.producer.readPolicy(),'control')).toBe('ask');
+it.each([
+ { provider: 'claude' as const, legacy: false, expected: 'deny' },
+ { provider: 'claude' as const, legacy: true, expected: 'deny' },
+ { provider: 'hermes' as const, legacy: false, expected: 'deny' },
+ { provider: 'matrix_pi' as const, legacy: false, expected: 'ask' },
+ { provider: 'pi' as const, legacy: false, expected: 'ask' },
+ { provider: 'codex' as const, legacy: false, expected: 'ask' },
+])('routes new proposals by the admitted $provider source even with legacy choice $legacy', ({ provider, legacy, expected }) => {
+ const run = input();
+ const binding = createChatRoutineSourceProducer({
+  input: { ...run, ...(legacy ? { context: { version: 1, requestHash: 'a'.repeat(64), chats: [], routineCreation: 'matrix' } } : {}) },
+  computerId: 'computer', signal: run.signal, publish: () => {}, current: () => true, provider,
+ });
+ const { source, readPolicy } = binding.producer;
+ expect(routineActionPolicy(source, readPolicy(), 'propose')).toBe(expected);
+ expect(routineActionPolicy(source, readPolicy(), 'read')).toBe('allow');
+ expect(routineActionPolicy(source, readPolicy(), 'control')).toBe('ask');
 });
 it('does not bind a previous Full Access lease in a retained native due phase',()=>{
  const bindFullAccess=vi.fn();const i={...input(),permissionMode:'full_access',nativeScheduled:{sourceRunId:'run_previous',sessionId:'native_1',promptId:'de000000-0000-4000-8000-000000000001'}};
