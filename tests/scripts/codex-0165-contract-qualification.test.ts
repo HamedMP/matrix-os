@@ -20,6 +20,7 @@ const historicalAppServerContract = {
   latestVerifiedVersion: "0.165.0",
   requiredServerProtocolSchemaDigests: {
     ...appServerContract.requiredServerProtocolSchemaDigests,
+    "item/commandExecution/requestApproval": "ef803ac64161397389bc35428803c3ec8dcc94757c93d758a9fdf0ae6b5a944f",
     "item/started": "554ed510ef9adc011a14b1d0045b2741c536a0f6a4728b07723537c31f088cb5",
     "item/completed": "7f57001a4be1380e4d2d183ae76dafc2beb274a9e4401edc4bd676cc59e7d2a3",
     "turn/completed": "d775b4d4e65c194a34726c88625fd88f71e5ffc00cd5ba5a6bc64ac913a90055",
