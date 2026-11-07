@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createProjectManager, validateGitHubUrl } from "../../packages/gateway/src/project-manager.js";
 import { atomicWriteJson } from "../../packages/gateway/src/state-ops.js";
+import { githubClonePrerequisiteResult } from "../helpers/github-clone-prerequisites.js";
 
 describe("project-manager", () => {
   let homePath: string;
@@ -93,11 +94,19 @@ describe("project-manager", () => {
     vi.stubEnv("GIT_SSH_COMMAND", "synthetic-command");
     try {
       const runCommand = vi.fn(async (command: string, args: string[], options: { cwd: string; timeout: number; env?: NodeJS.ProcessEnv }) => {
-        expect(options.env).toMatchObject({ HOME: homePath, GH_CONFIG_DIR: join(homePath, ".config", "gh"), GIT_CONFIG_GLOBAL: join(homePath, ".gitconfig") });
+        expect(options.env).toMatchObject({ HOME: homePath, GH_CONFIG_DIR: join(homePath, ".config", "gh") });
         expect(options.env?.GH_TOKEN).toBeUndefined();
-        expect(options.env?.GIT_SSH_COMMAND).toBeUndefined();
-        if (command === "git" && args[0] === "clone") await mkdir(join(args.at(-1)!, ".git"), { recursive: true });
-        return { stdout: "", stderr: "" };
+        if (command === "git" && args[0] === "clone") {
+          expect(options.env).toMatchObject({ GIT_CONFIG_GLOBAL: "/dev/null", GIT_ALLOW_PROTOCOL: "ssh" });
+          expect(options.env?.GIT_SSH_COMMAND).toContain("StrictHostKeyChecking=yes");
+          expect(options.env?.GIT_SSH_COMMAND).toContain(join(homePath, ".ssh", "matrix-github-known-hosts"));
+          expect(options.env?.GIT_SSH_COMMAND).not.toContain("synthetic-command");
+          await mkdir(join(args.at(-1)!, ".git"), { recursive: true });
+        } else {
+          expect(options.env?.GIT_CONFIG_GLOBAL).toBe(join(homePath, ".gitconfig"));
+          expect(options.env?.GIT_SSH_COMMAND).toBeUndefined();
+        }
+        return githubClonePrerequisiteResult(command, args);
       });
       const result = await createProjectManager({ homePath, runCommand }).createProject({ url: "https://github.com/owner/private", slug: "private", ownerScope: { type: "user", id: "owner" } });
       expect(result.ok).toBe(true);
@@ -152,7 +161,7 @@ describe("project-manager", () => {
 
   it("creates a project through safe clone staging and writes owner-scoped config", async () => {
     const runCommand = vi.fn(async (command: string, args: string[], options) => {
-      expect(command).toMatch(/^(gh|git)$/);
+      expect(command).toMatch(/^(gh|git|ssh)$/);
       expect(args).not.toContain(";");
       if (command === "git" && args[0] === "clone") {
         expect(args).toContain("git@github.com:Owner/Repo.git");
@@ -160,7 +169,7 @@ describe("project-manager", () => {
         expect(typeof destination).toBe("string");
         await mkdir(join(destination as string, ".git"), { recursive: true });
       }
-      return { stdout: "", stderr: "" };
+      return githubClonePrerequisiteResult(command, args);
     });
     const manager = createProjectManager({ homePath, runCommand, now: () => "2026-04-26T00:00:00.000Z" });
 
@@ -1215,7 +1224,7 @@ describe("project-manager", () => {
         await mkdir(options.cwd, { recursive: true });
         throw new Error("fatal: token ghp_secret leaked");
       }
-      return { stdout: "", stderr: "" };
+      return githubClonePrerequisiteResult(command, args);
     });
     const manager = createProjectManager({ homePath, runCommand });
 

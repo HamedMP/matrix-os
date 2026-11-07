@@ -61,9 +61,14 @@ export async function migrateProjectGitOperationsV13(trx: Transaction<OwnerColla
 }
 
 import { execFile } from "node:child_process";
-import { realpath } from "node:fs/promises";
+import { constants } from "node:fs";
+import { mkdtemp, open, realpath, rm, writeFile } from "node:fs/promises";
+import { homedir, tmpdir } from "node:os";
+import { dirname, isAbsolute, join } from "node:path";
 import { promisify } from "node:util";
 import { z } from "zod/v4";
+import { githubDeveloperSshCommand } from "../github-developer-status.js";
+import { githubOwnerEnvironment } from "../github-owner-environment.js";
 import { validateGitHubUrl } from "../project-manager.js";
 import {
   AmbiguousProjectGitEffect,
@@ -83,10 +88,10 @@ const REMOTE_TIMEOUT_MS = 30_000;
 
 type GitCommandResult = { stdout: string; stderr: string };
 
-function gitEnvironment(identity?: ProjectGitOwnerIdentity, useOwnerCredential = false): NodeJS.ProcessEnv {
+function gitEnvironment(identity?: ProjectGitOwnerIdentity): NodeJS.ProcessEnv {
   return {
     PATH: process.env.PATH ?? "/usr/bin:/bin",
-    HOME: useOwnerCredential ? process.env.HOME ?? "/nonexistent" : "/nonexistent",
+    HOME: "/nonexistent",
     GIT_CONFIG_NOSYSTEM: "1",
     GIT_CONFIG_GLOBAL: "/dev/null",
     GIT_TERMINAL_PROMPT: "0",
@@ -99,17 +104,16 @@ function gitEnvironment(identity?: ProjectGitOwnerIdentity, useOwnerCredential =
   };
 }
 
-async function gitCommand(cwd: string, args: string[], identity?: ProjectGitOwnerIdentity, remote = false): Promise<GitCommandResult> {
+async function gitCommand(cwd: string, args: string[], identity?: ProjectGitOwnerIdentity): Promise<GitCommandResult> {
   return exec("git", [
     "--no-optional-locks",
     "-c", "core.fsmonitor=false",
     "-c", "core.hooksPath=/dev/null",
-    ...(remote ? ["-c", "credential.helper=", "-c", "credential.helper=!gh auth git-credential"] : []),
     ...args,
   ], {
     cwd,
-    env: gitEnvironment(identity, remote),
-    timeout: remote ? REMOTE_TIMEOUT_MS : GIT_TIMEOUT_MS,
+    env: gitEnvironment(identity),
+    timeout: GIT_TIMEOUT_MS,
     maxBuffer: 64 * 1024,
   });
 }
@@ -142,13 +146,97 @@ async function gitIdentityValue(cwd: string, key: "user.name" | "user.email"): P
   return stdout.trim();
 }
 
-async function ghCommand(cwd: string, args: string[]): Promise<GitCommandResult> {
+async function ghCommand(homePath: string, args: string[]): Promise<GitCommandResult> {
   return exec("gh", args, {
-    cwd,
-    env: { PATH: process.env.PATH ?? "/usr/bin:/bin", HOME: process.env.HOME ?? "/nonexistent", GH_PROMPT_DISABLED: "1" },
+    cwd: homePath,
+    env: { ...githubOwnerEnvironment(homePath), GH_PROMPT_DISABLED: "1" },
     timeout: REMOTE_TIMEOUT_MS,
     maxBuffer: 64 * 1024,
   });
+}
+
+async function readGitMetadata(path: string, maxBytes: number): Promise<string> {
+  const file = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+  try {
+    const stat = await file.stat();
+    if (!stat.isFile() || stat.size > maxBytes) throw new ProjectGitBrokerError("unavailable");
+    const buffer = Buffer.alloc(stat.size + 1);
+    const { bytesRead } = await file.read(buffer);
+    if (bytesRead !== stat.size) throw new ProjectGitBrokerError("unavailable");
+    return buffer.toString("utf8", 0, bytesRead);
+  } finally {
+    await file.close();
+  }
+}
+
+async function sourceObjects(root: string): Promise<{ objects: string; shallow?: string }> {
+  const { stdout } = await gitCommand(root, ["rev-parse", "--path-format=absolute", "--absolute-git-dir", "--git-common-dir"]);
+  const [gitDir, commonDir, extra] = stdout.replace(/\n$/, "").split("\n");
+  if (!gitDir || !commonDir || extra !== undefined || !isAbsolute(gitDir) || !isAbsolute(commonDir)
+    || await realpath(gitDir) !== gitDir || await realpath(commonDir) !== commonDir) {
+    throw new ProjectGitBrokerError("unavailable");
+  }
+  const checkoutGit = join(root, ".git");
+  if (gitDir !== checkoutGit || commonDir !== checkoutGit) {
+    // A linked worktree is valid only if the common repository recognizes this
+    // checkout. Its writable .git pointer alone cannot grant object access.
+    if (dirname(gitDir) !== join(commonDir, "worktrees")) throw new ProjectGitBrokerError("unavailable");
+    const backref = await readGitMetadata(join(gitDir, "gitdir"), 4096);
+    if (backref.replace(/\r?\n$/, "") !== checkoutGit) throw new ProjectGitBrokerError("unavailable");
+  }
+  const objects = join(commonDir, "objects");
+  if (await realpath(objects) !== objects) throw new ProjectGitBrokerError("unavailable");
+  try {
+    const shallow = await readGitMetadata(join(commonDir, "shallow"), 64 * 1024);
+    if (!/^(?:[0-9a-f]{40}\n)*$/.test(shallow)) throw new ProjectGitBrokerError("unavailable");
+    return { objects, shallow };
+  } catch (error: unknown) {
+    if (error instanceof Error && "code" in error && error.code === "ENOENT") return { objects };
+    throw error;
+  }
+}
+
+async function remoteGit(
+  homePath: string,
+  args: string[],
+  source?: { objects: string; shallow?: string },
+): Promise<GitCommandResult> {
+  const env = {
+    ...githubOwnerEnvironment(homePath),
+    GH_PROMPT_DISABLED: "1",
+    GIT_CONFIG_GLOBAL: "/dev/null",
+    GIT_TERMINAL_PROMPT: "0",
+    GIT_ALLOW_PROTOCOL: "https:ssh",
+    GIT_SSH_COMMAND: githubDeveloperSshCommand(homePath),
+  };
+  const cwd = await mkdtemp(join(tmpdir(), "matrix-collaboration-git-"));
+  try {
+    await exec("git", ["init", "--bare", "--template=", "."], {
+      cwd, env, timeout: GIT_TIMEOUT_MS, maxBuffer: 64 * 1024,
+    });
+    if (source) {
+      // Borrow the checkout's objects without loading its Git or transport configuration.
+      await writeFile(join(cwd, "objects", "info", "alternates"), `${source.objects}\n`, { flag: "wx" });
+      if (source.shallow) await writeFile(join(cwd, "shallow"), source.shallow, { flag: "wx" });
+    }
+    try {
+      return await exec("git", [
+        "--no-replace-objects",
+        "-c", "core.hooksPath=/dev/null",
+        "-c", "credential.helper=",
+        "-c", "credential.helper=!gh auth git-credential",
+        ...args,
+      ], { cwd, env, timeout: REMOTE_TIMEOUT_MS, maxBuffer: 64 * 1024 });
+    } catch (error: unknown) {
+      if (!source) throw error;
+      console.warn("[collaboration-git] push outcome ambiguous", error instanceof Error ? error.name : "UnknownError");
+      throw new AmbiguousProjectGitEffect();
+    }
+  } finally {
+    await rm(cwd, { recursive: true, force: true }).catch((error: unknown) => {
+      console.warn("[collaboration-git] transport cleanup failed", error instanceof Error ? error.name : "UnknownError");
+    });
+  }
 }
 
 async function requireRepositoryRoot(path: string): Promise<string> {
@@ -174,17 +262,20 @@ async function currentHead(root: string): Promise<string> {
 }
 
 async function ownerRemote(root: string): Promise<{ owner: string; repo: string; url: string }> {
+  async function readOrigin(key: "remote.origin.pushurl" | "remote.origin.url"): Promise<string | undefined> {
+    try {
+      const result = await gitCommand(root, ["config", "--local", "--no-includes", "--null", "--get-all", key]);
+      return result.stdout.split("\0", 1)[0];
+    } catch (error: unknown) {
+      if (error instanceof Error && "code" in error && error.code === 1) return undefined;
+      throw error;
+    }
+  }
+
   let value: string;
   try {
-    value = (await gitCommand(root, ["remote", "get-url", "--push", "origin"])).stdout.trim();
-    const rewrites = await gitCommand(root, ["config", "--local", "--get-regexp", "^url\\..*\\.\\(insteadOf\\|pushInsteadOf\\)$"])
-      .catch((error: unknown) => {
-        if (error instanceof Error && "code" in error && String((error as NodeJS.ErrnoException).code) === "1") return { stdout: "", stderr: "" };
-        throw error;
-      });
-    if (rewrites.stdout.trim()) throw new ProjectGitBrokerError("unavailable");
+    value = (await readOrigin("remote.origin.pushurl")) ?? (await readOrigin("remote.origin.url")) ?? "";
   } catch (error: unknown) {
-    if (error instanceof ProjectGitBrokerError) throw error;
     console.warn("[collaboration-git] remote unavailable", error instanceof Error ? error.name : "UnknownError");
     throw new ProjectGitBrokerError("unavailable");
   }
@@ -253,8 +344,10 @@ async function observeCommit(
 
 /** Host-side Git/forge driver. Credentials remain in the owner host and never enter the scope runtime. */
 export function createProjectGitDriver(options: {
+  homePath?: string;
   resolveProjectRoot(input: { ownerId: string; projectId: string }): Promise<string>;
 }) {
+  const homePath = options.homePath ?? homedir();
   async function root(input: { ownerId: string; projectId: string }) {
     return requireRepositoryRoot(await options.resolveProjectRoot(input));
   }
@@ -304,7 +397,7 @@ export function createProjectGitDriver(options: {
       })();
       let forgeCredential: CollaborationProjectGitSetup["forgeCredential"];
       try {
-        await ghCommand(cwd, ["auth", "status", "--hostname", "github.com"]);
+        await ghCommand(homePath, ["auth", "status", "--hostname", "github.com"]);
         forgeCredential = { status: "ready" };
       } catch (error: unknown) {
         forgeCredential = error instanceof Error && "code" in error && String((error as NodeJS.ErrnoException).code) === "1"
@@ -345,20 +438,16 @@ export function createProjectGitDriver(options: {
       if (request.type === "push") {
         await requireBranch(cwd, request.branch);
         const remote = await ownerRemote(cwd);
-        try {
-          await gitCommand(cwd, ["push", "--porcelain", remote.url, `refs/heads/${request.branch}:refs/heads/${request.branch}`], input.ownerIdentity, true);
-          return { commitSha: request.expectedHeadSha, remoteBranch: request.branch };
-        } catch (error: unknown) {
-          console.warn("[collaboration-git] push outcome ambiguous", error instanceof Error ? error.name : "UnknownError");
-          throw new AmbiguousProjectGitEffect();
-        }
+        const source = await sourceObjects(cwd);
+        await remoteGit(homePath, ["push", "--porcelain", "--", remote.url, `${request.expectedHeadSha}:refs/heads/${request.branch}`], source);
+        return { commitSha: request.expectedHeadSha, remoteBranch: request.branch };
       }
       await requireBranch(cwd, request.headBranch);
       const remote = await ownerRemote(cwd);
       const observed = await driver.reconcile(input);
       if (observed) return observed;
       try {
-        const result = await ghCommand(cwd, ["pr", "create", "--repo", `${remote.owner}/${remote.repo}`, "--base", request.baseBranch,
+        const result = await ghCommand(homePath, ["pr", "create", "--repo", `${remote.owner}/${remote.repo}`, "--base", request.baseBranch,
           "--head", request.headBranch, "--title", request.title, "--body", request.body ?? ""]);
         const url = z.url({ protocol: /^https$/ }).max(512).parse(result.stdout.trim());
         return { commitSha: request.expectedHeadSha, remoteBranch: request.headBranch, prUrl: url };
@@ -376,13 +465,15 @@ export function createProjectGitDriver(options: {
       }
       if (request.type === "push") {
         const remote = await ownerRemote(cwd);
-        const result = await gitCommand(cwd, ["ls-remote", remote.url, `refs/heads/${request.branch}`], input.ownerIdentity, true);
-        const sha = result.stdout.trim().split(/\s+/)[0];
-        return sha === request.expectedHeadSha ? { commitSha: sha, remoteBranch: request.branch } : null;
+        const ref = `refs/heads/${request.branch}`;
+        const result = await remoteGit(homePath, ["ls-remote", "--refs", "--", remote.url, ref]);
+        return result.stdout.trimEnd() === `${request.expectedHeadSha}\t${ref}`
+          ? { commitSha: request.expectedHeadSha, remoteBranch: request.branch }
+          : null;
       }
       if (request.type === "pr") {
         const remote = await ownerRemote(cwd);
-        const result = await ghCommand(cwd, ["pr", "list", "--repo", `${remote.owner}/${remote.repo}`, "--state", "open",
+        const result = await ghCommand(homePath, ["pr", "list", "--repo", `${remote.owner}/${remote.repo}`, "--state", "open",
           "--head", request.headBranch, "--base", request.baseBranch, "--limit", "2", "--json", "url,headRefOid"]);
         const rows = z.array(z.object({ url: z.url({ protocol: /^https$/ }).max(512), headRefOid: GitShaSchema }).strict())
           .max(2).parse(JSON.parse(result.stdout));

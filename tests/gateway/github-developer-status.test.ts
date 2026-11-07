@@ -3,7 +3,10 @@ import { join } from "node:path";
 import { getGithubDeveloperStatus } from "../../packages/gateway/src/github-developer-status.js";
 
 describe("github developer status", () => {
-  afterEach(() => vi.unstubAllEnvs());
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    vi.useRealTimers();
+  });
 
   function readyRunner(sshLogin = "octocat", sshExit = 0) {
     return vi.fn(async (command: string, args: string[], _options: { cwd: string; timeout: number; env?: NodeJS.ProcessEnv }) => {
@@ -27,6 +30,49 @@ describe("github developer status", () => {
   it("accepts the matching account greeting from SSH's normal exit 1", async () => {
     await expect(getGithubDeveloperStatus({ homePath: "/owner-home", runCommand: readyRunner("Octocat", 1) }))
       .resolves.toMatchObject({ sshStatus: "verified", ready: true });
+  });
+
+  it("returns safe partial status before the client deadline when SSH traffic is silently dropped", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "performance"] });
+    const valid = readyRunner();
+    const runCommand = vi.fn(async (command: string, args: string[], options: { cwd: string; timeout: number; env?: NodeJS.ProcessEnv }) => {
+      if (command === "ssh") {
+        await new Promise((resolve) => setTimeout(resolve, options.timeout));
+        throw Object.assign(new Error("SSH timed out"), { code: "ETIMEDOUT" });
+      }
+      // Account probes already consumed time before SSH starts; a per-child
+      // timeout alone must not extend the total past the client's ten seconds.
+      await new Promise((resolve) => setTimeout(resolve, command === "gh" ? 500 : 20));
+      return valid(command, args, options);
+    });
+    let result: Awaited<ReturnType<typeof getGithubDeveloperStatus>> | undefined;
+    const pending = getGithubDeveloperStatus({ homePath: "/owner-home", runCommand }).then((value) => { result = value; });
+
+    await vi.advanceTimersByTimeAsync(9_000);
+    expect(result).toMatchObject({
+      authenticated: true, user: "octocat", sshStatus: "setup_required",
+      commitIdentity: { status: "ready" }, ready: false, errorCode: "github_ssh_setup_required",
+    });
+    await pending;
+    expect(runCommand.mock.calls.find(([command]) => command === "ssh")?.[2].timeout).toBeLessThan(7_500);
+  });
+
+  it("bounds cumulative slow account probes without starting later probes after the budget expires", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "performance"] });
+    const valid = readyRunner();
+    const runCommand = vi.fn(async (command: string, args: string[], options: { cwd: string; timeout: number; env?: NodeJS.ProcessEnv }) => {
+      const delay = command === "gh" ? 4_000 : 20;
+      await new Promise((resolve) => setTimeout(resolve, Math.min(delay, options.timeout)));
+      if (delay > options.timeout) throw Object.assign(new Error("probe timed out"), { code: "ETIMEDOUT" });
+      return valid(command, args, options);
+    });
+    let result: Awaited<ReturnType<typeof getGithubDeveloperStatus>> | undefined;
+    const pending = getGithubDeveloperStatus({ homePath: "/owner-home", runCommand }).then((value) => { result = value; });
+
+    await vi.advanceTimersByTimeAsync(9_000);
+    expect(result).toMatchObject({ installed: true, authenticated: false, ready: false, errorCode: "github_auth_required" });
+    await pending;
+    expect(runCommand.mock.calls.some(([command]) => command === "ssh")).toBe(false);
   });
 
   it("binds every probe to the owner home and excludes inherited credentials and Git overrides", async () => {

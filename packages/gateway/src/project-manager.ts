@@ -12,7 +12,7 @@ import { createProjectRegistry, PROJECT_SLUG_REGEX } from "./project-registry.js
 import { removeValidatedLegacyProjectState } from "./legacy-project-state.js";
 import { projectStateRecoveryDir } from "./bounded-json-file.js";
 import { reconcileProjectIdentityIndex } from "./project-identity-index.js";
-import { getGithubDeveloperStatus } from "./github-developer-status.js";
+import { getGithubDeveloperStatus, githubDeveloperSshCommand } from "./github-developer-status.js";
 import { githubOwnerEnvironment } from "./github-owner-environment.js";
 
 export { PROJECT_SLUG_REGEX } from "./project-registry.js";
@@ -99,7 +99,6 @@ type Failure = { ok: false; status: number; error: WorkspaceError };
 type CreateProjectMode = ProjectKind;
 
 const DEFAULT_TIMEOUT_MS = 10_000;
-const STATUS_OUTPUT_BYTES = 64 * 1024;
 const CLONE_TIMEOUT_MS = 5 * 60_000;
 const MAX_PROJECT_ID_INDEX_ENTRIES = 10_000;
 
@@ -390,7 +389,10 @@ export function createProjectManager(options: {
   const homePath = resolve(options.homePath);
   const commandRunner = options.runCommand ?? defaultRunCommand;
   const env = githubOwnerEnvironment(homePath);
-  const runCommand: CommandRunner = (command, args, commandOptions) => commandRunner(command, args, { ...commandOptions, env });
+  const runCommand: CommandRunner = (command, args, commandOptions) => commandRunner(command, args, {
+    ...commandOptions,
+    env: commandOptions.env ?? env,
+  });
   const registry = createProjectRegistry({ homePath });
 
   return {
@@ -595,23 +597,18 @@ export function createProjectManager(options: {
           return genericError(409, "slug_conflict", "Project slug already exists");
         }
 
+        const githubStatus = await getGithubDeveloperStatus({ homePath, runCommand });
+        if (!githubStatus.authenticated) {
+          return genericError(424, "github_auth_required", "GitHub authentication is required");
+        }
+        if (githubStatus.gitProtocol !== "ssh" || githubStatus.sshStatus !== "verified") {
+          return genericError(424, "github_ssh_setup_required", "Finish GitHub Developer setup in Connect Apps before cloning.");
+        }
+
         const stagingRoot = join(homePath, "system", "clone-staging");
         const stagingPath = join(stagingRoot, `${slug}-${randomUUID()}`);
         const repoPath = join(targetProjectPath, "repo");
         await mkdir(stagingRoot, { recursive: true });
-
-        try {
-          await runCommand("gh", ["auth", "status", "--hostname", "github.com"], {
-            cwd: homePath,
-            timeout: DEFAULT_TIMEOUT_MS,
-            maxBuffer: STATUS_OUTPUT_BYTES,
-          });
-        } catch (err: unknown) {
-          if (err instanceof Error) {
-            return genericError(424, "github_auth_required", "GitHub authentication is required");
-          }
-          return genericError(424, "github_auth_required", "GitHub authentication is required");
-        }
 
         try {
           await runCommand(
@@ -620,6 +617,15 @@ export function createProjectManager(options: {
             {
               cwd: stagingRoot,
               timeout: CLONE_TIMEOUT_MS,
+              env: {
+                ...env,
+                // Clone only the canonical SSH URL. Owner Git URL rewrites
+                // must not bypass the account and host checked above.
+                GIT_CONFIG_GLOBAL: "/dev/null",
+                GIT_ALLOW_PROTOCOL: "ssh",
+                GIT_SSH_COMMAND: githubDeveloperSshCommand(homePath),
+                GIT_TERMINAL_PROMPT: "0",
+              },
             },
           );
           if (!await pathExists(stagingPath)) {

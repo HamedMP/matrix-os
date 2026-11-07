@@ -7,8 +7,11 @@ import {
 import { z } from "zod/v4";
 import { githubOwnerEnvironment } from "./github-owner-environment.js";
 
-const COMMAND_TIMEOUT_MS = 10_000;
-const SSH_TIMEOUT_MS = 15_000;
+// Leave response/transport headroom inside the Web/Electron ten-second request.
+// A subprocess receives only the remaining aggregate budget, never a new one.
+const STATUS_BUDGET_MS = 7_500;
+const COMMAND_TIMEOUT_MS = STATUS_BUDGET_MS;
+const SSH_TIMEOUT_MS = STATUS_BUDGET_MS;
 const STATUS_OUTPUT_BYTES = 64 * 1024;
 
 const GithubLoginSchema = z.string().trim().regex(/^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})$/);
@@ -40,17 +43,47 @@ function isGithubSshGreeting(value: string, user: string | null): boolean {
   return user !== null && login?.toLowerCase() === user.toLowerCase();
 }
 
+function githubDeveloperSshOptions(homePath: string): string[] {
+  return [
+    "-o", "BatchMode=yes",
+    "-o", "StrictHostKeyChecking=yes",
+    "-o", `UserKnownHostsFile=${join(homePath, ".ssh", "matrix-github-known-hosts")}`,
+    "-o", "GlobalKnownHostsFile=/dev/null",
+    "-o", "ConnectTimeout=10",
+    "-o", "ConnectionAttempts=1",
+  ];
+}
+
+/** Git evaluates GIT_SSH_COMMAND through a shell, so quote the probe's argv. */
+export function githubDeveloperSshCommand(homePath: string): string {
+  const args = githubDeveloperSshOptions(homePath).map((value) => `'${value.replace(/'/g, "'\\''")}'`);
+  return `ssh ${args.join(" ")}`;
+}
+
 export async function getGithubDeveloperStatus(input: {
   homePath: string;
   runCommand: GithubStatusCommandRunner;
 }): Promise<GithubDeveloperStatus> {
   const { homePath } = input;
-  const env = githubOwnerEnvironment(homePath);
-  const runCommand: GithubStatusCommandRunner = (command, args, options) => input.runCommand(command, args, { ...options, env });
+  const env = { ...githubOwnerEnvironment(homePath), GH_PROMPT_DISABLED: "1" };
+  const deadline = performance.now() + STATUS_BUDGET_MS;
+  const runCommand: GithubStatusCommandRunner = (command, args, options) => {
+    const timeout = Math.min(options.timeout, Math.floor(deadline - performance.now()));
+    if (timeout <= 0) return Promise.reject(Object.assign(new Error("GitHub status timed out"), { code: "ETIMEDOUT" }));
+    // The command runner enforces this timeout on the child process itself;
+    // do not race a timer and leave an SSH/GitHub process running afterward.
+    return input.runCommand(command, args, { ...options, timeout, env });
+  };
   let installed = false;
   let authenticated = false;
   let user: string | null = null;
   let gitProtocol: "ssh" | "https" | null = null;
+  // Local identity is independent of remote account/SSH reachability and must
+  // remain observable when a dropped SSH connection consumes the budget.
+  const identityResults = Promise.all([
+    globalIdentityValue("user.name"),
+    globalIdentityValue("user.email"),
+  ]);
 
   try {
     await runCommand("gh", ["--version"], {
@@ -103,18 +136,8 @@ export async function getGithubDeveloperStatus(input: {
   }
 
   let sshStatus: GithubDeveloperStatus["sshStatus"] = "setup_required";
-  const knownHostsPath = join(homePath, ".ssh", "matrix-github-known-hosts");
   try {
-    const result = await runCommand("ssh", [
-      "-T",
-      "-o", "BatchMode=yes",
-      "-o", "StrictHostKeyChecking=yes",
-      "-o", `UserKnownHostsFile=${knownHostsPath}`,
-      "-o", "GlobalKnownHostsFile=/dev/null",
-      "-o", "ConnectTimeout=10",
-      "-o", "ConnectionAttempts=1",
-      "git@github.com",
-    ], {
+    const result = await runCommand("ssh", ["-T", ...githubDeveloperSshOptions(homePath), "git@github.com"], {
       cwd: homePath,
       timeout: SSH_TIMEOUT_MS,
       maxBuffer: STATUS_OUTPUT_BYTES,
@@ -143,10 +166,7 @@ export async function getGithubDeveloperStatus(input: {
     }
   }
 
-  const [nameResult, emailResult] = await Promise.all([
-    globalIdentityValue("user.name"),
-    globalIdentityValue("user.email"),
-  ]);
+  const [nameResult, emailResult] = await identityResults;
   let commitIdentity: GithubDeveloperStatus["commitIdentity"];
   if (nameResult.kind === "unavailable" || emailResult.kind === "unavailable") {
     commitIdentity = { status: "unavailable", label: null };
