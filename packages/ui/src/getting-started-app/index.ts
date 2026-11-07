@@ -3,6 +3,7 @@ export {
   GETTING_STARTED_APP_MOBILE_URL,
   gettingStartedAppAction,
   gettingStartedAppActionLabel,
+  gettingStartedAppSignIn,
   gettingStartedAppToast,
   gettingStartedAppToastText,
   type GettingStartedAppAction,
@@ -10,12 +11,13 @@ export {
 } from "./actions.js";
 export { GettingStartedAppToastView } from "./toast.js";
 export { GettingStartedAppView } from "./GettingStartedAppView.js";
-export { GettingStartedAppSummary } from "./summary.js";
+export { GettingStartedAppOpenButton } from "./summary.js";
 export {
   GETTING_STARTED_APP_REFRESH_MS,
   GettingStartedAppProvider,
   useGettingStartedApp,
   type GettingStartedAppAvailability,
+  type GettingStartedAppConnections,
   type GettingStartedAppDesktopIconResult,
   type GettingStartedAppPoints,
   type GettingStartedAppPort,

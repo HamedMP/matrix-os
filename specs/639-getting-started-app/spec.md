@@ -8,7 +8,7 @@ Owner: Stefan. Reviewers suggested: Hamed (product), design owner of the Figma p
 
 ## Goal
 
-A new owner opens **Getting started** from its desktop icon and sees, in one window, what to do next and how far they are: 10 tasks, a progress bar and a points total. Finished tasks show Done, and finishing one while Matrix is open shows a short "+20 pts" toast.
+A new owner opens **Getting started** from its desktop icon and sees, in one window, what to do next and how far they are: 12 tasks, a progress bar and a points total. Finished tasks show Done, and finishing one while Matrix is open shows a short "+20 pts" toast.
 
 Why: the five-step Help popover is easy to miss and says nothing about what Matrix can do. A real app on the desktop is something people find, reopen and come back to in the first week.
 
@@ -28,11 +28,11 @@ The Get started wizard (spec 635) runs once, before the desktop. This app is wha
 
 ## Journey
 
-**First open.** The app opens once automatically, and its icon is placed on the desktop, the first time the desktop loads after the Get started wizard has finished or been skipped. The server claim (`/auto-open`) makes this happen once per owner across Web and Electron. Owners who never get the wizard are not auto-opened. After that it opens from its icon, the launcher or the Help popover.
+**First open.** The app opens once automatically, and its icon is placed first on the desktop, the first time the desktop loads after the Get started wizard has finished or been skipped. The server claim (`/auto-open`) makes this happen once per owner across Web and Electron. Owners who never get the wizard are not auto-opened. After that it opens from its icon, the launcher or the Help popover.
 
 **Screen** (Figma "First login"):
 
-- Header: "Getting started", "X of 10 done" with a progress bar, and a points badge.
+- Header: "Getting started", "X of 12 done" with a progress bar, and a points badge.
 - Hero, first state: the 45-second "Welcome to Matrix" intro video on the left; on the right a "Start here · +50 pts" card, "Put your agent to work", a suggested prompt ("Build me a habit tracker") and **Start in chat**, which opens Chat with that prompt in the composer (not sent).
 - Hero, later (Figma "In progress"): the video shrinks to "Watch the intro again" and the card becomes **Up next**: the first incomplete task in grid order, with its points and its button.
 - Grid of task cards, each with an icon, title, one-line description, and a points chip or a ✓ Done chip (component 1937:227).
@@ -46,6 +46,8 @@ The Get started wizard (spec 635) runs once, before the desktop. This app is wha
 | `build-app` | Build | Build an app | 30 | The owner has an app they created (source to confirm, see open questions) | App Gallery › Create app |
 | `create-agent` | Build | Create an agent | 30 | The owner has at least one bot besides the main bot (`/api/settings/get-started/bots` or the bots list; to confirm) | Bots |
 | `build-memory` | Build | Build your memory | 30 | To define (open question) | To define |
+| `gmail` | Connect | Gmail | 20 | `gmail` is an active service in `/api/integrations` | Settings › Integrations, Gmail |
+| `google-calendar` | Connect | Google Calendar | 20 | `google_calendar` is an active service in `/api/integrations` | Settings › Integrations, Google Calendar |
 | `slack` | Connect | Slack | 20 | `slack` is an active service in `/api/integrations` | Settings › Integrations, Slack |
 | `whatsapp` | Connect | WhatsApp | 20 | WhatsApp is connected (`/api/messaging/platforms` or `/api/channels/status`; to confirm) | The WhatsApp connect flow |
 | `github` | Connect | GitHub | 20 | Same rule as the popover's GitHub step (gh CLI authenticated or GitHub integration active); ENG-378's readiness when it lands | Agents & providers › GitHub |
@@ -54,17 +56,22 @@ The Get started wizard (spec 635) runs once, before the desktop. This app is wha
 | `invite-friends` | Go further | Invite friends | 100 per friend | Needs referrals ([GTM-529](https://linear.app/matrix-os/issue/GTM-529/affiliate-links-for-users)) | Hidden until GTM-529 ships |
 
 - A task without a reliable signal yet shows **unavailable** (no chip, button still works) and is never marked Done by guesswork. It counts toward the 10 but not toward "done".
-- Points are fixed per task on the server. The nine tasks other than Invite friends add up to 240 points; Invite friends adds 100 per friend once referrals exist.
+- Points are fixed per task on the server. The eleven tasks other than Invite friends add up to 280 points; Invite friends adds 100 per friend once referrals exist.
 - Buttons only open places that already exist. This app adds no new connect or sign-in flows.
 
 **Toast.** When a task turns Done while the owner is signed in, Matrix shows "Slack connected +20 pts" (task-specific copy) in the shared shell notification stack (`ShellNotificationPortal`), whether or not the app is open. Tasks that were already Done the first time they are seen are awarded silently.
 
-**Help popover.** The popover gains a summary row under its progress bar: **Open Getting started**, "X of 10 done" and the points total. Its own list stays for now, because since spec 635 it also carries the wizard's bots and "Try" prompts; removing it is a product decision (open question 9). Billing is not one of the 10 tasks (see open questions).
+**Help popover.** The popover keeps its full checklist (done steps checked off) and gains an expand button in its header, like the onboarding widget's, that opens the Getting started app full size. Its own list stays, because since spec 635 it also carries the wizard's bots and "Try" prompts; removing it is a product decision (open question 9). Billing is not one of the 12 tasks (see open questions).
 
 ## Points
 
 - Points belong to Getting started only. Nothing else reads them, and they cannot be spent in this version.
 - Each task pays out once per owner, ever. Disconnecting Slack later does not remove points, and reconnecting does not add them again.
+- A card's Done follows its live status: a disconnected Slack, GitHub or AI provider shows "20 pts earned" instead of Done until it is reconnected. Tasks Matrix cannot check, and the one-time first prompt, stay Done once earned.
+- When a task pays out while the app is on screen, the reward plays in the app (the hero shows it, the total floats "+N") instead of a corner toast. A minimized window or background tab gets the corner toast.
+- Desktop icon names wrap to two lines on Web Desktop and Electron Desktop, so "Getting started" is never cut off.
+- The icon takes the top-left slot. Icons on the slots before the first empty one move down one slot each (filling down, then right), once, when the icon is placed. If a hand-placed icon sits in that run, it goes in the first empty slot instead.
+- When a desktop draws, icons on valid slots keep them first; only then do displaced icons (overlapping or off screen) take open slots, so a displaced icon never pushes Getting started out of the top-left slot.
 - The server decides the amount from its own table; the client only names the task.
 - Points are progress, not money. Before points ever become credit or rewards, completion must be verified by the server or platform (see Risks).
 
@@ -164,14 +171,14 @@ Proposal (needs product sign-off): every owner gets the app once their computer 
 
 | # | Starting state | Action | Observable result | Surface / lane |
 | -- | -- | -- | -- | -- |
-| 1 | New owner, wizard just finished | Desktop loads | Getting started opens once in the "First login" state with 0 of 10 and 0 pts; reloading or opening Electron does not open it again | Web Desktop, Web Canvas, Electron Desktop / e2e |
+| 1 | New owner, wizard just finished | Desktop loads | Getting started opens once in the "First login" state with 0 of 12 and 0 pts; reloading or opening Electron does not open it again | Web Desktop, Web Canvas, Electron Desktop / e2e |
 | 2 | App open, Slack not connected | Connect Slack in Settings | Slack card shows Done, total +20, toast "Slack connected +20 pts" once | all three / e2e with fixture integration |
 | 3 | Slack already awarded | Disconnect and reconnect Slack | No new points, no toast | gateway integration test on real Postgres |
 | 4 | Two windows open | Both see Slack turn Done | One award row; one toast | gateway integration test (concurrent POSTs) |
 | 5 | Chat exists | Open app | Hero shows "Up next" with the first incomplete task; video shows "Watch the intro again" | all three / UI test + live capture |
 | 6 | Integrations endpoint failing | Open app | Connect cards show unavailable, nothing marked Done, other cards normal | UI test with fault injection |
 | 7 | Any | Click the icon on desktop, launcher and dock | App opens in a window and keeps its position after reload | all three / e2e |
-| 8 | Any | Open Help | Popover shows "X of 10 done", points and Open Getting started; no separate step list | all three / UI test |
+| 8 | Any | Open Help › Getting started | Popover shows the full checklist; its header expand button opens the app and closes the popover | all three / UI test |
 | 9 | Malformed award request | POST unknown task or with `points` | `400` generic, no row written | gateway route test |
 
 Evidence: live screenshots and a short recording on Web Desktop, Web Canvas and Electron Desktop, in the PR and #tech.
@@ -183,7 +190,7 @@ Evidence: live screenshots and a short recording on Web Desktop, Web Canvas and 
 3. Where is the 45-second intro video, who owns it, and where is it hosted? Until it exists the hero shows the card alone.
 4. What counts as done for **Build your memory**, and where does its button go?
 5. Which signal says the owner has **built an app** (own app in the catalog vs. any App Gallery install) and **signed in on mobile**?
-6. Billing is a popover step but not one of the 10 tasks. Drop it, or keep a billing nudge elsewhere?
+6. Billing is a popover step but not one of the 12 tasks. Drop it, or keep a billing nudge elsewhere?
 7. Existing owners: confirm the "icon yes, auto-open no, silent backfill" proposal.
 8. Icon artwork for `getting-started` in the v2 app icon family. A placeholder compass ships at `shell/public/system-app-icons/v2/getting-started.png`.
 9. Should the popover's own list go away now that the app exists, and where do the wizard's bot and "Try" rows live then?
@@ -206,3 +213,56 @@ Evidence: live screenshots and a short recording on Web Desktop, Web Canvas and 
 - **Points become money later.** Awards are claimed by the owner's own client after reading status. That is fine for progress on a single-owner computer, but not for credit. If points gain value, verification must move server-side or to the platform first.
 - **Two task lists drifting.** Mitigated by deriving both the app and the popover summary from one contracts function and removing the popover's own list.
 - **Default desktop icon.** Adding a path to `DEFAULT_OS_VIEW_DESKTOP_APP_PATHS` must not rearrange existing owners' saved layouts; verify with an existing-layout fixture.
+
+---
+
+# Iteration 2: an extension of onboarding (stack layer 3)
+
+Team feedback on the first build (#tech, Oct 29): it should feel like an extension of the onboarding process with Matrix's vibe (Stefan), share the onboarding widget's components and bring in Sahar's chat-first design (Nima), and it reads a bit empty: use the real integration logos (Hamed).
+
+## Plan
+
+1. **One set of components with the onboarding widget.** The widget's design tokens (`--mxo-*`) apply to the Getting started app too, and its starter-task button becomes a shared `OnboardingTaskButton` used by both. The app reuses the widget's `RabbitAvatar`, `AppLogo`, tiles, tags and rise animation instead of its own look-alikes.
+2. **The hero continues onboarding.** The left panel becomes the Matrix agent: rabbit avatar, "Hey {name} 👋" and a line that reacts to progress (next step, a just-finished task, all done). The right panel shows Sahar's four starter tasks from `ONBOARDING_TASKS` (Research anything, Plan my week, Build a website, Work on my code), ordered by the owner's Get started goals, with "Needs Calendar/GitHub" tags until those apps are connected.
+3. **Starting a task hands off to the widget.** Clicking a starter task opens the onboarding widget in the corner and starts that task there, through a small typed request channel the widget host listens to (one listener per shell, no globals). When no widget is mounted, it opens Chat with the same task prompt instead. Any started chat completes "Put your agent to work" (+50).
+4. **Real logos.** Connect cards show the integration's real logo from the integrations catalog (`/api/integrations/available`, the same source as Settings › Integrations); AI provider shows the Claude and OpenAI marks; Build cards use the sculpted app icons (Create app, Notes) and the Matrix rabbit for Create an agent. Missing logos fall back to the line icon.
+5. **More spirit, still calm.** Points count up when they change; a card that turns Done pops once with a soft glow; cards rise in with the widget's stagger. All motion is skipped under `prefers-reduced-motion`.
+
+## Not in this iteration
+
+- A new Figma frame: the layout follows the widget's existing components and Sahar's onboarding pages until design publishes an updated Getting started frame.
+- Removing the Help popover's own list (open question 9).
+
+## Iteration 3: email, calendar and the finish line
+
+Team feedback (Oct 30): email and calendar were missing, and finishing should feel like a reward.
+
+1. **Gmail and Google Calendar cards.** Two Connect cards, first in that group (+20 each), Done when `gmail` / `google_calendar` is an active integration, with their catalog logos. They also cover the starter task "Plan my week", which needs Calendar. That makes 12 tasks and 280 awardable points.
+2. **Matrix unlocked.** Once nothing Matrix can check is left (first prompt done and no incomplete task), the hero becomes a "Matrix is fully unlocked" banner: a gold medal with the rabbit, a slow ray burst, a short confetti fall, points collected, tasks done, and **Put Matrix to work** (opens Chat). Cards Matrix cannot check yet never block it; a note says they turn Done later. When the last task finishes in view, its reward plays first. Motion is skipped under `prefers-reduced-motion`.
+
+## Iteration 4: one job per piece, no repeated lists
+
+Team feedback (Oct 30): the app, the corner widget and the Help checklist repeated the same starter tasks.
+
+| Piece | Job |
+| -- | -- |
+| Onboarding widget (corner) | Runs the starter tasks. The only place they run while it is open. |
+| Getting started app | Progress, points, what is left, and the Matrix unlocked finish line. |
+| Help › Getting started | The checklist popover as before, with an expand button that opens the app. |
+
+1. **The widget publishes its state** on the shell's typed task channel (`task-requests.ts`): open (in the corner) or minimized, and its activity (choosing, setting up a task, running, done, failed) with the task's title. One value, newest widget wins, cleared on unmount; readers are capped.
+2. **The app hero mirrors the widget** while it is open and waiting for the first pick, or while it is setting up or running a task: "Pick your first task in the corner", "Matrix is working on Plan my week", with **Show Matrix panel** when the widget is minimized. When the widget is minimized with nothing running, missing, or done, the hero shows its own content: the four starter tasks (which still hand off to the widget, or Chat without one), then Up next, then Matrix unlocked.
+3. **Help stays as it was:** Help › Getting started opens the checklist popover with every step, done ones checked off. The **Open Getting started** row is replaced by an expand button in the popover header (like the widget's), which opens the app full size and closes the popover. Trimming the list is still open question 9.
+4. The widget's open/minimized state is stored per browser, so the mirror follows the device the owner is on.
+5. **Connect cards sign in where they are.** Gmail, Google Calendar, Slack and GitHub start the app's own sign-in from the card (the onboarding widget's flow) instead of opening Settings › Connect Apps, where an app is easy to lose. The card shows "Connecting…", or "Didn't connect, try again" when the sign-in fails, is blocked or times out; a finished sign-in re-reads progress at once. WhatsApp, a messaging channel, still opens Settings, and so does every card on a computer without an app connection service.
+
+## Version skew
+
+Electron updates apart from the gateway, so a client can read progress from a newer computer. Response schemas check a task id's shape only, cap the award list independently of this build's tasks, and ignore added fields; clients keep the ids they know (`gettingStartedAppKnownTaskIds`), and other tasks still count in the total. Requests stay strict: the server only accepts its own tasks. A newer client on an older gateway gets a generic award failure for a task that gateway does not know and retries on later refreshes, so that card stays unpaid until the gateway updates.
+
+## Runtime rules
+
+- The Web host captures its gateway URL and runtime slot once. Shared navigation rewrites the URL without the `/vm` prefix; real computer switches reload the document, and Electron remounts by computer scope.
+- The desktop icon is placed only after the saved layout has hydrated, never on primed defaults, so a customized layout cannot be overwritten.
+- A window restored while availability is unknown shows a loading state, not "not available".
+- Status reads run every 15 seconds while a window is showing and once a minute otherwise.

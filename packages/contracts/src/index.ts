@@ -1420,6 +1420,7 @@ export {
   canonicalOsViewCatalogPath,
   clampOsViewContextMenuPoint,
   findOpenOsViewDesktopSlot,
+  placeOsViewDesktopIcon,
   fitOsViewDesktopIconsToViewport,
   legacyDesktopImportFromConfig,
   normalizeOsViewMode,

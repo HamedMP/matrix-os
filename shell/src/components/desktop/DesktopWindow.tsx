@@ -15,6 +15,7 @@ import {
 } from "@/components/ui/card";
 import { ActivityMonitorApp } from "@/components/system-activity/ActivityMonitorApp";
 import { WebGettingStartedAppWindow } from "@/components/getting-started-app/web-getting-started-app";
+import { webGettingStartedAppVisible } from "@/components/getting-started-app/web-getting-started-app-port";
 import { AppViewer } from "@/components/AppViewer";
 import { ChatApp } from "@/components/ChatApp";
 import { FileBrowser } from "@/components/file-browser/FileBrowser";
@@ -252,7 +253,7 @@ export function DesktopWindow({
         ) : win.path === "__activity-monitor__" ? (
           <ActivityMonitorApp />
         ) : win.path === "__getting-started__" ? (
-          <WebGettingStartedAppWindow />
+          <WebGettingStartedAppWindow visible={webGettingStartedAppVisible(win, fullscreenWindowId)} />
         ) : (
           <AppViewer path={win.path} active={focusedWindowId === win.id && !win.minimized}
             onOpenApp={onAppOpen} visible={!isHidden && !isMinimizing} />

@@ -53,7 +53,7 @@ export default function DesktopIconGrid({
             type="button"
             aria-label={destination.name}
             data-selected={selected || undefined}
-            className="pointer-events-auto group absolute flex w-[76px] touch-none flex-col items-center gap-1.5 rounded-xl px-1 py-1.5 outline-none transition-colors hover:bg-[var(--bg-hover)] focus-visible:bg-[var(--bg-hover)] data-[selected]:bg-[var(--bg-selected)]"
+            className="pointer-events-auto group absolute flex w-[76px] touch-none flex-col items-center gap-1 rounded-xl px-1 py-1.5 outline-none transition-colors hover:bg-[var(--bg-hover)] focus-visible:bg-[var(--bg-hover)] data-[selected]:bg-[var(--bg-selected)]"
             style={{ left: placement.x, top: placement.y }}
             onClick={() => setSelectedId(destination.id)}
             onDoubleClick={destination.open}
@@ -110,9 +110,10 @@ export default function DesktopIconGrid({
                 style={{ borderColor: "var(--border-subtle)" }}
               />
             )}
+            {/* Two lines fit the 92px grid row: 6 + 48 + 4 + 2 × 14 + 6. Long names like "Getting started" wrap. */}
             <span
               data-desktop-icon-label
-              className="max-w-full truncate text-[12px] font-medium"
+              className="line-clamp-2 max-w-full break-words text-center text-[12px] font-medium leading-[14px]"
               style={{
                 color: "#fff",
                 textShadow: "0 1px 2px rgba(0, 0, 0, 0.95), 0 0 3px rgba(0, 0, 0, 0.8)",

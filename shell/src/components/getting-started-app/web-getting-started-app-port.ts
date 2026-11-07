@@ -4,11 +4,12 @@ import {
   GettingStartedAppAwardResponseSchema,
   GettingStartedAppDesktopIconResponseSchema,
   GettingStartedAppProgressSchema,
+  gettingStartedAppLogos,
   type GettingStartedAppAwardableTaskId,
 } from "@matrix-os/contracts";
 import type { GettingStartedAppPort } from "@matrix-os/ui";
 import { getGatewayUrl } from "@/lib/gateway";
-import { loadWebGettingStartedResults } from "../onboarding/GettingStartedPopover";
+import { currentRuntimeSlot, loadWebGettingStartedResults } from "../onboarding/GettingStartedPopover";
 
 export const GETTING_STARTED_APP_PATH = "__getting-started__";
 export const GETTING_STARTED_APP_TITLE = "Getting started";
@@ -20,8 +21,17 @@ function withTimeout(signal?: AbortSignal): AbortSignal {
   return signal ? AbortSignal.any([signal, timeout]) : timeout;
 }
 
-async function request(path: string, init: RequestInit & { signal?: AbortSignal } = {}): Promise<Response> {
-  return fetch(`${getGatewayUrl()}${path}`, {
+export interface WebGettingStartedComputer {
+  gatewayUrl: string;
+  runtimeSlot: string;
+}
+
+export function currentWebGettingStartedComputer(): WebGettingStartedComputer {
+  return { gatewayUrl: getGatewayUrl(), runtimeSlot: currentRuntimeSlot() };
+}
+
+async function requestFrom(gatewayUrl: string, path: string, init: RequestInit & { signal?: AbortSignal } = {}): Promise<Response> {
+  return fetch(`${gatewayUrl}${path}`, {
     cache: "no-store",
     credentials: "include",
     ...init,
@@ -30,9 +40,10 @@ async function request(path: string, init: RequestInit & { signal?: AbortSignal 
   });
 }
 
-export function createWebGettingStartedAppPort(): GettingStartedAppPort {
+export function createWebGettingStartedAppPort(computer: WebGettingStartedComputer): GettingStartedAppPort {
+  const request = (path: string, init?: RequestInit & { signal?: AbortSignal }) => requestFrom(computer.gatewayUrl, path, init);
   return {
-    loadResults: (signal) => loadWebGettingStartedResults((input, init) => fetch(input, { ...init, signal: withTimeout(signal) }), signal),
+    loadResults: (signal) => loadWebGettingStartedResults((input, init) => fetch(input, { ...init, signal: withTimeout(signal) }), signal, computer),
     async loadProgress(signal) {
       const response = await request("/api/getting-started/progress", { signal });
       if (response.status === 404) return null;
@@ -59,5 +70,36 @@ export function createWebGettingStartedAppPort(): GettingStartedAppPort {
       if (!response.ok) throw new Error("getting_started_desktop_icon_failed");
       GettingStartedAppDesktopIconResponseSchema.parse(await response.json());
     },
+    async loadLogos(signal: AbortSignal) {
+      const response = await request("/api/integrations/available", { signal });
+      if (!response.ok) throw new Error("getting_started_logos_unavailable");
+      return gettingStartedAppLogos(await response.json());
+    },
   };
+}
+
+/**
+ * Whether the Getting started window is on screen in Web Desktop or Web Canvas. A minimized window,
+ * one covered by another fullscreen window, or one panned out of view is not, so awards get the
+ * corner toast. Fullscreen fills the viewport wherever the window's saved position is.
+ */
+export function webGettingStartedAppVisible(
+  win: { id: string; minimized?: boolean },
+  fullscreenWindowId: string | null,
+  onScreen = true,
+): boolean {
+  if (win.minimized) return false;
+  return fullscreenWindowId === null ? onScreen : fullscreenWindowId === win.id;
+}
+
+/** Whether any part of a Web Canvas window is inside the viewport at the current pan and zoom. */
+export function webGettingStartedWindowOnScreen(
+  win: { x: number; y: number; width: number; height: number },
+  view: { zoom: number; panX: number; panY: number; viewportWidth: number; viewportHeight: number },
+): boolean {
+  const left = (win.x + view.panX) * view.zoom;
+  const top = (win.y + view.panY) * view.zoom;
+  const right = left + win.width * view.zoom;
+  const bottom = top + win.height * view.zoom;
+  return right > 0 && bottom > 0 && left < view.viewportWidth && top < view.viewportHeight;
 }

@@ -2,6 +2,7 @@
 
 import { GettingStartedVisibilityProvider, useGettingStartedAutoOpenSuppression } from "../../packages/ui/src/getting-started-visibility";
 import { GetStartedAnswersProvider, GetStartedGate, type GetStartedPort } from "../../packages/ui/src/get-started/index.js";
+import { GettingStartedAppProvider, type GettingStartedAppPort } from "../../packages/ui/src/getting-started-app/index.js";
 import React from "react";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
@@ -24,6 +25,18 @@ import { desktopComposerDraftIdentity, seedNewChatDraft } from "@desktop/rendere
 
 function render(ui: React.ReactNode) {
   return rtlRender(ui, { wrapper: ({ children }) => <GettingStartedVisibilityProvider scope="test">{children}</GettingStartedVisibilityProvider> });
+}
+
+function appPort(): GettingStartedAppPort {
+  return {
+    loadResults: vi.fn(async () => { throw new Error("not needed"); }),
+    loadProgress: vi.fn(async () => ({ awards: [], total: 0 })),
+    award: vi.fn(async () => ({ awarded: false, points: 0, total: 0 })),
+    claimAutoOpen: vi.fn(async () => false),
+    desktopIconPlaced: vi.fn(async () => true),
+    markDesktopIconPlaced: vi.fn(async () => undefined),
+    loadLogos: vi.fn(async () => ({})),
+  };
 }
 
 const CONNECTION_ID = "11111111-1111-4111-8111-111111111111";
@@ -366,6 +379,22 @@ describe("GettingStartedPopover", () => {
     expect(localStorage.getItem(gettingStartedAutoOpenKey("neo", "primary"))).toBeNull();
     fireEvent.click(trigger);
     expect(screen.getByRole("dialog", { name: "Getting started" })).not.toBeNull();
+  });
+
+  it("keeps the full checklist and opens the Getting started app from its header button", async () => {
+    const onOpen = vi.fn();
+    render(
+      <GettingStartedAppProvider port={appPort()} onOpen={onOpen}>
+        <GettingStartedPopover helpMenu={{ onSupport: vi.fn(), discordIcon: <span /> }} />
+      </GettingStartedAppProvider>,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Help", exact: true }));
+    fireEvent.click(await screen.findByRole("button", { name: "Getting started — 3 of 5" }));
+    const popover = screen.getByRole("dialog", { name: "Getting started" });
+    expect(within(popover).getAllByRole("button").length + within(popover).queryAllByRole("link").length).toBeGreaterThan(4);
+    fireEvent.click(await within(popover).findByRole("button", { name: "Open Getting started" }));
+    expect(onOpen).toHaveBeenCalledTimes(1);
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: "Getting started" })).toBeNull());
   });
 
   it("replaces Help with the checklist and lets Help reopen without overlapping", async () => {

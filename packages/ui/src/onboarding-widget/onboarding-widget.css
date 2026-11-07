@@ -1,4 +1,6 @@
-.mxo-root {
+/* Shared with the Getting started app (spec 639): one set of onboarding tokens, so the
+   widget's tiles, tags, logos and rabbit look the same in both places. */
+:is(.mxo-root, .mxo-gsa) {
   --mxo-bg: #fffefc;
   --mxo-surface: #ffffff;
   --mxo-border: #eceae8;
@@ -14,6 +16,9 @@
   --mxo-amber-soft: #fcf2e5;
   --mxo-red: #d6453d;
   --mxo-ease: cubic-bezier(0.19, 1, 0.22, 1);
+}
+
+.mxo-root {
   /* The card grows away from the corner it is anchored to, and enters from that corner. */
   --mxo-origin-x: right;
   --mxo-origin-y: bottom;

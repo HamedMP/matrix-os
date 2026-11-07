@@ -46,6 +46,24 @@ describe("native Desktop icon layout", () => {
     }));
   });
 
+  it("can put a new icon first, moving the icons ahead of the first gap down one slot", async () => {
+    const api = { patch: vi.fn(async () => ({ ok: true })) };
+    useDesktopIcons.setState({ icons: [CHAT, { path: "__terminal__", x: 20, y: 112 }, FILES], loaded: true });
+
+    expect(await useDesktopIcons.getState().add("__getting-started__", api as never, { width: 400, height: 300 }, { first: true }))
+      .toBe("added");
+
+    expect(useDesktopIcons.getState().icons).toEqual([
+      { path: "__getting-started__", x: 20, y: 20 },
+      { path: "__chat__", x: 20, y: 112 },
+      { path: "__terminal__", x: 20, y: 204 },
+      FILES,
+    ]);
+    expect(api.patch).toHaveBeenLastCalledWith("/api/os-view-state", expect.objectContaining({
+      patch: { desktop: { icons: useDesktopIcons.getState().icons } },
+    }));
+  });
+
   it("reports duplicate and full Desktop placement outcomes without writing", async () => {
     const api = { patch: vi.fn(async () => ({ ok: true })) };
     useDesktopIcons.setState({ icons: [CHAT], loaded: true });

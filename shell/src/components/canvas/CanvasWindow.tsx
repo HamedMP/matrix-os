@@ -14,6 +14,7 @@ import { PreviewWindow } from "../preview-window/PreviewWindow";
 import { ChatApp } from "../ChatApp";
 import { ActivityMonitorApp } from "../system-activity/ActivityMonitorApp";
 import { WebGettingStartedAppWindow } from "../getting-started-app/web-getting-started-app";
+import { webGettingStartedAppVisible } from "../getting-started-app/web-getting-started-app-port";
 import { useChatContext } from "@/stores/chat-context";
 import { TrafficLights } from "../window/TrafficLights";
 import { useThemeStyle } from "../window/useThemeStyle";
@@ -61,10 +62,12 @@ interface CanvasWindowProps {
   hidden?: boolean;
   /** Defers expensive app iframe hydration for offscreen Canvas windows. */
   deferAppContent?: boolean;
+  /** False when the window is panned out of the viewport. */
+  onScreen?: boolean;
 }
 
 // react-doctor-disable-next-line react-doctor/no-giant-component, react-doctor/prefer-useReducer -- cohesive single-window renderer: the bulk is theme-specific title-bar selection plus drag/resize/fullscreen pointer handlers that all share the same window state and refs. Splitting would require threading every handler and ref through props with no readability or reuse gain.
-export function CanvasWindow({ win, iconUrl, hidden = false, deferAppContent = false }: CanvasWindowProps) {
+export function CanvasWindow({ win, iconUrl, hidden = false, deferAppContent = false, onScreen = true }: CanvasWindowProps) {
   const chatState = useChatContext();
   const zoom = useCanvasTransform((s) => s.zoom);
   const panX = useCanvasTransform((s) => s.panX);
@@ -515,7 +518,7 @@ export function CanvasWindow({ win, iconUrl, hidden = false, deferAppContent = f
       ) : win.path === "__activity-monitor__" ? (
         <ActivityMonitorApp />
       ) : win.path === "__getting-started__" ? (
-        <WebGettingStartedAppWindow />
+        <WebGettingStartedAppWindow visible={!hidden && webGettingStartedAppVisible(win, fullscreenWindowId, onScreen)} />
       ) : deferAppContent ? (
         <div
           className="h-full w-full flex items-center justify-center bg-card"
