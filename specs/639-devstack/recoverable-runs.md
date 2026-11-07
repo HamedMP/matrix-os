@@ -9,6 +9,7 @@ ENG-432 extends the existing DevStack CLI and Preview skill with an operator run
 | `POST /api/devstack/runs` | Verified Clerk session bearer, current membership in the configured Private Preview Clerk organization, configured pilot Clerk user ID, and an agent-generated recovery key | No |
 | `GET /api/devstack/runs/:runId?cursor=N` | Fresh verification of the same Clerk membership and subject, plus the original run recovery key | No |
 | Returned `/vm/<handle>/` link | Existing Platform owner authentication and registered runtime routing | No |
+| Registered preview Next HMR upgrade | Existing verified Platform owner, matching registered runtime slot, and runtime proxy entitlement | No |
 | Sign-in continuation for a registered preview | Public Clerk sign-in. The return target is restricted to a canonical same-origin registered preview root. | Yes |
 
 The isolated Platform enables the run routes only in registered-runtime mode. The operator uses the same `MATRIX_INTERNAL_CLERK_ORG_ID` as Private Preview and configures at most three explicit Clerk user IDs. DevStack checks current membership with the existing Clerk Backend API reader and requires the caller to be on that list. Pending and impersonated sessions are rejected. A missing membership denies access, and an unavailable Clerk lookup fails closed. The preview link carries no session token or run key and requires the normal signed-in owner session.
@@ -27,6 +28,8 @@ Set `MATRIX_DEVSTACK_RUN_CONFIG` to JSON with `issuer`, `previewOrigin`, `operat
 ## Preview sign-in continuation
 
 An unauthenticated browser opening the generated preview URL receives a private, non-cacheable redirect to Platform sign-in. The return path contains only the original same-origin preview root. The sign-in view uses the publishable key from the same Clerk instance as the configured session verifier and gives that path to Clerk. The existing registered runtime router checks the owner again after login. Conflicting browser sessions fail closed with a recovery message instead of redirecting repeatedly. This flow never provisions a computer or invokes ordinary billing or runtime selection. API and WebSocket authentication keep their existing behavior.
+
+In registered-runtime mode, the exact Next HMR upgrades at `/_next/hmr` and `/_next/webpack-hmr` under an explicit VM route use that runtime's Shell port. Preserve the browser's asset-prefix path and strip routing credentials as for other upgrades. Gateway sockets keep their existing route.
 
 ## Acceptance
 
