@@ -46,7 +46,7 @@ function connect() {
 export default function (pi) {
   pi.registerTool({
     name: "matrix_routines", label: "Routines",
-    description: "Use the fixed Matrix routines CLI. Supply routine intent only. Mutations need the exact owner decision; activation, background model consent and integrations are separate. Never retry an unknown mutation; reconcile its original requestId from a fresh authorized call.",
+    description: "When the person explicitly asks to schedule work, use propose through the Matrix routine CLI. Clarify the saved Bot's execution model if it is unclear. A proposal awaits separate human approval in this Chat, where scheduled results also appear. Use a fresh requestId for each new mutation and the current revision for controls. Reconcile unknown outcomes with request and the original requestId from a fresh authorized call. Never retry a mutation automatically.",
     parameters: __MATRIX_ROUTINE_SCHEMA__,
     async execute(toolCallId, operation, signal, _onUpdate, ctx) {
       const context = { sessionId: ctx?.sessionManager?.getSessionId(), toolCallId };

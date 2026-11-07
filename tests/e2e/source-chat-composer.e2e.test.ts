@@ -32,10 +32,10 @@ beforeAll(async () => {
 }, 30000);
 afterAll(async () => { await browser?.close(); });
 
-// Regression: placing an expanded Persistent task grid in the non-shrinking
-// model/access toolbar pushes its explanation, destination and Send off-screen.
-it.each([480, 720, 1024].flatMap(width => ["available", "unset"].flatMap(destination => [false, true].map(empty => ({width, destination, empty})))))(
-  "keeps Persistent task, $destination destination and Send inside a $width px Chat window (empty=$empty)", async ({width, destination, empty}) => {
+// Keep the actual responsive composer and its Send control usable without an
+// engine selector in both a new and an existing private Chat.
+it.each([480, 720, 1024].flatMap(width => [false, true].map(empty => ({width, empty}))))(
+  "submits a scheduling request from a $width px Chat without a scheduler selector (empty=$empty)", async ({width, empty}) => {
   const page = await browser.newPage({ viewport: { width, height: 800 } });
   try {
     const errors: string[] = [];
@@ -43,25 +43,19 @@ it.each([480, 720, 1024].flatMap(width => ["available", "unset"].flatMap(destina
     await page.route("**/*", route => route.abort());
     await page.route("https://source-chat-layout.test/**", route => route.fulfill({ contentType: "text/html", body:
       `<!doctype html><html><style>${css}:root{--text-primary:#222;--text-secondary:#666;--text-tertiary:#777;--bg-surface:#fff;--bg-sunken:#eee;--border-subtle:#ddd}body{margin:0;font:14px Arial}#root{height:100vh;width:100%}</style><div id="root"></div></html>` }));
-    await page.goto(`https://source-chat-layout.test/?destination=${destination}&empty=${empty}`);
+    await page.goto(`https://source-chat-layout.test/?empty=${empty}`);
     await page.addScriptTag({ content: script });
-    const toggle = page.getByRole("button", { name: "Persistent task", exact: true });
-    try { await toggle.waitFor({ timeout: 5000 }); }
-    catch (error) { throw new Error(`Offline Chat fixture unavailable: ${JSON.stringify(errors)}; ${await page.locator("body").innerText()}`, { cause: error }); }
     const input = page.getByRole("textbox", { name: "Message chat" });
-    await input.fill("Unsaved persistent reminder draft");
-    await toggle.click();
-    if (destination === "available") await page.getByText("Existing Bot destination selected.", { exact: true }).waitFor();
-    else await page.getByRole("option", { name: "Existing private Bot with a very long name for this narrow Chat window", exact: true }).waitFor({state: "attached"});
+    const request = "Schedule a summary each morning at 9.";
+    try { await input.fill(request, {timeout:5000}); }
+    catch (error) { throw new Error(`Offline Chat fixture unavailable: ${JSON.stringify(errors)}; ${await page.locator("body").innerText()}`, { cause: error }); }
+    expect(await page.getByRole("button", { name: "Persistent task", exact: true }).count()).toBe(0);
+    expect(await page.getByRole("combobox", { name: "Routine destination" }).count()).toBe(0);
     const geometry = await page.locator(".prompt-card").evaluate(card => {
       const bounds = card.getBoundingClientRect();
-      return { x: bounds.x, right: bounds.right, overflow: card.scrollWidth > card.clientWidth + 1,
-        children: [...card.querySelectorAll("button,p,select")].map(element => {
-          const b = element.getBoundingClientRect();
-          return { text: element.textContent, x: b.x, right: b.right, width: b.width };
-        }).filter(element => element.width > 0) };
+      return { x: bounds.x, right: bounds.right, overflow: card.scrollWidth > card.clientWidth + 1 };
     });
-    await page.screenshot({ path: join(output, `persistent-${destination}-${width}-${empty ? "empty" : "existing"}.png`) });
+    await page.screenshot({ path: join(output, `conversational-${width}-${empty ? "empty" : "existing"}.png`) });
     expect(geometry.x).toBeGreaterThanOrEqual(0);
     expect(geometry.right).toBeLessThanOrEqual(width + 1);
     expect(geometry.overflow).toBe(false);
@@ -69,16 +63,10 @@ it.each([480, 720, 1024].flatMap(width => ["available", "unset"].flatMap(destina
     expect(await send.isVisible()).toBe(true);
     const sendBounds = await send.boundingBox();
     expect(sendBounds).not.toBeNull();
-    expect(sendBounds!.width).toBeGreaterThan(0);
-    expect(sendBounds!.height).toBeGreaterThan(0);
-    for (const child of geometry.children) {
-      expect(child.x, child.text ?? "control").toBeGreaterThanOrEqual(geometry.x);
-      expect(child.right, child.text ?? "control").toBeLessThanOrEqual(geometry.right + 1);
-    }
-    expect(await input.inputValue()).toBe("Unsaved persistent reminder draft");
-    expect(await toggle.getAttribute("aria-pressed")).toBe("true");
-    await toggle.click();
-    expect(await input.inputValue()).toBe("Unsaved persistent reminder draft");
-    expect(await toggle.getAttribute("aria-pressed")).toBe("false");
+    expect(sendBounds!.x).toBeGreaterThanOrEqual(geometry.x);
+    expect(sendBounds!.x + sendBounds!.width).toBeLessThanOrEqual(geometry.right + 1);
+    await send.click();
+    await expect.poll(async () => await page.locator("#root").getAttribute("data-last-submit")).toBe(JSON.stringify({text:request}));
+    expect(errors).toEqual([]);
   } finally { await page.close(); }
 });

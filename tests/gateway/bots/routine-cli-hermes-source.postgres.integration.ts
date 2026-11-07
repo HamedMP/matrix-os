@@ -3,30 +3,50 @@ import { writeFile } from "node:fs/promises";
 // Named native pin/API/bootstrap fixture. It does not mock source admission, registry, CLI or canonical backend.
 vi.mock("../../../packages/gateway/src/chat/hermes-routine-bootstrap.js", () => ({ hermesRoutineBootstrap: async (_root: string, args: string[]) => args }));
 import { hermesFixture } from "./routine-cli-hermes-support.js";
-import { proposal, TARGET_A } from "./routine-cli-request-support.js";
+import { insertRoutine, proposal, routineId, TARGET_A } from "./routine-cli-request-support.js";
 let f: Awaited<ReturnType<typeof hermesFixture>> | undefined;
 afterEach(async () => { await f?.close(); f = undefined; vi.unstubAllGlobals(); });
 
-it("actual admitted Hermes adapter invokes the published CLI/private IPC/HTTP/PG with exact owner decision and original UUID", async () => {
+async function pauseFixture(requestId: string, options: { hold?: boolean; duplicate?: boolean } = {}) {
+  f = await hermesFixture({ ...options, intent: { args: ["pause", routineId(700), "--revision", "1", "--request-id", requestId] } });
+  await insertRoutine(f.data.db, 700);
+  return f;
+}
+
+it("admitted Hermes controls an existing routine through the published CLI with exact owner decision and original UUID", async () => {
   const requestId = "de000000-0000-4000-8000-000000000701", chatId = "chat_hermes_actual";
-  f = await hermesFixture({ intent: { args: ["propose", "--input", "-", "--request-id", requestId], stdin: JSON.stringify(proposal) } });
+  f = await pauseFixture(requestId);
   const admitted = await f.start(chatId);
   await expect.poll(() => f!.sourceEvents.find(event => event.type === "approval.requested"), { timeout: 5000 }).toMatchObject({ type: "approval.requested" });
   const event = f.sourceEvents.find(event => event.type === "approval.requested")!;
   if (event.type !== "approval.requested") throw new Error("Missing exact owner operation decision");
   await f.approve(event, chatId, admitted.run.id); await f.f.canonical.drain();
   const frames = await f.frames(), result = frames.find(frame => frame.privateResult?.type === "result").privateResult;
-  expect(JSON.parse(result.result)).toMatchObject({ v: 1, ok: true, data: { receipt: { requestId, disposition: "queued" } } });
+  expect(JSON.parse(result.result)).toMatchObject({ v: 1, ok: true, data: {
+    receipt: { requestId, disposition: "applied", routine: { routineId: routineId(700), status: "paused", revision: 2 } },
+  } });
   expect(result.context).toMatchObject({ session_id: "native_durable", tool_call_id: "native_call" });
   expect(f.httpCalls()).toBe(1);
   expect(await f.data.db.selectFrom("routine_cli_requests").select("client_request_id").execute()).toEqual([{ client_request_id: requestId }]);
-  expect(await f.data.db.selectFrom("bot_interactions").select("chat_id").execute()).toEqual([{ chat_id: TARGET_A.chatId }]);
-  expect(await f.data.db.selectFrom("bot_routines").selectAll().execute()).toEqual([]);
+  expect(await f.data.db.selectFrom("bot_interactions").select("chat_id").execute()).toEqual([]);
+  expect(await f.data.db.selectFrom("bot_routines").select("status").execute()).toEqual([{ status: "paused" }]);
   const source = await f.data.db.selectFrom("routine_cli_sources").select(["source_context", "revoked_at"]).where("generation", "like", "native_%").executeTakeFirstOrThrow();
   expect(source.source_context).toMatchObject({ harness: "hermes", identity: { chatId, runId: admitted.run.id, kind: "chat_run" } });
   expect(source.revoked_at).not.toBeNull();
   expect(JSON.stringify(frames)).not.toMatch(/RoutineCapability|rcli_|fixture-owner-credential|platform-claude-consent|native_[a-f0-9]{48}/);
 }, 20_000);
+
+it("declines a new Hermes proposal while the owner catalog's native scheduling capability is unverified", async () => {
+  const requestId = "de000000-0000-4000-8000-000000000707";
+  f = await hermesFixture({ intent: { args: ["propose", "--input", "-", "--request-id", requestId], stdin: JSON.stringify(proposal) } });
+  await f.start("chat_hermes_creation"); await f.f.canonical.drain();
+  const result = (await f.frames()).find(frame => frame.privateResult?.type === "result").privateResult;
+  expect(JSON.parse(result.result)).toMatchObject({ v: 1, error: { code: "permission_denied" } });
+  expect(f.sourceEvents.some(event => event.type === "approval.requested")).toBe(false);
+  expect(f.httpCalls()).toBe(0);
+  expect(await f.data.db.selectFrom("routine_cli_requests").selectAll().execute()).toEqual([]);
+  expect(await f.data.db.selectFrom("bot_tasks").selectAll().execute()).toEqual([]);
+}, 15_000);
 
 it.each(["owner", "Chat", "run", "provider"])("rejects mismatched canonical %s without relabeling source", async mismatch => {
   f = await hermesFixture({ intent: { args: ["list"] } });
@@ -54,7 +74,7 @@ it.each(["missing catalog", "identity argument", "raw RPC context", "invalid con
 
 it.each(["end", "eof"])("native %s fences authorized HTTP consume before real child exit/pipe drainage", async ending => {
   const requestId = "de000000-0000-4000-8000-000000000702", chatId = "chat_hermes_consume_end";
-  f = await hermesFixture({ intent: { args: ["propose", "--input", "-", "--request-id", requestId], stdin: JSON.stringify(proposal) }, hold: true });
+  f = await pauseFixture(requestId, { hold: true });
   const register = f.runtime.registerChat; let revokedBeforeExit = false;
   f.runtime.registerChat = async input => { const source = await register(input); return { ...source, async revoke() {
     revokedBeforeExit = f!.children.every(child => child.exitCode === null && child.signalCode === null);
@@ -75,11 +95,12 @@ it.each(["end", "eof"])("native %s fences authorized HTTP consume before real ch
   expect(revokedBeforeExit).toBe(true);
   expect(await f.data.db.selectFrom("routine_cli_requests").selectAll().execute()).toEqual([]);
   expect(await f.data.db.selectFrom("bot_approvals").selectAll().execute()).toEqual([]);
+  expect(await f.data.db.selectFrom("bot_routines").select("status").execute()).toEqual([{ status: "active" }]);
 }, 20_000);
 
 it("private cancellation aborts only the exact action, preserves original UUID as unknown and keeps source live", async () => {
   const requestId = "de000000-0000-4000-8000-000000000703";
-  f = await hermesFixture({ intent: { args: ["propose", "--input", "-", "--request-id", requestId], stdin: JSON.stringify(proposal) }, hold: true });
+  f = await pauseFixture(requestId, { hold: true });
   await f.start("chat_hermes_cancel");
   await expect.poll(() => f!.sourceEvents.some(event => event.type === "approval.requested"), { timeout: 5000 }).toBe(true);
   await writeFile(f.control, "cancel");
@@ -91,36 +112,6 @@ it("private cancellation aborts only the exact action, preserves original UUID a
   expect(await f.data.db.selectFrom("routine_cli_requests").selectAll().execute()).toEqual([]);
 }, 15_000);
 
-it.each(["before claim", "after claim"])("source end %s respects the actual canonical task claim boundary", async phase => {
-  const requestId = "de000000-0000-4000-8000-000000000705", chatId = "chat_hermes_claim_boundary";
-  f = await hermesFixture({ intent: { args: ["propose", "--input", "-", "--request-id", requestId], stdin: JSON.stringify(proposal) }, hold: true });
-  let ended!: () => void;
-  let sourceSignal: AbortSignal | undefined;
-  const sourceEnded = new Promise<void>(resolve => { ended = resolve; });
-  const register = f.runtime.registerChat;
-  f.runtime.registerChat = async input => { sourceSignal = input.signal; const source = await register(input); return { ...source, async revoke() { await source.revoke(); ended(); } }; };
-  const stop = async () => { await writeFile(f!.control, "eof"); await expect.poll(() => sourceSignal?.aborted, { timeout: 2000 }).toBe(true); };
-  if (phase === "before claim") {
-    const begin = f.runtime.proposals.beginWithin;
-    f.runtime.proposals.beginWithin = async (tx, input) => { await stop(); return begin(tx, input); };
-  } else {
-    const consume = f.runtime.proposals.consume;
-    f.runtime.proposals.consume = async (binding, signal) => {
-      expect(await f!.data.db.selectFrom("routine_cli_proposals").select("stage").where("client_request_id", "=", requestId).executeTakeFirstOrThrow()).toMatchObject({ stage: "target_task_claimed" });
-      await stop(); return consume(binding, signal);
-    };
-  }
-  const admitted = await f.start(chatId);
-  await expect.poll(() => f!.sourceEvents.find(event => event.type === "approval.requested"), { timeout: 5000 }).toMatchObject({ type: "approval.requested" });
-  const event = f.sourceEvents.find(event => event.type === "approval.requested")!;
-  if (event.type !== "approval.requested") throw new Error("Missing owner operation decision");
-  await f.approve(event, chatId, admitted.run.id); await sourceEnded;
-  if (phase === "after claim") await expect.poll(async () => (await f!.data.db.selectFrom("bot_interactions").select("chat_id").execute()).length, { timeout: 3000 }).toBe(1);
-  await writeFile(f.control, "end"); await f.f.canonical.drain();
-  expect(await f.data.db.selectFrom("bot_interactions").select("chat_id").execute()).toEqual(phase === "after claim" ? [{ chat_id: TARGET_A.chatId }] : []);
-  expect(await f.data.db.selectFrom("bot_routines").selectAll().execute()).toEqual([]);
-}, 20_000);
-
 it("retains native review-mode rejection before a new source or process can be installed", async () => {
   f = await hermesFixture({ intent: { args: ["list"] } });
   await f.start("chat_hermes_review", { permission: "full_access", interaction: "review" });
@@ -129,9 +120,9 @@ it("retains native review-mode rejection before a new source or process can be i
   expect(await f.data.db.selectFrom("routine_cli_sources").select("source_id").where("generation", "like", "native_%").execute()).toEqual([]);
 }, 10_000);
 
-it("duplicate native callback identity cannot create a second CLI process, approval or canonical task", async () => {
+it("duplicate native callback identity cannot create a second CLI process, approval or control", async () => {
   const requestId = "de000000-0000-4000-8000-000000000706", chatId = "chat_hermes_duplicate";
-  f = await hermesFixture({ intent: { args: ["propose", "--input", "-", "--request-id", requestId], stdin: JSON.stringify(proposal) }, duplicate: true, hold: true });
+  f = await pauseFixture(requestId, { duplicate: true, hold: true });
   const admitted = await f.start(chatId);
   await expect.poll(() => f!.sourceEvents.find(event => event.type === "approval.requested"), { timeout: 5000 }).toMatchObject({ type: "approval.requested" });
   const event = f.sourceEvents.find(event => event.type === "approval.requested")!;
@@ -142,7 +133,8 @@ it("duplicate native callback identity cannot create a second CLI process, appro
   expect(f.httpCalls()).toBe(1);
   expect(f.sourceEvents.filter(event => event.type === "approval.requested")).toHaveLength(1);
   expect(await f.data.db.selectFrom("routine_cli_requests").select("client_request_id").execute()).toEqual([{ client_request_id: requestId }]);
-  expect(await f.data.db.selectFrom("bot_tasks").selectAll().execute()).toHaveLength(1);
+  expect(await f.data.db.selectFrom("bot_routines").select("status").execute()).toEqual([{ status: "paused" }]);
+  expect(await f.data.db.selectFrom("bot_tasks").selectAll().execute()).toEqual([]);
 }, 15_000);
 
 it("lost private enable ACK disables routine issuance without replaying or replacing the ordinary native prompt", async () => {

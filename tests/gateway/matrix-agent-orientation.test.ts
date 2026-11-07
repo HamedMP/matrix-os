@@ -66,5 +66,7 @@ describe("Claude Matrix orientation", () => {
     const prompt = launch.args[launch.args.indexOf("--append-system-prompt") + 1]!;
     expect(prompt).toContain("Only use tools present in this run");
     expect(prompt).not.toContain("Custom MCP");
+    expect(prompt).toContain("native scheduling tools");
+    expect(prompt).toContain("existing Matrix routines");
   });
 });
