@@ -69,9 +69,12 @@ import {
 import { appDomainServiceWorkerResponse } from './app-domain-service-worker.js';
 import { isPostHogRelayPath, proxyPostHogRelay } from './posthog-relay.js';
 import {
+  APP_SESSION_COOKIE,
+  CODE_SESSION_COOKIE,
   CODE_SESSION_EXPIRES_IN_SEC,
   NATIVE_APP_SESSION_PROXY_HEADER,
   buildCodeSessionCookie,
+  readCookie,
 } from './session-cookies.js';
 import { HANDLE_PATTERN, describeError } from './platform-route-utils.js';
 import {
@@ -115,6 +118,7 @@ import {
 } from './container-endpoint.js';
 import { scopeExplicitVmAppSessionCookie } from './session-routing-cookie-rewrite.js';
 import { resolveRegisteredRuntimeEndpoint } from './devstack-registered-runtime.js';
+import { isDevstackPreviewRoot, renderDevstackPreviewSignIn } from './devstack-preview-sign-in.js';
 
 export function isPlatformRuntimeShellPath(path: string): boolean {
   return path === '/runtime' || path === '/onboarding/computer';
@@ -532,6 +536,48 @@ export function createSessionRoutingMiddleware(opts: CreateSessionRoutingMiddlew
     const authHeader = c.req.header('authorization');
     const cookieHeader = c.req.header('cookie');
     const path = c.req.path;
+    const registeredBrowserUrl = registeredRuntimeInstance && isAppDomain
+      && (c.req.method === 'GET' || c.req.method === 'HEAD')
+      && c.req.header('upgrade')?.toLowerCase() !== 'websocket'
+      ? new URL(c.req.url) : null;
+    if (registeredBrowserUrl?.pathname === '/sign-in' && registeredBrowserUrl.searchParams.has('redirect_url')) {
+      applyNoStoreHeaders(c);
+      const targets = registeredBrowserUrl.searchParams.getAll('redirect_url');
+      const target = targets[0];
+      if (targets.length !== 1 || !target || !isDevstackPreviewRoot(target)) {
+        return c.text('Invalid DevStack preview return path', 400);
+      }
+      const token = clerkAuth?.extractToken(undefined, cookieHeader);
+      const clerkSession = clerkAuth && token ? await clerkAuth.verify(token) : null;
+      if (clerkSession?.authenticated && clerkSession.userId) {
+        if (platformJwtSecret && (readCookie(cookieHeader, APP_SESSION_COOKIE) || readCookie(cookieHeader, CODE_SESSION_COOKIE))) {
+          // Reuse the preview's principal checks to avoid bouncing between the
+          // two routes when an older Matrix session conflicts or cannot route.
+          const combinedIdentity = await resolveAppDomainIdentity({
+            authHeader: undefined,
+            cookieHeader,
+            clerkAuth,
+            db,
+            platformJwtSecret,
+            legacyContainerRoutingEnabled,
+            registeredRuntimeOnly: true,
+            allowUnroutedClerkIdentity: true,
+            runtimeSlot: 'primary',
+          });
+          if (combinedIdentity?.userId !== clerkSession.userId) {
+            return c.text('Your Matrix sessions conflict. Open the preview in a private browser window and sign in again.', 409);
+          }
+        }
+        // The target still goes through the registered runtime's owner check.
+        return c.redirect(target, 302);
+      }
+      const publishableKey = appEnv.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY;
+      if (!publishableKey || !clerkAuth) return c.text('Sign-in unavailable', 503);
+      const scriptNonce = randomBytes(16).toString('base64');
+      applyAuthPageHeaders(c, scriptNonce, applyNoStoreHeaders);
+      return c.html(renderDevstackPreviewSignIn(publishableKey, scriptNonce, target));
+    }
+
     const explicitVmRoute = isAppDomain ? readExplicitVmRoute(path) : null;
     const verifiedAssetSlot = explicitVmRoute && verifiedExplicitVmAppAssetSlot({
       method: c.req.method,
@@ -645,6 +691,10 @@ export function createSessionRoutingMiddleware(opts: CreateSessionRoutingMiddlew
 
     // No session/JWT -- serve Clerk auth directly from the platform.
     if (!identity) {
+      if (registeredBrowserUrl && !registeredBrowserUrl.search && isDevstackPreviewRoot(registeredBrowserUrl.pathname)) {
+        applyNoStoreHeaders(c);
+        return c.redirect(`/sign-in?redirect_url=${encodeURIComponent(registeredBrowserUrl.pathname)}`, 302);
+      }
       console.log(`[${isCodeDomain ? 'code' : 'app'}] no token path=${path}`);
       if (isAppDomain && allowAuthShellUnroutedIdentity) {
         return proxyAuthShell(c, host, { redirectToBillingOnFailure: false });
