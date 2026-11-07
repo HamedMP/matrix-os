@@ -31,7 +31,16 @@ const CONNECTION_ID = "11111111-1111-4111-8111-111111111111";
 function successfulResponse(path: string): unknown {
   switch (path) {
     case "/api/github/status":
-      return { installed: true, authenticated: true, user: "octocat", errorCode: null };
+      return {
+        installed: true,
+        authenticated: true,
+        user: "octocat",
+        gitProtocol: "ssh",
+        sshStatus: "verified",
+        commitIdentity: { status: "ready", label: "The Octocat <octocat@users.noreply.github.com>" },
+        ready: true,
+        errorCode: null,
+      };
     case "/api/integrations":
       return [
         { id: CONNECTION_ID, service: "gmail", account_label: "Mail", status: "active" },
@@ -119,7 +128,7 @@ describe("getting started status", () => {
     expect(snapshot.completedCount).toBe(0);
   });
 
-  it("marks GitHub complete when it is connected through Services", async () => {
+  it("does not mark GitHub complete from a legacy Services connection", async () => {
     const snapshot = await loadGettingStartedSnapshot(makeApi({
       "/api/github/status": { installed: true, authenticated: false, user: null, errorCode: null },
       "/api/integrations": [
@@ -127,7 +136,27 @@ describe("getting started status", () => {
       ],
     }) as never);
 
-    expect(snapshot.steps.find((step) => step.id === "github")?.status).toBe("complete");
+    expect(snapshot.steps.find((step) => step.id === "github")?.status).toBe("unavailable");
+  });
+
+  it("keeps GitHub incomplete until developer access is fully ready", async () => {
+    const snapshot = await loadGettingStartedSnapshot(makeApi({
+      "/api/github/status": {
+        installed: true,
+        authenticated: true,
+        user: "octocat",
+        gitProtocol: "ssh",
+        sshStatus: "setup_required",
+        commitIdentity: { status: "ready", label: "The Octocat <octocat@users.noreply.github.com>" },
+        ready: false,
+        errorCode: null,
+      },
+      "/api/integrations": [
+        { id: CONNECTION_ID, service: "github", account_label: "octocat", status: "active" },
+      ],
+    }) as never);
+
+    expect(snapshot.steps.find((step) => step.id === "github")?.status).toBe("incomplete");
   });
 
   it("loads platform-owned billing status through the primary route", async () => {
@@ -187,7 +216,7 @@ describe("GettingStartedPopover", () => {
         "/api/integrations": [],
         "/api/workspace/projects": { projects: [] },
         "/api/chats?limit=1": { items: [] },
-        "/api/github/status": { authenticated: false },
+        "/api/github/status": { ready: false },
         ...overrides,
       });
       useConnection.setState({ api: api as never, userId: "user_1" } as never);
@@ -205,18 +234,19 @@ describe("GettingStartedPopover", () => {
       await waitFor(() => expect(reads()).toBeGreaterThan(before));
     });
 
-    it("starts GitHub's own sign-in instead of opening the app directory", async () => {
+    it("opens GitHub developer access instead of starting a legacy app connection", async () => {
       const startConnect = vi.spyOn(useIntegrations.getState(), "startConnect").mockResolvedValue(null);
       const { dialog } = await openWith({});
       fireEvent.click(await within(dialog).findByRole("button", { name: "Connect GitHub" }));
-      await waitFor(() => expect(startConnect).toHaveBeenCalledWith("github", expect.anything()));
-      expect(useTabs.getState().tabs.some((tab) => tab.kind === "settings")).toBe(false);
+      expect(startConnect).not.toHaveBeenCalled();
+      expect(useUi.getState().requestedSettingsSection).toBe("agents-providers");
+      expect(useTabs.getState().tabs.some((tab) => tab.kind === "settings")).toBe(true);
     });
 
     it("says when a sign-in did not finish", async () => {
       vi.spyOn(useIntegrations.getState(), "startConnect").mockResolvedValue(null);
       const { dialog } = await openWith({});
-      fireEvent.click(await within(dialog).findByRole("button", { name: "Connect GitHub" }));
+      fireEvent.click(await within(dialog).findByRole("button", { name: "Connect email & calendar" }));
       expect(await within(dialog).findByText("Sign-in didn't finish. Click to try again.")).not.toBeNull();
     });
 

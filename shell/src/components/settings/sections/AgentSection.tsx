@@ -1,20 +1,22 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef } from "react";
-import { AgentsProvidersView, useProviderSettingsController, type AgentsProvidersViewProps } from "@matrix-os/ui";
+import { AgentsProvidersView, GithubDeveloperAccessCard, useProviderSettingsController, type AgentsProvidersViewProps } from "@matrix-os/ui";
 import { getGatewayUrl } from "@/lib/gateway";
 import { openProviderAuthorizationPath } from "@/lib/provider-browser-action";
-import { createProviderSettingsTransport, openWebProviderAgentSetup } from "@/lib/provider-settings-transport";
+import { boundedProviderSettingsJson, createProviderSettingsTransport, openWebProviderAgentSetup } from "@/lib/provider-settings-transport";
 import { currentAiCreditRuntimeSlot, openWebAiCreditCheckout } from "@/lib/ai-credit-checkout";
 import { createWebProviderWorkflowClient, createWebMatrixAnthropicClient, loadWebAiCreditHistory, openWebProviderWorkflowAuthorization } from "@/lib/provider-workflow-transport";
 import { createBrowserSpeechClient } from "@/lib/platform-speech-client";
 
 export function AgentSection({
   onOpenTerminal,
+  onOpenGithubDeveloperTerminal,
   automaticCreditRefreshEnabled = false,
 }: {
   automaticCreditRefreshEnabled?: boolean;
   onOpenTerminal?: (terminalSessionId: string) => void;
+  onOpenGithubDeveloperTerminal?: () => void;
 }) {
   const transport = useMemo(() => createProviderSettingsTransport(), []);
   const identityKey = getGatewayUrl();
@@ -26,6 +28,31 @@ export function AgentSection({
   const matrixAnthropicClient = useMemo(() => createWebMatrixAnthropicClient({
     isIdentityCurrent: () => getGatewayUrl() === identityKey && currentAiCreditRuntimeSlot() === runtimeSlot,
   }), [identityKey, runtimeSlot]);
+  const githubDeveloperAccessClient = useMemo<NonNullable<AgentsProvidersViewProps["githubDeveloperAccess"]>["client"]>(() => ({
+    async status(signal) {
+      const timeout = AbortSignal.timeout(10_000);
+      const response = await fetch(`${identityKey}/api/github/status`, {
+        cache: "no-store",
+        signal: AbortSignal.any([signal, timeout]),
+      });
+      if (!response.ok) {
+        await response.body?.cancel();
+        throw new Error("GitHub developer access is unavailable.");
+      }
+      const value = await boundedProviderSettingsJson(response, 16 * 1024);
+      if (getGatewayUrl() !== identityKey || currentAiCreditRuntimeSlot() !== runtimeSlot) {
+        throw new Error("GitHub developer access is unavailable.");
+      }
+      return value;
+    },
+    async startSetup() {
+      if (!onOpenGithubDeveloperTerminal
+        || getGatewayUrl() !== identityKey
+        || currentAiCreditRuntimeSlot() !== runtimeSlot) return false;
+      onOpenGithubDeveloperTerminal();
+      return true;
+    },
+  }), [identityKey, onOpenGithubDeveloperTerminal, runtimeSlot]);
   const loadUsageHistory = useCallback((cursor: string | null, signal: AbortSignal) => loadWebAiCreditHistory({ runtimeSlot, cursor, signal,
     isIdentityCurrent: () => getGatewayUrl() === identityKey && currentAiCreditRuntimeSlot() === runtimeSlot }), [identityKey, runtimeSlot]);
   const checkoutLifetime = useRef<AbortController | null>(null);
@@ -56,10 +83,14 @@ export function AgentSection({
     const unavailable = controller.error !== null;
     return (
       <div className="px-5 py-6" data-provider-settings-adapter="shared">
-        <div className="matrix-agents-providers" aria-busy={unavailable ? undefined : "true"}>
-          <div className="matrix-ap-empty-state" role={unavailable ? "alert" : "status"}>
+        <div className="matrix-agents-providers">
+          <GithubDeveloperAccessCard identityKey={`${identityKey}:${runtimeSlot}`} client={githubDeveloperAccessClient} readOnly />
+          <p>Setup actions require confirmed Settings permissions.</p>
+          <div className="matrix-ap-empty-state" role={unavailable ? "alert" : "status"} aria-busy={unavailable ? undefined : "true"}>
             <strong>{unavailable ? "Provider settings are unavailable" : "Loading agents & providers"}</strong>
             <span>{unavailable ? "Refresh Settings to try again." : "Checking this computer’s provider state…"}</span>
+            {unavailable ? <button type="button" className="matrix-ap-button matrix-ap-button-primary"
+              aria-label="Retry provider settings" disabled={controller.busy} onClick={() => void controller.refresh()}>Retry</button> : null}
           </div>
         </div>
       </div>
@@ -98,6 +129,10 @@ export function AgentSection({
         onOpenBrowser={openProviderAuthorizationPath}
         workflowClient={workflowClient}
         matrixAnthropicClient={matrixAnthropicClient}
+        githubDeveloperAccess={{
+          identityKey: `${identityKey}:${runtimeSlot}`,
+          client: githubDeveloperAccessClient,
+        }}
         onOpenAuthorizationUrl={(url) => {
           if (getGatewayUrl() !== identityKey || currentAiCreditRuntimeSlot() !== runtimeSlot) return;
           if (!openWebProviderWorkflowAuthorization(url)) throw new Error("Browser unavailable");

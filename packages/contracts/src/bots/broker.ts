@@ -94,10 +94,14 @@ const BotToolRequestUnionSchema = z.discriminatedUnion("capability", [
     content: z.string().max(BOT_ARTIFACT_MAX_BYTES)
       .refine((content) => textEncoder.encode(content).byteLength <= BOT_ARTIFACT_MAX_BYTES, { message: "Artifact is too large" }),
     mimeType: ArtifactMimeTypeSchema,
-    replace: z.object({ baseRevision: z.number().int().min(1).max(Number.MAX_SAFE_INTEGER) }).strict().optional(),
+    replace: z.union([
+      z.object({ baseRevision: z.number().int().min(1).max(Number.MAX_SAFE_INTEGER) }).strict(),
+      z.object({ expectedSha256: z.string().regex(/^[a-f0-9]{64}$/) }).strict(),
+    ]).optional(),
   }).strict()),
   capability("artifact.read", z.object({
     relPath: ArtifactPathSchema,
+    withHash: z.boolean().optional(),
     chunk: z.object({
       offset: z.number().int().min(0).max(BOT_INPUT_FILE_MAX_BYTES),
       length: z.number().int().min(1).max(BOT_ARTIFACT_CHUNK_MAX_BYTES),

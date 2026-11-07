@@ -26,6 +26,14 @@ export type { TooltipProps } from "./Tooltip.js";
 export { cn } from "./cn.js";
 
 export { AgentsProvidersView } from "./agents-providers/AgentsProvidersView.js";
+export {
+  GithubDeveloperAccessCard,
+  parseGithubDeveloperAccessStatus,
+} from "./agents-providers/GithubDeveloperAccessCard.js";
+export type {
+  GithubDeveloperAccessClient,
+  GithubDeveloperAccessStatus,
+} from "./agents-providers/GithubDeveloperAccessCard.js";
 export type {
   AgentsProvidersViewProps,
   ProviderSettingsMutationIntent,

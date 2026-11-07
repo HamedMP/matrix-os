@@ -3,11 +3,12 @@ import type { ProviderSettingsMutationIntent } from "@matrix-os/ui";
 import type { ProviderSettingsSnapshot, ProviderWorkflow } from "@matrix-os/contracts";
 import {
   AgentsProvidersView,
+  GithubDeveloperAccessCard,
   createBrowserSpeechClient,
   useProviderSettingsController,
 } from "@matrix-os/ui";
 import "@matrix-os/ui/agents-providers.css";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type { ApiClient } from "../../lib/api";
 import { useConnection } from "../../stores/connection";
 import { CreditDiagnosticDisclosure } from "./CreditDiagnosticDisclosure";
@@ -18,6 +19,7 @@ import {
   desktopProviderIdentityKey,
   openAiCreditCheckout,
   openDesktopProviderAgentSetup,
+  openDesktopGithubDeveloperSetup,
   openExistingProviderTerminalSession,
   openProviderAuthorizationPath,
 } from "./provider-settings-desktop-adapter";
@@ -28,10 +30,12 @@ function ProviderSettingsUnavailable({
   signedOut,
   failed = false,
   onRetry,
+  children,
 }: {
   signedOut: boolean;
   failed?: boolean;
   onRetry?: () => void;
+  children?: ReactNode;
 }) {
   return (
     <div className="matrix-agents-providers">
@@ -42,6 +46,7 @@ function ProviderSettingsUnavailable({
           <p>Choose which harness runs a task, which model it uses, and who funds the route.</p>
         </div>
       </header>
+      {children}
       <div className="matrix-ap-empty-state" role="status">
         <strong>
           {signedOut
@@ -116,6 +121,20 @@ function ConnectedAgentsProvidersAdapter({
   }, [controller.snapshot, isIdentityCurrent, onCatalogChanged]);
   const workflowClient = useMemo(() => createDesktopProviderWorkflowClient(runtimeApi, isIdentityCurrent), [runtimeApi, isIdentityCurrent]);
   const matrixAnthropicClient = useMemo(() => createDesktopMatrixAnthropicClient(runtimeApi, isIdentityCurrent), [runtimeApi, isIdentityCurrent]);
+  const githubDeveloperAccessClient = useMemo(() => ({
+    async status(signal: AbortSignal) {
+      const value = await runtimeApi.get<unknown>("/api/github/status", {
+        maxBytes: 16 * 1024,
+        timeoutMs: 10_000,
+        signal,
+        cache: "no-store",
+        omitErrorBody: true,
+      });
+      if (!isIdentityCurrent()) throw new Error("GitHub developer access is unavailable.");
+      return value;
+    },
+    startSetup: () => openDesktopGithubDeveloperSetup(runtimeApi, isIdentityCurrent),
+  }), [isIdentityCurrent, runtimeApi]);
   const authGeneration = useConnection((state) => state.authGeneration);
   const localChatgptClient = useMemo(() => createDesktopChatgptPlanClient({ runtimeSlot, authGeneration }, isIdentityCurrent,
     undefined, () => invalidateDesktopChatgptPlanCatalog(identityKey)),
@@ -173,7 +192,10 @@ function ConnectedAgentsProvidersAdapter({
         signedOut={false}
         failed={controller.error !== null}
         onRetry={() => void controller.refresh()}
-      />
+      >
+        <GithubDeveloperAccessCard identityKey={identityKey} client={githubDeveloperAccessClient} readOnly />
+        <p>Setup actions require confirmed Settings permissions.</p>
+      </ProviderSettingsUnavailable>
       </>
     );
   }
@@ -214,6 +236,7 @@ function ConnectedAgentsProvidersAdapter({
       localChatgptClient={localChatgptClient}
       onLocalChatgptChanged={() => { if (isIdentityCurrent()) void controller.refresh({ refresh: false }); }}
       matrixAnthropicClient={matrixAnthropicClient}
+      githubDeveloperAccess={{ identityKey, client: githubDeveloperAccessClient }}
       onOpenAuthorizationUrl={(url) => {
         if (!isIdentityCurrent()) return;
         void openDesktopProviderWorkflowAuthorization(url).then(opened => {

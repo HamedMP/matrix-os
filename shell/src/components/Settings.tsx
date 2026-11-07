@@ -1,7 +1,7 @@
 "use client";
 
 import { useGettingStartedBlocker } from "@matrix-os/ui";
-import { useEffect, useEffectEvent, useState } from "react";
+import { useCallback, useEffect, useEffectEvent, useState } from "react";
 import Image from "next/image";
 import {
   PaletteIcon,
@@ -198,11 +198,16 @@ function SettingsFrame({
   billingCheckoutReturnPath,
   billingCheckoutRuntimeSlot,
   onboardingDefaultInstalls,
+  onOpenAgentTerminal,
   onOpenProviderTerminalSession,
   onOpenImportedChat,
   billingActive,
   showBillingSection,
 }: SettingsFrameProps) {
+  const openGithubDeveloperTerminal = useCallback(
+    () => onOpenAgentTerminal?.("github-ssh-login"),
+    [onOpenAgentTerminal],
+  );
   const onboardingMode = onboardingDefaultInstalls !== undefined;
   const canonicalDefaultSection = normalizeSettingsSectionId(defaultSection);
   const canonicalLockedSection = lockedSection === undefined
@@ -416,7 +421,10 @@ function SettingsFrame({
               {activeSection === "appearance" && <AppearanceSection />}
               {activeSection === "organization" && <OrganizationSection />}
               {activeSection === "agents-providers" && (
-                <AgentSection automaticCreditRefreshEnabled={open} onOpenTerminal={onOpenProviderTerminalSession} />
+                <AgentSection automaticCreditRefreshEnabled={open} onOpenTerminal={onOpenProviderTerminalSession}
+                  onOpenGithubDeveloperTerminal={onOpenAgentTerminal
+                    ? openGithubDeveloperTerminal
+                    : undefined} />
               )}
               {activeSection === "identity-personality" && <IdentityPersonalitySection />}
               {activeSection === "channels" && <ChannelsSection />}

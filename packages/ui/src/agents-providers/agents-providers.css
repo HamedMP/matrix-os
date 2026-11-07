@@ -37,6 +37,33 @@
   outline-offset: 2px;
 }
 
+.matrix-ap-github {
+  background: var(--matrix-ap-surface);
+  border: 1px solid var(--matrix-ap-border);
+  border-radius: 14px;
+  margin-block: 18px;
+  padding: 18px;
+}
+
+.matrix-ap-github h2 { font-size: 18px; margin: 3px 0 4px; }
+.matrix-ap-github p { color: var(--matrix-ap-muted); font-size: 13px; margin: 0; max-width: 640px; }
+.matrix-ap-github-state { color: var(--matrix-ap-muted); font-size: 13px; padding-block: 16px 4px; }
+.matrix-ap-github-readiness { display: grid; gap: 1px; grid-template-columns: repeat(3, minmax(0, 1fr)); margin: 16px 0; }
+.matrix-ap-github-readiness > div { background: var(--matrix-ap-sunken); min-width: 0; padding: 12px; }
+.matrix-ap-github-readiness > div:first-child { border-radius: 10px 0 0 10px; }
+.matrix-ap-github-readiness > div:last-child { border-radius: 0 10px 10px 0; }
+.matrix-ap-github-readiness dt { color: var(--matrix-ap-faint); font-size: 11px; font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; }
+.matrix-ap-github-readiness dd { font-size: 13px; margin: 5px 0 0; overflow-wrap: anywhere; }
+.matrix-ap-github-footer { align-items: center; display: flex; gap: 12px; justify-content: space-between; }
+.matrix-ap-github-footer > span { color: var(--matrix-ap-warning); font-size: 13px; font-weight: 600; }
+.matrix-ap-github-footer > span[data-ready="true"] { color: var(--matrix-ap-success); }
+
+@media (max-width: 640px) {
+  .matrix-ap-github-readiness { grid-template-columns: 1fr; }
+  .matrix-ap-github-readiness > div:first-child { border-radius: 10px 10px 0 0; }
+  .matrix-ap-github-readiness > div:last-child { border-radius: 0 0 10px 10px; }
+}
+
 .matrix-ap-page-head,
 .matrix-ap-editor-head,
 .matrix-ap-panel-head,

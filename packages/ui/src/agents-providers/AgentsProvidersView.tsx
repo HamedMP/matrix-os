@@ -29,6 +29,7 @@ import { settingsErrorPresentation } from "./settings-error-presentation.js";
 import type { AgentsProvidersViewProps, ProviderSettingsMutationIntent } from "./types.js";
 import { selectedHarness } from "./utils.js";
 import {legacyClaudeNativeConnection} from "./legacy-claude-connection.js";
+import { GithubDeveloperAccessCard } from "./GithubDeveloperAccessCard.js";
 
 export type { AgentsProvidersViewProps, ProviderSettingsMutationIntent } from "./types.js";
 
@@ -58,6 +59,7 @@ export function AgentsProvidersView({
   matrixAnthropicClient,
   onOpenAuthorizationUrl,
   onLoadUsageHistory,
+  githubDeveloperAccess,
   speechClient,
 }: AgentsProvidersViewProps) {
   const root = useRef<HTMLDivElement>(null);
@@ -191,6 +193,9 @@ export function AgentsProvidersView({
           <span>{errorPresentation.message}</span>
         </div>
       ) : null}
+
+      {githubDeveloperAccess ? <GithubDeveloperAccessCard {...githubDeveloperAccess}
+        readOnly={snapshot.access.mode === "read_only" && snapshot.access.reason !== "runtime_unavailable"} /> : null}
 
       {historyLoader && historyLoader === onLoadUsageHistory ? <UsageHistoryDialog load={historyLoader} onClose={() => setHistoryLoader(undefined)} /> : null}
       <div className="matrix-ap-workspace">
