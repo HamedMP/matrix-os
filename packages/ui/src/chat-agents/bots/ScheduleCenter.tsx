@@ -2,15 +2,10 @@ import { useEffect, useRef, useState, type ReactNode } from "react";
 import type { BotRoutineCenterResponse, BotRoutineCenterQuery, BotRoutineDetailResponse, BotRoutineCenterItem } from "@matrix-os/contracts";
 import type { ChatAgentClient } from "../client.js";
 import { chatAgentButtonClass, chatAgentMutedStyle } from "../theme.js";
-import { InteractionCard } from "./InteractionCard.js";
-import { routineScheduleCopy, routineApprovalPreview, routineNextRun as nextRun, routineStatusLabel as statusLabel } from "./routine-presentation.js";
+import { routineScheduleCopy, routineTaskChat, routineNextRun as nextRun, routineStatusLabel as statusLabel } from "./routine-presentation.js";
 import { ScheduleEditForm } from "./ScheduleEditForm.js";
 
 const unavailable = "Schedules could not be loaded. Refresh and try again.";
-function timestamp(value: string | null) {
-  return value ? new Intl.DateTimeFormat("en", { dateStyle: "medium", timeStyle: "short" }).format(new Date(value)) : "None scheduled";
-}
-
 /** Owner-scoped API, same retained Chat navigation on every web/Electron shell. */
 export function ScheduleCenter({ client, onClose, onOpenBotChat, headerLeading }: {
   client: ChatAgentClient; onClose(): void; onOpenBotChat?: (chatId: string) => void | Promise<void>; headerLeading?: ReactNode;
@@ -131,51 +126,45 @@ export function ScheduleCenter({ client, onClose, onOpenBotChat, headerLeading }
       if (ownerGeneration === lifetime.current) setError("Your response was saved. Schedules could not refresh. Try Refresh.");
     });
   };
+  const task = detail?.routine;
+  const scheduleCopy = task ? routineScheduleCopy(task.proposal.schedule) : null;
+  const taskChat = task ? routineTaskChat(task) : null;
   return <section aria-label="Schedules" className="flex min-h-0 min-w-0 flex-1 flex-col overflow-auto p-4 sm:p-6">
     <header className="flex flex-wrap items-start justify-between gap-3 border-b pb-4">
       <div className="flex min-w-0 items-start gap-2">{headerLeading}<div><h1 className="text-lg font-semibold">Schedules</h1><p className="text-sm" style={chatAgentMutedStyle}>Your tasks on this Computer. Times shown in {Intl.DateTimeFormat().resolvedOptions().timeZone}.</p></div></div>
       <button type="button" className={chatAgentButtonClass} aria-label="Close schedules" onClick={onClose}>Close</button>
     </header>
     <div className="my-4 flex flex-wrap gap-2">
-      <button type="button" className={chatAgentButtonClass} aria-pressed={query.archived !== "true"} onClick={() => chooseFilter({})}>Current</button>
-      <button type="button" className={chatAgentButtonClass} aria-pressed={query.archived === "true"} onClick={() => chooseFilter({ archived: "true" })}>Archived</button>
+      <button type="button" className={chatAgentButtonClass} hidden={Boolean(detail)} aria-pressed={query.archived !== "true"} onClick={() => chooseFilter({})}>Current</button>
+      <button type="button" className={chatAgentButtonClass} hidden={Boolean(detail)} aria-pressed={query.archived === "true"} onClick={() => chooseFilter({ archived: "true" })}>Archived</button>
       <button type="button" className={chatAgentButtonClass} disabled={pending || loading} onClick={() => void act(refreshSelected, undefined, false)}>Refresh</button>
     </div>
     {error ? <p role="alert" className="mb-3 text-sm">{error}</p> : null}
     {loading ? <p role="status">Loading schedules…</p> : null}
     {archiving ? <section role="dialog" aria-label="Archive schedule" className="mb-4 grid gap-3 rounded-xl border p-4">
-      <h2 className="font-semibold">Archive {archiving.proposal.name}?</h2><p>No future runs will start. Any active run will be cancelled. History remains available.</p>
+      <h2 className="font-semibold">Archive {archiving.proposal.name}?</h2><p>No future runs will start. Cancellation will be requested for any active run. History remains available in Chat.</p>
       <div className="flex flex-wrap gap-2"><button className={chatAgentButtonClass} type="button" disabled={pending} onClick={() => void control(archiving, "archived")}>Confirm archive</button>
         <button className={chatAgentButtonClass} type="button" disabled={pending} onClick={() => setArchiving(null)}>Keep schedule</button></div>
     </section> : null}
-    {detail ? <section aria-label="Schedule details" className="mb-4 grid min-w-0 gap-3 rounded-xl border p-4">
-      <div className="flex flex-wrap justify-between gap-2"><h2 className="break-words font-semibold">{detail.routine.proposal.name}</h2><button type="button" className={chatAgentButtonClass} onClick={() => { detailIntent.current += 1; selectedRoutine.current = null; setDetail(null); setEditing(false); }}>Close details</button></div>
-      <p className="whitespace-pre-wrap break-words text-sm">{detail.routine.proposal.prompt}</p>
-      <p className="text-sm">{statusLabel(detail.routine)} · Next run: {nextRun(detail.routine)}</p>
-      {rowButtons(detail.routine)}
+    {task && scheduleCopy ? <section aria-label="Schedule details" className="mb-4 grid min-w-0 gap-3 rounded-xl border p-4">
+      <div className="flex flex-wrap justify-between gap-2"><h2 className="break-words font-semibold">{task.proposal.name}</h2><button type="button" className={chatAgentButtonClass} onClick={() => { detailIntent.current += 1; selectedRoutine.current = null; setDetail(null); setEditing(false); }}>Back to schedules</button></div>
+      <p className="whitespace-pre-wrap break-words text-sm">{task.proposal.prompt}</p>
+      <dl className="grid min-w-0 gap-3 text-sm sm:grid-cols-2">
+        <div><dt style={chatAgentMutedStyle}>Status</dt><dd>{statusLabel(task)}</dd></div>
+        <div><dt style={chatAgentMutedStyle}>Next run</dt><dd className="break-words">{nextRun(task)}</dd></div>
+        <div><dt style={chatAgentMutedStyle}>Schedule</dt><dd>{scheduleCopy.frequency}</dd><dd>{scheduleCopy.timezone}</dd></div>
+        <div><dt style={chatAgentMutedStyle}>Runs on</dt><dd className="break-words">{names[task.botId] ?? "Private Bot"} · {task.computerId ?? "Computer unavailable"}</dd></div>
+      </dl>
+      {rowButtons(task)}
       <div className="flex flex-wrap gap-2">
-        {onOpenBotChat && detail.routine.targetAvailable ? <button className={chatAgentButtonClass} type="button" disabled={pending} onClick={() => void act(async () => { await onOpenBotChat(detail.routine.chatId); }, onClose, false)}>Open execution history</button> : null}
-        {detail.routine.status !== "archived" ? <button type="button" className={chatAgentButtonClass} disabled={pending || !detail.routine.targetAvailable || !detail.routine.sourceAvailable} onClick={() => setEditing(true)}>Edit schedule</button> : null}
+        {taskChat && onOpenBotChat ? <button type="button" className={chatAgentButtonClass} disabled={pending}
+          onClick={() => void act(async () => { await onOpenBotChat(taskChat.chatId); }, onClose, false)}>{taskChat.label}</button> : null}
+        {task.status !== "archived" ? <button type="button" className={chatAgentButtonClass} disabled={pending || !task.targetAvailable || !task.sourceAvailable} onClick={() => setEditing(true)}>Edit schedule</button> : null}
       </div>
-      {detail.routine.originChatId ? detail.routine.originAvailable
-        ? onOpenBotChat ? <button type="button" className={`${chatAgentButtonClass} justify-self-start`} disabled={pending} onClick={()=>void act(async()=>{await onOpenBotChat(detail.routine.originChatId!);},onClose,false)}>Open source Chat</button> : null
-        : <p role="status" className="text-sm">Source Chat unavailable. Execution history remains available.</p> : null}
-      {editing && api ? <ScheduleEditForm key={detail.routine.routineId} routine={detail.routine} api={api} botClient={client.bots!} agentName={names[detail.routine.botId]} pendingReadRevision={listRevision} getPendingReadSequence={() => reads.current} pendingInteractions={data?.pending ?? []} onRefreshRequired={refreshCommitted} onChanged={() => { detailIntent.current += 1; selectedRoutine.current = null; setEditing(false); setDetail(null); }}/>: null}
-      <h3 className="mt-2 font-semibold">Recent runs</h3>
-      {!detail.history.length ? <p className="text-sm">No runs yet.</p> : <ol className="grid gap-2">{detail.history.map(fire => <li key={fire.fireId} className="rounded-lg border p-3 text-sm">
-        <p>{timestamp(fire.scheduledFor)} · {fire.status} · {fire.attempts} attempt{fire.attempts === 1 ? "" : "s"}</p>
-        {fire.failureCode ? <p>Execution did not complete. Open Bot Chat for details.</p> : null}
-      </li>)}</ol>}
+      {task.originChatId && !task.originAvailable ? <p role="status" className="text-sm">Source Chat unavailable.</p> : null}
+      {editing && api ? <ScheduleEditForm key={task.routineId} routine={task} api={api} botClient={client.bots!} agentName={names[task.botId]} pendingReadRevision={listRevision} getPendingReadSequence={() => reads.current} pendingInteractions={data?.pending ?? []} onRefreshRequired={refreshCommitted} onChanged={() => { detailIntent.current += 1; selectedRoutine.current = null; setDetail(null); setEditing(false); }}/>: null}
     </section> : null}
-    {data && !loading ? <>
-      {query.archived !== "true" && data.pending.length ? <section aria-label="Awaiting your approval" className="mb-4 grid gap-3"><h2 className="font-semibold">Awaiting your approval</h2>
-        {data.pending.map(item => {
-          const preview = item.payload?.kind === "approval" ? routineApprovalPreview(item.payload.preview) : null;
-          const target = preview?.source.routineId ? data.items.find(row => row.routineId === preview.source.routineId) : undefined;
-          const revision = preview?.source.routineId ? target?.targetAvailable && target.sourceAvailable && !target.requiresReview ? target.revision : null : undefined;
-          return <InteractionCard key={item.interactionId} interaction={item} agentName={names[item.agentId]} actionsAvailable={!pending} currentRoutineRevision={revision}
-            onResolve={input => client.bots!.resolve(item.chatId, item.interactionId, input)} onResolved={() => void load()}/>;
-        })}</section> : null}
+    {data && !loading && !detail ? <>
       {!data.items.length ? <div className="rounded-xl border p-6"><h2 className="font-semibold">{query.archived === "true" ? "No archived schedules" : "No schedules yet"}</h2>{query.archived !== "true" ? <p className="mt-2 text-sm" style={chatAgentMutedStyle}>Ask in a private Chat to schedule a task, then review its proposal in that Chat.</p> : null}</div> : <ul className="grid min-w-0 gap-3">
         {data.items.map(row => { const copy = routineScheduleCopy(row.proposal.schedule); return <li key={row.routineId} className="grid min-w-0 gap-3 rounded-xl border p-4">
           <div className="flex flex-wrap items-start justify-between gap-2"><button type="button" className="text-left font-semibold" aria-label={`View ${row.proposal.name}`} disabled={pending} onClick={() => void view(row)}>{row.proposal.name}</button><span className="rounded-full border px-2 py-1 text-xs">{statusLabel(row)}</span></div>

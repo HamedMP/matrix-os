@@ -2,10 +2,9 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react
 import { Alert, ScrollView, Text, View } from "react-native";
 import type { BotInteraction, BotRoutineCenterItem, BotRoutineCenterResponse, BotRoutineDetailResponse, ResolveBotInteractionRequest, ResolveBotInteractionResponse } from "@matrix-os/contracts";
 import type { BotRoutineClient } from "@matrix-os/ui/bot-routine-client";
-import { routineApprovalPreview, routineScheduleCopy, routineStatusLabel as status, routineNextRun } from "@matrix-os/ui/bot-routine-presentation";
+import { routineTaskChat, routineScheduleCopy, routineStatusLabel as status, routineNextRun } from "@matrix-os/ui/bot-routine-presentation";
 import { TabScreen } from "@/components/shell/TabScreen";
 import { Button } from "@/components/ui";
-import { PendingInteraction } from "../interactions/PendingInteraction";
 import { ScheduleEditor } from "./ScheduleEditor";
 import { scheduleStyles as styles } from "./styles";
 
@@ -106,10 +105,11 @@ export function SchedulesScreen({ api, resolve, onBack, onOpenChat }: { api: Bot
     } finally { mutation.current = false; if (alive.current) setBusy(false); }
   }
   const current = detail?.routine;
+  const taskChat = current ? routineTaskChat(current) : null;
   return <TabScreen testID="schedules-screen"><ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
     <Button label="Back" variant="text" onPress={onBack} />
     <Text accessibilityRole="header" style={styles.title}>Schedules</Text>
-    <Text style={styles.note}>Your tasks on the selected Computer. Approve persistent tasks in their source Chat or here.</Text>
+    <Text style={styles.note}>Your tasks on the selected Computer. Review scheduled tasks in the Chat where they were requested.</Text>
     <View style={styles.row}><Button label={archived ? "Show current" : "Show archived"} variant="outline" disabled={busy} onPress={() => setArchived(value => !value)} />
       <Button label="Refresh" variant="outline" disabled={busy} onPress={() => { setError(""); void refreshAll(); }} /></View>
     {error ? <Text accessibilityRole="alert" style={styles.error}>{error}</Text> : null}
@@ -126,21 +126,15 @@ export function SchedulesScreen({ api, resolve, onBack, onOpenChat }: { api: Bot
           <Button label={current.status === "active" ? "Pause" : "Resume"} disabled={busy || !fresh || (current.status === "paused" && (!current.targetAvailable || !current.sourceAvailable || current.requiresReview))}
             onPress={() => void control(current, current.status === "active" ? "paused" : "active")} />
           <Button label="Edit" variant="outline" disabled={busy || !fresh || !current.targetAvailable || !current.sourceAvailable} onPress={() => setEditing(true)} />
-          <Button label="Archive" variant="outline" disabled={busy || !fresh} onPress={() => Alert.alert(`Archive ${current.proposal.name}?`, "Stops future runs and cancels the active occurrence. History is kept; this task cannot be resumed.", [
+          <Button label="Archive" variant="outline" disabled={busy || !fresh} onPress={() => Alert.alert(`Archive ${current.proposal.name}?`, "Stops future runs and requests cancellation of any active run. History remains available in Chat.", [
             {text: "Cancel", style: "cancel"}, {text: "Archive", style: "destructive", onPress: () => void control(current, "archived")},
           ])} />
         </View> : null}
-        {current.targetAvailable&&onOpenChat?<Button label="Open execution history" variant="text" onPress={()=>onOpenChat?.(current.chatId)}/>:null}
-        {current.originChatId?current.originAvailable?onOpenChat?<Button label="Open source Chat" variant="text" onPress={()=>onOpenChat?.(current.originChatId!)}/>:null:<Text style={styles.note}>Source Chat unavailable. Execution history remains available.</Text>:null}
+        {taskChat && onOpenChat ? <Button label={taskChat.label} variant="text" disabled={busy} onPress={() => onOpenChat(taskChat.chatId)} /> : null}
+        {current.originChatId && !current.originAvailable ? <Text style={styles.note}>Source Chat unavailable.</Text> : null}
         {editing && current.status !== "archived" ? <ScheduleEditor key={current.routineId} routine={current} api={api} resolve={resolve}
           actionsAvailable={fresh && !busy} pending={data.pending} pendingRead={pendingRead} getReadSequence={() => listRead.current}
           onRefresh={refreshAll} onDone={() => { if (alive.current) setEditing(false); }} /> : null}
-        <Text accessibilityRole="header" style={styles.heading}>Recent runs</Text>
-        {!detail.history.length ? <Text style={styles.note}>No runs yet.</Text> : detail.history.map(fire => <View key={fire.fireId} style={styles.card}>
-          <Text style={styles.text}>{`${fire.status} · ${date(fire.scheduledFor)}`}</Text>
-          <Text style={styles.note}>{`Attempts: ${fire.attempts} · ${fire.fireId}`}</Text>
-          {fire.failureCode ? <Text style={styles.note}>This run could not complete. Review the task before retrying; uncertain work is not replayed automatically.</Text> : null}
-        </View>)}
       </View> : null}
     </> : <>
       {loading ? <Text style={styles.note}>Loading schedules…</Text> : null}
@@ -153,13 +147,6 @@ export function SchedulesScreen({ api, resolve, onBack, onOpenChat }: { api: Bot
         {item.lastFire ? <Text style={styles.note}>{`Last run: ${item.lastFire.status} · ${date(item.lastFire.scheduledFor)}`}</Text> : null}
       </View>)}
       {data.nextCursor && data.items.length < MAX_VISIBLE ? <Button label="Load more" disabled={loading} onPress={() => void load(data.nextCursor!)} /> : null}
-      {!archived && data.pending.length ? <Text accessibilityRole="header" style={styles.heading}>Needs your review</Text> : null}
-      {!archived ? data.pending.map(interaction => {
-        const payload = interaction.payload, preview = payload?.kind === "approval" ? routineApprovalPreview(payload.preview) : null;
-        const revision = preview?.source.routineId ? data.items.find(item => item.routineId === preview.source.routineId)?.revision ?? null : undefined;
-        return <PendingInteraction key={`${interaction.interactionId}:${interaction.revision}`} interaction={interaction} currentRoutineRevision={revision}
-          actionsAvailable={fresh && !busy} onResolve={(_id, input) => resolve(interaction, input)} onRefresh={refreshAll} />;
-      }) : null}
     </>}
   </ScrollView></TabScreen>;
 }

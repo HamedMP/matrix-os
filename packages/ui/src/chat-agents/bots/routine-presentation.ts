@@ -29,6 +29,15 @@ export function routineStatusLabel(row: BotRoutineCenterItem): string {
   return row.lastFire?.status === "failed" ? "Active · last run failed" : "Active";
 }
 
+/** Navigate only to Chat identities present in the owner-scoped schedule projection. */
+export function routineTaskChat(row: BotRoutineCenterItem) {
+  if (row.originAvailable && row.originChatId) {
+    return { chatId: row.originChatId, label: "Open source Chat" };
+  }
+  if (!row.targetAvailable) return null;
+  return { chatId: row.chatId, label: row.originChatId ? "Open Bot Chat" : "Open task Chat" };
+}
+
 /** Display only. The service checks the stored digest/source; parsing never grants approval. */
 export function routineApprovalPreview(preview: string) {
   if (preview.length > 32 * 1024) return null;

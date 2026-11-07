@@ -14,6 +14,12 @@ This supersedes the explicit Persistent task route choice in source-chat-and-nat
 - Source operation authorization, per-task activation, background model consent and integration permissions remain separate. Full Access is not a schedule activation or implicit permission renewal.
 - Existing routine reads/reconciliation/pause/resume/archive remain available to their currently authorized sources, including Claude, without creating a new task or hiding historical origin.
 
+## Schedules presentation
+
+Carry forward the list-to-details and in-Chat history rules from #3087 and #3092. Schedules shows saved definitions, timing, status and revision-bound controls. The detail view replaces the list and links to the exact source Chat when available. Direct Bot schedules use their saved Bot Chat. If a recorded source Chat becomes unavailable, the UI reports that and offers the existing Bot Chat only when the owner-scoped projection says it is available.
+
+The list does not duplicate standalone approval cards or execution records. The existing revision-bound edit review and its refresh/recovery data remain in the editor. The conversational creation route and source Chat result receipts are unchanged.
+
 ## Trusted route and compatibility
 
 Reuse the currently admitted source producer/adapter and registered tools. Scheduling is a small host policy, not a model-supplied route or capability claim. Unknown native capability or unsupported source stays unavailable. The admitted Native Pi and managed Matrix Pi tool sets have no native scheduler; they are distinct adapters. Matrix-managed Codex has no native scheduling contract here, but its real source qualification gate still applies. Ordinary Hermes keeps owner-profile tool discovery, so absence of an offered native scheduler is not established; its new Matrix proposals stay closed pending qualification. OpenCode native adaptation remains deferred and its production gate stays closed. Other still-unqualified native sources are not promoted by passing fixtures.
