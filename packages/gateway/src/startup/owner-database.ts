@@ -34,6 +34,7 @@ import type { GatewayCollaborationConfig, GatewayCollaborationConfigurationFailu
 import { MessagingKyselyRepository } from "../messages/repository.js";
 import { registerNativeAppStorage } from "../native-app-storage.js";
 import { OsViewStateRepository } from "../os-view-state/repository.js";
+import { GettingStartedAppRepository } from "../getting-started-app/repository.js";
 import type { createProjectManager } from "../project-manager.js";
 import type { createWorktreeManager } from "../worktree-manager.js";
 import { constructOwnerCollaboration } from "./collaboration.js";
@@ -77,6 +78,7 @@ export interface OwnerDatabaseServices extends OwnerDatabaseFallbackServices {
   kyselyInstance: Kysely<any> | null;
   canvasRepository: CanvasRepository | null;
   osViewStateRepository: OsViewStateRepository | null;
+  gettingStartedAppRepository: GettingStartedAppRepository | null;
   canvasService: CanvasService | null;
   canvasSubscriptionHub: CanvasSubscriptionHub | null;
   canvasCleanupTimer: ReturnType<typeof setInterval> | null;
@@ -117,6 +119,7 @@ export async function initializeOwnerDatabaseServices(
   const services: OwnerDatabaseServices = {
     appDb: null, queryEngine: null, kvStore: null, appRegistry: null,
     kyselyInstance: null, canvasRepository: null, osViewStateRepository: null,
+    gettingStartedAppRepository: null,
     canvasService: null, canvasSubscriptionHub: null, canvasCleanupTimer: null,
     chatRepository: null, chatEventStream: null, chatExecutionRoots: null,
     chatCollaborationGuard: null, collaboration: null, messagingRepository: null,
@@ -144,6 +147,9 @@ export async function initializeOwnerDatabaseServices(
       const osViewStateRepository = new OsViewStateRepository(kysely as Kysely<any>);
       services.osViewStateRepository = osViewStateRepository;
       await osViewStateRepository.bootstrap();
+      const gettingStartedAppRepository = new GettingStartedAppRepository(kysely as Kysely<any>);
+      services.gettingStartedAppRepository = gettingStartedAppRepository;
+      await gettingStartedAppRepository.bootstrap();
       const chatRepository = new ChatRepository(kysely as Kysely<any>);
       services.chatRepository = chatRepository;
       await chatRepository.bootstrap();
