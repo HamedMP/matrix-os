@@ -120,9 +120,11 @@ The host bundle copies `distro/customer-vps/host-bin/matrix-github-developer-log
 ## Web and Electron setup entry (ENG-378)
 
 In Web Canvas, Web Desktop, and Electron Desktop, show **GitHub Developer**
-as its own card in **Connect Apps**. Getting Started opens that section with
-the card at the top. The card reports readiness for the selected computer,
-independently of the app catalog and any existing GitHub connection.
+immediately after **GitHub** in the regular **Connect Apps** catalog grid.
+Use the same compact card layout, search, and filters as the other apps.
+Getting Started opens Connect Apps and makes the developer entry available.
+The card reports readiness for the selected computer. Its setup and status
+remain independent of any existing GitHub connection.
 
 Show **Connect** for missing setup and **Finish setup** for incomplete setup.
 Open the same owner Terminal command from either action once Settings permissions

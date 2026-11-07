@@ -2,13 +2,17 @@
 
 import "@testing-library/jest-dom/vitest";
 import React from "react";
-import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
-  GithubDeveloperAccessCard,
+  GITHUB_DEVELOPER_SERVICE_ID,
+  GithubDeveloperAccess,
+  withGithubDeveloperCatalogEntry,
   parseGithubDeveloperAccessStatus,
   type GithubDeveloperAccessClient,
-} from "../../packages/ui/src/integrations/GithubDeveloperAccessCard.js";
+} from "../../packages/ui/src/integrations/GithubDeveloperAccess.js";
+
+import { IntegrationMarketplace } from "../../packages/ui/src/integrations/IntegrationMarketplace.js";
 
 const readyStatus = {
   installed: true,
@@ -70,6 +74,23 @@ const writable = { mode: "writable" } as const;
 const partialStatus = { ...readyStatus, ready: false, sshStatus: "setup_required" };
 const finishSetup = "Finish setup GitHub Developer";
 
+function GithubDeveloperAccessCard(props: { identityKey: string; client: GithubDeveloperAccessClient; active?: boolean }) {
+  return (
+    <GithubDeveloperAccess {...props}>
+      {presentation => (
+        <IntegrationMarketplace services={withGithubDeveloperCatalogEntry([])}
+          connectedIds={presentation.ready ? [GITHUB_DEVELOPER_SERVICE_ID] : []}
+          rowPresentation={() => presentation} onConnect={() => {}} />
+      )}
+    </GithubDeveloperAccess>
+  );
+}
+
+function developerRow() {
+  return within(screen.getByTestId("integration-card-github-developer"));
+}
+
+
 describe("GitHub Developer card", () => {
   it.each(["remote_policy", "insufficient_permission"] as const)("keeps setup disabled for %s", async (reason) => {
     const startSetup = vi.fn();
@@ -85,7 +106,7 @@ describe("GitHub Developer card", () => {
     expect(await screen.findByText("Setup requires permission on this computer.")).toBeVisible();
     fireEvent.click(setup);
     expect(startSetup).not.toHaveBeenCalled();
-    expect(screen.getAllByRole("button")).toHaveLength(1);
+    expect(developerRow().getAllByRole("button")).toHaveLength(1);
   });
 
   it("allows owner GitHub setup when only provider mutations are unavailable", async () => {
@@ -111,10 +132,10 @@ describe("GitHub Developer card", () => {
     };
     render(<GithubDeveloperAccessCard identityKey="alice:primary" client={client} />);
 
-    expect(screen.getByRole("heading", { name: "GitHub Developer" })).toBeVisible();
+    expect(developerRow().getByText("GitHub Developer")).toBeVisible();
     expect(await screen.findByText("Ready")).toBeVisible();
     expect(screen.getByText("octocat · SSH verified · The Octocat <octocat@users.noreply.github.com>")).toBeVisible();
-    expect(screen.queryByRole("button")).toBeNull();
+    expect(developerRow().queryByRole("button")).toBeNull();
     expect(client.setupAccess).not.toHaveBeenCalled();
   });
 
@@ -195,7 +216,7 @@ describe("GitHub Developer card", () => {
 
     expect(await screen.findByText("GitHub developer access is unavailable.")).toBeVisible();
     expect(screen.queryByText(/token leaked|hosts\.yml/i)).toBeNull();
-    expect(screen.getAllByRole("button")).toHaveLength(1);
+    expect(developerRow().getAllByRole("button")).toHaveLength(1);
     fireEvent.click(screen.getByRole("button", { name: "Retry GitHub Developer status" }));
     expect(await screen.findByText("Ready")).toBeVisible();
     expect(client.startSetup).not.toHaveBeenCalled();

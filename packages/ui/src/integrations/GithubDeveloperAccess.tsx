@@ -1,6 +1,7 @@
 import type { ProviderSettingsAccess } from "@matrix-os/contracts";
-import { Github } from "lucide-react";
-import { useEffect, useId, useRef, useState } from "react";
+import type { IntegrationCatalogItem } from "@matrix-os/contracts/integration-marketplace";
+import { useEffect, useRef, useState, type ReactNode } from "react";
+import type { IntegrationRowPresentation } from "./IntegrationMarketplace.js";
 
 const MAX_ACCOUNT_LABEL_LENGTH = 128;
 // Match the additive core contract, including the confirmed name and email.
@@ -97,31 +98,45 @@ function identityLabel(status: GithubDeveloperAccessStatus["commitIdentity"]): s
   return "Commit identity unavailable";
 }
 
-const muted = { color: "var(--text-tertiary, var(--muted-foreground))" };
-const pill = { background: "var(--bg-surface-hover, var(--muted))" };
-const success = { color: "var(--surface-success-emphasis, var(--primary))" };
-const danger = { color: "var(--surface-danger-emphasis, var(--destructive))" };
+export const GITHUB_DEVELOPER_SERVICE_ID = "github-developer";
 
-export function GithubDeveloperAccessCard({
+export function withGithubDeveloperCatalogEntry(services: readonly IntegrationCatalogItem[]): IntegrationCatalogItem[] {
+  const github = services.find(service => service.id === "github");
+  const developer: IntegrationCatalogItem = {
+    id: GITHUB_DEVELOPER_SERVICE_ID,
+    name: "GitHub Developer",
+    category: github?.category ?? "developer",
+    description: "Clone and push private repositories",
+    authType: "oauth",
+    ...(github?.logoUrl ? { logoUrl: github.logoUrl } : {}),
+  };
+  const catalog = services.filter(service => service.id !== GITHUB_DEVELOPER_SERVICE_ID);
+  return github
+    ? catalog.flatMap(service => service === github ? [service, developer] : [service])
+    : [...catalog, developer];
+}
+
+export function GithubDeveloperAccess({
   identityKey,
-  client,
-  active = true,
+  ...props
 }: {
   identityKey: string;
   client: GithubDeveloperAccessClient;
   active?: boolean;
+  children: (presentation: IntegrationRowPresentation) => ReactNode;
 }) {
-  return <GithubDeveloperAccessCardForIdentity key={identityKey} client={client} active={active} />;
+  return <GithubDeveloperAccessForIdentity key={identityKey} {...props} />;
 }
 
-function GithubDeveloperAccessCardForIdentity({
+function GithubDeveloperAccessForIdentity({
   client,
-  active,
+  active = true,
+  children,
 }: {
   client: GithubDeveloperAccessClient;
-  active: boolean;
+  active?: boolean;
+  children: (presentation: IntegrationRowPresentation) => ReactNode;
 }) {
-  const titleId = useId();
   const [refreshRevision, setRefreshRevision] = useState(0);
   const [status, setStatus] = useState<GithubDeveloperAccessStatus | null>(null);
   const [statusFailed, setStatusFailed] = useState(false);
@@ -198,52 +213,25 @@ function GithubDeveloperAccessCardForIdentity({
 
   const connectLabel = status?.authenticated ? "Finish setup" : "Connect";
   const retryStatus = statusFailed || setupAccess === "unavailable";
-  return (
-    <section className="flex min-w-0 flex-wrap items-center gap-3 py-4" aria-labelledby={titleId}>
-      <div className="flex size-12 shrink-0 items-center justify-center rounded-xl" style={pill}>
-        <Github size={24} aria-hidden="true" />
-      </div>
-      <div className="min-w-0 flex-1 basis-32">
-        <h3 id={titleId} className="font-sans text-sm font-medium">GitHub Developer</h3>
-        <p className="mt-1 text-sm" style={muted}>Clone and push private repositories from this computer.</p>
-        {!status && !statusFailed ? (
-          <p className="mt-1 text-xs" style={muted} role="status">Checking developer access…</p>
-        ) : null}
-        {status?.authenticated ? (
-          <p className="mt-1 break-words text-xs" style={muted}>
-            {status.user} · {readinessLabel(status.sshStatus)} · {identityLabel(status.commitIdentity)}
-          </p>
-        ) : null}
-        {statusFailed ? (
-          <p className="mt-1 text-xs" style={danger} role="alert">GitHub developer access is unavailable.</p>
-        ) : null}
-        {status && !status.ready && setupAccess === "denied" ? (
-          <p className="mt-1 text-xs" style={muted}>Setup requires permission on this computer.</p>
-        ) : null}
-        {setupAccess === "unavailable" ? (
-          <p className="mt-1 text-xs" style={danger} role="alert">Could not verify setup permission.</p>
-        ) : null}
-        {setupFailed && status && !status.ready && setupAccess === "allowed" ? (
-          <p className="mt-1 text-xs" style={danger} role="alert">Could not open setup in Terminal.</p>
-        ) : null}
-      </div>
-      {status?.ready ? (
-        <span className="inline-flex shrink-0 items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-medium"
-          style={{ ...success, background: "color-mix(in srgb, var(--surface-success-emphasis, var(--primary)) 12%, transparent)" }}
-          role="status">
-          <span className="size-1.5 rounded-full bg-current" aria-hidden="true" />
-          Ready
-        </span>
-      ) : null}
-      {retryStatus || (status && !status.ready) ? (
-        <button type="button" className="shrink-0 rounded-full px-4 py-2 text-sm transition-opacity hover:opacity-75 disabled:opacity-50 focus-visible:outline-2"
-          style={pill}
-          aria-label={retryStatus ? "Retry GitHub Developer status" : setupFailed ? "Retry GitHub Developer setup" : `${connectLabel} GitHub Developer`}
-          disabled={!retryStatus && (setupAccess !== "allowed" || setupPending)}
-          onClick={retryStatus ? () => setRefreshRevision((revision) => revision + 1) : () => void startSetup()}>
-          {retryStatus || setupFailed ? "Retry" : setupPending ? "Opening Terminal…" : connectLabel}
-        </button>
-      ) : null}
-    </section>
-  );
+  const ready = status?.ready === true;
+  const setupError = setupFailed && !ready && setupAccess === "allowed";
+  let detail = "Sign in securely";
+  if (statusFailed) detail = "GitHub developer access is unavailable.";
+  else if (!status) detail = "Checking developer access…";
+  else if (setupAccess === "denied") detail = "Setup requires permission on this computer.";
+  else if (setupAccess === "unavailable") detail = "Could not verify setup permission.";
+  else if (setupError) detail = "Could not open setup in Terminal.";
+  else if (status.authenticated) detail = `${status.user} · ${readinessLabel(status.sshStatus)} · ${identityLabel(status.commitIdentity)}`;
+
+  return children({
+    detail,
+    detailIsError: retryStatus || setupError,
+    ready,
+    action: retryStatus || (status && !ready) ? {
+      label: retryStatus ? "Retry GitHub Developer status" : setupError ? "Retry GitHub Developer setup" : `${connectLabel} GitHub Developer`,
+      text: retryStatus || setupError ? "Retry" : setupPending ? "Opening Terminal…" : connectLabel,
+      disabled: !retryStatus && (!active || setupAccess !== "allowed" || setupPending),
+      onClick: retryStatus ? () => setRefreshRevision((revision) => revision + 1) : () => void startSetup(),
+    } : undefined,
+  });
 }

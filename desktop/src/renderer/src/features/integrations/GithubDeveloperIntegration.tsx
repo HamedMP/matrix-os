@@ -1,5 +1,5 @@
-import { useCallback, useMemo } from "react";
-import { GithubDeveloperAccessCard, type GithubDeveloperAccessClient } from "@matrix-os/ui";
+import { useCallback, useMemo, type ReactNode } from "react";
+import { GithubDeveloperAccess, type GithubDeveloperAccessClient, type IntegrationRowPresentation } from "@matrix-os/ui";
 import { desktopProviderIdentityKey } from "../../lib/provider-settings-identity";
 import { useConnection } from "../../stores/connection";
 import {
@@ -7,7 +7,10 @@ import {
   openDesktopGithubDeveloperSetup,
 } from "../settings/provider-settings-desktop-adapter";
 
-export function GithubDeveloperIntegration({ active }: { active: boolean }) {
+export function GithubDeveloperIntegration({ active, children }: {
+  active: boolean;
+  children: (presentation?: IntegrationRowPresentation) => ReactNode;
+}) {
   const signedIn = useConnection((state) => state.status === "signed-in");
   const api = useConnection((state) => state.api);
   const runtimeSlot = useConnection((state) => state.runtimeSlot);
@@ -36,5 +39,7 @@ export function GithubDeveloperIntegration({ active }: { active: boolean }) {
     },
     startSetup: () => openDesktopGithubDeveloperSetup(runtimeApi, isIdentityCurrent),
   }) : null, [isIdentityCurrent, runtimeApi]);
-  return signedIn && client ? <GithubDeveloperAccessCard identityKey={identityKey} client={client} active={active} /> : null;
+  return signedIn && client
+    ? <GithubDeveloperAccess identityKey={identityKey} client={client} active={active}>{children}</GithubDeveloperAccess>
+    : children();
 }

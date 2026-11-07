@@ -84,7 +84,7 @@ describe("Canvas settings sections", () => {
     providerControllerState.error = "Provider settings are unavailable.";
     render(<AgentSection />);
 
-    expect(screen.queryByRole("heading", { name: "GitHub Developer" })).toBeNull();
+    expect(screen.queryByText("GitHub Developer")).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "Retry provider settings" }));
     expect(providerControllerState.refresh).toHaveBeenCalledOnce();
   });

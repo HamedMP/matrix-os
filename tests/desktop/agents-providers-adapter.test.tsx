@@ -66,7 +66,7 @@ describe("desktop shared agents and providers adapter", () => {
     });
     render(<AgentsProvidersAdapter />);
 
-    expect(screen.queryByRole("heading", { name: "GitHub Developer" })).toBeNull();
+    expect(screen.queryByText("GitHub Developer")).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "Retry provider settings" }));
     expect(refresh).toHaveBeenCalledOnce();
   });

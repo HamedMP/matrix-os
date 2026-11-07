@@ -175,6 +175,14 @@ describe("Connect Apps GitHub Developer entry", () => {
           ready,
         });
       }
+      if (String(input).endsWith("/api/integrations/available")) {
+        return Response.json({ services: [
+          ...["a", "b"].map(id => ({ id, name: id, category: "developer" })),
+          { id: "github", name: "GitHub", category: "developer" },
+          { id: "c", name: "c", category: "developer" },
+        ] });
+      }
+      if (String(input).endsWith("/api/integrations")) return Response.json({ connections: [] });
       return new Response(null, { status: 503 });
     });
     vi.stubGlobal("fetch", fetchMock);
@@ -182,17 +190,26 @@ describe("Connect Apps GitHub Developer entry", () => {
     const view = render(<IntegrationsSection onOpenGithubDeveloperTerminal={setup} />);
     const connect = await screen.findByRole("button", { name: "Connect GitHub Developer", exact: true });
     await waitFor(() => expect((connect as HTMLButtonElement).disabled).toBe(false));
+    const github = await screen.findByTestId("integration-card-github");
+    const developer = screen.getByTestId("integration-card-github-developer");
+    expect(github.nextElementSibling).toBe(developer);
+    expect(developer.className).toBe(github.className);
+    expect(connect.className).toBe(screen.getByRole("button", { name: "Connect GitHub", exact: true }).className);
     expect(fetchMock).toHaveBeenCalledWith(
       expect.stringMatching(/\/vm\/alice\/~runtime\/studio\/api\/github\/status$/),
       expect.objectContaining({ cache: "no-store" }),
     );
     fireEvent.click(connect);
     expect(setup).toHaveBeenCalledOnce();
+    expect(fetchMock).not.toHaveBeenCalledWith(expect.stringMatching(/integrations\/connect$/), expect.anything());
 
     view.rerender(<IntegrationsSection active={false} onOpenGithubDeveloperTerminal={setup} />);
     ready = true;
     view.rerender(<IntegrationsSection active onOpenGithubDeveloperTerminal={setup} />);
     expect(await screen.findByText("Ready")).toBeTruthy();
     expect(screen.queryByRole("button", { name: "Connect GitHub Developer", exact: true })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Connected (1)" }));
+    expect(screen.getByTestId("integration-card-github-developer")).toBeTruthy();
+    expect(screen.queryByTestId("integration-card-github")).toBeNull();
   });
 });

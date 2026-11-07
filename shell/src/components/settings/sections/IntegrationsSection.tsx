@@ -8,7 +8,7 @@ import {
   shouldLogIntegrationWarning,
   type ConnectedService,
 } from "./integrations-helpers";
-import { IntegrationMarketplace } from "@matrix-os/ui";
+import { GITHUB_DEVELOPER_SERVICE_ID, IntegrationMarketplace, withGithubDeveloperCatalogEntry } from "@matrix-os/ui";
 import type { IntegrationCatalogItem } from "@matrix-os/contracts/integration-marketplace";
 import { ConnectedIntegrationAccounts } from "./ConnectedIntegrationAccounts";
 import { GithubDeveloperIntegration } from "./GithubDeveloperIntegration";
@@ -408,23 +408,29 @@ export function IntegrationsSection({ active = true, onOpenGithubDeveloperTermin
         </button> : null}
       </div>
 
-      <GithubDeveloperIntegration active={active} onOpenGithubDeveloperTerminal={onOpenGithubDeveloperTerminal} />
+      <GithubDeveloperIntegration active={active} onOpenGithubDeveloperTerminal={onOpenGithubDeveloperTerminal}>
+        {developer => {
+          const services = withGithubDeveloperCatalogEntry(available);
+          const connectedIds = connected.map(connection => connection.service).filter(id => id !== GITHUB_DEVELOPER_SERVICE_ID);
+          if (developer.ready) connectedIds.push(GITHUB_DEVELOPER_SERVICE_ID);
+          return (
+            <>
+              {loading ? <p className="text-sm text-muted-foreground">Loading...</p> : null}
+              {!loading && error ? (
+                <div className="rounded-lg border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-400">
+                  {error}
+                </div>
+              ) : null}
 
-      {loading ? (
-        <p className="text-sm text-muted-foreground">Loading...</p>
-      ) : (
-        <>
-          {error && (
-            <div className="rounded-lg border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-400">
-              {error}
-            </div>
-          )}
-
-          <ConnectedIntegrationAccounts {...{ connected, available, renamingId, renameDraft, savingRename, checkingStatus, confirmDisconnect, disconnecting, setRenameDraft, setRenamingId, setConfirmDisconnect, handleRename, handleCheckStatus, handleDisconnect }} />
-          <IntegrationMarketplace services={available} connectedIds={connected.map(c => c.service)} connectingId={connecting} onConnect={id => void handleConnect(id)} />
-          <CustomMcpServersPanel />
-        </>
-      )}
+              {!loading ? <ConnectedIntegrationAccounts {...{ connected, available, renamingId, renameDraft, savingRename, checkingStatus, confirmDisconnect, disconnecting, setRenameDraft, setRenamingId, setConfirmDisconnect, handleRename, handleCheckStatus, handleDisconnect }} /> : null}
+              <IntegrationMarketplace services={services} connectedIds={connectedIds} connectingId={connecting}
+                rowPresentation={service => service.id === GITHUB_DEVELOPER_SERVICE_ID ? developer : undefined}
+                onConnect={id => { if (id !== GITHUB_DEVELOPER_SERVICE_ID) void handleConnect(id); }} />
+              {!loading ? <CustomMcpServersPanel /> : null}
+            </>
+          );
+        }}
+      </GithubDeveloperIntegration>
     </div>
   );
 }

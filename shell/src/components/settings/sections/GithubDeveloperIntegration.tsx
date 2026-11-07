@@ -1,7 +1,7 @@
 "use client";
 
-import { useMemo } from "react";
-import { GithubDeveloperAccessCard, type GithubDeveloperAccessClient } from "@matrix-os/ui";
+import { useMemo, type ReactNode } from "react";
+import { GithubDeveloperAccess, type GithubDeveloperAccessClient, type IntegrationRowPresentation } from "@matrix-os/ui";
 import { getGatewayUrl } from "@/lib/gateway";
 import { currentAiCreditRuntimeSlot } from "@/lib/ai-credit-checkout";
 import { boundedProviderSettingsJson, createProviderSettingsTransport } from "@/lib/provider-settings-transport";
@@ -9,9 +9,11 @@ import { boundedProviderSettingsJson, createProviderSettingsTransport } from "@/
 export function GithubDeveloperIntegration({
   active,
   onOpenGithubDeveloperTerminal,
+  children,
 }: {
   active: boolean;
   onOpenGithubDeveloperTerminal?: () => void;
+  children: (presentation: IntegrationRowPresentation) => ReactNode;
 }) {
   const identityKey = getGatewayUrl();
   const runtimeSlot = currentAiCreditRuntimeSlot();
@@ -48,5 +50,5 @@ export function GithubDeveloperIntegration({
       return true;
     },
   }), [identityKey, onOpenGithubDeveloperTerminal, runtimeSlot, transport]);
-  return <GithubDeveloperAccessCard identityKey={`${identityKey}:${runtimeSlot}`} client={githubDeveloperAccessClient} active={active} />;
+  return <GithubDeveloperAccess identityKey={`${identityKey}:${runtimeSlot}`} client={githubDeveloperAccessClient} active={active}>{children}</GithubDeveloperAccess>;
 }

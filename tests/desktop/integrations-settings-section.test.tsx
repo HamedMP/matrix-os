@@ -112,7 +112,7 @@ describe("desktop integrations settings section", () => {
     vi.restoreAllMocks();
   });
 
-  it("renders GitHub Developer separately and scopes setup to the selected computer", async () => {
+  it("keeps the catalog entry usable when legacy GitHub is unavailable and scopes setup to the selected computer", async () => {
     const pendingCatalog = makeApi({ getError: (path) => path.endsWith("/available") ? new AppError("notFound") : null });
     const runtime = {
       get: vi.fn(async (path: string) => {
@@ -131,7 +131,7 @@ describe("desktop integrations settings section", () => {
     });
     render(<IntegrationsSettingsSection />);
 
-    expect(await screen.findByRole("heading", { name: "GitHub Developer" })).not.toBeNull();
+    expect(await screen.findByTestId("integration-card-github-developer")).not.toBeNull();
     const connect = await screen.findByRole("button", { name: "Connect GitHub Developer", exact: true });
     await waitFor(() => expect((connect as HTMLButtonElement).disabled).toBe(false));
     expect(forRuntime).toHaveBeenCalledWith("preview");
@@ -139,6 +139,28 @@ describe("desktop integrations settings section", () => {
     fireEvent.click(connect);
     await waitFor(() => expect(setup).toHaveBeenCalledWith(runtime, expect.any(Function)));
     expect(pendingCatalog.post).not.toHaveBeenCalledWith("/api/integrations/connect", expect.anything());
+  });
+
+  it("uses the regular catalog card directly beside GitHub", async () => {
+    const api = makeApi({
+      available: [
+        ...["a", "b"].map(id => ({ id, name: id, category: "developer" })),
+        ...AVAILABLE,
+        { id: "c", name: "c", category: "developer" },
+      ],
+    });
+    useConnection.setState({ api });
+    render(<IntegrationsSettingsSection />);
+
+    const github = await screen.findByTestId("integration-card-github");
+    const developer = await screen.findByTestId("integration-card-github-developer");
+    expect(github.parentElement?.nextElementSibling?.firstElementChild).toBe(developer);
+    expect(developer.className).toBe(github.className);
+    expect(screen.getByTestId("integration-connect-github-developer").className)
+      .toBe(screen.getByTestId("integration-connect-github").className);
+    fireEvent.change(screen.getByRole("searchbox", { name: "Search integrations" }), { target: { value: "GitHub Developer" } });
+    expect(screen.queryByTestId("integration-card-github")).toBeNull();
+    expect(screen.getByTestId("integration-card-github-developer")).toBeTruthy();
   });
 
   it("renders a loading skeleton while the proxy responds", () => {
@@ -200,6 +222,7 @@ describe("desktop integrations settings section", () => {
       "integration-card-linear",
       "integration-card-slack",
       "integration-card-github",
+      "integration-card-github-developer",
     ]);
   });
 
@@ -275,8 +298,9 @@ describe("desktop integrations settings section", () => {
     await waitFor(() =>
       expect(screen.getByText("Integrations are unavailable on this runtime.")).not.toBeNull(),
     );
-    // Capability gate: no crash, no catalog, no connect buttons.
-    expect(screen.queryByRole("button", { name: /Connect/i })).toBeNull();
+    expect(screen.queryByTestId("integration-card-github")).toBeNull();
+    expect(screen.queryByRole("button", { name: /^Connect /i })).toBeNull();
+    expect(await screen.findByRole("button", { name: "Retry GitHub Developer status" })).not.toBeNull();
   });
 
   it("shows a generic offline message with a retry that reloads", async () => {
