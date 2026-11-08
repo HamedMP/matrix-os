@@ -6,6 +6,7 @@ import { setImmediate as turn } from "node:timers/promises";
 import { readdirSync, mkdtempSync, rmSync, fstatSync, readSync, writeSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { fixtureErrorKind, logFixtureFailure } from "./fixture-errors.mjs";
 const native = createRequire(import.meta.url)(process.argv[2]), mode = process.argv[3];
 assert.ok(["invalid-argument", "worker-attempt", "capacity127", "gc-role"].includes(mode));
 const fdCount = () => readdirSync("/proc/self/fd").length;
@@ -30,7 +31,7 @@ function attempt(call) {
   return result;
 }
 async function fail(error) {
-  await tell({ event: "fixture-error", phase: `guard-${mode}`, errorType: error.name }).catch(() => { writeSync(2, "guard IPC unavailable\n"); });
+  await tell({ event: "fixture-error", phase: `guard-${mode}`, errorType: fixtureErrorKind(error) }).catch(ipcError => logFixtureFailure("guard failure IPC", ipcError));
   process.exit(1);
 }
 process.on("message", async message => {
@@ -56,7 +57,6 @@ try {
     const actualThreadId = worker.threadId;
     const message = new Promise((resolve, reject) => { worker.once("message", resolve); worker.once("error", reject); });
     const exited = new Promise((resolve, reject) => { worker.once("exit", resolve); worker.once("error", reject); });
-    message.catch(() => {}); exited.catch(() => {}); // Original promises remain bounded/awaited below.
     let observation, workerExit;
     try { [observation, workerExit] = await bounded(Promise.all([message, exited]), "actual Worker attempt/exit"); }
     finally { if (worker.threadId !== -1) await bounded(worker.terminate(), "actual Worker cleanup"); }

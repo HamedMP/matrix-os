@@ -10,6 +10,7 @@ import { createHash } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import { resolve } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
+import { logFixtureFailure } from "./native-inherited-control-fixtures/fixture-errors.mjs";
 const index = process.argv.indexOf("--addon"); assert.ok(index >= 0 && process.argv[index + 1]);
 const addonPath = resolve(process.argv[index + 1]);
 const setterIndex = process.argv.indexOf("--pidfd-setter"); assert.ok(setterIndex >= 0 && process.argv[setterIndex + 1]);
@@ -99,7 +100,7 @@ async function fixture({ pidfdAncillary = false, closedStderr = false, copiedWri
     try { relay = spawn(process.execPath, [relayPath, addonPath, ...extra], { stdio: [fd, fd, "pipe", "ipc"], detached: true, env: process.env }); }
     finally { native.close(pair.child); }
     exited = new Promise((resolveExit, reject) => { relay.once("error", reject); relay.once("close", (code, signal) => resolveExit({ code, signal })); });
-    exited.catch(() => {}); // Original exit promise is still awaited and reported.
+    void exited.catch(error => logFixtureFailure("relay exit", error)); // The original promise is still awaited.
     birth = native.retainChild(relay.pid);
     relay.on("message", message => {
       if (Buffer.byteLength(JSON.stringify(message)) > 4096 || messages.length >= 64) { fault = new Error("fixture IPC cap"); return; }
@@ -110,7 +111,7 @@ async function fixture({ pidfdAncillary = false, closedStderr = false, copiedWri
     if (copiedWriter) {
       writer = spawn(process.execPath, [writerPath, String(process.pid)], { stdio: [parentFixtureFD, "ignore", "pipe", "ipc"], env: process.env });
       writerExited = new Promise((resolveExit, reject) => { writer.once("error", reject); writer.once("close", (code, signal) => resolveExit({ code, signal })); });
-      writerExited.catch(() => {}); // Actual original promise is bounded/awaited on every exit path.
+      void writerExited.catch(error => logFixtureFailure("copied writer exit", error)); // Cleanup awaits the original promise.
       writerBirth = native.retainChild(writer.pid); // Independently retained actual returned child.
       writer.on("message", message => {
         if (Buffer.byteLength(JSON.stringify(message)) > 1024 || writerMessages.length >= 8) { fault = new Error("writer IPC cap"); return; }
@@ -394,7 +395,7 @@ try {
   });
 } catch (error) { results.push({ name: "setup", ok: false, error: String(error.stack ?? error) }); }
 finally { for (const cleanup of [...cleanups]) { try { await cleanup(); } catch (error) { results.push({ name: "cleanup", ok: false, error: String(error) }); } } }
-const paths = [addonPath, setterPath, supervisorPath, failurePath, failureSourcePath, fileURLToPath(import.meta.url), relayPath, servicePath, writerPath, guardPath, workerPath, deathServicePath, supervisorSourcePath, fileURLToPath(new URL("./native-inherited-control-fixtures/enable-pidfd.c", import.meta.url))];
+const paths = [fileURLToPath(new URL("./native-inherited-control-fixtures/fixture-errors.mjs", import.meta.url)), addonPath, setterPath, supervisorPath, failurePath, failureSourcePath, fileURLToPath(import.meta.url), relayPath, servicePath, writerPath, guardPath, workerPath, deathServicePath, supervisorSourcePath, fileURLToPath(new URL("./native-inherited-control-fixtures/enable-pidfd.c", import.meta.url))];
 const artifacts = await Promise.all(paths.map(async path => ({ path, sha256: createHash("sha256").update(await readFile(path)).digest("hex") })));
 console.log(JSON.stringify({ platform: process.platform, arch: process.arch, node: process.version, scope: "actual inherited-control transport slices; fixture IPC is not product proof", sourceEnabled: false, accountQualified: false, artifacts, results, evidence, cleanupPending: cleanups.size, passed: results.filter(r => r.ok).length, failed: results.filter(r => !r.ok).length }, null, 2));
 process.exitCode = results.some(r => !r.ok) || cleanups.size ? 1 : 0;
