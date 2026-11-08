@@ -1,4 +1,4 @@
-import { createCanonicalChatAdmissionTracker } from "@matrix-os/ui";
+import { createCanonicalChatAdmissionTracker, type CanonicalChatClientAdmission } from "@matrix-os/ui";
 import type { CanonicalChatDetailResponse, CanonicalCreateChatTurnRequest } from "@matrix-os/contracts";
 import type { CanonicalChatClient } from "../../lib/canonical-chat-client";
 import { AppError } from "../../../../shared/app-error";
@@ -30,4 +30,32 @@ export async function admitDesktopChatTurn(options: {
     onAccepted: options.onAccepted, onRejected: options.onRejected, onConfirmed: () => options.onConfirmed(attempt.id),
     definitive: error => error instanceof AppError && error.httpStatus !== undefined && error.httpStatus >= 400 && error.httpStatus < 500 && error.httpStatus !== 408,
   });
+}
+
+
+function upsertAdmissionRow<T extends { id: string }>(rows: T[] = [], row: T): T[] {
+  const index = rows.findIndex(existing => existing.id === row.id);
+  if (index < 0) return [...rows, row];
+  return rows.map((existing, position) => position === index ? row : existing);
+}
+
+export function resolveDesktopAdmittedDetail(
+  admitted: CanonicalChatClientAdmission,
+  captured: CanonicalChatDetailResponse | null,
+  streamed: CanonicalChatDetailResponse | null,
+): CanonicalChatDetailResponse {
+  const chatId = admitted.record.chat.id;
+  const previous = captured?.record.chat.id === chatId ? captured : null;
+  const latest = streamed?.record.chat.id === chatId
+    && streamed.record.chat.revision >= (previous?.record.chat.revision ?? -1) ? streamed : previous;
+  const recovered = admitted.recoveredDetail;
+  if (latest && latest.record.chat.revision >= (recovered?.record ?? admitted.record).chat.revision) return latest;
+  if (recovered) return recovered;
+  return {
+    ...(latest ?? { activities: [] }),
+    record: admitted.record,
+    messages: upsertAdmissionRow(latest?.messages, admitted.message),
+    turns: upsertAdmissionRow(latest?.turns, admitted.turn),
+    runs: upsertAdmissionRow(latest?.runs, admitted.run),
+  };
 }
