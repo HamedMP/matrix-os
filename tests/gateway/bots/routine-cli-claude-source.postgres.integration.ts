@@ -1,7 +1,51 @@
 import { afterEach, expect, it, vi } from "vitest";
+import * as routineDisplay from "../../../packages/gateway/src/chat/routine-result-artifacts.js";
+import { insertRoutine } from "./routine-cli-request-support.js";
 import { claudeFixture, nativeProtocol, proposal, TARGET_A } from "./routine-cli-claude-support.js";
 let f: Awaited<ReturnType<typeof claudeFixture>>;
 afterEach(async () => { await f?.close(); vi.unstubAllGlobals(); });
+
+it.each(["setup", "cleanup"])("Claude completes the Chat when routine display %s fails", async failure => {
+  const original = routineDisplay.createRoutineResultArtifacts;
+  const createArtifacts = vi.spyOn(routineDisplay, "createRoutineResultArtifacts").mockImplementationOnce(async () => {
+    if (failure === "setup") throw new Error("Fixture display setup failure");
+    const artifacts = await original();
+    return { ...artifacts, async close() {
+      await artifacts.close();
+      throw new Error("Fixture display cleanup failure");
+    } };
+  });
+  try {
+    f = await claudeFixture();
+    const requestId = "de000000-0000-4000-8000-000000000504";
+    const routineId = await insertRoutine(f.data.db, 504);
+    const native = nativeProtocol(`matrix routines pause ${routineId} --revision 1 --request-id ${requestId}`);
+    const adapter = f.adapter(native.spawn);
+    let streamFailure: unknown;
+    f.setSourceAdapter({ ...adapter, async *start(input) {
+      try { yield* adapter.start(input); }
+      catch (error: unknown) { streamFailure = error; throw error; }
+    } });
+    const chatId = "chat_claude_display_failure";
+    const admitted = await f.start(chatId);
+    const readApproval = () => f.sourceEvents.find(event => event.type === "approval.requested");
+    await expect.poll(readApproval, { timeout: 5000 }).toBeDefined();
+    const approval = readApproval()!;
+    if (approval.type !== "approval.requested") throw new Error("Missing routine operation approval");
+    await f.approve(approval, chatId, admitted.run.id);
+    await expect.poll(() => !!native.display() || native.denied(), { timeout: 5000 }).toBe(true);
+    if (native.display()) native.end();
+    await f.f.canonical.drain();
+
+    expect(createArtifacts).toHaveBeenCalledOnce();
+    expect(streamFailure).toBeUndefined();
+    expect(f.sourceEvents).toContainEqual({ type: "run.completed", outcome: "completed" });
+    expect(f.httpCalls()).toBe(1);
+    expect(await f.data.db.selectFrom("bot_routines").select("status").execute()).toEqual([{ status: "paused" }]);
+  } finally {
+    createArtifacts.mockRestore();
+  }
+});
 it("real admitted Claude execute closure registers current source, runs published CLI and canonical backend; CLI return keeps source alive until actual process exit", async () => {
   f = await claudeFixture();
   const chatId = "chat_claude_actual", uuid = "de000000-0000-4000-8000-000000000501";
