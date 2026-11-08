@@ -50,7 +50,7 @@ export async function appendRoutineReceiptWithin(executor: Executor, ownerId: st
   const bound = "purpose" in target ? await isCurrentDirectRoutineOrigin(db, {
     ownerId, computerId: input.computerId, requestId: record.client_request_id, sourceChatId: input.sourceChatId,
     sourceRunId: context.data.identity.runId, canonicalChatId: record.chat_id, botId: record.bot_id, bindingCreatedAt: target.bindingCreatedAt, directChat: true,
-  }, true) : await hasAcceptedBinding(db, ownerId, record.chat_id, record.bot_id, target.bindingCreatedAt);
+  }, "ordered") : await hasAcceptedBinding(db, ownerId, record.chat_id, record.bot_id, target.bindingCreatedAt);
   if (!bound) return null;
   const sourceRun = await db.selectFrom("chat_runs").select("id").where("id", "=", context.data.identity.runId).where("chat_id", "=", input.sourceChatId).executeTakeFirst();
   if (!sourceRun) return null;
