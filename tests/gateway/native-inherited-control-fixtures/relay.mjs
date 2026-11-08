@@ -5,6 +5,7 @@ import { createRequire } from "node:module";
 import { spawn } from "node:child_process";
 import { fstatSync } from "node:fs";
 import { fileURLToPath } from "node:url";
+import { fixtureErrorKind, logFixtureFailure } from "./fixture-errors.mjs";
 const native = createRequire(import.meta.url)(process.argv[2]);
 const pidfdMode = process.argv[3] === "--pidfd-ancillary";
 const closedStderrMode = process.argv[3] === "--closed-stderr";
@@ -34,7 +35,7 @@ async function cleanup(code) {
   process.exit(code);
 }
 async function failure(phase, error) {
-  await tell({ event: "relay-error", phase, errorType: error.name }).catch(() => { process.stderr.write("relay fixture IPC unavailable\n"); });
+  await tell({ event: "relay-error", phase, errorType: fixtureErrorKind(error) }).catch(ipcError => logFixtureFailure("relay failure IPC", ipcError));
   await cleanup(1);
 }
 process.on("message", async message => {
@@ -49,20 +50,28 @@ process.on("message", async message => {
     });
   } catch (error) { await failure("parent-command", error); }
 });
-process.on("disconnect", () => cleanup(1).catch(() => process.exit(1)));
+process.on("disconnect", () => cleanup(1).catch(error => {
+  logFixtureFailure("relay disconnect cleanup", error);
+  process.exit(1);
+}));
 try {
   const extra = pidfdMode ? ["--pidfd-ancillary", process.argv[4]] : closedStderrMode ? ["--closed-stderr"] : guardMode ? [guardMode] : [];
   const selectedFixture = guardMode ? "./guard-service.mjs" : "./service.mjs";
   const flags = guardMode === "gc-role" ? ["--expose-gc"] : [];
   service = spawn(process.execPath, [...flags, fileURLToPath(new URL(selectedFixture, import.meta.url)), process.argv[2], ...extra], { stdio: [0, 1, 2, "ipc"], env: process.env });
   exited = new Promise((resolve, reject) => { service.once("error", reject); service.once("close", (code, signal) => resolve({ code, signal })); });
-  exited.catch(() => {});
+  void exited.catch(error => logFixtureFailure("service exit", error)); // waitExit awaits the original promise.
   birth = native.retainChild(service.pid); // Actual returned native child, retained before callbacks.
   service.on("message", message => {
     try {
       if (message?.event === "closed" || message?.event === "guard-result" && message.mode === "gc-role") { fstatSync(0); fstatSync(1); }
       tell({ event: "service", message, retainedServiceAlive: native.childAlive(birth), relayAliasesOpen: true }).catch(error => failure("service-message", error));
-    } catch (error) { failure("service-message", error).catch(() => process.exit(1)); }
+    } catch (error) {
+      void failure("service-message", error).catch(cleanupError => {
+        logFixtureFailure("service message cleanup", cleanupError);
+        process.exit(1);
+      });
+    }
   });
   service.once("close", (code, signal) => {
     tell({ event: "service-exit", code, signal, retainedServiceAlive: native.childAlive(birth) }).catch(error => failure("service-exit", error));

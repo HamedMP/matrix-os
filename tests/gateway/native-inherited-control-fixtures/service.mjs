@@ -5,6 +5,7 @@ import { createRequire } from "node:module";
 import { fstatSync, readSync, writeSync, readdirSync, closeSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { setTimeout as delay } from "node:timers/promises";
+import { fixtureErrorKind, logFixtureFailure } from "./fixture-errors.mjs";
 const native = createRequire(import.meta.url)(process.argv[2]);
 const pidfdMode = process.argv[3] === "--pidfd-ancillary";
 const closedStderrMode = process.argv[3] === "--closed-stderr";
@@ -19,8 +20,8 @@ async function tell(value) {
   });
 }
 async function fail(phase, error) {
-  await tell({ event: "fixture-error", phase, errorType: error.name, code: ["EPIPE", "EBADF"].includes(error.code) ? error.code : "none" }).catch(() => {
-    if (!closedStderrMode) writeSync(2, "service fixture IPC unavailable\n"); // No stderr diagnostics after owned fd2 close.
+  await tell({ event: "fixture-error", phase, errorType: fixtureErrorKind(error), code: ["EPIPE", "EBADF"].includes(error.code) ? error.code : "none" }).catch(ipcError => {
+    if (!closedStderrMode) logFixtureFailure("service failure IPC", ipcError); // No stderr diagnostics after owned fd2 close.
   });
   try { if (handle) native.close(handle); }
   finally { process.exit(1); }

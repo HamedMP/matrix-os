@@ -2,6 +2,7 @@
 // body content; expected kernel identity comes from the parent's spawn return.
 import assert from "node:assert/strict";
 import { writeSync } from "node:fs";
+import { fixtureErrorKind, logFixtureFailure } from "./fixture-errors.mjs";
 const claimedPID = Number(process.argv[2]);
 assert.ok(Number.isInteger(claimedPID) && claimedPID > 1 && claimedPID !== process.pid);
 let busy = false, commands = 0;
@@ -26,7 +27,7 @@ process.on("message", async message => {
     else throw new Error("unknown writer fixture command");
     busy = false;
   } catch (error) {
-    await tell({ event: "writer-error", errorType: error.name }).catch(() => { writeSync(2, "writer fixture IPC unavailable\n"); });
+    await tell({ event: "writer-error", errorType: fixtureErrorKind(error) }).catch(ipcError => logFixtureFailure("copied writer failure IPC", ipcError));
     process.exit(1);
   }
 });
