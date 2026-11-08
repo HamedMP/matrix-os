@@ -15,6 +15,7 @@ import { chatLoadState, chatScreenTitle, composerPlaceholder } from "./chat-scre
 import { CHAT_SUGGESTIONS } from "./chat-suggestions";
 import { composerAddProps } from "./composer-add";
 import { ModelTrigger } from "./ModelTrigger";
+import { NativeSourceChatRoutines } from "./NativeSourceChatRoutines";
 import { useChatThread } from "./use-chat-thread";
 
 export interface ActiveChatScreenProps {
@@ -117,7 +118,16 @@ export function ActiveChatScreen({ onBack, onNewChat }: ActiveChatScreenProps) {
       renderRequest={renderRequest}
       renderResults={renderResults}
       renderComputerPhoto={renderComputerPhoto}
-      routineScope={gatewayUrl && activeChatId ? { gatewayUrl, chatId: activeChatId, eligible: Boolean(routineOriginEligible) } : undefined}
+      renderThread={gatewayUrl && activeChatId ? (renderMessageList) => (
+        <NativeSourceChatRoutines
+          gatewayUrl={gatewayUrl}
+          chatId={activeChatId}
+          eligible={Boolean(routineOriginEligible)}
+          messages={messages}
+        >
+          {renderMessageList}
+        </NativeSourceChatRoutines>
+      ) : undefined}
       chatState={chatState}
       onReloadChat={reloadChat}
       unsentActions={unsentActions}
