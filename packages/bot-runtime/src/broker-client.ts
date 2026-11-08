@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { connect, type Socket } from "node:net";
 import type { z } from "zod/v4";
+import { isRoutineCliMutation, ROUTINE_CLI_MANAGED_REPLY_TIMEOUT_MS } from "@matrix-os/contracts/routine-cli";
 import {
   BOT_BROKER_MAX_FRAME_BYTES,
   SHARED_BROWSER_ACTION_DEADLINE_MS,
@@ -138,15 +139,15 @@ export function createBotBrokerClient(options: BotBrokerClientOptions): BotWorke
     const waitsForApproval = tool?.capability === "integration.call" || tool?.capability === "mcp.call";
     // Jev's paid classification and confirmed label readback use the gateway's bounded long-operation deadline.
     const longJevOperation = tool?.capability === "jev.inbox" && ["evaluate", "batch_next"].includes(tool.args.operation);
-    const routine = tool?.capability === "routine.cli";
+    const routineReplyTimeout = tool?.capability === "routine.cli"
+      ? (isRoutineCliMutation(tool.args) ? ROUTINE_CLI_MANAGED_REPLY_TIMEOUT_MS : 125_000) : undefined;
     const browserPause = tool?.capability === "browser.action";
     const githubDeveloper = tool?.capability === "github.developer";
     const nativeTask = tool?.capability === "agent.task";
-    const raw = await exchange(options.timeoutMs === undefined && (waitsForApproval || longJevOperation || browserPause || githubDeveloper || routine || nativeTask)
+    const raw = await exchange(options.timeoutMs === undefined && (waitsForApproval || longJevOperation || browserPause || githubDeveloper || routineReplyTimeout || nativeTask)
       ? { ...options, timeoutMs: githubDeveloper ? GITHUB_DEVELOPER_TIMEOUT_MS
         : nativeTask ? NATIVE_TASK_REPLY_TIMEOUT_MS
-        : routine ? 125_000
-        : browserPause ? SHARED_BROWSER_ACTION_DEADLINE_MS + 30_000 : 10 * 60_000 + 35_000 }
+        : routineReplyTimeout ?? (browserPause ? SHARED_BROWSER_ACTION_DEADLINE_MS + 30_000 : 10 * 60_000 + 35_000) }
       : options, frame.data, signal, githubDeveloper);
     const reply = BotBrokerResponseSchema.safeParse(raw);
     if (!reply.success || reply.data.requestId !== requestId) throw new BotBrokerError("unavailable");
