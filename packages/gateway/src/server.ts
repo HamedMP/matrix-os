@@ -1915,8 +1915,8 @@ export async function createGateway(config: GatewayConfig) {
     pluginRegistry,
     hookRunner,
     async close() {
-      await githubDeveloperSetup.close();
       await managedFeatureRestart.close();
+      await githubDeveloperSetup.close();
       await jevInboxRuntime?.close();
       chatDriveContext.close();
       matrixMcpCapabilities.close();
