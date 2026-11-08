@@ -33,6 +33,7 @@ import type { ScopeRuntimeHost } from "../scope-runtime-host/index.js";
 
 const DEFAULT_TOOL_TIMEOUT_MS = 30_000;
 const MAX_TOOL_TIMEOUT_MS = 60_000;
+const DELEGATED_ROUTINE_MUTATION_TIMEOUT_MS = 120_000;
 const AUTHORIZATION_TIMEOUT_MS = 10_000;
 /** Per-run event order entries kept after release; runs still bound are never evicted. */
 const MAX_TRACKED_RUNS = 256;
@@ -238,9 +239,14 @@ export function createBotBrokerActions(deps: {
       await checkpoints.markObserved({ ...id, now: now().toISOString() });
       throw new BotBrokerActionError("stale_generation");
     }
+    // Only the gateway's native child bridge supplies childSignal. Canonical tool frames and reads retain the normal deadline.
+    const delegatedRoutineMutation = childSignal !== undefined
+      && (request.capability === "routine.propose" || request.capability === "routine.control" && request.args.operation === "control")
+      && request.routineRequestId !== undefined;
     const deadline = request.capability === "jev.inbox" && ["evaluate", "batch_next"].includes(request.args.operation)
       ? 10 * 60_000 : request.capability === "browser.action" ? SHARED_BROWSER_ACTION_DEADLINE_MS : request.capability === "agent.task" ? 120_000 : request.capability === "github.developer" ? 90_000 : toolTimeoutMs;
-    const signal = AbortSignal.any([runSignal, deps.inference.lifetime, AbortSignal.timeout(deadline)]);
+    const signal = AbortSignal.any([runSignal, deps.inference.lifetime,
+      AbortSignal.timeout(delegatedRoutineMutation ? DELEGATED_ROUTINE_MUTATION_TIMEOUT_MS : deadline)]);
     try {
       await reauthorize(binding, runSignal);
       const { result, outcomeRef } = await untilAborted(deps.tools.dispatch(binding, request, signal), signal);
