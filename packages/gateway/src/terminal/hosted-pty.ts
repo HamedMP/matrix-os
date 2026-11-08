@@ -5,11 +5,34 @@ import { join, resolve } from "node:path";
 import { z } from "zod/v4";
 import type { AgentLaunchSpec } from "../agent-launcher.js";
 import type { IPty } from "node-pty";
+
+const NODE_PTY_INPUT_QUEUE_VERSION = "1.1.0";
+const MAX_PENDING_INPUT_BYTES = 64 * 1024;
+const MAX_PENDING_INPUT_FRAMES = 256;
+
 const Frame = z.discriminatedUnion("type", [
   z.object({ type: z.literal("input"), data: z.string().min(1).max(16384) }).strict(),
   z.object({ type: z.literal("resize"), cols: z.number().int().min(1).max(500), rows: z.number().int().min(1).max(200) }).strict(),
   z.object({ type: z.literal("ping") }).strict(),
 ]);
+
+function writeBoundedInput(child: IPty, data: string): boolean {
+  // node-pty 1.1.0 has no public input backpressure. Its Unix writer adds each
+  // buffer synchronously and retains it (including the active write) until drained.
+  // Check and write in the same turn so every viewer shares the same budget.
+  const unixPty = child as IPty & { _writeStream?: { _writeQueue?: unknown } };
+  const queue = unixPty._writeStream?._writeQueue;
+  if (!Array.isArray(queue) || queue.length >= MAX_PENDING_INPUT_FRAMES) return false;
+  let bytes = Buffer.byteLength(data);
+  for (const task of queue as unknown[]) {
+    if (!task || typeof task !== "object" || !("buffer" in task) || !Buffer.isBuffer(task.buffer)) return false;
+    bytes += task.buffer.byteLength;
+  }
+  if (bytes > MAX_PENDING_INPUT_BYTES) return false;
+  child.write(data);
+  return true;
+}
+
 /** Owns the actual native PTY. A viewer/proof controller owns NO part of its lifetime.
  * Zellij remains the screen/history renderer. This transport does not invent a screen
  * snapshot from a raw-byte tail; a surviving Zellij pane keeps its existing screen. */
@@ -24,6 +47,7 @@ export async function createHostedTerminalPty(options: {
   const peers = new Set<Socket>(); // <=8; output cap, heartbeat TTL, disconnect and shutdown eviction.
   const proof = new AbortController();
   let running = true, closed = false, stopping: Promise<void> | undefined;
+  let supportedInputQueue = false;
   let exited!: () => void;
   const exit = new Promise<void>(resolve => { exited = resolve; });
   const server = createServer(socket => {
@@ -40,7 +64,9 @@ export async function createHostedTerminalPty(options: {
         try {
           const frame = Frame.parse(JSON.parse(line));
           if (!running) { socket.destroy(); return; }
-          if (frame.type === "input") child.write(frame.data);
+          if (frame.type === "input" && (!supportedInputQueue || !writeBoundedInput(child, frame.data))) {
+            socket.destroy(); return;
+          }
           if (frame.type === "resize") child.resize(frame.cols, frame.rows);
         } catch (error) {
           console.warn("[terminal-host] Viewer unavailable", error instanceof Error ? error.name : "UnknownError"); socket.destroy();
@@ -52,7 +78,10 @@ export async function createHostedTerminalPty(options: {
   server.on("error", error => { console.warn("[terminal-host] I/O listener unavailable", error.name); });
   let child: IPty;
   try {
-    const pty = createRequire(import.meta.url)("node-pty") as typeof import("node-pty");
+    const requirePty = createRequire(import.meta.url);
+    const pty = requirePty("node-pty") as typeof import("node-pty");
+    const packageInfo = requirePty("node-pty/package.json") as { version?: unknown };
+    supportedInputQueue = packageInfo.version === NODE_PTY_INPUT_QUEUE_VERSION;
     child = pty.spawn(options.launch.command, options.launch.args, { name: "xterm-256color", cwd: options.launch.cwd,
       env: options.launch.env, cols: size.cols, rows: size.rows });
   } catch (error) { server.close(); await unlink(path); throw error; }
