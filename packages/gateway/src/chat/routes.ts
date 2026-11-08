@@ -1,4 +1,5 @@
 import type { ApprovalProvenance } from "./approval-submission.js";
+import { ROUTINE_FULL_ACCESS_SCOPE_HEADER, ROUTINE_FULL_ACCESS_PROOF_HEADER } from "@matrix-os/contracts";
 import { CanonicalChatNavigationQuerySchema, CanonicalChatNavigationResponseSchema, type CanonicalChatNavigationQuery, type CanonicalChatNavigationResponse } from "@matrix-os/contracts";
 import { projectChatRecipeSources } from "./recipe-source-wire.js";
 import { ChatMetadataVersionSchema, projectChatMetadata, ChatImportSourceVersionSchema, projectChatImportSource } from "./metadata-wire.js";
@@ -172,7 +173,7 @@ export interface CanonicalChatRouteService {
     owner: ChatOwner,
     chatId: string,
     input: CanonicalCreateChatTurnRequest,
-    provenance?: { previewTurnProof?: string },
+    provenance?: import("./turn-admission.js").CanonicalTurnProvenance,
   ): Promise<CanonicalChatTurnAdmissionResponse>;
   enqueueQueuedTurn(
     principal: RequestPrincipal,
@@ -601,7 +602,9 @@ export function createCanonicalChatRoutes(options: {
         ownerFromPrincipal(principal),
         chatId,
         parsed.data,
-        { previewTurnProof: context.req.header("x-matrix-preview-drive-turn-proof") },
+        { previewTurnProof: context.req.header("x-matrix-preview-drive-turn-proof"),
+          routineFullAccessScope: context.req.header(ROUTINE_FULL_ACCESS_SCOPE_HEADER),
+          routineFullAccessProof: context.req.header(ROUTINE_FULL_ACCESS_PROOF_HEADER) },
       );
       return chatJson(context, projectChatMessageResponse(
         CanonicalChatTurnAdmissionResponseSchema.parse(result),
