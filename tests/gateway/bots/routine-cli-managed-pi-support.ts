@@ -15,10 +15,12 @@ import type { ManagedPiRuntimeBinding } from "../../../packages/gateway/src/bots
 import type { ScopeRuntimeHost } from "../../../packages/gateway/src/scope-runtime-host/index.js";
 import { makeAiProviderSnapshot } from "../../fixtures/ai-provider-snapshot.js";
 import { claudeFixture } from "./routine-cli-claude-support.js";
+import { OWNER } from "./bot-state-support.js";
+import type { BotInputHistoryReader } from "../../../packages/gateway/src/bots/historical-input.js";
 import type { RoutineCliOperation, BotToolResult, BotEvent } from "@matrix-os/contracts";
 /** Named supervisor/process and model fixtures. Actual admission, managed binding, model-facing
  * pinned Pi worker loop/tool, typed Unix socket broker, CLI/IPC/Hono/Postgres and canonical target are real. */
-export async function managedPiFixture(operation: RoutineCliOperation, options: { hold?: boolean; omitAuthority?: boolean } = {}) {
+export async function managedPiFixture(operation: RoutineCliOperation, options: { hold?: boolean; omitAuthority?: boolean; inputHistory?: BotInputHistoryReader } = {}) {
   const f = await claudeFixture({ sourceDriver: "matrix_pi" }), lifetime = new AbortController();
   const socketPath = `/tmp/mpi-${randomBytes(8).toString("hex")}.sock`;
   let workerLoopSettled = false;
@@ -50,7 +52,7 @@ export async function managedPiFixture(operation: RoutineCliOperation, options: 
   } } as unknown as ScopeRuntimeHost;
   const admission = createManagedPiAdmission({ db: f.data.db, homePath: f.f.home, host, registry: f.f.registry,
     roots: { resolve: async () => { throw new Error("No project fixture"); } }, toolCapabilities: options.omitAuthority ? [] : ["routine.cli"] });
-  const managed = createManagedPiRuntime({ admission, host, homePath: f.f.home, providers: { getSnapshot: async () => makeAiProviderSnapshot() },
+  const managed = createManagedPiRuntime({ admission, host, homePath: f.f.home, expectedOwnerId: OWNER, inputHistory: options.inputHistory, providers: { getSnapshot: async () => makeAiProviderSnapshot() },
     lifetime: lifetime.signal, routineCli: { runtime: f.runtime, ...f.transport }, routineSignal: binding => f.f.registry.inferenceSignal(binding),
     forgetRun: runId => actions.forgetRun(runId), cancelInference: binding => f.f.registry.cancelInference(binding) });
   const actions = createBotBrokerActions({ db: f.data.db, registry: f.f.registry,
@@ -66,6 +68,6 @@ export async function managedPiFixture(operation: RoutineCliOperation, options: 
   const server = createScopeRuntimeBrokerServer({ socketPath, botImageFrames: true,
     broker: { handle: async () => { throw new Error("Unowned generic broker"); }, close() {} }, routeFrame: actions.handleFrame });
   await server.start(); f.setSourceAdapter(managed.adapter);
-  return { ...f, socketPath, managed, actions, bindings, controls, workerEvents, workerLoopSettled: () => workerLoopSettled, broker: (binding: ManagedPiRuntimeBinding) => createBotBrokerClient({ socketPath, ...binding }), result: () => result, finish: resolveWorker,
+  return { ...f, socketPath, managed, actions, host, bindings, controls, workerEvents, workerLoopSettled: () => workerLoopSettled, broker: (binding: ManagedPiRuntimeBinding) => createBotBrokerClient({ socketPath, ...binding }), result: () => result, finish: resolveWorker,
     async close() { resolveWorker(); lifetime.abort(); await managed.close(); await server.close(); await f.close(); } };
 }
