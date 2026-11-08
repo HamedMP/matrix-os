@@ -1,3 +1,9 @@
+import type { TerminalTab } from "@matrix-os/contracts";
+import type { Kysely } from "kysely";
+import { createCanonicalTerminalCollaborationBridge } from "../../../packages/gateway/src/collaboration/canonical-terminal-bridge.js";
+import type { OwnerCollaborationDatabase } from "../../../packages/gateway/src/collaboration/database.js";
+import { CollaborationRepository } from "../../../packages/gateway/src/collaboration/repository.js";
+import { hasTerminalCollaborationBinding } from "../../../packages/gateway/src/collaboration/terminal-bindings.js";
 import { serve } from "@hono/node-server";
 import { Hono } from "hono";
 import { resolve } from "node:path";
@@ -27,6 +33,7 @@ export async function terminalFixture() {
   const url = process.env.MATRIX_ROUTINE_CLI_TEST_POSTGRES_URL;
   if (!url) throw new Error("MATRIX_ROUTINE_CLI_TEST_POSTGRES_URL required");
   const data = await createRealBotStateDatabase(url);
+  const ownerDb = data.db as unknown as Kysely<OwnerCollaborationDatabase>;
   const f = await proposalFixture(data.db, vi.fn, { actualSourceOnly: true, adapters: [], catalog: { revision: "fixture", drivers: [], instances: [] } });
   f.state.clock = new Date().toISOString();
   const secret = "fixture-terminal-platform", handle = "computer-one", machineId = "machine_current";
@@ -57,19 +64,35 @@ export async function terminalFixture() {
     host: { start: async input => { const reference = { path: home + "/matrix-terminal-" + "a".repeat(32) + "/io.sock" }; await input.onPrepared?.(reference); port = await input.onBound?.(startup); input.onDispatchSettled?.(); return { reference, status: "running" }; } },
     launcher: { build: async (input) => ({ command: `/fixed/${input.harness}`, args: [], cwd: f.home, env: { HOME: f.home, PATH: "/bin" }, inheritEnv: false }) },
     generation, homePath: home, computerId: scope.computerId, ownerIds: [scope.ownerId],
-    routines: { runtime: routines, binPath: resolve("packages/sync-client/bin/matrix.mjs"), endpoint: `http://127.0.0.1:${(server.address() as { port: number }).port}/api/routine-cli/execute` },
+    routines: { runtime: routines,
+      isShared: (ref, incarnation, trx) => hasTerminalCollaborationBinding((trx ?? ownerDb) as Kysely<OwnerCollaborationDatabase>, ref, incarnation),
+      binPath: resolve("packages/sync-client/bin/matrix.mjs"), endpoint: `http://127.0.0.1:${(server.address() as { port: number }).port}/api/routine-cli/execute` },
     readProcess: async pid => { const found = [supervisor, hostIdentity, root, ...(writerLive ? [writer] : [])].find(p => p.pid === pid); if (!found) throw new Error("Named process absent"); return found; } });
   const route = createTerminalWorkspaceRoutes({ runtime: terminal, homePath: f.home, managedLaunch: coordinator, terminalOwnerIds: [scope.ownerId], getPrincipal: () => f.principal });
   async function approve() {
     await expect.poll(() => routines.list(f.principal).find(a => a.status === "pending"), { timeout: 5000 }).toBeDefined();
     const view = routines.list(f.principal).find(a => a.status === "pending")!;
     const path = `/api/routine-cli/actions/${view.challengeId}/decision`, body = { actionDigest: view.actionDigest, decision: "approve" as const, clientRequestId: crypto.randomUUID() };
+    const sessionExpiresAt = Math.floor(Date.now() / 1000) + 300;
     const proof = await authenticatedApprovalProxyProof({ request: new Request(`https://app.example.test${path}`, { method: "POST", body: JSON.stringify(body) }), method: "POST", path,
-      handle, machine, platformSecret: secret, identity: { userId: scope.ownerId, handle, runtimeSlot: "primary", source: "auth", sessionProvenance: "clerk-browser", sessionExpiresAt: Math.floor(Date.now() / 1000) + 300 } });
+      handle, machine, platformSecret: secret, identity: { userId: scope.ownerId, handle, runtimeSlot: "primary", source: "auth", sessionProvenance: "clerk-browser",
+        sessionExpiresAt, verifiedHumanBrowserExpiresAt: sessionExpiresAt } });
+    expect(proof).toEqual(expect.any(String));
     await routines.submit(f.principal, view.challengeId, body, proof as string);
   }
   return { data, f, routines, terminal, store, coordinator, writer, startup, approve,
     httpCalls: () => httpCalls, port: () => port!, endWriter: () => { writerLive = false; }, endRoot: () => rootSignal.abort(), changeManager: () => { managerCurrent = false; }, observeManager: () => startup.verifyCurrent(), loseProof: () => { current = false; },
+    async shareTab(tab: TerminalTab, retireRoutineSource = true) {
+      const repository = new CollaborationRepository(ownerDb);
+      const terminalId = `${tab.workspaceId}:${tab.id}`;
+      const { id: scopeId } = await repository.createDirectScope({ scopeId: crypto.randomUUID(), ownerId: scope.ownerId,
+        organizationId: "org_terminal_fixture", kind: "terminal", resourceId: terminalId, authorityRuntimeId: "runtime_terminal_fixture" });
+      const bridge = createCanonicalTerminalCollaborationBridge({ db: ownerDb, ownerId: scope.ownerId, runtime: terminal,
+        retireRoutineSource: retireRoutineSource ? coordinator.fence : undefined });
+      const eligible = await bridge.registry.get(terminalId) as { sessionIncarnation: string; executionGeneration: number };
+      await bridge.registry.bindCollaboration(terminalId, { scopeId, ...eligible, contributorControl: true });
+      return bridge.registry.get(terminalId);
+    },
     async launch(harness: TerminalHarness = "claude") {
       const response = await route.request(`/workspaces/${workspace.id}/tabs`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ name: harness, cwd: "", managedLaunch: { harness } }) });
       expect(response.status).toBe(201); return (await response.json()).tab;

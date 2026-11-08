@@ -60,6 +60,30 @@ it.each(["root end", "held proof loss", "canonical stop fence", "target collabor
   expect(await f.data.db.selectFrom("bot_tasks").selectAll().execute()).toEqual([]);
 }, 20_000);
 
+it.each(["at the owner wait", "after issue"])("sharing the exact Terminal %s retires personal authority while keeping the tab live", async phase => {
+  f = await terminalFixture(); const tab = await f.launch(), requestId = crypto.randomUUID();
+  const ref = { workspaceId: tab.workspaceId, tabId: tab.id };
+  const execute = f.routines.execute;
+  if (phase === "after issue") f.routines.execute = async input => {
+    // Exercise the durable check independently from the same-Gateway synchronous retirement hook.
+    await f!.shareTab(tab, false);
+    return execute(input);
+  };
+  const pending = f.port().invoke({ operation: "propose", requestId, proposal }, f.writer, new AbortController().signal);
+  await expect.poll(() => f!.routines.list(f!.f.principal).find(action => action.status === "pending"), { timeout: 5000 }).toBeDefined();
+  if (phase === "after issue") await f.approve();
+  else {
+    expect(await f.shareTab(tab)).toMatchObject({ sharedControlMode: "shared", contributorControl: true });
+    expect(f.startup.signal.aborted).toBe(true);
+  }
+  expect(await pending).not.toMatchObject({ data: { receipt: { disposition: "queued" } } });
+  expect(await f.coordinator.available(ref)).toBe(false);
+  expect(await f.store.getTab(ref)).toMatchObject({ status: "running", accessScope: "owner" });
+  expect(await f.data.db.selectFrom("routine_cli_requests").selectAll().execute()).toEqual([]);
+  expect(await f.data.db.selectFrom("bot_tasks").selectAll().execute()).toEqual([]);
+  expect(await f.data.db.selectFrom("bot_approvals").selectAll().execute()).toEqual([]);
+}, 20_000);
+
 it.each(["before claim", "after claim"])("actual root end %s respects canonical target independence", async phase => {
   f = await terminalFixture(); await f.launch(); const requestId = crypto.randomUUID();
   if (phase === "before claim") {

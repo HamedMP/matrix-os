@@ -9,6 +9,7 @@ const supervisor = { pid: 10, ppid: 1, uid: 501, gid: 20, start: "10" }, hostIde
 const closes: Array<() => Promise<unknown>> = [];
 afterEach(async () => { for (const close of closes.splice(0).reverse()) await close(); });
 async function fixture(limits: { maxTabsPerWorkspace?: number; maxTabsTotal?: number; maxObservers?: number } = {}) {
+  const isShared = vi.fn(async (_ref: import("@matrix-os/contracts").TerminalRef, _incarnation: string) => false);
   const home = await mkdtemp("/tmp/t7join-"); closes.push(() => rm(home, { recursive: true, force: true }));
   const store = new TerminalWorkspaceStore({ homePath: home }); const channel = new AbortController(); let boundCurrent = true;
   const startup: RetainedTerminalStartup = { heldGeneration: "private-held-launch", signal: channel.signal, current: () => boundCurrent && !channel.signal.aborted,
@@ -23,9 +24,9 @@ async function fixture(limits: { maxTabsPerWorkspace?: number; maxTabsTotal?: nu
   const register = vi.fn(async (_producer: import("../../../packages/gateway/src/bots/routine-action-source-registry.js").RoutineSourceProducer) => { void _producer; throw new Error("No synthetic positive source registration"); });
   const coordinator = createCanonicalTerminalLaunch({ interactiveHostEquivalent: true, runtime, host, launcher: { build: vi.fn(async () => ({ command: "/fixed/claude", args: [], cwd: home, env: { HOME: home, PATH: "/bin" }, inheritEnv: false as const })) },
     generation, homePath: home, computerId: "computer-current", ownerIds: [principal.userId, "configured_platform_owner"],
-    routines: { runtime: { register }, binPath: "/fixed/matrix.mjs", endpoint: "http://127.0.0.1:4000/api/routine-cli/execute" }, readProcess: async pid => [supervisor, hostIdentity, root].find(value => value.pid === pid)! }); closes.push(coordinator.close);
+    routines: { runtime: { register }, isShared, binPath: "/fixed/matrix.mjs", endpoint: "http://127.0.0.1:4000/api/routine-cli/execute" }, readProcess: async pid => [supervisor, hostIdentity, root].find(value => value.pid === pid)! }); closes.push(coordinator.close);
   const launch = () => coordinator.launch(principal, workspace.id, { name: "Claude", cwd: "", managedLaunch: { harness: "claude" } });
-  return { coordinator, register, store, runtime, zellij, host, launch, workspace, channel, startup, home, path, port: () => port, beforeJoin: () => beforeJoin, loseProof: () => { boundCurrent = false; channel.abort(); } };
+  return { coordinator, register, isShared, store, runtime, zellij, host, launch, workspace, channel, startup, home, path, port: () => port, beforeJoin: () => beforeJoin, loseProof: () => { boundCurrent = false; channel.abort(); } };
 }
 it("call-before-join is denied without registration; source identity comes only from the actual canonical record", async () => {
   const f = await fixture(), tab = await f.launch();
@@ -135,4 +136,32 @@ it("pending dispatch has a real reserved incarnation and cannot be commandeered,
   const result = await work;
   expect(result.status).toBe("unavailable"); expect(result.nativeHost?.dispatchPending).toBeUndefined();
   expect(result.nativeHost?.stopRequested).toBe(true); expect(f.register).not.toHaveBeenCalled();
+});
+
+
+it.each(["before admission", "after admission", "lookup failure"])("denies personal routine authority when Terminal sharing changes %s", async phase => {
+  const f = await fixture();
+  if (phase === "before admission") f.isShared.mockResolvedValue(true);
+  const tab = await f.launch(), ref = { workspaceId: f.workspace.id, tabId: tab.id };
+  if (phase !== "before admission") expect(await f.coordinator.available(ref)).toBe(true);
+  if (phase === "after admission") f.isShared.mockResolvedValue(true);
+  if (phase === "lookup failure") f.isShared.mockRejectedValue(new Error("Binding lookup unavailable"));
+  await expect(f.port()!.invoke({ operation: "list" }, root, new AbortController().signal)).resolves.toMatchObject({ error: { code: "unavailable" } });
+  expect(f.register).not.toHaveBeenCalled();
+  expect(f.isShared).toHaveBeenCalledWith(ref, tab.incarnation, undefined);
+  expect(f.startup.retire).toHaveBeenCalledOnce();
+  f.isShared.mockResolvedValue(false);
+  expect(await f.coordinator.available(ref)).toBe(false);
+  expect(await f.store.getTab(ref)).toMatchObject({ status: "running", accessScope: "owner" });
+});
+
+
+it("a sharing fence applies to the exact held tab incarnation", async () => {
+  const f = await fixture(), tab = await f.launch(), ref = { workspaceId: f.workspace.id, tabId: tab.id };
+  f.coordinator.fence(ref, `ti_${"e".repeat(32)}`);
+  expect(await f.coordinator.available(ref)).toBe(true);
+  f.coordinator.fence(ref, tab.incarnation!);
+  expect(f.startup.signal.aborted).toBe(true);
+  expect(await f.coordinator.available(ref)).toBe(false);
+  expect(await f.store.getTab(ref)).toMatchObject({ status: "running" });
 });
