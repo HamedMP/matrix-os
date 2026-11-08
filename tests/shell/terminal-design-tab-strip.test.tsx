@@ -4,6 +4,12 @@ import React from "react";
 import { act, fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+vi.mock("@clerk/nextjs", () => {
+  // Standalone UI fixture: no credentials or routine approval authority.
+  const getToken = async () => null;
+  return { useAuth: () => ({ getToken, userId: "fixture-owner", sessionId: "fixture-session" }) };
+});
+
 const paneGridSpy = vi.fn();
 const { terminalSettingsState } = vi.hoisted(() => ({
   terminalSettingsState: {
