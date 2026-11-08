@@ -1,4 +1,4 @@
-import { RoutineActionIdSchema } from "@matrix-os/contracts";
+import { CanonicalChatIdSchema, RoutineActionIdSchema } from "@matrix-os/contracts";
 import { slackLinkReturnTarget } from "./slack/link-return.js";
 import { RuntimeSlotSchema } from './customer-vps-schema.js';
 import { CanonicalChatIdSchema } from '@matrix-os/contracts';
@@ -123,17 +123,25 @@ export function buildForwardedQueryString(rawUrl: string, omittedParams: readonl
   return forwarded ? `?${forwarded}` : '';
 }
 
-const ROUTINE_CONFIRMATION_PATH = /^\/vm\/[a-z0-9][a-z0-9-]{0,62}\/routine-cli\/confirm$/;
+const ROUTINE_OWNER_COMPLETION_PATH = /^\/vm\/[a-z0-9][a-z0-9-]{0,62}\/routine-cli\/(confirm|full-access)$/;
+
+export function isRoutineOwnerCompletionPath(path: string): boolean {
+  return ROUTINE_OWNER_COMPLETION_PATH.test(path);
+}
 
 /** Preserve a local navigation selector only; the Gateway still authorizes the actual decision. */
-function routineActionReturnTarget(value: string | null): string | null {
+function routineOwnerReturnTarget(value: string | null): string | null {
   if (!value || value.length > 2048 || /[#\s\\]/.test(value)) return null;
   const queryStart = value.indexOf("?");
-  if (queryStart < 0 || !ROUTINE_CONFIRMATION_PATH.test(value.slice(0, queryStart))) return null;
+  const completion = queryStart < 0 ? null : ROUTINE_OWNER_COMPLETION_PATH.exec(value.slice(0, queryStart));
+  if (!completion) return null;
+  const exactAction = completion[1] === "confirm";
+  const selector = exactAction ? "challenge" : "chat";
+  const schema = exactAction ? RoutineActionIdSchema : CanonicalChatIdSchema;
   const params = new URLSearchParams(value.slice(queryStart + 1));
-  const challenges = params.getAll("challenge"), runtimes = params.getAll("runtime");
-  if ([...params.keys()].some(key => key !== "challenge" && key !== "runtime")
-    || challenges.length !== 1 || !RoutineActionIdSchema.safeParse(challenges[0]).success
+  const selected = params.getAll(selector), runtimes = params.getAll("runtime");
+  if ([...params.keys()].some(key => key !== selector && key !== "runtime")
+    || selected.length !== 1 || !schema.safeParse(selected[0]).success
     || runtimes.length > 1 || runtimes.length === 1 && !RuntimeSlotSchema.safeParse(runtimes[0]).success) return null;
   return value;
 }
@@ -142,16 +150,16 @@ export function buildPostAuthRedirectPath(rawUrl: string): string {
   try {
     const url = new URL(rawUrl, 'https://app.matrix-os.com');
     const normalizedPath = url.pathname.replace(/^\/{2,}/, '/');
-    if (ROUTINE_CONFIRMATION_PATH.test(url.pathname)) {
+    if (isRoutineOwnerCompletionPath(url.pathname)) {
       if (url.username || url.password || /[#\s\\]/.test(rawUrl)) return '/';
-      return routineActionReturnTarget(url.pathname + url.search) ?? '/';
+      return routineOwnerReturnTarget(url.pathname + url.search) ?? '/';
     }
     const directSlackLink = slackLinkReturnTarget(url.pathname + url.search);
     if (directSlackLink && !url.hash) return directSlackLink;
     const authPage = /^\/sign-(?:in|up)(?:\/.*)?$/.test(normalizedPath);
     if (authPage && url.searchParams.getAll("redirect_url").length === 1) {
       const target = url.searchParams.get("redirect_url");
-      const linked = slackLinkReturnTarget(target) ?? routineActionReturnTarget(target);
+      const linked = slackLinkReturnTarget(target) ?? routineOwnerReturnTarget(target);
       if (linked) return linked;
     }
     const path = authPage ? '/' : normalizedPath;
