@@ -1,5 +1,5 @@
 import { NativeDispatchLeases } from "./native-dispatch-leases.js";
-import { stopCanonicalNativeHost, type NativeTerminalHosts, type NativeTabAdmission, type NativeTabCompletion, type NativeTabReservation } from "./native-host-lifecycle.js";
+import { stopCanonicalNativeHost, tabsRequiringTerminationConfirmation, type NativeTerminalHosts, type NativeTabAdmission, type NativeTabCompletion, type NativeTabReservation } from "./native-host-lifecycle.js";
 import { TerminalScrollLineSchema, type TerminalScrollState } from "@matrix-os/contracts";
 import {
   TerminalRefSchema,
@@ -604,21 +604,23 @@ export class TerminalRuntime {
     const workspaceId = TerminalWorkspaceIdSchema.parse(workspaceIdInput);
     const workspace = (await this.listWorkspaces()).find((item) => item.id === workspaceId);
     if (!workspace) throw new TerminalRuntimeError("not_found");
-    const tabs = workspace.tabs.filter((tab) => tab.status === "running" || tab.status === "starting" || tab.status === "idle");
+    const tabs = await tabsRequiringTerminationConfirmation(workspace.tabs, this.nativeHosts);
     return { runningTabs: tabs.length, tabs };
   }
 
   async deleteWorkspace(workspaceIdInput: string, input: { confirmTerminate: boolean }): Promise<void> {
     const workspaceId = TerminalWorkspaceIdSchema.parse(workspaceIdInput);
     await this.runWorkspaceMutation(async () => {
-      const impact = await this.deletionImpact(workspaceId);
-      if (impact.runningTabs > 0 && !input.confirmTerminate) {
+      if (!input.confirmTerminate && (await this.deletionImpact(workspaceId)).runningTabs > 0) {
         throw new TerminalRuntimeError("confirmation_required");
       }
       const workspace = await this.requireRuntimeWorkspace(workspaceId);
       if (!this.zellij.deleteSession) throw new TerminalRuntimeError("unavailable");
-      for (const tab of Object.values(workspace.tabs)) {
-        await stopCanonicalNativeHost(this.store, this.nativeHosts, { workspaceId, tabId: tab.id });
+      // Without confirmation, the read-only recheck under this mutation proved that no host needs a stop.
+      if (input.confirmTerminate) {
+        for (const tab of Object.values(workspace.tabs)) {
+          await stopCanonicalNativeHost(this.store, this.nativeHosts, { workspaceId, tabId: tab.id });
+        }
       }
       this.deletingWorkspaceId = workspaceId;
       try {
