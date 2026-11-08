@@ -1,7 +1,7 @@
 import { spawn } from "node:child_process";
 import { chmod, mkdtemp, mkdir, readFile, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { basename, join, resolve } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 const SCRIPT = resolve("distro/customer-vps/host-bin/matrix-github-developer-login");
@@ -123,6 +123,21 @@ if (command === "gh") {
 }
 if (command === "ssh-keygen") {
   const path = args[args.indexOf("-f") + 1];
+  if (args[0] === "-y") {
+    if (args[args.indexOf("-P") + 1] !== "") process.exit(18);
+    const rejected = {
+      "00-encrypted": "incorrect passphrase supplied to decrypt private key",
+      "01-invalid": "invalid format",
+      "00-inaccessible": "Permission denied",
+    }[basename(path)];
+    if (rejected) {
+      console.error("Load key " + path + ": " + rejected);
+      process.exit(255);
+    }
+    if (basename(path) === "02-mismatch") console.log("ssh-ed25519 T1RIRVI= derived comment");
+    else process.stdout.write(readFileSync(path + ".pub", "utf8"));
+    process.exit(0);
+  }
   writeFileSync(path, "fixture private bytes", { flag: "wx", mode: 0o600 });
   writeFileSync(path + ".pub", "ssh-ed25519 R0VORVJBVEVE fixture generated key\\n", { flag: "wx", mode: 0o644 });
   process.exit(0);
@@ -447,6 +462,41 @@ process.exit(9);
     expect(calls.some((call) => call.command === "gh" && call.args[1] === "login")).toBe(false);
     expect(calls.some((call) => call.command === "ssh-keygen")).toBe(true);
     await expect(readFile(join(root, "uploaded-key.txt"), "utf8")).resolves.toBe("ssh-ed25519 R0VORVJBVEVE\n");
+  });
+
+  it.each([true, false])("skips keys unsuitable for unattended SSH, with an alternative key: %s", async (hasAlternative) => {
+    const sshPath = join(homePath, ".ssh");
+    await mkdir(sshPath, { mode: 0o700 });
+    const unsuitable = ["00-encrypted", "01-invalid", "02-mismatch"];
+    for (const name of [...unsuitable, ...(hasAlternative ? ["03-unattended"] : [])]) {
+      await writeFile(join(sshPath, name), "fixture private bytes", { mode: 0o600 });
+      await writeFile(join(sshPath, `${name}.pub`), `ssh-ed25519 ${name === "03-unattended" ? "VU5BVFRFTkRFRA==" : "VU5TVUlUQUJMRQ=="}\n`);
+    }
+    const result = await runLogin("", {
+      FAKE_SETTINGS: "1", FAKE_SETTINGS_EXISTING: "1", FAKE_SETTINGS_NEEDS_KEY: "1", FAKE_SETTINGS_SCOPE: "admin:public_key",
+    }, true);
+    expect(result).toEqual({ code: 0, stdout: "", stderr: "" });
+    const expectedBlob = hasAlternative ? "VU5BVFRFTkRFRA==" : "R0VORVJBVEVE";
+    await expect(readFile(join(root, "uploaded-key.txt"), "utf8")).resolves.toBe(`ssh-ed25519 ${expectedBlob}\n`);
+    const config = await readFile(join(sshPath, "matrix-github.conf"), "utf8");
+    expect(config).toContain(`IdentityFile ~/.ssh/${hasAlternative ? "03-unattended" : "matrix-github/id_ed25519"}`);
+    const derived = (await commands()).filter(({ command, args }) => command === "ssh-keygen" && args[0] === "-y");
+    expect(derived.map(({ args }) => basename(args.at(-1)!))).toEqual([
+      ...unsuitable, hasAlternative ? "03-unattended" : "id_ed25519",
+    ]);
+  });
+
+  it("does not upload or generate a key after a hard key derivation failure", async () => {
+    const sshPath = join(homePath, ".ssh");
+    await mkdir(sshPath, { mode: 0o700 });
+    await writeFile(join(sshPath, "00-inaccessible"), "fixture private bytes", { mode: 0o600 });
+    await writeFile(join(sshPath, "00-inaccessible.pub"), "ssh-ed25519 RklSU1Q=\n");
+    const result = await runLogin("", {
+      FAKE_SETTINGS: "1", FAKE_SETTINGS_EXISTING: "1", FAKE_SETTINGS_NEEDS_KEY: "1", FAKE_SETTINGS_SCOPE: "admin:public_key",
+    }, true);
+    expect(result).toEqual({ code: 3, stdout: "", stderr: "" });
+    expect((await commands()).some(({ command, args }) => (command === "gh" && args[0] === "ssh-key")
+      || (command === "ssh-keygen" && args[0] !== "-y"))).toBe(false);
   });
 
   it.each(["octocat", "other-owner"])("checks the selected registered key for %s before persisting it", async (login) => {

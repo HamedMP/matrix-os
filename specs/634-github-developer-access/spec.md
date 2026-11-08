@@ -26,7 +26,8 @@ its owner-local credential store.
 
 Setup reuses a key that already authenticates the same GitHub account. If a key
 must be registered, it defaults to the first eligible local SSH key pair in the
-CLI's sorted order, or creates an owner-local key if there is no eligible pair.
+CLI's sorted order. The pair must match and work without a passphrase or hardware
+interaction. Setup creates a dedicated owner-local key if no pair qualifies.
 It uploads only the public key and verifies the SSH account with the pinned host
 keys. Missing Git author identity defaults to the verified GitHub profile and
 GitHub noreply address. Existing valid identity is preserved. The card refreshes

@@ -448,6 +448,11 @@ function isOwnerKeyFile(stat, privateKey = false) {
     && (stat.mode & (privateKey ? 0o077 : 0o022)) === 0;
 }
 
+function normalizePublicKey(text) {
+  const key = PUBLIC_KEY.exec(text.trim());
+  return key ? `${key[1]} ${key[2]}\n` : null;
+}
+
 async function readPublicKey(sshPath, name) {
   const path = join(sshPath, name);
   if (!isOwnerKeyFile(await ownerKeyStat(path), true) || !isOwnerKeyFile(await ownerKeyStat(`${path}.pub`))) return null;
@@ -458,10 +463,29 @@ async function readPublicKey(sshPath, name) {
     const bytes = Buffer.alloc(stat.size + 1);
     const { bytesRead } = await file.read(bytes);
     if (bytesRead !== stat.size) return null;
-    const key = PUBLIC_KEY.exec(bytes.toString("utf8", 0, bytesRead).trim());
-    return key ? `${key[1]} ${key[2]}\n` : null;
+    return normalizePublicKey(bytes.toString("utf8", 0, bytesRead));
   } finally {
     await file.close();
+  }
+}
+
+async function readUnattendedPublicKey(env, homePath, name) {
+  const sshPath = join(homePath, ".ssh");
+  const key = await readPublicKey(sshPath, name);
+  if (!key || key.startsWith("sk-")) return null;
+  try {
+    // Derive only the public half with an explicitly empty passphrase.
+    const derived = await run("ssh-keygen", ["-y", "-P", "", "-f", join(sshPath, name)], {
+      env: { ...env, LC_ALL: "C" },
+      cwd: homePath,
+    });
+    return normalizePublicKey(derived.stdout) === key ? key : null;
+  } catch (error) {
+    if (error instanceof CommandFailure && error.code === 255
+      && /^Load key .*: (?:incorrect passphrase supplied to decrypt private key|invalid format|error in libcrypto)\r?$/m.test(error.output)) {
+      return null;
+    }
+    throw error;
   }
 }
 
@@ -475,7 +499,7 @@ async function chooseGithubKey(env, homePath) {
     if (entry.isFile() && entry.name.endsWith(".pub") && KEY_FILENAME.test(name)) names.push(name);
   }
   for (const name of names.sort()) {
-    const key = await readPublicKey(sshPath, name);
+    const key = await readUnattendedPublicKey(env, homePath, name);
     if (key) return { name, key };
   }
   // Keep unattended credentials separate from any default owner keys. Never
@@ -485,7 +509,7 @@ async function chooseGithubKey(env, homePath) {
   if (!await ownerKeyStat(path) && !await ownerKeyStat(`${path}.pub`)) {
     await run("ssh-keygen", ["-q", "-t", "ed25519", "-N", "", "-C", "", "-f", path], { env, cwd: homePath });
   }
-  const key = await readPublicKey(sshPath, GENERATED_KEY);
+  const key = await readUnattendedPublicKey(env, homePath, GENERATED_KEY);
   if (!key) throw new Error("no safe SSH key");
   return { name: GENERATED_KEY, key };
 }
