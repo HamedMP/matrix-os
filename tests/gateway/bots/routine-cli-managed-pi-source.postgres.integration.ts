@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { BOT_INPUT_MAX_ATTACHMENTS, type CanonicalChatMessagePart } from "@matrix-os/contracts";
 import { BotBrokerError } from "../../../packages/bot-runtime/src/broker-client.js";
 import { createConnection } from "node:net";
+import { sql } from "kysely";
 import { ChatSteerDeliveryUnknownError } from "../../../packages/gateway/src/chat/steering-delivery.js";
 import { RoutineCliError } from "../../../packages/gateway/src/bots/routine-cli-errors.js";
 import { afterEach, expect, it, vi } from "vitest";
@@ -41,6 +42,84 @@ it("managed metadata request creates no target task and retains read checkpoint 
   expect(await f.data.db.selectFrom("bot_tasks").selectAll().execute()).toEqual([]);
   expect(await f.data.db.selectFrom("managed_pi_tool_checkpoints").select(["effect_class", "phase"]).execute()).toEqual([{ effect_class: "read", phase: "observed_complete" }]);
 }, 10000);
+
+it.each([
+  { scenario: "a live run", endBeforeReply: false },
+  { scenario: "a run that ends during registration", endBeforeReply: true },
+])("shares one explicit registration retry for $scenario", async ({ endBeforeReply }) => {
+  const chatId = "chat_managed_register_again", requestId = "de000000-0000-4000-8000-000000000a25";
+  const operation = { operation: "propose" as const, requestId, proposal };
+  const fixture = f = await managedPiFixture(operation, { hold: true });
+  const releaseRegistration = Promise.withResolvers<void>();
+  const register = fixture.runtime.registerManagedChat;
+  const attempts = vi.spyOn(fixture.runtime, "registerManagedChat").mockImplementation(async input => {
+    const registered = await register(input);
+    await releaseRegistration.promise;
+    return registered;
+  });
+  // A real PostgreSQL rejection rolls back registration and exercises registry cleanup.
+  await sql`ALTER TABLE routine_cli_sources ADD CONSTRAINT fixture_reject_source CHECK (false) NOT VALID`.execute(fixture.data.db);
+  let reads: Promise<unknown>[] = [];
+  try {
+    const admitted = await fixture.start(chatId, { permission: "supervised", interaction: "default" });
+    await expect.poll(() => fixture.result(), { timeout: 5000 }).toMatchObject({ ok: true,
+      content: [{ text: expect.stringContaining('"kind":"unknown"') }] });
+    expect(fixture.result()).toMatchObject({ content: [{ text: expect.stringContaining(requestId) }] });
+    await expect.poll(() => fixture.workerLoopSettled(), { timeout: 5000 }).toBe(true);
+    expect(attempts).toHaveBeenCalledOnce();
+    expect(await fixture.data.db.selectFrom("routine_cli_sources").selectAll().execute()).toEqual([]);
+    await sql`ALTER TABLE routine_cli_sources DROP CONSTRAINT fixture_reject_source`.execute(fixture.data.db);
+    const binding = fixture.bindings[0]!, broker = fixture.broker(binding);
+    await expect(broker.tool({ toolCallId: "call_managed_routine", capability: "routine.cli", args: operation }))
+      .rejects.toMatchObject({ code: "denied" });
+    expect(attempts).toHaveBeenCalledOnce();
+    expect(fixture.httpCalls()).toBe(0);
+
+    const cancelledCaller = new AbortController();
+    const read = (toolCallId: string, signal?: AbortSignal) => broker.tool({ toolCallId, capability: "routine.cli", args: { operation: "request", requestId } }, signal);
+    const firstRead = read("call_new_read_one", cancelledCaller.signal), secondRead = read("call_new_read_two");
+    reads = [firstRead, secondRead];
+    const observed = Promise.allSettled(reads);
+    await expect.poll(() => attempts.mock.calls.length, { timeout: 3000 }).toBe(2);
+    const checkpoints = () => fixture.data.db.selectFrom("managed_pi_tool_checkpoints").select("tool_call_id")
+      .where("phase", "=", "dispatched").orderBy("tool_call_id").execute();
+    await expect.poll(checkpoints, { timeout: 3000 }).toEqual([{ tool_call_id: "call_new_read_one" }, { tool_call_id: "call_new_read_two" }]);
+    const sources = () => fixture.data.db.selectFrom("routine_cli_sources").select(["source_context", "revoked_at"]).execute();
+    await expect.poll(sources, { timeout: 3000 }).toMatchObject([{ revoked_at: null,
+      source_context: { identity: { kind: "chat_run", route: "managed", chatId, runId: admitted.run.id } } }]);
+    expect(fixture.httpCalls()).toBe(0);
+    if (endBeforeReply) {
+      fixture.f.registry.cancelInference(binding);
+      releaseRegistration.resolve();
+    } else {
+      cancelledCaller.abort();
+      await expect(firstRead).rejects.toMatchObject({ code: "stale_generation" });
+      const laterRead = read("call_new_read_three");
+      reads.push(laterRead);
+      await expect.poll(async () => (await checkpoints()).some(row => row.tool_call_id === "call_new_read_three"), { timeout: 3000 }).toBe(true);
+      const completing = Promise.all([secondRead, laterRead]);
+      releaseRegistration.resolve();
+      await expect(completing).resolves.toMatchObject([
+        { ok: true, content: [{ text: expect.stringContaining('"not_observed"') }] },
+        { ok: true, content: [{ text: expect.stringContaining('"not_observed"') }] },
+      ]);
+    }
+    await observed;
+    expect(attempts).toHaveBeenCalledTimes(2);
+    expect(fixture.httpCalls()).toBe(endBeforeReply ? 0 : 2);
+    expect(fixture.sourceEvents.some(event => event.type === "approval.requested")).toBe(false);
+    expect(await fixture.data.db.selectFrom("routine_cli_requests").selectAll().execute()).toEqual([]);
+    expect(await fixture.data.db.selectFrom("bot_approvals").selectAll().execute()).toEqual([]);
+    fixture.finish();
+    await fixture.f.canonical.drain();
+    expect(await sources()).toMatchObject([{ revoked_at: expect.any(Date) }]);
+    await expect(read("call_after_ended")).rejects.toMatchObject({ code: "stale_generation" });
+    expect(attempts).toHaveBeenCalledTimes(2);
+  } finally {
+    releaseRegistration.resolve();
+    await Promise.allSettled(reads);
+  }
+}, 15000);
 
 it.each(["accepted", "unknown"])("keeps routine authority through a rejected attachment steer, then fences %s worker delivery", async delivery => {
   const chatId = "chat_managed_steer_budget";
