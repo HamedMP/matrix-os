@@ -32,7 +32,7 @@ import type { TerminalHarness } from "../../../packages/gateway/src/terminal/nat
 export async function terminalFixture() {
   const url = process.env.MATRIX_ROUTINE_CLI_TEST_POSTGRES_URL;
   if (!url) throw new Error("MATRIX_ROUTINE_CLI_TEST_POSTGRES_URL required");
-  const data = await createRealBotStateDatabase(url);
+  const data = await createRealBotStateDatabase(url, { routineAuthority: true });
   const ownerDb = data.db as unknown as Kysely<OwnerCollaborationDatabase>;
   const f = await proposalFixture(data.db, vi.fn, { actualSourceOnly: true, adapters: [], catalog: { revision: "fixture", drivers: [], instances: [] } });
   f.state.clock = new Date().toISOString();
