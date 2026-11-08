@@ -153,7 +153,7 @@ export function ScheduleCenter({ client, onClose, onOpenBotChat, onNewSchedule, 
         <div><dt style={chatAgentMutedStyle}>Status</dt><dd>{statusLabel(detail.routine)}</dd></div>
         <div><dt style={chatAgentMutedStyle}>Next run</dt><dd className="break-words">{nextRun(detail.routine)}</dd></div>
         <div><dt style={chatAgentMutedStyle}>Schedule</dt><dd>{routineScheduleCopy(detail.routine.proposal.schedule).frequency}</dd><dd>{routineScheduleCopy(detail.routine.proposal.schedule).timezone}</dd></div>
-        <div><dt style={chatAgentMutedStyle}>Runs in</dt><dd className="break-words">{onOpenBotChat&&detail.routine.targetAvailable?<button type="button" className="underline underline-offset-2" aria-label="Open task Chat" disabled={pending} onClick={()=>void act(async()=>{await onOpenBotChat(detail.routine.chatId);},onClose,false)}>{names[detail.routine.botId]??"Private Bot"}</button>:names[detail.routine.botId]??"Private Bot"} · {detail.routine.computerId ?? "Computer unavailable"}</dd></div>
+        <div><dt style={chatAgentMutedStyle}>Runs in</dt><dd className="break-words">{onOpenBotChat?<button type="button" className="underline underline-offset-2" aria-label="Open task Chat" disabled={pending} onClick={()=>void act(async()=>{await onOpenBotChat(detail.routine.chatId);},onClose,false)}>{names[detail.routine.botId]??"Private Bot"}</button>:names[detail.routine.botId]??"Private Bot"} · {detail.routine.computerId ?? "Computer unavailable"}</dd></div>
       </dl>
       {rowButtons(detail.routine)}
       <div className="flex flex-wrap gap-2">
