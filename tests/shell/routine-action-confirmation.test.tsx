@@ -5,7 +5,7 @@ import { act, cleanup, fireEvent, render, renderHook, screen, waitFor } from "@t
 import { RoutineActionConfirmation, RoutineActionInbox } from "../../packages/ui/src/routine-action/RoutineActionConfirmation";
 import { useRoutineAction } from "../../packages/ui/src/routine-action/use-routine-action";
 import { createRoutineActionBrowserClient } from "../../packages/ui/src/routine-action/client";
-import { routineActionConfirmationUrl } from "@matrix-os/contracts";
+import { RoutineActionViewSchema, routineActionConfirmationUrl } from "@matrix-os/contracts";
 const id = `rcact_${"a".repeat(32)}`;
 const view = { challengeId: id, actionDigest: "d".repeat(64), sourceKind: "terminal_launch" as const, operation: "pause" as const,
   intent: { operation: "pause", requestId: "de000000-0000-4000-8000-000000000001", routineId: `rt_${"b".repeat(24)}`, baseRevision: 3 },
@@ -132,6 +132,34 @@ it("rejects retained callbacks after unmount and after the displayed challenge l
     await act(async () => { await oldSubmit("approve"); });
     expect(submit).not.toHaveBeenCalled();
   } finally { vi.useRealTimers(); }
+});
+
+it.each([true, false])("reads a full bounded inbox with large escaped proposals (content length: %s)", async hasLength => {
+  const challenges = Array.from({ length: 128 }, (_, index) => ({
+    ...view, challengeId: `rcact_${index.toString(16).padStart(32, "0")}`, operation: "propose", title: "Allow routine propose?",
+    intent: { operation: "propose", requestId: view.intent.requestId, proposal: {
+      name: "Large confirmation", prompt: "\u0001".repeat(2780), schedule: { kind: "interval", everyMs: 60_000 },
+      selection: { instanceId: "matrix_chatgpt_plan", model: "fixture-model" }, authorizedEffects: ["read"],
+    } },
+  }));
+  expect(RoutineActionViewSchema.array().safeParse(challenges).success).toBe(true);
+  const body = JSON.stringify({ challenges });
+  const headers = hasLength ? { "content-length": String(new TextEncoder().encode(body).byteLength) } : undefined;
+  const client = createRoutineActionBrowserClient("https://app.example.test/vm/owner-pc", async () => null,
+    async () => new Response(body, { headers }));
+  expect(body.length).toBeGreaterThan(128 * 1024);
+  await expect(client.list(new AbortController().signal)).resolves.toEqual(challenges);
+});
+
+it("enforces byte limits on oversized streamed inboxes and individual challenge reads", async () => {
+  const client = createRoutineActionBrowserClient("https://app.example.test/vm/owner-pc", async () => null, async url => {
+    const list = String(url).endsWith("/actions");
+    const response = JSON.stringify(list ? { challenges: [view] } : view);
+    return new Response(response + " ".repeat(list ? 3 * 1024 * 1024 : 128 * 1024));
+  });
+  const signal = new AbortController().signal;
+  await expect(client.list(signal)).rejects.toThrow("Routine confirmation unavailable");
+  await expect(client.read(id, signal)).rejects.toThrow("Routine confirmation unavailable");
 });
 
 it("settles an aborted token wait promptly even when Clerk never resolves", async () => {

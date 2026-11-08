@@ -1,12 +1,18 @@
 import { z } from "zod/v4";
 import { ROUTINE_ACTION_PATH, RoutineActionIdSchema, RoutineActionViewSchema, RoutineActionSubmitSchema,
   type RoutineActionSubmit } from "@matrix-os/contracts";
+
+const MAX_INBOX_CHALLENGES = 128;
+const MAX_CHALLENGE_RESPONSE_BYTES = 128 * 1024;
+// A serialized proposal is bounded at 20 KiB, plus room for escaped labels and the envelope.
+const MAX_INBOX_RESPONSE_BYTES = MAX_INBOX_CHALLENGES * 24 * 1024;
+
 export type RoutineActionRequest = (input: { path: string; method: "GET" | "POST"; body?: RoutineActionSubmit; signal: AbortSignal }) => Promise<unknown>;
 export function createRoutineActionClient(request: RoutineActionRequest) {
   if (typeof request !== "function") throw new Error("Routine confirmation unavailable");
   return {
     read: async (id: string, signal: AbortSignal) => RoutineActionViewSchema.parse(await request({ path: `${ROUTINE_ACTION_PATH}/${RoutineActionIdSchema.parse(id)}`, method: "GET", signal })),
-    list: async (signal: AbortSignal) => z.strictObject({ challenges: z.array(RoutineActionViewSchema).max(128) }).parse(await request({ path: ROUTINE_ACTION_PATH, method: "GET", signal })).challenges,
+    list: async (signal: AbortSignal) => z.strictObject({ challenges: z.array(RoutineActionViewSchema).max(MAX_INBOX_CHALLENGES) }).parse(await request({ path: ROUTINE_ACTION_PATH, method: "GET", signal })).challenges,
     submit: async (id: string, body: RoutineActionSubmit, signal: AbortSignal) => z.strictObject({ submission: z.enum(["accepted", "already_submitted"]) }).parse(await request({
       path: `${ROUTINE_ACTION_PATH}/${RoutineActionIdSchema.parse(id)}/decision`, method: "POST", body: RoutineActionSubmitSchema.parse(body), signal,
     })),
@@ -37,7 +43,9 @@ export function createRoutineActionBrowserClient(gatewayUrl: string, getToken: (
         headers: { ...(token ? { authorization: `Bearer ${token}` } : {}), ...(input.body ? { "content-type": "application/json" } : {}) },
         ...(input.body ? { body: JSON.stringify(input.body) } : {}) }), cancelled]);
       requireLive();
-      if (!response.ok || !response.body || Number(response.headers.get("content-length")) > 128 * 1024) {
+      const responseLimit = input.method === "GET" && input.path === ROUTINE_ACTION_PATH
+        ? MAX_INBOX_RESPONSE_BYTES : MAX_CHALLENGE_RESPONSE_BYTES;
+      if (!response.ok || !response.body || Number(response.headers.get("content-length")) > responseLimit) {
         await response.body?.cancel(); throw new Error("Routine confirmation unavailable");
       }
       const reader = response.body.getReader(), chunks: Uint8Array[] = []; let bytes = 0;
@@ -45,7 +53,7 @@ export function createRoutineActionBrowserClient(gatewayUrl: string, getToken: (
       signal.addEventListener("abort", abortRead, { once: true });
       try {
         for (;;) { requireLive(); const chunk = await Promise.race([reader.read(), cancelled]); requireLive(); if (chunk.done) break;
-          bytes += chunk.value.byteLength; if (bytes > 128 * 1024) { await reader.cancel(); throw new Error("Routine confirmation unavailable"); } chunks.push(chunk.value); }
+          bytes += chunk.value.byteLength; if (bytes > responseLimit) { await reader.cancel(); throw new Error("Routine confirmation unavailable"); } chunks.push(chunk.value); }
         const data = new Uint8Array(bytes); let offset = 0; for (const chunk of chunks) { data.set(chunk, offset); offset += chunk.byteLength; }
         return JSON.parse(new TextDecoder().decode(data));
       } finally { signal.removeEventListener("abort", abortRead); reader.releaseLock(); }
