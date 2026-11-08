@@ -306,10 +306,11 @@ export function createManagedPiRuntime(deps: {
         || run.chatId !== input.chatId || run.stopping || run.finished || run.signal?.aborted) throw new Error("Matrix AI run unavailable");
       if (!run.inputs) throw new Error("Matrix AI steering unavailable");
       const binding = run.binding;
-      run.routineSource?.end();
       const accepted = await run.inputs.steer(binding, input.parts, input.prompt, async payload => {
         await deps.assertSource?.(binding, run.signal!);
         run.inputs!.assertAuthorized(binding);
+        // Retire authority at dispatch, after input and binding validation have passed.
+        run.routineSource?.end();
         return deliverAcknowledgedSteer(() => deps.host.client.runBot({ runtimeHandle: binding.runtimeHandle, executionGeneration: binding.executionGeneration,
           command: { version: 1, kind: "bot.steer", runId: input.runId, ...payload } }));
       });

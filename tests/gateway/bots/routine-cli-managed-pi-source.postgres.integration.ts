@@ -1,5 +1,9 @@
+import { mkdir, writeFile } from "node:fs/promises";
+import { join } from "node:path";
+import { BOT_INPUT_MAX_ATTACHMENTS, type CanonicalChatMessagePart } from "@matrix-os/contracts";
 import { BotBrokerError } from "../../../packages/bot-runtime/src/broker-client.js";
 import { createConnection } from "node:net";
+import { ChatSteerDeliveryUnknownError } from "../../../packages/gateway/src/chat/steering-delivery.js";
 import { RoutineCliError } from "../../../packages/gateway/src/bots/routine-cli-errors.js";
 import { afterEach, expect, it, vi } from "vitest";
 import { managedPiFixture } from "./routine-cli-managed-pi-support.js";
@@ -37,6 +41,50 @@ it("managed metadata request creates no target task and retains read checkpoint 
   expect(await f.data.db.selectFrom("bot_tasks").selectAll().execute()).toEqual([]);
   expect(await f.data.db.selectFrom("managed_pi_tool_checkpoints").select(["effect_class", "phase"]).execute()).toEqual([{ effect_class: "read", phase: "observed_complete" }]);
 }, 10000);
+
+it.each(["accepted", "unknown"])("keeps routine authority through a rejected attachment steer, then fences %s worker delivery", async delivery => {
+  const chatId = "chat_managed_steer_budget";
+  const attachment = (i: number): Extract<CanonicalChatMessagePart, { type: "attachment_reference" }> => ({
+    type: "attachment_reference", attachmentId: `att_steer_${i}`, kind: "file", label: `steer-${i}.txt`,
+    mimeType: "text/plain", ownerReference: `temporary/desktop-chat/steer-${i}.txt`,
+  });
+  f = await managedPiFixture({ operation: "list" }, { hold: true, inputHistory: async () => ({
+    references: [{ part: attachment(0), seq: 1 }], assertCurrent: async () => undefined,
+  }) });
+  await mkdir(join(f.f.home, "temporary/desktop-chat"), { recursive: true });
+  const parts = Array.from({ length: BOT_INPUT_MAX_ATTACHMENTS }, (_, i) => attachment(i + 1));
+  await Promise.all([attachment(0), ...parts].map(part => writeFile(join(f!.f.home, part.ownerReference!), "attachment")));
+  let sourceSignal: AbortSignal | undefined;
+  const register = f.runtime.registerManagedChat;
+  f.runtime.registerManagedChat = input => { sourceSignal = input.signal; return register(input); };
+  const send = f.host.client.runBot.bind(f.host.client);
+  let deliverySourceAborted: boolean | undefined;
+  const hostCall = vi.spyOn(f.host.client, "runBot").mockImplementation(request => {
+    if (request.command.kind !== "bot.steer") return send(request);
+    deliverySourceAborted = sourceSignal?.aborted;
+    return Promise.resolve({ ok: true, reply: delivery === "accepted" ? { acknowledged: true } : {} });
+  });
+  const admitted = await f.start(chatId, { permission: "supervised", interaction: "default" });
+  await expect.poll(() => f!.result(), { timeout: 5000 }).toMatchObject({ ok: true });
+  const binding = f.bindings[0]!, broker = f.broker(binding);
+  const list = (toolCallId: string) => broker.tool({ toolCallId, capability: "routine.cli", args: { operation: "list" } });
+  const steer = { owner: { type: "personal" as const, ownerId: binding.ownerId }, chatId, runId: admitted.run.id,
+    turnId: admitted.turn.id, clientRequestId: "req_steer_budget", prompt: "Use the corrected input." };
+  await expect(f.managed.adapter.steer!({ ...steer, parts })).rejects.toMatchObject({ code: "invalid_arguments" });
+  expect(hostCall.mock.calls.some(([request]) => request.command.kind === "bot.steer")).toBe(false);
+  await expect(list("call_after_rejected_steer")).resolves.toMatchObject({ ok: true });
+  expect(sourceSignal?.aborted).toBe(false);
+
+  const delivered = f.managed.adapter.steer!({ ...steer, clientRequestId: "req_steer_corrected", parts: parts.slice(0, 1) });
+  if (delivery === "accepted") await expect(delivered).resolves.toBeUndefined();
+  else await expect(delivered).rejects.toBeInstanceOf(ChatSteerDeliveryUnknownError);
+  expect(hostCall.mock.calls.filter(([request]) => request.command.kind === "bot.steer")).toHaveLength(1);
+  expect(deliverySourceAborted).toBe(true);
+  await expect(list("call_after_worker_steer")).rejects.toMatchObject({ code: "stale_generation" });
+  expect(f.httpCalls()).toBe(2);
+  f.finish();
+  await f.f.canonical.drain();
+}, 15000);
 
 it.each(["owner", "Chat", "run", "turn", "provider", "scope", "worker", "generation"])("rejects wrong trusted %s instead of fabricating managed authority", async field => {
   f = await managedPiFixture({ operation: "list" });
