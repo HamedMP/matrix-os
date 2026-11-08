@@ -44,9 +44,10 @@ if (fixture.FAKE_ENV_LOG) appendFileSync(fixture.FAKE_ENV_LOG, JSON.stringify({
 }) + "\\n");
 if (command === "gh") {
   if (args[0] === "auth" && args[1] === "status") {
-    console.log(JSON.stringify({ hosts: fixture.FAKE_SETTINGS_EXISTING ? { "github.com": [{
-      active: true, login: "octocat", state: "success", scopes: fixture.FAKE_SETTINGS_SCOPE || "repo, read:org"
-    }] } : {} }));
+    const accounts = fixture.FAKE_SETTINGS_EXISTING
+      ? [{ active: true, login: "octocat", state: "success", scopes: fixture.FAKE_SETTINGS_SCOPE || "repo, read:org" }]
+      : process.env.GH_HOST ? [{ active: true, login: "", state: "error", tokenSource: "default" }] : [];
+    console.log(JSON.stringify({ hosts: accounts.length ? { "github.com": accounts } : {} }));
     process.exit(0);
   }
   if (args[0] === "config" && args[1] === "set") process.exit(0);
@@ -433,7 +434,7 @@ process.exit(9);
     expect(`${result.stdout}\n${result.stderr}`).not.toContain("c3ludGhldGljX3N0ZGVycl9rZXlfYm9keQ==");
     expect(result.stdout).toContain("[redacted private key]");
   });
-  it("runs unattended device authorization, exposes only the code and uploads the first valid key pair", async () => {
+  it("starts device authorization on a signed-out computer and uploads the first valid key pair", async () => {
     const sshPath = join(homePath, ".ssh");
     await mkdir(sshPath, { mode: 0o700 });
     await writeFile(join(sshPath, "00-orphan.pub"), "ssh-ed25519 T1JQSEFO\n");

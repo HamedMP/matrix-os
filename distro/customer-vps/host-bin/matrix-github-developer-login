@@ -419,7 +419,10 @@ async function githubProfile(env, homePath) {
 }
 
 async function activeGithubAccount(env, cwd) {
-  const result = await run("gh", ["auth", "status", "--hostname", "github.com", "--active", "--json", "hosts"], { env, cwd });
+  // gh 2.86 adds an empty-login host when GH_HOST is set on a signed-out computer.
+  const statusEnv = { ...env };
+  delete statusEnv.GH_HOST;
+  const result = await run("gh", ["auth", "status", "--hostname", "github.com", "--active", "--json", "hosts"], { env: statusEnv, cwd });
   const { hosts } = JSON.parse(result.stdout);
   if (!hosts || typeof hosts !== "object" || Array.isArray(hosts)) throw new Error("invalid GitHub status");
   const entries = hosts["github.com"];
