@@ -13,6 +13,7 @@ import { migrateRoutineCliProposalsV15 } from "./routine-cli-proposal-migration.
 import { sql, type Transaction } from "kysely";
 import { migrateRoutineCliRequestsV14 } from "./routine-cli-request-migration.js";
 import { migrateRoutineCliSourcesV13 } from "./routine-cli-source-migration.js";
+import { migrateRoutineDirectChatV17 } from "./routine-direct-chat-migration.js";
 import { migrateRoutineCliPreferencesV12 } from "./routine-cli-preference-migration.js";
 import { migrateBotRoutinesV11 } from "./routine-migration.js";
 import { migrateBotQuestionSourceV9, migrateBotQuestionThreadsV10 } from "./v9-compatibility.js";
@@ -371,4 +372,5 @@ export const BOT_MIGRATIONS: readonly BotMigration[] = [
   { version: 14, name: "routine_cli_requests", up: migrateRoutineCliRequestsV14 },
   { version: 15, name: "routine_cli_proposals", up: migrateRoutineCliProposalsV15 },
   { version: 16, name: "routine_chat_origin", up: migrateRoutineChatOriginV16 },
+  { version: 17, name: "routine_direct_chat", up: migrateRoutineDirectChatV17 },
 ];

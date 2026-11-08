@@ -14,6 +14,7 @@ export const REMAINING_POSTGRES_FILES = [
   'tests/gateway/bots/interactions-repository.test.ts',
   'tests/gateway/bots/managed-custom-recovery.test.ts',
   'tests/gateway/bots/memory-repository.test.ts',
+  'tests/gateway/bots/routine-direct-chat-contexts.test.ts',
   'tests/gateway/bots/sessions-repository.test.ts',
   'tests/gateway/bots/tasks-repository.test.ts',
   'tests/gateway/chat-order-title.test.ts',

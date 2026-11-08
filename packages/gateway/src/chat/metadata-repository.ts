@@ -1,3 +1,4 @@
+import { publicChatIdPredicate } from "./routine-direct-visibility.js";
 import { chatImportHarnessSql, chatImportSource } from "./import-source.js";
 import { CanonicalChatIdSchema, CanonicalChatModelSelectionSchema, CanonicalOwnerScopeSchema, CanonicalUpdateChatTitleRequestSchema, type CanonicalUpdateChatTitleRequest } from "@matrix-os/contracts";
 import { sql, type Kysely, type Transaction, type Selectable } from "kysely";
@@ -33,7 +34,8 @@ export async function listChats(deps: MetadataDependencies, ownerInput: ChatOwne
       .select(sql<string>`to_char(activity_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"')`
         .as("cursor_activity_at"))
       .where("owner_type", "=", owner.type)
-      .where("owner_id", "=", owner.ownerId);
+      .where("owner_id", "=", owner.ownerId)
+      .where(publicChatIdPredicate(sql.ref("chats.id")));
     if (input.unreadOnly) query = query.where(unreadChatPredicate(owner.ownerId));
     if (input.lifecycle) query = query.where("lifecycle", "=", input.lifecycle);
     if (input.projectId !== undefined) query = input.projectId === null

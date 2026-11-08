@@ -25,6 +25,36 @@ describe("CanonicalChatOrchestrator", () => {
   });
 
 
+  it("requires private canonical provenance even for an owner using a scheduler-shaped request ID", async () => {
+    const chatId = "chat_routine_0123456789abcdef0123456789abcdef";
+    await repository.create(owner, { id: chatId, clientRequestId: "req_create_scheduler", title: "Scheduler" });
+    const providerStart = vi.fn(adapter(async function* () {
+      yield { type: "run.completed", outcome: "completed" };
+    }).start);
+    const orchestrator = new CanonicalChatOrchestrator({
+      repository,
+      catalog: { getCatalog: async () => catalog() },
+      adapters: new CanonicalChatProviderRegistry([adapter(providerStart)]),
+    });
+    const internalLooking = { userId: owner.ownerId, source: "configured-container" as const };
+    const input = {
+      clientRequestId: "req_cli_routine_0123456789abcdef0123456789abcdef",
+      baseRevision: 0,
+      parts: [{ type: "text" as const, text: "Untrusted prompt" }],
+      selection: { instanceId: "codex_default", model: "gpt-5.6-sol" },
+      interactionMode: "default" as const,
+      permissionMode: "supervised" as const,
+    };
+    try {
+      await expect(orchestrator.admitTurn(internalLooking, owner, chatId, input)).rejects.toMatchObject({ status: 404 });
+      await expect(orchestrator.enqueueQueuedTurn(internalLooking, owner, chatId, input)).rejects.toMatchObject({ status: 404 });
+      expect(providerStart).not.toHaveBeenCalled();
+      expect((await repository.exportChat(owner, chatId))?.turns).toEqual([]);
+    } finally {
+      await orchestrator.close();
+    }
+  });
+
   it("commits admission before Provider work, revalidates the root, and replays normalized output", async () => {
     await repository.create(owner, {
       id: "chat_orchestrated",

@@ -3,7 +3,8 @@ import { CanonicalChatIdSchema, CanonicalChatMessageIdSchema } from "#canonical-
 import { BotInteractionSchema, botInteractionPayloadByteLimit } from "#bots/interactions";
 import { IsoTimestampSchema } from "#contract-primitives";
 import { RoutineChatReceiptPartSchema } from "#routine-chat-receipt";
-export { RoutineChatReceiptPartSchema, type RoutineChatReceiptPart } from "#routine-chat-receipt";
+export { RoutineChatReceiptPartSchema, ROUTINE_DIRECT_CHAT_ID_PATTERN, ROUTINE_DIRECT_BOT_ID_PATTERN,
+  isRoutineDirectChatId, isRoutineDirectBotId, type RoutineChatReceiptPart } from "#routine-chat-receipt";
 
 const ROUTINE_CHAT_ORIGIN_PAGE_LIMIT = 32;
 // Budget 1 KiB for the response envelope, 1 KiB per approval's metadata,
