@@ -101,6 +101,45 @@ it("does not abandon an atomically committed pending proposal after recovery", a
   expect(await f.db.selectFrom("bot_approvals").selectAll().execute()).toHaveLength(1);
   expect(vi.mocked(f.runBot).mock.calls.filter(([input]) => input.command.kind === "bot.run")).toHaveLength(0);
 });
+it("preserves the resolved proposal run but fails its lost answer continuation", async () => {
+  const owner = { type: "personal" as const, ownerId: OWNER };
+  const { createBotContinuationAdmitter } = await import("../../../packages/gateway/src/bots/continuations.js");
+  const { recoverOrphanedRun } = await import("../../../packages/gateway/src/chat/orphaned-run-recovery.js");
+  await f.submit(); await f.canonical.drain();
+  const proposal = await f.db.selectFrom("routine_cli_proposals").selectAll().executeTakeFirstOrThrow();
+  const pending = await f.db.selectFrom("bot_interactions").selectAll().executeTakeFirstOrThrow();
+  const { continuation } = await f.interactions.resolve(OWNER, pending.chat_id, pending.interaction_id,
+    { kind: "approval", decision: "approve", baseRevision: Number(pending.revision) });
+  expect(continuation?.clientRequestId).toBe(`req_answer_${pending.interaction_id}`);
+  const task = () => f.db.selectFrom("bot_tasks").select(["status", "run_id"]).where("task_id", "=", pending.task_id).executeTakeFirstOrThrow();
+  await f.tasks.abandon({ ownerId: OWNER, taskId: pending.task_id });
+  expect(await task()).toEqual({ status: "waiting_person", run_id: proposal.run_id });
+
+  let releaseWorker!: () => void;
+  const workerLost = new Promise<void>(resolve => { releaseWorker = resolve; });
+  vi.mocked(f.runBot).mockImplementation(async ({ command }) => {
+    if (command.kind === "bot.run") await workerLost;
+    return { ok: true, reply: { runId: command.runId, status: "failed", toolActions: 0, sessionRevision: 1 } };
+  });
+  try {
+    await createBotContinuationAdmitter({ repository: f.chats, orchestrator: f.canonical })(f.principal, continuation!);
+    const [context] = await f.chats.listActiveRunContexts(owner, 1);
+    const run = context!.latestRun;
+    expect(run.id).not.toBe(proposal.run_id);
+    await expect.poll(() => task()).toEqual({ status: "running", run_id: run.id });
+    await expect.poll(async () => (await f.chats.getAdapterState(owner, {
+      runId: run.id, driverKind: run.driverKind, instanceId: run.instanceId,
+    }))?.state).toMatchObject({ taskId: pending.task_id });
+    await expect(recoverOrphanedRun({ owner, run, repository: f.chats, adapter: f.adapter,
+      messageId: runId => `msg_${runId}`, completedAt: f.state.clock })).resolves.toBe(true);
+    expect(await f.db.selectFrom("chat_runs").select("status").where("id", "=", run.id).executeTakeFirstOrThrow())
+      .toEqual({ status: "failed" });
+    expect(await task()).toEqual({ status: "failed", run_id: run.id });
+  } finally {
+    releaseWorker();
+    await f.canonical.drain();
+  }
+});
 it("rolls pending interaction/approval/waiting/progress back when Stop wins before commit", async () => {
   const real = f.approvals.proposeWithin;
   f.approvals.proposeWithin = async (tx, binding, proposal) => { const result = await real(tx, binding, proposal); await f.tasks.cancel(binding.runId); return result; };
