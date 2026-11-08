@@ -70,7 +70,9 @@ it("actual delegated invocation and existing typed bridge run the fixed publishe
   });
   const tools = createBotToolDispatcher({ homePath: f.f.home, routines: { propose: direct, list: direct, control: direct } as never, nativeTask: native });
   const broker = createBotBrokerActions({ db: f.data.db, registry: f.f.registry, sessions: createBotSessionsRepository(f.data.db), checkpoints: createBotCheckpointsRepository(f.data.db), tools,
-    runs: f.f.tasks.runSource, events: f.f.tasks.eventSink, inference: { lifetime: new AbortController().signal } as never });
+    runs: f.f.tasks.runSource, events: f.f.tasks.eventSink, inference: { lifetime: new AbortController().signal } as never,
+    // A real CLI subprocess cannot start and receive the owner decision within this ordinary tool budget.
+    toolTimeoutMs: 5 });
   try {
     vi.mocked(f.f.runBot).mockImplementation(async input => {
       if (input.command.kind !== "bot.run") return { ok: true, reply: {} };
