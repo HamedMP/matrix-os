@@ -17,18 +17,9 @@ describe("Desktop Chat provider artwork", () => {
     const kind = id === "claude" ? "claude_code" : id;
     const { container } = render(<ProviderDriverGlyph kind={kind} size={24} />);
     const glyph = container.querySelector(`[data-provider-glyph="${kind}"]`);
-    expect(glyph).toHaveStyle({ height: "24px", width: "24px" });
-    if (kind === "hermes") {
-      expect(glyph?.tagName).toBe("IMG");
-      expect(glyph).toHaveAttribute("src", hermesProviderIcon);
-      expect(glyph).toHaveAttribute("alt", "");
-      expect(glyph).toHaveAttribute("height", "24");
-      expect(glyph).toHaveAttribute("width", "24");
-    } else {
-      expect(glyph).toHaveStyle({ background: option.color });
-      expect(glyph?.querySelector("img")).toHaveAttribute("src", `.${option.logoSrc}`);
-      expect(glyph?.querySelector("img")).toHaveAttribute("alt", "");
-    }
+    expect(glyph).toHaveStyle({ height: "24px", width: "24px", background: option.color });
+    expect(glyph?.querySelector("img")).toHaveAttribute("src", `.${option.logoSrc}`);
+    expect(glyph?.querySelector("img")).toHaveAttribute("alt", "");
     expect(glyph).toHaveAttribute("aria-hidden", "true");
   });
 
@@ -36,7 +27,7 @@ describe("Desktop Chat provider artwork", () => {
     const { container } = render(<ProviderDriverGlyph kind="hermes" size={20} />);
     const glyph = container.querySelector('[data-provider-glyph="hermes"]');
     expect(glyph).toBeInstanceOf(HTMLImageElement);
-    expect(glyph).toHaveAttribute("src", expect.stringContaining("hermes-provider.png"));
+    expect(glyph).toHaveAttribute("src", hermesProviderIcon);
     expect(glyph).toHaveAttribute("alt", "");
     expect(glyph).toHaveAttribute("aria-hidden", "true");
     expect(glyph).toHaveAttribute("width", "20");
