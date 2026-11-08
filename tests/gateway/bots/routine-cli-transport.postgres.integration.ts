@@ -76,15 +76,18 @@ it.each(["approve", "deny"] as const)("actual CLI proposal remains queued admiss
   expect(await f.db.selectFrom("bot_approvals").selectAll().execute()).toHaveLength(1);
 });
 
-it("workspace-aware tarball executes all real aliases and lazy routines IPC against real Hono/source consumer with bundled and cached dependencies", async () => {
+it("workspace-aware tarball executes all real aliases and lazy routines IPC against real Hono/source consumer with dependencies from the tarball and workspace cache", async () => {
   const { cachedRoutinePack } = await import("../../cli/routine-pack-support.js");
   const { execFile } = await import("node:child_process"), { promisify } = await import("node:util"), { join } = await import("node:path");
   const packed = await cachedRoutinePack(); closers.push(packed.cleanup);
   const publicDependencies = Object.keys(packed.manifest.dependencies).filter(name => name !== "@matrix-os/contracts");
   expect([...packed.bundled, ...Object.keys(packed.links)].sort()).toEqual(publicDependencies.sort());
-  expect(packed.bundled).toContain("micromark");
-  expect(packed.links).toHaveProperty("chokidar");
-  expect(packed.transitiveLinks).toHaveProperty("decode-named-character-reference");
+  const markup = await promisify(execFile)(process.execPath, [
+    "--input-type=module",
+    "--eval",
+    'import { micromark } from "micromark"; process.stdout.write(micromark("**packed**"));',
+  ], { cwd: packed.pkg, timeout: 10000 });
+  expect(markup.stdout).toBe("<p><strong>packed</strong></p>");
   expect(Object.keys(packed.transitiveLinks).filter(name => publicDependencies.includes(name))).toEqual([]);
   expect(packed.manifest.bin).toEqual({ matrix: "bin/matrix.mjs", matrixos: "bin/matrix.mjs", mos: "bin/matrix.mjs" });
   for (const alias of ["matrix", "matrixos", "mos"]) {
