@@ -187,16 +187,21 @@ it.each(["closed service", "missing generation"])("proven predescriptor %s leave
   await expect(f.client.deleteWorkspace(f.workspace.id, { confirmTerminate: true })).resolves.toBeUndefined();
 });
 it("public completion cannot drop recovery while the actual producer is held before native launch", async () => {
-  const f = await canonicalServiceFixture(true), work = f.start(); let completionDenied = false, deleteDenied = false;
-  await f.launchStarted;
+  const f = await canonicalServiceFixture(true), work = f.start();
+  await Promise.race([f.launchStarted, work]);
   const tab = (await f.store.listWorkspaces())[0]!.tabs[0]!, ref = { workspaceId: f.workspace.id, tabId: tab.id };
   try {
-    try { await f.client.completeNativeTab(ref, { expectedIncarnation: tab.incarnation!, nativeHost: { path: tab.nativeHost!.path, generation: tab.nativeHost!.generation }, attach: false } as never); }
-    catch { completionDenied = true; }
-    try { await f.client.deleteTab(ref); } catch { deleteDenied = true; }
+    expect(tab.nativeHost?.dispatchPending).toBe(true);
+    const completion = { expectedIncarnation: tab.incarnation!,
+      nativeHost: { path: tab.nativeHost!.path, generation: tab.nativeHost!.generation }, attach: false };
+    await expect(f.client.completeNativeTab(ref, completion as never))
+      .rejects.toMatchObject({ name: "TerminalRuntimeError", code: "invalid_request", message: "Invalid terminal runtime request" });
+    await expect(f.client.completeNativeTab(ref, { ...completion, settlementToken: "0".repeat(64), outcome: "never-dispatched" }))
+      .rejects.toMatchObject({ name: "TerminalRuntimeError", code: "conflict", message: "Terminal state changed" });
+    await expect(f.client.deleteTab(ref))
+      .rejects.toMatchObject({ name: "TerminalRuntimeError", code: "unavailable", message: "Terminal operation unavailable" });
   } finally { f.releaseLaunch(); }
-  await work.catch(() => undefined);
-  expect(completionDenied).toBe(true); expect(deleteDenied).toBe(true);
+  await expect(work).resolves.toMatchObject({ id: tab.id, status: "unavailable", nativeHost: { path: tab.nativeHost!.path, stopRequested: true } });
   expect(await f.store.getTab(ref)).toBeDefined(); expect([...f.units.values()]).toEqual([true]); expect(f.register).not.toHaveBeenCalled();
 });
 
