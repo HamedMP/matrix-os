@@ -10,6 +10,7 @@ export type BotRoutineControlCommit = Pick<BotRoutine, "ownerId" | "botId" | "ch
 export function createBotRoutineControl(deps: {
   db: BotExecutor; approvals: Pick<BotRoutineApprovals, "authorize">; now: () => string;
   stopFire: (ownerId: string, chatId: string, fire: BotRoutineFire) => Promise<void>;
+  cancelUnstarted: (tx: BotStateTransaction, ownerId: string, fireId: string, at: string) => Promise<boolean | void>;
 }) {
   return {
     async controlWithin(tx: BotStateTransaction, ownerId: string, botId: string, routineId: string, raw: unknown, chatId?: string) {
@@ -19,12 +20,19 @@ export function createBotRoutineControl(deps: {
       if (!existing || existing.botId !== botId || chatId !== undefined && existing.chatId !== chatId) throw new BotStateError("not_found");
       if (existing.revision !== input.baseRevision) throw new BotStateError("revision_conflict");
       if (existing.status === "archived") throw new BotStateError("invalid_transition");
+      const activeFire = existing.status === "paused" || input.status !== "active"
+        ? await repository.activeFire(ownerId, routineId) : undefined;
       if (input.status === "active") {
-        if (await repository.hasUncertain(ownerId, routineId, tx.db)) throw new BotStateError("conflict");
+        // Keep the pause fence until previously dispatched work is settled or recorded as uncertain.
+        if (activeFire || await repository.hasUncertain(ownerId, routineId, tx.db)) throw new BotStateError("conflict");
         if (!await deps.approvals.authorize({ ...existing, status: "active" }, tx.db)) throw new BotStateError("invalid_input");
       }
-      const routine = await repository.control({ ownerId, routineId, ...input, now: deps.now() }, tx.db);
-      await tx.publish(routine.chatId, "bot.authority.changed", { agentId: botId, revision: routine.revision });
+      const at = deps.now();
+      const routine = await repository.control({ ownerId, routineId, ...input, now: at }, tx.db);
+      // Dispatch takes the same routine row lock. Cancel unstarted work before another control can resume it.
+      const cancelled = activeFire?.status === "claimed" && activeFire.attempts === 0
+        && await deps.cancelUnstarted(tx, ownerId, activeFire.fire_id, at);
+      if (!cancelled) await tx.publish(routine.chatId, "bot.authority.changed", { agentId: botId, revision: routine.revision });
       return routine;
     },
     /** No transaction/capability is retained. ACK is never proof of worker exit or external effects. */

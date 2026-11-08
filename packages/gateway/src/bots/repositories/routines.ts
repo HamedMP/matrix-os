@@ -176,6 +176,11 @@ export function createBotRoutinesRepository(db: BotExecutor, options: { now?: ()
       return Boolean(await ex.selectFrom("bot_routine_fires").select("fire_id").where("owner_id", "=", ownerId)
         .where("routine_id", "=", routineId).where("status", "=", "uncertain").limit(1).executeTakeFirst());
     },
+    /** Control holds the routine row lock; claim permits only one unfinished occurrence. */
+    async activeFire(ownerId: string, routineId: string) {
+      return db.selectFrom("bot_routine_fires").select(["fire_id", "status", "attempts"]).where("owner_id", "=", ownerId)
+        .where("routine_id", "=", routineId).where("status", "in", ["claimed", "dispatched"]).limit(1).executeTakeFirst();
+    },
     /** Active occurrences for this committed control, not display history or a later resumed generation. */
     async activeFires(ownerId: string, routineId: string, control: Pick<BotRoutine, "status" | "revision">,
       afterId?: string, ex: BotExecutor = db) {

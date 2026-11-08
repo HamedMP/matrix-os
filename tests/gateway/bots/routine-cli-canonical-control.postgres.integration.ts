@@ -94,6 +94,57 @@ it("source revoke acquires its gate while postcommit cancellation is blocked", a
     expect(await f.repo.getFire(OWNER, running.fire.fireId)).toMatchObject({ status: "uncertain" });
   } finally { release.resolve(); await Promise.allSettled([request, ...(revoke ? [revoke] : [])]); }
 });
+it("fences a claimed occurrence before resume even if pause postcommit cancellation is delayed", async () => {
+  await f.db.updateTable("bot_routines").set({ status: "active" }).where("routine_id", "=", f.id).execute();
+  const old = await f.repo.claim({ ownerId: OWNER, routineId: f.id, scheduledFor: at(60_000),
+    nextFireAt: at(120_000), now: at(60_000) });
+  expect(old).toMatchObject({ status: "claimed", attempts: 0 });
+  f.state.clock = at(60_000);
+  const entered = deferred(), release = deferred();
+  const pause = f.execute(f.operation("pause", 2), { ...f.adapter, afterMutationCommit: async intent => {
+    entered.resolve(); await release.promise; await f.adapter.afterMutationCommit(intent);
+  } });
+  void pause.catch(() => undefined);
+  try {
+    await reached(entered.promise);
+    expect(await f.control("resume", 3, 101)).toMatchObject({ receipt: { routine: { status: "active", revision: 4 } } });
+    expect(await f.repo.dispatch({ ownerId: OWNER, fireId: old!.fireId, now: at(60_000) })).toBeUndefined();
+    expect(await f.repo.getFire(OWNER, old!.fireId)).toMatchObject({ status: "cancelled" });
+    expect(await f.db.selectFrom("bot_tasks").select("status").where("task_id", "=", old!.taskId).executeTakeFirst())
+      .toEqual({ status: "cancelled" });
+    const later = await f.repo.claim({ ownerId: OWNER, routineId: f.id, scheduledFor: at(120_000),
+      nextFireAt: at(180_000), now: at(120_000) });
+    expect(later).toMatchObject({ status: "claimed" });
+    release.resolve();
+    expect(await pause).toMatchObject({ receipt: { routine: { status: "paused", revision: 3 } }, execution: { stop: "unconfirmed" } });
+    expect(await f.repo.getFire(OWNER, later!.fireId)).toMatchObject({ status: "claimed" });
+  } finally { release.resolve(); await Promise.allSettled([pause]); }
+});
+
+it("does not reopen a paused routine before its dispatched occurrence settles", async () => {
+  const running = await runningCanonicalFire(f);
+  f.state.clock = at(60_000);
+  const cancel = vi.fn(async () => {
+    await f.repo.finish({ ownerId: OWNER, fireId: running.fire.fireId, status: "cancelled", now: f.state.clock });
+  });
+  f.execution.connect({ repository: f.chats, orchestrator: { cancelRun: cancel } } as never);
+  const entered = deferred(), release = deferred();
+  const pause = f.execute(f.operation("pause", running.revision), { ...f.adapter, afterMutationCommit: async intent => {
+    entered.resolve(); await release.promise; await f.adapter.afterMutationCommit(intent);
+  } });
+  void pause.catch(() => undefined);
+  try {
+    await reached(entered.promise);
+    await expect(f.control("resume", running.revision + 1, 101)).rejects.toMatchObject({ code: "invalid_input" });
+    expect(await f.repo.get(OWNER, f.id)).toMatchObject({ status: "paused", revision: running.revision + 1 });
+    expect(cancel).not.toHaveBeenCalled();
+    release.resolve();
+    expect(await pause).toMatchObject({ receipt: { disposition: "applied" }, execution: { stop: "unconfirmed" } });
+    expect(cancel).toHaveBeenCalledExactlyOnceWith({ type: "personal", ownerId: OWNER }, TARGET_A.chatId, running.runId);
+    expect(await f.control("resume", running.revision + 1, 102)).toMatchObject({ receipt: { routine: { status: "active" } } });
+  } finally { release.resolve(); await Promise.allSettled([pause]); }
+});
+
 it("does not cancel a newer resumed occurrence when an older pause postcommit phase is delayed", async () => {
   const entered = deferred(), release = deferred();
   const pause = f.execute(f.operation("pause"), { ...f.adapter, afterMutationCommit: async intent => {
