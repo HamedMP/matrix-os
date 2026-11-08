@@ -19,6 +19,7 @@ import {
   type CanonicalSubmitChatInputRequest,
   type CanonicalChatDetailResponse,
   canonicalChatApprovals,
+  canonicalChatDisplayedIncomingSeq,
   canonicalChatExecutionControls,
 } from "@matrix-os/contracts";
 import {
@@ -870,7 +871,7 @@ export function useCanonicalChatState({ initialDraft, initialCollaborationView, 
     openSharedHome,
     unreadOnly, setUnreadOnly,
     readState: selectedDetail?.record.readState,
-    displayedThroughSeq: Math.max(0, ...(selectedDetail?.messages ?? []).filter((message) => message.role === "assistant" && message.state === "committed").map((message) => message.seq)),
+    displayedThroughSeq: canonicalChatDisplayedIncomingSeq(selectedDetail?.messages ?? []),
     updateReadState,
     messages,
     sessionId: activeChatId,

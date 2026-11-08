@@ -1,7 +1,7 @@
 import { z } from "zod/v4";
 import { CanonicalChatDetailResponseSchema, CanonicalChatRecordSchema, CanonicalChatStreamEventSchema, CanonicalChatStreamServerFrameSchema } from "#canonical-chat-api";
 import { CanonicalChatMessageSchema } from "#canonical-chat";
-import type { CanonicalChatSafeError } from "#canonical-chat";
+import type { CanonicalChatMessage, CanonicalChatSafeError } from "#canonical-chat";
 export { canonicalChatApprovals, canonicalChatApprovalOutcome, canonicalChatApprovalTitle, type CanonicalChatApprovalView } from "#canonical-chat-approvals";
 export { supervisedToolApproval, supervisedToolApprovalCopy, supervisedToolRetryDraft, supervisedToolRetryPrompt, SUPERVISED_TOOL_APPROVAL_TTL_MS, type SupervisedToolApproval, type SupervisedToolApprovalSource } from "#supervised-tool-approval";
 
@@ -54,6 +54,19 @@ export type CanonicalChatContent = z.infer<typeof CanonicalChatContentSchema>;
 export type CanonicalChatContentFrame = z.infer<typeof CanonicalChatContentFrameSchema>;
 export const CanonicalChatTransportFrameSchema = z.union([CanonicalChatStreamServerFrameSchema, CanonicalChatContentFrameSchema]);
 export type CanonicalChatTransportFrame = z.infer<typeof CanonicalChatTransportFrameSchema>;
+
+/** Acknowledge only committed incoming messages from the displayed Chat window. */
+export function canonicalChatDisplayedIncomingSeq(messages: readonly CanonicalChatMessage[]): number {
+  let throughSeq = 0;
+  for (const message of messages) {
+    if (message.state !== "committed") continue;
+    if (message.role === "assistant" || (message.role === "system"
+      && message.parts.some(part => part.type === "routine_receipt" && part.engine === "matrix"))) {
+      throughSeq = Math.max(throughSeq, message.seq);
+    }
+  }
+  return throughSeq;
+}
 
 /** Older strict Chat parsers cannot read new funding error codes. */
 export const ChatFundingWireVersionSchema = z.enum(["0", "1"]).default("0");

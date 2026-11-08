@@ -1,4 +1,5 @@
 import type {
+  CanonicalChatMessage,
   CanonicalChatRun,
   CanonicalChatRunActivity,
   CanonicalChatInspectorProjection,
@@ -40,6 +41,26 @@ export interface CanonicalChatFixture {
 }
 
 const now = "2026-08-25T00:00:00.000Z";
+
+export function routineReceiptReadFixture(chatId: string): CanonicalChatMessage[] {
+  const base = { chatId, createdAt: now };
+  return [
+    { ...base, id: "msg_reply", seq: 1, role: "assistant", state: "committed",
+      parts: [{ type: "text", text: "An earlier reply" }] },
+    { ...base, id: "msg_receipt", seq: 2, role: "system", state: "committed",
+      parts: [{
+        type: "routine_receipt", engine: "matrix", kind: "output", status: "completed", attempt: 1,
+        routineId: "rt_" + "a".repeat(24), fireId: "fire_" + "b".repeat(24),
+        scheduledFor: now, canonicalChatId: "chat_target", canonicalTaskId: "task_target", model: "fixture-model",
+      }, { type: "text", text: "The scheduled result" }] },
+    { ...base, id: "msg_user", seq: 3, role: "user", state: "committed",
+      parts: [{ type: "text", text: "A user message" }] },
+    { ...base, id: "msg_system", seq: 4, role: "system", state: "committed",
+      parts: [{ type: "text", text: "An unrelated system note" }] },
+    { ...base, id: "msg_pending", seq: 5, role: "assistant", state: "pending",
+      parts: [{ type: "text", text: "An in-progress reply" }] },
+  ];
+}
 
 function runStatus(state: CanonicalChatFixtureState): CanonicalChatRun["status"] | undefined {
   if (state === "idle") return undefined;

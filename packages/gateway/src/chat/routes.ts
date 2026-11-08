@@ -15,6 +15,7 @@ import {
   ChatAssistantTextWireVersionSchema,
   ChatQuestionDescriptionWireVersionSchema,
   ChatMessageWireVersionSchema,
+  ChatRoutineReceiptWireVersionSchema,
   projectChatMessageResponse,
   CanonicalAcknowledgeChatCompletionRequestSchema,
   CanonicalCancelChatRunRequestSchema,
@@ -328,6 +329,8 @@ export function createCanonicalChatRoutes(options: {
       || (context.req.queries("assistantTextVersion")?.length ?? 0) > 1
       || !ChatQuestionDescriptionWireVersionSchema.safeParse(context.req.query("questionDescriptionVersion")).success
       || (context.req.queries("questionDescriptionVersion")?.length ?? 0) > 1
+      || !ChatRoutineReceiptWireVersionSchema.safeParse(context.req.query("routineReceiptVersion")).success
+      || (context.req.queries("routineReceiptVersion")?.length ?? 0) > 1
       || !ChatInputWireVersionSchema.safeParse(context.req.query("inputVersion")).success
       || !ChatCommandPreviewWireVersionSchema.safeParse(context.req.query("commandPreviewVersion")).success
       || (context.req.queries("commandPreviewVersion")?.length ?? 0) > 1
@@ -564,6 +567,7 @@ export function createCanonicalChatRoutes(options: {
         ChatCommandPreviewWireVersionSchema.parse(context.req.query("commandPreviewVersion")),
         ChatAssistantTextWireVersionSchema.parse(context.req.query("assistantTextVersion")),
         ChatQuestionDescriptionWireVersionSchema.parse(context.req.query("questionDescriptionVersion")),
+        ChatRoutineReceiptWireVersionSchema.parse(context.req.query("routineReceiptVersion")),
       ));
     } catch (error: unknown) {
       return handleError(context, error);
@@ -587,6 +591,7 @@ export function createCanonicalChatRoutes(options: {
         ChatCommandPreviewWireVersionSchema.parse(context.req.query("commandPreviewVersion")),
         ChatAssistantTextWireVersionSchema.parse(context.req.query("assistantTextVersion")),
         ChatQuestionDescriptionWireVersionSchema.parse(context.req.query("questionDescriptionVersion")),
+        ChatRoutineReceiptWireVersionSchema.parse(context.req.query("routineReceiptVersion")),
       ));
     } catch (error: unknown) {
       return handleError(context, error);
@@ -615,6 +620,7 @@ export function createCanonicalChatRoutes(options: {
         ChatCommandPreviewWireVersionSchema.parse(context.req.query("commandPreviewVersion")),
         ChatAssistantTextWireVersionSchema.parse(context.req.query("assistantTextVersion")),
         ChatQuestionDescriptionWireVersionSchema.parse(context.req.query("questionDescriptionVersion")),
+        ChatRoutineReceiptWireVersionSchema.parse(context.req.query("routineReceiptVersion")),
       ), 202);
     } catch (error: unknown) {
       return handleError(context, error);
@@ -711,6 +717,7 @@ export function createCanonicalChatRoutes(options: {
         ChatCommandPreviewWireVersionSchema.parse(context.req.query("commandPreviewVersion")),
         ChatAssistantTextWireVersionSchema.parse(context.req.query("assistantTextVersion")),
         ChatQuestionDescriptionWireVersionSchema.parse(context.req.query("questionDescriptionVersion")),
+        ChatRoutineReceiptWireVersionSchema.parse(context.req.query("routineReceiptVersion")),
       ));
     } catch (error: unknown) {
       return handleError(context, error);
@@ -741,6 +748,7 @@ export function createCanonicalChatRoutes(options: {
         ChatCommandPreviewWireVersionSchema.parse(context.req.query("commandPreviewVersion")),
         ChatAssistantTextWireVersionSchema.parse(context.req.query("assistantTextVersion")),
         ChatQuestionDescriptionWireVersionSchema.parse(context.req.query("questionDescriptionVersion")),
+        ChatRoutineReceiptWireVersionSchema.parse(context.req.query("routineReceiptVersion")),
       ));
       } catch (error: unknown) {
         return handleError(context, error);

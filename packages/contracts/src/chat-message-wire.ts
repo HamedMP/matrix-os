@@ -12,6 +12,9 @@ export type ChatAssistantTextWireVersion = z.infer<typeof ChatAssistantTextWireV
 /** Long option explanations require explicit support from strict released clients. */
 export const ChatQuestionDescriptionWireVersionSchema = z.enum(["0", "1"]).default("0");
 export type ChatQuestionDescriptionWireVersion = z.infer<typeof ChatQuestionDescriptionWireVersionSchema>;
+/** Released strict parsers accept the receipt's text but need to opt in to its metadata. */
+export const ChatRoutineReceiptWireVersionSchema = z.enum(["0", "1"]).default("0");
+export type ChatRoutineReceiptWireVersion = z.infer<typeof ChatRoutineReceiptWireVersionSchema>;
 
 /** Independent of SSE framing: protocol-2 clients shipped with message-v1 parsers. */
 export const ChatMessageWireVersionSchema = z.enum(["1", "2"]).default("1");
@@ -25,7 +28,7 @@ export type ChatCommandPreviewWireVersion = z.infer<typeof ChatCommandPreviewWir
 const LegacyToolPreviewSchema = canonicalSafeLabel(1_000, 4_000);
 
 export function chatMessageVersionUrl(path: string): string {
-  return `${path}${path.includes("?") ? "&" : "?"}messageVersion=2&inputVersion=1&commandPreviewVersion=1&assistantTextVersion=1&questionDescriptionVersion=1`;
+  return `${path}${path.includes("?") ? "&" : "?"}messageVersion=2&inputVersion=1&commandPreviewVersion=1&assistantTextVersion=1&questionDescriptionVersion=1&routineReceiptVersion=1`;
 }
 
 function commandPreviewActivities(activities: CanonicalChatRunActivity[], version: ChatCommandPreviewWireVersion): CanonicalChatRunActivity[] {
@@ -77,16 +80,32 @@ function legacyInputActivities(activities: CanonicalChatRunActivity[], version: 
   });
 }
 
+/** Keep committed receipt text and identity while withholding private execution references. */
+export function projectLegacyRoutineReceiptMessage<T extends { role: string; parts: CanonicalChatMessage["parts"] }>(message: T): T {
+  if (message.role !== "system" || !message.parts.some(part => part.type === "routine_receipt")) return message;
+  const parts = message.parts.filter(part => part.type !== "routine_receipt");
+  return { ...message, parts: parts.length > 0 ? parts : [{ type: "text", text: "Scheduled task update." }] };
+}
+
 /** Project validated wire responses only; never change repository/outbox data. */
 export function projectChatMessageResponse<T extends {
   message?: CanonicalChatMessage;
   messages?: CanonicalChatMessage[];
   activities?: CanonicalChatRunActivity[];
-}>(response: T, version: ChatMessageWireVersion, inputVersion: ChatInputWireVersion = "0", commandPreviewVersion: ChatCommandPreviewWireVersion = "0", assistantTextVersion: ChatAssistantTextWireVersion = "0", questionDescriptionVersion: ChatQuestionDescriptionWireVersion = "0"): T {
-  if (version === "2" && !response.activities && assistantTextVersion === "1") return response;
-  const message = (value: CanonicalChatMessage) => {
+}>(
+  response: T,
+  version: ChatMessageWireVersion,
+  inputVersion: ChatInputWireVersion = "0",
+  commandPreviewVersion: ChatCommandPreviewWireVersion = "0",
+  assistantTextVersion: ChatAssistantTextWireVersion = "0",
+  questionDescriptionVersion: ChatQuestionDescriptionWireVersion = "0",
+  routineReceiptVersion: ChatRoutineReceiptWireVersion = "0",
+): T {
+  if (version === "2" && !response.activities && assistantTextVersion === "1" && routineReceiptVersion === "1") return response;
+  const message = (value: CanonicalChatMessage): CanonicalChatMessage => {
     const projected = version === "1" ? legacyMessage(value) : value;
-    return assistantTextVersion === "1" ? projected : projectLegacyAssistantMessage(projected);
+    const compatible = assistantTextVersion === "1" ? projected : projectLegacyAssistantMessage(projected);
+    return routineReceiptVersion === "1" ? compatible : projectLegacyRoutineReceiptMessage(compatible);
   };
   return {
     ...response,
@@ -103,12 +122,13 @@ export function projectChatMessageFrame(
   commandPreviewVersion: ChatCommandPreviewWireVersion = "0",
   assistantTextVersion: ChatAssistantTextWireVersion = "0",
   questionDescriptionVersion: ChatQuestionDescriptionWireVersion = "0",
+  routineReceiptVersion: ChatRoutineReceiptWireVersion = "0",
 ): CanonicalChatTransportFrame {
   if (frame.type !== "chat.content") return frame;
   // Legacy snapshots may regroup parts: raw delta indices would no longer match.
   if (assistantTextVersion === "0") return { type: "chat.event", event: frame.event };
   return { ...frame, content: {
-    ...projectChatMessageResponse(frame.content, version, inputVersion, commandPreviewVersion, assistantTextVersion, questionDescriptionVersion),
+    ...projectChatMessageResponse(frame.content, version, inputVersion, commandPreviewVersion, assistantTextVersion, questionDescriptionVersion, routineReceiptVersion),
     ...(version === "1" && frame.content.messageDelta ? { messageDelta: {
       ...frame.content.messageDelta,
       message: legacyMessage(frame.content.messageDelta.message),
