@@ -5,7 +5,7 @@ import { markChatNavigation, chatImportSourceVersionUrl } from "@matrix-os/ui";
 import { MAX_AGENT_ATTACHMENT_BYTES, CanonicalChatNavigationResponseSchema, canonicalAssistantOutputMessages, type CanonicalChatNavigationResponse } from "@matrix-os/contracts";
 import { CanonicalUpdateChatReadStateRequestSchema, type CanonicalUpdateChatReadStateRequest } from "@matrix-os/contracts";
 import { createChatAgentClient, filePreviewContentUrl, type ChatAgentClient } from "@matrix-os/ui";
-import { chatEventVersionUrl, chatFundingVersionUrl, chatMessageVersionUrl, chatReadStateVersionUrl } from "@matrix-os/contracts";
+import { botRoutineOriginReadAccept, chatEventVersionUrl, chatFundingVersionUrl, chatMessageVersionUrl, chatReadStateVersionUrl } from "@matrix-os/contracts";
 import {
   CanonicalChatQueueAdmissionResponseSchema, CanonicalChatQueueCancellationResponseSchema,
   CanonicalQueueChatTurnRequestSchema, CanonicalCancelQueuedChatTurnRequestSchema, CanonicalChatQueuedTurnIdSchema,
@@ -213,9 +213,13 @@ export function createCanonicalShellChatClient(options: {
   return {
     routineFullAccess,
     browserPermissions: createBrowserPermissionClient((path, method, body) => request(path, { method, ...(body === undefined ? {} : { headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) }) })),
-    agents: createChatAgentClient((path, method, body, requestOptions) => request(path, { method,
-      ...(body === undefined ? {} : { headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) }),
-    }, requestOptions)),
+    agents: createChatAgentClient((path, method, body, requestOptions) => {
+      const accept = botRoutineOriginReadAccept(path, method);
+      return request(path, { method,
+        ...(body === undefined ? {} : { headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) }),
+        ...(accept ? { headers: { Accept: accept } } : {}),
+      }, requestOptions);
+    }),
     async openEventStream({ cursor, signal }) {
       const response = await fetchFn(chatImportSourceVersionUrl(chatFundingVersionUrl(chatEventVersionUrl(chatReadStateVersionUrl(chatMessageVersionUrl(`${options.gatewayUrl}/api/chats/events`))))), {
         method: "GET",

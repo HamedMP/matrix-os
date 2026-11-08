@@ -70,7 +70,7 @@ it("reads durable routine status only in the principal's owner scope", async () 
 it("provides one owner-scoped schedule center and refuses caller-supplied owner or malformed cursors", async () => {
   const { app, routines } = setup();
   expect((await app.request("/api/bot-routines")).status).toBe(200);
-  expect(routines.center).toHaveBeenCalledWith(OWNER, {}, false);
+  expect(routines.center).toHaveBeenCalledWith(OWNER, {});
   expect((await app.request("/api/bot-routines?ownerId=foreign")).status).toBe(400);
   expect((await app.request("/api/bot-routines?before=invalid&beforeId=bad")).status).toBe(400);
   expect(routines.center).toHaveBeenCalledTimes(1);

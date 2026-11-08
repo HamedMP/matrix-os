@@ -6,7 +6,7 @@ import { postWithProviderCatalogRecovery } from "../features/chat/provider-catal
 import { CanonicalUpdateChatReadStateRequestSchema, type CanonicalUpdateChatReadStateRequest } from "@matrix-os/contracts";
 import { createChatAgentClient, type ChatAgentClient } from "@matrix-os/ui";
 import { CanonicalSubmitChatInputRequestSchema, CanonicalChatInputSubmissionResponseSchema, type CanonicalSubmitChatInputRequest, type CanonicalChatInputSubmissionResponse } from "@matrix-os/contracts";
-import { chatMessageVersionUrl, chatReadStateVersionUrl } from "@matrix-os/contracts";
+import { botRoutineOriginReadAccept, chatMessageVersionUrl, chatReadStateVersionUrl } from "@matrix-os/contracts";
 import {
   CanonicalAcknowledgeChatCompletionRequestSchema,
   CanonicalCancelChatRunRequestSchema,
@@ -236,10 +236,14 @@ export function createCanonicalChatClient(
       ? transport.get(input.path, { signal: input.signal, maxBytes: 32 * 1024, cache: "no-store" })
       : transport.post(input.path, input.body, { signal: input.signal, maxBytes: 32 * 1024 })),
     browserPermissions: createBrowserPermissionClient((path, method, body) => method === "GET" ? transport.get(path) : transport.delete(path, body)),
-    agents: createChatAgentClient((path, method, body, requestOptions) => method === "GET" ? requestOptions ? transport.get(path, requestOptions) : transport.get(path)
-      : method === "POST" ? requestOptions ? transport.post(path, body, requestOptions) : transport.post(path, body)
-        : method === "DELETE" ? transport.delete(path)
-          : transport.patch(path, body)),
+    agents: createChatAgentClient((path, method, body, requestOptions) => {
+      const accept = botRoutineOriginReadAccept(path, method);
+      if (accept) return transport.get(path, { ...requestOptions, headers: { Accept: accept } });
+      return method === "GET" ? requestOptions ? transport.get(path, requestOptions) : transport.get(path)
+        : method === "POST" ? requestOptions ? transport.post(path, body, requestOptions) : transport.post(path, body)
+          : method === "DELETE" ? transport.delete(path)
+            : transport.patch(path, body);
+    }),
     async navigation() {
       markChatNavigation("request");
       return CanonicalChatNavigationResponseSchema.parse(await transport.get("/api/chat-navigation?version=1&limit=1000", {maxBytes:2*1024*1024, headers:{"X-Matrix-Chat-Import-Source":"1"}}));

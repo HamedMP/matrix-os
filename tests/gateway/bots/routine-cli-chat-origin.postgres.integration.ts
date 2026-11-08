@@ -147,14 +147,20 @@ it("keeps legacy strict Schedule list and detail parsers compatible while negoti
   const legacyCenter = BotRoutineCenterResponseSchema.extend({ items: legacyItem.array() });
   const legacyDetail = BotRoutineDetailResponseSchema.extend({ routine: legacyItem });
   const list = "/api/bot-routines", detail = `${list}/${routine.routine_id}`;
-  const read = async (path: string) => {
-    const response = await app.request(path);
+  const read = async (path: string, accept?: string) => {
+    const response = await app.request(path, accept ? { headers: { Accept: accept } } : undefined);
     expect(response.status).toBe(200);
     return response.json();
   };
 
   expect(legacyCenter.parse(await read(list)).items).toHaveLength(1);
   expect(legacyDetail.parse(await read(detail)).routine).toMatchObject({ routineId: routine.routine_id });
+  const accept = "application/json; matrix-routine-origin=1";
+  expect(BotRoutineCenterResponseSchema.parse(await read(`${list}?archived=false`, accept)).items)
+    .toMatchObject([{ originChatId: "chat_source", originAvailable: true }]);
+  expect(BotRoutineDetailResponseSchema.parse(await read(detail, accept)).routine)
+    .toMatchObject({ originChatId: "chat_source", originAvailable: true });
+  expect(legacyDetail.parse(await read(`${detail}?originVersion=0`, accept)).routine).toMatchObject({ routineId: routine.routine_id });
   expect(BotRoutineCenterResponseSchema.parse(await read(`${list}?archived=false&originVersion=1`)).items)
     .toMatchObject([{ originChatId: "chat_source", originAvailable: true }]);
   expect(BotRoutineDetailResponseSchema.parse(await read(`${detail}?originVersion=1`)).routine)
