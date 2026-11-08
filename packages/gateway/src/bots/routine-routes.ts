@@ -3,7 +3,7 @@ import { bodyLimit } from "hono/body-limit";
 import { z } from "zod/v4";
 import { ChatAgentIdSchema, BotRoutineIdSchema } from "@matrix-os/contracts";
 import { BotRoutineControlSchema } from "@matrix-os/contracts";
-import { BotRoutineCenterQuerySchema, BotRoutineEditRequestSchema, BotRoutineOriginWireVersionSchema } from "@matrix-os/contracts";
+import { BotRoutineCenterQuerySchema, BotRoutineEditRequestSchema, BotRoutineOriginWireVersionSchema, BOT_ROUTINE_ORIGIN_ACCEPT } from "@matrix-os/contracts";
 import { BotStateError } from "./repositories/shared.js";
 import type { BotRoutineExecution } from "./routine-execution.js";
 import { isRequestPrincipalError, mapRequestPrincipalError, type RequestPrincipal } from "../request-principal.js";
@@ -23,7 +23,8 @@ function error(c: Context, code: keyof typeof errors) {
 }
 const originVersions = z.array(BotRoutineOriginWireVersionSchema).max(1);
 function includesOrigin(c: Context) {
-  return originVersions.parse(c.req.queries("originVersion") ?? [])[0] === "1";
+  const version = originVersions.parse(c.req.queries("originVersion") ?? [])[0];
+  return version === undefined ? c.req.header("Accept") === BOT_ROUTINE_ORIGIN_ACCEPT : version === "1";
 }
 
 export function createBotRoutineRoutes(deps: {
@@ -57,7 +58,9 @@ export function createBotRoutineRoutes(deps: {
     const input = BotRoutineCenterQuerySchema.parse(query);
     if (!deps.routines?.center) return error(c, "unavailable");
     c.header("Cache-Control", "private, no-store");
-    return c.json(await deps.routines.center(principal.userId, input, includesOrigin(c)));
+    const result = includesOrigin(c) ? await deps.routines.center(principal.userId, input, true)
+      : await deps.routines.center(principal.userId, input);
+    return c.json(result);
   });
   app.get("/api/bot-routines/:routineId", async c => {
     const principal = deps.getPrincipal(c), routineId = BotRoutineIdSchema.parse(c.req.param("routineId"));

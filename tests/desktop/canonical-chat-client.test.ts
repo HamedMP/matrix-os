@@ -37,6 +37,17 @@ function api(overrides: Partial<ApiClient> = {}): ApiClient {
 }
 
 describe("canonical Chat client", () => {
+  it("negotiates Schedule origin metadata on reads without retrying a typed transport error", async () => {
+    const get = vi.fn().mockResolvedValueOnce({ items: [], pending: [], nextCursor: null })
+      .mockRejectedValueOnce(new AppError("unauthorized", { httpStatus: 401 }));
+    const client = createCanonicalChatClient(api({ get }));
+    await expect(client.agents.bots!.routines!.list({ archived: "true" })).resolves.toMatchObject({ items: [] });
+    expect(get).toHaveBeenCalledWith("/api/bot-routines?archived=true",
+      expect.objectContaining({ headers: { Accept: "application/json; matrix-routine-origin=1" } }));
+    get.mockClear();
+    await expect(client.agents.bots!.routines!.list()).rejects.toMatchObject({ status: 401 });
+    expect(get).toHaveBeenCalledOnce();
+  });
   it("allows the bounded funded observation deadline only for turn admission", async () => {
     const input = { clientRequestId: "req_slow_admission", baseRevision: 0,
       selection: { instanceId: "codex_default", model: "gpt-5.6-sol" },

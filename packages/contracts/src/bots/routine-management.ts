@@ -17,6 +17,12 @@ export const BotRoutineFireViewSchema = z.object({
 }).strict();
 /** Released strict Schedule parsers require opt-in before receiving origin metadata. */
 export const BotRoutineOriginWireVersionSchema = z.enum(["0", "1"]);
+export const BOT_ROUTINE_ORIGIN_ACCEPT = "application/json; matrix-routine-origin=1";
+
+export function botRoutineOriginReadAccept(path: string, method: string): string | undefined {
+  return method === "GET" && /^\/api\/bot-routines(?:\/rt_[a-f0-9]{24})?(?:\?[^#]*)?$/.test(path)
+    ? BOT_ROUTINE_ORIGIN_ACCEPT : undefined;
+}
 
 export const BotRoutineCenterItemSchema = z.object({
   routineId: BotRoutineIdSchema, botId: BotIdSchema, chatId: CanonicalChatIdSchema,

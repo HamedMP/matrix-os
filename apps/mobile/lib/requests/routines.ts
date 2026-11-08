@@ -1,4 +1,5 @@
 import { z } from "zod/v4";
+import { botRoutineOriginReadAccept } from "@matrix-os/contracts";
 import { createBotRoutineClient } from "@matrix-os/ui/bot-routine-client";
 import { buildGatewayRequestUrl, fetchAuthenticatedJson } from "./http";
 import type { GatewaySession } from "../queries/use-active-gateway";
@@ -11,8 +12,10 @@ export function createNativeRoutineClient(session: () => Promise<GatewaySession 
     const [pathname, query] = path.split("?");
     const url = new URL(buildGatewayRequestUrl(auth.gatewayUrl, pathname!));
     for (const [key, value] of new URLSearchParams(query)) url.searchParams.set(key, value);
+    const accept = botRoutineOriginReadAccept(path, method);
     return fetchAuthenticatedJson({ url: url.toString(), token: auth.token, method,
       ...(body === undefined ? {} : { headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) }),
+      ...(accept ? { headers: { Accept: accept } } : {}),
       schema: z.unknown(), errorMessage: "Schedules are temporarily unavailable." });
   });
 }
