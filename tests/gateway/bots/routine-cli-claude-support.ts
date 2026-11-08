@@ -60,9 +60,11 @@ export async function claudeFixture(options: { dbPlugin?: KyselyPlugin } = {}) {
   }
   async function approve(event: Extract<CanonicalProviderRunEvent, { type: "approval.requested" }>, chatId: string, runId: string) {
     const path = `/api/chats/${chatId}/runs/${runId}/approvals/${event.approvalId}`, body = { actionDigest: event.actionDigest!, decision: "approve" as const, clientRequestId: "de000000-0000-4000-8000-000000000099" };
+    const expiresAt = Math.floor(Date.now() / 1000) + 300;
     const proof = await authenticatedApprovalProxyProof({ request: new Request(`https://app.example.test${path}`, { method: "POST", body: JSON.stringify(body) }), method: "POST", path, handle, machine, platformSecret: secret,
-      identity: { userId: OWNER, handle, runtimeSlot: "primary", source: "auth", sessionProvenance: "clerk-browser", sessionExpiresAt: Math.floor(Date.now() / 1000) + 300 } });
-    return runtime.submitChat(OWNER, chatId, runId, event.approvalId, body, proof as string);
+      identity: { userId: OWNER, handle, runtimeSlot: "primary", source: "auth", sessionProvenance: "clerk-browser", sessionExpiresAt: expiresAt, verifiedHumanBrowserExpiresAt: expiresAt } });
+    if (typeof proof !== "string") throw new Error("Verified fixture browser approval proof required");
+    return runtime.submitChat(OWNER, chatId, runId, event.approvalId, body, proof);
   }
   return { data, f, runtime, transport, admit, approve, sourceEvents,
     async start(chatId: string, modes = { permission: "full_access", interaction: "default" }) {
