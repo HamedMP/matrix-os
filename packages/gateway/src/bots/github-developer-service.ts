@@ -203,7 +203,11 @@ export function createGithubDeveloperService(deps: {
         } finally { if (staging) await stagingFiles.remove(staging); }
       }
       const repo = await repository(root, action.path, signal);
-      if (repo.head !== action.expectedHead) refuse();
+      // The authorization check above can wait while Terminal changes the
+      // branch or origin. Only use a snapshot that still matches approval.
+      if (repo.head !== plan.head || repo.branch !== plan.branch || repo.remote !== plan.repository) {
+        throw new BotBrokerActionError("denied");
+      }
       await guard?.assertCurrent();
       if (action.action === "branch") {
         effectStarted = true;

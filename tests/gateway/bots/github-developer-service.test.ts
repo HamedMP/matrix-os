@@ -4,6 +4,7 @@ import { mkdtemp, mkdir, readFile, readdir, rm, symlink, writeFile } from "node:
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { beforeEach, afterEach, expect, it, vi } from "vitest";
+import { GithubDeveloperActionSchema, type GithubDeveloperAction } from "@matrix-os/contracts";
 import { createGithubDeveloperService as createService } from "../../../packages/gateway/src/bots/github-developer-service.js";
 
 const services: ReturnType<typeof createService>[] = [];
@@ -64,6 +65,44 @@ it("binds approval to the canonical repository and selected bytes, refusing drif
   await writeFile(join(home, ".gitconfig"), '[user]\n name = Changed Identity\n email = changed@example.com\n');
   await expect(service.execute(workspace, commit, signal(), { plan: approved, assertCurrent: async () => undefined })).rejects.toMatchObject({ code: "denied" });
   expect((await exec("git", ["rev-parse", "HEAD"], { cwd: repo })).stdout.trim()).toBe(head);
+});
+
+it.each([
+  ["branch", "branch"],
+  ["commit", "branch"],
+  ["push", "branch"],
+  ["push", "origin"],
+  ["pull_request", "branch"],
+  ["pull_request", "origin"],
+] as const)("refuses a %s if the %s changes during approval revalidation at the same SHA", async (kind, drift) => {
+  const { repo, head } = await repository();
+  await exec("git", ["switch", "-c", "matrix/approved"], { cwd: repo });
+  await writeFile(join(repo, "demo.txt"), "approved bytes\n");
+  const existing = { path: "repo", expectedHead: head };
+  const actions: Record<typeof kind, GithubDeveloperAction> = {
+    branch: { ...existing, action: "branch", name: "matrix/new" },
+    commit: { ...existing, action: "commit", files: ["demo.txt"], message: "Approved" },
+    push: { ...existing, action: "push" },
+    pull_request: { ...existing, action: "pull_request", base: "main", title: "Demo", body: "Proof" },
+  };
+  const run = vi.fn<NonNullable<Parameters<typeof createGithubDeveloperService>[0]["run"]>>(async (command, args, options) => {
+    if (command === "gh" || args.includes("push") || args.includes("ls-remote")) {
+      throw new Error("Remote Git operation reached the offline test");
+    }
+    return exec(command, args, options);
+  });
+  const service = createGithubDeveloperService({ homePath: home, status, run });
+  const action = actions[kind];
+  const plan = await service.inspect(workspace, action, signal());
+  const assertCurrent = vi.fn(async () => {
+    if (drift === "branch") await exec("git", ["switch", "main"], { cwd: repo });
+    else await exec("git", ["remote", "set-url", "origin", "git@github.com:owner/other.git"], { cwd: repo });
+  });
+  await expect(service.execute(workspace, action, signal(), { plan, assertCurrent })).rejects.toMatchObject({ code: "denied" });
+  expect(assertCurrent).toHaveBeenCalled();
+  expect((await exec("git", ["rev-parse", "HEAD"], { cwd: repo })).stdout.trim()).toBe(head);
+  expect(run.mock.calls.some(([command, args]) => command === "gh" ||
+    args.some(arg => ["push", "ls-remote", "update-ref", "switch"].includes(arg)))).toBe(false);
 });
 
 it("commit compare-and-swap retains a concurrent Terminal commit and removes its temporary index", async () => {
@@ -130,6 +169,7 @@ it("does not create a PR until the remote branch matches, then verifies draft, a
   let pushed = false; let created = false;
   const run = vi.fn(async (command: string, args: string[], options: Parameters<NonNullable<Parameters<typeof createGithubDeveloperService>[0]["run"]>>[2]) => {
     if (command === "gh") {
+      expect(args[args.indexOf("--base") + 1]).toBe("release/1.0");
       if (args[1] === "create") { expect(args).toContain("--draft"); created = true; return { stdout: "", stderr: "" }; }
       return { stdout: JSON.stringify(created ? [{ number: 1, url: "https://github.com/owner/private-test/pull/1", author: { login: "owner" }, isDraft: true, headRefOid: head }] : []), stderr: "" };
     }
@@ -137,12 +177,21 @@ it("does not create a PR until the remote branch matches, then verifies draft, a
     return exec(command, args, options);
   });
   const service = createGithubDeveloperService({ homePath: home, status, run });
-  const action = { action: "pull_request" as const, path: "repo", expectedHead: head, base: "main", title: "Demo", body: "Proof" };
+  const action = { action: "pull_request" as const, path: "repo", expectedHead: head, base: "release/1.0", title: "Demo", body: "Proof" };
   await expect(service.execute(workspace, action, signal())).rejects.toThrow(); expect(created).toBe(false);
   pushed = true;
   await expect(service.execute(workspace, action, signal())).resolves.toMatchObject({ account: "owner", draft: true, pullRequest: "https://github.com/owner/private-test/pull/1", head });
   expect(run.mock.calls.filter(([command, args]) => command === "gh" && args[1] === "create")).toHaveLength(1);
 });
+
+it.each(["release/..", "release/.hidden", "release/1.0.lock", "release/1.0.", "refs/heads/main", "release//1.0", "-main"])(
+  "rejects an unsafe pull request base %s",
+  base => {
+    expect(GithubDeveloperActionSchema.safeParse({
+      action: "pull_request", path: "repo", expectedHead: "a".repeat(40), base, title: "Demo", body: "Proof",
+    }).success).toBe(false);
+  },
+);
 
 it("removes clone staging without deleting a concurrent owner file in the visible reservation", async () => {
   const run = vi.fn(async () => { await writeFile(join(workspace, "new", "owner.txt"), "keep"); throw new Error("Clone failed"); });

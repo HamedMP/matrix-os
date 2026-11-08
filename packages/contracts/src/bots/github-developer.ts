@@ -1,5 +1,6 @@
 import { z } from "zod/v4";
 import { canonicalBoundedText, canonicalOwnerRelativePath } from "#canonical-chat-primitives";
+import { isCollaborationGitBranchName } from "#collaboration-execution";
 
 /** Git metadata and server staging are never model-addressable workspace paths. */
 export const GithubDeveloperPathSchema = canonicalOwnerRelativePath(256, 1024).refine(path =>
@@ -9,8 +10,8 @@ const RepositorySchema = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9-]{0,38}\/[A-Za
   .refine(value => !value.endsWith(".git") && !value.includes(".."));
 const BranchSchema = z.string().max(120).regex(/^matrix\/[A-Za-z0-9][A-Za-z0-9_/-]*$/)
   .refine(value => value.split("/").length <= 5 && !value.includes("//") && !value.endsWith("/") && value.split("/").every(part => part.length > 0 && !part.endsWith(".lock")));
-const BaseSchema = z.string().max(120).regex(/^[A-Za-z0-9][A-Za-z0-9_/-]*$/)
-  .refine(value => !value.includes("//") && !value.endsWith("/"));
+const BaseSchema = z.string().max(120).regex(/^[A-Za-z0-9][A-Za-z0-9_./-]*$/)
+  .refine(isCollaborationGitBranchName, { message: "Invalid branch name" });
 const HeadSchema = z.string().regex(/^[a-f0-9]{40}$/);
 const existing = { path: GithubDeveloperPathSchema, expectedHead: HeadSchema };
 export const GithubDeveloperActionSchema = z.discriminatedUnion("action", [

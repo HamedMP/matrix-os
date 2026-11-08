@@ -37,8 +37,10 @@ Recipe Bot uses the existing
 owner Postgres approval interaction and same-task continuation. Approval binds
 the canonical repository, account, branch, parent HEAD, confirmed Git author, selected-file digest,
 arguments and workspace fingerprint. Server-held receipts expire, are bounded,
-and are consumed once. Account/repository/root drift refuses execution.
-Login and SSH setup remain explicit owner Terminal actions.
+and are consumed once. Account, repository, branch, HEAD or root drift refuses
+execution. After revalidating authorization, the broker compares the current
+repository, branch and HEAD with approval before using the verified snapshot
+for effects. Login and SSH setup remain explicit owner Terminal actions.
 
 ## Git execution and compatibility
 
@@ -70,8 +72,9 @@ resolved repository attributes and the normalized Git blob separately. Built-in
 text/EOL conversion is supported without executable filters; system/global
 attribute files are excluded. Staged blobs must match approved normalization,
 and raw content/attributes are rechecked before the ref moves. Safe tracking
-configuration supports dotted branch names such as `release/1.0`; only the
-existing `remote` and `merge` keys are accepted. In-process locks serialize this service only;
+configuration supports dotted branch names such as `release/1.0`. Pull request
+base branches may also contain dots and must be valid branch names. Tracking
+configuration accepts only the existing `remote` and `merge` keys. In-process locks serialize this service only;
 Terminal writers still use Git's index/ref locks. A post-ref reconciliation
 failure or cancellation after an effect starts is an unknown effect. Unreferenced objects from a failed CAS are safe
 Git-GC orphans. Existing HTTPS origins are retained and use the owner's gh helper.
