@@ -1,5 +1,8 @@
 import { beforeEach, afterEach, expect, it, vi } from "vitest";
-import { canonicalAssistantContinuationId } from "@matrix-os/contracts";
+import { CanonicalChatContentFrameSchema, CanonicalChatContentSchema, canonicalAssistantContinuationId,
+  type CanonicalChatTransportFrame } from "@matrix-os/contracts";
+import { createCanonicalChatEventStream } from "../../../packages/gateway/src/chat/event-stream.js";
+import { applyCanonicalChatContent } from "../../../packages/ui/src/canonical-chat-content.js";
 import { createRealBotStateDatabase, OWNER } from "./bot-state-support.js";
 import { proposalFixture } from "./routine-cli-proposal-support.js";
 import { scope } from "./routine-cli-request-support.js";
@@ -82,6 +85,41 @@ it("waits for committed output then projects exactly once across restart while f
   expect(message.parts).toContainEqual(expect.objectContaining({ type:"routine_receipt",canonicalMessageId:"msg_fire_output",canonicalRunId:"run_fire" }));
   expect(await f.db.selectFrom("chat_outbox").selectAll().where("chat_id","=","chat_source").where("event_type","=","chat.updated").execute()).toHaveLength(1);
   await restarted.reconcile(OWNER,"chat_source"); expect((await restarted.read(OWNER,"chat_source")).deliveryPending).toBe(false); expect(await f.db.selectFrom("routine_chat_deliveries").selectAll().execute()).toHaveLength(1); await restarted.close();
+});
+it.each(["idle", "active"] as const)("streams a committed receipt into an open %s Chat without a detail refresh", async state => {
+  const { admitFixtureRun, terminalFixtureFire, originService } = await import("./routine-chat-origin-support.js");
+  const fire = await terminalFixtureFire(f);
+  const owner = { type: "personal" as const, ownerId: OWNER }, chatId = "chat_source";
+  if (state === "idle") {
+    await f.chats.finishRun(owner, { chatId, runId: "run_source", outcome: "completed", completedAt: f.state.clock });
+  } else {
+    await admitFixtureRun(f, chatId, "run_foreground");
+    await f.chats.markRunRunning(owner, { chatId, runId: "run_foreground", startedAt: f.state.clock });
+  }
+  const before = (await f.chats.getDetailPage(owner, chatId, { limit: 200 }))!;
+  expect(before.record.activeRun?.status).toBe(state === "idle" ? undefined : "running");
+  const stream = createCanonicalChatEventStream({ repository: f.chats }), service = originService(f);
+  const frames: CanonicalChatTransportFrame[] = [];
+  try {
+    await stream.open({ content: true, principal: f.principal, sink: { send: frame => { frames.push(frame); return true; }, close() {} } });
+    await fire.finish();
+    await service.reconcile(OWNER, chatId);
+    const delivered = await f.db.selectFrom("routine_chat_deliveries").select("message_id").executeTakeFirstOrThrow();
+    const event = await f.db.selectFrom("chat_outbox").selectAll()
+      .where("chat_id", "=", chatId).where("event_type", "=", "chat.updated").executeTakeFirstOrThrow();
+    const content = CanonicalChatContentSchema.parse(event.payload.streamContent);
+    expect(content.messages?.map(message => message.id)).toEqual([delivered.message_id]);
+    expect(content.messages?.[0]).toMatchObject({ chatId, role: "system", state: "committed",
+      parts: [expect.objectContaining({ type: "routine_receipt", fireId: fire.fireId }),
+        { type: "text", text: "Committed scheduled output" }] });
+    const frame = CanonicalChatContentFrameSchema.parse(frames.find(candidate =>
+      candidate.type === "chat.content" && candidate.event.chatId === chatId && candidate.event.eventType === "chat.updated"));
+    expect(frame.content).toEqual(content);
+    const updated = applyCanonicalChatContent(before, frame);
+    expect(updated?.messages).toEqual([...before.messages, ...content.messages!]);
+    expect(updated?.record.chat.revision).toBe(before.record.chat.revision + 1);
+    expect(updated?.record.activeRun).toEqual(before.record.activeRun);
+  } finally { stream.shutdown(); await service.close(); }
 });
 it.each(["cancelled", "uncertain"] as const)("preserves %s status without claiming worker exit and delivers a separately committed late output once", async status => {
   const { terminalFixtureFire, originService } = await import("./routine-chat-origin-support.js");

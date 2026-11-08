@@ -6,14 +6,14 @@ import type { OwnerBotDatabase } from "../bots/database.js";
 import type { ChatDatabase } from "./database.js";
 import { RoutineCliSourceContextSchema } from "../bots/routine-cli-source-context.js";
 import { BotStateError } from "../bots/repositories/shared.js";
-import { asIso, jsonb, messageSearchText, parseJson, toMessage, type ChatOwner, type ChatOutboxEventType } from "./records.js";
+import { asIso, jsonb, messageSearchText, parseJson, toMessage, type ChatOwner } from "./records.js";
 import { hasNonPrivateChatScope } from "./private-routine-authority.js";
 import { redactAssistantParts } from "./safe-activity-projection.js";
 export interface AppendRoutineReceiptInput {
   sourceChatId: string; computerId: string; fireId: string; kind: "status" | "output"; now: string;
 }
 type Executor = Kysely<ChatDatabase> | Transaction<ChatDatabase>;
-type AppendOutbox = (executor: Executor, owner: ChatOwner, chatId: string, revision: number, event: ChatOutboxEventType, payload: Record<string, unknown>) => Promise<void>;
+type AppendOutbox = (executor: Executor, owner: ChatOwner, revision: number, message: CanonicalChatMessage) => Promise<void>;
 const statusText = (status: RoutineChatReceiptPart["status"]) => ({
   completed: "Scheduled task output is unavailable.", failed: "Scheduled task failed. Review its execution history.",
   cancelled: "Scheduled task was cancelled. Stopping execution is unconfirmed.",
@@ -93,6 +93,6 @@ export async function appendRoutineReceiptWithin(executor: Executor, ownerId: st
   const revision = Number(sourceChat.revision) + 1;
   await db.updateTable("chats").set({ revision, message_count: sql<number>`message_count+1`, last_message_preview: text.slice(0,280),
     activity_at: input.now, updated_at: input.now }).where("id", "=", input.sourceChatId).execute();
-  await appendOutbox(executor, { type: "personal", ownerId }, input.sourceChatId, revision, "chat.updated", { messageId: message.id, seq: message.seq });
+  await appendOutbox(executor, { type: "personal", ownerId }, revision, message);
   return message;
 }
