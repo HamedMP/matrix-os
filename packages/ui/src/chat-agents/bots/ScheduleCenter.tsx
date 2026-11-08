@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
-import type { BotRoutineCenterResponse, BotRoutineCenterQuery, BotRoutineDetailResponse, BotRoutineCenterItem } from "@matrix-os/contracts";
+import { isRoutineDirectBotId, type BotRoutineCenterResponse, type BotRoutineCenterQuery, type BotRoutineDetailResponse, type BotRoutineCenterItem } from "@matrix-os/contracts";
 import type { ChatAgentClient } from "../client.js";
 import { chatAgentButtonClass, chatAgentMutedStyle } from "../theme.js";
 import { routineScheduleCopy, routineTaskChat, routineNextRun as nextRun, routineStatusLabel as statusLabel } from "./routine-presentation.js";
@@ -156,7 +156,7 @@ export function ScheduleCenter({ client, onClose, onOpenBotChat, onNewSchedule, 
         <div><dt style={chatAgentMutedStyle}>Status</dt><dd>{statusLabel(task)}</dd></div>
         <div><dt style={chatAgentMutedStyle}>Next run</dt><dd className="break-words">{nextRun(task)}</dd></div>
         <div><dt style={chatAgentMutedStyle}>Schedule</dt><dd>{scheduleCopy.frequency}</dd><dd>{scheduleCopy.timezone}</dd></div>
-        <div><dt style={chatAgentMutedStyle}>Runs on</dt><dd className="break-words">{names[task.botId] ?? "Private Bot"} · {task.computerId ?? "Computer unavailable"}</dd></div>
+        <div><dt style={chatAgentMutedStyle}>Runs on</dt><dd className="break-words">{isRoutineDirectBotId(task.botId) ? "Matrix Schedules" : names[task.botId] ?? "Private Bot"} · {task.computerId ?? "Computer unavailable"}</dd></div>
       </dl>
       {rowButtons(task)}
       <div className="flex flex-wrap gap-2">
@@ -164,7 +164,7 @@ export function ScheduleCenter({ client, onClose, onOpenBotChat, onNewSchedule, 
           onClick={() => void act(async () => { await onOpenBotChat(taskChat.chatId); }, onClose, false)}>{taskChat.label}</button> : null}
         {task.status !== "archived" ? <button type="button" className={chatAgentButtonClass} disabled={pending || !task.targetAvailable || !task.sourceAvailable} onClick={() => setEditing(true)}>Edit schedule</button> : null}
       </div>
-      {task.originChatId && !task.originAvailable ? <p role="status" className="text-sm">Source Chat unavailable.</p> : null}
+      {(task.originChatId || isRoutineDirectBotId(task.botId)) && !task.originAvailable ? <p role="status" className="text-sm">Source Chat unavailable.</p> : null}
       {editing && api ? <ScheduleEditForm key={task.routineId} routine={task} api={api} botClient={client.bots!} agentName={names[task.botId]} pendingReadRevision={listRevision} getPendingReadSequence={() => reads.current} pendingInteractions={data?.pending ?? []} onRefreshRequired={refreshCommitted} onChanged={() => { detailIntent.current += 1; selectedRoutine.current = null; setDetail(null); setEditing(false); }}/>: null}
     </section> : null}
     {data && !loading && !detail ? <>
@@ -172,7 +172,7 @@ export function ScheduleCenter({ client, onClose, onOpenBotChat, onNewSchedule, 
         {data.items.map(row => { const copy = routineScheduleCopy(row.proposal.schedule); return <li key={row.routineId} className="grid min-w-0 gap-3 rounded-xl border p-4">
           <div className="flex flex-wrap items-start justify-between gap-2"><button type="button" className="text-left font-semibold" aria-label={`View ${row.proposal.name}`} disabled={pending} onClick={() => void view(row)}>{row.proposal.name}</button><span className="rounded-full border px-2 py-1 text-xs">{statusLabel(row)}</span></div>
           <p className="whitespace-pre-wrap break-words text-sm">{row.proposal.prompt}</p>
-          <p className="break-words text-xs" style={chatAgentMutedStyle}>{names[row.botId] ?? (row.targetAvailable ? "Private Bot" : "Bot unavailable")} · {row.computerId ?? "Computer unavailable"}</p>
+          <p className="break-words text-xs" style={chatAgentMutedStyle}>{isRoutineDirectBotId(row.botId) ? "Matrix Schedules" : names[row.botId] ?? (row.targetAvailable ? "Private Bot" : "Bot unavailable")} · {row.computerId ?? "Computer unavailable"}</p>
           <p className="break-words text-sm">{copy.frequency} · {copy.timezone}</p><p className="text-xs" style={chatAgentMutedStyle}>Next run: {nextRun(row)}{row.lastFire ? ` · Last run: ${row.lastFire.status}` : " · Not run yet"}</p>
           {rowButtons(row)}
         </li>; })}

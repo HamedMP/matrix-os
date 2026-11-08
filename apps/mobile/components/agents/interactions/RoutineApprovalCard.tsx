@@ -6,9 +6,9 @@ import { Button } from "@/components/ui";
 import { InteractionCard, InteractionNote } from "./InteractionCard";
 
 /** Display only: decisions still go through the designated owner/revision endpoint. */
-export function RoutineApprovalCard({ preview, sending, error, stale, closed, historicalStatus, onAllow, onDeny, testID, botId }: {
+export function RoutineApprovalCard({ preview, sending, error, stale, closed, historicalStatus, onAllow, onDeny, testID, botId, executionLabel }: {
   preview: string; sending: string | null; error: string | null; stale: boolean; closed?: string; historicalStatus?: string;
-  onAllow(): void; onDeny(): void; testID: string; botId: string;
+  onAllow(): void; onDeny(): void; testID: string; botId: string; executionLabel?: string;
 }) {
   const [technical, setTechnical] = useState(false);
   const approval = routineApprovalPreview(preview);
@@ -25,7 +25,7 @@ export function RoutineApprovalCard({ preview, sending, error, stale, closed, hi
     title={approval ? `${edit ? "Update schedule" : "Schedule"} ${approval.proposal.name}` : "Schedule unavailable"} error={error}>
     {approval && timing ? <>
       <InteractionNote>{approval.proposal.prompt}</InteractionNote>
-      <InteractionNote>{`Bot: ${botId}`}</InteractionNote>
+      <InteractionNote>{executionLabel ?? `Bot: ${botId}`}</InteractionNote>
       <InteractionNote>{`Model: ${approval.proposal.selection.model}`}</InteractionNote>
       <InteractionNote>{`Computer: ${approval.source.computerId}`}</InteractionNote>
       <InteractionNote>{timing.frequency}</InteractionNote><InteractionNote>{timing.timezone}</InteractionNote>

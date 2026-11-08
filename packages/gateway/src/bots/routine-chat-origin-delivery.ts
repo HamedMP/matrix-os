@@ -1,4 +1,5 @@
 import { sql, type Kysely } from "kysely";
+import { directRoutineOriginLiveSql, routineReceiptBindingTimestamp } from "./routine-direct-chat-lifecycle.js";
 import type { OwnerBotDatabase } from "./database.js";
 /** q and b are the immutable request and candidate live binding. Format the database timestamp with the
  * same millisecond floor and optional trailing microseconds as routineCliBindingTimestamp, without
@@ -6,9 +7,9 @@ import type { OwnerBotDatabase } from "./database.js";
 const pinnedTarget = sql`
   q.target_snapshot->>'ownerId'=r.owner_id AND q.target_snapshot->>'computerId'=r.origin_computer_id
   AND q.target_snapshot->>'botId'=r.bot_id AND q.target_snapshot->>'chatId'=r.chat_id
-  AND q.target_snapshot->>'bindingCreatedAt'=(
-    to_char(b.created_at AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.MS')
-    ||rtrim(right(to_char(b.created_at AT TIME ZONE 'UTC','US'),3),'0')||'Z')
+  AND q.target_snapshot->>'bindingCreatedAt'=(${routineReceiptBindingTimestamp(sql.ref("b.created_at"))})
+  AND ${directRoutineOriginLiveSql({ ownerId: sql.ref("r.owner_id"), botId: sql.ref("r.bot_id"), chatId: sql.ref("r.chat_id"),
+    computerId: sql.ref("r.origin_computer_id"), requestId: sql.ref("r.origin_request_id") })}
   AND NOT EXISTS(SELECT 1 FROM bot_chat_bindings other WHERE other.chat_id=b.chat_id AND other.removed_at IS NULL
     AND (other.owner_id,other.bot_id)<>(b.owner_id,b.bot_id))`;
 // Advisory recovery filter only. Receipt writes recheck hasNonPrivateChatScope under the Chat locks.

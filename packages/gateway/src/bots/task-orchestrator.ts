@@ -7,6 +7,7 @@ import { sql } from "kysely";
 import { isolatedChatModelMatches, isManagedCustomBot, type ChatAgent } from "@matrix-os/contracts";
 import { sameCustomCoordinatorSelection } from "./custom-procedure.js";
 import { recipeCoordinatorSelection } from "./coordinator-selection.js";
+import { isRoutineDirectChatId } from "./routine-direct-chat-identity.js";
 /**
  * Runs one bot turn in the bot workload (spec 536). For each canonical run:
  *
@@ -117,6 +118,7 @@ export function createBotTaskOrchestrator(deps: {
   transact: BotStateTransactions;
   interactions?: Pick<BotInteractionService, "answerWithMessage">;
   routineTools?: boolean;
+  resolveRoutineProposalRoute?(ownerId: string, model: string): Promise<ResolvedBotRoute>;
   /** Server-owned durable checker; no request or model field can provide phase authority. */
   routineExecution?: Pick<import("./routine-execution.js").BotRoutineExecution, "assertOccurrencePhase"> & Partial<Pick<import("./routine-execution.js").BotRoutineExecution, "describeChatPhase" | "approvalReply">>;
   /** Server-only receipt-backed interactive intent; never supplied by a model/HTTP request. */
@@ -164,7 +166,7 @@ export function createBotTaskOrchestrator(deps: {
    * Starts the run's task: the bot's task waiting for the owner continues
    * with this message; otherwise a new task begins.
    */
-  async function begin(input: { ownerId: string; botId: string; chatId: string; runId: string; text: string; backgroundTaskId?: string }): Promise<{ task: BotTask; continued: boolean }> {
+  async function begin(input: { ownerId: string; botId: string; chatId: string; runId: string; text: string; backgroundTaskId?: string }): Promise<{ task: BotTask; continued: boolean; routineProposalModel?: string }> {
     return deps.transact(input.ownerId, tx => beginBotTask(tx, { ...input, now: now() }, { beginRoutineProposal: deps.routineProposals?.beginWithin }));
   }
 
@@ -344,8 +346,9 @@ export function createBotTaskOrchestrator(deps: {
     }
     let task: BotTask;
     let continued: boolean;
+    let routineProposalModel: string | undefined;
     try {
-      ({ task, continued } = await setup(
+      ({ task, continued, routineProposalModel } = await setup(
         () => begin({ ownerId: input.ownerId, botId, chatId: input.chatId, runId: input.runId, text: input.text, ...(input.backgroundTaskId ? {backgroundTaskId:input.backgroundTaskId}: {}) }),
         ({ task: lateTask }) => settle(lateTask, interruptedStatus()).then(() => undefined),
       ));
@@ -379,11 +382,17 @@ export function createBotTaskOrchestrator(deps: {
       }
     }
 
+    const internalScheduleChat = isRoutineDirectChatId(input.chatId);
+    if (internalScheduleChat && !input.backgroundTaskId && !routineProposalModel) return settle(task, "blocked", "policy_denied");
+
     let resolved: ResolvedBotRoute;
     try {
       if (group) {
         if (!deps.resolveGroupRoute) throw new BotRouteError("model_unavailable");
         resolved = await groupWait(run, () => deps.resolveGroupRoute!({ ownerId: input.ownerId, chatId: input.chatId, runId: input.runId, group: group! }));
+      } else if (routineProposalModel) {
+        if (!deps.resolveRoutineProposalRoute || input.backgroundTaskId || isolatedModel) throw new BotRouteError("model_unavailable");
+        resolved = await setup(() => deps.resolveRoutineProposalRoute!(input.ownerId, routineProposalModel));
       } else {
         const requested = isolatedModel ? selection : recipeCoordinatorSelection(input.selection, agent.selection);
         if (input.backgroundTaskId && (isolatedModel || requested?.instanceId !== "matrix_chatgpt_plan")) throw new BotRouteError("model_unavailable");
@@ -502,6 +511,7 @@ export function createBotTaskOrchestrator(deps: {
       if (input.signal.aborted || run.stopping) return await settle(task, run.stopping === "lease_lost" ? "failed" : "cancelled");
       const proposal = await deps.routineProposals?.consume(binding, run.signal);
       if (proposal) return proposal; // Its pending approval/task state committed atomically; never generic settle/inference.
+      if (internalScheduleChat && routineProposalModel) return await settle(task, "blocked", "policy_denied");
       run.worker = createBotWorkerDrain({ graceMs: cancelGraceMs,
         release: () => releaseRuntime(run, run.runtime!.runtimeHandle),
         onError: error => console.warn("[bots] bot runtime grace release failed:", error instanceof Error ? error.name : "UnknownError"),

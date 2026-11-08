@@ -1,5 +1,5 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
-import { BotRoutineEditRequestSchema, type BotInteraction, type BotRoutineSchedule, type BotRoutineCenterItem } from "@matrix-os/contracts";
+import { BotRoutineEditRequestSchema, isRoutineDirectBotId, type BotInteraction, type BotRoutineSchedule, type BotRoutineCenterItem } from "@matrix-os/contracts";
 import type { BotRoutineClient } from "./routine-client.js";
 import type { BotClient } from "./client.js";
 import { routineScheduleCopy } from "./routine-presentation.js";
@@ -52,7 +52,10 @@ export function ScheduleEditForm({ routine, api, botClient, agentName, onChanged
     <h3 className="font-semibold">Review changes before they apply</h3>
     <p className="text-sm">The existing schedule keeps its current settings until you approve these changes. Pause it first if you do not want another run.</p>
     {routine.revision !== openedRevision.current ? <div role="status" className="rounded-lg border p-3 text-sm"><p>The saved schedule changed to revision {routine.revision}. Your draft is kept. Check the saved task before reviewing again.</p><p className="mt-2 whitespace-pre-wrap break-words">Current saved task: {routine.proposal.name} — {routine.proposal.prompt}</p><p className="break-words">Saved timing: {routineScheduleCopy(routine.proposal.schedule).frequency} · {routineScheduleCopy(routine.proposal.schedule).timezone}</p></div> : null}
-    {interaction && shownInteraction ? <><InteractionCard key={shownInteraction.interactionId} interaction={shownInteraction} actionsAvailable={!reviewUnavailable} agentName={agentName} currentRoutineRevision={routine.revision}
+    {interaction && isRoutineDirectBotId(routine.botId) ? <div className="grid gap-2 text-sm">
+      <p role="status">Review these changes in the source Chat.</p>
+      <button className={chatAgentButtonClass} type="button" onClick={() => setInteraction(null)}>Return to draft</button>
+    </div> : interaction && shownInteraction ? <><InteractionCard key={shownInteraction.interactionId} interaction={shownInteraction} actionsAvailable={!reviewUnavailable} agentName={agentName} currentRoutineRevision={routine.revision}
       onResolve={async input => {
         busy.current = true; setPending(true);
         try { const result = await botClient.resolve(routine.chatId, interaction.interactionId, input); decision.current = input.kind === "approval" ? input.decision : null; return result; }

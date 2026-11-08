@@ -3,7 +3,7 @@ import { sql, type Kysely, type Transaction } from "kysely";
 import { z } from "zod/v4";
 import {
   RoutineCliActionSchema, RoutineCliRememberTargetSchema, RoutineCliResetTargetSchema,
-  RoutineCliTargetPreferenceSchema, type RoutineCliAction, type RoutineCliTargetPreference,
+  RoutineCliTargetPreferenceSchema, type RoutineCliAction, type RoutineCliOperation, type RoutineCliTargetPreference,
 } from "@matrix-os/contracts";
 import type { ChatDatabase } from "../chat/database.js";
 import type { RequestPrincipal } from "../request-principal.js";
@@ -11,6 +11,7 @@ import { lockChatAgentOwner } from "../chat/agent-owner-lock.js";
 import type { ChatAgentStore } from "../chat/agent-store.js";
 import type { OwnerBotDatabase } from "./database.js";
 import { RoutineCliError, routineCliBoundary } from "./routine-cli-errors.js";
+import type { RoutineDirectChatContexts } from "./routine-direct-chat-contexts.js";
 import {
   createRoutineCliPreferencesRepository, lockRoutineCliPreference, RoutineCliScopeSchema,
   routineCliBindingTimestamp, type RoutineCliScope, type RoutineCliStoredPreference,
@@ -19,19 +20,38 @@ import {
 import { RoutineCliSourceContextSchema as SourceContextSchema, type RoutineCliSourceContext } from "./routine-cli-source-context.js";
 export type { RoutineCliSourceContext } from "./routine-cli-source-context.js";
 
-/** Internal dispatch snapshot, never the general-purpose CLI DTO. */
-export interface RoutineCliResolvedTarget extends RoutineCliScope {
-  botId: string;
-  chatId: string;
-  bindingCreatedAt: string;
-  preferenceRevision: number;
-}
+const bindingSnapshot = RoutineCliScopeSchema.extend({
+  botId: RoutineCliRememberTargetSchema.shape.botId,
+  chatId: RoutineCliRememberTargetSchema.shape.chatId,
+  bindingCreatedAt: z.iso.datetime({ offset: true }),
+});
+const rememberedSnapshot = bindingSnapshot.extend({
+  preferenceRevision: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
+}).strict();
+const directChatSnapshot = bindingSnapshot.extend({
+  purpose: z.literal("direct_chat"),
+  sourceChatId: RoutineCliRememberTargetSchema.shape.chatId,
+}).strict();
+/** Durable internal dispatch snapshots. The remembered shape is kept byte-compatible. */
+export const RoutineCliResolvedTargetSchema = z.union([rememberedSnapshot, directChatSnapshot]);
+export type RoutineCliResolvedTarget = z.infer<typeof RoutineCliResolvedTargetSchema>;
+export type RoutineCliRememberedTarget = z.infer<typeof rememberedSnapshot>;
+
+const chatScope = (source: RoutineCliSourceContext) => source.identity.kind === "chat_run"
+  ? { ownerId: source.ownerId, computerId: source.computerId, sourceChatId: source.identity.chatId }
+  : undefined;
+/** Source registration and current canonical turn checks supply the authoritative actions. */
+export const routineDirectChatProposalScope = (source: RoutineCliSourceContext) =>
+  source.actions.includes("propose") && source.harness !== "claude" && source.harness !== "hermes"
+    ? chatScope(source) : undefined;
+
 type TargetAccess = RoutineCliScope & { botId: string; chatId: string; action: RoutineCliAction | "remember" };
 export interface RoutineCliTargetDependencies {
   db: Kysely<OwnerBotDatabase>;
   /** Configured/admitted current Computer and owner, not body or environment hints from a model. */
   scope: RoutineCliScope;
   agents: Pick<ChatAgentStore, "get">;
+  directChatContexts?: RoutineDirectChatContexts;
   now?: () => Date;
   /** Must check exact live native turn/session/launch + generation, private policy and current scopes.
    * Implementations must hold the same generation gate used by revoke/consume through this transaction.
@@ -60,8 +80,12 @@ export function createRoutineCliTargetService(deps: RoutineCliTargetDependencies
     value ?? { target: null, revision: 0, updatedAt: null });
 
   const validateTarget = async (trx: Transaction<OwnerBotDatabase>, configured: RoutineCliScope,
-    target: { botId: string; chatId: string; bindingCreatedAt?: string }, action: TargetAccess["action"]) => {
+    target: { botId: string; chatId: string; bindingCreatedAt?: string }, action: TargetAccess["action"], direct = false) => {
     if (!deps.canAccessTarget) throw new RoutineCliError("unavailable");
+    if (!direct && await trx.selectFrom("routine_direct_chat_contexts").select("chat_id")
+      .where("owner_id", "=", configured.ownerId)
+      .where(eb => eb.or([eb("bot_id", "=", target.botId), eb("chat_id", "=", target.chatId)]))
+      .executeTakeFirst()) throw new RoutineCliError("target_unavailable");
     // Same lock as ChatAgentStore file updates; keep it through dispatch's write.
     await lockChatAgentOwner(trx as unknown as Transaction<ChatDatabase>, { type: "personal", ownerId: configured.ownerId });
     const definition = await deps.agents.get({ type: "personal", ownerId: configured.ownerId }, target.botId);
@@ -110,11 +134,43 @@ export function createRoutineCliTargetService(deps: RoutineCliTargetDependencies
     if (!await deps.revalidateSource(source, action, trx)) throw new RoutineCliError("permission_denied");
     requireSource(source, action);
   };
+  const validateSnapshot = async (trx: Transaction<OwnerBotDatabase>, configured: RoutineCliScope, raw: RoutineCliResolvedTarget,
+    action: RoutineCliAction, source?: RoutineCliSourceContext): Promise<RoutineCliResolvedTarget> => {
+    const target = RoutineCliResolvedTargetSchema.parse(raw);
+    if (target.ownerId !== configured.ownerId || target.computerId !== configured.computerId) throw new RoutineCliError("permission_denied");
+    if ("purpose" in target) {
+      if (source && routineDirectChatProposalScope(source)?.sourceChatId !== target.sourceChatId) throw new RoutineCliError("permission_denied");
+      const mapping = await deps.directChatContexts?.getWithin(trx, { ...configured, sourceChatId: target.sourceChatId });
+      if (!mapping || mapping.botId !== target.botId || mapping.chatId !== target.chatId) throw new RoutineCliError("target_unavailable");
+      await validateTarget(trx, configured, target, action, true);
+    } else {
+      await validateTarget(trx, configured, target, action);
+    }
+    return target;
+  };
+
   const resolveWithin = (trx: Transaction<OwnerBotDatabase>, value: RoutineCliSourceContext | undefined,
-    action: RoutineCliAction, pinned?: RoutineCliResolvedTarget): Promise<RoutineCliResolvedTarget> => routineCliBoundary(async () => {
+    action: RoutineCliAction, pinned?: RoutineCliResolvedTarget, operation?: RoutineCliOperation): Promise<RoutineCliResolvedTarget> => routineCliBoundary(async () => {
     if (!trx.isTransaction) throw new RoutineCliError("unavailable");
     const source = requireSource(value, action), configured = scope();
     await sourceLive(trx, source, action);
+    if (pinned && "purpose" in pinned) {
+      const target = await validateSnapshot(trx, configured, pinned, action, source);
+      await sourceLive(trx, source, action);
+      return target;
+    }
+    const origin = (action === "propose" || operation) && routineDirectChatProposalScope(source);
+    if (deps.directChatContexts && origin && !pinned) {
+      const binding = await deps.directChatContexts.getWithin(trx, origin);
+      if (action === "propose" && !binding) throw new RoutineCliError("target_unavailable");
+      if (binding && (!operation || !("routineId" in operation) || await trx.selectFrom("bot_routines").select("routine_id")
+        .where("owner_id", "=", configured.ownerId).where("routine_id", "=", operation.routineId)
+        .where("bot_id", "=", binding.botId).where("chat_id", "=", binding.chatId).executeTakeFirst())) {
+        const target = await validateTarget(trx, configured, binding, action, true);
+        await sourceLive(trx, source, action);
+        return { ...configured, ...target, purpose: "direct_chat", sourceChatId: origin.sourceChatId };
+      }
+    }
     await lockRoutineCliPreference(trx, configured);
     const saved = await preferences.get(configured, trx);
     if (pinned && (pinned.ownerId !== configured.ownerId || pinned.computerId !== configured.computerId
@@ -131,21 +187,29 @@ export function createRoutineCliTargetService(deps: RoutineCliTargetDependencies
     action: RoutineCliAction, snapshot: RoutineCliResolvedTarget): Promise<RoutineCliResolvedTarget> => routineCliBoundary(async () => {
     if (!trx.isTransaction) throw new RoutineCliError("unavailable");
     const source = requireSource(value, action), configured = scope();
-    const target = RoutineCliScopeSchema.extend({ botId: RoutineCliRememberTargetSchema.shape.botId,
-      chatId: RoutineCliRememberTargetSchema.shape.chatId, bindingCreatedAt: z.iso.datetime({ offset: true }),
-      preferenceRevision: z.number().int().positive().max(Number.MAX_SAFE_INTEGER) }).strict().parse(snapshot);
-    if (target.ownerId !== configured.ownerId || target.computerId !== configured.computerId) throw new RoutineCliError("permission_denied");
     await sourceLive(trx, source, action);
-    const live = await validateTarget(trx, configured, target, action);
+    const target = await validateSnapshot(trx, configured, snapshot, action, source);
     await sourceLive(trx, source, action);
-    return { ...configured, ...live, preferenceRevision: target.preferenceRevision };
+    return target;
   });
+  /** Preserve the previously authorized remembered list alongside new source-owned routines. */
+  const resolveListSupplementWithin = async (trx: Transaction<OwnerBotDatabase>, source: RoutineCliSourceContext,
+    primary: RoutineCliResolvedTarget): Promise<RoutineCliRememberedTarget | undefined> => {
+    if (!("purpose" in primary)) return;
+    try {
+      const target = await resolveWithin(trx, source, "read");
+      if ("preferenceRevision" in target) return target;
+    } catch (error: unknown) {
+      if (!(error instanceof RoutineCliError) || error.code !== "target_required" && error.code !== "target_unavailable") throw error;
+    }
+  };
   return {
     validatePinnedWithin,
+    resolveListSupplementWithin,
     /** Read-only owner snapshot for explicit scope review/admission. No fabricated native source,
      * capability or mutation authorization is created by this port. Keep the existing lock order. */
     resolveOwnerDefaultWithin: (trx: Transaction<OwnerBotDatabase>, principal: RequestPrincipal,
-      pinned?: RoutineCliResolvedTarget): Promise<RoutineCliResolvedTarget> => routineCliBoundary(async () => {
+      pinned?: RoutineCliRememberedTarget): Promise<RoutineCliRememberedTarget> => routineCliBoundary(async () => {
       if (!trx.isTransaction) throw new RoutineCliError("unavailable");
       const configured = requireOwner(principal);
       await lockRoutineCliPreference(trx, configured);
@@ -161,12 +225,7 @@ export function createRoutineCliTargetService(deps: RoutineCliTargetDependencies
      * current owner/target policy only; it neither revives the origin nor authorizes an unclaimed intent. */
     validateClaimedTargetWithin: (trx: Transaction<OwnerBotDatabase>, snapshot: RoutineCliResolvedTarget): Promise<RoutineCliResolvedTarget> => routineCliBoundary(async () => {
       if (!trx.isTransaction) throw new RoutineCliError("unavailable");
-      const configured = scope(), target = RoutineCliScopeSchema.extend({ botId: RoutineCliRememberTargetSchema.shape.botId,
-        chatId: RoutineCliRememberTargetSchema.shape.chatId, bindingCreatedAt: z.iso.datetime({ offset: true }),
-        preferenceRevision: z.number().int().positive().max(Number.MAX_SAFE_INTEGER) }).strict().parse(snapshot);
-      if (target.ownerId !== configured.ownerId || target.computerId !== configured.computerId) throw new RoutineCliError("permission_denied");
-      const live = await validateTarget(trx, configured, target, "propose");
-      return { ...configured, ...live, preferenceRevision: target.preferenceRevision };
+      return validateSnapshot(trx, scope(), snapshot, "propose");
     }),
     remember: (principal: RequestPrincipal, value: z.infer<typeof RoutineCliRememberTargetSchema>): Promise<RoutineCliTargetPreference> => routineCliBoundary(async () => {
       const configured = requireOwner(principal), input = RoutineCliRememberTargetSchema.parse(value);

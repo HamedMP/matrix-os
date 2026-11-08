@@ -1,4 +1,4 @@
-import { CanonicalChatContentSchema, type CanonicalChatContent } from "@matrix-os/contracts";
+import { CanonicalChatContentSchema, CanonicalChatMessageIdSchema, type CanonicalChatContent } from "@matrix-os/contracts";
 import type { Kysely } from "kysely";
 import type { ChatDatabase } from "./database.js";
 import { toActivities, toMessage, toRun, toTurn, type ChatOwner, type ChatOutboxEventType, type ChatRecord } from "./records.js";
@@ -21,6 +21,18 @@ export async function captureChatContent(
   if (BOT_EVENT_TYPES.includes(eventType)) return undefined;
   const record = await getRecord(owner, chatId);
   if (!record) return undefined;
+  if (eventType === "chat.updated" && typeof payload.messageId === "string") {
+    const id = CanonicalChatMessageIdSchema.safeParse(payload.messageId);
+    if (!id.success) return undefined;
+    // Scheduled receipts have no foreground run. Publish their exact committed
+    // message so an open Chat can append it without loading the transcript.
+    const row = await db.selectFrom("chat_messages").selectAll().where("chat_id", "=", chatId)
+      .where("id", "=", id.data).where("role", "=", "system")
+      .where("state", "=", "committed").executeTakeFirst();
+    const message = row && toMessage(row);
+    if (!message?.parts.some(part => part.type === "routine_receipt")) return undefined;
+    return CanonicalChatContentSchema.parse({ record, messages: [message] });
+  }
   if (eventType === "run.message") {
     if (!payload.messageDelta) return undefined;
     return CanonicalChatContentSchema.parse({ record, messageDelta: payload.messageDelta });

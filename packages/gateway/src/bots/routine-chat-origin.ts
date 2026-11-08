@@ -1,4 +1,6 @@
 import { beginOriginTransaction, boundOriginQueries, hasAcceptedBinding } from "./routine-chat-origin-target.js";
+import { routineDirectChatSourceIsEligible } from "./routine-direct-chat-contexts.js";
+import { isCurrentDirectRoutineOrigin } from "./routine-direct-chat-lifecycle.js";
 import { routineChatOriginApprovalIds } from "./routine-chat-origin-approval-ids.js";
 import { createHash } from "node:crypto";
 import { type Kysely } from "kysely";
@@ -28,10 +30,15 @@ async function privateSource(db: BotExecutor, ownerId: string, chatId: string) {
     .forNoKeyUpdate().executeTakeFirst();
   return chat && !await hasNonPrivateChatScope(db as never, { type: "personal", ownerId }, chatId);
 }
-async function liveOrigin(db: BotExecutor, origin: RoutineChatOrigin, lockTarget = true) {
-  // Source lock always precedes canonical Chat/binding read locks. No target->source reversal.
-  if (!await privateSource(db, origin.ownerId, origin.sourceChatId)) return;
-  if (origin.canonicalChatId === origin.sourceChatId || !await hasAcceptedBinding(db, origin.ownerId, origin.canonicalChatId, origin.botId, origin.bindingCreatedAt, lockTarget ? "ordered" : false)) return;
+async function liveOrigin(db: BotExecutor, origin: RoutineChatOrigin, deciding = false) {
+  // Fence the source before the canonical target. Approval acquires the target itself.
+  const source = origin.directChat && deciding ? await routineDirectChatSourceIsEligible(db, origin, { lock: true })
+    : await privateSource(db, origin.ownerId, origin.sourceChatId);
+  if (!source || origin.canonicalChatId === origin.sourceChatId) return;
+  const lockTarget = deciding ? false : "ordered";
+  const bound = origin.directChat ? await isCurrentDirectRoutineOrigin(db, origin, lockTarget)
+    : await hasAcceptedBinding(db, origin.ownerId, origin.canonicalChatId, origin.botId, origin.bindingCreatedAt, lockTarget);
+  if (!bound) return;
   return db.selectFrom("chat_runs as run").innerJoin("chat_turns as turn", join => join.onRef("turn.id", "=", "run.turn_id").onRef("turn.chat_id", "=", "run.chat_id"))
     .innerJoin("chat_messages as message", join => join.onRef("message.id", "=", "turn.input_message_id").onRef("message.chat_id", "=", "turn.chat_id"))
     .select("message.id").where("run.id", "=", origin.sourceRunId).where("run.chat_id", "=", origin.sourceChatId)
@@ -155,15 +162,18 @@ export function createRoutineChatOriginService(deps: RoutineChatOriginDependenci
         const interaction = await createBotInteractionsRepository(tx.db).get({ ownerId, interactionId }, tx.db);
         if (!interaction || interaction.responderActorId !== ownerId) throw new BotInteractionError("not_found");
         const origin = await routineChatOriginForInteraction(tx.db, interaction);
-        if (!origin || origin.computerId !== deps.computerId || origin.sourceChatId !== sourceChatId || !await liveOrigin(tx.db, origin, false)) throw new BotInteractionError("not_found");
+        if (!origin || origin.computerId !== deps.computerId || origin.sourceChatId !== sourceChatId || !await liveOrigin(tx.db, origin, true)) throw new BotInteractionError("not_found");
         if (closed) throw new BotInteractionError("unavailable");
         if (proof.expiresAt <= now().getTime()) throw new BotInteractionError("expired");
         // The canonical decision owns the target lock order, including Routine before
         // the binding and Chat for edits. Do not take the target lock early in the alias.
-        // Revalidate after the same uncommitted decision. It may already hold the Chat,
-        // so this membership recheck must never wait on another binding.
-        const decision = await deps.interactions.resolveWithin(tx, ownerId, origin.canonicalChatId, interactionId, input);
-        if (!await hasAcceptedBinding(tx.db, ownerId, origin.canonicalChatId, origin.botId, origin.bindingCreatedAt, "recheck")) throw new BotInteractionError("not_found");
+        // The same uncommitted decision may already hold the target Chat.
+        // Recheck membership without waiting on a conflicting binding.
+        const decision = await deps.interactions.resolveWithin({ ...tx, routineOriginDecision: { sourceChatId, interactionId } },
+          ownerId, origin.canonicalChatId, interactionId, input);
+        const bound = origin.directChat ? await isCurrentDirectRoutineOrigin(tx.db, origin, "recheck")
+          : await hasAcceptedBinding(tx.db, ownerId, origin.canonicalChatId, origin.botId, origin.bindingCreatedAt, "recheck");
+        if (!bound) throw new BotInteractionError("not_found");
         if (closed) throw new BotInteractionError("unavailable");
         if (proof.expiresAt <= now().getTime()) throw new BotInteractionError("expired");
         return decision;

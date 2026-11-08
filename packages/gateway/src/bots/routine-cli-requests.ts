@@ -6,7 +6,7 @@ import type { OwnerBotDatabase } from "./database.js";
 import type { BotStateTransaction, BotStateTransactions } from "./events.js";
 import type { RoutineCliSourceContext } from "./routine-cli-source-context.js";
 import type { RoutineCliSourceService, RoutineCliVerifiedInvocation } from "./routine-cli-source.js";
-import type { RoutineCliTargetService, RoutineCliResolvedTarget } from "./routine-cli-targets.js";
+import type { RoutineCliTargetService, RoutineCliResolvedTarget, RoutineCliRememberedTarget } from "./routine-cli-targets.js";
 import { RoutineCliScopeSchema, type RoutineCliScope } from "./repositories/routine-cli-preferences.js";
 import { createRoutineCliRequestsRepository, lockRoutineCliRequest, type RoutineCliRequestRecord } from "./repositories/routine-cli-requests.js";
 import { createBotRoutinesRepository } from "./repositories/routines.js";
@@ -30,11 +30,12 @@ export type RoutineCliAfterMutationCommit = (input: Readonly<{
   source: RoutineCliSourceContext; invocation: RoutineCliVerifiedInvocation; target: RoutineCliResolvedTarget;
   operation: RoutineCliMutationOperation; admission: RoutineCliAdmission;
 }>) => Promise<void>;
-type TargetIntent = { source: RoutineCliSourceContext; invocation: RoutineCliVerifiedInvocation; target: RoutineCliResolvedTarget; operation: RoutineCliOperation };
+type TargetIntent = { source: RoutineCliSourceContext; invocation: RoutineCliVerifiedInvocation; target: RoutineCliResolvedTarget; operation: RoutineCliOperation; listSupplement?: RoutineCliRememberedTarget };
 export interface RoutineCliRequestDependencies {
   db: Kysely<OwnerBotDatabase>; scope: RoutineCliScope;
   sources: Pick<RoutineCliSourceService, "consumeWithin">;
-  targets: Pick<RoutineCliTargetService, "resolveWithin" | "validatePinnedWithin">;
+  targets: Pick<RoutineCliTargetService, "resolveWithin" | "validatePinnedWithin">
+    & Partial<Pick<RoutineCliTargetService, "resolveListSupplementWithin">>;
   /** Canonical Chat outbox-aware outer transaction. No nested source/canonical transaction. */
   transact: BotStateTransactions;
   now?: () => Date;
@@ -129,10 +130,12 @@ export function createRoutineCliRequestService(deps: RoutineCliRequestDependenci
             }
             const target = freezeIntent(existing
               ? await deps.targets.validatePinnedWithin(trx, source, action, existing.target)
-              : await deps.targets.resolveWithin(trx, source, action));
-            if (await deps.authorizeTarget!(Object.freeze({ source, invocation, target, operation }), transaction) !== true) throw new RoutineCliError("permission_denied");
+              : await deps.targets.resolveWithin(trx, source, action, undefined, operation));
+            const listSupplement = operation.operation === "list"
+              ? freezeIntent(await deps.targets.resolveListSupplementWithin?.(trx, source, target)) : undefined;
+            if (await deps.authorizeTarget!(Object.freeze({ source, invocation, target, operation, ...(listSupplement ? { listSupplement } : {}) }), transaction) !== true) throw new RoutineCliError("permission_denied");
             if (existing) return views.receipt(existing);
-            if (operation.operation === "list") return views.list(target);
+            if (operation.operation === "list") return views.list(target, listSupplement);
             if (operation.operation === "show") return views.show(target, operation.routineId);
             if (operation.operation === "request") return { kind: "not_observed" as const, requestId: operation.requestId, mayStillArrive: true as const };
             if (operation.operation !== "propose" && !await routines.getForChat({ ...target, routineId: operation.routineId }, trx)) throw new RoutineCliError("not_found");

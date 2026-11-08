@@ -4,7 +4,7 @@ import { z } from "zod/v4";
 import { RoutineCliOperationSchema, type RoutineCliAction, type RoutineCliOperation } from "@matrix-os/contracts";
 import type { OwnerBotDatabase } from "./database.js";
 import { RoutineCliError, routineCliBoundary } from "./routine-cli-errors.js";
-import { lockRoutineCliControl } from "./routine-cli-lock-order.js";
+import { lockRoutineCliControl, lockRoutineCliDirectControl } from "./routine-cli-lock-order.js";
 import { RoutineCliSourceContextSchema, type RoutineCliSourceContext } from "./routine-cli-source-context.js";
 import { RoutineCliScopeSchema, type RoutineCliScope } from "./repositories/routine-cli-preferences.js";
 import { createRoutineCliSourcesRepository, lockRoutineCliSourceAdmission, lockRoutineCliSourceGeneration } from "./repositories/routine-cli-sources.js";
@@ -153,11 +153,12 @@ export function createRoutineCliSourceService(deps: RoutineCliSourceDependencies
   });
   /** Task1 callback: retain the generation gate and check current source/action ceilings.
    * This is not exact-operation authorization or bearer consumption; dispatch must use consumeWithin. */
-  const revalidateSource = (value: RoutineCliSourceContext, action: RoutineCliAction, trx: Transaction<OwnerBotDatabase>): Promise<boolean> => routineCliBoundary(async () => {
+  const revalidateSource = (value: RoutineCliSourceContext, action: RoutineCliAction, trx: Transaction<OwnerBotDatabase>,
+    invocation?: RoutineCliVerifiedInvocation): Promise<boolean> => routineCliBoundary(async () => {
     try {
       const source = scopedContext(value), record = await lockReference(trx, { sourceId: sourceId(source) });
       if (!sameHash(record.context_hash, contextHash(source))) return false;
-      await liveRecord(record, trx, action);
+      await liveRecord(record, trx, action, undefined, invocation);
       return true;
     } catch (error: unknown) {
       if (error instanceof RoutineCliError && error.code === "permission_denied") return false;
@@ -182,7 +183,7 @@ export function createRoutineCliSourceService(deps: RoutineCliSourceDependencies
     validateAcceptedWithin: <T>(trx: Transaction<OwnerBotDatabase>, input: { source: RoutineCliSourceContext; invocation: RoutineCliVerifiedInvocation; operation: RoutineCliOperation }, work: () => Promise<T>): Promise<T> => routineCliBoundary(async () => {
       const source = scopedContext(input.source), operation = RoutineCliOperationSchema.parse(input.operation);
       const reference = RefSchema.parse({ sourceId: input.invocation.sourceId });
-      await lockRoutineCliControl(trx, configured().scope, operation);
+      const directControl = await lockRoutineCliControl(trx, configured().scope, operation);
       const record = await lockReference(trx, reference), digest = hash(JSON.stringify(operation));
       if (sourceId(source) !== reference.sourceId || !sameHash(contextHash(source), record.context_hash)
         || !sameHash(input.invocation.operationDigest, digest)) throw new RoutineCliError("permission_denied");
@@ -192,6 +193,7 @@ export function createRoutineCliSourceService(deps: RoutineCliSourceDependencies
       if (!cap?.consumed_at || !sameHash(cap.operation_digest, digest)) throw new RoutineCliError("permission_denied");
       const verified = Object.freeze({ sourceId: record.source_id, invocationId: cap.invocation_id, operationDigest: cap.operation_digest, accepted: true as const });
       await liveRecord(record, trx, actionFor(operation), operation, verified);
+      await lockRoutineCliDirectControl(trx, source, directControl);
       const result = await work();
       await liveRecord(record, trx, actionFor(operation), operation, verified);
       return result;
@@ -244,13 +246,14 @@ export function createRoutineCliSourceService(deps: RoutineCliSourceDependencies
       const found = await repo.capability(scope, tokenHash, trx);
       requireCapability(found); // Reject invalid/replayed/mismatched bearers before requesting any routine lock.
       if (!found) throw new RoutineCliError("permission_denied");
-      await lockRoutineCliControl(trx, scope, operation);
+      const directControl = await lockRoutineCliControl(trx, scope, operation);
       const record = await lockReference(trx, { sourceId: found.source_id });
       const cap = await repo.capability(scope, tokenHash, trx, true);
       requireCapability(cap); // Recheck under the original source-generation/capability locks.
       if (!cap) throw new RoutineCliError("permission_denied");
       const verified = Object.freeze({ sourceId: record.source_id, invocationId: cap.invocation_id, operationDigest: cap.operation_digest });
       const source = await liveRecord(record, trx, action, operation, verified);
+      await lockRoutineCliDirectControl(trx, source, directControl);
       await repo.consume(scope, tokenHash, now().toISOString(), trx);
       const result = await work(source, trx, verified);
       // Validate again around awaited local admission work, including action policy and expiry.

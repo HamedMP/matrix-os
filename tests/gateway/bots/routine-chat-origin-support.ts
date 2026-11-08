@@ -4,7 +4,7 @@ import { createRoutineChatOriginService } from "../../../packages/gateway/src/bo
 import type { VerifiedRoutineOriginApproval } from "../../../packages/gateway/src/bots/routine-origin-platform-client.js";
 import { createHash } from "node:crypto";
 import { scope } from "./routine-cli-request-support.js";
-export async function admitFixtureRun(f: Awaited<ReturnType<typeof proposalFixture>>, chatId = "chat_source", runId = "run_source") {
+export async function admitFixtureRun(f: Pick<Awaited<ReturnType<typeof proposalFixture>>, "chats"> & { state: { clock: string } }, chatId = "chat_source", runId = "run_source") {
   const owner = { type: "personal" as const, ownerId: OWNER };
   let record = await f.chats.get(owner, chatId);
   if (!record) { await f.chats.create(owner, { id: chatId, clientRequestId: "req_create_" + chatId, title: "Fixture" }); record = (await f.chats.get(owner, chatId))!; }
@@ -24,7 +24,7 @@ export function originService(f: Awaited<ReturnType<typeof proposalFixture>>) {
     computerId: scope.computerId, expectedMachine: machine, now: () => new Date(f.state.clock), intervalMs: 100 });
 }
 /** Fixture of the nominal post-verification value. Actual Platform/Hono proof lane is separate. */
-export function decisionProof(f: Awaited<ReturnType<typeof proposalFixture>>, interactionId: string, request = { kind: "approval" as const, baseRevision: 1, decision: "approve" as const }) {
+export function decisionProof(f: { state: { clock: string } }, interactionId: string, request = { kind: "approval" as const, baseRevision: 1, decision: "approve" as const }) {
   const at = Date.parse(f.state.clock);
   return { ...machine, ownerId: OWNER, purpose: "routine_origin_approval", sourceChatId: "chat_source", interactionId,
     method: "POST", path: `/api/chats/chat_source/routine-origin/${interactionId}/resolve`, ...request,
