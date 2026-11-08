@@ -195,6 +195,74 @@ it("reconciles a lost pending-commit ACK before generic failure/recovery and nev
   expect(await f.db.selectFrom("bot_approvals").selectAll().execute()).toHaveLength(1);
   expect(vi.mocked(f.runBot).mock.calls.filter(([input]) => input.command.kind === "bot.run")).toHaveLength(0);
 });
+it.each(["rolled back", "committed"] as const)("recovers the exact task after an unconfirmed approval transaction that %s", async outcome => {
+  const owner = { type: "personal" as const, ownerId: OWNER };
+  let approvalAttempted = false, readsAvailable = false, unavailableReads = 0, failSettlement = false;
+  f.taskDependencies.transact = (ownerId, work) => f.transact(ownerId, async tx => {
+    const result = await work(tx);
+    if (failSettlement && await tx.db.selectFrom("bot_tasks").select("task_id").where("status", "=", "failed").executeTakeFirst())
+      throw new Error("Fixture rolled back task settlement");
+    return result;
+  });
+  f.hooks.transact = async (ownerId, work) => {
+    if (approvalAttempted && !readsAvailable) {
+      unavailableReads++;
+      throw new Error("Fixture proposal readback unavailable");
+    }
+    let wroteApproval = false;
+    const value = await f.transact(ownerId, async tx => {
+      const result = await work(tx);
+      wroteApproval = !approvalAttempted && !!await tx.db.selectFrom("routine_cli_proposals")
+        .select("client_request_id").where("stage", "=", "pending_approval").executeTakeFirst();
+      if (wroteApproval) {
+        approvalAttempted = true;
+        if (outcome === "rolled back") throw new Error("Fixture rolled back proposal transaction");
+      }
+      return result;
+    });
+    if (wroteApproval) throw new Error("Fixture lost proposal commit acknowledgement");
+    return value;
+  };
+  await f.submit();
+  await f.canonical.drain();
+  expect(approvalAttempted).toBe(true);
+  expect(unavailableReads).toBeGreaterThan(0);
+  const dispatch = await f.db.selectFrom("routine_cli_proposals").selectAll().executeTakeFirstOrThrow();
+  const run = () => f.db.selectFrom("chat_runs").select("status").where("id", "=", dispatch.run_id!).executeTakeFirstOrThrow();
+  const task = () => f.db.selectFrom("bot_tasks").select(["status", "run_id", "revision"]).where("task_id", "=", dispatch.task_id!).executeTakeFirstOrThrow();
+  const count = outcome === "committed" ? 1 : 0;
+  const receipt = () => f.execute({ operation: "request", requestId: dispatch.client_request_id });
+  expect(await receipt()).toMatchObject({ receipt: { disposition: "queued" },
+    proposal: { handoff: count ? "pending_approval" : "target_task_claimed", approval: count ? "pending" : null } });
+  expect(await run()).toEqual({ status: "running" });
+  const before = await task();
+  expect(before).toMatchObject({ status: count ? "waiting_person" : "running", run_id: dispatch.run_id });
+  expect(await f.canonical.reconcileActiveRuns(owner)).toBe(0);
+  expect(await run()).toEqual({ status: "running" });
+  expect(await task()).toEqual(before);
+
+  readsAvailable = true;
+  await f.tasks.abandon({ ownerId: OWNER, taskId: dispatch.task_id!, runId: "run_unrelated" });
+  expect(await task()).toEqual(before);
+  if (outcome === "rolled back") {
+    failSettlement = true;
+    expect(await f.canonical.reconcileActiveRuns(owner)).toBe(0);
+    expect(await run()).toEqual({ status: "running" });
+    expect(await task()).toEqual(before);
+    failSettlement = false;
+  }
+  expect(await f.canonical.reconcileActiveRuns(owner)).toBe(1);
+  expect(await run()).toEqual({ status: count ? "completed" : "failed" });
+  expect(await task()).toMatchObject({ status: count ? "waiting_person" : "failed", run_id: dispatch.run_id });
+  const after = await task();
+  expect(Number(after.revision)).toBe(Number(before.revision) + (count ? 0 : 1));
+  expect(await f.canonical.reconcileActiveRuns(owner)).toBe(0);
+  expect(await task()).toEqual(after);
+  expect(await f.db.selectFrom("bot_approvals").selectAll().execute()).toHaveLength(count);
+  expect(await receipt()).toMatchObject({ receipt: { disposition: "queued" },
+    proposal: { handoff: count ? "pending_approval" : "rejected", approval: count ? "pending" : null } });
+  expect(vi.mocked(f.runBot).mock.calls.filter(([input]) => input.command.kind === "bot.run")).toHaveLength(0);
+});
 it("commits waiting task before a fast owner decision and does not stale-settle after that decision", async () => {
   let answered = false;
   f.hooks.transact = async (owner, work) => {
