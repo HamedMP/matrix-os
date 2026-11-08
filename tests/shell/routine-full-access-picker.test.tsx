@@ -12,14 +12,17 @@ const status = RoutineFullAccessStatusSchema.parse({ revision: 3, eligibility: "
 function setup(revoke: () => Promise<typeof status>, initialMode = "full_access") {
   const catalog = createCanonicalProviderCatalogFixture();
   catalog.drivers[0]!.kind = "claude_code"; catalog.instances[0]!.driverKind = "claude_code";
+  catalog.instances[0]!.options.push({ id: "effort", label: "Effort", kind: "enum", placement: "composer", defaultValue: "low",
+    values: [{ value: "low", label: "Low" }, { value: "high", label: "High" }] });
   CanonicalProviderCatalogSchema.parse(catalog);
   vi.stubGlobal("fetch", vi.fn(async () => Response.json(catalog)));
   const client = { read: vi.fn(async () => status), revoke: vi.fn(revoke), challenge: vi.fn(async () => status), decide: vi.fn() };
   const selection = { instanceId: "codex_fixture", model: "gpt-5.6-sol" };
   const context = { chatId: "chat_one", scopeKey: "owner-session-computer", executionControls: { chatId: "chat_one", runId: "run_one", selection,
     interactionMode: "default", permissionMode: initialMode }, routineFullAccessClient: client, allowRoutineScope: true };
-  const hook = renderHook(() => useChatProviderState(selection, selection.instanceId, context));
-  return { hook, client };
+  const hook = renderHook(executionControls => useChatProviderState(selection, selection.instanceId, { ...context, executionControls }),
+    { initialProps: context.executionControls });
+  return { hook, client, executionControls: context.executionControls };
 }
 it("revokes the server scope before the existing permission picker reports a downgrade", async () => {
   let release!: (value: typeof status) => void;
@@ -32,6 +35,49 @@ it("revokes the server scope before the existing permission picker reports a dow
   await act(async () => { release({ ...status, revision: 4, consent: null }); await pending; });
   await waitFor(() => expect(hook.result.current.selected?.permissionMode).toBe("supervised"));
 });
+it.each(["separate render", "same batch"])("preserves an effort change made during interaction-mode revocation (%s)", async timing => {
+  const revocation = Promise.withResolvers<typeof status>();
+  const { hook, client } = setup(() => revocation.promise);
+  const low = [{ id: "effort", value: "low" }], high = [{ id: "effort", value: "high" }];
+  await waitFor(() => expect(hook.result.current.selected?.selectedOptions).toEqual(low));
+
+  act(() => hook.result.current.selectInteractionMode("plan"));
+  await waitFor(() => expect(client.revoke).toHaveBeenCalledOnce());
+  expect(hook.result.current.selected?.interactionMode).toBe("default");
+
+  const selectHigh = () => hook.result.current.selectOption("effort", "high");
+  if (timing === "separate render") {
+    act(selectHigh);
+    expect(hook.result.current.selected?.selectedOptions).toEqual(high);
+    expect(hook.result.current.selected?.interactionMode).toBe("default");
+  }
+  await act(async () => {
+    if (timing === "same batch") selectHigh();
+    revocation.resolve({ ...status, revision: 4, consent: null });
+    await revocation.promise;
+  });
+  expect(hook.result.current.selected).toMatchObject({ interactionMode: "plan", permissionMode: "full_access", selectedOptions: high });
+});
+
+it("does not overwrite the newer run's selection when an earlier mode change finishes revoking", async () => {
+  const revocation = Promise.withResolvers<typeof status>();
+  const { hook, client, executionControls } = setup(() => revocation.promise);
+  await waitFor(() => expect(hook.result.current.selected?.permissionMode).toBe("full_access"));
+  act(() => hook.result.current.selectInteractionMode("plan"));
+  await waitFor(() => expect(client.revoke).toHaveBeenCalledOnce());
+
+  hook.rerender({ ...executionControls, runId: "run_two" });
+  act(() => hook.result.current.selectOption("effort", "high"));
+  expect(hook.result.current.selected?.selectedOptions).toEqual([{ id: "effort", value: "high" }]);
+  await act(async () => {
+    revocation.resolve({ ...status, revision: 4, consent: null });
+    await revocation.promise;
+  });
+  expect(hook.result.current.selected).toMatchObject({
+    interactionMode: "default", selectedOptions: [{ id: "effort", value: "high" }],
+  });
+});
+
 it("retains Full Access when revocation fails instead of showing a completed downgrade", async () => {
   vi.spyOn(console, "warn").mockImplementation(() => {});
   const { hook, client } = setup(async () => { throw new Error("Fixture failed revoke"); });
