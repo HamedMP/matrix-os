@@ -1,5 +1,5 @@
 // Named native/model transport fixture; exact 0.162.1 JSON schemas validate consumed native contracts.
-import Ajv from "ajv";
+import Ajv from "codex-fixture-ajv";
 import { readFile, appendFile, writeFile } from "node:fs/promises";
 import { readFileSync } from "node:fs";
 import { gunzipSync } from "node:zlib";
