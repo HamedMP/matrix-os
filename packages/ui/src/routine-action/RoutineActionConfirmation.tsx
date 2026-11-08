@@ -8,7 +8,7 @@ export function RoutineActionConfirmation({ client, challengeId, identity, openC
   client: RoutineActionClient; challengeId: string; identity: string; openConfirmation?: (id: string, signal?: AbortSignal) => Promise<void>;
 }) {
   const { view, status, error, busy, opened, active, submit } = useRoutineAction({ client, challengeId, identity, openConfirmation });
-  return <section aria-label="Routine operation confirmation" className="space-y-3 rounded-xl border p-4 text-sm">
+  return <section aria-label="Routine operation confirmation" className="ph-no-capture space-y-3 rounded-xl border p-4 text-sm">
     <p className="font-semibold">{view?.title ?? "Routine operation confirmation"}</p>
     <p>{ROUTINE_ACTION_NOTICE}</p>
     {view ? <pre className="whitespace-pre-wrap break-words font-sans">{routineActionDetails(view)}</pre> : null}
