@@ -26,6 +26,8 @@ import {
 /** A session load reply carries a whole transcript. */
 const MAX_REPLY_BYTES = BOT_BROKER_MAX_FRAME_BYTES;
 const DEFAULT_TIMEOUT_MS = 30_000;
+// The Gateway still caps native execution at 120 seconds. Leave time for preflight and the checkpoint reply.
+const NATIVE_TASK_REPLY_TIMEOUT_MS = 150_000;
 
 export class BotBrokerError extends Error {
   constructor(readonly code: BotToolErrorCode) {
@@ -113,8 +115,11 @@ export function createBotBrokerClient(options: BotBrokerClientOptions): BotWorke
     // Jev's paid classification and confirmed label readback use the gateway's bounded long-operation deadline.
     const longJevOperation = tool?.capability === "jev.inbox" && ["evaluate", "batch_next"].includes(tool.args.operation);
     const browserPause = tool?.capability === "browser.action";
-    const raw = await exchange(options.timeoutMs === undefined && (waitsForApproval || longJevOperation || browserPause)
-      ? { ...options, timeoutMs: browserPause ? SHARED_BROWSER_ACTION_DEADLINE_MS + 30_000 : 10 * 60_000 + 35_000 } : options, frame.data);
+    const nativeTask = tool?.capability === "agent.task";
+    const raw = await exchange(options.timeoutMs === undefined && (waitsForApproval || longJevOperation || browserPause || nativeTask)
+      ? { ...options, timeoutMs: nativeTask ? NATIVE_TASK_REPLY_TIMEOUT_MS
+        : browserPause ? SHARED_BROWSER_ACTION_DEADLINE_MS + 30_000 : 10 * 60_000 + 35_000 }
+      : options, frame.data);
     const reply = BotBrokerResponseSchema.safeParse(raw);
     if (!reply.success || reply.data.requestId !== requestId) throw new BotBrokerError("unavailable");
     if (!reply.data.ok) throw new BotBrokerError(reply.data.code);
