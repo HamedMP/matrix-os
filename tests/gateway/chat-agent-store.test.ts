@@ -1,3 +1,5 @@
+import { MATRIX_BOT_SELECTION } from "@matrix-os/contracts";
+import { ROUTINE_DIRECT_CHAT_RECIPE } from "../../packages/gateway/src/bots/recipe-catalog.js";
 import { mkdir, mkdtemp, open, opendir, readFile, readdir, rm, symlink, utimes, writeFile } from "node:fs/promises";
 import { constants, type Dir } from "node:fs";
 import { execFileSync } from "node:child_process";
@@ -47,6 +49,27 @@ describe("owner-controlled Chat Agent definitions", () => {
     expect(files).toEqual([`${created.id}.md`]);
     expect(await readFile(join(root, directory, files[0]!), "utf8")).toContain(input.instructions);
     await restarted.close();
+  });
+
+  it("keeps scheduler Bot definitions available only to internal lookup, without counting them as visible Bots", async () => {
+    const visible = await store.create(owner, input);
+    const { recipeId, version, name, description, instructions } = ROUTINE_DIRECT_CHAT_RECIPE;
+    const bot = await store.createRecipeBot(owner, {
+      id: "bot_routine0123456789abcdef0123456789abcdef",
+      createHash: "1".repeat(64),
+      fields: { name, description, instructions, selection: MATRIX_BOT_SELECTION },
+      recipeRef: { recipeId, version },
+    });
+    expect(await store.list(owner, true)).toEqual([visible]);
+    expect(await store.count(owner)).toBe(1);
+    await expect(store.update(owner, bot.id, { baseRevision: 1, archived: true })).rejects.toMatchObject({ code: "agent_not_found" });
+    expect(await store.get(owner, bot.id)).toEqual(bot);
+    const root = join(home, "agents/custom/chat-bots");
+    const path = join(root, (await readdir(root))[0]!, `${bot.id}.md`);
+    const content = await readFile(path, "utf8");
+    await writeFile(path, content.replace(instructions, "An altered scheduler prompt."));
+    await expect(store.get(owner, bot.id)).rejects.toMatchObject({ code: "agent_unavailable" });
+    expect(await store.list(owner)).toEqual([visible]);
   });
 
   it("does not expose or mutate another owner's Agent", async () => {

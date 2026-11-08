@@ -1,3 +1,4 @@
+import { isRoutineDirectChatId } from "../bots/routine-direct-chat-identity.js";
 import { hasCompanyDriveMaterial } from "../chat/drive-sharing-guard.js";
 import { createHmac, randomUUID, timingSafeEqual } from "node:crypto";
 import { z } from "zod/v4";
@@ -73,6 +74,7 @@ export class CollaborationChatScopeService {
     existingScopeId?: string;
     existingLifecycle?: CollaborationScopeRecord["lifecycle"];
   }> {
+    if (isRoutineDirectChatId(input.chatId)) throw new CollaborationChatScopeError("not_found", "Chat not found");
     const chat = await this.db.selectFrom("chats")
       .select(["revision", "collaboration"])
       .where("id", "=", input.chatId)
@@ -126,6 +128,7 @@ export class CollaborationChatScopeService {
     expectedChatRevision: number;
     confirmationToken: string;
   }): Promise<CollaborationScopeRecord> {
+    if (isRoutineDirectChatId(input.chatId)) throw new CollaborationChatScopeError("not_found", "Chat not found");
     const now = this.now().toISOString();
     let committedChatEvent: ChatOutboxEvent | undefined;
     const result = await this.withCapabilityTransition(() => this.db.transaction().execute(async (trx) => {

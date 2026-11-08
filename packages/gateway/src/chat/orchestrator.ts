@@ -1,3 +1,5 @@
+import { assertRoutineDirectAdmission, ROUTINE_DIRECT_DISPATCH } from "./routine-direct-admission.js";
+import { isRoutineDirectChatId } from "../bots/routine-direct-chat-identity.js";
 import { admitNativeScheduledPhase, parseNativeScheduledPhaseRequest, type NativeScheduledPhaseRequest } from "./native-scheduled-admission.js";
 import type { RoutineCliActionController } from "../bots/routine-action-controller.js";
 import { registerBrowserApprovalRun } from "./browser-approval-registration.js";
@@ -326,6 +328,7 @@ export class CanonicalChatOrchestrator {
     inputValue: CanonicalCreateChatTurnRequest,
     provenance?: import("./turn-admission.js").CanonicalTurnProvenance,
   ): Promise<CanonicalChatTurnAdmissionResponse> {
+    assertRoutineDirectAdmission(principal, owner, chatId, inputValue.clientRequestId, provenance?.[ROUTINE_DIRECT_DISPATCH]);
     return admitCanonicalTurn({
       ...this.options,
       assertOpen: () => this.assertOpen(),
@@ -379,6 +382,7 @@ export class CanonicalChatOrchestrator {
     inputValue: CanonicalQueueChatTurnRequest,
     provenance?: import("./turn-admission.js").CanonicalTurnProvenance,
   ): Promise<CanonicalChatQueueAdmissionResponse> {
+    assertRoutineDirectAdmission(principal, owner, chatId, inputValue.clientRequestId, provenance?.[ROUTINE_DIRECT_DISPATCH]);
     this.assertOpen();
     await this.assertPersonalExecutionAllowed(owner, chatId);
     try {
@@ -406,6 +410,7 @@ export class CanonicalChatOrchestrator {
   async retryTurn(principal: RequestPrincipal, owner: ChatOwner, chatId: string,
     turnId: string, inputValue: CanonicalRetryChatTurnRequest,
   ): Promise<CanonicalChatRunAdmissionResponse> {
+    if (isRoutineDirectChatId(chatId)) return mapRepositoryError(new ChatNotFoundError(chatId));
     return admitCanonicalRetry({
       ...this.options,
       assertOpen: () => this.assertOpen(),

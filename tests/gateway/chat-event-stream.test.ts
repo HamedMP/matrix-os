@@ -2,7 +2,8 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import type { CanonicalChatStreamServerFrame } from "@matrix-os/contracts";
-import { Hono } from "hono";
+import { Hono, type Context } from "hono";
+import { registerRoutineDirectResourceFence } from "../../packages/gateway/src/chat/routine-direct-visibility.js";
 import { authMiddleware } from "../../packages/gateway/src/auth.js";
 import {
   createCanonicalChatEventStream,
@@ -70,6 +71,43 @@ function eventCursors(sink: ReturnType<typeof frameSink>) {
 }
 
 describe("canonical Chat event stream", () => {
+  it("hides reserved Chat and Bot routes before sharing, direct-chat, or interaction handlers run", async () => {
+    const app = new Hono();
+    registerRoutineDirectResourceFence(app);
+    const handler = vi.fn((c: Context) => c.json({ routeReached: true }));
+    app.all("/api/chats/:chatId/shares", handler);
+    app.post("/api/chats/:chatId/interactions/:interactionId/resolve", handler);
+    app.get("/api/chat-context/:chatId", handler);
+    app.all("/api/chat-agents/:agentId/direct-chat", handler);
+    const chatId = "chat_routine_0123456789abcdef0123456789abcdef";
+    const botId = "bot_routine0123456789abcdef0123456789abcdef";
+    for (const [method, path] of [
+      ["POST", `/api/chats/${chatId}/shares`],
+      ["POST", `/api/chats/${chatId}/interactions/in_guessed/resolve`],
+      ["GET", `/api/chat-context/${chatId}`],
+      ["GET", `/api/chat-agents/%62${botId.slice(1)}/direct-chat`],
+    ] as const) expect((await app.request(path, { method })).status).toBe(404);
+    expect(handler).not.toHaveBeenCalled();
+    expect((await app.request("/api/chat-agents/bot_visible123/direct-chat")).status).toBe(200);
+  });
+
+  it("does not publish scheduler backing events to owner subscribers", async () => {
+    const hidden = "chat_routine_0123456789abcdef0123456789abcdef";
+    const harness = repositoryHarness(async () => ({ events: [outbox(1, hidden), outbox(2)], gap: false }));
+    const recordTelemetry = vi.fn();
+    const stream = createCanonicalChatEventStream({ repository: harness.repository, onCommittedEvent: recordTelemetry });
+    const sink = frameSink();
+    try {
+      await stream.open({ sink, principal: principalA });
+      harness.publish(principalA.userId, outbox(3, hidden));
+      harness.publish(principalA.userId, outbox(4));
+      expect(eventCursors(sink)).toEqual([2, 4]);
+      expect(recordTelemetry).toHaveBeenCalledTimes(2);
+    } finally {
+      stream.shutdown();
+    }
+  });
+
   it("registers the exact event route before the dynamic Chat detail route", async () => {
     // Hono matches in registration order, so registering /api/chats/:chatId
     // first would swallow /api/chats/events. Mount the real registrar and let

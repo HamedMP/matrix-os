@@ -15,6 +15,7 @@ import {
   type BotToolCapability,
 } from "@matrix-os/contracts";
 import { z } from "zod/v4";
+import { ROUTINE_DIRECT_CHAT_RECIPE_REF } from "./routine-direct-chat-identity.js";
 
 export interface BotRecipeIntegration {
   service: string;
@@ -53,6 +54,17 @@ const RecipeSchema = z.object({
   output: z.string().min(1).max(1_000),
   identitySource: z.literal("owner_soul").optional(),
 }).strict();
+
+/** Internal scheduler procedure. It is resolvable for canonical runs but has no catalog entry. */
+export const ROUTINE_DIRECT_CHAT_RECIPE: BotRecipe = {
+  ...ROUTINE_DIRECT_CHAT_RECIPE_REF,
+  name: "Scheduled task",
+  description: "Executes an approved schedule for its originating Chat.",
+  instructions: "Complete the approved scheduled prompt and return its result in text. Report only verified results.",
+  capabilities: [],
+  integrations: [],
+  output: "A text result delivered to the Chat that requested the schedule.",
+};
 
 const CONVERSATION: readonly BotToolCapability[] = ["interaction.create", "memory.search", "memory.propose"];
 const ARTIFACTS: readonly BotToolCapability[] = ["artifact.read", "artifact.write"];
@@ -279,6 +291,8 @@ export function createBotRecipeCatalog(recipes: readonly BotRecipe[] = RECIPES):
   if (recipes.length > MAX_BOT_RECIPE_VERSIONS) throw new RangeError("Too many bot recipe versions");
   const byKey = new Map(recipes.map((recipe) => [`${recipe.recipeId}@${recipe.version}`, RecipeSchema.parse(recipe) as BotRecipe]));
   if (recipes === RECIPES) {
+    const routineRecipe = ROUTINE_DIRECT_CHAT_RECIPE;
+    byKey.set(`${routineRecipe.recipeId}@${routineRecipe.version}`, routineRecipe);
     for (const recipe of RETAINED_RECIPES) byKey.set(`${recipe.recipeId}@${recipe.version}`, RecipeSchema.parse(recipe) as BotRecipe);
   }
   return {

@@ -119,6 +119,22 @@ function acknowledge(
 }
 
 describe("canonical Chat routes", () => {
+  it("treats a scheduler's backing Chat as absent before invoking public reads or mutations", async () => {
+    const backingChatId = "chat_routine_0123456789abcdef0123456789abcdef";
+    const service = routeService();
+    const app = appFor(service);
+    for (const [method, suffix] of [["GET", ""], ["POST", "/turns"], ["PATCH", "/title"], ["DELETE", ""]] as const) {
+      const response = await app.request(`/api/chats/${backingChatId}${suffix}`, { method });
+      expect(response.status).toBe(404);
+    }
+    const encoded = await app.request(`/api/chats/%63${backingChatId.slice(1)}`);
+    expect(encoded.status).toBe(404);
+    expect(service.getDetail).not.toHaveBeenCalled();
+    expect(service.admitTurn).not.toHaveBeenCalled();
+    expect(service.updateTitle).not.toHaveBeenCalled();
+    expect(service.delete).not.toHaveBeenCalled();
+  });
+
   it("derives personal ownership and creates a Chat through the shared service", async () => {
     const create = vi.fn(async (_owner: ChatOwner, _input: CanonicalCreateChatRequest) => record);
     const service = routeService({ create });
