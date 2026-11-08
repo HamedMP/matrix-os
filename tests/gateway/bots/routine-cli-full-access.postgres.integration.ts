@@ -164,6 +164,61 @@ it("published CLI uses canonical pause/archive/history while Full Access cannot 
   expect(await f.db.selectFrom("bot_grants").selectAll().execute()).toEqual([]);
 });
 
+it("keeps published CLI list and show live in native plan mode while fencing every prior write", async () => {
+  const { source, events } = await admittedSource();
+  const id = routineId(917);
+  await insertRoutine(f.db, 917, { botId: f.target.botId, chatId: f.target.chatId });
+  const pause = { operation: "pause" as const, routineId: id, baseRevision: 1, requestId: invocation(917) };
+  const signal = new AbortController().signal;
+  const issued = { operation: pause, invocationId: invocation(918), signal };
+  const approved = { operation: { ...pause, requestId: invocation(919) }, invocationId: invocation(920), signal };
+  expect(await source.authorize(issued)).toBe(true);
+  const token = (await source.issue(issued)).takeToken();
+  expect(await source.authorize(approved)).toBe(true);
+
+  source.narrowNativeMode("plan");
+  await expect(source.issue(approved)).rejects.toMatchObject({ code: "permission_denied" });
+  await expect(runtime.execute({ token, operation: pause })).rejects.toMatchObject({ code: "permission_denied" });
+  source.narrowNativeMode("default");
+  await expect(source.authorize({ ...issued, invocationId: invocation(921) })).rejects.toMatchObject({ code: "permission_denied" });
+
+  const invoker = await cli(source);
+  await expect(invoker.invoke({ args: ["list"] })).resolves.toMatchObject({
+    ok: true, data: { kind: "list", routines: [{ routineId: id, status: "active", revision: 1 }] },
+  });
+  await expect(invoker.invoke({ args: ["show", id] })).resolves.toMatchObject({
+    ok: true, data: { kind: "show", routine: { routineId: id, status: "active", revision: 1 } },
+  });
+  expect(httpCalls).toBe(2);
+  expect(events).toEqual([]);
+  expect(await f.db.selectFrom("routine_cli_requests").selectAll().execute()).toEqual([]);
+});
+
+it.each(["project publication", "run completion", "target revision"] as const)(
+  "revalidates a plan-mode read when %s occurs after capability issue", async change => {
+    const { source, input } = await admittedSource();
+    source.narrowNativeMode("plan");
+    const operation = { operation: "list" as const };
+    const call = { operation, invocationId: invocation(922), signal: new AbortController().signal };
+    expect(await source.authorize(call)).toBe(true);
+    const token = (await source.issue(call)).takeToken();
+    if (change === "project publication") await (await stageProjectPublication())();
+    if (change === "run completion") {
+      await f.chats.finishRun(input.owner, { chatId: input.chatId, runId: input.runId, outcome: "completed", completedAt: new Date().toISOString() });
+    }
+    if (change === "target revision") await f.targets.remember(f.principal, { ...f.target, baseRevision: 1 });
+    await expect(runtime.execute({ token, operation })).rejects.toMatchObject({ code: "permission_denied" });
+  },
+);
+
+it("does not revive a source whose Full Access was already revoked before entering plan mode", async () => {
+  const { source, approved } = await admittedSource();
+  await runtime.fullAccess.revoke(f.principal, f.chatId, { baseRevision: approved.revision });
+  source.narrowNativeMode("plan");
+  await expect(source.authorize({ operation: { operation: "list" }, invocationId: invocation(923), signal: new AbortController().signal }))
+    .rejects.toMatchObject({ code: "permission_denied" });
+});
+
 it("holds the real preference gate through canonical consume and rejects a concurrent committed target revision", async () => {
   const { source } = await admittedSource(); await insertRoutine(f.db, 910, { botId: f.target.botId, chatId: f.target.chatId });
   const operation = { operation: "pause" as const, routineId: routineId(910), baseRevision: 1, requestId: invocation(910) };
