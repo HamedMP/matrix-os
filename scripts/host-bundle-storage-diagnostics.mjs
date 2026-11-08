@@ -1,5 +1,6 @@
 // Best-effort build evidence only. No paths, mount sources or environment in output.
 import { spawn } from "node:child_process";
+import { Console } from "node:console";
 import { lstat, statfs } from "node:fs/promises";
 import { dirname, isAbsolute, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -66,9 +67,9 @@ export async function storageSnapshot(scope, phase, paths) {
     const value = JSON.parse(stdout);
     if (valid(value, scope, phase)) record = value;
   } catch (error) { record = unavailable(scope, phase); }
-  // A failed diagnostic sink must not replace the original build error, emit
-  // an arbitrary logger exception, or prevent owned cleanup.
-  try { console.log(JSON.stringify(record)); }
+  // Keep Node's write-error handling local to diagnostics, even with a strict
+  // global Console. An asynchronous broken pipe must not interrupt cleanup.
+  try { new Console({ stdout: process.stdout, ignoreErrors: true }).log(JSON.stringify(record)); }
   catch (error) { return; }
 }
 

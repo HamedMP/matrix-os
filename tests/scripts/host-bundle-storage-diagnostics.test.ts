@@ -230,18 +230,51 @@ it("normal direct-baseline Bash never invokes sandbox diagnostics or its failure
 
 it.each(["before", "failure"])("preserves original build exit and cleanup when %s-phase diagnostic reporting throws", phase => {
   const f = fixture(), path = join(f.root, "scripts/host-bundle-storage-diagnostics.mjs");
-  writeFileSync(path, `const diagnosticLog = console.log;
-console.log = (text, ...rest) => {
-  if(typeof text==='string' && text.startsWith('{"kind":"host-bundle-storage"') && text.includes(${JSON.stringify('"phase":"' + phase + '"')})) throw new Error('do-not-log-diagnostic-path-or-token');
-  diagnosticLog(text, ...rest);
-};
+  writeFileSync(path, `if (process.argv[2] !== '--collect') {
+  const diagnosticWrite = process.stdout.write;
+  process.stdout.write = function (text, ...rest) {
+    if (typeof text === 'string' && text.startsWith('{"kind":"host-bundle-storage"') && text.includes(${JSON.stringify('"phase":"' + phase + '"')})) throw new Error('do-not-log-diagnostic-path-or-token');
+    return diagnosticWrite.call(this, text, ...rest);
+  };
+}
 ` + readFileSync(path, "utf8")); f.freeze();
   const result = f.run();
   expect(result.status, result.stderr).toBe(83);
   expect(result.stderr).toContain("docker failed (83)");
   expect(result.stdout + result.stderr).not.toContain("do-not-log-diagnostic-path-or-token");
+  expect(snapshots(result.stdout).map(record => record.phase)).toEqual([phase === "before" ? "failure" : "before"]);
   expect(existsSync(join(f.root, "removed"))).toBe(true);
   expect(existsSync(readFileSync(join(f.root, "source-path"), "utf8"))).toBe(false);
+});
+
+it("preserves build failure and cleanup when the diagnostic stdout write fails asynchronously", () => {
+  const f = fixture(), path = join(f.root, "scripts/host-bundle-storage-diagnostics.mjs");
+  writeFileSync(path, `import { Console as FixtureConsole } from 'node:console';
+import { Writable as FixtureWritable } from 'node:stream';
+import { writeFileSync as fixtureWrite } from 'node:fs';
+if (process.argv[2] !== '--collect') {
+  const original = process.stdout;
+  const stdout = new FixtureWritable({
+    write(chunk, encoding, done) {
+      const text = chunk.toString();
+      if (text.startsWith('{"kind":"host-bundle-storage"') && text.includes('"phase":"failure"')) {
+        setImmediate(() => done(Object.assign(new Error('do-not-log-diagnostic-pipe-failure'), { code: 'EPIPE' })));
+      } else original.write(chunk, encoding, done);
+    },
+  });
+  Object.defineProperty(process, 'stdout', { value: stdout });
+  globalThis.console = new FixtureConsole({ stdout, stderr: process.stderr, ignoreErrors: false });
+  process.once('exit', () => fixtureWrite(process.env.FIXTURE_ROOT + '/diagnostic-error-listeners', String(stdout.listenerCount('error'))));
+}
+` + readFileSync(path, "utf8")); f.freeze();
+  const result = f.run();
+  expect(result.status, result.stderr).toBe(83);
+  expect(result.stderr).toContain("docker failed (83)");
+  expect(result.stdout + result.stderr).not.toContain("do-not-log-diagnostic-pipe-failure");
+  expect(snapshots(result.stdout).map(record => record.phase)).toEqual(["before"]);
+  expect(existsSync(join(f.root, "removed"))).toBe(true);
+  expect(existsSync(readFileSync(join(f.root, "source-path"), "utf8"))).toBe(false);
+  expect(readFileSync(join(f.root, "diagnostic-error-listeners"), "utf8")).toBe("0");
 });
 
 it("preserves original failure and cleanup if spawning the diagnostic child throws", () => {
