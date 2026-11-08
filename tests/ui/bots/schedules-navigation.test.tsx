@@ -337,10 +337,14 @@ it("shows the newly scheduled run in the open detail after resuming", async () =
   render(<ScheduleCenter client={{ ...base, bots: { routines: api } } as unknown as ChatAgentClient} onClose={vi.fn()} />);
   fireEvent.click(await screen.findByRole("button", { name: "View Morning brief" }));
   expect(await screen.findByText("No future runs · paused")).toBeTruthy();
-  fireEvent.click(screen.getByRole("button", { name: "Resume Morning brief" }));
+  const resume = screen.getByRole("button", { name: "Resume Morning brief" });
+  await waitFor(() => expect(resume).toHaveProperty("disabled", false));
+  expect(api.detail).toHaveBeenCalledExactlyOnceWith(routine.routineId);
+  fireEvent.click(resume);
 
   expect(await screen.findByText(/2100/)).toBeTruthy();
   expect(screen.queryByText(/2099/)).toBeNull();
+  expect(api.detail).toHaveBeenCalledTimes(2);
 });
 
 it("shows a separate definition view and opens the original Chat for runs", async () => {

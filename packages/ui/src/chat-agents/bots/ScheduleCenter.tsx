@@ -103,7 +103,7 @@ export function ScheduleCenter({ client, onClose, onOpenBotChat, onNewSchedule, 
     await act(async () => {
       const result = await api.detail(row.routineId);
       if (current.current === client && lifetime.current === generation && detailIntent.current === intent) { selectedRoutine.current = row.routineId; acceptDetail(result); setEditing(false); }
-    });
+    }, undefined, false);
   }
   async function refreshSelected() {
     if (!api) return;
