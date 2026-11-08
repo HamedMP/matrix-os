@@ -110,6 +110,7 @@ export function SharedChatComposer({
   layout = "default",
   speech,
   routineFullAccess,
+  acceptedRunId,
 }: {
   permissionModeRequest?: number;
   value: string;
@@ -154,8 +155,9 @@ export function SharedChatComposer({
   layout?: "default" | "narrow";
   speech?: { scopeKey: string; onDraft: (text: string) => void };
   routineFullAccess?: RoutineFullAccessContext;
+  acceptedRunId?: string;
 }) {
-  const routineAccess = useRoutineFullAccessSelection({ context: routineFullAccess, selection, onChange: onSelectionChange,
+  const routineAccess = useRoutineFullAccessSelection({ context: routineFullAccess, acceptedRunId, selection, onChange: onSelectionChange,
     isQualified: next => catalog.instances.find(instance => instance.id === next.instanceId)?.driverKind === "claude_code" && next.permissionMode === "full_access" && next.interactionMode === "default" });
   const [dismissedSuggestionKey, setDismissedSuggestionKey] = useState<string | null>(null);
   const suggestionMenuRef = useRef<HTMLDivElement>(null);
