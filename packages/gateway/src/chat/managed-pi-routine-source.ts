@@ -88,8 +88,14 @@ export function createManagedPiRoutineSource(options: ManagedRoutineCliPort & { 
       const aborted = () => terminal(callId); actionSignal.addEventListener("abort", aborted, { once: true });
       let invoker: ReturnType<typeof createFixedNativeRoutineCliInvoker> | undefined;
       try {
-        registration ??= options.runtime.registerManagedChat({ binding, input: options.input, signal, current, publish: options.publish });
-        const registered = await boundedOperation(() => registration!, 10_000, actionSignal); sourceId = registered.reference.sourceId;
+        if (!registration) {
+          const attempt = options.runtime.registerManagedChat({ binding, input: options.input, signal, current, publish: options.publish });
+          registration = attempt;
+          // A caller timing out must not reset a registration shared by other calls.
+          void attempt.catch(() => { if (registration === attempt) registration = undefined; });
+        }
+        const attempt = registration;
+        const registered = await boundedOperation(() => attempt, 10_000, actionSignal); sourceId = registered.reference.sourceId;
         if (!live() || actionSignal.aborted) throw new BotBrokerActionError("stale_generation");
         invoker = createFixedNativeRoutineCliInvoker({ binPath: options.binPath, endpoint: options.endpoint, cwd: options.homePath, homePath: options.homePath,
           authorize(input) {
