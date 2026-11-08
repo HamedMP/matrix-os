@@ -127,6 +127,70 @@ try {
       const f = await fixture(); await f.command('emit {"alive":true}'); f.consume(); await until(() => f.messages.length === 1);
       assert.deepEqual(f.messages, [{ alive: true }]); await f.cleanup();
     });
+    await check("mutating the ordinary byte sink cannot change authenticated JSON", async () => {
+      const f = await fixture();
+      try {
+        f.consume(undefined, chunk => chunk.fill(0));
+        await f.command('emit {"original":true}');
+        await until(() => f.messages.length === 1, "original authenticated JSON", 750);
+        assert.deepEqual(f.messages, [{ original: true }]);
+      } finally { await f.cleanup(); }
+    });
+    await check("ordinary bytes drain while a fenced JSON callback is still pending", async () => {
+      const f = await fixture();
+      let release;
+      const gate = new Promise(resolve => { release = resolve; });
+      try {
+        const output = f.consume(async () => { await gate; });
+        await f.command('emit {"beforeFence":true}');
+        await until(() => f.messages.length === 1);
+        f.session.fence();
+        assert.equal(f.guards[0](), false);
+        await f.command('emit {"duringFence":true}');
+        await until(() => f.bytes.join("").includes("duringFence"), "ordinary bytes during pending callback", 750);
+        release();
+        await output;
+        await f.command('emit {"afterFence":true}');
+        await until(() => f.bytes.join("").includes("afterFence"));
+        assert.deepEqual(f.messages, [{ beforeFence: true }]);
+        assert.equal(f.bytes.join("").match(/duringFence/g)?.length, 1);
+        assert.equal(f.bytes.join("").match(/afterFence/g)?.length, 1);
+        assert.equal(f.session.child.exitCode, null);
+      } finally {
+        release();
+        await f.cleanup();
+      }
+    });
+    await check("native proof and drain failures log bounded categories", async () => {
+      const originalWarn = console.warn;
+      const logs = [];
+      console.warn = (...args) => logs.push(args);
+      try {
+        for (const [method, stage] of [
+          ["retainChild", "retain-child"],
+          ["childAlive", "child-alive"],
+          ["stdoutReceive", "drain"],
+        ]) {
+          const wrapped = Object.create(native, {
+            [method]: { value() { throw new Error("private fixture path and output"); } },
+          });
+          const f = await fixture({ native: wrapped });
+          try {
+            if (method === "stdoutReceive") f.session.fence();
+            await f.consume();
+            assert.equal(f.session.isFenced(), true);
+            await until(() => logs.some(args => args.includes(stage)), stage, 750);
+            assert.deepEqual(f.messages, []);
+            assert.equal(f.session.child.exitCode, null);
+          } finally { await f.cleanup(); }
+        }
+        assert.deepEqual(logs, [
+          ["[codex-native-stdout] transport failure", "retain-child", "native-error"],
+          ["[codex-native-stdout] transport failure", "child-alive", "native-error"],
+          ["[codex-native-stdout] transport failure", "drain", "native-error"],
+        ]);
+      } finally { console.warn = originalWarn; }
+    });
     await check("cancellation invalidates delivery guard and suppresses queued coalesced callbacks", async () => {
       const f = await fixture(); let release;
       const gate = new Promise(resolve => { release = resolve; });
