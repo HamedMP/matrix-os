@@ -110,6 +110,7 @@ export async function validateTerminalClosureIfPresent(directory, generation) {
       catch (missing) { if (missing instanceof Error && "code" in missing && missing.code === "ENOENT") continue; throw missing; }
       fail(); // A damaged v2 package cannot silently downgrade to the legacy readiness contract.
     }
+    if (await legacyTerminalGeneration(directory) !== generation) fail();
     return undefined;
   }
   return validateTerminalClosure(directory, generation);
