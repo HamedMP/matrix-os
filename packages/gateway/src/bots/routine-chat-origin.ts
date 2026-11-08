@@ -31,7 +31,7 @@ async function privateSource(db: BotExecutor, ownerId: string, chatId: string) {
 async function liveOrigin(db: BotExecutor, origin: RoutineChatOrigin, lockTarget = true) {
   // Source lock always precedes canonical Chat/binding read locks. No target->source reversal.
   if (!await privateSource(db, origin.ownerId, origin.sourceChatId)) return;
-  if (origin.canonicalChatId === origin.sourceChatId || !await hasAcceptedBinding(db, origin.ownerId, origin.canonicalChatId, origin.botId, origin.bindingCreatedAt, lockTarget)) return;
+  if (origin.canonicalChatId === origin.sourceChatId || !await hasAcceptedBinding(db, origin.ownerId, origin.canonicalChatId, origin.botId, origin.bindingCreatedAt, lockTarget ? "ordered" : false)) return;
   return db.selectFrom("chat_runs as run").innerJoin("chat_turns as turn", join => join.onRef("turn.id", "=", "run.turn_id").onRef("turn.chat_id", "=", "run.chat_id"))
     .innerJoin("chat_messages as message", join => join.onRef("message.id", "=", "turn.input_message_id").onRef("message.chat_id", "=", "turn.chat_id"))
     .select("message.id").where("run.id", "=", origin.sourceRunId).where("run.chat_id", "=", origin.sourceChatId)
@@ -120,9 +120,10 @@ export function createRoutineChatOriginService(deps: RoutineChatOriginDependenci
         if (proof.expiresAt <= now().getTime()) throw new BotInteractionError("expired");
         // The canonical decision owns the target lock order, including Routine before
         // the binding and Chat for edits. Do not take the target lock early in the alias.
-        // Revalidate and fence membership after the same uncommitted decision; drift rolls it back.
+        // Revalidate after the same uncommitted decision. It may already hold the Chat,
+        // so this membership recheck must never wait on another binding.
         const decision = await deps.interactions.resolveWithin(tx, ownerId, origin.canonicalChatId, interactionId, input);
-        if (!await hasAcceptedBinding(tx.db, ownerId, origin.canonicalChatId, origin.botId, origin.bindingCreatedAt)) throw new BotInteractionError("not_found");
+        if (!await hasAcceptedBinding(tx.db, ownerId, origin.canonicalChatId, origin.botId, origin.bindingCreatedAt, "recheck")) throw new BotInteractionError("not_found");
         if (closed) throw new BotInteractionError("unavailable");
         if (proof.expiresAt <= now().getTime()) throw new BotInteractionError("expired");
         return decision;
