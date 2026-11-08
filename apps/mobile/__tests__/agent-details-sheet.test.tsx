@@ -1,9 +1,10 @@
 import type { ReactNode } from "react";
-import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/react-native";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react-native";
 import { ActivityIndicator } from "react-native";
 import { SafeAreaInsetsContext } from "react-native-safe-area-context";
 
 import { AgentDetailsSheet, type AgentDetailsSheetProps } from "../components/agents/AgentDetailsSheet";
+import { RoutineDestinationSection } from "../components/agents/RoutineDestinationSection";
 import { AgentMascot } from "../components/ui/AgentMascot";
 import { Icon } from "../components/ui/Icon";
 import { LockIcon } from "../components/ui/icons";
@@ -258,11 +259,31 @@ describe("agent details sheet", () => {
   });
 });
 
-it("real Native Mobile agent details offers current Chat as routine destination without an access grant", async () => {
-  const fetchMock = jest.spyOn(global, "fetch").mockResolvedValue({ ok: true, status: 200, json: async () => ({ preference: { revision: 0, target: null, updatedAt: null }, availability: "unset" }) } as Response);
-  renderSheet({ routineDestination: { chatId: "chat_research", gatewayUrl: "https://fixture.invalid", eligible: true } });
-  expect(await screen.findByText("Routine destination")).toBeTruthy();
-  expect(screen.getByRole("button", { name: "Use this Chat" })).toBeTruthy();
-  expect(screen.getByText(/does not authorize routine operations/)).toBeTruthy();
-  fetchMock.mockRestore();
+it("offers the current Chat as a routine destination only while the sheet is open", async () => {
+  const fetchMock = jest.spyOn(global, "fetch").mockResolvedValue({
+    ok: true, status: 200,
+    json: async () => ({ preference: { revision: 0, target: null, updatedAt: null }, availability: "unset" }),
+  } as Response);
+  const routineDestination = (
+    <RoutineDestinationSection botId={agent.id} chatId="chat_research" gatewayUrl="https://fixture.invalid" eligible />
+  );
+  try {
+    const { rerender } = renderSheet({ visible: false, routineDestination });
+    expect(screen.queryByText("Routine destination")).toBeNull();
+    expect(fetchMock).not.toHaveBeenCalled();
+
+    rerender(sheet({ routineDestination }).element);
+    expect(screen.getByText("Routine destination")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Use this Chat" })).toBeTruthy();
+    expect(screen.getByText(/does not authorize routine operations/)).toBeTruthy();
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
+      "https://fixture.invalid/api/routine-cli/destination",
+      expect.objectContaining({ method: "GET" }),
+    ));
+
+    rerender(sheet({ visible: false, routineDestination }).element);
+    expect(screen.queryByText("Routine destination")).toBeNull();
+  } finally {
+    fetchMock.mockRestore();
+  }
 });
