@@ -17,6 +17,57 @@ function fixture(verify = async () => true, onBound?: Parameters<typeof createRe
   return { binding, sent, admissionId, bound, receive: (frame: TerminalShimFrame) => receiver(frame), disconnect: () => closed() };
 }
 const unavailable = { v: 1, error: { code: "unavailable", message: "Routine requests are temporarily unavailable." } } as const;
+function call(f: ReturnType<typeof fixture>) {
+  return { type: "terminal.call" as const, admissionId: f.admissionId, actionId: randomUUID(), writer: f.bound.root, operation: { operation: "list" as const } };
+}
+
+it("holds calls during verification and source registration, and honors an early cancellation", async () => {
+  const verifying = Promise.withResolvers<boolean>(), creating = Promise.withResolvers<TerminalSourcePort>();
+  const verify = vi.fn(async () => true).mockReturnValueOnce(verifying.promise);
+  const port = { invoke: vi.fn(async () => unavailable), end: vi.fn(), close: vi.fn(async () => {}) };
+  const onBound = vi.fn(() => creating.promise);
+  const f = fixture(verify, onBound), first = call(f), cancelled = call(f);
+
+  f.receive(f.bound);
+  f.receive(first);
+  expect(f.binding.signal.aborted).toBe(false);
+  expect(onBound).not.toHaveBeenCalled();
+  expect(port.invoke).not.toHaveBeenCalled();
+
+  verifying.resolve(true);
+  await vi.waitFor(() => expect(onBound).toHaveBeenCalledOnce());
+  f.receive(cancelled);
+  f.receive({ type: "terminal.cancel", admissionId: f.admissionId, actionId: cancelled.actionId });
+  expect(port.invoke).not.toHaveBeenCalled();
+
+  creating.resolve(port);
+  expect(await f.binding.ready).toBe(true);
+  await vi.waitFor(() => expect(f.sent.slice(1)).toEqual([
+    { type: "host.terminal.result", admissionId: f.admissionId, actionId: first.actionId, result: unavailable },
+  ]));
+  expect(port.invoke).toHaveBeenCalledExactlyOnceWith(first.operation, first.writer, expect.any(AbortSignal));
+  expect(verify).toHaveBeenCalledTimes(2);
+});
+
+it("rejects calls before a bound frame and caps requests waiting for verification", async () => {
+  const unbound = fixture();
+  unbound.receive(call(unbound));
+  expect(await unbound.binding.ready).toBe(false);
+  expect(unbound.binding.signal.aborted).toBe(true);
+
+  const verifying = Promise.withResolvers<boolean>(), onBound = vi.fn();
+  const f = fixture(() => verifying.promise, onBound);
+  f.receive(f.bound);
+  for (let count = 0; count < 8; count++) f.receive(call(f));
+  expect(f.binding.signal.aborted).toBe(false);
+
+  f.receive(call(f));
+  expect(await f.binding.ready).toBe(false);
+  verifying.resolve(true);
+  expect(f.binding.signal.aborted).toBe(true);
+  expect(onBound).not.toHaveBeenCalled();
+  expect(f.sent).toHaveLength(1);
+});
 it("never calls trusted source factory when supervisor verification fails", async () => {
   const onBound = vi.fn(), f = fixture(async () => false, onBound); f.receive(f.bound);
   expect(await f.binding.ready).toBe(false); expect(onBound).not.toHaveBeenCalled(); expect(f.binding.signal.aborted).toBe(true);
@@ -25,8 +76,12 @@ it("fences synchronously on control loss and closes a late source without resurr
   let resolve!: (port: TerminalSourcePort) => void;
   const onBound = vi.fn(() => new Promise<TerminalSourcePort>(done => { resolve = done; }));
   const f = fixture(async () => true, onBound); f.receive(f.bound); await vi.waitFor(() => expect(onBound).toHaveBeenCalledOnce());
-  f.disconnect(); expect(f.binding.signal.aborted).toBe(true); expect(await f.binding.ready).toBe(false);
-  const port = { invoke: vi.fn(async () => unavailable), end: vi.fn(), close: vi.fn(async () => {}) }; resolve(port);
+  const port = { invoke: vi.fn(async () => unavailable), end: vi.fn(), close: vi.fn(async () => {}) };
+  try {
+    f.receive(call(f));
+    expect(f.binding.signal.aborted).toBe(false);
+    f.disconnect(); expect(f.binding.signal.aborted).toBe(true); expect(await f.binding.ready).toBe(false);
+  } finally { resolve(port); }
   await vi.waitFor(() => expect(port.close).toHaveBeenCalledOnce()); expect(port.end).toHaveBeenCalledOnce(); expect(port.invoke).not.toHaveBeenCalled();
 });
 it("rechecks current binding, cancels an exact pending call and rejects replay without inventing positive authority", async () => {
