@@ -1,12 +1,13 @@
 import { readFile } from "node:fs/promises";
 import { createHash } from "node:crypto";
 import { fileURLToPath } from "node:url";
-import { verifyJevHermesRuntimePin } from "./jev-hermes-runtime-pin.js";
+import { verifyHermesRuntimePin } from "./jev-hermes-runtime-pin.js";
+import { HERMES_ROUTINE_PIN } from "./hermes-routine-source.js";
 
 /** Compose with the owned browser/restricted bootstrap, never replace its setup or borrow its credentials. */
 export async function hermesRoutineBootstrap(root: string, args: string[], signal: AbortSignal): Promise<string[] | undefined> {
   try {
-    await verifyJevHermesRuntimePin(root, signal);
+    await verifyHermesRuntimePin(root, HERMES_ROUTINE_PIN, signal);
     const path = new URL("./hermes-routine-tool.py", import.meta.url);
     const resourcePath = fileURLToPath(path);
     const bytes = await readFile(path);

@@ -421,7 +421,6 @@ export function createHermesChatProviderAdapter(options: {
     };
 
     const handleEvent = (event: HermesGatewayEvent) => {
-      routines?.observe(event);
       browserRun?.observe(event);
       catalogGate?.observe(event);
       selectedRouteGate?.observe(event);
@@ -661,11 +660,10 @@ export function createHermesChatProviderAdapter(options: {
     const executionCwd = restrictedProfile?.homePath ?? input.executionRoot ?? options.homePath;
     const nativeArgs = restrictedProfile ? restrictedHermesPythonArguments(hermesRoot, join(restrictedProfile.homePath, "pycache"), python) : browserRun?.args ?? ["-u", "-m", "tui_gateway.entry"];
     const routineArgs = options.routineCli && !jevScope ? await hermesRoutineBootstrap(hermesRoot, nativeArgs, input.signal) : undefined;
-    if (routineArgs) routines = createHermesRoutineSource({ ...options.routineCli!, input, homePath: options.homePath, publish: event => queue.push(event) });
+    const routinePort = routineArgs ? options.routineCli : undefined;
     const clientOptions = {
       command: python,
       args: routineArgs ?? nativeArgs,
-      ...(routines ? { routines } : {}),
       cwd: executionCwd,
       inheritEnvironment: false,
       env: {
@@ -684,7 +682,6 @@ export function createHermesChatProviderAdapter(options: {
       spawnFn: options.spawnFn,
       readyTimeoutMs: options.readyTimeoutMs,
       requestTimeoutMs: options.requestTimeoutMs,
-      onEvent: handleEvent,
       onFailure(error: Error) {
         routines?.end();
         selectedRouteGate?.fail();
@@ -732,7 +729,19 @@ export function createHermesChatProviderAdapter(options: {
           console.warn("[chat/hermes] Run deadline or cancellation observed:", error instanceof Error ? error.name : "UnknownError");
         });
         const withinRun = <T>(operation: Promise<T>) => Promise.race([operation, stopped]);
-        client = await startHermesGateway({ client: clientOptions, signal: startupSignal,
+        client = await startHermesGateway({ signal: startupSignal,
+          createClientOptions() {
+            const attemptSource = routinePort ? createHermesRoutineSource({
+              ...routinePort, input, homePath: options.homePath, publish: event => queue.push(event),
+            }) : undefined;
+            routines = attemptSource;
+            return {
+              ...clientOptions, routines: attemptSource, onEvent(event) {
+                attemptSource?.observe(event);
+                handleEvent(event);
+              },
+            };
+          },
           async onRetry({ label }) {
             reconnectLabel = label;
             emitAgentActivity({ activityId: "startup_reconnect", kind: "phase", label, status: "running" });
