@@ -33,14 +33,21 @@ export function useRoutineDestinationPicker(client: ChatAgentClient | undefined,
       }
       const library = await client.list();
       if (current.current !== scope || sequence !== generation.current) return;
-      const candidates = await Promise.all(library.agents.filter(agent => !agent.archived && agent.recipeRef)
+      const lookups = await Promise.allSettled(library.agents.filter(agent => !agent.archived && agent.recipeRef)
         .slice(0, 100).map(async agent => {
           const chatId = await client.bots!.directChat(agent.id);
           return chatId && await client.bots!.directBot(chatId) === agent.id
             ? { botId: agent.id, chatId, name: agent.name } : null;
         }));
       if (current.current === scope && sequence === generation.current) {
-        setStored({ scope, view, candidates: candidates.filter(item => item !== null), pending: false, error: "" });
+        const candidates = lookups.flatMap(result => result.status === "fulfilled" && result.value ? [result.value] : []);
+        const failure = lookups.find(result => result.status === "rejected");
+        if (failure) {
+          const reason: unknown = failure.reason;
+          console.warn("[routine-destination] Candidate lookup incomplete", reason instanceof Error ? reason.name : "UnknownError");
+        }
+        setStored({ scope, view, candidates, pending: false,
+          error: failure ? "Some routine destinations could not be confirmed. Refresh to check again." : "" });
       }
     } catch (error: unknown) {
       console.warn("[routine-destination] Picker unavailable", error instanceof Error ? error.name : "UnknownError");
@@ -60,7 +67,7 @@ export function useRoutineDestinationPicker(client: ChatAgentClient | undefined,
     setStored({ ...state, pending: true, error: "" });
     try {
       const view = await client.bots.routineDestination.remember({ botId: target.botId, chatId: target.chatId, baseRevision: state.view.preference.revision }, lifetime.current.signal);
-      if (current.current === scope && sequence === generation.current) setStored({ ...state, view, pending: false });
+      if (current.current === scope && sequence === generation.current) setStored({ ...state, view, pending: false, error: "" });
     } catch (error: unknown) {
       console.warn("[routine-destination] Selection unconfirmed", error instanceof Error ? error.name : "UnknownError");
       if (current.current === scope && sequence === generation.current) {
