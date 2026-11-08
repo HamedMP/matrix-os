@@ -8,7 +8,7 @@ import { nativePiRoutineSource } from "../../../packages/gateway/src/chat/pi-rou
 import { claudeFixture } from "./routine-cli-claude-support.js";
 /** Native version/auth/API/RPC/model fixtures; production canonical driver, owned extension callback,
  * exact retained FD/source/controller, published CLI/private IPC/Hono/owner PostgreSQL/target remain real. */
-export async function piFixture(native: { operation: unknown; order?: "fd-first" | "event-first"; ackBeforeObservationWait?: boolean; hold?: boolean; holdDrain?: boolean; version?: string;
+export async function piFixture(native: { operation: unknown; order?: "fd-first" | "event-first"; ackBeforeObservationWait?: boolean; hold?: boolean; holdDrain?: boolean; holdStateResponse?: boolean; version?: string;
   sessionId?: string; callId?: string; event?: Record<string, unknown>; duplicate?: boolean; terminalBefore?: boolean; noFd?: boolean }) {
   const f = await claudeFixture({ sourceDriver: "pi" }), home = await mkdtemp("/tmp/rpi-");
   const records = join(home, "records"), config = join(home, "fixture.json");

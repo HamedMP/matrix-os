@@ -5,12 +5,15 @@ let f: Awaited<ReturnType<typeof piFixture>> | undefined;
 afterEach(async () => { await f?.close(); f = undefined; vi.unstubAllGlobals(); });
 it.each(["event-first", "fd-first"] as const)("%s actual Pi source/owned extension invokes published CLI and canonical target after exact owner decision", async order => {
   const requestId = "de000000-0000-4000-8000-000000000901", chatId = "chat_pi_actual_" + order;
-  f = await piFixture({ operation: { operation: "propose", requestId, proposal }, order, ackBeforeObservationWait: order === "fd-first" });
+  f = await piFixture({ operation: { operation: "propose", requestId, proposal }, order, hold: true, ackBeforeObservationWait: order === "fd-first" });
   const admitted = await f.start(chatId);
   await expect.poll(() => f!.sourceEvents.find(event => event.type === "approval.requested"), { timeout: 5000 }).toMatchObject({ type: "approval.requested" });
   const decision = f.sourceEvents.find(event => event.type === "approval.requested")!;
   if (decision.type !== "approval.requested") throw new Error("Missing exact owner decision");
-  await f.approve(decision, chatId, admitted.run.id); await f.f.canonical.drain();
+  await f.approve(decision, chatId, admitted.run.id);
+  await expect.poll(() => f!.data.db.selectFrom("bot_interactions").select("chat_id").execute(), { timeout: 5000 }).toEqual([{ chat_id: TARGET_A.chatId }]);
+  f.send({ type: "fixture_end" });
+  await f.f.canonical.drain();
   expect(JSON.parse((await f.frames()).find(frame => frame.result).result)).toMatchObject({ ok: true, data: { receipt: { requestId, disposition: "queued" } } });
   expect(f.httpCalls()).toBe(1);
   expect(f.orderTrace.slice(0, 2)).toEqual(order === "fd-first" ? ["fd-callback", "observed-running"] : ["observed-running", "fd-callback"]);
@@ -97,6 +100,27 @@ it.each(["agent_end", "native error", "stdout EOF", "steer", "exit"])("%s fences
   await expect.poll(() => sourceSignal?.aborted, { timeout: 2000 }).toBe(true);
   if (["agent_end", "stdout EOF"].includes(ending)) expect(f.children.at(-1)!.exitCode).toBeNull();
   expect(await f.data.db.selectFrom("routine_cli_requests").selectAll().execute()).toEqual([]);
+}, 15000);
+
+it.each([true, false])("early steering sends the initial prompt before steer and does not restore routine authority on a late get_state reply (%s)", async success => {
+  f = await piFixture({ operation: { operation: "list" }, hold: true, holdStateResponse: true });
+  await f.start("chat_pi_early_steer");
+  await expect.poll(async () => (await f!.frames()).some(frame => frame.waitingState)).toBe(true);
+  expect((await f.frames()).some(frame => frame.prompt)).toBe(false);
+  const thread = (await f.threads.listThreads(f.f.principal)).items[0]!;
+  await f.threads.steerTurn(f.f.principal, thread.id, { message: "Early steer", clientRequestId: "req_pi_early_steer" });
+  await expect.poll(async () => (await f!.frames()).filter(frame => frame.prompt || frame.steer).map(frame => frame.prompt ? "prompt" : frame.steer))
+    .toEqual(["prompt", "Early steer"]);
+  f.send({ type: "fixture_state", success });
+  await expect.poll(async () => (await f!.frames()).some(frame => frame.releasedState)).toBe(true);
+  await expect.poll(async () => (await f!.frames()).some(frame => frame.result)).toBe(true);
+  expect((await f.frames()).filter(frame => frame.prompt)).toEqual([expect.objectContaining({ message: expect.stringContaining("Fixture") })]);
+  expect(f.httpCalls()).toBe(0);
+  expect(await f.data.db.selectFrom("routine_cli_sources").selectAll().execute()).toEqual([]);
+  expect(f.children.at(-1)!.exitCode).toBeNull();
+  f.send({ type: "fixture_settle" });
+  await f.f.canonical.drain();
+  expect(f.sourceEvents).toContainEqual(expect.objectContaining({ type: "assistant.delta", delta: "AFTER-STATE" }));
 }, 15000);
 
 it("native duplicate cannot invoke CLI twice", async () => {
