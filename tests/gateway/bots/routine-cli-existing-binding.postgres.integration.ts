@@ -1,4 +1,6 @@
 import { afterEach, expect, it, vi } from "vitest";
+import { CanonicalChatModelSelectionSchema } from "@matrix-os/contracts";
+import { OWNER } from "./bot-state-support.js";
 import { claudeFixture, proposal, TARGET_A } from "./routine-cli-claude-support.js";
 import { beginBotTask } from "../../../packages/gateway/src/bots/task-begin.js";
 import { createBotTasksRepository } from "../../../packages/gateway/src/bots/repositories/tasks.js";
@@ -43,64 +45,95 @@ it("reuses only the actual admitted registered parent binding; proposal/wait/out
   expect(duplicate).toMatchObject({ receipt: { disposition: "pending_approval" }, proposal: { approval: "approved" } });
   expect(submit).not.toHaveBeenCalled(); expect(await f.data.db.selectFrom("bot_approvals").selectAll().execute()).toHaveLength(1);
 });
-it("recovers the current delegated proposal after the same task has a resolved receipt from another run", async () => {
-  const { input, binding: firstBinding } = await existing();
-  const { owner } = input, { ownerId, chatId, taskId } = firstBinding, now = f.f.state.clock;
-  const recover = (runId?: string) => f.runtime.proposals.recover({ ownerId, taskId, chatId, runId });
+it.each(["delegated", "queued"] as const)("recovers the current delegated proposal after a %s proposal from another run", async first => {
+  let firstBinding: Awaited<ReturnType<typeof admitBinding>> | undefined;
+  if (first === "queued") {
+    f = await claudeFixture();
+    const issuedAt = f.f.state.clock;
+    const source = await f.f.sources.register({ ...context("queued-recovery"), issuedAt,
+      expiresAt: new Date(Date.parse(issuedAt) + 240000).toISOString() });
+    const operation = { operation: "propose" as const, requestId: "de000000-0000-4000-8000-000000000610", proposal };
+    // The queued fixture uses the same source policy at intake and task claim.
+    f.f.taskDependencies.routineProposals = f.f.proposals;
+    try {
+      await expect(f.f.service(f.f.proposals).execute({ operation, token: await f.f.token(operation, source) }))
+        .resolves.toMatchObject({ receipt: { disposition: "queued" } });
+      await f.f.canonical.drain();
+    } finally { f.f.taskDependencies.routineProposals = f.runtime.proposals; }
+  } else {
+    ({ binding: firstBinding } = await existing());
+  }
+  const ownerId = OWNER, owner = { type: "personal" as const, ownerId };
+  const { chatId } = TARGET_A, now = f.f.state.clock;
   async function propose(binding: Awaited<ReturnType<typeof admitBinding>>, requestId: string) {
     const source = await f.f.sources.register({ ...context("existing-recovery"), harness: "claude", issuedAt: now,
       expiresAt: new Date(Date.parse(now) + 240000).toISOString(), generation: binding.executionGeneration,
-      identity: { kind: "bot_child", taskId, runId: binding.runId, runtimeHandle: binding.runtimeHandle } });
+      identity: { kind: "bot_child", taskId: binding.taskId, runId: binding.runId, runtimeHandle: binding.runtimeHandle } });
     const operation = { operation: "propose" as const, requestId, proposal };
     await expect(f.f.service(f.f.proposals).execute({ operation, token: await f.f.token(operation, source) }))
       .resolves.toMatchObject({ receipt: { disposition: "pending_approval" }, proposal: { existingBinding: true } });
   }
-  await propose(firstBinding, "de000000-0000-4000-8000-000000000610");
+  if (firstBinding) await propose(firstBinding, "de000000-0000-4000-8000-000000000610");
   const prior = await f.data.db.selectFrom("bot_interactions").selectAll().executeTakeFirstOrThrow();
-  await f.f.chats.finishRun(owner, { chatId, runId: firstBinding.runId, outcome: "completed", completedAt: now });
+  const { task_id: taskId, source_run_id: priorRunId } = prior;
+  if (!priorRunId) throw new Error("Expected the real original proposal run");
+  const dispatches = () => f.data.db.selectFrom("routine_cli_proposals").selectAll().execute();
+  const initialDispatches = await dispatches();
+  expect(initialDispatches).toMatchObject(first === "queued"
+    ? [{ run_id: priorRunId, task_id: taskId, interaction_id: prior.interaction_id, stage: "pending_approval" }] : []);
+  const recover = (runId?: string) => f.runtime.proposals.recover({ ownerId, taskId, chatId, runId });
+  expect(await recover(priorRunId)).toBe(true);
+  expect(await recover()).toBe(true);
+  await f.f.chats.finishRun(owner, { chatId, runId: priorRunId, outcome: "completed", completedAt: now });
   const { continuation } = await f.f.interactions.resolve(ownerId, chatId, prior.interaction_id,
     { kind: "approval", decision: "deny", baseRevision: Number(prior.revision) });
   if (!continuation) throw new Error("Expected actual owner continuation");
-  await f.f.admission.release(firstBinding.runtimeHandle);
+  if (firstBinding) await f.f.admission.release(firstBinding.runtimeHandle);
 
   const runId = "run_existing_proposal_second", turnId = "cturn_existing_proposal_second", messageId = "msg_existing_proposal_second";
   const detail = (await f.f.chats.get(owner, chatId))!;
+  const selection = CanonicalChatModelSelectionSchema.parse((await f.data.db.selectFrom("chat_runs").select("selection")
+    .where("id", "=", priorRunId).executeTakeFirstOrThrow()).selection);
   await f.f.chats.admitTurn(owner, { chatId, baseRevision: detail.chat.revision,
     message: { id: messageId, chatId, turnId, seq: detail.chat.messageCount + 1, role: "user", state: "committed", parts: [{ type: "text", text: continuation.text }], createdAt: now },
     turn: { id: turnId, chatId, clientRequestId: continuation.clientRequestId, baseMessageSeq: detail.chat.messageCount, inputMessageId: messageId, status: "accepted", createdAt: now, updatedAt: now },
-    run: { id: runId, chatId, turnId, attempt: 1, driverKind: "matrix_bot", instanceId: input.selection.instanceId, selection: input.selection,
+    run: { id: runId, chatId, turnId, attempt: 1, driverKind: "matrix_bot", instanceId: selection.instanceId, selection,
       interactionMode: "default", permissionMode: "default", status: "accepted", historyBoundarySeq: detail.chat.messageCount, createdAt: now, updatedAt: now,
       capabilitySnapshot: { revision: "fixture", rootChat: true, attachments: [], resources: [], tools: [], approvals: true, userInput: true, resume: false,
         cancellation: true, worktrees: "none", interactionModes: ["default"], permissionModes: ["default"] } } });
   const continued = await f.f.transact(ownerId, tx => beginBotTask(tx, { ownerId, ...TARGET_A, runId, now, text: continuation.text }));
   expect(continued).toMatchObject({ continued: true, task: { taskId, runId, status: "running" } });
   const staleOnly = await recover();
-  const staleExact = await recover(firstBinding.runId);
+  const staleExact = await recover(priorRunId);
   const current = await admitBinding(ownerId, taskId, runId);
   await propose(current, "de000000-0000-4000-8000-000000000611");
+  await f.f.admission.release(current.runtimeHandle);
   expect(await f.data.db.selectFrom("routine_cli_requests").selectAll().execute()).toHaveLength(2);
   const interactions = () => f.data.db.selectFrom("bot_interactions").select(["interaction_id", "status", "source_run_id"])
     .orderBy("source_run_id").execute();
   const before = await interactions();
   expect(before).toEqual(expect.arrayContaining([
-    expect.objectContaining({ interaction_id: prior.interaction_id, status: "resolved", source_run_id: firstBinding.runId }),
+    expect.objectContaining({ interaction_id: prior.interaction_id, status: "resolved", source_run_id: priorRunId }),
     expect.objectContaining({ status: "pending", source_run_id: runId }),
   ]));
   expect(await recover(runId)).toBe(true);
   expect(await recover()).toBe(true);
   expect(staleOnly).toBe(false);
   expect(staleExact).toBe(false);
-  expect(await recover(firstBinding.runId)).toBe(false);
+  expect(await recover(priorRunId)).toBe(false);
   expect(await f.runtime.proposals.recover({ ownerId, taskId, chatId: "chat_foreign", runId })).toBe(false);
   const recoveryInput = { owner, runId, state: { taskId }, signal: new AbortController().signal };
   const waiting = await createBotTasksRepository(f.data.db).get({ ownerId, taskId });
   for (let attempt = 0; attempt < 2; attempt++) {
     await expect(f.f.adapter.recover!(recoveryInput)).resolves.toMatchObject({ outcome: "completed", messages: [] });
-    await f.f.tasks.abandon({ ownerId, taskId });
+    await expect(f.f.tasks.abandon({ ownerId, taskId })).resolves.toBe("waiting_person");
   }
   expect(await createBotTasksRepository(f.data.db).get({ ownerId, taskId })).toEqual(waiting);
   expect(waiting).toMatchObject({ status: "waiting_person", runId });
   expect(await interactions()).toEqual(before);
+  expect(await dispatches()).toEqual(initialDispatches);
+  expect(await f.data.db.selectFrom("bot_approvals").select("approval_id").execute()).toHaveLength(2);
+  expect(f.f.runBot).not.toHaveBeenCalled();
 }, 15000);
 
 it("actual delegated invocation and existing typed bridge run the fixed published CLI, not canonical direct routine dispatch", async () => {
