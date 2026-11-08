@@ -297,10 +297,12 @@ it.each(["source expiry", "source revoke", "controller close"] as const)("settle
     const source = await controller.register({ source: { ...context("human_wait_cleanup"), issuedAt: new Date(clock).toISOString(), expiresAt: new Date(clock + 1_800_000).toISOString() },
       signal: sourceAbort.signal, readPolicy: () => policy, validateWithin: async () => true, publish: humanWait.emit });
     const operation = propose(133), id = invocation(34), signal = new AbortController().signal;
-    const pending = source.authorize({ operation, invocationId: id, signal });
+    const onOwnerWait = vi.fn();
+    const pending = source.authorize({ operation, invocationId: id, signal, onOwnerWait });
     await waitFor(() => events.some(event => event.type === "approval.requested"));
     const requested = events.find(event => event.type === "approval.requested")!, view = controller.get(f.principal, requested.approvalId);
     expect(idle.pause).toHaveBeenCalledOnce(); expect(idle.resume).not.toHaveBeenCalled();
+    expect(onOwnerWait.mock.calls).toEqual([[true]]);
     if (boundary === "source expiry") { current = clock + 1_800_000; expect(registry.read(source.source)).toBeNull(); }
     else if (boundary === "source revoke") await source.revoke();
     else controller.close();
@@ -314,5 +316,6 @@ it.each(["source expiry", "source revoke", "controller close"] as const)("settle
       { type: "approval.resolved", approvalId: requested.approvalId, decision: "cancel" },
     ]);
     expect.soft(idle.resume).toHaveBeenCalledOnce();
+    expect(onOwnerWait.mock.calls).toEqual([[true], [false]]);
   } finally { humanWait.close(); }
 });

@@ -38,6 +38,7 @@ const tuple = { admissionId: id, nativeGeneration: id, threadId: ref, turnId: re
 export const ManagedHostFrameSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("host.ready"), wrapper: id, shim: id, digest: z.string().regex(/^[a-f0-9]{64}$/) }).strict(),
   z.object({ type: z.literal("host.turn"), admissionId: id, first: z.boolean(), clientRequestId: z.string().regex(/^req_[A-Za-z0-9_-]+$/).max(160).optional(), turn: PendingTurnSchema.optional() }).strict().refine(frame => frame.first || !!frame.turn && !!frame.clientRequestId),
+  z.object({ type: z.literal("host.owner_wait"), admissionId: id, actionId: id, waiting: z.boolean() }).strict(),
   z.object({ type: z.literal("host.result"), admissionId: id, actionId: id, result: z.string().max(131072).refine(value => Buffer.byteLength(value) <= 131072) }).strict(),
   z.object({ type: z.literal("host.cancel"), admissionId: id }).strict(),
   z.object({ type: z.literal("host.disconnect") }).strict(),

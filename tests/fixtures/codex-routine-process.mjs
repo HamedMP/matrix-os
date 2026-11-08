@@ -11,6 +11,7 @@ const client = check("ClientRequest"), output = check("DynamicToolCallResponse")
 const config = JSON.parse(await readFile(process.env.TEST_ROUTINE_NATIVE_FILE, "utf8"));
 const record = value => appendFile(config.records, JSON.stringify(value) + "\n");
 const emit = value => process.stdout.write(JSON.stringify(value) + "\n");
+const started = config.dynamicToolLifecycle ? check("v2/ItemStartedNotification") : undefined;
 let turn = 0, processTurns = 0, completed = 0, controlState = "";
 const control = config.controlFile ? setInterval(async () => {
   if (!turn) return;
@@ -65,6 +66,12 @@ for await (const line of createInterface({ input: process.stdin, crlfDelay: Infi
           threadId: "fixture_native_thread", turnId, callId: "native_call_" + turn + "_" + index, tool: "matrix_routines", arguments: config.intents?.[turn - 1] ?? config.intent ?? { args: ["list"] }, ...override,
         } };
         if (!server(request)) throw new Error("Fixture rejected native server contract");
+        if (started) {
+          const { threadId, turnId, callId, tool, arguments: args } = request.params;
+          const params = { threadId, turnId, startedAtMs: Date.now(), item: { type: "dynamicToolCall", id: callId, tool, arguments: args, status: "inProgress" } };
+          if (!started(params)) throw new Error("Fixture rejected native item/started contract");
+          emit({ method: "item/started", params });
+        }
         emit(request);
       }
       if (config.endBeforeResult) emit({ method: "turn/completed", params: { threadId: "fixture_native_thread", turn: { id: turnId, status: "completed" } } });

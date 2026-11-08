@@ -121,7 +121,9 @@ let nativeGeneration, routineFeatureThread = false;
 const routines = createCodexRoutineChannel({ enabled: config.routinePrivate, initialTurn: () => PendingTurnSchema.parse({ prompt: config.prompt, model: config.model, modelOptions: [
   ...(config.effort ? [{ id: "effort", value: config.effort }] : []), ...(config.serviceTier ? [{ id: "service_tier", value: config.serviceTier }] : []),
 ] }), enqueue: (turn, requestId) => { const accepted = enqueuePendingTurn(turn); if (accepted && requestId) executionObservation.admitted(requestId); return accepted; }, sendNative: value => sendProvider(value),
-  current: binding => activeTurn && !executionExpired && nativeGeneration === binding.nativeGeneration && nativeThreadId === binding.threadId && activeNativeTurnId === binding.turnId });
+  current: binding => activeTurn && !executionExpired && nativeGeneration === binding.nativeGeneration && nativeThreadId === binding.threadId && activeNativeTurnId === binding.turnId,
+  ownerWaitChanged: (callId, turnId, waiting) => executionWatchdog.setToolOwnerWait(itemIdentity(turnId, callId), waiting),
+});
 const artifactHomePath = resolve(dirname(eventPath), "../../..");
 const artifactStorageDirectory = join(artifactHomePath, "data", "chat-artifacts", "codex", "sha256");
 const artifactSessionId = basename(eventPath, extname(eventPath));
@@ -699,7 +701,9 @@ async function handleItemLifecycle(raw) {
       ...details,
     });
     startedToolItems.add(matrixItemId);
-    executionWatchdog.toolStarted(matrixItemId, item.type);
+    const ownerWaiting = item.type === "dynamicToolCall" && item.tool === CODEX_ROUTINE_TOOL.name
+      ? routines.isWaitingForOwner(item.id, parsed.data.params.turnId) : undefined;
+    executionWatchdog.toolStarted(matrixItemId, item.type, ownerWaiting);
     return true;
   }
 
