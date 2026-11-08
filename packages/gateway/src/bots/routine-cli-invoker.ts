@@ -5,19 +5,21 @@ import { statSync } from "node:fs";
 import { routineCliResultMatchesOperation, RoutineCliChildFrameSchema, RoutineCliOperationSchema, RoutineCliEnvelopeSchema, RoutineCliEndpointSchema, RoutineCliTokenSchema,
   ROUTINE_CLI_REQUEST_TIMEOUT_MS, ROUTINE_CLI_INVOCATION_TIMEOUT_MS, ROUTINE_CLI_FRAME_BYTES, ROUTINE_CLI_INPUT_BYTES, ROUTINE_CLI_OUTPUT_BYTES, ROUTINE_CLI_SAFE_ERRORS,
   type RoutineCliEnvelope, type RoutineCliOperation, RoutineCliErrorCodeSchema } from "@matrix-os/contracts/routine-cli";
+type OwnerWaitObserver = (waiting: boolean) => void;
+
 export interface FixedNativeRoutineCliDependencies {
   binPath: string; endpoint: string;
   /** Trusted host working directory; never read from CLI args or operation payload. */
   cwd?: string;
   homePath?: string;
-  authorize(input: { operation: RoutineCliOperation; invocationId: string; signal: AbortSignal }): Promise<boolean>;
+  authorize(input: { operation: RoutineCliOperation; invocationId: string; signal: AbortSignal; onOwnerWait?: OwnerWaitObserver }): Promise<boolean>;
   issue(input: { operation: RoutineCliOperation; invocationId: string; signal: AbortSignal }): Promise<{ takeToken(): string }>;
   /** Invocation-local cleanup/unused-cap revocation only; NEVER revoke the original source on CLI exit,
    * cancel a target task or equate a transport ACK with stopped execution. Must honor bounded abort/drain. */
   cancel(input: { operation?: RoutineCliOperation; invocationId: string; reason: "finished" | "aborted" | "timeout" | "protocol_error" | "shutdown" }): Promise<void>;
   timeoutMs?: number;
 }
-type Input = { args: readonly string[]; stdin?: string; expectedOperation?: RoutineCliOperation; signal?: AbortSignal };
+type Input = { args: readonly string[]; stdin?: string; expectedOperation?: RoutineCliOperation; signal?: AbortSignal; onOwnerWait?: OwnerWaitObserver };
 type Reason = Parameters<FixedNativeRoutineCliDependencies["cancel"]>[0]["reason"];
 const failure = (code: keyof typeof ROUTINE_CLI_SAFE_ERRORS): RoutineCliEnvelope => ({ v: 1, error: { code, message: ROUTINE_CLI_SAFE_ERRORS[code] } });
 const mutating = (op: RoutineCliOperation | undefined): op is Extract<RoutineCliOperation, { requestId: string }> => !!op && ["propose", "pause", "resume", "archive"].includes(op.operation);
@@ -93,7 +95,7 @@ export function createFixedNativeRoutineCliInvoker(deps: FixedNativeRoutineCliDe
         operation = frozen(parsed.data.operation);
         const request = Object.freeze({ operation, invocationId, signal: controller.signal });
         try {
-          const allowed = await authorize(request);
+          const allowed = await authorize(input.onOwnerWait ? Object.freeze({ ...request, onOwnerWait: input.onOwnerWait }) : request);
           if (finished || stopping || controller.signal.aborted || !child.connected) return;
           if (allowed !== true) { child.send({ v: 1, type: "routine.denied", code: "permission_denied" }); return; }
           const delivery = await issue(request);

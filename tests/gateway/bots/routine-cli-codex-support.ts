@@ -20,7 +20,7 @@ import { createCanonicalCodingChatProviderAdapter } from "../../../packages/gate
 
 /** Real canonical admission/registry/thread store/workspace/manager/launch/wrapper/shim/CLI/HTTP/PG.
  * Native model/auth readiness/sandbox preflight and Linux systemd transport are named fixtures. */
-export async function codexFixture(native: { intent?: { args: string[]; stdin?: string }; intents?: Array<{ args: string[]; stdin?: string }>; loseQueuedAck?: boolean; dropShimEnd?: boolean; receiverHalfClose?: boolean; wrapperOverflow?: boolean; calls?: Record<string, unknown>[]; turns?: number; holdAfterResult?: boolean; holdAfterResultOnTurn?: number; endBeforeResult?: boolean } = {}) {
+export async function codexFixture(native: { intent?: { args: string[]; stdin?: string }; intents?: Array<{ args: string[]; stdin?: string }>; loseQueuedAck?: boolean; dropShimEnd?: boolean; receiverHalfClose?: boolean; wrapperOverflow?: boolean; calls?: Record<string, unknown>[]; turns?: number; holdAfterResult?: boolean; holdAfterResultOnTurn?: number; endBeforeResult?: boolean; dynamicToolLifecycle?: boolean } = {}) {
   const f = await claudeFixture({ sourceDriver: "codex" });
   const home = await mkdtemp("/tmp/rc-"); // Keep the real Unix control socket below macOS sun_path bounds.
   const records = join(home, "native-requests.jsonl"), fixture = join(home, "native-fixture.json"), executable = join(home, "named-codex-native-fixture.mjs");
