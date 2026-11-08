@@ -49,6 +49,30 @@ it("does not commit a deferred native downgrade after owner/Computer identity ch
   await act(async () => { release({ ...view, revision: 2, consent: null }); });
   expect(onChange).not.toHaveBeenCalled();
 });
+it("changes ordinary Chat permissions when the gateway confirms there is no routine scope", async () => {
+  const client = { read: vi.fn(async () => ({ ...view, eligibility: "ineligible" as const, revision: 0, consent: null })),
+    revoke: vi.fn(), challenge: vi.fn(), decide: vi.fn() };
+  const onChange = vi.fn(), selection = { permissionMode: "full_access", instanceId: "codex", model: "model" };
+  const next = { ...selection, permissionMode: "supervised" };
+  const mounted = renderHook(() => useRoutineFullAccessSelection({ context: { client, chatId: "chat_one", identity: "owner",
+    enabled: false, manage: true, browserOrigin: false }, selection, onChange }));
+  await waitFor(() => expect(mounted.result.current.controller.status?.eligibility).toBe("ineligible"));
+  act(() => mounted.result.current.onChange(next));
+  await waitFor(() => expect(onChange).toHaveBeenCalledExactlyOnceWith(next));
+  expect(client.revoke).not.toHaveBeenCalled();
+});
+it("keeps the selection when the gateway cannot confirm whether any scope exists", async () => {
+  vi.spyOn(console, "warn").mockImplementation(() => {});
+  const client = { read: vi.fn(async () => { throw new Error("Temporary outage"); }), revoke: vi.fn(), challenge: vi.fn(), decide: vi.fn() };
+  const onChange = vi.fn(), selection = { permissionMode: "full_access", instanceId: "codex", model: "model" };
+  const mounted = renderHook(() => useRoutineFullAccessSelection({ context: { client, chatId: "chat_one", identity: "owner",
+    enabled: false, manage: true, browserOrigin: false }, selection, onChange }));
+  await waitFor(() => expect(client.read).toHaveBeenCalledOnce());
+  act(() => mounted.result.current.onChange({ ...selection, permissionMode: "supervised" }));
+  await waitFor(() => expect(client.read).toHaveBeenCalledTimes(2));
+  expect(onChange).not.toHaveBeenCalled();
+  expect(client.revoke).not.toHaveBeenCalled();
+});
 it("exposes failed non-Claude revocation without offering a grant or reporting a downgrade", async () => {
   vi.spyOn(console, "warn").mockImplementation(() => {});
   const client = { read: vi.fn(async () => view), revoke: vi.fn(async () => { throw new Error("Uncertain result"); }), challenge: vi.fn(), decide: vi.fn() };
