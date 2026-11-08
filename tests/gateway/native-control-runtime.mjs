@@ -80,12 +80,27 @@ async function fixture({ api = native, queued, command = actorPath, args = [], s
       ack += chunk.toString().split("ack\n").length - 1;
     });
   } catch (error) { await cleanup(); throw error; }
-  const commandLine = async text => {
+  const commandLine = async (text, { eventKind, stdoutAfterAck = false } = {}) => {
     assert.ok(text.length < 4096 && !text.includes("\n"), "bounded actor command");
-    const wanted = ack + 1; child.stdin.write(text + "\n");
-    if (text !== "exit") await until(() => { if (fault) throw fault; return ack >= wanted; }, "actor command");
+    const wanted = ack + 1, cursor = events.length;
+    // Force the adverse cross-pipe order in the bootstrap receive check.
+    if (stdoutAfterAck) child.stdout.pause();
+    try {
+      child.stdin.write(text + "\n");
+      if (text !== "exit") await until(() => { if (fault) throw fault; return ack >= wanted; }, "actor command");
+    } finally {
+      if (stdoutAfterAck) child.stdout.resume();
+    }
+    if (!eventKind) return;
+    let observed;
+    await until(() => {
+      if (fault) throw fault;
+      observed = events.find((event, index) => index >= cursor && event.event === eventKind);
+      return observed !== undefined;
+    }, `actor command event ${eventKind}`);
+    return observed;
   };
-  return { api, pair, child, birth, exited, events, command: commandLine, cleanup,
+  return { api, pair, child, birth, exited, command: commandLine, cleanup,
     async started() { await until(() => { if (fault) throw fault; return events.some(event => event.event === "start"); }, "actor start"); return events.find(event => event.event === "start"); } };
 }
 try {
@@ -119,10 +134,11 @@ try {
       const start = await f.started();
       assert.deepEqual(start, { event: "start", parent: process.pid, creator: process.pid, parentAlive: true, passcred: 1, blocking: true, cloexec: false }); // dup2(fd3) clears CLOEXEC.
       assert.equal(native.childAlive(f.birth), true); assert.throws(() => native.controlChildFd(f.pair.child));
-      await f.command("recv"); const first = f.events.find(event => event.event === "received");
+      const first = await f.command("recv", { eventKind: "received", stdoutAfterAck: true });
       assert.deepEqual(first, { event: "received", writer: { pid: process.pid, uid: process.getuid(), gid: process.getgid() }, parentAlive: true, hex: Buffer.from("bootstrap-before-spawn").toString("hex") });
-      assert.equal(native.send(f.pair.channel, Buffer.from("later-parent")), 12); await f.command("recv");
-      assert.equal(f.events.filter(event => event.event === "received")[1].writer.pid, process.pid);
+      assert.equal(native.send(f.pair.channel, Buffer.from("later-parent")), 12);
+      const second = await f.command("recv", { eventKind: "received" });
+      assert.deepEqual(second, { ...first, hex: Buffer.from("later-parent").toString("hex") });
       await f.command("emit genuine-child"); const message = await receive(native, f.pair.channel);
       assert.equal(message.data.toString(), "genuine-child");
       assert.deepEqual(message.writer, { pid: f.child.pid, uid: f.pair.uid, gid: f.pair.gid });
@@ -130,8 +146,8 @@ try {
     });
     await check("same-UID copied writer and forged body PID never become the retained child's kernel writer", async () => {
       const f = await fixture(); await f.started();
-      await f.command(`foreign {"pid":${f.child.pid}}`); const message = await receive(native, f.pair.channel);
-      const foreign = f.events.find(event => event.event === "foreign");
+      const foreign = await f.command(`foreign {"pid":${f.child.pid}}`, { eventKind: "foreign" });
+      const message = await receive(native, f.pair.channel);
       assert.equal(message.data.toString(), `{"pid":${f.child.pid}}`);
       assert.equal(message.writer.pid, foreign.pid); assert.notEqual(message.writer.pid, f.child.pid);
       assert.equal(message.writer.uid, f.pair.uid); assert.equal(message.writer.gid, f.pair.gid);
@@ -159,7 +175,7 @@ try {
     });
     await check("parent control close gives child EOF without stopping actual child", async () => {
       const f = await fixture(); await f.started(); native.close(f.pair.channel); native.close(f.pair.channel);
-      await f.command("recv"); assert.ok(f.events.some(event => event.event === "eof"));
+      assert.deepEqual(await f.command("recv", { eventKind: "eof" }), { event: "eof" });
       assert.equal(native.childAlive(f.birth), true); assert.equal(f.child.exitCode, null); await f.cleanup();
     });
     await check("authentic queued bytes require consumer's actual retained birth, including before Node exit delivery", async () => {
