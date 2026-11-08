@@ -133,7 +133,7 @@ export async function createHostedTerminalPty(options: {
     // its unread tail was delivered, or hold source authority for output drain.
     if (initialBackpressureUsed && !firstAttached) initialIncomplete = true;
     for (const socket of peers) socket.end(); exited();
-    if (!firstAttached && !handoffFinished) { handoffTimer = setTimeout(finishHandoff, 30000); handoffTimer.unref(); }
+    if (!handoffFinished && !handoffTimer) { handoffTimer = setTimeout(finishHandoff, 30000); handoffTimer.unref(); }
   });
   function drainViewer(socket: Socket): Promise<void> {
     if (socket.destroyed || socket.writableFinished || forcedTeardown.signal.aborted) return Promise.resolve();
