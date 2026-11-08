@@ -7,6 +7,7 @@ import type { ChatDatabase } from "./database.js";
 import { RoutineCliSourceContextSchema } from "../bots/routine-cli-source-context.js";
 import { BotStateError } from "../bots/repositories/shared.js";
 import { asIso, jsonb, messageSearchText, parseJson, toMessage, type ChatOwner, type ChatOutboxEventType } from "./records.js";
+import { hasNonPrivateChatScope } from "./private-routine-authority.js";
 import { redactAssistantParts } from "./safe-activity-projection.js";
 export interface AppendRoutineReceiptInput {
   sourceChatId: string; computerId: string; fireId: string; kind: "status" | "output"; now: string;
@@ -27,7 +28,7 @@ export async function appendRoutineReceiptWithin(executor: Executor, ownerId: st
   const sourceChat = await db.selectFrom("chats").selectAll().where("id", "=", input.sourceChatId)
     .where("owner_type", "=", "personal").where("owner_id", "=", ownerId).where("lifecycle", "=", "active")
     .where("collaboration", "is", null).forNoKeyUpdate().executeTakeFirst();
-  if (!sourceChat) return null;
+  if (!sourceChat || await hasNonPrivateChatScope(executor, { type: "personal", ownerId }, input.sourceChatId)) return null;
   const record = await db.selectFrom("bot_routine_fires as fire")
     .innerJoin("bot_routines as routine", join => join.onRef("routine.owner_id", "=", "fire.owner_id").onRef("routine.routine_id", "=", "fire.routine_id"))
     .innerJoin("routine_cli_requests as receipt", join => join.onRef("receipt.owner_id", "=", "routine.owner_id")

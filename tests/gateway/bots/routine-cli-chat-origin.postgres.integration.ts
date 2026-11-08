@@ -7,7 +7,7 @@ let data: Awaited<ReturnType<typeof createRealBotStateDatabase>>, f: Awaited<Ret
 beforeEach(async () => {
   const url = process.env.MATRIX_ROUTINE_CLI_TEST_POSTGRES_URL;
   if (!url) throw new Error("MATRIX_ROUTINE_CLI_TEST_POSTGRES_URL is required");
-  data = await createRealBotStateDatabase(url); f = await proposalFixture(data.db, vi.fn);
+  data = await createRealBotStateDatabase(url, { routineAuthority: true }); f = await proposalFixture(data.db, vi.fn);
 });
 afterEach(async () => { await f?.close(); await data?.destroy(); });
 it("pins initial activation to the exact immutable accepted request, independently of standing approval replacement", async () => {
@@ -150,6 +150,49 @@ it.each(["source shared","target shared","source deleted"] as const)("suppresses
   expect(await f.db.selectFrom("routine_chat_deliveries").selectAll().execute()).toHaveLength(0);
   expect(await f.db.selectFrom("bot_routine_fires").select("status").execute()).toEqual([{status:"completed"}]);
   expect(await f.db.selectFrom("chat_messages").select("id").where("id","=","msg_fire_output").execute()).toHaveLength(1);await service.close();
+});
+it.each(["source", "target"] as const)("suppresses delayed output when the %s Chat was published through a project", async which => {
+  const { terminalFixtureFire, originService } = await import("./routine-chat-origin-support.js");
+  const { createProjectInheritanceResolver } = await import("../../../packages/gateway/src/collaboration/project-inheritance.js");
+  const { reconcileProjectMembershipAtPublication } = await import("../../../packages/gateway/src/collaboration/project-membership-transition.js");
+  type CollaborationDb = import("../../../packages/gateway/src/collaboration/database.js").OwnerCollaborationDatabase;
+  const db = f.db as unknown as import("kysely").Kysely<CollaborationDb>;
+  const fire = await terminalFixtureFire(f); await fire.finish();
+  const chatId = which === "source" ? "chat_source" : fire.routine.chat_id;
+  const projectScopeId = "10000000-0000-4000-8000-000000000b93", runtimeId = "vps:routine_origin_test";
+  await db.insertInto("collaboration_scopes").values({
+    id: projectScopeId, owner_type: "personal", owner_id: OWNER, organization_id: "org_scope_test",
+    kind: "project", resource_id: "project_scope_test", parent_scope_id: null, membership_mode: "direct",
+    lifecycle: "preparing", revision: 1, auth_epoch: 1, authority_runtime_id: runtimeId, authority_generation: 1,
+    created_at: f.state.clock, updated_at: f.state.clock, deleted_at: null,
+  }).execute();
+  await createProjectInheritanceResolver({ db }).bindOwnedResource({
+    projectScopeId, ownerId: OWNER, kind: "chat", resourceId: chatId, authorityRuntimeId: runtimeId,
+    authorityGeneration: 1, revision: 1, readiness: "ready",
+  });
+  await db.transaction().execute(async tx => {
+    await tx.selectFrom("collaboration_scopes").select("id").where("id", "=", projectScopeId).forUpdate().executeTakeFirstOrThrow();
+    await reconcileProjectMembershipAtPublication(tx, { projectScopeId, ownerType: "personal", ownerId: OWNER,
+      requestedBy: OWNER, destinationAuthorityRuntimeId: runtimeId, destinationAuthorityGeneration: 1, now: new Date(f.state.clock),
+      createEventId: () => "60000000-0000-4000-8000-000000000b93" });
+    await tx.updateTable("collaboration_scopes").set({ lifecycle: "shared" }).where("id", "=", projectScopeId).execute();
+  });
+  expect(await db.selectFrom("chats").select("collaboration").where("id", "=", chatId).executeTakeFirstOrThrow()).toEqual({ collaboration: null });
+  expect(await db.selectFrom("collaboration_scopes").select("lifecycle").where("kind", "=", "chat").where("resource_id", "=", chatId).executeTakeFirstOrThrow()).toEqual({ lifecycle: "shared" });
+
+  const service = originService(f);
+  try {
+    await service.reconcile(OWNER, "chat_source");
+    // The locked repository is the authority even if a candidate was already selected before publication.
+    await expect(f.chats.appendRoutineReceipt(OWNER, {
+      sourceChatId: "chat_source", computerId: scope.computerId, fireId: fire.fireId, kind: "output", now: f.state.clock,
+    })).resolves.toBeNull();
+    if (which === "source") await expect(service.read(OWNER, "chat_source")).rejects.toMatchObject({ code: "not_found" });
+    else expect(await service.read(OWNER, "chat_source")).toMatchObject({ deliveryPending: false });
+    expect(await f.db.selectFrom("routine_chat_deliveries").select("fire_id").execute()).toEqual([]);
+    expect(await f.db.selectFrom("chat_messages").select("id").where("id", "=", "msg_fire_output").execute()).toHaveLength(1);
+    expect(await f.db.selectFrom("chat_messages").select("id").where("chat_id", "=", "chat_source").where("role", "=", "system").execute()).toEqual([]);
+  } finally { await service.close(); }
 });
 it.each(["owner","computer","target","source kind"] as const)("rejects forged %s origin links without presenting payload",async mode=>{
   const {admitFixtureRun,originService,decisionProof}=await import("./routine-chat-origin-support.js");await admitFixtureRun(f);await f.submit();await f.canonical.drain();

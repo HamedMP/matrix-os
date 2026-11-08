@@ -2,6 +2,7 @@ import { sql } from "kysely";
 import { z } from "zod/v4";
 import { RoutineCliRememberTargetSchema } from "@matrix-os/contracts";
 import { RoutineCliScopeSchema, routineCliBindingTimestamp } from "./repositories/routine-cli-preferences.js";
+import { hasNonPrivateChatScope } from "../chat/private-routine-authority.js";
 import type { BotExecutor } from "./repositories/shared.js";
 
 const snapshot = RoutineCliScopeSchema.extend({
@@ -33,7 +34,7 @@ export async function hasAcceptedBinding(db: BotExecutor, ownerId: string, chatI
   const target = db.selectFrom("chats").select("id").where("id","=",chatId).where("owner_type","=","personal")
     .where("owner_id","=",ownerId).where("lifecycle","=","active").where("collaboration","is",null);
   const chat = await (lock ? target.forUpdate() : target).executeTakeFirst();
-  if (!chat) return false;
+  if (!chat || await hasNonPrivateChatScope(db as never, { type: "personal", ownerId }, chatId)) return false;
   if (lock) await sql`WITH locked AS MATERIALIZED (
     SELECT 1 FROM bot_chat_bindings WHERE chat_id=${chatId} ORDER BY owner_id,bot_id FOR SHARE
   ) SELECT count(*) FROM locked`.execute(db);
