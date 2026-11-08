@@ -92,7 +92,10 @@ export function createManagedPiRoutineSource(options: ManagedRoutineCliPort & { 
           const attempt = options.runtime.registerManagedChat({ binding, input: options.input, signal, current, publish: options.publish });
           registration = attempt;
           // A caller timing out must not reset a registration shared by other calls.
-          void attempt.catch(() => { if (registration === attempt) registration = undefined; });
+          void attempt.catch((error: unknown) => {
+            if (registration === attempt) registration = undefined;
+            console.warn("[managed-pi-routines] Registration unavailable", error instanceof Error ? error.name : "UnknownError");
+          });
         }
         const attempt = registration;
         const registered = await boundedOperation(() => attempt, 10_000, actionSignal); sourceId = registered.reference.sourceId;
