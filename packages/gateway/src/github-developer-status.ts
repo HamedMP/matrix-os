@@ -98,7 +98,7 @@ export async function getGithubDeveloperStatus(input: {
 
   if (installed) {
     try {
-      await runCommand("gh", ["auth", "status", "--hostname", "github.com"], {
+      await runCommand("gh", ["auth", "status", "--hostname", "github.com", "--active"], {
         cwd: homePath,
         timeout: COMMAND_TIMEOUT_MS,
         maxBuffer: STATUS_OUTPUT_BYTES,

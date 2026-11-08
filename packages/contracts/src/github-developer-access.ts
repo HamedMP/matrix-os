@@ -30,3 +30,18 @@ export const GithubDeveloperStatusSchema = z.object({
 export type GithubDeveloperStatus = z.infer<typeof GithubDeveloperStatusSchema>;
 export type GithubDeveloperStatusErrorCode = z.infer<typeof GithubDeveloperStatusErrorCodeSchema>;
 
+export const GithubDeveloperDeviceCodeSchema = z.string().regex(/^[A-Z0-9]{4}-[A-Z0-9]{4}$/);
+
+export const GithubDeveloperSetupOperationSchema = z.discriminatedUnion("state", [
+  z.object({
+    id: z.uuid(),
+    state: z.literal("awaiting_authorization"),
+    deviceCode: GithubDeveloperDeviceCodeSchema,
+  }).strict(),
+  z.object({
+    id: z.uuid(),
+    state: z.enum(["starting", "succeeded", "failed", "expired", "cancelled"]),
+  }).strict(),
+]);
+
+export type GithubDeveloperSetupOperation = z.infer<typeof GithubDeveloperSetupOperationSchema>;

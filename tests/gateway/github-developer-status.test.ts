@@ -27,6 +27,18 @@ describe("github developer status", () => {
     expect(result).toMatchObject({ authenticated: true, user: "octocat", sshStatus: "setup_required", ready: false, errorCode: "github_ssh_setup_required" });
   });
 
+  it("checks the active GitHub account even if a saved inactive account is expired", async () => {
+    const valid = readyRunner();
+    const runCommand: Parameters<typeof getGithubDeveloperStatus>[0]["runCommand"] = async (command, args, options) => {
+      if (command === "gh" && args[0] === "auth" && args[1] === "status" && !args.includes("--active")) {
+        throw Object.assign(new Error("Inactive account expired"), { code: 1 });
+      }
+      return valid(command, args, options);
+    };
+    await expect(getGithubDeveloperStatus({ homePath: "/owner-home", runCommand }))
+      .resolves.toMatchObject({ user: "octocat", sshStatus: "verified", ready: true });
+  });
+
   it("accepts the matching account greeting from SSH's normal exit 1", async () => {
     await expect(getGithubDeveloperStatus({ homePath: "/owner-home", runCommand: readyRunner("Octocat", 1) }))
       .resolves.toMatchObject({ sshStatus: "verified", ready: true });

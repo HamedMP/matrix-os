@@ -2,11 +2,11 @@
 
 ## Goal
 
-Give each Matrix computer owner a terminal-driven GitHub setup that leaves GitHub CLI credentials, SSH keys, host verification, and Git commit identity in owner-controlled runtime files. After setup, the headless core can clone a private repository over SSH and coding agents can commit, push, and open a pull request as the owner.
+Give each Matrix computer owner GitHub setup from Settings or Terminal that leaves GitHub CLI credentials, SSH keys, host verification, and Git commit identity in owner-controlled runtime files. After setup, the headless core can clone a private repository over SSH and coding agents can commit, push, and open a pull request as the owner.
 
 ## Scope
 
-- Add the fixed `matrix-github-developer-login` terminal command.
+- Provide the fixed `matrix-github-developer-login` Terminal command and an owner-bound Settings setup operation.
 - Extend `GET /api/github/status` without removing the existing `installed`, `authenticated`, or `user` fields.
 - Use canonical `git@github.com:<owner>/<repo>.git` remotes for new managed clones.
 - Preserve existing HTTPS remotes and configure GitHub CLI as their credential helper.
@@ -15,6 +15,24 @@ Give each Matrix computer owner a terminal-driven GitHub setup that leaves GitHu
 Web, Electron, and mobile renderers are separate ENG-378 and ENG-379 changes. Pipedream retirement is ENG-382. Public documentation is ENG-380. Clerk sign-in, rich GitHub APIs, key rotation, and key-deletion UI are deferred.
 
 ## Owner Journey
+
+### Settings device authorization
+
+On the selected computer, Connect Apps starts a bounded device login and opens the
+GitHub Developer dialog. It shows the one-time code, **Copy**, and **Open GitHub**.
+The owner completes authorization at `https://github.com/login/device` while
+GitHub CLI polls on the computer. The operation uses the installed GitHub CLI and
+its owner-local credential store.
+
+Setup reuses a key that already authenticates the same GitHub account. If a key
+must be registered, it defaults to the first eligible local SSH key pair in the
+CLI's sorted order, or creates an owner-local key if there is no eligible pair.
+It uploads only the public key and verifies the SSH account with the pinned host
+keys. Missing Git author identity defaults to the verified GitHub profile and
+GitHub noreply address. Existing valid identity is preserved. The card refreshes
+`GET /api/github/status` on completion and reflects the computer's actual readiness.
+
+### Manual Terminal setup
 
 1. The owner runs `matrix-github-developer-login` in their Matrix computer terminal.
 2. The command runs `gh auth login --hostname github.com --web --git-protocol ssh` with GitHub CLI's accessible prompter fixed on for this login child. This keeps the owner's questions in the current Terminal viewport instead of relying on the default survey cursor-position probe. GitHub CLI detects an existing public key or creates and uploads a new public key; Matrix never accepts or uploads a private key.
@@ -57,13 +75,22 @@ The pinned `github.com` Ed25519, ECDSA, and RSA host-key entries are copied from
 
 GitHub logins, identity values, and labels are schema-validated and bounded. The response never includes command output, paths, tokens, SSH material, or raw errors.
 
+The Settings setup endpoints return an opaque operation UUID and state.
+`awaiting_authorization` alone includes `deviceCode`, with the format `XXXX-XXXX`.
+`starting`, `succeeded`, `failed`, `expired`, and `cancelled` contain no code.
+The client opens the fixed GitHub device verification page. Responses use
+`Cache-Control: private, no-store`.
+
 ## Auth Matrix
 
 | Route | Method | Auth source | Public |
 | --- | --- | --- | --- |
 | `/api/github/status` | GET | Existing gateway owner-session middleware | No |
+| `/api/github/setup` | POST `{}` | Selected computer owner with writable Settings | No |
+| `/api/github/setup/:id` | GET | Selected computer owner and matching operation | No |
+| `/api/github/setup/:id/cancel` | POST `{}` | Selected computer owner and matching operation | No |
 
-The terminal command is not an HTTP endpoint. It executes as the Matrix computer owner inside an already authorized terminal session.
+The manual command runs inside an authorized owner Terminal session. Settings invokes the fixed command with `--settings` in the selected computer gateway.
 
 ## Failure, Recovery, And Resource Policy
 
@@ -83,16 +110,16 @@ The terminal command is not an HTTP endpoint. It executes as the Matrix computer
   Local identity checks run independently so a dropped SSH connection still
   returns an accurate, safe partial status. Interactive CLI setup retains its
   separate longer login and verification timeouts.
-- No in-memory collection, database row, temporary clone, or platform credential is added. Existing clone staging cleanup remains authoritative.
+- The Settings gateway tracks at most one setup operation per computer. The child and code expire, and shutdown cancels active work. No operation or code is persisted in the database. Existing clone staging cleanup remains authoritative.
 
 ## Integration Wiring
 
-The host bundle copies `distro/customer-vps/host-bin/matrix-github-developer-login` into `/opt/matrix/bin`. Renderer work in ENG-378 and ENG-379 launches that fixed command through the existing terminal-session handoff. The gateway status route calls the project manager, which probes the same owner-local GitHub CLI, SSH, and Git configuration. Managed project creation clones the validated repository using its canonical SSH URL. Coding-agent source control resolves and validates the repository's effective owner identity before committing, then uses the existing GitHub CLI path for push and PR creation.
+The host bundle copies `distro/customer-vps/host-bin/matrix-github-developer-login` into `/opt/matrix/bin`. Web and Electron in ENG-378 use the owner-bound Settings operation. ENG-379 remains a separate Mobile delivery. The gateway status route calls the project manager, which probes the same owner-local GitHub CLI, SSH, and Git configuration. Managed project creation clones the validated repository using its canonical SSH URL. Coding-agent source control resolves and validates the repository's effective owner identity before committing, then uses the existing GitHub CLI path for push and PR creation.
 
 ## Acceptance And Tests
 
 - Fake-executable tests cover exact login sequencing, cancellation, existing-key delegation, strict SSH verification, identity confirmation/editing, validation, and redaction.
-- Gateway tests cover ready and partial status, timeouts, output bounds, safe error codes, and the compatible legacy fields.
+- Gateway tests cover owner scope, setup lifecycle and canonical completion, ready and partial status, timeouts, output bounds, safe error codes, and the compatible legacy fields.
 - Project tests prove new clones use SSH while existing HTTPS remotes are not rewritten.
 - Source-control tests prove commits use configured owner identity and fail safely when it is absent or invalid.
 - A disposable VPS and private test repository must prove browser login → SSH verification → private clone → correctly attributed commit → pushed branch → PR.

@@ -29,7 +29,7 @@ describe("matrix-github-developer-login", () => {
     ]);
     const fake = join(binPath, "fake-command.mjs");
     await writeFile(fake, `#!/usr/bin/env node
-import { appendFileSync, readFileSync } from "node:fs";
+import { appendFileSync, existsSync, readFileSync, writeFileSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
 const command = basename(process.argv[1]);
 const args = process.argv.slice(2);
@@ -43,6 +43,32 @@ if (fixture.FAKE_ENV_LOG) appendFileSync(fixture.FAKE_ENV_LOG, JSON.stringify({
   GIT_EXEC_PATH: process.env.GIT_EXEC_PATH, GH_REPO: process.env.GH_REPO, GATEWAY_SECRET: process.env.GATEWAY_SECRET,
 }) + "\\n");
 if (command === "gh") {
+  if (args[0] === "auth" && args[1] === "status") {
+    console.log(JSON.stringify({ hosts: fixture.FAKE_SETTINGS_EXISTING ? { "github.com": [{
+      active: true, login: "octocat", state: "success", scopes: fixture.FAKE_SETTINGS_SCOPE || "repo, read:org"
+    }] } : {} }));
+    process.exit(0);
+  }
+  if (args[0] === "config" && args[1] === "set") process.exit(0);
+  if (args[0] === "ssh-key" && args[1] === "add") {
+    if (fixture.FAKE_SETTINGS_REGISTERED_KEY) process.exit(17);
+    const input = readFileSync(0, "utf8");
+    writeFileSync(join(fixtureRoot, "uploaded-key.txt"), input);
+    process.exit(0);
+  }
+  if (fixture.FAKE_SETTINGS && args[0] === "auth" && ["login", "refresh"].includes(args[1])) {
+    if (process.stdin.isTTY || process.env.GH_FORCE_TTY) process.exit(16);
+    process.stderr.write("ignore ghp_fixture_secret\\n! First copy your one-time ");
+    await new Promise((resolveChunk) => setTimeout(resolveChunk, 20));
+    process.stderr.write("code: " + (fixture.FAKE_SETTINGS_BAD_CODE ? "ghp_fixture_not_a_device_code" : "ABCD-EF12") + "\\n");
+    if (!fixture.FAKE_SETTINGS_NO_URL) {
+      process.stderr.write("Open this URL to continue in your web browser: https://");
+      await new Promise((resolveChunk) => setTimeout(resolveChunk, 20));
+      process.stderr.write((fixture.FAKE_SETTINGS_BAD_URL ? "github.com/login/device/other" : "github.com/login/device") + "\\n");
+    }
+    if (fixture.FAKE_SETTINGS_CANCEL) await new Promise((resolve) => setTimeout(resolve, 10_000));
+    process.exit(0);
+  }
   if (args[0] === "auth" && args[1] === "login") {
     if (fixture.FAKE_REQUIRE_ACCESSIBLE_PROMPTER === "1" && process.env.GH_ACCESSIBLE_PROMPTER !== "1") {
       process.exit(15);
@@ -95,14 +121,34 @@ if (command === "gh") {
     process.exit(0);
   }
 }
+if (command === "ssh-keygen") {
+  const path = args[args.indexOf("-f") + 1];
+  writeFileSync(path, "fixture private bytes", { flag: "wx", mode: 0o600 });
+  writeFileSync(path + ".pub", "ssh-ed25519 R0VORVJBVEVE fixture generated key\\n", { flag: "wx", mode: 0o644 });
+  process.exit(0);
+}
 if (command === "ssh") {
-  console.error("Hi " + (fixture.FAKE_SSH_LOGIN || "octocat") + "! You've successfully authenticated, but GitHub does not provide shell access.");
+  let login = fixture.FAKE_SSH_LOGIN || "octocat";
+  if (fixture.FAKE_SETTINGS_REGISTERED_KEY) {
+    const selectedPath = args.includes("-i") ? args[args.indexOf("-i") + 1] : undefined;
+    const config = readFileSync(join(process.env.HOME, ".ssh", "matrix-github.conf"), "utf8");
+    if (selectedPath !== join(process.env.HOME, ".ssh", fixture.FAKE_SETTINGS_REGISTERED_KEY)
+      && !config.includes("IdentityFile ~/.ssh/" + fixture.FAKE_SETTINGS_REGISTERED_KEY)) {
+      console.error("git@github.com: Permission denied (publickey).");
+      process.exit(255);
+    }
+    login = fixture.FAKE_SETTINGS_REGISTERED_LOGIN || login;
+  } else if (fixture.FAKE_SETTINGS_NEEDS_KEY && !existsSync(join(fixtureRoot, "uploaded-key.txt"))) {
+    console.error("git@github.com: Permission denied (publickey).");
+    process.exit(255);
+  }
+  console.error("Hi " + login + "! You've successfully authenticated, but GitHub does not provide shell access.");
   process.exit(1);
 }
 if (command === "git") {
   const key = args.at(-1);
   if (args.includes("--get")) {
-    if (fixture.FAKE_IDENTITY_READY === "1") {
+    if (fixture.FAKE_IDENTITY_READY === "1" || (fixture.FAKE_IDENTITY_NAME_READY && key === "user.name")) {
       console.log(key === "user.name" ? "Existing Owner" : "owner@example.com");
       process.exit(0);
     }
@@ -117,6 +163,7 @@ process.exit(9);
       symlink("fake-command.mjs", join(binPath, "gh")),
       symlink("fake-command.mjs", join(binPath, "git")),
       symlink("fake-command.mjs", join(binPath, "ssh")),
+      symlink("fake-command.mjs", join(binPath, "ssh-keygen")),
     ]);
   });
 
@@ -124,10 +171,10 @@ process.exit(9);
     await rm(root, { recursive: true, force: true });
   });
 
-  async function runLogin(input = "", extraEnv: NodeJS.ProcessEnv = {}): Promise<RunResult> {
+  async function runLogin(input = "", extraEnv: NodeJS.ProcessEnv = {}, settings = false): Promise<RunResult> {
     await writeFile(join(root, "fixture.json"), JSON.stringify(extraEnv));
     return new Promise((resolveRun, rejectRun) => {
-      const child = spawn(process.execPath, [SCRIPT], {
+      const child = spawn(process.execPath, [SCRIPT, ...(settings ? ["--settings"] : [])], {
         cwd: homePath,
         env: {
           ...process.env,
@@ -143,8 +190,10 @@ process.exit(9);
       let stderr = "";
       let promptAnswered = false;
       let queryAnswered = false;
+      if (settings) child.stdin.end();
       child.stdout.on("data", (chunk: Buffer) => {
         stdout += chunk.toString("utf8");
+        if (extraEnv.FAKE_SETTINGS_CANCEL && stdout.includes("ABCD-EF12")) child.kill("SIGTERM");
         if (!queryAnswered && extraEnv.FAKE_TERMINAL_QUERY === "1" && stdout.includes("\u001b[6n")) {
           queryAnswered = true;
           child.stdin.write("\u001b[24;80R");
@@ -163,7 +212,7 @@ process.exit(9);
       child.stdin.on("error", (error: NodeJS.ErrnoException) => {
         if (error.code !== "EPIPE") rejectRun(error);
       });
-      const inputTimer = setInterval(async () => {
+      const inputTimer = settings ? undefined : setInterval(async () => {
         try {
           const log = await readFile(logPath, "utf8");
           if (!log.includes('"user.email"')) return;
@@ -369,4 +418,92 @@ process.exit(9);
     expect(`${result.stdout}\n${result.stderr}`).not.toContain("c3ludGhldGljX3N0ZGVycl9rZXlfYm9keQ==");
     expect(result.stdout).toContain("[redacted private key]");
   });
+  it("runs unattended device authorization, exposes only the code and uploads the first valid key pair", async () => {
+    const sshPath = join(homePath, ".ssh");
+    await mkdir(sshPath, { mode: 0o700 });
+    await writeFile(join(sshPath, "00-orphan.pub"), "ssh-ed25519 T1JQSEFO\n");
+    for (const [name, key] of [["b-later", "TEFURVI="], ["a-first", "RklSU1Q="]]) {
+      await writeFile(join(sshPath, name), "fixture private bytes", { mode: 0o600 });
+      await writeFile(join(sshPath, `${name}.pub`), `ssh-ed25519 ${key} test comment\n`);
+    }
+    const result = await runLogin("", {
+      FAKE_SETTINGS: "1", FAKE_SETTINGS_NEEDS_KEY: "1", FAKE_IDENTITY_NAME_READY: "1", GH_FORCE_TTY: "1",
+    }, true);
+    expect(result).toEqual({ code: 0, stdout: '{"deviceCode":"ABCD-EF12"}\n', stderr: "" });
+    await expect(readFile(join(root, "uploaded-key.txt"), "utf8")).resolves.toBe("ssh-ed25519 RklSU1Q=\n");
+    await expect(readFile(join(sshPath, "matrix-github.conf"), "utf8")).resolves.toContain("IdentityFile ~/.ssh/a-first");
+    const calls = await commands();
+    expect(calls).toContainEqual({ command: "gh", args: expect.arrayContaining(["auth", "login", "--web", "--skip-ssh-key", "admin:public_key"]) });
+    expect(calls.filter((call) => call.command === "git" && call.args.includes("--replace-all"))).toEqual([{
+      command: "git", args: ["config", "--global", "--replace-all", "user.email", "583231+octocat@users.noreply.github.com"],
+    }]);
+  });
+
+  it("refreshes the active account for key registration and generates a key without replacing owner keys", async () => {
+    const result = await runLogin("", { FAKE_SETTINGS: "1", FAKE_SETTINGS_EXISTING: "1", FAKE_SETTINGS_NEEDS_KEY: "1" }, true);
+    expect(result.code).toBe(0);
+    const calls = await commands();
+    expect(calls).toContainEqual({ command: "gh", args: ["auth", "refresh", "--hostname", "github.com", "--scopes", "admin:public_key"] });
+    expect(calls.some((call) => call.command === "gh" && call.args[1] === "login")).toBe(false);
+    expect(calls.some((call) => call.command === "ssh-keygen")).toBe(true);
+    await expect(readFile(join(root, "uploaded-key.txt"), "utf8")).resolves.toBe("ssh-ed25519 R0VORVJBVEVE\n");
+  });
+
+  it.each(["octocat", "other-owner"])("checks the selected registered key for %s before persisting it", async (login) => {
+    const sshPath = join(await realpath(homePath), ".ssh");
+    const name = "a-registered-key";
+    await mkdir(sshPath, { mode: 0o700 });
+    await writeFile(join(sshPath, name), "fixture private bytes", { mode: 0o600 });
+    await writeFile(join(sshPath, `${name}.pub`), "ssh-ed25519 RklSU1Q=\n");
+    const result = await runLogin("", {
+      FAKE_SETTINGS: "1", FAKE_SETTINGS_EXISTING: "1",
+      FAKE_SETTINGS_REGISTERED_KEY: name, FAKE_SETTINGS_REGISTERED_LOGIN: login,
+    }, true);
+    const matchesAccount = login === "octocat";
+    expect(result).toEqual({ code: matchesAccount ? 0 : 3, stdout: "", stderr: "" });
+    const calls = await commands();
+    expect(calls).toContainEqual({ command: "ssh", args: expect.arrayContaining([
+      "-F", "/dev/null", "-i", join(sshPath, name), "IdentitiesOnly=yes", "IdentityAgent=none",
+      "CertificateFile=none", "StrictHostKeyChecking=yes", `UserKnownHostsFile=${join(sshPath, "matrix-github-known-hosts")}`,
+    ]) });
+    expect(calls.some(({ command, args }) => command === "gh" && (args[0] === "ssh-key" || args[1] === "refresh"))).toBe(false);
+    const config = await readFile(join(sshPath, "matrix-github.conf"), "utf8");
+    expect(config.includes(`IdentityFile ~/.ssh/${name}`)).toBe(matchesAccount);
+  });
+
+  it("reuses matching SSH for an existing active account without browser authorization or uploading a key", async () => {
+    const result = await runLogin("", { FAKE_SETTINGS: "1", FAKE_SETTINGS_EXISTING: "1", FAKE_IDENTITY_READY: "1" }, true);
+    expect(result).toEqual({ code: 0, stdout: "", stderr: "" });
+    const calls = await commands();
+    expect(calls.some((call) => call.command === "gh" && ["login", "refresh", "add"].includes(call.args[1] ?? ""))).toBe(false);
+  });
+
+  it("cancels the Settings subprocess before SSH or identity work", async () => {
+    const result = await runLogin("", { FAKE_SETTINGS: "1", FAKE_SETTINGS_CANCEL: "1" }, true);
+    expect(result.code).toBe(3);
+    expect(result.stdout).toBe('{"deviceCode":"ABCD-EF12"}\n');
+    expect((await commands()).map(({ command, args }) => [command, ...args.slice(0, 2)])).toEqual([
+      ["gh", "auth", "status"], ["gh", "auth", "login"],
+    ]);
+  });
+
+  it("refuses an SSH account mismatch before uploading a key or changing identity", async () => {
+    const result = await runLogin("", { FAKE_SETTINGS: "1", FAKE_SETTINGS_EXISTING: "1", FAKE_SSH_LOGIN: "other-owner" }, true);
+    expect(result).toEqual({ code: 3, stdout: "", stderr: "" });
+    const calls = await commands();
+    expect(calls.some(({ command, args }) => command === "git" || args[0] === "ssh-key")).toBe(false);
+  });
+
+  it.each([
+    "FAKE_SETTINGS_BAD_CODE",
+    "FAKE_SETTINGS_BAD_URL",
+    "FAKE_SETTINGS_NO_URL",
+  ])("rejects invalid or incomplete device authorization output (%s)", async (fixtureFlag) => {
+    const result = await runLogin("", { FAKE_SETTINGS: "1", [fixtureFlag]: "1" }, true);
+    expect(result).toEqual({ code: 3, stdout: "", stderr: "" });
+    expect((await commands()).map(({ command, args }) => [command, ...args.slice(0, 2)])).toEqual([
+      ["gh", "auth", "status"], ["gh", "auth", "login"],
+    ]);
+  });
+
 });
