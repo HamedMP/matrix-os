@@ -10,6 +10,8 @@ import {
 } from "@matrix-os/contracts";
 import type { OwnerBotDatabase } from "./database.js";
 import type { RequestPrincipal } from "../request-principal.js";
+import type { ChatDatabase } from "../chat/database.js";
+import { hasNonPrivateChatScope } from "../chat/private-routine-authority.js";
 import type { RoutineFullAccessTurnAdmission } from "../chat/turn-admission.js";
 import type { RoutineCliSourceContext } from "./routine-cli-source-context.js";
 import type { RoutineCliResolvedTarget, RoutineCliTargetService } from "./routine-cli-targets.js";
@@ -82,12 +84,18 @@ export function createRoutineFullAccessService(options: {
   const timer = setInterval(sweep, 1000); timer.unref?.();
   const ordinaryWithin = async (trx: Transaction<OwnerBotDatabase>, chatId: string) => {
     await lockRoutineCliPolicyScope(trx, configured);
-    // This Chat row fences live binding inserts. Existing binding writers use the same owner gate.
+    // The Chat lock fences both live bindings and project publication. Read
+    // the durable sharing scope without locking it after the Chat.
     const chat = await trx.selectFrom("chats").select("id").where("id", "=", chatId)
       .where("owner_id", "=", configured.ownerId).where("owner_type", "=", "personal")
       .where("lifecycle", "=", "active").where("collaboration", "is", null).forUpdate().executeTakeFirst();
-    if (!chat || await trx.selectFrom("bot_chat_bindings").select("bot_id").where("chat_id", "=", chatId)
-      .where("removed_at", "is", null).limit(1).forUpdate().executeTakeFirst()) throw new RoutineCliError("permission_denied");
+    if (!chat || await hasNonPrivateChatScope(trx as unknown as Transaction<ChatDatabase>, { type: "personal", ownerId: configured.ownerId }, chatId)
+      || await trx.selectFrom("bot_chat_bindings").select("bot_id").where("chat_id", "=", chatId)
+        .where("removed_at", "is", null).limit(1).forUpdate().executeTakeFirst()) {
+      const entry = entries.get(chatId);
+      if (entry?.scope) invalidate(entry);
+      throw new RoutineCliError("permission_denied");
+    }
   };
   const inspect = async (principal: RequestPrincipal, chatId: string, pinned?: RoutineCliResolvedTarget, admission?: RoutineFullAccessTurnAdmission) => {
     owner(principal); CanonicalChatIdSchema.parse(chatId);
