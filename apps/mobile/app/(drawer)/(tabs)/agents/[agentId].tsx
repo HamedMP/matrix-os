@@ -3,6 +3,7 @@ import { useLocalSearchParams, useRouter } from "expo-router";
 
 import { AgentChatScreen } from "@/components/agents/AgentChatScreen";
 import { AgentDetailsSheet } from "@/components/agents/AgentDetailsSheet";
+import { RoutineDestinationSection } from "@/components/agents/RoutineDestinationSection";
 import { confirmArchiveAgent, reportArchiveAgentFailure } from "@/components/agents/agent-archive";
 import { agentRunsOn } from "@/components/agents/agent-copy";
 import { AGENTS_LIST_ROUTE } from "@/components/agents/agent-routes";
@@ -93,7 +94,14 @@ export default function AgentChatRoute() {
         composer={thread.composer}
       />
       <AgentDetailsSheet
-        routineDestination={chat.chatId && thread.gatewayUrl ? { chatId: chat.chatId, gatewayUrl: thread.gatewayUrl, eligible: fromTemplate && !shown?.archived } : undefined}
+        routineDestination={chat.chatId && thread.gatewayUrl ? (
+          <RoutineDestinationSection
+            chatId={chat.chatId}
+            gatewayUrl={thread.gatewayUrl}
+            botId={agentId}
+            eligible={fromTemplate && !shown?.archived}
+          />
+        ) : null}
         visible={detailsOpen}
         onClose={() => setDetailsOpen(false)}
         agent={{ id: agentId, name, description: shown?.description }}
