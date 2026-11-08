@@ -196,6 +196,38 @@ describe("bot broker client", () => {
     await expect(client(garbage.socketPath).loadSession()).rejects.toMatchObject({ code: "unavailable" });
   });
 
+  it.each([
+    { configured: true, perCall: false, abort: "configured" },
+    { configured: false, perCall: true, abort: "per-call" },
+    { configured: true, perCall: true, abort: "configured" },
+    { configured: true, perCall: true, abort: "per-call" },
+  ])("cancels a live socket from the $abort signal (configured $configured, per-call $perCall)", async ({ configured, perCall, abort }) => {
+    const lifetime = new AbortController(), invocation = new AbortController();
+    const received = Promise.withResolvers<void>();
+    const { socketPath, frames } = broker(() => { received.resolve(); return null; });
+    const worker = createBotBrokerClient({
+      socketPath, runtimeHandle: RUNTIME, executionGeneration: "3", runId: "run_abc",
+      timeoutMs: 150, signal: configured ? lifetime.signal : undefined, requestIdFactory: () => REQUEST_ID,
+    });
+    const outcome = worker.tool({ capability: "routine.cli", toolCallId: "call_cancel", args: { operation: "list" } },
+      perCall ? invocation.signal : undefined).catch(error => error);
+    await received.promise;
+    (abort === "configured" ? lifetime : invocation).abort();
+    expect(await outcome).toMatchObject({ code: "stale_generation" });
+    expect(frames).toHaveLength(1);
+  });
+
+  it("honors an already-aborted configured signal for operations without a per-call signal", async () => {
+    const { socketPath, frames } = broker(frame => JSON.stringify({ version: 1, requestId: frame.requestId, ok: true, result: {
+      revision: 0, needsRecompaction: false, messages: [],
+    } }));
+    const worker = createBotBrokerClient({
+      socketPath, runtimeHandle: RUNTIME, executionGeneration: "3", runId: "run_abc", signal: AbortSignal.abort(),
+    });
+    await expect(worker.loadSession()).rejects.toMatchObject({ code: "stale_generation" });
+    expect(frames).toHaveLength(0);
+  });
+
   it("times out a silent broker and refuses invalid frames before sending", async () => {
     const silent = broker(() => null);
     await expect(client(silent.socketPath, 50).loadSession()).rejects.toMatchObject({ code: "timeout" });
