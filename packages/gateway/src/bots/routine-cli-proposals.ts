@@ -70,8 +70,12 @@ export function createRoutineCliProposals(deps: RoutineCliProposalDependencies) 
     return { run, dispatch, receipt };
   };
   const recover: RoutineCliProposalRuntime["recover"] = async input => deps.transact(input.ownerId, async tx => {
-    const row = await tx.db.selectFrom("routine_cli_proposals").selectAll().where("owner_id", "=", input.ownerId).where("computer_id", "=", scope.computerId)
-      .where("task_id", "=", input.taskId).executeTakeFirst();
+    // A queued proposal's dispatch remains immutable after the task continues in a later run.
+    const row = await tx.db.selectFrom("routine_cli_proposals as dispatch")
+      .innerJoin("bot_tasks as task", join => join.onRef("task.owner_id", "=", "dispatch.owner_id")
+        .onRef("task.task_id", "=", "dispatch.task_id").onRef("task.run_id", "=", "dispatch.run_id"))
+      .selectAll("dispatch").where("dispatch.owner_id", "=", input.ownerId).where("dispatch.computer_id", "=", scope.computerId)
+      .where("dispatch.task_id", "=", input.taskId).executeTakeFirst();
     if (!row) return recoverExistingRoutineProposal(tx, scope, input);
     if (row.stage !== "pending_approval" || !row.interaction_id || input.runId && row.run_id !== input.runId) return false;
     const receipt = await requireReceipt(row.client_request_id, tx);
@@ -82,9 +86,10 @@ export function createRoutineCliProposals(deps: RoutineCliProposalDependencies) 
       .where("a.bot_id", "=", receipt.target.botId).where("i.chat_id", "=", receipt.target.chatId).where("i.interaction_id", "=", row.interaction_id)
       .where("i.kind", "=", "approval").where("a.tool", "=", "routine.activate").executeTakeFirst();
     const task = await createBotTasksRepository(tx.db).get({ ownerId: input.ownerId, taskId: input.taskId }, tx.db);
+    if (task && task.runId !== row.run_id) return recoverExistingRoutineProposal(tx, scope, input);
     return !!interaction && !!task && task.botId === receipt.target.botId && task.chatId === receipt.target.chatId
       && interaction.task_id === task.taskId && interaction.source_run_id === row.run_id && interaction.run_id === row.run_id
-      && task.runId === row.run_id && (interaction.status !== "pending" || task.status === "waiting_person");
+      && (interaction.status !== "pending" || task.status === "waiting_person");
   });
   const admitMutation: RoutineCliMutationAdmission = async ({ transaction, source, target, operation }) => {
     if (operation.operation !== "propose") throw new RoutineCliError("unavailable");
