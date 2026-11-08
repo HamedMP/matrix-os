@@ -55,6 +55,25 @@ it("cleans only expired owned crash directories and never traverses an abandoned
   await symlink(external, join(abandoned, "a".repeat(48) + ".json")); await store.sweep(); expect((await stat(external)).isDirectory()).toBe(true); expect((await stat(abandoned)).isDirectory()).toBe(true);
   await rm(join(abandoned, "a".repeat(48) + ".json")); await store.sweep(); await expect(stat(abandoned)).rejects.toMatchObject({ code: "ENOENT" });
 });
+it("allows overlapping cleaners to create and use separate result stores", async () => {
+  const seed = await createRoutineResultArtifacts();
+  closers.push(seed.close);
+  const abandoned = await mkdtemp(join(dirname(seed.directory), "run-"));
+  closers.push(() => rm(abandoned, { recursive: true, force: true }));
+  const lease = join(abandoned, ".lease");
+  await writeFile(lease, "");
+  await writeFile(join(abandoned, "a".repeat(48) + ".json"), "{}");
+  await utimes(lease, new Date(0), new Date(0));
+
+  const stores = await Promise.allSettled([createRoutineResultArtifacts(), createRoutineResultArtifacts()]);
+  for (const result of stores) if (result.status === "fulfilled") closers.push(result.value.close);
+  for (const result of stores) {
+    if (result.status === "rejected") throw result.reason;
+    await expect(result.value.write({ v: 1, ok: true, data: { kind: "list", routines: [], truncated: false } }))
+      .resolves.toHaveProperty("path");
+  }
+  await expect(stat(abandoned)).rejects.toMatchObject({ code: "ENOENT" });
+});
 it("unrelated Bash returns no-op and preserves native permission/safety checks; duplicate tool callback cannot execute twice", async () => {
   const frames: WrittenFrame[] = []; let executions = 0;
   const hook = createClaudeRoutineHook({ signal: new AbortController().signal, write: async frame => { frames.push(JSON.parse(frame)); }, startInput: async () => {}, fail: () => {}, execute: async () => { executions++; return "/bin/cat -- '/tmp/display'"; } });

@@ -4,6 +4,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { RoutineCliEnvelopeSchema, ROUTINE_CLI_OUTPUT_BYTES, type RoutineCliEnvelope } from "@matrix-os/contracts/routine-cli";
 import { sanitizeAssistantText } from "./safe-activity-projection.js";
+function isMissing(error: unknown): boolean {
+  return Boolean(error && typeof error === "object" && "code" in error && error.code === "ENOENT");
+}
+
 /** Same-UID readable files are display data only. Never consumed as authority or receipt truth.
  * Unique per native execution; recurring symlink-safe TTL sweep, capped files/writes, explicit drain. */
 export async function createRoutineResultArtifacts(options: { now?: () => number; ttlMs?: number; maxFiles?: number } = {}) {
@@ -17,23 +21,34 @@ export async function createRoutineResultArtifacts(options: { now?: () => number
     const names = await readdir(root);
     for (const name of names.slice(0, 256)) {
       if (!/^run-[A-Za-z0-9]{6}$/.test(name)) continue;
-      const path = join(root, name); let stat;
-      try { stat = await lstat(path); } catch (error: unknown) { if (error && typeof error === "object" && "code" in error && error.code === "ENOENT") continue; throw error; }
-      if (!stat.isDirectory() || stat.isSymbolicLink()) continue;
-      const lease = join(path, ".lease");
-      let lastTouched = stat.mtimeMs;
-      try { const leased = await lstat(lease); if (leased.isSymbolicLink() || !leased.isFile()) continue; lastTouched = leased.mtimeMs; }
-      catch (error: unknown) { if (!error || typeof error !== "object" || !("code" in error) || error.code !== "ENOENT") throw error; }
-      if (Date.now() - lastTouched <= 150_000) continue;
-      const children = await readdir(path); if (children.length > 33) continue;
-      let safe = true;
-      for (const file of children) {
-        if (file !== ".lease" && !/^[a-f0-9]{48}\.json$/.test(file)) { safe = false; break; }
-        const child = await lstat(join(path, file)); if (!child.isFile() || child.isSymbolicLink()) { safe = false; break; }
+      try {
+        const path = join(root, name), stat = await lstat(path);
+        if (!stat.isDirectory() || stat.isSymbolicLink()) continue;
+        const lease = join(path, ".lease");
+        let lastTouched = stat.mtimeMs;
+        try {
+          const leased = await lstat(lease);
+          if (leased.isSymbolicLink() || !leased.isFile()) continue;
+          lastTouched = leased.mtimeMs;
+        } catch (error: unknown) {
+          if (!isMissing(error)) throw error;
+        }
+        if (Date.now() - lastTouched <= 150_000) continue;
+        const children = await readdir(path);
+        if (children.length > 33) continue;
+        let safe = true;
+        for (const file of children) {
+          if (file !== ".lease" && !/^[a-f0-9]{48}\.json$/.test(file)) { safe = false; break; }
+          const child = await lstat(join(path, file));
+          if (!child.isFile() || child.isSymbolicLink()) { safe = false; break; }
+        }
+        if (!safe) continue;
+        for (const file of children) await unlink(join(path, file));
+        await rmdir(path);
+      } catch (error: unknown) {
+        // A different run may remove any of these entries after we enumerate them.
+        if (!isMissing(error)) throw error;
       }
-      if (!safe) continue;
-      for (const file of children) await unlink(join(path, file));
-      await rmdir(path);
     }
   };
   await sweepAbandoned();
