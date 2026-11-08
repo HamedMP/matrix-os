@@ -1,4 +1,5 @@
 import { beforeEach, afterEach, expect, it, vi } from "vitest";
+import { canonicalAssistantContinuationId } from "@matrix-os/contracts";
 import { createRealBotStateDatabase, OWNER } from "./bot-state-support.js";
 import { proposalFixture } from "./routine-cli-proposal-support.js";
 import { scope } from "./routine-cli-request-support.js";
@@ -240,6 +241,30 @@ it("redacts credentials split across committed output parts before durable sourc
     const row = await f.db.selectFrom("chat_messages").select(["parts","search_text"]).where("role","=","system").where("chat_id","=","chat_source").executeTakeFirstOrThrow();
     expect(row.parts).toContainEqual({type:"text", text:"Report: Bearer [redacted]"});
     expect(row.search_text).not.toContain("syntheticFixtureToken");
+  } finally { await service.close(); }
+});
+it("delivers the ordered continuation group with credentials redacted across rows", async () => {
+  const { terminalFixtureFire, originService } = await import("./routine-chat-origin-support.js");
+  const fire = await terminalFixtureFire(f), service = originService(f);
+  const owner = { type: "personal" as const, ownerId: OWNER };
+  const chatId = fire.routine.chat_id, runId = fire.run.run.id, createdAt = f.state.clock;
+  const rootId = "msg_fire_output";
+  const continuationId = canonicalAssistantContinuationId(rootId, 1);
+  try {
+    await f.chats.appendAssistantDelta(owner, { chatId, runId, messageId: rootId, createdAt, delta: "Report: Bea" });
+    await f.chats.appendAssistantDelta(owner, { chatId, runId, messageId: "msg_other_output", createdAt, delta: "An unrelated output." });
+    await f.chats.appendAssistantDelta(owner, { chatId, runId, messageId: continuationId, createdAt, delta: "rer syntheticFixtureToken\nDelivered in order." });
+    await f.chats.finishRun(owner, { chatId, runId, outcome: "completed", completedAt: createdAt });
+    await service.reconcile(OWNER, "chat_source");
+    await service.reconcile(OWNER, "chat_source");
+    const rows = await f.db.selectFrom("chat_messages").select(["parts", "search_text"])
+      .where("role", "=", "system").where("chat_id", "=", "chat_source").execute();
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.parts).toEqual([
+      expect.objectContaining({ type: "routine_receipt", canonicalMessageId: continuationId, canonicalRunId: runId }),
+      { type: "text", text: "Report: Bearer [redacted]\nDelivered in order." },
+    ]);
+    expect(rows[0]?.search_text).not.toContain("syntheticFixtureToken");
   } finally { await service.close(); }
 });
 it("bounds recovery reads when the shared production pool has no query or lock timeout", async () => {
