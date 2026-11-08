@@ -20,8 +20,10 @@ import { freezeIntent, type RoutineCliRequestDependencies } from "./routine-cli-
 import { routineActionHash, routineActionPolicy, type RoutineActionSourceRegistry, type RoutineSourceHandle, type RoutineSourceProducer } from "./routine-action-source-registry.js";
 
 type Call = { operation: RoutineCliOperation; invocationId: string; signal: AbortSignal; onOwnerWait?: (waiting: boolean) => void };
-type TargetCeiling = Readonly<{ botId: string; chatId: string }>;
-const withinCeiling = (target: { botId: string; chatId: string }, ceiling?: TargetCeiling) => !ceiling || target.botId === ceiling.botId && target.chatId === ceiling.chatId;
+type TargetCeiling = Readonly<{ botId: string; chatId: string; bindingCreatedAt?: string; preferenceRevision?: number }>;
+const withinCeiling = (target: RoutineCliResolvedTarget, ceiling?: TargetCeiling) => !ceiling || target.botId === ceiling.botId && target.chatId === ceiling.chatId
+  && (ceiling.bindingCreatedAt === undefined || target.bindingCreatedAt === ceiling.bindingCreatedAt)
+  && (ceiling.preferenceRevision === undefined || target.preferenceRevision === ceiling.preferenceRevision);
 type Entry = { handle: RoutineSourceHandle; reference: RoutineCliSourceReference; invocationId: string; operation: RoutineCliOperation;
   operationDigest: string; target: RoutineCliResolvedTarget; boundTarget?: TargetCeiling; originalReceipt: boolean; fingerprint: string; mode: "allow" | "ask";
   expiresAt: number; challengeId: string; actionDigest: string; status: RoutineActionView["status"]; issued: boolean;
@@ -198,8 +200,10 @@ export function createRoutineCliActionController(options: {
     };
   return {
     sources, targets, authorizeTarget,
-    async register(producer: RoutineSourceProducer, targetCeiling?: { botId: string; chatId: string }) {
-      const boundTarget = targetCeiling ? freezeIntent(RoutineCliRememberTargetSchema.pick({ botId: true, chatId: true }).parse(targetCeiling)) : undefined;
+    async register(producer: RoutineSourceProducer, targetCeiling?: TargetCeiling) {
+      const boundTarget = targetCeiling ? freezeIntent(RoutineCliRememberTargetSchema.pick({ botId: true, chatId: true }).extend({
+        bindingCreatedAt: z.iso.datetime({ offset: true }).optional(), preferenceRevision: z.number().int().positive().max(Number.MAX_SAFE_INTEGER).optional(),
+      }).refine(value => (value.bindingCreatedAt === undefined) === (value.preferenceRevision === undefined)).parse(targetCeiling)) : undefined;
       if (producer.source.identity.kind === "bot_child" && !boundTarget) throw new RoutineCliError("permission_denied");
       if (producer.source.ownerId !== scope.ownerId || producer.source.computerId !== scope.computerId) throw new RoutineCliError("permission_denied");
       const handle = options.registry.register(producer);

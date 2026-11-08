@@ -1690,6 +1690,7 @@ export async function createGateway(config: GatewayConfig) {
     }
     canonicalChatRuntime = await createCanonicalChatRuntime({
       homePath, browserApprovals: supervisedBrowserRuntime?.control, routineActions: botServices?.routineCli,
+      beforeRoutineFullAccessDispatch: botServices?.routineCli?.beforeRoutineFullAccessDispatch,
       executionAdmissionFence,
       ...(chatDriveContext.service ? {drives:chatDriveContext.service} : {}),
       assertChatReferenceAllowed: chatDriveContext.assertChatReferenceAllowed,
