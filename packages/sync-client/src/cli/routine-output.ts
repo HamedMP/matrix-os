@@ -1,7 +1,10 @@
 import type { RoutineCliResult, RoutineCliErrorCode } from "@matrix-os/contracts/routine-cli";
 const label = (value: string) => value.replace(/[\p{Cc}\p{Cf}]/gu, char => `\\u${char.codePointAt(0)!.toString(16).padStart(4, "0")}`);
 export function routineExitCode(value: RoutineCliResult | RoutineCliErrorCode) {
-  if (typeof value !== "string") return value.kind === "unknown" ? 75 : 0;
+  if (typeof value !== "string") {
+    const unknown = value.kind === "unknown" || (value.kind === "receipt" && value.receipt.disposition === "unknown");
+    return unknown ? 75 : 0;
+  }
   return value === "invalid_input" ? 2 : ["permission_denied", "source_context_required"].includes(value) ? 3
     : ["revision_conflict", "request_conflict", "target_required", "target_unavailable", "not_found"].includes(value) ? 4 : 1;
 }
