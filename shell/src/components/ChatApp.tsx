@@ -1,5 +1,5 @@
 "use client";
-import { PersistentTaskControl, usePersistentTaskSelection, useRoutineOrigin, RoutineOriginApprovals, RoutineReceipt, ScheduledMessageMeta } from "@matrix-os/ui";
+import { PersistentTaskControl, usePersistentTaskSelection, useRoutineOrigin, RoutineOriginApprovals, RoutineReceipt } from "@matrix-os/ui";
 import { routineFullAccessChatPresentationEligible } from "@matrix-os/ui";
 import { BrowserPermissionReviewProvider, BrowserPermissionReminder } from "@matrix-os/ui";
 import { shellChatAttachmentPolicy } from "./chat/attachment-policy";
