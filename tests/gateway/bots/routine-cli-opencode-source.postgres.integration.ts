@@ -11,12 +11,18 @@ afterEach(async () => { await f?.close(); f = undefined; bootstrap = undefined; 
 async function fixture(native: Parameters<typeof opencodeFixture>[0]) { f = await opencodeFixture(native); bootstrap = native.noBootstrap ? undefined : f.candidate.environment; return f; }
 it.each(["sse-first", "fd-first"] as const)("%s actual admitted OpenCode source invokes the published CLI/private IPC/HTTP/PG after exact owner decision with original UUID", async order => {
   const requestId = "de000000-0000-4000-8000-000000000801", chatId = "chat_opencode_actual_" + order;
-  f = await fixture({ order, intent: { args: ["propose", "--input", "-", "--request-id", requestId], stdin: JSON.stringify(proposal) } });
+  f = await fixture({ order, hold: true, intent: { args: ["propose", "--input", "-", "--request-id", requestId], stdin: JSON.stringify(proposal) } });
   const admitted = await f.start(chatId);
   await expect.poll(() => f!.sourceEvents.find(event => event.type === "approval.requested"), { timeout: 5000 }).toMatchObject({ type: "approval.requested" });
   const decision = f.sourceEvents.find(event => event.type === "approval.requested")!;
   if (decision.type !== "approval.requested") throw new Error("Missing exact owner operation decision");
-  await f.approve(decision, chatId, admitted.run.id); await f.f.canonical.drain();
+  await f.approve(decision, chatId, admitted.run.id);
+  // This success case keeps the source live through the target claim. Ending
+  // the source before that claim is exercised by the dedicated negative cases.
+  await expect.poll(() => f!.data.db.selectFrom("bot_interactions").select("chat_id").execute(), { timeout: 5000 }).toEqual([{ chat_id: TARGET_A.chatId }]);
+  await expect.poll(async () => (await f!.frames()).find(frame => frame.result), { timeout: 5000 }).toBeDefined();
+  f.finish();
+  await f.f.canonical.drain();
   const frames = await f.frames(); expect(JSON.parse(frames.find(frame => frame.result).result)).toMatchObject({ v: 1, ok: true, data: { receipt: { requestId, disposition: "queued" } } });
   expect(f.httpCalls()).toBe(1); expect(f.promptCount()).toBe(1);
   expect(f.orderTrace.slice(0, 2)).toEqual(order === "fd-first" ? ["fd-callback", "observed-running"] : ["observed-running", "fd-callback"]);
