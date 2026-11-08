@@ -28,7 +28,7 @@ IDs and unknown effects are never replayed automatically.
 | branch | write | New matrix/ branch from the approved SHA; no reset/force |
 | commit | write | Explicit regular files, confirmed owner author/committer; expected-HEAD CAS |
 | push | send | Exact approved SHA to its development branch; no force; remote readback |
-| pull_request | send | Expected remote SHA, explicit base/title/body; draft only; actor/head readback |
+| pull_request | send | Expected remote SHA, explicit base/title/body; draft only; actor, refs and text readback |
 
 Every action fits a 3,000-character serialized budget so its complete arguments
 fit the exact approval preview. Every non-read action requires the person's
@@ -73,7 +73,11 @@ text/EOL conversion is supported without executable filters; system/global
 attribute files are excluded. Staged blobs must match approved normalization,
 and raw content/attributes are rechecked before the ref moves. Safe tracking
 configuration supports dotted branch names such as `release/1.0`. Pull request
-base branches may also contain dots and must be valid branch names. Tracking
+base branches may also contain dots and must be valid branch names. The broker
+verifies the draft's repository, actor, branch names, head SHA, and exact
+approved title and body before reusing or confirming it. A mismatch on an
+existing draft refuses the action. A mismatch after creation is an unknown
+effect. Tracking
 configuration accepts only the existing `remote` and `merge` keys. In-process locks serialize this service only;
 Terminal writers still use Git's index/ref locks. A post-ref reconciliation
 failure or cancellation after an effect starts is an unknown effect. Unreferenced objects from a failed CAS are safe

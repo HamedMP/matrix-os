@@ -163,15 +163,31 @@ it("pushes the approved SHA even when Terminal changes HEAD and preserves an exi
   expect((await exec("git", ["remote", "get-url", "origin"], { cwd: repo })).stdout.trim()).toBe("https://github.com/owner/private-test.git");
 });
 
-it("does not create a PR until the remote branch matches, then verifies draft, actor and exact head", async () => {
+function draftPullRequest(head: string, branch: string, base: string) {
+  return {
+    number: 1, url: "https://github.com/owner/private-test/pull/1", author: { login: "owner" },
+    isDraft: true, isCrossRepository: false, headRefOid: head, headRefName: branch, baseRefName: base,
+    title: "Demo", body: "Proof",
+  };
+}
+
+it("creates and reuses only the draft matching the approved content and refs", async () => {
   const { repo, head } = await repository();
   await exec("git", ["switch", "-c", "matrix/pr"], { cwd: repo });
   let pushed = false; let created = false;
   const run = vi.fn(async (command: string, args: string[], options: Parameters<NonNullable<Parameters<typeof createGithubDeveloperService>[0]["run"]>>[2]) => {
     if (command === "gh") {
       expect(args[args.indexOf("--base") + 1]).toBe("release/1.0");
-      if (args[1] === "create") { expect(args).toContain("--draft"); created = true; return { stdout: "", stderr: "" }; }
-      return { stdout: JSON.stringify(created ? [{ number: 1, url: "https://github.com/owner/private-test/pull/1", author: { login: "owner" }, isDraft: true, headRefOid: head }] : []), stderr: "" };
+      if (args[1] === "create") {
+        expect(args).toContain("--draft");
+        expect(args.slice(-4)).toEqual(["--title", "Demo", "--body", "Proof"]);
+        created = true;
+        return { stdout: "", stderr: "" };
+      }
+      expect(args[args.indexOf("--json") + 1]?.split(",")).toEqual(expect.arrayContaining([
+        "title", "body", "headRefName", "baseRefName", "isCrossRepository",
+      ]));
+      return { stdout: JSON.stringify(created ? [draftPullRequest(head, "matrix/pr", "release/1.0")] : []), stderr: "" };
     }
     if (args.includes("ls-remote")) return { stdout: `${pushed ? head : "0".repeat(40)}\trefs/heads/matrix/pr\n`, stderr: "" };
     return exec(command, args, options);
@@ -181,6 +197,7 @@ it("does not create a PR until the remote branch matches, then verifies draft, a
   await expect(service.execute(workspace, action, signal())).rejects.toThrow(); expect(created).toBe(false);
   pushed = true;
   await expect(service.execute(workspace, action, signal())).resolves.toMatchObject({ account: "owner", draft: true, pullRequest: "https://github.com/owner/private-test/pull/1", head });
+  await expect(service.execute(workspace, action, signal())).resolves.toMatchObject({ draft: true, head });
   expect(run.mock.calls.filter(([command, args]) => command === "gh" && args[1] === "create")).toHaveLength(1);
 });
 
@@ -202,23 +219,48 @@ it("removes clone staging without deleting a concurrent owner file in the visibl
   expect(await readdir(join(home, ".matrix-github-staging"))).toEqual([]);
 });
 
-it("marks a post-create actor/draft mismatch as an unconfirmed effect rather than a replayable refusal", async () => {
+it.each([
+  { title: "Different title" },
+  { body: "Proof " },
+  { headRefName: "matrix/other" },
+  { baseRefName: "release/1.0" },
+  { isCrossRepository: true },
+])("refuses an existing draft with a different approval payload (%j)", async difference => {
   const { repo, head } = await repository();
   await exec("git", ["switch", "-c", "matrix/readback"], { cwd: repo });
-  let created = false;
-  const run = vi.fn(async (command: string, args: string[], options: Parameters<NonNullable<Parameters<typeof createGithubDeveloperService>[0]["run"]>>[2]) => {
+  const run = vi.fn<NonNullable<Parameters<typeof createGithubDeveloperService>[0]["run"]>>(async (command, args, options) => {
     if (command === "gh") {
-      if (args[1] === "create") { created = true; return { stdout: "", stderr: "" }; }
-      return { stdout: JSON.stringify(created ? [{ number: 1, url: "https://github.com/owner/private-test/pull/1", author: { login: "owner" }, isDraft: false, headRefOid: head }] : []), stderr: "" };
+      expect(args[1]).toBe("list");
+      return { stdout: JSON.stringify([{ ...draftPullRequest(head, "matrix/readback", "main"), ...difference }]), stderr: "" };
     }
-    if (args.includes("ls-remote")) return { stdout: `${head}\trefs/heads/matrix/readback\n`, stderr: "" };
     return exec(command, args, options);
   });
   const service = createGithubDeveloperService({ homePath: home, status, run });
   await expect(service.execute(workspace, { action: "pull_request", path: "repo", expectedHead: head, base: "main", title: "Demo", body: "Proof" }, signal()))
-    .rejects.toThrow("GitHub pull request outcome unconfirmed");
-  expect(created).toBe(true);
+    .rejects.toMatchObject({ code: "invalid_arguments" });
+  expect(run.mock.calls.filter(([command]) => command === "gh")).toHaveLength(1);
 });
+
+it.each([{ isDraft: false }, { title: "Different title" }, { body: "Proof " }])(
+  "marks a post-create mismatch as an unconfirmed effect (%j)",
+  async difference => {
+    const { repo, head } = await repository();
+    await exec("git", ["switch", "-c", "matrix/readback"], { cwd: repo });
+    let created = false;
+    const run = vi.fn(async (command: string, args: string[], options: Parameters<NonNullable<Parameters<typeof createGithubDeveloperService>[0]["run"]>>[2]) => {
+      if (command === "gh") {
+        if (args[1] === "create") { created = true; return { stdout: "", stderr: "" }; }
+        return { stdout: JSON.stringify(created ? [{ ...draftPullRequest(head, "matrix/readback", "main"), ...difference }] : []), stderr: "" };
+      }
+      if (args.includes("ls-remote")) return { stdout: `${head}\trefs/heads/matrix/readback\n`, stderr: "" };
+      return exec(command, args, options);
+    });
+    const service = createGithubDeveloperService({ homePath: home, status, run });
+    await expect(service.execute(workspace, { action: "pull_request", path: "repo", expectedHead: head, base: "main", title: "Demo", body: "Proof" }, signal()))
+      .rejects.toThrow("GitHub pull request outcome unconfirmed");
+    expect(created).toBe(true);
+  },
+);
 
 it("rejects stale HEAD, unready identity, symlinks, outside paths and executable repository config before effects", async () => {
   const { repo, head } = await repository();

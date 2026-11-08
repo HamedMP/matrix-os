@@ -16,6 +16,18 @@ const SHA = /^[a-f0-9]{40}$/;
 const REPOSITORY = /^[A-Za-z0-9][A-Za-z0-9-]{0,38}\/[A-Za-z0-9_][A-Za-z0-9_.-]{0,99}$/;
 const DEVELOPMENT_BRANCH = /^matrix\/[A-Za-z0-9][A-Za-z0-9_/-]{0,111}$/;
 const SAFE_CONFIG = /^(?:core\.(?:repositoryformatversion|filemode|bare|logallrefupdates|ignorecase|precomposeunicode)|remote\.origin\.(?:url|fetch)|branch\.[a-z0-9_./-]+\.(?:remote|merge))$/i;
+const pullRequestListSchema = z.array(z.object({
+  number: z.number().int().positive(),
+  url: z.string(),
+  author: z.object({ login: z.string() }),
+  isDraft: z.boolean(),
+  isCrossRepository: z.boolean(),
+  headRefOid: z.string().regex(SHA),
+  headRefName: z.string(),
+  baseRefName: z.string(),
+  title: z.string(),
+  body: z.string(),
+})).max(1);
 type Result = Record<string, unknown>;
 type RunOptions = { cwd: string; env: NodeJS.ProcessEnv; signal: AbortSignal; maxBuffer: number; killSignal: NodeJS.Signals };
 export type GithubDeveloperCommand = (command: string, args: string[], options: RunOptions) => Promise<{ stdout: string; stderr: string }>;
@@ -258,10 +270,16 @@ export function createGithubDeveloperService(deps: {
       let created = false;
       const list = async () => {
         const response = await run(repo.cwd, "gh", ["pr", "list", "--repo", repo.remote, "--head", repo.branch, "--base", action.base,
-          "--state", "open", "--json", "number,url,author,isDraft,headRefOid"], signal);
-        const rows = z.array(z.object({ number: z.number().int().positive(), url: z.string(), author: z.object({ login: z.string() }), isDraft: z.boolean(), headRefOid: z.string().regex(SHA) })).max(1).parse(JSON.parse(response.stdout));
-        const row = rows[0];
-        if (row && (!row.isDraft || row.url.toLowerCase() !== `https://github.com/${repo.remote}/pull/${row.number}`.toLowerCase() || row.author.login.toLowerCase() !== plan.account.toLowerCase() || row.headRefOid !== repo.head)) {
+          "--state", "open", "--limit", "2",
+          "--json", "number,url,author,isDraft,isCrossRepository,headRefOid,headRefName,baseRefName,title,body"], signal);
+        const [row] = pullRequestListSchema.parse(JSON.parse(response.stdout));
+        if (row && (
+          !row.isDraft || row.isCrossRepository
+          || row.url.toLowerCase() !== `https://github.com/${repo.remote}/pull/${row.number}`.toLowerCase()
+          || row.author.login.toLowerCase() !== plan.account.toLowerCase()
+          || row.headRefOid !== repo.head || row.headRefName !== repo.branch || row.baseRefName !== action.base
+          || row.title !== action.title || row.body !== action.body
+        )) {
           if (created) throw new Error("GitHub pull request outcome unconfirmed");
           refuse();
         }
