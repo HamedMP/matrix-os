@@ -70,7 +70,7 @@ it.each([480, 720, 1024].flatMap(width => ["available", "unset"].flatMap(destina
     const sendBounds = await send.boundingBox();
     expect(sendBounds).not.toBeNull();
     expect(sendBounds!.width).toBeGreaterThan(0);
-    expect(sendBounds!.height).toBeGreaterThan(0);
+    expect(sendBounds!.height).toBe(28);
     for (const child of geometry.children) {
       expect(child.x, child.text ?? "control").toBeGreaterThanOrEqual(geometry.x);
       expect(child.right, child.text ?? "control").toBeLessThanOrEqual(geometry.right + 1);
