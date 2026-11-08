@@ -1,3 +1,4 @@
+import { RoutineActionIdSchema } from "@matrix-os/contracts";
 import { slackLinkReturnTarget } from "./slack/link-return.js";
 import { RuntimeSlotSchema } from './customer-vps-schema.js';
 
@@ -121,17 +122,38 @@ export function buildForwardedQueryString(rawUrl: string, omittedParams: readonl
   return forwarded ? `?${forwarded}` : '';
 }
 
+const ROUTINE_CONFIRMATION_PATH = /^\/vm\/[a-z0-9][a-z0-9-]{0,62}\/routine-cli\/confirm$/;
+
+/** Preserve a local navigation selector only; the Gateway still authorizes the actual decision. */
+function routineActionReturnTarget(value: string | null): string | null {
+  if (!value || value.length > 2048 || /[#\s\\]/.test(value)) return null;
+  const queryStart = value.indexOf("?");
+  if (queryStart < 0 || !ROUTINE_CONFIRMATION_PATH.test(value.slice(0, queryStart))) return null;
+  const params = new URLSearchParams(value.slice(queryStart + 1));
+  const challenges = params.getAll("challenge"), runtimes = params.getAll("runtime");
+  if ([...params.keys()].some(key => key !== "challenge" && key !== "runtime")
+    || challenges.length !== 1 || !RoutineActionIdSchema.safeParse(challenges[0]).success
+    || runtimes.length > 1 || runtimes.length === 1 && !RuntimeSlotSchema.safeParse(runtimes[0]).success) return null;
+  return value;
+}
+
 export function buildPostAuthRedirectPath(rawUrl: string): string {
   try {
     const url = new URL(rawUrl, 'https://app.matrix-os.com');
     const normalizedPath = url.pathname.replace(/^\/{2,}/, '/');
+    if (ROUTINE_CONFIRMATION_PATH.test(url.pathname)) {
+      if (url.username || url.password || /[#\s\\]/.test(rawUrl)) return '/';
+      return routineActionReturnTarget(url.pathname + url.search) ?? '/';
+    }
     const directSlackLink = slackLinkReturnTarget(url.pathname + url.search);
     if (directSlackLink && !url.hash) return directSlackLink;
-    if (/^\/sign-(?:in|up)(?:\/.*)?$/.test(normalizedPath) && url.searchParams.getAll("redirect_url").length === 1) {
-      const linked = slackLinkReturnTarget(url.searchParams.get("redirect_url"));
+    const authPage = /^\/sign-(?:in|up)(?:\/.*)?$/.test(normalizedPath);
+    if (authPage && url.searchParams.getAll("redirect_url").length === 1) {
+      const target = url.searchParams.get("redirect_url");
+      const linked = slackLinkReturnTarget(target) ?? routineActionReturnTarget(target);
       if (linked) return linked;
     }
-    const path = /^\/sign-(?:in|up)(?:\/.*)?$/.test(normalizedPath) ? '/' : normalizedPath;
+    const path = authPage ? '/' : normalizedPath;
     const params = new URLSearchParams();
     const runtime = url.searchParams.get('runtime');
     if (runtime && RuntimeSlotSchema.safeParse(runtime).success) {
@@ -152,7 +174,7 @@ export function normalizePostAuthRedirectPath(value: string | undefined): string
   try {
     const url = new URL(value, 'https://app.matrix-os.com');
     if (url.origin !== 'https://app.matrix-os.com') return '/';
-    return buildPostAuthRedirectPath(url.toString());
+    return buildPostAuthRedirectPath(value);
   } catch (err: unknown) {
     console.warn('[platform] Failed to normalize app-session redirect:', err instanceof Error ? err.message : String(err));
     return '/';
