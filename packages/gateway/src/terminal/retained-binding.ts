@@ -57,6 +57,9 @@ export function createRetainedTerminalBinding(options: {
     } catch (error) { console.warn("[terminal-host] Source binding unavailable", error instanceof Error ? error.name : "UnknownError"); fence(); }
   }
   async function dispatch(frame: Extract<TerminalShimFrame, { type: "terminal.call" }>, signal: AbortSignal) {
+    // The host can send calls after terminal.bound while Gateway still verifies
+    // the launch. Use the existing startup deadline and pending-action caps.
+    if (!await ready || signal.aborted) return;
     let result = terminalUnavailable(frame.operation);
     try {
       if (!identity || !source) { fence(); return; }
@@ -75,7 +78,7 @@ export function createRetainedTerminalBinding(options: {
     if (!("admissionId" in frame) || frame.admissionId !== admissionId) { fence(); return; }
     if (frame.type === "terminal.end") { fence(); return; }
     if (frame.type === "terminal.bound" && !binding) { binding = true; void bind(frame); return; }
-    if (!identity || !source || frame.type === "terminal.bound") { fence(); return; }
+    if (!binding || frame.type === "terminal.bound") { fence(); return; }
     if (frame.type === "terminal.cancel") { pending.get(frame.actionId)?.controller.abort(); return; }
     if (seen.has(frame.actionId) || seen.size >= 256 || pending.size >= 8) { fence(); return; }
     seen.add(frame.actionId); const action = new AbortController();
