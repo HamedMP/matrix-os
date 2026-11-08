@@ -7,11 +7,11 @@ import { createRoutineActionPlatformClient } from "../../../packages/gateway/src
 import { createRoutineActionVerificationRoutes } from "../../../packages/platform/src/routine-action-routes.js";
 import { authenticatedApprovalProxyProof } from "../../../packages/platform/src/canonical-owner-approval-proxy.js";
 import { buildPlatformVerificationToken } from "../../../packages/platform/src/platform-token.js";
-import { requestFixture, propose, scope } from "./routine-cli-request-support.js";
+import { insertRoutine, requestFixture, propose, scope } from "./routine-cli-request-support.js";
 import { context, invocation } from "./routine-cli-source-support.js";
 import { createRoutineCliRequestService } from "../../../packages/gateway/src/bots/routine-cli-requests.js";
 import { createRealBotStateDatabase } from "./bot-state-support.js";
-import type { RoutineActionView } from "@matrix-os/contracts";
+import type { RoutineActionView, RoutineCliOperation } from "@matrix-os/contracts";
 
 const secret = "fixture-platform-only-routine-proof", handle = scope.computerId.toLowerCase().replaceAll("_", "-");
 const machine = { machineId: "machine_one", handle, runtimeSlot: "primary", clerkUserId: scope.ownerId, provisioningClass: "customer" as const };
@@ -70,6 +70,24 @@ describe("routine action real Platform producer -> gateway controller -> durable
     await expect(db.transaction().execute(trx => controller.sources.validateAcceptedWithin(trx, {
       source: source.source, operation, invocation: { sourceId: source.reference.sourceId, invocationId: id, operationDigest: accepted.operation_digest },
     }, async () => true))).rejects.toMatchObject({ code: "permission_denied" });
+  });
+  it("reuses in-flight capacity after completing more than sixteen read invocations", async () => {
+    const source = await setup(), routineId = await insertRoutine(db, 1), signal = new AbortController().signal;
+    const service = createRoutineCliRequestService({ db, scope, sources: controller.sources, targets: controller.targets,
+      transact: f.transact, authorizeTarget: controller.authorizeTarget });
+    const reads = [
+      { operation: { operation: "list" }, kind: "list" },
+      { operation: { operation: "show", routineId }, kind: "show" },
+      { operation: { operation: "request", requestId: invocation(499) }, kind: "not_observed" },
+    ] as const satisfies readonly { operation: RoutineCliOperation; kind: string }[];
+    for (let n = 0; n < 18; n++) {
+      const { operation, kind } = reads[n % reads.length]!;
+      const call = { operation, invocationId: invocation(500 + n), signal };
+      expect(await source.authorize(call)).toBe(true);
+      const delivery = await source.issue(call);
+      expect(await service.execute({ token: delivery.takeToken(), operation })).toMatchObject({ kind });
+      await source.cancel({ ...call, reason: "finished" });
+    }
   });
   it("revocation and default changes can proceed while waiting and win before issuance", async () => {
     const source = await setup(), operation = propose(101);
@@ -184,6 +202,7 @@ it("a fresh duplicate decision reconciles the original UUID and target after the
   }
   expect(await db.selectFrom("bot_tasks").selectAll().execute()).toHaveLength(1);
   expect(await db.selectFrom("routine_cli_requests").selectAll().execute()).toHaveLength(1);
+  expect(controller.list(f.principal, true)).toHaveLength(1);
 });
 it("source revocation after the issuance target check rolls capability creation back before commit", async () => {
   const { createRoutineCliSourceService } = await import("../../../packages/gateway/src/bots/routine-cli-source.js");

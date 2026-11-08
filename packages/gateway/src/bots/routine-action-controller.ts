@@ -56,8 +56,9 @@ export function createRoutineCliActionController(options: {
   };
   const remove = (entry: Entry, status: RoutineActionView["status"] = "unavailable") => {
     if (entries.get(entry.invocationId) !== entry) return;
+    const notify = entry.mode === "ask" && entry.status === "pending";
     entries.delete(entry.invocationId); entry.status = status; entry.detach(); entry.settle(false);
-    if (entry.mode === "ask") { try { emit(entry, true); } catch (error: unknown) { console.warn("[routine-action] Resolution unavailable", error instanceof Error ? error.name : "UnknownError"); } }
+    if (notify) { try { emit(entry, true); } catch (error: unknown) { console.warn("[routine-action] Resolution unavailable", error instanceof Error ? error.name : "UnknownError"); } }
   };
   const sweep = () => { for (const entry of entries.values()) if (!live(entry)) remove(entry, entry.expiresAt <= now() ? "expired" : "unavailable"); };
   const timer = setInterval(sweep, 1000); timer.unref?.();
@@ -185,8 +186,13 @@ export function createRoutineCliActionController(options: {
           const entry = entries.get(z.uuid().parse(input.invocationId).toLowerCase());
           if (!entry || entry.handle !== handle) return;
           const released = await sources.releaseInvocation(reference, entry.invocationId);
-          if (!released.consumed) remove(entry);
-          // A queued consumed intent retains its still-live exact unexpired approval for the later real task claim.
+          // Only the invocation that queued a proposal is needed by a later canonical claim.
+          if (released.consumed && entry.operation.operation === "propose") {
+            const request = await ledger.get(scope, entry.operation.requestId);
+            if (request?.admission.disposition === "queued" && request.invocation.invocationId === entry.invocationId
+              && request.invocation.sourceId === entry.reference.sourceId) return;
+          }
+          remove(entry);
         },
         async revoke() { options.registry.revoke(handle); await sources.revoke(reference); },
       };
