@@ -10,6 +10,32 @@ it("selects only an existing actual direct Bot using strict destination fields, 
  const {client,remember,create}=fixture();const {result}=renderHook(()=>useRoutineDestinationPicker(client,true));await waitFor(()=>expect(result.current.pending).toBe(false));
  await act(async()=>result.current.choose("bot_existing"));expect(remember).toHaveBeenCalledWith({botId:"bot_existing",chatId:"chat_executor",baseRevision:0},expect.any(AbortSignal));expect(create).not.toHaveBeenCalled();
 });
+it.each(["directChat", "directBot"] as const)("preserves confirmed candidates when another %s lookup fails", async failedLookup => {
+  const { client, remember } = fixture();
+  const library = await client.list();
+  vi.mocked(client.list).mockResolvedValue({
+    ...library,
+    agents: [{ ...library.agents[0]!, id: "bot_unavailable", name: "Unavailable" }, ...library.agents],
+  });
+  vi.mocked(client.bots!.directChat).mockImplementation(async id => {
+    if (id === "bot_existing") return "chat_executor";
+    if (failedLookup === "directChat") throw new Error("private request failure");
+    return "chat_unavailable";
+  });
+  vi.mocked(client.bots!.directBot).mockImplementation(async chatId => {
+    if (chatId === "chat_executor") return "bot_existing";
+    throw new Error("private request failure");
+  });
+  const { result } = renderHook(() => useRoutineDestinationPicker(client, true));
+  await waitFor(() => expect(result.current.pending).toBe(false));
+  expect(result.current.candidates).toEqual([{ botId: "bot_existing", chatId: "chat_executor", name: "Existing" }]);
+  expect(result.current.error).toBe("Some routine destinations could not be confirmed. Refresh to check again.");
+  await act(async () => result.current.choose("bot_unavailable"));
+  expect(remember).not.toHaveBeenCalled();
+  await act(async () => result.current.choose("bot_existing"));
+  expect(remember).toHaveBeenCalledWith({ botId: "bot_existing", chatId: "chat_executor", baseRevision: 0 }, expect.any(AbortSignal));
+  expect(result.current.error).toBe("");
+});
 it("invalidates a retained picker callback when creation selection changes, including enabled A to B to A",async()=>{
  const {client,remember}=fixture();const {result,rerender}=renderHook(({enabled})=>useRoutineDestinationPicker(client,enabled),{initialProps:{enabled:true}});await waitFor(()=>expect(result.current.pending).toBe(false));const old=result.current.choose;rerender({enabled:false});rerender({enabled:true});await waitFor(()=>expect(result.current.pending).toBe(false));await act(async()=>old("bot_existing"));expect(remember).not.toHaveBeenCalled();
 });
