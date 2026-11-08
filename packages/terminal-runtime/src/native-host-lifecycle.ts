@@ -74,7 +74,7 @@ export async function tabsRequiringTerminationConfirmation(tabs: TerminalTab[], 
 export async function stopCanonicalNativeHost(store: TerminalWorkspaceStore, hosts: NativeTerminalHosts | undefined, ref: TerminalRef) {
   const tab = await store.getTab(ref);
   if (!tab?.nativeHost) return;
-  await store.fenceNativeHost(ref);
+  if (!tab.nativeHost.stopRequested) await store.fenceNativeHost(ref);
   if (tab.nativeHost.managerStopped && !tab.nativeHost.dispatchPending) return;
   if (!hosts) throw new TerminalRuntimeError("unavailable");
   let stopped = false;
