@@ -138,6 +138,41 @@ describe("GitHub Developer card", () => {
     }
   });
 
+  it("shows safe messages and logs only error categories when device actions fail", async () => {
+    const operation = { id: setupId, state: "awaiting_authorization", deviceCode: "ABCD-EFGH" };
+    const client = {
+      status: vi.fn().mockResolvedValue(partialStatus),
+      setupAccess: vi.fn().mockResolvedValue(writable),
+      startSetup: vi.fn().mockResolvedValue(operation),
+      getSetup: vi.fn().mockResolvedValue(operation),
+      cancelSetup: vi.fn().mockResolvedValue(undefined),
+      openSetupPage: vi.fn().mockRejectedValue(new Error("private browser diagnostic")),
+    };
+    const clipboard = Object.getOwnPropertyDescriptor(navigator, "clipboard");
+    const writeText = vi.fn().mockRejectedValue(new DOMException("private clipboard diagnostic", "NotAllowedError"));
+    Object.defineProperty(navigator, "clipboard", { configurable: true, value: { writeText } });
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      render(<GithubDeveloperAccessCard identityKey="alice:primary" client={client} />);
+      const setup = await screen.findByRole("button", { name: finishSetup });
+      await waitFor(() => expect(setup).toBeEnabled());
+      fireEvent.click(setup);
+      const dialog = within(await screen.findByRole("dialog", { name: "Connect GitHub Developer" }));
+      await act(async () => { fireEvent.click(await dialog.findByRole("button", { name: "Copy" })); });
+      expect(dialog.getByRole("alert")).toHaveTextContent("Couldn't copy the code.");
+      await act(async () => { fireEvent.click(dialog.getByRole("button", { name: "Open GitHub" })); });
+      expect(dialog.getByRole("alert")).toHaveTextContent("Couldn't open GitHub.");
+      expect(warn.mock.calls).toEqual([
+        ["[github-developer-access] Could not copy device code:", "DOMException"],
+        ["[github-developer-access] Could not open GitHub:", "Error"],
+      ]);
+    } finally {
+      warn.mockRestore();
+      if (clipboard) Object.defineProperty(navigator, "clipboard", clipboard);
+      else Reflect.deleteProperty(navigator, "clipboard");
+    }
+  });
+
   it("cleans up a setup created while its start response was still pending at dismissal", async () => {
     let finishStart!: (value: unknown) => void;
     const client = {

@@ -114,7 +114,7 @@ export function useGithubDeveloperSetup(client: GithubDeveloperSetupClient, acti
       }
     } catch (error: unknown) {
       if (!signal.aborted) {
-        console.warn("[github-developer-access] Sign-in unavailable:", error instanceof Error ? error.name : typeof error);
+        console.warn("[github-developer-access] Sign-in unavailable:", errorCategory(error));
         show({ phase: "failed" });
       }
     } finally {
@@ -123,7 +123,7 @@ export function useGithubDeveloperSetup(client: GithubDeveloperSetupClient, acti
         try {
           await client.cancelSetup(id, AbortSignal.timeout(3_000));
         } catch (error: unknown) {
-          console.warn("[github-developer-access] Sign-in cancellation unavailable:", error instanceof Error ? error.name : typeof error);
+          console.warn("[github-developer-access] Sign-in cancellation unavailable:", errorCategory(error));
         }
       }
       attempt.current = null;
@@ -133,6 +133,11 @@ export function useGithubDeveloperSetup(client: GithubDeveloperSetupClient, acti
 
   const view = active && display?.client === client && !display.scope.aborted ? display.view : null;
   return { view, pending, start, dismiss };
+}
+
+function errorCategory(error: unknown): string {
+  if (error instanceof DOMException) return "DOMException";
+  return error instanceof Error ? "Error" : typeof error;
 }
 
 function DeviceCode({ code, openPage }: { code: string; openPage: GithubDeveloperSetupClient["openSetupPage"] }) {
@@ -147,7 +152,8 @@ function DeviceCode({ code, openPage }: { code: string; openPage: GithubDevelope
           await navigator.clipboard.writeText(code);
           setCopied(true);
           setError(null);
-        } catch {
+        } catch (error: unknown) {
+          console.warn("[github-developer-access] Could not copy device code:", errorCategory(error));
           setError("Couldn't copy the code. You can select and copy it.");
         }
       }}>{copied ? "Copied" : "Copy"}</Button>
@@ -157,7 +163,8 @@ function DeviceCode({ code, openPage }: { code: string; openPage: GithubDevelope
       try {
         await openPage();
         setError(null);
-      } catch {
+      } catch (error: unknown) {
+        console.warn("[github-developer-access] Could not open GitHub:", errorCategory(error));
         setError("Couldn't open GitHub. Try again.");
       }
     }}>Open GitHub</Button>
