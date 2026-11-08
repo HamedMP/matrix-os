@@ -1,12 +1,12 @@
 import { acceptedBinding, beginOriginTransaction, hasAcceptedBinding } from "../bots/routine-chat-origin-target.js";
 import { randomUUID } from "node:crypto";
 import { sql, type Kysely, type Transaction } from "kysely";
-import { CanonicalChatMessageSchema, RoutineChatReceiptPartSchema, type CanonicalChatMessage, type CanonicalChatMessagePart, type RoutineChatReceiptPart } from "@matrix-os/contracts";
+import { BOT_OUTPUT_MAX_SEGMENTS, CanonicalChatMessageSchema, RoutineChatReceiptPartSchema, canonicalAssistantContinuationId, canonicalAssistantOutputMessages, canonicalAssistantOutputRootId, type CanonicalChatMessage, type CanonicalChatMessagePart, type RoutineChatReceiptPart } from "@matrix-os/contracts";
 import type { OwnerBotDatabase } from "../bots/database.js";
 import type { ChatDatabase } from "./database.js";
 import { RoutineCliSourceContextSchema } from "../bots/routine-cli-source-context.js";
 import { BotStateError } from "../bots/repositories/shared.js";
-import { asIso, jsonb, messageSearchText, parseJson, type ChatOwner, type ChatOutboxEventType } from "./records.js";
+import { asIso, jsonb, messageSearchText, parseJson, toMessage, type ChatOwner, type ChatOutboxEventType } from "./records.js";
 import { redactAssistantParts } from "./safe-activity-projection.js";
 export interface AppendRoutineReceiptInput {
   sourceChatId: string; computerId: string; fireId: string; kind: "status" | "output"; now: string;
@@ -50,12 +50,24 @@ export async function appendRoutineReceiptWithin(executor: Executor, ownerId: st
   if (existing) return null;
   const task = await db.selectFrom("bot_tasks").select("run_id").where("task_id", "=", record.task_id).where("owner_id", "=", ownerId)
     .where("bot_id", "=", record.bot_id).where("chat_id", "=", record.chat_id).executeTakeFirst();
-  let output: { id: string; run_id: string | null; parts: unknown } | undefined;
+  let output: { id: string; run_id: string | null; parts: CanonicalChatMessagePart[] } | undefined;
   if (input.kind === "output" && task?.run_id) {
-    output = await db.selectFrom("chat_messages as message").innerJoin("chat_runs as run", join => join.onRef("run.id", "=", "message.run_id").onRef("run.chat_id", "=", "message.chat_id"))
-      .select(["message.id", "message.run_id", "message.parts"]).where("run.id", "=", task.run_id).where("run.chat_id", "=", record.chat_id)
-      .where("run.status", "in", ["completed", "failed", "aborted"]).where("message.role", "=", "assistant").where("message.state", "=", "committed")
-      .orderBy("message.seq", "desc").limit(1).executeTakeFirst();
+    const committed = db.selectFrom("chat_messages as message").innerJoin("chat_runs as run", join => join.onRef("run.id", "=", "message.run_id").onRef("run.chat_id", "=", "message.chat_id"))
+      .selectAll("message").where("run.id", "=", task.run_id).where("run.chat_id", "=", record.chat_id)
+      .where("run.status", "in", ["completed", "failed", "aborted"]).where("message.role", "=", "assistant").where("message.state", "=", "committed");
+    const latest = await committed.orderBy("message.seq", "desc").limit(1).executeTakeFirst();
+    if (latest) {
+      let parts = parseJson<CanonicalChatMessagePart[]>(latest.parts);
+      const rootId = canonicalAssistantOutputRootId(latest.id);
+      if (rootId !== latest.id && latest.turn_id) {
+        // Match only the same bounded continuation group, then redact its joined text.
+        const ids = [rootId, ...Array.from({ length: BOT_OUTPUT_MAX_SEGMENTS - 1 }, (_, index) => canonicalAssistantContinuationId(rootId, index + 1))];
+        const previous = await committed.where("message.turn_id", "=", latest.turn_id).where("message.seq", "<", latest.seq)
+          .where("message.id", "in", ids).execute();
+        parts = canonicalAssistantOutputMessages([...previous, latest].map(toMessage)).at(-1)!.parts;
+      }
+      output = { id: latest.id, run_id: latest.run_id, parts };
+    }
   }
   if (input.kind === "output" && !output || input.kind === "status" && record.status === "completed") return null;
   const status = record.status === "uncertain" ? "unknown" : record.status as RoutineChatReceiptPart["status"];
@@ -65,7 +77,7 @@ export async function appendRoutineReceiptWithin(executor: Executor, ownerId: st
     scheduledFor: asIso(record.scheduled_for), canonicalChatId: record.chat_id, canonicalTaskId: record.task_id,
     ...(output ? { canonicalRunId: output.run_id, canonicalMessageId: output.id } : {}),
     ...(status === "cancelled" ? { stop: "unconfirmed" } : {}), model: proposal.selection.model });
-  const original = output ? redactAssistantParts(parseJson<CanonicalChatMessagePart[]>(output.parts)).filter(part => part.type === "text").map(part => part.text).join("\n") : statusText(status);
+  const original = output ? redactAssistantParts(output.parts).filter(part => part.type === "text").map(part => part.text).join("\n") : statusText(status);
   const text = original.slice(0, 24_000).trim();
   if (input.kind === "output" && !text) return null;
   const latest = await db.selectFrom("chat_messages").select(eb => eb.fn.max<number>("seq").as("seq")).where("chat_id", "=", input.sourceChatId).executeTakeFirst();
