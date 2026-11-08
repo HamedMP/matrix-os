@@ -1,6 +1,6 @@
 import { execFile } from "node:child_process";
 import { randomBytes } from "node:crypto";
-import { access, mkdtemp, rm } from "node:fs/promises";
+import { access, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
@@ -8,6 +8,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { ZellijCliRuntimeAdapter } from "../../packages/terminal-runtime/src/zellij-adapter.js";
 import { createTerminalRuntimeEnvironment } from "../../packages/terminal-runtime/src/runtime-environment.js";
 import { initializeMatrixZellijConfig } from "../../packages/terminal-runtime/src/zellij-bootstrap.js";
+import { matrixZellijConfigPaths } from "../../packages/terminal-runtime/src/zellij-config.js";
 
 const execFileAsync = promisify(execFile);
 const binaryPath = process.env.MATRIX_TEST_ZELLIJ_BIN ?? "/usr/local/bin/zellij";
@@ -195,8 +196,9 @@ describe.runIf(available)("real bundled Zellij 0.44.3 integration", () => {
     }
   }, 30_000);
 
-  it("keeps held-pane attachments independent with the production config and a focused scroll plugin", async () => {
+  it("keeps new held-pane attachments independent after upgrading a legacy config", async () => {
     const fixtureHome = await mkdtemp(join(tmpdir(), "matrix-zellij-held-"));
+    const legacySession = `matrix-w-${randomBytes(16).toString("hex")}`;
     const fixtureSession = `matrix-w-${randomBytes(16).toString("hex")}`;
     const fixtureEnv = createTerminalRuntimeEnvironment({
       homePath: fixtureHome, uid: process.getuid?.() ?? 0, runtimeDir: fixtureHome,
@@ -209,7 +211,22 @@ describe.runIf(available)("real bundled Zellij 0.44.3 integration", () => {
       ["--session", fixtureSession, ...args], { timeout: 5_000, env: fixtureEnv })).stdout;
     try {
       await initializeMatrixZellijConfig(fixtureHome);
+      const paths = matrixZellijConfigPaths(fixtureHome);
+      const legacyConfig = (await readFile(new URL("./fixtures/legacy-mirrored-config.kdl", import.meta.url), "utf8"))
+        .replace('"__MATRIX_SHELL_PATH__"', () => JSON.stringify(paths.shellFile));
+      await writeFile(paths.file, legacyConfig);
+      await fixture.ensureSession(legacySession, { cols: 100, rows: 30 });
+      const legacyTab = await fixture.createTab(legacySession, {
+        internalName: `matrix-tab-${randomBytes(16).toString("hex")}`, cwd: "",
+        command: ["sh"],
+      });
+
+      await initializeMatrixZellijConfig(fixtureHome);
       await fixture.ensureSession(fixtureSession, { cols: 100, rows: 30 });
+      await fixture.writeToPane(legacySession, legacyTab.paneId, new TextEncoder().encode("printf 'matrix-before-upgrade\\n'\r"));
+      await expect.poll(async () => (await execFileAsync(binaryPath,
+        ["--session", legacySession, "action", "dump-screen", "--pane-id", legacyTab.paneId, "--full", "--ansi"],
+        { timeout: 5_000, env: fixtureEnv })).stdout).toContain("matrix-before-upgrade");
       const panes = [];
       for (let index = 0; index < 3; index += 1) {
         panes.push(await fixture.createTab(fixtureSession, {
@@ -248,7 +265,7 @@ describe.runIf(available)("real bundled Zellij 0.44.3 integration", () => {
       expect(clients).toContain(panes[2]!.paneId);
     } finally {
       for (const attachment of attachments.reverse()) await attachment.close();
-      try { await fixture.deleteSession(fixtureSession); }
+      try { await Promise.all([fixture.deleteSession(fixtureSession), fixture.deleteSession(legacySession)]); }
       finally { await rm(fixtureHome, { recursive: true, force: true }); }
     }
   }, 30_000);

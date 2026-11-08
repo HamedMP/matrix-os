@@ -99,6 +99,12 @@ The gateway and control plane are therefore replaceable clients of the workspace
 
 The exact bundled binary is checksum-verified Zellij 0.44.3. Runtime control uses structured `list-tabs --json` and `list-panes --json` identifiers, targeted tab/pane actions, and `subscribe --format json`; tab-index shifting is prohibited.
 
+Runtime startup upgrades the exact previously shipped mirrored Zellij config
+for each generated theme. Owner-edited configs are preserved. New workspaces
+read the updated independent-focus default. Zellij 0.44.3 reads mirroring when
+it starts a workspace, so an already running workspace retains its startup
+mode until the owner closes and recreates it in the normal workspace lifecycle.
+
 One observer exists per active workspace. One attachment exists per viewed tab, shared by all viewers. Attachments have viewer TTL eviction, caps, shutdown drains, bounded input queues, and isolated broadcast failure handling.
 
 Workspace subscriptions include only tabs that still occupy live admission;
