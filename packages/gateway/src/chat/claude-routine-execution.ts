@@ -38,7 +38,13 @@ export function createClaudeRoutineExecution(options: NativeRoutineCliPort & { i
       closed = true;
       try { await invoker?.close(); } finally {
         if (source) { try { await (await source).revoke(); } catch (error: unknown) { console.warn("[claude-routines] Source cleanup unavailable", error instanceof Error ? error.name : "UnknownError"); } }
-        if (artifacts) await (await artifacts).close();
+        if (artifacts) {
+          try {
+            await (await artifacts).close();
+          } catch (error: unknown) {
+            console.warn("[claude-routines] Display cleanup unavailable", error instanceof Error ? error.name : "UnknownError");
+          }
+        }
       }
     },
   };
