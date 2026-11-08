@@ -1,18 +1,24 @@
 # Host ABI composition for routine acceptance
 
-## Exact sources
+## Current comparison
 
-| Component | Reviewed source | Applied commit |
-| --- | --- | --- |
-| Claude 2.1.280 routine hook | Draft #3097 | `0614dcb99a672b152fda5ed3fe961a6b0b30d889` (base) |
-| Native ABI and rollback repair | Merged #3101, `a924c6174418a0834c0c3556a0143b5bb6825fad` | `b9027e84dfed0ad2da45a5750f0cd0e7cdad8e1d` |
-| Preview builder parity | Draft #3103, `11183466d817cabcae0d9b78a0c338ae9c2a24be` | `a586a6475eedb2ae9552dc0deb023868faac691e` |
+The [current #3104 comparison](https://github.com/HamedMP/matrix-os/pull/3104)
+is based on the [Claude 2.1.280 hook layer #3097](https://github.com/HamedMP/matrix-os/pull/3097),
+which follows the [routine reliability layer #3090](https://github.com/HamedMP/matrix-os/pull/3090).
+The native ABI and rollback implementation is already in the current ancestry
+through [merged #3101](https://github.com/HamedMP/matrix-os/pull/3101),
+commit `a924c6174418a0834c0c3556a0143b5bb6825fad`. The Ubuntu 24.04 Preview
+runner configuration is already present in main and matches
+[#3103](https://github.com/HamedMP/matrix-os/pull/3103). This comparison only
+records composition and acceptance evidence.
 
-#3097 retains its exact #3090 base
-`203bb805fe0127d6b0a5a1d27540b01265aa05f1`. The #3101 cherry-pick applied
-without conflicts. Its eight files have identical added/removed lines to the
-supplier commit; surrounding branch context differs. The Preview patch has the
-same stable patch ID as its standalone source.
+## Historical qualification receipt
+
+The original qualification replay used #3097 at `0614dcb99a67` over #3090 at
+`203bb805fe01`. It replayed #3101 as `b9027e84dfed` and #3103 as
+`a586a6475eed`. The ABI replay had the same added and removed lines as its
+supplier commit. The Preview replay had the same stable patch ID. These four
+historical SHAs identify the run below.
 
 ## Interfaces and boundaries
 
