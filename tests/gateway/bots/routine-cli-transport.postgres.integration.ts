@@ -76,11 +76,16 @@ it.each(["approve", "deny"] as const)("actual CLI proposal remains queued admiss
   expect(await f.db.selectFrom("bot_approvals").selectAll().execute()).toHaveLength(1);
 });
 
-it("workspace-aware tarball executes all real aliases and lazy routines IPC against real Hono/source consumer with cached public deps", async () => {
+it("workspace-aware tarball executes all real aliases and lazy routines IPC against real Hono/source consumer with bundled and cached dependencies", async () => {
   const { cachedRoutinePack } = await import("../../cli/routine-pack-support.js");
   const { execFile } = await import("node:child_process"), { promisify } = await import("node:util"), { join } = await import("node:path");
   const packed = await cachedRoutinePack(); closers.push(packed.cleanup);
-  expect(Object.keys(packed.links)).toHaveLength(12); expect(packed.links).not.toHaveProperty("@matrix-os/contracts");
+  const publicDependencies = Object.keys(packed.manifest.dependencies).filter(name => name !== "@matrix-os/contracts");
+  expect([...packed.bundled, ...Object.keys(packed.links)].sort()).toEqual(publicDependencies.sort());
+  expect(packed.bundled).toContain("micromark");
+  expect(packed.links).toHaveProperty("chokidar");
+  expect(packed.transitiveLinks).toHaveProperty("decode-named-character-reference");
+  expect(Object.keys(packed.transitiveLinks).filter(name => publicDependencies.includes(name))).toEqual([]);
   expect(packed.manifest.bin).toEqual({ matrix: "bin/matrix.mjs", matrixos: "bin/matrix.mjs", mos: "bin/matrix.mjs" });
   for (const alias of ["matrix", "matrixos", "mos"]) {
     try {
@@ -89,7 +94,7 @@ it("workspace-aware tarball executes all real aliases and lazy routines IPC agai
       throw new Error("Unmanaged packed CLI incorrectly admitted");
     } catch (error) {
       const output = error as { code?: number; stdout?: string; stderr?: string };
-      expect(output.code).toBe(3); expect(JSON.parse(output.stdout!)).toMatchObject({ v: 1, error: { code: "source_context_required" } });
+      expect(output.code, output.stderr).toBe(3); expect(JSON.parse(output.stdout!)).toMatchObject({ v: 1, error: { code: "source_context_required" } });
       expect(output.stderr).not.toContain("rcli_");
     }
   }

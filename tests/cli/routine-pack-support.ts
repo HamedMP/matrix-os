@@ -1,10 +1,17 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
-import { mkdtemp, mkdir, readFile, realpath, rm, symlink, access } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, realpath, rm, symlink, access, lstat } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { tmpdir } from "node:os";
 const run = promisify(execFile);
-/** Offline workspace-aware packing; public runtime dependencies link only to this already cached install.
+
+function packedEntry(path: string) {
+  return lstat(path).catch((error: unknown) => {
+    if (error instanceof Error && "code" in error && error.code === "ENOENT") return undefined;
+    throw error;
+  });
+}
+/** Offline workspace-aware packing; keep bundled dependencies and link missing ones from the existing cache.
  * This proves tarball contents + lazy command execution, NOT a clean external package-runner install. */
 export async function cachedRoutinePack() {
   const root = await mkdtemp(join(tmpdir(), "routine-cli-pack-")), source = resolve("packages/sync-client");
@@ -22,13 +29,48 @@ export async function cachedRoutinePack() {
     const contracts = JSON.parse(await readFile(join(pkg, "node_modules/@matrix-os/contracts/package.json"), "utf8"));
     if (contracts.exports["./routine-cli"] !== "./src/routine-cli.ts") throw new Error("Packed routine contracts export missing");
     const links: Record<string, string> = {};
+    const bundled: { name: string; target: string; dependencies: string[] }[] = [];
+    const modules = join(pkg, "node_modules");
     for (const name of Object.keys(manifest.dependencies)) {
       if (name === "@matrix-os/contracts") continue;
-      const target = await realpath(join(source, "node_modules", name)), destination = join(pkg, "node_modules", name);
-      await mkdir(dirname(destination), { recursive: true }); await symlink(target, destination, "dir"); links[name] = target;
+      const target = await realpath(join(source, "node_modules", name)), destination = join(modules, name);
+      const packaged = await packedEntry(destination);
+      if (packaged) {
+        if (!packaged.isDirectory()) throw new Error(`Unexpected packed dependency: ${name}`);
+        const installed = JSON.parse(await readFile(join(target, "package.json"), "utf8"));
+        const included = JSON.parse(await readFile(join(destination, "package.json"), "utf8"));
+        if (included.name !== name || typeof included.version !== "string" || included.version !== installed.version) {
+          throw new Error(`Packed dependency does not match cached package: ${name}`);
+        }
+        bundled.push({ name, target, dependencies: Object.keys(included.dependencies ?? {}) });
+        continue;
+      }
+      await mkdir(dirname(destination), { recursive: true });
+      await symlink(target, destination, "dir");
+      links[name] = target;
+    }
+    const transitiveLinks: Record<string, string> = {};
+    // The packer can include a dependency's files without the pnpm links it uses to resolve its own dependencies.
+    // A cached link retains its installed realpath, so Node resolves further dependencies from that same graph.
+    for (const { name, target, dependencies } of bundled) {
+      const installedModules = name.startsWith("@") ? dirname(dirname(target)) : dirname(target);
+      for (const dependency of dependencies) {
+        const destination = join(modules, dependency);
+        const previous = transitiveLinks[dependency];
+        if (await packedEntry(join(modules, name, "node_modules", dependency))) continue;
+        if (!previous && await packedEntry(destination)) continue;
+        const cached = await realpath(join(installedModules, dependency));
+        if (previous) {
+          if (previous !== cached) throw new Error(`Conflicting cached dependency: ${dependency}`);
+          continue;
+        }
+        await mkdir(dirname(destination), { recursive: true });
+        await symlink(cached, destination, "dir");
+        transitiveLinks[dependency] = cached;
+      }
     }
     await mkdir(join(root, "home")); await mkdir(join(root, "cwd"));
     for (const [alias, path] of Object.entries<string>(manifest.bin)) await symlink(join(pkg, path), join(root, alias));
-    return { root, pkg, manifest, links, binPath: join(pkg, "bin/matrix.mjs"), cleanup: () => rm(root, { recursive: true, force: true }) };
+    return { root, pkg, manifest, bundled: bundled.map(({ name }) => name), links, transitiveLinks, binPath: join(pkg, "bin/matrix.mjs"), cleanup: () => rm(root, { recursive: true, force: true }) };
   } catch (error) { await rm(root, { recursive: true, force: true }); throw error; }
 }
