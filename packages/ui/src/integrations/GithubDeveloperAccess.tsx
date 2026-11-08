@@ -130,7 +130,7 @@ export function withGithubDeveloperCatalogEntry(services: readonly IntegrationCa
     id: GITHUB_DEVELOPER_SERVICE_ID,
     name: "GitHub Developer",
     category: github?.category ?? "developer",
-    description: "Clone and push private repositories",
+    description: "Set up your GitHub account and SSH key to clone private repos, push commits, and open pull requests.",
     authType: "oauth",
     ...(github?.logoUrl ? { logoUrl: github.logoUrl } : {}),
   };
