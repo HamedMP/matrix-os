@@ -1,4 +1,5 @@
 import "../../../packages/ui/src/chat-agents/chat-agents.css";
+import "../../../packages/ui/src/chat/composer/chat-composer.css";
 import React from "react";
 import { createRoot } from "react-dom/client";
 import { ChatApp } from "../../../shell/src/components/ChatApp";
