@@ -647,6 +647,45 @@ describe("canonical Chat routes", () => {
     }
   });
 
+  it.each(["existing", "unclaimed"])("keeps an %s scheduler Chat create key private", async (state) => {
+    const pglite = await KyselyPGlite.create();
+    const repository = new ChatRepository(pglite.dialect);
+    const backingChatId = "chat_routine_0123456789abcdef0123456789abcdef";
+    const requestId = `req_${backingChatId}`;
+    const service = createCanonicalChatService(repository);
+    const publicCreate = vi.spyOn(service, "create");
+    const app = appFor(service);
+    const postChat = (clientRequestId: string, title: string) => app.request("/api/chats", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ clientRequestId, title }),
+    });
+
+    try {
+      await repository.bootstrap();
+      if (state === "existing") {
+        const internal = await repository.create({ type: "personal", ownerId: "owner_1" }, {
+          id: backingChatId, clientRequestId: requestId, title: "Private schedule worker",
+        });
+        expect(internal.chat.id).toBe(backingChatId);
+      }
+
+      const rejected = await postChat(requestId, "Public retry");
+      expect(rejected.status).toBe(400);
+      expect(await rejected.json()).toEqual({ error: "Invalid request" });
+      expect(publicCreate).not.toHaveBeenCalled();
+
+      const ordinaryKey = `${requestId}_ordinary`;
+      const created = await postChat(ordinaryKey, "Ordinary Chat");
+      const retried = await postChat(ordinaryKey, "Retried");
+      expect(created.status).toBe(201);
+      expect(retried.status).toBe(201);
+      expect(await retried.json()).toEqual(await created.json());
+    } finally {
+      await repository.kysely.destroy();
+    }
+  });
+
   it("enqueues a bounded next Turn through an explicit owner-derived route", async () => {
     const queuedAt = "2026-08-31T09:00:00.000Z";
     const queued = {
