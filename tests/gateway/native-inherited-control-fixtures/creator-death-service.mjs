@@ -2,6 +2,7 @@
 // Only native owns application stdio0/1; records are observations, not authority.
 import assert from "node:assert/strict";
 import { createRequire } from "node:module";
+import { fixtureErrorKind } from "./fixture-errors.mjs";
 import { Socket } from "node:net";
 const native = createRequire(import.meta.url)(process.argv[2]);
 const channel = new Socket({ fd: 3, readable: true, writable: true });
@@ -40,10 +41,10 @@ channel.on("data", async chunk => {
     else if (command === "EXIT") finish(0);
     else throw new Error("unknown fixed fixture command");
     busy = false;
-  } catch (error) { await tell("F", { event: "fixture-error", errorType: error.name }).finally(() => finish(1)); }
+  } catch (error) { await tell("F", { event: "fixture-error", errorType: fixtureErrorKind(error) }).finally(() => finish(1)); }
 });
 try {
   handle = native.inheritedControl(); assert.equal(native.inheritedControlCurrent(handle), true);
   const ready = Buffer.from("native-ready"); assert.equal(native.send(handle, ready), ready.length);
   await tell("R", { event: "service-ready", current: true });
-} catch (error) { await tell("F", { event: "fixture-error", errorType: error.name }).finally(() => finish(1)); }
+} catch (error) { await tell("F", { event: "fixture-error", errorType: fixtureErrorKind(error) }).finally(() => finish(1)); }
