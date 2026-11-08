@@ -14,6 +14,38 @@ it("advertises bounded owner GitHub actions only after capability admission", as
   expect(call).toHaveBeenCalledWith(expect.objectContaining({ capability: "github.developer", args: { action: "status" } }), signal);
 });
 
+it("cancels an already stopped GitHub action without dispatching it", async () => {
+  const call = vi.fn();
+  const state = { waitingForPerson: false, effectUnknown: false };
+  const [tool] = createBotTools({ capabilities: ["github.developer"], broker: { tool: call } as never, state });
+
+  await expect(tool!.execute("github_stopped", { action: "status" }, AbortSignal.abort()))
+    .rejects.toMatchObject({ name: "ToolCancelledError" });
+  expect(call).not.toHaveBeenCalled();
+  expect(state.effectUnknown).toBe(false);
+});
+
+it("handles the broker rejection when GitHub dispatch aborts synchronously", async () => {
+  const controller = new AbortController();
+  const pending = Promise.reject(new Error("Broker cancelled"));
+  const observe = vi.spyOn(pending, "then");
+  const call = () => {
+    controller.abort();
+    return pending;
+  };
+  const state = { waitingForPerson: false, effectUnknown: false };
+  const [tool] = createBotTools({ capabilities: ["github.developer"], broker: { tool: call } as never, state });
+
+  try {
+    await expect(tool!.execute("github_stopping", { action: "status" }, controller.signal))
+      .rejects.toMatchObject({ name: "ToolCancelledError" });
+    expect(observe).toHaveBeenCalledWith(expect.any(Function), expect.any(Function));
+    expect(state.effectUnknown).toBe(true);
+  } finally {
+    await pending.catch(() => undefined);
+  }
+});
+
 it("rejects arbitrary commands, secrets, remote hosts, unsafe branches and metadata paths", () => {
   for (const args of [
     { action: "exec", command: "gh auth token" },

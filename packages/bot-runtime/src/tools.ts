@@ -222,11 +222,9 @@ function untilCancelled<T>(pending: Promise<T>, signal: AbortSignal | undefined,
       state.effectUnknown = true;
       reject(new ToolCancelledError());
     };
-    if (signal.aborted) {
-      onAbort();
-      return;
-    }
-    signal.addEventListener("abort", onAbort, { once: true });
+    if (signal.aborted) onAbort();
+    else signal.addEventListener("abort", onAbort, { once: true });
+    // Observe the broker result even if dispatch has already cancelled the run.
     pending.then(
       (value) => { signal.removeEventListener("abort", onAbort); resolve(value); },
       (error: unknown) => { signal.removeEventListener("abort", onAbort); reject(error); },
@@ -267,6 +265,7 @@ export function createBotTools(input: {
     parameters: spec.parameters,
     executionMode: "sequential",
     async execute(toolCallId, params, signal): Promise<AgentToolResult<undefined>> {
+      if (signal?.aborted) throw new ToolCancelledError();
       const checked = BotToolRequestSchema.safeParse({
         toolCallId: bridgeToolCallId(toolCallId),
         capability: spec.capability,
