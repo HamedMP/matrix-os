@@ -163,7 +163,9 @@ it("actual delegated executor exit fences an in-flight broker/CLI proposal befor
     callTool: (parent, request, signal) => broker.callTool(parent, request, signal),
     runTask: input => { spawned = input; return runClaudeBotTask({ ...input, spawn: () => child }); },
   });
-  const tools = createBotToolDispatcher({ homePath: f.f.home, nativeTask: service });
+  const direct = vi.fn(async () => { throw new Error("Native routine bypassed CLI"); });
+  const tools = createBotToolDispatcher({ homePath: f.f.home, nativeTask: service,
+    routines: { propose: direct, list: direct, control: direct } });
   const broker = createBotBrokerActions({ db: f.data.db, registry: f.f.registry, sessions: createBotSessionsRepository(f.data.db), checkpoints: createBotCheckpointsRepository(f.data.db), tools,
     runs: f.f.tasks.runSource, events: f.f.tasks.eventSink, inference: { lifetime: new AbortController().signal } as never });
   let settled = false;
@@ -173,7 +175,9 @@ it("actual delegated executor exit fences an in-flight broker/CLI proposal befor
     await vi.waitFor(() => expect(child.stdin.writableEnded).toBe(true));
     request = fetch(spawned!.mcpUrl, { method: "POST", signal: AbortSignal.timeout(15000), headers: { authorization: `Bearer ${spawned!.mcpToken}`, "content-type": "application/json" },
       body: JSON.stringify({ action: "call", tool: { capability: "routine.propose", requestId: "de000000-0000-4000-8000-000000000709", args: proposal } }) });
-    await claim;
+    await Promise.race([claim, request.then(response => {
+      throw new Error(`Delegated bridge returned ${response.status} before the transaction reached its claim`);
+    })]);
     child.emit("exit", 0, null); // Keep inherited/open stdout and stderr alive: close has NOT occurred.
     child.stdout.write(JSON.stringify({ type: "result", subtype: "success", is_error: false, result: "drained child result", session_id: "fixture_drain_session" }) + "\n");
     await new Promise(resolve => setImmediate(resolve));
@@ -186,8 +190,11 @@ it("actual delegated executor exit fences an in-flight broker/CLI proposal befor
     expect(outcome).toMatchObject({ error: { code: "permission_denied" } });
     expect(await createBotTasksRepository(f.data.db).get({ ownerId: binding.ownerId, taskId: task.taskId })).toMatchObject({ status: "running", revision: task.revision });
   } finally {
-    resumeClaim(); child.emit("close", 0, null); await work; await request; await service.close();
+    resumeClaim(); child.emit("close", 0, null);
+    await Promise.allSettled([work, request]); await service.close();
   }
+  await expect(work).resolves.toMatchObject({ ok: true });
+  expect(direct).not.toHaveBeenCalled();
   expect(release).toHaveBeenCalledOnce(); expect(saveSession).toHaveBeenCalledWith(binding.ownerId, binding.botId, 1, "fixture_drain_session");
 });
 it("delegated source authorization and remembered-target mutation retain a consistent preference/owner/Chat order on two PG connections", async () => {
