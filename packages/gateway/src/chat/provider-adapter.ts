@@ -152,6 +152,14 @@ export interface CanonicalProviderRunInput<State = unknown> {
   onCleanupConfirmed?: () => void;
 }
 
+/** An exact persisted Run needs reconciliation before projection can terminalize it. */
+export class CanonicalProviderRunRecoveryPendingError extends Error {
+  constructor(readonly safeError: CanonicalChatSafeError) {
+    super(safeError.safeMessage);
+    this.name = "CanonicalProviderRunRecoveryPendingError";
+  }
+}
+
 export interface CanonicalChatProviderAdapter<State = unknown> {
   readonly driverKind: CanonicalProviderDriverKind;
   readonly stateSchemaVersion: number;
@@ -161,7 +169,9 @@ export interface CanonicalChatProviderAdapter<State = unknown> {
   serializeState(value: State): unknown;
   /** Read-only admission guard for adapters whose execution can outlive projection. */
   isBackingRunActive?(input: { owner: CanonicalOwnerScope; state: State; signal: AbortSignal }): Promise<boolean>;
-  /** Read-only recovery of this exact Run; never starts or resubmits work. */
+  /** A failed or timed-out recovery cannot safely establish this Run's outcome. */
+  readonly recoveryFailureMode?: "pending";
+  /** Recovery of this exact Run never starts or resubmits work. */
   recover?(input: {
     owner: CanonicalOwnerScope;
     runId: string;
