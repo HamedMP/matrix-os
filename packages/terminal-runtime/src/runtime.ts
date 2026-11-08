@@ -25,6 +25,7 @@ import { applyWorkspaceResize, workspaceResizeProposal, type TerminalSizeListene
 import { createViewerOutput } from "./viewer-output.js";
 import {
   TerminalWorkspaceStore,
+  type TerminalRuntimeTabState,
   type TerminalRuntimeWorkspaceState,
   type TerminalSnapshot,
 } from "./workspace-store.js";
@@ -1118,7 +1119,7 @@ export class TerminalRuntime {
   }
 
   /** With admission closed, the existing queue alone can still write to this exact pane incarnation. */
-  private async fenceNativeInput(ref: TerminalRef, tab: TerminalTab): Promise<void> {
+  private async fenceNativeInput(ref: TerminalRef, tab: TerminalRuntimeTabState): Promise<void> {
     if (!tab.nativeHost) return;
     const key = refKey(ref);
     const attachment = this.attachments.get(key);
