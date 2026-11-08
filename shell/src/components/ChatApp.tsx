@@ -17,7 +17,7 @@ import { ChatNewChatContent, useChatReadState, CanonicalChatInputForm, Supervise
 import type { CanonicalChatInputView, CanonicalSubmitChatInputRequest } from "@matrix-os/contracts";
 import { supervisedToolApproval, supervisedToolRetryDraft } from "@matrix-os/contracts";
 
-import { useState, useMemo, useRef, useEffect, useCallback } from "react";
+import { useState, useMemo, useRef, useEffect, useLayoutEffect, useCallback } from "react";
 import { WebChatQueuedTurns } from "./chat/WebChatQueuedTurns";
 import { WebChatProjectPicker } from "./chat/WebChatProjectPicker";
 import { WebChatComposerControls } from "./chat/WebChatComposerControls";
@@ -266,6 +266,12 @@ function ChatAppContent({
   const [agentDraftRequest, setAgentDraftRequest] = useState<(ChatAgentDraftRequest & { ownerIdentity: unknown }) | null>(null);
   if (agentDraftRequest && agentDraftRequest.ownerIdentity !== draftIdentity) setAgentDraftRequest(null);
   const composerScope = sessionId ?? `new:${newChatSequence}`;
+  const submitScope = useMemo(() => ({ composerScope, draftIdentity, authorityKey }), [composerScope, draftIdentity, authorityKey]);
+  const liveSubmitScope = useRef<typeof submitScope | null>(null);
+  useLayoutEffect(() => {
+    liveSubmitScope.current = submitScope;
+    return () => { liveSubmitScope.current = null; };
+  }, [submitScope]);
   const onNewChat = () => {
     if (isCurrentAuthority && !isCurrentAuthority()) return;
     botDraftNavigation.clearNotice();
@@ -396,7 +402,10 @@ function ChatAppContent({
     files?: Array<{ name: string; type: string; data: string }>,
     mentionOptions?: ChatSubmitOptions,
   ) => {
-    if (botIdentityUnknown) return Promise.resolve(false);
+    // Attachment reads can finish after this composer has left its Chat or draft.
+    if (liveSubmitScope.current !== submitScope || (isCurrentAuthority && !isCurrentAuthority()) || botIdentityUnknown) {
+      return Promise.resolve(false);
+    }
     if (directBotId) {
       if (!botPresentation || !botPresentation.available) return Promise.resolve(false);
       return onSubmit(text, files, { displayText: text, instanceId: botPresentation.selection.instanceId, model: botPresentation.selection.model,
