@@ -45,6 +45,7 @@ export async function recoverOrphanedRun(input: {
     }
   } catch (error: unknown) {
     console.warn("[chat/recovery] Backing snapshot unavailable", { runId: run.id, errorType: error instanceof Error ? error.name : "UnknownError" });
+    if (adapter.recoveryFailureMode === "pending") return "pending";
   }
   if (!recovered) {
     if (adapter.isBackingRunActive) {

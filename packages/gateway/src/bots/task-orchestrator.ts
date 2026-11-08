@@ -168,7 +168,7 @@ export function createBotTaskOrchestrator(deps: {
     return deps.transact(input.ownerId, tx => beginBotTask(tx, { ...input, now: now() }, { beginRoutineProposal: deps.routineProposals?.beginWithin }));
   }
 
-  async function settle(task: BotTask, status: BotRunStatus, blockedReason?: BotBlockedReason): Promise<BotTurnResult> {
+  async function settle(task: BotTask, status: BotRunStatus, blockedReason?: BotBlockedReason, options?: { requireRecorded: true }): Promise<BotTurnResult> {
     const to = status === "waiting_capacity" ? "blocked"
       : status === "uncertain" ? "failed"
       : status;
@@ -194,6 +194,7 @@ export function createBotTaskOrchestrator(deps: {
         await tx.publish(settled.chatId, "bot.task.updated", taskEvent(settled));
       });
     } catch (error: unknown) {
+      if (options?.requireRecorded) throw error;
       console.warn("[bots] task state was not recorded:", error instanceof Error ? error.name : "UnknownError");
     }
     return { status, ...(to === "blocked" ? { blockedReason: reason ?? "tool_unavailable" } : {}) };
@@ -640,11 +641,12 @@ export function createBotTaskOrchestrator(deps: {
       if (run) await stopRuntime(run, runId, "cancelled");
     },
     /** A run the previous process lost: its task fails and nothing is replayed. */
-    async abandon(input: { ownerId: string; taskId: string }): Promise<void> {
-      if (await deps.routineProposals?.recover(input)) return;
+    async abandon(input: { ownerId: string; taskId: string; runId?: string }): Promise<"waiting_person" | void> {
       const task = await deps.transact(input.ownerId, (tx) => createBotTasksRepository(tx.db).get({ ownerId: input.ownerId, taskId: input.taskId }, tx.db));
-      if (!task || ["completed", "failed", "cancelled"].includes(task.status)) return;
-      await settle(task, "failed");
+      if (!task || (input.runId !== undefined && task.runId !== input.runId) || ["completed", "failed", "cancelled"].includes(task.status)) return;
+      // Keep the observed revision if approval commits after this read. Its newer task state must win.
+      if (await deps.routineProposals?.recover(input)) return "waiting_person";
+      await settle(task, "failed", undefined, { requireRecorded: true });
     },
   };
 }
