@@ -794,6 +794,7 @@ function CanonicalChatWorkspaceContent({
       <BrowserPermissionReminder/>
       <SharedChatComposer
         routineFullAccess={routineFullAccess}
+        acceptedRunId={executionControls?.runId}
         permissionModeRequest={permissionModeRequest}
         value={draft}
         onChange={setDraft}
