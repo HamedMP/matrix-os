@@ -2,7 +2,7 @@
 
 import { providerCatalogObservationRetryDelay } from "@matrix-os/ui";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { rabbitMarkSvg } from "@matrix-os/brand/marks";
 import {
   CanonicalProviderCatalogSchema,
@@ -273,7 +273,24 @@ export function useChatProviderState(
     ? applySavedSelection(selectedBase, effectiveSaved)
     : null;
 
+  const selectedDraft = selected && {
+    key: choiceKey(selected),
+    interactionMode: selected.interactionMode,
+    permissionMode: selected.permissionMode,
+    options: selected.selectedOptions,
+  };
+  const latestSelection = useRef<{ bindingKey: string; modes: readonly string[]; draft: SavedProviderSelection } | null>(null);
+  useLayoutEffect(() => {
+    latestSelection.current = selected && selectedDraft
+      ? { bindingKey, modes: selected.interactionModes, draft: selectedDraft }
+      : null;
+    return () => { latestSelection.current = null; };
+  });
+
   const save = (next: SavedProviderSelection) => {
+    // A revoke can finish before React commits a choice saved in the same batch.
+    const latest = latestSelection.current;
+    if (latest?.bindingKey === bindingKey && latest.draft.key === next.key) latest.draft = next;
     if (currentSelection) {
       setBoundDraft({ bindingKey, selection: next });
       return;
@@ -300,14 +317,10 @@ export function useChatProviderState(
   };
 
   const updateSelected = (patch: Partial<Omit<SavedProviderSelection, "key">>) => {
-    if (!selected) return;
-    save({
-      key: choiceKey(selected),
-      interactionMode: selected.interactionMode,
-      permissionMode: selected.permissionMode,
-      options: selected.selectedOptions,
-      ...patch,
-    });
+    const latest = latestSelection.current;
+    if (!latest || latest.bindingKey !== bindingKey || latest.draft.key !== selectedDraft?.key) return;
+    if (patch.interactionMode !== undefined && !latest.modes.includes(patch.interactionMode)) return;
+    save({ ...latest.draft, ...patch });
   };
 
   const selectInteractionMode = (mode: string) => {
