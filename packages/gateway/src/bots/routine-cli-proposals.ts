@@ -15,6 +15,7 @@ import { createRoutineCliProposalsRepository } from "./repositories/routine-cli-
 import { createBotTasksRepository, type BotTask } from "./repositories/tasks.js";
 import { RoutineCliScopeSchema, type RoutineCliScope } from "./repositories/routine-cli-preferences.js";
 import { RoutineCliError } from "./routine-cli-errors.js";
+import { lockRoutineCliPolicyScope } from "./routine-cli-lock-order.js";
 import { ROUTINE_CLI_REQUEST_PREFIX, newRoutineCliCanonicalRequestId, routineCliProposalInput, routineCliCanonicalRun, routineCliCanonicalHashMatches } from "./routine-cli-proposal-identity.js";
 import { assertRoutineCliProposalBinding } from "./routine-cli-proposal-runtime.js";
 
@@ -141,12 +142,15 @@ export function createRoutineCliProposals(deps: RoutineCliProposalDependencies) 
         const found = await resolveRun(binding, tx);
         if (!found) return undefined;
         intent = true;
-        await lockRoutineCliRequest(tx.db as Transaction<OwnerBotDatabase>, scope, found.receipt.requestId);
+        const trx = tx.db as Transaction<OwnerBotDatabase>;
+        // Receipt reads take the same policy locks before the request gate.
+        await lockRoutineCliPolicyScope(trx, scope);
+        await lockRoutineCliRequest(trx, scope, found.receipt.requestId);
         const dispatch = await dispatches.get(scope, found.receipt.requestId, tx.db, true);
         if (!dispatch || dispatch.stage !== "target_task_claimed") throw new RoutineCliError("permission_denied");
         const { receipt } = found;
         assertRoutineCliProposalBinding(deps.registry, binding, receipt, dispatch, signal);
-        await deps.targets.validateClaimedTargetWithin(tx.db as Transaction<OwnerBotDatabase>, receipt.target);
+        await deps.targets.validateClaimedTargetWithin(trx, receipt.target);
         assertRoutineCliProposalBinding(deps.registry, binding, receipt, dispatch, signal);
         const pending = await deps.approvals.proposeWithin(tx, binding, receipt.operation.operation === "propose" ? receipt.operation.proposal : undefined);
         const tasks = createBotTasksRepository(tx.db), task = await tasks.get({ ownerId: binding.ownerId, taskId: binding.taskId }, tx.db);
@@ -154,7 +158,7 @@ export function createRoutineCliProposals(deps: RoutineCliProposalDependencies) 
         const waiting = await tasks.transition({ ownerId: binding.ownerId, taskId: task.taskId, baseRevision: task.revision, to: "waiting_person", now: now() }, tx.db);
         await tx.publish(binding.chatId, "bot.task.updated", { taskId: task.taskId, chatId: task.chatId, agentId: task.botId, status: waiting.status, revision: waiting.revision });
         await dispatches.advance(dispatch, { stage: "pending_approval", interaction_id: pending.interactionId, runtime_handle: binding.runtimeHandle, execution_generation: binding.executionGeneration }, now(), tx.db);
-        await deps.targets.validateClaimedTargetWithin(tx.db as Transaction<OwnerBotDatabase>, receipt.target);
+        await deps.targets.validateClaimedTargetWithin(trx, receipt.target);
         assertRoutineCliProposalBinding(deps.registry, binding, receipt, dispatch, signal);
         return { status: "waiting_person" as const }; // Already atomically settled; no generic settle afterward.
       });
