@@ -28,9 +28,12 @@ export function createBotRoutineClient(request: (path: string, method: "GET" | "
     list: (input = {}) => {
       const query = BotRoutineCenterQuerySchema.parse(input);
       const params = new URLSearchParams(query as Record<string, string>);
-      return parsed(BotRoutineCenterResponseSchema, () => request(`/api/bot-routines${params.size ? `?${params}` : ""}`, "GET"));
+      const legacy = `/api/bot-routines${params.size ? `?${params}` : ""}`;
+      params.set("originVersion", "1");
+      // Older Gateways validate all list query keys and reject the version. Retry only this read with its legacy URL.
+      return parsed(BotRoutineCenterResponseSchema, () => request(`/api/bot-routines?${params}`, "GET").catch(() => request(legacy, "GET")));
     },
-    detail: id => parsed(BotRoutineDetailResponseSchema, () => request(path(id), "GET")),
+    detail: id => parsed(BotRoutineDetailResponseSchema, () => request(`${path(id)}?originVersion=1`, "GET")),
     control: (id, input) => parsed(controlReceipt, () => request(`${path(id)}/control`, "POST", BotRoutineControlSchema.parse(input))),
     review: (id, input) => parsed(BotRoutineEditResponseSchema, () => request(`${path(id)}/review`, "POST", BotRoutineEditRequestSchema.parse(input))),
   };

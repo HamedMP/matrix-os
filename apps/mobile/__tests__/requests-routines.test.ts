@@ -7,10 +7,18 @@ afterEach(() => jest.restoreAllMocks());
 it("keeps the normal Computer path, runtime slot, current token and timeout on a validated list request", async () => {
   await createNativeRoutineClient(session).list({archived: "true"});
   const [url, input] = request.mock.calls[0];
-  expect(url).toBe("https://app.matrix-os.com/vm/test/api/bot-routines?runtime=dev&archived=true");
+  expect(url).toBe("https://app.matrix-os.com/vm/test/api/bot-routines?runtime=dev&archived=true&originVersion=1");
   expect(input.headers.Authorization).toBe("Bearer test-token");
   expect(input.signal).toBeDefined();
   expect(input.body).toBeUndefined();
+});
+it("retries a versioned list through a strictly older Gateway without changing pagination filters", async () => {
+  request.mockResolvedValueOnce({ok: false, status: 400, json: async () => ({code: "invalid_request"})} as Response);
+  await expect(createNativeRoutineClient(session).list({archived: "true"})).resolves.toMatchObject({items: []});
+  expect(request.mock.calls.map(([url]) => url)).toEqual([
+    "https://app.matrix-os.com/vm/test/api/bot-routines?runtime=dev&archived=true&originVersion=1",
+    "https://app.matrix-os.com/vm/test/api/bot-routines?runtime=dev&archived=true",
+  ]);
 });
 it("sends only an explicit revision-bound control through the normal native authenticated transport", async () => {
   request.mockResolvedValueOnce({ok: true, json: async () => ({routineId: id, status: "paused", revision: 4})} as Response);

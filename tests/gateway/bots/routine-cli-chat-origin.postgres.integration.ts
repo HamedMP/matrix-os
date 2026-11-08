@@ -129,9 +129,38 @@ it("retains original source across default changes and edit approval while fresh
   await service.resolve(OWNER,"chat_source",edit.interaction.interactionId,{kind:"approval",baseRevision:1,decision:"approve"},decisionProof(f,edit.interaction.interactionId));
   await expect(f.execute({operation:"list"})).rejects.toThrow();
   const {createBotRoutineManagement}=await import("../../../packages/gateway/src/bots/routine-management.js");
-  expect((await createBotRoutineManagement(f.db,f.approvals).detail(OWNER,routine.routine_id)).routine).toMatchObject({chatId:initial.chatId,originChatId:"chat_source",originAvailable:true});
+  expect((await createBotRoutineManagement(f.db,f.approvals).detail(OWNER,routine.routine_id,true)).routine).toMatchObject({chatId:initial.chatId,originChatId:"chat_source",originAvailable:true});
   await f.db.updateTable("chats").set({lifecycle:"archived"}).where("id","=","chat_source").execute();
-  expect((await createBotRoutineManagement(f.db,f.approvals).detail(OWNER,routine.routine_id)).routine).toMatchObject({originChatId:"chat_source",originAvailable:false,status:"active"});await service.close();
+  expect((await createBotRoutineManagement(f.db,f.approvals).detail(OWNER,routine.routine_id,true)).routine).toMatchObject({originChatId:"chat_source",originAvailable:false,status:"active"});await service.close();
+});
+it("keeps legacy strict Schedule list and detail parsers compatible while negotiated clients see the origin", async () => {
+  const { terminalFixtureFire } = await import("./routine-chat-origin-support.js");
+  const { createBotRoutineRoutes } = await import("../../../packages/gateway/src/bots/routine-routes.js");
+  const { createBotRoutineManagement } = await import("../../../packages/gateway/src/bots/routine-management.js");
+  const { BotRoutineCenterItemSchema, BotRoutineCenterResponseSchema, BotRoutineDetailResponseSchema } = await import("@matrix-os/contracts");
+  const { routine } = await terminalFixtureFire(f);
+  const management = createBotRoutineManagement(f.db, f.approvals);
+  const app = createBotRoutineRoutes({ getPrincipal: () => f.principal, routines: {
+    ...management, list: async () => [], control: async () => { throw new Error("Unexpected control"); },
+  } });
+  const legacyItem = BotRoutineCenterItemSchema.omit({ originChatId: true, originAvailable: true });
+  const legacyCenter = BotRoutineCenterResponseSchema.extend({ items: legacyItem.array() });
+  const legacyDetail = BotRoutineDetailResponseSchema.extend({ routine: legacyItem });
+  const list = "/api/bot-routines", detail = `${list}/${routine.routine_id}`;
+  const read = async (path: string) => {
+    const response = await app.request(path);
+    expect(response.status).toBe(200);
+    return response.json();
+  };
+
+  expect(legacyCenter.parse(await read(list)).items).toHaveLength(1);
+  expect(legacyDetail.parse(await read(detail)).routine).toMatchObject({ routineId: routine.routine_id });
+  expect(BotRoutineCenterResponseSchema.parse(await read(`${list}?archived=false&originVersion=1`)).items)
+    .toMatchObject([{ originChatId: "chat_source", originAvailable: true }]);
+  expect(BotRoutineDetailResponseSchema.parse(await read(`${detail}?originVersion=1`)).routine)
+    .toMatchObject({ originChatId: "chat_source", originAvailable: true });
+  expect((await app.request(`${list}?originVersion=2`)).status).toBe(400);
+  expect((await app.request(`${detail}?originVersion=1&originVersion=1`)).status).toBe(400);
 });
 it("rolls source delivery claim, append, sequence, revision, unread and outbox back together, then safely recovers", async()=>{
   const {terminalFixtureFire,originService}=await import("./routine-chat-origin-support.js");const fire=await terminalFixtureFire(f);await fire.finish();

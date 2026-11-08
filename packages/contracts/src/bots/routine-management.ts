@@ -15,6 +15,9 @@ export const BotRoutineFireViewSchema = z.object({
   attempts: z.number().int().min(0).max(100), failureCode: z.string().regex(/^[a-z][a-z0-9_]{0,63}$/).nullable(),
   updatedAt: z.iso.datetime({ offset: true }),
 }).strict();
+/** Released strict Schedule parsers require opt-in before receiving origin metadata. */
+export const BotRoutineOriginWireVersionSchema = z.enum(["0", "1"]);
+
 export const BotRoutineCenterItemSchema = z.object({
   routineId: BotRoutineIdSchema, botId: BotIdSchema, chatId: CanonicalChatIdSchema,
   proposal: BotRoutineProposalSchema, computerId: z.string().min(1).max(128).nullable(),

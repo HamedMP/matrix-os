@@ -1,4 +1,5 @@
 import { RoutineCliSourceContextSchema } from "./routine-cli-source-context.js";
+import { hasNonPrivateChatScope } from "../chat/private-routine-authority.js";
 import { parseJson } from "../chat/records.js";
 import { sql } from "kysely";
 import { BotRoutineCenterQuerySchema, BotRoutineCenterResponseSchema, BotRoutineDetailResponseSchema } from "@matrix-os/contracts";
@@ -14,17 +15,17 @@ export function createBotRoutineManagement(db: BotExecutor, approvals: BotRoutin
   const repository = createBotRoutinesRepository(db);
   const fireView = (fire: BotRoutineFire) => ({ fireId: fire.fireId, taskId: fire.taskId, scheduledFor: fire.scheduledFor,
     status: fire.status, attempts: fire.attempts, failureCode: fire.failureCode, updatedAt: fire.updatedAt });
-  async function summary(routine: BotRoutine, history: BotRoutineFire[]) {
+  async function summary(routine: BotRoutine, history: BotRoutineFire[], includeOrigin: boolean) {
     const targetAvailable = await approvals.targetAvailable(routine.ownerId, routine.botId, routine.chatId);
     let origin: { originChatId: string; originAvailable: boolean } | undefined;
-    if (routine.origin) {
+    if (includeOrigin && routine.origin) {
       const ledger = await db.selectFrom("routine_cli_requests").select("source_context").where("owner_id", "=", routine.ownerId)
         .where("computer_id", "=", routine.origin.computerId).where("client_request_id", "=", routine.origin.requestId).executeTakeFirst();
       const source = RoutineCliSourceContextSchema.safeParse(ledger && parseJson(ledger.source_context));
       if (source.success && source.data.identity.kind === "chat_run" && source.data.ownerId === routine.ownerId && source.data.computerId === routine.origin.computerId) {
         const chat = await db.selectFrom("chats").select("id").where("id", "=", source.data.identity.chatId).where("owner_type", "=", "personal")
           .where("owner_id", "=", routine.ownerId).where("lifecycle", "=", "active").where("collaboration", "is", null).executeTakeFirst();
-        origin = { originChatId: source.data.identity.chatId, originAvailable: Boolean(chat) };
+        origin = { originChatId: source.data.identity.chatId, originAvailable: Boolean(chat) && !await hasNonPrivateChatScope(db as never, { type: "personal", ownerId: routine.ownerId }, source.data.identity.chatId) };
       }
     }
     return { ...origin, routineId: routine.routineId, botId: routine.botId, chatId: routine.chatId, proposal: routine.proposal,
@@ -34,9 +35,9 @@ export function createBotRoutineManagement(db: BotExecutor, approvals: BotRoutin
       lastFire: history[0] ? fireView(history[0]) : null };
   }
   return {
-    async center(ownerId: string, raw: unknown = {}) {
+    async center(ownerId: string, raw: unknown = {}, includeOrigin = false) {
       const input = BotRoutineCenterQuerySchema.parse(raw), rows = await repository.listOwner(ownerId, input), page = rows.slice(0, 32);
-      const items = await Promise.all(page.map(async row => summary(row, await repository.fires(ownerId, row.routineId))));
+      const items = await Promise.all(page.map(async row => summary(row, await repository.fires(ownerId, row.routineId), includeOrigin)));
       const ids = await db.selectFrom("bot_interactions as interaction")
         .innerJoin("chats as chat", "chat.id", "interaction.chat_id")
         .innerJoin("bot_chat_bindings as binding", join => join.onRef("binding.owner_id", "=", "interaction.owner_id")
@@ -58,11 +59,11 @@ export function createBotRoutineManagement(db: BotExecutor, approvals: BotRoutin
       return BotRoutineCenterResponseSchema.parse({ items, pending, nextCursor: rows.length > 32 && last
         ? { before: last.createdAt, beforeId: last.routineId } : null });
     },
-    async detail(ownerId: string, routineId: string) {
+    async detail(ownerId: string, routineId: string, includeOrigin = false) {
       const routine = await repository.get(ownerId, routineId);
       if (!routine) throw new BotStateError("not_found");
       const history = await repository.fires(ownerId, routineId);
-      return BotRoutineDetailResponseSchema.parse({ routine: await summary(routine, history), history: history.map(fireView) });
+      return BotRoutineDetailResponseSchema.parse({ routine: await summary(routine, history, includeOrigin), history: history.map(fireView) });
     },
   };
 }
