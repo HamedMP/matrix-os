@@ -2,12 +2,14 @@ import { randomUUID } from "node:crypto";
 import { RoutineCliOperationSchema, RoutineCliEnvelopeSchema, type RoutineCliOperation, type RoutineCliEnvelope } from "@matrix-os/contracts/routine-cli";
 import { boundedOperation } from "../bounded-operation.js";
 import { createFixedNativeRoutineCliInvoker } from "../bots/routine-cli-invoker.js";
-import { routineActionHash, type RoutineSourcePolicy } from "../bots/routine-action-source-registry.js";
+import { routineActionHash, type RoutineSourcePolicy, type RoutineSourceProducer } from "../bots/routine-action-source-registry.js";
 import type { RoutineCliRuntime } from "../bots/routine-cli-runtime.js";
 import { RoutineCliSourceContextSchema, type RoutineCliSourceContext } from "../bots/routine-cli-source-context.js";
 import type { RoutineCliVerifiedInvocation } from "../bots/routine-cli-source.js";
 import type { RequestPrincipal } from "../request-principal.js";
 import { readLinuxProcess, sameProcess, verifyTerminalDescendant, type LinuxProcessIdentity } from "./process-identity.js";
+type RoutineValidationTransaction = Parameters<RoutineSourceProducer["validateWithin"]>[1];
+
 export interface TerminalRoutineAdmission {
   principal: RequestPrincipal; harness: RoutineCliSourceContext["harness"]; sessionId: string; incarnationId: string; launchId: string; generation: string;
   /** Taken ONLY from the actual held host spawn/private bridge, never public restore records. */
@@ -32,7 +34,7 @@ function unavailable(operation: RoutineCliOperation): RoutineCliEnvelope {
  * Never creates a Chat/run/Bot binding or infers policy from CLI --yolo flags. */
 export function createTerminalRoutineSource(options: {
   runtime: Pick<RoutineCliRuntime, "register">; computerId: string; binPath: string; endpoint: string; homePath: string;
-  admission: TerminalRoutineAdmission; signal: AbortSignal; current(): boolean; validateCurrent?(): Promise<boolean>; preflightCurrent?(): Promise<boolean>; readProcess?: typeof readLinuxProcess;
+  admission: TerminalRoutineAdmission; signal: AbortSignal; current(): boolean; validateCurrent?(trx?: RoutineValidationTransaction): Promise<boolean>; preflightCurrent?(): Promise<boolean>; readProcess?: typeof readLinuxProcess;
 }) {
   const admission = structuredClone(options.admission), read = options.readProcess ?? readLinuxProcess;
   if (admission.root.ppid !== admission.host.pid || admission.root.uid !== admission.host.uid || admission.root.gid !== admission.host.gid
@@ -49,7 +51,7 @@ export function createTerminalRoutineSource(options: {
   function observe(work: Promise<unknown>) {
     cleanups.add(work); void work.catch(error => console.warn("[terminal-routines] Cleanup unavailable", error instanceof Error ? error.name : "UnknownError")).finally(() => cleanups.delete(work));
   }
-  async function actualRoot() {
+  async function actualRoot(trx?: RoutineValidationTransaction) {
     if (!live()) return false;
     try {
       const host = await read(admission.host.pid), root = await read(admission.root.pid);
@@ -58,11 +60,11 @@ export function createTerminalRoutineSource(options: {
         if (!sameProcess(admission.supervisor, supervisor) || host.ppid !== supervisor.pid) return false;
       }
       return live() && sameProcess(admission.host, host) && sameProcess(admission.root, root) && root.ppid === host.pid
-        && (!options.validateCurrent || await options.validateCurrent()) && live();
+        && (!options.validateCurrent || await options.validateCurrent(trx)) && live();
     } catch (error) { console.warn("[terminal-routines] Root unavailable", error instanceof Error ? error.name : "UnknownError"); return false; }
   }
-  async function current(invocation?: RoutineCliVerifiedInvocation) {
-    if (!await actualRoot()) return false;
+  async function current(invocation?: RoutineCliVerifiedInvocation, trx?: RoutineValidationTransaction) {
+    if (!await actualRoot(trx)) return false;
     if (!invocation) return true;
     const call = invocations.get(invocation.invocationId);
     if (!call || invocation.sourceId !== sourceId || call.digest !== invocation.operationDigest) return false;
@@ -98,7 +100,7 @@ export function createTerminalRoutineSource(options: {
       actionSignal.addEventListener("abort", cancel, { once: true });
       try {
         registration ??= options.runtime.register({ source, signal, readPolicy: () => ({ ...admission.policy, live: live() && admission.policy.live }),
-          validateWithin: async (_source, _trx, _action, invocation) => current(invocation) });
+          validateWithin: async (_source, trx, _action, invocation) => current(invocation, trx) });
         const port = await boundedOperation(() => registration!, 10000, actionSignal); sourceId = port.reference.sourceId;
         if (!live() || actionSignal.aborted) return unavailable(operation);
         invoker = createFixedNativeRoutineCliInvoker({ binPath: options.binPath, endpoint: options.endpoint, cwd: options.homePath, homePath: options.homePath, timeoutMs: 120000,

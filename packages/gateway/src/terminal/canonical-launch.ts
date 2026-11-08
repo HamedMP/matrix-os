@@ -8,7 +8,7 @@ import { TerminalRuntimeError, TerminalWorkspaceStore } from "@matrix-os/termina
 import { boundedOperation } from "../bounded-operation.js";
 import { SAFE_PRINCIPAL_USER_ID, type RequestPrincipal } from "../request-principal.js";
 import type { RoutineCliRuntime } from "../bots/routine-cli-runtime.js";
-import type { RoutineSourcePolicy } from "../bots/routine-action-source-registry.js";
+import type { RoutineSourcePolicy, RoutineSourceProducer } from "../bots/routine-action-source-registry.js";
 import type { TerminalWorkspaceRouteRuntime } from "../shell/workspace-routes.js";
 import { createTerminalRoutineSource } from "./routine-source.js";
 import { terminalUnavailable } from "./host-channel.js";
@@ -20,7 +20,7 @@ export interface CanonicalTerminalLaunchInput { tabId?: string; name: string; cw
 export interface CanonicalTerminalLaunch {
   launch(principal: RequestPrincipal, workspaceId: string, input: CanonicalTerminalLaunchInput): Promise<TerminalTab>;
   launchPrepared(input: PreparedWorkspaceTerminalLaunch): Promise<TerminalTab>;
-  fence(ref: TerminalRef): void;
+  fence(ref: TerminalRef, expectedIncarnation?: string): void;
   fenceWorkspace(workspaceId: string): void;
   available(ref: TerminalRef): Promise<boolean>;
   close(): Promise<void>;
@@ -33,10 +33,11 @@ export function createCanonicalTerminalLaunch(options: {
   /** Trusted composition only. Production interactive equivalence needs private configuration handoff. */
   interactiveHostEquivalent?: boolean;
   homePath: string; generation: string; computerId: string; ownerIds: readonly string[];
-  routines?: { runtime: Pick<RoutineCliRuntime, "register">; binPath: string; endpoint: string };
+  routines?: { runtime: Pick<RoutineCliRuntime, "register">; binPath: string; endpoint: string;
+    isShared(ref: TerminalRef, incarnation: string, trx?: Parameters<RoutineSourceProducer["validateWithin"]>[1]): Promise<boolean> };
   readProcess?: typeof readLinuxProcess;
 }): CanonicalTerminalLaunch {
-  type Entry = { ref: TerminalRef; end(): void; close(): Promise<void>; current(): Promise<boolean> };
+  type Entry = { ref: TerminalRef; incarnation: string; end(): void; close(): Promise<void>; current(): Promise<boolean> };
   const entries = new Map<string, Entry>(); // <=32 private proofs; eviction on end, expiry and shutdown. Never caps I/O sessions.
   const pending = new Map<string, { digest: string; work: Promise<TerminalTab> }>(); // <=64 admissions, removed on settlement.
   let closed = false;
@@ -73,18 +74,23 @@ export function createCanonicalTerminalLaunch(options: {
     const end = () => { if (controller.signal.aborted) return; controller.abort(); clearTimeout(expiry); source?.end(); retained?.retire(); if (entries.get(key)?.end === end) entries.delete(key); };
     const close = async () => { end(); await source?.close(); };
     const privateCurrent = () => !closed && !controller.signal.aborted && !!retained && retained.current() && !retained.signal.aborted && retained.identity.generation === options.generation;
-    async function currentRecord() {
-      if (!privateCurrent() || !canonical?.incarnation || !expectedHost || !admittedIncarnation) { end(); return false; }
-      // Transaction checks read only the local atomic canonical record, never UDS/manager RPC.
-      let current: TerminalTab | undefined;
-      try { current = await boundedOperation(() => canonicalStore.getTab(ref), 1000); }
-      catch (error) { end(); throw error; }
-      const valid = privateCurrent() && current?.incarnation === admittedIncarnation && current.createdAt === canonical.createdAt
-        && current.accessScope === "owner" && ["running", "idle"].includes(current.status)
-        && current.nativeHost?.path === expectedHost.path && current.nativeHost?.generation === expectedHost.generation
-        && !current.nativeHost.stopRequested && !current.nativeHost.dispatchPending;
-      if (!valid) end();
-      return valid;
+    async function currentRecord(trx?: Parameters<RoutineSourceProducer["validateWithin"]>[1]) {
+      const incarnation = admittedIncarnation, routines = options.routines;
+      if (!privateCurrent() || !canonical?.incarnation || !expectedHost || !incarnation || !routines) { end(); return false; }
+      // Use the local atomic canonical record and exact collaboration binding, without UDS/manager RPC.
+      try {
+        const current = await boundedOperation(() => canonicalStore.getTab(ref), 1000, controller.signal);
+        const valid = privateCurrent() && current?.incarnation === incarnation && current.createdAt === canonical.createdAt
+          && current.accessScope === "owner" && ["running", "idle"].includes(current.status)
+          && current.nativeHost?.path === expectedHost.path && current.nativeHost?.generation === expectedHost.generation
+          && !current.nativeHost.stopRequested && !current.nativeHost.dispatchPending;
+        if (valid) {
+          const shared = await boundedOperation(() => routines.isShared(ref, incarnation, trx), 1000, controller.signal);
+          if (shared === false && privateCurrent()) return true;
+        }
+      } catch (error) { console.warn("[terminal-launch] Current source unavailable", error instanceof Error ? error.name : "UnknownError"); }
+      end();
+      return false;
     }
     // This transitional port is authority-free until this reserved record is finalized.
     const port: TerminalSourcePort = { end, close, invoke: (operation, writer, signal) => {
@@ -108,11 +114,11 @@ export function createCanonicalTerminalLaunch(options: {
         onDispatchSettled: () => { dispatchSettled = true; },
         async onBound(startup) {
         if (closed || entries.size >= 32 || !options.computerId || !options.routines || !["jwt", "platform-verified"].includes(principal.source)
-          || !options.ownerIds.includes(principal.userId) || startup.identity.generation !== options.generation || !startup.current() || startup.signal.aborted) return undefined;
+          || !options.ownerIds.includes(principal.userId) || !admittedIncarnation || startup.identity.generation !== options.generation || !startup.current() || startup.signal.aborted) return undefined;
         retained = startup;
         startup.signal.addEventListener("abort", end, { once: true });
         controller.signal.addEventListener("abort", () => startup.signal.removeEventListener("abort", end), { once: true });
-        entries.set(key, { ref, end, close, current: currentRecord });
+        entries.set(key, { ref, incarnation: admittedIncarnation, end, close, current: currentRecord });
         expiry = setTimeout(end, 30 * 60000); expiry.unref();
         return port; // Never waits for createTab, never manufactures an interim source/Chat/run.
       } });
@@ -154,7 +160,10 @@ export function createCanonicalTerminalLaunch(options: {
   return {
     launch: admit,
     launchPrepared(prepared) { return admit(prepared.principal, prepared.workspaceId, { name: prepared.name, cwd: prepared.cwd, managedLaunch: { harness: prepared.harness } }, structuredClone(prepared)); },
-    fence(ref) { entries.get(keyOf(ref))?.end(); },
+    fence(ref, expectedIncarnation) {
+      const entry = entries.get(keyOf(ref));
+      if (entry && (expectedIncarnation === undefined || entry.incarnation === expectedIncarnation)) entry.end();
+    },
     fenceWorkspace(workspaceId) { for (const entry of entries.values()) if (entry.ref.workspaceId === workspaceId) entry.end(); },
     async available(ref) { const entry = entries.get(keyOf(ref)); return entry ? entry.current() : false; },
     async close() { closed = true; const draining = [...entries.values()].map(entry => entry.close()); await Promise.allSettled(draining); },
