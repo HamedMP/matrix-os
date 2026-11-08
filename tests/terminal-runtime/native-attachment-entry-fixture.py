@@ -280,12 +280,14 @@ process.exit(7);
                                 "    print('controlled compiler version'); sys.exit(0)\n" +
                                 "pathlib.Path(sys.argv[sys.argv.index('-o') + 1]).write_bytes(b'partial-output')\n" +
                                 "pathlib.Path(" + repr(str(entered)) + ").write_text('compile entered')\n" +
+                                "sys.stderr.write('fixture compiler diagnostics\\n')\n"
                                 "sys.exit(9)\n")
                 shim.chmod(0o700)
                 env = dict(os.environ, CC=str(shim))
                 result = run([str(node), str(builder), str(binary)], env=env)
                 assert entered.is_file(), "compiler never entered compile phase"
                 assert result.returncode != 0 and binary.read_bytes() == prior
+                assert b"fixture compiler diagnostics" in result.stderr, "bounded compiler diagnostics missing"
                 assert sorted(p.name for p in generation.iterdir()) == [
                     "matrix-terminal-attachment-entry", "node", "terminal-io-attach.mjs"]
             if binary.exists():
