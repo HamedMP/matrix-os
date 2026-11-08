@@ -14,7 +14,6 @@ export function useRoutineFullAccess(input: RoutineFullAccessContext & {
   const manage = input.manage ?? enabled;
   const key = useMemo(() => ({ client, chatId, identity, enabled, manage, browserOrigin }), [client, chatId, identity, enabled, manage, browserOrigin]);
   const scope = useRef<{ key: typeof key; abort: AbortController; busy: boolean; generation: number; view: RoutineFullAccessStatus | null } | null>(null);
-  const commit = useRef(input.onPermissionModeChange); commit.current = input.onPermissionModeChange;
   const [status, setStatus] = useState<RoutineFullAccessStatus | null>(null);
   const [error, setError] = useState<string | null>(null), [busy, setBusy] = useState(false), [open, setOpen] = useState(false);
   const [clock, setClock] = useState(Date.now);
@@ -106,7 +105,8 @@ export function useRoutineFullAccess(input: RoutineFullAccessContext & {
     after();
   };
   const changeMode = (mode: string) => guardSelectionChange(enabled && mode === "full_access", () => {
-    commit.current(mode);
+    // Keep the selection callback bound to the render that requested the change.
+    input.onPermissionModeChange(mode);
     if (mode === "full_access" && enabled && client && chatId) beginReview();
     else setOpen(false);
   });
