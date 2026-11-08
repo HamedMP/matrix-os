@@ -324,3 +324,9 @@ export { createRoutineActionClient, createRoutineActionBrowserClient, type Routi
 export { RoutineActionConfirmation, RoutineActionInbox } from "./routine-action/RoutineActionConfirmation.js";
 
 export { providerCatalogObservationRetryDelay } from "./provider-observation.js";
+export { createRoutineFullAccessClient, createRoutineFullAccessBrowserClient, routineFullAccessTurnHeaders, routineFullAccessOwnerUrl, type RoutineFullAccessClient, type RoutineFullAccessRequest } from "./routine-action/full-access-client.js";
+export { useRoutineFullAccess, type RoutineFullAccessController, type RoutineFullAccessContext } from "./routine-action/use-routine-full-access.js";
+export { RoutineFullAccessConsent, RoutineFullAccessConsentContent } from "./routine-action/RoutineFullAccessConsent.js";
+export { useRoutineFullAccessSelection } from "./routine-action/use-routine-full-access-selection.js";
+
+export { routineFullAccessChatPresentationEligible } from "./routine-action/full-access-presentation.js";

@@ -96,7 +96,11 @@ export function useCanonicalChatState({ initialDraft, initialCollaborationView, 
   const [mentionRequests] = useState(createChatMentionRequestTracker);
   const [admissions] = useState(createCanonicalChatAdmissionTracker);
   const [gatewayUrl] = useState(getGatewayUrl);
-  const client = useMemo(() => createCanonicalShellChatClient({ gatewayUrl }), [gatewayUrl]);
+  const routineAuthority = useRef<() => boolean>(() => false);
+  const client = useMemo(() => createCanonicalShellChatClient({ gatewayUrl, captureAuthority: chatId => {
+    const authority = routineAuthority.current, selectedChat = activeChatIdRef.current;
+    return () => authority() && (activeChatIdRef.current === selectedChat || selectedChat === undefined && activeChatIdRef.current === chatId);
+  } }), [gatewayUrl]);
   const eventSource = useMemo(() => createSharedCanonicalChatEventSource({
     openStream: (input) => client.openEventStream(input),
   }), [client]);
@@ -105,6 +109,7 @@ export function useCanonicalChatState({ initialDraft, initialCollaborationView, 
   const navigation = useShellChatNavigation(client, eventSource, navigationScope, navigationGeneration);
   const authority = useCanonicalChatAuthority(navigation, client.agents, navigationScope, navigationGeneration);
   const { isCurrent } = authority;
+  routineAuthority.current = isCurrent;
   const composerIdentity = useMemo(() => ({ client, scope: navigationScope }), [client, navigationScope]);
   const unreadNavigation = useUnreadChatNavigation(client, navigation, unreadOnly);
   const { records, update: updateUnreadRecords, refresh: refreshUnread } = unreadNavigation;
@@ -876,6 +881,8 @@ export function useCanonicalChatState({ initialDraft, initialCollaborationView, 
     queue: [],
     agentClient: authority.agentClient,
     browserPermissions: client.browserPermissions,
+    routineFullAccess: client.routineFullAccess,
+    routineFullAccessChat: selectedDetail?.record.chat,
     agentSummaryClient: authority.summaryClient,
     authorityKey: navigationIdentity,
     gatewayUrl,

@@ -40,6 +40,8 @@ export interface ChatState {
   updateReadState?: (chatId: string, input: import("@matrix-os/contracts").CanonicalUpdateChatReadStateRequest) => Promise<boolean>;
   agentClient?: ChatAgentClient;
   browserPermissions?: BrowserPermissionClient;
+  routineFullAccess?: import("@matrix-os/ui").RoutineFullAccessClient;
+  routineFullAccessChat?: Pick<import("@matrix-os/contracts").CanonicalChatSummary, "id" | "ownerScope" | "lifecycle" | "collaboration">;
   agentSummaryClient?: ChatAgentClient;
   authorityKey?: string;
   gatewayUrl?: string;
