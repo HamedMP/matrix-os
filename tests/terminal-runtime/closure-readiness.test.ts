@@ -17,4 +17,6 @@ it("installed readiness validates the whole new closure and never treats a remov
   await expect(loadInstalledTerminalRuntimeGeneration(app, { terminalRuntimeRoot, userUnitRoot })).rejects.toThrow("Terminal runtime unavailable");
   await rm(join(generationDir, "closure.json"));
   await expect(loadInstalledTerminalRuntimeGeneration(app, { terminalRuntimeRoot, userUnitRoot })).rejects.toThrow("Terminal runtime unavailable");
+  for (const name of ["node", "terminal-host.mjs", "terminal-writer.node"]) await rm(join(generationDir, name));
+  await expect(loadInstalledTerminalRuntimeGeneration(app, { terminalRuntimeRoot, userUnitRoot })).rejects.toThrow("Terminal runtime unavailable");
 });
