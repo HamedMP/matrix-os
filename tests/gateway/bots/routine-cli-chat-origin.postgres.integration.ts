@@ -27,6 +27,25 @@ it("presents the canonical pending interaction at its real source message withou
   expect(await service.read(OWNER, "chat_source")).toMatchObject({ sourceChatId: "chat_source", pending: [{ sourceChatId: "chat_source", anchorMessageId: "msg_run_source", interaction: { interactionId: pending.interaction_id, chatId: pending.chat_id, taskId: pending.task_id } }] });
   await service.close();
 });
+it("warns safely and skips an edit approval with a corrupt persisted preview", async () => {
+  const { admitFixtureRun, originService } = await import("./routine-chat-origin-support.js");
+  await admitFixtureRun(f); await f.submit(); await f.canonical.drain();
+  const initial = await f.db.selectFrom("bot_interactions").selectAll().executeTakeFirstOrThrow();
+  await f.interactions.resolve(OWNER, initial.chat_id, initial.interaction_id, { kind: "approval", decision: "approve", baseRevision: 1 });
+  const routine = await f.db.selectFrom("bot_routines").selectAll().executeTakeFirstOrThrow();
+  const { interaction } = await f.approvals.requestEdit(OWNER, routine.routine_id, {
+    baseRevision: 1, name: "Edited", prompt: "Edited prompt", schedule: { kind: "interval", everyMs: 60_000 },
+  });
+  const service = originService(f), warning = vi.spyOn(console, "warn").mockImplementation(() => {});
+  try {
+    expect((await service.read(OWNER, "chat_source")).pending.map(item => item.interaction.interactionId)).toEqual([interaction.interactionId]);
+    await f.db.updateTable("bot_interactions").set({
+      payload: { ...interaction.payload, preview: '{"prompt":"private fixture preview' },
+    }).where("owner_id", "=", OWNER).where("interaction_id", "=", interaction.interactionId).executeTakeFirstOrThrow();
+    expect((await service.read(OWNER, "chat_source")).pending).toEqual([]);
+    expect(warning.mock.calls).toEqual([["[routine-origin] Saved approval preview is invalid"]]);
+  } finally { warning.mockRestore(); await service.close(); }
+});
 it("resolves the same canonical approval once, preserving duplicate/stale and source privacy boundaries", async () => {
   const { admitFixtureRun, originService, decisionProof } = await import("./routine-chat-origin-support.js");
   await admitFixtureRun(f); await f.submit(); await f.canonical.drain();
