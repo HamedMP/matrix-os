@@ -6,7 +6,14 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { _electron, type ElectronApplication, type Page } from "playwright";
-import { BotDirectChatResponseSchema, ChatAgentListResponseSchema, CanonicalChatDetailResponseSchema, CanonicalChatListResponseSchema, CanonicalChatNavigationResponseSchema } from "@matrix-os/contracts";
+import {
+  BotDirectChatResponseSchema,
+  ChatAgentListResponseSchema,
+  CanonicalChatDetailResponseSchema,
+  CanonicalChatListResponseSchema,
+  CanonicalChatNavigationResponseSchema,
+  RoutineChatOriginViewSchema,
+} from "@matrix-os/contracts";
 import { createCanonicalChatFixture } from "../../contracts/fixtures/canonical-chat";
 import { closeElectronApp } from "./fixtures/close-electron";
 import { startStubGateway, type StubGateway } from "./fixtures/stub-gateway";
@@ -39,6 +46,7 @@ const activities = Array.from({ length: 500 }, (_, index) => ({
 const finalText = "The large Chat remains visible with stable viewport geometry.";
 let completed = false;
 let detailRequests = 0;
+let routineOriginStatus: number | undefined;
 let cursor = 0;
 let app: ElectronApplication;
 let page: Page;
@@ -142,6 +150,16 @@ const server = createServer((req, res) => {
   if (url.pathname === `/api/chats/${chatId}/read-state`) {
     req.resume();
     return json(record());
+  }
+  if (req.method === "GET" && url.pathname === `/api/chats/${chatId}/routine-origin`) {
+    res.once("finish", () => { routineOriginStatus = res.statusCode; });
+    return json(RoutineChatOriginViewSchema.parse({
+      sourceChatId: chatId,
+      pending: [],
+      deliveries: [],
+      deliveryPending: false,
+      hasMore: false,
+    }));
   }
   const upstream = request(new URL(req.url!, base.url), {
     method: req.method,
@@ -278,6 +296,7 @@ suite("large canonical Chat viewport recovery", () => {
     await page.screenshot({ path: join(output, "collapsed.png") });
 
     const requestsBeforeReload = detailRequests;
+    routineOriginStatus = undefined;
     await app.evaluate(async ({ BrowserWindow, Menu }) => {
       const win = BrowserWindow.getAllWindows()[0]!;
       const viewMenu = Menu.getApplicationMenu()?.items.find((item) => item.label === "View");
@@ -291,6 +310,7 @@ suite("large canonical Chat viewport recovery", () => {
     await page.getByRole("button", { name: "Large transcript recovery", exact: true }).click();
     await page.getByText(finalText, { exact: true }).waitFor();
     expect(detailRequests).toBeGreaterThan(requestsBeforeReload);
+    await expect.poll(() => routineOriginStatus).toBe(200);
     await expectValidGeometry();
     await page.screenshot({ path: join(output, "reloaded.png") });
   }, 45_000);
