@@ -29,7 +29,7 @@ const computerId = SOURCE_SCOPE.computerId;
 async function setup() {
   const url = process.env.MATRIX_ROUTINE_CLI_TEST_POSTGRES_URL;
   if (!url) throw new Error("MATRIX_ROUTINE_CLI_TEST_POSTGRES_URL is required");
-  const { db, destroy } = await createRealBotStateDatabase(url);
+  const { db, destroy } = await createRealBotStateDatabase(url, { routineAuthority: true });
   const chats = new ChatRepository(db as never);
   const state = { clock: NOW };
   const transact = createBotStateTransactions(chats);
@@ -101,7 +101,11 @@ it("requires the exact originating Chat for a claimed scheduler proposal and for
   expect((await f.origin.read(OWNER, originChatId, true)).history).toMatchObject([{ anchorMessageId: "msg_run_source", decision: "approve" }]);
   const [routine] = await f.repo.list(OWNER, botId);
   const manager = createBotRoutineManagement(f.db, f.approvals);
-  expect((await manager.detail(OWNER, routine!.routineId)).routine).toMatchObject({
+  const legacyDetail = (await manager.detail(OWNER, routine!.routineId)).routine;
+  expect(legacyDetail.chatId).toBe(originChatId);
+  expect(legacyDetail).not.toHaveProperty("originChatId");
+  expect(legacyDetail).not.toHaveProperty("originAvailable");
+  expect((await manager.detail(OWNER, routine!.routineId, true)).routine).toMatchObject({
     chatId: originChatId, originChatId, originAvailable: true, sourceAvailable: true,
   });
   const edit = await f.approvals.requestEdit(OWNER, routine!.routineId, { baseRevision: 1, name: "Edited task",
@@ -147,7 +151,7 @@ it("fences future and already claimed fires when the original Chat becomes ineli
   expect(await f.repo.pending(due)).toEqual([]);
   expect(await f.approvals.authorize(routine!)).toBe(false);
   const manager = createBotRoutineManagement(f.db, f.approvals);
-  expect((await manager.detail(OWNER, routine!.routineId)).routine).toMatchObject({
+  expect((await manager.detail(OWNER, routine!.routineId, true)).routine).toMatchObject({
     chatId: originChatId, originChatId, originAvailable: false, sourceAvailable: false,
   });
   expect(await f.repo.claim({ ownerId: OWNER, routineId: routine!.routineId, scheduledFor: at(120_000), nextFireAt: at(180_000), now: at(120_000) })).toBeUndefined();
