@@ -27,7 +27,8 @@ export async function executeRoutineOperation(operation: RoutineCliOperation, si
   let onMessage!: (value: unknown, handle?: unknown) => void;
   const disconnected = () => { controller.abort(); fail(new RoutineClientError("unavailable")); };
   const aborted = () => fail(new RoutineClientError("unavailable"));
-  const timer = setTimeout(() => { controller.abort(); fail(new RoutineClientError("unavailable")); }, 10000);
+  const deadline = AbortSignal.timeout(10_000);
+  deadline.addEventListener("abort", forwardAbort, { once: true });
   try {
     const capability = await new Promise<Extract<ReturnType<typeof RoutineCliHostFrameSchema.parse>, { type: "routine.capability" }>>((resolve, reject) => {
       fail = reject;
@@ -61,6 +62,6 @@ export async function executeRoutineOperation(operation: RoutineCliOperation, si
     if (routineMutation(operation) && !completed) return unknown(operation);
     throw new RoutineClientError("unavailable");
   } finally {
-    clearTimeout(timer); signal.removeEventListener("abort", forwardAbort); if (onMessage) process.removeListener("message", onMessage); process.removeListener("disconnect", disconnected); combined.removeEventListener("abort", aborted);
+    deadline.removeEventListener("abort", forwardAbort); signal.removeEventListener("abort", forwardAbort); if (onMessage) process.removeListener("message", onMessage); process.removeListener("disconnect", disconnected); combined.removeEventListener("abort", aborted);
   }
 }

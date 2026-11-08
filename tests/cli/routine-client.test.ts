@@ -16,7 +16,8 @@ it.each(["success", "abort"])("source client works without AbortSignal.any on th
     queueMicrotask(() => { callback?.(null); process.emit("message", { v: 1, type: "routine.capability",
       endpoint: "http://127.0.0.1:1/api/routine-cli/execute", token: "rcli_" + "A".repeat(43) }); }); return true;
   }) });
-  const controller = new AbortController();
+  const controller = new AbortController(), deadline = new AbortController();
+  const timeout = vi.spyOn(AbortSignal, "timeout").mockReturnValue(deadline.signal);
   const fetch = vi.fn(async (_url: string, init: RequestInit) => {
     if (outcome === "abort") {
       const pending = new Promise<Response>((_done, reject) => init.signal!.addEventListener("abort", () => reject(new DOMException("Aborted", "AbortError")), { once: true }));
@@ -29,6 +30,8 @@ it.each(["success", "abort"])("source client works without AbortSignal.any on th
     if (outcome === "abort") await expect(executeRoutineOperation({ operation: "pause", routineId: "rt_" + "a".repeat(24), baseRevision: 1,
       requestId: "de000000-0000-4000-8000-000000000100" }, controller.signal)).resolves.toMatchObject({ kind: "unknown", requestId: "de000000-0000-4000-8000-000000000100" });
     else expect(await executeRoutineOperation(LIST, controller.signal)).toEqual(RESULT);
+    expect(timeout).toHaveBeenCalledExactlyOnceWith(10_000);
+    expect(getEventListeners(deadline.signal, "abort")).toHaveLength(0);
     expect(fetch).toHaveBeenCalledOnce(); expect(process.send).toHaveBeenCalledOnce();
     expect(process.listenerCount("message")).toBe(messages); expect(process.listenerCount("disconnect")).toBe(disconnects);
     expect(getEventListeners(controller.signal, "abort")).toHaveLength(0);
