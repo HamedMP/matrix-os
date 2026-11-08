@@ -18,7 +18,13 @@ try {
   check('unprivileged Linux with non-PID1 actual parent',process.platform==='linux'&&process.getuid()!==0&&process.pid>1);
   work=await mkdtemp('/tmp/mx-owned-');pair=native.controlPair();
   child=spawn(binaryPath,['--matrix-private-server','3'],{cwd:work,env:{HOME:work,XDG_CONFIG_HOME:work+'/config',XDG_CACHE_HOME:work+'/cache',PATH:'/usr/bin:/bin',TERM:'xterm-256color'},stdio:['ignore','ignore','ignore',native.controlChildFd(pair.child)],shell:false});
-  exit=new Promise((resolve,reject)=>{child.once('error',reject);child.once('close',(code,signal)=>resolve({code,signal}));});exit.catch(()=>{});
+  child.on('error',error=>{
+    const code=error instanceof Error?error.code:undefined;
+    const kind=['EACCES','ENOENT','ENOEXEC','EPERM','ESRCH'].includes(code)?code:error instanceof Error?'error':'unknown-error';
+    result.cleanup.childError??=kind;
+    console.warn('[native control bootstrap fixture] child error',kind);
+  });
+  exit=new Promise(resolve=>child.once('close',(code,signal)=>resolve({code,signal})));
   birth=native.retainChild(child.pid);native.close(pair.child);
   const generation=randomBytes(32),nonce=randomBytes(32),socket=Buffer.from(work+'/daemon.sock');
   const deadline=process.hrtime.bigint()+2000000000n;
@@ -39,11 +45,20 @@ try {
 finally{
   if(pair){native.close(pair.child);native.close(pair.channel);}
   if(child){
-    if(child.exitCode===null&&child.signalCode===null){child.kill('SIGTERM');await Promise.race([exit,delay(500)]);if(child.exitCode===null&&child.signalCode===null){result.cleanup.escalatedToSigkill=true;child.kill('SIGKILL');}}
-    try{result.cleanup.actualChildClose=await Promise.race([exit,delay(2500).then(()=>{throw new Error('actual cleanup deadline');})]);}catch(error){result.cleanup.error=String(error);}
+    try{
+      if(child.pid&&child.exitCode===null&&child.signalCode===null){
+        child.kill('SIGTERM');
+        await Promise.race([exit,delay(500)]);
+        if(child.exitCode===null&&child.signalCode===null){result.cleanup.escalatedToSigkill=true;child.kill('SIGKILL');}
+      }
+      const closed=await Promise.race([exit,delay(2500)]);
+      if(closed)result.cleanup.actualChildClose=closed;
+      else result.cleanup.error='child-close-deadline';
+    }catch(error){result.cleanup.error=error instanceof Error?'child-cleanup-failed':'unknown-child-cleanup-failure';}
+    if(result.cleanup.error)console.warn('[native control bootstrap fixture] cleanup failed',result.cleanup.error);
   }
   if(birth){result.cleanup.birthDead=!native.childAlive(birth);native.close(birth);}
   if(work){await rm(work,{recursive:true,force:true});result.cleanup.ownedTemporaryRemoved=true;}
 }
 const {writeFile}=await import('node:fs/promises');await writeFile(evidencePath,JSON.stringify(result,null,2)+'\n');console.log(JSON.stringify(result,null,2));
-process.exitCode=result.status==='component-pass'&&result.cleanup.birthDead&&!result.cleanup.error?0:1;
+process.exitCode=result.status==='component-pass'&&result.cleanup.birthDead&&!result.cleanup.childError&&!result.cleanup.error?0:1;
