@@ -17,7 +17,8 @@ it("shows the exact operation and pinned destination; read/mount never decides",
   const submit = vi.fn(), client = { read: async () => view, list: async () => [view], submit };
   render(<RoutineActionConfirmation client={client as never} challengeId={id} identity="owner-a"/>);
   await screen.findByText("Allow routine pause?");
-  expect(screen.getByText(/rt_bbbbbbbbbbbbbbbbbbbbbbbb/)).toBeTruthy();
+  const details = screen.getByText(/rt_bbbbbbbbbbbbbbbbbbbbbbbb/);
+  expect(details.closest(".ph-no-capture")).toBe(screen.getByLabelText("Routine operation confirmation"));
   expect(screen.getByText(/chat_target/)).toBeTruthy();
   expect(submit).not.toHaveBeenCalled(); expect(screen.queryByText("Approve for session")).toBeNull();
   fireEvent.click(screen.getByRole("button", { name: "Allow once" }));
