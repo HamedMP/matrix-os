@@ -1,3 +1,7 @@
+import { ROUTINE_CHAT_ORIGIN_RESPONSE_MAX_BYTES } from "@matrix-os/contracts";
+
+const ROUTINE_CHAT_ORIGIN_LIST_PATH = /^\/api\/chats\/chat_[A-Za-z0-9_-]{1,128}\/routine-origin$/;
+
 export interface OwnerBrowserJsonRequest { path: string; method: "GET" | "POST"; body?: unknown; signal?: AbortSignal }
 /** Existing bounded owner-browser transport; no request here supplies origin authority. */
 export function createOwnerBrowserJsonRequest(gatewayUrl: string, getToken: () => Promise<string | null>, fetcher: typeof fetch = fetch, options: { cache?: RequestCache; allowRelative?: boolean; responseLimit?: (input: OwnerBrowserJsonRequest) => number } = {}) {
@@ -7,7 +11,10 @@ export function createOwnerBrowserJsonRequest(gatewayUrl: string, getToken: () =
   return async (input: OwnerBrowserJsonRequest) => {
     // RN's AbortSignal does not implement throwIfAborted. Own one portable scope,
     // including the token wait, and drain its timer/listeners on every exit.
-    const responseLimit = options.responseLimit?.(input) ?? 128 * 1024;
+    const isRoutineOriginList = input.method === "GET" && ROUTINE_CHAT_ORIGIN_LIST_PATH.test(input.path);
+    const responseLimit = options.responseLimit?.(input) ?? (
+      isRoutineOriginList ? ROUTINE_CHAT_ORIGIN_RESPONSE_MAX_BYTES : 128 * 1024
+    );
     const callerSignal = input.signal ?? new AbortController().signal;
     if (callerSignal.aborted) throw new Error("Routine confirmation unavailable");
     const controller = new AbortController(), signal = controller.signal;
