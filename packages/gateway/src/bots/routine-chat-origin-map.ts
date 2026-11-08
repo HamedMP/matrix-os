@@ -38,7 +38,13 @@ export async function routineChatOriginForInteraction(db: BotExecutor, interacti
   if (typeof interaction.payload.preview !== "string") return;
   let preview: { source?: { routineId?: string } };
   try { preview = JSON.parse(interaction.payload.preview); }
-  catch (error: unknown) { if (error instanceof SyntaxError) return; throw error; }
+  catch (error: unknown) {
+    if (error instanceof SyntaxError) {
+      console.warn("[routine-origin] Saved approval preview is invalid");
+      return;
+    }
+    throw error;
+  }
   const routineId = preview?.source?.routineId;
   if (typeof routineId !== "string" || !/^rt_[a-f0-9]{24}$/.test(routineId)) return;
   const row = await db.selectFrom("bot_routines as routine").innerJoin("routine_cli_requests as receipt", join =>
