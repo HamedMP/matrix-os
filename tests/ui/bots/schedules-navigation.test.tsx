@@ -347,9 +347,9 @@ it("shows the newly scheduled run in the open detail after resuming", async () =
   expect(api.detail).toHaveBeenCalledTimes(2);
 });
 
-it("shows a separate definition view and opens the original Chat for runs", async () => {
+it.each([true, false])("opens the original Chat for runs (execution available: %s)", async targetAvailable => {
   const base = clientFixture(), open = vi.fn();
-  const current = {...routine, originChatId: "chat_source", originAvailable: true};
+  const current = {...routine, targetAvailable, originChatId: "chat_source", originAvailable: true};
   const api = {list: vi.fn(async () => ({items: [current], pending: [], nextCursor: null})),
     detail: vi.fn(async () => ({routine: current, history: []})), review: vi.fn(), control: vi.fn()};
   render(<ScheduleCenter client={{...base, bots: {routines: api}} as unknown as ChatAgentClient} onClose={vi.fn()} onOpenBotChat={open}/>);
@@ -363,9 +363,9 @@ it("shows a separate definition view and opens the original Chat for runs", asyn
   await waitFor(() => expect(open).toHaveBeenCalledExactlyOnceWith("chat_source"));
 });
 
-it("links to the existing Bot Chat when the recorded source Chat is unavailable", async () => {
+it.each([true, false])("links to the existing Bot Chat when the source is unavailable (execution available: %s)", async targetAvailable => {
   const base = clientFixture(), open = vi.fn();
-  const current = {...routine, originChatId: "chat_source", originAvailable: false};
+  const current = {...routine, targetAvailable, originChatId: "chat_source", originAvailable: false};
   const api = {list: vi.fn(async () => ({items: [current], pending: [], nextCursor: null})),
     detail: vi.fn(async () => ({routine: current, history: []})), review: vi.fn(), control: vi.fn()};
   render(<ScheduleCenter client={{...base, bots: {routines: api}} as unknown as ChatAgentClient} onClose={vi.fn()} onOpenBotChat={open}/>);
@@ -376,9 +376,9 @@ it("links to the existing Bot Chat when the recorded source Chat is unavailable"
   await waitFor(() => expect(open).toHaveBeenCalledExactlyOnceWith(routine.chatId));
 });
 
-it("keeps a Chat-owned schedule's internal execution Chat out of Schedules navigation", async () => {
+it.each([true, false])("hides a Chat-owned schedule's internal execution Chat (execution available: %s)", async targetAvailable => {
   const base = clientFixture(), open = vi.fn();
-  const current = {...routine, botId: `bot_routine${"c".repeat(32)}`, originChatId: "chat_source", originAvailable: false};
+  const current = {...routine, targetAvailable, botId: `bot_routine${"c".repeat(32)}`, originChatId: "chat_source", originAvailable: false};
   const api = {list: vi.fn(async () => ({items: [current], pending: [], nextCursor: null})),
     detail: vi.fn(async () => ({routine: current, history: []})), review: vi.fn(), control: vi.fn()};
   render(<ScheduleCenter client={{...base, bots: {routines: api}} as unknown as ChatAgentClient} onClose={vi.fn()} onOpenBotChat={open}/>);
