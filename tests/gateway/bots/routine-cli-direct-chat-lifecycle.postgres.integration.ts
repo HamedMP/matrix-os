@@ -15,7 +15,7 @@ import type { ChatOutboxEvent } from "../../../packages/gateway/src/chat/records
 import type { BotRuntimeBinding } from "../../../packages/gateway/src/bots/runtime-registry.js";
 import { createRealBotStateDatabase, insertChat, NOW, OWNER, at } from "./bot-state-support.js";
 import { context, invocation, SOURCE_SCOPE } from "./routine-cli-source-support.js";
-import { admitFixtureRun, decisionProof, machine } from "./routine-chat-origin-support.js";
+import { admitFixtureRun, decisionProof, machine, publishRoutineFixtureChatThroughProject } from "./routine-chat-origin-support.js";
 import { backendPid, barrier, bounded } from "./routine-postgres-support.js";
 import { proposal } from "./routine-cli-request-support.js";
 
@@ -140,13 +140,17 @@ it("serializes activation with a concurrent source archive and leaves no active 
   expect(await f.repo.list(OWNER, botId)).toEqual([]);
 });
 
-it("fences future and already claimed fires when the original Chat becomes ineligible", async () => {
+it.each(["archive", "project publication"])("fences future and already claimed fires after source %s", async (change) => {
   await f.approve(await f.pend());
   const [routine] = await f.repo.list(OWNER, botId);
   const due = routine!.nextFireAt!;
   const fire = await f.repo.claim({ ownerId: OWNER, routineId: routine!.routineId, scheduledFor: due, nextFireAt: at(120_000), now: due });
   expect(fire?.status).toBe("claimed");
-  await f.db.updateTable("chats").set({ lifecycle: "archived" }).where("id", "=", originChatId).execute();
+  if (change === "archive") {
+    await f.db.updateTable("chats").set({ lifecycle: "archived" }).where("id", "=", originChatId).execute();
+  } else {
+    await publishRoutineFixtureChatThroughProject(f.db, originChatId, due);
+  }
   expect(await f.repo.dispatch({ ownerId: OWNER, fireId: fire!.fireId, now: due })).toBeUndefined();
   expect(await f.repo.pending(due)).toEqual([]);
   expect(await f.approvals.authorize(routine!)).toBe(false);

@@ -16,13 +16,13 @@ export function at(offsetMs: number): string {
   return new Date(Date.parse(NOW) + offsetMs).toISOString();
 }
 
-/** A real Postgres (PGlite) with the chat and bot schemas applied. */
+/** A real Postgres (PGlite) with the normal Bot startup schemas applied. */
 export async function createBotStateDatabase(options: { migrate?: boolean; routineAuthority?: boolean } = {}) {
   const instance = await createTestPGlite();
   const db = new Kysely<OwnerBotDatabase>({ dialect: singleSessionTestDialect(instance.dialect) });
   await bootstrapChatDatabase(db);
   if (options.migrate !== false) await bootstrapBotDatabase(db);
-  if (options.routineAuthority) await bootstrapCollaborationDatabase(db as never);
+  if (options.routineAuthority ?? (options.migrate !== false)) await bootstrapCollaborationDatabase(db as never);
   return { db, destroy: () => db.destroy() };
 }
 
@@ -73,7 +73,7 @@ export async function createRealBotStateDatabase(
   });
   await bootstrapChatDatabase(db);
   await bootstrapBotDatabase(db);
-  if (options.routineAuthority) await bootstrapCollaborationDatabase(db as never);
+  if (options.routineAuthority !== false) await bootstrapCollaborationDatabase(db as never);
   return {
     db,
     destroy: async () => {

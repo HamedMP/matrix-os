@@ -1,3 +1,4 @@
+import { expect } from "vitest";
 import { OWNER } from "./bot-state-support.js";
 import type { proposalFixture } from "./routine-cli-proposal-support.js";
 import { createRoutineChatOriginService } from "../../../packages/gateway/src/bots/routine-chat-origin.js";
@@ -50,4 +51,38 @@ export async function terminalFixtureFire(f: Awaited<ReturnType<typeof proposalF
         role: "assistant", state: "committed", parts, createdAt: f.state.clock } });
   };
   return { routine, fireId, finish, run, task };
+}
+
+
+/** Exercise project publication, which leaves the Chat's own collaboration field unset. */
+export async function publishRoutineFixtureChatThroughProject(
+  ownerDb: import("kysely").Kysely<import("../../../packages/gateway/src/bots/database.js").OwnerBotDatabase>,
+  chatId: string,
+  now: string,
+) {
+  const { createProjectInheritanceResolver } = await import("../../../packages/gateway/src/collaboration/project-inheritance.js");
+  const { reconcileProjectMembershipAtPublication } = await import("../../../packages/gateway/src/collaboration/project-membership-transition.js");
+  type CollaborationDb = import("../../../packages/gateway/src/collaboration/database.js").OwnerCollaborationDatabase;
+  const db = ownerDb as unknown as import("kysely").Kysely<CollaborationDb>;
+  const projectScopeId = "10000000-0000-4000-8000-000000000b93", runtimeId = "vps:routine_origin_test";
+  await db.insertInto("collaboration_scopes").values({
+    id: projectScopeId, owner_type: "personal", owner_id: OWNER, organization_id: "org_scope_test",
+    kind: "project", resource_id: "project_scope_test", parent_scope_id: null, membership_mode: "direct",
+    lifecycle: "preparing", revision: 1, auth_epoch: 1, authority_runtime_id: runtimeId, authority_generation: 1,
+    created_at: now, updated_at: now, deleted_at: null,
+  }).execute();
+  await createProjectInheritanceResolver({ db }).bindOwnedResource({
+    projectScopeId, ownerId: OWNER, kind: "chat", resourceId: chatId, authorityRuntimeId: runtimeId,
+    authorityGeneration: 1, revision: 1, readiness: "ready",
+  });
+  await db.transaction().execute(async tx => {
+    await tx.selectFrom("collaboration_scopes").select("id").where("id", "=", projectScopeId).forUpdate().executeTakeFirstOrThrow();
+    await reconcileProjectMembershipAtPublication(tx, { projectScopeId, ownerType: "personal", ownerId: OWNER,
+      requestedBy: OWNER, destinationAuthorityRuntimeId: runtimeId, destinationAuthorityGeneration: 1, now: new Date(now),
+      createEventId: () => "60000000-0000-4000-8000-000000000b93" });
+    await tx.updateTable("collaboration_scopes").set({ lifecycle: "shared" }).where("id", "=", projectScopeId).execute();
+  });
+  expect(await db.selectFrom("chats").select("collaboration").where("id", "=", chatId).executeTakeFirstOrThrow()).toEqual({ collaboration: null });
+  expect(await db.selectFrom("collaboration_scopes").select("lifecycle").where("kind", "=", "chat").where("resource_id", "=", chatId).executeTakeFirstOrThrow()).toEqual({ lifecycle: "shared" });
+
 }
