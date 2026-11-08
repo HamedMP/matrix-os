@@ -80,7 +80,7 @@ export function createRoutineCliProposals(deps: RoutineCliProposalDependencies) 
     const task = await createBotTasksRepository(tx.db).get({ ownerId: input.ownerId, taskId: input.taskId }, tx.db);
     return !!interaction && !!task && task.botId === receipt.target.botId && task.chatId === receipt.target.chatId
       && interaction.task_id === task.taskId && interaction.source_run_id === row.run_id && interaction.run_id === row.run_id
-      && (interaction.status !== "pending" || task.status === "waiting_person" && task.runId === row.run_id);
+      && task.runId === row.run_id && (interaction.status !== "pending" || task.status === "waiting_person");
   });
   const admitMutation: RoutineCliMutationAdmission = async ({ transaction, source, target, operation }) => {
     if (operation.operation !== "propose") throw new RoutineCliError("unavailable");
