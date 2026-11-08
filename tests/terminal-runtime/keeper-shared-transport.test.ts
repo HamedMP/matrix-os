@@ -31,7 +31,6 @@ const fenced = () => ({ v: 1 as const, type: "workspace.fenced" as const, reques
 async function workspaceChannel(options: { startReady?: boolean } = {}) {
   const module = await loadWorkspace(), f = fixture();
   const pending = module.openWorkspaceLaunchChannel({ args: ["--user", "--pipe"], env: {}, digest, spawn: f.spawn });
-  pending.catch(() => {});
   if (options.startReady !== false) f.send(ready());
   return { f, pending };
 }
@@ -47,7 +46,7 @@ describe("shared anonymous held-launch transport", () => {
       handshakeSchema: hello.transform(frame => ({ generation: frame.epoch, digest: frame.digest, reply: { ...frame, type: "other.host.ready" as const } })),
       readyTypes: ["other.ready"], endTypes: ["other.end"],
     });
-    pending.catch(() => {}); f.send({ type: "other.ready", digest, epoch: keeper });
+    f.send({ type: "other.ready", digest, epoch: keeper });
     const channel = await pending; closeOwned.push(() => channel.close());
     expect(channel.generation).toBe(keeper);
     expect(JSON.parse(f.child.stdin.read().toString())).toEqual({ type: "other.host.ready", digest, epoch: keeper });
@@ -68,11 +67,13 @@ describe("shared anonymous held-launch transport", () => {
 
   it.each(["digest", "first application frame", "managed first frame"])("rejects %s without service stop/retry", async failure => {
     const { f, pending } = await workspaceChannel({ startReady: false });
+    const refused = expect(pending).rejects.toThrow("Private launch unavailable");
     if (failure === "digest") f.send({ ...ready(), digest: "c".repeat(64) });
     else if (failure === "first application frame") f.send(fenced());
     else f.send({ type: "wrapper.ready", wrapper: keeper, shim: channelId, digest });
-    expect(f.child.stdin.writableEnded).toBe(true); // Refusal, not eventual startup timeout.
-    await expect(pending).rejects.toThrow("Private launch unavailable");
+    const endedImmediately = f.child.stdin.writableEnded;
+    await refused;
+    expect(endedImmediately).toBe(true);
     expect(f.spawn).toHaveBeenCalledTimes(1); expect(f.child.kill).not.toHaveBeenCalled(); expect(f.child.stdin.writableEnded).toBe(true);
   });
 
@@ -86,18 +87,25 @@ describe("shared anonymous held-launch transport", () => {
 
   it.each(["end", "close", "exit", "error", "stderr cap", "frame cap", "bad json"])("fences %s before ready", async event => {
     const { f, pending } = await workspaceChannel({ startReady: false });
+    const refused = expect(pending).rejects.toThrow("Private launch unavailable");
     if (event === "stderr cap") f.child.stderr.write(Buffer.alloc(16385));
     else if (event === "frame cap") f.child.stdout.write(Buffer.alloc(196609, 0x20));
     else if (event === "bad json") f.child.stdout.write("{oops}\n");
     else if (event === "exit" || event === "error") f.child.emit(event, event === "error" ? new Error("fixture") : 0);
     else f.child.stdout.emit(event);
-    expect(f.child.stdin.writableEnded).toBe(true); // Immediate cap/error fence.
-    await expect(pending).rejects.toThrow("Private launch unavailable"); expect(f.child.kill).not.toHaveBeenCalled();
+    const endedImmediately = f.child.stdin.writableEnded;
+    await refused;
+    expect(endedImmediately).toBe(true);
+    expect(f.child.kill).not.toHaveBeenCalled();
   });
 
   it("keeps the original ten-second startup limit", async () => {
     vi.useFakeTimers(); const { pending, f } = await workspaceChannel({ startReady: false });
-    await vi.advanceTimersByTimeAsync(10000); await expect(pending).rejects.toThrow("Private launch unavailable"); expect(f.child.stdin.writableEnded).toBe(true);
+    await Promise.all([
+      expect(pending).rejects.toThrow("Private launch unavailable"),
+      vi.advanceTimersByTimeAsync(10000),
+    ]);
+    expect(f.child.stdin.writableEnded).toBe(true);
   });
 
   it("bounds four subscribers, detaches, isolates failure and closes once", async () => {
