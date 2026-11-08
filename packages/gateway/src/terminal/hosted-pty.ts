@@ -10,6 +10,7 @@ const NODE_PTY_INPUT_QUEUE_VERSION = "1.1.0";
 const MAX_PENDING_INPUT_BYTES = 64 * 1024;
 const MAX_PENDING_INPUT_FRAMES = 256;
 
+const MAX_VIEWER_FRAME_BYTES = 32 * 1024;
 const Frame = z.discriminatedUnion("type", [
   z.object({ type: z.literal("input"), data: z.string().min(1).max(16384) }).strict(),
   z.object({ type: z.literal("resize"), cols: z.number().int().min(1).max(500), rows: z.number().int().min(1).max(200) }).strict(),
@@ -65,15 +66,30 @@ export async function createHostedTerminalPty(options: {
   const exit = new Promise<void>(resolve => { exited = resolve; });
   const server = createServer(socket => {
     if (closed || peers.size >= 8) { socket.destroy(); return; }
-    peers.add(socket); socket.setEncoding("utf8"); socket.setTimeout(60000, () => socket.destroy());
-    let input = "";
+    peers.add(socket); socket.setTimeout(60000, () => socket.destroy());
+    let pending: Buffer | undefined, pendingBytes = 0;
     socket.on("error", () => socket.destroy()); socket.once("close", () => peers.delete(socket));
     socket.on("data", bytes => {
-      input += bytes;
-      if (Buffer.byteLength(input) > 32768) { socket.destroy(); return; }
-      let newline;
-      while ((newline = input.indexOf("\n")) !== -1 && !socket.destroyed) {
-        const line = input.slice(0, newline); input = input.slice(newline + 1);
+      if (typeof bytes === "string") { socket.destroy(); return; }
+      for (let start = 0; start < bytes.length && !socket.destroyed;) {
+        const newline = bytes.indexOf(0x0a, start);
+        const end = newline < 0 ? bytes.length : newline;
+        // The wire budget includes the terminator for a complete frame. A
+        // socket chunk may carry many individually valid frames.
+        const length = end - start;
+        if (pendingBytes + length + (newline < 0 ? 0 : 1) > MAX_VIEWER_FRAME_BYTES) { socket.destroy(); return; }
+        let line: string;
+        if (pendingBytes > 0 || newline < 0) {
+          pending ??= Buffer.allocUnsafe(MAX_VIEWER_FRAME_BYTES);
+          bytes.copy(pending, pendingBytes, start, end);
+          pendingBytes += length;
+          if (newline < 0) return;
+          line = pending.toString("utf8", 0, pendingBytes);
+          pendingBytes = 0;
+        } else {
+          line = bytes.toString("utf8", start, end);
+        }
+        start = end + 1;
         try {
           const frame = Frame.parse(JSON.parse(line));
           if (!running) { socket.end(); return; }
