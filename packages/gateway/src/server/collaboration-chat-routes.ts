@@ -118,7 +118,11 @@ export function registerCollaborationChatRoutes(options: CollaborationChatRouteO
     getPrincipal: (c) => requireRequestPrincipal(c),
   }));
   app.route("/", createRoutineActionOwnerRoutes({ actions: botServices?.routineCli ?? null, getPrincipal: requireRequestPrincipal }));
-  app.route("/", createRoutineFullAccessRoutes({ service: botServices?.routineCli?.fullAccess ?? null, getPrincipal: requireRequestPrincipal }));
+  app.route("/", createRoutineFullAccessRoutes({
+    service: botServices?.routineCli?.fullAccess ?? null,
+    unconfigured: Boolean(botServices && !botServices.routineCli),
+    getPrincipal: requireRequestPrincipal,
+  }));
   app.route("/", createRoutineCliExecutionRoutes({ requests: { execute: input => {
     if (!botServices?.routineCli) throw new RoutineCliError("unavailable"); return botServices.routineCli.execute(input);
   } } }));
