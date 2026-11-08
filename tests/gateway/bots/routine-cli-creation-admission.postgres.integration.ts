@@ -1,4 +1,4 @@
-import { beforeEach, afterEach, expect, it } from 'vitest';
+import { beforeEach, afterEach, expect, it, vi } from 'vitest';
 import { Kysely, PostgresDialect, sql } from 'kysely';
 import { Pool } from 'pg';
 import { CanonicalProviderCatalogSchema } from '@matrix-os/contracts';
@@ -22,6 +22,87 @@ beforeEach(async()=>{data=await createRealCollaborationTestDatabase(process.env.
 afterEach(async()=>{await reopened?.destroy();reopened=undefined;await data?.destroy();});
 function deps():TurnAdmissionOptions{return{repository,catalog:{getCatalog:async()=>catalog},adapters,assertOpen(){},assertPersonalExecutionAllowed:async()=>{},reconcileActiveRuns:async()=>{},reservePendingDispatch(){},releasePendingDispatch(){},atCapacity:()=>false,hasStoppingExecution:()=>false,startDispatch:async()=>{},beforeRoutineCreationAdmission:creation};}
 async function proof(body:typeof turn,path='turns'){const result=await browser(`/api/chats/${chatId}/${path}`,body);if(typeof result.proof!=='string')throw new Error('browser proof unavailable');return {routineCreationProof:result.proof};}
+it('acknowledges an exact accepted turn without fresh browser proof or dispatch', async () => {
+  const selected = { ...turn, baseRevision: 0 };
+  const provenance = await proof(selected);
+  const startDispatch = vi.fn(async () => {});
+  const reconcileActiveRuns = vi.fn(async () => {});
+  const options = { ...deps(), startDispatch, reconcileActiveRuns };
+  const accepted = await admitCanonicalTurn(options, principal, owner, chatId, selected, provenance);
+  expect(startDispatch).toHaveBeenCalledTimes(1);
+
+  const verifierUnavailable = vi.fn(async () => { throw new Error('Verifier unavailable'); });
+  const retryOptions = {
+    ...options,
+    beforeRoutineCreationAdmission: createRoutineCreationAdmission({ ...machine, verifyCreation: verifierUnavailable }),
+  };
+  const replays = await Promise.all([undefined, provenance].map(retryProof =>
+    admitCanonicalTurn(retryOptions, principal, owner, chatId, selected, retryProof)));
+  for (const replay of replays) {
+    expect(replay).toMatchObject({ admission: 'already_accepted', turn: { id: accepted.turn.id }, run: { id: accepted.run.id } });
+  }
+  expect(verifierUnavailable).not.toHaveBeenCalled();
+  expect(reconcileActiveRuns).toHaveBeenCalledTimes(1);
+  expect(startDispatch).toHaveBeenCalledTimes(1);
+  expect((await repository.exportChat(owner, chatId))!.runs).toHaveLength(1);
+});
+
+it('replay still checks authenticated owner, Chat and exact accepted turn identity', async () => {
+  const selected = { ...turn, baseRevision: 0 };
+  await admitCanonicalTurn(deps(), principal, owner, chatId, selected, await proof(selected));
+  const unavailable = { ...deps(), beforeRoutineCreationAdmission: undefined };
+  const otherPrincipal = { ...principal, userId: 'user_other' };
+  const otherOwner = { ...owner, ownerId: otherPrincipal.userId };
+  const otherChat = 'chat_other';
+  await repository.create(owner, { id: otherChat, clientRequestId: 'req_other_chat', title: 'Other' });
+
+  await expect(admitCanonicalTurn(unavailable, otherPrincipal, owner, chatId, selected)).rejects.toMatchObject({ status: 400 });
+  await expect(admitCanonicalTurn(unavailable, otherPrincipal, otherOwner, chatId, selected)).rejects.toMatchObject({ status: 404 });
+  await expect(admitCanonicalTurn(unavailable, principal, owner, otherChat, selected)).rejects.toMatchObject({ status: 400 });
+  await expect(admitCanonicalTurn(unavailable, principal, owner, chatId, {
+    ...selected, parts: [{ type: 'text', text: 'Altered payload' }],
+  })).rejects.toMatchObject({ status: 409 });
+  await expect(admitCanonicalTurn(unavailable, principal, owner, chatId, {
+    ...selected, clientRequestId: 'req_new_unsigned',
+  })).rejects.toMatchObject({ status: 400 });
+  expect((await repository.exportChat(owner, chatId))!.runs).toHaveLength(1);
+  expect((await repository.exportChat(owner, otherChat))!.runs).toHaveLength(0);
+});
+
+it('acknowledges the same queued request before and after claim without fresh proof', async () => {
+  const active = await admitCanonicalTurn(deps(), principal, owner, chatId, { ...turn, baseRevision: 0, routineCreation: undefined });
+  const queued = { ...turn, clientRequestId: 'req_queue_replay', baseRevision: (await repository.get(owner, chatId))!.chat.revision };
+  const options = { principal, owner, chatId, input: queued, repository, catalog: { getCatalog: async () => catalog }, adapters, now: () => new Date() };
+  const provenance = await proof(queued, 'queued-turns');
+  const accepted = await enqueueCanonicalQueuedTurn({ ...options, beforeRoutineCreationAdmission: creation, provenance });
+
+  const verifierUnavailable = vi.fn(async () => { throw new Error('Verifier unavailable'); });
+  const retryOptions = {
+    ...options, beforeRoutineCreationAdmission: createRoutineCreationAdmission({ ...machine, verifyCreation: verifierUnavailable }),
+  };
+  expect(await enqueueCanonicalQueuedTurn(retryOptions)).toMatchObject({ queuedTurn: { id: accepted.queuedTurn.id }, queueDepth: 1 });
+  await expect(enqueueCanonicalQueuedTurn({
+    ...retryOptions, input: { ...queued, parts: [{ type: 'text', text: 'Altered payload' }] },
+  })).rejects.toMatchObject({ name: 'ChatConflictError' });
+  await expect(enqueueCanonicalQueuedTurn({
+    ...retryOptions, principal: { ...principal, userId: 'user_other' },
+  })).rejects.toMatchObject({ status: 400 });
+  await expect(enqueueCanonicalQueuedTurn({
+    ...retryOptions, input: { ...queued, clientRequestId: 'req_new_unsigned_queue' },
+  })).rejects.toMatchObject({ status: 400 });
+  expect(await repository.listQueuedTurns(owner, chatId)).toHaveLength(1);
+
+  await repository.finishRun(owner, { chatId, runId: active.run.id, outcome: 'completed', completedAt: new Date().toISOString() });
+  const claimed = await repository.claimNextQueuedTurn(owner, { chatId, turnId: 'cturn_replayed', runId: 'run_replayed', messageId: 'msg_replayed', claimedAt: new Date().toISOString() });
+  expect(claimed?.run.id).toBe('run_replayed');
+  await repository.finishRun(owner, { chatId, runId: 'run_replayed', outcome: 'completed', completedAt: new Date().toISOString() });
+  expect(await enqueueCanonicalQueuedTurn({ ...retryOptions, provenance })).toMatchObject({
+    queuedTurn: { id: accepted.queuedTurn.id }, queueDepth: 0, alreadyClaimed: true,
+  });
+  expect(verifierUnavailable).not.toHaveBeenCalled();
+  expect((await repository.exportChat(owner, chatId))!.runs).toHaveLength(2);
+});
+
 it('the same accepted request ID with another creation route conflicts before any second run',async()=>{
  const native={...turn,baseRevision:0,routineCreation:undefined};const admitted=await admitCanonicalTurn(deps(),principal,owner,chatId,native);
  const matrix={...native,routineCreation:'matrix' as const};

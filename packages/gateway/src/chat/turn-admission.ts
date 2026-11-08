@@ -63,19 +63,24 @@ export async function admitCanonicalTurn(
   provenance?: CanonicalTurnProvenance,
 ): Promise<CanonicalChatTurnAdmissionResponse> {
     deps.assertOpen();
-    await deps.assertPersonalExecutionAllowed(owner, chatId);
-    await deps.reconcileActiveRuns(owner);
     const input = CanonicalCreateChatTurnRequestSchema.parse(inputValue);
-    const requestHash = chatContextRequestHash(input);
-    if (input.routineCreation) {
-      if (!deps.beforeRoutineCreationAdmission) throw new CanonicalChatOrchestrationError(safeError("authorization_failed", "Persistent task selection is unavailable."), 400);
-      await deps.beforeRoutineCreationAdmission({ principal, owner, chatId, body: input, proof: provenance?.routineCreationProof, path: "turns" });
+    if (input.routineCreation && (owner.type !== "personal" || principal.userId !== owner.ownerId)) {
+      throw new CanonicalChatOrchestrationError(safeError("authorization_failed", "Persistent task selection is unavailable."), 400);
     }
+    await deps.assertPersonalExecutionAllowed(owner, chatId);
+    if (!input.routineCreation) await deps.reconcileActiveRuns(owner);
+    const requestHash = chatContextRequestHash(input);
     try {
       const duplicate = await deps.repository.findTurnAdmission(owner, chatId, input.clientRequestId, requestHash);
       if (duplicate) return CanonicalChatTurnAdmissionResponseSchema.parse({ record: duplicate.chat,
         message: duplicate.message, turn: duplicate.turn, run: duplicate.run, admission: "already_accepted" });
     } catch (error: unknown) { return mapRepositoryError(error); }
+    // The owner-scoped receipt can be read again. New work still needs a fresh browser proof.
+    if (input.routineCreation) {
+      if (!deps.beforeRoutineCreationAdmission) throw new CanonicalChatOrchestrationError(safeError("authorization_failed", "Persistent task selection is unavailable."), 400);
+      await deps.beforeRoutineCreationAdmission({ principal, owner, chatId, body: input, proof: provenance?.routineCreationProof, path: "turns" });
+      await deps.reconcileActiveRuns(owner);
+    }
     const admissionKey = dispatchAdmissionKey("turn", input.clientRequestId);
     if (deps.hasStoppingExecution(owner, chatId, admissionKey)) {
       return mapRepositoryError(new ChatBusyError(chatId));

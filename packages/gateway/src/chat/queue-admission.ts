@@ -72,9 +72,8 @@ export async function enqueueCanonicalQueuedTurn(options: {
   now: () => Date;
 }): Promise<CanonicalChatQueueAdmissionResponse> {
   const input = CanonicalQueueChatTurnRequestSchema.parse(options.input);
-  if (input.routineCreation) {
-    if (!options.beforeRoutineCreationAdmission) throw new CanonicalQueueAdmissionError(safeError("authorization_failed", "Persistent task selection is unavailable."), 400);
-    await options.beforeRoutineCreationAdmission({ principal: options.principal, owner: options.owner, chatId: options.chatId, body: input, proof: options.provenance?.routineCreationProof, path: "queued-turns" });
+  if (input.routineCreation && (options.owner.type !== "personal" || options.principal.userId !== options.owner.ownerId)) {
+    throw new CanonicalQueueAdmissionError(safeError("authorization_failed", "Persistent task selection is unavailable."), 400);
   }
   const record = await options.repository.get(options.owner, options.chatId);
   if (!record) {
@@ -86,6 +85,10 @@ export async function enqueueCanonicalQueuedTurn(options: {
   const duplicate = await options.repository.findQueuedAdmission(options.owner, options.chatId, input.clientRequestId,
     chatContextRequestHash(input));
   if (duplicate) return CanonicalChatQueueAdmissionResponseSchema.parse({ queuedTurn: duplicate.queuedTurn, queueDepth: duplicate.queueDepth, ...(duplicate.alreadyClaimed ? { alreadyClaimed: true } : {}) });
+  if (input.routineCreation) {
+    if (!options.beforeRoutineCreationAdmission) throw new CanonicalQueueAdmissionError(safeError("authorization_failed", "Persistent task selection is unavailable."), 400);
+    await options.beforeRoutineCreationAdmission({ principal: options.principal, owner: options.owner, chatId: options.chatId, body: input, proof: options.provenance?.routineCreationProof, path: "queued-turns" });
+  }
   if (!record.activeRun) {
     throw new CanonicalQueueAdmissionError(
       safeError("chat_conflict", "Queue next is available only while a Run is active.", true, ["retry"]),
