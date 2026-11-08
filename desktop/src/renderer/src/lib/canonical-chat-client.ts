@@ -1,4 +1,5 @@
 import { createBrowserPermissionClient, recoverCanonicalChatAdmission, type CanonicalChatClientAdmission, type BrowserPermissionClient } from "@matrix-os/ui";
+import { createRoutineFullAccessClient, type RoutineFullAccessClient } from "@matrix-os/ui";
 import { markChatNavigation, chatImportSourceVersionUrl } from "@matrix-os/ui";
 import { CanonicalChatNavigationResponseSchema, type CanonicalChatNavigationResponse } from "@matrix-os/contracts";
 import { postWithProviderCatalogRecovery } from "../features/chat/provider-catalog-admission";
@@ -132,6 +133,7 @@ export type ChatCredentialOccurrence = z.infer<typeof ChatCredentialOccurrenceSc
 export interface CanonicalChatClient {
   agents?: ChatAgentClient;
   browserPermissions?: BrowserPermissionClient;
+  routineFullAccess?: RoutineFullAccessClient;
   navigation?(): Promise<CanonicalChatNavigationResponse>;
   list(input?: z.input<typeof CanonicalChatListInputSchema>): Promise<CanonicalChatListResponse>;
   search(
@@ -230,6 +232,9 @@ export function createCanonicalChatClient(
   };
   const trackEvent = options.trackEvent ?? trackDesktopEvent;
   return {
+    routineFullAccess: createRoutineFullAccessClient(input => input.method === "GET"
+      ? transport.get(input.path, { signal: input.signal, maxBytes: 32 * 1024, cache: "no-store" })
+      : transport.post(input.path, input.body, { signal: input.signal, maxBytes: 32 * 1024 })),
     browserPermissions: createBrowserPermissionClient((path, method, body) => method === "GET" ? transport.get(path) : transport.delete(path, body)),
     agents: createChatAgentClient((path, method, body, requestOptions) => method === "GET" ? requestOptions ? transport.get(path, requestOptions) : transport.get(path)
       : method === "POST" ? requestOptions ? transport.post(path, body, requestOptions) : transport.post(path, body)
