@@ -218,3 +218,23 @@ it("possible dispatch failure stays unknown even when the manager currently has 
   expect((await f.store.getTab({ workspaceId: f.workspace.id, tabId: tab.id }))?.nativeHost?.dispatchPending).toBe(true);
   expect(f.register).not.toHaveBeenCalled();
 });
+
+it.each(["tab", "workspace"] as const)("retains natural stop proof until the canonical %s can be deleted", async kind => {
+  const f = await canonicalServiceFixture(), tab = await f.start();
+  const ref = { workspaceId: f.workspace.id, tabId: tab.id };
+  const descriptorRoot = join(f.home, "system/terminal-runtimes");
+  const [unit] = f.units.keys();
+  const name = `native-${unit!.slice("matrix-terminal-native-".length, -".service".length)}.json`;
+  const path = join(descriptorRoot, name), descriptor = JSON.parse(await readFile(path, "utf8"));
+  descriptor.createdAt = new Date(Date.now() - 2 * 24 * 60 * 60000).toISOString();
+  await writeFile(path, JSON.stringify(descriptor), { mode: 0o600 });
+  await f.coordinator.close(); // The source is gone. Keep only manager-confirmed lifecycle evidence.
+  f.units.set(unit!, false); // Natural exit, with no stop request or native exit code in the tab.
+  await f.service.sweep();
+  const deletion = kind === "tab" ? f.client.deleteTab(ref) : f.client.deleteWorkspace(f.workspace.id, { confirmTerminate: true });
+  await expect(deletion).resolves.toBeUndefined();
+  expect(await f.store.getTab(ref)).toBeUndefined();
+  expect(f.run.mock.calls.some(([, args]) => args[1] === "stop")).toBe(false);
+  await f.service.sweep();
+  await expect(readFile(path)).rejects.toMatchObject({ code: "ENOENT" });
+});
