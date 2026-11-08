@@ -91,7 +91,9 @@ export function useRoutineFullAccess(input: RoutineFullAccessContext & {
     void perform(async current => {
       const fresh = await client!.read(chatId!, current.abort.signal);
       if (currentScope() !== current) return;
-      const next = await client!.revoke(chatId!, fresh.revision, current.abort.signal);
+      const next = fresh.consent || fresh.challenge
+        ? await client!.revoke(chatId!, fresh.revision, current.abort.signal)
+        : fresh;
       if (next.consent || next.challenge) throw new Error("Routine CLI revocation unconfirmed");
       if (currentScope() === current) { current.view = next; setStatus(next); setClock(Date.now()); after?.(); }
     });
