@@ -19,7 +19,7 @@ import { assertCurrentRoutinePhase } from "./routine-phase.js";
 import { createBotRoutineManagement } from "./routine-management.js";
 import { describeRoutineChatPhase } from "./routine-chat-context.js";
 import { routineApprovalReply } from "./routine-approval-receipt.js";
-import { createBotStateTransactions, type BotStateTransactions } from "./events.js";
+import { createBotStateTransactions, type BotStateTransaction, type BotStateTransactions } from "./events.js";
 import { ChatRepository } from "../chat/repository.js";
 import type { ChatDatabase } from "../chat/database.js";
 import type { CanonicalChatOrchestrator } from "../chat/orchestrator.js";
@@ -49,8 +49,8 @@ export function createBotRoutineExecution(deps: {
     .select(["run.client_request_id", "run.driver_kind", "run.attempt", "turn.client_request_id as original_request_id"])
     .where("run.id", "=", input.runId).where("run.chat_id", "=", input.chatId).executeTakeFirst();
   let canonical: Canonical | undefined, scheduler: ReturnType<typeof createBotRoutineScheduler> | undefined;
-  async function finish(input: Parameters<typeof repository.finish>[0], unstarted?: { chatId: string; attempt: number } & ({ kind: "canonical_run"; runId: string } | { kind: "cancelled_queue"; queuedTurnId: string })) {
-    return transact(input.ownerId, async tx => {
+  async function finish(input: Parameters<typeof repository.finish>[0], unstarted?: { chatId: string; attempt: number } & ({ kind: "canonical_run"; runId: string } | { kind: "cancelled_queue"; queuedTurnId: string }), transaction?: BotStateTransaction) {
+    const settle = async (tx: BotStateTransaction) => {
       const scoped = createBotRoutinesRepository(tx.db);
       if (unstarted) {
         const selected = await scoped.getFire(input.ownerId, input.fireId);
@@ -101,7 +101,8 @@ export function createBotRoutineExecution(deps: {
         revision: task.revision
       });
       return true;
-    });
+    };
+    return transaction ? settle(transaction) : transact(input.ownerId, settle);
   }
   async function reconcileCancelledQueue() {
     const cancelled = await deps.db.selectFrom("bot_routine_fires as f")
@@ -252,7 +253,8 @@ export function createBotRoutineExecution(deps: {
       });
     }
   }
-  const controls = createBotRoutineControl({ db: deps.db, approvals: deps.approvals, now, stopFire });
+  const controls = createBotRoutineControl({ db: deps.db, approvals: deps.approvals, now, stopFire,
+    cancelUnstarted: (tx, ownerId, fireId, at) => finish({ ownerId, fireId, status: "cancelled", expectedStatus: "claimed", now: at }, undefined, tx) });
   return {
     describeChatPhase: (binding: BotRuntimeBinding) => describeRoutineChatPhase(deps.db, deps.approvals, binding, now()),
     approvalReply: (scope: Parameters<typeof routineApprovalReply>[1]) => routineApprovalReply(deps.db, scope, now()),
