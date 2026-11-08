@@ -1,9 +1,10 @@
+import { createHash } from "node:crypto";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { connect } from "node:net";
+import { connect, Socket, type Server } from "node:net";
 import type { IPty } from "node-pty";
 import { createHostedTerminalPty } from "../../../packages/gateway/src/terminal/hosted-pty.js";
 const cleanups: (() => Promise<unknown>)[] = [];
@@ -11,9 +12,9 @@ afterEach(async () => {
   try { for (const close of cleanups.splice(0).reverse()) await close(); }
   finally { vi.restoreAllMocks(); }
 });
-async function fixture(args: string[] = []) {
+async function fixture(args: string[] = [], command = "/bin/sh") {
   const directory = await mkdtemp(join(tmpdir(), "t7-")); cleanups.push(() => rm(directory, { recursive: true, force: true }));
-  const host = await createHostedTerminalPty({ directory, launch: { command: "/bin/sh", args, cwd: directory, env: { PATH: "/usr/bin:/bin", HOME: directory, TERM: "xterm-256color" } }, cols: 80, rows: 24 });
+  const host = await createHostedTerminalPty({ directory, launch: { command, args, cwd: directory, env: { PATH: "/usr/bin:/bin", HOME: directory, TERM: "xterm-256color" } }, cols: 80, rows: 24 });
   cleanups.push(async () => { await host.stop(); await host.close(); });
   return host;
 }
@@ -68,6 +69,23 @@ async function sendObserved(peer: Awaited<ReturnType<typeof viewer>>, accepted: 
   await until(() => accepted.length > before || peer.socket.destroyed);
 }
 
+async function observingPty(expectedBytes: number) {
+  const script = `
+      process.stdin.setRawMode(true);
+      const hash = require('node:crypto').createHash('sha256');
+      let received = 0;
+      process.stdin.on('data', chunk => {
+        received += chunk.length;
+        if (received <= ${expectedBytes}) hash.update(chunk);
+        if (received === ${expectedBytes}) process.stdout.write('PASTE-' + hash.digest('hex'));
+      });
+      process.stdout.write('READY');
+    `;
+  const host = await fixture(["-e", script], process.execPath), pane = await viewer(host.path);
+  await until(() => pane.output.includes("READY"));
+  return { host, pane };
+}
+
 describe("actual /bin/sh PTY lifetime, independently of source proof", () => {
   it("fences an exited root before any pane attaches and delivers its initial error to that first pane", async () => {
     const host = await fixture(["-c", "printf 'EARLY-EXIT-ERROR\\n'; exit 7"]);
@@ -115,6 +133,64 @@ describe("actual /bin/sh PTY lifetime, independently of source proof", () => {
     await until(() => second.output.includes("41 113") && second.output.includes("SECOND-ok"));
     expect(host.pid).toBe(pid); expect(host.running).toBe(true);
     await host.stop(); expect(host.running).toBe(false);
+  });
+  it("delivers a coalesced 48 KiB paste of valid frames to the native PTY", async () => {
+    const pieces = Array.from({ length: 12 }, (_, index) => String.fromCharCode(65 + index).repeat(4096));
+    const expectedBytes = 48 * 1024;
+    const expectedDigest = createHash("sha256").update(pieces.join("")).digest("hex");
+    const { host, pane } = await observingPty(expectedBytes);
+    const wire = Buffer.from(pieces.map(data => JSON.stringify({ type: "input", data }) + "\n").join(""));
+    const chunks: Buffer[] = [];
+    let received = 0, delivered = 0;
+    const emit = Socket.prototype.emit;
+    // UDS read chunking differs by OS. Deliver these real socket bytes in a
+    // single event so the regression is reproducible on either kernel.
+    const coalesce = vi.spyOn(Socket.prototype, "emit").mockImplementation(function (this: Socket, event, ...args) {
+      if (event !== "data" || (this as Socket & { server?: Server }).server?.address() !== host.path || delivered) {
+        return Reflect.apply(emit, this, [event, ...args]);
+      }
+      const raw = args[0];
+      if (typeof raw !== "string" && !Buffer.isBuffer(raw)) throw new Error("Unexpected UDS receive type");
+      const chunk = typeof raw === "string" ? Buffer.from(raw) : raw;
+      chunks.push(chunk);
+      received += chunk.length;
+      if (received < wire.length) return true;
+      const batch = Buffer.concat(chunks);
+      delivered = batch.length;
+      return Reflect.apply(emit, this, [event, typeof raw === "string" ? batch.toString("utf8") : batch]);
+    });
+    try {
+      pane.socket.write(wire);
+      await until(() => pane.socket.destroyed || /PASTE-[0-9a-f]{64}/.test(pane.output));
+      expect(delivered).toBe(wire.length);
+      expect(pane.output).toContain(`PASTE-${expectedDigest}`);
+      expect(pane.socket.destroyed).toBe(false);
+      expect(host.running).toBe(true);
+    } finally { coalesce.mockRestore(); }
+  });
+  it("accepts an exact-limit frame with a fragmented UTF-8 character", async () => {
+    const data = "漢";
+    const { pane } = await observingPty(Buffer.byteLength(data));
+    const body = Buffer.from(JSON.stringify({ type: "input", data }));
+    const frame = Buffer.concat([body, Buffer.alloc(32 * 1024 - body.length - 1, 0x20), Buffer.from("\n")]);
+    const split = body.indexOf(Buffer.from(data)) + 1;
+    pane.socket.write(frame.subarray(0, split));
+    await new Promise<void>(resolve => setImmediate(resolve));
+    pane.socket.write(frame.subarray(split));
+    await until(() => pane.socket.destroyed || /PASTE-[0-9a-f]{64}/.test(pane.output));
+    expect(pane.output).toContain(`PASTE-${createHash("sha256").update(data).digest("hex")}`);
+    expect(pane.socket.destroyed).toBe(false);
+  });
+  it.each(["complete", "unfinished"])("closes the viewer for an oversized %s individual frame", async frame => {
+    const host = await fixture(), pane = await viewer(host.path);
+    const wire = Buffer.from(JSON.stringify({ type: "input", data: "漢".repeat(12_000) }) + (frame === "complete" ? "\n" : ""));
+    pane.socket.write(wire.subarray(0, 16_384));
+    pane.socket.write(wire.subarray(16_384));
+    await until(() => pane.socket.destroyed);
+    expect(host.running).toBe(true);
+    const next = await viewer(host.path);
+    next.send({ type: "input", data: "printf 'AFTER-LIMIT-%s\\n' ok\n" });
+    await until(() => next.output.includes("AFTER-LIMIT-ok"));
   });
   it("malformed I/O viewer and controller detach never terminate the native root", async () => {
     const host = await fixture(), bad = await viewer(host.path);
