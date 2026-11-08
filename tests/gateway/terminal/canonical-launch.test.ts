@@ -101,7 +101,8 @@ it("a concurrent requested ID cannot join a different actual host record", async
     await input.onBound?.(f.startup); input.onDispatchSettled?.();
     return { reference: { path: f.path }, status: "running" };
   });
-  try { await f.coordinator.launch(principal, f.workspace.id, { tabId, name: "Claude", cwd: "", managedLaunch: { harness: "claude" } }); } catch { /* Admission conflict is expected after the fix. */ }
+  await expect(f.coordinator.launch(principal, f.workspace.id, { tabId, name: "Claude", cwd: "", managedLaunch: { harness: "claude" } }))
+    .rejects.toMatchObject({ name: "TerminalRuntimeError", code: "conflict", message: "Terminal state changed" });
   expect(await f.coordinator.available({ workspaceId: f.workspace.id, tabId })).toBe(false);
   expect(await f.store.getTab({ workspaceId: f.workspace.id, tabId })).toMatchObject({ nativeHost: { path: otherPath } });
 });
