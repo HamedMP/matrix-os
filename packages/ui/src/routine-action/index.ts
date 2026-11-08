@@ -1,2 +1,3 @@
-export { createRoutineActionClient, createRoutineActionBrowserClient, type RoutineActionClient } from "./client.js";
+export { createRoutineActionClient, createRoutineActionBrowserClient, routineActionResponseByteLimit,
+  type RoutineActionClient, type RoutineActionRequest } from "./client.js";
 export { useRoutineAction } from "./use-routine-action.js";

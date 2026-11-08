@@ -7,6 +7,10 @@ const MAX_CHALLENGE_RESPONSE_BYTES = 128 * 1024;
 // A serialized proposal is bounded at 20 KiB, plus room for escaped labels and the envelope.
 const MAX_INBOX_RESPONSE_BYTES = MAX_INBOX_CHALLENGES * 24 * 1024;
 
+export function routineActionResponseByteLimit(method: "GET" | "POST", path: string): number {
+  return method === "GET" && path === ROUTINE_ACTION_PATH ? MAX_INBOX_RESPONSE_BYTES : MAX_CHALLENGE_RESPONSE_BYTES;
+}
+
 export type RoutineActionRequest = (input: { path: string; method: "GET" | "POST"; body?: RoutineActionSubmit; signal: AbortSignal }) => Promise<unknown>;
 export function createRoutineActionClient(request: RoutineActionRequest) {
   if (typeof request !== "function") throw new Error("Routine confirmation unavailable");
@@ -43,8 +47,7 @@ export function createRoutineActionBrowserClient(gatewayUrl: string, getToken: (
         headers: { ...(token ? { authorization: `Bearer ${token}` } : {}), ...(input.body ? { "content-type": "application/json" } : {}) },
         ...(input.body ? { body: JSON.stringify(input.body) } : {}) }), cancelled]);
       requireLive();
-      const responseLimit = input.method === "GET" && input.path === ROUTINE_ACTION_PATH
-        ? MAX_INBOX_RESPONSE_BYTES : MAX_CHALLENGE_RESPONSE_BYTES;
+      const responseLimit = routineActionResponseByteLimit(input.method, input.path);
       if (!response.ok || !response.body || Number(response.headers.get("content-length")) > responseLimit) {
         await response.body?.cancel(); throw new Error("Routine confirmation unavailable");
       }

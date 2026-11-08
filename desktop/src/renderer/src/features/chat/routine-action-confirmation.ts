@@ -1,7 +1,7 @@
 import { MatrixComputerListSchema, RoutineActionIdSchema, RoutineActionViewSchema, routineActionConfirmationUrl } from "@matrix-os/contracts";
+import { routineActionResponseByteLimit, type RoutineActionRequest } from "@matrix-os/ui/routine-action";
 import { useConnection } from "../../stores/connection";
 import { invoke } from "../../lib/operator";
-import type { RoutineActionRequest } from "@matrix-os/ui";
 async function destination() {
   const connection = useConnection.getState(), api = connection.api;
   if (connection.status !== "signed-in" || !api || !connection.platformHost) throw new Error("Confirmation unavailable");
@@ -17,7 +17,8 @@ async function destination() {
 }
 export const desktopRoutineActionRequest: RoutineActionRequest = async input => {
   input.signal.throwIfAborted(); const target = await destination(); input.signal.throwIfAborted();
-  const options = { signal: input.signal, timeoutMs: 10_000, maxBytes: 128 * 1024 }, path = target.prefix + input.path;
+  const options = { signal: input.signal, timeoutMs: 10_000, maxBytes: routineActionResponseByteLimit(input.method, input.path) };
+  const path = target.prefix + input.path;
   const result = input.method === "GET" ? await target.api.get(path, options) : await target.api.post(path, input.body, options);
   if (!target.current() || input.signal.aborted) throw new Error("Confirmation unavailable"); return result;
 };
