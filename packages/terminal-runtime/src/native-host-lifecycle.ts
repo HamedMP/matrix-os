@@ -53,6 +53,23 @@ export function createNativeTerminalHosts(options: { homePath: string; runtimeRo
     },
   };
 }
+/** Preview is read-only. A lost helper pane does not tell us whether the native workload stopped. */
+export async function tabsRequiringTerminationConfirmation(tabs: TerminalTab[], hosts: NativeTerminalHosts | undefined): Promise<TerminalTab[]> {
+  // Bound supervisor calls even for imported workspaces. Unchecked hosts remain potentially live.
+  const unchecked = tabs.filter(({ nativeHost }) => nativeHost && !nativeHost.dispatchPending && !nativeHost.managerStopped).slice(0, 8);
+  const confirmedStopped = new Set(hosts ? await Promise.all(unchecked.map(async tab => {
+    try {
+      return (await hosts.inspect(tab.nativeHost!)).status === "stopped" ? tab.id : undefined;
+    } catch (error) {
+      console.warn("[terminal-runtime] Native deletion impact unavailable", error instanceof Error ? error.name : "UnknownError");
+      return undefined;
+    }
+  })) : []);
+  return tabs.filter(tab => tab.nativeHost
+    ? tab.nativeHost.dispatchPending || (!tab.nativeHost.managerStopped && !confirmedStopped.has(tab.id))
+    : tab.status === "running" || tab.status === "starting" || tab.status === "idle");
+}
+
 /** Called under canonical workspace mutation ordering. Source validation reads this same durable fence. */
 export async function stopCanonicalNativeHost(store: TerminalWorkspaceStore, hosts: NativeTerminalHosts | undefined, ref: TerminalRef) {
   const tab = await store.getTab(ref);

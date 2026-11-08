@@ -1,8 +1,10 @@
+import { spawn } from "node:child_process";
+import { once } from "node:events";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, expect, it, vi } from "vitest";
-import { TerminalRuntime, type ZellijRuntimeAdapter } from "../../packages/terminal-runtime/src/runtime.js";
+import { TerminalRuntime, type ZellijObserverEvent, type ZellijRuntimeAdapter } from "../../packages/terminal-runtime/src/runtime.js";
 import { TerminalWorkspaceStore } from "../../packages/terminal-runtime/src/workspace-store.js";
 const nativeHost = { path: "/run/user/501/matrix-terminal-" + "a".repeat(32) + "/io.sock", generation: "gen_" + "b".repeat(64) };
 const cleanup: Array<() => Promise<void>> = [];
@@ -11,9 +13,13 @@ async function fixture(stopStatus: "stopped" | "unknown" = "stopped") {
   const homePath = await mkdtemp(join(tmpdir(), "terminal-native-lifecycle-"));
   const store = new TerminalWorkspaceStore({ homePath });
   const ids = { tabId: 1, paneId: "terminal_1" }; let found = true;
+  let observe: ((event: ZellijObserverEvent) => void) | undefined;
   const zellij: ZellijRuntimeAdapter = { ensureSession: vi.fn(async () => {}), createTab: vi.fn(async () => ids),
     findTabByInternalName: vi.fn(async () => found ? ids : undefined),
-    openAttachment: vi.fn(), subscribeWorkspace: vi.fn(async () => ({ close: async () => {} })),
+    openAttachment: vi.fn(), subscribeWorkspace: vi.fn(async (_session, input) => {
+      observe = input.onEvent;
+      return { close: async () => {} };
+    }),
     closeTab: vi.fn(async () => { found = false; }), deleteSession: vi.fn(async () => { found = false; }),
     getCommandState: vi.fn(async () => "exited" as const), getCommandResult: vi.fn(async () => ({ state: "exited" as const, exitCode: 0 })),
   };
@@ -24,7 +30,8 @@ async function fixture(stopStatus: "stopped" | "unknown" = "stopped") {
   const workspace = await runtime.ensureWorkspace();
   const tab = await runtime.createTab(workspace.id, { name: "Hermes", cwd: "", nativeHost } as never);
   const ref = { workspaceId: workspace.id, tabId: tab.id };
-  return { runtime, store, host, zellij, workspace, tab, ref, losePane: () => { found = false; } };
+  return { runtime, store, host, zellij, workspace, tab, ref, losePane: () => { found = false; },
+    notifyPaneClosed: () => observe!({ type: "pane-closed", paneId: ids.paneId }) };
 }
 it("persists public native I/O metadata and launches the fixed pinned attach helper", async () => {
   const f = await fixture();
@@ -46,6 +53,66 @@ it("successful manager stop is not a native exit code, while explicit deletion c
   const f = await fixture(); await f.runtime.terminateTab(f.ref);
   expect(f.host.stop).toHaveBeenCalledOnce(); expect(await f.store.getTab(f.ref)).toMatchObject({ status: "unavailable", exitCode: null, nativeHost: { managerStopped: true } });
   await f.runtime.deleteTab(f.ref); expect(await f.store.getTab(f.ref)).toBeUndefined();
+});
+it.each(["running", "stopped"] as const)("workspace deletion respects the %s native workload after losing its I/O pane", async state => {
+  const f = await fixture();
+  const child = spawn(process.execPath, ["-e", "process.stdin.resume()"], { stdio: ["pipe", "ignore", "ignore"] });
+  const exit = once(child, "exit");
+  cleanup.push(async () => { if (child.exitCode === null && child.signalCode === null) child.kill(); await exit; });
+  await once(child, "spawn");
+  const running = () => child.exitCode === null && child.signalCode === null;
+  f.host.inspect.mockImplementation(async () => ({ status: running() ? "running" : "stopped" }));
+  f.host.stop.mockImplementation(async () => {
+    if (running()) child.kill();
+    await exit;
+    return { status: "stopped" };
+  });
+  if (state === "stopped") { child.stdin.end(); await exit; }
+  f.losePane();
+  f.notifyPaneClosed();
+  await vi.waitFor(async () => expect(await f.store.getTab(f.ref)).toMatchObject({ status: "unavailable", exitCode: null, nativeHost }));
+  const before = await f.store.getRuntimeWorkspace(f.workspace.id);
+  const impact = await f.runtime.deletionImpact(f.workspace.id);
+  const deletion = f.runtime.deleteWorkspace(f.workspace.id, { confirmTerminate: false });
+  if (state === "running") {
+    await expect(deletion).rejects.toMatchObject({ code: "confirmation_required" });
+    expect(impact).toMatchObject({ runningTabs: 1, tabs: [{ id: f.tab.id }] });
+    expect(await f.store.getRuntimeWorkspace(f.workspace.id)).toEqual(before);
+    expect(f.host.stop).not.toHaveBeenCalled();
+    expect(f.zellij.deleteSession).not.toHaveBeenCalled();
+    expect(running()).toBe(true);
+
+    await f.runtime.deleteWorkspace(f.workspace.id, { confirmTerminate: true });
+    expect(f.host.stop).toHaveBeenCalledOnce();
+    expect(running()).toBe(false);
+  } else {
+    await expect(deletion).resolves.toBeUndefined();
+    expect(impact).toEqual({ runningTabs: 0, tabs: [] });
+    expect(f.host.stop).not.toHaveBeenCalled();
+  }
+  expect(f.zellij.deleteSession).toHaveBeenCalledOnce();
+  expect(await f.store.getRuntimeWorkspace(f.workspace.id)).toBeUndefined();
+});
+it.each(["unknown supervisor", "pending dispatch"] as const)("unconfirmed deletion preserves native state for %s", async state => {
+  const f = await fixture();
+  f.losePane();
+  f.notifyPaneClosed();
+  await vi.waitFor(async () => expect(await f.store.getTab(f.ref)).toMatchObject({ status: "unavailable" }));
+  f.host.inspect.mockResolvedValue({ status: state === "unknown supervisor" ? "unknown" : "stopped" });
+  let expectedTabId = f.tab.id;
+  if (state === "pending dispatch") {
+    const pending = await f.runtime.prepareNativeTab(f.workspace.id, {
+      tabId: "tt_" + "c".repeat(32), name: "Pending", cwd: "",
+      nativeHost: { ...nativeHost, path: nativeHost.path.replace("a".repeat(32), "c".repeat(32)) },
+    });
+    expectedTabId = pending.tab.id;
+  }
+  const before = await f.store.getRuntimeWorkspace(f.workspace.id);
+  await expect(f.runtime.deletionImpact(f.workspace.id)).resolves.toMatchObject({ runningTabs: 1, tabs: [{ id: expectedTabId }] });
+  await expect(f.runtime.deleteWorkspace(f.workspace.id, { confirmTerminate: false })).rejects.toMatchObject({ code: "confirmation_required" });
+  expect(f.host.stop).not.toHaveBeenCalled();
+  expect(f.zellij.deleteSession).not.toHaveBeenCalled();
+  expect(await f.store.getRuntimeWorkspace(f.workspace.id)).toEqual(before);
 });
 it("restore recreates only an I/O pane for the retained running host and never starts a native child", async () => {
   const f = await fixture(); f.losePane(); await f.runtime.restoreAll();
