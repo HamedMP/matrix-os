@@ -576,6 +576,7 @@ export async function createGateway(config: GatewayConfig) {
   const backgroundChatProjection = createBackgroundChatProjection();
   // Public workspace sessions and coding-agent threads share native admission,
   // runtime ownership and the single shutdown path, even without installed agents.
+  let retireTerminalRoutineSource: import("./terminal/canonical-launch.js").CanonicalTerminalLaunch["fence"] | undefined;
   let preparedTerminalLaunch: import("./terminal/workspace-launch.js").WorkspaceTerminalLaunch | undefined = undefined;
   const codingAgentSessionManager = createAgentSessionManager({
     homePath,
@@ -867,6 +868,7 @@ export async function createGateway(config: GatewayConfig) {
     codingAgentProjectManager,
     codingAgentWorktreeManager,
     terminalWorkspaceRuntime,
+    retireTerminalRoutineSource: (ref, incarnation) => retireTerminalRoutineSource?.(ref, incarnation),
     terminalRuntimeOwnerIds,
     projectOwnerToolOutput,
     capture: (event, options) => posthogErrorTracker.captureEvent(event, options),
@@ -1728,10 +1730,11 @@ export async function createGateway(config: GatewayConfig) {
   }
   const terminalLaunchRuntime = await createTerminalLaunchRuntime({ homePath, runtime: terminalWorkspaceRuntime,
     ownerIds: terminalRuntimeOwnerIds, computerId: internalHandle ?? "",
-    ...(botServices?.routineCli ? { routines: { runtime: botServices.routineCli,
+    ...(botServices?.routineCli && chatRepository ? { routines: { runtime: botServices.routineCli, ownerDb: chatRepository.kysely,
       binPath: fileURLToPath(new URL("../bin/matrix.mjs", import.meta.resolve("@finnaai/matrix"))),
       endpoint: `http://127.0.0.1:${port}/api/routine-cli/execute` } } : {}),
   });
+  retireTerminalRoutineSource = terminalLaunchRuntime.admission.fence;
   preparedTerminalLaunch = input => terminalLaunchRuntime.admission.launchPrepared(input);
   const { shellRouteDeps, terminalWorkspaceProjectAdmission,
     chatBoundWorkspaceRouteDeps, systemActivityCandidates } = registerShellTerminalRoutes({

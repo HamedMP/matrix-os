@@ -145,7 +145,7 @@ it.each(["expiry", "failed join"])("canonical %s retires the actual held service
   const coordinator = createCanonicalTerminalLaunch({ homePath: f.home, generation: f.options.generation, runtime, computerId: "computer-current", ownerIds: ["clerk_actual"], interactiveHostEquivalent: true,
     host: { start: input => f.service.start({ ...input, onBound: async startup => { held.push(startup); return input.onBound?.(startup); } }) },
     launcher: { build: async () => f.launch }, readProcess: f.options.readProcess,
-    routines: { runtime: { register }, binPath: "/fixed/matrix.mjs", endpoint: "http://127.0.0.1:4000/api/routine-cli/execute" } });
+    routines: { runtime: { register }, isShared: async () => false, binPath: "/fixed/matrix.mjs", endpoint: "http://127.0.0.1:4000/api/routine-cli/execute" } });
   cleanup.push(coordinator.close);
   vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
   try {
@@ -170,7 +170,7 @@ async function canonicalServiceFixture(holdLaunch = false) {
   const register = vi.fn(async () => { throw new Error("No synthetic positive source"); });
   const coordinator = createCanonicalTerminalLaunch({ homePath: f.home, generation: f.options.generation, runtime: client, host: f.service,
     computerId: "computer-current", ownerIds: ["clerk_actual"], interactiveHostEquivalent: true, launcher: { build: async () => f.launch }, readProcess: f.options.readProcess,
-    routines: { runtime: { register }, binPath: "/fixed/matrix.mjs", endpoint: "http://127.0.0.1:4000/api/routine-cli/execute" } });
+    routines: { runtime: { register }, isShared: async () => false, binPath: "/fixed/matrix.mjs", endpoint: "http://127.0.0.1:4000/api/routine-cli/execute" } });
   cleanup.push(coordinator.close);
   return { ...f, store, client, runtime, coordinator, workspace, register, start: () => coordinator.launch({ userId: "clerk_actual", source: "jwt" }, workspace.id,
     { name: "Claude", cwd: "", managedLaunch: { harness: "claude" } }) };

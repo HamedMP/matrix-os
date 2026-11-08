@@ -3,6 +3,10 @@ import { join } from "node:path";
 import { promisify } from "node:util";
 import { loadInstalledTerminalRuntimeGeneration } from "@matrix-os/terminal-runtime";
 import { validateTerminalClosure } from "@matrix-os/terminal-runtime/generation-closure";
+import type { Kysely } from "kysely";
+import type { ChatDatabase } from "../chat/database.js";
+import type { OwnerCollaborationDatabase } from "../collaboration/database.js";
+import { hasTerminalCollaborationBinding } from "../collaboration/terminal-bindings.js";
 import type { RoutineCliRuntime } from "../bots/routine-cli-runtime.js";
 import type { TerminalWorkspaceRouteRuntime } from "../shell/workspace-routes.js";
 import { createCanonicalTerminalLaunch } from "./canonical-launch.js";
@@ -12,7 +16,7 @@ import { createTerminalNativeLauncher } from "./native-launch.js";
  * native launching. No fallback is attempted after a host may have dispatched. */
 export async function createTerminalLaunchRuntime(options: {
   homePath: string; runtime: TerminalWorkspaceRouteRuntime; ownerIds: readonly string[]; computerId: string;
-  routines?: { runtime: RoutineCliRuntime; binPath: string; endpoint: string };
+  routines?: { runtime: RoutineCliRuntime; binPath: string; endpoint: string; ownerDb: Kysely<ChatDatabase> };
 }) {
   const runtimeRoot = process.env.MATRIX_TERMINAL_RUNTIME_ROOT ?? "/opt/matrix/terminal-runtime";
   let generation = "unavailable", host: ReturnType<typeof createTerminalHostService> | undefined;
@@ -26,6 +30,13 @@ export async function createTerminalLaunchRuntime(options: {
     host = createTerminalHostService({ homePath: options.homePath, generation, runtimeRoot });
   } catch (error) { console.warn("[terminal-launch] Routine source prerequisite unavailable", error instanceof Error ? error.name : "UnknownError"); }
   const launcher = createTerminalNativeLauncher({ homePath: options.homePath });
-  const admission = createCanonicalTerminalLaunch({ ...options, host, launcher, generation });
+  const { routines, ...launchOptions } = options;
+  const admission = createCanonicalTerminalLaunch({ ...launchOptions, host, launcher, generation,
+    ...(routines ? { routines: { runtime: routines.runtime, binPath: routines.binPath, endpoint: routines.endpoint,
+      // The collaboration and Bot tables share the same owner database. Reuse the
+      // action transaction when provided instead of borrowing a second pooled connection.
+      isShared: (ref, incarnation, trx) => hasTerminalCollaborationBinding((trx ?? routines.ownerDb) as unknown as Kysely<OwnerCollaborationDatabase>, ref, incarnation),
+    } } : {}),
+  });
   return { admission, hermesStatus: () => launcher.status("hermes"), async close() { await admission.close(); await host?.close(); } };
 }
