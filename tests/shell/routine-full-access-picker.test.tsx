@@ -59,11 +59,14 @@ it.each(["separate render", "same batch"])("preserves an effort change made duri
   expect(hook.result.current.selected).toMatchObject({ interactionMode: "plan", permissionMode: "full_access", selectedOptions: high });
 });
 
-it("does not overwrite the newer run's selection when an earlier mode change finishes revoking", async () => {
+it.each(["interaction", "permission"])("does not overwrite the newer run's selection when an earlier %s change finishes revoking", async mode => {
   const revocation = Promise.withResolvers<typeof status>();
   const { hook, client, executionControls } = setup(() => revocation.promise);
   await waitFor(() => expect(hook.result.current.selected?.permissionMode).toBe("full_access"));
-  act(() => hook.result.current.selectInteractionMode("plan"));
+  act(() => {
+    if (mode === "interaction") hook.result.current.selectInteractionMode("plan");
+    else hook.result.current.selectPermissionMode("supervised");
+  });
   await waitFor(() => expect(client.revoke).toHaveBeenCalledOnce());
 
   hook.rerender({ ...executionControls, runId: "run_two" });
@@ -74,7 +77,7 @@ it("does not overwrite the newer run's selection when an earlier mode change fin
     await revocation.promise;
   });
   expect(hook.result.current.selected).toMatchObject({
-    interactionMode: "default", selectedOptions: [{ id: "effort", value: "high" }],
+    interactionMode: "default", permissionMode: "full_access", selectedOptions: [{ id: "effort", value: "high" }],
   });
 });
 
