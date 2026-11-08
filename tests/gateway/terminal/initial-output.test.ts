@@ -1,11 +1,11 @@
 import { mkdtemp, rm } from "node:fs/promises";
-import { connect } from "node:net";
+import { connect, Socket } from "node:net";
 import { createRequire } from "node:module";
 import type { IPty } from "node-pty";
 import { afterEach, expect, it, vi } from "vitest";
 import { createHostedTerminalPty } from "../../../packages/gateway/src/terminal/hosted-pty.js";
 const cleanup: (() => Promise<unknown>)[] = [];
-afterEach(async () => { vi.useRealTimers(); for (const close of cleanup.splice(0).reverse()) await close(); });
+afterEach(async () => { vi.useRealTimers(); vi.restoreAllMocks(); for (const close of cleanup.splice(0).reverse()) await close(); });
 async function fixture() {
   const directory = await mkdtemp("/tmp/t7initial-"); cleanup.push(() => rm(directory, { recursive: true, force: true }));
   let emitData!: (bytes: string) => void, emitExit!: () => void;
@@ -38,6 +38,40 @@ it("bounds post-exit initial retention to30seconds and explicit stop cancels it"
   const stopped = await fixture(); stopped.data("other error"); stopped.exit();
   await stopped.host.stop(); await stopped.host.initialOutputDelivered;
   expect(stopped.child.kill).not.toHaveBeenCalled(); expect(stopped.host.signal.aborted).toBe(true);
+});
+it("bounds post-exit handoff even when the attached first viewer is backpressured and still pings", async () => {
+  const f = await fixture();
+  const retained = Buffer.from("retained startup output");
+  f.data(retained.toString());
+  let serverSocket: Socket | undefined;
+  let blocked!: () => void;
+  const blockedWrite = new Promise<void>(resolve => { blocked = resolve; });
+  const write = Socket.prototype.write, end = Socket.prototype.end;
+  // Reproduce a socket that cannot flush its first write or finish its queued shutdown.
+  vi.spyOn(Socket.prototype, "write").mockImplementation(function (this: Socket, ...args) {
+    if (Buffer.isBuffer(args[0]) && args[0].equals(retained)) {
+      serverSocket = this; blocked(); return false;
+    }
+    return write.apply(this, args);
+  });
+  vi.spyOn(Socket.prototype, "end").mockImplementation(function (this: Socket, ...args) {
+    return this === serverSocket ? this : end.apply(this, args);
+  });
+  const viewer = connect(f.host.path);
+  cleanup.push(async () => { viewer.destroy(); });
+  await blockedWrite;
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+  f.exit();
+  await f.host.exited;
+  expect(f.host.signal.aborted).toBe(true);
+  let delivered = false;
+  void f.host.initialOutputDelivered.then(() => { delivered = true; });
+  viewer.write('{"type":"ping"}\n');
+  await vi.advanceTimersByTimeAsync(29_999);
+  expect(delivered).toBe(false);
+  viewer.write('{"type":"ping"}\n');
+  await vi.advanceTimersByTimeAsync(1);
+  expect(delivered).toBe(true);
 });
 it("observes actual native root exit and proof fencing while initial reads are paused before any pane", async () => {
   const directory = await mkdtemp("/tmp/t7paused-"); cleanup.push(() => rm(directory, { recursive: true, force: true }));
