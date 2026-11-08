@@ -63,11 +63,17 @@ it("retains details and shows a safe error if opening the saved Chat fails", asy
   expect(close).not.toHaveBeenCalled();
 });
 it("keeps read-only Chat navigation available when its Bot execution target is unavailable", async () => {
-  const {client} = setup({targetAvailable: false});
-  render(<ScheduleCenter client={client} onClose={vi.fn()} onOpenBotChat={vi.fn()}/>);
+  const {client, routines} = setup({targetAvailable: false, status: "paused"}), open = vi.fn(), close = vi.fn();
+  render(<ScheduleCenter client={client} onClose={close} onOpenBotChat={open}/>);
   fireEvent.click(await screen.findByRole("button", {name: "View Morning brief"}));
   await screen.findByRole("region", {name: "Schedule details"});
-  expect(screen.getByRole("button", {name: "Open task Chat"})).toBeTruthy();
+  expect((screen.getByRole("button", {name: "Resume Morning brief"}) as HTMLButtonElement).disabled).toBe(true);
+  expect((screen.getByRole("button", {name: "Edit schedule"}) as HTMLButtonElement).disabled).toBe(true);
+  fireEvent.click(screen.getByRole("button", {name: "Open task Chat"}));
+  await waitFor(() => expect(open).toHaveBeenCalledExactlyOnceWith("chat_exact_owner"));
+  expect(close).toHaveBeenCalledTimes(1);
+  expect(routines.control).not.toHaveBeenCalled();
+  expect(routines.review).not.toHaveBeenCalled();
 });
 
 it("places Schedules above the Agents heading in the shared Chat sidebar", async () => {
