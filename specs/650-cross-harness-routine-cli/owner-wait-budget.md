@@ -14,6 +14,7 @@ increasing the API or network timeout.
 | HTTP after a mutation capability arrives | Fresh 10 seconds, including response consumption |
 | Fixed CLI child | 30 minutes + 10 seconds startup + 10 seconds HTTP; known reads remain bounded to 10 seconds |
 | Native callback / outer transport | Fixed child limit + 10 seconds for bounded cancellation/drain |
+| Authenticated managed Pi mutation | Gateway broker allows 10 seconds beyond the native callback; its host socket and worker allow another 10 seconds for the reply |
 | Browser purpose proof | Existing maximum 60 seconds, freshly minted at the owner's click |
 | Issued capability | Existing short one-shot lifetime, unchanged |
 | Result display artifact | Existing 120-second post-result lifetime, unchanged |
@@ -24,6 +25,8 @@ OpenCode and Hermes assets retain their bounded local copy because they cannot
 resolve the host TypeScript package from the owned native environment. Their read
 and mutation branches use the same limits. This does not qualify or enable a
 previously disabled adapter.
+
+The host grants the managed Pi socket allowance after the broker verifies the current registered interactive run and its mutation capability. Read calls, stale or unregistered runs and other host routes retain their existing transport budgets.
 
 Only `ask` challenges receive the longer lifetime. Automatically allowed/read
 entries keep their existing maximum 120-second decision/accepted-claim fence.

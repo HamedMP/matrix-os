@@ -8,6 +8,9 @@ export const ROUTINE_CLI_REQUEST_TIMEOUT_MS = 10_000;
 export const ROUTINE_CLI_INVOCATION_TIMEOUT_MS = ROUTINE_CLI_OWNER_WAIT_MS + 2 * ROUTINE_CLI_REQUEST_TIMEOUT_MS;
 // Native callbacks additionally allow the existing bounded child/cancellation drain.
 export const ROUTINE_CLI_NATIVE_TIMEOUT_MS = ROUTINE_CLI_INVOCATION_TIMEOUT_MS + ROUTINE_CLI_REQUEST_TIMEOUT_MS;
+// Bounded headroom for a managed mutation's broker checkpoint and socket reply.
+export const ROUTINE_CLI_MANAGED_BROKER_TIMEOUT_MS = ROUTINE_CLI_NATIVE_TIMEOUT_MS + ROUTINE_CLI_REQUEST_TIMEOUT_MS;
+export const ROUTINE_CLI_MANAGED_REPLY_TIMEOUT_MS = ROUTINE_CLI_MANAGED_BROKER_TIMEOUT_MS + ROUTINE_CLI_REQUEST_TIMEOUT_MS;
 export const ROUTINE_CLI_EXECUTION_PATH = "/api/routine-cli/execute";
 export const ROUTINE_CLI_AUTH_SCHEME = "RoutineCapability";
 export const ROUTINE_CLI_INPUT_BYTES = 24 * 1024;
