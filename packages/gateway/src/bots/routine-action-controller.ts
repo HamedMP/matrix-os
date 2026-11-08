@@ -19,7 +19,7 @@ import { lockRoutineCliPolicyScope } from "./routine-cli-lock-order.js";
 import { freezeIntent, type RoutineCliRequestDependencies } from "./routine-cli-requests.js";
 import { routineActionHash, routineActionPolicy, type RoutineActionSourceRegistry, type RoutineSourceHandle, type RoutineSourceProducer } from "./routine-action-source-registry.js";
 
-type Call = { operation: RoutineCliOperation; invocationId: string; signal: AbortSignal };
+type Call = { operation: RoutineCliOperation; invocationId: string; signal: AbortSignal; onOwnerWait?: (waiting: boolean) => void };
 type TargetCeiling = Readonly<{ botId: string; chatId: string }>;
 const withinCeiling = (target: { botId: string; chatId: string }, ceiling?: TargetCeiling) => !ceiling || target.botId === ceiling.botId && target.chatId === ceiling.chatId;
 type Entry = { handle: RoutineSourceHandle; reference: RoutineCliSourceReference; invocationId: string; operation: RoutineCliOperation;
@@ -158,7 +158,14 @@ export function createRoutineCliActionController(options: {
     entries.set(invocationId, entry);
     try { if (mode === "ask") emit(entry); else settle(true); }
     catch (error: unknown) { remove(entry); throw error; }
-    const allowed = await waiting;
+    // Only this host-created pending challenge can suspend its native tool watchdog.
+    const onOwnerWait = mode === "ask" && entry.status === "pending" && live(entry) ? call.onOwnerWait : undefined;
+    const observeWait = (pending: boolean) => {
+      try { onOwnerWait?.(pending); }
+      catch (error: unknown) { console.warn("[routine-action] Owner wait observer unavailable", error instanceof Error ? error.name : "UnknownError"); }
+    };
+    observeWait(true);
+    const allowed = await waiting.finally(() => observeWait(false));
     // Tool callback completion abort is invocation-local; issue/cancel own cleanup after this wait.
     call.signal.removeEventListener("abort", abort);
     if (!allowed) return false;

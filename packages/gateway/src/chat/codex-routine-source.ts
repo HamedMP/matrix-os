@@ -63,7 +63,14 @@ export function createCodexRoutineSources(port: NativeRoutineCliPort | undefined
           if (!live() || actionSignal.aborted) return;
           invoker ??= createFixedNativeRoutineCliInvoker({ binPath: port!.binPath, endpoint: port!.endpoint, cwd: homePath, homePath,
             authorize: source.authorize, issue: source.issue, cancel: source.cancel, timeoutMs: ROUTINE_CLI_INVOCATION_TIMEOUT_MS });
-          const result = RoutineCliEnvelopeSchema.parse(await invoker.invoke({ ...intent.data, signal: actionSignal }));
+          const result = RoutineCliEnvelopeSchema.parse(await invoker.invoke({
+            ...intent.data, signal: actionSignal,
+            onOwnerWait(waiting) {
+              if (live() && actions.get(frame.actionId) === action) {
+                channel?.send({ type: "host.owner_wait", admissionId, actionId: frame.actionId, waiting });
+              }
+            },
+          }));
           if (live() && binding && frame.turnId === binding.turnId && frame.nativeGeneration === binding.nativeGeneration) channel?.send({ type: "host.result", admissionId, actionId: frame.actionId, result: JSON.stringify(result) });
         } catch (error) {
           console.warn("[codex-routines] Action unavailable", error instanceof Error ? error.name : "UnknownError");
