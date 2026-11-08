@@ -124,6 +124,48 @@ it.each([
   expect(snapshots(result.stdout).map(record => record.phase)).toEqual(["before", "failure"]);
 });
 
+it.each([
+  { state: "unset", key: undefined, exit: 1 },
+  { state: "empty", key: "", exit: 1 },
+  { state: "set", key: "pk_test_Y2xlcmsuZXhhbXBsZS5jb20k", exit: 93 },
+])("requires a Clerk publishable key before building the shell ($state)", ({ key, exit }) => {
+  const f = fixture();
+  // Run the unchanged Bash entry with owned fixture artifacts in place of builds.
+  writeFileSync(join(f.root, "scripts/host-bundle-baseline-builder.mjs"), "process.exit(process.argv[2] === '--check' ? 0 : 92);\n");
+  mkdirSync(join(f.root, "node_modules/tsx"), { recursive: true });
+  writeFileSync(join(f.root, "node_modules/tsx/index.js"), "");
+  writeFileSync(join(f.root, "scripts/smoke-gateway-production-loader.mjs"), "");
+  writeFileSync(join(f.root, "bin/pnpm"), `#!/bin/sh
+if [ "$1" = "--filter" ] && [ "$2" = "./shell" ]; then
+  echo SHELL_BUILD_REACHED >&2
+  exit 93
+fi
+exit 0
+`, { mode: 0o755 });
+  for (const path of [
+    "dist/chat/hermes-routine-tool.py",
+    "dist/coding-agents/opencode-routine-tool.mjs",
+    "dist/collaboration/filesystem-identity.node",
+    "dist/terminal/terminal-writer.node",
+    "src/app-runtime/fixture.html",
+  ]) {
+    const target = join(f.root, "packages/gateway", path);
+    mkdirSync(dirname(target), { recursive: true });
+    writeFileSync(target, "");
+  }
+  const result = spawnSync("bash", ["scripts/build-host-bundle.sh"], {
+    cwd: f.root, env: { ...f.env, ...(key === undefined ? {} : { NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: key }) },
+    encoding: "utf8", timeout: 5_000,
+  });
+  expect(result.status, result.stderr).toBe(exit);
+  if (exit === 1) {
+    expect(result.stderr).toContain("set NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY before building the customer host bundle");
+    expect(result.stderr).not.toContain("SHELL_BUILD_REACHED");
+  } else {
+    expect(result.stderr).toContain("SHELL_BUILD_REACHED");
+  }
+});
+
 it.each(["throw", "hang", "unsafe-json", "oversized", "killed"])("preserves the original build failure and owned cleanup when the diagnostic process has a %s fault", kind => {
   const f = fixture(), path = join(f.root, "scripts/host-bundle-storage-diagnostics.mjs");
   const fault = {
