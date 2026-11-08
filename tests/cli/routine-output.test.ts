@@ -25,3 +25,13 @@ it("unknown preserves reconciliation UUID and has explicit retryable-transport e
   const result = { kind: "unknown", requestId, disposition: "unknown", reconcile: true } as const;
   expect(formatRoutineHuman(result)).toContain(`routines request ${requestId}`); expect(formatRoutineHuman(result)).toContain("Do not retry the mutation"); expect(routineExitCode(result)).toBe(75);
 });
+it("returns an uncertain exit for an unknown reconciled receipt", () => {
+  const result: Extract<RoutineCliResult, { kind: "receipt" }> = {
+    ...base,
+    receipt: { ...base.receipt, disposition: "unknown" },
+    proposal: undefined,
+  };
+  expect(formatRoutineHuman(result)).toContain("Outcome unknown");
+  expect(routineExitCode(result)).toBe(75);
+  expect(routineExitCode(base)).toBe(0);
+});
