@@ -6,15 +6,19 @@ import { context } from "./routine-cli-source-support.js";
 const ownedAdmissions: string[] = [];
 let f: Awaited<ReturnType<typeof claudeFixture>>;
 afterEach(async () => { for (const handle of ownedAdmissions.splice(0)) await f?.f.admission.release(handle); await f?.close(); vi.unstubAllGlobals(); });
-async function existing(options: Parameters<typeof claudeFixture>[0] = {}) {
-  f = await claudeFixture(options); const input = await f.admit(TARGET_A.chatId, "matrix_bot", { permission: "default", interaction: "default" });
-  const { task } = await f.f.transact(input.owner.ownerId, tx => beginBotTask(tx, { ownerId: input.owner.ownerId, ...TARGET_A, runId: input.runId, now: f.f.state.clock, text: "Fixture real parent" }));
-  const runtime = await f.f.admission.admit({ ownerId: input.owner.ownerId, ...TARGET_A, taskId: task.taskId, runId: input.runId,
+async function admitBinding(ownerId: string, taskId: string, runId: string) {
+  const runtime = await f.f.admission.admit({ ownerId, ...TARGET_A, taskId, runId,
     route: { api: "openai-responses", modelId: proposal.selection.model, input: ["text"], contextWindow: 8192, maxOutputTokens: 256 }, accessSourceId: "matrix_chatgpt_plan",
     subscription: f.f.subscription, capabilities: ["routine.propose", "routine.control", "agent.task"], requestClass: "interactive" });
   ownedAdmissions.push(runtime.runtimeHandle);
-  const binding = f.f.registry.lookupRun({ ...runtime, runId: input.runId }); if (!binding || "kind" in binding) throw new Error("Real admission missing binding");
-  return { input, task, binding };
+  const binding = f.f.registry.lookupRun({ ...runtime, runId });
+  if (!binding || "kind" in binding) throw new Error("Real admission missing binding");
+  return binding;
+}
+async function existing(options: Parameters<typeof claudeFixture>[0] = {}) {
+  f = await claudeFixture(options); const input = await f.admit(TARGET_A.chatId, "matrix_bot", { permission: "default", interaction: "default" });
+  const { task } = await f.f.transact(input.owner.ownerId, tx => beginBotTask(tx, { ownerId: input.owner.ownerId, ...TARGET_A, runId: input.runId, now: f.f.state.clock, text: "Fixture real parent" }));
+  return { input, task, binding: await admitBinding(input.owner.ownerId, task.taskId, input.runId) };
 }
 it("reuses only the actual admitted registered parent binding; proposal/wait/outbox/immutable receipt are atomic without canonical resubmit", async () => {
   const { binding, task } = await existing();
@@ -39,6 +43,66 @@ it("reuses only the actual admitted registered parent binding; proposal/wait/out
   expect(duplicate).toMatchObject({ receipt: { disposition: "pending_approval" }, proposal: { approval: "approved" } });
   expect(submit).not.toHaveBeenCalled(); expect(await f.data.db.selectFrom("bot_approvals").selectAll().execute()).toHaveLength(1);
 });
+it("recovers the current delegated proposal after the same task has a resolved receipt from another run", async () => {
+  const { input, binding: firstBinding } = await existing();
+  const { owner } = input, { ownerId, chatId, taskId } = firstBinding, now = f.f.state.clock;
+  const recover = (runId?: string) => f.runtime.proposals.recover({ ownerId, taskId, chatId, runId });
+  async function propose(binding: Awaited<ReturnType<typeof admitBinding>>, requestId: string) {
+    const source = await f.f.sources.register({ ...context("existing-recovery"), harness: "claude", issuedAt: now,
+      expiresAt: new Date(Date.parse(now) + 240000).toISOString(), generation: binding.executionGeneration,
+      identity: { kind: "bot_child", taskId, runId: binding.runId, runtimeHandle: binding.runtimeHandle } });
+    const operation = { operation: "propose" as const, requestId, proposal };
+    await expect(f.f.service(f.f.proposals).execute({ operation, token: await f.f.token(operation, source) }))
+      .resolves.toMatchObject({ receipt: { disposition: "pending_approval" }, proposal: { existingBinding: true } });
+  }
+  await propose(firstBinding, "de000000-0000-4000-8000-000000000610");
+  const prior = await f.data.db.selectFrom("bot_interactions").selectAll().executeTakeFirstOrThrow();
+  await f.f.chats.finishRun(owner, { chatId, runId: firstBinding.runId, outcome: "completed", completedAt: now });
+  const { continuation } = await f.f.interactions.resolve(ownerId, chatId, prior.interaction_id,
+    { kind: "approval", decision: "deny", baseRevision: Number(prior.revision) });
+  if (!continuation) throw new Error("Expected actual owner continuation");
+  await f.f.admission.release(firstBinding.runtimeHandle);
+
+  const runId = "run_existing_proposal_second", turnId = "cturn_existing_proposal_second", messageId = "msg_existing_proposal_second";
+  const detail = (await f.f.chats.get(owner, chatId))!;
+  await f.f.chats.admitTurn(owner, { chatId, baseRevision: detail.chat.revision,
+    message: { id: messageId, chatId, turnId, seq: detail.chat.messageCount + 1, role: "user", state: "committed", parts: [{ type: "text", text: continuation.text }], createdAt: now },
+    turn: { id: turnId, chatId, clientRequestId: continuation.clientRequestId, baseMessageSeq: detail.chat.messageCount, inputMessageId: messageId, status: "accepted", createdAt: now, updatedAt: now },
+    run: { id: runId, chatId, turnId, attempt: 1, driverKind: "matrix_bot", instanceId: input.selection.instanceId, selection: input.selection,
+      interactionMode: "default", permissionMode: "default", status: "accepted", historyBoundarySeq: detail.chat.messageCount, createdAt: now, updatedAt: now,
+      capabilitySnapshot: { revision: "fixture", rootChat: true, attachments: [], resources: [], tools: [], approvals: true, userInput: true, resume: false,
+        cancellation: true, worktrees: "none", interactionModes: ["default"], permissionModes: ["default"] } } });
+  const continued = await f.f.transact(ownerId, tx => beginBotTask(tx, { ownerId, ...TARGET_A, runId, now, text: continuation.text }));
+  expect(continued).toMatchObject({ continued: true, task: { taskId, runId, status: "running" } });
+  const staleOnly = await recover();
+  const staleExact = await recover(firstBinding.runId);
+  const current = await admitBinding(ownerId, taskId, runId);
+  await propose(current, "de000000-0000-4000-8000-000000000611");
+  expect(await f.data.db.selectFrom("routine_cli_requests").selectAll().execute()).toHaveLength(2);
+  const interactions = () => f.data.db.selectFrom("bot_interactions").select(["interaction_id", "status", "source_run_id"])
+    .orderBy("source_run_id").execute();
+  const before = await interactions();
+  expect(before).toEqual(expect.arrayContaining([
+    expect.objectContaining({ interaction_id: prior.interaction_id, status: "resolved", source_run_id: firstBinding.runId }),
+    expect.objectContaining({ status: "pending", source_run_id: runId }),
+  ]));
+  expect(await recover(runId)).toBe(true);
+  expect(await recover()).toBe(true);
+  expect(staleOnly).toBe(false);
+  expect(staleExact).toBe(false);
+  expect(await recover(firstBinding.runId)).toBe(false);
+  expect(await f.runtime.proposals.recover({ ownerId, taskId, chatId: "chat_foreign", runId })).toBe(false);
+  const recoveryInput = { owner, runId, state: { taskId }, signal: new AbortController().signal };
+  const waiting = await createBotTasksRepository(f.data.db).get({ ownerId, taskId });
+  for (let attempt = 0; attempt < 2; attempt++) {
+    await expect(f.f.adapter.recover!(recoveryInput)).resolves.toMatchObject({ outcome: "completed", messages: [] });
+    await f.f.tasks.abandon({ ownerId, taskId });
+  }
+  expect(await createBotTasksRepository(f.data.db).get({ ownerId, taskId })).toEqual(waiting);
+  expect(waiting).toMatchObject({ status: "waiting_person", runId });
+  expect(await interactions()).toEqual(before);
+}, 15000);
+
 it("actual delegated invocation and existing typed bridge run the fixed published CLI, not canonical direct routine dispatch", async () => {
   f = await claudeFixture();
   f.f.taskDependencies.executorReady = async () => true; // Native readiness/auth transport fixture only.
