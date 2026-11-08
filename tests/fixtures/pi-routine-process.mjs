@@ -13,7 +13,7 @@ for (let n = 0; n < args.length; n++) if (args[n] === "--extension" && args[n + 
 let outputEnded = false;
 const emit = value => { if (!outputEnded) process.stdout.write(JSON.stringify(value) + "\n"); };
 const record = value => appendFile(config.records, JSON.stringify(value) + "\n");
-let controller, call, releaseObservation, prompted = false;
+let controller, call, releaseObservation, pendingStateId, prompted = false;
 // Arm before execute can write its FD callback: the ACK may arrive during record().
 const observation = new Promise(resolve => { releaseObservation = resolve; });
 let acknowledgeObservation;
@@ -40,8 +40,18 @@ const execute = async () => {
 };
 for await (const line of frames) {
   const frame = JSON.parse(line);
-  if (frame.type === "get_state") emit({ type: "response", id: frame.id, command: "get_state", success: true, data: { sessionId } });
-  if (frame.type === "prompt") { if (prompted) throw new Error("Duplicate prompt"); prompted = true; await record({ prompt: true, tools: args[args.indexOf("--tools") + 1] }); emit({ type: "agent_start" }); emit({ type: "turn_start" }); void execute(); }
+  if (frame.type === "get_state") {
+    if (config.holdStateResponse) { pendingStateId = frame.id; await record({ waitingState: true }); }
+    else emit({ type: "response", id: frame.id, command: "get_state", success: true, data: { sessionId } });
+  }
+  if (frame.type === "fixture_state") {
+    await record({ releasedState: true });
+    emit({ type: "response", id: pendingStateId, command: "get_state", success: frame.success, data: { sessionId } });
+    emit({ type: "message_update", assistantMessageEvent: { type: "text_delta", delta: "AFTER-STATE" } });
+    emit({ type: "message_end", message: { role: "assistant", content: [{ type: "text", text: "AFTER-STATE" }] } });
+  }
+  if (frame.type === "steer" && config.holdStateResponse) await record({ steer: frame.message });
+  if (frame.type === "prompt") { if (prompted) throw new Error("Duplicate prompt"); prompted = true; await record({ prompt: true, message: frame.message, tools: args[args.indexOf("--tools") + 1] }); emit({ type: "agent_start" }); emit({ type: "turn_start" }); void execute(); }
   if (frame.type === "fixture_observe") { acknowledgeObservation(); releaseObservation?.(); }
   if (frame.type === "fixture_terminal") emit({ type: "tool_execution_end", toolName: "matrix_routines", toolCallId: "call_owned", result: {}, isError: frame.isError });
   if (frame.type === "fixture_cancel") controller?.abort();

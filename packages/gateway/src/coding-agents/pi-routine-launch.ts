@@ -19,6 +19,11 @@ export function createPiRoutinePrompt(input: { source?: PiRoutineSource; fd?: Du
   const prompt = () => { if (started || closed) return; started = true; clearTimeout(timer); input.prompt(); };
   const end = () => { closed = true; clearTimeout(timer); source?.end(); };
   return { end,
+    beforeSteer() {
+      // Retire authority before the ordinary prompt can start any tools.
+      source?.end();
+      prompt();
+    },
     start() {
       if (!source || !input.fd || !source.current()) { source?.end(); prompt(); return; }
       source.attach(input.fd);
@@ -26,13 +31,18 @@ export function createPiRoutinePrompt(input: { source?: PiRoutineSource; fd?: Du
       input.write({ type: "get_state", id });
     },
     receive(value: unknown) {
-      if (!source || closed || !value || typeof value !== "object") return;
+      if (!source || closed || !value || typeof value !== "object") return false;
       const frame = value as { id?: unknown; type?: unknown; command?: unknown; success?: unknown; data?: { sessionId?: unknown } };
-      if (!started && frame.type === "response" && frame.id === id) {
-        if (frame.command !== "get_state" || frame.success !== true || frame.data?.sessionId !== input.sessionId || !source.beforePrompt(input.sessionId, input.cwd)) source.end();
-        prompt(); return;
+      if (frame.type === "response" && frame.id === id) {
+        if (!started) {
+          if (frame.command !== "get_state" || frame.success !== true || frame.data?.sessionId !== input.sessionId || !source.beforePrompt(input.sessionId, input.cwd)) source.end();
+          prompt();
+        }
+        // The optional routine probe is independent of native prompt/steer responses.
+        return true;
       }
       source.observeEvent(value);
+      return false;
     },
   };
 }

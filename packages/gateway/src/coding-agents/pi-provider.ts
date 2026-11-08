@@ -448,7 +448,7 @@ export function createPiCodingAgentProvider(options: PiCodingAgentProviderOption
       const inputControl = createPiInputControl({ threadId: input.threadId, now: input.now,
         nextEventId: input.nextEventId, write, emit: queueEvents });
       const routinePrompt = createPiRoutinePrompt({ source: routineSource, fd: proc.stdio?.[3] as Duplex | undefined, sessionId: input.sessionId, cwd: input.cwd, write, prompt: () => write({ type: "prompt", message: input.prompt }) });
-      const onSteer = (message: string) => { routinePrompt.end(); write({ type: "steer", message }); };
+      const onSteer = (message: string) => { routinePrompt.beforeSteer(); write({ type: "steer", message }); };
       const trackedProcess = trackProcess(input.threadId, onAbort, onSteer, inputControl.submit, inputControl.defer);
       if (input.signal) {
         if (input.signal.aborted) onAbort();
@@ -516,8 +516,7 @@ export function createPiCodingAgentProvider(options: PiCodingAgentProviderOption
             try { frame = JSON.parse(line); } catch (error: unknown) {
               if (!(error instanceof SyntaxError)) throw error;
             }
-            routinePrompt.receive(frame);
-            if (inputControl.receive(frame)) return;
+            if (routinePrompt.receive(frame) || inputControl.receive(frame)) return;
             collector.feedLine(line);
             drainCollector();
             if (frame && typeof frame === "object" && "type" in frame) {
