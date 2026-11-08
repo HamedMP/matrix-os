@@ -16,7 +16,7 @@ import { BOT, OWNER, createBotStateDatabase, insertChat } from "./bot-state-supp
 
 export async function fullAccessFixture(database?: Awaited<ReturnType<typeof createBotStateDatabase>>,
   limits: { maxScopes?: number; maxRunLeases?: number } = {}) {
-  const data = database ?? await createBotStateDatabase(), db = data.db;
+  const data = database ?? await createBotStateDatabase({ routineAuthority: true }), db = data.db;
   const home = await mkdtemp(join(tmpdir(), "matrix-routine-origin-")), agents = new ChatAgentStore({ homePath: home, db: db as unknown as Kysely<ChatDatabase> });
   await agents.bootstrap();
   await agents.createRecipeBot({ type: "personal", ownerId: OWNER }, { id: BOT, createHash: "a".repeat(64),

@@ -1,8 +1,9 @@
+import { randomUUID } from "node:crypto";
 import { resolve } from "node:path";
 import { serve } from "@hono/node-server";
 import { Hono } from "hono";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import { sql } from "kysely";
+import { sql, type Kysely, type Transaction } from "kysely";
 import { lockRoutineCliPreference, createRoutineCliPreferencesRepository } from "../../../packages/gateway/src/bots/repositories/routine-cli-preferences.js";
 import { createRoutineCliRuntime } from "../../../packages/gateway/src/bots/routine-cli-runtime.js";
 import { createRoutineCliExecutionRoutes } from "../../../packages/gateway/src/bots/routine-cli-routes.js";
@@ -11,6 +12,9 @@ import { createBotRoutineControl } from "../../../packages/gateway/src/bots/rout
 import { createBotRoutineApprovals } from "../../../packages/gateway/src/bots/routine-approval.js";
 import { createBotStateTransactions } from "../../../packages/gateway/src/bots/events.js";
 import { BotRuntimeRegistry } from "../../../packages/gateway/src/bots/runtime-registry.js";
+import type { OwnerCollaborationDatabase } from "../../../packages/gateway/src/collaboration/database.js";
+import { createProjectInheritanceResolver } from "../../../packages/gateway/src/collaboration/project-inheritance.js";
+import { reconcileProjectMembershipAtPublication } from "../../../packages/gateway/src/collaboration/project-membership-transition.js";
 import { fullAccessFixture } from "./routine-full-access-support.js";
 import { createRealBotStateDatabase, OTHER_OWNER } from "./bot-state-support.js";
 import { insertRoutine, routineId } from "./routine-cli-request-support.js";
@@ -23,7 +27,7 @@ let timeOffset: number, httpCalls: number;
 beforeEach(async () => {
   const url = process.env.MATRIX_ROUTINE_CLI_TEST_POSTGRES_URL;
   if (!url) throw new Error("MATRIX_ROUTINE_CLI_TEST_POSTGRES_URL is required for Full Access final issue/consume qualification");
-  data = await createRealBotStateDatabase(url); f = await fullAccessFixture(data); timeOffset = 0; httpCalls = 0;
+  data = await createRealBotStateDatabase(url, { routineAuthority: true }); f = await fullAccessFixture(data); timeOffset = 0; httpCalls = 0;
   const transact = createBotStateTransactions(f.chats);
   const approvals = createBotRoutineApprovals({ db: f.db, transact, definitionRevision: async () => 1,
     source: { resolve: async () => { throw new Error("No background authorization in this isolated fixture"); } } });
@@ -51,10 +55,13 @@ afterEach(async () => {
     finally { try { await f?.close(); } finally { await data?.destroy(); vi.unstubAllGlobals(); } }
   }
 });
-async function admittedSource() {
+async function approveScope() {
   const created = await runtime.fullAccess.createChallenge(f.principal, f.chatId, { baseRevision: 0 }), challenge = created.challenge!;
-  const approved = await runtime.fullAccess.submitDecision(f.principal, f.chatId, challenge.challengeId,
+  return runtime.fullAccess.submitDecision(f.principal, f.chatId, challenge.challengeId,
     { scopeDigest: challenge.scopeDigest, decision: "approve", clientRequestId: invocation(700) }, "browser-proof-fixture");
+}
+async function admittedSource() {
+  const approved = await approveScope();
   const input = await f.admission(approved.consent!.scopeId);
   const release = await runtime.beforeRoutineFullAccessDispatch(input); if (release) closers.push(async () => release());
   const controller = new AbortController(), events: unknown[] = [];
@@ -73,6 +80,72 @@ async function cli(source: Awaited<ReturnType<typeof admittedSource>>["source"])
     endpoint: `http://127.0.0.1:${(server.address() as { port: number }).port}/api/routine-cli/execute`, ...source });
   closers.unshift(invoker.close); return invoker;
 }
+
+async function stageProjectPublication() {
+  const db = f.db as unknown as Kysely<OwnerCollaborationDatabase>;
+  const projectScopeId = randomUUID(), authorityRuntimeId = "vps:full_access_scope_test", now = new Date();
+  await db.insertInto("collaboration_scopes").values({
+    id: projectScopeId, owner_type: "personal", owner_id: f.scope.ownerId, organization_id: "org_scope_test",
+    kind: "project", resource_id: "project_full_access", parent_scope_id: null, membership_mode: "direct",
+    lifecycle: "preparing", revision: 1, auth_epoch: 1, authority_runtime_id: authorityRuntimeId, authority_generation: 1,
+    created_at: now, updated_at: now, deleted_at: null,
+  }).execute();
+  await createProjectInheritanceResolver({ db }).bindOwnedResource({
+    projectScopeId, ownerId: f.scope.ownerId, kind: "chat", resourceId: f.chatId,
+    authorityRuntimeId, authorityGeneration: 1, revision: 1, readiness: "ready",
+  });
+  return async (holdBeforeCommit?: (trx: Transaction<OwnerCollaborationDatabase>) => Promise<void>) => {
+    await db.transaction().execute(async trx => {
+      await trx.selectFrom("collaboration_scopes").select("id").where("id", "=", projectScopeId).forUpdate().executeTakeFirstOrThrow();
+      await reconcileProjectMembershipAtPublication(trx, { projectScopeId, ownerType: "personal",
+        ownerId: f.scope.ownerId, requestedBy: f.scope.ownerId, destinationAuthorityRuntimeId: authorityRuntimeId,
+        destinationAuthorityGeneration: 1, now, createEventId: randomUUID });
+      await trx.updateTable("collaboration_scopes").set({ lifecycle: "shared" }).where("id", "=", projectScopeId).execute();
+      await holdBeforeCommit?.(trx);
+    });
+    expect(await db.selectFrom("chats").select("collaboration").where("id", "=", f.chatId).executeTakeFirstOrThrow())
+      .toEqual({ collaboration: null });
+    expect(await db.selectFrom("collaboration_scopes").select(["lifecycle", "membership_mode"])
+      .where("kind", "=", "chat").where("resource_id", "=", f.chatId).executeTakeFirstOrThrow())
+      .toEqual({ lifecycle: "shared", membership_mode: "inherited" });
+  };
+}
+
+it("refuses Full Access consent for a project-published source Chat", async () => {
+  const publish = await stageProjectPublication();
+  await publish();
+  await expect(runtime.fullAccess.status(f.principal, f.chatId)).resolves.toMatchObject({
+    eligibility: "ineligible", consent: null, challenge: null,
+  });
+  await expect(runtime.fullAccess.createChallenge(f.principal, f.chatId, { baseRevision: 0 })).rejects.toMatchObject({
+    code: "permission_denied",
+  });
+  expect(f.verify).not.toHaveBeenCalled();
+});
+
+it.each(["consent", "turn admission"] as const)("rechecks %s after proof if the Project publishes while verification is in flight", async phase => {
+  const publish = await stageProjectPublication();
+  const installPublicationDuringProof = () => {
+    const verify = f.verify.getMockImplementation()!;
+    f.verify.mockImplementationOnce(async (tuple, proof) => {
+      const verified = await verify(tuple, proof);
+      await publish();
+      return verified;
+    });
+  };
+  if (phase === "consent") {
+    installPublicationDuringProof();
+    await expect(approveScope()).rejects.toMatchObject({ code: "permission_denied" });
+  } else {
+    const approved = await approveScope(), input = await f.admission(approved.consent!.scopeId);
+    installPublicationDuringProof();
+    await expect(runtime.beforeRoutineFullAccessDispatch(input)).rejects.toMatchObject({ code: "permission_denied" });
+  }
+  expect(f.verify).toHaveBeenCalledTimes(phase === "consent" ? 1 : 2);
+  await expect(runtime.fullAccess.status(f.principal, f.chatId)).resolves.toMatchObject({
+    eligibility: "ineligible", consent: null, challenge: null,
+  });
+});
 
 it("published CLI uses canonical pause/archive/history while Full Access cannot create background authorization", async () => {
   const { source, events } = await admittedSource();
@@ -118,7 +191,7 @@ it("holds the real preference gate through canonical consume and rejects a concu
   } finally { release.resolve(); await Promise.allSettled([writer, ...(consumer ? [consumer] : [])]); }
 });
 
-it.each(["revoke", "expiry", "source close", "target preference", "target incarnation"])("rejects %s between authorization and final capability issue", async condition => {
+it.each(["revoke", "expiry", "source close", "target preference", "target incarnation", "project publication"])("rejects %s between authorization and final capability issue", async condition => {
   const { source, controller, approved } = await admittedSource();
   await insertRoutine(f.db, 902, { botId: f.target.botId, chatId: f.target.chatId });
   const operation = { operation: "pause" as const, routineId: routineId(902), baseRevision: 1, requestId: invocation(902) };
@@ -132,9 +205,45 @@ it.each(["revoke", "expiry", "source close", "target preference", "target incarn
     await f.bindings.remove({ ...f.scope, ...f.target, now: new Date().toISOString() });
     await f.bindings.bindDirect({ ...f.scope, ...f.target, now: new Date(Date.now() + 1).toISOString() });
   }
+  if (condition === "project publication") await (await stageProjectPublication())();
   await expect(source.issue(call)).rejects.toMatchObject({ code: "permission_denied" });
+  if (condition === "project publication") {
+    await expect(source.authorize({ ...call, invocationId: invocation(913) })).rejects.toMatchObject({ code: "permission_denied" });
+  }
   expect((await f.db.selectFrom("bot_routines").select("revision").execute()).map(row => Number(row.revision))).toEqual([1]);
   expect(await f.db.selectFrom("routine_cli_requests").selectAll().execute()).toEqual([]);
+});
+
+it("blocks capability consume behind real Project publication and refuses the stale lease after commit", async () => {
+  const { source } = await admittedSource();
+  await insertRoutine(f.db, 911, { botId: f.target.botId, chatId: f.target.chatId });
+  const operation = { operation: "pause" as const, routineId: routineId(911), baseRevision: 1, requestId: invocation(914) };
+  const call = { operation, invocationId: invocation(915), signal: new AbortController().signal };
+  expect(await source.authorize(call)).toBe(true);
+  const token = (await source.issue(call)).takeToken(), publish = await stageProjectPublication();
+  const entered = Promise.withResolvers<number>(), release = Promise.withResolvers<void>();
+  const publisher = publish(async trx => {
+    const pid = (await sql<{ pid: number }>`SELECT pg_backend_pid() AS pid`.execute(trx)).rows[0]!.pid;
+    entered.resolve(pid); await release.promise;
+  });
+  let consumer: Promise<unknown> | undefined;
+  try {
+    const pid = await Promise.race([entered.promise, publisher.then(() => { throw new Error("Publication did not hold the Chat lock"); })]);
+    consumer = runtime.execute({ token, operation });
+    void consumer.catch(() => undefined);
+    await vi.waitFor(async () => {
+      const state = await sql<{ blocked: boolean }>`SELECT EXISTS (
+        SELECT 1 FROM pg_stat_activity WHERE ${pid} = ANY(pg_blocking_pids(pid))
+      ) AS blocked`.execute(f.db);
+      expect(state.rows[0]?.blocked).toBe(true);
+    }, { timeout: 3000, interval: 20 });
+    release.resolve(); await publisher;
+    await expect(consumer).rejects.toMatchObject({ code: "permission_denied" });
+    await expect(source.authorize({ ...call, invocationId: invocation(916) })).rejects.toMatchObject({ code: "permission_denied" });
+    expect(await f.db.selectFrom("routine_cli_requests").selectAll().execute()).toEqual([]);
+    expect(await f.db.selectFrom("bot_routines").select(["status", "revision"]).executeTakeFirstOrThrow())
+      .toMatchObject({ status: "active", revision: "1" });
+  } finally { release.resolve(); await Promise.allSettled([publisher, ...(consumer ? [consumer] : [])]); }
 });
 
 it("revalidates target preference and consent after capability issuance, before canonical mutation", async () => {
