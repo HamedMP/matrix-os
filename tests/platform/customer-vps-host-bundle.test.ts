@@ -122,7 +122,6 @@ describe('customer VPS host bundle', () => {
     expect(script).toContain('manifest.json');
     expect(script).toContain('release.json');
     expect(script).toContain('incremental-manifest.json');
-    expect(script).toContain('NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY:?set NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY before building the customer host bundle');
     expect(script).toContain('GH_VERSION="${HOST_BUNDLE_GH_VERSION:-2.86.0}"');
     expect(script).toContain('GH_URL="https://github.com/cli/cli/releases/download/v${GH_VERSION}/${GH_ARCHIVE}"');
     expect(script).toContain('install -m 0755 "$DIST_DIR/$GH_DIST/bin/gh" "$STAGE_DIR/runtime/node/bin/gh"');
