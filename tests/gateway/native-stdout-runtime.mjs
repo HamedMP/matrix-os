@@ -10,6 +10,7 @@ import { fileURLToPath } from "node:url";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
+import { CodexTransportError } from "../../packages/gateway/src/coding-agents/codex-provider-output.mjs";
 const option = name => process.argv[process.argv.indexOf(name) + 1];
 const addonPath = resolve(option("--addon"));
 const actorPath = resolve(option("--actor"));
@@ -18,6 +19,12 @@ const results = [];
 const cleanups = new Set();
 const digest = async path => createHash("sha256").update(await readFile(path)).digest("hex");
 let native, createCodexNativeStdout;
+const nativeUnavailable = { name: "Error", message: "Terminal native proof unavailable" };
+function errorKind(error) {
+  if (error instanceof CodexTransportError && ["malformed", "oversized"].includes(error.category)) return error.category;
+  if (!(error instanceof Error)) return "unknown-error";
+  return error.message === nativeUnavailable.message ? "native-unavailable" : "error";
+}
 async function until(predicate, label = "condition", ms = 2500) {
   const deadline = Date.now() + ms;
   while (!predicate()) { assert.ok(Date.now() < deadline, `${label} deadline`); await delay(2); }
@@ -31,10 +38,20 @@ async function fixture(options = {}) {
   let ack = 0, stderr = "";
   session.child.stderr.on("data", chunk => { stderr += chunk; ack += chunk.toString().split("ack\n").length - 1; });
   const messages = [], guards = [], bytes = [];
-  let output;
+  let output, outputObserved, outputFailureAsserted = false;
   function consume(onMessage, onBytes = chunk => bytes.push(chunk.toString())) {
     output = session.consume({ onBytes, onMessage: async (message, current) => { messages.push(message); guards.push(current); await onMessage?.(message, current); } });
-    output.catch(() => {}); return output;
+    // Attach immediately so delayed assertions cannot produce unhandled rejections.
+    outputObserved = output.catch(error => {
+      const kind = errorKind(error);
+      console.warn("[native stdout fixture] output rejected", kind);
+      return kind;
+    });
+    return output;
+  }
+  async function expectOutputFailure(expected) {
+    await assert.rejects(output, expected);
+    outputFailureAsserted = true;
   }
   async function command(text) {
     const next = ack + 1; session.child.stdin.write(`${text}\n`);
@@ -44,11 +61,12 @@ async function fixture(options = {}) {
     session.closeReader();
     if (session.child.pid && session.child.exitCode === null && session.child.signalCode === null) session.child.kill("SIGKILL");
     await Promise.race([session.exited, delay(2000).then(() => { throw new Error("child cleanup deadline"); })]);
-    if (output) await output.catch(() => {});
+    const failure = await outputObserved;
     cleanups.delete(cleanup);
+    if (failure && !outputFailureAsserted) throw new Error(`Unexpected fixture output failure: ${failure}`);
   }
   cleanups.add(cleanup);
-  return { session, messages, guards, bytes, consume, command, cleanup, stderr: () => stderr };
+  return { session, messages, guards, bytes, consume, expectOutputFailure, command, cleanup, stderr: () => stderr };
 }
 try {
   native = createRequire(import.meta.url)(addonPath);
@@ -161,6 +179,19 @@ try {
         await f.cleanup();
       }
     });
+    await check("an unasserted output failure fails cleanup with a bounded category", async () => {
+      const originalWarn = console.warn;
+      const logs = [];
+      const f = await fixture();
+      console.warn = (...args) => logs.push(args);
+      try {
+        f.consume(() => { throw new Error("fixture private callback details"); });
+        await f.command('emit {"callback":true}');
+        await until(() => f.session.isFenced());
+        await assert.rejects(f.cleanup(), { message: "Unexpected fixture output failure: error" });
+        assert.deepEqual(logs, [["[native stdout fixture] output rejected", "error"]]);
+      } finally { console.warn = originalWarn; }
+    });
     await check("native proof and drain failures log bounded categories", async () => {
       const originalWarn = console.warn;
       const logs = [];
@@ -227,7 +258,9 @@ try {
           await f.command('emit {"fault":true}'); await until(() => f.session.isFenced());
         } finally { delete process.env.MATRIX_STDOUT_TEST_FAULT; }
         assert.equal(f.messages.length, 0); assert.equal(f.session.child.exitCode, null);
-        if (fault !== "readerror") {
+        if (fault === "readerror") {
+          await f.expectOutputFailure(nativeUnavailable);
+        } else {
           await f.command('emit {"ordinary":"after-metadata-fault"}');
           await until(() => f.bytes.join("").includes("after-metadata-fault")); assert.equal(f.messages.length, 0);
         }
@@ -235,28 +268,31 @@ try {
       });
     }
     await check("16MiB original parser cap fences without killing or retrying native child", async () => {
-      const f = await fixture(); const output = f.consume(); f.session.child.stdin.write("oversize\n");
-      await until(() => f.session.isFenced(), "oversized frame", 6000); await output.catch(() => {});
+      const f = await fixture(); f.consume(); f.session.child.stdin.write("oversize\n");
+      await until(() => f.session.isFenced(), "oversized frame", 6000);
+      await f.expectOutputFailure({ name: "Error", category: "oversized" });
       assert.deepEqual(f.messages, []); assert.equal(f.session.child.exitCode, null); await f.cleanup();
     });
     await check("malformed JSON and UTF8 fence permanently using original parser", async () => {
       const f = await fixture(); f.consume(); await f.command("emit {malformed}"); await until(() => f.session.isFenced());
+      await f.expectOutputFailure({ name: "Error", category: "malformed" });
       assert.deepEqual(f.messages, []); await f.cleanup();
     });
     await check("invalid UTF8 uses original fatal decoder and permanently fences", async () => {
       const f = await fixture(); f.consume(); await f.command("utf8"); await until(() => f.session.isFenced());
+      await f.expectOutputFailure({ name: "Error", category: "malformed" });
       await f.command('emit {"ordinary":"after-invalid-utf8"}');
       await until(() => f.bytes.join("").includes("after-invalid-utf8")); assert.deepEqual(f.messages, []); await f.cleanup();
     });
     await check("ordinary byte sink failure is reader loss, never native stop or retry", async () => {
-      const f = await fixture(); const output = f.consume(undefined, () => { throw new Error("fixture sink failed"); });
-      await f.command('emit {"sink":true}'); await assert.rejects(output, /fixture sink failed/);
+      const f = await fixture(); f.consume(undefined, () => { throw new Error("fixture sink failed"); });
+      await f.command('emit {"sink":true}'); await f.expectOutputFailure({ name: "Error", message: "fixture sink failed" });
       assert.equal(f.session.isFenced(), true); assert.deepEqual(f.messages, []); assert.equal(f.session.child.exitCode, null); await f.cleanup();
     });
     await check("destroyed actual receiver fences safely without killing native", async () => {
       let pair; const wrapped = { ...Object.fromEntries(["stdoutPair", "stdoutWriterFd", "stdoutReceive", "retainChild", "childAlive", "receive", "close"].map(key => [key, native[key]])), stdoutPair() { pair = native.stdoutPair(); return pair; } };
       const f = await fixture({ native: wrapped }); native.close(pair.receiver);
-      await assert.rejects(f.consume()); assert.equal(f.session.isFenced(), true); assert.equal(f.session.child.exitCode, null); await f.cleanup();
+      f.consume(); await f.expectOutputFailure(nativeUnavailable); assert.equal(f.session.isFenced(), true); assert.equal(f.session.child.exitCode, null); await f.cleanup();
     });
     await check("closed reader yields real native EPIPE; only actual child exit settles lifetime", async () => {
       const f = await fixture(); f.session.closeReader(); assert.equal(f.session.child.exitCode, null);
@@ -282,7 +318,7 @@ try {
     });
     await check("single receiver consumer and explicit reader shutdown", async () => {
       const f = await fixture(); const output = f.consume(); assert.throws(() => f.session.consume({ onMessage: async () => {} }));
-      f.session.closeReader(); await output.catch(() => {}); assert.equal(f.session.isFenced(), true);
+      f.session.closeReader(); await output; assert.equal(f.session.isFenced(), true);
       assert.equal(f.session.child.exitCode, null); await f.cleanup();
     });
     await check("native handle cap close GC and pidfd death primitive", async () => {
@@ -299,13 +335,18 @@ try {
     await check("ordinary Terminal listen accept receive send close regression", async () => {
       const directory = await mkdtemp(join(tmpdir(), "stdout-regression-")); const path = join(directory, "socket");
       const listener = native.listen(path); const { createConnection } = await import("node:net");
-      const socket = createConnection(path); socket.on("error", () => {}); let connection;
+      const socket = createConnection(path);
+      let connection, socketError;
+      socket.on("error", error => {
+        socketError = error;
+        console.warn("[native stdout fixture] socket error", errorKind(error));
+      });
       try {
-        await until(() => { connection ??= native.accept(listener); return !!connection; });
+        await until(() => { assert.ifError(socketError); connection ??= native.accept(listener); return !!connection; });
         socket.write("ordinary"); let received; await until(() => { received ??= native.receive(connection.handle); return !!received; });
         assert.equal(received.data.toString(), "ordinary"); assert.equal(received.writer.pid, process.pid);
         let reply = ""; socket.on("data", chunk => { reply += chunk; }); assert.equal(native.send(connection.handle, Buffer.from("reply")), 5);
-        await until(() => reply === "reply");
+        await until(() => { assert.ifError(socketError); return reply === "reply"; });
       } finally { socket.destroy(); if (connection) native.close(connection.handle); native.close(listener); await rm(directory, { recursive: true, force: true }); }
     });
   }
