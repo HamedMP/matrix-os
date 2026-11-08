@@ -4,6 +4,7 @@ import { createHash } from "node:crypto";
 import { chmodSync, closeSync, mkdtempSync, openSync, readFileSync, renameSync, rmSync, statSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { stripVTControlCharacters } from "node:util";
 
 if (process.platform !== "linux" || !["x64", "arm64"].includes(process.arch)) {
   throw new Error("Terminal attachment entry requires Linux x64 or arm64");
@@ -77,7 +78,10 @@ async function executeCompiler(args, timeout, maxBuffer) {
       killGroup(); boundCleanup();
     });
     child.on("close", () => {
-      if (!failure && (!exited || exitCode !== 0)) failure = new Error("Compiler failed");
+      if (!failure && (!exited || exitCode !== 0)) {
+        const diagnostics = stripVTControlCharacters(Buffer.concat(stderr).subarray(0, 4096).toString("utf8")).trim();
+        failure = new Error(diagnostics ? `Compiler failed:\n${diagnostics}` : "Compiler failed");
+      }
       settle(failure);
     });
   });
