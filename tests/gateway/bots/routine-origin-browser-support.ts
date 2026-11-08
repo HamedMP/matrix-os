@@ -1,6 +1,6 @@
 import { SignJWT, jwtVerify } from "jose";
 import { createClerkAuth } from "../../../packages/platform/src/clerk-auth.js";
-import { authenticatedApprovalProxyProof } from "../../../packages/platform/src/canonical-owner-approval-proxy.js";
+import { authenticatedApprovalProxyProofs } from "../../../packages/platform/src/owner-approval-proofs.js";
 import { createRoutineOriginVerificationRoutes } from "../../../packages/platform/src/routine-origin-proof-routes.js";
 import { buildPlatformVerificationToken } from "../../../packages/platform/src/platform-token.js";
 import { createRoutineOriginPlatformClient } from "../../../packages/gateway/src/bots/routine-origin-platform-client.js";
@@ -24,11 +24,11 @@ export function routineOriginBrowserFixture(ownerId: string) {
       const token = await new SignJWT({ sid: "sess_origin_composition" }).setProtectedHeader({ alg: "HS256" })
         .setSubject(ownerId).setIssuer("fixture-clerk").setExpirationTime("2m").sign(key);
       const path = `/api/chats/${sourceChatId}/routine-origin/${interactionId}/resolve`;
-      const proof = await authenticatedApprovalProxyProof({ request: new Request(`https://app.fixture.test${path}`, {
+      const proofs = await authenticatedApprovalProxyProofs({ request: new Request(`https://app.fixture.test${path}`, {
         method: "POST", headers: { authorization: `Bearer ${token}` }, body: JSON.stringify(body) }),
       method: "POST", path, handle: machine.handle, identity: { source: "auth", userId: ownerId,
         handle: machine.handle, runtimeSlot: machine.runtimeSlot }, machine, clerkAuth, platformSecret: secret });
-      if (typeof proof !== "string") throw new Error("Fixture browser decision was not attested");
-      return proof;
+      if (!Array.isArray(proofs) || proofs.length !== 1) throw new Error("Fixture browser decision was not attested");
+      return proofs[0]!;
     } };
 }

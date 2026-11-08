@@ -23,7 +23,7 @@ function fixture({admitted=true, otherChat=false, live=true, requestId=`req_rout
     if(method!=="GET")throw new Error("Unexpected mutation");
     if(path.startsWith("/api/bot-routines?"))return {items:path.includes("archived=true")?[row]:[],pending:[],nextCursor:null};
     if(path==="/api/bot-routines")return {items:[],pending:[],nextCursor:null};
-    if(path===`/api/bot-routines/${routineId}`)return {routine:row,history:[fire]};
+    if(path===`/api/bot-routines/${routineId}?originVersion=1`)return {routine:row,history:[fire]};
     throw new Error("Unexpected path");
   });
   const base=clientFixture();base.list.mockResolvedValue({enabled:true,agents:live?[{...saved,recipeRef:{recipeId:"writer",version:"1"}}]:[]});
