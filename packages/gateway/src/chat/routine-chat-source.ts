@@ -1,7 +1,10 @@
 import { isDeepStrictEqual } from "node:util";
+import type { Transaction } from "kysely";
 import type { RoutineCliVerifiedInvocation } from "../bots/routine-cli-source.js";
 import { randomBytes } from "node:crypto";
 import type { RoutineSourceProducer, RoutineSourcePolicy } from "../bots/routine-action-source-registry.js";
+import type { ChatDatabase } from "./database.js";
+import { hasNonPrivateChatScope } from "./private-routine-authority.js";
 import { parseCanonicalProviderRunInput, type CanonicalProviderRunInput, type CanonicalProviderRunEvent } from "./provider-adapter.js";
 import type { RoutineFullAccessSourceLease } from "../bots/routine-full-access.js";
 /** Identity comes exclusively from the admitted execute closure. Native mode can narrow, never expand.
@@ -20,7 +23,7 @@ export function createChatRoutineSourceProducer(options: { input: CanonicalProvi
     originCeiling: "exact", revision: generation };
   const source: RoutineSourceProducer["source"] = { ownerId: input.owner.ownerId, computerId: options.computerId, harness: provider === "matrix_pi" ? "pi" : provider, identity: { kind: "chat_run", chatId: input.chatId, runId: input.runId, route: provider === "matrix_pi" ? "managed" : "native" },
     generation, issuedAt: new Date().toISOString(), expiresAt: new Date(Date.now() + 30 * 60_000).toISOString(), actions: ["read", "propose", "control"] };
-  const lease = provider === "claude" && policy.scope === "personal" && policy.permissionMode === "full_access"
+  let lease = provider === "claude" && policy.scope === "personal" && policy.permissionMode === "full_access"
     && policy.interactionMode === "default" ? options.bindFullAccess?.(source, options.signal) : null;
   const producer: RoutineSourceProducer = {
     source,
@@ -28,14 +31,16 @@ export function createChatRoutineSourceProducer(options: { input: CanonicalProvi
     readPolicy: () => ({ ...policy, originCeiling: lease ? "full" : "exact", revision: lease ? `${generation}:full_${lease.revision}` : generation,
       live: options.current() && !options.signal.aborted && (!lease || lease.current()),
       ...(narrowed ? { interactionMode: "plan" as const, originCeiling: "read" as const } : {}) }),
-    async validateWithin(source, trx, _action, invocation) {
+    async validateWithin(source, trx, action, invocation) {
       if (source.generation !== generation || !options.current(invocation) || options.signal.aborted || source.identity.kind !== "chat_run") return false;
+      if (narrowed && action !== undefined && action !== "read") return false;
       // Hold current admission rows through issue/consume. Neither runtimeOwnerId nor model/native IDs supply scope.
       // Canonical Chat mutations acquire Chat before Run. Keep that order across this source boundary.
       const chat = await trx.selectFrom("chats").select("id").where("id", "=", input.chatId)
         .where("owner_id", "=", input.owner.ownerId).where("owner_type", "=", "personal")
         .where("lifecycle", "=", "active").where("collaboration", "is", null).forShare().executeTakeFirst();
       if (!chat) { await lease?.validateWithin(trx); return false; }
+      if (narrowed && await hasNonPrivateChatScope(trx as unknown as Transaction<ChatDatabase>, input.owner, input.chatId)) return false;
       const row = await trx.selectFrom("chat_runs").select(["id", "instance_id", "selection"])
         .where("id", "=", input.runId).where("chat_id", "=", input.chatId).where("turn_id", "=", input.turnId)
         .where("driver_kind", "=", driver).where("permission_mode", "=", input.permissionMode)
@@ -47,5 +52,13 @@ export function createChatRoutineSourceProducer(options: { input: CanonicalProvi
     },
   };
   return { producer, fullAccessTarget: lease?.target, releaseFullAccess: () => lease?.release(),
-    narrowNativeMode(mode?: string) { if (mode === "plan") { narrowed = true; lease?.release(); } } };
+    narrowNativeMode(mode?: string) {
+      if (mode !== "plan" || narrowed) return;
+      narrowed = true;
+      // Only this deliberate downgrade can detach a live lease. A previously
+      // revoked source stays fenced, and the registered target ceiling survives.
+      const wasLive = lease?.current();
+      lease?.release();
+      if (wasLive) lease = null;
+    } };
 }
