@@ -32,8 +32,13 @@ def run(argv, timeout=35, **kwargs):
                              stderr=subprocess.PIPE, start_new_session=True, **kwargs)
     streams = {"stdout": bytearray(), "stderr": bytearray()}
     try:
-        child.stdin.write(payload)
-        child.stdin.close()
+        try:
+            with child.stdin:
+                child.stdin.write(payload)
+        except BrokenPipeError:
+            # Invalid invocations may reject before consuming the stdio probe.
+            # Keep collecting the real exit status and bounded output below.
+            pass
         deadline = time.monotonic() + timeout
         with selectors.DefaultSelector() as selector:
             for name in streams:
