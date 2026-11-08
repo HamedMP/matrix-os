@@ -28,6 +28,22 @@ it("actual admitted Hermes adapter invokes the published CLI/private IPC/HTTP/PG
   expect(JSON.stringify(frames)).not.toMatch(/RoutineCapability|rcli_|fixture-owner-credential|platform-claude-consent|native_[a-f0-9]{48}/);
 }, 20_000);
 
+it("retries an unready child with a fresh routine source and never admits the retired descriptor", async () => {
+  f = await hermesFixture({ intent: { args: ["list"] }, startupTimeouts: 1 });
+  await f.start("chat_hermes_routine_retry");
+  await f.f.canonical.drain();
+  expect(f.children).toHaveLength(2);
+  expect(f.children[0]!.exitCode !== null || f.children[0]!.signalCode !== null).toBe(true);
+  const frames = await f.frames();
+  expect(frames.filter(frame => frame.attempt === "retired" && (frame.rpc || frame.privateResult?.type === "enable"))).toEqual([]);
+  expect(frames.filter(frame => frame.rpc?.method === "prompt.submit")).toHaveLength(1);
+  expect(frames.filter(frame => frame.attempt === "live" && frame.privateResult?.type === "enable")).toHaveLength(1);
+  const result = frames.find(frame => frame.attempt === "live" && frame.privateResult?.type === "result")?.privateResult.result;
+  expect(JSON.parse(result ?? "null")).toMatchObject({ v: 1, ok: true, data: { kind: "list" } });
+  expect(f.httpCalls()).toBe(1);
+  expect(await f.data.db.selectFrom("routine_cli_sources").select("source_id").where("generation", "like", "native_%").execute()).toHaveLength(1);
+}, 20_000);
+
 it.each(["owner", "Chat", "run", "provider"])("rejects mismatched canonical %s without relabeling source", async mismatch => {
   f = await hermesFixture({ intent: { args: ["list"] } });
   const register = f.runtime.registerChat;
