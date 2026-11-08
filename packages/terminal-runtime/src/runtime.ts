@@ -114,6 +114,7 @@ interface AttachmentState {
   handle: ZellijAttachment;
   viewers: Map<string, ViewerState>;
   mouseModes: TerminalMouseModeState;
+  inputFenced?: true;
   scrollRead?: { at: number; ttl: number; pending: boolean; result: Promise<TerminalScrollState | null> };
 }
 
@@ -121,6 +122,7 @@ interface InputQueueState {
   chain: Promise<void>;
   pendingBytes: number;
   lastTouched: number;
+  nativeDrainIncarnation?: string;
 }
 
 interface ObserverState extends ZellijObserver {
@@ -495,6 +497,8 @@ export class TerminalRuntime {
         const workspace = await this.requireRuntimeWorkspace(ref.workspaceId);
         const tab = workspace.tabs[ref.tabId];
         if (!tab || (expectedIncarnation && terminalTabIncarnation(tab) !== expectedIncarnation)) throw new TerminalRuntimeError("not_found");
+        try { await this.fenceNativeInput(ref, tab); }
+        finally { await this.drainTabInput(key); }
         await stopCanonicalNativeHost(this.store, this.nativeHosts, ref);
         const terminalAlreadyExited = tab.status === "exited" || tab.status === "failed";
         let zellijTabId = terminalAlreadyExited ? null : tab.zellijTabId;
@@ -515,7 +519,6 @@ export class TerminalRuntime {
         if (zellijTabId !== null && !this.zellij.closeTab) {
           throw new TerminalRuntimeError("unavailable");
         }
-        await this.drainTabInput(key);
         await this.closeAttachment(key, true);
         if (zellijTabId !== null) {
           await this.zellij.closeTab!(workspace.zellijSessionName, zellijTabId);
@@ -536,10 +539,10 @@ export class TerminalRuntime {
       const tab = workspace.tabs[ref.tabId];
       if (!tab || tab.zellijPaneId === null
         || (expectedIncarnation && terminalTabIncarnation(tab) !== expectedIncarnation)) throw new TerminalRuntimeError("not_found");
-      if (
-        (tab.status !== "running" && tab.status !== "idle") ||
-        !this.zellij.writeToPane
-      ) throw new TerminalRuntimeError("unavailable");
+      const draining = tab.status === "unavailable" && tab.nativeHost?.stopRequested && !tab.nativeHost.managerStopped
+        && this.inputQueues.get(refKey(ref))?.nativeDrainIncarnation === terminalTabIncarnation(tab);
+      if ((!draining && tab.status !== "running" && tab.status !== "idle") || !this.zellij.writeToPane)
+        throw new TerminalRuntimeError("unavailable");
       await this.zellij.writeToPane(workspace.zellijSessionName, tab.zellijPaneId, data);
     });
   }
@@ -579,25 +582,22 @@ export class TerminalRuntime {
   async paneAction(refInput: TerminalRef, actionInput: TerminalPaneAction): Promise<void> {
     const ref = TerminalRefSchema.parse(refInput);
     const action = TerminalPaneActionSchema.parse(actionInput);
-    await this.runWorkspaceMutation(async () => {
-      const workspace = await this.requireRuntimeWorkspace(ref.workspaceId);
-      const tab = workspace.tabs[ref.tabId];
-      if (
-        !tab
-        || tab.zellijTabId === null
-        || tab.zellijPaneId === null
-        || !this.zellij.paneAction
-      ) {
-        throw new Error("Terminal tab unavailable");
-      }
-      if (action.type === "close") await stopCanonicalNativeHost(this.store, this.nativeHosts, ref);
-      await this.zellij.paneAction(
-        workspace.zellijSessionName,
-        tab.zellijTabId,
-        tab.zellijPaneId,
-        action,
-      );
-    });
+    const key = refKey(ref);
+    const release = action.type === "close" ? this.reservePaneClosure(key) : undefined;
+    try {
+      await this.runWorkspaceMutation(async () => {
+        const workspace = await this.requireRuntimeWorkspace(ref.workspaceId);
+        const tab = workspace.tabs[ref.tabId];
+        if (!tab || tab.zellijTabId === null || tab.zellijPaneId === null || !this.zellij.paneAction)
+          throw new Error("Terminal tab unavailable");
+        if (action.type === "close") {
+          try { await this.fenceNativeInput(ref, tab); }
+          finally { await this.drainTabInput(key); }
+          await stopCanonicalNativeHost(this.store, this.nativeHosts, ref);
+        }
+        await this.zellij.paneAction(workspace.zellijSessionName, tab.zellijTabId, tab.zellijPaneId, action);
+      });
+    } finally { release?.(); }
   }
 
   async deletionImpact(workspaceIdInput: string): Promise<{ runningTabs: number; tabs: TerminalTab[] }> {
@@ -616,15 +616,18 @@ export class TerminalRuntime {
       }
       const workspace = await this.requireRuntimeWorkspace(workspaceId);
       if (!this.zellij.deleteSession) throw new TerminalRuntimeError("unavailable");
-      // Without confirmation, the read-only recheck under this mutation proved that no host needs a stop.
-      if (input.confirmTerminate) {
-        for (const tab of Object.values(workspace.tabs)) {
-          await stopCanonicalNativeHost(this.store, this.nativeHosts, { workspaceId, tabId: tab.id });
-        }
-      }
       this.deletingWorkspaceId = workspaceId;
       try {
-        await this.drainWorkspaceInput(workspaceId);
+        const tabs = Object.values(workspace.tabs);
+        // Without confirmation, the read-only recheck proved that no host needs a stop.
+        try {
+          if (input.confirmTerminate) {
+            for (const tab of tabs) await this.fenceNativeInput({ workspaceId, tabId: tab.id }, tab);
+          }
+        } finally { await this.drainWorkspaceInput(workspaceId); }
+        if (input.confirmTerminate) {
+          for (const tab of tabs) await stopCanonicalNativeHost(this.store, this.nativeHosts, { workspaceId, tabId: tab.id });
+        }
         for (const key of [...this.attachments.keys()]) {
           if (key.startsWith(`${workspaceId}:`)) await this.closeAttachment(key, true);
         }
@@ -675,12 +678,14 @@ export class TerminalRuntime {
     await this.sweepStaleViewers();
     const key = refKey(ref);
     let attachment = this.attachments.get(key);
+    if (attachment?.inputFenced) throw new TerminalRuntimeError("unavailable");
     let bootstrap: Awaited<ReturnType<typeof openBufferedAttachment>> | undefined;
     if (!attachment) {
       if (this.attachments.size >= this.maxAttachments) throw new TerminalRuntimeError("capacity");
       const workspace = await this.requireRuntimeWorkspace(ref.workspaceId);
       const tab = workspace.tabs[ref.tabId];
       if (!tab || tab.zellijPaneId === null) throw new TerminalRuntimeError("not_found");
+      if (tab.nativeHost?.stopRequested) throw new TerminalRuntimeError("unavailable");
       const paneId = tab.zellijPaneId;
       const next: AttachmentState = {
         ref,
@@ -1031,6 +1036,7 @@ export class TerminalRuntime {
     }
     const key = refKey(ref);
     this.assertTabAcceptsInput(key);
+    if (this.attachments.get(key)?.inputFenced) throw new TerminalRuntimeError("unavailable");
     let queue = this.inputQueues.get(key);
     if (!queue) {
       if (this.inputQueues.size >= this.maxAttachments * 2) {
@@ -1100,6 +1106,19 @@ export class TerminalRuntime {
     if (count === undefined) return;
     if (count === 1) this.closingPaneTabKeys.delete(key);
     else this.closingPaneTabKeys.set(key, count - 1);
+  }
+
+  /** With admission closed, the existing queue alone can still write to this exact pane incarnation. */
+  private async fenceNativeInput(ref: TerminalRef, tab: TerminalTab): Promise<void> {
+    if (!tab.nativeHost) return;
+    const key = refKey(ref);
+    const attachment = this.attachments.get(key);
+    if (attachment) attachment.inputFenced = true;
+    if (tab.nativeHost.stopRequested) return;
+    const queue = this.inputQueues.get(key);
+    if (queue && (tab.status === "running" || tab.status === "idle"))
+      queue.nativeDrainIncarnation = terminalTabIncarnation(tab);
+    await this.store.fenceNativeHost(ref);
   }
 
   private async drainWorkspaceInput(workspaceId: string): Promise<void> {

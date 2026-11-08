@@ -49,6 +49,58 @@ it.each(["terminateTab", "deleteTab", "deleteWorkspace"] as const)("runtime-owne
   expect(f.host.stop).toHaveBeenCalledOnce(); expect(await f.store.getTab(f.ref)).toMatchObject({ status: "unavailable", exitCode: null });
   expect(f.zellij.closeTab).not.toHaveBeenCalled(); expect(f.zellij.deleteSession).not.toHaveBeenCalled();
 });
+it.each(["terminateTab", "deleteTab", "closePane", "deleteWorkspace"] as const)("%s fences immediately and drains accepted input before stopping native work", async method => {
+  const f = await fixture();
+  const entered = Promise.withResolvers<void>(), release = Promise.withResolvers<void>();
+  const delivered: string[] = [];
+  let stopping = false;
+  f.host.stop.mockImplementation(async () => { stopping = true; return { status: "stopped" }; });
+  const write = vi.fn(async (data: Uint8Array) => {
+    const text = Buffer.from(data).toString();
+    if (text === "first") { entered.resolve(); await release.promise; }
+    if (stopping) throw new Error("Native host stopped before accepted input");
+    delivered.push(text);
+  });
+  vi.mocked(f.zellij.openAttachment).mockResolvedValue({ write, resize: async () => undefined, close: async () => undefined });
+  f.zellij.paneAction = vi.fn(async () => undefined);
+  f.zellij.writeToPane = async (_session, _pane, data) => write(data);
+  const viewer = await f.runtime.attach(f.ref, { viewerId: "writer", send: () => undefined });
+  const first = viewer.write("first");
+  await entered.promise;
+  const second = viewer.write("second");
+  const direct = f.runtime.writeInput(f.ref, "direct", f.tab.incarnation);
+  const operation = method === "deleteWorkspace" ? f.runtime.deleteWorkspace(f.workspace.id, { confirmTerminate: true })
+    : method === "closePane" ? f.runtime.paneAction(f.ref, { type: "close" }) : f.runtime[method](f.ref);
+  const observed = Promise.allSettled([first, second, direct, operation]);
+  try {
+    await vi.waitFor(async () => expect((await f.store.getTab(f.ref))?.nativeHost?.stopRequested).toBe(true));
+    expect(f.host.stop).not.toHaveBeenCalled();
+    await expect(viewer.write("late")).rejects.toMatchObject({ code: "conflict" });
+    release.resolve();
+    await Promise.all([first, second, direct, operation]);
+    expect(delivered).toEqual(["first", "second", "direct"]);
+    expect(f.host.stop).toHaveBeenCalledOnce();
+  } finally { release.resolve(); await observed; }
+});
+
+it("keeps a fenced viewer closed to new input after an unknown stop and retries only the native stop", async () => {
+  const f = await fixture();
+  const write = vi.fn(async () => undefined);
+  vi.mocked(f.zellij.openAttachment).mockResolvedValue({ write, resize: async () => undefined, close: async () => undefined });
+  const viewer = await f.runtime.attach(f.ref, { viewerId: "writer", send: () => undefined });
+  await viewer.write("accepted");
+  f.host.stop.mockResolvedValueOnce({ status: "unknown" });
+  await expect(f.runtime.deleteWorkspace(f.workspace.id, { confirmTerminate: true })).rejects.toMatchObject({ code: "unavailable" });
+  expect(await f.store.getTab(f.ref)).toMatchObject({ status: "unavailable", nativeHost: { stopRequested: true } });
+  expect(f.zellij.deleteSession).not.toHaveBeenCalled();
+  await expect(viewer.write("too late")).rejects.toMatchObject({ code: "unavailable" });
+  await expect(f.runtime.attach(f.ref, { viewerId: "another", send: () => undefined })).rejects.toMatchObject({ code: "unavailable" });
+  await f.runtime.deleteWorkspace(f.workspace.id, { confirmTerminate: true });
+  expect(f.host.stop).toHaveBeenCalledTimes(2);
+  expect(f.zellij.deleteSession).toHaveBeenCalledOnce();
+  expect(write).toHaveBeenCalledOnce();
+});
+
 it("successful manager stop is not a native exit code, while explicit deletion can remove the stopped record", async () => {
   const f = await fixture(); await f.runtime.terminateTab(f.ref);
   expect(f.host.stop).toHaveBeenCalledOnce(); expect(await f.store.getTab(f.ref)).toMatchObject({ status: "unavailable", exitCode: null, nativeHost: { managerStopped: true } });
