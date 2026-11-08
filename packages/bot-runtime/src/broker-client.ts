@@ -110,7 +110,8 @@ function exchange(options: BotBrokerClientOptions, frame: BotBrokerRequest): Pro
 export function createBotBrokerClient(options: BotBrokerClientOptions): BotWorkerBrokerClient {
   const requestIdFactory = options.requestIdFactory ?? randomUUID;
 
-  async function call<T>(action: Record<string, unknown>, resultSchema: z.ZodType<T>, signal?: AbortSignal): Promise<T> {
+  async function call<T>(action: Record<string, unknown>, resultSchema: z.ZodType<T>, callSignal?: AbortSignal): Promise<T> {
+    const signal = options.signal && callSignal ? AbortSignal.any([options.signal, callSignal]) : options.signal ?? callSignal;
     const requestId = requestIdFactory();
     const frame = BotBrokerRequestSchema.safeParse({
       version: 1,
