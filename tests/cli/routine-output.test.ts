@@ -1,9 +1,9 @@
 import { expect, it } from "vitest";
 import { formatRoutineHuman, routineExitCode } from "../../packages/sync-client/src/cli/routine-output.js";
-import type { RoutineCliResult } from "@matrix-os/contracts/routine-cli";
+import { RoutineCliResultSchema, type RoutineCliResult } from "@matrix-os/contracts/routine-cli";
 const id = "rt_" + "a".repeat(24), requestId = "de000000-0000-4000-8000-000000000100";
-const base: Extract<RoutineCliResult, { kind: "receipt" }> = { kind: "receipt", receipt: { operation: "propose", requestId, disposition: "queued", revision: 1, createdAt: "2026-09-27T12:00:00.000Z" }, current: null, approval: null,
-  proposal: { handoff: "pending_approval", revision: 5, approval: null, routine: null } };
+const base = { kind: "receipt", receipt: { operation: "propose", requestId, disposition: "queued", revision: 1, createdAt: "2026-09-27T12:00:00.000Z" }, current: null, approval: null,
+  proposal: { handoff: "pending_approval", revision: 5, approval: null, routine: null } } satisfies Extract<RoutineCliResult, { kind: "receipt" }>;
 it.each(["reserved", "submitting", "canonical_queued", "canonical_accepted", "target_task_claimed"] as const)("handoff %s is admission only, never pending/active", handoff => {
   const text = formatRoutineHuman({ ...base, proposal: { ...base.proposal!, handoff } });
   expect(text).toContain("Queued"); expect(text).not.toContain("Pending human approval"); expect(text).not.toContain(": active");
@@ -26,11 +26,11 @@ it("unknown preserves reconciliation UUID and has explicit retryable-transport e
   expect(formatRoutineHuman(result)).toContain(`routines request ${requestId}`); expect(formatRoutineHuman(result)).toContain("Do not retry the mutation"); expect(routineExitCode(result)).toBe(75);
 });
 it("returns an uncertain exit for an unknown reconciled receipt", () => {
-  const result: Extract<RoutineCliResult, { kind: "receipt" }> = {
+  const result = RoutineCliResultSchema.parse({
     ...base,
-    receipt: { ...base.receipt, disposition: "unknown" },
+    receipt: { ...base.receipt, disposition: "unknown", reconcile: true },
     proposal: undefined,
-  };
+  });
   expect(formatRoutineHuman(result)).toContain("Outcome unknown");
   expect(routineExitCode(result)).toBe(75);
   expect(routineExitCode(base)).toBe(0);
