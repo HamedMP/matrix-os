@@ -28,6 +28,12 @@ previously disabled adapter.
 
 The host grants the managed Pi socket allowance after the broker verifies the current registered interactive run and its mutation capability. Read calls, stale or unregistered runs and other host routes retain their existing transport budgets.
 
+The Terminal socket broker, held host IPC and Gateway binding use the shared
+native callback budget for mutations and the short request budget for reads.
+The socket broker extends the clock only after validating the writer's lineage.
+EOF, trailing data, explicit cancellation and the original source expiry still
+end the wait.
+
 Only `ask` challenges receive the longer lifetime. Automatically allowed/read
 entries keep their existing maximum 120-second decision/accepted-claim fence.
 The existing 30-minute Chat/Terminal source lease is not renewed. A call made late
