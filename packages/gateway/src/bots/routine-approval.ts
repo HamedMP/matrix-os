@@ -1,4 +1,5 @@
-import { initialRoutineChatOrigin } from "./routine-chat-origin-map.js";
+import { claimedRoutineChatOrigin, initialRoutineChatOrigin, routineChatOriginForInteraction } from "./routine-chat-origin-map.js";
+import { hasLiveDirectRoutineOrigin, isCurrentDirectRoutineOrigin, isDirectRoutineTarget } from "./routine-direct-chat-lifecycle.js";
 import { RoutineAuthorizationSchema, routineApprovalDigest, routineSelection, hasLiveRoutineChat, type RoutineAuthorization } from "./routine-authorization.js";
 import { z } from "zod/v4";
 import { BOT_ROUTINE_APPROVAL_PREVIEW_LIMIT, BotRoutineProposalSchema, BotRoutineEditRequestSchema, type BotRoutineProposal } from "@matrix-os/contracts";
@@ -56,6 +57,9 @@ export function createBotRoutineApprovals(deps: {
       grantRevision: binding.subscription.grantRevision,
       definitionRevision: await definitionRevision(binding.ownerId, binding.botId)
     });
+    const direct = isDirectRoutineTarget(binding);
+    const origin = direct ? await claimedRoutineChatOrigin(tx.db, binding, source.computerId) : undefined;
+    if (direct && (!origin || !await isCurrentDirectRoutineOrigin(tx.db, origin))) throw new BotStateError("not_found");
     if (!(await sourceMatches(binding.ownerId, proposal, source))) throw new BotStateError("invalid_input");
     const preview = JSON.stringify({
       proposal,
@@ -118,7 +122,8 @@ export function createBotRoutineApprovals(deps: {
         revision: interaction.revision
       });
       if (await definitionRevision(binding.ownerId, binding.botId) !== source.definitionRevision
-        || !await sourceMatches(binding.ownerId, proposal, source)) throw new BotStateError("invalid_input");
+        || !await sourceMatches(binding.ownerId, proposal, source)
+        || origin && !await isCurrentDirectRoutineOrigin(tx.db, origin)) throw new BotStateError("invalid_input");
       return { interactionId: interaction.interactionId, status: "pending" as const };
   }
   async function authorize(routine: BotRoutine, executor: BotExecutor = deps.db): Promise<boolean> {
@@ -130,7 +135,8 @@ export function createBotRoutineApprovals(deps: {
       || approval.argsHash !== routineApprovalDigest(routine.proposal, source) || approval.account !== source.accountId
       || approval.policyRevision !== source.grantRevision || approval.audience !== "direct") return false;
     if ((await definitionRevision(routine.ownerId, routine.botId)) !== source.definitionRevision) return false;
-    return sourceMatches(routine.ownerId, routine.proposal, source);
+    return await sourceMatches(routine.ownerId, routine.proposal, source)
+      && await hasLiveDirectRoutineOrigin(executor, routine);
   }
   return {
     authorize,
@@ -206,6 +212,12 @@ export function createBotRoutineApprovals(deps: {
         if (toSafeInteger(target.revision) !== source.baseRoutineRevision) throw new BotStateError("revision_conflict");
         if (target.status === "archived") throw new BotStateError("invalid_transition");
       }
+      const direct = isDirectRoutineTarget(interaction);
+      const origin = direct ? await routineChatOriginForInteraction(tx.db, interaction) : undefined;
+      if (direct && (!origin || origin.computerId !== source.computerId
+        || tx.routineOriginDecision?.interactionId !== interaction.interactionId
+        || tx.routineOriginDecision.sourceChatId !== origin.sourceChatId
+        || !await isCurrentDirectRoutineOrigin(tx.db, origin))) throw new BotStateError("not_found");
       // Registry/source reads do not perform provider I/O. Confirmation and
       // inherited sharing serialize on the Chat lock, using durable scope authority.
       if (decision === "approve" && ((await definitionRevision(interaction.ownerId, interaction.botId)) !== source.definitionRevision
@@ -235,9 +247,9 @@ export function createBotRoutineApprovals(deps: {
       const nextFireAt = nextBotRoutineFire(proposal.schedule, at);
       if (!nextFireAt) throw new BotStateError("invalid_input");
       const repository = createBotRoutinesRepository(tx.db);
-      const origin = source.routineId ? undefined : await initialRoutineChatOrigin(tx.db, interaction);
+      const initialOrigin = source.routineId ? undefined : origin ?? await initialRoutineChatOrigin(tx.db, interaction);
       const data = {
-        ...(origin ? { origin: { computerId: origin.computerId, requestId: origin.requestId } } : {}),
+        ...(initialOrigin ? { origin: { computerId: initialOrigin.computerId, requestId: initialOrigin.requestId } } : {}),
         ownerId: interaction.ownerId,
         botId: interaction.botId,
         chatId: interaction.chatId,

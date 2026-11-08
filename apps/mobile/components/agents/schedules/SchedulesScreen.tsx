@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { Alert, ScrollView, Text, View } from "react-native";
-import type { BotInteraction, BotRoutineCenterItem, BotRoutineCenterResponse, BotRoutineDetailResponse, ResolveBotInteractionRequest, ResolveBotInteractionResponse } from "@matrix-os/contracts";
+import { isRoutineDirectBotId, type BotInteraction, type BotRoutineCenterItem, type BotRoutineCenterResponse, type BotRoutineDetailResponse, type ResolveBotInteractionRequest, type ResolveBotInteractionResponse } from "@matrix-os/contracts";
 import type { BotRoutineClient } from "@matrix-os/ui/bot-routine-client";
 import { routineTaskChat, routineScheduleCopy, routineStatusLabel as status, routineNextRun } from "@matrix-os/ui/bot-routine-presentation";
 import { TabScreen } from "@/components/shell/TabScreen";
@@ -129,7 +129,7 @@ export function SchedulesScreen({ api, resolve, onBack, onOpenChat, onNewSchedul
         <Text accessibilityRole="header" style={styles.heading}>{current.proposal.name}</Text>
         <Text style={styles.text}>{current.proposal.prompt}</Text>
         <Text style={styles.note}>{`${status(current)} · Revision ${current.revision}`}</Text>
-        <Text style={styles.note}>{`Bot: ${current.botId} · Computer: ${current.computerId ?? "Unavailable"}`}</Text>
+        <Text style={styles.note}>{`${isRoutineDirectBotId(current.botId) ? "Matrix Schedules" : `Bot: ${current.botId}`} · Computer: ${current.computerId ?? "Unavailable"}`}</Text>
         <Text style={styles.text}>{`${routineScheduleCopy(current.proposal.schedule).frequency} · ${routineScheduleCopy(current.proposal.schedule).timezone}`}</Text>
         <Text style={styles.note}>{`Next run: ${routineNextRun(current)}`}</Text>
         {current.status !== "archived" ? <View style={styles.row}>
@@ -141,7 +141,7 @@ export function SchedulesScreen({ api, resolve, onBack, onOpenChat, onNewSchedul
           ])} />
         </View> : null}
         {taskChat && onOpenChat ? <Button label={taskChat.label} variant="text" disabled={busy} onPress={() => void openHistory(taskChat.chatId, current.originAvailable && current.originChatId === taskChat.chatId ? undefined : current.botId)} /> : null}
-        {current.originChatId && !current.originAvailable ? <Text style={styles.note}>Source Chat unavailable.</Text> : null}
+        {(current.originChatId || isRoutineDirectBotId(current.botId)) && !current.originAvailable ? <Text style={styles.note}>Source Chat unavailable.</Text> : null}
         {editing && current.status !== "archived" ? <ScheduleEditor key={current.routineId} routine={current} api={api} resolve={resolve}
           actionsAvailable={fresh && !busy} pending={data.pending} pendingRead={pendingRead} getReadSequence={() => listRead.current}
           onRefresh={refreshAll} onDone={() => { if (alive.current) setEditing(false); }} /> : null}
@@ -152,7 +152,7 @@ export function SchedulesScreen({ api, resolve, onBack, onOpenChat, onNewSchedul
       {data.items.map(item => <View key={item.routineId} style={styles.card}>
         <Button label={item.proposal.name} variant="text" onPress={() => void view(item.routineId)} />
         <Text style={styles.text}>{`${status(item)} · ${routineScheduleCopy(item.proposal.schedule).frequency}`}</Text>
-        <Text style={styles.note}>{`${routineScheduleCopy(item.proposal.schedule).timezone} · Bot ${item.botId} · ${item.computerId ?? "Computer unavailable"}`}</Text>
+        <Text style={styles.note}>{`${routineScheduleCopy(item.proposal.schedule).timezone} · ${isRoutineDirectBotId(item.botId) ? "Matrix Schedules" : `Bot ${item.botId}`} · ${item.computerId ?? "Computer unavailable"}`}</Text>
         <Text style={styles.note}>{`Next run: ${routineNextRun(item)}`}</Text>
         {item.lastFire ? <Text style={styles.note}>{`Last run: ${item.lastFire.status} · ${date(item.lastFire.scheduledFor)}`}</Text> : null}
       </View>)}

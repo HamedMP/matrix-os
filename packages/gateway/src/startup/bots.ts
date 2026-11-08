@@ -2,6 +2,7 @@ import { bootstrapCollaborationDatabase } from "../collaboration/database.js";
 import { createRoutineOriginStartup, type RoutineOriginStartup } from "./routine-origin.js";
 import { createRoutineCliRuntime, type RoutineCliRuntime } from "../bots/routine-cli-runtime.js";
 import { createRoutineCliDestinationService } from "../bots/routine-cli-destination-service.js";
+import { createRoutineDirectChatContexts } from "../bots/routine-direct-chat-contexts.js";
 import {createBotRoutineApprovals} from "../bots/routine-approval.js";
 import {createBotRoutineExecution,type BotRoutineExecution} from "../bots/routine-execution.js";
 import {BotStateError} from "../bots/repositories/shared.js";
@@ -371,6 +372,8 @@ export async function startBots(options: {
   const routineCli = options.routineActionPlatform && options.computerId && options.configuredOwnerIds?.length
     ? createRoutineCliRuntime({ db, computerId: options.computerId, configuredOwnerIds: options.configuredOwnerIds,
       agents: options.agents, repository: options.repository, transact, approvals: routineApprovals, control: routines, registry,
+      directChatContexts: createRoutineDirectChatContexts({ db, agents: options.agents, repository: options.repository,
+        ensureWorkspace: botId => ensureBotWorkspace(options.homePath, botId), now: options.now }),
       platform: options.routineActionPlatform, now: options.now }) : undefined;
   recoveryRegistry = registry;
   let brokerTool: import('../bots/broker-actions.js').BotBrokerActions['callTool'] = async () => { throw new Error('Bot broker not registered'); };
@@ -405,6 +408,7 @@ export async function startBots(options: {
   const inputHistory = createBotInputHistoryReader(options.repository);
   const orchestrator = createBotTaskOrchestrator({
     routineProposals: routineCli?.proposals,
+    ...(chatgptPlanPeers ? { resolveRoutineProposalRoute: (ownerId: string, model: string) => chatgptPlanPeers.resolveRoutineProposal(ownerId, model) } : {}),
     inputHistory,
     homePath: options.homePath, expectedOwnerId: options.runtimeOwnerId, assertSource: revalidateSource,
     ...(isolatedChat ? { isolatedChat } : {}),

@@ -1,19 +1,23 @@
 import { sql } from "kysely";
-import { z } from "zod/v4";
-import { RoutineCliRememberTargetSchema } from "@matrix-os/contracts";
-import { RoutineCliScopeSchema, routineCliBindingTimestamp } from "./repositories/routine-cli-preferences.js";
+import { routineCliBindingTimestamp } from "./repositories/routine-cli-preferences.js";
+import { RoutineCliResolvedTargetSchema } from "./routine-cli-targets.js";
+import { parseJson } from "../chat/records.js";
+import { isRoutineDirectChatId, isRoutineDirectBotId } from "./routine-direct-chat-identity.js";
 import { hasNonPrivateChatScope } from "../chat/private-routine-authority.js";
 import { BotStateError, type BotExecutor } from "./repositories/shared.js";
 
-const snapshot = RoutineCliScopeSchema.extend({
-  botId: RoutineCliRememberTargetSchema.shape.botId, chatId: RoutineCliRememberTargetSchema.shape.chatId,
-  bindingCreatedAt: z.iso.datetime({ offset: true }), preferenceRevision: z.number().int().positive(),
-}).strict();
-export function acceptedBinding(raw: unknown, ownerId: string, computerId: string, botId: string, chatId: string) {
-  const parsed = snapshot.safeParse(raw);
-  const target = parsed.success ? parsed.data : undefined;
-  return target?.ownerId === ownerId && target.computerId === computerId && target.botId === botId && target.chatId === chatId
-    ? target.bindingCreatedAt : undefined;
+/** Match the accepted target variant to the actual receipt origin. Legacy receipts never authorize
+ * a reserved scheduler identity, even if their owner, destination and binding timestamp match. */
+export function acceptedRoutineOriginTarget(raw: unknown, ownerId: string, computerId: string, botId: string, chatId: string, sourceChatId: string) {
+  const parsed = RoutineCliResolvedTargetSchema.safeParse(parseJson(raw));
+  if (!parsed.success) return;
+  const target = parsed.data;
+  if (target.ownerId !== ownerId || target.computerId !== computerId || target.botId !== botId || target.chatId !== chatId
+    || sourceChatId === chatId) return;
+  if ("purpose" in target) {
+    if (target.sourceChatId !== sourceChatId || !isRoutineDirectChatId(chatId) || !isRoutineDirectBotId(botId)) return;
+  } else if (isRoutineDirectChatId(chatId) || isRoutineDirectBotId(botId)) return;
+  return target;
 }
 
 export async function boundOriginQueries(db: BotExecutor) {
@@ -28,10 +32,12 @@ export async function beginOriginTransaction(db: BotExecutor, ownerId: string) {
   await sql`SELECT pg_advisory_xact_lock(hashtextextended(${"routine-chat-origin:" + ownerId},0))`.execute(db);
 }
 
+export type RoutineOriginTargetLock = false | "ordered" | "recheck";
+
 /** Follow canonical approval's binding → Chat rowmark order. The parent lock fences FK inserts,
  * and locking removed memberships also fences in-place restorations. */
 export async function hasAcceptedBinding(db: BotExecutor, ownerId: string, chatId: string, botId: string, bindingCreatedAt: string,
-  lock: false | "ordered" | "recheck" = "ordered") {
+  lock: RoutineOriginTargetLock = "ordered") {
   const locked = lock && await sql<{ count: string }>`WITH locked AS MATERIALIZED (
     SELECT 1 FROM bot_chat_bindings WHERE chat_id=${chatId} ORDER BY owner_id,bot_id
     FOR SHARE ${lock === "recheck" ? sql`NOWAIT` : sql``}

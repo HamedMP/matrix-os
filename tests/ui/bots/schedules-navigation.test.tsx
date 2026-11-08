@@ -375,3 +375,17 @@ it("links to the existing Bot Chat when the recorded source Chat is unavailable"
   fireEvent.click(screen.getByRole("button", {name: "Open Bot Chat"}));
   await waitFor(() => expect(open).toHaveBeenCalledExactlyOnceWith(routine.chatId));
 });
+
+it("keeps a Chat-owned schedule's internal execution Chat out of Schedules navigation", async () => {
+  const base = clientFixture(), open = vi.fn();
+  const current = {...routine, botId: `bot_routine${"c".repeat(32)}`, originChatId: "chat_source", originAvailable: false};
+  const api = {list: vi.fn(async () => ({items: [current], pending: [], nextCursor: null})),
+    detail: vi.fn(async () => ({routine: current, history: []})), review: vi.fn(), control: vi.fn()};
+  render(<ScheduleCenter client={{...base, bots: {routines: api}} as unknown as ChatAgentClient} onClose={vi.fn()} onOpenBotChat={open}/>);
+  fireEvent.click(await screen.findByRole("button", {name: "View Morning brief"}));
+  expect(await screen.findByText("Source Chat unavailable.")).toBeTruthy();
+  expect(screen.queryByRole("button", {name: "Open Bot Chat"})).toBeNull();
+  expect(screen.queryByRole("button", {name: "Open task Chat"})).toBeNull();
+  expect(screen.queryByText(/Private Bot/)).toBeNull();
+  expect(open).not.toHaveBeenCalled();
+});

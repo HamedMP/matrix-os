@@ -8,7 +8,7 @@ import { createBotTasksRepository, type BotTask } from "./repositories/tasks.js"
 /** One transaction decides whether this message continues a waiting task. */
 export async function beginBotTask(tx: BotStateTransaction, input: {
   ownerId: string; botId: string; chatId: string; runId: string; now: string; text: string; backgroundTaskId?: string;
-}, trusted?: { beginRoutineProposal?: RoutineCliProposalRuntime["beginWithin"] }): Promise<{ task: BotTask; continued: boolean }> {
+}, trusted?: { beginRoutineProposal?: RoutineCliProposalRuntime["beginWithin"] }): Promise<{ task: BotTask; continued: boolean; routineProposalModel?: string }> {
   const tasks = createBotTasksRepository(tx.db);
   const admitted = await tx.db.selectFrom("chat_runs").innerJoin("chats", "chats.id", "chat_runs.chat_id")
     .innerJoin("chat_turns as turn", "turn.id", "chat_runs.turn_id")

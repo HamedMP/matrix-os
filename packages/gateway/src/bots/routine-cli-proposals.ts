@@ -22,7 +22,7 @@ import { routineOutcomeDiagnostic } from "./routine-outcome-diagnostic.js";
 
 export interface RoutineCliProposalTaskInput { ownerId: string; botId: string; chatId: string; runId: string; text: string; now: string }
 export interface RoutineCliProposalRuntime {
-  beginWithin(tx: BotStateTransaction, input: RoutineCliProposalTaskInput): Promise<{ task: BotTask; continued: false }>;
+  beginWithin(tx: BotStateTransaction, input: RoutineCliProposalTaskInput): Promise<{ task: BotTask; continued: false; routineProposalModel?: string }>;
   consume(binding: BotRuntimeBinding, signal: AbortSignal): Promise<BotTurnResult | undefined>;
   recover(input: { ownerId: string; taskId: string; chatId?: string; runId?: string }): Promise<boolean>;
 }
@@ -45,7 +45,7 @@ export function createRoutineCliProposals(deps: RoutineCliProposalDependencies) 
     deps.canonical?.repository?.get, deps.canonical?.repository?.findTurnAdmission, deps.canonical?.repository?.findQueuedAdmission,
     deps.canonical?.orchestrator?.admitTurn, deps.canonical?.orchestrator?.enqueueQueuedTurn]
     .some(dependency => typeof dependency !== "function")) throw new RoutineCliError("unavailable");
-  const admit = createBotContinuationAdmitter(deps.canonical), now = () => (deps.now?.() ?? new Date()).toISOString();
+  const admit = createBotContinuationAdmitter(deps.canonical, "proposal"), now = () => (deps.now?.() ?? new Date()).toISOString();
   const requireReceipt = async (requestId: string, tx: BotStateTransaction): Promise<RoutineCliRequestRecord> => {
     const receipt = await ledger.get(scope, requestId, tx.db);
     if (!receipt || receipt.operation.operation !== "propose" || receipt.target.ownerId !== scope.ownerId || receipt.target.computerId !== scope.computerId) throw new RoutineCliError("permission_denied");
@@ -132,6 +132,8 @@ export function createRoutineCliProposals(deps: RoutineCliProposalDependencies) 
     const found = await resolveRun(input, tx);
     if (!found || !["accepted", "running"].includes(found.run.status) || input.botId !== found.receipt.target.botId || input.text !== routineCliProposalInput(found.receipt).text) throw new RoutineCliError("permission_denied");
     const receipt = freezeIntent(found.receipt);
+    const routineProposalModel = "purpose" in receipt.target && receipt.operation.operation === "propose"
+      ? receipt.operation.proposal.selection.model : undefined;
     return deps.sources.validateAcceptedWithin(tx.db as Transaction<OwnerBotDatabase>, receipt, async () => {
       await lockRoutineCliRequest(tx.db as Transaction<OwnerBotDatabase>, scope, receipt.requestId);
       const dispatch = await dispatches.get(scope, receipt.requestId, tx.db, true);
@@ -142,7 +144,7 @@ export function createRoutineCliProposals(deps: RoutineCliProposalDependencies) 
       const task = await tasks.transition({ ownerId: input.ownerId, taskId: queued.taskId, baseRevision: queued.revision, to: "running", runId: input.runId, now: input.now }, tx.db);
       await dispatches.advance(dispatch, { stage: "target_task_claimed", task_id: task.taskId, run_id: input.runId }, now(), tx.db);
       await tx.publish(task.chatId, "bot.task.updated", { taskId: task.taskId, chatId: task.chatId, agentId: task.botId, status: task.status, revision: task.revision });
-      return { task, continued: false as const };
+      return { task, continued: false as const, ...(routineProposalModel ? { routineProposalModel } : {}) };
     });
   };
   const consume: RoutineCliProposalRuntime["consume"] = async (binding, signal) => {

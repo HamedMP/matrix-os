@@ -1,6 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { Text, TextInput, View } from "react-native";
-import { BotRoutineEditRequestSchema, type BotInteraction, type BotRoutineCenterItem, type BotRoutineSchedule } from "@matrix-os/contracts";
+import { BotRoutineEditRequestSchema, isRoutineDirectBotId, type BotInteraction, type BotRoutineCenterItem, type BotRoutineSchedule } from "@matrix-os/contracts";
 import type { BotRoutineClient } from "@matrix-os/ui/bot-routine-client";
 import { routineScheduleCopy } from "@matrix-os/ui/bot-routine-presentation";
 import { useRoutineReviewClosed } from "@matrix-os/ui/bot-routine-review";
@@ -51,7 +51,10 @@ export function ScheduleEditor({ routine, api, resolve, actionsAvailable, pendin
       <Text style={styles.text}>{`Current saved task: ${routine.proposal.name} — ${routine.proposal.prompt}`}</Text>
       <Text style={styles.note}>{`Saved timing: ${routineScheduleCopy(routine.proposal.schedule).frequency}`}</Text>
     </View> : null}
-    {review ? <>
+    {review && isRoutineDirectBotId(routine.botId) ? <>
+      <Text accessibilityRole="alert" style={styles.note}>Review these changes in the source Chat.</Text>
+      <Button label="Return to draft" variant="outline" onPress={() => setReview(null)} />
+    </> : review ? <>
       <PendingInteraction key={review.interactionId} interaction={currentReview ?? review} currentRoutineRevision={routine.revision}
         actionsAvailable={actionsAvailable && !missing} onResolve={async (_id, input) => {
           inFlight.current = true; setBusy(true);
