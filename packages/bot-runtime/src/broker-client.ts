@@ -28,6 +28,8 @@ const MAX_REPLY_BYTES = BOT_BROKER_MAX_FRAME_BYTES;
 const DEFAULT_TIMEOUT_MS = 30_000;
 // Gateway: up to ten minutes for exact human approval, then 90s host work.
 const GITHUB_DEVELOPER_TIMEOUT_MS = 10 * 60_000 + 90_000 + 35_000;
+// The Gateway still caps native execution at 120 seconds. Leave time for preflight and the checkpoint reply.
+const NATIVE_TASK_REPLY_TIMEOUT_MS = 150_000;
 
 export class BotBrokerError extends Error {
   constructor(readonly code: BotToolErrorCode) {
@@ -129,8 +131,12 @@ export function createBotBrokerClient(options: BotBrokerClientOptions): BotWorke
     const longJevOperation = tool?.capability === "jev.inbox" && ["evaluate", "batch_next"].includes(tool.args.operation);
     const browserPause = tool?.capability === "browser.action";
     const githubDeveloper = tool?.capability === "github.developer";
-    const raw = await exchange(options.timeoutMs === undefined && (waitsForApproval || longJevOperation || browserPause || githubDeveloper)
-      ? { ...options, timeoutMs: githubDeveloper ? GITHUB_DEVELOPER_TIMEOUT_MS : browserPause ? SHARED_BROWSER_ACTION_DEADLINE_MS + 30_000 : 10 * 60_000 + 35_000 } : options, frame.data, signal, githubDeveloper);
+    const nativeTask = tool?.capability === "agent.task";
+    const raw = await exchange(options.timeoutMs === undefined && (waitsForApproval || longJevOperation || browserPause || githubDeveloper || nativeTask)
+      ? { ...options, timeoutMs: githubDeveloper ? GITHUB_DEVELOPER_TIMEOUT_MS
+        : nativeTask ? NATIVE_TASK_REPLY_TIMEOUT_MS
+        : browserPause ? SHARED_BROWSER_ACTION_DEADLINE_MS + 30_000 : 10 * 60_000 + 35_000 }
+      : options, frame.data, signal, githubDeveloper);
     const reply = BotBrokerResponseSchema.safeParse(raw);
     if (!reply.success || reply.data.requestId !== requestId) throw new BotBrokerError("unavailable");
     if (!reply.data.ok) throw new BotBrokerError(reply.data.code);

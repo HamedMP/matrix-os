@@ -11,7 +11,7 @@ const cleanups: Array<() => void> = [];
 
 afterEach(() => { for (const cleanup of cleanups.splice(0)) cleanup(); });
 
-function broker(reply: (frame: Record<string, unknown>) => string | null): { socketPath: string; frames: Record<string, unknown>[] } {
+function broker(reply: (frame: Record<string, unknown>) => string | null, responseDelayMs = 0): { socketPath: string; frames: Record<string, unknown>[] } {
   const dir = mkdtempSync(join(tmpdir(), "bot-broker-"));
   const socketPath = join(dir, "broker.sock");
   const frames: Record<string, unknown>[] = [];
@@ -26,7 +26,10 @@ function broker(reply: (frame: Record<string, unknown>) => string | null): { soc
       const frame = JSON.parse(buffered.slice(0, newline)) as Record<string, unknown>;
       frames.push(frame);
       const response = reply(frame);
-      if (response !== null) socket.end(`${response}\n`);
+      if (response === null) return;
+      const send = () => socket.end(`${response}\n`);
+      if (responseDelayMs) setTimeout(send, responseDelayMs);
+      else send();
     });
   });
   server.listen(socketPath);
@@ -135,6 +138,27 @@ describe("bot broker client", () => {
       expect(timeout.mock.calls.at(-1)?.[0]).toBe(30_000);
       await client(socketPath, 1000).tool({ toolCallId: "call_override", capability: "browser.action", args: { action: "status" } });
       expect(timeout.mock.calls.at(-1)?.[0]).toBe(1000);
+    } finally { timeout.mockRestore(); }
+  });
+  it("waits for the delegated task reply beyond the ordinary socket deadline", async () => {
+    const { socketPath } = broker(frame => (frame.tool as { toolCallId: string }).toolCallId === "call_task"
+      ? JSON.stringify({ version: 1, requestId: REQUEST_ID, ok: true,
+        result: { ok: true, content: [{ type: "text", text: "native task completed" }] } })
+      : null, 40);
+    const setTimeout = Socket.prototype.setTimeout;
+    const timeout = vi.spyOn(Socket.prototype, "setTimeout").mockImplementation(function (this: Socket, ms, callback) {
+      return setTimeout.call(this, ms === 30_000 ? 10 : ms, callback);
+    });
+    try {
+      const worker = createBotBrokerClient({ socketPath, runtimeHandle: RUNTIME, executionGeneration: "3", runId: "run_abc", requestIdFactory: () => REQUEST_ID });
+      const task = { toolCallId: "call_task", capability: "agent.task", args: { prompt: "Use the delegated native task" } } as const;
+      await expect(worker.tool(task)).resolves.toMatchObject({ ok: true });
+      expect(timeout.mock.calls.at(-1)?.[0]).toBe(150_000);
+      await expect(worker.tool({ toolCallId: "call_read", capability: "artifact.read", args: { relPath: "fixture.txt" } }))
+        .rejects.toMatchObject({ code: "timeout" });
+      expect(timeout.mock.calls.at(-1)?.[0]).toBe(30_000);
+      await expect(client(socketPath, 10).tool({ ...task, toolCallId: "call_override" })).rejects.toMatchObject({ code: "timeout" });
+      expect(timeout.mock.calls.at(-1)?.[0]).toBe(10);
     } finally { timeout.mockRestore(); }
   });
   it("allows the bounded Jev evaluation deadline without widening ordinary reads or explicit overrides", async () => {
