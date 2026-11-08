@@ -201,18 +201,6 @@ export async function openDesktopProviderAgentSetup(
   });
 }
 
-export async function openDesktopGithubDeveloperSetup(
-  api: ApiClient,
-  isIdentityCurrent: () => boolean,
-): Promise<boolean> {
-  if (!isIdentityCurrent()) return false;
-  const session = await useShellSessions.getState().create(api, {
-    cmd: "matrix-github-developer-login",
-  });
-  if (!session || !isIdentityCurrent()) return false;
-  return openExistingProviderTerminalSession(api, session.name, isIdentityCurrent);
-}
-
 export async function openDesktopGithubDeveloperDisconnect(
   api: ApiClient,
   account: string,

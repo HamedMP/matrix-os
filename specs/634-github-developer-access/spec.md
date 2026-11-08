@@ -127,16 +127,20 @@ The card reports readiness for the selected computer. Its setup and status
 remain independent of any existing GitHub connection.
 
 Show **Connect** for missing setup and **Finish setup** for incomplete setup.
-Open the same owner Terminal command from either action once Settings permissions
-are confirmed. When ready, keep the same compact card and offer **Disconnect**
-to authorized owners. After confirmation, open the selected owner's Terminal
-to sign out of GitHub CLI on that computer. Existing SSH keys and Git commit
-identity stay available, so direct SSH Git operations may still work. Sign
-out the GitHub account shown in the confirmation. Recheck actual status
-after returning from Terminal.
-Retry failed status or permission checks from the card. Electron also retries
-a failed Terminal handoff there. Web uses its existing Terminal recovery path.
-Discard results from a previously selected computer.
+After confirming writable Settings on the selected computer, open the shared
+GitHub Developer dialog. Show the one-time code, **Copy**, and **Open GitHub**
+once the device flow is waiting for browser authorization. Use the fixed
+`https://github.com/login/device` page. Poll the owner-bound operation and
+refresh canonical status when setup settles. Dismissing the dialog cancels the
+attempt. Discard late responses and clear transient codes on a computer change.
+
+When ready, keep the compact card and offer **Disconnect** to authorized owners.
+After confirmation, open the selected owner's Terminal to sign out the GitHub
+account shown in the confirmation. Existing SSH keys and Git identity stay
+available. Recheck status after returning from Terminal.
+
+Retry failed status, permission, or setup checks from the card. An unavailable
+Settings setup shows a recoverable error on the selected computer.
 
 ## Acceptance And Tests
 

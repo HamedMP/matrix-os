@@ -6,7 +6,7 @@
 // the HTTPS-only shell:open-external bridge and status polls go through the
 // typed ApiClient (bearer injected by the trusted core at the network layer).
 import React from "react";
-import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   IntegrationsSettingsSection,
@@ -113,10 +113,27 @@ describe("desktop integrations settings section", () => {
   });
 
   it("keeps the catalog entry usable when legacy GitHub is unavailable and scopes setup to the selected computer", async () => {
+    HTMLDialogElement.prototype.showModal = function () { this.setAttribute("open", ""); };
+    HTMLDialogElement.prototype.close = function () { this.removeAttribute("open"); };
     const pendingCatalog = makeApi({ getError: (path) => path.endsWith("/available") ? new AppError("notFound") : null });
+    const setupId = "016d31b0-50d7-4dca-ae0d-b6083bdcd219";
+    let ready = false;
     const runtime = {
       get: vi.fn(async (path: string) => {
-        if (path === "/api/github/status") return { installed: true, authenticated: false, user: null };
+        if (path === `/api/github/setup/${setupId}`) {
+          ready = true;
+          return { id: setupId, state: "succeeded" };
+        }
+        if (path === "/api/github/status") return {
+          installed: true, authenticated: ready, user: ready ? "octocat" : null,
+          gitProtocol: ready ? "ssh" : null, sshStatus: ready ? "verified" : "setup_required",
+          commitIdentity: { status: ready ? "ready" : "missing", label: ready ? "Octocat" : null },
+          ready,
+        };
+        throw new AppError("notFound");
+      }),
+      post: vi.fn(async (path: string) => {
+        if (path === "/api/github/setup") return { id: setupId, state: "awaiting_authorization", deviceCode: "ABCD-EFGH" };
         throw new AppError("notFound");
       }),
     };
@@ -124,7 +141,6 @@ describe("desktop integrations settings section", () => {
     vi.spyOn(providerActions, "createDesktopProviderSettingsTransport").mockReturnValue({
       getSnapshot: vi.fn().mockResolvedValue({ access: { mode: "writable" } }),
     } as never);
-    const setup = vi.spyOn(providerActions, "openDesktopGithubDeveloperSetup").mockResolvedValue(true);
     useConnection.setState({
       api: { ...pendingCatalog, forRuntime } as never,
       runtimeSlot: "preview",
@@ -137,7 +153,13 @@ describe("desktop integrations settings section", () => {
     expect(forRuntime).toHaveBeenCalledWith("preview");
     expect(runtime.get).toHaveBeenCalledWith("/api/github/status", expect.objectContaining({ cache: "no-store" }));
     fireEvent.click(connect);
-    await waitFor(() => expect(setup).toHaveBeenCalledWith(runtime, expect.any(Function)));
+    const dialog = within(await screen.findByRole("dialog", { name: "Connect GitHub Developer" }));
+    expect(await dialog.findByText("ABCD-EFGH")).toBeTruthy();
+    fireEvent.click(dialog.getByRole("button", { name: "Open GitHub" }));
+    expect(window.operator?.invoke).toHaveBeenCalledWith("shell:open-external", { url: "https://github.com/login/device" });
+    expect(runtime.post).toHaveBeenCalledExactlyOnceWith("/api/github/setup", {}, expect.objectContaining({ cache: "no-store" }));
+    expect(await screen.findByLabelText("GitHub Developer ready", {}, { timeout: 3_000 })).toBeTruthy();
+    expect(runtime.get).toHaveBeenCalledWith(`/api/github/setup/${setupId}`, expect.objectContaining({ cache: "no-store" }));
     expect(pendingCatalog.post).not.toHaveBeenCalledWith("/api/integrations/connect", expect.anything());
   });
 

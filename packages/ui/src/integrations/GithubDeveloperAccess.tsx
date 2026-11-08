@@ -5,6 +5,7 @@ import { Button } from "../Button.js";
 import { Dialog } from "../Dialog.js";
 import { DialogFooter } from "../DialogFooter.js";
 import { DialogTitle } from "../DialogTitle.js";
+import { GithubDeveloperSetupDialog, useGithubDeveloperSetup, type GithubDeveloperSetupClient } from "./GithubDeveloperSetupDialog.js";
 import type { IntegrationRowPresentation } from "./IntegrationMarketplace.js";
 
 const MAX_ACCOUNT_LABEL_LENGTH = 128;
@@ -26,10 +27,9 @@ export interface GithubDeveloperAccessStatus {
   errorCode: string | null;
 }
 
-export interface GithubDeveloperAccessClient {
+export interface GithubDeveloperAccessClient extends GithubDeveloperSetupClient {
   status(signal: AbortSignal): Promise<unknown>;
   setupAccess(signal: AbortSignal): Promise<ProviderSettingsAccess>;
-  startSetup(): Promise<boolean>;
   startDisconnect?(account: string, signal: AbortSignal): Promise<boolean>;
 }
 
@@ -164,12 +164,14 @@ function GithubDeveloperAccessForIdentity({
   const [refreshRevision, setRefreshRevision] = useState(0);
   const [status, setStatus] = useState<GithubDeveloperAccessStatus | null>(null);
   const [statusFailed, setStatusFailed] = useState(false);
-  const [setupAccess, setSetupAccess] = useState<"checking" | "allowed" | "setup_only" | "denied" | "unavailable">("checking");
-  const [setupPending, setSetupPending] = useState(false);
-  const [failedOperation, setFailedOperation] = useState<"setup" | "disconnect" | null>(null);
+  const [setupAccess, setSetupAccess] = useState<"checking" | "allowed" | "denied" | "unavailable">("checking");
+  const [disconnectPending, setDisconnectPending] = useState(false);
+  const [disconnectFailed, setDisconnectFailed] = useState(false);
   const [confirmDisconnect, setConfirmDisconnect] = useState<string | null>(null);
-  const setupInFlight = useRef(false);
+  const disconnectInFlight = useRef(false);
   const lifetime = useRef<AbortController | null>(null);
+  const refresh = () => setRefreshRevision((revision) => revision + 1);
+  const setup = useGithubDeveloperSetup(client, active, refresh);
 
   useEffect(() => {
     if (!active) return;
@@ -182,7 +184,7 @@ function GithubDeveloperAccessForIdentity({
   }, [active, client]);
 
   useEffect(() => {
-    if (!active) return;
+    if (!active || setup.pending) return;
     const refresh = () => setRefreshRevision((revision) => revision + 1);
     const refreshWhenVisible = () => {
       if (document.visibilityState === "visible") refresh();
@@ -193,7 +195,7 @@ function GithubDeveloperAccessForIdentity({
       window.removeEventListener("focus", refresh);
       document.removeEventListener("visibilitychange", refreshWhenVisible);
     };
-  }, [active]);
+  }, [active, setup.pending]);
 
   useEffect(() => {
     if (!active) return;
@@ -218,9 +220,7 @@ function GithubDeveloperAccessForIdentity({
       try {
         const access = await client.setupAccess(signal);
         if (!signal.aborted) {
-          if (access.mode === "writable") setSetupAccess("allowed");
-          else if (access.reason === "runtime_unavailable") setSetupAccess("setup_only");
-          else setSetupAccess("denied");
+          setSetupAccess(access.mode === "writable" ? "allowed" : "denied");
         }
       } catch (error: unknown) {
         if (signal.aborted) return;
@@ -232,66 +232,47 @@ function GithubDeveloperAccessForIdentity({
     return () => controller.abort();
   }, [active, client, refreshRevision]);
 
-  async function startSetup() {
-    if (!active || (setupAccess !== "allowed" && setupAccess !== "setup_only") || setupInFlight.current) return;
-    setupInFlight.current = true;
-    setSetupPending(true);
-    setFailedOperation(null);
-    try {
-      if (!await client.startSetup()) setFailedOperation("setup");
-    } catch (error: unknown) {
-      console.warn("[github-developer-access] Setup handoff unavailable:", error instanceof Error ? error.name : typeof error);
-      setFailedOperation("setup");
-    } finally {
-      setupInFlight.current = false;
-      setSetupPending(false);
-    }
-  }
-
   async function startDisconnect() {
     const signal = lifetime.current?.signal;
     const start = client.startDisconnect;
     if (!signal || signal.aborted || !active || setupAccess !== "allowed" || !status?.ready
-      || !confirmDisconnect || confirmDisconnect !== status.user || setupInFlight.current || !start) return;
-    setupInFlight.current = true;
-    setSetupPending(true);
-    setFailedOperation(null);
+      || !confirmDisconnect || confirmDisconnect !== status.user || disconnectInFlight.current || !start) return;
+    disconnectInFlight.current = true;
+    setDisconnectPending(true);
+    setDisconnectFailed(false);
     setConfirmDisconnect(null);
     try {
       const access = await client.setupAccess(signal);
       if (signal.aborted) return;
       if (access.mode !== "writable") {
-        setSetupAccess(access.reason === "runtime_unavailable" ? "setup_only" : "denied");
+        setSetupAccess("denied");
         return;
       }
       if (!await start(confirmDisconnect, signal) && !signal.aborted) {
-        setFailedOperation("disconnect");
-        setRefreshRevision((revision) => revision + 1);
+        setDisconnectFailed(true);
+        refresh();
       }
     } catch (error: unknown) {
       if (signal.aborted) return;
       console.warn("[github-developer-access] Disconnect handoff unavailable:", error instanceof Error ? error.name : typeof error);
-      setFailedOperation("disconnect");
-      setRefreshRevision((revision) => revision + 1);
+      setDisconnectFailed(true);
+      refresh();
     } finally {
-      setupInFlight.current = false;
-      setSetupPending(false);
+      disconnectInFlight.current = false;
+      setDisconnectPending(false);
     }
   }
 
   const connectLabel = status?.authenticated ? "Finish setup" : "Connect";
   const retryStatus = statusFailed || setupAccess === "unavailable";
   const ready = status?.ready === true;
-  const canSetup = setupAccess === "allowed" || setupAccess === "setup_only";
-  const setupError = failedOperation === "setup" && !ready && canSetup;
-  const disconnectError = failedOperation === "disconnect" && ready && setupAccess === "allowed";
-  const refresh = () => setRefreshRevision((revision) => revision + 1);
+  const canSetup = setupAccess === "allowed" && !disconnectPending;
+  const disconnectError = disconnectFailed && ready && setupAccess === "allowed";
   let detail = "Sign in securely";
   if (statusFailed) detail = "GitHub developer access is unavailable.";
   else if (!status) detail = "Checking developer access…";
   else if (setupAccess === "denied" && !ready) detail = "Setup requires permission on this computer.";
   else if (setupAccess === "unavailable") detail = "Could not verify setup permission.";
-  else if (setupError) detail = "Could not open setup in Terminal.";
   else if (disconnectError) detail = "Could not open disconnect in Terminal.";
   else if (status.authenticated) detail = `${status.user} · ${readinessLabel(status.sshStatus)} · ${identityLabel(status.commitIdentity)}`;
 
@@ -299,24 +280,25 @@ function GithubDeveloperAccessForIdentity({
   let accountAction: IntegrationRowPresentation["accountAction"];
   if (retryStatus || (status && !ready)) {
     action = {
-      label: retryStatus ? "Retry GitHub Developer status" : setupError ? "Retry GitHub Developer setup" : `${connectLabel} GitHub Developer`,
-      text: retryStatus || setupError ? "Retry" : setupPending ? "Opening Terminal…" : connectLabel,
-      disabled: !active || (!retryStatus && (!canSetup || setupPending)),
-      onClick: retryStatus ? refresh : () => void startSetup(),
+      label: retryStatus ? "Retry GitHub Developer status" : `${connectLabel} GitHub Developer`,
+      text: retryStatus ? "Retry" : setup.pending ? "Connecting…" : connectLabel,
+      disabled: !active || (!retryStatus && (!canSetup || setup.pending || !!setup.view)),
+      onClick: retryStatus ? refresh : () => { if (canSetup) void setup.start(); },
     };
   } else if (ready && status.user && GITHUB_ACCOUNT_PATTERN.test(status.user)
     && setupAccess === "allowed" && client.startDisconnect) {
     accountAction = {
       label: disconnectError ? "Retry GitHub Developer disconnect" : "Disconnect GitHub Developer",
-      text: setupPending ? "Opening Terminal…" : disconnectError ? "Retry" : "Disconnect",
-      disabled: !active || setupPending,
+      text: disconnectPending ? "Opening Terminal…" : disconnectError ? "Retry" : "Disconnect",
+      disabled: !active || disconnectPending || setup.pending,
       onClick: () => setConfirmDisconnect(status?.user ?? null),
     };
   }
 
   return (
     <>
-      {children({ detail, detailIsError: retryStatus || setupError || disconnectError, ready, action, accountAction })}
+      {children({ detail, detailIsError: retryStatus || disconnectError, ready, action, accountAction })}
+      <GithubDeveloperSetupDialog setup={setup} openPage={client.openSetupPage} canStart={canSetup} />
       {active && ready && setupAccess === "allowed" && confirmDisconnect && confirmDisconnect === status?.user ? (
         <Dialog open onClose={() => setConfirmDisconnect(null)} aria-label="Disconnect GitHub Developer?">
           <DialogTitle>Disconnect GitHub Developer?</DialogTitle>

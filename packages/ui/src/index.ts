@@ -33,6 +33,7 @@ export {
   withGithubDeveloperCatalogEntry,
   parseGithubDeveloperAccessStatus,
 } from "./integrations/GithubDeveloperAccess.js";
+export { GITHUB_DEVELOPER_DEVICE_URL } from "./integrations/GithubDeveloperSetupDialog.js";
 export type {
   GithubDeveloperAccessClient,
   GithubDeveloperAccessStatus,

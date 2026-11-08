@@ -17,9 +17,8 @@ import { CustomMcpServersPanel } from "./CustomMcpServersPanel";
 const GATEWAY = getGatewayUrl();
 
 // react-doctor-disable-next-line react-doctor/prefer-useReducer -- the available/connected lists, load/error flags, and the many independent per-action progress flags (connecting, disconnecting, checkingStatus, renaming, etc.) are distinct UI concerns, not a single cohesive state machine; a reducer would not simplify them.
-export function IntegrationsSection({ active = true, onOpenGithubDeveloperTerminal, onOpenGithubDisconnectTerminal }: {
+export function IntegrationsSection({ active = true, onOpenGithubDisconnectTerminal }: {
   active?: boolean;
-  onOpenGithubDeveloperTerminal?: () => void;
   onOpenGithubDisconnectTerminal?: (sessionId: string) => void;
 } = {}) {
   const [available, setAvailable] = useState<IntegrationCatalogItem[]>([]);
@@ -409,8 +408,7 @@ export function IntegrationsSection({ active = true, onOpenGithubDeveloperTermin
         </button> : null}
       </div>
 
-      <GithubDeveloperIntegration active={active} onOpenGithubDeveloperTerminal={onOpenGithubDeveloperTerminal}
-        onOpenGithubDisconnectTerminal={onOpenGithubDisconnectTerminal}>
+      <GithubDeveloperIntegration active={active} onOpenGithubDisconnectTerminal={onOpenGithubDisconnectTerminal}>
         {developer => {
           const services = withGithubDeveloperCatalogEntry(available);
           const connectedIds = connected.map(connection => connection.service).filter(id => id !== GITHUB_DEVELOPER_SERVICE_ID);

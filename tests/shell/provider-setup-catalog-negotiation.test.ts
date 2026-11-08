@@ -4,19 +4,10 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { githubDeveloperDisconnectCommand } from "../../packages/ui/src/integrations/GithubDeveloperAccess.js";
 import { openWebProviderAgentSetup, openWebProviderTerminalCommand } from "../../shell/src/lib/provider-settings-transport.js";
 import { useShellSessions } from "../../desktop/src/renderer/src/stores/shell-sessions";
-import { openDesktopGithubDeveloperDisconnect, openDesktopGithubDeveloperSetup, openDesktopProviderAgentSetup } from "../../desktop/src/renderer/src/features/settings/provider-settings-desktop-adapter.js";
+import { openDesktopGithubDeveloperDisconnect, openDesktopProviderAgentSetup } from "../../desktop/src/renderer/src/features/settings/provider-settings-desktop-adapter.js";
 
 describe("Settings catalog connection-label negotiation", () => {
   afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks(); });
-  it("creates GitHub setup with only the fixed developer-login command", async () => {
-    const create = vi.spyOn(useShellSessions.getState(), "create").mockResolvedValue(null);
-
-    await expect(openDesktopGithubDeveloperSetup({} as never, () => true)).resolves.toBe(false);
-
-    expect(create).toHaveBeenCalledExactlyOnceWith({}, {
-      cmd: "matrix-github-developer-login",
-    });
-  });
   it("dispatches the GitHub account-bound disconnect argv through the Web Terminal once", async () => {
     const workspaceId = `tws_${"a".repeat(32)}`;
     const tabId = `tt_${"b".repeat(32)}`;

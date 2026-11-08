@@ -1,7 +1,7 @@
 "use client";
 
 import { useGettingStartedBlocker } from "@matrix-os/ui";
-import { useCallback, useEffect, useEffectEvent, useState } from "react";
+import { useEffect, useEffectEvent, useState } from "react";
 import Image from "next/image";
 import {
   PaletteIcon,
@@ -199,17 +199,12 @@ function SettingsFrame({
   billingCheckoutReturnPath,
   billingCheckoutRuntimeSlot,
   onboardingDefaultInstalls,
-  onOpenAgentTerminal,
   onOpenProviderTerminalSession,
   onOpenGithubDisconnectTerminal,
   onOpenImportedChat,
   billingActive,
   showBillingSection,
 }: SettingsFrameProps) {
-  const openGithubDeveloperTerminal = useCallback(
-    () => onOpenAgentTerminal?.("github-ssh-login"),
-    [onOpenAgentTerminal],
-  );
   const onboardingMode = onboardingDefaultInstalls !== undefined;
   const canonicalDefaultSection = normalizeSettingsSectionId(defaultSection);
   const canonicalLockedSection = lockedSection === undefined
@@ -428,8 +423,7 @@ function SettingsFrame({
               {activeSection === "identity-personality" && <IdentityPersonalitySection />}
               {activeSection === "channels" && <ChannelsSection />}
               {activeSection === "integrations" && (
-                <IntegrationsSection active={open} onOpenGithubDeveloperTerminal={onOpenAgentTerminal ? openGithubDeveloperTerminal : undefined}
-                  onOpenGithubDisconnectTerminal={onOpenGithubDisconnectTerminal} />
+                <IntegrationsSection active={open} onOpenGithubDisconnectTerminal={onOpenGithubDisconnectTerminal} />
               )}
               {activeSection === "skills" && <SkillsSection />}
               {activeSection === "chat-import" && <ChatImportSection onOpenChat={onOpenImportedChat} />}

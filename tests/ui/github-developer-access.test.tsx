@@ -79,6 +79,8 @@ describe("GitHub developer access compatibility parser", () => {
 const writable = { mode: "writable" } as const;
 const partialStatus = { ...readyStatus, ready: false, sshStatus: "setup_required" };
 const finishSetup = "Finish setup GitHub Developer";
+const setupId = "016d31b0-50d7-4dca-ae0d-b6083bdcd219";
+const unusedSetupMethods = { getSetup: vi.fn(), cancelSetup: vi.fn(), openSetupPage: vi.fn() };
 
 function GithubDeveloperAccessCard(props: { identityKey: string; client: GithubDeveloperAccessClient; active?: boolean }) {
   return (
@@ -98,9 +100,129 @@ function developerRow() {
 
 
 describe("GitHub Developer card", () => {
-  it.each(["remote_policy", "insufficient_permission"] as const)("keeps setup disabled for %s", async (reason) => {
+  it("opens a device sign-in dialog and refreshes canonical readiness after authorization", async () => {
+    const client = {
+      status: vi.fn().mockResolvedValueOnce(partialStatus).mockResolvedValueOnce(readyStatus),
+      setupAccess: vi.fn().mockResolvedValue(writable),
+      startSetup: vi.fn().mockResolvedValue({ id: setupId, state: "awaiting_authorization", deviceCode: "ABCD-EFGH" }),
+      getSetup: vi.fn().mockResolvedValueOnce({ id: setupId, state: "starting" })
+        .mockResolvedValueOnce({ id: setupId, state: "succeeded" }),
+      cancelSetup: vi.fn(),
+      openSetupPage: vi.fn(),
+    };
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    const clipboard = Object.getOwnPropertyDescriptor(navigator, "clipboard");
+    Object.defineProperty(navigator, "clipboard", { configurable: true, value: { writeText } });
+    try {
+      render(<GithubDeveloperAccessCard identityKey="alice:primary" client={client} />);
+      const setup = await screen.findByRole("button", { name: finishSetup });
+      await waitFor(() => expect(setup).toBeEnabled());
+      fireEvent.click(setup);
+      const dialog = within(await screen.findByRole("dialog", { name: "Connect GitHub Developer" }));
+      expect(await dialog.findByText("ABCD-EFGH")).toBeVisible();
+      await act(async () => { fireEvent.click(dialog.getByRole("button", { name: "Copy" })); });
+      expect(writeText).toHaveBeenCalledExactlyOnceWith("ABCD-EFGH");
+      await act(async () => { fireEvent.click(dialog.getByRole("button", { name: "Open GitHub" })); });
+      expect(client.openSetupPage).toHaveBeenCalledTimes(1);
+      expect(await dialog.findByText("Checking the connection…", {}, { timeout: 3_000 })).toBeVisible();
+      expect(screen.queryByText("ABCD-EFGH")).toBeNull();
+      expect(await screen.findByText("Ready", {}, { timeout: 3_000 })).toBeVisible();
+      expect(client.getSetup).toHaveBeenCalledTimes(2);
+      expect(client.getSetup).toHaveBeenLastCalledWith(setupId, expect.any(AbortSignal));
+      expect(client.status).toHaveBeenCalledTimes(2);
+      expect(screen.queryByText("ABCD-EFGH")).toBeNull();
+      expect(client.cancelSetup).not.toHaveBeenCalled();
+    } finally {
+      if (clipboard) Object.defineProperty(navigator, "clipboard", clipboard);
+      else Reflect.deleteProperty(navigator, "clipboard");
+    }
+  });
+
+  it("cleans up a setup created while its start response was still pending at dismissal", async () => {
+    let finishStart!: (value: unknown) => void;
+    const client = {
+      ...unusedSetupMethods,
+      status: vi.fn().mockResolvedValue(partialStatus),
+      setupAccess: vi.fn().mockResolvedValue(writable),
+      startSetup: vi.fn((signal: AbortSignal) => new Promise((resolve, reject) => {
+        finishStart = resolve;
+        signal.addEventListener("abort", () => reject(signal.reason), { once: true });
+      })),
+      cancelSetup: vi.fn(),
+    };
+    render(<GithubDeveloperAccessCard identityKey="alice:primary" client={client} />);
+    const setup = await screen.findByRole("button", { name: finishSetup });
+    await waitFor(() => expect(setup).toBeEnabled());
+    fireEvent.click(setup);
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(screen.queryByRole("dialog")).toBeNull();
+
+    await act(async () => { finishStart({ id: setupId, state: "awaiting_authorization", deviceCode: "ABCD-EFGH" }); });
+    expect(client.cancelSetup).toHaveBeenCalledExactlyOnceWith(setupId, expect.any(AbortSignal));
+    expect(client.getSetup).not.toHaveBeenCalled();
+    expect(screen.queryByText("ABCD-EFGH")).toBeNull();
+    expect(setup).toBeEnabled();
+  });
+
+  it("cancels on dismissal and ignores a late response when the selected computer changes", async () => {
+    let finishPoll!: (value: unknown) => void;
+    const client = {
+      ...unusedSetupMethods,
+      status: vi.fn().mockResolvedValue(partialStatus),
+      setupAccess: vi.fn().mockResolvedValue(writable),
+      startSetup: vi.fn().mockResolvedValue({ id: setupId, state: "awaiting_authorization", deviceCode: "ABCD-EFGH" }),
+      getSetup: vi.fn((_id: string, _signal: AbortSignal) => new Promise(resolve => { finishPoll = resolve; })),
+      cancelSetup: vi.fn(),
+    };
+    const other = { ...client, startSetup: vi.fn(), status: vi.fn().mockResolvedValue(partialStatus), cancelSetup: vi.fn() };
+    const view = render(<GithubDeveloperAccessCard identityKey="alice:primary" client={client} />);
+    const setup = await screen.findByRole("button", { name: finishSetup });
+    await waitFor(() => expect(setup).toBeEnabled());
+    fireEvent.click(setup);
+    expect(await screen.findByText("ABCD-EFGH")).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(screen.queryByText("ABCD-EFGH")).toBeNull();
+    await waitFor(() => expect(client.cancelSetup).toHaveBeenCalledExactlyOnceWith(setupId, expect.any(AbortSignal)));
+    await waitFor(() => expect(setup).toBeEnabled());
+    fireEvent.click(setup);
+    await waitFor(() => expect(client.getSetup).toHaveBeenCalledTimes(1), { timeout: 3_000 });
+    const signal = client.getSetup.mock.calls[0]?.[1];
+    view.rerender(<GithubDeveloperAccessCard identityKey="alice:studio" client={other} />);
+    expect(signal?.aborted).toBe(true);
+    await act(async () => { finishPoll({ id: setupId, state: "succeeded" }); });
+    expect(screen.queryByText("ABCD-EFGH")).toBeNull();
+    expect(client.status).toHaveBeenCalledTimes(1);
+    expect(other.cancelSetup).not.toHaveBeenCalled();
+    expect(screen.queryByText("Ready")).toBeNull();
+  });
+
+  it("clears an expired code and allows a new attempt", async () => {
+    const client = {
+      ...unusedSetupMethods,
+      status: vi.fn().mockResolvedValue(partialStatus),
+      setupAccess: vi.fn().mockResolvedValue(writable),
+      startSetup: vi.fn()
+        .mockResolvedValueOnce({ id: setupId, state: "awaiting_authorization", deviceCode: "ABCD-EFGH" })
+        .mockResolvedValueOnce({ id: "322046b5-ae42-4b8c-9875-6d68bba5ca93", state: "awaiting_authorization", deviceCode: "IJKL-MNOP" }),
+      getSetup: vi.fn().mockResolvedValue({ id: setupId, state: "expired" }),
+      cancelSetup: vi.fn(),
+    };
+    render(<GithubDeveloperAccessCard identityKey="alice:primary" client={client} />);
+    const setup = await screen.findByRole("button", { name: finishSetup });
+    await waitFor(() => expect(setup).toBeEnabled());
+    fireEvent.click(setup);
+    expect(await screen.findByText("ABCD-EFGH")).toBeVisible();
+    expect(await screen.findByText(/This GitHub code expired/, {}, { timeout: 3_000 })).toBeVisible();
+    expect(screen.queryByText("ABCD-EFGH")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Open GitHub" })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Try again" }));
+    expect(await screen.findByText("IJKL-MNOP")).toBeVisible();
+  });
+
+  it.each(["remote_policy", "insufficient_permission", "runtime_unavailable"] as const)("keeps setup disabled for %s", async (reason) => {
     const startSetup = vi.fn();
     const client: GithubDeveloperAccessClient = {
+      ...unusedSetupMethods,
       status: vi.fn().mockResolvedValue(partialStatus),
       setupAccess: vi.fn().mockResolvedValue({ mode: "read_only", reason }),
       startSetup,
@@ -116,24 +238,9 @@ describe("GitHub Developer card", () => {
     expect(developerRow().getAllByRole("button")).toHaveLength(1);
   });
 
-  it("allows owner GitHub setup when only provider mutations are unavailable", async () => {
-    const startSetup = vi.fn().mockResolvedValue(true);
-    const client: GithubDeveloperAccessClient = {
-      status: vi.fn().mockResolvedValue(partialStatus),
-      setupAccess: vi.fn().mockResolvedValue({ mode: "read_only", reason: "runtime_unavailable" }),
-      startSetup,
-      startDisconnect: vi.fn(),
-    };
-    render(<GithubDeveloperAccessCard identityKey="alice:primary" client={client} />);
-
-    const setup = await screen.findByRole("button", { name: finishSetup });
-    await waitFor(() => expect(setup).toBeEnabled());
-    await act(async () => { fireEvent.click(setup); });
-    expect(startSetup).toHaveBeenCalledTimes(1);
-  });
-
   it("disconnects only after confirmation and shows Connect after a fresh signed-out status", async () => {
     const client: GithubDeveloperAccessClient = {
+      ...unusedSetupMethods,
       status: vi.fn().mockResolvedValueOnce(readyStatus).mockResolvedValueOnce({
         ...readyStatus, authenticated: false, user: null, ready: false,
       }),
@@ -171,6 +278,7 @@ describe("GitHub Developer card", () => {
 
   it("never offers disconnect on a ready computer without writable owner settings", async () => {
     const client: GithubDeveloperAccessClient = {
+      ...unusedSetupMethods,
       status: vi.fn().mockResolvedValue(readyStatus),
       setupAccess: vi.fn().mockResolvedValue({ mode: "read_only", reason: "runtime_unavailable" }),
       startSetup: vi.fn(),
@@ -185,6 +293,7 @@ describe("GitHub Developer card", () => {
 
   it("abandons an open disconnect confirmation when the computer changes", async () => {
     const alice: GithubDeveloperAccessClient = {
+      ...unusedSetupMethods,
       status: vi.fn().mockResolvedValue(readyStatus),
       setupAccess: vi.fn().mockResolvedValue(writable),
       startSetup: vi.fn(),
@@ -205,6 +314,7 @@ describe("GitHub Developer card", () => {
 
   it("rechecks owner permission at confirmation before dispatching disconnect", async () => {
     const client: GithubDeveloperAccessClient = {
+      ...unusedSetupMethods,
       status: vi.fn().mockResolvedValue(readyStatus),
       setupAccess: vi.fn().mockResolvedValueOnce(writable)
         .mockResolvedValueOnce({ mode: "read_only", reason: "insufficient_permission" }),
@@ -231,10 +341,11 @@ describe("GitHub Developer card", () => {
     expect(githubDeveloperDisconnectCommand("--all")).toBeNull();
   });
 
-  it("locks setup while a terminal handoff is pending and reports a retry after failure", async () => {
+  it("locks setup while an attempt starts and offers a retry after failure", async () => {
     let releaseSetup!: (opened: boolean) => void;
     const startSetup = vi.fn(() => new Promise<boolean>((resolve) => { releaseSetup = resolve; }));
     const client = {
+      ...unusedSetupMethods,
       status: vi.fn().mockResolvedValue(partialStatus),
       setupAccess: vi.fn().mockResolvedValue(writable),
       startSetup,
@@ -250,21 +361,21 @@ describe("GitHub Developer card", () => {
     expect(startSetup).toHaveBeenCalledTimes(1);
 
     await act(async () => { releaseSetup(false); });
-    expect(screen.getByText("Could not open setup in Terminal.")).toBeVisible();
-    expect(screen.getByRole("button", { name: "Retry GitHub Developer setup" })).toBeEnabled();
+    expect(screen.getByText("Couldn't finish GitHub sign-in on this computer.")).toBeVisible();
+    expect(screen.getByRole("button", { name: "Try again" })).toBeEnabled();
   });
 
-  it("refreshes when the same settings panel becomes active after Terminal setup", async () => {
+  it("refreshes when the same settings panel becomes active after manual setup", async () => {
     const client = {
+      ...unusedSetupMethods,
       status: vi.fn().mockResolvedValueOnce(partialStatus).mockResolvedValueOnce(readyStatus),
       setupAccess: vi.fn().mockResolvedValue(writable),
-      startSetup: vi.fn().mockResolvedValue(true),
+      startSetup: vi.fn(),
       startDisconnect: vi.fn(),
     };
     const view = render(<GithubDeveloperAccessCard identityKey="alice:primary" client={client} />);
     const finish = await screen.findByRole("button", { name: finishSetup });
     await waitFor(() => expect(finish).toBeEnabled());
-    await act(async () => { fireEvent.click(finish); });
     view.rerender(<GithubDeveloperAccessCard identityKey="alice:primary" client={client} active={false} />);
     fireEvent.focus(window);
     expect(client.status).toHaveBeenCalledTimes(1);
@@ -278,12 +389,14 @@ describe("GitHub Developer card", () => {
     let releaseAlice!: (value: unknown) => void;
     let releaseBob!: (value: unknown) => void;
     const alice: GithubDeveloperAccessClient = {
+      ...unusedSetupMethods,
       status: vi.fn(() => new Promise((resolve) => { releaseAlice = resolve; })),
       setupAccess: vi.fn().mockResolvedValue(writable),
       startSetup: vi.fn(),
       startDisconnect: vi.fn(),
     };
     const bob: GithubDeveloperAccessClient = {
+      ...unusedSetupMethods,
       status: vi.fn(() => new Promise((resolve) => { releaseBob = resolve; })),
       setupAccess: vi.fn().mockResolvedValue(writable),
       startSetup: vi.fn(),
@@ -303,6 +416,7 @@ describe("GitHub Developer card", () => {
 
   it("offers only a status retry after a failed read and hides error details", async () => {
     const client: GithubDeveloperAccessClient = {
+      ...unusedSetupMethods,
       status: vi.fn().mockRejectedValueOnce(new Error("token leaked from /home/alice/.config/gh/hosts.yml"))
         .mockResolvedValueOnce(readyStatus),
       setupAccess: vi.fn().mockResolvedValue(writable),
