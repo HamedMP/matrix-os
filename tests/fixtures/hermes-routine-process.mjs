@@ -4,12 +4,13 @@ import { createInterface } from "node:readline";
 import { Socket } from "node:net";
 import { randomUUID } from "node:crypto";
 const settings = JSON.parse(await readFile(process.argv[2], "utf8"));
+const attempt = process.argv[3] ?? "live";
 const pipe = new Socket({ fd: 3, readable: true, writable: true });
 const native = { task_id: "native_task", session_id: "native_durable", turn_id: "native_turn", tool_call_id: "native_call", api_request_id: "native_api" };
 const actionId = randomUUID(); let completed = false, calls = 0;
 const send = value => process.stdout.write(JSON.stringify(value) + "\n");
 const event = (type, payload) => send({ jsonrpc: "2.0", method: "event", params: { type, session_id: "live_rpc", payload } });
-const record = async value => { if (++calls > 128) throw new Error("Named fixture record cap exceeded"); await appendFile(settings.records, JSON.stringify(value) + "\n"); };
+const record = async value => { if (++calls > 128) throw new Error("Named fixture record cap exceeded"); await appendFile(settings.records, JSON.stringify({ attempt, ...value }) + "\n"); };
 const complete = () => { if (!completed) { completed = true; event("message.complete", { text: "Fixture done", status: "complete" }); } };
 const call = () => {
   const frame = { type: "call", id: actionId, context: native, intent: settings.intent };
@@ -57,4 +58,5 @@ const timer = setInterval(async () => {
   if (control === "cancel") pipe.write(JSON.stringify({ type: "cancel", id: actionId }) + "\n");
   if (control === "late") call();
 }, 10);
-event("gateway.ready", {});
+if (attempt === "retired") call(); // No gateway.ready. A pre-prompt call must never gain authority.
+else event("gateway.ready", {});
