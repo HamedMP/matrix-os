@@ -11,6 +11,9 @@ const pinnedTarget = sql`
     ||rtrim(right(to_char(b.created_at AT TIME ZONE 'UTC','US'),3),'0')||'Z')
   AND NOT EXISTS(SELECT 1 FROM bot_chat_bindings other WHERE other.chat_id=b.chat_id AND other.removed_at IS NULL
     AND (other.owner_id,other.bot_id)<>(b.owner_id,b.bot_id))`;
+// Advisory recovery filter only. Receipt writes recheck hasNonPrivateChatScope under the Chat locks.
+const nonPrivateScope = sql`scope.owner_type='personal' AND scope.owner_id=r.owner_id AND scope.kind='chat'
+  AND scope.lifecycle NOT IN ('private','preparing')`;
 /** No execution state is mutated here. Readiness and durable uniqueness are filtered before LIMIT. */
 export async function pendingRoutineChatDeliveries(db: Kysely<OwnerBotDatabase>, computerId: string, ownerId?: string, sourceChatId?: string, after?: { updatedAt: string; fireId: string; kind: string }) {
   const result = await sql<{ owner_id: string; source_chat_id: string; updated_at: string; fire_id: string; kind: "status" | "output" }>`
@@ -22,6 +25,7 @@ export async function pendingRoutineChatDeliveries(db: Kysely<OwnerBotDatabase>,
     JOIN bot_chat_bindings b ON b.owner_id=r.owner_id AND b.bot_id=r.bot_id AND b.chat_id=r.chat_id AND b.kind='direct' AND b.removed_at IS NULL
     CROSS JOIN (VALUES ('status'),('output')) AS k(kind)
     WHERE ${pinnedTarget} AND r.origin_computer_id=${computerId} AND q.source_context->'identity'->>'kind'='chat_run'
+      AND NOT EXISTS (SELECT 1 FROM collaboration_scopes scope WHERE ${nonPrivateScope} AND scope.resource_id IN (s.id,c.id))
       ${after ? sql`AND (f.updated_at,f.fire_id,k.kind)>(${after.updatedAt}::timestamptz,${after.fireId},${after.kind})` : sql``}
       ${ownerId ? sql`AND r.owner_id=${ownerId}` : sql``}
       ${sourceChatId ? sql`AND s.id=${sourceChatId}` : sql``}
@@ -45,6 +49,7 @@ export async function hasPendingRoutineChatOutput(db: import("./repositories/sha
     JOIN chats c ON c.id=r.chat_id AND c.owner_type='personal' AND c.owner_id=r.owner_id AND c.lifecycle='active' AND c.collaboration IS NULL
     JOIN bot_chat_bindings b ON b.owner_id=r.owner_id AND b.bot_id=r.bot_id AND b.chat_id=r.chat_id AND b.kind='direct' AND b.removed_at IS NULL
     WHERE ${pinnedTarget} AND r.owner_id=${ownerId} AND r.origin_computer_id=${computerId} AND q.source_context->'identity'->>'kind'='chat_run'
+      AND NOT EXISTS (SELECT 1 FROM collaboration_scopes scope WHERE ${nonPrivateScope} AND scope.resource_id=c.id)
       AND q.source_context->'identity'->>'chatId'=${sourceChatId} AND f.status='completed'
       AND NOT EXISTS(SELECT 1 FROM routine_chat_deliveries d WHERE d.owner_id=r.owner_id AND d.source_chat_id=${sourceChatId}
         AND d.routine_id=r.routine_id AND d.fire_id=f.fire_id AND d.attempt=f.attempts AND d.kind='output')

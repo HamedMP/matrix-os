@@ -10,6 +10,7 @@ import { createBotInteractionsRepository } from "./repositories/interactions.js"
 import type { BotExecutor } from "./repositories/shared.js";
 import { routineChatOriginForInteraction, type RoutineChatOrigin } from "./routine-chat-origin-map.js";
 import type { VerifiedRoutineOriginApproval } from "./routine-origin-platform-client.js";
+import { hasNonPrivateChatScope } from "../chat/private-routine-authority.js";
 import type { ChatRepository } from "../chat/repository.js";
 import { pendingRoutineChatDeliveries, hasPendingRoutineChatOutput } from "./routine-chat-origin-delivery.js";
 
@@ -22,9 +23,10 @@ export interface RoutineChatOriginDependencies {
   now?: () => Date; intervalMs?: number;
 }
 async function privateSource(db: BotExecutor, ownerId: string, chatId: string) {
-  return db.selectFrom("chats").select("id").where("id", "=", chatId).where("owner_type", "=", "personal")
+  const chat = await db.selectFrom("chats").select("id").where("id", "=", chatId).where("owner_type", "=", "personal")
     .where("owner_id", "=", ownerId).where("lifecycle", "=", "active").where("collaboration", "is", null)
     .forNoKeyUpdate().executeTakeFirst();
+  return chat && !await hasNonPrivateChatScope(db as never, { type: "personal", ownerId }, chatId);
 }
 async function liveOrigin(db: BotExecutor, origin: RoutineChatOrigin, lockTarget = true) {
   // Source lock always precedes canonical Chat/binding read locks. No target->source reversal.

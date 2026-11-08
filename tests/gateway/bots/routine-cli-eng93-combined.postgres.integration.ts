@@ -1,3 +1,4 @@
+import { bootstrapCollaborationDatabase } from "../../../packages/gateway/src/collaboration/database.js";
 import { createHash, generateKeyPairSync, randomUUID, sign } from "node:crypto";
 import { afterEach, expect, it, vi } from "vitest";
 import { chatGptPlanPeerProof, ROUTINE_ORIGIN_PROOF_HEADER } from "@matrix-os/contracts";
@@ -39,6 +40,7 @@ afterEach(async () => { await origin?.close(); await scheduler?.stop(); peers?.c
 // admission/adapter/orchestrator/registry and inference broker/peer authority are production code.
 it("runs one actual source CLI proposal through owner approval and a background-off canonical occurrence to the native inference boundary", async () => {
   x = await claudeFixture(); const f = x.f;
+  await bootstrapCollaborationDatabase(f.db as never);
   const execution = createBotRoutineExecution({ db: f.db, transact: f.transact, approvals: f.approvals, now: () => new Date(f.state.clock) });
   f.adapterOptions.routines = execution; f.taskDependencies.routineExecution = execution;
   const canonical = { repository: f.chats, orchestrator: f.canonical }; execution.connect(canonical);
