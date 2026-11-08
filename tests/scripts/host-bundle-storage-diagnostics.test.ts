@@ -105,6 +105,25 @@ it("retains the actual Bash entry's build exit when its diagnostic CLI fails (ba
   expect(existsSync(join(f.root, "removed"))).toBe(false);
 });
 
+it.each([
+  { scenario: "explicit exit", code: 47 },
+  { scenario: "missing Clerk key", code: 1 },
+])("samples failures that exit the isolated Bash process directly", ({ scenario, code }) => {
+  const f = fixture(), path = join(f.root, "scripts/build-host-bundle.sh");
+  const script = readFileSync(path, "utf8");
+  const firstBuild = "pnpm install --frozen-lockfile --config.enableGlobalVirtualStore=false";
+  const keyGuard = script.split('smoke-gateway-production-loader.mjs"\n')[1]?.split("# In-app auth routes")[0];
+  expect(keyGuard).toContain("NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY");
+  expect(script).toContain(firstBuild);
+  writeFileSync(path, script.replace(firstBuild, scenario === "explicit exit" ? "exit 47" : `${keyGuard}\nexit 0`));
+  writeFileSync(join(f.root, "scripts/host-bundle-baseline-builder.mjs"), "process.exit(0);\n");
+  writeFileSync(join(f.root, "scripts/host-bundle-storage-diagnostics.mjs"),
+    "console.log(JSON.stringify({kind:'host-bundle-storage',scope:'inner',phase:process.argv[3]}));\n");
+  const result = isolatedBash(f);
+  expect(result.status, result.stderr).toBe(code);
+  expect(snapshots(result.stdout).map(record => record.phase)).toEqual(["before", "failure"]);
+});
+
 it.each(["throw", "hang", "unsafe-json", "oversized", "killed"])("preserves the original build failure and owned cleanup when the diagnostic process has a %s fault", kind => {
   const f = fixture(), path = join(f.root, "scripts/host-bundle-storage-diagnostics.mjs");
   const fault = {
