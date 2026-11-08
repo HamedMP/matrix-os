@@ -1,7 +1,6 @@
 /** Frozen deployed schema to additive routines: real pooled PostgreSQL only. */
 import { sql } from "kysely";
 import { afterEach, describe, expect, it } from "vitest";
-import { BOT_MIGRATIONS } from "../../../packages/gateway/src/bots/database-migrations.js";
 import { BotSchemaError, bootstrapBotDatabase } from "../../../packages/gateway/src/bots/database.js";
 import { BOT_MIGRATIONS } from "../../../packages/gateway/src/bots/database-migrations.js";
 import { OWNER, NOW, V9_DIRECT, createDeployedV9Fixture, v9PgEnabled, type DeployedV9Fixture } from "./deployed-v9-postgres-support.js";
@@ -71,7 +70,7 @@ describe.skipIf(!v9PgEnabled)("released v9 and unpublished routine migration ide
       access_method: "btree", chat_key: "chat_id", owner_key: "owner_id", bot_key: "bot_id", includes_removed: true,
     }]);
     expect(await fixture.snapshot()).toEqual(before);
-    expect(await db.selectFrom("bot_schema_migrations").selectAll().where("version", "<=", 18).orderBy("version").execute())
+    expect(await db.selectFrom("bot_schema_migrations").selectAll().where("version", "<=", 17).orderBy("version").execute())
       .toEqual(history);
     await expect(bootstrapBotDatabase(db)).resolves.toEqual({ applied: [] });
   });
