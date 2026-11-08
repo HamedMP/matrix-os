@@ -391,3 +391,106 @@ it("waits at the canonical activation binding and Chat fence without a deadlock"
     expect(await f.db.selectFrom("bot_routines").select("routine_id").execute()).toHaveLength(1);
   } finally { release(); await results; await service.close(); }
 });
+
+it("completes actual receipt delivery and canonical edit approval without a target lock cycle", async () => {
+  const { terminalFixtureFire } = await import("./routine-chat-origin-support.js");
+  const { barrier, bounded } = await import("./routine-cli-lock-order-support.js");
+  const { PostgresQueryCompiler, sql } = await import("kysely");
+  const { ChatRepository } = await import("../../../packages/gateway/src/chat/repository.js");
+  const fire = await terminalFixtureFire(f); await fire.finish();
+  const { interaction } = await f.approvals.requestEdit(OWNER, fire.routine.routine_id, {
+    baseRevision: 1, name: "Edited during delivery", prompt: "Future edited prompt", schedule: { kind: "interval", everyMs: 60_000 },
+  });
+  const targetLocked = barrier(), releaseDelivery = barrier(), compiler = new PostgresQueryCompiler();
+  let targetQuery: import("kysely").QueryId | undefined;
+  const projection = new ChatRepository(f.db.withPlugin({
+    transformQuery(args) {
+      const query = compiler.compileQuery(args.node, args.queryId);
+      if (query.sql.includes('from "chats"') && query.sql.includes("for update")
+        && query.parameters.includes(fire.routine.chat_id)) targetQuery = args.queryId;
+      return args.node;
+    },
+    async transformResult(args) {
+      if (args.queryId === targetQuery) { targetLocked.release(); await bounded(releaseDelivery.ready); }
+      return args.result;
+    },
+  }) as unknown as import("kysely").Kysely<import("../../../packages/gateway/src/chat/database.js").ChatDatabase>);
+  const delivery = projection.appendRoutineReceipt(OWNER, { sourceChatId: "chat_source", computerId: scope.computerId,
+    fireId: fire.fireId, kind: "output", now: f.state.clock });
+  let approval: Promise<unknown> | undefined;
+  try {
+    await bounded(targetLocked.ready);
+    approval = f.interactions.resolve(OWNER, interaction.chatId, interaction.interactionId, {
+      kind: "approval", baseRevision: 1, decision: "approve",
+    });
+    const results = Promise.allSettled([delivery, approval]);
+    await expect.poll(async () => Number((await sql<{ n: string }>`SELECT count(*) AS n FROM pg_stat_activity
+      WHERE pid<>pg_backend_pid() AND wait_event_type='Lock' AND query LIKE '%bot_chat_bindings%' AND query LIKE '%for update%'`.execute(f.db)).rows[0].n),
+    { timeout: 3_000 }).toBeGreaterThan(0);
+    releaseDelivery.release();
+    expect(await results).toEqual([
+      { status: "fulfilled", value: expect.objectContaining({ chatId: "chat_source" }) },
+      { status: "fulfilled", value: expect.anything() },
+    ]);
+    expect(await f.db.selectFrom("routine_chat_deliveries").select("fire_id").execute()).toEqual([{ fire_id: fire.fireId }]);
+    expect(await f.db.selectFrom("bot_routines").select("revision").execute()).toEqual([{ revision: "2" }]);
+  } finally { releaseDelivery.release(); await Promise.allSettled([delivery, approval]); }
+});
+
+it("defers a busy target receipt and delivers it on the next recovery without duplication", async () => {
+  const { terminalFixtureFire, originService } = await import("./routine-chat-origin-support.js");
+  const { barrier, bounded } = await import("./routine-cli-lock-order-support.js");
+  const fire = await terminalFixtureFire(f); await fire.finish();
+  const service = originService(f), append = vi.spyOn(f.chats, "appendRoutineReceipt");
+  const locked = barrier(), release = barrier();
+  const holder = f.db.transaction().execute(async tx => {
+    await tx.selectFrom("chats").select("id").where("id", "=", fire.routine.chat_id).forUpdate().executeTakeFirstOrThrow();
+    locked.release(); await bounded(release.ready);
+  });
+  try {
+    await bounded(locked.ready);
+    await expect(service.reconcile(OWNER, "chat_source")).rejects.toMatchObject({ code: "unavailable" });
+    await expect(append.mock.results[0]!.value).rejects.toMatchObject({ code: "55P03" });
+    expect(await f.db.selectFrom("routine_chat_deliveries").select("message_id").execute()).toEqual([]);
+    release.release(); await holder;
+    await service.reconcile(OWNER, "chat_source");
+    expect(append).toHaveBeenCalledTimes(2);
+    expect(await f.db.selectFrom("routine_chat_deliveries").select("fire_id").execute()).toEqual([{ fire_id: fire.fireId }]);
+  } finally { release.release(); await holder; await service.close(); append.mockRestore(); }
+});
+
+it("returns a retryable HTTP response when final membership recheck cannot lock a removed binding", async () => {
+  const { terminalFixtureFire, originService, decisionProof, machine } = await import("./routine-chat-origin-support.js");
+  const { barrier, bounded } = await import("./routine-cli-lock-order-support.js");
+  const { createRoutineOriginRoutes } = await import("../../../packages/gateway/src/bots/routine-origin-routes.js");
+  const { ROUTINE_ORIGIN_PROOF_HEADER } = await import("@matrix-os/contracts");
+  const fire = await terminalFixtureFire(f);
+  const { interaction } = await f.approvals.requestEdit(OWNER, fire.routine.routine_id, {
+    baseRevision: 1, name: "Retry edit", prompt: "Future retry prompt", schedule: { kind: "interval", everyMs: 60_000 },
+  });
+  const removed = { owner_id: OWNER, bot_id: "bot_deadbeef", chat_id: interaction.chatId, kind: "group" as const,
+    created_at: f.state.clock, removed_at: f.state.clock };
+  await f.db.insertInto("bot_chat_bindings").values(removed).execute();
+  const service = originService(f), proof = decisionProof(f, interaction.interactionId);
+  const app = createRoutineOriginRoutes({ service, ...machine, getPrincipal: () => f.principal,
+    verifyApproval: async () => proof, admitContinuation: async () => {} });
+  const decide = () => app.request(proof.path, { method: "POST", headers: {
+    "content-type": "application/json", [ROUTINE_ORIGIN_PROOF_HEADER]: "fixture-proof",
+  }, body: JSON.stringify({ kind: "approval", baseRevision: 1, decision: "approve" }) });
+  const locked = barrier(), release = barrier();
+  const holder = f.db.transaction().execute(async tx => {
+    await tx.selectFrom("bot_chat_bindings").select("bot_id").where("chat_id", "=", removed.chat_id)
+      .where("bot_id", "=", removed.bot_id).forUpdate().executeTakeFirstOrThrow();
+    locked.release(); await bounded(release.ready);
+  });
+  try {
+    await bounded(locked.ready);
+    const retryable = await decide();
+    expect(retryable.status).toBe(503);
+    expect(await retryable.json()).toMatchObject({ code: "unavailable" });
+    expect(await f.db.selectFrom("bot_routines").select("revision").execute()).toEqual([{ revision: "1" }]);
+    release.release(); await holder;
+    expect((await decide()).status).toBe(200);
+    expect(await f.db.selectFrom("bot_routines").select("revision").execute()).toEqual([{ revision: "2" }]);
+  } finally { release.release(); await holder; await service.close(); }
+});
