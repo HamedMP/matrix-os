@@ -1,4 +1,4 @@
-import { CanonicalChatIdSchema, RoutineActionIdSchema } from "@matrix-os/contracts";
+import { BotInteractionIdSchema, CanonicalChatIdSchema, RoutineActionIdSchema } from "@matrix-os/contracts";
 import { slackLinkReturnTarget } from "./slack/link-return.js";
 import { RuntimeSlotSchema } from './customer-vps-schema.js';
 
@@ -134,13 +134,19 @@ function routineOwnerReturnTarget(value: string | null): string | null {
   const queryStart = value.indexOf("?");
   const completion = queryStart < 0 ? null : ROUTINE_OWNER_COMPLETION_PATH.exec(value.slice(0, queryStart));
   if (!completion) return null;
-  const exactAction = completion[1] === "confirm";
-  const selector = exactAction ? "challenge" : "chat";
-  const schema = exactAction ? RoutineActionIdSchema : CanonicalChatIdSchema;
   const params = new URLSearchParams(value.slice(queryStart + 1));
-  const selected = params.getAll(selector), runtimes = params.getAll("runtime");
-  if ([...params.keys()].some(key => key !== selector && key !== "runtime")
-    || selected.length !== 1 || !schema.safeParse(selected[0]).success
+  const runtimes = params.getAll("runtime");
+  const sourceReview = params.has("originChat") || params.has("interaction");
+  const selectors = completion[1] === "full-access"
+    ? [["chat", CanonicalChatIdSchema]] as const
+    : sourceReview
+      ? [["originChat", CanonicalChatIdSchema], ["interaction", BotInteractionIdSchema]] as const
+      : [["challenge", RoutineActionIdSchema]] as const;
+  if ([...params.keys()].some(key => key !== "runtime" && !selectors.some(([selector]) => key === selector))
+    || selectors.some(([selector, schema]) => {
+      const values = params.getAll(selector);
+      return values.length !== 1 || !schema.safeParse(values[0]).success;
+    })
     || runtimes.length > 1 || runtimes.length === 1 && !RuntimeSlotSchema.safeParse(runtimes[0]).success) return null;
   return value;
 }
