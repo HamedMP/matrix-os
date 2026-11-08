@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, expect, it, onTestFinished, vi } from "vitest";
 import { createClerkAuth } from "../../packages/platform/src/clerk-auth.js";
 import { deleteContainer, insertUserMachine, type PlatformDB } from "../../packages/platform/src/db.js";
 import { buildPostAuthRedirectPath, createApp } from "../../packages/platform/src/main.js";
@@ -10,7 +10,11 @@ let db: PlatformDB;
 beforeEach(async () => { db = await setupProxyRoutingTest(); });
 afterEach(async () => { await cleanupProxyRoutingTest(db); });
 
-it("carries the exact Electron routine confirmation through signed-out HTTP and browser session exchange", async ({ onTestFinished }) => {
+it.each([
+  { flow: "confirm", selector: "challenge", id: `rcact_${"a".repeat(32)}` },
+  { flow: "full-access", selector: "chat", id: "chat_source" },
+])("carries the exact Electron $flow link through VPS-only signed-out HTTP and browser session exchange", async ({ flow, selector, id }) => {
+  process.env.MATRIX_LEGACY_CONTAINER_ROUTING_ENABLED = "false";
   process.env.PLATFORM_JWT_SECRET = JWT_SECRET;
   vi.stubEnv("NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY", "pk_test_matrix");
   onTestFinished(() => vi.unstubAllEnvs());
@@ -21,14 +25,18 @@ it("carries the exact Electron routine confirmation through signed-out HTTP and 
     hetznerServerId: 123484, publicIPv4: "203.0.113.35", imageVersion: "matrix-os-host-2026.05.31-1",
     serverType: "cpx22", provisionedAt: "2026-05-31T12:05:00.000Z",
   });
-  const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async () => new Response("Confirmation page", { status: 200 }));
+  const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async url => {
+    if (String(url).startsWith("http://127.0.0.1:3200/")) return new Response(null, {
+      status: 307, headers: { location: "/sign-in?redirect_url=" + encodeURIComponent(String(url)) },
+    });
+    return new Response("Confirmation page", { status: 200 });
+  });
   const app = createApp({
     db, orchestrator: stubOrchestrator(), platformSecret: "platform-secret-123",
     clerkAuth: createClerkAuth({ verifyToken: vi.fn().mockResolvedValue({ sub: "user_alice" }) }),
   });
-  const challenge = `rcact_${"a".repeat(32)}`;
-  const path = "/vm/alice-staging/routine-cli/confirm";
-  const link = `${path}?runtime=staging&challenge=${challenge}`;
+  const path = `/vm/alice-staging/routine-cli/${flow}`;
+  const link = `${path}?runtime=staging&${selector}=${id}`;
   const response = await app.request(link, { headers: { host: "app.matrix-os.com" } });
   expect(response.status).toBe(200);
   const html = await response.text();
@@ -48,12 +56,12 @@ it("carries the exact Electron routine confirmation through signed-out HTTP and 
   const cookie = cookieHeaderFromSetCookie(session.headers, ["matrix_app_session"]);
   const final = await app.request(link, { headers: { host: "app.matrix-os.com", cookie } });
   expect(final.status).toBe(200);
-  expect(fetchMock.mock.lastCall?.[0]).toBe(`https://203.0.113.35:443/routine-cli/confirm?challenge=${challenge}`);
+  expect(fetchMock.mock.lastCall?.[0]).toBe(`https://203.0.113.35:443/routine-cli/${flow}?${selector}=${id}`);
 
   for (const invalid of [
     `https://evil.example${link}`, `//evil.example${link}`,
-    `${path}?runtime=staging&challenge=invalid`, `${path}?runtime=invalid_runtime&challenge=${challenge}`,
-    `${link}&%63hallenge=${challenge}`, `${link}&runtime=primary`, `${link}&next=https://evil.example`, `${link}#external`,
+    `${path}?runtime=staging&${selector}=invalid`, `${path}?runtime=invalid_runtime&${selector}=${id}`,
+    `${link}&%63${selector.slice(1)}=${id}`, `${link}&runtime=primary`, `${link}&next=https://evil.example`, `${link}#external`,
   ]) {
     const result = await exchange(invalid);
     expect(result.status).toBe(200);
@@ -61,7 +69,7 @@ it("carries the exact Electron routine confirmation through signed-out HTTP and 
   }
   const nested = (target: string) => buildPostAuthRedirectPath(`https://app.matrix-os.com/sign-in?redirect_url=${encodeURIComponent(target)}`);
   expect(nested(link)).toBe(link);
-  expect(nested(`${path}?challenge=${challenge}`)).toBe(`${path}?challenge=${challenge}`);
+  expect(nested(`${path}?${selector}=${id}`)).toBe(`${path}?${selector}=${id}`);
   expect(nested(`https://evil.example${link}`)).toBe("/");
-  expect(nested(`${link}&challenge=${challenge}`)).toBe("/");
+  expect(nested(`${link}&${selector}=${id}`)).toBe("/");
 });
