@@ -1,7 +1,7 @@
 // Named native/model transport fixture; exact 0.162.1 JSON schemas validate consumed native contracts.
 import Ajv from "codex-fixture-ajv";
 import { readFile, appendFile, writeFile } from "node:fs/promises";
-import { readFileSync } from "node:fs";
+import { closeSync, readFileSync } from "node:fs";
 import { gunzipSync } from "node:zlib";
 import { createInterface } from "node:readline";
 const schema = JSON.parse(gunzipSync(readFileSync(new URL("./codex-0162/app-server-schema-0162.json.gz", import.meta.url))).toString("utf8"));
@@ -23,6 +23,10 @@ const control = config.controlFile ? setInterval(async () => {
     emit(request);
   }
   if (text === "complete") { emit({ method: "turn/completed", params: { threadId: "fixture_native_thread", turn: { id: "fixture_native_turn_" + turn, status: "completed" } } }); }
+  if (text === "stdout-eof") {
+    closeSync(1);
+    await record({ fixtureEvent: "native.stdout-eof", pid: process.pid });
+  }
 }, 10) : undefined;
 control?.unref();
 let history;
