@@ -82,6 +82,9 @@ export async function createPlatformCollaboration(options: {
   const listOrganizationIds = organizations
     ? async (actorId: string) => (await organizations.repository.listOrganizationsForActor(actorId)).map((row) => row.organization.organizationId)
     : undefined;
+  const isCurrentOrganizationMember = organizations
+    ? (input: { organizationId: string; actorId: string }) => organizations.projection.isCurrentMember(input)
+    : undefined;
   const routes = createPlatformCollaborationRoutes({
     repository,
     ...(options.direct?.relay ? { relay: options.direct.relay } : {}),
@@ -91,6 +94,7 @@ export async function createPlatformCollaboration(options: {
     resolveParticipant: options.resolveParticipant,
     resolveInvitationIdentifier: options.resolveInvitationIdentifier,
     ...(listOrganizationIds ? { listOrganizationIds } : {}),
+    ...(isCurrentOrganizationMember ? { isCurrentOrganizationMember } : {}),
     now: options.now,
   });
   let registered = false;

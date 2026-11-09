@@ -1,9 +1,10 @@
 import { Hono } from "hono";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   createPlatformCollaboration,
   loadPlatformCollaborationConfig,
 } from "../../packages/platform/src/collaboration/wiring.js";
+import type { PlatformOrganizations } from "../../packages/platform/src/organizations/wiring.js";
 import {
   createPlatformCollaborationTestDatabase,
   destroyPlatformCollaborationTestDatabase,
@@ -73,6 +74,62 @@ describe("platform collaboration wiring", () => {
     });
     expect(discovery.status).toBe(200);
     expect(await discovery.json()).toMatchObject({ items: [{ scopeId, status: "accepted", kind: "chat" }] });
+    await runtime.shutdown();
+  });
+
+  it("rechecks saved organization memberships before app discovery", async () => {
+    const organizationId = "org_matrix_team";
+    const actorId = platformCollaborationActors.recipientWithoutComputer;
+    const isCurrentMember = vi.fn(async () => false);
+    const organizations = {
+      repository: {
+        listOrganizationsForActor: async () => [{ organization: { organizationId } }],
+      },
+      projection: { isCurrentMember },
+      controlAuthority: {},
+      register: () => undefined,
+      shutdown: async () => undefined,
+    } as unknown as PlatformOrganizations;
+    const runtime = await createPlatformCollaboration({
+      db: fixture.collaborationDb,
+      organizations,
+      resolveActor: async (c) => c.req.header("x-test-actor") ?? null,
+      authenticateRuntime: async () => null,
+      resolveParticipant: async (participantId) => ({ actorId: participantId, displayName: participantId }),
+      resolveInvitationIdentifier: async () => null,
+      now: () => new Date("2026-09-07T12:00:00.000Z"),
+    });
+    await runtime.repository.applyDirectoryEvent({
+      eventId: "20000000-0000-4000-8000-000000000002",
+      scopeId,
+      runtimeId: "runtime_owner",
+      ownerId: platformCollaborationActors.owner,
+      kind: "app",
+      organizationId,
+      audience: "current_membership",
+      authorityGeneration: 1,
+      metadataRevision: 1,
+      app: {
+        appId: "team-tracker",
+        catalogId: "50000000-0000-4000-8000-000000000001",
+        readinessId: "60000000-0000-4000-8000-000000000001",
+        registrationIncarnation: "a".repeat(64),
+        buildId: "b".repeat(64),
+        shareRevision: 1,
+        state: "active",
+      },
+      recipients: [{ actorId: platformCollaborationActors.owner, status: "accepted" }],
+    });
+    const app = new Hono();
+    runtime.register(app);
+
+    const response = await app.request("/api/collaboration/shared-apps", {
+      headers: { "x-test-actor": actorId },
+    });
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({ items: [] });
+    expect(isCurrentMember).toHaveBeenCalledWith({ organizationId, actorId });
     await runtime.shutdown();
   });
 });
