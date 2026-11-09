@@ -39,10 +39,11 @@ export function AiUsagePanel({
   const [agent, setAgent] = useState<UsageAgent | "">(""),
     [range, setRange] = useState(history ? "all" : "365");
   const [zone, setZone] = useState(history?.timeZone ?? timeZone);
-  const report = history?.reports.find(
-    (r) => r.id === range && r.agent === agent,
-  );
-  const days = report?.days ?? Number(range);
+  const report = history?.reports.find(r => r.id === range && r.agent === agent)
+    ?? history?.reports.find(r => r.id === "all" && r.agent === agent)
+    ?? history?.reports.find(r => r.agent === agent);
+  const effectiveRange = report?.id ?? (Number.isFinite(Number(range)) ? range : "365");
+  const days = report?.days ?? Number(effectiveRange);
   const endDay = report?.endDay ?? usageDay(now.toISOString(), zone);
   const computed = useMemo(
     () =>
@@ -98,7 +99,7 @@ export function AiUsagePanel({
           </select>
           <select
             aria-label="Date range"
-            value={range}
+            value={effectiveRange}
             onChange={(e) => setRange(e.target.value)}
           >
             {history ? (

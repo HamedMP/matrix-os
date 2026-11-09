@@ -98,6 +98,10 @@ function CoverageMetadata({ history }: { history: UsageHistory }) {
     <div className="au-coverage-body">
       <dl className="au-coverage-grid">
         <div>
+          <dt>Report updated</dt>
+          <dd>{new Intl.DateTimeFormat("en", { dateStyle: "medium", timeStyle: "short", timeZone: "UTC" }).format(new Date(c.indexedAt))} UTC</dd>
+        </div>
+        <div>
           <dt>Connected sources</dt>
           <dd>{c.machines.join(", ")}</dd>
         </div>
