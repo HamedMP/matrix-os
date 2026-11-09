@@ -35,6 +35,37 @@ function share(state: "active" | "needs_recheck" | "stopped") {
 }
 
 describe("owner collaborative app transport", () => {
+  it("restores change notifications after the gateway closes a stream", async () => {
+    const handlers: Array<{ onEvent(): void; onUnavailable(): void }> = [];
+    const unsubscribes: Array<ReturnType<typeof vi.fn>> = [];
+    const direct = {
+      request: vi.fn().mockResolvedValue({ result: [], revision: "7" }),
+      subscribeEvents: vi.fn((_scopeId: string, callbacks: { onEvent(): void; onUnavailable(): void }) => {
+        handlers.push(callbacks);
+        const unsubscribe = vi.fn();
+        unsubscribes.push(unsubscribe);
+        return unsubscribe;
+      }),
+    };
+    const onChanged = vi.fn();
+    const transport = createOwnerCollaborativeAppTransport({
+      appId, api: { get: vi.fn().mockResolvedValue(share("active")), direct },
+      legacyRequest: vi.fn(), onChanged,
+    });
+
+    await transport.query({ action: "find" });
+    handlers[0]!.onUnavailable();
+    expect(onChanged).toHaveBeenCalledOnce();
+    await transport.query({ action: "find" });
+    expect(direct.subscribeEvents).toHaveBeenCalledTimes(2);
+    expect(unsubscribes[0]).toHaveBeenCalledOnce();
+
+    handlers[0]!.onUnavailable();
+    expect(unsubscribes[1]).not.toHaveBeenCalled();
+    handlers[1]!.onEvent();
+    expect(onChanged).toHaveBeenCalledTimes(2);
+  });
+
   it("starts change notifications when an already-open owner app becomes shared", async () => {
     const direct = { request: vi.fn(), subscribeEvents: vi.fn().mockReturnValue(vi.fn()) };
     const get = vi.fn().mockResolvedValueOnce(null).mockResolvedValueOnce(share("active"));
@@ -46,7 +77,9 @@ describe("owner collaborative app transport", () => {
     expect(direct.subscribeEvents).not.toHaveBeenCalled();
 
     await transport.refreshShare();
-    expect(direct.subscribeEvents).toHaveBeenCalledWith(scopeId, expect.objectContaining({ onEvent: onChanged }));
+    expect(direct.subscribeEvents).toHaveBeenCalledWith(scopeId, expect.objectContaining({ onEvent: expect.any(Function) }));
+    direct.subscribeEvents.mock.calls[0]![1].onEvent();
+    expect(onChanged).toHaveBeenCalledOnce();
   });
 
   it("does not subscribe or send a request after closing during share lookup", async () => {
@@ -222,8 +255,10 @@ describe("owner collaborative app transport", () => {
         action: { action: "update", table: "items", id: "one", data: { done: true }, app: appId },
       }, undefined, undefined);
     expect(direct.subscribeEvents).toHaveBeenCalledWith(scopeId, expect.objectContaining({
-      onEvent: onChanged,
+      onEvent: expect.any(Function),
     }));
+    direct.subscribeEvents.mock.calls[0]![1].onEvent();
+    expect(onChanged).toHaveBeenCalledOnce();
 
     transport.close();
     expect(unsubscribe).toHaveBeenCalledTimes(1);

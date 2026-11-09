@@ -67,23 +67,38 @@ export function createOwnerCollaborativeAppTransport(input: {
   const requestId = input.createRequestId ?? (() => crypto.randomUUID());
   let subscribedScopeId: string | null = null;
   let unsubscribe: (() => void) | null = null;
+  let subscriptionGeneration = 0;
   let closed = false;
   let uncertain: PendingMutation[] = [];
   const inFlight = new Set<string>();
 
   const stopSubscription = () => {
-    unsubscribe?.();
+    const release = unsubscribe;
     unsubscribe = null;
     subscribedScopeId = null;
+    subscriptionGeneration += 1;
+    release?.();
   };
 
   const ensureSubscription = (scopeId: string) => {
     if (subscribedScopeId === scopeId) return;
     stopSubscription();
-    unsubscribe = input.api.direct.subscribeEvents(scopeId, {
-      onEvent: input.onChanged,
-      onUnavailable: input.onChanged,
+    const generation = subscriptionGeneration;
+    const release = input.api.direct.subscribeEvents(scopeId, {
+      onEvent: () => {
+        if (!closed && subscriptionGeneration === generation) return input.onChanged();
+      },
+      onUnavailable: () => {
+        if (closed || subscriptionGeneration !== generation) return;
+        stopSubscription();
+        input.onChanged();
+      },
     });
+    if (closed || subscriptionGeneration !== generation) {
+      release();
+      return;
+    }
+    unsubscribe = release;
     subscribedScopeId = scopeId;
   };
 
