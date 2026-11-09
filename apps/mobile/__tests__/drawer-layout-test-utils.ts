@@ -8,7 +8,6 @@ import { C2_CHATS } from "./side-panel-test-utils";
 /** What the layout gave the navigator, and the route the app is on. */
 export type DrawerState = {
   history: ({ type: "drawer"; status: "open" | "closed" } | { type: "route"; key: string })[];
-  default?: "open" | "closed";
 };
 type DrawerListeners = Record<string, (event: { data: { state: DrawerState } }) => void>;
 
@@ -25,6 +24,7 @@ export const drawer = {
 
 export const mocks = {
   navigate: jest.fn(),
+  dismissTo: jest.fn(),
   closeDrawer: jest.fn(),
   useCanonicalChatPages: jest.fn(),
   useProjects: jest.fn(),
