@@ -134,6 +134,16 @@ describe("collaborative app authenticated launch facade", () => {
     expect(request).toHaveBeenCalledWith("index.html", expect.any(AbortSignal));
   });
 
+  it("keeps the owner relay alive for the full asset-download deadline", async () => {
+    const timeout = vi.spyOn(AbortSignal, "timeout").mockReturnValue(new AbortController().signal);
+    await sessions.create({ actorId, clientRequestId: requestId, scopeId, organizationId, runtimeId: "runtime_owner",
+      authorityGeneration: 1, appId: app.appId, catalogId: app.catalogId, buildId: app.buildId, shareRevision: 1 });
+
+    await sessions.request({ launchId, actorId, scopeId, assetPath: "assets/main.js" });
+
+    expect(timeout).toHaveBeenCalledWith(30_000);
+  });
+
   it("rechecks the platform session, current membership, share, build, and confined path on every request", async () => {
     await sessions.create({ actorId, clientRequestId: requestId, scopeId, organizationId, runtimeId: "runtime_owner",
       authorityGeneration: 1, appId: app.appId, catalogId: app.catalogId, buildId: app.buildId, shareRevision: 1 });
