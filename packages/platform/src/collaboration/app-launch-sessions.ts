@@ -5,6 +5,7 @@ const DEFAULT_SWEEP_MS = 30_000;
 const DEFAULT_MAX_SESSIONS = 512;
 const DEFAULT_MAX_PER_ACTOR = 8;
 const DEFAULT_MAX_RESPONSE_BYTES = 256 * 1024 * 1024;
+const ASSET_DOWNLOAD_TIMEOUT_MS = 30_000;
 const SAFE_CONTENT_TYPES = new Set([
   "application/json", "application/json; charset=utf-8", "application/octet-stream", "application/wasm",
   "font/woff", "font/woff2", "image/gif", "image/jpeg", "image/png", "image/svg+xml", "image/webp",
@@ -187,8 +188,8 @@ export class CollaborativeAppLaunchSessions {
     let response: Response;
     try {
       const signal = input.signal
-        ? AbortSignal.any([input.signal, AbortSignal.timeout(10_000)])
-        : AbortSignal.timeout(10_000);
+        ? AbortSignal.any([input.signal, AbortSignal.timeout(ASSET_DOWNLOAD_TIMEOUT_MS)])
+        : AbortSignal.timeout(ASSET_DOWNLOAD_TIMEOUT_MS);
       response = await record.upstream.request(input.assetPath, signal);
     } catch (error: unknown) {
       if (input.signal?.aborted) throw error;
