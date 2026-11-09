@@ -179,8 +179,8 @@ export function createAppInstanceAdapter(options: {
       .where("catalog.deleted_at", "is", null)
       .where("catalog.kind", "=", "app")
       .where("catalog.id", "=", context.resourceId);
-    if (lock === "update") query = query.forUpdate();
-    else if (lock === "share") query = query.forShare();
+    if (lock === "update") query = query.forUpdate("binding");
+    else if (lock === "share") query = query.forShare("binding");
     const binding = await query.executeTakeFirst();
     if (!binding) throw new ProjectAppAdapterError("app_unavailable");
     return binding;
