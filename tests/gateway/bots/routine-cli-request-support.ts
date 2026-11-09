@@ -11,7 +11,7 @@ import { ChatAgentStore } from "../../../packages/gateway/src/chat/agent-store.j
 import { createBotStateTransactions } from "../../../packages/gateway/src/bots/events.js";
 import { createBotBindingsRepository } from "../../../packages/gateway/src/bots/repositories/bindings.js";
 import { createBotTasksRepository } from "../../../packages/gateway/src/bots/repositories/tasks.js";
-import { createRoutineCliSourceService } from "../../../packages/gateway/src/bots/routine-cli-source.js";
+import { createRoutineCliSourceService, type RoutineCliSourceReference } from "../../../packages/gateway/src/bots/routine-cli-source.js";
 import { createRoutineCliTargetService } from "../../../packages/gateway/src/bots/routine-cli-targets.js";
 import { createRoutineCliRequestService, type RoutineCliRequestDependencies, type RoutineCliMutationAdmission } from "../../../packages/gateway/src/bots/routine-cli-requests.js";
 import { BOT, NOW, OWNER, at, insertChat } from "./bot-state-support.js";
@@ -20,7 +20,20 @@ export const TARGET_A = { botId: BOT, chatId: "chat_target_a" }, TARGET_B = { bo
 export const proposal: BotRoutineProposal = { name: "Daily report", prompt: "private prompt", schedule: { kind: "interval", everyMs: 60_000 }, selection: { instanceId: "matrix_chatgpt_plan", model: "private-model" }, authorizedEffects: ["read"] };
 export const propose = (n = 100): RoutineCliOperation => ({ operation: "propose", requestId: invocation(n), proposal });
 export const routineId = (n: number) => `rt_${n.toString(16).padStart(24, "0")}`;
-export async function requestFixture(db: Kysely<OwnerBotDatabase>, options: { actualSourceOnly?: boolean } = {}) {
+type RequestFixtureOptions = { actualSourceOnly?: boolean };
+type FixtureSource<Options extends RequestFixtureOptions> = Options extends { actualSourceOnly: true } ? ""
+  : Options extends { actualSourceOnly?: false | undefined } ? RoutineCliSourceReference : RoutineCliSourceReference | "";
+type RequestFixtureWith<Source> = Omit<Awaited<ReturnType<typeof createRequestFixture>>, "source"> & { source: Source };
+
+export function requestFixture<Options extends RequestFixtureOptions>(db: Kysely<OwnerBotDatabase>,
+  options: Options): Promise<RequestFixtureWith<FixtureSource<Options>>>;
+// Keep the default last for fixtures typed with ReturnType<typeof requestFixture>.
+export function requestFixture(db: Kysely<OwnerBotDatabase>, options?: { actualSourceOnly?: false }): Promise<RequestFixtureWith<RoutineCliSourceReference>>;
+export function requestFixture(db: Kysely<OwnerBotDatabase>, options: RequestFixtureOptions = {}) {
+  return createRequestFixture(db, options);
+}
+
+async function createRequestFixture(db: Kysely<OwnerBotDatabase>, options: RequestFixtureOptions) {
   // Match Bot startup: routine target authority also reads durable collaboration scopes.
   await bootstrapCollaborationDatabase(db as unknown as Kysely<OwnerCollaborationDatabase>);
   const home = await mkdtemp(join(tmpdir(), "routine-cli-requests-"));
@@ -38,7 +51,8 @@ export async function requestFixture(db: Kysely<OwnerBotDatabase>, options: { ac
   const principal = { userId: OWNER, source: "jwt" as const };
   await targets.remember(principal, { ...TARGET_A, baseRevision: 0 });
   // Actual native-source lanes must mint through their canonical adapter, never pre-seed a source.
-  const source: Awaited<ReturnType<typeof sources.register>> | "" = options.actualSourceOnly ? "" : await sources.register(context()); let nextInvocation = 1;
+  const source = options.actualSourceOnly ? "" as const : await sources.register(context());
+  let nextInvocation = 1;
   // Explicit atomic ledger fixture port, NOT real canonical proposal/control admission.
   const admitMutation: RoutineCliMutationAdmission = async ({ transaction, target }) => {
     const task = await createBotTasksRepository(transaction.db).create({ ownerId: OWNER, botId: target.botId, chatId: target.chatId, now: state.clock }, transaction.db);
@@ -48,11 +62,13 @@ export async function requestFixture(db: Kysely<OwnerBotDatabase>, options: { ac
   const transact = createBotStateTransactions(chats);
   const service = (overrides: Partial<RoutineCliRequestDependencies> = {}) => createRoutineCliRequestService({ db, scope, sources, targets, transact,
     now: () => new Date(state.clock), authorizeTarget: async () => state.targetAllowed, admitMutation, ...overrides });
-  const token = async (operation: RoutineCliOperation, registered: typeof source = source) => {
-    if (!registered) throw new Error("Actual canonical native source required");
-    return (await sources.issue(registered, { invocationId: invocation(nextInvocation++), operation })).takeToken();
+  const requireSource = (): RoutineCliSourceReference => {
+    if (!source) throw new Error("Actual canonical native source required");
+    return source;
   };
-  return { home, db, state, chats, agents, sources, targets, source, principal, transact, service, token, admitMutation,
+  const token = async (operation: RoutineCliOperation, registered?: RoutineCliSourceReference) =>
+    (await sources.issue(registered ?? requireSource(), { invocationId: invocation(nextInvocation++), operation })).takeToken();
+  return { home, db, state, chats, agents, sources, targets, source, requireSource, principal, transact, service, token, admitMutation,
     execute: async (operation: RoutineCliOperation, overrides: Partial<RoutineCliRequestDependencies> = {}) => service(overrides).execute({ token: await token(operation), operation }),
     switchDefault: async () => { const current = await targets.getStoredPreference(principal); await targets.remember(principal, { ...TARGET_B, baseRevision: current.revision }); },
     close: async () => { await agents.close(); await chats.release(); await rm(home, { recursive: true, force: true }); },
