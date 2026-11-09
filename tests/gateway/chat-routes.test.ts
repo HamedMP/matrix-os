@@ -677,6 +677,7 @@ describe("canonical Chat routes", () => {
       { type: "personal", ownerId: "owner_1" },
       "chat_route_test",
       expect.objectContaining({ clientRequestId: "req_route_queue" }),
+      { routineCreationProof: undefined },
     );
   });
 

@@ -12,6 +12,8 @@ export const RoutineSourcePolicySchema = z.strictObject({
   live: z.boolean(), scope: z.enum(["personal", "shared", "org"]),
   interactionMode: z.enum(["default", "plan", "review"]),
   permissionMode: z.enum(["full_access", "supervised", "auto", "auto_accept_edits", "unsupported"]),
+  creationApproval: z.enum(["exact", "admitted"]).optional(),
+  creationRoute: z.enum(["native", "matrix"]).optional(),
   originCeiling: z.enum(["read", "exact", "full"]), revision: z.string().min(1).max(128),
 });
 export type RoutineSourcePolicy = z.infer<typeof RoutineSourcePolicySchema>;
@@ -21,7 +23,9 @@ export function routineActionPolicy(source: RoutineCliSourceContext, policyValue
   if (!parsed.success || !parsed.data.live || !source.actions.includes(action)) return "deny";
   const policy = parsed.data;
   if (action === "read") return "allow";
+  if (action === "propose" && policy.creationRoute === "native") return "deny";
   if (policy.scope !== "personal" || policy.interactionMode !== "default" || policy.permissionMode === "unsupported" || policy.originCeiling === "read") return "deny";
+  if (action === "propose" && policy.creationApproval === "exact") return "ask";
   return source.identity.kind !== "terminal_launch" && policy.permissionMode === "full_access" && policy.originCeiling === "full" ? "allow" : "ask";
 }
 export interface RoutineSourceProducer {
@@ -46,7 +50,7 @@ export function createRoutineActionSourceRegistry(options: { now?: () => number;
   const remove = (key: string) => { const entry = entries.get(key); if (!entry) return; entries.delete(key); entry.detach(); entry.controller.abort(); };
   const sweep = () => { for (const [key, entry] of entries) if (entry.producer.signal.aborted || Date.parse(entry.handle.source.expiresAt) <= now()) remove(key); };
   const timer = setInterval(sweep, 1000); timer.unref?.();
-  const read = (source: RoutineCliSourceContext) => {
+  const read = (source: RoutineCliSourceContext, action?: RoutineCliAction) => {
     sweep(); if (closed) return null;
     const parsedSource = RoutineCliSourceContextSchema.safeParse(source); if (!parsedSource.success) return null;
     const entry = entries.get(routineActionHash(parsedSource.data)); if (!entry || entry.controller.signal.aborted) return null;
@@ -55,7 +59,13 @@ export function createRoutineActionSourceRegistry(options: { now?: () => number;
       console.warn("[routine-action] Current policy unavailable", error instanceof Error ? error.name : "UnknownError"); remove(routineActionHash(parsedSource.data)); return null;
     }
     const parsed = RoutineSourcePolicySchema.safeParse(raw);
-    return parsed.success && parsed.data.live ? { ...entry, policy: parsed.data, fingerprint: routineActionHash(parsed.data) } : null;
+    if (!parsed.success || !parsed.data.live) return null;
+    const policy = parsed.data;
+    // Creation selection and approval only authorize proposals. Keep all other
+    // policy changes, including source revision, visible to every action.
+    const fingerprint = routineActionHash(action === "read" || action === "control"
+      ? { ...policy, creationRoute: undefined, creationApproval: undefined } : policy);
+    return { ...entry, policy, fingerprint };
   };
   return {
     register(producer: RoutineSourceProducer): RoutineSourceHandle {
@@ -76,10 +86,10 @@ export function createRoutineActionSourceRegistry(options: { now?: () => number;
     has(handle: RoutineSourceHandle) { return read(handle.source)?.handle === handle; },
     revoke(handle: RoutineSourceHandle) { if (read(handle.source)?.handle === handle) remove(routineActionHash(RoutineCliSourceContextSchema.parse(handle.source))); },
     async validateWithin(source: RoutineCliSourceContext, trx: Transaction<OwnerBotDatabase>, action?: RoutineCliAction, invocation?: RoutineCliVerifiedInvocation) {
-      const before = read(source);
+      const before = read(source, action);
       if (!before || action && routineActionPolicy(source, before.policy, action) === "deny") return false;
       if (await before.producer.validateWithin(source, trx, action, invocation) !== true) return false;
-      const after = read(source); return after?.handle === before.handle && after.fingerprint === before.fingerprint;
+      const after = read(source, action); return after?.handle === before.handle && after.fingerprint === before.fingerprint;
     },
     close() { closed = true; clearInterval(timer); for (const key of [...entries.keys()]) remove(key); },
   };

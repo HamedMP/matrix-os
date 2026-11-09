@@ -1,5 +1,7 @@
 import { afterEach, expect, it, vi } from "vitest";
 import * as routineDisplay from "../../../packages/gateway/src/chat/routine-result-artifacts.js";
+import { createRoutineCreationLatch } from "../../../packages/gateway/src/chat/routine-creation-latch.js";
+import { invocation } from "./routine-cli-source-support.js";
 import { insertRoutine } from "./routine-cli-request-support.js";
 import { claudeFixture, nativeProtocol, proposal, TARGET_A } from "./routine-cli-claude-support.js";
 let f: Awaited<ReturnType<typeof claudeFixture>>;
@@ -84,6 +86,44 @@ it.each(["unknown-version", "review", "cancel"])('fails closed for %s without ow
   await f.f.canonical.drain(); expect(f.httpCalls()).toBe(0); expect(await f.data.db.selectFrom("routine_cli_requests").selectAll().execute()).toEqual([]);
   expect(await f.data.db.selectFrom("bot_approvals").selectAll().execute()).toEqual([]);
 });
+it.each(["native", "matrix"] as const)("claiming %s creation leaves a pending control and admitted reads intact", async engine => {
+  f = await claudeFixture();
+  const chatId = "chat_claude_creation_scope", input = await f.admit(chatId);
+  const latch = createRoutineCreationLatch(input);
+  const source = await f.runtime.registerChat({ input, provider: "claude", signal: input.signal,
+    current: () => true, creationPolicy: latch, publish: event => { f.sourceEvents.push(event); } });
+  const call = (n: number) => ({ invocationId: invocation(n), signal: input.signal });
+  try {
+    const routineId = await insertRoutine(f.data.db, 705);
+    const pause = { operation: "pause", routineId, baseRevision: 1, requestId: invocation(706) } as const;
+    const pendingControl = source.authorize({ ...call(707), operation: pause });
+    await expect.poll(() => f.sourceEvents.some(event => event.type === "approval.requested")).toBe(true);
+    const approval = f.sourceEvents.find(event => event.type === "approval.requested");
+    if (approval?.type !== "approval.requested") throw new Error("Missing exact pause challenge");
+    const list = { operation: "list" } as const;
+    expect(await source.authorize({ ...call(708), operation: list })).toBe(true);
+    const issuedRead = await source.issue({ ...call(708), operation: list });
+    expect(await source.authorize({ ...call(709), operation: list })).toBe(true);
+
+    expect(latch.claim(engine)).toBe(true);
+    expect(latch.claim(engine === "matrix" ? "native" : "matrix")).toBe(false);
+    expect(f.runtime.get(f.f.principal, approval.approvalId)).toMatchObject({ status: "pending", actionDigest: approval.actionDigest });
+    await f.approve(approval, chatId, input.runId);
+    expect(await pendingControl).toBe(true);
+    const pauseDelivery = await source.issue({ ...call(707), operation: pause });
+    expect(await f.runtime.execute({ token: pauseDelivery.takeToken(), operation: pause })).toMatchObject({ kind: "receipt" });
+    expect(await f.data.db.selectFrom("bot_routines").select("status").where("routine_id", "=", routineId).executeTakeFirst()).toEqual({ status: "paused" });
+
+    expect(await f.runtime.execute({ token: issuedRead.takeToken(), operation: list })).toMatchObject({ kind: "list" });
+    const laterRead = await source.issue({ ...call(709), operation: list });
+    expect(await f.runtime.execute({ token: laterRead.takeToken(), operation: list })).toMatchObject({ kind: "list" });
+    if (engine === "native") {
+      const operation = { operation: "propose", requestId: invocation(710), proposal } as const;
+      await expect(source.authorize({ ...call(711), operation })).rejects.toMatchObject({ code: "permission_denied" });
+    }
+  } finally { await source.revoke(); }
+});
+
 it("actual source end before real target claim rejects the claim while preserving the original immutable queued receipt", async () => {
   f = await claudeFixture(); const requestId = "de000000-0000-4000-8000-000000000503", chatId = "chat_claude_ended";
   const native = nativeProtocol(`matrix routines propose --input - --request-id ${requestId} <<'MATRIX_ROUTINE_JSON'\n${JSON.stringify(proposal)}\nMATRIX_ROUTINE_JSON`);
