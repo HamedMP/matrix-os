@@ -122,6 +122,7 @@ export function createCollaborativeAppLaunchUpstreamFactory(options: {
         query: "",
         headers,
         body: null,
+        ...(method === "GET" ? { responseClass: "app_asset" as const } : {}),
       }).then((response) => bindResponseToSignal(response, signal));
     };
 

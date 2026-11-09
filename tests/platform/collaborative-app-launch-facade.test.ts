@@ -428,6 +428,7 @@ describe("collaborative app launch owner-session client", () => {
     expect(relay.forward).toHaveBeenCalledWith(expect.objectContaining({
       method: "GET",
       path: `/api/collaboration/scopes/${scopeId}/apps/${app.appId}/assets/assets/main.js`,
+      responseClass: "app_asset",
     }));
     await upstreamClient.request("assets/team logo?#.png", new AbortController().signal);
     const encodedPath = `/api/collaboration/scopes/${scopeId}/apps/${app.appId}/assets/assets/team%20logo%3F%23.png`;
