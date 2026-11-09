@@ -123,6 +123,33 @@ describe("shared app publishing", () => {
     expect(createAccessLink).toHaveBeenNthCalledWith(1,"launch",{baseRevision:1},expect.any(AbortSignal));
     expect(createAccessLink).toHaveBeenNthCalledWith(2,"launch",{baseRevision:1},expect.any(AbortSignal));
   });
+  it("keeps a created invite when an older empty link list returns later", async () => {
+    const link={id:"44444444-4444-4444-8444-444444444444",status:"unclaimed" as const,createdAt:"2026-11-05T12:00:00.000Z",claimExpiresAt:"2026-11-12T12:00:00.000Z",claimedAt:null,sessionExpiresAt:null};
+    const privateSite={...published,title:"launch",description:"",slug:null,accessMode:"private_link" as const};
+    const url=`https://matrix.page/${privateSite.id}#access=${link.id}.${"a".repeat(43)}`;
+    let resolveCreate!: (value:{link:typeof link;url:string})=>void;
+    let resolveList!: (value:{links:typeof link[]})=>void;
+    const createPending=new Promise<{link:typeof link;url:string}>(resolve=>{resolveCreate=resolve;});
+    const listPending=new Promise<{links:typeof link[]}>(resolve=>{resolveList=resolve;});
+    const api=client({
+      get:vi.fn(async()=>null),
+      deploy:vi.fn(async()=>privateSite),
+      accessLinks:vi.fn(()=>listPending),
+      createAccessLink:vi.fn(()=>createPending),
+    });
+    render(<AppSitePanel appSlug="launch" client={api} variant="share" />);
+
+    await waitFor(()=>expect(screen.getByRole("button",{name:"Create invite link"})).toHaveProperty("disabled",false));
+    fireEvent.click(screen.getByRole("button",{name:"Create invite link"}));
+    await waitFor(()=>expect(api.accessLinks).toHaveBeenCalledTimes(1));
+    await act(async()=>resolveCreate({link,url}));
+
+    expect(await screen.findByText(url)).toBeTruthy();
+    expect(screen.getByRole("button",{name:"Revoke link"})).toBeTruthy();
+    await act(async()=>resolveList({links:[]}));
+
+    expect(screen.getByRole("button",{name:"Revoke link"})).toBeTruthy();
+  });
   it("creates an invite in one click for an existing public app", async () => {
     const link={id:"44444444-4444-4444-8444-444444444444",status:"unclaimed" as const,createdAt:"2026-11-05T12:00:00.000Z",claimExpiresAt:"2026-11-12T12:00:00.000Z",claimedAt:null,sessionExpiresAt:null};
     const privateSite={...published,accessMode:"private_link" as const,revision:2};

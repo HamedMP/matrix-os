@@ -1,5 +1,5 @@
 "use client";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { SITE_MAX_ACCESS_LINKS, type SiteAccessLinkSummary, type SiteRecord } from "@matrix-os/contracts";
 import { Button } from "@matrix-os/ui";
 import { siteActionError, type SiteClient } from "../../lib/site-client";
@@ -18,6 +18,7 @@ export function SiteAccessLinks({ appSlug, client, site, state, disabled, varian
   const [loadError, setLoadError] = useState<string | null>(null);
   const [linksLoaded, setLinksLoaded] = useState(false);
   const [reload, setReload] = useState(0);
+  const linksMutationVersion = useRef(0);
   const invite = variant === "invite";
   const ready = site?.status === "published" && site.accessMode === "private_link";
   const publicationKey = ready && site ? `${site.id}:${site.revision}` : null;
@@ -25,10 +26,13 @@ export function SiteAccessLinks({ appSlug, client, site, state, disabled, varian
   useEffect(() => {
     if (!ready) return;
     const controller = new AbortController();
+    const requestVersion = linksMutationVersion.current;
     void client.accessLinks(appSlug, controller.signal).then(page => {
-      if (!controller.signal.aborted) { setLinks(page.links); setLoadError(null); setLinksLoaded(true); }
+      if (!controller.signal.aborted && linksMutationVersion.current === requestVersion) {
+        setLinks(page.links); setLoadError(null); setLinksLoaded(true);
+      }
     }).catch((error: unknown) => {
-      if (!controller.signal.aborted) setLoadError(siteActionError(error));
+      if (!controller.signal.aborted && linksMutationVersion.current === requestVersion) setLoadError(siteActionError(error));
     });
     return () => controller.abort();
   }, [appSlug, client, ready, site?.id, reload]);
@@ -62,6 +66,7 @@ export function SiteAccessLinks({ appSlug, client, site, state, disabled, varian
     return { ...created, publication };
   },
     result => {
+      linksMutationVersion.current += 1;
       setLinksLoaded(true);
       setLinks(current => [result.link, ...current.filter(link => link.id !== result.link.id)]);
       setGeneratedLink({ url: result.url, publicationKey: `${result.publication.id}:${result.publication.revision}` });
@@ -71,6 +76,7 @@ export function SiteAccessLinks({ appSlug, client, site, state, disabled, varian
   const revoke = (linkId: string) => state.action(async signal => {
     await client.revokeAccessLink(appSlug, linkId, signal); return linkId;
   }, revoked => {
+    linksMutationVersion.current += 1;
     setLinks(current => current.filter(link => link.id !== revoked));
     setGeneratedLink(current => current?.url.includes(revoked) ? null : current);
   }, "Link revoked.");
