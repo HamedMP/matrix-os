@@ -1,0 +1,275 @@
+import { execFile } from "node:child_process";
+import { lstat, realpath } from "node:fs/promises";
+import { isAbsolute, join, resolve } from "node:path";
+import { createInterface } from "node:readline/promises";
+import { promisify } from "node:util";
+import { defineCommand } from "citty";
+import { z } from "zod/v4";
+import { getConfigDir } from "../../lib/config.js";
+import { cliError, formatCliError, formatCliSuccess } from "../output.js";
+
+const exec = promisify(execFile);
+const safeText = z.string().min(1).max(4096).refine(value => !/[\p{Cc}\p{Bidi_Control}\u2028\u2029]/u.test(value));
+const computerSchema = z.string().regex(/^[a-z0-9][a-z0-9-]{0,62}$/);
+const bindingSchema = z.object({
+  computer: computerSchema,
+  worktree: safeText.refine(isAbsolute),
+});
+const bindingsSchema = z.array(bindingSchema).max(100);
+type Binding = z.infer<typeof bindingSchema>;
+
+const previewUrlSchema = z.url({ protocol: /^https$/ }).refine(value => {
+  const url = new URL(value);
+  return !url.username && !url.password && !url.search && !url.hash &&
+    /^\/vm\/[a-z0-9][a-z0-9-]*\/?$/.test(url.pathname);
+});
+const syncSchema = z.object({ syncScope: z.array(safeText).min(1).max(100) });
+const previewSchema = syncSchema.extend({ previewUrl: previewUrlSchema });
+const statusSchema = z.object({
+  state: z.enum(["registered", "syncing", "ready", "conflict", "unavailable"]),
+  previewUrl: previewUrlSchema.optional(),
+}).refine(status => status.state !== "ready" || status.previewUrl !== undefined);
+const diffSchema = z.object({
+  changes: z.array(z.object({ path: safeText, status: safeText.max(16) })).max(2000),
+  excluded: z.array(safeText).max(2000).optional(),
+});
+const actions = ["connect", "sync", "diff", "status", "reset"] as const;
+type Action = typeof actions[number];
+
+const errors: Record<Action | "list" | "discover" | "enroll", string> = {
+  list: "Could not read the enrolled Stage 2 bindings.",
+  discover: "Could not discover eligible Stage 2 worktrees.",
+  enroll: "Could not enroll the selected Stage 2 worktree.",
+  connect: "Could not prepare the authenticated Stage 2 preview.",
+  sync: "Could not sync the selected Stage 2 worktree.",
+  diff: "Could not read changes in the selected worktree.",
+  status: "Could not read the selected Stage 2 binding status.",
+  reset: "Could not rebuild the selected Stage 2 source mirror.",
+};
+
+// The operator installs an owner-only adapter outside any Git worktree.
+async function localAdapter(): Promise<string> {
+  const directory = getConfigDir();
+  const path = join(directory, "devstack-adapter");
+  try {
+    const [parent, stat] = await Promise.all([lstat(directory), lstat(path)]);
+    const owner = process.getuid?.();
+    if (parent.isDirectory() && parent.uid === owner && (parent.mode & 0o022) === 0 &&
+        stat.isFile() && stat.uid === owner && (stat.mode & 0o077) === 0 && (stat.mode & 0o100) !== 0) {
+      return path;
+    }
+  } catch (error) {
+    if (!(error instanceof Error && "code" in error && error.code === "ENOENT")) {
+      throw cliError("devstack_adapter_unavailable", "Could not inspect the local Stage 2 adapter.");
+    }
+  }
+  throw cliError("devstack_adapter_unavailable", "A private Stage 2 adapter must be enrolled on this computer first.");
+}
+
+type AdapterAction = keyof typeof errors;
+
+async function adapterRequest<T>(
+  adapter: string,
+  schema: z.ZodType<T>,
+  action: AdapterAction,
+  ...args: string[]
+): Promise<T> {
+  const timeout = ["connect", "enroll", "reset", "sync"].includes(action) ? 120_000 : 45_000;
+  try {
+    const { stdout } = await exec(adapter, [action, ...args], { timeout, maxBuffer: 256 * 1024 });
+    return schema.parse(JSON.parse(stdout));
+  } catch (error) {
+    if (error instanceof Error && "code" in error && error.code === 78) {
+      throw cliError("devstack_capacity_unavailable", "The isolated Stage 2 slot lacks resource headroom.");
+    }
+    // The original adapter rejects unknown actions with this exact diagnostic.
+    // Exit 64 explicitly signals an unsupported action in versioned adapters.
+    if (action === "discover" && error instanceof Error && "code" in error &&
+        (error.code === 64 || (error.code === 1 && "stderr" in error &&
+          typeof error.stderr === "string" && error.stderr.trim() === "This Computer and worktree are not enrolled."))) {
+      throw cliError("devstack_discovery_unsupported");
+    }
+    throw cliError("devstack_adapter_failed", errors[action]);
+  }
+}
+
+async function discover(adapter: string, worktree?: string): Promise<Binding[]> {
+  try {
+    return await adapterRequest(adapter, bindingsSchema, "discover", ...(worktree ? [worktree] : []));
+  } catch (error) {
+    if (error instanceof Error && "code" in error && error.code === "devstack_discovery_unsupported") return [];
+    throw error;
+  }
+}
+
+async function select(label: string, options: string[]): Promise<string> {
+  const prompt = createInterface({ input: process.stdin, output: process.stderr });
+  try {
+    options.forEach((option, index) => process.stderr.write(`  ${index + 1}. ${option}\n`));
+    const answer = (await prompt.question(`${label} [1-${options.length}]: `)).trim();
+    const choice = /^\d+$/.test(answer) ? options[Number(answer) - 1] : undefined;
+    if (choice !== undefined) return choice;
+    throw cliError("devstack_selection_required", "Choose a listed option and retry.");
+  } finally {
+    prompt.close();
+  }
+}
+
+async function canonicalPath(path: string): Promise<string> {
+  const absolute = resolve(path);
+  try {
+    return await realpath(absolute);
+  } catch (error) {
+    // The adapter remains responsible for confirming the enrolled source exists.
+    if (error instanceof Error && "code" in error && error.code === "ENOENT") return absolute;
+    throw cliError("devstack_selection_required", "Could not resolve the selected worktree path.");
+  }
+}
+
+async function currentWorktree(): Promise<string> {
+  try {
+    // Repo overrides must not change which binding a command targets from cwd.
+    const env = Object.fromEntries(Object.entries(process.env).filter(([name]) => !name.startsWith("GIT_")));
+    const { stdout } = await exec("git", ["rev-parse", "--show-toplevel"], { env, timeout: 5000, maxBuffer: 8192 });
+    const worktree = stdout.replace(/\r?\n$/, "");
+    if (isAbsolute(worktree)) return await canonicalPath(worktree);
+  } catch {
+    // An explicit worktree is required when cwd cannot identify the binding.
+  }
+  throw cliError("devstack_selection_required", "Run from the enrolled worktree or pass --worktree <path>.");
+}
+
+function matchingBindings(bindings: Binding[], computer?: string, worktree?: string): Binding[] {
+  return bindings.filter(binding =>
+    (computer === undefined || binding.computer === computer) &&
+    (worktree === undefined || binding.worktree === worktree));
+}
+
+function requireMatches(bindings: Binding[], message: string): void {
+  if (bindings.length === 0) throw cliError("devstack_binding_not_found", message);
+}
+
+async function connect(
+  adapter: string,
+  bindings: Binding[],
+  options: { computer?: string; worktree?: string; interactive: boolean; open?: boolean; json: boolean },
+): Promise<void> {
+  let { computer, worktree } = options;
+  const alreadyBound = computer !== undefined && worktree !== undefined &&
+    matchingBindings(bindings, computer, worktree).length > 0;
+  const candidates = alreadyBound ? bindings : [...bindings, ...await discover(adapter, worktree)];
+  const matching = matchingBindings(candidates, computer, worktree);
+  requireMatches(matching, "No eligible Stage 2 binding matches that Computer and worktree.");
+  computer ??= await select("Dev Computer", [...new Set(matching.map(binding => binding.computer))]);
+  worktree ??= await select("Local worktree", [
+    ...new Set(matchingBindings(matching, computer).map(binding => binding.worktree)),
+  ]);
+
+  const action = matchingBindings(bindings, computer, worktree).length > 0 ? "connect" : "enroll";
+  const browser = (options.open ?? options.interactive) ? "open" : "link";
+  const preview = await adapterRequest(adapter, previewSchema, action, computer, worktree, browser);
+  if (options.json) {
+    console.log(formatCliSuccess({ computer, worktree, ...preview }));
+  } else {
+    console.log(`Stage 2 preview: ${preview.previewUrl}`);
+    console.log(`Synced: ${preview.syncScope.join(", ")}`);
+  }
+}
+
+async function runBoundAction(
+  adapter: string,
+  action: Exclude<Action, "connect">,
+  bindings: Binding[],
+  options: { computer?: string; worktree?: string; json: boolean },
+): Promise<void> {
+  const worktree = options.worktree ?? await currentWorktree();
+  const matching = matchingBindings(bindings, options.computer, worktree);
+  requireMatches(matching, "That worktree is not enrolled for the selected Dev Computer.");
+  const computers = [...new Set(matching.map(binding => binding.computer))];
+  const [computer] = computers;
+  if (computers.length !== 1 || computer === undefined) {
+    throw cliError("devstack_selection_required", "More than one Computer is enrolled. Pass --computer <handle>.");
+  }
+
+  const args = [computer, worktree];
+  if (action === "diff") {
+    const diff = await adapterRequest(adapter, diffSchema, action, ...args);
+    if (options.json) {
+      console.log(formatCliSuccess({ computer, worktree, ...diff }));
+      return;
+    }
+    if (!diff.changes.length) console.log("No sync-eligible source changes.");
+    for (const entry of diff.changes) console.log(`${entry.status}\t${entry.path}`);
+    for (const path of diff.excluded ?? []) console.log(`Excluded\t${path}`);
+  } else if (action === "status") {
+    const status = await adapterRequest(adapter, statusSchema, action, ...args);
+    if (options.json) {
+      console.log(formatCliSuccess({ computer, worktree, ...status }));
+      return;
+    }
+    console.log(`Stage 2: ${status.state} (${computer}, ${worktree})`);
+    if (status.previewUrl) console.log(`Stage 2 preview: ${status.previewUrl}`);
+  } else {
+    const synced = await adapterRequest(adapter, syncSchema, action, ...args);
+    if (options.json) {
+      console.log(formatCliSuccess({ computer, worktree, ...synced }));
+      return;
+    }
+    if (action === "reset") console.log("Reprojected the selected Stage 2 worktree.");
+    console.log(`Synced: ${synced.syncScope.join(", ")}`);
+  }
+}
+
+const commandArgsSchema = z.strictObject({
+  _: z.array(z.enum(actions)).max(1),
+  action: z.enum(actions).optional(),
+  computer: computerSchema.optional(),
+  worktree: safeText.optional(),
+  open: z.boolean().optional(),
+  json: z.boolean().optional(),
+});
+
+export const devstackCommand = defineCommand({
+  meta: { name: "devstack", description: "Connect or manage an isolated Stage 2 Git worktree" },
+  args: {
+    action: { type: "positional", required: false, description: "connect (default), sync, diff, status, or reset" },
+    computer: { type: "string", description: "Approved Dev Computer handle" },
+    worktree: { type: "string", description: "Local Git worktree path" },
+    open: { type: "boolean", description: "Open the connected preview in the configured browser" },
+    json: { type: "boolean", description: "Print a machine-readable result" },
+  },
+  async run({ args }) {
+    const json = args.json === true;
+    try {
+      const parsed = commandArgsSchema.safeParse(args);
+      if (!parsed.success) {
+        throw cliError("devstack_selection_required", "Use matrix devstack [connect|sync|diff|status|reset] --help.");
+      }
+      const action = parsed.data._[0] ?? "connect";
+      if (action !== "connect" && parsed.data.open !== undefined) {
+        throw cliError("devstack_selection_required", "--open applies only when connecting a Stage 2 preview.");
+      }
+      const interactive = Boolean(process.stdin.isTTY && process.stderr.isTTY && !json);
+      if (action === "connect" && !interactive && (!parsed.data.computer || !parsed.data.worktree)) {
+        throw cliError("devstack_selection_required", "Use --computer <handle> and --worktree <path>.");
+      }
+
+      const adapter = await localAdapter();
+      const bindings = await adapterRequest(adapter, bindingsSchema, "list");
+      const worktree = parsed.data.worktree === undefined ? undefined : await canonicalPath(parsed.data.worktree);
+      const options = { computer: parsed.data.computer, worktree, json };
+      if (action === "connect") {
+        await connect(adapter, bindings, { ...options, interactive, open: parsed.data.open });
+      } else {
+        await runBoundAction(adapter, action, bindings, options);
+      }
+    } catch (error) {
+      const code = error instanceof Error && "code" in error && typeof error.code === "string" &&
+        error.code.startsWith("devstack_") ? error.code : "devstack_failed";
+      const message = code !== "devstack_failed" && error instanceof Error
+        ? error.message : "Could not complete the Stage 2 operation.";
+      console.error(json ? formatCliError(code, message) : message);
+      process.exitCode = 1;
+    }
+  },
+});
