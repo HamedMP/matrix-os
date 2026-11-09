@@ -26,7 +26,10 @@
     "./chat-import.css": "./src/chat-import/chat-import.css",
     "./bot-routine-messages": "./src/chat-agents/bots/use-routine-messages.ts",
     "./bot-routine-transcript": "./src/chat-agents/bots/routine-transcript.ts",
-    "./chat-scheduled-message": "./src/chat/scheduled-message.ts"
+    "./chat-scheduled-message": "./src/chat/scheduled-message.ts",
+    "./ai-usage": "./src/ai-usage/AiUsagePanel.tsx",
+    "./ai-usage.css": "./src/ai-usage/ai-usage.css",
+    "./ai-usage-auto": "./src/ai-usage/AutomaticAiUsagePanel.tsx"
   },
   "dependencies": {
     "@matrix-os/contracts": "workspace:*",

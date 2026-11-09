@@ -63,6 +63,7 @@ import {
 } from "./hermes/configuration-client";
 import { createNativeChatImportService } from "./files/local-chat-import";
 import { discoverLocalChats } from "./files/local-chat-discovery";
+import {registerAiUsageIpc} from "./ipc/ai-usage";
 import { registerLocalChatImportIpc } from "./ipc/local-chat-import";
 import { registerIpcHandlers } from "./ipc/handlers";
 import { fetchDesktopSupportIdentity } from "./support/support-identity-client";
@@ -147,6 +148,7 @@ let planDrained = false;
 let drainingPlan = false;
 let updateCheckTimer: ReturnType<typeof setInterval> | null = null;
 let fileDownloads: ReturnType<typeof createFileDownloadService> | null = null;
+let localUsage:ReturnType<typeof registerAiUsageIpc>|null=null;
 let localChatImports:ReturnType<typeof createNativeChatImportService>|null=null;
 let nativeAppChatNavigation: ReturnType<typeof createNativeAppChatNavigationBroker> | null = null;
 let importsDrained=false;
@@ -347,7 +349,7 @@ if (!gotLock) {
           chatgptPlan?.resume();
           fileDownloads?.cancelAll();
           organizationDriveTransfers?.cancelAll();
-          localChatImports?.cancelAll();
+          localChatImports?.cancelAll();localUsage?.cancel();
           sendEvent("auth:changed", {
             signedIn: status.signedIn,
             ...(status.signedIn ? {
@@ -593,6 +595,11 @@ if (!gotLock) {
         const rendererUrl=desktopRendererUrl??pathToFileURL(join(__dirname,"../renderer/index.html")).toString();
         return !!contents&&!contents.isDestroyed()&&event.sender===contents&&event.senderFrame===contents.mainFrame&&contents.getURL()===rendererUrl;
       });
+      localUsage=registerAiUsageIpc(ipcMain,{home:app.getPath("home"),auth,isTrusted:rawEvent=>{
+        const event=rawEvent as IpcMainInvokeEvent,contents=mainWindow?.webContents;
+        const rendererUrl=desktopRendererUrl??pathToFileURL(join(__dirname,"../renderer/index.html")).toString();
+        return !!contents&&!contents.isDestroyed()&&event.sender===contents&&event.senderFrame===contents.mainFrame&&contents.getURL()===rendererUrl;
+      }});
       const downloads = fileDownloads;
       const driveTransfers = organizationDriveTransfers;
       const packagedRendererPath = join(__dirname, "../renderer/index.html");
@@ -695,7 +702,7 @@ if (!gotLock) {
           chatgptPlan?.resume();
           downloads.cancelAll();
           driveTransfers.cancelAll();
-          localChatImports?.cancelAll();
+          localChatImports?.cancelAll();localUsage?.cancel();
           nativeAppChatNavigation?.cancelAll();
           // Switching runtime invalidates embed cookies/tokens; tear them down so
           // they re-handshake against the new slot (Integration Wiring rule).
@@ -893,7 +900,7 @@ if (!gotLock) {
     }
     if(!importsDrained&&localChatImports){
       event.preventDefault();
-      if(!drainingImports){drainingImports=true;void localChatImports.dispose().catch((error:unknown)=>logMainError("import cleanup failed",error)).finally(()=>{importsDrained=true;app.quit();});}
+      if(!drainingImports){drainingImports=true;void Promise.all([localChatImports.dispose(),localUsage?.dispose()]).catch((error:unknown)=>logMainError("import cleanup failed",error)).finally(()=>{importsDrained=true;app.quit();});}
       return;
     }
     if (!downloadsDrained && fileDownloads) {

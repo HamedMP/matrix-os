@@ -1826,7 +1826,7 @@ export async function createGateway(config: GatewayConfig) {
     aiProviderService,
   });
   registerSettingsRoutes({
-    app, homePath, settingsRoutes, botServices,
+    app, homePath, settingsRoutes, botServices, runtimeOwnerId: terminalRuntimeOwnerId,
     getStartedEnabled: process.env.MATRIX_GET_STARTED_ENABLED === "true",
     getOwnerId: (c) => getOptionalRequestPrincipal(c)?.userId ?? null,
     osViewState: osViewStateRepository ? {
