@@ -372,6 +372,8 @@ async function* normalizedEvents(
 
 async function* projectAssistantText(
   events: AsyncIterable<CanonicalProviderRunEvent>,
+  inbox: ThreadEventInbox,
+  endRoutineSource: () => void,
   options: { homePath: string; executionRoot?: string; showPrivatePaths: boolean },
   context: { ownerType: "personal" | "organization"; ownerId: string; chatId: string; runId: string; key?: Buffer; sharedScopeId?: string },
 ): AsyncGenerator<CanonicalProviderRunEvent> {
@@ -397,6 +399,12 @@ async function* projectAssistantText(
       for (const tail of flush()) yield tail;
       projector = createAssistantTextStreamProjector(options);
       messageId = undefined;
+      // The native journal and private source end travel independently. Fence
+      // new decisions before draining queued decisions and source cancellations.
+      endRoutineSource();
+      for (let pending = inbox.takeCanonical(); pending.length > 0; pending = inbox.takeCanonical()) {
+        yield* pending;
+      }
     } else if (messageId) {
       // Preserve the native activity order when an ordinary word is complete.
       // Path and credential candidates remain buffered across activity events.
@@ -436,6 +444,15 @@ export function createCanonicalCodingChatProviderAdapter(options: {
     threadId: string;
     legacyTurnId?: string;
   }>();
+
+  function openRoutineSource(input: CanonicalProviderRunInput, inbox: ThreadEventInbox) {
+    const lifetime = new AbortController();
+    const routine = routineSources.open(
+      { ...input, signal: AbortSignal.any([input.signal, lifetime.signal]) },
+      event => inbox.pushCanonical(event),
+    );
+    return { routine, endRoutineSource: () => lifetime.abort() };
+  }
 
   function registerSteerRun(
     runId: string,
@@ -510,7 +527,7 @@ export function createCanonicalCodingChatProviderAdapter(options: {
       let terminalObserved = false;
       let releaseSteerRun: (() => void) | undefined;
       const browserAttempt = browsers.open(input);
-      const routine = routineSources.open(input, event => inbox.pushCanonical(event));
+      const { routine, endRoutineSource } = openRoutineSource(input, inbox);
       const withSource = <T>(work: () => T) => routine ? routine.withContext(() => browserAttempt.withContext(work)) : browserAttempt.withContext(work);
       let sink: { dispose(): void } | undefined;
       try {
@@ -563,6 +580,8 @@ export function createCanonicalCodingChatProviderAdapter(options: {
         });
         for await (const event of projectAssistantText(
           normalizedEvents(created.snapshot.events.items, inbox, options.providerId, options.toolOutputKey),
+          inbox,
+          endRoutineSource,
           { homePath: options.homePath ?? "/home/matrix/home", executionRoot: input.executionRoot, showPrivatePaths: !input.sharedScopeId },
           { ownerType: input.owner.type, ownerId: input.owner.ownerId, chatId: input.chatId, runId: input.runId, key: options.toolOutputKey, sharedScopeId: input.sharedScopeId },
         )) {
@@ -591,7 +610,7 @@ export function createCanonicalCodingChatProviderAdapter(options: {
       let terminalObserved = false;
       let restartFresh = false;
       const browserAttempt = browsers.open(input);
-      const routine = routineSources.open(input, event => inbox.pushCanonical(event));
+      const { routine, endRoutineSource } = openRoutineSource(input, inbox);
       const withSource = <T>(work: () => T) => routine ? routine.withContext(() => browserAttempt.withContext(work)) : browserAttempt.withContext(work);
       let sink: { dispose(): void } | undefined;
       try {
@@ -625,6 +644,8 @@ export function createCanonicalCodingChatProviderAdapter(options: {
         });
         for await (const event of projectAssistantText(
           normalizedEvents(eventsForAcceptedRun(current, requestId), inbox, options.providerId, options.toolOutputKey),
+          inbox,
+          endRoutineSource,
           { homePath: options.homePath ?? "/home/matrix/home", executionRoot: input.executionRoot, showPrivatePaths: !input.sharedScopeId },
           { ownerType: input.owner.type, ownerId: input.owner.ownerId, chatId: input.chatId, runId: input.runId, key: options.toolOutputKey, sharedScopeId: input.sharedScopeId },
         )) {

@@ -10,6 +10,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import { createCanonicalCodingChatProviderAdapter } from "../../packages/gateway/src/chat/coding-provider-adapter.js";
+import * as codexRoutineSource from "../../packages/gateway/src/chat/codex-routine-source.js";
 import {
   createCodingAgentThreadStore,
   type CodingAgentThreadStore,
@@ -589,6 +590,45 @@ describe("canonical coding Chat Provider adapter", () => {
       approvalId: "appr_command",
       decision: "approve_for_session",
     });
+  });
+
+  it.each([
+    { nativeEvent: event({ type: "file.changed", eventId: "evt_file", path: "README.md", changeKind: "updated" }), projected: "resource.changed" },
+    { nativeEvent: event({ type: "assistant.text.delta", eventId: "evt_text", messageId: "msg_final", delta: "Done" }), projected: "assistant.delta" },
+  ])("keeps a routine decision before run completion after $projected", async ({ nativeEvent, projected }) => {
+    const fake = fakeStore([]);
+    let publishRoutineEvent!: (event: CanonicalProviderRunEvent) => void;
+    const sources = vi.spyOn(codexRoutineSource, "createCodexRoutineSources").mockReturnValueOnce({
+      open(_input, publish) { publishRoutineEvent = publish; return undefined; },
+    });
+    const adapter = createCanonicalCodingChatProviderAdapter({ providerId: "codex", threads: fake.store });
+    sources.mockRestore();
+
+    const stream = adapter.start(input())[Symbol.asyncIterator]();
+    try {
+      expect((await stream.next()).value).toMatchObject({ type: "state.updated" });
+      const request = {
+        type: "approval.requested", approvalId: "appr_routine", title: "Allow routine pause?",
+        risk: "medium", allowedDecisions: ["approve", "decline"],
+      } satisfies CanonicalProviderRunEvent;
+      publishRoutineEvent(request);
+      expect((await stream.next()).value).toEqual(request);
+
+      fake.publish([nativeEvent, event({ type: "thread.completed", eventId: "evt_complete", outcome: "completed" })]);
+      expect((await stream.next()).value).toMatchObject({ type: projected });
+      const decision = { type: "approval.resolved", approvalId: request.approvalId, decision: "approve" } satisfies CanonicalProviderRunEvent;
+      publishRoutineEvent(decision);
+
+      const remaining: CanonicalProviderRunEvent[] = [];
+      for (;;) {
+        const item = await stream.next();
+        if (item.done) break;
+        remaining.push(item.value);
+      }
+      expect(remaining).toEqual([decision, { type: "run.completed", outcome: "completed" }]);
+    } finally {
+      await stream.return?.();
+    }
   });
 
   it("separates distinct Codex assistant message items for Markdown rendering", async () => {
