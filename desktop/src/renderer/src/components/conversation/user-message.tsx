@@ -1,7 +1,7 @@
 import { FileText, Link2, Wrench } from "@renderer/lib/hugeicons";
-import { useState } from "react";
+import { useLayoutEffect, useRef, useState } from "react";
 import { ChatAttachments, RoutineMessageMeta, ScheduledMessageMeta, type RoutineOccurrence, type ChatMessageAttachment } from "@matrix-os/ui";
-import { ConversationItem } from "./conversation";
+import { ConversationItem, usePreserveConversationFocus } from "./conversation";
 import { Bubble, BubbleContent } from "./bubble";
 import { Message, MessageContent, MessageMetadata, MessageResponse } from "./message";
 import type { ConversationMessagePresentation, ConversationPresentationCallbacks } from "./presentation";
@@ -22,6 +22,15 @@ export function UserMessage({
   const lines = message.markdown.split("\n");
   const collapsible = scheduled || message.scheduledMessage ? message.markdown.length > 200 || lines.length > 3 : message.markdown.length > 700 || lines.length > 12;
   const [expanded, setExpanded] = useState(false);
+  const focusedContentRef = useRef<HTMLElement | null>(null);
+  const preserveConversationFocus = usePreserveConversationFocus();
+  useLayoutEffect(() => {
+    const focused = focusedContentRef.current;
+    if (!expanded || !focused) return;
+    focusedContentRef.current = null;
+    // Reveal the focused control after the clipped height is removed.
+    focused.scrollIntoView?.({ block: "nearest" });
+  }, [expanded]);
   const references = (message.references ?? message.attachments ?? []).filter((reference) =>
     reference.kind !== "file" || !message.content?.some((segment) =>
       segment.kind !== "text" && segment.id === reference.id
@@ -58,6 +67,8 @@ export function UserMessage({
                 onFocusCapture={(event) => {
                   if (collapsible && !expanded && (event.currentTarget.scrollTop > 0
                     || event.target.getBoundingClientRect().bottom > event.currentTarget.getBoundingClientRect().bottom)) {
+                    focusedContentRef.current = event.target;
+                    preserveConversationFocus?.();
                     setExpanded(true);
                   }
                 }}>
