@@ -54,6 +54,27 @@ describe("attachment-only user messages", () => {
 });
 
 describe("user message Markdown", () => {
+  it("opens a visible link without expanding a long user message", () => {
+    const openWebLink = vi.fn();
+    const markdown = `[PR #3154](https://github.com/HamedMP/matrix-os/pull/3154)\n\n${"Additional context. ".repeat(50)}`;
+    render(<UserMessage message={{
+      kind: "message", id: "long-link", role: "user", phase: "commentary", timestamp: 1000,
+      markdown, copyText: markdown, content: [{ kind: "text", text: markdown }],
+    }} callbacks={{ copyText: vi.fn(), openWebLink }} />);
+
+    expect(screen.getByRole("button", { name: "Show full message" }).getAttribute("aria-expanded")).toBe("false");
+    const link = screen.getByRole("link", { name: "PR #3154" });
+    // jsdom dispatches clicks through inert ancestors; a browser does not.
+    expect(link.closest("[inert]")).toBeNull();
+    const preview = link.closest('[data-message-preview-content]') as HTMLElement;
+    vi.spyOn(preview, "getBoundingClientRect").mockReturnValue({ bottom: 100 } as DOMRect);
+    vi.spyOn(link, "getBoundingClientRect").mockReturnValue({ bottom: 30 } as DOMRect);
+    fireEvent.focus(link);
+    fireEvent.click(link);
+    expect(openWebLink).toHaveBeenCalledWith("https://github.com/HamedMP/matrix-os/pull/3154");
+    expect(screen.getByRole("button", { name: "Show full message" }).getAttribute("aria-expanded")).toBe("false");
+  });
+
   it("renders formatting and links inside the user bubble", () => {
     const markdown = "**Important**: read [the guide](https://example.com/guide) and `run test`.";
     const { container } = show([{ kind: "text", text: markdown }], markdown);
@@ -134,13 +155,20 @@ describe("user message Markdown", () => {
     expect(screen.getByRole("button", { name: "Disable code wrapping" }).getAttribute("aria-pressed")).toBe("true");
   });
 
-  it("keeps controls in a collapsed long message out of keyboard navigation", () => {
+  it.each([
+    { caseName: "clipped link bounds", targetBottom: 150, scrollTop: 0 },
+    { caseName: "focus scrolling the clipped preview", targetBottom: 50, scrollTop: 20 },
+  ])("expands a collapsed message when focus reaches $caseName", ({ targetBottom, scrollTop }) => {
     const markdown = `${"Introduction. ".repeat(65)} [hidden link](https://example.com)`;
     const { container } = show([{ kind: "text", text: markdown }], markdown);
-    expect(container.querySelector('[data-message-preview-content]')?.hasAttribute("inert")).toBe(true);
-    expect(screen.getByText(/Message preview:/)).toBeTruthy();
-    fireEvent.click(screen.getByRole("button", { name: "Show full message" }));
-    expect(container.querySelector('[data-message-preview-content]')?.hasAttribute("inert")).toBe(false);
-    expect(screen.getByRole("link", { name: "hidden link" })).toBeTruthy();
+    const preview = container.querySelector('[data-message-preview-content]') as HTMLElement;
+    expect(preview.className).toContain("max-h-[6rem]");
+    const link = screen.getByRole("link", { name: "hidden link" });
+    preview.scrollTop = scrollTop;
+    vi.spyOn(preview, "getBoundingClientRect").mockReturnValue({ bottom: 100 } as DOMRect);
+    vi.spyOn(link, "getBoundingClientRect").mockReturnValue({ bottom: targetBottom } as DOMRect);
+    fireEvent.focus(link);
+    expect(container.querySelector('[data-message-preview-content]')?.className).not.toContain("max-h-[6rem]");
+    expect(screen.getByRole("button", { name: "Show less" })).toBeTruthy();
   });
 });
