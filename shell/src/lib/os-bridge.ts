@@ -347,7 +347,9 @@ export function buildBridgeScript(
         reject(new Error("Collaboration unavailable"));
       };
       pendingFetches.push(cancel);
-      var timer = setTimeout(cancel, 10000);
+      // The owner direct path can spend several 10s budgets on ticket, session, and retry requests.
+      // Allow 5s beyond the 70s shared-app request budget for the parent reply to reach this iframe.
+      var timer = setTimeout(cancel, 75000);
       channel.port1.onmessage = function(e) {
         clearTimeout(timer);
         var idx = pendingFetches.indexOf(cancel);

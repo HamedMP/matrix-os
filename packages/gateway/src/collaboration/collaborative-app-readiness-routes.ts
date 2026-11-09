@@ -93,6 +93,7 @@ export interface CollaborativeAppReadinessRouteDependencies {
     appId: string,
     options: { ensureCatalog: boolean },
   ): Promise<CurrentCollaborativeAppBuild | null>;
+  registrationIncarnation(ownerId: string, appId: string): Promise<string | null>;
   requireOrganizationMembership(actorId: string, organizationId: string): Promise<void>;
   rateLimiter?: RateLimiter;
   readRateLimiter?: RateLimiter;
@@ -211,9 +212,9 @@ export function registerCollaborativeAppReadinessRoutes(
     try {
       const ownerId = readinessOwner(context, dependencies.ownerId);
       const appId = AppIdSchema.parse(context.req.param("appId"));
-      const current = await dependencies.resolveCurrentBuild(ownerId, appId, { ensureCatalog: false });
-      if (!current) throw new ReadinessRouteError("not_found");
-      return context.json({ registrationIncarnation: current.build.registrationIncarnation });
+      const incarnation = await dependencies.registrationIncarnation(ownerId, appId);
+      if (!incarnation) throw new ReadinessRouteError("not_found");
+      return context.json({ registrationIncarnation: incarnation });
     } catch (error: unknown) {
       return failure(context, error);
     }

@@ -61,6 +61,7 @@ function setup(overrides: Record<string, unknown> = {}) {
     },
     evaluator: { check: vi.fn(async () => blocked) },
     resolveCurrentBuild: vi.fn(async () => ({ build, artifactRef: `objects/${build.buildId}` })),
+    registrationIncarnation: vi.fn(async () => build.registrationIncarnation),
     requireOrganizationMembership: vi.fn(async () => undefined),
     rateLimiter: { check: vi.fn(() => true) },
     ...overrides,
@@ -136,7 +137,10 @@ describe("collaborative app readiness routes", () => {
   });
 
   it("returns the current registration incarnation so an unchecked exact build can be checked", async () => {
-    const { routes } = setup({ repository: { getCurrent: async () => null } });
+    const { routes, dependencies } = setup({
+      repository: { getCurrent: async () => null },
+      resolveCurrentBuild: vi.fn(async () => null),
+    });
     const response = await routes.request(`/api/collaboration/apps/${appId}/readiness/registration`, {
       headers: { "x-test-principal": "user_owner" },
     });
@@ -144,6 +148,7 @@ describe("collaborative app readiness routes", () => {
     expect(response.status).toBe(200);
     expect(response.headers.get("cache-control")).toBe("private, no-store");
     expect(await response.json()).toEqual({ registrationIncarnation: build.registrationIncarnation });
+    expect(dependencies.resolveCurrentBuild).not.toHaveBeenCalled();
   });
 
   it("rejects missing and foreign principals before resolving app state", async () => {
@@ -153,6 +158,11 @@ describe("collaborative app readiness routes", () => {
       headers: { "x-test-principal": "user_other" },
     })).status).toBe(403);
     expect(dependencies.resolveCurrentBuild).not.toHaveBeenCalled();
+    expect((await routes.request(`/api/collaboration/apps/${appId}/readiness/registration`)).status).toBe(401);
+    expect((await routes.request(`/api/collaboration/apps/${appId}/readiness/registration`, {
+      headers: { "x-test-principal": "user_other" },
+    })).status).toBe(403);
+    expect(dependencies.registrationIncarnation).not.toHaveBeenCalled();
   });
 
   it("requires the real owner bearer middleware before accepting configured-owner fallback", async () => {

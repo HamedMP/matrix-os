@@ -38,6 +38,13 @@ export class CollaborativeAppBuildResolver {
     this.build = options.build ?? new BuildOrchestrator({ concurrency: 1 });
   }
 
+  async registrationIncarnation(ownerId: string, appId: string): Promise<string | null> {
+    if (ownerId !== this.options.ownerId) return null;
+    const registration = await this.options.appRegistry.get(appId);
+    if (!registration || registration.slug !== appId) return null;
+    return appRegistryIncarnation(registration);
+  }
+
   async resolve(
     ownerId: string,
     appId: string,

@@ -529,6 +529,7 @@ export async function createGatewayCollaboration(options: {
           verifier: new CollaborativeAppCapabilityVerifier(new CollaborativeAppBuildBehaviorProbe(input.builds)),
         }),
         resolveCurrentBuild: (ownerId, appId, resolveOptions) => resolver.resolve(ownerId, appId, resolveOptions),
+        registrationIncarnation: (ownerId, appId) => resolver.registrationIncarnation(ownerId, appId),
         requireOrganizationMembership: async (actorId, organizationId) => {
           await organizationPrecondition.require({ actorId, organizationId });
         },

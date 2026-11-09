@@ -106,6 +106,9 @@ describe("collaborative app production build resolution", () => {
       readiness,
       store,
     });
+    await expect(resolver.registrationIncarnation("user_owner", "team-tracker"))
+      .resolves.toBe(appRegistryIncarnation(registration()));
+    expect(catalog.register).not.toHaveBeenCalled();
     const resolved = await resolver.resolve("user_owner", "team-tracker", { ensureCatalog: true });
     expect(resolved?.build).toMatchObject({
       appId: "team-tracker",
