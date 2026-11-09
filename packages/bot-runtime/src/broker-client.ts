@@ -64,8 +64,7 @@ export interface BotBrokerClientOptions {
 }
 
 /** One request per connection, newline-delimited JSON, mirroring the existing worker bridge. */
-function exchange(options: BotBrokerClientOptions, frame: BotBrokerRequest, callSignal?: AbortSignal, absoluteDeadline = false): Promise<unknown> {
-  const signal = callSignal && options.signal ? AbortSignal.any([callSignal, options.signal]) : callSignal ?? options.signal;
+function exchange(options: BotBrokerClientOptions, frame: BotBrokerRequest, signal?: AbortSignal, absoluteDeadline = false): Promise<unknown> {
   if (signal?.aborted) return Promise.reject(new BotBrokerError("stale_generation"));
   const connectFn = options.connectFn ?? ((path: string) => connect({ path }));
   return new Promise((resolve, reject) => {
