@@ -137,6 +137,27 @@ describe("collaborative app readiness drift", () => {
     });
     expect(await fixture.db.selectFrom("collaboration_scopes").select(["revision", "auth_epoch"])
       .where("id", "=", scopeId).executeTakeFirstOrThrow()).toEqual({ revision: 2, auth_epoch: 2 });
+
+    await readiness.restart({ id: readinessId, ownerId: "user_owner", expectedRevision: 3 });
+    await readiness.transition({
+      id: readinessId,
+      ownerId: "user_owner",
+      expectedRevision: 4,
+      status: "ready",
+      gateResults: [{ code: "cleanup", status: "passed" }],
+      verifiedAt: now,
+    });
+    expect(await worker.runOnce()).toBe(1);
+    const recovered = JSON.parse((fetchImpl.mock.calls[2] as [string, RequestInit])[1].body as string) as {
+      metadataRevision: number;
+      app?: { state: string; shareRevision: number };
+    };
+    expect(recovered).toMatchObject({
+      metadataRevision: 3,
+      app: { state: "active", shareRevision: 3 },
+    });
+    expect(await fixture.db.selectFrom("collaboration_app_bindings").select(["state", "revision"])
+      .where("scope_id", "=", scopeId).executeTakeFirstOrThrow()).toEqual({ state: "active", revision: 3 });
     await worker.shutdown();
   });
 
