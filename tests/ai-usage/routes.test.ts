@@ -16,3 +16,7 @@ it('reports missing configuration and scan failure without exposing filesystem e
  const app=createAiUsageRoutes({homePath:'/owner',runtimeOwnerId:'owner',getOwnerId:()=> 'owner',scan:async()=>{throw new Error('/private/secret');}});
  const response=await app.request('/api/ai-usage');expect(response.status).toBe(503);expect(await response.text()).not.toContain('/private');
 });
+it('does not substitute a capped sample when the historical index is unconfigured',async()=>{
+ const app=createAiUsageRoutes({homePath:'/owner',runtimeOwnerId:'owner',getOwnerId:()=> 'owner'});
+ expect((await app.request('/api/ai-usage')).status).toBe(503);
+});

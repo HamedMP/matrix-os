@@ -8,6 +8,7 @@ import { parse as parseYaml } from 'yaml';
 // Explicit ownership: newly discovered real-server suites must be assigned to a
 // hosted lane before qualification succeeds. Existing hosted selections stay put.
 export const REMAINING_POSTGRES_FILES = [
+  'tests/ai-usage/history-db.test.ts',
   'tests/gateway/app-db-json-arrays-postgres.test.ts',
   'tests/gateway/bots/custom-direct-chat-postgres.test.ts',
   'tests/gateway/bots/deployed-v6-schema-postgres.test.ts',

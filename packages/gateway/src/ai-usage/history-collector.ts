@@ -68,7 +68,7 @@ export async function indexUsageRoots(
                   st.size < (encoded ? saved.size : saved.offset) ||
                   saved.prefix !== prefix ||
                   (saved.modified !== undefined &&
-                    saved.complete &&
+                    (saved.complete || saved.eof) &&
                     saved.size === st.size &&
                     saved.modified !== st.mtimeMs)),
             );
@@ -84,7 +84,12 @@ export async function indexUsageRoots(
                     issues: 0,
                   }
                 : saved;
-            if (saved && !reset && saved.size === st.size && saved.complete) {
+            if (
+              saved &&
+              !reset &&
+              saved.size === st.size &&
+              (saved.complete || saved.eof)
+            ) {
               indexed++;
               continue;
             }
@@ -126,6 +131,7 @@ export async function indexUsageRoots(
                   size: st.size,
                   issues: checkpoint.issues + batch.issues,
                   complete: false,
+                  eof: false,
                   modified: st.mtimeMs,
                 };
                 await repo.commit(
@@ -146,6 +152,7 @@ export async function indexUsageRoots(
                 ...checkpoint,
                 size: st.size,
                 complete: checkpoint.offset === decodedBytes,
+                eof: true,
                 modified: st.mtimeMs,
               };
               await repo.commit(

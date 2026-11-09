@@ -30,15 +30,15 @@ export async function readUsageRootConfig(home: string) {
   }
   const config = schema.parse(JSON.parse(raw)),
     base = await realpath(home);
-  const sources = [];
-  for (const source of config.sources) {
-    const path = resolveWithinHome(home, source.path);
-    if (!path) throw new Error("Invalid usage source path");
-    const actual = await realpath(path);
-    const rel = relative(base, actual);
-    if (rel.startsWith("..") || isAbsolute(rel))
-      throw new Error("Invalid usage source path");
-    sources.push({ ...source, path });
-  }
-  return sources;
+  return Promise.all(
+    config.sources.map(async (source) => {
+      const path = resolveWithinHome(home, source.path);
+      if (!path) throw new Error("Invalid usage source path");
+      const actual = await realpath(path);
+      const rel = relative(base, actual);
+      if (rel.startsWith("..") || isAbsolute(rel))
+        throw new Error("Invalid usage source path");
+      return { ...source, path };
+    }),
+  );
 }

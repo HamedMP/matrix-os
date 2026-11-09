@@ -24,7 +24,7 @@ export async function readUsageHistory(
   const normalized = await repo.visitEvents(owner, (e) => builder.push(e));
   const coverage: UsageHistoryCoverage = {
     machines: [...new Set(progress.sources.map((s) => s.machine))],
-    files: progress.sources.length,
+    files: progress.sources.reduce((n, s) => n + s.files, 0),
     bytes: progress.sources.reduce((n, s) => n + s.bytes, 0),
     indexedBytes: progress.sources.reduce((n, s) => n + s.indexedBytes, 0),
     oldest: bounds.oldest,
@@ -40,7 +40,11 @@ export async function readUsageHistory(
     version: 1 as const,
     events: [],
     issues: coverage.issues,
-    history: { timeZone:options.timeZone??"UTC", reports: builder.finish(), coverage },
+    history: {
+      timeZone: options.timeZone ?? "UTC",
+      reports: builder.finish(),
+      coverage,
+    },
   };
 }
 /** Gateway lifecycle owns the timer/abort; injected owner pool remains open until its existing shutdown. */
@@ -75,8 +79,16 @@ export function startUsageHistory(options: {
           controller.signal,
         );
         failedRoots = result.failed;
-        for(const source of await readUsageRootConfig(options.home)) {
-          const imported=await indexUsageRoots(repo,options.owner,source.machine,[{path:source.path,agent:source.agent}],controller.signal);failedRoots+=imported.failed;
+        for (const source of await readUsageRootConfig(options.home)) {
+          // react-doctor-disable-next-line react-doctor/async-await-in-loop -- one decoder and bounded database writer run at a time across recovered machines
+          const imported = await indexUsageRoots(
+            repo,
+            options.owner,
+            source.machine,
+            [{ path: source.path, agent: source.agent }],
+            controller.signal,
+          );
+          failedRoots += imported.failed;
         }
       })
       .catch((error: unknown) => {

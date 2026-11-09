@@ -23,6 +23,7 @@ export function createAiUsageRoutes(options: {
       if (Object.keys(c.req.query()).length)
         return c.json({ error: "Invalid usage request" }, 400);
       if(options.history) return c.json(await options.history.read());
+      if(!options.scan) return c.json({error:"Usage unavailable"},503);
       // One bounded scan per computer; simultaneous authenticated requests coalesce.
       const task =
         pending ??

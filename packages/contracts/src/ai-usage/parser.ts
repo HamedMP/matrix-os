@@ -114,6 +114,14 @@ export function createUsageRecordParser(
             };
             native.cumulative = { ...nativeTotals };
           } else nativeTotals = undefined;
+          if (
+            native.input +
+              native.cachedInput +
+              native.cacheWrite +
+              native.output ===
+            0
+          )
+            return { events, issues };
           usageRecords++;
           return { events: [native], issues };
         }

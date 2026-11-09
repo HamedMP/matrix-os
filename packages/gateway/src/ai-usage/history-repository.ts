@@ -11,6 +11,7 @@ export interface UsageCheckpoint {
   size: number;
   issues: number;
   complete?: boolean;
+  eof?: boolean;
   modified?: number;
 }
 const sourceKey = (machine: string, path: string) =>
@@ -280,17 +281,31 @@ export class UsageHistoryRepository {
   async coverage(owner: string) {
     const rows = await this.db
       .selectFrom("ai_usage_sources")
-      .select(["machine", "checkpoint", "status", "updated_at"])
+      .select([
+        "machine",
+        sql<string>`count(*)`.as("files"),
+        sql<string>`coalesce(sum((checkpoint->>'size')::bigint),0)`.as("bytes"),
+        sql<string>`coalesce(sum((checkpoint->>'offset')::bigint),0)`.as(
+          "indexedBytes",
+        ),
+        sql<string>`coalesce(sum((checkpoint->>'issues')::bigint),0)`.as(
+          "issues",
+        ),
+        sql<Date>`max(updated_at)`.as("updated_at"),
+      ])
       .where("owner_id", "=", owner)
+      .groupBy("machine")
       .orderBy("machine")
+      .limit(129)
       .execute();
+    if (rows.length > 128) throw new RangeError("Usage machine limit");
     return {
       sources: rows.map((r) => ({
         machine: r.machine,
-        bytes: r.checkpoint.size ?? 0,
-        indexedBytes: r.checkpoint.offset ?? 0,
-        issues: r.checkpoint.issues ?? 0,
-        status: r.status,
+        files: Number(r.files),
+        bytes: Number(r.bytes),
+        indexedBytes: Number(r.indexedBytes),
+        issues: Number(r.issues),
         updatedAt: new Date(r.updated_at).toISOString(),
       })),
     };

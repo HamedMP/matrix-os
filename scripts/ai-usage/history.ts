@@ -17,6 +17,7 @@ const config = JSON.parse(await readFile(configFile, "utf8")) as {
   owner: string;
   machines: Array<{
     id: string;
+    label?: string;
     roots: Array<{ path: string; agent: "claude" | "codex" }>;
   }>;
   backupManifest?: string;
@@ -61,8 +62,8 @@ try {
     builder.push(e),
   );
   const coverage: UsageHistoryCoverage = {
-    machines: [...new Set(progress.sources.map((s) => s.machine))],
-    files: progress.sources.length,
+    machines: [...new Set(config.machines.map((m) => m.label ?? m.id))],
+    files: progress.sources.reduce((n, s) => n + s.files, 0),
     bytes: progress.sources.reduce((n, s) => n + s.bytes, 0),
     indexedBytes: progress.sources.reduce((n, s) => n + s.indexedBytes, 0),
     oldest: bounds.oldest,
