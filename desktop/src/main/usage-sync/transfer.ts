@@ -69,18 +69,19 @@ export async function transferUsageHistory(
     }
   }
   if (!active.length) throw new Error("No usage sources");
-  const revision = `${config.backupRoot}/revisions/auto-${randomUUID()}`;
+  const incomingId = `auto-${randomUUID()}`;
+  const incoming = `${config.backupRoot}/incoming/${incomingId}`;
   // Paths are operator configuration, validated before entering the remote shell. Never renderer inputs.
   const dirs = active.map(
     (s) =>
-      `${config.backupRoot}/mac/${s.directory ? s.relative : s.relative.slice(0, s.relative.lastIndexOf("/"))}`,
+      `${incoming}/mac/${s.directory ? s.relative : s.relative.slice(0, s.relative.lastIndexOf("/"))}`,
   );
   await run(
     "ssh",
     [
       ...sshOptions,
       config.sshHost,
-      `cd '${config.checkout}' && node --import tsx scripts/ai-usage/check-pairing.ts '${config.backupRoot}/collector.json' '${config.ownerId}' && umask 077 && mkdir -p ${dirs.map((p) => `'${p}'`).join(" ")}`,
+      `cd '${config.checkout}' && node --import tsx scripts/ai-usage/check-pairing.ts '${config.backupRoot}/collector.json' '${config.ownerId}' '${incomingId}' && umask 077 && mkdir -p ${dirs.map((p) => `'${p}'`).join(" ")}`,
     ],
     signal,
   );
@@ -94,12 +95,11 @@ export async function transferUsageHistory(
         "--no-devices",
         "--no-specials",
         "--chmod=Du=rwx,Dgo=,Fu=rw,Fgo=",
-        "--backup",
-        `--backup-dir=${revision}/mac/${source.directory ? source.relative : posix.dirname(source.relative)}`,
+        `--link-dest=${config.backupRoot}/mac/${source.directory ? source.relative : posix.dirname(source.relative)}`,
         "-e",
         `ssh ${sshOptions.join(" ")}`,
         `${join(home, source.relative)}${source.directory ? "/" : ""}`,
-        `${config.sshHost}:${config.backupRoot}/mac/${source.relative}${source.directory ? "/" : ""}`,
+        `${config.sshHost}:${incoming}/mac/${source.relative}${source.directory ? "/" : ""}`,
       ],
       signal,
     );
@@ -109,7 +109,7 @@ export async function transferUsageHistory(
     [
       ...sshOptions,
       config.sshHost,
-      `cd '${config.checkout}' && set -a && . '${config.databaseEnv}' && set +a && AI_USAGE_TIMEZONE=Europe/Stockholm flock -n '${config.backupRoot}/.refresh.lock' node --import tsx scripts/ai-usage/refresh.ts '${config.backupRoot}/collector.json'`,
+      `cd '${config.checkout}' && set -a && . '${config.databaseEnv}' && set +a && AI_USAGE_TIMEZONE=Europe/Stockholm flock -w 900 '${config.backupRoot}/.refresh.lock' node --import tsx scripts/ai-usage/refresh.ts '${config.backupRoot}/collector.json' '${incomingId}'`,
     ],
     signal,
   );

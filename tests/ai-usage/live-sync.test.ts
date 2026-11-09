@@ -173,7 +173,8 @@ it("backs up only allowlisted history, preserves changed versions, then waits fo
     );
     expect(run.mock.calls.map((c) => c[0])).toEqual(["ssh", "rsync", "ssh"]);
     const args = run.mock.calls[1][1] as string[];
-    expect(args).toContain("--backup");
+    expect(args.at(-1)).toContain("/incoming/auto-");
+    expect(args.some((arg) => arg.startsWith("--link-dest="))).toBe(true);
     expect(args).toContain("--no-links");
     expect(args).not.toContain("--delete");
     expect(args).toContain(join(home, ".codex/sessions") + "/");
@@ -184,4 +185,40 @@ it("backs up only allowlisted history, preserves changed versions, then waits fo
   } finally {
     await rm(home, { recursive: true, force: true });
   }
+});
+it("drains a cancelled previous account sync before loading the new account", async () => {
+  vi.useFakeTimers();
+  let owner = "owner",
+    generation = 1;
+  let finish!: () => void;
+  const transfer = vi.fn(async () => {
+    if (transfer.mock.calls.length === 1)
+      await new Promise<void>((resolve) => {
+        finish = resolve;
+      });
+  });
+  const service = createUsageSyncService({
+    home: "/mac",
+    pairingFile: "/private/config",
+    auth: {
+      getStatus: () => ({
+        signedIn: true,
+        userId: owner,
+        runtimeSlot: "primary",
+        authGeneration: generation,
+      }),
+      getGatewayOrigin: () => pairing.gatewayOrigin,
+    },
+    readPairing: async () => ({ ...pairing, ownerId: owner }),
+    transfer,
+  });
+  await vi.advanceTimersByTimeAsync(0);
+  owner = "new-owner";
+  generation = 2;
+  service.cancel();
+  const next = service.sync({ runtimeSlot: "primary", authGeneration: 2 });
+  finish();
+  await expect(next).resolves.toMatchObject({ status: "synced" });
+  expect(transfer).toHaveBeenCalledTimes(2);
+  await service.dispose();
 });

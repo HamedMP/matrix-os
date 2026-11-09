@@ -5,9 +5,10 @@ import { randomUUID } from "node:crypto";
 import { lstat, mkdir, readFile, writeFile, rename } from "node:fs/promises";
 import { join, dirname, relative, resolve } from "node:path";
 import { USAGE_BACKUP_PATHS } from "../../packages/contracts/src/ai-usage/node";
+import { publishIncoming } from "./incoming";
 import { prepareBackupVersions } from "./backup-versions";
 const exec = promisify(execFile);
-const [configFile] = process.argv.slice(2);
+const [configFile, incomingId] = process.argv.slice(2);
 if (!configFile) throw new Error("Usage config required");
 const root = dirname(resolve(configFile)),
   config = JSON.parse(await readFile(configFile, "utf8"));
@@ -23,6 +24,7 @@ const inside = (path: string) => {
     throw new Error("Backup path outside recovery root");
   return path;
 };
+const staged = incomingId ? await publishIncoming(root, incomingId) : null;
 const revision = join(root, "revisions", `auto-${randomUUID()}`);
 for (const home of config.captureHomes ?? []) {
   if (
@@ -107,4 +109,5 @@ await run(process.execPath, [
   join(root, "usage-report.json"),
 ]);
 await versions.finish();
+await staged?.finish();
 console.log("Usage backup verified and historical report refreshed");

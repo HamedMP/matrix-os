@@ -22,7 +22,8 @@ export function createUsageSyncService(options: {
   type Result = { status: "synced"; syncedAt: string } | { status: "unpaired" };
   let disposed = false,
     restart = false,
-    pending: Promise<Result> | null = null;
+    pending: Promise<Result> | null = null,
+    pendingKey: string | null = null;
   let completed: { key: string; value: Result; at: number } | null = null;
   let controller: AbortController | null = null,
     timer: ReturnType<typeof setTimeout> | undefined;
@@ -40,7 +41,7 @@ export function createUsageSyncService(options: {
     }, delay);
     timer.unref?.();
   };
-  async function sync(request: Session) {
+  async function sync(request: Session): Promise<Result> {
     if (disposed) throw new Error("Usage sync unavailable");
     const start = options.auth.getStatus(),
       origin = options.auth.getGatewayOrigin();
@@ -57,7 +58,18 @@ export function createUsageSyncService(options: {
       start.authGeneration,
       origin,
     ]);
-    if (pending) return pending;
+    if (pending) {
+      if (pendingKey === key && !controller?.signal.aborted) return pending;
+      try {
+        await pending;
+      } catch (error: unknown) {
+        console.warn(
+          "[ai-usage] previous sync drained",
+          error instanceof Error ? error.name : "UnknownError",
+        );
+      }
+      return sync(request);
+    }
     if (
       !request.force &&
       completed?.key === key &&
@@ -105,12 +117,14 @@ export function createUsageSyncService(options: {
       completed = { key, value, at: Date.now() };
       return value;
     })();
+    pendingKey = key;
     pending = task;
     try {
       return await task;
     } finally {
       if (pending === task) {
         pending = null;
+        pendingKey = null;
         controller = null;
         schedule(restart ? 0 : undefined);
       }
