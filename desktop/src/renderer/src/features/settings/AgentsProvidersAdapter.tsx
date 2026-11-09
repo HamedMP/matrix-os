@@ -167,15 +167,11 @@ function ConnectedAgentsProvidersAdapter({
   }, [api, isIdentityCurrent, runtimeSlot]);
 
   if (controller.snapshot === null) {
-    return (
-      <>
-      <ProviderSettingsUnavailable
-        signedOut={false}
-        failed={controller.error !== null}
-        onRetry={() => void controller.refresh()}
-      />
-      </>
-    );
+    return <ProviderSettingsUnavailable
+      signedOut={false}
+      failed={controller.error !== null}
+      onRetry={() => void controller.refresh()}
+    />;
   }
 
   return (

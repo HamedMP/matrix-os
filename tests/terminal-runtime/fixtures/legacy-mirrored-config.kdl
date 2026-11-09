@@ -1,0 +1,37 @@
+// Matrix OS generated shell config.
+// Paper shell themes: dark=default, light=gruvbox-light, matrix=matrix.
+pane_frames false
+simplified_ui true
+hide_session_name true
+// All Matrix clients share a session focus, including scoped CLI pane actions.
+mirror_session true
+// Shells and agent TUIs receive their normal editing keys. Ctrl+g deliberately
+// unlocks Zellij's native prefix modes when Matrix shortcut handling is bypassed.
+default_mode "locked"
+keybinds {
+  normal {
+    unbind "Alt Left" "Alt Right" "Alt b" "Alt f" "Alt Backspace"
+  }
+  locked {
+    bind "Ctrl g" { SwitchToMode "Normal"; }
+  }
+}
+default_layout "matrix"
+default_shell "__MATRIX_SHELL_PATH__"
+theme "default"
+
+themes {
+  matrix {
+    fg 47 191 85
+    bg 2 10 2
+    black 2 10 2
+    red 47 191 85
+    green 57 255 106
+    yellow 91 240 138
+    blue 31 176 78
+    magenta 57 255 106
+    cyan 57 255 106
+    white 216 255 217
+    orange 91 240 138
+  }
+}

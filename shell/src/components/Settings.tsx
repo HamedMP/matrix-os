@@ -159,6 +159,7 @@ interface SettingsProps {
   };
   onOpenAgentTerminal?: (action: TerminalLaunchAction) => void;
   onOpenProviderTerminalSession?: (sessionId: string) => void;
+  onOpenGithubDisconnectTerminal?: (sessionId: string) => void;
   onOpenImportedChat?: (chatId: string) => void;
 }
 
@@ -199,6 +200,7 @@ function SettingsFrame({
   billingCheckoutRuntimeSlot,
   onboardingDefaultInstalls,
   onOpenProviderTerminalSession,
+  onOpenGithubDisconnectTerminal,
   onOpenImportedChat,
   billingActive,
   showBillingSection,
@@ -420,7 +422,9 @@ function SettingsFrame({
               )}
               {activeSection === "identity-personality" && <IdentityPersonalitySection />}
               {activeSection === "channels" && <ChannelsSection />}
-              {activeSection === "integrations" && <IntegrationsSection />}
+              {activeSection === "integrations" && (
+                <IntegrationsSection active={open} onOpenGithubDisconnectTerminal={onOpenGithubDisconnectTerminal} />
+              )}
               {activeSection === "skills" && <SkillsSection />}
               {activeSection === "chat-import" && <ChatImportSection onOpenChat={onOpenImportedChat} />}
               {activeSection === "cron" && <CronSection />}

@@ -117,6 +117,31 @@ The manual command runs inside an authorized owner Terminal session. Settings in
 
 The host bundle copies `distro/customer-vps/host-bin/matrix-github-developer-login` into `/opt/matrix/bin`. Web and Electron in ENG-378 use the owner-bound Settings operation. ENG-379 remains a separate Mobile delivery. The gateway status route calls the project manager, which probes the same owner-local GitHub CLI, SSH, and Git configuration. Managed project creation clones the validated repository using its canonical SSH URL. Coding-agent source control resolves and validates the repository's effective owner identity before committing, then uses the existing GitHub CLI path for push and PR creation.
 
+## Web and Electron setup entry (ENG-378)
+
+In Web Canvas, Web Desktop, and Electron Desktop, show **GitHub Developer**
+immediately after **GitHub** in the regular **Connect Apps** catalog grid.
+Use the same compact card layout, search, and filters as the other apps.
+Getting Started opens Connect Apps and makes the developer entry available.
+The card reports readiness for the selected computer. Its setup and status
+remain independent of any existing GitHub connection.
+
+Show **Connect** for missing setup and **Finish setup** for incomplete setup.
+After confirming writable Settings on the selected computer, open the shared
+GitHub Developer dialog. Show the one-time code, **Copy**, and **Open GitHub**
+once the device flow is waiting for browser authorization. Use the fixed
+`https://github.com/login/device` page. Poll the owner-bound operation and
+refresh canonical status when setup settles. Dismissing the dialog cancels the
+attempt. Discard late responses and clear transient codes on a computer change.
+
+When ready, keep the compact card and offer **Disconnect** to authorized owners.
+After confirmation, open the selected owner's Terminal to sign out the GitHub
+account shown in the confirmation. Existing SSH keys and Git identity stay
+available. Recheck status after returning from Terminal.
+
+Retry failed status, permission, or setup checks from the card. An unavailable
+Settings setup shows a recoverable error on the selected computer.
+
 ## Acceptance And Tests
 
 - Fake-executable tests cover exact login sequencing, cancellation, existing-key delegation, strict SSH verification, identity confirmation/editing, validation, and redaction.

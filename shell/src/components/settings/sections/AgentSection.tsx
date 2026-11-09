@@ -56,10 +56,12 @@ export function AgentSection({
     const unavailable = controller.error !== null;
     return (
       <div className="px-5 py-6" data-provider-settings-adapter="shared">
-        <div className="matrix-agents-providers" aria-busy={unavailable ? undefined : "true"}>
-          <div className="matrix-ap-empty-state" role={unavailable ? "alert" : "status"}>
+        <div className="matrix-agents-providers">
+          <div className="matrix-ap-empty-state" role={unavailable ? "alert" : "status"} aria-busy={unavailable ? undefined : "true"}>
             <strong>{unavailable ? "Provider settings are unavailable" : "Loading agents & providers"}</strong>
             <span>{unavailable ? "Refresh Settings to try again." : "Checking this computer’s provider state…"}</span>
+            {unavailable ? <button type="button" className="matrix-ap-button matrix-ap-button-primary"
+              aria-label="Retry provider settings" disabled={controller.busy} onClick={() => void controller.refresh()}>Retry</button> : null}
           </div>
         </div>
       </div>

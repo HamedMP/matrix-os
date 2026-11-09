@@ -302,6 +302,18 @@ describe("CreateProjectDialog add-project flows", () => {
       expect(onUnauthorized).not.toHaveBeenCalled();
     });
 
+    it("points to GitHub Developer when SSH setup is required before cloning", async () => {
+      vi.stubGlobal("fetch", vi.fn(async () => jsonResponse(424, { error: { code: "github_ssh_setup_required" } })));
+      openCloneStep();
+
+      fireEvent.change(screen.getByPlaceholderText("https://github.com/owner/repo"), {
+        target: { value: "https://github.com/owner/repo" },
+      });
+      fireEvent.click(screen.getByRole("button", { name: "Clone" }));
+
+      expect(await screen.findByText("Open Settings → Connect Apps → GitHub Developer to finish SSH setup, then try again.")).toBeTruthy();
+    });
+
     it("keeps transport failure details out of renderer diagnostics", async () => {
       const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
       const fetchMock = vi.fn(async () => {

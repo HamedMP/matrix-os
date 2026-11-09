@@ -6,7 +6,7 @@
 // the HTTPS-only shell:open-external bridge and status polls go through the
 // typed ApiClient (bearer injected by the trusted core at the network layer).
 import React from "react";
-import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   IntegrationsSettingsSection,
@@ -14,6 +14,7 @@ import {
 } from "../../desktop/src/renderer/src/features/integrations";
 import { AppError } from "../../desktop/src/shared/app-error";
 import { useConnection } from "../../desktop/src/renderer/src/stores/connection";
+import * as providerActions from "../../desktop/src/renderer/src/features/settings/provider-settings-desktop-adapter";
 import { advanceRuntimeGeneration } from "../../desktop/src/renderer/src/stores/runtime-generation";
 import type { ApiClient } from "../../desktop/src/renderer/src/lib/api";
 
@@ -63,6 +64,7 @@ function makeApi(opts: FakeApiOptions = {}) {
   } = opts;
   return {
     baseUrl: "https://app.matrix-os.com",
+    forRuntime() { return this; },
     get: vi.fn(async (path: string) => {
       const err = getError?.(path);
       if (err) throw err;
@@ -108,6 +110,105 @@ describe("desktop integrations settings section", () => {
   afterEach(() => {
     cleanup();
     vi.restoreAllMocks();
+  });
+
+  it("keeps the catalog entry usable when legacy GitHub is unavailable and scopes setup to the selected computer", async () => {
+    HTMLDialogElement.prototype.showModal = function () { this.setAttribute("open", ""); };
+    HTMLDialogElement.prototype.close = function () { this.removeAttribute("open"); };
+    const pendingCatalog = makeApi({ getError: (path) => path.endsWith("/available") ? new AppError("notFound") : null });
+    const setupId = "016d31b0-50d7-4dca-ae0d-b6083bdcd219";
+    let ready = false;
+    const runtime = {
+      get: vi.fn(async (path: string) => {
+        if (path === `/api/github/setup/${setupId}`) {
+          ready = true;
+          return { id: setupId, state: "succeeded" };
+        }
+        if (path === "/api/github/status") return {
+          installed: true, authenticated: ready, user: ready ? "octocat" : null,
+          gitProtocol: ready ? "ssh" : null, sshStatus: ready ? "verified" : "setup_required",
+          commitIdentity: { status: ready ? "ready" : "missing", label: ready ? "Octocat" : null },
+          ready,
+        };
+        throw new AppError("notFound");
+      }),
+      post: vi.fn(async (path: string) => {
+        if (path === "/api/github/setup") return { id: setupId, state: "awaiting_authorization", deviceCode: "ABCD-EFGH" };
+        throw new AppError("notFound");
+      }),
+    };
+    const forRuntime = vi.fn(() => runtime);
+    vi.spyOn(providerActions, "createDesktopProviderSettingsTransport").mockReturnValue({
+      getSnapshot: vi.fn().mockResolvedValue({ access: { mode: "writable" } }),
+    } as never);
+    useConnection.setState({
+      api: { ...pendingCatalog, forRuntime } as never,
+      runtimeSlot: "preview",
+    });
+    render(<IntegrationsSettingsSection />);
+
+    expect(await screen.findByTestId("integration-card-github-developer")).not.toBeNull();
+    const connect = await screen.findByRole("button", { name: "Connect GitHub Developer", exact: true });
+    await waitFor(() => expect((connect as HTMLButtonElement).disabled).toBe(false));
+    expect(forRuntime).toHaveBeenCalledWith("preview");
+    expect(runtime.get).toHaveBeenCalledWith("/api/github/status", expect.objectContaining({ cache: "no-store" }));
+    fireEvent.click(connect);
+    const dialog = within(await screen.findByRole("dialog", { name: "Connect GitHub Developer" }));
+    expect(await dialog.findByText("ABCD-EFGH")).toBeTruthy();
+    fireEvent.click(dialog.getByRole("button", { name: "Open GitHub" }));
+    expect(window.operator?.invoke).toHaveBeenCalledWith("shell:open-external", { url: "https://github.com/login/device" });
+    expect(runtime.post).toHaveBeenCalledExactlyOnceWith("/api/github/setup", {}, expect.objectContaining({ cache: "no-store" }));
+    expect(await screen.findByLabelText("GitHub Developer ready", {}, { timeout: 3_000 })).toBeTruthy();
+    expect(runtime.get).toHaveBeenCalledWith(`/api/github/setup/${setupId}`, expect.objectContaining({ cache: "no-store" }));
+    expect(pendingCatalog.post).not.toHaveBeenCalledWith("/api/integrations/connect", expect.anything());
+  });
+
+  it("uses the regular catalog card directly beside GitHub", async () => {
+    const api = makeApi({
+      available: [
+        ...["a", "b"].map(id => ({ id, name: id, category: "developer" })),
+        ...AVAILABLE,
+        { id: "c", name: "c", category: "developer" },
+      ],
+    });
+    useConnection.setState({ api });
+    render(<IntegrationsSettingsSection />);
+
+    const github = await screen.findByTestId("integration-card-github");
+    const developer = await screen.findByTestId("integration-card-github-developer");
+    expect(github.parentElement?.nextElementSibling?.firstElementChild).toBe(developer);
+    expect(developer.className).toBe(github.className);
+    expect(screen.getByTestId("integration-connect-github-developer").className)
+      .toBe(screen.getByTestId("integration-connect-github").className);
+    fireEvent.change(screen.getByRole("searchbox", { name: "Search integrations" }), { target: { value: "GitHub Developer" } });
+    expect(screen.queryByTestId("integration-card-github")).toBeNull();
+    expect(screen.getByTestId("integration-card-github-developer")).toBeTruthy();
+  });
+
+  it("puts GitHub Developer disconnect next to account details using the existing account control", async () => {
+    const githubConnection = { ...GMAIL_CONNECTION, service: "github", account_label: "Legacy GitHub" };
+    const api = makeApi({ connections: [githubConnection] });
+    const get = api.get;
+    api.get = vi.fn((path) => path === "/api/github/status"
+      ? Promise.resolve({
+        installed: true, authenticated: true, user: "octocat", gitProtocol: "ssh", sshStatus: "verified",
+        commitIdentity: { status: "ready", label: "Octocat" }, ready: true,
+      })
+      : get(path)) as ApiClient["get"];
+    vi.spyOn(providerActions, "createDesktopProviderSettingsTransport").mockReturnValue({
+      getSnapshot: vi.fn().mockResolvedValue({ access: { mode: "writable" } }),
+    } as never);
+    useConnection.setState({ api });
+    render(<IntegrationsSettingsSection />);
+
+    const disconnect = await screen.findByRole("button", { name: "Disconnect GitHub Developer" });
+    const legacyDisconnect = screen.getByTestId(`integration-disconnect-${CONN_ID}`);
+    const details = screen.getByText("octocat · SSH verified · Octocat");
+    const cardActions = screen.getByTestId("integration-action-github-developer");
+    expect(disconnect.parentElement).toBe(details.parentElement);
+    expect(disconnect.className).toBe(legacyDisconnect.className);
+    expect(cardActions.contains(disconnect)).toBe(false);
+    expect(cardActions.contains(screen.getByLabelText("GitHub Developer ready"))).toBe(true);
   });
 
   it("renders a loading skeleton while the proxy responds", () => {
@@ -169,6 +270,7 @@ describe("desktop integrations settings section", () => {
       "integration-card-linear",
       "integration-card-slack",
       "integration-card-github",
+      "integration-card-github-developer",
     ]);
   });
 
@@ -244,8 +346,9 @@ describe("desktop integrations settings section", () => {
     await waitFor(() =>
       expect(screen.getByText("Integrations are unavailable on this runtime.")).not.toBeNull(),
     );
-    // Capability gate: no crash, no catalog, no connect buttons.
-    expect(screen.queryByRole("button", { name: /Connect/i })).toBeNull();
+    expect(screen.queryByTestId("integration-card-github")).toBeNull();
+    expect(screen.queryByRole("button", { name: /^Connect /i })).toBeNull();
+    expect(await screen.findByRole("button", { name: "Retry GitHub Developer status" })).not.toBeNull();
   });
 
   it("shows a generic offline message with a retry that reloads", async () => {
@@ -263,7 +366,7 @@ describe("desktop integrations settings section", () => {
       expect(screen.getByText("Can't reach Matrix OS. Check your connection.")).not.toBeNull(),
     );
 
-    fireEvent.click(screen.getByRole("button", { name: /Retry/i }));
+    fireEvent.click(screen.getByRole("button", { name: "Retry", exact: true }));
     await waitFor(() => expect(screen.getByText("Gmail")).not.toBeNull());
   });
 
