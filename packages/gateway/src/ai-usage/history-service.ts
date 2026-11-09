@@ -12,6 +12,7 @@ export async function readUsageHistory(
   owner: string,
   options: { timeZone?: string; failedRoots?: number; indexing?: boolean } = {},
 ) {
+  return repo.withSnapshot(async repo => {
   const [bounds, progress, activity] = await Promise.all([
     repo.bounds(owner),
     repo.coverage(owner),
@@ -46,6 +47,7 @@ export async function readUsageHistory(
       coverage,
     },
   };
+  });
 }
 /** Gateway lifecycle owns the timer/abort; injected owner pool remains open until its existing shutdown. */
 export function startUsageHistory(options: {

@@ -9,8 +9,9 @@ export async function* usageInput(
   start: number,
   signal?: AbortSignal,
 ): AsyncGenerator<Uint8Array> {
+  const encoded = path.endsWith(".zst") || path.endsWith(".json");
   async function* raw() {
-    let position = 0;
+    let position = encoded ? 0 : start;
     const buffer = Buffer.alloc(64 * 1024);
     while (position < size) {
       signal?.throwIfAborted();
@@ -55,7 +56,7 @@ export async function* usageInput(
     }
     source = legacy();
   } else source = raw();
-  let offset = 0;
+  let offset = encoded ? 0 : start;
   try {
     for await (const chunk of source) {
       signal?.throwIfAborted();

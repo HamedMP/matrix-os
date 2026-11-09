@@ -2,6 +2,7 @@ import { constants } from "node:fs";
 import { lstat, opendir, open } from "node:fs/promises";
 import { join } from "node:path";
 import { createHash } from "node:crypto";
+import { committedHash } from "./history-hash";
 import { usageInput } from "./history-input";
 import { streamUsageSource } from "@matrix-os/contracts/ai-usage";
 import type { UsageAgent } from "@matrix-os/contracts/ai-usage";
@@ -62,7 +63,7 @@ export async function indexUsageRoots(
             const head = Buffer.alloc(prefixBytes);
             await handle.read(head, 0, prefixBytes, 0);
             const prefix = createHash("sha256").update(head).digest("hex");
-            const reset = Boolean(
+            let reset = Boolean(
               saved &&
                 (saved.fingerprint !== fingerprint ||
                   st.size < (encoded ? saved.size : saved.offset) ||
@@ -72,27 +73,21 @@ export async function indexUsageRoots(
                     saved.size === st.size &&
                     saved.modified !== st.mtimeMs)),
             );
-            let base = saved ?? null;
-            let checkpoint: UsageCheckpoint =
-              reset || !saved
-                ? {
-                    offset: 0,
-                    state: null,
-                    fingerprint,
-                    prefix,
-                    size: st.size,
-                    issues: 0,
-                  }
-                : saved;
-            if (
-              saved &&
-              !reset &&
-              saved.size === st.size &&
-              (saved.complete || saved.eof)
-            ) {
+            if (saved && !reset && saved.size === st.size && saved.modified === st.mtimeMs && (saved.complete || saved.eof)) {
               indexed++;
               continue;
             }
+            let hash = committedHash(handle, signal);
+            if (saved && !reset) {
+              const verified = await hash(encoded ? st.size : saved.offset);
+              // Old checkpoints have no full prefix proof: replay once when they change.
+              reset = !saved.verifiedHash || verified !== saved.verifiedHash;
+            }
+            if (reset) hash = committedHash(handle, signal);
+            let base = saved ?? null;
+            let checkpoint: UsageCheckpoint = reset || !saved ? {
+              offset: 0, state: null, fingerprint, prefix, size: st.size, issues: 0,
+            } : saved;
             let first = true;
             let decodedBytes = checkpoint.offset;
             async function* input() {
@@ -133,6 +128,7 @@ export async function indexUsageRoots(
                   complete: false,
                   eof: false,
                   modified: st.mtimeMs,
+                  verifiedHash: await hash(encoded ? st.size : batch.offset),
                 };
                 await repo.commit(
                   owner,
@@ -154,6 +150,7 @@ export async function indexUsageRoots(
                 complete: checkpoint.offset === decodedBytes,
                 eof: true,
                 modified: st.mtimeMs,
+                verifiedHash: await hash(encoded ? st.size : checkpoint.offset),
               };
               await repo.commit(
                 owner,

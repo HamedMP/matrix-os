@@ -13,6 +13,7 @@ export interface UsageCheckpoint {
   complete?: boolean;
   eof?: boolean;
   modified?: number;
+  verifiedHash?: string;
 }
 const sourceKey = (machine: string, path: string) =>
   createHash("sha256")
@@ -181,7 +182,12 @@ export class UsageHistoryRepository {
       after = rows.at(-1)!.event_id;
     }
   }
+  async withSnapshot<T>(read: (repo: UsageHistoryRepository) => Promise<T>): Promise<T> {
+    if (this.db.isTransaction) return read(this);
+    return this.db.transaction().setIsolationLevel("repeatable read").execute(tx => read(new UsageHistoryRepository(tx)));
+  }
   async visitEvents(owner: string, visit: (event: UsageEvent) => void) {
+    if (!this.db.isTransaction) return this.withSnapshot(repo => repo.visitEvents(owner, visit));
     const canonical = this.db
       .selectFrom("ai_usage_observations")
       .select(["event_id", "event"])
@@ -193,20 +199,19 @@ export class UsageHistoryRepository {
     let last = "",
       previous = { input: 0, cached: 0, output: 0 },
       issues = 0;
-    await this.db
-      .transaction()
-      .setIsolationLevel("repeatable read")
-      .execute(async (tx) => {
-        await sql`DECLARE ai_usage_history_read NO SCROLL CURSOR FOR WITH canonical AS MATERIALIZED (${canonical}), precise AS (SELECT DISTINCT event->>'session' AS session, event->'cumulative' AS cumulative FROM canonical WHERE event->>'sourceKind'='response' AND event->'cumulative' IS NOT NULL) SELECT c.event, p.session IS NOT NULL AS covered FROM canonical c LEFT JOIN precise p ON c.event->>'session'=p.session AND c.event->'cumulative'=p.cumulative ORDER BY c.event->>'agent', c.event->>'session', coalesce((c.event->'cumulative'->>'input')::bigint+(c.event->'cumulative'->>'output')::bigint,0), c.event->>'timestamp', c.event_id`.execute(
+    const tx = this.db;
+    {
+        await sql`DECLARE ai_usage_history_read NO SCROLL CURSOR FOR WITH canonical AS MATERIALIZED (${canonical}), precise AS (SELECT DISTINCT event->>'session' AS session, event->'cumulative' AS cumulative FROM canonical WHERE event->>'sourceKind'='response' AND event->'cumulative' IS NOT NULL) SELECT c.event, p.session IS NOT NULL AS covered, EXISTS (SELECT 1 FROM canonical u WHERE u.event->>'agent'='codex' AND u.event->>'session'=c.event->>'session' AND u.event->>'sourceKind'='response' AND u.event->'cumulative' IS NULL) AS uncertain FROM canonical c LEFT JOIN precise p ON c.event->>'session'=p.session AND c.event->'cumulative'=p.cumulative ORDER BY c.event->>'agent', c.event->>'session', coalesce((c.event->'cumulative'->>'input')::bigint+(c.event->'cumulative'->>'output')::bigint,0), c.event->>'timestamp', c.event_id`.execute(
           tx,
         );
         for (;;) {
           const result = await sql<{
             event: UsageEvent;
             covered: boolean;
+            uncertain: boolean;
           }>`FETCH FORWARD 512 FROM ai_usage_history_read`.execute(tx);
           if (!result.rows.length) break;
-          for (const { event: raw, covered } of result.rows) {
+          for (const { event: raw, covered, uncertain } of result.rows) {
             let event = raw;
             if (raw.agent === "codex" && raw.sourceKind === "response") {
               if (raw.session !== last) {
@@ -223,6 +228,8 @@ export class UsageHistoryRepository {
               continue;
             }
             if (raw.agent === "codex" && raw.cumulative) {
+              // Without response endpoints the cumulative mirror cannot be reconciled safely.
+              if (uncertain) { issues++; continue; }
               const session = raw.session;
               if (session !== last) {
                 previous = { input: 0, cached: 0, output: 0 };
@@ -250,7 +257,7 @@ export class UsageHistoryRepository {
           }
         }
         await sql`CLOSE ai_usage_history_read`.execute(tx);
-      });
+    }
     return { issues };
   }
   async bounds(owner: string) {

@@ -1,4 +1,4 @@
-import { afterAll, expect, it } from "vitest";
+import { afterAll, expect, it, vi } from "vitest";
 import { Kysely, PostgresDialect, sql } from "kysely";
 import pg from "pg";
 import { zstdCompressSync } from "node:zlib";
@@ -204,3 +204,66 @@ it.runIf(Boolean(url))(
     }
   },
 );
+
+it.runIf(Boolean(url))("does not sum ambiguous Codex mirrors, replaces growing rewrites, and reads one database snapshot", async () => {
+  if (!db || !url || !new URL(url).pathname.includes("test")) throw new Error("Disposable PostgreSQL required");
+  const schema = "usage_regression_" + Date.now();
+  await sql.raw(`CREATE SCHEMA ${schema}`).execute(db);
+  const repo = new UsageHistoryRepository(db.withSchema(schema));
+  const root = await mkdtemp(join(tmpdir(), "usage-regression-"));
+  const write = (name: string, rows: unknown[]) => writeFile(join(root, name), rows.map(r => JSON.stringify(r)).join("\n") + "\n");
+  const record = (id: string, date = "2026-10-01T00:00:00Z") => ({ type: "assistant", sessionId: "rewrite", requestId: id, timestamp: date, message: { id, model: "unknown", usage: { input_tokens: 100, output_tokens: 10 } } });
+  try {
+    await repo.bootstrap();
+    const meta = { type: "session_meta", payload: { id: "mirror" } };
+    await write("native.jsonl", [meta, { type: "token_usage_record", timestamp: "2026-10-01T00:00:00Z", payload: { thread_id: "mirror", response_id: "response", usage: { input_tokens: 100, output_tokens: 10, cached_input_tokens: 0 } } }]);
+    await write("legacy.jsonl", [meta, { type: "event_msg", timestamp: "2026-10-01T00:00:00Z", payload: { type: "token_count", info: { total_token_usage: { input_tokens: 100, output_tokens: 10, cached_input_tokens: 0 } } } }]);
+    await indexUsageRoots(repo, "mirror-owner", "mac", [{ path: root, agent: "codex" }]);
+    const report = await readUsageHistory(repo, "mirror-owner");
+    expect(report.history.reports.find(r => r.id === "all" && r.agent === "")!.summary.tokens).toBe(110);
+    expect(report.issues).toBeGreaterThan(0);
+
+    const file = join(root, "rewrite.jsonl");
+    const prefix = { type: "user", sessionId: "rewrite", message: { content: "x".repeat(6000) } };
+    await write("rewrite.jsonl", [prefix, record("old")]);
+    await indexUsageRoots(repo, "rewrite-owner", "mac", [{ path: file, agent: "claude" }]);
+    const oldEvents = [];
+    for await (const e of repo.events("rewrite-owner")) oldEvents.push(e);
+    await write("rewrite.jsonl", [prefix, record("replacement-with-a-longer-id")]);
+    await indexUsageRoots(repo, "rewrite-owner", "mac", [{ path: file, agent: "claude" }]);
+    const events = [];
+    for await (const e of repo.events("rewrite-owner")) events.push(e);
+    expect(events).toHaveLength(1);
+    expect(events[0].id).not.toBe(oldEvents[0].id);
+    const replacement = await readUsageHistory(repo, "rewrite-owner");
+    expect(replacement.history.reports.find(r => r.id === "all" && r.agent === "")!.summary.tokens).toBe(110);
+
+    await write("initial.jsonl", [record("initial")]);
+    await indexUsageRoots(repo, "snapshot-owner", "mac", [{ path: join(root, "initial.jsonl"), agent: "claude" }]);
+    await write("older.jsonl", [record("older", "2024-01-01T00:00:00Z")]);
+    const originalBounds = UsageHistoryRepository.prototype.bounds;
+    let inserted = false, visited = 0;
+    vi.spyOn(UsageHistoryRepository.prototype, "bounds").mockImplementation(async function(owner) {
+      const result = await originalBounds.call(this, owner);
+      if (owner === "snapshot-owner" && !inserted) {
+        inserted = true;
+        await indexUsageRoots(repo, owner, "mac", [{ path: join(root, "older.jsonl"), agent: "claude" }]);
+      }
+      return result;
+    });
+    const originalVisit = UsageHistoryRepository.prototype.visitEvents;
+    vi.spyOn(UsageHistoryRepository.prototype, "visitEvents").mockImplementation(function(owner, visit) {
+      return originalVisit.call(this, owner, e => { if (this.db.isTransaction) visited++; visit(e); });
+    });
+    const snapshot = await readUsageHistory(repo, "snapshot-owner");
+    expect(visited).toBe(1);
+    expect(snapshot.history.reports.find(r => r.id === "all" && r.agent === "")!.summary.tokens).toBe(110);
+    vi.restoreAllMocks();
+    const next = await readUsageHistory(repo, "snapshot-owner");
+    expect(next.history.reports.find(r => r.id === "all" && r.agent === "")!.summary.tokens).toBe(220);
+  } finally {
+    vi.restoreAllMocks();
+    await rm(root, { recursive: true });
+    await sql.raw(`DROP SCHEMA ${schema} CASCADE`).execute(db);
+  }
+});
