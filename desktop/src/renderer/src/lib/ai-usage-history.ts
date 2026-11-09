@@ -18,19 +18,26 @@ export async function loadMatrixUsage(
 ) {
   if (!owner) throw new Error("Usage unavailable");
   signal.throwIfAborted();
+  let recent: ReturnType<typeof readUsageExport> | undefined;
   try {
     const value = await api.get("/api/ai-usage", readOptions(signal));
     signal.throwIfAborted();
     const snapshot = readUsageExport(value);
     if (snapshot.history) return { snapshot, backup: false };
+    recent = snapshot;
   } catch (error: unknown) {
     signal.throwIfAborted();
     if (!(error instanceof AppError && error.httpStatus === 404)) throw error;
   }
-  const value = await api.get(
+  let value;
+  try { value = await api.get(
     `/api/files/blob?path=${encodeURIComponent("exports/ai-usage/latest.json")}`,
     readOptions(signal),
-  );
+  ); } catch(error:unknown) {
+    signal.throwIfAborted();
+    if (recent && error instanceof AppError && error.httpStatus === 404) return {snapshot:recent,backup:false};
+    throw error;
+  }
   signal.throwIfAborted();
   const backup = AiUsageBackupSchema.parse(value);
   if (backup.ownerId !== owner || !backup.report.history)

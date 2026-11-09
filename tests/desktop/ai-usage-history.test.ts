@@ -110,3 +110,10 @@ it("rejects a snapshot belonging to another signed-in person", async () => {
     loadMatrixUsage(client(fetch), "owner", new AbortController().signal),
   ).rejects.toThrow();
 });
+it.each([404,401,503])("retains usable recent counters only when the optional historical export is absent (%s)",async status=>{
+ const recent={version:1,events:[{id:"recent",session:"recent",agent:"claude",model:"unknown",timestamp:"2026-11-09T12:00:00Z",input:10,cachedInput:0,cacheWrite:0,output:2}],issues:0};
+ const fetch=vi.fn().mockResolvedValueOnce(json(recent)).mockResolvedValueOnce(json({error:"unavailable"},status));
+ const result=loadMatrixUsage(client(fetch),"owner",new AbortController().signal);
+ if(status===404) expect((await result).snapshot.events).toHaveLength(1);
+ else await expect(result).rejects.toThrow();
+});
