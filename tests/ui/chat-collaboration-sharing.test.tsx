@@ -15,6 +15,42 @@ const scopeId = "10000000-0000-4000-8000-000000000001";
 const chatId = "chat_one";
 
 describe("Chat collaboration sharing", () => {
+  it("opens a shared app beyond the tenth directory page", async () => {
+    const appScopeId = "10000000-0000-4000-8000-000000000099";
+    const app = {
+      scopeId: appScopeId, runtimeId: "vps:50000000-0000-4000-8000-000000000001",
+      organizationId: "org_matrix_team", authorityGeneration: 2, appId: "team-tracker",
+      catalogId: "30000000-0000-4000-8000-000000000001",
+      readinessId: "40000000-0000-4000-8000-000000000001",
+      registrationIncarnation: "a".repeat(64), buildId: "b".repeat(64), shareRevision: "2",
+      owner: { actorId: "user_owner", displayName: "Owner" },
+    };
+    const api = {
+      get: vi.fn(async (path: string) => {
+        if (path === `/api/collaboration/shared-apps/${appScopeId}`) return app;
+        const cursor = new URL(path, "https://app.matrix-os.com").searchParams.get("cursor");
+        const page = cursor ? Number(cursor) : 0;
+        return { items: page === 10 ? [app] : [], ...(page < 10 ? { nextCursor: String(page + 1) } : {}) };
+      }),
+      post: vi.fn(async () => ({
+        target: { kind: "shared", scopeId: appScopeId, organizationId: app.organizationId,
+          appId: app.appId, catalogId: app.catalogId, buildId: app.buildId,
+          name: "Team tracker", owner: app.owner, shareRevision: app.shareRevision },
+        launchId: "20000000-0000-4000-8000-000000000001",
+        entryUrl: `/api/collaboration/shared-apps/${appScopeId}/runtime/20000000-0000-4000-8000-000000000001/index.html`,
+        expiresAt: "2026-11-05T10:05:00.000Z",
+      })),
+      delete: vi.fn(),
+      direct: { request: vi.fn(), subscribeEvents: vi.fn(() => vi.fn()), close: vi.fn() },
+    };
+    render(<ChatCollaboration view={{ kind: "app", scopeId: appScopeId }} api={api as never} actorId="user_member" />);
+
+    await waitFor(() => expect(api.post).toHaveBeenCalledWith(
+      `/api/collaboration/shared-apps/${appScopeId}/launch`, expect.any(Object),
+    ));
+    expect(api.get).toHaveBeenCalledWith(`/api/collaboration/shared-apps/${appScopeId}`);
+  });
+
   it("lists current-organization app shares separately and opens the exact scope", async () => {
     const appScopeId = "10000000-0000-4000-8000-000000000099";
     const app = {

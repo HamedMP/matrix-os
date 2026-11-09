@@ -9,13 +9,14 @@ export interface CollaborativeAppShareApi extends CollaborativeAppReadinessApi {
   delete(path: string, body?: unknown): Promise<unknown>;
 }
 
-export function CollaborativeAppShareButton({ appId, api, organizationId, organizationName }: {
+export function CollaborativeAppShareButton({ appId, api, organizationId, organizationName, buildEpoch }: {
   appId: string;
   api: CollaborativeAppShareApi;
   organizationId: string | null;
   organizationName: string | null;
+  buildEpoch?: number;
 }) {
-  const readiness = useCollaborativeAppSharing({ appId, api });
+  const readiness = useCollaborativeAppSharing({ appId, api, buildEpoch });
   const [share, setShare] = useState<CollaborativeAppShare | null>(null);
   const [shareKnown, setShareKnown] = useState(false);
   const [open, setOpen] = useState(false);

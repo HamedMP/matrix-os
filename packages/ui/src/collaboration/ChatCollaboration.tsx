@@ -1,6 +1,7 @@
 import {
   CollaborationChatMessagesResponseSchema,
   CollaborationChatSchema,
+  CollaborativeAppDirectoryItemSchema,
   CollaborativeAppDirectoryResponseSchema,
   CollaborationDiscoveryResponseSchema,
   CollaborationDiscoveryItemSchema,
@@ -124,17 +125,9 @@ function directClientOf(api: CollaborationApi): Pick<CollaborationDirectClient, 
 }
 
 async function findSharedApp(api: CollaborationApi, scopeId: string): Promise<CollaborativeAppDirectoryItem> {
-  let cursor: string | undefined;
-  for (let pageNumber = 0; pageNumber < 10; pageNumber += 1) {
-    const page = CollaborativeAppDirectoryResponseSchema.parse(await api.get(
-      `/api/collaboration/shared-apps?limit=100${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ""}`,
-    ));
-    const target = page.items.find((item) => item.scopeId === scopeId);
-    if (target) return target;
-    if (!page.nextCursor) break;
-    cursor = page.nextCursor;
-  }
-  throw new Error("SharedAppNotFound");
+  return CollaborativeAppDirectoryItemSchema.parse(await api.get(
+    `/api/collaboration/shared-apps/${encodeURIComponent(scopeId)}`,
+  ));
 }
 
 function CollaborationHome({ api, openInvitation, openChat, openTerminal, openProject, openApp, hideAcceptedProjects }: {

@@ -10,6 +10,7 @@ import {
   CollaborativeAppLaunchResponseSchema,
   CollaborativeAppParticipantSchema,
   CollaborationAppAssetPathSchema,
+  CollaborativeAppDirectoryItemSchema,
   CollaborativeAppDirectoryResponseSchema,
 } from "@matrix-os/contracts";
 import { Hono, type Context } from "hono";
@@ -182,6 +183,39 @@ export function createPlatformCollaborationRoutes(options: {
       }));
     } catch (error: unknown) {
       console.warn("[platform-collaboration] app discovery failed", error instanceof Error ? error.name : "UnknownError");
+      return safeJson(c, "Collaboration unavailable", 503);
+    }
+  });
+  app.get("/api/collaboration/shared-apps/:scopeId", async (c) => {
+    const actorId = await resolveValidatedActor(c, options.resolveActor);
+    if (!actorId) return safeJson(c, "Unauthorized", 401);
+    if (!appDiscoveryLimit.allow(actorId)) return safeJson(c, "Too many collaboration requests", 429);
+    const scopeId = z.uuid().safeParse(c.req.param("scopeId"));
+    if (!scopeId.success) return safeJson(c, "Invalid request", 422);
+    try {
+      const route = await options.repository.getDirectoryRoute(scopeId.data);
+      const currentOrganizations = await listCurrentOrganizationIds(actorId, options);
+      if (!route || route.kind !== "app" || route.audience !== "current_membership"
+        || !route.organizationId || !currentOrganizations.includes(route.organizationId)
+        || !route.app || route.app.state !== "active") return safeJson(c, "Collaboration resource not found", 404);
+      const owner = await options.resolveParticipant(route.ownerId);
+      if (!owner) return safeJson(c, "Collaboration unavailable", 503);
+      c.header("Cache-Control", "private, no-store");
+      return c.json(CollaborativeAppDirectoryItemSchema.parse({
+        scopeId: route.scopeId,
+        runtimeId: route.runtimeId,
+        organizationId: route.organizationId,
+        authorityGeneration: route.authorityGeneration,
+        appId: route.app.appId,
+        catalogId: route.app.catalogId,
+        readinessId: route.app.readinessId,
+        registrationIncarnation: route.app.registrationIncarnation,
+        buildId: route.app.buildId,
+        shareRevision: String(route.app.shareRevision),
+        owner,
+      }));
+    } catch (error: unknown) {
+      console.warn("[platform-collaboration] app lookup failed", error instanceof Error ? error.name : "UnknownError");
       return safeJson(c, "Collaboration unavailable", 503);
     }
   });

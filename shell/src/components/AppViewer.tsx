@@ -406,7 +406,7 @@ function SandboxedAppViewer({ path, sessionId, onOpenApp, onShareApp, visible = 
     <div className="flex h-full w-full flex-col">
       {slug && visible ? <div className="flex items-start justify-end gap-2 border-b px-3 py-1.5">
         {onShareApp ? <CollaborativeAppReadinessControls appId={slug} buildEpoch={refreshKey} onShareApp={onShareApp} />
-          : <OwnerCollaborativeAppSharingControls appId={slug} />}
+          : <OwnerCollaborativeAppSharingControls appId={slug} buildEpoch={refreshKey} />}
         <AppSiteButton key={slug} appSlug={slug} />
       </div> : null}
       <iframe
@@ -422,10 +422,10 @@ function SandboxedAppViewer({ path, sessionId, onOpenApp, onShareApp, visible = 
   );
 }
 
-function OwnerCollaborativeAppSharingControls({ appId }: { appId: string }) {
+function OwnerCollaborativeAppSharingControls({ appId, buildEpoch }: { appId: string; buildEpoch: number }) {
   const organization = useCollaborationOrganization();
   if (organization.status !== "member" || !organization.organizationId) return null;
-  return <CollaborativeAppShareButton appId={appId} api={COLLABORATION_API}
+  return <CollaborativeAppShareButton appId={appId} api={COLLABORATION_API} buildEpoch={buildEpoch}
     organizationId={organization.organizationId}
     organizationName={organization.organizationName ?? "your organization"} />;
 }
