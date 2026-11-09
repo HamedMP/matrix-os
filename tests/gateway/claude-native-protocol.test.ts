@@ -56,12 +56,16 @@ it("never permits fallback when physical version child cleanup is unconfirmed", 
     await vi.advanceTimersByTimeAsync(1501); await check;
   } finally { vi.useRealTimers(); }
 });
-it("treats a failed version query as unqualified only after actual close", async () => {
-  const c = child(); let settled = false;
-  const pending = resolveClaudeNativeProtocol({ ...scope, spawnFn: () => c }).then(value => { settled = true; return value; });
-  await vi.waitFor(() => expect(c.listenerCount("exit")).toBe(1)); c.emit("exit", 1, null);
-  await Promise.resolve(); expect(settled).toBe(false); c.emit("close");
-  await expect(pending).resolves.toEqual({ command: process.execPath, qualified: false });
+it("logs only the safe kind of a failed version query and waits for actual close", async () => {
+  const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+  try {
+    const c = child(); let settled = false;
+    const pending = resolveClaudeNativeProtocol({ ...scope, spawnFn: () => c }).then(value => { settled = true; return value; });
+    await vi.waitFor(() => expect(c.listenerCount("exit")).toBe(1)); c.stderr.emit("data", Buffer.from("private stderr")); c.emit("exit", 1, null);
+    await Promise.resolve(); expect(settled).toBe(false); c.emit("close");
+    await expect(pending).resolves.toEqual({ command: process.execPath, qualified: false });
+    expect(warn.mock.calls).toEqual([["[chat-claude] Native schedule version probe failed", "exit"]]);
+  } finally { warn.mockRestore(); }
 });
 it("merges CronCreate into existing denied tools without duplicate flags or losing restrictions", () => {
   expect(disallowNativeCronCreate(["--disallowedTools", "Bash,Write", "Edit", "--model", "haiku"])).toEqual([
