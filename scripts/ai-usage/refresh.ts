@@ -63,18 +63,29 @@ for (const home of config.captureHomes ?? []) {
 }
 const versions = await prepareBackupVersions(root);
 for (const machine of config.machines) {
-  for (const agent of ["claude", "codex"]) {
-    const path = join(root, "recovered", machine.id, `.${agent}`);
-    try {
-      const st = await lstat(path);
-      if (st.isSymbolicLink() || !st.isDirectory())
-        throw new Error("Invalid recovered history");
-    } catch (error: unknown) {
-      if ((error as NodeJS.ErrnoException)?.code === "ENOENT") continue;
-      throw error;
+  // Logical machine IDs are labels; preserved folders follow the physical capture roots.
+  const folders = ["mac", "matrix-login", "matrix-runtime"].filter((folder) =>
+    machine.roots.some(
+      (source: { path: string }) =>
+        relative(root, resolve(source.path)).split("/")[0] === folder,
+    ),
+  );
+  for (const folder of folders) {
+    for (const agent of ["claude", "codex"]) {
+      const path = join(root, "recovered", folder, `.${agent}`);
+      try {
+        const st = await lstat(path);
+        if (st.isSymbolicLink() || !st.isDirectory())
+          throw new Error("Invalid recovered history");
+      } catch (error: unknown) {
+        if ((error as NodeJS.ErrnoException)?.code === "ENOENT") continue;
+        throw error;
+      }
+      if (
+        !machine.roots.some((source: { path: string }) => source.path === path)
+      )
+        machine.roots.push({ path, agent });
     }
-    if (!machine.roots.some((r: { path: string }) => r.path === path))
-      machine.roots.push({ path, agent });
   }
 }
 for (const machine of config.machines)

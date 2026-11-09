@@ -7,6 +7,7 @@ import {
   rm,
   access,
   utimes,
+  lstat,
 } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
@@ -61,3 +62,36 @@ it("keeps independent uploads out of verified originals until publication and pr
     await rm(root, { recursive: true });
   }
 });
+it.each(["stat", "remove"])(
+  "tolerates an incoming folder disappearing during %s",
+  async (race) => {
+    const root = await mkdtemp(join(tmpdir(), "usage-sweep-"));
+    try {
+      const old = `auto-${randomUUID()}`,
+        next = `auto-${randomUUID()}`;
+      await prepareIncoming(root, old);
+      await utimes(join(root, "incoming", old), new Date(0), new Date(0));
+      let injected = false;
+      await prepareIncoming(root, next, {
+        stat: async (path) => {
+          if (race === "stat") {
+            await rm(path, { recursive: true });
+            injected = true;
+          }
+          return lstat(path);
+        },
+        remove: async (path) => {
+          if (race === "remove") {
+            await rm(path, { recursive: true });
+            injected = true;
+          }
+          await rm(path, { recursive: true });
+        },
+      });
+      expect(injected).toBe(true);
+      await access(join(root, "incoming", next));
+    } finally {
+      await rm(root, { recursive: true });
+    }
+  },
+);

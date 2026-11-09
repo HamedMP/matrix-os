@@ -11,7 +11,14 @@ function stagePath(root: string, id: string) {
   return join(root, "incoming", id);
 }
 /** Failed transfers expire after 24h; cap concurrent/stale attempts before accepting another. */
-export async function prepareIncoming(root: string, id: string) {
+export async function prepareIncoming(
+  root: string,
+  id: string,
+  io = {
+    stat: (path: string) => lstat(path),
+    remove: (path: string) => rm(path, { recursive: true }),
+  },
+) {
   const parent = join(root, "incoming");
   await mkdir(parent, { recursive: true, mode: 0o700 });
   if ((await lstat(parent)).isSymbolicLink())
@@ -20,17 +27,20 @@ export async function prepareIncoming(root: string, id: string) {
     visited = 0;
   for await (const entry of await opendir(parent)) {
     if (++visited > 256) throw new Error("Incoming history limit");
-    const path = join(parent, entry.name),
-      st = await lstat(path);
-    if (
-      !incomingName.test(entry.name) ||
-      !st.isDirectory() ||
-      st.isSymbolicLink()
-    )
-      throw new Error("Invalid incoming history");
-    if (Date.now() - st.mtimeMs > 24 * 60 * 60 * 1000)
-      await rm(path, { recursive: true });
-    else retained++;
+    try {
+      const path = join(parent, entry.name),
+        st = await io.stat(path);
+      if (
+        !incomingName.test(entry.name) ||
+        !st.isDirectory() ||
+        st.isSymbolicLink()
+      )
+        throw new Error("Invalid incoming history");
+      if (Date.now() - st.mtimeMs > 24 * 60 * 60 * 1000) await io.remove(path);
+      else retained++;
+    } catch (error: unknown) {
+      if ((error as NodeJS.ErrnoException)?.code !== "ENOENT") throw error;
+    }
   }
   if (retained >= 48) throw new Error("Incoming history limit");
   await mkdir(join(stagePath(root, id), "mac"), {
