@@ -28,6 +28,7 @@ describe("collaborative app current-membership discovery", () => {
   let repository: PlatformCollaborationRepository;
   let routes: Hono;
   const organizations = new Map<string, string[]>();
+  const currentMemberships = new Set<string>();
 
   beforeEach(async () => {
     fixture = await createPlatformCollaborationTestDatabase();
@@ -41,10 +42,14 @@ describe("collaborative app current-membership discovery", () => {
       resolveParticipant: async (actorId) => ({ actorId, displayName: actorId === platformCollaborationActors.owner ? "Owner" : "Member" }),
       resolveInvitationIdentifier: async () => null,
       listOrganizationIds: async (actorId) => organizations.get(actorId) ?? [],
+      isCurrentOrganizationMember: async ({ actorId, organizationId }) =>
+        currentMemberships.has(`${actorId}:${organizationId}`),
       now: () => now,
     }));
     organizations.set(platformCollaborationActors.recipientWithoutComputer, ["org_matrix_team"]);
     organizations.set("user_platform_guest", ["org_matrix_team"]);
+    currentMemberships.add(`${platformCollaborationActors.recipientWithoutComputer}:org_matrix_team`);
+    currentMemberships.add("user_platform_guest:org_matrix_team");
     await repository.applyDirectoryEvent({
       eventId: "20000000-0000-4000-8000-000000000001",
       scopeId,
@@ -62,6 +67,7 @@ describe("collaborative app current-membership discovery", () => {
 
   afterEach(async () => {
     organizations.clear();
+    currentMemberships.clear();
     await destroyPlatformCollaborationTestDatabase(fixture);
   });
 
@@ -120,5 +126,17 @@ describe("collaborative app current-membership discovery", () => {
     expect((await routes.request("/api/collaboration/shared-apps?cursor=not-json", {
       headers: { "x-test-actor": platformCollaborationActors.recipientWithoutComputer },
     })).status).toBe(422);
+  });
+
+  it("does not expose app metadata when saved membership is no longer current", async () => {
+    const actorId = platformCollaborationActors.recipientWithoutComputer;
+    currentMemberships.delete(`${actorId}:org_matrix_team`);
+
+    const response = await routes.request("/api/collaboration/shared-apps", {
+      headers: { "x-test-actor": actorId },
+    });
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({ items: [] });
   });
 });

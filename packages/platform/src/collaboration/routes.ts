@@ -4,6 +4,7 @@ import {
   CollaborationDiscoveryItemSchema,
   CollaborationDiscoveryResponseSchema,
   CollaborationDirectoryEventSchema,
+  CollaborationOrganizationIdSchema,
   CollaborationPageRequestSchema,
   CollaborativeAppDirectoryResponseSchema,
 } from "@matrix-os/contracts";
@@ -60,10 +61,15 @@ export function createPlatformCollaborationRoutes(options: {
   resolveParticipant(actorId: string): Promise<{ actorId: string; displayName: string } | null>;
   resolveInvitationIdentifier(identifier: string, organizationId: string): Promise<{ actorId: string; displayName: string } | null>;
   /**
-   * S06 / T032: the actor's current organization ids from the membership projection, used only to list
-   * organization-wide shares still pending for them. Absent means no organization inventory.
+   * S06 / T032: candidate organization ids from saved membership rows. Every candidate is checked
+   * against `isCurrentOrganizationMember` before it can contribute inventory.
    */
   listOrganizationIds?(actorId: string): Promise<readonly string[]>;
+  /**
+   * Fresh-membership authority for organization inventory. When absent, organization-wide
+   * discovery fails closed even if saved membership rows still list an organization.
+   */
+  isCurrentOrganizationMember?(input: { organizationId: string; actorId: string }): Promise<boolean>;
   now?: () => Date;
 }): Hono {
   const app = new Hono();
@@ -130,7 +136,7 @@ export function createPlatformCollaborationRoutes(options: {
     const after = pageRequest.data.cursor ? decodeAppDiscoveryCursor(pageRequest.data.cursor, actorId) : undefined;
     if (pageRequest.data.cursor && !after) return safeJson(c, "Invalid request", 422);
     try {
-      const organizationIds = options.listOrganizationIds ? await options.listOrganizationIds(actorId) : [];
+      const organizationIds = await listCurrentOrganizationIds(actorId, options);
       const page = await options.repository.listCurrentMembershipAppsForActorPage(actorId, organizationIds, {
         limit: pageRequest.data.limit,
         ...(after ? { after } : {}),
@@ -298,7 +304,7 @@ async function readDiscoveryPage(
     }));
   let nextCursor = page.nextCursor ? encodeDiscoveryCursor(actorId, status, "indexed", page.nextCursor) : undefined;
   if (status === "invited" && !page.nextCursor && options.listOrganizationIds) {
-    const organizationIds = await options.listOrganizationIds(actorId);
+    const organizationIds = await listCurrentOrganizationIds(actorId, options);
     const remaining = limit - items.length;
     const pending = await options.repository.listOrganizationSharesForActorPage(actorId, organizationIds, {
       limit: Math.max(1, remaining),
@@ -318,6 +324,33 @@ async function readDiscoveryPage(
     }
   }
   return { items, ...(nextCursor ? { nextCursor } : {}) };
+}
+
+const MAX_ORGANIZATION_DISCOVERY_CANDIDATES = 100;
+const CURRENT_MEMBERSHIP_CHECK_CONCURRENCY = 8;
+
+async function listCurrentOrganizationIds(
+  actorId: string,
+  options: Parameters<typeof createPlatformCollaborationRoutes>[0],
+): Promise<string[]> {
+  const listOrganizationIds = options.listOrganizationIds;
+  const isCurrentOrganizationMember = options.isCurrentOrganizationMember;
+  if (!listOrganizationIds || !isCurrentOrganizationMember) return [];
+  const candidates = await listOrganizationIds(actorId);
+  const organizationIds = [...new Set(candidates.flatMap((candidate) => {
+    const parsed = CollaborationOrganizationIdSchema.safeParse(candidate);
+    return parsed.success ? [parsed.data] : [];
+  }))].slice(0, MAX_ORGANIZATION_DISCOVERY_CANDIDATES);
+  const current: string[] = [];
+  for (let index = 0; index < organizationIds.length; index += CURRENT_MEMBERSHIP_CHECK_CONCURRENCY) {
+    const batch = organizationIds.slice(index, index + CURRENT_MEMBERSHIP_CHECK_CONCURRENCY);
+    const memberships = await Promise.all(batch.map(async (organizationId) => ({
+      organizationId,
+      current: await isCurrentOrganizationMember({ organizationId, actorId }),
+    })));
+    current.push(...memberships.filter((membership) => membership.current).map((membership) => membership.organizationId));
+  }
+  return current;
 }
 
 function exactDiscoveryQuery(c: RouteContext): Record<string, string> {
