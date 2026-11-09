@@ -247,6 +247,28 @@ describe("owner collaborative app transport", () => {
     expect(direct.request).not.toHaveBeenCalled();
   });
 
+  it("keeps count query results numeric before, during, and after sharing", async () => {
+    const direct = {
+      request: vi.fn().mockResolvedValue({ result: 3, revision: "7" }),
+      subscribeEvents: vi.fn().mockReturnValue(vi.fn()),
+    };
+    const legacyRequest = vi.fn().mockResolvedValue({ count: 3 });
+    const get = vi.fn()
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce(share("active"))
+      .mockResolvedValueOnce(share("stopped"));
+    const transport = createOwnerCollaborativeAppTransport({
+      appId, api: { get, direct }, legacyRequest, onChanged: vi.fn(),
+    });
+    const action = { action: "count", table: "items" };
+
+    await expect(transport.query(action)).resolves.toEqual({ result: 3, revision: "0" });
+    await expect(transport.query(action)).resolves.toEqual({ result: 3, revision: "7" });
+    await expect(transport.query(action)).resolves.toEqual({ result: 3, revision: "0" });
+    expect(legacyRequest).toHaveBeenCalledTimes(2);
+    expect(direct.request).toHaveBeenCalledTimes(1);
+  });
+
   it("fails closed while a share needs rechecking", async () => {
     const direct = { request: vi.fn(), subscribeEvents: vi.fn() };
     const legacyRequest = vi.fn();

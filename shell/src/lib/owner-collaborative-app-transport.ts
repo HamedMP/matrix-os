@@ -12,6 +12,7 @@ import { z } from "zod/v4";
 
 const AppIdSchema = z.string().min(1).max(256).regex(/^[A-Za-z0-9_-]+$/);
 const ActionSchema = z.object({ action: z.string().min(1).max(64) }).passthrough();
+const LegacyCountResponseSchema = z.strictObject({ count: z.number().int().nonnegative() });
 const MAX_PENDING_MUTATIONS = 32;
 
 interface OwnerCollaborationDirectClient {
@@ -169,7 +170,13 @@ export function createOwnerCollaborativeAppTransport(input: {
       const share = await currentShare(signal);
       if (closed || signal?.aborted) throw unavailable();
       if (!share) {
-        return { result: await input.legacyRequest(action, signal), revision: "0" };
+        const result = await input.legacyRequest(action, signal);
+        if (action.action === "count") {
+          const count = LegacyCountResponseSchema.safeParse(result);
+          if (!count.success) throw unavailable();
+          return { result: count.data.count, revision: "0" };
+        }
+        return { result, revision: "0" };
       }
       return CollaborativeAppQueryResponseSchema.parse(await input.api.direct.request(
         share.scopeId,
