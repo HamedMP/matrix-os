@@ -134,4 +134,35 @@ describe("collaborative app owner/member common Postgres data", () => {
     expect((await sql<{ id: string }>`SELECT id FROM teamtracker.tasks WHERE id IN ('winner', 'stale') ORDER BY id`.execute(fixture.db)).rows)
       .toEqual([{ id: "winner" }]);
   });
+
+  it("does not wait on a readiness row lock after taking the live scope lock", async () => {
+    let releaseReadiness!: () => void;
+    let readinessLocked!: () => void;
+    const locked = new Promise<void>((resolve) => { readinessLocked = resolve; });
+    const release = new Promise<void>((resolve) => { releaseReadiness = resolve; });
+    const holder = fixture.db.transaction().execute(async (trx) => {
+      await trx.selectFrom("collaboration_app_readiness").select("id")
+        .where("id", "=", readinessId).forUpdate().executeTakeFirstOrThrow();
+      readinessLocked();
+      await release;
+    });
+    await locked;
+
+    const member = await authority.authorize({ scopeId, actorId: memberId, action: "read" });
+    const pending = adapter.query(member, appId, {
+      action: "find",
+      app: appId,
+      table: "tasks",
+      limit: 1,
+    });
+    const result = await Promise.race([
+      pending.then(() => "completed" as const),
+      new Promise<"blocked">((resolve) => setTimeout(() => resolve("blocked"), 500)),
+    ]);
+
+    releaseReadiness();
+    await holder;
+    await pending;
+    expect(result).toBe("completed");
+  });
 });
