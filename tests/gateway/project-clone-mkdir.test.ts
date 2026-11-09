@@ -6,6 +6,7 @@ import { join } from "node:path";
 import { createWorkspaceRoutes } from "../../packages/gateway/src/workspace-routes.js";
 import { createProjectManager } from "../../packages/gateway/src/project-manager.js";
 import { createProjectFolders } from "../../packages/gateway/src/project-folders.js";
+import { githubClonePrerequisiteResult } from "../helpers/github-clone-prerequisites.js";
 
 const receiptRemovalRace = vi.hoisted(() => ({
   enabled: false,
@@ -226,6 +227,24 @@ describe("project clone and mkdir routes", () => {
       });
     });
 
+    it.each([
+      { protocol: "https", sshUser: null },
+      { protocol: "ssh", sshUser: "another-account" },
+    ])("requires owner SSH setup for $protocol with SSH account $sshUser", async ({ protocol, sshUser }) => {
+      const runCommand = vi.fn(async (command: string, args: string[]) => (
+        githubClonePrerequisiteResult(command, args, { protocol, sshUser })
+      ));
+      const projectManager = createProjectManager({ homePath, runCommand });
+      const app = createWorkspaceRoutes({ homePath, projectManager });
+
+      const res = await app.request(jsonRequest("/api/projects/clone", { url: "https://github.com/owner/repo" }));
+
+      expect(res.status).toBe(424);
+      await expect(res.json()).resolves.toMatchObject({ error: { code: "github_ssh_setup_required" } });
+      expect(runCommand.mock.calls.some(([command, args]) => command === "git" && args[0] === "clone")).toBe(false);
+      await expect(stat(join(homePath, "projects", "repo"))).rejects.toMatchObject({ code: "ENOENT" });
+    });
+
     it("maps clone failures without leaking git output", async () => {
       const projectManager = makeProjectManager({
         createProject: vi.fn(async () => ({
@@ -340,7 +359,7 @@ describe("project clone and mkdir routes", () => {
     });
 
     it("passes --branch to git clone when a branch is given", async () => {
-      const runCommand = vi.fn(async (_command: string, _args: string[]) => ({ stdout: "", stderr: "" }));
+      const runCommand = vi.fn(async (command: string, args: string[]) => githubClonePrerequisiteResult(command, args));
       const manager = createProjectManager({ homePath, runCommand });
 
       const result = await manager.createProject({
@@ -358,7 +377,7 @@ describe("project clone and mkdir routes", () => {
     });
 
     it("clones without --branch when none is given", async () => {
-      const runCommand = vi.fn(async (_command: string, _args: string[]) => ({ stdout: "", stderr: "" }));
+      const runCommand = vi.fn(async (command: string, args: string[]) => githubClonePrerequisiteResult(command, args));
       const manager = createProjectManager({ homePath, runCommand });
 
       const result = await manager.createProject({ mode: "github", url: "https://github.com/owner/repo" });
