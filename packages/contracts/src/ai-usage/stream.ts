@@ -1,6 +1,6 @@
-import { readLocalChatJsonl } from "../local-chat-import/jsonl";
-import { createUsageRecordParser, type UsageParserState } from "./parser";
-import type { UsageAgent, UsageEvent } from "./types";
+import { readLocalChatJsonl } from "../local-chat-import/jsonl.js";
+import { createUsageRecordParser, type UsageParserState } from "./parser.js";
+import type { UsageAgent, UsageEvent } from "./types.js";
 export interface UsageBatch {
   events: UsageEvent[];
   issues: number;

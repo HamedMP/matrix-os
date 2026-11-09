@@ -1,7 +1,7 @@
 import { lstat, readFile, realpath } from "node:fs/promises";
 import { join, relative, isAbsolute } from "node:path";
 import { z } from "zod/v4";
-import { resolveWithinHome } from "../path-security";
+import { resolveWithinHome } from "../path-security.js";
 const schema = z.object({
   version: z.literal(1),
   sources: z

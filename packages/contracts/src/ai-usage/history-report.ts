@@ -1,10 +1,10 @@
-import { estimateUsageUsd, shiftUsageDay, usageDay } from "./summary";
+import { estimateUsageUsd, shiftUsageDay, usageDay } from "./summary.js";
 import type {
   UsageAgent,
   UsageEvent,
   UsageSummary,
   UsageTotals,
-} from "./types";
+} from "./types.js";
 export interface UsageHistoryReport {
   id: string;
   label: string;

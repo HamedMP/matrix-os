@@ -2,14 +2,14 @@ import { constants } from "node:fs";
 import { lstat, opendir, open } from "node:fs/promises";
 import { join } from "node:path";
 import { createHash } from "node:crypto";
-import { committedHash } from "./history-hash";
-import { usageInput } from "./history-input";
+import { committedHash } from "./history-hash.js";
+import { usageInput } from "./history-input.js";
 import { streamUsageSource } from "@matrix-os/contracts/ai-usage";
 import type { UsageAgent } from "@matrix-os/contracts/ai-usage";
 import type {
   UsageHistoryRepository,
   UsageCheckpoint,
-} from "./history-repository";
+} from "./history-repository.js";
 /** Depth/record/batch bounded, with no aggregate byte/file/history cutoff. Missing roots are reported to the caller. */
 const supported = (path: string) =>
   path.endsWith(".jsonl") ||

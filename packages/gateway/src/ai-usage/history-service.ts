@@ -4,9 +4,9 @@ import {
   createHistoryReports,
   type UsageHistoryCoverage,
 } from "@matrix-os/contracts/ai-usage";
-import { readUsageRootConfig } from "./history-config";
-import { UsageHistoryRepository } from "./history-repository";
-import { indexUsageRoots } from "./history-collector";
+import { readUsageRootConfig } from "./history-config.js";
+import { UsageHistoryRepository } from "./history-repository.js";
+import { indexUsageRoots } from "./history-collector.js";
 export async function readUsageHistory(
   repo: UsageHistoryRepository,
   owner: string,
