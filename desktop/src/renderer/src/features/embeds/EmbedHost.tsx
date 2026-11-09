@@ -291,7 +291,6 @@ export default function EmbedHost({
             const id = embedIdRef.current;
             if (!id) return;
             setState("loading");
-            void invoke("embed:set-active", { embedId: id, active: true });
             void invoke("embed:reload", { embedId: id }).then((result) => {
               if (embedIdRef.current !== id) return;
               if (result.ok) reportBounds();

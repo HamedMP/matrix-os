@@ -305,7 +305,7 @@ describe("EmbedHost", () => {
     expect(screen.queryByRole("button", { name: "Retry sign-in" })).toBeNull();
   });
 
-  it("detaches a retained shared app while its retry overlay is visible and reattaches before reload", async () => {
+  it("detaches a retained shared app while its retry overlay is visible and reloads it exactly once", async () => {
     let emitState: ((payload: { embedId: string; state: "host-offline" }) => void) | null = null;
     vi.mocked(onEvent).mockImplementation((_channel, callback) => {
       emitState = callback as typeof emitState;
@@ -337,10 +337,9 @@ describe("EmbedHost", () => {
 
     await waitFor(() => {
       const calls = vi.mocked(invoke).mock.calls;
-      expect(calls).toContainEqual(["embed:set-active", { embedId: "shared-1", active: true }]);
       expect(calls).toContainEqual(["embed:reload", { embedId: "shared-1" }]);
-      expect(calls.findIndex(([channel]) => channel === "embed:set-active"))
-        .toBeLessThan(calls.findIndex(([channel]) => channel === "embed:reload"));
+      expect(calls.filter(([channel]) => channel === "embed:reload")).toHaveLength(1);
+      expect(calls).not.toContainEqual(["embed:set-active", { embedId: "shared-1", active: true }]);
     });
   });
 
