@@ -83,15 +83,19 @@ export class CollaborativeAppBuildResolver {
     const result = await this.build.buildWithCollaborativeSnapshot(appId, resolved.entry.appDir, {
       store: this.options.store,
       buildIdForAssetDigest: (assetDigest, manifest) => identity(assetDigest, manifest).buildId,
+      afterCapture: async (snapshot) => {
+        const captured = identity(snapshot.assetDigest, snapshot.manifest);
+        if (captured.buildId !== snapshot.buildId) throw new CollaborativeAppBuildResolutionError();
+        await this.options.readiness.invalidateDriftedBuilds({
+          ownerId,
+          catalogId: catalog.id,
+          currentBuildId: captured.buildId,
+        });
+      },
     });
     if (!result.ok) throw new CollaborativeAppBuildResolutionError();
     const exact = identity(result.snapshot.assetDigest, result.snapshot.manifest);
     if (exact.buildId !== result.snapshot.buildId) throw new CollaborativeAppBuildResolutionError();
-    await this.options.readiness.invalidateDriftedBuilds({
-      ownerId,
-      catalogId: catalog.id,
-      currentBuildId: exact.buildId,
-    });
     return { build: exact, artifactRef: `objects/${exact.buildId}` };
   }
 }

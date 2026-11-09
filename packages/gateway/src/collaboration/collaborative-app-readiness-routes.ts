@@ -53,6 +53,7 @@ export interface CollaborativeAppReadinessRouteDependencies {
   ): Promise<CurrentCollaborativeAppBuild | null>;
   requireOrganizationMembership(actorId: string, organizationId: string): Promise<void>;
   rateLimiter?: RateLimiter;
+  readRateLimiter?: RateLimiter;
 }
 
 function project(record: CollaborativeAppReadinessRecord) {
@@ -112,6 +113,12 @@ export function registerCollaborativeAppReadinessRoutes(
     lockoutMs: 60_000,
     maxKeys: 10_000,
   });
+  const readLimiter = dependencies.readRateLimiter ?? createRateLimiter({
+    maxAttempts: 30,
+    windowMs: 60_000,
+    lockoutMs: 60_000,
+    maxKeys: 10_000,
+  });
   const limit = bodyLimit({
     maxSize: COLLABORATION_HTTP_BODY_LIMIT,
     onError: (context) => context.json({ error: "Readiness request too large", code: "invalid_request" }, 413),
@@ -123,6 +130,7 @@ export function registerCollaborativeAppReadinessRoutes(
     try {
       const ownerId = readinessOwner(context, dependencies.ownerId);
       const appId = AppIdSchema.parse(context.req.param("appId"));
+      if (!readLimiter.check(ownerId)) return context.json({ error: "Too many readiness reads", code: "rate_limited" }, 429);
       const current = await dependencies.resolveCurrentBuild(ownerId, appId, { ensureCatalog: false });
       if (!current) throw new ReadinessRouteError("not_found");
       const record = await dependencies.repository.getCurrent({ ownerId, catalogId: current.build.catalogId });

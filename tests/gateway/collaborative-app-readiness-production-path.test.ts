@@ -321,4 +321,43 @@ describe("collaborative app production build resolution", () => {
         assetDigest,
       } });
   });
+
+  it("orders drift invalidation with build capture so an older request cannot stale a newer build", async () => {
+    const firstWrite = Promise.withResolvers<void>();
+    const firstWriteEntered = Promise.withResolvers<void>();
+    const readiness = { invalidateDriftedBuilds: vi.fn(async () => {
+      if (readiness.invalidateDriftedBuilds.mock.calls.length === 1) {
+        firstWriteEntered.resolve();
+        await firstWrite.promise;
+      }
+      return 0;
+    }) };
+    const registered = registration();
+    const resolver = new CollaborativeAppBuildResolver({
+      homePath: root,
+      ownerId: "user_owner",
+      appRegistry: { get: async () => registered } as never,
+      catalog: { getLiveByPath: async () => ({
+        id: catalogId, ownerId: "user_owner", projectId: null, kind: "app", path: "team-tracker",
+        parentId: null, incarnation: appRegistryIncarnation(registered as never), revision: 0,
+        updatedAt: createdAt, deletedAt: null,
+      }) } as never,
+      readiness,
+      store,
+    });
+    const first = resolver.resolve("user_owner", "team-tracker", { ensureCatalog: false });
+    await firstWriteEntered.promise;
+    await writeFile(join(appDir, "input.txt"), "new exact bytes");
+    const second = resolver.resolve("user_owner", "team-tracker", { ensureCatalog: false });
+    try {
+      await new Promise((resolve) => setTimeout(resolve, 1_000));
+      expect(readiness.invalidateDriftedBuilds).toHaveBeenCalledTimes(1);
+    } finally {
+      firstWrite.resolve();
+      await Promise.allSettled([first, second]);
+    }
+    const [older, newer] = await Promise.all([first, second]);
+    expect(older?.build.buildId).not.toBe(newer?.build.buildId);
+    expect(readiness.invalidateDriftedBuilds).toHaveBeenCalledTimes(2);
+  });
 });

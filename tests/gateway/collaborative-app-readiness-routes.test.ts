@@ -108,6 +108,30 @@ describe("collaborative app readiness routes", () => {
     }
   });
 
+  it("returns an interrupted check as stale when drift precedes its first gate result", async () => {
+    const interrupted = setup({ repository: { getCurrent: async () => ({
+      ...blocked,
+      status: "stale",
+      gateResults: [],
+      verifiedAt: null,
+      invalidatedAt: "2026-11-05T10:02:00.000Z",
+    }) } });
+    const response = await interrupted.routes.request(`/api/collaboration/apps/${appId}/readiness`, {
+      headers: { "x-test-principal": "user_owner" },
+    });
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({ status: "stale", checks: [] });
+  });
+
+  it("bounds expensive readiness reads before resolving the current build", async () => {
+    const limited = setup({ readRateLimiter: { check: () => false } });
+    const response = await limited.routes.request(`/api/collaboration/apps/${appId}/readiness`, {
+      headers: { "x-test-principal": "user_owner" },
+    });
+    expect(response.status).toBe(429);
+    expect(limited.dependencies.resolveCurrentBuild).not.toHaveBeenCalled();
+  });
+
   it("rejects missing and foreign principals before resolving app state", async () => {
     const { routes, dependencies } = setup();
     expect((await routes.request(`/api/collaboration/apps/${appId}/readiness`)).status).toBe(401);

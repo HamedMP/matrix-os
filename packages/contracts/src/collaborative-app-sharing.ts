@@ -74,7 +74,7 @@ export const CollaborativeAppReadinessSchema = z.object({
   if (new Set(readiness.checks.map((check) => check.code)).size !== readiness.checks.length) {
     context.addIssue({ code: "custom", path: ["checks"], message: "Readiness gates must be unique" });
   }
-  if (readiness.status !== "checking" && readiness.checks.length === 0) {
+  if (readiness.status !== "checking" && readiness.status !== "stale" && readiness.checks.length === 0) {
     context.addIssue({ code: "custom", path: ["checks"], message: "Completed readiness requires gate results" });
   }
   if (readiness.status === "ready"

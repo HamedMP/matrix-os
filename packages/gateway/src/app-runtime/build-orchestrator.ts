@@ -108,6 +108,7 @@ export class BuildOrchestrator {
     opts: BuildOptions & {
       store: ImmutableCollaborativeBuildStore;
       buildIdForAssetDigest: (assetDigest: string, manifest: AppManifest) => string;
+      afterCapture?: (snapshot: CollaborativeBuildSnapshot & { manifest: AppManifest }) => Promise<void>;
     },
   ): Promise<BuildSnapshotResult<CollaborativeBuildSnapshot & { manifest: AppManifest }>> {
     return this.buildWithSnapshot(slug, appDir, opts, async (_result, canonicalDir) => {
@@ -139,7 +140,9 @@ export class BuildOrchestrator {
         buildRoot: artifactRoot,
         buildIdForAssetDigest: (assetDigest) => opts.buildIdForAssetDigest(assetDigest, parsed.manifest),
       });
-      return { ...snapshot, manifest: parsed.manifest };
+      const captured = { ...snapshot, manifest: parsed.manifest };
+      await opts.afterCapture?.(captured);
+      return captured;
     });
   }
 
