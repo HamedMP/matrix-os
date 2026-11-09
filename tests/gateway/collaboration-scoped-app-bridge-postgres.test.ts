@@ -24,7 +24,8 @@ describe("scoped app bridge", () => {
     await sql`CREATE TABLE ${sql.id(schema)}.${sql.id("cards")} (id TEXT PRIMARY KEY, title TEXT NOT NULL, payload JSONB, updated_at TIMESTAMPTZ DEFAULT now())`.execute(fixture.db);
     await sql`CREATE TABLE IF NOT EXISTS public._kv (app TEXT NOT NULL, key TEXT NOT NULL, value TEXT, updated_at TIMESTAMPTZ DEFAULT now(), PRIMARY KEY (app, key))`.execute(fixture.db);
     bridge = createScopedAppBridge({
-      resolveApp: async (appId) => appId === APP ? { storageSchema: schema, tables: ["cards"] } : null,
+      resolveApp: async (appId) => appId === APP ? { storageSchema: schema,
+        tables: { cards: { columns: { id: "text", title: "text" } } }, installedVersion: "2.3.0" } : null,
     });
   });
   afterEach(async () => {
@@ -43,6 +44,16 @@ describe("scoped app bridge", () => {
     });
     const count = await sql<{ count: string }>`SELECT COUNT(*) AS count FROM ${sql.id(schema)}.${sql.id("cards")}`.execute(fixture.db);
     expect(Number(count.rows[0]?.count)).toBe(1);
+  });
+
+  it("returns the registered schema and installed version through the owner transaction", async () => {
+    await fixture.db.transaction().execute(async (transaction) => {
+      const input = { namespace, appId: APP, storageSchema: schema, scopeId: SCOPE, actorId: "member", transaction };
+      await expect(bridge.execute({ ...input, action: { action: "schema", app: namespace } }))
+        .resolves.toEqual({ cards: { columns: { id: "text", title: "text" } } });
+      await expect(bridge.execute({ ...input, action: { action: "appInfo", app: namespace } }))
+        .resolves.toEqual({ installedVersion: "2.3.0" });
+    });
   });
 
   it("conditionally writes the exact payload in the verified owner transaction", async () => {

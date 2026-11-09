@@ -73,7 +73,8 @@ describe("collaborative app owner/member common Postgres data", () => {
       } } as never,
     });
     const bridge = createScopedAppBridge({
-      resolveApp: async (requested) => requested === appId ? { storageSchema: appId, tables: ["tasks"] } : null,
+      resolveApp: async (requested) => requested === appId ? { storageSchema: appId,
+        tables: { tasks: { columns: { id: "text", title: "text" } } }, installedVersion: "1.0.0" } : null,
     });
     adapter = createAppInstanceAdapter({
       db: fixture.db,
@@ -98,7 +99,7 @@ describe("collaborative app owner/member common Postgres data", () => {
       revision: 0,
     });
     await expect(adapter.query(member, appId, { action: "appInfo", app: appId })).resolves.toEqual({
-      result: { id: appId },
+      result: { installedVersion: "1.0.0" },
       revision: 0,
     });
     const find = { action: "find", app: appId, table: "tasks", orderBy: { id: "asc" } };

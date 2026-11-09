@@ -304,6 +304,25 @@ describe("owner collaborative app transport", () => {
     expect(direct.request).toHaveBeenCalledTimes(1);
   });
 
+  it.each([
+    ["schema", { cards: { columns: { id: "text" } } }],
+    ["appInfo", { installedVersion: "2.3.0" }],
+  ])("keeps %s query replies stable before, during, and after sharing", async (actionName, result) => {
+    const direct = { request: vi.fn().mockResolvedValue({ result, revision: "7" }),
+      subscribeEvents: vi.fn().mockReturnValue(vi.fn()) };
+    const legacyRequest = vi.fn().mockResolvedValue(result);
+    const get = vi.fn().mockResolvedValueOnce(null).mockResolvedValueOnce(share("active"))
+      .mockResolvedValueOnce(share("stopped"));
+    const transport = createOwnerCollaborativeAppTransport({ appId, api: { get, direct }, legacyRequest,
+      onChanged: vi.fn() });
+
+    await expect(transport.query({ action: actionName })).resolves.toEqual({ result, revision: "0" });
+    await expect(transport.query({ action: actionName })).resolves.toEqual({ result, revision: "7" });
+    await expect(transport.query({ action: actionName })).resolves.toEqual({ result, revision: "0" });
+    expect(legacyRequest).toHaveBeenCalledTimes(2);
+    expect(direct.request).toHaveBeenCalledTimes(1);
+  });
+
   it("fails closed while a share needs rechecking", async () => {
     const direct = { request: vi.fn(), subscribeEvents: vi.fn() };
     const legacyRequest = vi.fn();
