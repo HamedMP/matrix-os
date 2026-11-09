@@ -172,7 +172,7 @@ it("named private transport cancels only the exact pending CLI action and keeps 
 
 it("a lost private queued ACK never falls back or resubmits a prompt/mutation and retains the original business UUID", async () => {
   const requestId = "de000000-0000-4000-8000-000000000606", chatId = "chat_codex_lost_ack", owner = { type: "personal" as const, ownerId: "user_owner_1" };
-  f = await codexFixture({ intents: [{ args: ["list"] }, { args: ["propose", "--input", "-", "--request-id", requestId], stdin: JSON.stringify(proposal) }], turns: 3, loseQueuedAck: true });
+  f = await codexFixture({ intents: [{ args: ["list"] }, { args: ["propose", "--input", "-", "--request-id", requestId], stdin: JSON.stringify(proposal) }], turns: 3, loseQueuedAck: true, holdAfterResultOnTurn: 2 });
   const submit = vi.spyOn(f.control, "submitTurn");
   await f.start(chatId); await f.f.canonical.drain();
   const detail = await f.f.chats.get(owner, chatId);
@@ -180,7 +180,15 @@ it("a lost private queued ACK never falls back or resubmits a prompt/mutation an
   await expect.poll(() => f!.sourceEvents.find(event => event.type === "approval.requested"), { timeout: 5000 }).toMatchObject({ type: "approval.requested" });
   const event = f.sourceEvents.find(event => event.type === "approval.requested")!;
   if (event.type !== "approval.requested") throw new Error("Missing exact owner decision");
-  await f.approve(event, chatId, second.run.id); await f.f.canonical.drain();
+  await f.approve(event, chatId, second.run.id);
+  // The accepted proposal can claim its target only while the original source is live.
+  await expect.poll(() => f!.data.db.selectFrom("bot_interactions").select("chat_id").execute(), { timeout: 8000 })
+    .toEqual([{ chat_id: TARGET_A.chatId }]);
+  await expect.poll(async () => {
+    const response = (await f!.frames()).find(frame => frame.id === 207 && !frame.method);
+    return response?.result?.success ? JSON.parse(response.result.contentItems[0].text) : undefined;
+  }, { timeout: 8000 }).toMatchObject({ v: 1, ok: true, data: { receipt: { requestId, disposition: "queued" } } });
+  await writeFile(f.controlFile, "complete"); await f.f.canonical.drain();
   const frames = await f.frames();
   expect(frames.filter(frame => frame.method === "thread/start")).toHaveLength(1);
   expect(frames.filter(frame => frame.method === "thread/resume")).toHaveLength(0);

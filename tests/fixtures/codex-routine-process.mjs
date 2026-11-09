@@ -79,7 +79,8 @@ for await (const line of createInterface({ input: process.stdin, crlfDelay: Infi
   } else if (message.id !== undefined) {
     if (message.result && !output(message.result)) throw new Error("Fixture rejected dynamic result contract");
     responses.add(message.id);
-    if (responses.size >= (config.calls ?? [{}]).length * processTurns && !config.endBeforeResult && !config.holdAfterResult) {
+    const holdAfterResult = config.holdAfterResult || config.holdAfterResultOnTurn === processTurns;
+    if (responses.size >= (config.calls ?? [{}]).length * processTurns && !config.endBeforeResult && !holdAfterResult) {
       completed++; emit({ method: "turn/completed", params: { threadId: "fixture_native_thread", turn: { id: "fixture_native_turn_" + turn, status: "completed" } } });
       if (completed >= (config.turns ?? 1)) process.exit(0);
     }
