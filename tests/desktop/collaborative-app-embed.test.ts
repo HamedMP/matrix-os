@@ -102,6 +102,9 @@ describe("collaborative app Electron embed", () => {
 
     expect(authorize(`https://platform.test/shared/app/${TARGET.scopeId}`, "GET", true)).toBe(true);
     expect(authorize("https://platform.test/api/collaboration/shared-apps?limit=100", "GET")).toBe(true);
+    expect(authorize(`https://platform.test/api/collaboration/shared-apps/${TARGET.scopeId}`, "GET", true)).toBe(true);
+    expect(authorize(`https://platform.test/api/collaboration/shared-apps/${TARGET.scopeId}`, "GET")).toBe(false);
+    expect(authorize("https://platform.test/api/collaboration/shared-apps/20000000-0000-4000-8000-000000000002", "GET", true)).toBe(false);
     expect(authorize("https://platform.test/api/collaboration/connections", "POST")).toBe(true);
     expect(authorize(
       `https://platform.test/api/collaboration/shared-apps/${TARGET.scopeId}/launch`,
@@ -150,6 +153,20 @@ describe("collaborative app Electron embed", () => {
     expect(authorize("https://platform.test/api/apps/inventory/session-token", "POST", true)).toBe(false);
     expect(authorize(`https://evil.test/shared/app/${TARGET.scopeId}`, "GET", true)).toBe(false);
     expect(authorize("https://platform.test/api/collaboration/shared-apps", "POST")).toBe(false);
+  });
+
+  it("rejects malformed URLs with a safe diagnostic", () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      expect(shouldAuthorizeSharedAppRequest({
+        requestUrl: "https://[secret-token/", gatewayOrigin: "https://platform.test",
+        scopeId: TARGET.scopeId, appId: TARGET.appId, method: "GET", mainFrame: true,
+      })).toBe(false);
+      expect(warn).toHaveBeenCalledWith("[shared-app-auth] invalid URL", "TypeError");
+      expect(JSON.stringify(warn.mock.calls)).not.toContain("secret-token");
+    } finally {
+      warn.mockRestore();
+    }
   });
 
   it("retains and reloads the same native view after an offline load failure", async () => {
