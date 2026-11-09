@@ -13,6 +13,7 @@ import { createBotRoutineApprovals } from "../../../packages/gateway/src/bots/ro
 import { createBotStateTransactions } from "../../../packages/gateway/src/bots/events.js";
 import { BotRuntimeRegistry } from "../../../packages/gateway/src/bots/runtime-registry.js";
 import type { OwnerCollaborationDatabase } from "../../../packages/gateway/src/collaboration/database.js";
+import { createProjectChatAssignmentCoordinator } from "../../../packages/gateway/src/collaboration/project-chat-assignment.js";
 import { createProjectInheritanceResolver } from "../../../packages/gateway/src/collaboration/project-inheritance.js";
 import { reconcileProjectMembershipAtPublication } from "../../../packages/gateway/src/collaboration/project-membership-transition.js";
 import { fullAccessFixture } from "./routine-full-access-support.js";
@@ -81,7 +82,7 @@ async function cli(source: Awaited<ReturnType<typeof admittedSource>>["source"])
   closers.unshift(invoker.close); return invoker;
 }
 
-async function stageProjectPublication() {
+async function stageProjectPublication(chatId = f.chatId) {
   const db = f.db as unknown as Kysely<OwnerCollaborationDatabase>;
   const projectScopeId = randomUUID(), authorityRuntimeId = "vps:full_access_scope_test", now = new Date();
   await db.insertInto("collaboration_scopes").values({
@@ -91,7 +92,7 @@ async function stageProjectPublication() {
     created_at: now, updated_at: now, deleted_at: null,
   }).execute();
   await createProjectInheritanceResolver({ db }).bindOwnedResource({
-    projectScopeId, ownerId: f.scope.ownerId, kind: "chat", resourceId: f.chatId,
+    projectScopeId, ownerId: f.scope.ownerId, kind: "chat", resourceId: chatId,
     authorityRuntimeId, authorityGeneration: 1, revision: 1, readiness: "ready",
   });
   return async (holdBeforeCommit?: (trx: Transaction<OwnerCollaborationDatabase>) => Promise<void>) => {
@@ -103,10 +104,10 @@ async function stageProjectPublication() {
       await trx.updateTable("collaboration_scopes").set({ lifecycle: "shared" }).where("id", "=", projectScopeId).execute();
       await holdBeforeCommit?.(trx);
     });
-    expect(await db.selectFrom("chats").select("collaboration").where("id", "=", f.chatId).executeTakeFirstOrThrow())
+    expect(await db.selectFrom("chats").select("collaboration").where("id", "=", chatId).executeTakeFirstOrThrow())
       .toEqual({ collaboration: null });
     expect(await db.selectFrom("collaboration_scopes").select(["lifecycle", "membership_mode"])
-      .where("kind", "=", "chat").where("resource_id", "=", f.chatId).executeTakeFirstOrThrow())
+      .where("kind", "=", "chat").where("resource_id", "=", chatId).executeTakeFirstOrThrow())
       .toEqual({ lifecycle: "shared", membership_mode: "inherited" });
   };
 }
@@ -119,6 +120,21 @@ it("refuses Full Access consent for a project-published source Chat", async () =
   });
   await expect(runtime.fullAccess.createChallenge(f.principal, f.chatId, { baseRevision: 0 })).rejects.toMatchObject({
     code: "permission_denied",
+  });
+  expect(f.verify).not.toHaveBeenCalled();
+});
+
+it("rejects a Project-published remembered Bot destination during Full Access review", async () => {
+  await (await stageProjectPublication(f.target.chatId))();
+  await expect(f.targets.getOwnerView(f.principal)).resolves.toMatchObject({
+    preference: { target: { botId: f.target.botId, chatId: f.target.chatId }, revision: 1 },
+    availability: "unavailable",
+  });
+  await expect(runtime.fullAccess.status(f.principal, f.chatId)).resolves.toMatchObject({
+    eligibility: "target_required", consent: null, challenge: null,
+  });
+  await expect(runtime.fullAccess.createChallenge(f.principal, f.chatId, { baseRevision: 0 })).rejects.toMatchObject({
+    code: "target_unavailable",
   });
   expect(f.verify).not.toHaveBeenCalled();
 });
@@ -246,7 +262,7 @@ it("holds the real preference gate through canonical consume and rejects a concu
   } finally { release.resolve(); await Promise.allSettled([writer, ...(consumer ? [consumer] : [])]); }
 });
 
-it.each(["revoke", "expiry", "source close", "target preference", "target incarnation", "project publication"])("rejects %s between authorization and final capability issue", async condition => {
+it.each(["revoke", "expiry", "source close", "target preference", "target incarnation", "project publication", "destination Project publication"])("rejects %s between authorization and final capability issue", async condition => {
   const { source, controller, approved } = await admittedSource();
   await insertRoutine(f.db, 902, { botId: f.target.botId, chatId: f.target.chatId });
   const operation = { operation: "pause" as const, routineId: routineId(902), baseRevision: 1, requestId: invocation(902) };
@@ -260,22 +276,25 @@ it.each(["revoke", "expiry", "source close", "target preference", "target incarn
     await f.bindings.remove({ ...f.scope, ...f.target, now: new Date().toISOString() });
     await f.bindings.bindDirect({ ...f.scope, ...f.target, now: new Date(Date.now() + 1).toISOString() });
   }
-  if (condition === "project publication") await (await stageProjectPublication())();
+  if (condition === "project publication" || condition === "destination Project publication") {
+    await (await stageProjectPublication(condition === "project publication" ? f.chatId : f.target.chatId))();
+  }
   await expect(source.issue(call)).rejects.toMatchObject({ code: "permission_denied" });
-  if (condition === "project publication") {
+  if (condition === "project publication" || condition === "destination Project publication") {
     await expect(source.authorize({ ...call, invocationId: invocation(913) })).rejects.toMatchObject({ code: "permission_denied" });
   }
   expect((await f.db.selectFrom("bot_routines").select("revision").execute()).map(row => Number(row.revision))).toEqual([1]);
   expect(await f.db.selectFrom("routine_cli_requests").selectAll().execute()).toEqual([]);
 });
 
-it("blocks capability consume behind real Project publication and refuses the stale lease after commit", async () => {
+it.each(["source", "destination"] as const)("blocks capability consume behind real Project publication of the %s and refuses the stale lease", async shared => {
   const { source } = await admittedSource();
   await insertRoutine(f.db, 911, { botId: f.target.botId, chatId: f.target.chatId });
   const operation = { operation: "pause" as const, routineId: routineId(911), baseRevision: 1, requestId: invocation(914) };
   const call = { operation, invocationId: invocation(915), signal: new AbortController().signal };
   expect(await source.authorize(call)).toBe(true);
-  const token = (await source.issue(call)).takeToken(), publish = await stageProjectPublication();
+  const token = (await source.issue(call)).takeToken();
+  const publish = await stageProjectPublication(shared === "source" ? f.chatId : f.target.chatId);
   const entered = Promise.withResolvers<number>(), release = Promise.withResolvers<void>();
   const publisher = publish(async trx => {
     const pid = (await sql<{ pid: number }>`SELECT pg_backend_pid() AS pid`.execute(trx)).rows[0]!.pid;
@@ -299,6 +318,37 @@ it("blocks capability consume behind real Project publication and refuses the st
     expect(await f.db.selectFrom("bot_routines").select(["status", "revision"]).executeTakeFirstOrThrow())
       .toMatchObject({ status: "active", revision: "1" });
   } finally { release.resolve(); await Promise.allSettled([publisher, ...(consumer ? [consumer] : [])]); }
+});
+
+it("does not revive the destination lease if Project sharing ends before the next check", async () => {
+  const { source, input } = await admittedSource();
+  await insertRoutine(f.db, 916, { botId: f.target.botId, chatId: f.target.chatId });
+  const operation = { operation: "archive" as const, routineId: routineId(916), baseRevision: 1, requestId: invocation(930) };
+  const call = { operation, invocationId: invocation(931), signal: new AbortController().signal };
+  expect(await source.authorize(call)).toBe(true);
+  const token = (await source.issue(call)).takeToken();
+  const db = f.db as unknown as Kysely<OwnerCollaborationDatabase>;
+  const chatId = f.target.chatId;
+  const original = (await f.chats.get(input.owner, chatId))!;
+  await f.chats.update(input.owner, chatId, { baseRevision: original.chat.revision, projectId: "project_full_access" });
+  await (await stageProjectPublication(chatId))();
+  const published = (await f.chats.get(input.owner, chatId))!;
+  const assignments = createProjectChatAssignmentCoordinator({ db, chatRepository: f.chats });
+  await assignments.run(input.owner, repository => repository.update(input.owner, chatId, {
+    baseRevision: published.chat.revision, projectId: null,
+  }));
+  expect(await db.selectFrom("collaboration_scopes").select("lifecycle").where("kind", "=", "chat")
+    .where("resource_id", "=", chatId).executeTakeFirstOrThrow()).toEqual({ lifecycle: "deleted" });
+  await expect(runtime.execute({ token, operation })).rejects.toMatchObject({ code: "permission_denied" });
+  await expect(runtime.fullAccess.status(f.principal, f.chatId)).resolves.toMatchObject({
+    eligibility: "target_required", consent: null, challenge: null,
+  });
+  await expect(f.targets.getStoredPreference(f.principal)).resolves.toMatchObject({
+    target: { botId: f.target.botId, chatId }, revision: 1,
+  });
+  expect(await f.db.selectFrom("routine_cli_requests").selectAll().execute()).toEqual([]);
+  expect(await f.db.selectFrom("bot_routines").select(["status", "revision"]).executeTakeFirstOrThrow())
+    .toMatchObject({ status: "active", revision: "1" });
 });
 
 it("revalidates target preference and consent after capability issuance, before canonical mutation", async () => {
