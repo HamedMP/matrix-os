@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import React, { useState } from "react";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { AppSiteButton } from "../../shell/src/components/app-sites/AppSiteButton";
 import { DesktopAppSiteButton } from "../../desktop/src/renderer/src/features/app-sites/DesktopAppSiteButton";
@@ -53,7 +53,9 @@ for (const [surface, Component] of [["Web", AppSiteButton], ["Electron", Desktop
       expect(screen.getByTestId("created-app-surface").contains(dialog)).toBe(true);
       expect(screen.getByRole("heading", { name: "Invite" })).toBeTruthy();
       const panel = dialog.querySelector<HTMLElement>("section");
-      expect(panel?.style.background).toMatch(/#111113|rgb\(17, 17, 19\)/);
+      expect(panel?.style.background).toContain("var(");
+      expect(panel?.style.background).not.toContain("#111113");
+      expect(dialog.className).not.toContain("bg-[#111113]");
       if (surface === "Electron") {
         expect(dialog.style.height).toBe("calc(100% - 32px)");
         expect(dialog.className).toContain("overflow-hidden");
@@ -80,10 +82,16 @@ for (const [surface, Component] of [["Web", AppSiteButton], ["Electron", Desktop
     it("resets the visible app identity and releases the Electron overlay on unmount", async () => {
       const view = render(<ContainedTrigger Component={Component} />);
       fireEvent.click(screen.getByRole("button", { name: "Publish app" }));
+      await waitFor(() => expect(fixture.client.get).toHaveBeenCalledTimes(1));
+      await act(async () => {});
+      fireEvent.click(await screen.findByRole("button", { name: /Publish app to a permanent URL/ }));
       await screen.findByText("This app is private.");
       fireEvent.change(screen.getByLabelText("Title"), { target: { value: "Unsaved previous app" } });
       fixture.connection.runtimeSlot = "other"; fixture.connection.authGeneration += 1;
       view.rerender(<ContainedTrigger Component={Component} appSlug="other" />);
+      await waitFor(() => expect(fixture.client.get).toHaveBeenCalledTimes(2));
+      await act(async () => {});
+      fireEvent.click(await screen.findByRole("button", { name: /Publish app to a permanent URL/ }));
       await screen.findByText("This app is private.");
       expect(screen.getByLabelText("Title")).toHaveProperty("value", "other");
       view.unmount();

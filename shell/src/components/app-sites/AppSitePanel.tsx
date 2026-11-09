@@ -1,5 +1,5 @@
 "use client";
-import { useId, useState, type CSSProperties } from "react";
+import { useId, useState, type CSSProperties, type ReactNode } from "react";
 import { desktopPalette, desktopFonts } from "@matrix-os/brand/tokens";
 import { SiteSlugSchema, type SitePublishing, type SiteRecord } from "@matrix-os/contracts";
 import { Button, Input } from "@matrix-os/ui";
@@ -41,51 +41,72 @@ function AppSiteForm({ appSlug, client, state, variant }: { appSlug: string; cli
     });
   }
   const share = variant === "share";
-  return <section className={share ? "space-y-3 text-[13px] [&_div.border]:border-[#323238] [&_fieldset]:rounded-lg [&_fieldset]:border [&_fieldset]:border-[#323238] [&_fieldset]:bg-[#171717] [&_fieldset]:p-3 [&_details]:border-[#323238] [&_details]:bg-[#171717] [&_li.border]:border-[#323238] [&_pre]:border-[#323238] [&_select]:border-[#3f3f46] [&_select]:bg-[#171717] [&_select]:text-[#f4f4f5]" : "space-y-4"} aria-label="App publishing" style={{
-      "--matrix-fg": share ? "#f4f4f5" : `var(--foreground, var(--text-primary, ${desktopPalette.forest}))`,
-      "--matrix-card": share ? "#171717" : `var(--background, var(--bg-surface, ${desktopPalette.paper}))`,
-      "--matrix-input": share ? "#3f3f46" : "var(--border, var(--border-default))",
-      "--matrix-border": share ? "#3f3f46" : "var(--border, var(--border-default))",
-      "--matrix-primary": share ? "#2563eb" : `var(--primary, var(--accent, ${desktopPalette.forest}))`,
-      "--matrix-primary-fg": share ? "#ffffff" : `var(--primary-foreground, var(--text-on-accent, ${desktopPalette.paper}))`,
-      "--matrix-destructive": share ? "#ef4444" : `var(--destructive, ${desktopPalette.danger})`,
-      "--muted": share ? "#27272a" : undefined,
-      "--muted-foreground": share ? "#a1a1aa" : undefined,
-      "--bg-surface": share ? "#171717" : undefined,
-      "--border-default": share ? "#323238" : undefined,
-      "--text-primary": share ? "#f4f4f5" : undefined,
-      "--text-secondary": share ? "#a1a1aa" : undefined,
-      "--matrix-radius-md": "8px", "--matrix-font-sans": desktopFonts.sans,
-      color: "var(--matrix-fg)",
-    } as CSSProperties}>
-    {share ? <ShareInviteSection {...{ appSlug, client, state, disabled }} /> : null}
-    <p className="text-sm">Publish this app on Matrix.page. Choose public access or create one-time private links.</p>
+  const publishingControls = <>
+    {!share ? <p className="text-sm">Publish this app on Matrix.page. Choose public access or create one-time private links.</p> : null}
     <SitePublicationStatus state={state} onRefreshPublication={() => { invalidateReview(); void state.reloadPublication(); }} />
     <SiteMetadataFields {...{ fieldId, disabled, title, description, slug, accessMode, invalid, setTitle, setDescription, setSlug, setAccessMode, invalidateReview }} />
     <SitePublicLinks {...{ site, disabled, action }} />
     <SiteDeploymentActions {...{ appSlug, client, state, disabled, invalid, reviewed, previewReady, config, metadata, review }} />
     {reviewOpen ? <SiteDeploymentReview {...{ config, reviewed, setReviewed }} /> : null}
     <SitePublicationManagement {...{ appSlug, client, state, disabled }} showAccessLinks={!share} />
+  </>;
+  return <section className={share ? "space-y-3 text-[13px] [&_div.border]:border-[var(--matrix-border)] [&_fieldset]:rounded-lg [&_fieldset]:border [&_fieldset]:border-[var(--matrix-border)] [&_fieldset]:bg-[var(--matrix-card)] [&_fieldset]:p-3 [&_details]:border-[var(--matrix-border)] [&_details]:bg-[var(--matrix-card)] [&_li.border]:border-[var(--matrix-border)] [&_pre]:border-[var(--matrix-border)] [&_select]:border-[var(--matrix-border)] [&_select]:bg-[var(--matrix-card)] [&_select]:text-[var(--matrix-fg)]" : "space-y-4"} aria-label="App publishing" style={{
+      "--matrix-fg": `var(--foreground, var(--text-primary, ${desktopPalette.forest}))`,
+      "--matrix-card": `var(--card, var(--bg-surface, var(--background, ${desktopPalette.paper})))`,
+      "--matrix-input": "var(--input, var(--border, var(--border-default)))",
+      "--matrix-border": "var(--border, var(--border-default))",
+      "--matrix-primary": `var(--primary, var(--accent, ${desktopPalette.forest}))`,
+      "--matrix-primary-fg": `var(--primary-foreground, var(--text-on-accent, ${desktopPalette.paper}))`,
+      "--matrix-destructive": `var(--destructive, ${desktopPalette.danger})`,
+      "--matrix-radius-md": "8px", "--matrix-font-sans": desktopFonts.sans,
+      color: "var(--matrix-fg)",
+    } as CSSProperties}>
+    {share ? <ShareInviteSection {...{ appSlug, client, state, disabled }} /> : null}
+    {share ? <SharePublishingDisclosure>{publishingControls}</SharePublishingDisclosure> : publishingControls}
+  </section>;
+}
+
+function SharePublishingDisclosure({ children }: { children: ReactNode }) {
+  const contentId = useId();
+  const [open, setOpen] = useState(false);
+  return <section className="overflow-hidden rounded-lg border bg-[var(--matrix-card)]" aria-label="Permanent app publishing">
+    <button
+      type="button"
+      aria-expanded={open}
+      aria-controls={contentId}
+      onClick={() => setOpen(value => !value)}
+      className="flex w-full items-center justify-between gap-4 px-3 py-3 text-left"
+    >
+      <span className="min-w-0">
+        <span className="block text-sm font-semibold">Publish app to a permanent URL</span>
+        <span className="mt-0.5 block text-xs" style={{ color: "var(--muted-foreground, var(--text-secondary, GrayText))" }}>Host the whole app at a stable Matrix.page URL.</span>
+      </span>
+      <span aria-hidden="true" className="shrink-0 text-base">{open ? "⌃" : "⌄"}</span>
+    </button>
+    {open ? <div id={contentId} className="space-y-3 border-t p-3" style={{ borderColor: "var(--matrix-border)" }}>
+      <p className="text-xs" style={{ color: "var(--muted-foreground, var(--text-secondary, GrayText))" }}>Public access gives anyone the stable URL. Private access enables the one-time invite links above.</p>
+      {children}
+    </div> : null}
   </section>;
 }
 
 function ShareInviteSection({ appSlug, client, state, disabled }: SiteSectionProps) {
-  return <section aria-label="Invite" className="space-y-3 rounded-lg border border-[#323238] bg-[#171717] p-3">
+  return <section aria-label="Invite" className="space-y-3 rounded-lg border bg-[var(--matrix-card)] p-3" style={{ borderColor: "var(--matrix-border)" }}>
     <div className="space-y-1">
       <h3 className="text-base font-semibold">Invite</h3>
-      <p className="text-xs leading-5 text-[#a1a1aa]">Invite collaborators to use this app. Email invitations are not available yet.</p>
+      <p className="text-xs leading-5" style={{ color: "var(--muted-foreground, var(--text-secondary, GrayText))" }}>Invite collaborators to use this app. Email invitations are not available yet.</p>
     </div>
     <div className="grid grid-cols-[minmax(0,1fr)_auto] gap-2">
-      <input aria-label="Invite by email" disabled placeholder="Invite by email" className="h-9 min-w-0 rounded-md border border-[#3f3f46] bg-[#111113] px-3 text-sm text-[#71717a] disabled:cursor-not-allowed" />
+      <input aria-label="Invite by email" disabled placeholder="Invite by email" className="h-9 min-w-0 rounded-md border px-3 text-sm disabled:cursor-not-allowed" style={{ borderColor: "var(--matrix-border)", background: "var(--muted, var(--matrix-card))", color: "var(--muted-foreground, var(--text-secondary, GrayText))" }} />
       <Button disabled size="sm">Invite</Button>
     </div>
     <div className="flex items-center gap-3 py-1">
-      <span aria-hidden="true" className="flex size-8 shrink-0 items-center justify-center rounded-full bg-[#c2410c] text-sm font-semibold text-white">Y</span>
+      <span aria-hidden="true" className="flex size-8 shrink-0 items-center justify-center rounded-full text-sm font-semibold" style={{ background: "var(--matrix-primary)", color: "var(--matrix-primary-fg)" }}>Y</span>
       <div className="min-w-0 flex-1">
         <p className="text-sm font-medium">You</p>
-        <p className="text-xs text-[#a1a1aa]">App owner</p>
+        <p className="text-xs" style={{ color: "var(--muted-foreground, var(--text-secondary, GrayText))" }}>App owner</p>
       </div>
-      <span className="text-sm font-medium text-[#d4d4d8]">Owner</span>
+      <span className="text-sm font-medium" style={{ color: "var(--muted-foreground, var(--text-secondary, GrayText))" }}>Owner</span>
     </div>
     <SiteAccessLinks appSlug={appSlug} client={client} site={state.site} state={state} disabled={disabled || state.conflict} variant="invite" />
   </section>;

@@ -46,18 +46,18 @@ export function SiteAccessLinks({ appSlug, client, site, state, disabled, varian
   const readinessCopy = ready
     ? "One-time access for one browser. Unclaimed links expire after 7 days."
     : site?.status === "published"
-      ? "Choose Private — one-time links and save the publishing settings to enable invites."
-      : "Publish this app with Private — one-time links to enable invites.";
+      ? "Switch publishing to Private — one-time links below to enable invites."
+      : "Publish privately below to enable one-time invite links.";
   return <section aria-label={invite ? "Invite link" : "One-time links"} className={invite ? "space-y-3 border-t pt-3" : "space-y-3 rounded-lg border p-3"}>
     <div className={invite ? "flex items-center justify-between gap-4" : "space-y-1"}>
       <div className={invite ? "flex min-w-0 items-start gap-3" : "space-y-1"}>
         {invite ? <span aria-hidden="true" className="mt-0.5 text-base">↗</span> : null}
         <div className="min-w-0 space-y-0.5">
-          <p className="text-sm font-medium">{invite ? "Create invite link" : "Private — one-time links"}</p>
+          <p className="text-sm font-medium">{invite ? "One-time invite link" : "Private — one-time links"}</p>
           <p className="text-xs">{invite ? readinessCopy : "Each link can be claimed by one browser. Unclaimed links expire after 7 days; access lasts 30 days."}</p>
         </div>
       </div>
-      {invite ? <Button size="sm" disabled={disabled || !ready || !linksLoaded || links.length >= SITE_MAX_ACCESS_LINKS} onClick={() => void create()}>Create</Button> : null}
+      {invite ? <Button size="sm" disabled={disabled || !ready || !linksLoaded || links.length >= SITE_MAX_ACCESS_LINKS} onClick={() => void create()}>Create invite link</Button> : null}
     </div>
     {!invite ? <Button size="sm" disabled={disabled || !linksLoaded || links.length >= SITE_MAX_ACCESS_LINKS} onClick={() => void create()}>Create one-time link</Button> : null}
     {ready && generatedUrl ? <div className="ph-no-capture space-y-2 rounded border p-2" role="status">

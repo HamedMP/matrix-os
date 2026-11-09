@@ -53,13 +53,22 @@ describe("shared app publishing", () => {
     expect(screen.getByText("Owner")).toBeTruthy();
     expect(screen.queryByText(/upgrade to pro/i)).toBeNull();
     expect(screen.queryByRole("button",{name:"Create one-time link"})).toBeNull();
+    expect(screen.queryByLabelText("Title")).toBeNull();
+    expect(screen.getByText("One-time invite link")).toBeTruthy();
 
-    const create=screen.getByRole("button",{name:"Create"});
-    await waitFor(()=>expect(create).toHaveProperty("disabled",false));
+    await waitFor(()=>expect(screen.getByRole("button",{name:"Create invite link"})).toHaveProperty("disabled",false));
+    const create=screen.getByRole("button",{name:"Create invite link"});
     fireEvent.click(create);
     expect(await screen.findByText(url)).toBeTruthy();
     expect(screen.getByRole("button",{name:"Copy invite link"})).toBeTruthy();
     expect(api.createAccessLink).toHaveBeenCalledWith("launch",{baseRevision:1},expect.any(AbortSignal));
+
+    const publishing=screen.getByRole("button",{name:/Publish app to a permanent URL/});
+    expect(publishing.getAttribute("aria-expanded")).toBe("false");
+    fireEvent.click(publishing);
+    expect(publishing.getAttribute("aria-expanded")).toBe("true");
+    expect(screen.getByLabelText("Title")).toHaveProperty("value","Launch");
+    expect(screen.getByText("Host the whole app at a stable Matrix.page URL.")).toBeTruthy();
   });
   it("removes a generated invite after refresh confirms the publication no longer supports links", async () => {
     const link={id:"44444444-4444-4444-8444-444444444444",status:"unclaimed" as const,createdAt:"2026-11-05T12:00:00.000Z",claimExpiresAt:"2026-11-12T12:00:00.000Z",claimedAt:null,sessionExpiresAt:null};
@@ -73,12 +82,12 @@ describe("shared app publishing", () => {
       update:vi.fn(async()=>{throw new SiteClientError(409);}),
     });
     render(<AppSitePanel appSlug="launch" client={api} variant="share" />);
-    await screen.findByText("Your app uses one-time links.");
-    const create=screen.getByRole("button",{name:"Create"});
-    expect(create).toHaveProperty("disabled",false);
+    await waitFor(()=>expect(screen.getByRole("button",{name:"Create invite link"})).toHaveProperty("disabled",false));
+    const create=screen.getByRole("button",{name:"Create invite link"});
     fireEvent.click(create);
     expect(await screen.findByText(url)).toBeTruthy();
 
+    fireEvent.click(screen.getByRole("button",{name:/Publish app to a permanent URL/}));
     fireEvent.change(screen.getByLabelText("Access"),{target:{value:"public"}});
     fireEvent.click(screen.getByRole("button",{name:"Save URL and details"}));
     fireEvent.click(await screen.findByRole("button",{name:"Refresh publication"}));

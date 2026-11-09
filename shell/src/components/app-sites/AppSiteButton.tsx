@@ -36,7 +36,7 @@ export function AppSiteButton({
         showCloseButton={false}
         style={{ zIndex: SHELL_Z_INDEX.appDialog }}
         overlayStyle={{ background: "rgba(0, 0, 0, 0.72)" }}
-        className="max-h-[calc(100%-2rem)] gap-0 overflow-hidden border-[#323238] bg-[#111113] p-0 text-[#f4f4f5] sm:max-w-xl"
+        className="max-h-[calc(100%-2rem)] gap-0 overflow-hidden border-border bg-background p-0 text-foreground sm:max-w-xl"
       >
         <DialogTitle className="sr-only">Share app</DialogTitle>
         <DialogDescription className="sr-only">

@@ -14,17 +14,21 @@ export function AppSiteSharePanel({
 }) {
   return (
     <section
-      style={{ height: "100%", background: "#111113", color: "#f4f4f5" }}
+      style={{
+        height: "100%",
+        background: "var(--background, var(--bg-surface, Canvas))",
+        color: "var(--foreground, var(--text-primary, CanvasText))",
+      }}
       className="flex min-h-0 w-full flex-col overflow-hidden rounded-xl"
     >
       <header
         className="flex shrink-0 items-start justify-between gap-4 border-b px-4 py-3.5"
-        style={{ borderColor: "#2b2b30" }}
+        style={{ borderColor: "var(--border, var(--border-default, color-mix(in srgb, CanvasText 18%, transparent)))" }}
       >
         <div className="min-w-0">
           <h2 className="text-base font-semibold tracking-[-0.01em]">Share app</h2>
-          <p className="mt-1 text-xs leading-5" style={{ color: "#a1a1aa" }}>
-            Invite access with a one-time link, then manage publishing settings below.
+          <p className="mt-1 text-xs leading-5" style={{ color: "var(--muted-foreground, var(--text-secondary, GrayText))" }}>
+            Create a one-time invite link, or publish the app at a stable URL.
           </p>
         </div>
         <button
@@ -32,7 +36,7 @@ export function AppSiteSharePanel({
           aria-label="Close sharing"
           onClick={onClose}
           className="-mr-1 inline-flex size-7 shrink-0 items-center justify-center rounded-md text-lg leading-none transition-colors"
-          style={{ color: "#a1a1aa" }}
+          style={{ color: "var(--muted-foreground, var(--text-secondary, GrayText))" }}
         >
           ×
         </button>
