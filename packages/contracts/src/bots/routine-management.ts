@@ -15,11 +15,21 @@ export const BotRoutineFireViewSchema = z.object({
   attempts: z.number().int().min(0).max(100), failureCode: z.string().regex(/^[a-z][a-z0-9_]{0,63}$/).nullable(),
   updatedAt: z.iso.datetime({ offset: true }),
 }).strict();
+/** Released strict Schedule parsers require opt-in before receiving origin metadata. */
+export const BotRoutineOriginWireVersionSchema = z.enum(["0", "1"]);
+export const BOT_ROUTINE_ORIGIN_ACCEPT = "application/json; matrix-routine-origin=1";
+
+export function botRoutineOriginReadAccept(path: string, method: string): string | undefined {
+  return method === "GET" && /^\/api\/bot-routines(?:\/rt_[a-f0-9]{24})?(?:\?[^#]*)?$/.test(path)
+    ? BOT_ROUTINE_ORIGIN_ACCEPT : undefined;
+}
+
 export const BotRoutineCenterItemSchema = z.object({
   routineId: BotRoutineIdSchema, botId: BotIdSchema, chatId: CanonicalChatIdSchema,
   proposal: BotRoutineProposalSchema, computerId: z.string().min(1).max(128).nullable(),
   status: z.enum(["active", "paused", "archived"]), revision: z.number().int().positive(),
   nextFireAt: z.iso.datetime({ offset: true }).nullable(), requiresReview: z.boolean(), targetAvailable: z.boolean(),
+  originChatId: CanonicalChatIdSchema.optional(), originAvailable: z.boolean().optional(),
   sourceAvailable: z.boolean(), lastFire: BotRoutineFireViewSchema.nullable(),
 }).strict();
 export const BotRoutineCenterResponseSchema = z.object({

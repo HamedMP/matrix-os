@@ -37,6 +37,17 @@ function api(overrides: Partial<ApiClient> = {}): ApiClient {
 }
 
 describe("canonical Chat client", () => {
+  it("negotiates Schedule origin metadata on reads without retrying a typed transport error", async () => {
+    const get = vi.fn().mockResolvedValueOnce({ items: [], pending: [], nextCursor: null })
+      .mockRejectedValueOnce(new AppError("unauthorized", { httpStatus: 401 }));
+    const client = createCanonicalChatClient(api({ get }));
+    await expect(client.agents.bots!.routines!.list({ archived: "true" })).resolves.toMatchObject({ items: [] });
+    expect(get).toHaveBeenCalledWith("/api/bot-routines?archived=true",
+      expect.objectContaining({ headers: { Accept: "application/json; matrix-routine-origin=1" } }));
+    get.mockClear();
+    await expect(client.agents.bots!.routines!.list()).rejects.toMatchObject({ status: 401 });
+    expect(get).toHaveBeenCalledOnce();
+  });
   it("allows the bounded funded observation deadline only for turn admission", async () => {
     const input = { clientRequestId: "req_slow_admission", baseRevision: 0,
       selection: { instanceId: "codex_default", model: "gpt-5.6-sol" },
@@ -331,7 +342,7 @@ describe("canonical Chat client", () => {
       cursor: "chatcur_current",
     });
     expect(get).toHaveBeenCalledWith(
-      "/api/chats/chat_client_test?limit=100&cursor=chatcur_current&messageVersion=2&inputVersion=1&commandPreviewVersion=1&assistantTextVersion=1&questionDescriptionVersion=1&readStateVersion=1&importSourceVersion=1",
+      "/api/chats/chat_client_test?limit=100&cursor=chatcur_current&messageVersion=2&inputVersion=1&commandPreviewVersion=1&assistantTextVersion=1&questionDescriptionVersion=1&routineReceiptVersion=1&readStateVersion=1&importSourceVersion=1",
     );
     expect(detail.nextCursor).toBe("chatcur_older");
 
@@ -406,7 +417,7 @@ describe("canonical Chat client", () => {
       decision: "approve_for_session",
     });
 
-    expect(post).toHaveBeenNthCalledWith(1, "/api/chats/chat_client_test/turns?messageVersion=2&inputVersion=1&commandPreviewVersion=1&assistantTextVersion=1&questionDescriptionVersion=1&readStateVersion=1&importSourceVersion=1", turnInput, { timeoutMs: 30_000 });
+    expect(post).toHaveBeenNthCalledWith(1, "/api/chats/chat_client_test/turns?messageVersion=2&inputVersion=1&commandPreviewVersion=1&assistantTextVersion=1&questionDescriptionVersion=1&routineReceiptVersion=1&readStateVersion=1&importSourceVersion=1", turnInput, { timeoutMs: 30_000 });
     expect(post).toHaveBeenNthCalledWith(2, "/api/chats/chat_client_test/runs/run_client/cancel?readStateVersion=1&importSourceVersion=1", {
       clientRequestId: "req_client_cancel",
     });
@@ -502,7 +513,7 @@ describe("canonical Chat client", () => {
     });
 
     expect(post).toHaveBeenNthCalledWith(1, "/api/chats/chat_client_test/queued-turns?readStateVersion=1&importSourceVersion=1", queueInput);
-    expect(post).toHaveBeenNthCalledWith(2, "/api/chats/chat_client_test/runs/run_client/steer?messageVersion=2&inputVersion=1&commandPreviewVersion=1&assistantTextVersion=1&questionDescriptionVersion=1&readStateVersion=1&importSourceVersion=1", {
+    expect(post).toHaveBeenNthCalledWith(2, "/api/chats/chat_client_test/runs/run_client/steer?messageVersion=2&inputVersion=1&commandPreviewVersion=1&assistantTextVersion=1&questionDescriptionVersion=1&routineReceiptVersion=1&readStateVersion=1&importSourceVersion=1", {
       clientRequestId: "req_client_steer",
       expectedTurnId: "cturn_client",
       parts: steeringMessage.parts,
@@ -527,7 +538,7 @@ describe("canonical Chat client", () => {
     );
     expect(post).toHaveBeenNthCalledWith(
       3,
-      "/api/chats/chat_client_test/runs/run_client/queued-turns/qturn_client/steer?messageVersion=2&inputVersion=1&commandPreviewVersion=1&assistantTextVersion=1&questionDescriptionVersion=1&readStateVersion=1&importSourceVersion=1",
+      "/api/chats/chat_client_test/runs/run_client/queued-turns/qturn_client/steer?messageVersion=2&inputVersion=1&commandPreviewVersion=1&assistantTextVersion=1&questionDescriptionVersion=1&routineReceiptVersion=1&readStateVersion=1&importSourceVersion=1",
       {
         clientRequestId: "req_client_steer_queue",
         baseRevision: 5,
@@ -558,7 +569,7 @@ describe("canonical Chat client", () => {
 
     await client.admitTurn(record.chat.id, turnInput);
 
-    expect(post).toHaveBeenCalledWith("/api/chats/chat_client_test/turns?messageVersion=2&inputVersion=1&commandPreviewVersion=1&assistantTextVersion=1&questionDescriptionVersion=1&readStateVersion=1&importSourceVersion=1", turnInput, { timeoutMs: 30_000 });
+    expect(post).toHaveBeenCalledWith("/api/chats/chat_client_test/turns?messageVersion=2&inputVersion=1&commandPreviewVersion=1&assistantTextVersion=1&questionDescriptionVersion=1&routineReceiptVersion=1&readStateVersion=1&importSourceVersion=1", turnInput, { timeoutMs: 30_000 });
   });
 });
 

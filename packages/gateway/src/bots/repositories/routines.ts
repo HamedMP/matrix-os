@@ -27,6 +27,7 @@ function routine(row: Selectable<OwnerBotDatabase["bot_routines"]>) {
     proposal: BotRoutineProposalSchema.parse(typeof row.proposal === "string" ? JSON.parse(row.proposal) : row.proposal),
     authorization: row.approved_source ? RoutineAuthorizationSchema.parse(typeof row.approved_source === "string" ? JSON.parse(row.approved_source) : row.approved_source) : null,
     approvalId: row.approval_id,
+    origin: row.origin_computer_id && row.origin_request_id ? { computerId: row.origin_computer_id, requestId: row.origin_request_id } : null,
     status: row.status,
     nextFireAt: optionalIsoTimestamp(row.next_fire_at),
     revision: toSafeInteger(row.revision),
@@ -123,6 +124,7 @@ export function createBotRoutinesRepository(db: BotExecutor, options: { now?: ()
       proposal: BotRoutineProposal;
       authorization?: RoutineAuthorization;
       approvalId?: string;
+      origin?: { computerId: string; requestId: string };
       nextFireAt: string;
       now: string;
     }, ex: BotExecutor = db) {
@@ -143,6 +145,8 @@ export function createBotRoutinesRepository(db: BotExecutor, options: { now?: ()
           proposal: JSON.stringify(proposal),
           approved_source: input.authorization ? JSON.stringify(RoutineAuthorizationSchema.parse(input.authorization)) : null,
           approval_id: input.approvalId ?? null,
+          origin_computer_id: input.origin?.computerId ?? null,
+          origin_request_id: input.origin?.requestId ?? null,
           status: "active",
           next_fire_at: input.nextFireAt,
           created_at: input.now,
