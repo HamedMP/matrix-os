@@ -10,6 +10,9 @@ import {
 
 const BridgeMessageSchema = z.discriminatedUnion("type", [
   z.object({
+    type: z.literal("matrix:shared-app:ready"),
+  }).strict(),
+  z.object({
     type: z.literal("matrix:shared-app:query"),
     requestId: z.string().min(8).max(128),
     action: z.json(),
@@ -21,6 +24,7 @@ const BridgeMessageSchema = z.discriminatedUnion("type", [
     action: z.json(),
   }).strict(),
 ]);
+const BRIDGE_READY_TIMEOUT_MS = 10_000;
 
 type ViewerState = "launching" | "ready" | SharedAppFailureCode;
 
@@ -30,11 +34,13 @@ export function SharedAppViewer({ target, transport }: {
 }) {
   const targetKey = `${target.scopeId}:${target.buildId}:${target.shareRevision}`;
   const [entry, setEntry] = useState<{ targetKey: string; url: string } | null>(null);
+  const [documentGeneration, setDocumentGeneration] = useState(0);
   const [state, setState] = useState<ViewerState>("launching");
   const iframeRef = useRef<HTMLIFrameElement>(null);
   const mounted = useRef(true);
   const requestGeneration = useRef(0);
   const pendingMutationRecovery = useRef(false);
+  const documentReady = useRef(false);
   const entryUrl = entry?.targetKey === targetKey ? entry.url : null;
   const title = `${displayName(target.appId)} shared by ${target.owner.displayName}`;
 
@@ -52,12 +58,24 @@ export function SharedAppViewer({ target, transport }: {
       const launched = await transport.launch();
       if (verifyHome) await transport.query({ action: "appInfo", app: target.appId });
       if (!mounted.current || requestGeneration.current !== generation) return;
+      documentReady.current = false;
       setEntry({ targetKey, url: launched.entryUrl });
-      setState("ready");
+      setDocumentGeneration((value) => value + 1);
     } catch (error: unknown) {
       if (mounted.current && requestGeneration.current === generation) applyFailure(error);
     }
   }, [applyFailure, target.appId, targetKey, transport]);
+
+  useEffect(() => {
+    if (!entryUrl || state !== "launching") return;
+    const generation = documentGeneration;
+    const timer = window.setTimeout(() => {
+      if (mounted.current && documentGeneration === generation && !documentReady.current) {
+        applyFailure(new SharedAppTransportError("unavailable", true));
+      }
+    }, BRIDGE_READY_TIMEOUT_MS);
+    return () => window.clearTimeout(timer);
+  }, [applyFailure, documentGeneration, entryUrl, state]);
 
   useEffect(() => {
     mounted.current = true;
@@ -68,7 +86,7 @@ export function SharedAppViewer({ target, transport }: {
         try {
           await transport.query({ action: "appInfo", app: target.appId });
           if (!active || !mounted.current) return;
-          setState(pendingMutationRecovery.current ? "uncertain" : "ready");
+          setState(pendingMutationRecovery.current ? "uncertain" : documentReady.current ? "ready" : "launching");
           iframeRef.current?.contentWindow?.postMessage({ type: "matrix:shared-app:changed" }, "*");
         } catch (error: unknown) {
           if (active && mounted.current) applyFailure(error);
@@ -94,6 +112,11 @@ export function SharedAppViewer({ target, transport }: {
       const parsed = BridgeMessageSchema.safeParse(event.data);
       if (!parsed.success) return;
       const request = parsed.data;
+      if (request.type === "matrix:shared-app:ready") {
+        documentReady.current = true;
+        setState(pendingMutationRecovery.current ? "uncertain" : "ready");
+        return;
+      }
       const work = request.type === "matrix:shared-app:query"
         ? transport.query(request.action)
         : transport.mutate(request.action, request.expectedRevision);
@@ -111,7 +134,7 @@ export function SharedAppViewer({ target, transport }: {
   }, [applyFailure, transport]);
 
   const retry = useCallback(async () => {
-    if (state !== "uncertain" && entryUrl) {
+    if (state !== "uncertain" && entryUrl && documentReady.current) {
       const generation = ++requestGeneration.current;
       try {
         await transport.query({ action: "appInfo", app: target.appId });
@@ -132,7 +155,7 @@ export function SharedAppViewer({ target, transport }: {
       await transport.retryMutation();
       if (!mounted.current || requestGeneration.current !== generation) return;
       pendingMutationRecovery.current = false;
-      setState("ready");
+      setState(documentReady.current ? "ready" : "launching");
       iframeRef.current?.contentWindow?.postMessage({ type: "matrix:shared-app:changed" }, "*");
     } catch (error: unknown) {
       if (mounted.current && requestGeneration.current === generation) applyFailure(error);
@@ -141,7 +164,8 @@ export function SharedAppViewer({ target, transport }: {
 
   const retryable = state === "host_offline" || state === "unavailable" || state === "uncertain" || state === "conflict";
   return <div className="relative h-full min-h-0 w-full overflow-hidden bg-[var(--bg-primary)]">
-    {entryUrl ? <iframe ref={iframeRef} key={targetKey} title={title} src={entryUrl}
+    {entryUrl ? <iframe ref={iframeRef} key={`${targetKey}:${documentGeneration}`} title={title} src={entryUrl}
+      onError={() => { documentReady.current = false; applyFailure(new SharedAppTransportError("unavailable", true)); }}
       className="h-full w-full border-0" sandbox="allow-scripts allow-forms allow-modals allow-popups" /> : null}
     {state !== "ready" ? <div className="absolute inset-0 grid place-items-center bg-[color:var(--bg-primary)]/90 p-6">
       <section role={state === "launching" ? "status" : "alert"} className="max-w-sm rounded-2xl border bg-[var(--bg-primary)] p-6 text-center shadow-lg">

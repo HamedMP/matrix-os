@@ -35,6 +35,32 @@ const share = {
 };
 
 describe("collaborative app owner sharing controls", () => {
+  it("lets an owner check an app that has no readiness record yet", async () => {
+    const api = {
+      get: vi.fn(async (path: string) => {
+        if (path.endsWith("/registration")) {
+          return { registrationIncarnation: readiness.build.registrationIncarnation };
+        }
+        return null;
+      }),
+      post: vi.fn(async () => readiness),
+      delete: vi.fn(),
+    };
+    render(<CollaborativeAppShareButton appId="team-tracker" api={api}
+      organizationId="org_matrix_team" organizationName="Matrix team" />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Check collaboration" }));
+
+    await waitFor(() => expect(api.post).toHaveBeenCalledWith(
+      "/api/collaboration/apps/team-tracker/readiness/check",
+      expect.objectContaining({
+        organizationId: "org_matrix_team",
+        expectedRegistrationIncarnation: readiness.build.registrationIncarnation,
+      }),
+    ));
+    expect(await screen.findByRole("button", { name: "Share app" })).toBeEnabled();
+  });
+
   it("confirms full access for every current member and creates from a fresh preflight", async () => {
     const api = {
       get: vi.fn(async (path: string) => path.endsWith("/readiness") ? readiness : null),

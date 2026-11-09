@@ -233,9 +233,7 @@ export function createAppInstanceAdapter(options: {
     action: unknown,
   ): Promise<{ result: unknown; revision: number }> {
     if (context.resourceKind === "project") {
-      const instance = await describe(context, rawAppId);
-      if (instance.readiness !== "ready" || instance.collaborationMode !== "scoped") throw new ProjectAppAdapterError("app_unavailable");
-      return { result: await project.query(context, { appId: rawAppId, action }), revision: instance.revision };
+      return project.queryWithRevision(context, { appId: rawAppId, action });
     }
     const appId = AppIdSchema.safeParse(rawAppId);
     if (!appId.success) throw new ProjectAppAdapterError("invalid_action");

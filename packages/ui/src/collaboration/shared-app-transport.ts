@@ -61,6 +61,7 @@ export function createSharedAppTransport(input: {
   const base = `/api/collaboration/scopes/${target.scopeId}/apps/${encodeURIComponent(target.appId)}`;
   let launchRequestId: string | null = null;
   let uncertain: PendingMutation[] = [];
+  let pendingConflict = false;
   const inFlight = new Set<string>();
 
   const launch = async () => {
@@ -132,10 +133,31 @@ export function createSharedAppTransport(input: {
       return sendMutation(attempt);
     },
     async retryMutation() {
-      const [first, ...remaining] = uncertain;
-      if (!first) throw new SharedAppTransportError("conflict", false);
-      let result = await sendMutation(first);
-      for (const attempt of remaining) result = await sendMutation(attempt);
+      const attempts = [...uncertain];
+      if (attempts.length === 0) {
+        pendingConflict = false;
+        throw new SharedAppTransportError("conflict", false);
+      }
+      let result: { result: unknown; revision: string; replayed: boolean } | undefined;
+      let firstFailure: unknown;
+      for (const attempt of attempts) {
+        try {
+          result = await sendMutation(attempt);
+        } catch (error: unknown) {
+          if (error instanceof SharedAppTransportError && error.code === "conflict") {
+            pendingConflict = true;
+          } else {
+            firstFailure ??= error;
+          }
+        }
+      }
+      if (uncertain.length > 0) throw new SharedAppTransportError("uncertain", true);
+      if (firstFailure) throw firstFailure;
+      if (pendingConflict) {
+        pendingConflict = false;
+        throw new SharedAppTransportError("conflict", false);
+      }
+      if (!result) throw new SharedAppTransportError("conflict", false);
       return result;
     },
     subscribe(handlers) {

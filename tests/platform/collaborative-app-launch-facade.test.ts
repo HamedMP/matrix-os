@@ -133,6 +133,7 @@ describe("collaborative app authenticated launch facade", () => {
     expect(html).toContain("matrix:shared-app:query");
     expect(html).toContain("matrix:shared-app:mutate");
     expect(html).toContain("matrix:shared-app:changed");
+    expect(html).toContain("matrix:shared-app:ready");
     expect(html).toContain("MatrixOS.collaboration");
     expect(html).toContain("},70000)");
     expect(html).not.toContain("},10000)");

@@ -204,6 +204,19 @@ export function registerCollaborativeAppReadinessRoutes(
     }
   });
 
+  routes.get(`${path}/registration`, async (context) => {
+    context.header("Cache-Control", "private, no-store");
+    try {
+      const ownerId = readinessOwner(context, dependencies.ownerId);
+      const appId = AppIdSchema.parse(context.req.param("appId"));
+      const current = await dependencies.resolveCurrentBuild(ownerId, appId, { ensureCatalog: false });
+      if (!current) throw new ReadinessRouteError("not_found");
+      return context.json({ registrationIncarnation: current.build.registrationIncarnation });
+    } catch (error: unknown) {
+      return failure(context, error);
+    }
+  });
+
   routes.post(`${path}/check`, limit, async (context) => {
     context.header("Cache-Control", "private, no-store");
     try {

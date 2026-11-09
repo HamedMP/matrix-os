@@ -53,6 +53,14 @@ function setup() {
   return { platform, direct, eventHandlers: () => eventHandlers };
 }
 
+function signalBridgeReady(frame: HTMLIFrameElement): void {
+  window.dispatchEvent(new MessageEvent("message", {
+    source: frame.contentWindow,
+    origin: "null",
+    data: { type: "matrix:shared-app:ready" },
+  }));
+}
+
 describe("shared app transport", () => {
   it("returns the current data revision with every restricted query", async () => {
     const { platform, direct } = setup();
@@ -105,6 +113,46 @@ describe("shared app transport", () => {
       .toBe((direct.request.mock.calls[2]![3] as { clientRequestId: string }).clientRequestId);
   });
 
+  it("settles every queued uncertain mutation even when an earlier retry conflicts", async () => {
+    const { platform, direct } = setup();
+    direct.request
+      .mockRejectedValueOnce(new CollaborationDirectError("unavailable"))
+      .mockRejectedValueOnce(new CollaborationDirectError("unavailable"))
+      .mockRejectedValueOnce(new CollaborationDirectError("invalid_request"))
+      .mockResolvedValueOnce({ result: { saved: true }, revision: 4, replayed: false });
+    const transport = createSharedAppTransport({ platform, direct: direct as never, target });
+
+    await expect(transport.mutate({ type: "rename", value: "First" }, "2"))
+      .rejects.toMatchObject({ code: "uncertain" });
+    await expect(transport.mutate({ type: "rename", value: "Second" }, "2"))
+      .rejects.toMatchObject({ code: "uncertain" });
+    await expect(transport.retryMutation()).rejects.toMatchObject({ code: "conflict" });
+
+    expect(direct.request).toHaveBeenCalledTimes(4);
+    expect((direct.request.mock.calls[1]![3] as { clientRequestId: string }).clientRequestId)
+      .toBe((direct.request.mock.calls[3]![3] as { clientRequestId: string }).clientRequestId);
+  });
+
+  it("keeps retry recovery active before surfacing an already-known conflict", async () => {
+    const { platform, direct } = setup();
+    direct.request
+      .mockRejectedValueOnce(new CollaborationDirectError("unavailable"))
+      .mockRejectedValueOnce(new CollaborationDirectError("unavailable"))
+      .mockRejectedValueOnce(new CollaborationDirectError("invalid_request"))
+      .mockRejectedValueOnce(new CollaborationDirectError("unavailable"))
+      .mockResolvedValueOnce({ result: { saved: true }, revision: 4, replayed: false });
+    const transport = createSharedAppTransport({ platform, direct: direct as never, target });
+
+    await expect(transport.mutate({ type: "rename", value: "First" }, "2"))
+      .rejects.toMatchObject({ code: "uncertain" });
+    await expect(transport.mutate({ type: "rename", value: "Second" }, "2"))
+      .rejects.toMatchObject({ code: "uncertain" });
+    await expect(transport.retryMutation()).rejects.toMatchObject({ code: "uncertain" });
+    await expect(transport.retryMutation()).rejects.toMatchObject({ code: "conflict" });
+
+    expect(direct.request).toHaveBeenCalledTimes(5);
+  });
+
   it("maps conflict, host-offline, recheck and ended-access states without leaking raw errors", async () => {
     const cases = [
       [new CollaborationDirectError("invalid_request"), "conflict"],
@@ -126,11 +174,48 @@ describe("shared app transport", () => {
 });
 
 describe("SharedAppViewer", () => {
+  it("waits for the exact iframe bridge before dismissing the opening state", async () => {
+    const { platform, direct } = setup();
+    const transport = createSharedAppTransport({ platform, direct: direct as never, target });
+    render(<SharedAppViewer target={target} transport={transport} />);
+
+    const frame = await screen.findByTitle("Team tracker shared by Owner") as HTMLIFrameElement;
+    expect(screen.getByText("Opening shared app…")).toBeVisible();
+    act(() => signalBridgeReady(frame));
+
+    await waitFor(() => expect(screen.queryByText("Opening shared app…")).toBeNull());
+  });
+
+  it("remounts a document that failed before its bridge became ready", async () => {
+    vi.useFakeTimers();
+    try {
+      const { platform, direct } = setup();
+      const transport = createSharedAppTransport({ platform, direct: direct as never, target });
+      render(<SharedAppViewer target={target} transport={transport} />);
+      await act(async () => { await Promise.resolve(); });
+      const failedFrame = screen.getByTitle("Team tracker shared by Owner") as HTMLIFrameElement;
+
+      act(() => vi.advanceTimersByTime(10_000));
+      expect(screen.getByText("Shared app unavailable")).toBeVisible();
+      fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+      await act(async () => { await Promise.resolve(); });
+
+      expect(platform.post).toHaveBeenCalledTimes(2);
+      const replacement = screen.getByTitle("Team tracker shared by Owner") as HTMLIFrameElement;
+      expect(replacement).not.toBe(failedFrame);
+      act(() => signalBridgeReady(replacement));
+      expect(screen.queryByText("Opening shared app…")).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("keeps one iframe mounted while host-offline and conflict overlays preserve app-local input", async () => {
     const { platform, direct, eventHandlers } = setup();
     const transport = createSharedAppTransport({ platform, direct: direct as never, target });
     const view = render(<SharedAppViewer target={target} transport={transport} />);
-    const frame = await screen.findByTitle("Team tracker shared by Owner");
+    const frame = await screen.findByTitle("Team tracker shared by Owner") as HTMLIFrameElement;
+    act(() => signalBridgeReady(frame));
     expect(frame).toHaveAttribute("src", expect.stringContaining(launchId));
     expect(direct.subscribeEvents).toHaveBeenCalledTimes(1);
 
@@ -196,6 +281,7 @@ describe("SharedAppViewer", () => {
     const transport = createSharedAppTransport({ platform, direct: direct as never, target });
     render(<SharedAppViewer target={target} transport={transport} />);
     const frame = await screen.findByTitle("Team tracker shared by Owner") as HTMLIFrameElement;
+    act(() => signalBridgeReady(frame));
     const originalUrl = frame.src;
     platform.post.mockResolvedValueOnce({
       target: { kind: "shared", scopeId, organizationId: target.organizationId, appId: target.appId,
@@ -244,6 +330,7 @@ describe("SharedAppViewer", () => {
     const transport = createSharedAppTransport({ platform, direct: direct as never, target });
     render(<SharedAppViewer target={target} transport={transport} />);
     const frame = await screen.findByTitle("Team tracker shared by Owner") as HTMLIFrameElement;
+    act(() => signalBridgeReady(frame));
     const postMessage = vi.spyOn(frame.contentWindow!, "postMessage");
     window.dispatchEvent(new MessageEvent("message", {
       source: frame.contentWindow,
@@ -290,7 +377,8 @@ describe("SharedAppViewer", () => {
     const { platform, direct, eventHandlers } = setup();
     const transport = createSharedAppTransport({ platform, direct: direct as never, target });
     render(<SharedAppViewer target={target} transport={transport} />);
-    const frame = await screen.findByTitle("Team tracker shared by Owner");
+    const frame = await screen.findByTitle("Team tracker shared by Owner") as HTMLIFrameElement;
+    act(() => signalBridgeReady(frame));
     await act(async () => { eventHandlers()?.onUnavailable(); });
     direct.request.mockRejectedValueOnce(new CollaborationDirectError("denied"));
     fireEvent.click(screen.getByRole("button", { name: "Retry" }));
