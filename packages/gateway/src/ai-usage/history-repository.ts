@@ -205,7 +205,8 @@ export class UsageHistoryRepository {
       .where("owner_id", "=", owner)
       .orderBy("event_id")
       .orderBy(sql`(event->>'output')::bigint`, "desc")
-      .orderBy(sql`(event->>'input')::bigint`, "desc");
+      .orderBy(sql`(event->>'input')::bigint`, "desc")
+      .orderBy(sql`event->>'timestamp'`, "asc");
     let issues = 0;
     const tx = this.db;
     await sql`DECLARE ai_usage_history_read NO SCROLL CURSOR FOR ${canonicalHistoryQuery(canonical)}`.execute(

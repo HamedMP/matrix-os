@@ -33,7 +33,7 @@ export function canonicalHistoryQuery(canonical: OperationNodeSource) {
         range_agg(int8range(cached-actual_cached,cached,'[)')) FILTER (WHERE cached IS NOT NULL) AS cached,
         range_agg(int8range(output-actual_output,output,'[)')) FILTER (WHERE output IS NOT NULL) AS output,
         bool_or(input IS NULL OR input<actual_input OR cached<actual_cached OR output<actual_output
-          OR coalesce(input<prior_input OR cached<prior_cached OR output<prior_output,false)) AS uncertain
+          OR coalesce(input-actual_input<prior_input OR cached-actual_cached<prior_cached OR output-actual_output<prior_output,false)) AS uncertain
       FROM native_ordered GROUP BY session
     ),
     legacy_values AS (
