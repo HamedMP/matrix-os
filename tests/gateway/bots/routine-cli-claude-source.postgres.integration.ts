@@ -21,11 +21,12 @@ it.each(["setup", "cleanup"])("Claude completes the Chat when routine display %s
     const routineId = await insertRoutine(f.data.db, 504);
     const native = nativeProtocol(`matrix routines pause ${routineId} --revision 1 --request-id ${requestId}`);
     const adapter = f.adapter(native.spawn);
+    const startAdapter = adapter.start.bind(adapter);
     let streamFailure: unknown;
-    f.setSourceAdapter({ ...adapter, async *start(input) {
-      try { yield* adapter.start(input); }
+    const start = vi.spyOn(adapter, "start").mockImplementation(async function* (input) {
+      try { yield* startAdapter(input); }
       catch (error: unknown) { streamFailure = error; throw error; }
-    } });
+    });
     const chatId = "chat_claude_display_failure";
     const admitted = await f.start(chatId);
     const readApproval = () => f.sourceEvents.find(event => event.type === "approval.requested");
@@ -38,6 +39,7 @@ it.each(["setup", "cleanup"])("Claude completes the Chat when routine display %s
     await f.f.canonical.drain();
 
     expect(createArtifacts).toHaveBeenCalledOnce();
+    expect(start).toHaveBeenCalledOnce();
     expect(streamFailure).toBeUndefined();
     expect(f.sourceEvents).toContainEqual({ type: "run.completed", outcome: "completed" });
     expect(f.httpCalls()).toBe(1);
