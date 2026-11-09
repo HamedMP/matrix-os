@@ -6,6 +6,7 @@ const coverageDate = new Intl.DateTimeFormat("en", {
   dateStyle: "medium",
   timeZone: "UTC",
 });
+const reportTime = new Intl.DateTimeFormat("en", { dateStyle: "medium", timeStyle: "short", timeZone: "UTC" });
 const date = (value: string) => coverageDate.format(new Date(value));
 export function HistoryCoverage({ history }: { history: UsageHistory }) {
   const c = history.coverage,
@@ -120,7 +121,7 @@ function CoverageMetadata({ history }: { history: UsageHistory }) {
       <dl className="au-coverage-grid">
         <div>
           <dt>Report updated</dt>
-          <dd>{new Intl.DateTimeFormat("en", { dateStyle: "medium", timeStyle: "short", timeZone: "UTC" }).format(new Date(c.indexedAt))} UTC</dd>
+          <dd>{reportTime.format(new Date(c.indexedAt))} UTC</dd>
         </div>
         <div>
           <dt>Connected sources</dt>

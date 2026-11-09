@@ -9,6 +9,7 @@ import {
 } from "@matrix-os/contracts/ai-usage";
 import { Button } from "../Button.js";
 import { UsageFilters } from "./UsageSelect";
+import { usageSelection } from "./usage-selection";
 import { useUsageFiles } from "./use-usage-files";
 
 import {
@@ -41,11 +42,7 @@ export function AiUsagePanel({
   const [agent, setAgent] = useState<UsageAgent | "">(""),
     [range, setRange] = useState(history ? "all" : "365");
   const [zone, setZone] = useState(history?.timeZone ?? timeZone);
-  const report = history?.reports.find(r => r.id === range && r.agent === agent)
-    ?? history?.reports.find(r => r.id === "all" && r.agent === agent)
-    ?? history?.reports.find(r => r.agent === agent);
-  const effectiveRange = report?.id ?? (Number.isFinite(Number(range)) ? range : "365");
-  const days = report?.days ?? Number(effectiveRange);
+  const {report, effectiveRange, days} = usageSelection(history, agent, range);
   const endDay = report?.endDay ?? usageDay(now.toISOString(), zone);
   const computed = useMemo(
     () =>
