@@ -13,12 +13,14 @@ export function SiteAccessLinks({ appSlug, client, site, state, disabled, varian
   appSlug: string; client: SiteClient; site: SiteRecord | null; state: AppSiteState; disabled: boolean; variant?: "default" | "invite";
 }) {
   const [links, setLinks] = useState<SiteAccessLinkSummary[]>([]);
-  const [generatedUrl, setGeneratedUrl] = useState<string | null>(null);
+  const [generatedLink, setGeneratedLink] = useState<{ url: string; publicationKey: string } | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [linksLoaded, setLinksLoaded] = useState(false);
   const [reload, setReload] = useState(0);
   const invite = variant === "invite";
   const ready = site?.status === "published" && site.accessMode === "private_link";
+  const publicationKey = ready && site ? `${site.id}:${site.revision}` : null;
+  const generatedUrl = generatedLink?.publicationKey === publicationKey ? generatedLink.url : null;
   useEffect(() => {
     if (!ready) return;
     const controller = new AbortController();
@@ -30,16 +32,16 @@ export function SiteAccessLinks({ appSlug, client, site, state, disabled, varian
     return () => controller.abort();
   }, [appSlug, client, ready, site?.id, reload]);
   if (!invite && !ready) return null;
-  const create = () => !site || !ready ? Promise.resolve(false) : state.mutate(
+  const create = () => !site || !ready || !publicationKey ? Promise.resolve(false) : state.mutate(
     signal => client.createAccessLink(appSlug, { baseRevision: site.revision }, signal),
-    result => { setLinks(current => [result.link, ...current.filter(link => link.id !== result.link.id)]); setGeneratedUrl(result.url); },
+    result => { setLinks(current => [result.link, ...current.filter(link => link.id !== result.link.id)]); setGeneratedLink({ url: result.url, publicationKey }); },
     invite ? "Invite link created." : "One-time link created.",
   );
   const revoke = (linkId: string) => state.action(async signal => {
     await client.revokeAccessLink(appSlug, linkId, signal); return linkId;
   }, revoked => {
     setLinks(current => current.filter(link => link.id !== revoked));
-    setGeneratedUrl(current => current?.includes(revoked) ? null : current);
+    setGeneratedLink(current => current?.url.includes(revoked) ? null : current);
   }, "Link revoked.");
   const readinessCopy = ready
     ? "One-time access for one browser. Unclaimed links expire after 7 days."
@@ -58,7 +60,7 @@ export function SiteAccessLinks({ appSlug, client, site, state, disabled, varian
       {invite ? <Button size="sm" disabled={disabled || !ready || !linksLoaded || links.length >= SITE_MAX_ACCESS_LINKS} onClick={() => void create()}>Create</Button> : null}
     </div>
     {!invite ? <Button size="sm" disabled={disabled || !linksLoaded || links.length >= SITE_MAX_ACCESS_LINKS} onClick={() => void create()}>Create one-time link</Button> : null}
-    {generatedUrl ? <div className="ph-no-capture space-y-2 rounded border p-2" role="status">
+    {ready && generatedUrl ? <div className="ph-no-capture space-y-2 rounded border p-2" role="status">
       <p className="text-xs font-medium">Save this URL now. It will not be shown again.</p>
       <p className="break-all text-sm" data-ph-mask="true">{generatedUrl}</p>
       <Button size="sm" variant="secondary" disabled={disabled} onClick={() => void state.action(async () => navigator.clipboard.writeText(generatedUrl), () => {}, invite ? "Invite link copied." : "One-time link copied.")}>{invite ? "Copy invite link" : "Copy one-time link"}</Button>

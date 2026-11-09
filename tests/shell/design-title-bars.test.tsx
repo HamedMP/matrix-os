@@ -5,6 +5,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";import { CanvasWin
 import { DesignCaptionButtons } from "../../shell/src/components/window/DesignCaptionButtons.js";
 import { useCanvasTransform } from "../../shell/src/hooks/useCanvasTransform.js";
 import { useWindowManager, type AppWindow } from "../../shell/src/hooks/useWindowManager.js";
+import { useCanvasSettings } from "../../shell/src/stores/canvas-settings.js";
 
 const publishingProps = vi.hoisted(() => ({ current: null as null | { appSlug: string; portalContainer?: HTMLElement | null } }));
 
@@ -56,6 +57,7 @@ describe("CanvasWindow design-system title bars", () => {
     document.documentElement.removeAttribute("data-theme-style");
     document.getElementById("matrix-canvas-window-motion-styles")?.remove();
     useCanvasTransform.setState({ zoom: 1, panX: 0, panY: 0, isAnimating: false, isScrolling: false });
+    useCanvasSettings.setState({ showTitles: true });
     useWindowManager.setState({
       windows: [appWindow],
       nextZ: 2,
@@ -92,6 +94,23 @@ describe("CanvasWindow design-system title bars", () => {
     expect(container.querySelector('[data-testid="app-publishing-bar"]')).toBeNull();
     expect(publishingProps.current?.appSlug).toBe("notes");
     expect(publishingProps.current?.portalContainer).toBe(container.firstElementChild);
+  });
+
+  it("does not leave an invisible publishing control clickable when canvas titles are hidden", async () => {
+    useCanvasSettings.setState({ showTitles: false });
+
+    await renderWindow();
+
+    expect(screen.queryByRole("button", { name: "Publish app" })).toBeNull();
+  });
+
+  it("keeps publishing available in fullscreen when the canvas is zoomed below the interaction threshold", async () => {
+    useCanvasTransform.setState({ zoom: 0.2 });
+    useWindowManager.setState({ fullscreenWindowId: appWindow.id });
+
+    await renderWindow();
+
+    expect(screen.getByRole("button", { name: "Publish app" })).toBeTruthy();
   });
 
   it("renders frosted glass chrome with traffic lights for macos-glass", async () => {

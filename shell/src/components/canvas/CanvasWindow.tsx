@@ -301,7 +301,7 @@ export function CanvasWindow({ win, iconUrl, hidden = false, deferAppContent = f
   const titleBarHeight = 36;
   const titleBarGap = 8;
   const publishingSlug = publishingAppSlugFromPath(win.path);
-  const publishingControl = publishingSlug && isInteractive && !hidden ? (
+  const publishingControl = publishingSlug && !hidden && (isFullscreen || (isInteractive && showTitles)) ? (
     <div
       className="pointer-events-auto"
       onPointerDown={(event) => event.stopPropagation()}
