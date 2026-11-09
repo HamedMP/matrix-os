@@ -64,6 +64,7 @@ import {
 import { createNativeChatImportService } from "./files/local-chat-import";
 import { discoverLocalChats } from "./files/local-chat-discovery";
 import {registerAiUsageIpc} from "./ipc/ai-usage";
+import {createUsageSyncService} from "./usage-sync/service";
 import { registerLocalChatImportIpc } from "./ipc/local-chat-import";
 import { registerIpcHandlers } from "./ipc/handlers";
 import { fetchDesktopSupportIdentity } from "./support/support-identity-client";
@@ -595,7 +596,7 @@ if (!gotLock) {
         const rendererUrl=desktopRendererUrl??pathToFileURL(join(__dirname,"../renderer/index.html")).toString();
         return !!contents&&!contents.isDestroyed()&&event.sender===contents&&event.senderFrame===contents.mainFrame&&contents.getURL()===rendererUrl;
       });
-      localUsage=registerAiUsageIpc(ipcMain,{home:app.getPath("home"),roots:{codexRoot:process.env.CODEX_HOME,claudeRoot:process.env.CLAUDE_CONFIG_DIR},auth,isTrusted:rawEvent=>{
+      localUsage=registerAiUsageIpc(ipcMain,{home:app.getPath("home"),roots:{codexRoot:process.env.CODEX_HOME,claudeRoot:process.env.CLAUDE_CONFIG_DIR},auth,sync:createUsageSyncService({home:app.getPath("home"),pairingFile:join(app.getPath("userData"),"ai-usage-sync.json"),auth}),isTrusted:rawEvent=>{
         const event=rawEvent as IpcMainInvokeEvent,contents=mainWindow?.webContents;
         const rendererUrl=desktopRendererUrl??pathToFileURL(join(__dirname,"../renderer/index.html")).toString();
         return !!contents&&!contents.isDestroyed()&&event.sender===contents&&event.senderFrame===contents.mainFrame&&contents.getURL()===rendererUrl;

@@ -7,6 +7,7 @@ import {
   type UsageEvent,
   type UsageHistory,
 } from "@matrix-os/contracts/ai-usage";
+import { UsageFilters } from "./UsageSelect";
 import { useUsageFiles } from "./use-usage-files";
 
 import {
@@ -86,42 +87,13 @@ export function AiUsagePanel({
           </div>
         )}
       </header>
-      <div className="au-toolbar">
-        <div className="au-filter">
-          <select
-            aria-label="Coding agent"
-            value={agent}
-            onChange={(e) => setAgent(e.target.value as UsageAgent | "")}
-          >
-            <option value="">All agents</option>
-            <option value="claude">Claude Code</option>
-            <option value="codex">Codex</option>
-          </select>
-          <select
-            aria-label="Date range"
-            value={effectiveRange}
-            onChange={(e) => setRange(e.target.value)}
-          >
-            {history ? (
-              history.reports
-                .filter((r) => r.agent === "")
-                .map((r) => (
-                  <option key={r.id} value={r.id}>
-                    {r.label}
-                  </option>
-                ))
-            ) : (
-              <>
-                <option value={7}>Last 7 days</option>
-                <option value={30}>Last 30 days</option>
-                <option value={90}>Last 90 days</option>
-                <option value={365}>Last year</option>
-              </>
-            )}
-          </select>
-        </div>
-        <span>◉ Only you can see this</span>
-      </div>
+      <UsageFilters
+        agent={agent}
+        range={effectiveRange}
+        history={history}
+        onAgent={setAgent}
+        onRange={setRange}
+      />
       {error && (
         <p role="alert" className="au-notice">
           {error}

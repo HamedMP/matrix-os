@@ -126,3 +126,5 @@ export async function scanUsageRoots(
     issues: issues + merged.conflicts,
   };
 }
+/** Original-history backup allowlist. Credentials and account databases are deliberately absent. */
+export const USAGE_BACKUP_PATHS = [".claude/projects", ".claude/stats-cache.json", ".claude/history.jsonl", ".codex/sessions", ".codex/archived_sessions", ".codex/history.jsonl", ".codex/session_index.jsonl", ".pi/agent/sessions", ".cursor/projects", ".local/share/opencode/storage/session", ".local/share/opencode/storage/message", ".local/share/opencode/storage/part"] as const;

@@ -1,5 +1,5 @@
 "use client";
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { readUsageExport } from "@matrix-os/contracts/ai-usage";
 import { AiUsagePanel } from "./AiUsagePanel";
 export type UsageSnapshot = ReturnType<typeof readUsageExport>;
@@ -12,10 +12,16 @@ const checkedTime = new Intl.DateTimeFormat(undefined, {
 export function AutomaticAiUsagePanel({
   load,
   sourceLabel,
+  loadingLabel,
 }: {
-  load(signal: AbortSignal): Promise<UsageSnapshot>;
+  load(
+    signal: AbortSignal,
+    trigger: "open" | "manual" | "hourly",
+  ): Promise<UsageSnapshot>;
   sourceLabel: string;
+  loadingLabel?: string;
 }) {
+  const trigger = useRef<"open" | "manual" | "hourly">("open");
   const [snapshot, setSnapshot] = useState<{
       value: UsageSnapshot;
       checkedAt: Date;
@@ -27,7 +33,7 @@ export function AutomaticAiUsagePanel({
     const controller = new AbortController();
     setLoading(true);
     setFailure(false);
-    void load(controller.signal)
+    void load(controller.signal, trigger.current)
       .then((value) => {
         controller.signal.throwIfAborted();
         const parsed = readUsageExport(value);
@@ -53,7 +59,10 @@ export function AutomaticAiUsagePanel({
   }, [load, revision]);
   useEffect(() => {
     if (loading) return;
-    const timer = setTimeout(() => setRevision((v) => v + 1), refreshEveryMs);
+    const timer = setTimeout(() => {
+      trigger.current = "hourly";
+      setRevision((v) => v + 1);
+    }, refreshEveryMs);
     return () => clearTimeout(timer);
   }, [loading, revision]);
   return (
@@ -62,7 +71,7 @@ export function AutomaticAiUsagePanel({
         <span className="au-auto-message">
           <span>
             {loading
-              ? `Detecting usage on ${sourceLabel}…`
+              ? (loadingLabel ?? `Detecting usage on ${sourceLabel}…`)
               : failure
                 ? `Scan unavailable · ${sourceLabel}`
                 : `Automatically detected · ${sourceLabel}`}
@@ -85,7 +94,10 @@ export function AutomaticAiUsagePanel({
         <button
           type="button"
           disabled={loading}
-          onClick={() => setRevision((v) => v + 1)}
+          onClick={() => {
+            trigger.current = "manual";
+            setRevision((v) => v + 1);
+          }}
         >
           Refresh usage
         </button>

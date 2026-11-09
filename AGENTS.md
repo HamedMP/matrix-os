@@ -96,6 +96,7 @@ file so the rules have one source of truth.
 
 ## Development Rules
 
+- **Reuse the component library first**: inspect existing components before changing UI. Use the project's shadcn controls and shared `packages/ui` components; extract a shared implementation when web and Electron both need it. Avoid native controls styled to imitate library components or parallel custom versions of existing controls.
 - **TDD**: failing tests FIRST, then implement (Red -> Green -> Refactor)
 - **Test effectiveness**: follow `docs/dev/testing-effectiveness.md`. Name the user outcome and fault a test detects; exercise production code, preserve real producer/consumer boundaries, and show regression red/green evidence. Do not test local replicas, freeze invented policy, or add duplicate suites for coverage. Delete only with recorded no-protection or equivalent-retained-coverage proof. Required lanes must execute assertions, not silently skip.
 - **Conventional Commits and PR Titles**: commits and PR titles use semantic Conventional Commit style such as `feat(canvas): add workspace canvas`; never prefix PR titles with agent/tool tags like `[codex]`.

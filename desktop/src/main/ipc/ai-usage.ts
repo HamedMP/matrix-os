@@ -23,6 +23,14 @@ export function registerAiUsageIpc(
     auth: Auth;
     isTrusted(event: unknown): boolean;
     scan?: typeof scanUsageRoots;
+    sync?: {
+      sync(input: {
+        runtimeSlot: string;
+        authGeneration: number;
+      }): Promise<unknown>;
+      cancel(): void;
+      dispose(): Promise<void>;
+    };
   },
 ) {
   if (!options.auth || !options.home || typeof options.isTrusted !== "function")
@@ -33,7 +41,27 @@ export function registerAiUsageIpc(
     controller: AbortController;
     task: ReturnType<typeof scanUsageRoots>;
   } | null = null;
-  const cancel = () => operation?.controller.abort();
+  const cancel = () => {
+    operation?.controller.abort();
+    options.sync?.cancel();
+  };
+  ipc.handle("runtime:ai-usage-sync", async (event, input) => {
+    if (!options.isTrusted(event)) throw new Error("Invalid request");
+    const request =
+      AI_USAGE_INVOKE["runtime:ai-usage-sync"].request.parse(input);
+    if (!options.sync) throw new Error("Usage sync unavailable");
+    try {
+      return AI_USAGE_INVOKE["runtime:ai-usage-sync"].response.parse(
+        await options.sync.sync(request),
+      );
+    } catch (error: unknown) {
+      console.warn(
+        "[ai-usage] sync unavailable",
+        error instanceof Error ? error.name : "UnknownError",
+      );
+      throw new Error("Usage sync unavailable");
+    }
+  });
   ipc.handle("runtime:ai-usage", async (event, input) => {
     if (!options.isTrusted(event)) throw new Error("Invalid request");
     const parsed = AI_USAGE_INVOKE["runtime:ai-usage"].request.safeParse(input);
@@ -104,7 +132,8 @@ export function registerAiUsageIpc(
   return {
     cancel,
     async dispose() {
-      cancel();
+      operation?.controller.abort();
+      await options.sync?.dispose();
       try {
         await operation?.task;
       } catch (error: unknown) {
