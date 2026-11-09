@@ -7,6 +7,7 @@ import {
 import type { ChatDatabase } from "../chat/database.js";
 import type { RequestPrincipal } from "../request-principal.js";
 import { lockChatAgentOwner } from "../chat/agent-owner-lock.js";
+import { hasNonPrivateChatScope } from "../chat/private-routine-authority.js";
 import type { ChatAgentStore } from "../chat/agent-store.js";
 import type { OwnerBotDatabase } from "./database.js";
 import { RoutineCliError, routineCliBoundary } from "./routine-cli-errors.js";
@@ -61,15 +62,20 @@ export function createRoutineCliTargetService(deps: RoutineCliTargetDependencies
   const validateTarget = async (trx: Transaction<OwnerBotDatabase>, configured: RoutineCliScope,
     target: { botId: string; chatId: string; bindingCreatedAt?: string }, action: TargetAccess["action"]) => {
     if (!deps.canAccessTarget) throw new RoutineCliError("unavailable");
+    const owner = { type: "personal" as const, ownerId: configured.ownerId };
+    const chatTrx = trx as unknown as Transaction<ChatDatabase>;
     // Same lock as ChatAgentStore file updates; keep it through dispatch's write.
-    await lockChatAgentOwner(trx as unknown as Transaction<ChatDatabase>, { type: "personal", ownerId: configured.ownerId });
-    const definition = await deps.agents.get({ type: "personal", ownerId: configured.ownerId }, target.botId);
+    await lockChatAgentOwner(chatTrx, owner);
+    const definition = await deps.agents.get(owner, target.botId);
     if (!definition || definition.id !== target.botId || definition.archived || !definition.recipeRef)
       throw new RoutineCliError("target_unavailable");
     const chat = await trx.selectFrom("chats").select(["id", "owner_id", "owner_type", "collaboration", "lifecycle"])
       .where("id", "=", target.chatId).forUpdate().executeTakeFirst();
     if (!chat || chat.owner_id !== configured.ownerId || chat.owner_type !== "personal" || chat.collaboration !== null || chat.lifecycle !== "active")
       throw new RoutineCliError("target_unavailable");
+    // Project publication holds this same Chat lock. Read the scope without
+    // locking it after Chat, since publication takes the scope lock first.
+    if (await hasNonPrivateChatScope(chatTrx, owner, target.chatId)) throw new RoutineCliError("target_unavailable");
     // Chat FOR UPDATE fences new FK inserts. Restoring an existing removed binding
     // changes no FK column, so lock those rows too before evaluating live membership.
     // Aggregate in Postgres to avoid returning unbounded historical rows to Node.
