@@ -2,6 +2,7 @@ import { sql, type Kysely } from "kysely";
 import { createHash } from "node:crypto";
 import type { UsageEvent } from "@matrix-os/contracts/ai-usage";
 import type { UsageBatch } from "@matrix-os/contracts/ai-usage";
+import { canonicalHistoryQuery } from "./history-normalization.js";
 import type { UsageParserState } from "@matrix-os/contracts/ai-usage";
 export interface UsageCheckpoint {
   offset: number;
@@ -205,130 +206,46 @@ export class UsageHistoryRepository {
       .orderBy("event_id")
       .orderBy(sql`(event->>'output')::bigint`, "desc")
       .orderBy(sql`(event->>'input')::bigint`, "desc");
-    let last = "",
-      previous = { input: 0, cached: 0, output: 0 },
-      issues = 0;
+    let issues = 0;
     const tx = this.db;
-    {
-      await sql`DECLARE ai_usage_history_read NO SCROLL CURSOR FOR
-          WITH canonical AS MATERIALIZED (${canonical}),
-          precise AS (SELECT DISTINCT event->>'session' AS session, event->'cumulative' AS cumulative FROM canonical WHERE event->>'sourceKind'='response' AND event->'cumulative' IS NOT NULL),
-          native_max AS (SELECT session, max((cumulative->>'input')::bigint+(cumulative->>'output')::bigint) AS endpoint FROM precise GROUP BY session),
-          legacy AS (SELECT DISTINCT event->>'session' AS session, event->'cumulative' AS cumulative FROM canonical WHERE event->>'sourceKind'='cumulative'),
-          uncertain AS (SELECT DISTINCT event->>'session' AS session FROM canonical WHERE event->>'agent'='codex' AND event->>'sourceKind'='response' AND event->'cumulative' IS NULL)
-          SELECT c.event, p.session IS NOT NULL AS covered, l.session IS NOT NULL AS legacy,
-            u.session IS NOT NULL AS uncertain,
-            coalesce((c.event->'cumulative'->>'input')::bigint+(c.event->'cumulative'->>'output')::bigint <= n.endpoint, false) AS native_range
-          FROM canonical c
-          LEFT JOIN precise p ON c.event->>'session'=p.session AND c.event->'cumulative'=p.cumulative
-          LEFT JOIN legacy l ON c.event->>'session'=l.session AND c.event->'cumulative'=l.cumulative
-          LEFT JOIN native_max n ON c.event->>'session'=n.session
-          LEFT JOIN uncertain u ON c.event->>'session'=u.session
-          ORDER BY c.event->>'agent', c.event->>'session',
-            coalesce((c.event->'cumulative'->>'input')::bigint+(c.event->'cumulative'->>'output')::bigint,0),
-            (c.event->>'sourceKind'='response') DESC, c.event->>'timestamp', c.event_id`.execute(
-        tx,
-      );
-      for (;;) {
-        const result = await sql<{
-          event: UsageEvent;
-          covered: boolean;
-          uncertain: boolean;
-          legacy: boolean;
-          native_range: boolean;
-        }>`FETCH FORWARD 512 FROM ai_usage_history_read`.execute(tx);
-        if (!result.rows.length) break;
-        for (const {
-          event: raw,
-          covered,
-          uncertain,
-          legacy,
-          native_range,
-        } of result.rows) {
-          let event = raw;
-          if (raw.agent === "codex" && raw.sourceKind === "response") {
-            if (raw.session !== last) {
-              last = raw.session;
-              previous = { input: 0, cached: 0, output: 0 };
-            }
-            if (
-              raw.cumulative &&
-              raw.cumulative.input >= previous.input &&
-              raw.cumulative.output >= previous.output
-            ) {
-              const input =
-                  raw.cumulative.input -
-                  previous.input -
-                  raw.input -
-                  raw.cachedInput,
-                cached =
-                  raw.cumulative.cached - previous.cached - raw.cachedInput,
-                output = raw.cumulative.output - previous.output - raw.output;
-              if (input > 0 || output > 0) {
-                if (
-                  legacy &&
-                  !uncertain &&
-                  input >= cached &&
-                  cached >= 0 &&
-                  output >= 0
-                )
-                  visit({
-                    ...raw,
-                    id: raw.id + ":recovered-prefix",
-                    model: "unknown",
-                    sourceKind: "cumulative",
-                    cumulative: undefined,
-                    input: input - cached,
-                    cachedInput: cached,
-                    output,
-                  });
-                else issues++;
-              }
-              previous = { ...raw.cumulative };
-            }
-            visit(raw);
-            continue;
-          }
-          if (raw.agent === "codex" && raw.cumulative) {
-            // Without response endpoints the cumulative mirror cannot be reconciled safely.
-            if (uncertain) {
-              issues++;
-              continue;
-            }
-            // Intermediate legacy snapshots may overlap a native request. Its matching endpoint
-            // recovers the missing prefix once, rather than summing partial counters over it.
-            if (native_range) {
-              if (!covered) issues++;
-              continue;
-            }
-            const session = raw.session;
-            if (session !== last) {
-              previous = { input: 0, cached: 0, output: 0 };
-              last = session;
-            }
-            const next = raw.cumulative,
-              input = next.input - previous.input,
-              cached = next.cached - previous.cached,
-              output = next.output - previous.output;
-            if (input < 0 || cached < 0 || output < 0 || cached > input) {
-              issues++;
-              continue;
-            }
-            previous = next;
-            if (covered) continue;
-            if (input + output === 0) continue;
-            event = {
-              ...raw,
-              input: input - cached,
-              cachedInput: cached,
-              output,
-            };
-          }
-          visit(event);
+    await sql`DECLARE ai_usage_history_read NO SCROLL CURSOR FOR ${canonicalHistoryQuery(canonical)}`.execute(
+      tx,
+    );
+    for (;;) {
+      const result = await sql<{
+        event: UsageEvent;
+        mixed: boolean;
+        uncertain: boolean;
+        remaining_input: string;
+        remaining_cached: string;
+        remaining_output: string;
+      }>`FETCH FORWARD 512 FROM ai_usage_history_read`.execute(tx);
+      if (!result.rows.length) break;
+      for (const row of result.rows) {
+        const raw = row.event;
+        if (raw.agent !== "codex" || raw.sourceKind !== "cumulative") {
+          visit(raw);
+          continue;
         }
+        const input = Number(row.remaining_input),
+          cached = Number(row.remaining_cached),
+          output = Number(row.remaining_output);
+        if (row.uncertain || input < cached || cached < 0 || output < 0) {
+          issues++;
+          continue;
+        }
+        if (input + output === 0) continue;
+        visit({
+          ...raw,
+          model: row.mixed ? "unknown" : raw.model,
+          input: input - cached,
+          cachedInput: cached,
+          cacheWrite: 0,
+          output,
+        });
       }
-      await sql`CLOSE ai_usage_history_read`.execute(tx);
     }
+    await sql`CLOSE ai_usage_history_read`.execute(tx);
     return { issues };
   }
   async bounds(owner: string) {

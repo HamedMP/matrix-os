@@ -225,6 +225,53 @@ it.runIf(Boolean(url))(
         partial.history.reports.find((r) => r.id === "all" && r.agent === "")!
           .summary.tokens,
       ).toBe(220);
+      const earlier = total(100, 10),
+        later = total(200, 20);
+      earlier.timestamp = "2025-12-31T12:00:00Z";
+      later.timestamp = "2026-01-01T12:00:00Z";
+      tail.timestamp = later.timestamp;
+      await writeFile(
+        join(partialRoot, "legacy.jsonl"),
+        [meta, earlier, later].map((r) => JSON.stringify(r)).join("\n") + "\n",
+      );
+      await writeFile(
+        join(partialRoot, "native.jsonl"),
+        [meta, tail].map((r) => JSON.stringify(r)).join("\n") + "\n",
+      );
+      await indexUsageRoots(repo, "dated-owner", "mac", [
+        { path: partialRoot, agent: "codex" },
+      ]);
+      const dated = await readUsageHistory(repo, "dated-owner");
+      expect(
+        dated.history.reports.find(
+          (r) => r.id === "year:2025" && r.agent === "",
+        )!.summary.tokens,
+      ).toBe(110);
+      expect(
+        dated.history.reports.find(
+          (r) => r.id === "year:2026" && r.agent === "",
+        )!.summary.tokens,
+      ).toBe(110);
+      const writesRoot = join(root, "writes");
+      await mkdir(writesRoot);
+      const writeUsage = native("cache-write", 100, 10);
+      Object.assign(writeUsage.payload.usage, { cache_write_input_tokens: 20 });
+      await writeFile(
+        join(writesRoot, "native.jsonl"),
+        [meta, writeUsage].map((r) => JSON.stringify(r)).join("\n") + "\n",
+      );
+      await writeFile(
+        join(writesRoot, "legacy.jsonl"),
+        [meta, total(100, 10)].map((r) => JSON.stringify(r)).join("\n") + "\n",
+      );
+      await indexUsageRoots(repo, "writes-owner", "mac", [
+        { path: writesRoot, agent: "codex" },
+      ]);
+      const writes = await readUsageHistory(repo, "writes-owner");
+      expect(
+        writes.history.reports.find((r) => r.id === "all" && r.agent === "")!
+          .summary.tokens,
+      ).toBe(110);
     } finally {
       await rm(root, { recursive: true });
       await sql.raw(`DROP SCHEMA ${schema} CASCADE`).execute(db);
