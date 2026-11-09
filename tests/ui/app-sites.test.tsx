@@ -39,6 +39,28 @@ describe("shared app publishing", () => {
     await waitFor(()=>expect(api.revokeAccessLink).toHaveBeenCalledWith("launch",link.id,expect.any(AbortSignal)));
     expect(screen.queryByText(url)).toBeNull();
   });
+  it("uses the collaboration invite hierarchy while keeping email disabled and reusing one-time links", async () => {
+    const link={id:"44444444-4444-4444-8444-444444444444",status:"unclaimed" as const,createdAt:"2026-11-05T12:00:00.000Z",claimExpiresAt:"2026-11-12T12:00:00.000Z",claimedAt:null,sessionExpiresAt:null};
+    const privateSite={...published,accessMode:"private_link" as const};
+    const url=`https://matrix.page/${privateSite.id}#access=${link.id}.${"a".repeat(43)}`;
+    const api=client({get:vi.fn(async()=>privateSite),accessLinks:vi.fn(async()=>({links:[]})),createAccessLink:vi.fn(async()=>({link,url}))});
+    render(<AppSitePanel appSlug="launch" client={api} variant="share" />);
+
+    expect(await screen.findByRole("heading",{name:"Invite"})).toBeTruthy();
+    expect(screen.getByLabelText("Invite by email")).toHaveProperty("disabled",true);
+    expect(screen.getByRole("button",{name:"Invite"})).toHaveProperty("disabled",true);
+    expect(screen.getByText("You")).toBeTruthy();
+    expect(screen.getByText("Owner")).toBeTruthy();
+    expect(screen.queryByText(/upgrade to pro/i)).toBeNull();
+    expect(screen.queryByRole("button",{name:"Create one-time link"})).toBeNull();
+
+    const create=screen.getByRole("button",{name:"Create"});
+    await waitFor(()=>expect(create).toHaveProperty("disabled",false));
+    fireEvent.click(create);
+    expect(await screen.findByText(url)).toBeTruthy();
+    expect(screen.getByRole("button",{name:"Copy invite link"})).toBeTruthy();
+    expect(api.createAccessLink).toHaveBeenCalledWith("launch",{baseRevision:1},expect.any(AbortSignal));
+  });
   it("offers publication refresh when one-time link creation loses a revision race",async()=>{
     const privateSite={...published,accessMode:"private_link" as const};
     const api=client({get:vi.fn(async()=>privateSite),accessLinks:vi.fn(async()=>({links:[]})),createAccessLink:vi.fn(async()=>{throw new SiteClientError(409);})});

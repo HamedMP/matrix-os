@@ -1,5 +1,5 @@
 import { buildBridgeScript, withCredentialedAssets, type ThemeVars } from "@/lib/os-bridge";
-import { appRuntimeSlugFromIdentity } from "@matrix-os/contracts";
+import { appRuntimeSlugFromIdentity, remoteBrowserSurfaceForPath } from "@matrix-os/contracts";
 
 const LEGACY_NESTED_RUNTIME_APP_SLUGS = new Set([
   "2048",
@@ -58,6 +58,13 @@ export function extractSlug(path: string): string | null {
     return appRuntimeSlugFromIdentity(appIdentityFromPath(path));
   }
   return null;
+}
+
+/** Only owner-created app windows expose publishing controls in their shell chrome. */
+export function publishingAppSlugFromPath(path: string): string | null {
+  if (remoteBrowserSurfaceForPath(path)) return null;
+  const slug = extractSlug(path);
+  return slug === "browser-lab" ? null : slug;
 }
 
 export function shouldRenderAppIframe(path: string): boolean {

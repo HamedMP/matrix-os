@@ -6,8 +6,6 @@ import { BrowserLabView } from "./BrowserLabView";
 import { resolveAppBridgeLaunch } from "@/lib/app-bridge-launch";
 import { prepareBridgeFetchRequest, resolveBridgeFetchUrl } from "./app-viewer-bridge-request";
 import { readAppBridgeResponse, appBridgeTimeoutMs } from "./app-capability-request";
-import { AppSiteButton } from "./app-sites/AppSiteButton";
-
 import { useState, useEffect, useRef } from "react";
 import { useFileWatcher } from "@/hooks/useFileWatcher";
 import { useSocket } from "@/hooks/useSocket";
@@ -117,7 +115,6 @@ export function AppViewer(props: AppViewerProps) {
 function SandboxedAppViewer({ path, sessionId, onOpenApp, visible = true }: AppViewerProps) {
   const [refreshKey, setRefreshKey] = useState(0);
   const [iframeHtml, setIframeHtml] = useState<string | null>(null);
-  const [portalContainer, setPortalContainer] = useState<HTMLDivElement | null>(null);
   const iframeRef = useRef<HTMLIFrameElement>(null);
   const { send, subscribe } = useSocket();
   // react-doctor-disable-next-line react-doctor/no-event-handler -- pure derived value computed from the `path` prop during render, not a DOM event handler or effect-driven side effect.
@@ -396,16 +393,7 @@ function SandboxedAppViewer({ path, sessionId, onOpenApp, visible = true }: AppV
   }
 
   return (
-    <div ref={setPortalContainer} data-created-app-surface="true" className="relative isolate flex h-full w-full flex-col overflow-hidden">
-      {slug && visible ? (
-        <div
-          data-testid="app-publishing-bar"
-          className="flex min-h-10 shrink-0 items-center justify-end px-3 py-1.5"
-          style={{ background: "#080808" }}
-        >
-          <AppSiteButton key={slug} appSlug={slug} portalContainer={portalContainer} />
-        </div>
-      ) : null}
+    <div className="relative isolate flex h-full w-full flex-col overflow-hidden">
       <iframe
         ref={iframeRef}
         key={refreshKey}

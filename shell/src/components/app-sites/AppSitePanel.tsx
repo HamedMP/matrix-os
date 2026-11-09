@@ -58,13 +58,36 @@ function AppSiteForm({ appSlug, client, state, variant }: { appSlug: string; cli
       "--matrix-radius-md": "8px", "--matrix-font-sans": desktopFonts.sans,
       color: "var(--matrix-fg)",
     } as CSSProperties}>
+    {share ? <ShareInviteSection {...{ appSlug, client, state, disabled }} /> : null}
     <p className="text-sm">Publish this app on Matrix.page. Choose public access or create one-time private links.</p>
     <SitePublicationStatus state={state} onRefreshPublication={() => { invalidateReview(); void state.reloadPublication(); }} />
     <SiteMetadataFields {...{ fieldId, disabled, title, description, slug, accessMode, invalid, setTitle, setDescription, setSlug, setAccessMode, invalidateReview }} />
     <SitePublicLinks {...{ site, disabled, action }} />
     <SiteDeploymentActions {...{ appSlug, client, state, disabled, invalid, reviewed, previewReady, config, metadata, review }} />
     {reviewOpen ? <SiteDeploymentReview {...{ config, reviewed, setReviewed }} /> : null}
-    <SitePublicationManagement {...{ appSlug, client, state, disabled }} />
+    <SitePublicationManagement {...{ appSlug, client, state, disabled }} showAccessLinks={!share} />
+  </section>;
+}
+
+function ShareInviteSection({ appSlug, client, state, disabled }: SiteSectionProps) {
+  return <section aria-label="Invite" className="space-y-3 rounded-lg border border-[#323238] bg-[#171717] p-3">
+    <div className="space-y-1">
+      <h3 className="text-base font-semibold">Invite</h3>
+      <p className="text-xs leading-5 text-[#a1a1aa]">Invite collaborators to use this app. Email invitations are not available yet.</p>
+    </div>
+    <div className="grid grid-cols-[minmax(0,1fr)_auto] gap-2">
+      <input aria-label="Invite by email" disabled placeholder="Invite by email" className="h-9 min-w-0 rounded-md border border-[#3f3f46] bg-[#111113] px-3 text-sm text-[#71717a] disabled:cursor-not-allowed" />
+      <Button disabled size="sm">Invite</Button>
+    </div>
+    <div className="flex items-center gap-3 py-1">
+      <span aria-hidden="true" className="flex size-8 shrink-0 items-center justify-center rounded-full bg-[#c2410c] text-sm font-semibold text-white">Y</span>
+      <div className="min-w-0 flex-1">
+        <p className="text-sm font-medium">You</p>
+        <p className="text-xs text-[#a1a1aa]">App owner</p>
+      </div>
+      <span className="text-sm font-medium text-[#d4d4d8]">Owner</span>
+    </div>
+    <SiteAccessLinks appSlug={appSlug} client={client} site={state.site} state={state} disabled={disabled || state.conflict} variant="invite" />
   </section>;
 }
 
@@ -137,13 +160,13 @@ function SiteDeploymentActions({ appSlug, client, state, disabled, invalid, revi
     </div>;
 }
 
-function SitePublicationManagement({ appSlug, client, state, disabled }: SiteSectionProps) {
+function SitePublicationManagement({ appSlug, client, state, disabled, showAccessLinks }: SiteSectionProps & { showAccessLinks: boolean }) {
   const submissionsId = useId();
   const [showSubmissions, setShowSubmissions] = useState(false);
   if (!state.site) return null;
   const published = state.site.status === "published";
   return <>
-      <SiteAccessLinks appSlug={appSlug} client={client} site={state.site} state={state} disabled={disabled || state.conflict} />
+      {showAccessLinks ? <SiteAccessLinks appSlug={appSlug} client={client} site={state.site} state={state} disabled={disabled || state.conflict} /> : null}
       <SiteVersionHistory {...{ appSlug, client, state }} disabled={disabled || state.conflict} />
       <Button variant="secondary" disabled={disabled} aria-expanded={showSubmissions} aria-controls={submissionsId} onClick={() => { setShowSubmissions(!showSubmissions); if (!showSubmissions) void state.loadSubmissions(); }}>Visitor submissions</Button>
       {showSubmissions ? <SiteSubmissions id={submissionsId} appSlug={appSlug} client={client} state={state} /> : null}

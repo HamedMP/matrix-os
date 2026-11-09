@@ -8,16 +8,19 @@ import type { useAppSite } from "./use-app-site";
 
 type AppSiteState = ReturnType<typeof useAppSite>;
 
-export function SiteAccessLinks({ appSlug, client, site, state, disabled }: {
-  appSlug: string; client: SiteClient; site: SiteRecord; state: AppSiteState; disabled: boolean;
+// react-doctor-disable-next-line react-doctor/no-high-complexity-react-function -- one authoritative one-time-link lifecycle intentionally serves the standard publishing view and the collaboration-style invite presentation so their create/revoke/secret handling cannot drift.
+export function SiteAccessLinks({ appSlug, client, site, state, disabled, variant = "default" }: {
+  appSlug: string; client: SiteClient; site: SiteRecord | null; state: AppSiteState; disabled: boolean; variant?: "default" | "invite";
 }) {
   const [links, setLinks] = useState<SiteAccessLinkSummary[]>([]);
   const [generatedUrl, setGeneratedUrl] = useState<string | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [linksLoaded, setLinksLoaded] = useState(false);
   const [reload, setReload] = useState(0);
+  const invite = variant === "invite";
+  const ready = site?.status === "published" && site.accessMode === "private_link";
   useEffect(() => {
-    if (site.status !== "published" || site.accessMode !== "private_link") return;
+    if (!ready) return;
     const controller = new AbortController();
     void client.accessLinks(appSlug, controller.signal).then(page => {
       if (!controller.signal.aborted) { setLinks(page.links); setLoadError(null); setLinksLoaded(true); }
@@ -25,12 +28,12 @@ export function SiteAccessLinks({ appSlug, client, site, state, disabled }: {
       if (!controller.signal.aborted) setLoadError(siteActionError(error));
     });
     return () => controller.abort();
-  }, [appSlug, client, site.id, site.status, site.accessMode, reload]);
-  if (site.status !== "published" || site.accessMode !== "private_link") return null;
-  const create = () => state.mutate(
+  }, [appSlug, client, ready, site?.id, reload]);
+  if (!invite && !ready) return null;
+  const create = () => !site || !ready ? Promise.resolve(false) : state.mutate(
     signal => client.createAccessLink(appSlug, { baseRevision: site.revision }, signal),
     result => { setLinks(current => [result.link, ...current.filter(link => link.id !== result.link.id)]); setGeneratedUrl(result.url); },
-    "One-time link created.",
+    invite ? "Invite link created." : "One-time link created.",
   );
   const revoke = (linkId: string) => state.action(async signal => {
     await client.revokeAccessLink(appSlug, linkId, signal); return linkId;
@@ -38,19 +41,32 @@ export function SiteAccessLinks({ appSlug, client, site, state, disabled }: {
     setLinks(current => current.filter(link => link.id !== revoked));
     setGeneratedUrl(current => current?.includes(revoked) ? null : current);
   }, "Link revoked.");
-  return <section aria-label="One-time links" className="space-y-3 rounded-lg border p-3">
-    <div className="space-y-1"><p className="text-sm font-medium">Private — one-time links</p>
-      <p className="text-xs">Each link can be claimed by one browser. Unclaimed links expire after 7 days; access lasts 30 days.</p></div>
-    <Button size="sm" disabled={disabled || !linksLoaded || links.length >= SITE_MAX_ACCESS_LINKS} onClick={() => void create()}>Create one-time link</Button>
+  const readinessCopy = ready
+    ? "One-time access for one browser. Unclaimed links expire after 7 days."
+    : site?.status === "published"
+      ? "Choose Private — one-time links and save the publishing settings to enable invites."
+      : "Publish this app with Private — one-time links to enable invites.";
+  return <section aria-label={invite ? "Invite link" : "One-time links"} className={invite ? "space-y-3 border-t pt-3" : "space-y-3 rounded-lg border p-3"}>
+    <div className={invite ? "flex items-center justify-between gap-4" : "space-y-1"}>
+      <div className={invite ? "flex min-w-0 items-start gap-3" : "space-y-1"}>
+        {invite ? <span aria-hidden="true" className="mt-0.5 text-base">↗</span> : null}
+        <div className="min-w-0 space-y-0.5">
+          <p className="text-sm font-medium">{invite ? "Create invite link" : "Private — one-time links"}</p>
+          <p className="text-xs">{invite ? readinessCopy : "Each link can be claimed by one browser. Unclaimed links expire after 7 days; access lasts 30 days."}</p>
+        </div>
+      </div>
+      {invite ? <Button size="sm" disabled={disabled || !ready || !linksLoaded || links.length >= SITE_MAX_ACCESS_LINKS} onClick={() => void create()}>Create</Button> : null}
+    </div>
+    {!invite ? <Button size="sm" disabled={disabled || !linksLoaded || links.length >= SITE_MAX_ACCESS_LINKS} onClick={() => void create()}>Create one-time link</Button> : null}
     {generatedUrl ? <div className="ph-no-capture space-y-2 rounded border p-2" role="status">
       <p className="text-xs font-medium">Save this URL now. It will not be shown again.</p>
       <p className="break-all text-sm" data-ph-mask="true">{generatedUrl}</p>
-      <Button size="sm" variant="secondary" disabled={disabled} onClick={() => void state.action(async () => navigator.clipboard.writeText(generatedUrl), () => {}, "One-time link copied.")}>Copy one-time link</Button>
+      <Button size="sm" variant="secondary" disabled={disabled} onClick={() => void state.action(async () => navigator.clipboard.writeText(generatedUrl), () => {}, invite ? "Invite link copied." : "One-time link copied.")}>{invite ? "Copy invite link" : "Copy one-time link"}</Button>
     </div> : null}
     {loadError ? <div className="space-y-2"><p role="alert" className="text-sm">{loadError}</p><Button size="sm" variant="secondary" disabled={disabled} onClick={() => { setLinksLoaded(false); setLoadError(null); setReload(value => value + 1); }}>Retry link list</Button></div> : null}
-    {links.length ? <ul className="space-y-2">{links.map(link => <li key={link.id} className="flex flex-wrap items-center justify-between gap-2 rounded border p-2 text-xs">
+    {ready && links.length ? <ul className="space-y-2">{links.map(link => <li key={link.id} className="flex flex-wrap items-center justify-between gap-2 rounded border p-2 text-xs">
       <span><strong>{link.status === "unclaimed" ? "Unclaimed" : link.status === "claimed" ? "Claimed" : "Expired"}</strong> · Created {formatSiteDate(link.createdAt)} · {link.status === "claimed" && link.sessionExpiresAt ? `Access expires ${formatSiteDate(link.sessionExpiresAt)}` : `Claim expires ${formatSiteDate(link.claimExpiresAt)}`}</span>
       <Button size="sm" variant="destructive" disabled={disabled} onClick={() => void revoke(link.id)}>Revoke link</Button>
-    </li>)}</ul> : <p className="text-xs">No one-time links yet.</p>}
+    </li>)}</ul> : ready ? <p className="text-xs">No invite links yet.</p> : null}
   </section>;
 }

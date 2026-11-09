@@ -51,6 +51,7 @@ for (const [surface, Component] of [["Web", AppSiteButton], ["Electron", Desktop
       fireEvent.click(trigger);
       const dialog = await screen.findByRole("dialog", { name: "Share app" });
       expect(screen.getByTestId("created-app-surface").contains(dialog)).toBe(true);
+      expect(screen.getByRole("heading", { name: "Invite" })).toBeTruthy();
       const panel = dialog.querySelector<HTMLElement>("section");
       expect(panel?.style.background).toMatch(/#111113|rgb\(17, 17, 19\)/);
       if (surface === "Electron") {

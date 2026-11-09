@@ -32,7 +32,7 @@ export function DesktopAppSiteButton({
         <Button
           variant="subtle"
           disabled={!client}
-          style={{ background: "#171717", color: "#f4f4f5", border: "1px solid #3f3f46" }}
+          style={{ height: 28, padding: "0 10px", fontSize: 12, background: "var(--bg-app)", color: "var(--text-primary)", border: "1px solid var(--border-default)", boxShadow: "var(--shadow-1)" }}
         >
           Publish app
         </Button>

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Button } from "../../design/primitives";
 import { invoke, onEvent } from "../../lib/operator";
 import { useConnection } from "../../stores/connection";
@@ -6,6 +6,7 @@ import { useUi } from "../../stores/ui";
 import { readNativeEmbedBounds } from "./embed-bounds";
 import { nativeBrowserProduct } from "../../../../shared/browser-products";
 import { DesktopAppSiteButton } from "../app-sites/DesktopAppSiteButton";
+import { useSurfaceChromeHost } from "../desktop-shell/SurfaceChrome";
 
 // Hosts a main-process WebContentsView positioned over this element's rect.
 // The remote content renders in an isolated partition with no IPC access.
@@ -49,6 +50,7 @@ export default function EmbedHost({
   const product = nativeBrowserProduct(appIdentity ?? "", slug ?? "");
   const authGeneration = useConnection((connection) => product ? connection.authGeneration : 0);
   const [portalContainer, setPortalContainer] = useState<HTMLDivElement | null>(null);
+  const surfaceChromeHost = useSurfaceChromeHost();
   const hostRef = useRef<HTMLDivElement>(null);
   const embedIdRef = useRef<string | null>(null);
   const activeRef = useRef(active);
@@ -58,6 +60,21 @@ export default function EmbedHost({
   const [retryRevision, setRetryRevision] = useState(0);
   const [state, setState] = useState<"loading" | "ready" | "auth-required" | "failed">("loading");
   const [snapshotDataUrl, setSnapshotDataUrl] = useState<string | null>(null);
+  const publishingChrome = useMemo(() => slug && visible ? ({
+    rightActions: (
+      <DesktopAppSiteButton
+        key={`${runtimeSlot}:${authGeneration}:${slug}`}
+        appSlug={slug}
+        portalContainer={portalContainer}
+      />
+    ),
+  }) : null, [authGeneration, portalContainer, runtimeSlot, slug, visible]);
+
+  useLayoutEffect(() => {
+    if (!surfaceChromeHost) return;
+    surfaceChromeHost.setChrome(publishingChrome);
+    return () => surfaceChromeHost.setChrome(null);
+  }, [publishingChrome, surfaceChromeHost]);
 
   const reportBounds = useCallback((): void => {
     const id = embedIdRef.current;
@@ -203,15 +220,6 @@ export default function EmbedHost({
 
   return (
     <div ref={setPortalContainer} data-testid="created-app-surface" className="relative isolate flex min-h-0 flex-1 flex-col overflow-hidden">
-      {slug && visible ? (
-        <div
-          data-testid="app-publishing-bar"
-          className="flex min-h-10 shrink-0 items-center justify-end px-3 py-1.5"
-          style={{ background: "#080808" }}
-        >
-          <DesktopAppSiteButton key={slug} appSlug={slug} portalContainer={portalContainer} />
-        </div>
-      ) : null}
       <div ref={hostRef} className="ph-no-capture relative min-h-0 flex-1" style={{ background: "var(--bg-app)" }}>
         {snapshotDataUrl ? (
           <img

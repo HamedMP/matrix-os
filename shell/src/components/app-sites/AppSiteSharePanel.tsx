@@ -24,7 +24,7 @@ export function AppSiteSharePanel({
         <div className="min-w-0">
           <h2 className="text-base font-semibold tracking-[-0.01em]">Share app</h2>
           <p className="mt-1 text-xs leading-5" style={{ color: "#a1a1aa" }}>
-            Publish on Matrix.page, choose who can access it, and manage visitor responses.
+            Invite access with a one-time link, then manage publishing settings below.
           </p>
         </div>
         <button

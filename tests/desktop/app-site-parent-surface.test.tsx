@@ -59,7 +59,10 @@ describe("app publishing through the owning desktop surface", () => {
     ["canvas", "window"],
   ] as const)("keeps the %s %s publishing dialog mounted across its own overlay and closes it when hidden", async (presentation, mode) => {
     const view = render(<ParentSurface presentation={presentation} mode={mode} />);
-    fireEvent.click(screen.getByRole("button", { name: "Publish app" }));
+    const trigger = screen.getByRole("button", { name: "Publish app" });
+    expect(trigger.closest("[data-os-window-top-bar-overlay]")).not.toBeNull();
+    expect(screen.queryByTestId("app-publishing-bar")).toBeNull();
+    fireEvent.click(trigger);
     const dialog = await screen.findByRole("dialog", { name: "Share app" });
     expect(dialog.closest("[data-os-window]")).not.toBeNull();
     expect(useUi.getState().rendererOverlayCount).toBe(1);
