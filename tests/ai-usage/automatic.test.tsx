@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import React from "react";
 import { afterEach, it, expect, vi } from "vitest";
-import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { AutomaticAiUsagePanel } from "../../packages/ui/src/ai-usage/AutomaticAiUsagePanel";
 afterEach(cleanup);
 it("discovers usage on opening Settings without choosing files", async () => {
@@ -97,4 +97,62 @@ it("handles an invalid auto-scan response at the async boundary", async () => {
   expect(
     await screen.findByText("Your AI activity, in one place."),
   ).toBeTruthy();
+});
+
+it("shows all-time indexed history and backup coverage when the server returns aggregated reports", async () => {
+  const { createHistoryReports } = await import(
+    "../../packages/contracts/src/ai-usage/history-report"
+  );
+  const builder = createHistoryReports(
+    "2023-01-01T00:00:00Z",
+    "UTC",
+    new Date("2026-11-09T00:00:00Z"),
+  );
+  builder.push({
+    id: "old",
+    session: "s",
+    agent: "claude",
+    model: "unknown",
+    timestamp: "2023-01-01T12:00:00Z",
+    input: 10,
+    cachedInput: 0,
+    cacheWrite: 0,
+    output: 20,
+  });
+  render(
+    <AutomaticAiUsagePanel
+      sourceLabel="Mac + Matrix"
+      load={async () => ({
+        version: 1,
+        events: [],
+        issues: 0,
+        history: {
+          reports: builder.finish(),
+          coverage: {
+            machines: ["Mac", "Matrix"],
+            files: 10,
+            bytes: 1024,
+            indexedBytes: 1024,
+            oldest: "2023-01-01T00:00:00Z",
+            newest: "2023-01-01T12:00:00Z",
+            issues: 0,
+            failedRoots: 0,
+            indexedAt: "2026-11-09T00:00:00Z",
+            backup: {
+              verifiedFiles: 10,
+              verifiedBytes: 1024,
+              verifiedAt: "2026-11-09T00:00:00Z",
+            },
+          },
+        },
+      })}
+    />,
+  );
+  expect(await screen.findByText("All available history")).toBeTruthy();
+  expect(screen.getByTestId("token-total").textContent).toBe("30");
+  expect(screen.getByText(/10 files verified on Matrix/)).toBeTruthy();
+  const disclosure = screen.getByText("Details").closest("details")!;
+  expect(disclosure.open).toBe(false);
+  fireEvent.click(screen.getByText("Details"));
+  expect(disclosure.open).toBe(true);
 });

@@ -12,10 +12,9 @@ export function UsageHeatmap({
 }) {
   const [metric, setMetric] = useState<"tokens" | "requests">("tokens");
   const [detail, setDetail] = useState("");
-  const startDay=summary.daily[0]?.day??endDay;
+  const startDay = summary.daily[0]?.day ?? endDay;
   const peak = Math.max(1, ...summary.daily.map((d) => d[metric]));
-  const padding =
-    (new Date(`${startDay}T12:00:00Z`).getUTCDay() + 6) % 7;
+  const padding = (new Date(`${startDay}T12:00:00Z`).getUTCDay() + 6) % 7;
   return (
     <article className="au-activity">
       <div className="au-section-head">
@@ -60,7 +59,10 @@ export function UsageHeatmap({
                 d[metric] === 0
                   ? 0
                   : Math.min(4, Math.ceil((d[metric] / peak) * 4));
-              const label = `${d.day}: ${number(d.tokens)} tokens, ${number(d.requests)} usage updates`;
+              const label =
+                d.requests === 0
+                  ? `${d.day}: no recorded usage; history may be unavailable`
+                  : `${d.day}: ${number(d.tokens)} tokens, ${number(d.requests)} usage updates`;
               return (
                 <button
                   type="button"

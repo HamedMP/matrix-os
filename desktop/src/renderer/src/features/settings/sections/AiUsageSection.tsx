@@ -3,7 +3,7 @@ import { AutomaticAiUsagePanel } from "@matrix-os/ui/ai-usage-auto";
 import { invoke } from "../../../lib/operator";
 import { useConnection } from "../../../stores/connection";
 export default function AiUsageSection() {
-  const [source, setSource] = useState<"local" | "matrix">("local");
+  const [source, setSource] = useState<"local" | "matrix">("matrix");
   const api = useConnection((s) => s.api);
   const runtimeSlot = useConnection((s) => s.runtimeSlot),
     authGeneration = useConnection((s) => s.authGeneration),
@@ -36,8 +36,8 @@ export default function AiUsageSection() {
           value={source}
           onChange={(e) => setSource(e.target.value as "local" | "matrix")}
         >
-          <option value="local">This Mac</option>
-          <option value="matrix">Matrix computer</option>
+          <option value="local">Recent local scan (partial)</option>
+          <option value="matrix">Matrix + backed-up history</option>
         </select>
       </label>
       <AutomaticAiUsagePanel

@@ -4,6 +4,7 @@ import {
   scanUsageRoots,
   usageRoots,
 } from "../../packages/contracts/src/ai-usage/node.ts";
+import { readFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { resolve } from "node:path";
 const root = resolve(import.meta.dirname, "../..");
@@ -38,10 +39,10 @@ const server = await createServer({
             }
             const task =
               pending ??
-              scanUsageRoots(
+              (process.env.AI_USAGE_PREVIEW_REPORT ? readFile(process.env.AI_USAGE_PREVIEW_REPORT, "utf8").then(JSON.parse) : scanUsageRoots(
                 usageRoots(process.env.AI_USAGE_PREVIEW_HOME ?? homedir()),
                 AbortSignal.timeout(60_000),
-              );
+              ));
             pending = task;
             try {
               const value = await task;

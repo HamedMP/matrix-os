@@ -32,3 +32,7 @@ Implemented 9 November 2026. Scope: personal Claude Code/Codex telemetry, automa
 ## Development
 
 Start the loopback-only component preview with `AI_USAGE_PREVIEW_HOME=<owner-home> node --import tsx scripts/ai-usage/preview.mjs`. Use SSH forwarding for remote development; do not expose this unauthenticated developer server publicly. The production gateway route separately enforces owner authentication. Stop the task preview when review is complete. CLI metrics exports are optional troubleshooting artifacts and should be removed when no longer needed.
+
+## Full-history extension
+
+The native stack adds durable owner-Postgres checkpoints, compressed/legacy archives, native response-ID accounting, aggregate all-time/calendar-year reports, original-byte backup verification and index restore checks. See [full-history.md](full-history.md). Account exports supply separate activity without invented token/billing counters. Additional preserved agent histories remain outside qualified token totals. The original bounded native scan is explicitly a partial fallback; the Matrix history view is the default. These changes remain draft implementation; no installed production runtime or continuous desktop archive transfer was released.

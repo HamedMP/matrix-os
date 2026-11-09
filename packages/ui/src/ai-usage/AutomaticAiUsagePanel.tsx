@@ -73,6 +73,7 @@ export function AutomaticAiUsagePanel({
         <AiUsagePanel
           key={snapshot.receipt}
           initialEvents={snapshot.value.events}
+          history={snapshot.value.history}
           initialIssues={snapshot.value.issues}
           initialSourceLabel={sourceLabel}
           allowFileSelection={false}
