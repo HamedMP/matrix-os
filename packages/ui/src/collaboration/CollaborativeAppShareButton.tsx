@@ -39,6 +39,10 @@ export function CollaborativeAppShareButton({ appId, api, organizationId, organi
     ? organizationId === share.organizationId ? organizationName ?? share.organizationId : share.organizationId
     : organizationName;
   const canOpen = active || Boolean(effectiveOrganizationId && effectiveOrganizationName && readiness.canShare);
+  const canCheck = Boolean(effectiveOrganizationId)
+    && readiness.state !== "loading"
+    && readiness.state !== "checking"
+    && readiness.state !== "ready";
   const handleOpen = async () => {
     if (!active) { setOpen(true); return; }
     setShareKnown(false);
@@ -56,6 +60,11 @@ export function CollaborativeAppShareButton({ appId, api, organizationId, organi
     {readiness.readiness ? <ReadinessSummary readiness={readiness.readiness} compact />
       : <span role="status" className="py-1 text-xs text-muted-foreground">{readiness.state === "loading"
         ? "Checking collaboration…" : readiness.safeMessage ?? "Collaboration has not been checked."}</span>}
+    {canCheck ? <button type="button"
+      className="rounded-md border px-2.5 py-1 text-xs font-medium"
+      onClick={() => void readiness.recheck({ organizationId: effectiveOrganizationId! })}>
+      {readiness.readiness ? "Check again" : "Check collaboration"}
+    </button> : null}
     <button type="button" className="rounded-md border px-2.5 py-1 text-xs font-medium disabled:cursor-not-allowed disabled:opacity-50"
       disabled={!shareKnown || !canOpen} onClick={() => void handleOpen()}>{active ? "Manage app sharing" : "Share app"}</button>
     {open && effectiveOrganizationId && effectiveOrganizationName ? <CollaborativeAppShareDialog
