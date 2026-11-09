@@ -35,6 +35,7 @@ export function SiteAccessLinks({ appSlug, client, site, state, disabled, varian
   if (!invite && !ready) return null;
   const create = () => state.mutate(async signal => {
     let publication = site;
+    let publicationChanged = false;
     if (!publication || publication.status !== "published") {
       const reviewedConfig = await client.getConfig(appSlug, signal);
       publication = await client.deploy(appSlug, {
@@ -45,6 +46,7 @@ export function SiteAccessLinks({ appSlug, client, site, state, disabled, varian
         baseRevision: publication?.revision ?? 0,
         reviewedConfig,
       }, signal);
+      publicationChanged = true;
     } else if (publication.accessMode !== "private_link") {
       publication = await client.update(appSlug, {
         title: publication.title,
@@ -53,12 +55,13 @@ export function SiteAccessLinks({ appSlug, client, site, state, disabled, varian
         accessMode: "private_link",
         baseRevision: publication.revision,
       }, signal);
+      publicationChanged = true;
     }
+    if (publicationChanged) onPublicationChange?.(publication);
     const created = await client.createAccessLink(appSlug, { baseRevision: publication.revision }, signal);
     return { ...created, publication };
   },
     result => {
-      onPublicationChange?.(result.publication);
       setLinksLoaded(true);
       setLinks(current => [result.link, ...current.filter(link => link.id !== result.link.id)]);
       setGeneratedLink({ url: result.url, publicationKey: `${result.publication.id}:${result.publication.revision}` });

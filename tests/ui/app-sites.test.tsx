@@ -96,6 +96,33 @@ describe("shared app publishing", () => {
     }),expect.any(AbortSignal));
     expect(api.createAccessLink).toHaveBeenCalledWith("launch",{baseRevision:1},expect.any(AbortSignal));
   });
+  it("keeps confirmed private publication state when invite creation fails", async () => {
+    const link={id:"44444444-4444-4444-8444-444444444444",status:"unclaimed" as const,createdAt:"2026-11-05T12:00:00.000Z",claimExpiresAt:"2026-11-12T12:00:00.000Z",claimedAt:null,sessionExpiresAt:null};
+    const privateSite={...published,title:"launch",description:"",slug:null,accessMode:"private_link" as const};
+    const url=`https://matrix.page/${privateSite.id}#access=${link.id}.${"a".repeat(43)}`;
+    const createAccessLink=vi.fn()
+      .mockRejectedValueOnce(new Error("network unavailable"))
+      .mockResolvedValueOnce({link,url});
+    const api=client({
+      get:vi.fn(async()=>null),
+      deploy:vi.fn(async()=>privateSite),
+      createAccessLink,
+    });
+    render(<AppSitePanel appSlug="launch" client={api} variant="share" />);
+
+    await waitFor(()=>expect(screen.getByRole("button",{name:"Create invite link"})).toHaveProperty("disabled",false));
+    fireEvent.click(screen.getByRole("button",{name:"Create invite link"}));
+
+    expect(await screen.findByText("Your app uses one-time links.")).toBeTruthy();
+    expect((await screen.findByRole("alert")).textContent).toBe("Could not complete this action. Please try again.");
+    await waitFor(()=>expect(screen.getByRole("button",{name:"Create invite link"})).toHaveProperty("disabled",false));
+    fireEvent.click(screen.getByRole("button",{name:"Create invite link"}));
+
+    expect(await screen.findByText(url)).toBeTruthy();
+    expect(api.deploy).toHaveBeenCalledTimes(1);
+    expect(createAccessLink).toHaveBeenNthCalledWith(1,"launch",{baseRevision:1},expect.any(AbortSignal));
+    expect(createAccessLink).toHaveBeenNthCalledWith(2,"launch",{baseRevision:1},expect.any(AbortSignal));
+  });
   it("creates an invite in one click for an existing public app", async () => {
     const link={id:"44444444-4444-4444-8444-444444444444",status:"unclaimed" as const,createdAt:"2026-11-05T12:00:00.000Z",claimExpiresAt:"2026-11-12T12:00:00.000Z",claimedAt:null,sessionExpiresAt:null};
     const privateSite={...published,accessMode:"private_link" as const,revision:2};
