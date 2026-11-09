@@ -34,6 +34,54 @@ it("actual admitted Hermes adapter invokes the published CLI/private IPC/HTTP/PG
   expect(JSON.stringify(frames)).not.toMatch(/RoutineCapability|rcli_|fixture-owner-credential|platform-claude-consent|native_[a-f0-9]{48}/);
 }, 20_000);
 
+it.each(["late_ready", "late_catalog"] as const)("enables routines when %s arrives after the startup RPC", async startupProof => {
+  f = await hermesFixture({ startupProof, intent: { args: ["list"] } });
+  await f.start("chat_hermes_late_startup_proof");
+  await f.f.canonical.drain();
+  const frames = await f.frames();
+  expect(frames.filter(frame => frame.rpc?.method === "prompt.submit")).toHaveLength(1);
+  expect(frames.filter(frame => frame.privateResult?.type === "enable")).toHaveLength(1);
+  const result = frames.find(frame => frame.privateResult?.type === "result")?.privateResult.result;
+  expect(JSON.parse(result ?? "null")).toMatchObject({ v: 1, ok: true, data: { kind: "list" } });
+  expect(f.httpCalls()).toBe(1);
+}, 10_000);
+
+it("submits the ordinary prompt once when private readiness never arrives", async () => {
+  f = await hermesFixture({ startupProof: "no_ready", intent: { args: ["list"] } });
+  await f.start("chat_hermes_missing_private_ready");
+  await f.f.canonical.drain();
+  const frames = await f.frames();
+  expect(frames.filter(frame => frame.rpc?.method === "prompt.submit")).toHaveLength(1);
+  expect(frames.filter(frame => frame.privateResult?.type === "enable")).toEqual([]);
+  expect(f.sourceEvents).toContainEqual(expect.objectContaining({ type: "run.completed", outcome: "completed" }));
+  expect(f.httpCalls()).toBe(0);
+  expect(await f.data.db.selectFrom("routine_cli_sources").select("source_id").where("generation", "like", "native_%").execute()).toEqual([]);
+}, 10_000);
+
+it("does not dispatch the ordinary prompt when the run aborts as the enable ACK settles", async () => {
+  f = await hermesFixture({ loseEnableAck: true, intent: { args: ["list"] } });
+  const abort = new AbortController(), adapter = f.adapter;
+  f.setSourceAdapter({ ...adapter, start: input => adapter.start({ ...input, signal: AbortSignal.any([input.signal, abort.signal]) }) });
+  await f.start("chat_hermes_abort_before_prompt");
+  await expect.poll(async () => (await f!.frames()).some(frame => frame.privateResult?.type === "enable"), { timeout: 5_000 }).toBe(true);
+  const child = f.children[0], privateFd = child?.stdio[3], stdin = child?.stdin;
+  if (!privateFd || !stdin) throw new Error("Missing real Hermes child pipes");
+  const writes = vi.spyOn(stdin, "write");
+  privateFd.once("data", () => {
+    // The source consumes the real ACK first. Abort after the handshake race resolves but before the prompt continuation.
+    queueMicrotask(() => queueMicrotask(() => abort.abort()));
+  });
+  await writeFile(f.control, "enable-ack");
+  await f.f.canonical.drain();
+  const promptDispatched = writes.mock.calls.some(([frame]) => String(frame).includes('"method":"prompt.submit"'));
+  writes.mockRestore();
+  expect(abort.signal.aborted).toBe(true);
+  expect(promptDispatched).toBe(false);
+  expect(f.sourceEvents).toContainEqual(expect.objectContaining({ type: "run.completed", outcome: "aborted" }));
+  expect(f.httpCalls()).toBe(0);
+  expect(await f.data.db.selectFrom("routine_cli_sources").select("source_id").where("generation", "like", "native_%").execute()).toEqual([]);
+}, 10_000);
+
 it("retries an unready child with a fresh routine source and never admits the retired descriptor", async () => {
   f = await hermesFixture({ intent: { args: ["list"] }, startupTimeouts: 1 });
   await f.start("chat_hermes_routine_retry");

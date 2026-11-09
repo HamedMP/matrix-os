@@ -10,6 +10,7 @@ import type { CanonicalProviderRunInput, CanonicalProviderRunEvent } from "./pro
 
 export const HERMES_ROUTINE_TOOL = "matrix_routines";
 export const HERMES_ROUTINE_PIN = "d337b736aa1e8ebecfab043842d13e4a2d2f48a3";
+const HANDSHAKE_TIMEOUT_MS = 2_000;
 const ref = z.string().min(1).max(512);
 const NativeContext = z.object({ task_id: ref, session_id: ref, turn_id: ref, tool_call_id: ref, api_request_id: ref }).strict();
 const Frame = z.discriminatedUnion("type", [
@@ -26,7 +27,7 @@ export function createHermesRoutineSource(options: NativeRoutineCliPort & { inpu
   const controller = new AbortController(), signal = AbortSignal.any([options.input.signal, controller.signal]);
   let socket: Duplex | undefined, ended = false, ready = false, selected = false, prompted = false;
   let liveSession: string | undefined, observed: HermesGatewayCatalog | undefined;
-  let acknowledge: ((enabled: boolean) => void) | undefined, ackTimer: ReturnType<typeof setTimeout> | undefined;
+  let handshake: { resolve(enabled: boolean): void; sentEnable: boolean; timer: ReturnType<typeof setTimeout> } | undefined;
   let registration: ReturnType<NativeRoutineCliPort["runtime"]["registerChat"]> | undefined;
   let invoker: ReturnType<typeof createFixedNativeRoutineCliInvoker> | undefined;
   const calls = new Map<string, AbortController>(); // <=8 active; delete on settlement, source-wide cancellation.
@@ -42,9 +43,21 @@ export function createHermesRoutineSource(options: NativeRoutineCliPort & { inpu
     if (Buffer.byteLength(bytes) > 196608) { end(); return false; }
     try { socket.write(bytes); return true; } catch (error) { console.warn("[hermes-routines] Write unavailable", error instanceof Error ? error.name : "UnknownError"); end(); return false; }
   }
+  function finishHandshake(enabled: boolean) {
+    const pending = handshake;
+    if (!pending) return;
+    handshake = undefined;
+    clearTimeout(pending.timer);
+    pending.resolve(enabled);
+  }
+  function enableWhenReady() {
+    if (!handshake || handshake.sentEnable || !ready || !selected || !live()) return;
+    handshake.sentEnable = true;
+    send({ type: "enable" });
+  }
   function end() {
     if (ended) return; ended = true; controller.abort(); clearTimeout(timer); options.input.signal.removeEventListener("abort", end);
-    clearTimeout(ackTimer); acknowledge?.(false); acknowledge = undefined;
+    finishHandshake(false);
     for (const action of calls.values()) action.abort();
     // Retire the held descriptor itself. Native handler returns unknown under EOF; stdin/stdout remain independent.
     socket?.destroy();
@@ -58,7 +71,8 @@ export function createHermesRoutineSource(options: NativeRoutineCliPort & { inpu
     const parsed = Catalog.safeParse(observed.payload);
     selected = parsed.success && !parsed.data.lazy && Object.keys(parsed.data.tools).length <= 32
       && Object.values(parsed.data.tools).flat().filter(name => name === HERMES_ROUTINE_TOOL).length === 1;
-    if (prompted && !selected) end();
+    if ((prompted || handshake?.sentEnable) && !selected) end();
+    else enableWhenReady();
   }
   async function call(frame: Extract<z.infer<typeof Frame>, { type: "call" }>) {
     const key = JSON.stringify(frame.context);
@@ -95,8 +109,11 @@ export function createHermesRoutineSource(options: NativeRoutineCliPort & { inpu
           let value: unknown; try { value = JSON.parse(line); } catch (error) { console.warn("[hermes-routines] Invalid frame", error instanceof Error ? error.name : "UnknownError"); end(); return; }
           const parsed = Frame.safeParse(value); if (!parsed.success) { end(); return; }
           const frame = parsed.data;
-          if (frame.type === "ready") { if (ready) end(); else ready = true; }
-          else if (frame.type === "enabled") { if (!acknowledge) end(); else { clearTimeout(ackTimer); acknowledge(true); acknowledge = undefined; } }
+          if (frame.type === "ready") {
+            if (ready) end();
+            else { ready = true; enableWhenReady(); }
+          }
+          else if (frame.type === "enabled") { if (!handshake?.sentEnable) end(); else finishHandshake(true); }
           else if (frame.type === "end") end();
           else if (frame.type === "cancel") calls.get(frame.id)?.abort();
           else observe(call(frame)); // Never block native frame consumption on owner/CLI waits.
@@ -107,12 +124,16 @@ export function createHermesRoutineSource(options: NativeRoutineCliPort & { inpu
     observe(event: { type: string; session_id?: string; payload?: unknown }) { if (event.type === "session.info") { observed = event; inspect(); } },
     setSession(id: string) { liveSession = id; inspect(); },
     async beforePrompt() {
-      if (prompted || !ready || !selected || !live()) { end(); return false; }
+      if (prompted || handshake || !live()) { end(); return false; }
       const enabled = await new Promise<boolean>(resolve => {
-        acknowledge = resolve; ackTimer = setTimeout(end, 2000); ackTimer.unref();
-        send({ type: "enable" });
+        const timer = setTimeout(end, HANDSHAKE_TIMEOUT_MS);
+        timer.unref();
+        handshake = { resolve, sentEnable: false, timer };
+        enableWhenReady();
       });
-      prompted = enabled && live(); return prompted;
+      prompted = enabled && selected && live();
+      if (!prompted) end();
+      return prompted;
     },
     end,
     async close() { end(); try { await boundedOperation(() => Promise.allSettled([...cleanup]), 5000); } catch (error) { console.warn("[hermes-routines] Drain unconfirmed", error instanceof Error ? error.name : "UnknownError"); } },

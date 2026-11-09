@@ -850,7 +850,10 @@ export function createHermesChatProviderAdapter(options: {
         await selectedRouteGate?.ready(startupSignal, Math.min(options.requestTimeoutMs ?? 30_000, 30_000));
         startupSignal.throwIfAborted();
         stage = "prompt";
-        if (routines) await withinRun(routines.beforePrompt());
+        if (routines) {
+          await withinRun(routines.beforePrompt());
+          startupSignal.throwIfAborted();
+        }
         HermesPromptResponseSchema.parse(await withinRun(client.request("prompt.submit", {
           session_id: liveSessionId,
           text: input.prompt,
