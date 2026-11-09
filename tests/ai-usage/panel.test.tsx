@@ -55,3 +55,7 @@ describe("AI usage Settings", () => {
     expect(screen.getAllByText("Unavailable").length).toBeGreaterThan(0);
   });
 });
+it("blocks private usage totals, dates and models from session replay",()=>{
+ render(<AiUsagePanel initialEvents={events} now={new Date("2026-11-09T12:00:00Z")} />);
+ expect(screen.getByRole("region",{name:"Personal AI usage"}).classList.contains("ph-no-capture")).toBe(true);
+});

@@ -39,3 +39,12 @@ describe("computer usage scan", () => {
     }
   });
 });
+it("continues when one discovered transcript cannot be read",async()=>{
+ const {chmod}=await import("node:fs/promises");
+ const root=await mkdtemp(join(tmpdir(),"usage-unreadable-"));
+ try{
+  const row=JSON.stringify({type:"assistant",timestamp:"2026-11-09T12:00:00Z",sessionId:"s",message:{id:"m",model:"unknown",usage:{input_tokens:2,output_tokens:3}}})+"\n";
+  await writeFile(join(root,"good.jsonl"),row);await writeFile(join(root,"unreadable.jsonl"),row);await chmod(join(root,"unreadable.jsonl"),0);
+  const result=await scanUsageRoots([root]);expect(result.events).toHaveLength(1);expect(result.issues).toBe(1);
+ }finally{await rm(root,{recursive:true});}
+});

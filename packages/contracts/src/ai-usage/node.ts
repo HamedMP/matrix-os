@@ -82,6 +82,7 @@ export async function scanUsageRoots(
   if (files.length > MAX_USAGE_FILES) issues++;
   for (const { path: file } of files.slice(0, MAX_USAGE_FILES)) {
     signal.throwIfAborted();
+    try {
     const stat = await lstat(file);
     if (
       stat.isSymbolicLink() ||
@@ -111,6 +112,11 @@ export async function scanUsageRoots(
     if (events.length >= MAX_USAGE_EVENTS) {
       issues++;
       break;
+    }
+    } catch(error:unknown) {
+      if(signal.aborted)throw error;
+      if(error instanceof RangeError||(error instanceof Error&&"code"in error&&["ENOENT","EACCES","EPERM","ENOTDIR"].includes(String(error.code)))) {issues++;continue;}
+      throw error;
     }
   }
   const merged = mergeUsageEvents(events);

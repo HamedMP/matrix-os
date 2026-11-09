@@ -87,7 +87,7 @@ export function AiUsagePanel({
     }
   }
   return (
-    <section className="ai-usage" aria-label="Personal AI usage">
+    <section className="ai-usage ph-no-capture" aria-label="Personal AI usage">
       <header className="au-header">
         <div>
           <div className="au-eyebrow">
