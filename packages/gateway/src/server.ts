@@ -1,3 +1,4 @@
+import { startUsageHistory } from "./ai-usage/history-service.js";
 import { createSupervisedBrowserRuntime } from "./startup/browser-approvals.js";
 import { createRuntimeProviderSettings, executableChatDrivers } from "./server/provider-discovery-composition.js";
 import { composePhaseCatalog } from "./chat/phase-catalog-composition.js";
@@ -1825,8 +1826,9 @@ export async function createGateway(config: GatewayConfig) {
     agentRuntimeController: agentRuntimeServices.controller,
     aiProviderService,
   });
+  const usageHistory = kyselyInstance && terminalRuntimeOwnerId ? startUsageHistory({db:kyselyInstance,owner:terminalRuntimeOwnerId,home:homePath}) : undefined;
   registerSettingsRoutes({
-    app, homePath, settingsRoutes, botServices, runtimeOwnerId: terminalRuntimeOwnerId,
+    app, homePath, settingsRoutes, botServices, runtimeOwnerId: terminalRuntimeOwnerId, usageHistory,
     getStartedEnabled: process.env.MATRIX_GET_STARTED_ENABLED === "true",
     getOwnerId: (c) => getOptionalRequestPrincipal(c)?.userId ?? null,
     osViewState: osViewStateRepository ? {
@@ -1951,6 +1953,7 @@ export async function createGateway(config: GatewayConfig) {
         }
       }
 
+      await usageHistory?.dispose();
       heartbeat.stop();
       watchdog.stop();
       proactiveHeartbeat.stop();

@@ -6,6 +6,7 @@ export function createAiUsageRoutes(options: {
   runtimeOwnerId?: string;
   getOwnerId(c: Context): string | null;
   scan?: typeof scanUsageRoots;
+  history?: {read():Promise<unknown>};
 }) {
   const routes = new Hono();
   let pending: ReturnType<typeof scanUsageRoots> | null = null;
@@ -21,6 +22,7 @@ export function createAiUsageRoutes(options: {
         return c.json({ error: "Usage unavailable" }, 403);
       if (Object.keys(c.req.query()).length)
         return c.json({ error: "Invalid usage request" }, 400);
+      if(options.history) return c.json(await options.history.read());
       // One bounded scan per computer; simultaneous authenticated requests coalesce.
       const task =
         pending ??

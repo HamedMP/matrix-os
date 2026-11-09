@@ -11,6 +11,7 @@ export interface SettingsRouteOptions {
   homePath: string;
   runtimeOwnerId?: string;
   settingsRoutes: Hono;
+  usageHistory?: {read():Promise<unknown>};
   /** MATRIX_GET_STARTED_ENABLED=true. The platform sets it on new computers; the surfaces' PostHog flag decides who sees the wizard. */
   getStartedEnabled: boolean;
   getOwnerId(c: Context): string | null;
@@ -19,8 +20,8 @@ export interface SettingsRouteOptions {
   osViewState: Parameters<typeof createOsViewStateRoutes>[0] | null;
 }
 
-export function registerSettingsRoutes({ app, homePath, runtimeOwnerId, settingsRoutes, getStartedEnabled, getOwnerId, botServices, osViewState }: SettingsRouteOptions): void {
-  app.route("/",createAiUsageRoutes({homePath,runtimeOwnerId,getOwnerId}));
+export function registerSettingsRoutes({ app, homePath, runtimeOwnerId, usageHistory, settingsRoutes, getStartedEnabled, getOwnerId, botServices, osViewState }: SettingsRouteOptions): void {
+  app.route("/",createAiUsageRoutes({homePath,runtimeOwnerId,getOwnerId,history:usageHistory}));
   // Spec 636: name suggestions come from the platform over this computer's machine bearer.
   const botNames = createGetStartedBotNameClient({
     platformUrl: process.env.PLATFORM_INTERNAL_URL,

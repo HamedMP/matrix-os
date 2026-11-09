@@ -12,6 +12,8 @@ export interface UsageEvent {
   output: number;
   cacheWrite5m?: number;
   cacheWrite1h?: number;
+  sourceKind?: "response" | "cumulative";
+  cumulative?: { input: number; cached: number; output: number };
 }
 export interface UsageParseResult {
   events: UsageEvent[];
