@@ -193,5 +193,6 @@ describe("remaining real PostgreSQL qualification", () => {
 });
 
 it("assigns the current checkout's real PostgreSQL suites to executable hosted lanes", () => {
-  expect(() => remainingPostgresInventory(process.cwd())).not.toThrow();
+  const inventory = remainingPostgresInventory(process.cwd());
+  expect(inventory.requirements.map(row => row.file)).not.toContain("tests/gateway/routine-creation-ordering.test.ts");
 });
