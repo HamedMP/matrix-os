@@ -1,5 +1,6 @@
 [
   "tests/gateway/chat-attribution-postgres.test.ts",
+  "tests/gateway/chat-native-scheduled-postgres.test.ts",
   "tests/gateway/chat-navigation.test.ts",
   "tests/gateway/chat-provider-binding-postgres.test.ts",
   "tests/gateway/chat-provider-binding-reconciliation.test.ts",

@@ -1,3 +1,7 @@
+import type { ClaudeNativeSessionPool } from "./claude-native-session.js";
+import type { NativeScheduledPhaseRequest } from "./native-scheduled-admission.js";
+import { resolveClaudeSessionSource } from "./claude-session-source.js";
+import { ClaudeNativeProbeCleanupError, disallowNativeCronCreate, resolveClaudeNativeProtocol } from "./claude-native-protocol.js";
 import { createClaudeRoutineHook } from "./claude-routine-hook.js";
 import { createClaudeRoutineExecution, type NativeRoutineCliPort } from "./claude-routine-execution.js";
 import type { SharedBrowserBroker } from "../shared-browser/broker.js";
@@ -43,7 +47,7 @@ import {
   projectAssistantTextWithCaptures,
   type CapturedAssistantText,
 } from "./safe-activity-projection.js";
-import { projectClaudeToolPreview } from "./claude-tool-preview.js";
+import { projectClaudeToolPreview, claudeActivity, canonicalClaudeActivityEvent, type ClaudeActivity } from "./claude-tool-preview.js";
 import { createAssistantCredentialEmitter } from "./assistant-credential-emitter.js";
 
 const ClaudeChatStateSchema = z.object({
@@ -83,15 +87,6 @@ type ClaudeChatState = z.infer<typeof ClaudeChatStateSchema>;
 const MAX_FRAME_BYTES = 16 * 1024 * 1024;
 const MAX_STDERR_BYTES = 8_192;
 
-type ClaudeActivity = {
-  activityId: string;
-  kind: ReturnType<typeof claudeActivity>["kind"] | "reasoning";
-  label: string;
-  preview?: string;
-  previewKind?: "command" | "path" | "text";
-  detail?: string;
-};
-
 function definedEnvironment(
   value: Record<string, string | undefined>,
 ): Record<string, string> {
@@ -111,57 +106,16 @@ function permissionMode(value: string, interactionMode: string) {
   throw new Error("Unsupported Claude permission mode");
 }
 
-function claudeActivity(name: string) {
-  const normalized = name.trim().toLowerCase();
-  if (["bash", "shell", "terminal", "execute", "run_command"].includes(normalized)) {
-    return { kind: "command" as const, label: "Run command" };
-  }
-  if (["write", "edit", "apply_patch", "notebookedit"].includes(normalized)) {
-    return { kind: "file_change" as const, label: "Update file" };
-  }
-  if (["websearch", "webfetch", "web_search"].includes(normalized)) {
-    return { kind: "web_search" as const, label: "Search the web" };
-  }
-  if (["task", "agent", "delegate"].includes(normalized)) {
-    return { kind: "delegation" as const, label: "Delegated task" };
-  }
-  return { kind: "dynamic_tool" as const, label: name };
+export interface ClaudeChatProviderAdapter extends CanonicalChatProviderAdapter<ClaudeChatState> {
+  bindNativeScheduledHandler(handler: (request: NativeScheduledPhaseRequest) => Promise<void>): void;
+  closeNativeSessions(): Promise<void>;
 }
-
-function canonicalClaudeActivityEvent(
-  activity: ClaudeActivity,
-  status: "running" | "completed",
-): CanonicalProviderRunEvent {
-  const fullProjection = CanonicalProviderRunEventSchema.safeParse({
-    type: "agent.activity",
-    ...activity,
-    status,
-  });
-  if (fullProjection.success) return fullProjection.data;
-
-  let retained = CanonicalProviderRunEventSchema.parse({
-    type: "agent.activity",
-    activityId: activity.activityId,
-    kind: activity.kind,
-    label: activity.label,
-    status,
-  });
-  // Validate optional fields independently: an unavailable path detail must
-  // not erase a safe command preview. Preview and kind remain one atomic pair.
-  for (const fields of [
-    activity.preview === undefined ? undefined : { preview: activity.preview, previewKind: activity.previewKind },
-    activity.detail === undefined ? undefined : { detail: activity.detail },
-  ]) {
-    if (!fields) continue;
-    const candidate = CanonicalProviderRunEventSchema.safeParse({ ...retained, ...fields });
-    if (candidate.success) retained = candidate.data;
-  }
-  return retained;
-}
-
 
 export function createClaudeChatProviderAdapter(options: {
   homePath: string;
+  nativeSessions?: ClaudeNativeSessionPool;
+  resolveSessionSource?: typeof resolveClaudeSessionSource;
+  resolveNativeProtocol?: typeof resolveClaudeNativeProtocol;
   routineCli?: NativeRoutineCliPort;
   credentialKey?: Buffer;
   spawnFn?: CanonicalCliSpawn;
@@ -175,7 +129,7 @@ export function createClaudeChatProviderAdapter(options: {
   matrixMcpCapabilityIssuer?: MatrixMcpCapabilityIssuer;
   previewDriveClient?: Pick<PreviewDrivePlatformClient, "grantAction">;
   customMcpApprovalClient?: CustomMcpApprovalClient;
-}): CanonicalChatProviderAdapter<ClaudeChatState> {
+}): ClaudeChatProviderAdapter {
   const activeRuns = new Map<string, {
     ownerId: string;
     ownerType: CanonicalProviderRunInput["owner"]["type"];
@@ -746,7 +700,39 @@ export function createClaudeChatProviderAdapter(options: {
     };
 
     const lines = createBoundedCliLines(MAX_FRAME_BYTES, parseLine);
-    void runCanonicalCli({
+    const runPhase = options.nativeSessions ? async (transport: Parameters<typeof runCanonicalCli>[0]) => {
+      const preparingAt = Date.now();
+      const remainingLifetime = () => {
+        if (transport.timeoutMs === undefined) return {};
+        const timeoutMs = transport.timeoutMs - (Date.now() - preparingAt);
+        if (timeoutMs <= 0) throw new CanonicalCliError("timeout");
+        return { timeoutMs };
+      };
+      try {
+        const protocol = await (options.resolveNativeProtocol ?? resolveClaudeNativeProtocol)({
+          command: transport.command, cwd: transport.cwd, env: transport.env, signal: transport.signal,
+          spawnFn: transport.spawnFn, timeoutMs: transport.timeoutMs,
+        });
+        transport.signal.throwIfAborted();
+        if (!protocol.qualified) {
+          if (input.nativeScheduled) throw new Error("Native scheduled protocol unavailable");
+          await options.nativeSessions!.retireIdle(input);
+          if (transport.signal.aborted) throw new CanonicalCliError("aborted");
+          return await runCanonicalCli({ ...transport, command: protocol.command,
+            args: disallowNativeCronCreate(transport.args), ...remainingLifetime() });
+        }
+        const source = await (options.resolveSessionSource ?? resolveClaudeSessionSource)({
+          homePath: options.homePath, command: protocol.command, cwd: launch.cwd, args: launch.args, env: runEnv, input,
+        });
+        return await options.nativeSessions!.runTurn({ ...transport, command: protocol.command, ...remainingLifetime(),
+          input, sourceFingerprint: source.fingerprint, schedulingAllowed: source.schedulingAllowed });
+      } catch (error: unknown) {
+        if (error instanceof ClaudeNativeProbeCleanupError) input.onCleanupUnconfirmed?.();
+        await cancelScheduledSource(input);
+        throw transport.signal.aborted ? new CanonicalCliError("aborted") : error;
+      }
+    } : runCanonicalCli;
+    void runPhase({
       command: launch.command,
       args: launch.args,
       cwd: launch.cwd,
@@ -852,6 +838,7 @@ export function createClaudeChatProviderAdapter(options: {
         for await (const event of execute({
           ...input,
           prompt: steerPrompt,
+          nativeScheduled: undefined,
           parts: [{ type: "text", text: steerPrompt }],
           resumeState: emittedState,
         }, emittedState, blockIds, approvalReady && cleared)) {
@@ -931,13 +918,29 @@ export function createClaudeChatProviderAdapter(options: {
     }
   }
 
+  async function cancelScheduledSource(input: CanonicalProviderRunInput) {
+    if (!input.nativeScheduled || !options.nativeSessions) return;
+    try { await options.nativeSessions.cancel({ owner: input.owner, chatId: input.chatId,
+      runId: input.nativeScheduled.sourceRunId }); }
+    catch (error: unknown) {
+      input.onCleanupUnconfirmed?.();
+      console.warn("[chat-claude] Native scheduled source cleanup unavailable", error instanceof Error ? error.name : "UnknownError");
+    }
+  }
+  async function* guardedExecute(input: CanonicalProviderRunInput<ClaudeChatState>, resume: boolean) {
+    try { yield* execute(input, resume ? ClaudeChatStateSchema.parse(input.resumeState) : undefined); }
+    catch (error: unknown) { await cancelScheduledSource(input); throw error; }
+  }
+
   return {
     driverKind: "claude_code",
     stateSchemaVersion: 1,
+    bindNativeScheduledHandler: handler => { options.nativeSessions?.setScheduledHandler(handler); },
+    closeNativeSessions: () => options.nativeSessions?.close() ?? Promise.resolve(),
     parseState: (value) => ClaudeChatStateSchema.parse(value),
     serializeState: (value) => ClaudeChatStateSchema.parse(value),
-    start: (input) => execute(input),
-    resume: (input) => execute(input, ClaudeChatStateSchema.parse(input.resumeState)),
+    start: (input) => guardedExecute(input, false),
+    resume: (input) => guardedExecute(input, true),
     async submitInput(input) {
       const active = activeRuns.get(input.runId);
       if (!active || active.ownerId !== input.owner.ownerId || active.ownerType !== input.owner.type || active.chatId !== input.chatId) throw new Error("Input Run unavailable");
@@ -956,6 +959,7 @@ export function createClaudeChatProviderAdapter(options: {
       const active = activeRuns.get(input.runId);
       if (active && active.ownerId === input.owner.ownerId && active.ownerType === input.owner.type
         && active.chatId === input.chatId) active.abort();
+      await options.nativeSessions?.cancel(input);
     },
     async steer(input) {
       const active = activeRuns.get(input.runId);
