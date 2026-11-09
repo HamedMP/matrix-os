@@ -841,9 +841,9 @@ jobs:
     needs: changes
     if: always() && !cancelled() && needs.changes.result == 'success' && (needs.changes.outputs.should_run == 'true')
     runs-on: ubuntu-latest
-    # Main needed cleanup headroom at 14m. This PR also adds the full
-    # routine cohort, measured at 445s, so retain its bounded 25m budget.
-    timeout-minutes: 25
+    # The hosted routine and funded suites reached 25m before the final
+    # PostgreSQL cohort. Reserve 3m for it and 2m for cleanup and artifacts.
+    timeout-minutes: 30
     services:
       postgres:
         # ECR Public anonymous pulls hit "toomanyrequests: Data limit exceeded" on shared runner IPs,
