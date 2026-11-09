@@ -4,7 +4,7 @@ import { join, resolve } from "node:path";
 import { claudeFixture } from "./routine-cli-claude-support.js";
 import { createHermesChatProviderAdapter } from "../../../packages/gateway/src/chat/hermes-provider-adapter.js";
 /** Actual admitted Hermes adapter/source/fixed CLI/private IPC/HTTP/PG. Public native API, pin, auth and model are separate fixtures. */
-export async function hermesFixture(native: { intent: { args: string[]; stdin?: string }; hold?: boolean; duplicate?: boolean; missingCatalog?: boolean; loseEnableAck?: boolean; startupTimeouts?: number; frame?: unknown }) {
+export async function hermesFixture(native: { intent: { args: string[]; stdin?: string }; hold?: boolean; duplicate?: boolean; missingCatalog?: boolean; loseEnableAck?: boolean; startupTimeouts?: number; startupProof?: "late_ready" | "late_catalog" | "no_ready"; frame?: unknown }) {
   const f = await claudeFixture({ sourceDriver: "hermes" }), home = await mkdtemp("/tmp/rh-");
   const records = join(home, "records"), control = join(home, "control"), config = join(home, "fixture.json");
   await writeFile(records, ""); await writeFile(config, JSON.stringify({ ...native, records, control }));
