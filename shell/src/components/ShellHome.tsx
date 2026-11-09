@@ -2,7 +2,7 @@
 
 import { GetStartedAnswersProvider, GettingStartedVisibilityProvider, resolveRecipeHandoff, type ChatCollaborationView } from "@matrix-os/ui";
 import { useState, useCallback, useEffect, useRef, useSyncExternalStore } from "react";
-import { useAuth } from "@clerk/nextjs";
+import { useAuth, useUser } from "@clerk/nextjs";
 import { useTheme } from "@/hooks/useTheme";
 import { useDesktopConfig } from "@/hooks/useDesktopConfig";
 import { useCanonicalChatState } from "@/hooks/useCanonicalChatState";
@@ -21,6 +21,7 @@ import { createShellSnapshotScope } from "@/lib/shell-snapshot-cache";
 import { createShellChatNavigationScope } from "@/lib/chat-navigation-scope";
 import { getGatewayUrl } from "@/lib/gateway";
 import { isSelfHostedRuntime, SELF_HOSTED_SHELL_USER_ID } from "@/lib/self-host-mode";
+import { AppSiteOwnerIdentityProvider } from "@/components/app-sites/AppSiteOwnerIdentity";
 
 const LAUNCHABLE_BUILT_IN_PATHS = new Set([
   "__terminal__",
@@ -59,7 +60,7 @@ const localAuthBypass = process.env.NEXT_PUBLIC_E2E_TEST_BYPASS === "1";
 
 export function ShellHome(props: ShellHomeProps = {}) {
   if (localAuthBypass) {
-    return <ShellHomeContent {...props} userId={null} sessionId={null} />;
+    return <ShellHomeContent {...props} userId={null} sessionId={null} ownerIdentity="local-user" />;
   }
 
   // Self-hosted documents render without ClerkProvider, so useAuth must never run there.
@@ -69,6 +70,7 @@ export function ShellHome(props: ShellHomeProps = {}) {
       <ShellHomeBody
         userId={SELF_HOSTED_SHELL_USER_ID}
         sessionId={null}
+        ownerIdentity={SELF_HOSTED_SHELL_USER_ID}
         initialCollaborationView={props.initialCollaborationView}
       />
     );
@@ -83,18 +85,22 @@ function ManagedShellHome(props: ShellHomeProps) {
 
 function ClerkShellHome(props: ShellHomeProps) {
   const { userId, sessionId } = useAuth();
-  return <ShellHomeContent {...props} userId={userId} sessionId={sessionId} />;
+  const { user } = useUser();
+  const ownerIdentity = user?.primaryEmailAddress?.emailAddress ?? userId ?? "signed-in-user";
+  return <ShellHomeContent {...props} userId={userId} sessionId={sessionId} ownerIdentity={ownerIdentity} />;
 }
 
 function ShellHomeContent({
   initialCollaborationView,
   userId,
   sessionId,
-}: ShellHomeProps & { userId: string | null | undefined; sessionId: string | null | undefined }) {
+  ownerIdentity,
+}: ShellHomeProps & { userId: string | null | undefined; sessionId: string | null | undefined; ownerIdentity: string }) {
   return (
     <ShellHomeBody
       userId={userId}
       sessionId={sessionId}
+      ownerIdentity={ownerIdentity}
       initialCollaborationView={initialCollaborationView}
     />
   );
@@ -103,8 +109,9 @@ function ShellHomeContent({
 function ShellHomeBody({
   userId,
   sessionId,
+  ownerIdentity,
   initialCollaborationView,
-}: ShellHomeProps & { userId: string | null | undefined; sessionId: string | null | undefined }) {
+}: ShellHomeProps & { userId: string | null | undefined; sessionId: string | null | undefined; ownerIdentity: string }) {
   const isMobile = useMobileViewport();
   // Canonical Chat captures this transport on mount. Shared navigation rewrites
   // history without replacing it; actual Computer switches reload the document.
@@ -168,6 +175,7 @@ function ShellHomeBody({
 
   const gettingStartedScope = JSON.stringify([cacheScope?.storageKey ?? cachePathname, sessionId, runtimeSlot]);
   return (
+    <AppSiteOwnerIdentityProvider value={ownerIdentity}>
     <GettingStartedVisibilityProvider scope={gettingStartedScope}>
     <GetStartedAnswersProvider scope={gettingStartedScope}>
     <ChatProvider value={chat}>
@@ -199,5 +207,6 @@ function ShellHomeBody({
     </ChatProvider>
     </GetStartedAnswersProvider>
     </GettingStartedVisibilityProvider>
+    </AppSiteOwnerIdentityProvider>
   );
 }

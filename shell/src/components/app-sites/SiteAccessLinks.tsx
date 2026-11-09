@@ -9,8 +9,9 @@ import type { useAppSite } from "./use-app-site";
 type AppSiteState = ReturnType<typeof useAppSite>;
 
 // react-doctor-disable-next-line react-doctor/no-high-complexity-react-function -- one authoritative one-time-link lifecycle intentionally serves the standard publishing view and the collaboration-style invite presentation so their create/revoke/secret handling cannot drift.
-export function SiteAccessLinks({ appSlug, client, site, state, disabled, variant = "default" }: {
+export function SiteAccessLinks({ appSlug, client, site, state, disabled, variant = "default", onPublicationChange }: {
   appSlug: string; client: SiteClient; site: SiteRecord | null; state: AppSiteState; disabled: boolean; variant?: "default" | "invite";
+  onPublicationChange?: (site: SiteRecord) => void;
 }) {
   const [links, setLinks] = useState<SiteAccessLinkSummary[]>([]);
   const [generatedLink, setGeneratedLink] = useState<{ url: string; publicationKey: string } | null>(null);
@@ -32,9 +33,36 @@ export function SiteAccessLinks({ appSlug, client, site, state, disabled, varian
     return () => controller.abort();
   }, [appSlug, client, ready, site?.id, reload]);
   if (!invite && !ready) return null;
-  const create = () => !site || !ready || !publicationKey ? Promise.resolve(false) : state.mutate(
-    signal => client.createAccessLink(appSlug, { baseRevision: site.revision }, signal),
-    result => { setLinks(current => [result.link, ...current.filter(link => link.id !== result.link.id)]); setGeneratedLink({ url: result.url, publicationKey }); },
+  const create = () => state.mutate(async signal => {
+    let publication = site;
+    if (!publication || publication.status !== "published") {
+      const reviewedConfig = await client.getConfig(appSlug, signal);
+      publication = await client.deploy(appSlug, {
+        title: publication?.title ?? appSlug,
+        description: publication?.description ?? "",
+        slug: publication?.slug ?? null,
+        accessMode: "private_link",
+        baseRevision: publication?.revision ?? 0,
+        reviewedConfig,
+      }, signal);
+    } else if (publication.accessMode !== "private_link") {
+      publication = await client.update(appSlug, {
+        title: publication.title,
+        description: publication.description,
+        slug: publication.slug,
+        accessMode: "private_link",
+        baseRevision: publication.revision,
+      }, signal);
+    }
+    const created = await client.createAccessLink(appSlug, { baseRevision: publication.revision }, signal);
+    return { ...created, publication };
+  },
+    result => {
+      onPublicationChange?.(result.publication);
+      setLinksLoaded(true);
+      setLinks(current => [result.link, ...current.filter(link => link.id !== result.link.id)]);
+      setGeneratedLink({ url: result.url, publicationKey: `${result.publication.id}:${result.publication.revision}` });
+    },
     invite ? "Invite link created." : "One-time link created.",
   );
   const revoke = (linkId: string) => state.action(async signal => {
@@ -43,12 +71,8 @@ export function SiteAccessLinks({ appSlug, client, site, state, disabled, varian
     setLinks(current => current.filter(link => link.id !== revoked));
     setGeneratedLink(current => current?.url.includes(revoked) ? null : current);
   }, "Link revoked.");
-  const readinessCopy = ready
-    ? "One-time access for one browser. Unclaimed links expire after 7 days."
-    : site?.status === "published"
-      ? "Switch publishing to Private — one-time links below to enable invites."
-      : "Publish privately below to enable one-time invite links.";
-  return <section aria-label={invite ? "Invite link" : "One-time links"} className={invite ? "space-y-3 border-t pt-3" : "space-y-3 rounded-lg border p-3"}>
+  const readinessCopy = "Unclaimed links expire after 7 days.";
+  return <section aria-label={invite ? "Invite link" : "One-time links"} className={invite ? "space-y-2 border-t pt-2" : "space-y-3 rounded-lg border p-3"}>
     <div className={invite ? "flex items-center justify-between gap-4" : "space-y-1"}>
       <div className={invite ? "flex min-w-0 items-start gap-3" : "space-y-1"}>
         {invite ? <span aria-hidden="true" className="mt-0.5 text-base">↗</span> : null}
@@ -57,7 +81,7 @@ export function SiteAccessLinks({ appSlug, client, site, state, disabled, varian
           <p className="text-xs">{invite ? readinessCopy : "Each link can be claimed by one browser. Unclaimed links expire after 7 days; access lasts 30 days."}</p>
         </div>
       </div>
-      {invite ? <Button size="sm" disabled={disabled || !ready || !linksLoaded || links.length >= SITE_MAX_ACCESS_LINKS} onClick={() => void create()}>Create invite link</Button> : null}
+      {invite ? <Button aria-label="Create invite link" size="sm" disabled={disabled || (ready && (!linksLoaded || links.length >= SITE_MAX_ACCESS_LINKS))} onClick={() => void create()}>Create</Button> : null}
     </div>
     {!invite ? <Button size="sm" disabled={disabled || !linksLoaded || links.length >= SITE_MAX_ACCESS_LINKS} onClick={() => void create()}>Create one-time link</Button> : null}
     {ready && generatedUrl ? <div className="ph-no-capture space-y-2 rounded border p-2" role="status">

@@ -9,16 +9,16 @@ import { formatSiteDate } from "./format-site-date";
 import { SiteSubmissions } from "./SiteSubmissions";
 import { SiteAccessLinks } from "./SiteAccessLinks";
 
-export function AppSitePanel(props: { appSlug: string; client: SiteClient; variant?: "default" | "share" }) {
+export function AppSitePanel(props: { appSlug: string; client: SiteClient; variant?: "default" | "share"; ownerIdentity?: string }) {
   return <AppSitePanelSession key={props.appSlug} {...props} />;
 }
-function AppSitePanelSession({ appSlug, client, variant = "default" }: { appSlug: string; client: SiteClient; variant?: "default" | "share" }) {
+function AppSitePanelSession({ appSlug, client, variant = "default", ownerIdentity = "local-user" }: { appSlug: string; client: SiteClient; variant?: "default" | "share"; ownerIdentity?: string }) {
   const state = useAppSite(appSlug, client);
   const formKey = `${state.loading ? "loading" : "ready"}:${state.metadataEpoch}`;
-  return <AppSiteForm key={formKey} appSlug={appSlug} client={client} state={state} variant={variant} />;
+  return <AppSiteForm key={formKey} appSlug={appSlug} client={client} state={state} variant={variant} ownerIdentity={ownerIdentity} />;
 }
-// react-doctor-disable-next-line react-doctor/no-high-complexity-react-function -- The pre-existing form coordinates one publishing draft and delegates each access, version, submission, and deployment section below; this change only adds a visual variant without altering that state machine.
-function AppSiteForm({ appSlug, client, state, variant }: { appSlug: string; client: SiteClient; state: ReturnType<typeof useAppSite>; variant: "default" | "share" }) {
+// react-doctor-disable-next-line react-doctor/no-high-complexity-react-function -- This form coordinates one publishing draft and delegates invite, access, version, submission, and deployment workflows to focused sections below.
+function AppSiteForm({ appSlug, client, state, variant, ownerIdentity }: { appSlug: string; client: SiteClient; state: ReturnType<typeof useAppSite>; variant: "default" | "share"; ownerIdentity: string }) {
   const fieldId = useId();
   const { site, loading, pending, loadFailed, action } = state;
   const [title, setTitle] = useState(site?.title ?? appSlug);
@@ -49,7 +49,7 @@ function AppSiteForm({ appSlug, client, state, variant }: { appSlug: string; cli
     {reviewOpen ? <SiteDeploymentReview {...{ config, reviewed, setReviewed }} /> : null}
     <SitePublicationManagement {...{ appSlug, client, state, disabled }} showAccessLinks={!share} />
   </>;
-  return <section className={share ? "space-y-3 text-[13px] [&_div.border]:border-[var(--matrix-border)] [&_fieldset]:rounded-lg [&_fieldset]:border [&_fieldset]:border-[var(--matrix-border)] [&_fieldset]:bg-[var(--matrix-card)] [&_fieldset]:p-3 [&_details]:border-[var(--matrix-border)] [&_details]:bg-[var(--matrix-card)] [&_li.border]:border-[var(--matrix-border)] [&_pre]:border-[var(--matrix-border)] [&_select]:border-[var(--matrix-border)] [&_select]:bg-[var(--matrix-card)] [&_select]:text-[var(--matrix-fg)]" : "space-y-4"} aria-label="App publishing" style={{
+  return <section className={share ? "space-y-2 text-[13px] [&_div.border]:border-[var(--matrix-border)] [&_fieldset]:rounded-lg [&_fieldset]:border [&_fieldset]:border-[var(--matrix-border)] [&_fieldset]:bg-[var(--matrix-card)] [&_fieldset]:p-3 [&_details]:border-[var(--matrix-border)] [&_details]:bg-[var(--matrix-card)] [&_li.border]:border-[var(--matrix-border)] [&_pre]:border-[var(--matrix-border)] [&_select]:border-[var(--matrix-border)] [&_select]:bg-[var(--matrix-card)] [&_select]:text-[var(--matrix-fg)]" : "space-y-4"} aria-label="App publishing" style={{
       "--matrix-fg": `var(--foreground, var(--text-primary, ${desktopPalette.forest}))`,
       "--matrix-card": `var(--card, var(--bg-surface, var(--background, ${desktopPalette.paper})))`,
       "--matrix-input": "var(--input, var(--border, var(--border-default)))",
@@ -60,7 +60,10 @@ function AppSiteForm({ appSlug, client, state, variant }: { appSlug: string; cli
       "--matrix-radius-md": "8px", "--matrix-font-sans": desktopFonts.sans,
       color: "var(--matrix-fg)",
     } as CSSProperties}>
-    {share ? <ShareInviteSection {...{ appSlug, client, state, disabled }} /> : null}
+    {share ? <ShareInviteSection {...{ appSlug, client, state, disabled, ownerIdentity }} onPublicationChange={(publication) => {
+      setAccessMode("private_link");
+      state.syncSite(publication);
+    }} /> : null}
     <SitePublicationStatus state={state} onRefreshPublication={() => { invalidateReview(); void state.reloadPublication(); }} />
     {share ? <SharePublishingDisclosure>{publishingControls}</SharePublishingDisclosure> : publishingControls}
   </section>;
@@ -75,7 +78,7 @@ function SharePublishingDisclosure({ children }: { children: ReactNode }) {
       aria-expanded={open}
       aria-controls={contentId}
       onClick={() => setOpen(value => !value)}
-      className="flex w-full items-center justify-between gap-4 px-3 py-3 text-left"
+      className="flex w-full items-center justify-between gap-4 px-3 py-2.5 text-left"
     >
       <span className="min-w-0">
         <span className="block text-sm font-semibold">Publish app to a permanent URL</span>
@@ -90,25 +93,25 @@ function SharePublishingDisclosure({ children }: { children: ReactNode }) {
   </section>;
 }
 
-function ShareInviteSection({ appSlug, client, state, disabled }: SiteSectionProps) {
-  return <section aria-label="Invite" className="space-y-3 rounded-lg border bg-[var(--matrix-card)] p-3" style={{ borderColor: "var(--matrix-border)" }}>
+function ShareInviteSection({ appSlug, client, state, disabled, ownerIdentity, onPublicationChange }: SiteSectionProps & { ownerIdentity: string; onPublicationChange: (site: SiteRecord) => void }) {
+  return <section aria-label="Invite" className="space-y-2 rounded-lg border bg-[var(--matrix-card)] p-2.5" style={{ borderColor: "var(--matrix-border)" }}>
     <div className="space-y-1">
-      <h3 className="text-base font-semibold">Invite</h3>
-      <p className="text-xs leading-5" style={{ color: "var(--muted-foreground, var(--text-secondary, GrayText))" }}>Invite collaborators to use this app. Email invitations are not available yet.</p>
+      <h3 className="text-sm font-semibold">Invite</h3>
+      <p className="text-xs leading-4" style={{ color: "var(--muted-foreground, var(--text-secondary, GrayText))" }}>Invite collaborators to use this app. Email invitations are not available yet.</p>
     </div>
     <div className="grid grid-cols-[minmax(0,1fr)_auto] gap-2">
-      <input aria-label="Invite by email" disabled placeholder="Invite by email" className="h-9 min-w-0 rounded-md border px-3 text-sm disabled:cursor-not-allowed" style={{ borderColor: "var(--matrix-border)", background: "var(--muted, var(--matrix-card))", color: "var(--muted-foreground, var(--text-secondary, GrayText))" }} />
+      <input aria-label="Invite by email" disabled placeholder="Invite by email" className="h-8 min-w-0 rounded-md border px-3 text-sm disabled:cursor-not-allowed" style={{ borderColor: "var(--matrix-border)", background: "var(--muted, var(--matrix-card))", color: "var(--muted-foreground, var(--text-secondary, GrayText))" }} />
       <Button disabled size="sm">Invite</Button>
     </div>
-    <div className="flex items-center gap-3 py-1">
-      <span aria-hidden="true" className="flex size-8 shrink-0 items-center justify-center rounded-full text-sm font-semibold" style={{ background: "var(--matrix-primary)", color: "var(--matrix-primary-fg)" }}>Y</span>
+    <div className="flex items-center gap-3">
+      <span aria-hidden="true" className="flex size-7 shrink-0 items-center justify-center rounded-full text-sm font-semibold" style={{ background: "var(--matrix-primary)", color: "var(--matrix-primary-fg)" }}>Y</span>
       <div className="min-w-0 flex-1">
-        <p className="text-sm font-medium">You</p>
+        <p className="truncate text-sm font-medium" title={`You (${ownerIdentity})`}>You ({ownerIdentity})</p>
         <p className="text-xs" style={{ color: "var(--muted-foreground, var(--text-secondary, GrayText))" }}>App owner</p>
       </div>
       <span className="text-sm font-medium" style={{ color: "var(--muted-foreground, var(--text-secondary, GrayText))" }}>Owner</span>
     </div>
-    <SiteAccessLinks appSlug={appSlug} client={client} site={state.site} state={state} disabled={disabled || state.conflict} variant="invite" />
+    <SiteAccessLinks appSlug={appSlug} client={client} site={state.site} state={state} disabled={disabled || state.conflict} variant="invite" onPublicationChange={onPublicationChange} />
   </section>;
 }
 

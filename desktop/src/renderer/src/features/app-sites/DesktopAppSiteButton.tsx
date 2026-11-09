@@ -1,7 +1,9 @@
 import { useEffect, useMemo, useState } from "react";
+import { AppSiteSharePopover } from "../../../../../../shell/src/components/app-sites/AppSiteSharePopover";
 import { AppSiteSharePanel } from "../../../../../../shell/src/components/app-sites/AppSiteSharePanel";
 import { createDesktopSiteClient } from "./site-client";
-import { Button, Dialog } from "../../design/primitives";
+import { DESKTOP_Z_INDEX } from "../../design/layering";
+import { Button } from "../../design/primitives";
 import { useConnection } from "../../stores/connection";
 import { useUi } from "../../stores/ui";
 
@@ -15,6 +17,8 @@ export function DesktopAppSiteButton({
   const api = useConnection(state => state.api);
   const runtimeSlot = useConnection(state => state.runtimeSlot);
   const authGeneration = useConnection(state => state.authGeneration);
+  const email = useConnection(state => state.email);
+  const userId = useConnection(state => state.userId);
   const [open, setOpen] = useState(false);
   const acquire = useUi(state => state.acquireRendererOverlay);
   const release = useUi(state => state.releaseRendererOverlay);
@@ -24,8 +28,7 @@ export function DesktopAppSiteButton({
     return createDesktopSiteClient(api, runtimeSlot);
   }, [api, runtimeSlot, authGeneration]);
   return (
-    <Dialog
-      modal={false}
+    <AppSiteSharePopover
       onOpenChange={setOpen}
       portalContainer={portalContainer}
       trigger={(
@@ -38,19 +41,17 @@ export function DesktopAppSiteButton({
         </Button>
       )}
       open={open}
-      onClose={() => setOpen(false)}
-      title="Share app"
-      width={576}
-      placement="center"
+      zIndex={DESKTOP_Z_INDEX.popover}
     >
       {open && client ? (
         <AppSiteSharePanel
           key={`${runtimeSlot}:${authGeneration}:${appSlug}`}
           appSlug={appSlug}
           client={client}
+          ownerIdentity={email ?? userId ?? "local-user"}
           onClose={() => setOpen(false)}
         />
       ) : null}
-    </Dialog>
+    </AppSiteSharePopover>
   );
 }

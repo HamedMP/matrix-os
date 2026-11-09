@@ -2,7 +2,8 @@
 import { useState, type RefObject } from "react";
 import { SHELL_Z_INDEX } from "../../lib/shell-layering";
 import { Button } from "../ui/button";
-import { Dialog, DialogContent, DialogDescription, DialogTitle, DialogTrigger } from "../ui/dialog";
+import { AppSiteSharePopover } from "./AppSiteSharePopover";
+import { useAppSiteOwnerIdentity } from "./AppSiteOwnerIdentity";
 import { AppSiteSharePanel } from "./AppSiteSharePanel";
 import { webSiteClient } from "./web-site-client";
 export function AppSiteButton({
@@ -15,14 +16,19 @@ export function AppSiteButton({
   portalContainerRef?: RefObject<HTMLElement | null>;
 }) {
   const [open, setOpen] = useState(false);
+  const ownerIdentity = useAppSiteOwnerIdentity();
   const [resolvedPortalContainer, setResolvedPortalContainer] = useState<HTMLElement | null>(portalContainer ?? null);
   const handleOpenChange = (nextOpen: boolean) => {
     if (nextOpen) setResolvedPortalContainer(portalContainerRef?.current ?? portalContainer ?? null);
     setOpen(nextOpen);
   };
   return (
-    <Dialog modal={false} open={open} onOpenChange={handleOpenChange}>
-      <DialogTrigger asChild>
+    <AppSiteSharePopover
+      open={open}
+      onOpenChange={handleOpenChange}
+      portalContainer={resolvedPortalContainer}
+      zIndex={SHELL_Z_INDEX.appDialog}
+      trigger={(
         <Button
           size="sm"
           variant="outline"
@@ -30,27 +36,17 @@ export function AppSiteButton({
         >
           Publish app
         </Button>
-      </DialogTrigger>
-      <DialogContent
-        portalContainer={resolvedPortalContainer}
-        showCloseButton={false}
-        style={{ zIndex: SHELL_Z_INDEX.appDialog }}
-        overlayStyle={{ background: "rgba(0, 0, 0, 0.72)" }}
-        className="max-h-[calc(100%-2rem)] gap-0 overflow-hidden border-border bg-background p-0 text-foreground sm:max-w-xl"
-      >
-        <DialogTitle className="sr-only">Share app</DialogTitle>
-        <DialogDescription className="sr-only">
-          Publish your app and manage access, links, versions, and visitor responses.
-        </DialogDescription>
-        {open ? (
-          <AppSiteSharePanel
-            key={appSlug}
-            appSlug={appSlug}
-            client={webSiteClient}
-            onClose={() => setOpen(false)}
-          />
-        ) : null}
-      </DialogContent>
-    </Dialog>
+      )}
+    >
+      {open ? (
+        <AppSiteSharePanel
+          key={appSlug}
+          appSlug={appSlug}
+          client={webSiteClient}
+          ownerIdentity={ownerIdentity}
+          onClose={() => setOpen(false)}
+        />
+      ) : null}
+    </AppSiteSharePopover>
   );
 }
