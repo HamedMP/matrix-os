@@ -120,12 +120,16 @@ it.each(["turn completion", "private pipe EOF", "receiver EOF", "wrapper overflo
 
 it("two native request IDs for one call execute the actual CLI once and retain the explicit business UUID", async () => {
   const requestId = "de000000-0000-4000-8000-000000000604", chatId = "chat_codex_duplicate";
-  f = await codexFixture({ intent: { args: ["propose", "--input", "-", "--request-id", requestId], stdin: JSON.stringify(proposal) }, calls: [{ callId: "same_native_call" }, { callId: "same_native_call" }] });
+  f = await codexFixture({ intent: { args: ["propose", "--input", "-", "--request-id", requestId], stdin: JSON.stringify(proposal) }, calls: [{ callId: "same_native_call" }, { callId: "same_native_call" }], holdAfterResult: true });
   const admitted = await f.start(chatId);
   await expect.poll(() => f!.sourceEvents.find(event => event.type === "approval.requested"), { timeout: 5000 }).toMatchObject({ type: "approval.requested" });
   const event = f.sourceEvents.find(event => event.type === "approval.requested")!;
   if (event.type !== "approval.requested") throw new Error("Missing exact approval");
-  await f.approve(event, chatId, admitted.run.id); await f.f.canonical.drain();
+  await f.approve(event, chatId, admitted.run.id);
+  await expect.poll(async () => (await f!.frames()).filter(frame => [107, 108].includes(frame.id)), { timeout: 5000 }).toHaveLength(2);
+  await expect.poll(() => f!.data.db.selectFrom("bot_tasks").selectAll().execute(), { timeout: 5000 }).toHaveLength(1);
+  await writeFile(f.controlFile, "complete");
+  await f.f.canonical.drain();
   const results = (await f.frames()).filter(frame => [107, 108].includes(frame.id));
   expect(results).toHaveLength(2); expect(results.every(frame => frame.result.success)).toBe(true);
   expect(f.httpCalls()).toBe(1); expect(f.sourceEvents.filter(event => event.type === "approval.requested")).toHaveLength(1);
