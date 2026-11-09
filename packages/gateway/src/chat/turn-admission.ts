@@ -63,11 +63,11 @@ export async function admitCanonicalTurn(
   provenance?: CanonicalTurnProvenance,
 ): Promise<CanonicalChatTurnAdmissionResponse> {
     deps.assertOpen();
+    await deps.assertPersonalExecutionAllowed(owner, chatId);
     const input = CanonicalCreateChatTurnRequestSchema.parse(inputValue);
     if (input.routineCreation && (owner.type !== "personal" || principal.userId !== owner.ownerId)) {
       throw new CanonicalChatOrchestrationError(safeError("authorization_failed", "Persistent task selection is unavailable."), 400);
     }
-    await deps.assertPersonalExecutionAllowed(owner, chatId);
     if (!input.routineCreation) await deps.reconcileActiveRuns(owner);
     const requestHash = chatContextRequestHash(input);
     try {
