@@ -59,11 +59,24 @@ it("uses the qualified existing native workflow only after an explicit adoption 
 it("retains the legacy route and allows retry after adoption fails", async () => {
   const snapshot = fixture(), before = structuredClone(snapshot);
   const controls = mount(snapshot, true);
-  fireEvent.click(await screen.findByRole("button", {name: "Use connected Claude account"}));
-  expect(await screen.findByRole("alert")).toHaveTextContent("The connection could not be updated. Try again.");
+  const adopt = await screen.findByRole("button", {name: "Use connected Claude account"});
+  expect(adopt).toBeEnabled();
+  // The local rejected promise must settle and commit inside React's async
+  // boundary before querying error state; no polling timeout is involved.
+  await act(async () => {fireEvent.click(adopt);});
+  expect(controls.startConnection).toHaveBeenCalledOnce();
+  expect(screen.getByRole("alert")).toHaveTextContent("The connection could not be updated. Try again.");
+  const retry = screen.getByRole("button", {name: "Use connected Claude account"});
+  expect(retry).toBeVisible();
+  expect(retry).toBeEnabled();
+  expect(snapshot).toEqual(before);
+  await act(async () => {fireEvent.click(retry);});
+  expect(controls.startConnection).toHaveBeenCalledTimes(2);
+  expect(screen.getByRole("alert")).toHaveTextContent("The connection could not be updated. Try again.");
   expect(screen.getByRole("button", {name: "Use connected Claude account"})).toBeEnabled();
   expect(snapshot).toEqual(before);
   expect(controls.onMutate).not.toHaveBeenCalled();
+  expect(controls.onRefreshForConnection).not.toHaveBeenCalled();
 });
 it("waits for an existing operation to resume before offering another adoption start", async () => {
   const controls = mount(fixture(), false, true);
@@ -100,11 +113,15 @@ const negatives: [string, (snapshot: ProviderSettingsSnapshot) => void][] = [
   ["a nonnative funding source", s => {s.accessSources[0]!.fundingKind = "owner_api_key";}],
   ["negative native readiness", s => {s.accessSources[0]!.readiness.state = "invalid";}],
 ];
-it.each(negatives)("does not borrow native identity for %s", async (_name, change) => {
+it.each(negatives)("preserves exact identity and explicit recovery fences for %s", async (_name, change) => {
   const snapshot = fixture(); change(snapshot); const before = structuredClone(snapshot);
   const controls = mount(snapshot);
   await waitFor(() => expect(controls.client.capabilities).toHaveBeenCalled());
   expect(screen.queryByRole("button", {name: "Use connected Claude account"})).not.toBeInTheDocument();
-  expect(screen.getByRole("button", {name: /^Claude Code/})).not.toHaveTextContent("Connected");
+  if (_name === "explicit owner route" || _name === "another saved source") {
+    expect(screen.getByRole("button", {name: /^Claude Code/})).toHaveTextContent("Connected");
+  } else {
+    expect(screen.getByRole("button", {name: /^Claude Code/})).not.toHaveTextContent("Connected");
+  }
   expect(snapshot).toEqual(before);
 });

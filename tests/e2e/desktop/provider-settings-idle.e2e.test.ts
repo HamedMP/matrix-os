@@ -40,6 +40,7 @@ suite("Electron Desktop idle provider Settings (synthetic gateway)", () => {
   let profile: string;
   let captures: ReturnType<typeof createEvidenceDirectory>;
   let reads = 0;
+  let forcedReads = 0;
   let capabilityReads = 0;
   let mutations = 0;
   const settings = () => page.locator(".matrix-agents-providers");
@@ -56,8 +57,10 @@ suite("Electron Desktop idle provider Settings (synthetic gateway)", () => {
     page = await app.firstWindow();
     await dismissGettingStartedOnInteraction(page);
     page.on("request", request => {
-      const path = new URL(request.url()).pathname;
-      if (path === "/api/ai/provider-settings" && request.method() === "GET") reads++;
+      const url = new URL(request.url()), path = url.pathname;
+      if (path === "/api/ai/provider-settings" && request.method() === "GET") {
+        reads++; if (url.searchParams.get("refresh") === "true") forcedReads++;
+      }
       if (path.startsWith("/api/ai/provider-settings/workflows/") && path.endsWith("/capabilities")) capabilityReads++;
       if (path.startsWith("/api/ai/provider-settings") && !["GET", "OPTIONS"].includes(request.method())) mutations++;
     });
@@ -92,6 +95,13 @@ suite("Electron Desktop idle provider Settings (synthetic gateway)", () => {
     const baseline = { reads, capabilityReads };
     await page.waitForTimeout(12_000);
     await page.screenshot({ path: join(captures.path, "idle-hermes-expired.png") });
+    writeFileSync(join(captures.path,"idle-hermes-dom-diagnostic.json"),JSON.stringify(await settings().evaluateAll(roots=>roots.map(root=>({
+      visible:root.getClientRects().length>0 && getComputedStyle(root).visibility!=="hidden",
+      rows:Array.from(root.querySelectorAll<HTMLButtonElement>(".matrix-ap-rail-item")).filter(row=>row.textContent?.includes("Hermes")).map(row=>({
+        text:row.textContent,expanded:row.getAttribute("aria-expanded"),visible:row.getClientRects().length>0 && getComputedStyle(row).visibility!=="hidden",
+        hiddenAncestor:Boolean(row.closest("[hidden],[aria-hidden=true]"))
+      }))
+    }))),null,2));
     expect(reads - baseline.reads).toBe(0);
     expect(capabilityReads - baseline.capabilityReads).toBe(0);
     expect(await refresh().isEnabled()).toBe(true);
@@ -103,15 +113,19 @@ suite("Electron Desktop idle provider Settings (synthetic gateway)", () => {
     expect(mutations).toBe(0);
   }, 20_000);
 
-  it("manual Refresh performs one new read and retains expansion without rearming polling", async () => {
+  it("manual Refresh performs exactly one forced read while native authentication polling stays bounded", async () => {
     await expect.poll(() => refresh().isEnabled()).toBe(true);
-    const baseline = reads;
+    const baseline = { reads, forcedReads };
     await refresh().click();
-    await expect.poll(() => reads).toBe(baseline + 1);
+    await expect.poll(() => forcedReads).toBe(baseline.forcedReads + 1);
     await expect.poll(() => refresh().isEnabled()).toBe(true);
     expect(await hermes().getAttribute("aria-expanded")).toBe("true");
     await page.waitForTimeout(6000);
-    expect(reads).toBe(baseline + 1);
+    expect(forcedReads).toBe(baseline.forcedReads + 1);
+    // A scheduled 20-second native observation can cross this six-second
+    // window; manual Refresh must neither force another read nor duplicate it.
+    expect(reads - baseline.reads - 1).toBeGreaterThanOrEqual(0);
+    expect(reads - baseline.reads - 1).toBeLessThanOrEqual(1);
     expect(mutations).toBe(0);
     expect(gateway.workflowEvents).toEqual([]);
     await page.screenshot({ path: join(captures.path, "explicit-refresh-expired.png") });
@@ -158,6 +172,8 @@ suite("Electron Desktop combined signup fixes (synthetic gateway)", () => {
   let captures: ReturnType<typeof createEvidenceDirectory>;
   let creditReads = 0;
   let settingsReads = 0;
+  let forcedSettingsReads = 0;
+  const ordinarySettingsReadTimes: number[] = [];
   let mutations = 0;
   const settings = () => page.locator(".matrix-agents-providers");
   const claude = () => settings().locator(".matrix-ap-rail-item").filter({ hasText: "Claude" }).first();
@@ -182,8 +198,12 @@ suite("Electron Desktop combined signup fixes (synthetic gateway)", () => {
     await app.evaluate(({ shell }) => { shell.openExternal = async () => {}; });
     page = await app.firstWindow();
     page.on("request", request => {
-      const path = new URL(request.url()).pathname;
-      if (path === "/api/ai/provider-settings" && request.method() === "GET") settingsReads++;
+      const url = new URL(request.url()), path = url.pathname;
+      if (path === "/api/ai/provider-settings" && request.method() === "GET") {
+        settingsReads++;
+        if (url.searchParams.get("refresh") === "true") forcedSettingsReads++;
+        else ordinarySettingsReadTimes.push(performance.now());
+      }
       if (path.startsWith("/api/ai/provider-settings") && !["GET", "OPTIONS"].includes(request.method())) mutations++;
     });
     await dismissGettingStartedOnInteraction(page);
@@ -228,10 +248,18 @@ suite("Electron Desktop combined signup fixes (synthetic gateway)", () => {
 
   it("quietly renews credit under the same skew and explicitly connects only the native Claude account", async () => {
     try {
-      const baseline = { settingsReads, mutations };
+      const baseline = { settingsReads, forcedSettingsReads, ordinaryReads: ordinarySettingsReadTimes.length, mutations, at: performance.now() };
       await expect.poll(() => creditReads, { timeout: 50_000, interval: 500 }).toBe(1);
       await settings().getByText("$4.00", { exact: true }).first().waitFor({ timeout: 5000 });
-      expect(settingsReads).toBe(baseline.settingsReads);
+      // Quiet credit renewal does not force provider discovery. Independent
+      // native authentication observations remain on their bounded cadence.
+      expect(forcedSettingsReads).toBe(baseline.forcedSettingsReads);
+      const ordinaryReads = ordinarySettingsReadTimes.slice(baseline.ordinaryReads);
+      expect(settingsReads - baseline.settingsReads).toBe(ordinaryReads.length);
+      expect(ordinaryReads.length).toBeLessThanOrEqual(Math.ceil((performance.now() - baseline.at) / 20_000));
+      for (let index = 1; index < ordinaryReads.length; index++) {
+        expect(ordinaryReads[index]! - ordinaryReads[index - 1]!).toBeGreaterThanOrEqual(19_000);
+      }
       expect(mutations).toBe(baseline.mutations);
       expect(await claude().innerText()).toContain("Not connected");
       expect(await claude().getAttribute("aria-expanded")).toBe("true");

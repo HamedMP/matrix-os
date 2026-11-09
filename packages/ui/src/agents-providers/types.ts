@@ -52,6 +52,8 @@ export type ProviderSettingsMutationIntent =
 
 export interface AgentsProvidersViewProps {
   snapshot: ProviderSettingsSnapshot;
+  /** Controller discovery revision; native timestamp-only renewals leave it stable. */
+  capabilityRefreshRevision?: number;
   selectedHarnessId: string | null;
   connectionAttempt?: import("@matrix-os/contracts").ProviderConnectionAttempt | null;
   busy?: boolean;
