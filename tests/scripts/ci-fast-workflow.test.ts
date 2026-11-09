@@ -172,6 +172,7 @@ describe('fast CI preserves validation while removing serialized work', () => {
     expect(upload?.with?.name).toBe('unit-profile-${{ matrix.shard }}');
     expect(upload?.with?.['retention-days']).toBe(7);
   });
+
 });
 
 describe('Docker image export runner capacity', () => {

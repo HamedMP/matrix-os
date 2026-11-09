@@ -7,7 +7,8 @@ import type { CanonicalUpdateChatTitleRequest } from "@matrix-os/contracts";
 import { projectChatReadState, writeChatReadState } from "./read-state-repository.js";
 import { CanonicalUpdateChatReadStateRequestSchema, type CanonicalUpdateChatReadStateRequest } from "@matrix-os/contracts";
 import { findChatTurnAdmission, findChatRetryAdmission } from "./admission-replay.js";
-import { admitChatTurn } from "./turn-admission-repository.js";
+import { NativeScheduledSourceSchema, readNativeScheduledSource, type NativeScheduledSource, type NativeScheduledSourceRecord } from "./native-scheduled-source.js";
+import { admitNativeScheduledChatTurn, admitChatTurn } from "./turn-admission-repository.js";
 import { randomUUID } from "node:crypto";
 import { captureChatContent } from "./content-projection.js";
 import { captureChatFailureMetadata } from "./failure-telemetry.js";
@@ -1015,6 +1016,24 @@ export class ChatRepository {
       appendOutbox: (...args) => this.appendOutbox(...args),
       selectOwnedChat, hydrateAdmission, toPrincipalRecord, activeRunQuery, postgresUniqueConstraint, preview,
     }, ownerInput, input);
+  }
+
+  /** Server-only source lookup; the write path revalidates it under the same Chat lock. */
+  async getNativeScheduledSource(ownerInput: ChatOwner, chatId: string, sourceValue: NativeScheduledSource): Promise<NativeScheduledSourceRecord | null> {
+    const owner = validateOwner(ownerInput);
+    const source = NativeScheduledSourceSchema.parse(sourceValue);
+    CanonicalChatIdSchema.parse(chatId);
+    return this.transact(async trx => {
+      const chat = await selectOwnedChat(trx, owner, chatId);
+      if (!chat) return null;
+      return { chat: await toPrincipalRecord(trx, owner, chat), ...await readNativeScheduledSource(trx, owner, chat, source) };
+    });
+  }
+
+  async admitNativeScheduledTurn(owner: ChatOwner, input: AdmitTurnInput, source: NativeScheduledSource): Promise<AdmittedTurn> {
+    return admitNativeScheduledChatTurn({ transact: operation => this.transact(operation),
+      appendOutbox: (...args) => this.appendOutbox(...args), selectOwnedChat, hydrateAdmission,
+      toPrincipalRecord, activeRunQuery, postgresUniqueConstraint, preview }, owner, input, source);
   }
 
   async enqueueQueuedTurn(
