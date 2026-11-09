@@ -20,7 +20,7 @@ import { createCanonicalCodingChatProviderAdapter } from "../../../packages/gate
 
 /** Real canonical admission/registry/thread store/workspace/manager/launch/wrapper/shim/CLI/HTTP/PG.
  * Native model/auth readiness/sandbox preflight and Linux systemd transport are named fixtures. */
-export async function codexFixture(native: { intent?: { args: string[]; stdin?: string }; intents?: Array<{ args: string[]; stdin?: string }>; loseQueuedAck?: boolean; receiverHalfClose?: boolean; wrapperOverflow?: boolean; calls?: Record<string, unknown>[]; turns?: number; holdAfterResult?: boolean; holdAfterResultOnTurn?: number; endBeforeResult?: boolean } = {}) {
+export async function codexFixture(native: { intent?: { args: string[]; stdin?: string }; intents?: Array<{ args: string[]; stdin?: string }>; loseQueuedAck?: boolean; dropShimEnd?: boolean; receiverHalfClose?: boolean; wrapperOverflow?: boolean; calls?: Record<string, unknown>[]; turns?: number; holdAfterResult?: boolean; holdAfterResultOnTurn?: number; endBeforeResult?: boolean } = {}) {
   const f = await claudeFixture({ sourceDriver: "codex" });
   const home = await mkdtemp("/tmp/rc-"); // Keep the real Unix control socket below macOS sun_path bounds.
   const records = join(home, "native-requests.jsonl"), fixture = join(home, "native-fixture.json"), executable = join(home, "named-codex-native-fixture.mjs");
@@ -48,7 +48,7 @@ export async function codexFixture(native: { intent?: { args: string[]; stdin?: 
           if (privateFrames.length >= 128) privateFrames.shift(); privateFrames.push(JSON.parse(line));
         }
       });
-      if (native.loseQueuedAck || native.receiverHalfClose) {
+      if (native.loseQueuedAck || native.dropShimEnd || native.receiverHalfClose) {
         let buffer = "", first: string | undefined;
         const filtered = new Transform({ transform(chunk: Buffer, _encoding, done) {
           buffer += chunk.toString("utf8");
@@ -57,6 +57,7 @@ export async function codexFixture(native: { intent?: { args: string[]; stdin?: 
           while ((newline = buffer.indexOf("\n")) >= 0) {
             const line = buffer.slice(0, newline); buffer = buffer.slice(newline + 1); const frame = JSON.parse(line);
             if (native.loseQueuedAck && frame.type === "shim.accepted") { first ??= frame.admissionId; if (frame.admissionId !== first) continue; }
+            if (native.dropShimEnd && frame.type === "shim.end") continue;
             this.push(line + "\n");
           }
           done();

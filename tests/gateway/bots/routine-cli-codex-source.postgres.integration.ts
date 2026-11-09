@@ -6,13 +6,17 @@ let f: Awaited<ReturnType<typeof codexFixture>> | undefined;
 afterEach(async () => { await f?.close(); f = undefined; vi.unstubAllGlobals(); });
 it("actual admitted Codex Chat executes the published fixed CLI through private wrapper/shim IPC, HTTP and canonical PostgreSQL receipt", async () => {
   const requestId = "de000000-0000-4000-8000-000000000601", chatId = "chat_codex_actual";
-  f = await codexFixture({ intent: { args: ["propose", "--input", "-", "--request-id", requestId], stdin: JSON.stringify(proposal) } });
+  f = await codexFixture({ intent: { args: ["propose", "--input", "-", "--request-id", requestId], stdin: JSON.stringify(proposal) }, holdAfterResult: true });
   const admitted = await f.start(chatId);
   await expect.poll(() => f!.sourceEvents.find(event => event.type === "approval.requested"), { timeout: 8000 }).toMatchObject({ type: "approval.requested" });
   const approval = f.sourceEvents.find(event => event.type === "approval.requested")!;
   if (approval.type !== "approval.requested") throw new Error("Missing exact approval");
   await f.approve(approval, chatId, admitted.run.id);
   await expect.poll(async () => (await f!.frames()).find(frame => frame.id === 107), { timeout: 8000 }).toMatchObject({ result: { success: true } });
+  // The live source must still own the turn when the deferred target claim runs.
+  await expect.poll(() => f!.data.db.selectFrom("bot_interactions").select("chat_id").execute(), { timeout: 8000 })
+    .toEqual([{ chat_id: TARGET_A.chatId }]);
+  await writeFile(f.controlFile, "complete");
   await f.f.canonical.drain();
   expect(f.httpCalls()).toBe(1);
   const frames = await f.frames(), response = frames.find(frame => frame.id === 107);
@@ -169,6 +173,39 @@ it("named private transport cancels only the exact pending CLI action and keeps 
   expect(f.httpCalls()).toBe(0); expect(await f.data.db.selectFrom("routine_cli_requests").selectAll().execute()).toEqual([]);
 }, 15_000);
 
+
+it("canonical completion fences a late owner decision before private end arrives", async () => {
+  const requestId = "de000000-0000-4000-8000-000000000609", chatId = "chat_codex_late_approval";
+  const fixture = await codexFixture({ intent: { args: ["propose", "--input", "-", "--request-id", requestId], stdin: JSON.stringify(proposal) }, holdAfterResult: true, dropShimEnd: true });
+  f = fixture;
+  let submitLateApproval: () => Promise<unknown>;
+  let submission: unknown;
+  fixture.setSourceAdapter({
+    ...fixture.adapter,
+    async *start(input) {
+      for await (const event of fixture.adapter.start(input)) {
+        // The journal delivered completion while the separate private end is withheld.
+        if (event.type === "run.completed") {
+          submission = await submitLateApproval().catch(error => error);
+        }
+        yield event;
+      }
+    },
+  });
+  const admitted = await fixture.start(chatId);
+  const pending = () => fixture.sourceEvents.find(event => event.type === "approval.requested");
+  await expect.poll(pending, { timeout: 5000 }).toMatchObject({ type: "approval.requested" });
+  const approval = pending();
+  if (!approval) throw new Error("Missing exact owner decision");
+  submitLateApproval = () => fixture.approve(approval, chatId, admitted.run.id);
+  await writeFile(fixture.controlFile, "complete");
+  await fixture.f.canonical.drain();
+
+  expect(fixture.privateFrames).toContainEqual(expect.objectContaining({ type: "shim.end" }));
+  expect(submission).toMatchObject({ code: "not_found" });
+  expect(fixture.httpCalls()).toBe(0);
+  expect(await fixture.data.db.selectFrom("routine_cli_requests").selectAll().execute()).toEqual([]);
+}, 15_000);
 
 it("native stdout EOF cancels a pending owner approval while the process is alive", async () => {
   const requestId = "de000000-0000-4000-8000-000000000608", chatId = "chat_codex_native_stdout_eof";
