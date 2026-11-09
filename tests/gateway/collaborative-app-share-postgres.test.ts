@@ -1,5 +1,8 @@
 import { sql } from "kysely";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 import { ChatRepository } from "../../packages/gateway/src/chat/repository.js";
 import { bootstrapCollaborationDatabase } from "../../packages/gateway/src/collaboration/database.js";
@@ -8,6 +11,7 @@ import { CollaborativeAppShareRepository } from "../../packages/gateway/src/coll
 import { CollaborationDirectoryOutbox } from "../../packages/gateway/src/collaboration/directory-outbox.js";
 import { CollaborationResourceCatalog } from "../../packages/gateway/src/collaboration/resource-catalog.js";
 import { createCollaborationTestDatabase, type CollaborationTestDatabase } from "./collaboration-test-support.js";
+import { createCollaborativeAppInfrastructure } from "../../packages/gateway/src/startup/collaboration.js";
 
 const catalogId = "50000000-0000-4000-8000-000000000001";
 const readinessId = "60000000-0000-4000-8000-000000000001";
@@ -68,6 +72,49 @@ describe("collaborative app atomic share creation", () => {
   });
 
   afterEach(async () => fixture.destroy());
+
+  it("keeps ready and actively shared build files across cleanup and restart until both references end", async () => {
+    const root = await mkdtemp(join(tmpdir(), "collaborative-build-retention-"));
+    const output = join(root, "output");
+    await mkdir(output);
+    await writeFile(join(output, "index.html"), "shared app");
+    const storeRoot = join(root, "store");
+    let infrastructure = createCollaborativeAppInfrastructure({ db: fixture.db, buildStoreRoot: storeRoot, startTimers: false });
+    try {
+      await infrastructure.builds.capture({ buildRoot: output, buildId: build.buildId });
+      vi.useFakeTimers({ toFake: ["Date"] });
+      vi.setSystemTime(Date.now() + 31 * 24 * 60 * 60 * 1_000);
+      await infrastructure.builds.cleanup();
+      expect(await infrastructure.builds.resolve(build.buildId)).not.toBeNull();
+
+      await repository.createAtomic(input);
+      await infrastructure.readiness.invalidateDriftedBuilds({
+        ownerId: input.ownerId,
+        catalogId,
+        currentBuildId: "f".repeat(64),
+      });
+      await infrastructure.close();
+      infrastructure = createCollaborativeAppInfrastructure({ db: fixture.db, buildStoreRoot: storeRoot, startTimers: false });
+      await infrastructure.builds.cleanup();
+      expect(await infrastructure.builds.resolve(build.buildId)).not.toBeNull();
+
+      const scope = await fixture.db.selectFrom("collaboration_scopes").select("revision")
+        .where("id", "=", scopeId).executeTakeFirstOrThrow();
+      const binding = await fixture.db.selectFrom("collaboration_app_bindings").select("revision")
+        .where("scope_id", "=", scopeId).executeTakeFirstOrThrow();
+      await repository.stopAtomic({
+        scopeId, ownerId: input.ownerId,
+        expectedScopeRevision: scope.revision, expectedBindingRevision: binding.revision,
+        clientRequestId: "80000000-0000-4000-8000-000000000002", payloadHash: "9".repeat(64),
+      });
+      await infrastructure.builds.cleanup();
+      expect(await infrastructure.builds.resolve(build.buildId)).toBeNull();
+    } finally {
+      vi.useRealTimers();
+      await infrastructure.close();
+      await rm(root, { recursive: true, force: true });
+    }
+  });
 
   it("commits one scope, binding, owner invariant, operation, audit, event, and directory outbox and replays exactly", async () => {
     const first = await repository.createAtomic(input);

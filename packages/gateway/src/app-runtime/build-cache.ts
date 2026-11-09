@@ -110,6 +110,7 @@ export class ImmutableCollaborativeBuildStore {
     cleanupIntervalMs: number;
     startTimer?: boolean;
     now?: () => number;
+    isProtectedBuild?: (buildId: string) => Promise<boolean>;
   }) {
     if (!Number.isInteger(options.maxSnapshots) || options.maxSnapshots < 1
       || !Number.isFinite(options.retentionMs) || options.retentionMs < 0
@@ -378,6 +379,9 @@ export class ImmutableCollaborativeBuildStore {
         if (item.references.length > 0) continue;
         const expired = this.now() - item.lastReleasedAt >= this.options.retentionMs;
         if (!expired && excess <= 0) continue;
+        // The owner database is authoritative across restarts and share changes.
+        // Fail closed on a database error rather than deleting a live artifact.
+        if (await this.options.isProtectedBuild?.(item.buildId)) continue;
         let artifact;
         try {
           artifact = await lstat(this.artifactPath(item.buildId));

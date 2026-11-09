@@ -50,6 +50,21 @@ export function createCollaborativeAppInfrastructure(options: {
     retentionMs: COLLABORATIVE_BUILD_RETENTION_MS,
     cleanupIntervalMs: COLLABORATIVE_BUILD_CLEANUP_INTERVAL_MS,
     startTimer: options.startTimers !== false,
+    isProtectedBuild: async (buildId) => {
+      const readiness = await options.db.selectFrom("collaboration_app_readiness")
+        .select("build_id")
+        .where("build_id", "=", buildId)
+        .where("status", "in", ["checking", "ready"])
+        .where("invalidated_at", "is", null)
+        .executeTakeFirst();
+      if (readiness) return true;
+      const binding = await options.db.selectFrom("collaboration_app_bindings")
+        .select("build_id")
+        .where("build_id", "=", buildId)
+        .where("state", "!=", "stopped")
+        .executeTakeFirst();
+      return Boolean(binding);
+    },
   });
   return {
     readiness: new CollaborativeAppReadinessRepository(options.db),
