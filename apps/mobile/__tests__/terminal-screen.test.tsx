@@ -7,11 +7,12 @@ const mockRenameSession = jest.fn();
 const mockDeleteSession = jest.fn();
 const mockRefreshTerminals = jest.fn();
 
-jest.mock("react-native-gesture-handler", () => {
+jest.mock("react-native-gesture-handler/ReanimatedSwipeable", () => {
   const React = require("react");
   const { View } = require("react-native");
   return {
-    Swipeable: React.forwardRef(function MockSwipeable(
+    __esModule: true,
+    default: React.forwardRef(function MockSwipeable(
       { children, renderRightActions }: { children: React.ReactNode; renderRightActions?: () => React.ReactNode },
       _ref: React.ForwardedRef<unknown>,
     ) {

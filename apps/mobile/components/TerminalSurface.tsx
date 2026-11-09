@@ -435,7 +435,9 @@ function buildHtml(fontScale: number): string {
 
 export const TerminalSurface = forwardRef<TerminalSurfaceHandle, TerminalSurfaceProps>(
   function TerminalSurface({ fontScale, onInput, onBinary, onKeys, onResize, onCursor }, ref) {
-    const webRef = useRef<WebView | null>(null);
+    // react-native-webview 14 defaults the class's extra-props parameter to
+    // `undefined`, which would leave every prop typed `never` through the ref.
+    const webRef = useRef<WebView<object> | null>(null);
     const readyRef = useRef(false);
     // Held for an emulator that has not booted yet; one queue per surface.
     const [pending] = useState(() => new PendingTerminalOps());
