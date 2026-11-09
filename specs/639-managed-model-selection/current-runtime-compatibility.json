@@ -63,6 +63,57 @@
         }
       ],
       "preserveRuntimeConfiguration": true
+    },
+    {
+      "sourceSha": "3da721c31a7ef2c824e469a789e4e4bd5d9e76e3",
+      "imageDigest": "sha256:c07e77584da8f81bebc624cc1fe69a2707cc79373f6200ab49ed1b6c3495d976",
+      "preserveRuntimeConfiguration": true,
+      "preservedFiles": [
+        {
+          "path": "packages/contracts/src/canonical-chat-api.ts",
+          "sha256": "1ad85b2fea1224d07186cbe9143a4477c41f7a749228468946cc949dd944e476"
+        },
+        {
+          "path": "packages/contracts/src/chat-agent-context.ts",
+          "sha256": "b84d69a8dffd56cc6cf5c97c464702ffa926ba4ad913b3cf570b038b24ceb660"
+        },
+        {
+          "path": "packages/contracts/src/routine-origin-proof.ts",
+          "sha256": "87166925327f013d19336d89b0392c81753194e7be2b58cfdd7ff49ff5cdc4f5"
+        },
+        {
+          "path": "packages/platform/src/browser-chat-approval-proof.ts",
+          "sha256": "95517ceb31206dfa02069c89fc58c80431f42918a48866a2d4f29a0a13f176c2"
+        },
+        {
+          "path": "packages/platform/src/browser-chat-approval-registration.ts",
+          "sha256": "3576c8a72e6b27dd3e374a79bc6ddd446919a86950914377d29ac5de7b29212d"
+        },
+        {
+          "path": "packages/platform/src/owner-approval-proofs.ts",
+          "sha256": "41e79beeced3a705fa571e44955a8747bcc5735073ff10f5a4166e81c77ff58d"
+        },
+        {
+          "path": "packages/platform/src/routine-origin-proof-routes.ts",
+          "sha256": "4afb2a8928bb86cc0635fdae6c84aa055b7dc58da29cf43004a853ea055b0d5a"
+        },
+        {
+          "path": "packages/platform/src/routine-origin-proof.ts",
+          "sha256": "6f789118de5d01a326fb8fed2c0d682ecc2510af0a0668849e43c50d162e63b0"
+        },
+        {
+          "path": "packages/platform/src/routine-origin-proxy.ts",
+          "sha256": "0c4a27061f751352acc49c57945230b629dee0c9d1cb47f56f72db3f74dc13fb"
+        },
+        {
+          "path": "packages/platform/src/session-routing-middleware.ts",
+          "sha256": "2a174c733e0e9ed3987391a94031701e4e1b30af185f5dbded03b29bf61d7951"
+        },
+        {
+          "path": "packages/platform/src/session-routing-proxy.ts",
+          "sha256": "5aa2d94c8011d9e7b4a5abfb7e51e6d4c150d886c0876431e22f6cefb2d6bd7e"
+        }
+      ]
     }
   ]
 }
