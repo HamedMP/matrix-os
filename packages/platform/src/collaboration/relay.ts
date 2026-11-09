@@ -34,6 +34,7 @@ const RUNTIME_ROUTES: ReadonlyArray<readonly [string, RegExp]> = [
   ["POST", new RegExp(`^/api/collaboration/runtimes/(${RUNTIME})/scopes$`)],
 ];
 const SCOPE_PATH = new RegExp(`^/api/collaboration/scopes/(${UUID})(?:/|$)`);
+const APP_ASSET_PATH = new RegExp(`^/api/collaboration/scopes/${UUID}/apps/[A-Za-z0-9_-]{1,256}/assets/.+$`);
 /**
  * The owner-runtime session's setup requests on a private project (the home's OWNER_PROJECT_PATH).
  * A private project is not in the platform directory until it becomes active, so these are the
@@ -71,8 +72,10 @@ const MAX_RAW_PATH = 2_048;
 const DEFAULT_LIMITS = Object.freeze({
   requestBytes: 96 * 1024,
   responseBytes: 2 * 1024 * 1024,
+  appAssetBytes: 256 * 1024 * 1024,
   exportBytes: 512 * 1024 * 1024,
   requestTimeoutMs: 10_000,
+  appAssetTimeoutMs: 30_000,
   exportTimeoutMs: 30_000,
   connectionsPerHome: 256,
   connectionsPerActor: 32,
@@ -214,6 +217,8 @@ export class CollaborationRelay {
     headers: Headers;
     body: ReadableStream<Uint8Array> | Uint8Array | null;
     contentLength?: number;
+    /** Larger bounded streaming response, accepted only for an exact immutable shared-app asset route. */
+    responseClass?: "app_asset";
   }): Promise<Response> {
     const startedAt = this.now();
     // What a caller declares is not what it sends. This starts at the known size of a buffered
@@ -254,6 +259,10 @@ export class CollaborationRelay {
       return plain("Collaboration route not found", 404);
     }
     const isExport = input.method === "GET" && /\/exports\/[0-9a-f-]{36}$/.test(input.path);
+    const isAppAsset = input.responseClass === "app_asset" && input.method === "GET" && APP_ASSET_PATH.test(input.path);
+    const responseTimeoutMs = isExport
+      ? this.limits.exportTimeoutMs
+      : isAppAsset ? this.limits.appAssetTimeoutMs : this.limits.requestTimeoutMs;
     // A chunked upload declares no length, so the check above cannot see it. The relay holds
     // its own limit against the bytes themselves rather than trusting whatever body limit the
     // caller mounted in front of it, which is a different constant in a different package.
@@ -282,7 +291,7 @@ export class CollaborationRelay {
           : requestBody ?? undefined,
         ...(requestBody instanceof ReadableStream ? { duplex: "half" } : {}),
         redirect: "error",
-        signal: AbortSignal.timeout(isExport ? this.limits.exportTimeoutMs : this.limits.requestTimeoutMs),
+        signal: AbortSignal.timeout(responseTimeoutMs),
       } as RequestInit);
     } catch (error: unknown) {
       if (overflowed) {
@@ -301,7 +310,7 @@ export class CollaborationRelay {
     // forwarding the body, and the home's answer no longer describes the request that was
     // made, so it is discarded rather than relayed. A truncated upload never reads as fine.
     const settled = requestBody instanceof ReadableStream
-      ? await settleWithin(requestBodySettled, isExport ? this.limits.exportTimeoutMs : this.limits.requestTimeoutMs)
+      ? await settleWithin(requestBodySettled, responseTimeoutMs)
       : true;
     if (!settled) {
       await response.body?.cancel();
@@ -314,7 +323,9 @@ export class CollaborationRelay {
       finish(413, "limit", home.runtimeId);
       return plain("Collaboration request too large", 413);
     }
-    const maxBytes = isExport ? this.limits.exportBytes : this.limits.responseBytes;
+    const maxBytes = isExport
+      ? this.limits.exportBytes
+      : isAppAsset ? this.limits.appAssetBytes : this.limits.responseBytes;
     const contentLength = Number(response.headers.get("content-length") ?? -1);
     if (contentLength > maxBytes) {
       await response.body?.cancel();
