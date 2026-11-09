@@ -155,3 +155,9 @@ it("keeps the saved details visible if history navigation fails", async () => {
   expect(screen.getByText("Return FIXED TEXT")).toBeTruthy();
   expect(screen.queryByText("secret /home/path")).toBeNull();
 });
+
+it("opens the exact source through the owning navigation callback instead of only changing hidden Chat state",async()=>{
+ const client=api(),onOpenChat=jest.fn();client.detail.mockResolvedValue({routine:{...routine,originChatId:"chat_source",originAvailable:true},history:[]});
+ render(<SchedulesScreen api={client} resolve={jest.fn()} onBack={jest.fn()} onOpenChat={onOpenChat}/>);
+ fireEvent.press(await screen.findByRole("button",{name:"Private ping"}));fireEvent.press(await screen.findByRole("button",{name:"Open source Chat"}));expect(onOpenChat).toHaveBeenCalledWith("chat_source");
+});

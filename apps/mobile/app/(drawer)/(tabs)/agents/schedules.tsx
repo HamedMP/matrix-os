@@ -1,3 +1,6 @@
+import {openRoutineHistory} from "@/lib/open-routine-history";
+import {useCanonicalChatSession} from "@/lib/canonical-chat-session-context";
+import {useShowChatScreen} from "@/lib/use-shell-navigation";
 import { useMemo } from "react";
 import { Text } from "react-native";
 import { useRouter } from "expo-router";
@@ -11,12 +14,13 @@ import { Button } from "@/components/ui";
 
 export default function SchedulesRoute() {
   const gateway = useActiveGateway(), router = useRouter();
+  const {selectChat}=useCanonicalChatSession(), showChat=useShowChatScreen();
   const api = useMemo(() => createNativeRoutineClient(gateway.session), [gateway.session]);
   const scope = `${gateway.userId}:${gateway.computerKey}`;
   if (!gateway.ready) return <TabScreen><Text>{gateway.isComputerPending ? "Loading Computer…" : "Schedules unavailable. Select a Computer and try again."}</Text><Button label="Back" onPress={() => router.back()} /></TabScreen>;
   return <SchedulesScreen key={scope} api={api} onBack={() => router.back()}
     onNewSchedule={() => router.push({pathname: "/agents", params: {schedule: "1"}} as never)}
-    onOpenChat={(chatId, botId) => router.push({ ...agentChatRoute(botId), params: {agentId: botId, scheduleChatId: chatId, scheduleScope: scope} } as never)}
+    onOpenChat={(chatId, botId) => botId ? router.push({ ...agentChatRoute(botId), params: {agentId: botId, scheduleChatId: chatId, scheduleScope: scope} } as never) : openRoutineHistory(chatId, selectChat, showChat)}
     resolve={async (interaction, input) => {
       const auth = await gateway.session();
       if (!auth) throw new Error("Schedule response could not be saved.");

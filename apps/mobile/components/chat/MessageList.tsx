@@ -8,6 +8,7 @@ import type { TranscriptMessage } from "@/lib/canonical-chat-transcript";
 import { AssistantMessage } from "./AssistantMessage";
 import type { MessageAttachmentsProps } from "./MessageAttachments";
 import { useUnsentMessageActions } from "./unsent-message-actions";
+import {NativeRoutineReceipt} from "./NativeRoutineReceipt";
 import { UserMessage } from "./UserMessage";
 
 export interface MessageListProps extends Pick<MessageAttachmentsProps, "renderComputerPhoto"> {
@@ -73,6 +74,7 @@ function Message({
 }: Pick<MessageListProps, "chatId" | "renderResults" | "renderComputerPhoto"> & { message: TranscriptMessage }) {
   // A message that was not sent offers what the chat it is shown in can do about it.
   const unsent = useUnsentMessageActions();
+  if(message.routineReceipt)return <NativeRoutineReceipt sourceChatId={chatId ?? undefined} receipt={message.routineReceipt} text={message.text}/>;
   if (message.role === "user" || message.scheduledMessage) {
     const failed = message.delivery === "failed" && unsent !== null;
     return (
