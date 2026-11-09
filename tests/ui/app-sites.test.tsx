@@ -70,6 +70,34 @@ describe("shared app publishing", () => {
     expect(screen.getByLabelText("Title")).toHaveProperty("value","Launch");
     expect(screen.getByText("Host the whole app at a stable Matrix.page URL.")).toBeTruthy();
   });
+  it("keeps invite conflicts and recovery visible while permanent publishing stays closed", async () => {
+    const privateSite={...published,accessMode:"private_link" as const};
+    const api=client({
+      get:vi.fn(async()=>privateSite),
+      accessLinks:vi.fn(async()=>({links:[]})),
+      createAccessLink:vi.fn(async()=>{throw new SiteClientError(409);}),
+    });
+    render(<AppSitePanel appSlug="launch" client={api} variant="share" />);
+
+    const publishing=screen.getByRole("button",{name:/Publish app to a permanent URL/});
+    expect(publishing.getAttribute("aria-expanded")).toBe("false");
+    await waitFor(()=>expect(screen.getByRole("button",{name:"Create invite link"})).toHaveProperty("disabled",false));
+    fireEvent.click(screen.getByRole("button",{name:"Create invite link"}));
+
+    expect((await screen.findByRole("alert")).textContent).toContain("publication changed");
+    expect(screen.getByRole("button",{name:"Refresh publication"})).toBeTruthy();
+    expect(publishing.getAttribute("aria-expanded")).toBe("false");
+  });
+  it("keeps initial load recovery visible while permanent publishing stays closed", async () => {
+    const api=client({get:vi.fn(async()=>{throw new Error("private internal host");})});
+    render(<AppSitePanel appSlug="launch" client={api} variant="share" />);
+
+    const publishing=screen.getByRole("button",{name:/Publish app to a permanent URL/});
+    expect(publishing.getAttribute("aria-expanded")).toBe("false");
+    expect((await screen.findByRole("alert")).textContent).toBe("Publishing is unavailable. Please try again.");
+    expect(screen.getByRole("button",{name:"Retry"})).toBeTruthy();
+    expect(publishing.getAttribute("aria-expanded")).toBe("false");
+  });
   it("removes a generated invite after refresh confirms the publication no longer supports links", async () => {
     const link={id:"44444444-4444-4444-8444-444444444444",status:"unclaimed" as const,createdAt:"2026-11-05T12:00:00.000Z",claimExpiresAt:"2026-11-12T12:00:00.000Z",claimedAt:null,sessionExpiresAt:null};
     const privateSite={...published,accessMode:"private_link" as const};

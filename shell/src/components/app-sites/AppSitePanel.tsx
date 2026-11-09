@@ -43,7 +43,6 @@ function AppSiteForm({ appSlug, client, state, variant }: { appSlug: string; cli
   const share = variant === "share";
   const publishingControls = <>
     {!share ? <p className="text-sm">Publish this app on Matrix.page. Choose public access or create one-time private links.</p> : null}
-    <SitePublicationStatus state={state} onRefreshPublication={() => { invalidateReview(); void state.reloadPublication(); }} />
     <SiteMetadataFields {...{ fieldId, disabled, title, description, slug, accessMode, invalid, setTitle, setDescription, setSlug, setAccessMode, invalidateReview }} />
     <SitePublicLinks {...{ site, disabled, action }} />
     <SiteDeploymentActions {...{ appSlug, client, state, disabled, invalid, reviewed, previewReady, config, metadata, review }} />
@@ -62,6 +61,7 @@ function AppSiteForm({ appSlug, client, state, variant }: { appSlug: string; cli
       color: "var(--matrix-fg)",
     } as CSSProperties}>
     {share ? <ShareInviteSection {...{ appSlug, client, state, disabled }} /> : null}
+    <SitePublicationStatus state={state} onRefreshPublication={() => { invalidateReview(); void state.reloadPublication(); }} />
     {share ? <SharePublishingDisclosure>{publishingControls}</SharePublishingDisclosure> : publishingControls}
   </section>;
 }
