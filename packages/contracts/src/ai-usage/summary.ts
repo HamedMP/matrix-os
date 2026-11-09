@@ -1,10 +1,10 @@
-import { mergeUsageEvents } from "./parser";
+import { mergeUsageEvents } from "./parser.js";
 import type {
   UsageAgent,
   UsageEvent,
   UsageSummary,
   UsageTotals,
-} from "./types";
+} from "./types.js";
 /** USD / million tokens. Reviewed 2026-11-09; intentionally exact model allowlist.
  * https://platform.claude.com/docs/en/about-claude/pricing
  * https://developers.openai.com/api/docs/pricing

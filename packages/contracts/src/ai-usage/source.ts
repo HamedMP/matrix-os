@@ -1,7 +1,7 @@
 import { z } from "zod/v4";
-import { readLocalChatJsonl } from "../local-chat-import/jsonl";
-import { parseUsageRecords } from "./parser";
-import { MAX_USAGE_EVENTS, MAX_USAGE_FILE_BYTES } from "./types";
+import { readLocalChatJsonl } from "../local-chat-import/jsonl.js";
+import { parseUsageRecords } from "./parser.js";
+import { MAX_USAGE_EVENTS, MAX_USAGE_FILE_BYTES } from "./types.js";
 const count = z.number().int().min(0).max(1e12);
 const eventSchema = z.object({
   id: z.string().min(1).max(1024),

@@ -13,7 +13,7 @@ import {
   mergeUsageEvents,
   readUsageSource,
   type UsageEvent,
-} from "./index";
+} from "./index.js";
 export function usageRoots(
   home: string,
   config: { codexRoot?: string; claudeRoot?: string } = {},
