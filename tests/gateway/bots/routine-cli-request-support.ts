@@ -5,6 +5,7 @@ import type { Kysely } from "kysely";
 import type { RoutineCliOperation, BotRoutineProposal } from "../../../packages/contracts/src/bots/index.js";
 import type { OwnerBotDatabase } from "../../../packages/gateway/src/bots/database.js";
 import type { ChatDatabase } from "../../../packages/gateway/src/chat/database.js";
+import { bootstrapCollaborationDatabase, type OwnerCollaborationDatabase } from "../../../packages/gateway/src/collaboration/database.js";
 import { ChatRepository } from "../../../packages/gateway/src/chat/repository.js";
 import { ChatAgentStore } from "../../../packages/gateway/src/chat/agent-store.js";
 import { createBotStateTransactions } from "../../../packages/gateway/src/bots/events.js";
@@ -20,6 +21,8 @@ export const proposal: BotRoutineProposal = { name: "Daily report", prompt: "pri
 export const propose = (n = 100): RoutineCliOperation => ({ operation: "propose", requestId: invocation(n), proposal });
 export const routineId = (n: number) => `rt_${n.toString(16).padStart(24, "0")}`;
 export async function requestFixture(db: Kysely<OwnerBotDatabase>) {
+  // Match Bot startup: routine target authority also reads durable collaboration scopes.
+  await bootstrapCollaborationDatabase(db as unknown as Kysely<OwnerCollaborationDatabase>);
   const home = await mkdtemp(join(tmpdir(), "routine-cli-requests-"));
   const chats = new ChatRepository(db as unknown as Kysely<ChatDatabase>);
   const agents = new ChatAgentStore({ homePath: home, db: chats.kysely }); await agents.bootstrap();
