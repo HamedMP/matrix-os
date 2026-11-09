@@ -43,6 +43,10 @@ The manifest seals every captured original with SHA-256 and performs an independ
 
 Desktop prefers the live historical endpoint. On an older runtime with a missing endpoint or a valid recent-only report, it can read `exports/ai-usage/latest.json` through the existing owner-file API. The recovery CLI writes this envelope atomically with the verified Clerk owner ID. The desktop validates its schema and owner, honors cancellation and labels it “Matrix backup snapshot”; authentication, service failures and malformed live responses do not trigger fallback. The export carries the index timestamp and is a dated snapshot, not continuous synchronization.
 
+## Refresh behavior
+
+Settings reads usage when opened, then automatically checks again one hour after each completed check. The manual Refresh usage action runs immediately and resets that timer. Reads never overlap; closing the owner/runtime scope aborts the active read and clears its timer. A failed check retains the last successful graph, shows a safe error and retries next hour. Refreshing preserves agent/date filters. Last checked describes when the report was fetched, not when original archives were synchronized; dated backups remain snapshots.
+
 ## Verification and release
 
 Tests exercise real source bytes, large files, compressed archives, live-tail resume, replacement, owner isolation, mirrored endpoints, native counter resets, Postgres transactions, authenticated reads and the shared dashboard. The isolated Matrix database is development infrastructure and does not replace the installed runtime's owner database.

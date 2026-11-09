@@ -1,9 +1,19 @@
 // @vitest-environment jsdom
 import React from "react";
 import { afterEach, it, expect, vi } from "vitest";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import {
+  act,
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from "@testing-library/react";
 import { AutomaticAiUsagePanel } from "../../packages/ui/src/ai-usage/AutomaticAiUsagePanel";
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  vi.useRealTimers();
+});
 it("discovers usage on opening Settings without choosing files", async () => {
   const load = vi.fn(async () => ({
     version: 1 as const,
@@ -155,4 +165,117 @@ it("shows all-time indexed history and backup coverage when the server returns a
   expect(disclosure.open).toBe(false);
   fireEvent.click(screen.getByText("Details"));
   expect(disclosure.open).toBe(true);
+});
+
+const hour = 60 * 60 * 1000;
+const refreshedSnapshot = (input: number) => ({
+  version: 1 as const,
+  issues: 0,
+  events: [
+    {
+      id: "refresh-event",
+      session: "session",
+      agent: "codex" as const,
+      model: "unknown",
+      timestamp: new Date().toISOString(),
+      input,
+      cachedInput: 0,
+      cacheWrite: 0,
+      output: 0,
+    },
+  ],
+});
+it("refreshes hourly and on demand while preserving the selected agent and date range", async () => {
+  vi.useFakeTimers();
+  const load = vi
+    .fn()
+    .mockResolvedValueOnce(refreshedSnapshot(2))
+    .mockResolvedValueOnce(refreshedSnapshot(9))
+    .mockResolvedValue(refreshedSnapshot(13));
+  const view = render(
+    <AutomaticAiUsagePanel load={load} sourceLabel="This computer" />,
+  );
+  await act(async () => {});
+  fireEvent.change(screen.getByLabelText("Coding agent"), {
+    target: { value: "codex" },
+  });
+  fireEvent.change(screen.getByLabelText("Date range"), {
+    target: { value: "30" },
+  });
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(hour - 1);
+  });
+  expect(load).toHaveBeenCalledTimes(1);
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(1);
+  });
+  expect(load).toHaveBeenCalledTimes(2);
+  expect(screen.getByTestId("token-total").textContent).toBe("9");
+  expect(
+    (screen.getByLabelText("Coding agent") as HTMLSelectElement).value,
+  ).toBe("codex");
+  expect((screen.getByLabelText("Date range") as HTMLSelectElement).value).toBe(
+    "30",
+  );
+  await act(async () => {
+    fireEvent.click(screen.getByRole("button", { name: "Refresh usage" }));
+  });
+  expect(load).toHaveBeenCalledTimes(3);
+  expect(screen.getByTestId("token-total").textContent).toBe("13");
+  expect(screen.getByText(/Last checked/)).toBeTruthy();
+  view.unmount();
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(hour);
+  });
+  expect(load).toHaveBeenCalledTimes(3);
+});
+it("keeps the last graph if an hourly check fails and retries the following hour", async () => {
+  vi.useFakeTimers();
+  const load = vi
+    .fn()
+    .mockResolvedValueOnce(refreshedSnapshot(2))
+    .mockRejectedValueOnce(new Error("offline"))
+    .mockResolvedValue(refreshedSnapshot(9));
+  render(<AutomaticAiUsagePanel load={load} sourceLabel="This computer" />);
+  await act(async () => {});
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(hour);
+  });
+  expect(screen.getByRole("alert")).toBeTruthy();
+  expect(screen.getByTestId("token-total").textContent).toBe("2");
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(hour);
+  });
+  expect(screen.queryByRole("alert")).toBeNull();
+  expect(screen.getByTestId("token-total").textContent).toBe("9");
+});
+it("never overlaps an hourly scan and aborts the active read when its scope closes", async () => {
+  vi.useFakeTimers();
+  let pendingSignal!: AbortSignal;
+  const load = vi
+    .fn()
+    .mockResolvedValueOnce(refreshedSnapshot(2))
+    .mockImplementation((signal: AbortSignal) => {
+      pendingSignal = signal;
+      return new Promise(() => {});
+    });
+  const view = render(
+    <AutomaticAiUsagePanel load={load} sourceLabel="This computer" />,
+  );
+  await act(async () => {});
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(hour);
+  });
+  expect(load).toHaveBeenCalledTimes(2);
+  expect(screen.getByTestId("token-total").textContent).toBe("2");
+  expect(
+    (screen.getByRole("button", { name: "Refresh usage" }) as HTMLButtonElement)
+      .disabled,
+  ).toBe(true);
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(2 * hour);
+  });
+  expect(load).toHaveBeenCalledTimes(2);
+  view.unmount();
+  expect(pendingSignal.aborted).toBe(true);
 });

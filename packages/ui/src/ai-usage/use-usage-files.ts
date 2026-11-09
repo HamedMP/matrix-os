@@ -8,6 +8,7 @@ import { readUsageFiles } from "./read-files";
 export function useUsageFiles(
   initialEvents: UsageEvent[],
   initialIssues: number,
+  allowFileSelection = true,
 ) {
   const [events, setEvents] = useState(initialEvents),
     [busy, setBusy] = useState(false),
@@ -57,5 +58,13 @@ export function useUsageFiles(
     }
   }
 
-  return { events, busy, error, issues, sources, selectFiles, clear };
+  return {
+    events: allowFileSelection ? events : initialEvents,
+    busy,
+    error,
+    issues: allowFileSelection ? issues : initialIssues,
+    sources,
+    selectFiles,
+    clear,
+  };
 }

@@ -538,3 +538,11 @@
   min-width: 0;
   flex: 1;
 }
+
+.ai-usage .au-auto-message {
+  display: grid;
+  gap: 4px;
+}
+.ai-usage .au-auto-message small {
+  font-size: 12px;
+}

@@ -3,6 +3,11 @@ import React, { useEffect, useState } from "react";
 import { readUsageExport } from "@matrix-os/contracts/ai-usage";
 import { AiUsagePanel } from "./AiUsagePanel";
 export type UsageSnapshot = ReturnType<typeof readUsageExport>;
+const refreshEveryMs = 60 * 60 * 1000;
+const checkedTime = new Intl.DateTimeFormat(undefined, {
+  hour: "2-digit",
+  minute: "2-digit",
+});
 /** The caller keys this component by authenticated owner and runtime generation. */
 export function AutomaticAiUsagePanel({
   load,
@@ -13,7 +18,7 @@ export function AutomaticAiUsagePanel({
 }) {
   const [snapshot, setSnapshot] = useState<{
       value: UsageSnapshot;
-      receipt: number;
+      checkedAt: Date;
     } | null>(null),
     [failure, setFailure] = useState(false),
     [revision, setRevision] = useState(0),
@@ -26,10 +31,7 @@ export function AutomaticAiUsagePanel({
       .then((value) => {
         controller.signal.throwIfAborted();
         const parsed = readUsageExport(value);
-        setSnapshot((previous) => ({
-          value: parsed,
-          receipt: (previous?.receipt ?? 0) + 1,
-        }));
+        setSnapshot({ value: parsed, checkedAt: new Date() });
       })
       .catch((error: unknown) => {
         if (!controller.signal.aborted) {
@@ -41,19 +43,44 @@ export function AutomaticAiUsagePanel({
         }
       })
       .finally(() => {
-        if (!controller.signal.aborted) setLoading(false);
+        if (!controller.signal.aborted) {
+          setLoading(false);
+        }
       });
-    return () => controller.abort();
+    return () => {
+      controller.abort();
+    };
   }, [load, revision]);
+  useEffect(() => {
+    if (loading) return;
+    const timer = setTimeout(() => setRevision((v) => v + 1), refreshEveryMs);
+    return () => clearTimeout(timer);
+  }, [loading, revision]);
   return (
     <div>
       <div className="ai-usage au-auto-status">
-        <span>
-          {loading
-            ? `Detecting usage on ${sourceLabel}…`
-            : failure
-              ? `Scan unavailable · ${sourceLabel}`
-              : `Automatically detected · ${sourceLabel}`}
+        <span className="au-auto-message">
+          <span>
+            {loading
+              ? `Detecting usage on ${sourceLabel}…`
+              : failure
+                ? `Scan unavailable · ${sourceLabel}`
+                : `Automatically detected · ${sourceLabel}`}
+          </span>
+          <small>
+            {snapshot && (
+              <>
+                <time
+                  dateTime={snapshot.checkedAt.toISOString()}
+                  title={snapshot.checkedAt.toLocaleString()}
+                >
+                  Last checked {checkedTime.format(snapshot.checkedAt)}
+                </time>{" "}
+                ·{" "}
+              </>
+            )}
+            Refreshes hourly
+          </small>
         </span>
         <button
           type="button"
@@ -65,13 +92,14 @@ export function AutomaticAiUsagePanel({
       </div>
       {failure && (
         <p role="alert" className="ai-usage">
-          Automatic usage scan is unavailable. Retry or connect to a computer
-          with the latest Matrix version.
+          {snapshot
+            ? "Could not refresh usage. Showing the last loaded history; retry or wait for the next hourly check."
+            : "Automatic usage scan is unavailable. Retry or connect to a computer with the latest Matrix version."}
         </p>
       )}
       {snapshot ? (
         <AiUsagePanel
-          key={snapshot.receipt}
+          key="loaded"
           initialEvents={snapshot.value.events}
           history={snapshot.value.history}
           initialIssues={snapshot.value.issues}
@@ -80,7 +108,7 @@ export function AutomaticAiUsagePanel({
           timeZone={Intl.DateTimeFormat().resolvedOptions().timeZone}
         />
       ) : !loading ? (
-        <AiUsagePanel allowFileSelection={false} />
+        <AiUsagePanel key="empty" allowFileSelection={false} />
       ) : null}
     </div>
   );

@@ -35,7 +35,7 @@ export function AiUsagePanel({
   timeZone?: string;
 } = {}) {
   const { events, busy, error, issues, sources, selectFiles, clear } =
-    useUsageFiles(initialEvents, initialIssues);
+    useUsageFiles(initialEvents, initialIssues, allowFileSelection);
   const [agent, setAgent] = useState<UsageAgent | "">(""),
     [range, setRange] = useState(history ? "all" : "365");
   const [zone, setZone] = useState(history?.timeZone ?? timeZone);
