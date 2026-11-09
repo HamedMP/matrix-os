@@ -342,3 +342,13 @@ export { RoutineFullAccessConsent, RoutineFullAccessConsentContent } from "./rou
 export { useRoutineFullAccessSelection } from "./routine-action/use-routine-full-access-selection.js";
 
 export { routineFullAccessChatPresentationEligible } from "./routine-action/full-access-presentation.js";
+
+export { isRoutineOriginPath, createRoutineOriginClient, type RoutineOriginClient } from "./chat/routine-origin-client.js";
+export { useRoutineOrigin } from "./chat/use-routine-origin.js";
+export { RoutineOriginApprovals } from "./chat/RoutineOriginApprovals.js";
+export { RoutineReceipt } from "./chat/RoutineReceipt.js";
+export { routineReceiptMessage, routineReceiptOutcome } from "./chat/routine-receipt.js";
+export { usePersistentTaskSelection } from "./chat/use-persistent-task-selection.js";
+
+export { ScheduledInputText } from "./chat/ScheduledInputText.js";
+export { PersistentTaskControl } from "./chat/PersistentTaskControl.js";
