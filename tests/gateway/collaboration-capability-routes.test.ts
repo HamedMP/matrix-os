@@ -8,6 +8,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { CollaborationGrantSchema, CollaborationProjectAccessPresentationSchema, CollaborationReadinessSchema } from "@matrix-os/contracts";
 import { bootstrapChatDatabase } from "../../packages/gateway/src/chat/database.js";
 import { ChatRepository } from "../../packages/gateway/src/chat/repository.js";
+import { CollaborativeAppReadinessRepository } from "../../packages/gateway/src/collaboration/collaborative-app-readiness-repository.js";
+import { CollaborativeAppShareRepository } from "../../packages/gateway/src/collaboration/collaborative-app-share-repository.js";
+import { CollaborationResourceCatalog } from "../../packages/gateway/src/collaboration/resource-catalog.js";
 import { createGatewayCollaboration } from "../../packages/gateway/src/collaboration/wiring.js";
 import { createOwnerResourceDriver } from "../../packages/gateway/src/collaboration/owner-resource-driver.js";
 import { CollaborationProofSigner } from "../../packages/platform/src/collaboration/proof.js";
@@ -31,6 +34,8 @@ const scopeId = "10000000-0000-4000-8000-00000000a915";
 const runtimeId = "vps:11111111-1111-4111-8111-111111111111";
 const key = "a".repeat(32);
 const boardAppIncarnation = "d".repeat(64);
+const collaborativeCatalogId = "50000000-0000-4000-8000-000000000001";
+const collaborativeReadinessId = "60000000-0000-4000-8000-000000000001";
 
 const socketUpgrade = (() => (_context: Context) => new Response(null, { status: 426 })) as unknown as UpgradeWebSocket;
 
@@ -168,11 +173,67 @@ describe("collaboration capability HTTP routes", () => {
     expect((await signed({ actorId: outsiderId, method: "GET", path })).status).toBe(404);
   });
 
-  it("rejects a second grant permission model for collaborative app scopes", async () => {
+  it("keeps legacy app grants manageable before a collaborative binding exists", async () => {
     await fixture.db.updateTable("collaboration_scopes").set({
       kind: "app",
-      resource_id: "50000000-0000-4000-8000-000000000001",
+      resource_id: collaborativeCatalogId,
     }).where("id", "=", scopeId).execute();
+    const path = `/api/collaboration/scopes/${scopeId}/grants`;
+
+    const response = await signed({ actorId: ownerId, method: "POST", path, body: {
+      clientRequestId: randomUUID(), expectedRevision: "1",
+      audience: { kind: "organization" }, preset: "viewer",
+    } });
+
+    expect(response.status).toBe(201);
+    expect(await fixture.db.selectFrom("collaboration_grants").selectAll().execute()).toHaveLength(1);
+  });
+
+  it("rejects a second grant permission model for collaborative app scopes", async () => {
+    const catalog = new CollaborationResourceCatalog(fixture.db, {
+      createId: () => collaborativeCatalogId,
+    });
+    await catalog.register({
+      ownerId,
+      projectId: null,
+      kind: "app",
+      path: "board",
+      incarnation: boardAppIncarnation,
+    });
+    await fixture.db.updateTable("collaboration_scopes").set({
+      kind: "app",
+      resource_id: collaborativeCatalogId,
+    }).where("id", "=", scopeId).execute();
+    const build = {
+      appId: "board",
+      catalogId: collaborativeCatalogId,
+      registrationIncarnation: boardAppIncarnation,
+      manifestVersion: "1.0.0",
+      buildId: "b".repeat(64),
+      manifestDigest: "c".repeat(64),
+      schemaDigest: "d".repeat(64),
+      assetDigest: "e".repeat(64),
+      bridgeContractVersion: "matrix-app-bridge-v1",
+      runtimeAbi: "matrix-runtime-v1",
+    };
+    const readiness = new CollaborativeAppReadinessRepository(fixture.db, {
+      createId: () => collaborativeReadinessId,
+    });
+    await readiness.createOrGet({ ownerId, build, artifactRef: `objects/${build.buildId}`, verifierVersion: "v1" });
+    await readiness.transition({
+      id: collaborativeReadinessId,
+      ownerId,
+      expectedRevision: 1,
+      status: "ready",
+      gateResults: [{ code: "cleanup", status: "passed" }],
+      verifiedAt: new Date(),
+    });
+    await new CollaborativeAppShareRepository(fixture.db).create({
+      scopeId,
+      ownerId,
+      readinessId: collaborativeReadinessId,
+      expectedBuildId: build.buildId,
+    });
     const path = `/api/collaboration/scopes/${scopeId}/grants`;
 
     const response = await signed({ actorId: ownerId, method: "POST", path, body: {

@@ -89,6 +89,38 @@ describe("collaborative app atomic share creation", () => {
     expect(member).toMatchObject({ actor_id: input.ownerId, role: "owner", status: "accepted" });
   });
 
+  it("advances a legacy app scope before publishing its first collaborative share event", async () => {
+    await fixture.db.insertInto("collaboration_scopes").values({
+      id: scopeId,
+      owner_type: "personal",
+      owner_id: input.ownerId,
+      organization_id: input.organizationId,
+      kind: "app",
+      resource_id: catalogId,
+      parent_scope_id: null,
+      membership_mode: "direct",
+      lifecycle: "shared",
+      revision: 7,
+      auth_epoch: 3,
+      authority_runtime_id: input.runtimeId,
+      authority_generation: 1,
+      execution_generation: null,
+      execution_eligibility: null,
+      created_at: now,
+      updated_at: now,
+      deleted_at: null,
+    }).execute();
+
+    const created = await repository.createAtomic(input);
+
+    expect(created).toMatchObject({ scopeId, scopeRevision: 8, authEpoch: 4 });
+    expect(await fixture.db.selectFrom("collaboration_events").select(["revision", "event_type"])
+      .where("scope_id", "=", scopeId).executeTakeFirstOrThrow()).toEqual({
+      revision: 8,
+      event_type: "app.share.created",
+    });
+  });
+
   it("rolls back every related write when the final outbox insert fails", async () => {
     await sql`ALTER TABLE collaboration_directory_outbox
       ADD CONSTRAINT reject_app_share_test CHECK (resource_kind <> 'app')`.execute(fixture.db);

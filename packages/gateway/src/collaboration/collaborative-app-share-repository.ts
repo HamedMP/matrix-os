@@ -202,7 +202,7 @@ export class CollaborativeAppShareRepository {
         if (!readiness) throw new CollaborativeAppShareRepositoryError("conflict");
         const timestamp = this.now();
         const timestampIso = timestamp.toISOString();
-        await trx.insertInto("collaboration_scopes").values({
+        const insertedScope = await trx.insertInto("collaboration_scopes").values({
           id: this.createId(), owner_type: "personal", owner_id: input.ownerId,
           organization_id: input.organizationId, kind: "app", resource_id: catalog.id,
           parent_scope_id: null, membership_mode: "direct", lifecycle: "shared", revision: 1,
@@ -210,7 +210,8 @@ export class CollaborativeAppShareRepository {
           execution_generation: null, execution_eligibility: null,
           created_at: timestamp, updated_at: timestamp, deleted_at: null,
         }).onConflict((conflict) => conflict.columns(["owner_type", "owner_id", "kind", "resource_id"])
-          .where("deleted_at", "is", null).where("lifecycle", "!=", "deleted").doNothing()).execute();
+          .where("deleted_at", "is", null).where("lifecycle", "!=", "deleted").doNothing())
+          .returning("id").executeTakeFirst();
         let scope = await trx.selectFrom("collaboration_scopes").selectAll()
           .where("owner_type", "=", "personal").where("owner_id", "=", input.ownerId)
           .where("kind", "=", "app").where("resource_id", "=", catalog.id)
@@ -236,6 +237,16 @@ export class CollaborativeAppShareRepository {
           || (scope.lifecycle !== "shared" && !restarting)
           || (binding && !restarting)) {
           throw new CollaborativeAppShareRepositoryError("conflict");
+        }
+        if (!binding && !insertedScope) {
+          const adoptedScope = await trx.updateTable("collaboration_scopes").set({
+            revision: Number(scope.revision) + 1,
+            auth_epoch: sql<number>`auth_epoch + 1`,
+            updated_at: timestamp,
+          }).where("id", "=", scope.id).where("revision", "=", Number(scope.revision))
+            .returningAll().executeTakeFirst();
+          if (!adoptedScope) throw new CollaborativeAppShareRepositoryError("conflict");
+          scope = adoptedScope;
         }
         if (restarting) {
           const restartedScope = await trx.updateTable("collaboration_scopes").set({
