@@ -1,15 +1,15 @@
 import React from "react";
 import type { UsageHistory, UsageSummary } from "@matrix-os/contracts/ai-usage";
 import { number, money, agentName, formatBytes } from "./format";
+const coverageDate = new Intl.DateTimeFormat("en", {
+  dateStyle: "medium",
+  timeZone: "UTC",
+});
+const date = (value: string) => coverageDate.format(new Date(value));
 export function HistoryCoverage({ history }: { history: UsageHistory }) {
   const c = history.coverage,
     backup = c.backup;
   const uncertain = c.issues > 0 || c.failedRoots > 0;
-  const date = (value: string) =>
-    new Intl.DateTimeFormat("en", {
-      dateStyle: "medium",
-      timeZone: "UTC",
-    }).format(new Date(value));
   return (
     <details className="au-coverage">
       <summary>
@@ -86,72 +86,80 @@ export function HistoryCoverage({ history }: { history: UsageHistory }) {
           </span>
         </span>
       </summary>
-      <div className="au-coverage-body">
-        <dl className="au-coverage-grid">
-          <div>
-            <dt>Connected sources</dt>
-            <dd>{c.machines.join(", ")}</dd>
-          </div>
-          <div>
-            <dt>Recorded token history</dt>
-            <dd>
-              {c.oldest ? date(c.oldest) : "Unknown start"} –{" "}
-              {c.newest ? date(c.newest) : "Unknown end"}
-            </dd>
-          </div>
-          <div>
-            <dt>Verified backup</dt>
-            <dd>
-              {backup
-                ? `${number(backup.verifiedFiles)} files verified on Matrix · ${formatBytes(backup.verifiedBytes)}`
-                : "Verification pending"}
-            </dd>
-          </div>
-          <div>
-            <dt>Recovered files</dt>
-            <dd>
-              {number(c.files)} files · {formatBytes(c.indexedBytes)} processed
-            </dd>
-          </div>
-          {!!c.activityOnlySessions && (
-            <div>
-              <dt>Activity without token counters</dt>
-              <dd>
-                {number(c.activityOnlySessions)} sessions
-                {c.oldestActivity ? ` · since ${date(c.oldestActivity)}` : ""}
-              </dd>
-            </div>
-          )}
-          {uncertain && (
-            <div>
-              <dt>Coverage gaps</dt>
-              <dd>
-                {number(c.issues)} partial or ambiguous records
-                {c.failedRoots > 0
-                  ? ` · ${number(c.failedRoots)} folders could not be read`
-                  : ""}
-                . Totals may be incomplete.
-              </dd>
-            </div>
-          )}
-          {!!c.preservedAgents?.length && (
-            <div>
-              <dt>Other histories preserved</dt>
-              <dd>
-                {c.preservedAgents.join(", ")}. Their token imports are pending.
-              </dd>
-            </div>
-          )}
-        </dl>
-        {c.legacyActivity && (
-          <p className="au-coverage-note">
-            Earlier Claude activity ({c.legacyActivity.firstDay} –{" "}
-            {c.legacyActivity.lastDay}) is kept separate from token totals to
-            avoid counting overlapping history twice.
-          </p>
-        )}
-      </div>
+      <CoverageMetadata history={history} />
     </details>
+  );
+}
+function CoverageMetadata({ history }: { history: UsageHistory }) {
+  const c = history.coverage,
+    backup = c.backup;
+  const uncertain = c.issues > 0 || c.failedRoots > 0;
+  return (
+    <div className="au-coverage-body">
+      <dl className="au-coverage-grid">
+        <div>
+          <dt>Connected sources</dt>
+          <dd>{c.machines.join(", ")}</dd>
+        </div>
+        <div>
+          <dt>Recorded token history</dt>
+          <dd>
+            {c.oldest ? date(c.oldest) : "Unknown start"} –{" "}
+            {c.newest ? date(c.newest) : "Unknown end"}
+          </dd>
+        </div>
+        <div>
+          <dt>Verified backup</dt>
+          <dd>
+            {backup
+              ? `${number(backup.verifiedFiles)} files verified on Matrix · ${formatBytes(backup.verifiedBytes)}`
+              : "Verification pending"}
+          </dd>
+        </div>
+        <div>
+          <dt>Recovered files</dt>
+          <dd>
+            {number(c.files)} files · {formatBytes(c.indexedBytes)} processed
+          </dd>
+        </div>
+        {!!c.activityOnlySessions && (
+          <div>
+            <dt>Activity without token counters</dt>
+            <dd>
+              {number(c.activityOnlySessions)} sessions
+              {c.oldestActivity ? ` · since ${date(c.oldestActivity)}` : ""}
+            </dd>
+          </div>
+        )}
+        {uncertain && (
+          <div>
+            <dt>Coverage gaps</dt>
+            <dd>
+              {number(c.issues)} partial or ambiguous records
+              {c.failedRoots > 0
+                ? ` · ${number(c.failedRoots)} folders could not be read`
+                : ""}
+              . Totals may be incomplete.
+            </dd>
+          </div>
+        )}
+        {!!c.preservedAgents?.length && (
+          <div>
+            <dt>Other histories preserved</dt>
+            <dd>
+              {c.preservedAgents.join(", ")}. Their token imports are pending.
+            </dd>
+          </div>
+        )}
+      </dl>
+      {c.legacyActivity && (
+        <p className="au-coverage-note">
+          Earlier Claude activity ({c.legacyActivity.firstDay} –{" "}
+          {c.legacyActivity.lastDay}) is kept separate from token totals to
+          avoid counting overlapping history twice.
+        </p>
+      )}
+    </div>
   );
 }
 export function WebHistoryDetails({ history }: { history: UsageHistory }) {

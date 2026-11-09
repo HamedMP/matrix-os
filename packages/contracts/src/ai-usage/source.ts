@@ -121,6 +121,12 @@ export const UsageExportSchema = z.object({
   issues: z.number().int().nonnegative().max(1e9).default(0),
   history: historySchema.optional(),
 });
+/** Portable full-history export; consumers must match the authenticated owner before display. */
+export const AiUsageBackupSchema = z.object({
+  version: z.literal(1),
+  ownerId: z.string().min(1).max(256),
+  report: UsageExportSchema,
+});
 export function readUsageExport(value: unknown) {
   return UsageExportSchema.parse(value);
 }

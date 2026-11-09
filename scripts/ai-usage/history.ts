@@ -2,7 +2,7 @@
 import { Kysely, PostgresDialect } from "kysely";
 import pg from "pg";
 import { readClaudeAccountHistory } from "./account-history";
-import { readFile, writeFile, rename } from "node:fs/promises";
+import { readFile, writeFile, rename, mkdir } from "node:fs/promises";
 import { join } from "node:path";
 import { UsageHistoryRepository } from "../../packages/gateway/src/ai-usage/history-repository";
 import { indexUsageRoots } from "../../packages/gateway/src/ai-usage/history-collector";
@@ -21,6 +21,7 @@ const config = JSON.parse(await readFile(configFile, "utf8")) as {
   legacyCache?: string;
   accountExport?: string;
   preservedAgents?: string[];
+  desktopExport?: { home: string; ownerId: string };
 };
 const db = new Kysely<any>({
   dialect: new PostgresDialect({
@@ -85,6 +86,21 @@ try {
     mode: 0o600,
   });
   await rename(output + ".pending", output);
+  if (config.desktopExport) {
+    const directory = join(config.desktopExport.home, "exports", "ai-usage");
+    await mkdir(directory, { recursive: true, mode: 0o700 });
+    const path = join(directory, "latest.json");
+    await writeFile(
+      path + ".pending",
+      JSON.stringify({
+        version: 1,
+        ownerId: config.desktopExport.ownerId,
+        report: snapshot,
+      }),
+      { mode: 0o600 },
+    );
+    await rename(path + ".pending", path);
+  }
   console.error(
     `Full-history report ready: ${coverage.files} files, ${coverage.indexedBytes} indexed bytes; ${failedRoots} failed roots`,
   );
