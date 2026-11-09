@@ -170,6 +170,32 @@ it("named private transport cancels only the exact pending CLI action and keeps 
 }, 15_000);
 
 
+it("native stdout EOF cancels a pending owner approval while the process is alive", async () => {
+  const requestId = "de000000-0000-4000-8000-000000000608", chatId = "chat_codex_native_stdout_eof";
+  f = await codexFixture({ intent: { args: ["propose", "--input", "-", "--request-id", requestId], stdin: JSON.stringify(proposal) }, holdAfterResult: true });
+  const register = f.runtime.registerChat;
+  let sourceSignal: AbortSignal | undefined;
+  f.runtime.registerChat = options => { sourceSignal = options.signal; return register(options); };
+
+  const admitted = await f.start(chatId);
+  await expect.poll(() => f!.sourceEvents.find(event => event.type === "approval.requested"), { timeout: 5000 }).toMatchObject({ type: "approval.requested" });
+  const approval = f.sourceEvents.find(event => event.type === "approval.requested");
+  if (!approval) throw new Error("Missing exact owner decision");
+
+  await writeFile(f.controlFile, "stdout-eof");
+  const stdoutEof = async () => (await f!.frames()).find(frame => frame.fixtureEvent === "native.stdout-eof");
+  await expect.poll(stdoutEof, { timeout: 3000 }).toMatchObject({ pid: expect.any(Number) });
+  const { pid } = await stdoutEof();
+  expect(() => process.kill(pid, 0)).not.toThrow();
+  await expect.poll(() => sourceSignal?.aborted, { timeout: 2000 }).toBe(true);
+  expect(() => process.kill(pid, 0)).not.toThrow();
+
+  await expect(f.approve(approval, chatId, admitted.run.id)).rejects.toMatchObject({ code: "not_found" });
+  expect(f.httpCalls()).toBe(0);
+  expect(await f.data.db.selectFrom("routine_cli_requests").selectAll().execute()).toEqual([]);
+  expect(await f.data.db.selectFrom("bot_approvals").selectAll().execute()).toEqual([]);
+}, 15_000);
+
 it("a lost private queued ACK never falls back or resubmits a prompt/mutation and retains the original business UUID", async () => {
   const requestId = "de000000-0000-4000-8000-000000000606", chatId = "chat_codex_lost_ack", owner = { type: "personal" as const, ownerId: "user_owner_1" };
   f = await codexFixture({ intents: [{ args: ["list"] }, { args: ["propose", "--input", "-", "--request-id", requestId], stdin: JSON.stringify(proposal) }], turns: 3, loseQueuedAck: true, holdAfterResultOnTurn: 2 });

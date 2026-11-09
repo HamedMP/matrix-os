@@ -1195,7 +1195,7 @@ async function runTurn(threadId, turn) {
     activeNativeTurnId = z.object({
       turn: z.object({ id: NativeReferenceSchema }).passthrough(),
     }).passthrough().parse(started).turn.id;
-    routines.bind(turn, nativeGeneration, threadId, activeNativeTurnId, routineFeatureThread);
+    routines.bind(turn, nativeGeneration, threadId, activeNativeTurnId, routineFeatureThread && child.stdout.readable);
   } catch (error) {
     routines.end();
     activeTurn = false;
@@ -1239,7 +1239,14 @@ async function startNativeSession(lease) {
   const resumeId = nativeThreadId ?? config.providerThreadId;
   nativeSession = await startCodexNativeProviderSession({ command, args: commandArgs,
     cwd: process.cwd(), env: codexBrowserChildEnvironment(process.env, lease), signal: startupController.signal,
-    onChild(value) { routines.end(); nativeGeneration = randomUUID(); child = value; value.once("exit", () => routines.end()); },
+    onChild(value) {
+      routines.end();
+      nativeGeneration = randomUUID();
+      child = value;
+      const endRoutines = () => { if (child === value) routines.end(); };
+      value.once("exit", endRoutines);
+      value.stdout.once("end", endRoutines);
+    },
     onClosed() { if (stopTimer) clearTimeout(stopTimer); for (const pending of pendingRpc.values()) { clearTimeout(pending.timeout); pending.reject(new Error("provider_stopped")); } pendingRpc.clear(); },
     onMessage: handleProviderMessage,
     onFailure(error) {
