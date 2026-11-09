@@ -45,6 +45,7 @@ export async function resolveClaudeNativeProtocol(options: {
     });
   } catch (error: unknown) {
     if (!(error instanceof CanonicalCliError)) throw error;
+    if (error.kind !== "aborted") console.warn("[chat-claude] Native schedule version probe failed", error.kind);
     failed = true;
   }
   // Forced runner settlement alone never authorizes a fallback child.
