@@ -52,21 +52,23 @@ it('preserves the legacy site response unless the gateway negotiates access mode
  expect(current).toMatchObject({title:'Legacy updated',accessMode:'private_link',revision:2});
 });
 
-it('manages write-only access links through the verified machine owner route',async()=>{
+it('preserves legacy access-link listings unless the gateway negotiates pagination',async()=>{
  const siteId=randomUUID();
  await db.executor.insertInto('public_sites').values({id:siteId,owner_id:'user_launch',machine_id:identity.machineId,app_slug:'private-event',title:'Private event',description:'',slug:null,revision:1,status:'published',access_mode:'private_link',active_version:null,created_at:new Date().toISOString()}).execute();
  const url='/internal/containers/launch/sites/private-event/access-links?runtimeSlot=primary';
  const listUrl=`${url}&limit=50`;
  const headers={authorization:`Bearer ${token}`,'content-type':'application/json'};
+ expect(await (await app.request(listUrl,{headers})).json()).toEqual({links:[]});
  const created=await app.request(url,{method:'POST',headers,body:JSON.stringify({baseRevision:1})});
  expect(created.status).toBe(200);
  const value=await created.json() as {link:{id:string};url:string};
  expect(value.url).toMatch(new RegExp(`^https://matrix\\.page/${siteId}#access=`));
  const listed=await (await app.request(listUrl,{headers})).json();
- expect(listed).toEqual({links:[expect.objectContaining({id:value.link.id,status:'unclaimed'})],nextCursor:null});
+ expect(listed).toEqual({links:[expect.objectContaining({id:value.link.id,status:'unclaimed'})]});
  expect(JSON.stringify(listed)).not.toContain('#access=');
+ expect(await (await app.request(listUrl,{headers:{...headers,[SITE_MANAGEMENT_CONTRACT_VERSION_HEADER]:SITE_MANAGEMENT_CONTRACT_VERSION}})).json()).toEqual({links:[expect.objectContaining({id:value.link.id,status:'unclaimed'})],nextCursor:null});
  expect((await app.request(`${url.replace('?runtimeSlot=primary','')}/${value.link.id}?runtimeSlot=primary`,{method:'DELETE',headers})).status).toBe(200);
- expect(await (await app.request(listUrl,{headers})).json()).toEqual({links:[],nextCursor:null});
+ expect(await (await app.request(listUrl,{headers})).json()).toEqual({links:[]});
 });
 
 it('rejects legacy handle credentials, different machines, different slots and old token epochs',async()=>{

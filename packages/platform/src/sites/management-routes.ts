@@ -1,7 +1,7 @@
 import { Hono, type Context } from 'hono';
 import { bodyLimit } from 'hono/body-limit';
 import { z } from 'zod/v4';
-import { SITE_MANAGEMENT_CONTRACT_VERSION, SITE_MANAGEMENT_CONTRACT_VERSION_HEADER, SITE_PUBLISH_TIMEOUT_MS, SiteAccessLinkCreateRequestSchema, SiteAccessLinksQuerySchema, SiteAppSlugSchema, SiteIdSchema, SiteRollbackSchema, type SiteRecord } from '@matrix-os/contracts';
+import { SITE_MANAGEMENT_CONTRACT_VERSION, SITE_MANAGEMENT_CONTRACT_VERSION_HEADER, SITE_PUBLISH_TIMEOUT_MS, SiteAccessLinkCreateRequestSchema, SiteAccessLinksQuerySchema, SiteAppSlugSchema, SiteIdSchema, SiteRollbackSchema, type SiteAccessLinksResponse, type SiteRecord } from '@matrix-os/contracts';
 import { RuntimeSlotSchema, SafeHandleSchema } from '../customer-vps-schema.js';
 import { getRunningUserMachineByHandle, type PlatformDB } from '../db.js';
 import { buildPlatformSyncVerificationToken, timingSafeTokenEquals } from '../platform-token.js';
@@ -54,6 +54,7 @@ export function createSiteManagementRoutes(options: {
         const { accessMode: _, ...legacySite } = site;
         return c.json(legacySite);
     };
+    const accessLinksResponse = (c: Context, result: SiteAccessLinksResponse) => c.json(usesCurrentContract(c) ? result : { links: result.links });
     app.get('/:appSlug', async (c) => { const identity = await owner(c); if (!identity)
         return denied(c); const site = await options.service.get(identity); if (!site)
         throw new SiteError('not_found'); return siteResponse(c, site); });
@@ -96,7 +97,7 @@ export function createSiteManagementRoutes(options: {
             limit: c.req.query('limit'), cursor: c.req.query('cursor'),
         });
         if (!query.success) throw new SiteError('invalid_request');
-        return c.json(await options.service.listAccessLinks(identity, query.data));
+        return accessLinksResponse(c, await options.service.listAccessLinks(identity, query.data));
     });
     app.post('/:appSlug/access-links', smallBody, async c => {
         const identity = await owner(c); if (!identity) return denied(c);

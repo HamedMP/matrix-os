@@ -25,6 +25,7 @@ describe('bounded site management transport',()=>{
   ]);
   const listQuery=new URL(String(fetch.mock.calls[0]![0])).searchParams;
   expect({runtimeSlot:listQuery.get('runtimeSlot'),limit:listQuery.get('limit')}).toEqual({runtimeSlot:'main',limit:'50'});
+  expect(fetch.mock.calls[0]![1].headers['x-matrix-sites-contract-version']).toBe('2');
   expect(fetch.mock.calls.map(([,options])=>options.method)).toEqual(['GET','POST','DELETE']);
   vi.stubGlobal('fetch',vi.fn().mockResolvedValue(new Response(JSON.stringify({links:[{...link,token:'secret'}]}))));
   await expect(api.accessLinks('event')).rejects.toMatchObject({status:503});
