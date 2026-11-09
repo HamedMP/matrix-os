@@ -1,6 +1,7 @@
 "use client";
 import React, { useEffect, useRef, useState } from "react";
 import { readUsageExport } from "@matrix-os/contracts/ai-usage";
+import { Button } from "../Button.js";
 import { AiUsagePanel } from "./AiUsagePanel";
 export type UsageSnapshot = ReturnType<typeof readUsageExport>;
 const refreshEveryMs = 60 * 60 * 1000;
@@ -91,8 +92,8 @@ export function AutomaticAiUsagePanel({
             Refreshes hourly
           </small>
         </span>
-        <button
-          type="button"
+        <Button
+          variant="secondary"
           disabled={loading}
           onClick={() => {
             trigger.current = "manual";
@@ -100,7 +101,7 @@ export function AutomaticAiUsagePanel({
           }}
         >
           Refresh usage
-        </button>
+        </Button>
       </div>
       {failure && (
         <p role="alert" className="ai-usage">

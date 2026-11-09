@@ -7,6 +7,7 @@ import {
   type UsageEvent,
   type UsageHistory,
 } from "@matrix-os/contracts/ai-usage";
+import { Button } from "../Button.js";
 import { UsageFilters } from "./UsageSelect";
 import { useUsageFiles } from "./use-usage-files";
 
@@ -67,9 +68,9 @@ export function AiUsagePanel({
         </div>
         {allowFileSelection && (
           <div className="au-actions">
-            <button type="button" onClick={clear}>
+            <Button variant="secondary" onClick={clear}>
               Clear
-            </button>
+            </Button>
             <label className="au-primary">
               {busy ? "Reading locally…" : "Add usage files"}
               <input
