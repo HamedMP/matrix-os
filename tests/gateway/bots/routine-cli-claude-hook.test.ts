@@ -1,8 +1,10 @@
 import { ROUTINE_CLI_SAFE_ERRORS } from "@matrix-os/contracts/routine-cli";
-import { afterEach, expect, it } from "vitest";
+import { afterEach, expect, it, vi } from "vitest";
 import { readFile, readdir, symlink, mkdtemp, rm, mkdir, writeFile, utimes, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
+import { PassThrough } from "node:stream";
+import { createBoundedCliLines } from "../../../packages/gateway/src/chat/bounded-cli-lines.js";
 import { createRoutineResultArtifacts } from "../../../packages/gateway/src/chat/routine-result-artifacts.js";
 import { createClaudeRoutineHook } from "../../../packages/gateway/src/chat/claude-routine-hook.js";
 type WrittenFrame = { request_id: string; request: { hooks: { PreToolUse: Array<{ hookCallbackIds: string[] }> } }; response: { response: { hookSpecificOutput: { permissionDecision: string; permissionDecisionReason: string; updatedInput?: { command: string } } } } };
@@ -23,6 +25,100 @@ const init = (id: string, applied = true) => ({ type: "control_response", respon
 const system = { type: "system", subtype: "init", claude_code_version: "2.1.240", tools: ["Bash"], permissionMode: "bypassPermissions" };
 function callback(cb: string, id = "request-one", tool = "tool-one", command = "matrix routines list") { return { type: "control_request", request_id: id, request: { subtype: "hook_callback", callback_id: cb, tool_use_id: tool,
   input: { hook_event_name: "PreToolUse", tool_name: "Bash", tool_use_id: tool, tool_input: { command, run_in_background: true }, permission_mode: "bypassPermissions" } } }; }
+it("replies to nine ordinary Bash callbacks from one stdout chunk without aborting Claude", async () => {
+  const frames: WrittenFrame[] = [];
+  const fail = vi.fn(), execute = vi.fn(async () => "unused");
+  let release!: () => void;
+  const gate = new Promise<void>(resolve => { release = resolve; });
+  let writesInFlight = 0, peakWrites = 0;
+  const hook = createClaudeRoutineHook({ signal: new AbortController().signal, fail, execute,
+    startInput: async () => {}, write: async raw => {
+      const frame = JSON.parse(raw) as WrittenFrame;
+      if (frame.response) {
+        writesInFlight++;
+        peakWrites = Math.max(peakWrites, writesInFlight);
+        await gate;
+        writesInFlight--;
+      }
+      frames.push(frame);
+    } });
+  closers.push(hook.close);
+  await hook.start();
+  const initialize = frames[0], cb = initialize.request.hooks.PreToolUse[0].hookCallbackIds[0];
+  hook.handle(init(initialize.request_id)); hook.handle(system);
+  const stdout = new PassThrough();
+  const lines = createBoundedCliLines(256 * 1024, line => hook.handle(JSON.parse(line)));
+  stdout.on("data", (chunk: Buffer) => lines.push(chunk));
+  const ids = Array.from({ length: 9 }, (_, i) => `ordinary-request-${i}`);
+  stdout.write(Buffer.from(ids.map(id => JSON.stringify(callback(cb, id, id, "git status"))).join("\n") + "\n"));
+  release();
+  await new Promise(resolve => setImmediate(resolve));
+  stdout.destroy();
+
+  expect(frames.slice(1).map(frame => frame.response)).toEqual(ids.map(request_id => ({ subtype: "success", request_id, response: {} })));
+  expect(fail).not.toHaveBeenCalled();
+  expect(execute).not.toHaveBeenCalled();
+  expect(peakWrites).toBe(1);
+});
+it.each(["process abort", "EOF", "write failure", "queue overflow"] as const)("stops queued writes on %s", async stop => {
+  const frames: WrittenFrame[] = [];
+  const controller = new AbortController(), fail = vi.fn();
+  let failWrite!: (error: Error) => void;
+  const heldWrite = new Promise<void>((_resolve, reject) => { failWrite = reject; });
+  const hook = createClaudeRoutineHook({ signal: controller.signal, fail, execute: async () => "unused",
+    startInput: async () => {}, write: async raw => {
+      const frame = JSON.parse(raw) as WrittenFrame;
+      frames.push(frame);
+      if (frame.response) await heldWrite;
+    } });
+  closers.push(hook.close);
+  await hook.start();
+  const initialize = frames[0], cb = initialize.request.hooks.PreToolUse[0].hookCallbackIds[0];
+  hook.handle(init(initialize.request_id)); hook.handle(system);
+  hook.handle(callback(cb, "writing", "writing", "git status"));
+  hook.handle(callback(cb, "queued", "queued", "git diff"));
+  if (stop === "queue overflow") {
+    for (let i = 0; i < 512; i++) hook.handle(callback(cb, `queued-${i}`, `queued-${i}`, "git diff"));
+    expect(fail).toHaveBeenCalledTimes(1);
+  }
+  if (stop === "process abort") controller.abort();
+  if (stop === "EOF") await hook.close();
+  failWrite(new Error("stdin is closed"));
+  await new Promise(resolve => setImmediate(resolve));
+
+  expect(frames.slice(1).map(frame => frame.response)).toEqual([{ subtype: "success", request_id: "writing", response: {} }]);
+  expect(fail).toHaveBeenCalledTimes(stop === "write failure" || stop === "queue overflow" ? 1 : 0);
+});
+it("drops queued routine and ordinary Bash replies for cancelled native callbacks", async () => {
+  const frames: WrittenFrame[] = [];
+  const fail = vi.fn(), execute = vi.fn(async () => "/bin/cat -- '/tmp/display'");
+  let release!: () => void;
+  const gate = new Promise<void>(resolve => { release = resolve; });
+  const hook = createClaudeRoutineHook({ signal: new AbortController().signal, fail, execute,
+    startInput: async () => {}, write: async raw => {
+      const frame = JSON.parse(raw) as WrittenFrame;
+      frames.push(frame);
+      if (frame.response) await gate;
+    } });
+  closers.push(hook.close);
+  await hook.start();
+  const initialize = frames[0], cb = initialize.request.hooks.PreToolUse[0].hookCallbackIds[0];
+  hook.handle(init(initialize.request_id)); hook.handle(system);
+  hook.handle(callback(cb, "ordinary", "ordinary", "git status"));
+  hook.handle(callback(cb, "ordinary-cancel", "ordinary-cancel", "git status"));
+  hook.handle({ type: "stream_event", event: { type: "content_block_start", content_block: { type: "tool_use", name: "Bash", id: "tool-one" } } });
+  hook.handle(callback(cb));
+  await new Promise(resolve => setImmediate(resolve));
+  hook.handle({ type: "control_cancel_request", request_id: "request-one" });
+  hook.handle({ type: "control_cancel_request", request_id: "ordinary-cancel" });
+  hook.handle(callback(cb, "after-cancel", "after-cancel", "git diff"));
+  release();
+  await new Promise(resolve => setImmediate(resolve));
+
+  expect(execute).toHaveBeenCalledTimes(1);
+  expect(frames.slice(1).map(frame => frame.response)).toEqual(["ordinary", "after-cancel"].map(request_id => ({ subtype: "success", request_id, response: {} })));
+  expect(fail).not.toHaveBeenCalled();
+});
 it("ACK before input; only matching current tool can rewrite; cancellation pump stays live and never sends a late allow", async () => {
   const frames: WrittenFrame[] = []; let prompts = 0, executions = 0, cancelled = false;
   let complete!: (command: string) => void;

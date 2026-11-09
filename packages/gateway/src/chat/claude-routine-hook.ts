@@ -12,31 +12,96 @@ const FrameSchema = z.object({ type: z.string(), subtype: z.string().optional(),
   request: z.object({ subtype: z.string() }).passthrough().optional(), claude_code_version: z.string().optional(), tools: z.array(z.string()).max(256).optional(),
   event: z.object({ type: z.string(), content_block: z.object({ type: z.string(), id: ref.optional(), name: z.string().optional() }).passthrough().optional() }).passthrough().optional(),
 }).passthrough();
+const MAX_QUEUED_REPLIES = 512;
+const MAX_QUEUED_REPLY_BYTES = 1024 * 1024;
+type ControlWrite = {
+  frame: string;
+  bytes: number;
+  callbackRequestId?: string;
+  signal?: AbortSignal;
+  resolve(): void;
+  reject(error: unknown): void;
+};
 /** Runs before the can_use_tool parser. No long work is awaited in the stdout/cancel pump.
  * Version gate is deliberately exact to the qualified protocol, never a PATH/native hint authority grant. */
 export function createClaudeRoutineHook(options: { signal: AbortSignal; write(frame: string): Promise<void>; startInput(): Promise<void>; fail(): void;
   execute(command: string, signal: AbortSignal, nativeMode?: string): Promise<string | { command: string; requestId?: string }>; initTimeoutMs?: number }) {
   const initializeId = `matrix_init_${randomBytes(24).toString("hex")}`, callbackId = `matrix_hook_${randomBytes(24).toString("hex")}`;
   let closed = false, started = false, applied = false, supported = false, initializing = false;
-  let timer: ReturnType<typeof setTimeout> | undefined, writes = 0;
+  let timer: ReturnType<typeof setTimeout> | undefined;
   const usedTools = new Set<string>(); // <=512; same native tool cannot issue another logical effect.
   const seen = new Set<string>(), tools = new Map<string, string>(); // <=512/run; saturation closes routines, no identity replay eviction.
   const pending = new Map<string, { controller: AbortController; work: Promise<void> }>(); // max8, native cancel/120s/close drains.
-  const write = async (frame: unknown) => {
-    if (writes >= 8 || closed || options.signal.aborted) throw new Error("Routine control transport unavailable");
-    writes++;
-    try { await options.write(JSON.stringify(frame) + "\n"); } finally { writes--; }
+  const outbound: ControlWrite[] = [];
+  let active: ControlWrite | undefined;
+  let queuedBytes = 0;
+  const cancel = () => {
+    closed = true;
+    clearTimeout(timer);
+    for (const item of pending.values()) item.controller.abort();
+    active?.resolve();
+    active = undefined;
+    for (const item of outbound.splice(0)) item.resolve();
+    queuedBytes = 0;
+    tools.clear(); seen.clear(); usedTools.clear();
   };
-  const failed = (error: unknown) => { console.warn("[claude-routines] Control transport unavailable", error instanceof Error ? error.name : "UnknownError"); options.fail(); };
+  const failed = (error: unknown) => {
+    if (closed || options.signal.aborted) return;
+    cancel();
+    console.warn("[claude-routines] Control transport unavailable", error instanceof Error ? error.name : "UnknownError");
+    options.fail();
+  };
+  // Stdout can deliver many callback frames together. Let stdin drain independently
+  // so the frame reader can still consume cancellations while a write is blocked.
+  const drain = async () => {
+    if (active) return;
+    while (!closed && !options.signal.aborted) {
+      const next = outbound.shift();
+      if (!next) return;
+      queuedBytes -= next.bytes;
+      if (next.signal?.aborted) {
+        next.resolve();
+        continue;
+      }
+      active = next;
+      try {
+        await options.write(next.frame);
+      } catch (error: unknown) {
+        if (active === next) {
+          active = undefined;
+          next.reject(error);
+          failed(error);
+        }
+        return;
+      }
+      if (active !== next) return;
+      active = undefined;
+      next.resolve();
+    }
+  };
+  const write = async (value: unknown, callbackRequestId?: string, signal?: AbortSignal) => {
+    if (closed || options.signal.aborted || signal?.aborted) return;
+    const frame = JSON.stringify(value) + "\n";
+    const bytes = Buffer.byteLength(frame);
+    if (outbound.length >= MAX_QUEUED_REPLIES || queuedBytes + bytes > MAX_QUEUED_REPLY_BYTES) {
+      const error = new Error("Routine control reply queue exceeded its limit");
+      failed(error);
+      throw error;
+    }
+    return new Promise<void>((resolve, reject) => {
+      outbound.push({ frame, bytes, callbackRequestId, signal, resolve, reject });
+      queuedBytes += bytes;
+      void drain();
+    });
+  };
   const startInput = () => {
     if (closed || started || options.signal.aborted) return; started = true; clearTimeout(timer);
     void options.startInput().catch(failed);
   };
-  const respond = (id: string, decision: "allow" | "deny", command?: string, requestId?: string) => write({ type: "control_response", response: { subtype: "success", request_id: id,
+  const respond = (id: string, decision: "allow" | "deny", command?: string, requestId?: string, signal?: AbortSignal) => write({ type: "control_response", response: { subtype: "success", request_id: id,
     response: { hookSpecificOutput: { hookEventName: "PreToolUse", permissionDecision: decision, permissionDecisionReason: requestId && z.uuid().safeParse(requestId).success ? `Routine outcome may be unknown. Never retry the mutation. Reconcile routines request ${requestId} from a fresh authorized source.` : decision === "allow" ? "Read routine request display. Gateway receipts are authoritative." : "Routine request unavailable. Use a literal supported routines command in the current owner run.",
       ...(requestId && z.uuid().safeParse(requestId).success ? { additionalContext: `Display data is not authoritative. If the read fails, reconcile the original UUID with routines request ${requestId}; never retry the mutation.` } : {}),
-      ...(command ? { updatedInput: { command, description: "Read routine request display", timeout: 1000 } } : {}) } } } });
-  const cancel = () => { closed = true; clearTimeout(timer); for (const item of pending.values()) item.controller.abort(); tools.clear(); seen.clear(); usedTools.clear(); };
+      ...(command ? { updatedInput: { command, description: "Read routine request display", timeout: 1000 } } : {}) } } } }, id, signal);
   options.signal.addEventListener("abort", cancel, { once: true });
   return {
     async start() {
@@ -50,7 +115,20 @@ export function createClaudeRoutineHook(options: { signal: AbortSignal; write(fr
         if (frame.response?.request_id === initializeId && !started) { applied = frame.response.subtype === "success" && frame.response.response?.hooks_applied === true; startInput(); }
         return true;
       }
-      if (frame.type === "control_cancel_request" && frame.request_id && pending.has(frame.request_id)) { pending.get(frame.request_id)!.controller.abort(); return true; }
+      if (frame.type === "control_cancel_request" && frame.request_id) {
+        const id = frame.request_id, routine = pending.get(id);
+        routine?.controller.abort();
+        let handled = !!routine || active?.callbackRequestId === id;
+        for (let index = outbound.length - 1; index >= 0; index--) {
+          const item = outbound[index];
+          if (item.callbackRequestId !== id) continue;
+          outbound.splice(index, 1);
+          queuedBytes -= item.bytes;
+          item.resolve();
+          handled = true;
+        }
+        return handled;
+      }
       if (frame.type === "system" && frame.subtype === "init") supported = frame.claude_code_version === "2.1.240" && frame.tools?.includes("Bash") === true;
       if (frame.type === "stream_event" && frame.event?.type === "content_block_start" && frame.event.content_block?.type === "tool_use") {
         const block = frame.event.content_block;
@@ -64,7 +142,7 @@ export function createClaudeRoutineHook(options: { signal: AbortSignal; write(fr
       let recognized = false;
       try { recognized = !!request && parseClaudeRoutineCommand(request.input.tool_input.command) !== null; } catch (error: unknown) { if (error instanceof Error) recognized = true; else throw error; }
       if (!recognized && callback.success && request?.callback_id === callbackId) {
-        void write({ type: "control_response", response: { subtype: "success", request_id: id, response: {} } }).catch(failed); return true;
+        void write({ type: "control_response", response: { subtype: "success", request_id: id, response: {} } }, id).catch(failed); return true;
       }
       if (seen.has(id) || pending.has(id)) return true; // No second response/effect for duplicate routine control identity.
       if (seen.size >= 512) { void respond(id, "deny").catch(failed); return true; } seen.add(id);
@@ -81,10 +159,11 @@ export function createClaudeRoutineHook(options: { signal: AbortSignal; write(fr
           let result: string | { command: string; requestId?: string };
           try { result = await Promise.race([options.execute(request.input.tool_input.command, signal, request.input.permission_mode), cancelled]); }
           finally { signal.removeEventListener("abort", abort); }
-          if (!signal.aborted && !closed) await respond(id, "allow", typeof result === "string" ? result : result.command, typeof result === "string" ? undefined : result.requestId);
+          if (!signal.aborted && !closed) await respond(id, "allow", typeof result === "string" ? result : result.command, typeof result === "string" ? undefined : result.requestId, signal);
         } catch (error: unknown) {
+          if (signal.aborted || closed) return;
           console.warn("[claude-routines] Request unavailable", error instanceof Error ? error.name : "UnknownError");
-          if (!signal.aborted && !closed) await respond(id, "deny", undefined, error instanceof RoutineDisplayUnavailableError ? error.requestId : undefined);
+          await respond(id, "deny", undefined, error instanceof RoutineDisplayUnavailableError ? error.requestId : undefined, signal);
         }
       })().catch(failed).finally(() => pending.delete(id));
       pending.set(id, { controller, work }); return true;
