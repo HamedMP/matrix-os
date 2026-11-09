@@ -186,7 +186,7 @@ export class UsageHistoryRepository {
     if (this.db.isTransaction) return read(this);
     return this.db.transaction().setIsolationLevel("repeatable read").execute(tx => read(new UsageHistoryRepository(tx)));
   }
-  async visitEvents(owner: string, visit: (event: UsageEvent) => void) {
+  async visitEvents(owner: string, visit: (event: UsageEvent) => void): Promise<{ issues: number }> {
     if (!this.db.isTransaction) return this.withSnapshot(repo => repo.visitEvents(owner, visit));
     const canonical = this.db
       .selectFrom("ai_usage_observations")
@@ -201,7 +201,7 @@ export class UsageHistoryRepository {
       issues = 0;
     const tx = this.db;
     {
-        await sql`DECLARE ai_usage_history_read NO SCROLL CURSOR FOR WITH canonical AS MATERIALIZED (${canonical}), precise AS (SELECT DISTINCT event->>'session' AS session, event->'cumulative' AS cumulative FROM canonical WHERE event->>'sourceKind'='response' AND event->'cumulative' IS NOT NULL) SELECT c.event, p.session IS NOT NULL AS covered, EXISTS (SELECT 1 FROM canonical u WHERE u.event->>'agent'='codex' AND u.event->>'session'=c.event->>'session' AND u.event->>'sourceKind'='response' AND u.event->'cumulative' IS NULL) AS uncertain FROM canonical c LEFT JOIN precise p ON c.event->>'session'=p.session AND c.event->'cumulative'=p.cumulative ORDER BY c.event->>'agent', c.event->>'session', coalesce((c.event->'cumulative'->>'input')::bigint+(c.event->'cumulative'->>'output')::bigint,0), c.event->>'timestamp', c.event_id`.execute(
+        await sql`DECLARE ai_usage_history_read NO SCROLL CURSOR FOR WITH canonical AS MATERIALIZED (${canonical}), precise AS (SELECT DISTINCT event->>'session' AS session, event->'cumulative' AS cumulative FROM canonical WHERE event->>'sourceKind'='response' AND event->'cumulative' IS NOT NULL), uncertain AS (SELECT DISTINCT event->>'session' AS session FROM canonical WHERE event->>'agent'='codex' AND event->>'sourceKind'='response' AND event->'cumulative' IS NULL) SELECT c.event, p.session IS NOT NULL AS covered, u.session IS NOT NULL AS uncertain FROM canonical c LEFT JOIN precise p ON c.event->>'session'=p.session AND c.event->'cumulative'=p.cumulative LEFT JOIN uncertain u ON c.event->>'session'=u.session ORDER BY c.event->>'agent', c.event->>'session', coalesce((c.event->'cumulative'->>'input')::bigint+(c.event->'cumulative'->>'output')::bigint,0), c.event->>'timestamp', c.event_id`.execute(
           tx,
         );
         for (;;) {
