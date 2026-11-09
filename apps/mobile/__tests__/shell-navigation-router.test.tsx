@@ -14,6 +14,7 @@ import {
   PROJECTS_SCREEN_HREF,
   SHARED_SCREEN_HREF,
 } from "../lib/shell-routes";
+import { useCloseAndShowChatScreen } from "../lib/use-close-and-show-chat-screen";
 import { useShowChatScreen, useShowTab } from "../lib/use-shell-navigation";
 
 // The Chats layout's provider loads Clerk, whose import opens a MessagePort
@@ -38,6 +39,17 @@ function AppsScreen() {
   return null;
 }
 
+/** What New agent's "Build in chat" calls once it has started the draft. */
+const newAgent: { closeAndShowChatScreen?: () => void } = {};
+
+function NewAgentScreen() {
+  const closeAndShowChatScreen = useCloseAndShowChatScreen();
+  useEffect(() => {
+    newAgent.closeAndShowChatScreen = closeAndShowChatScreen;
+  }, [closeAndShowChatScreen]);
+  return null;
+}
+
 const ROUTES = {
   _layout: () => <Stack />,
   index: Empty,
@@ -55,7 +67,7 @@ const ROUTES = {
   "(drawer)/(tabs)/(chats)/projects/index": Empty,
   "(drawer)/(tabs)/agents/_layout": () => <Stack />,
   "(drawer)/(tabs)/agents/index": Empty,
-  "(drawer)/(tabs)/agents/new": Empty,
+  "(drawer)/(tabs)/agents/new": NewAgentScreen,
   "(drawer)/(tabs)/(apps)/_layout": { default: () => <Stack />, unstable_settings: appsSettings },
   "(drawer)/(tabs)/(apps)/apps": AppsScreen,
   "(drawer)/(tabs)/(apps)/files": Empty,
@@ -157,6 +169,33 @@ describe("shell navigation", () => {
       await run(() => router.navigate("/apps" as never));
       await run(() => apps.showTab!("terminal"));
       expect(app.getSegments()).toEqual(["(drawer)", "(tabs)", "terminal"]);
+    });
+  });
+
+  describe("from New agent, building in chat", () => {
+    it("closes New agent, then shows the chat screen with nothing left above it", async () => {
+      await open(CHAT_SCREEN_HREF);
+      await run(() => router.navigate(SHARED_SCREEN_HREF as never));
+      await run(() => router.navigate("/agents" as never));
+      await run(() => router.push("/agents/new" as never));
+      expect(tabStack("agents")).toEqual(["index", "new"]);
+
+      await run(() => newAgent.closeAndShowChatScreen!());
+
+      expect(app.getSegments()).toEqual(CHAT_SCREEN);
+      expect(tabStack("(chats)")).toEqual(["index"]);
+      // The Agents tab shows its list the next time it is opened.
+      expect(tabStack("agents")).toEqual(["index"]);
+    });
+
+    it("shows the chat screen without going back when New agent was opened by a link", async () => {
+      await open("/agents/new");
+      expect(tabStack("agents")).toEqual(["new"]);
+
+      await run(() => newAgent.closeAndShowChatScreen!());
+
+      expect(app.getSegments()).toEqual(CHAT_SCREEN);
+      expect(tabStack("agents")).toEqual(["new"]);
     });
   });
 

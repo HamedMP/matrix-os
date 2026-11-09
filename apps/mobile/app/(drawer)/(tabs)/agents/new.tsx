@@ -23,7 +23,7 @@ import { useBotRecipes } from "@/lib/queries/use-bot-recipes";
 import { useCanonicalChats } from "@/lib/queries/use-canonical-chats";
 import { mobileQueryKeys } from "@/lib/requests/query-keys";
 import { HOSTED_GATEWAY_URL } from "@/lib/storage";
-import { useShowChatScreen } from "@/lib/use-shell-navigation";
+import { useCloseAndShowChatScreen } from "@/lib/use-close-and-show-chat-screen";
 
 export default function NewAgentRoute() {
   const navigation = useNavigation();
@@ -33,7 +33,7 @@ export default function NewAgentRoute() {
   const { startDraftChat } = useCanonicalChatSession();
   const chats = useCanonicalChats();
   const agents = useAgents();
-  const showChatScreen = useShowChatScreen();
+  const closeAndShowChatScreen = useCloseAndShowChatScreen();
   const gatewayUrl = chats.computer ? `${HOSTED_GATEWAY_URL}${chats.computer.gatewayPath}` : null;
   const recipes = useBotRecipes(gatewayUrl, true);
   const [query, setQuery] = useState("");
@@ -78,11 +78,7 @@ export default function NewAgentRoute() {
     requestChatDraft(prompt);
     setTemplate(null);
     setInspiration(null);
-    // This screen closes first, so the Agents tab is on its list the next time
-    // it is opened. Navigation actions apply in order once this render has
-    // committed, so the switch to the Chats tab follows the closing.
-    if (navigation.isFocused() && (navigation.getState()?.routes.length ?? 0) > 1) navigation.goBack();
-    showChatScreen();
+    closeAndShowChatScreen();
   };
 
   // Without a computer there is nothing to read the templates from.
