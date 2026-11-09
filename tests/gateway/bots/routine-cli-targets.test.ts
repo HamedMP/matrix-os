@@ -24,7 +24,7 @@ const source = (harness: RoutineCliSourceContext["harness"] = "claude"): Routine
 });
 const service = () => createRoutineCliTargetService({ db, scope, agents, now: () => new Date(clock), revalidateSource, canAccessTarget });
 beforeEach(async () => {
-  ({ db, destroy } = await createBotStateDatabase());
+  ({ db, destroy } = await createBotStateDatabase({ routineAuthority: true }));
   home = await mkdtemp(join(tmpdir(), "matrix-routine-target-"));
   agents = new ChatAgentStore({ homePath: home, db: db as unknown as Kysely<ChatDatabase> }); await agents.bootstrap();
   await agents.createRecipeBot({ type: "personal", ownerId: OWNER }, { id: BOT, createHash: "a".repeat(64),

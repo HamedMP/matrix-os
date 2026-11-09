@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -6,6 +7,9 @@ import { sql, type Kysely } from "kysely";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { ChatDatabase } from "../../../packages/gateway/src/chat/database.js";
 import type { OwnerBotDatabase } from "../../../packages/gateway/src/bots/database.js";
+import { ChatRepository } from "../../../packages/gateway/src/chat/repository.js";
+import { bootstrapCollaborationDatabase, type OwnerCollaborationDatabase } from "../../../packages/gateway/src/collaboration/database.js";
+import { createProjectChatAssignmentCoordinator } from "../../../packages/gateway/src/collaboration/project-chat-assignment.js";
 import { ChatAgentStore } from "../../../packages/gateway/src/chat/agent-store.js";
 import { createBotBindingsRepository } from "../../../packages/gateway/src/bots/repositories/bindings.js";
 import { createRoutineCliTargetService, type RoutineCliSourceContext } from "../../../packages/gateway/src/bots/routine-cli-targets.js";
@@ -28,6 +32,7 @@ beforeEach(async () => {
   const connectionString = process.env.MATRIX_ROUTINE_CLI_TEST_POSTGRES_URL;
   if (!connectionString) throw new Error("MATRIX_ROUTINE_CLI_TEST_POSTGRES_URL is required for native routine target races");
   ({ db, destroy } = await createRealBotStateDatabase(connectionString));
+  await bootstrapCollaborationDatabase(db as unknown as Kysely<OwnerCollaborationDatabase>);
   home = await mkdtemp(join(tmpdir(), "matrix-routine-target-pg-"));
   agents = new ChatAgentStore({ homePath: home, db: db as unknown as Kysely<ChatDatabase> });
   await agents.bootstrap();
@@ -57,6 +62,39 @@ describe("native routine target binding serialization", () => {
     await bindings.remove({ ...scope, ...target, now: at(2) });
     await bindings.bindDirect({ ...scope, ...target, now: second });
     await expect(svc.resolve(source, "read")).rejects.toMatchObject({ code: "target_unavailable" });
+  });
+
+  it("rejects a remembered Bot Chat when real Project assignment publishes its inherited scope", async () => {
+    const database = db!, shared = database as unknown as Kysely<OwnerCollaborationDatabase>;
+    const chats = new ChatRepository(database as unknown as Kysely<ChatDatabase>);
+    const svc = createRoutineCliTargetService({ db: database, scope, agents: agents!, now: () => new Date(NOW),
+      revalidateSource: async () => true, canAccessTarget: async () => true });
+    const owner = { type: "personal" as const, ownerId: OWNER }, projectId = "project_routine_target";
+    const at = new Date(NOW);
+    await shared.insertInto("collaboration_scopes").values({
+      id: randomUUID(), owner_type: "personal", owner_id: OWNER, organization_id: "org_routine_target",
+      kind: "project", resource_id: projectId, parent_scope_id: null, membership_mode: "direct",
+      lifecycle: "shared", revision: 1, auth_epoch: 1, authority_runtime_id: "vps:routine_target", authority_generation: 1,
+      created_at: at, updated_at: at, deleted_at: null,
+    }).execute();
+    try {
+      await svc.remember(principal, target);
+      await expect(svc.resolve(source, "read")).resolves.toMatchObject({ botId: BOT, chatId: target.chatId, preferenceRevision: 1 });
+      const chat = (await chats.get(owner, target.chatId))!;
+      const assignments = createProjectChatAssignmentCoordinator({ db: shared, chatRepository: chats, now: () => at });
+      await assignments.run(owner, repository => repository.update(owner, target.chatId, { baseRevision: chat.chat.revision, projectId }));
+      expect(await shared.selectFrom("chats").select("collaboration").where("id", "=", target.chatId).executeTakeFirstOrThrow())
+        .toEqual({ collaboration: null });
+      expect(await shared.selectFrom("collaboration_scopes").select(["lifecycle", "membership_mode"])
+        .where("kind", "=", "chat").where("resource_id", "=", target.chatId).executeTakeFirstOrThrow())
+        .toEqual({ lifecycle: "shared", membership_mode: "inherited" });
+      await expect(svc.resolve(source, "read")).rejects.toMatchObject({ code: "target_unavailable" });
+      await expect(svc.getDefault(principal)).rejects.toMatchObject({ code: "target_unavailable" });
+      await expect(svc.remember(principal, { ...target, baseRevision: 1 })).rejects.toMatchObject({ code: "target_unavailable" });
+      await expect(svc.getStoredPreference(principal)).resolves.toMatchObject({ target: { botId: BOT, chatId: target.chatId }, revision: 1 });
+    } finally {
+      await chats.release();
+    }
   });
 
   it.each([
