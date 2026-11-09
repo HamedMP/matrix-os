@@ -215,7 +215,9 @@ export function registerCapabilityRoutes(routes: Hono, options: CapabilityRouteO
     const actorId = await grantManager(options, c, bytes, "manage_members", scopeId);
     const input = CollaborationCreateGrantRequestSchema.parse(value);
     const scope = await requireScope(options.repository, scopeId);
-    if (scope.kind === "app") throw new CollaborationAuthorizationError("not_found", "Grant scope not found");
+    if (scope.kind === "app" && await options.repository.hasCollaborativeAppBinding(scopeId)) {
+      throw new CollaborationAuthorizationError("not_found", "Grant scope not found");
+    }
     const { grants, evaluator } = requireCapabilities(options);
     const result = await evaluator.createGrant({
       scopeId,

@@ -167,6 +167,14 @@ export class CollaborationRepository {
     return row ? toScope(row) : null;
   }
 
+  async hasCollaborativeAppBinding(scopeId: string): Promise<boolean> {
+    const row = await this.db.selectFrom("collaboration_app_bindings")
+      .select("scope_id")
+      .where("scope_id", "=", scopeId)
+      .executeTakeFirst();
+    return row !== undefined;
+  }
+
   async getMember(scopeId: string, actorId: string): Promise<CollaborationMemberRecord | null> {
     const row = await this.db.selectFrom("collaboration_members")
       .selectAll()
