@@ -7,6 +7,7 @@ import { BotConnectionIdSchema, BotIntegrationServiceSchema } from "#bots/ids";
 import { BotInteractionPayloadSchema } from "#bots/interactions";
 import { BotMemoryContentSchema, BotMemoryKindSchema, BotMemoryScopeSchema, BotMemorySourceSchema } from "#bots/memory";
 import { JevInboxInputSchema } from "#jev-inbox";
+import { GithubDeveloperActionSchema } from "#bots/github-developer";
 
 /** Leaves room for the broker envelope inside the 256 KiB broker request cap. */
 export const BOT_ARTIFACT_MAX_BYTES = 192 * 1024;
@@ -31,6 +32,7 @@ export const BotToolCapabilitySchema = z.enum([
   "routine.control",
   "agent.task",
   "browser.action",
+  "github.developer",
   "integration.inventory",
   "integration.call",
   "integration.describe",
@@ -53,6 +55,7 @@ const capability = <Name extends z.infer<typeof BotToolCapabilitySchema>, Args e
 
 const BotToolRequestUnionSchema = z.discriminatedUnion("capability", [
   capability("browser.action", SharedBrowserActionSchema),
+  capability("github.developer", GithubDeveloperActionSchema),
   capability("routine.propose",BotRoutineProposalSchema),
   capability("routine.control",BotRoutineToolControlSchema),
   capability("agent.task", z.object({ prompt: canonicalBoundedText(16 * 1024, 32 * 1024) }).strict()),
@@ -91,10 +94,14 @@ const BotToolRequestUnionSchema = z.discriminatedUnion("capability", [
     content: z.string().max(BOT_ARTIFACT_MAX_BYTES)
       .refine((content) => textEncoder.encode(content).byteLength <= BOT_ARTIFACT_MAX_BYTES, { message: "Artifact is too large" }),
     mimeType: ArtifactMimeTypeSchema,
-    replace: z.object({ baseRevision: z.number().int().min(1).max(Number.MAX_SAFE_INTEGER) }).strict().optional(),
+    replace: z.union([
+      z.object({ baseRevision: z.number().int().min(1).max(Number.MAX_SAFE_INTEGER) }).strict(),
+      z.object({ expectedSha256: z.string().regex(/^[a-f0-9]{64}$/) }).strict(),
+    ]).optional(),
   }).strict()),
   capability("artifact.read", z.object({
     relPath: ArtifactPathSchema,
+    withHash: z.boolean().optional(),
     chunk: z.object({
       offset: z.number().int().min(0).max(BOT_INPUT_FILE_MAX_BYTES),
       length: z.number().int().min(1).max(BOT_ARTIFACT_CHUNK_MAX_BYTES),

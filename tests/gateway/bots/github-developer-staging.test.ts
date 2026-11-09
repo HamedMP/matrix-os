@@ -1,0 +1,53 @@
+import { mkdtemp, mkdir, writeFile, symlink, utimes, lstat, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterEach, expect, it, vi } from "vitest";
+import { createGithubDeveloperStaging } from "../../../packages/gateway/src/bots/github-developer-staging.js";
+
+let home: string;
+let staging: ReturnType<typeof createGithubDeveloperStaging>;
+afterEach(async () => { await staging?.close(); vi.useRealTimers(); if (home) await rm(home, { recursive: true, force: true }); });
+it("recovers only expired owned staging, preserving active entries and outside symlink targets", async () => {
+  home = await mkdtemp(join(tmpdir(), "github-staging-"));
+  staging = createGithubDeveloperStaging(home);
+  const active = await staging.create("index");
+  const root = join(home, ".matrix-github-staging");
+  const old = join(root, "clone-00000000-0000-4000-8000-000000000000");
+  const recent = join(root, "index-00000000-0000-4000-8000-000000000001");
+  const link = join(root, "clone-00000000-0000-4000-8000-000000000002");
+  const unknown = join(root, "owner-project");
+  const outside = join(home, "outside");
+  for (const path of [old, recent, unknown, outside]) await mkdir(path, { mode: 0o700 });
+  await writeFile(join(outside, "keep"), "owner data");
+  await symlink(outside, link);
+  const expired = new Date(Date.now() - 2 * 60 * 60 * 1000);
+  for (const path of [old, active, unknown]) await utimes(path, expired, expired);
+  await staging.sweep();
+  await expect(lstat(old)).rejects.toMatchObject({ code: "ENOENT" });
+  for (const path of [recent, active, unknown, link, join(outside, "keep")]) expect(await lstat(path)).toBeTruthy();
+  await staging.remove(active);
+  await expect(lstat(active)).rejects.toMatchObject({ code: "ENOENT" });
+});
+it("periodically expires abandoned staging and drains its timer on close", async () => {
+  vi.useFakeTimers();
+  home = await mkdtemp(join(tmpdir(), "github-staging-"));
+  staging = createGithubDeveloperStaging(home);
+  const active = await staging.create("clone");
+  const old = join(home, ".matrix-github-staging", "clone-00000000-0000-4000-8000-000000000003");
+  await mkdir(old, { mode: 0o700 });
+  const expired = new Date(Date.now() - 2 * 60 * 60 * 1000);
+  await utimes(old, expired, expired);
+  await vi.advanceTimersByTimeAsync(15 * 60 * 1000);
+  await staging.close();
+  await expect(lstat(old)).rejects.toMatchObject({ code: "ENOENT" });
+  expect(await lstat(active)).toBeTruthy();
+  expect(vi.getTimerCount()).toBe(0);
+});
+it("refuses a symlinked staging root", async () => {
+  home = await mkdtemp(join(tmpdir(), "github-staging-"));
+  const outside = join(home, "outside"); await mkdir(outside);
+  await symlink(outside, join(home, ".matrix-github-staging"));
+  staging = createGithubDeveloperStaging(home);
+  await expect(staging.create("clone")).rejects.toThrow();
+  expect(await lstat(outside)).toBeTruthy();
+});

@@ -26,6 +26,8 @@ import {
 /** A session load reply carries a whole transcript. */
 const MAX_REPLY_BYTES = BOT_BROKER_MAX_FRAME_BYTES;
 const DEFAULT_TIMEOUT_MS = 30_000;
+// Gateway: up to ten minutes for exact human approval, then 90s host work.
+const GITHUB_DEVELOPER_TIMEOUT_MS = 10 * 60_000 + 90_000 + 35_000;
 
 export class BotBrokerError extends Error {
   constructor(readonly code: BotToolErrorCode) {
@@ -37,7 +39,7 @@ export class BotBrokerError extends Error {
 export interface BotBrokerClient {
   loadSession(): Promise<BotSessionSnapshot>;
   saveSession(session: BotSessionSaveRequest): Promise<{ revision: number }>;
-  tool(request: BotToolRequest): Promise<BotToolResult>;
+  tool(request: BotToolRequest, signal?: AbortSignal): Promise<BotToolResult>;
   event(event: BotEvent): Promise<void>;
 }
 
@@ -58,20 +60,32 @@ export interface BotBrokerClientOptions {
 }
 
 /** One request per connection, newline-delimited JSON, mirroring the existing worker bridge. */
-function exchange(options: BotBrokerClientOptions, frame: unknown): Promise<unknown> {
+function exchange(options: BotBrokerClientOptions, frame: unknown, signal?: AbortSignal, absoluteDeadline = false): Promise<unknown> {
+  if (signal?.aborted) return Promise.reject(new BotBrokerError("stale_generation"));
   const connectFn = options.connectFn ?? ((path: string) => connect({ path }));
   return new Promise((resolve, reject) => {
     const socket = connectFn(options.socketPath);
     let reply = Buffer.alloc(0);
     let settled = false;
+    let deadlineTimer: ReturnType<typeof setTimeout> | undefined;
     const finish = (error?: BotBrokerError, value?: unknown) => {
       if (settled) return;
       settled = true;
+      clearTimeout(deadlineTimer);
+      signal?.removeEventListener("abort", onAbort);
       socket.destroy();
       if (error) reject(error);
       else resolve(value);
     };
+    const onAbort = () => finish(new BotBrokerError("stale_generation"));
+    signal?.addEventListener("abort", onAbort, { once: true });
     socket.setTimeout(options.timeoutMs ?? DEFAULT_TIMEOUT_MS, () => finish(new BotBrokerError("timeout")));
+    // Socket inactivity alone can be extended by partial reply traffic. The
+    // GitHub approval/work budget also bounds the complete exchange lifetime.
+    if (absoluteDeadline) {
+      deadlineTimer = setTimeout(() => finish(new BotBrokerError("timeout")), options.timeoutMs ?? DEFAULT_TIMEOUT_MS);
+      deadlineTimer.unref();
+    }
     // The broker handles one frame after EOF, then replies on the half-open socket.
     socket.once("connect", () => socket.end(`${JSON.stringify(frame)}\n`));
     socket.on("data", (chunk: Buffer) => {
@@ -91,13 +105,14 @@ function exchange(options: BotBrokerClientOptions, frame: unknown): Promise<unkn
     });
     socket.once("error", () => finish(new BotBrokerError("unavailable")));
     socket.once("end", () => finish(new BotBrokerError("unavailable")));
+    if (signal?.aborted) onAbort();
   });
 }
 
 export function createBotBrokerClient(options: BotBrokerClientOptions): BotWorkerBrokerClient {
   const requestIdFactory = options.requestIdFactory ?? randomUUID;
 
-  async function call<T>(action: Record<string, unknown>, resultSchema: z.ZodType<T>): Promise<T> {
+  async function call<T>(action: Record<string, unknown>, resultSchema: z.ZodType<T>, signal?: AbortSignal): Promise<T> {
     const requestId = requestIdFactory();
     const frame = BotBrokerRequestSchema.safeParse({
       version: 1,
@@ -113,8 +128,9 @@ export function createBotBrokerClient(options: BotBrokerClientOptions): BotWorke
     // Jev's paid classification and confirmed label readback use the gateway's bounded long-operation deadline.
     const longJevOperation = tool?.capability === "jev.inbox" && ["evaluate", "batch_next"].includes(tool.args.operation);
     const browserPause = tool?.capability === "browser.action";
-    const raw = await exchange(options.timeoutMs === undefined && (waitsForApproval || longJevOperation || browserPause)
-      ? { ...options, timeoutMs: browserPause ? SHARED_BROWSER_ACTION_DEADLINE_MS + 30_000 : 10 * 60_000 + 35_000 } : options, frame.data);
+    const githubDeveloper = tool?.capability === "github.developer";
+    const raw = await exchange(options.timeoutMs === undefined && (waitsForApproval || longJevOperation || browserPause || githubDeveloper)
+      ? { ...options, timeoutMs: githubDeveloper ? GITHUB_DEVELOPER_TIMEOUT_MS : browserPause ? SHARED_BROWSER_ACTION_DEADLINE_MS + 30_000 : 10 * 60_000 + 35_000 } : options, frame.data, signal, githubDeveloper);
     const reply = BotBrokerResponseSchema.safeParse(raw);
     if (!reply.success || reply.data.requestId !== requestId) throw new BotBrokerError("unavailable");
     if (!reply.data.ok) throw new BotBrokerError(reply.data.code);
@@ -128,7 +144,7 @@ export function createBotBrokerClient(options: BotBrokerClientOptions): BotWorke
     readImageChunk: (image) => call({ action: "bot.input.image", image }, BotImageChunkSchema),
     loadSession: () => call({ action: "bot.session.load" }, BotSessionSnapshotSchema),
     saveSession: (session) => call({ action: "bot.session.save", session }, BotSessionSaveResultSchema),
-    tool: (tool) => call({ action: "bot.tool", tool }, BotToolResultSchema),
+    tool: (tool, signal) => call({ action: "bot.tool", tool }, BotToolResultSchema, signal),
     event: async (event) => {
       await call({ action: "bot.event", event }, BotEventAcceptedSchema);
     },

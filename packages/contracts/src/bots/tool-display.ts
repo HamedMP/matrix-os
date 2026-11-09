@@ -11,7 +11,7 @@ export const BotToolDisplaySchema = z.object({
 }).strict();
 export type BotToolDisplay = z.infer<typeof BotToolDisplaySchema>;
 
-const PARAMS = ["path", "relPath", "cwd", "service", "action", "serverId", "tool", "connectionId", "query", "pattern", "limit", "timeout", "offset", "length", "mimeType"] as const;
+const PARAMS = ["path", "relPath", "cwd", "service", "action", "repository", "name", "base", "expectedHead", "serverId", "tool", "connectionId", "query", "pattern", "limit", "timeout", "offset", "length", "mimeType"] as const;
 const PRIVATE_INPUT = /secret|password|credential|api[_-]?key|token|id_rsa|\.ssh\b|\.env\b|auth\.json/i;
 export const BOT_TOOL_HIDDEN_OUTPUT = "Output withheld because it may contain private data.";
 export const BOT_TOOL_EMPTY_OUTPUT = "No text result was returned.";
