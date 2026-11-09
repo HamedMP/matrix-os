@@ -131,10 +131,13 @@ describe("shared app publishing", () => {
     let resolveList!: (value:{links:typeof link[]})=>void;
     const createPending=new Promise<{link:typeof link;url:string}>(resolve=>{resolveCreate=resolve;});
     const listPending=new Promise<{links:typeof link[]}>(resolve=>{resolveList=resolve;});
+    const accessLinks=vi.fn()
+      .mockImplementationOnce(()=>listPending)
+      .mockResolvedValue({links:[link]});
     const api=client({
       get:vi.fn(async()=>null),
       deploy:vi.fn(async()=>privateSite),
-      accessLinks:vi.fn(()=>listPending),
+      accessLinks,
       createAccessLink:vi.fn(()=>createPending),
     });
     render(<AppSitePanel appSlug="launch" client={api} variant="share" />);
@@ -148,7 +151,48 @@ describe("shared app publishing", () => {
     expect(screen.getByRole("button",{name:"Revoke link"})).toBeTruthy();
     await act(async()=>resolveList({links:[]}));
 
+    await waitFor(()=>expect(accessLinks).toHaveBeenCalledTimes(2));
     expect(screen.getByRole("button",{name:"Revoke link"})).toBeTruthy();
+  });
+  it("refreshes after revocation makes a link-list retry stale", async () => {
+    const link={id:"44444444-4444-4444-8444-444444444444",status:"unclaimed" as const,createdAt:"2026-11-05T12:00:00.000Z",claimExpiresAt:"2026-11-12T12:00:00.000Z",claimedAt:null,sessionExpiresAt:null};
+    const privateSite={...published,title:"launch",description:"",slug:null,accessMode:"private_link" as const};
+    const url=`https://matrix.page/${privateSite.id}#access=${link.id}.${"a".repeat(43)}`;
+    let resolveCreate!: (value:{link:typeof link;url:string})=>void;
+    let rejectInitialList!: (reason:Error)=>void;
+    let resolveRetry!: (value:{links:typeof link[]})=>void;
+    const createPending=new Promise<{link:typeof link;url:string}>(resolve=>{resolveCreate=resolve;});
+    const initialList=new Promise<{links:typeof link[]}>((_resolve,reject)=>{rejectInitialList=reject;});
+    const retryPending=new Promise<{links:typeof link[]}>(resolve=>{resolveRetry=resolve;});
+    const accessLinks=vi.fn()
+      .mockImplementationOnce(()=>initialList)
+      .mockImplementationOnce(()=>retryPending)
+      .mockResolvedValue({links:[]});
+    const api=client({
+      get:vi.fn(async()=>null),
+      deploy:vi.fn(async()=>privateSite),
+      accessLinks,
+      createAccessLink:vi.fn(()=>createPending),
+    });
+    render(<AppSitePanel appSlug="launch" client={api} variant="share" />);
+
+    await waitFor(()=>expect(screen.getByRole("button",{name:"Create invite link"})).toHaveProperty("disabled",false));
+    fireEvent.click(screen.getByRole("button",{name:"Create invite link"}));
+    await waitFor(()=>expect(accessLinks).toHaveBeenCalledTimes(1));
+    await act(async()=>rejectInitialList(new Error("network unavailable")));
+    expect(await screen.findByRole("button",{name:"Retry link list"})).toBeTruthy();
+    await act(async()=>resolveCreate({link,url}));
+    expect(await screen.findByRole("button",{name:"Revoke link"})).toBeTruthy();
+
+    fireEvent.click(screen.getByRole("button",{name:"Retry link list"}));
+    await waitFor(()=>expect(accessLinks).toHaveBeenCalledTimes(2));
+    fireEvent.click(screen.getByRole("button",{name:"Revoke link"}));
+    await waitFor(()=>expect(api.revokeAccessLink).toHaveBeenCalledWith("launch",link.id,expect.any(AbortSignal)));
+    await act(async()=>resolveRetry({links:[link]}));
+
+    await waitFor(()=>expect(accessLinks).toHaveBeenCalledTimes(3));
+    await waitFor(()=>expect(screen.getByRole("button",{name:"Create invite link"})).toHaveProperty("disabled",false));
+    expect(screen.queryByRole("button",{name:"Revoke link"})).toBeNull();
   });
   it("creates an invite in one click for an existing public app", async () => {
     const link={id:"44444444-4444-4444-8444-444444444444",status:"unclaimed" as const,createdAt:"2026-11-05T12:00:00.000Z",claimExpiresAt:"2026-11-12T12:00:00.000Z",claimedAt:null,sessionExpiresAt:null};

@@ -28,11 +28,13 @@ export function SiteAccessLinks({ appSlug, client, site, state, disabled, varian
     const controller = new AbortController();
     const requestVersion = linksMutationVersion.current;
     void client.accessLinks(appSlug, controller.signal).then(page => {
-      if (!controller.signal.aborted && linksMutationVersion.current === requestVersion) {
-        setLinks(page.links); setLoadError(null); setLinksLoaded(true);
-      }
+      if (controller.signal.aborted) return;
+      if (linksMutationVersion.current !== requestVersion) { setReload(value => value + 1); return; }
+      setLinks(page.links); setLoadError(null); setLinksLoaded(true);
     }).catch((error: unknown) => {
-      if (!controller.signal.aborted && linksMutationVersion.current === requestVersion) setLoadError(siteActionError(error));
+      if (controller.signal.aborted) return;
+      if (linksMutationVersion.current !== requestVersion) { setReload(value => value + 1); return; }
+      setLoadError(siteActionError(error));
     });
     return () => controller.abort();
   }, [appSlug, client, ready, site?.id, reload]);
