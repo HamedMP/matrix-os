@@ -1,4 +1,4 @@
-import { type ReactNode, useEffect, useRef, useState } from "react";
+import { type ReactNode, useEffect, useLayoutEffect, useRef, useState } from "react";
 import type {
   ProviderHarnessInstance,
   ProviderAccessSource,
@@ -165,7 +165,9 @@ export function useHarnessWorkflowController({
       setFailure(null);
     }
   });
-  useEffect(() => {
+  // An enabled action can be clicked as soon as its DOM is committed.
+  // Reset and install its exact workflow scope before exposing that first click.
+  useLayoutEffect(() => {
     const controller = new AbortController();
     scope.current = controller;
     completionRefresh.current = null;
