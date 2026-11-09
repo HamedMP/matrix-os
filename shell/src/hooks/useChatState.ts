@@ -98,6 +98,7 @@ export interface ChatState {
 }
 
 export interface ChatSubmitOptions {
+  routineCreation?: "matrix";
   onAccepted?: () => void;
   resources?: CanonicalChatResourceReference[];
   clientRequestId?: string;

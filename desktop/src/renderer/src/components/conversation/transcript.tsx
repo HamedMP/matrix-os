@@ -1,6 +1,6 @@
 import { BrowserPermissionCard, useRoutineMessageState, routineMessageTimeline, RoutineOccurrenceMessage, RoutineMessageReadNotice, type RoutineOccurrence } from "@matrix-os/ui";
 import { ConversationNotice } from "./notice";
-import { BotRunMessageBody, BotUnassignedMessageBody, ChatContextReceipt, CanonicalChatInputForm, SupervisedToolApprovalCard } from "@matrix-os/ui";
+import { RoutineReceipt, BotRunMessageBody, BotUnassignedMessageBody, ChatContextReceipt, CanonicalChatInputForm, SupervisedToolApprovalCard } from "@matrix-os/ui";
 import { UserMessage } from "./user-message";
 import {
   ChevronRight,
@@ -327,6 +327,7 @@ function ConversationTurn({
     ...(callbacks.openApp ? { openApp: openRunApp } : {}),
   };
   const { showWork, visibleWork, visibleTimeline, pendingRequestIds, partialCopyMessageId } = visibility;
+  if(turn.routineReceipt)return <RoutineReceipt {...turn.routineReceipt} sourceChatId={callbacks.browserChatId} onOpenChat={callbacks.openChat}/>;
   const hasWork = turn.work.length > 0;
   const timeline = turn.timeline;
   return (

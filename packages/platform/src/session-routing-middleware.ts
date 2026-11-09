@@ -48,6 +48,7 @@ import {
   buildForwardedQueryString,
   buildPostAuthRedirectPath,
   isRoutineOwnerCompletionPath,
+  routineSourceChatReturnPath,
   getPlatformShellAssetUpstreamPath,
   getAuthShellOrigin,
   isAppDomainGatewayPath,
@@ -639,8 +640,11 @@ export function createSessionRoutingMiddleware(opts: CreateSessionRoutingMiddlew
     // No session/JWT -- serve Clerk auth directly from the platform.
     if (!identity) {
       console.log(`[${isCodeDomain ? 'code' : 'app'}] no token path=${path}`);
-      // These scoped completion pages carry selectors the auth shell's generic sign-in redirect does not retain.
-      if (isAppDomain && allowAuthShellUnroutedIdentity && !isRoutineOwnerCompletionPath(path)) {
+      const sourceChatTarget = isAppDomain && (c.req.method === 'GET' || c.req.method === 'HEAD')
+        ? routineSourceChatReturnPath(c.req.url)
+        : null;
+      // These scoped entry points carry selectors the auth shell's generic redirect does not retain.
+      if (isAppDomain && allowAuthShellUnroutedIdentity && !isRoutineOwnerCompletionPath(path) && !sourceChatTarget) {
         return proxyAuthShell(c, host, { redirectToBillingOnFailure: false });
       }
       if (isCodeDomain && isCodeDomainStaticAssetPath(path)) {
@@ -667,7 +671,7 @@ export function createSessionRoutingMiddleware(opts: CreateSessionRoutingMiddlew
       }
       const scriptNonce = randomBytes(16).toString('base64');
       applyAuthPageHeaders(c, scriptNonce, applyNoStoreHeaders);
-      return c.html(getAuthPage(publishableKey, authMode, scriptNonce, buildPostAuthRedirectPath(c.req.url), appOrigin(appEnv)));
+      return c.html(getAuthPage(publishableKey, authMode, scriptNonce, sourceChatTarget ?? buildPostAuthRedirectPath(c.req.url), appOrigin(appEnv)));
     }
 
     console.log(`[${isCodeDomain ? 'code' : 'app'}] verified request path=${path}`);

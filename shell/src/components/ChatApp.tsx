@@ -1,4 +1,5 @@
 "use client";
+import { PersistentTaskControl, usePersistentTaskSelection, useRoutineOrigin, RoutineOriginApprovals, RoutineReceipt } from "@matrix-os/ui";
 import { routineFullAccessChatPresentationEligible } from "@matrix-os/ui";
 import { BrowserPermissionReviewProvider, BrowserPermissionReminder } from "@matrix-os/ui";
 import { shellChatAttachmentPolicy } from "./chat/attachment-policy";
@@ -384,6 +385,14 @@ function ChatAppContent({
   useEffect(() => {
     writeHermesSetup(selectedChannels);
   }, [selectedChannels]);
+  const persistentEligible = Boolean(agentClient?.bots?.routineOrigin) && !botIdentityUnknown && routineFullAccessChatPresentationEligible({
+    chat: routineScopeChat, ordinary: !collaborationView && botBinding.status === "ordinary",
+    fresh: navigationFresh === true && (isCurrentAuthority?.() ?? false),
+  });
+  const persistentScope = useMemo(()=>({client:agentClient,authorityKey,sessionId}),[agentClient,authorityKey,sessionId]);
+  const persistentTask = usePersistentTaskSelection({scope:persistentScope,eligible:persistentEligible});
+  const routineOrigin = useRoutineOrigin({client:agentClient?.bots?.routineOrigin,chatId:sessionId,eligible:persistentEligible,revision:botEventRevision,identity:persistentScope});
+  const persistentControl = persistentEligible ? <PersistentTaskControl selected={persistentTask.selected} onChange={persistentTask.select} client={agentClient} disabled={busy}/> : null;
   const submitWithHermesSetup = (
     text: string,
     files?: Array<{ name: string; type: string; data: string }>,
@@ -402,7 +411,9 @@ function ChatAppContent({
     if (!providerState.selected || !providerState.selectionAvailable) return Promise.resolve(false);
     const usesChannels = providerState.selected.driverKind === "hermes";
     const promptText = usesChannels ? createChannelConfiguredPrompt(text, selectedChannels) : text;
+    const routineCreation = persistentTask.consume(mentionOptions?.clientRequestId);
     return onSubmit(text, files, {
+      ...(routineCreation ? {routineCreation} : {}),
       displayText: text,
       ...(promptText === text ? {} : { promptText }),
       instanceId: providerState.selected.instanceId,
@@ -708,7 +719,7 @@ function ChatAppContent({
         {/* Empty state or conversation */}
         <BotTranscriptLayout empty={isEmpty}>{showEmpty=>showEmpty ? (
           <><div className="mx-auto w-full max-w-[720px] px-4"><BotTranscriptFallback placement={botTranscript}/><RoutineMessageReadNotice/></div><EmptyState
-            composerProps={{ leadingControls: projectControl, toolbarControls: composerToolbar, queue: queuePanel, attachmentPolicy: attachmentPolicy.error, slashInstance, slashCatalogLoading, botControls: botComposerControls, botContext: Boolean(directBotId), composer, agentClient, onOpenBotMention: botDraftNavigation.openBotMention, scope: composerScope, driveContextEnabled: !directBotId && providerState.selected?.supportsCompanyDriveContext === true, botConsentResources: botExecution.consentResources, botRequiresFullAccess: botPresentation?.requiresFullAccess, permissionMode: directBotId ? botPresentation?.permissionMode ?? "default" : providerState.selected?.permissionMode ?? "supervised" }}
+            composerProps={{ leadingControls: projectControl, toolbarControls: <>{composerToolbar}{persistentControl}</>, queue: queuePanel, attachmentPolicy: attachmentPolicy.error, slashInstance, slashCatalogLoading, botControls: botComposerControls, botContext: Boolean(directBotId), composer, agentClient, onOpenBotMention: botDraftNavigation.openBotMention, scope: composerScope, driveContextEnabled: !directBotId && providerState.selected?.supportsCompanyDriveContext === true, botConsentResources: botExecution.consentResources, botRequiresFullAccess: botPresentation?.requiresFullAccess, permissionMode: directBotId ? botPresentation?.permissionMode ?? "default" : providerState.selected?.permissionMode ?? "supervised" }}
             onSubmit={submitWithHermesSetup}
             connected={connected}
             mobile={mobile}
@@ -730,7 +741,7 @@ function ChatAppContent({
                   const msg = group.message;
                   return (
                     <div key={msg.id}>
-                      {msg.role === "user" || msg.scheduledMessage ? (
+                      {msg.routineReceipt ? <RoutineReceipt sourceChatId={sessionId} receipt={msg.routineReceipt} text={msg.content} onOpenChat={onSwitchConversation}/> : msg.role === "user" || msg.scheduledMessage ? (
                         <Message from="user">
                           {scheduled?<RoutineMessageMeta occurrence={scheduled}/>:msg.scheduledMessage?<ScheduledMessageMeta {...msg.scheduledMessage}/>:null}
                           {msg.attachments?.length ? <ChatAttachments attachments={msg.attachments} open={openMessageFile} loadImage={loadShellChatImage} /> : null}
@@ -793,6 +804,7 @@ function ChatAppContent({
                     </div>
                   </div>
                 )}
+                <RoutineOriginApprovals state={routineOrigin}/>
               </ConversationContent>
               <ConversationScrollButton />
             </Conversation>
@@ -818,7 +830,7 @@ function ChatAppContent({
               ) : null}
               <ChatInput
                 leadingControls={projectControl}
-                toolbarControls={composerToolbar}
+                toolbarControls={<>{composerToolbar}{persistentControl}</>}
                 queue={queuePanel}
                 attachmentPolicy={attachmentPolicy.error}
                 slashInstance={slashInstance}

@@ -1,4 +1,4 @@
-import { CanonicalChatIdSchema, RoutineActionIdSchema } from "@matrix-os/contracts";
+import { BotInteractionIdSchema, CanonicalChatIdSchema, RoutineActionIdSchema } from "@matrix-os/contracts";
 import { slackLinkReturnTarget } from "./slack/link-return.js";
 import { RuntimeSlotSchema } from './customer-vps-schema.js';
 
@@ -122,6 +122,9 @@ export function buildForwardedQueryString(rawUrl: string, omittedParams: readonl
   return forwarded ? `?${forwarded}` : '';
 }
 
+const AUTH_PAGE_PATH = /^\/sign-(?:in|up)(?:\/.*)?$/;
+const ROUTINE_SOURCE_CHAT_PATH = /^\/vm\/[a-z0-9][a-z0-9-]{1,62}$/;
+
 const ROUTINE_OWNER_COMPLETION_PATH = /^\/vm\/[a-z0-9][a-z0-9-]{0,62}\/routine-cli\/(confirm|full-access)$/;
 
 export function isRoutineOwnerCompletionPath(path: string): boolean {
@@ -134,28 +137,56 @@ function routineOwnerReturnTarget(value: string | null): string | null {
   const queryStart = value.indexOf("?");
   const completion = queryStart < 0 ? null : ROUTINE_OWNER_COMPLETION_PATH.exec(value.slice(0, queryStart));
   if (!completion) return null;
-  const exactAction = completion[1] === "confirm";
-  const selector = exactAction ? "challenge" : "chat";
-  const schema = exactAction ? RoutineActionIdSchema : CanonicalChatIdSchema;
   const params = new URLSearchParams(value.slice(queryStart + 1));
-  const selected = params.getAll(selector), runtimes = params.getAll("runtime");
-  if ([...params.keys()].some(key => key !== selector && key !== "runtime")
-    || selected.length !== 1 || !schema.safeParse(selected[0]).success
+  const runtimes = params.getAll("runtime");
+  const sourceReview = params.has("originChat") || params.has("interaction");
+  const selectors = completion[1] === "full-access"
+    ? [["chat", CanonicalChatIdSchema]] as const
+    : sourceReview
+      ? [["originChat", CanonicalChatIdSchema], ["interaction", BotInteractionIdSchema]] as const
+      : [["challenge", RoutineActionIdSchema]] as const;
+  if ([...params.keys()].some(key => key !== "runtime" && !selectors.some(([selector]) => key === selector))
+    || selectors.some(([selector, schema]) => {
+      const values = params.getAll(selector);
+      return values.length !== 1 || !schema.safeParse(values[0]).success;
+    })
     || runtimes.length > 1 || runtimes.length === 1 && !RuntimeSlotSchema.safeParse(runtimes[0]).success) return null;
   return value;
+}
+
+/** A browser navigation selector only. The authenticated VM proxy still checks machine access. */
+export function routineSourceChatReturnPath(rawUrl: string): string | null {
+  const url = URL.parse(rawUrl, 'https://app.matrix-os.com');
+  if (!url || !['http:', 'https:'].includes(url.protocol) || url.username || url.password || /[#\s\\]/.test(rawUrl)) return null;
+  // Keep the original path for validation so dot segments cannot become an accepted creation link.
+  const target = AUTH_PAGE_PATH.test(url.pathname)
+    ? url.searchParams.getAll('redirect_url').length === 1 ? url.searchParams.get('redirect_url') : null
+    : rawUrl.replace(/^https?:\/\/[^/?#]+/i, '');
+  if (!target || target.length > 2048 || /[#\s\\]/.test(target)) return null;
+  const queryStart = target.indexOf('?');
+  if (queryStart < 0 || !ROUTINE_SOURCE_CHAT_PATH.test(target.slice(0, queryStart))) return null;
+  const params = new URLSearchParams(target.slice(queryStart + 1));
+  if ([...params.keys()].some(key => key !== 'sourceChat' && key !== 'launch' && key !== 'runtime')
+    || params.getAll('sourceChat').length !== 1 || !CanonicalChatIdSchema.safeParse(params.get('sourceChat')).success
+    || params.getAll('launch').length !== 1 || params.get('launch') !== '__chat__'
+    || params.getAll('runtime').length > 1
+    || params.has('runtime') && !RuntimeSlotSchema.safeParse(params.get('runtime')).success) return null;
+  return target;
 }
 
 export function buildPostAuthRedirectPath(rawUrl: string): string {
   try {
     const url = new URL(rawUrl, 'https://app.matrix-os.com');
     const normalizedPath = url.pathname.replace(/^\/{2,}/, '/');
+    const sourceChat = routineSourceChatReturnPath(rawUrl);
+    if (sourceChat) return sourceChat;
     if (isRoutineOwnerCompletionPath(url.pathname)) {
       if (url.username || url.password || /[#\s\\]/.test(rawUrl)) return '/';
       return routineOwnerReturnTarget(url.pathname + url.search) ?? '/';
     }
     const directSlackLink = slackLinkReturnTarget(url.pathname + url.search);
     if (directSlackLink && !url.hash) return directSlackLink;
-    const authPage = /^\/sign-(?:in|up)(?:\/.*)?$/.test(normalizedPath);
+    const authPage = AUTH_PAGE_PATH.test(normalizedPath);
     if (authPage && url.searchParams.getAll("redirect_url").length === 1) {
       const target = url.searchParams.get("redirect_url");
       const linked = slackLinkReturnTarget(target) ?? routineOwnerReturnTarget(target);
