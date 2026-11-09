@@ -1492,3 +1492,5 @@ export * from "#funded-host-activation";
 export * from "#routine-action";
 export * from "#routine-full-access";
 export * from "#routine-full-access-view";
+
+export * from "#routine-origin-proof";
