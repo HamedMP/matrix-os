@@ -86,6 +86,50 @@ describe("Chat collaboration sharing", () => {
     ));
   });
 
+  it("recovers when browser history replaces stale pins for the same shared app scope", async () => {
+    const appScopeId = "10000000-0000-4000-8000-000000000099";
+    const app = {
+      scopeId: appScopeId,
+      runtimeId: "vps:50000000-0000-4000-8000-000000000001",
+      organizationId: "org_matrix_team",
+      authorityGeneration: 2,
+      appId: "team-tracker",
+      catalogId: "30000000-0000-4000-8000-000000000001",
+      readinessId: "40000000-0000-4000-8000-000000000001",
+      registrationIncarnation: "a".repeat(64),
+      buildId: "b".repeat(64),
+      shareRevision: "2",
+      owner: { actorId: "user_owner", displayName: "Nima" },
+    };
+    const launchId = "20000000-0000-4000-8000-000000000001";
+    const api = {
+      baseUrl: "https://app.matrix-os.com",
+      get: vi.fn(async () => ({ items: [app] })),
+      post: vi.fn(async () => ({
+        target: { kind: "shared", scopeId: appScopeId, organizationId: app.organizationId,
+          appId: app.appId, catalogId: app.catalogId, buildId: app.buildId, name: "Team tracker",
+          owner: app.owner, shareRevision: app.shareRevision },
+        launchId,
+        entryUrl: `/api/collaboration/shared-apps/${appScopeId}/runtime/${launchId}/index.html`,
+        expiresAt: "2026-11-05T10:05:00.000Z",
+      })),
+      delete: vi.fn(),
+      direct: {
+        request: vi.fn(async () => ({ result: {}, revision: "1" })),
+        subscribeEvents: vi.fn(() => vi.fn()),
+        close: vi.fn(),
+      },
+    };
+    const view = render(<ChatCollaboration view={{ kind: "app", scopeId: appScopeId,
+      expectedBuildId: "c".repeat(64), expectedShareRevision: "1" }} api={api} actorId="user_member" />);
+    expect(await screen.findByText("Shared app unavailable")).toBeVisible();
+
+    view.rerender(<ChatCollaboration view={{ kind: "app", scopeId: appScopeId,
+      expectedBuildId: app.buildId, expectedShareRevision: app.shareRevision }} api={api} actorId="user_member" />);
+
+    expect(await screen.findByTitle("Team tracker shared by Nima")).toBeVisible();
+  });
+
   it("can reserve accepted shared projects for the Chats rail while keeping project invitations visible", async () => {
     const projectScopeId = "10000000-0000-4000-8000-000000000101";
     const projectInvitationId = "30000000-0000-4000-8000-000000000101";
