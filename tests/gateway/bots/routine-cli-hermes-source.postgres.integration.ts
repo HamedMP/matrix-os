@@ -9,12 +9,18 @@ afterEach(async () => { await f?.close(); f = undefined; vi.unstubAllGlobals(); 
 
 it("actual admitted Hermes adapter invokes the published CLI/private IPC/HTTP/PG with exact owner decision and original UUID", async () => {
   const requestId = "de000000-0000-4000-8000-000000000701", chatId = "chat_hermes_actual";
-  f = await hermesFixture({ intent: { args: ["propose", "--input", "-", "--request-id", requestId], stdin: JSON.stringify(proposal) } });
+  f = await hermesFixture({ intent: { args: ["propose", "--input", "-", "--request-id", requestId], stdin: JSON.stringify(proposal) }, hold: true });
   const admitted = await f.start(chatId);
   await expect.poll(() => f!.sourceEvents.find(event => event.type === "approval.requested"), { timeout: 5000 }).toMatchObject({ type: "approval.requested" });
   const event = f.sourceEvents.find(event => event.type === "approval.requested")!;
   if (event.type !== "approval.requested") throw new Error("Missing exact owner operation decision");
-  await f.approve(event, chatId, admitted.run.id); await f.f.canonical.drain();
+  await f.approve(event, chatId, admitted.run.id);
+  // Wait for both the native receipt and the separately committed target approval before ending the source.
+  await expect.poll(async () => (await f!.frames()).some(frame => frame.privateResult?.type === "result"), { timeout: 5_000 }).toBe(true);
+  await expect.poll(() => f!.data.db.selectFrom("bot_interactions").select("chat_id").execute(), { timeout: 5_000 })
+    .toEqual([{ chat_id: TARGET_A.chatId }]);
+  await writeFile(f.control, "end");
+  await f.f.canonical.drain();
   const frames = await f.frames(), result = frames.find(frame => frame.privateResult?.type === "result").privateResult;
   expect(JSON.parse(result.result)).toMatchObject({ v: 1, ok: true, data: { receipt: { requestId, disposition: "queued" } } });
   expect(result.context).toMatchObject({ session_id: "native_durable", tool_call_id: "native_call" });
@@ -154,6 +160,8 @@ it("duplicate native callback identity cannot create a second CLI process, appro
   if (event.type !== "approval.requested") throw new Error("Missing exact decision");
   await f.approve(event, chatId, admitted.run.id);
   await expect.poll(async () => (await f!.frames()).some(frame => frame.privateResult?.type === "result" && JSON.parse(frame.privateResult.result).data?.receipt), { timeout: 5000 }).toBe(true);
+  await expect.poll(() => f!.data.db.selectFrom("bot_interactions").select("chat_id").execute(), { timeout: 5_000 })
+    .toEqual([{ chat_id: TARGET_A.chatId }]);
   await writeFile(f.control, "end"); await f.f.canonical.drain();
   expect(f.httpCalls()).toBe(1);
   expect(f.sourceEvents.filter(event => event.type === "approval.requested")).toHaveLength(1);
