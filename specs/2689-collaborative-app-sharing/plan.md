@@ -23,7 +23,7 @@ The implementation uses the fewest reviewable Matrix OS PRs practical while keep
 **Performance Goals**: 95% of supported active-session updates visible within 5 seconds; ready owner shares in under 2 minutes; bounded asset/data responses and event replay
 **Constraints**: Creator-hosted V1; one organization per share; exact build only; existing records visible; full functionality for every current member including guests; any member may share an app they own; no admin approval or second app permission system; no owner credential/provider/AI delegation; safe offline/conflict input retention; no authorization feature flag
 **Scale/Scope**: One active share per exact app catalog identity; existing collaboration connection/page/replay caps; bounded launch/readiness registries and immutable-build retention; at most ten Matrix OS PRs under 3,000 changed lines each
-**Unknowns**: The source and authorization lifecycle of the second authenticated readiness principal is intentionally deferred. The verifier seam may be implemented, but readiness must return a safe blocked result and sharing must remain disabled until this mechanism is approved.
+**Unknowns**: None for V1 identity or authorization. Owners and recipients use normal authenticated Matrix sessions; an active exact share plus current organization membership is the complete recipient authority.
 
 ## Constitution Check
 
@@ -34,7 +34,7 @@ The implementation uses the fewest reviewable Matrix OS PRs practical while keep
 | Data belongs to its owner | App code/builds/records remain on the creator's Matrix; platform holds metadata only; stop-share never deletes records. | PASS |
 | AI is the kernel | Sharing does not silently delegate creator AI, connected accounts, provider tokens, or spending authority. Existing provider policy remains authoritative. | PASS |
 | Headless core, multi-shell | Readiness, share, membership, data, and event services work without UI; shells consume typed contracts. | PASS |
-| Quality over shortcuts | Exact-build proof and production-path two-principal qualification replace declaration-only readiness. | PASS |
+| Quality over shortcuts | Exact-build capability proof plus live two-account production-path qualification replace unchecked declaration-only readiness. | PASS |
 | App ecosystem | Direct private sharing stays distinct from Gallery install and public Sites. | PASS |
 | Multi-tenancy | Constitution v2.5.0 permits owner-retained delegated app access. Any current member may share an app they own; every current member including guests receives full app functionality through existing membership, without a second permission system. | PASS |
 | Defense in depth | Auth matrix, strict schemas, body limits, generic errors, bounded resources, timeouts, immutable assets, and reauthorization are designed before implementation. | PASS |
@@ -49,9 +49,9 @@ The implementation uses the fewest reviewable Matrix OS PRs practical while keep
 - All related writes are transactional; revision predicates are in write statements; idempotent create/retry paths use `ON CONFLICT` or operation receipts.
 - External platform/owner calls have trusted origins, redirect rejection, and explicit timeouts. Streams, pages, results, registries, and artifacts are bounded and cleaned up.
 - UI errors retain mounted iframe/`WebContentsView` state and allowlist safe strings.
-- Real Postgres plus rendered two-account tests cover actual producer/consumer boundaries after the second-principal mechanism is approved; until then the readiness result is blocked and no share can be created.
+- Real Postgres plus rendered two-account tests cover actual producer/consumer boundaries using normal Matrix sessions and current organization membership.
 
-**Post-design gate result**: PASS against Constitution v2.5.0. The deferred second-principal mechanism is an explicit implementation blocker, not a complexity exception.
+**Post-design gate result**: PASS against Constitution v2.5.0. No identity or authorization clarification remains open.
 
 ## Project Structure
 
@@ -186,7 +186,7 @@ All layers reuse ENG-29. The stack has five logical Matrix OS layers that may be
 - Add strict collaborative manifest/bridge/runtime ABI declarations.
 - Capture immutable built bytes under the build lock and calculate exact build ID.
 - Add readiness migration/repository/evaluator/routes and bounded gate results.
-- Add a fail-closed verifier seam. Do not issue a ready certificate until the deferred second-principal source and authorization lifecycle are approved; once approved, run the purpose-bound production-path proof and clean tagged probe data.
+- Add the exact-build capability verifier. Issue a ready certificate only when the bounded declaration matches the immutable build, owner schema, bridge/runtime compatibility, mutation/signal path, participant identity, and provider policy.
 - Mark readiness stale on manifest/schema/assets/bridge/runtime-ABI drift.
 - Render app entries as “client update required” on old clients, never as Chat/project.
 - Reconcile `specs/124-organization-collaboration/spec.md`.
@@ -243,7 +243,7 @@ All layers reuse ENG-29. The stack has five logical Matrix OS layers that may be
 
 - Extend direct resource, bridge, CAS, events, sessions, membership, and relay suites; add real-Postgres two-home journey.
 - RED: recipient cannot run the app, owner writes bypass events, mutable assets are unsafe.
-- GREEN: two principals see 20 rows; CRUD/reload/retry/conflict/signal/restart/revocation/replacement pass.
+- GREEN: owner and recipient accounts see 20 rows; CRUD/reload/retry/conflict/signal/restart/revocation/replacement pass.
 
 **Visual evidence**: Backend-only N/A with reviewer approval; attach headless integration receipts.
 

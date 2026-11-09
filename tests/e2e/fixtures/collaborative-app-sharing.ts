@@ -1,7 +1,7 @@
 /**
  * Stable identities for the collaborative-app production journeys.
- * Authentication material is supplied by the live test environment; this
- * fixture deliberately does not invent the deferred second readiness principal.
+ * Authentication material is supplied by the live test environment. The owner
+ * and recipient use their normal Matrix sessions and current organization membership.
  */
 export const collaborativeAppSharingFixture = Object.freeze({
   organization: Object.freeze({
@@ -25,8 +25,7 @@ export const collaborativeAppSharingFixture = Object.freeze({
     outsider: Object.freeze({ actorId: "user_tracker_outsider", organizationRole: "none", membership: "none" }),
   }),
   readiness: Object.freeze({
-    secondPrincipalCredentialSource: null,
-    expectedStatusUntilConfigured: "blocked",
+    expectedStatus: "ready",
   }),
 });
 

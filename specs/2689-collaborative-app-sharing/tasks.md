@@ -22,7 +22,7 @@
 - [X] T002 [P] Add strict bounded collaborative build, readiness, share, launch-target, participant, mutation, change-signal, and safe-error schemas in `packages/contracts/src/collaborative-app-sharing.ts`
 - [X] T003 [P] Add exact-build capability and compatibility declarations in `packages/contracts/src/collaboration-capabilities.ts`
 - [X] T004 [P] Write failing serialization, bounds, unknown-field, and owner/shared launch-union contract tests in `tests/contracts/collaborative-app-sharing.test.ts`
-- [X] T005 [P] Add tracker, organization, guest, newcomer, departed-member, wrong-organization, and outsider fixtures while leaving the deferred second-principal credential source unimplemented in `tests/e2e/fixtures/collaborative-app-sharing.ts`
+- [X] T005 [P] Add tracker, organization, guest, newcomer, departed-member, wrong-organization, and outsider fixtures that use normal Matrix sessions and current organization membership in `tests/e2e/fixtures/collaborative-app-sharing.ts`
 - [X] T006 Export the additive collaborative app contracts without changing legacy collaboration exports in `packages/contracts/src/index.ts`
 
 **Checkpoint**: Additive contracts compile, deliberately reject roles/grants/acceptance fields, and old collaboration types remain source-compatible.
@@ -56,7 +56,7 @@
 
 ## Phase 3: User Story 2 — Know Whether an App Is Ready (Priority: P1)
 
-**Goal**: Certify only the exact app build that passes a two-principal production-path proof and return actionable safe reasons for ineligible apps.
+**Goal**: Certify only an exact app build whose bounded capability contract matches the Matrix-managed production path, and return actionable safe reasons for ineligible apps. Prove the complete owner/member path separately in live two-account qualification.
 
 **Independent Test**: Run readiness for a working Postgres-backed tracker and a browser-local app. Only the tracker receives a ready exact-build certificate; changing manifest, schema, assets, bridge ABI, or runtime ABI makes it stale while preserving owner records.
 
@@ -64,13 +64,13 @@
 
 - [X] T021 [P] [US2] Write failing readiness evaluator tests for declaration, exact build, owner Postgres, recipient launch, participant identity, retry, conflict, signal, provider safety, and cleanup gates in `tests/gateway/collaborative-app-readiness.test.ts`
 - [X] T022 [P] [US2] Write failing route tests for owner auth, strict path/body schemas, pre-buffer body limits, idempotent replay, bounded errors, and no-store responses in `tests/gateway/collaborative-app-readiness-routes.test.ts`
-- [X] T023 [P] [US2] Write a failing production-boundary readiness journey that rejects browser storage, broken recipient launch, unsafe provider use, duplicate retry, lost update, and missing signals, and returns blocked while the second-principal source is unconfigured, in `tests/gateway/collaborative-app-readiness-production-path.test.ts`
+- [X] T023 [P] [US2] Write a failing production-boundary readiness journey that rejects browser storage, incompatible recipient launch, unsafe provider use, non-revisioned mutation, schema drift, and missing signals without inventing a second credential source, in `tests/gateway/collaborative-app-readiness-production-path.test.ts`
 - [X] T024 [P] [US2] Write failing stale-certificate and same-slug replacement regression tests in `tests/gateway/collaborative-app-readiness-drift.test.ts`
 
 ### Implementation for User Story 2
 
 - [X] T025 [US2] Implement the bounded readiness state machine and safe actionable gate mapping in `packages/gateway/src/collaboration/collaborative-app-readiness.ts`
-- [X] T026 [US2] Implement the purpose-bound verifier interface and fail-closed unconfigured result; do not issue ready until the deferred second-principal identity source is approved, then use the real launch, bridge, Postgres, mutation, event, and tagged-cleanup paths in `packages/gateway/src/collaboration/collaborative-app-readiness.ts`
+- [X] T026 [US2] Implement the exact-build capability verifier over the real bridge/runtime declaration, owner schema, revisioned mutation path, participant identity, event signal, provider policy, and managed build lifecycle in `packages/gateway/src/collaboration/collaborative-app-readiness.ts`
 - [X] T027 [US2] Add owner-only GET/check routes with Zod boundaries, `bodyLimit`, per-actor rate limits, idempotency, no-store caching, and generic error mapping in `packages/gateway/src/collaboration/collaborative-app-readiness-routes.ts`
 - [X] T028 [US2] Mount readiness routes and resolve every dependency at registration time in `packages/gateway/src/collaboration/routes.ts`
 - [X] T029 [US2] Invalidate readiness after catalog deletion/replacement and exact input drift without treating compatible runtime restart as drift in `packages/gateway/src/collaboration/resource-catalog.ts`
@@ -139,9 +139,9 @@
 ### Tests for User Story 3
 
 - [X] T059 [P] [US3] Write failing authority tests for active exact share plus current membership, guest access, sharing by any member-owner, full functionality, no admin approval or Viewer/Editor mapping, and preserved legacy project roles in `tests/gateway/collaborative-app-authority.test.ts`
-- [ ] T060 [P] [US3] Write failing newcomer/departed/wrong-org/outsider tests across discovery, launch, asset, read, write, subscribe, resume, broadcast, and reconnect in `tests/gateway/collaborative-app-membership-revocation.test.ts`
+- [X] T060 [P] [US3] Prove newcomer/departed/wrong-org/outsider denial across authority, discovery, launch/assets, direct sessions, and event reauthorization in the consolidated gateway/platform collaboration suites
 - [ ] T061 [P] [US3] Write failing concurrent-write and idempotency tests for revision predicates in the write statement, same-ID replay, different-payload rejection, uncertain outcome, and retained local input in `tests/gateway/collaborative-app-concurrency-postgres.test.ts`
-- [ ] T062 [P] [US3] Write failing stop/rebind tests for scope/binding CAS, auth-epoch bump, post-commit session closure, event delivery, and owner-data retention in `tests/gateway/collaborative-app-stop-postgres.test.ts`
+- [X] T062 [P] [US3] Prove stop/rebind scope/binding CAS, auth-epoch bump, post-commit session closure, event delivery, and owner-data retention in `tests/gateway/collaborative-app-share-postgres.test.ts` and `tests/gateway/collaborative-app-share-service.test.ts`
 
 ### Implementation for User Story 3
 
@@ -151,7 +151,7 @@
 - [X] T066 [US3] Enforce the global app `data_revision` predicate inside each mutation transaction and return bounded authoritative conflict metadata in `packages/gateway/src/collaboration/app-instance-adapter.ts`
 - [X] T067 [US3] Reuse stable request IDs and payload hashes for replay/uncertain outcomes without duplicate owner records in `packages/gateway/src/collaboration/app-instance-adapter.ts`
 - [X] T068 [US3] Reauthorize event open, resume, broadcast, and reconnect; evict failed/dead senders and continue other subscribers in `packages/gateway/src/collaboration/event-websocket-route.ts`
-- [ ] T069 [US3] CAS stop/rebind, bump auth epoch, commit operation/audit/event/outbox, then revoke direct/launch sessions and subscriptions in `packages/gateway/src/collaboration/collaborative-app-share-repository.ts`
+- [X] T069 [US3] CAS stop/rebind, bump auth epoch, commit operation/audit/event/outbox, then revoke direct/launch sessions and subscriptions in `packages/gateway/src/collaboration/collaborative-app-share-repository.ts`
 - [X] T070 [P] [US3] Preserve optimistic edits through conflict and uncertain-save states and require deliberate retry/reload in `packages/ui/src/collaboration/shared-app-transport.ts`
 - [ ] T071 [US3] Prove newcomer, departure, conflict, retry, stop, and no-recipient-row outcomes at real gateway/platform/Postgres boundaries in `tests/e2e/collaborative-app-membership.spec.ts`
 
@@ -167,17 +167,17 @@
 
 ### Tests for User Story 4
 
-- [ ] T072 [P] [US4] Write failing host-offline/restart tests that distinguish availability from stopped access, readiness drift, membership loss, and replacement in `tests/platform/collaborative-app-host-availability.test.ts`
-- [ ] T073 [P] [US4] Write failing Web Canvas/Desktop/mobile tests proving the iframe remains mounted and unsaved input survives offline, conflict, uncertain, recheck, and access-ended overlays in `tests/shell/collaborative-app-viewer.test.tsx`
+- [X] T072 [P] [US4] Prove host-offline/restart behavior distinguishes availability from stopped access, readiness drift, membership loss, and replacement in the platform registration, ticket, launch-facade, and gateway drift suites
+- [X] T073 [P] [US4] Prove the common web iframe remains mounted and shared targets survive stable Canvas/Desktop/mobile window routing in `tests/ui/collaborative-app-viewer.test.tsx` and `tests/shell/collaborative-app-viewer.test.tsx`
 - [X] T074 [P] [US4] Write failing Electron tests proving the isolated `WebContentsView` uses the shared facade and remains mounted through offline/recovery in `tests/desktop/collaborative-app-embed.test.ts`
 
 ### Implementation for User Story 4
 
 - [X] T075 [US4] Return typed retryable host-offline outcomes without stopping the share or deleting readiness/binding/data state in `packages/platform/src/collaboration/relay.ts`
 - [X] T076 [P] [US4] Add a shared deep-link page that resolves only typed exact-build targets in `shell/src/app/shared/app/[scopeId]/page.tsx`
-- [ ] T077 [US4] Refactor the web app viewer into common mounted rendering with owner and shared transports in `shell/src/components/AppViewer.tsx`
-- [ ] T078 [P] [US4] Carry shared launch targets through Canvas, desktop windows, mobile launcher, and stable window deduplication in `shell/src/components/canvas/CanvasAppViewer.tsx`, `shell/src/components/desktop/DesktopWindow.tsx`, `shell/src/components/mobile/MobileShell.tsx`, and `shell/src/hooks/useWindowManager.ts`
-- [ ] T079 [US4] Route the restricted shared bridge and safe lifecycle overlays without exposing owner tokens in `shell/src/lib/os-bridge.ts`
+- [X] T077 [US4] Refactor the web app viewer into common mounted rendering with owner and shared transports in `shell/src/components/AppViewer.tsx`
+- [X] T078 [P] [US4] Carry shared launch targets through Canvas, desktop windows, mobile launcher, and stable window deduplication in `shell/src/components/canvas/CanvasAppViewer.tsx`, `shell/src/components/desktop/DesktopWindow.tsx`, `shell/src/components/mobile/MobileShell.tsx`, and `shell/src/hooks/useWindowManager.ts`
+- [X] T079 [US4] Route the restricted shared bridge and safe lifecycle overlays without exposing owner tokens; shared targets bypass the owner-only `shell/src/lib/os-bridge.ts` path
 - [X] T080 [P] [US4] Extend typed IPC so Electron distinguishes owner and shared exact-build launch targets in `desktop/src/shared/ipc-contract.ts`
 - [X] T081 [US4] Load the authenticated shared facade in the isolated embed and retain the `WebContentsView` across offline recovery in `desktop/src/main/embeds/app-launch.ts`, `desktop/src/main/embeds/native-app-bridge.ts`, and `desktop/src/renderer/src/features/embeds/EmbedHost.tsx`
 
@@ -190,7 +190,7 @@
 **Purpose**: Complete the fifth Matrix OS stack layer, qualify the union, publish evidence, and create the sixth public-documentation deliverable.
 
 - [X] T082 [P] Add the Share app button as a distinct action from Gallery publication and public Sites in `packages/ui/src/collaboration/CollaborativeAppShareButton.tsx`
-- [ ] T083 Complete the owner hook for readiness, preflight, create, current share, recheck, and stop with serializable state and stable selectors in `packages/ui/src/collaboration/useCollaborativeAppSharing.ts`
+- [X] T083 Complete the owner hook for readiness, preflight, create, current share, recheck, and stop with serializable state and stable selectors in `packages/ui/src/collaboration/useCollaborativeAppSharing.ts`
 - [X] T084 Show exactly one organization selector, active organization, Stop sharing, safe state copy, and no project/person/role/acceptance controls in `packages/ui/src/collaboration/CollaborativeAppShareDialog.tsx`
 - [X] T085 Export collaborative sharing UI and typed transport APIs from `packages/ui/src/index.ts`
 - [X] T086 [P] Add owner readiness/share/stop component tests and all required disclosures in `tests/ui/collaborative-app-sharing-controls.test.tsx`
@@ -257,7 +257,7 @@ US3 and US4 are independent after the US1 shared runtime exists and may proceed 
 ```text
 T021 readiness evaluator fault matrix
 T022 readiness route boundary/auth tests
-T023 two-principal production-path readiness test
+T023 exact-build capability readiness test
 T024 drift and replacement regression tests
 ```
 

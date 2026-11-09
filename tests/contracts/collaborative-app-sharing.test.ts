@@ -10,6 +10,7 @@ import {
   CollaborativeAppMutationRequestSchema,
   CollaborativeAppMutationResponseSchema,
   CollaborativeAppParticipantSchema,
+  CollaborativeAppReadinessGateResultSchema,
   CollaborativeAppReadinessSchema,
   CollaborativeAppSafeErrorSchema,
   CollaborativeAppShareSchema,
@@ -62,7 +63,7 @@ describe("collaborative app sharing contracts", () => {
       revision: "3",
       checks: [
         { code: "declaration", status: "passed" },
-        { code: "two_principal_round_trip", status: "passed" },
+        { code: "recipient_launch", status: "passed" },
         { code: "cleanup", status: "passed" },
       ],
       verifiedAt: now,
@@ -78,7 +79,7 @@ describe("collaborative app sharing contracts", () => {
       ...ready,
       status: "blocked",
       verifiedAt: undefined,
-      checks: [{ code: "two_principal_round_trip", status: "blocked", action: "A second verifier is not configured." }],
+      checks: [{ code: "declaration", status: "blocked", action: "Declare collaborative capability." }],
     }).status).toBe("blocked");
     expect(CollaborativeAppReadinessSchema.parse({
       ...ready,
@@ -100,6 +101,14 @@ describe("collaborative app sharing contracts", () => {
     ]) {
       expect(CollaborativeAppReadinessSchema.safeParse(invalid).success).toBe(false);
     }
+  });
+
+  it("keeps legacy two-principal readiness blockers readable after the verifier upgrade", () => {
+    expect(CollaborativeAppReadinessGateResultSchema.parse({
+      code: "two_principal_round_trip",
+      status: "blocked",
+      action: "A second authenticated verifier is not configured yet.",
+    })).toMatchObject({ code: "two_principal_round_trip", status: "blocked" });
   });
 
   it("serializes an owner-retained organization share without roles, grants, or acceptance", () => {

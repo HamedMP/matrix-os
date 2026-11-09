@@ -1,5 +1,12 @@
 import { isAppGalleryInventoryIdentity } from "@matrix-os/contracts/app-gallery-bridge-policy";
-import { MAX_APP_CAPABILITY_BYTES, MAX_APP_DATABASE_REQUEST_BYTES, MAX_APP_KV_REQUEST_BYTES } from "@matrix-os/contracts";
+import {
+  CollaborationParticipantSchema,
+  CollaborativeAppParticipantSchema,
+  MAX_APP_CAPABILITY_BYTES,
+  MAX_APP_DATABASE_REQUEST_BYTES,
+  MAX_APP_KV_REQUEST_BYTES,
+  type CollaborationParticipant,
+} from "@matrix-os/contracts";
 
 export type BridgeMessage =
   | { type: "os:generate"; app: string; payload: { context: string } }
@@ -231,11 +238,20 @@ function sanitizeDesignId(design: string | undefined): string {
   return design && DESIGN_ID_PATTERN.test(design) ? design : DEFAULT_DESIGN_ID;
 }
 
-export function buildBridgeScript(appName: string, themeVars?: ThemeVars, design?: string): string {
+export function buildBridgeScript(
+  appName: string,
+  themeVars?: ThemeVars,
+  design?: string,
+  participant?: CollaborationParticipant | null,
+): string {
   const inventoryIdentity = appName.replace(/^apps\//, "");
   const useOwnerInventory = isAppGalleryInventoryIdentity(inventoryIdentity);
   const designId = sanitizeDesignId(design);
   const themeJson = JSON.stringify(themeVars ?? {});
+  const contextualParticipant = CollaborativeAppParticipantSchema.safeParse(participant);
+  const basicParticipant = CollaborationParticipantSchema.safeParse(participant);
+  const safeParticipant = contextualParticipant.success ? contextualParticipant.data : basicParticipant.success ? basicParticipant.data : null;
+  const participantJson = JSON.stringify(safeParticipant).replaceAll("<", "\\u003c");
   const initialCss = themeVars
     ? buildThemeStyleBlock({ ...themeVars, "--matrix-design": designId })
     : "";
@@ -312,6 +328,42 @@ export function buildBridgeScript(appName: string, themeVars?: ThemeVars, design
 	    });
 	  }
 
+  function collaborationRequest(payload) {
+    return new Promise(function(resolve, reject) {
+      var frame;
+      try { frame = JSON.stringify(payload); } catch (err) {
+        console.warn("[MatrixOS bridge] collaboration payload serialization failed", err instanceof Error ? err.name : "UnknownError");
+        reject(new Error("Collaboration unavailable")); return;
+      }
+      if (pendingFetches.length >= 32 || utf8Bytes(frame) > ${MAX_APP_DATABASE_REQUEST_BYTES}) {
+        reject(new Error("Collaboration unavailable")); return;
+      }
+      var channel = new MessageChannel();
+      var cancel = function() {
+        clearTimeout(timer);
+        channel.port1.close();
+        var idx = pendingFetches.indexOf(cancel);
+        if (idx >= 0) pendingFetches.splice(idx, 1);
+        reject(new Error("Collaboration unavailable"));
+      };
+      pendingFetches.push(cancel);
+      var timer = setTimeout(cancel, 10000);
+      channel.port1.onmessage = function(e) {
+        clearTimeout(timer);
+        var idx = pendingFetches.indexOf(cancel);
+        if (idx >= 0) pendingFetches.splice(idx, 1);
+        channel.port1.close();
+        if (e.data && e.data.ok) resolve(e.data.value);
+        else reject(new Error("Collaboration unavailable"));
+      };
+      window.parent.postMessage(
+        { type: "os:collaboration-request", app: app, payload: payload },
+        "*",
+        [channel.port2]
+      );
+    });
+  }
+
   function utf8Bytes(value) {
     return encodeURIComponent(value).replace(/%[A-F0-9]{2}/gi, "x").length;
   }
@@ -323,10 +375,48 @@ export function buildBridgeScript(appName: string, themeVars?: ThemeVars, design
   document.head.appendChild(themeStyle);
 
   var dataChangeCallbacks = [];
+  var collaborationChangeCallbacks = [];
+
+  function notifyCollaborationChange() {
+    for (var i = 0; i < collaborationChangeCallbacks.length; i++) {
+      try { collaborationChangeCallbacks[i](); } catch (err) {
+        console.warn("[MatrixOS bridge] collaboration listener failed", err instanceof Error ? err.name : "UnknownError");
+      }
+    }
+  }
+
+  // Participant context is display metadata. All operations still authorize at
+  // the owner home; accepting a context update never grants app data access.
+  function normalizeCollaborationParticipant(value) {
+    if (value === null) return null;
+    if (!value || typeof value !== "object" || Array.isArray(value)
+      || typeof value.actorId !== "string" || !/^[A-Za-z0-9_-]{1,128}$/.test(value.actorId)
+      || typeof value.displayName !== "string" || value.displayName.length < 1
+      || value.displayName.length > 120) return undefined;
+    var next = { actorId: value.actorId, displayName: value.displayName };
+    if (typeof value.organizationId === "string" && /^org_[A-Za-z0-9_-]{1,124}$/.test(value.organizationId)
+      && typeof value.scopeId === "string" && /^[a-f0-9-]{36}$/i.test(value.scopeId)
+      && typeof value.shareRevision === "string" && /^[0-9]{1,20}$/.test(value.shareRevision)
+      && typeof value.buildId === "string" && /^[a-f0-9]{64}$/.test(value.buildId)) {
+      next.organizationId = value.organizationId;
+      next.scopeId = value.scopeId;
+      next.shareRevision = value.shareRevision;
+      next.buildId = value.buildId;
+    }
+    return Object.freeze(next);
+  }
 
   // Listen for dynamic theme updates and data change notifications
   window.addEventListener("message", function(e) {
     if (!e.data || !e.data.type) return;
+
+    if (e.data.type === "os:collaboration-context" && e.source === parent && window.MatrixOS) {
+      var nextParticipant = normalizeCollaborationParticipant(e.data.participant);
+      if (nextParticipant !== undefined) {
+        window.MatrixOS.collaboration.participant = nextParticipant;
+        notifyCollaborationChange();
+      }
+    }
 
     if (e.data.type === "os:theme-update" && e.data.payload) {
       currentTheme = e.data.payload;
@@ -352,7 +442,10 @@ export function buildBridgeScript(appName: string, themeVars?: ThemeVars, design
       for (var i = 0; i < dataChangeCallbacks.length; i++) {
         try { dataChangeCallbacks[i](changeKey, e.data.payload.app); } catch(err) {}
       }
+      notifyCollaborationChange();
     }
+
+    if (e.data.type === "os:collaboration-change") notifyCollaborationChange();
   });
 
   window.MatrixOS = {
@@ -426,6 +519,32 @@ export function buildBridgeScript(appName: string, themeVars?: ThemeVars, design
     design: currentDesign,
 
     app: { name: app },
+
+    collaboration: {
+      participant: ${participantJson === "null" ? "null" : `Object.freeze(${participantJson})`},
+      query: function(action) {
+        return collaborationRequest({ kind: "query", action: action });
+      },
+      mutate: function(action, expectedRevision) {
+        if (typeof expectedRevision !== "string" || !/^(?:0|[1-9][0-9]{0,18})$/.test(expectedRevision)) {
+          return Promise.reject(new Error("Collaboration unavailable"));
+        }
+        return collaborationRequest({ kind: "mutate", action: action, expectedRevision: expectedRevision });
+      },
+      retryMutation: function() {
+        return collaborationRequest({ kind: "retry_mutation" });
+      },
+      onChange: function(callback) {
+        if (typeof callback !== "function" || collaborationChangeCallbacks.length >= 32) {
+          throw new Error("Collaboration unavailable");
+        }
+        collaborationChangeCallbacks.push(callback);
+        return function() {
+          var idx = collaborationChangeCallbacks.indexOf(callback);
+          if (idx >= 0) collaborationChangeCallbacks.splice(idx, 1);
+        };
+      }
+    },
 
     ai: {
       routes: function() {

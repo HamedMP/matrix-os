@@ -9,6 +9,7 @@ export {
 } from "./shared-app-transport.js";
 export type {
   CollaborativeAppReadinessApi,
+  CollaborativeAppSharingActionState,
   CollaborativeAppSharingState,
 } from "./useCollaborativeAppSharing.js";
 export type {

@@ -171,6 +171,63 @@ describe("shared app transport", () => {
     platform.post.mockRejectedValueOnce(new Error("postgres password=secret"));
     await expect(transport.launch()).rejects.toMatchObject({ code: "unavailable", message: "Shared app is unavailable." });
   });
+
+  it("rejects a launch response for a different app build", async () => {
+    const { platform, direct } = setup();
+    platform.post.mockImplementationOnce(async () => ({
+      target: { kind: "shared", scopeId, organizationId: target.organizationId, appId: target.appId,
+        catalogId: target.catalogId, buildId: "c".repeat(64), name: "Team tracker", owner: target.owner,
+        shareRevision: target.shareRevision },
+      launchId,
+      entryUrl: `/api/collaboration/shared-apps/${scopeId}/runtime/${launchId}/index.html`,
+      expiresAt: "2026-11-05T10:05:00.000Z",
+    }));
+    const transport = createSharedAppTransport({ platform, direct: direct as never, target });
+
+    await expect(transport.launch()).rejects.toMatchObject({ code: "invalid_response" });
+    expect(direct.request).not.toHaveBeenCalled();
+  });
+
+  it("bounds unresolved member mutations and never issues a thirty-third write", async () => {
+    const { platform, direct } = setup();
+    direct.request.mockRejectedValue(new CollaborationDirectError("host_offline"));
+    const transport = createSharedAppTransport({ platform, direct: direct as never, target });
+
+    for (let index = 0; index < 32; index++) {
+      await expect(transport.mutate({ action: "insert", value: index }, "2"))
+        .rejects.toMatchObject({ code: "uncertain" });
+    }
+    await expect(transport.mutate({ action: "insert", value: 32 }, "2"))
+      .rejects.toMatchObject({ code: "unavailable" });
+    expect(direct.request).toHaveBeenCalledTimes(32);
+  });
+
+  it("continues member retry recovery after one write loses access", async () => {
+    const { platform, direct } = setup();
+    direct.request
+      .mockRejectedValueOnce(new CollaborationDirectError("unavailable"))
+      .mockRejectedValueOnce(new CollaborationDirectError("unavailable"))
+      .mockRejectedValueOnce(new CollaborationDirectError("denied"))
+      .mockResolvedValueOnce({ result: { saved: true }, revision: 4, replayed: false });
+    const transport = createSharedAppTransport({ platform, direct: direct as never, target });
+
+    await expect(transport.mutate({ action: "rename", value: "First" }, "2"))
+      .rejects.toMatchObject({ code: "uncertain" });
+    await expect(transport.mutate({ action: "rename", value: "Second" }, "2"))
+      .rejects.toMatchObject({ code: "uncertain" });
+    await expect(transport.retryMutation()).rejects.toMatchObject({ code: "access_ended" });
+    expect(direct.request).toHaveBeenCalledTimes(4);
+    await expect(transport.retryMutation()).rejects.toMatchObject({ code: "conflict" });
+  });
+
+  it("rejects a malformed owner query response with a safe error", async () => {
+    const { platform, direct } = setup();
+    direct.request.mockRejectedValueOnce(new CollaborationDirectError("invalid_response"));
+    const transport = createSharedAppTransport({ platform, direct: direct as never, target });
+
+    await expect(transport.query({ action: "find" }))
+      .rejects.toMatchObject({ code: "invalid_response", message: "Shared app is unavailable." });
+  });
 });
 
 describe("SharedAppViewer", () => {

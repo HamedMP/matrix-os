@@ -94,8 +94,13 @@ export class CollaborativeAppBuildResolver {
       },
     });
     if (!result.ok) throw new CollaborativeAppBuildResolutionError();
+    const declaration = result.snapshot.manifest.collaboration;
     const exact = identity(result.snapshot.assetDigest, result.snapshot.manifest);
     if (exact.buildId !== result.snapshot.buildId) throw new CollaborativeAppBuildResolutionError();
-    return { build: exact, artifactRef: `objects/${exact.buildId}` };
+    return {
+      build: exact,
+      artifactRef: `objects/${exact.buildId}`,
+      declaration: declaration ?? null,
+    };
   }
 }

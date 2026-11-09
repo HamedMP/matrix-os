@@ -10,12 +10,15 @@ import { AppSiteButton } from "./app-sites/AppSiteButton";
 import {
   CollaborativeAppShareButton,
   ReadinessSummary,
+  SharedAppViewer,
+  createSharedAppTransport,
   useCollaborativeAppSharing,
 } from "@matrix-os/ui/collaborative-app-sharing";
 import { shellApi } from "@/api/http";
 import { useCollaborationOrganization } from "@/lib/collaboration-organization-state";
+import { useOwnerCollaborationParticipant } from "@/lib/owner-collaboration-participant";
 
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useMemo, useRef, useCallback } from "react";
 import { useFileWatcher } from "@/hooks/useFileWatcher";
 import { useSocket } from "@/hooks/useSocket";
 import {
@@ -30,7 +33,14 @@ import { openAppSession } from "@/lib/app-session";
 import { capturePostHogEvent } from "@/lib/posthog-client";
 import { createCoalescedBridgeDataHandler, type BridgeDataRequest } from "@/lib/app-data-write-queue";
 import { MATRIX_TELEMETRY_EVENTS } from "@matrix-os/observability/events";
-import { MAX_APP_KV_REQUEST_BYTES } from "@matrix-os/contracts";
+import { MAX_APP_KV_REQUEST_BYTES, type CollaborativeAppDirectoryItem, type CollaborativeAppParticipant } from "@matrix-os/contracts";
+import { useBrowserOrigin } from "@/hooks/useBrowserOrigin";
+import { createShellCollaborationApi, releaseShellCollaborationApi } from "@/lib/collaboration";
+import {
+  createOwnerCollaborativeAppTransport,
+  type OwnerCollaborativeAppTransport,
+} from "@/lib/owner-collaborative-app-transport";
+import { z } from "zod/v4";
 import {
   APP_IFRAME_SANDBOX,
   extractSlug,
@@ -44,9 +54,15 @@ const GATEWAY_URL = getGatewayUrl();
 const COLLABORATION_API = shellApi;
 const SESSION_REFRESH_DEBOUNCE_MS = 2000;
 const BRIDGE_FETCH_TIMEOUT_MS = 10_000;
+const OwnerCollaborationRequestSchema = z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("query"), action: z.unknown() }).strict(),
+  z.object({ kind: z.literal("mutate"), action: z.unknown(), expectedRevision: z.string() }).strict(),
+  z.object({ kind: z.literal("retry_mutation") }).strict(),
+]);
 
 interface AppViewerProps {
   path: string;
+  sharedAppTarget?: CollaborativeAppDirectoryItem;
   active?: boolean;
   sessionId?: string;
   onOpenApp?: (name: string, path: string) => void;
@@ -86,6 +102,44 @@ async function handleBridgeFetch(appName: string, payload: unknown, port: Messag
   }
 }
 
+async function requestOwnerLegacyAppDatabase(action: unknown, signal?: AbortSignal): Promise<unknown> {
+  const response = await fetch(`${GATEWAY_URL}/api/bridge/query`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(action),
+    signal: signal
+      ? AbortSignal.any([signal, AbortSignal.timeout(BRIDGE_FETCH_TIMEOUT_MS)])
+      : AbortSignal.timeout(BRIDGE_FETCH_TIMEOUT_MS),
+    redirect: "error",
+  });
+  const body = await readAppBridgeResponse(response, { url: "/api/bridge/query", init: {} });
+  if (!response.ok) throw new Error("Collaboration unavailable");
+  return body;
+}
+
+async function handleOwnerCollaborationRequest(
+  payload: unknown,
+  port: MessagePort,
+  transport: OwnerCollaborativeAppTransport | null,
+  signal: AbortSignal,
+): Promise<void> {
+  try {
+    const request = OwnerCollaborationRequestSchema.parse(payload);
+    if (!transport) throw new Error("Collaboration unavailable");
+    const value = request.kind === "query"
+      ? await transport.query(request.action, signal)
+      : request.kind === "mutate"
+        ? await transport.mutate(request.action, request.expectedRevision, signal)
+        : await transport.retryMutation(signal);
+    if (!signal.aborted) port.postMessage({ ok: true, value });
+  } catch (error: unknown) {
+    console.warn("[app-viewer] owner collaboration request unavailable", error instanceof Error ? error.name : "UnknownError");
+    if (!signal.aborted) port.postMessage({ ok: false, error: "Collaboration unavailable" });
+  } finally {
+    port.close();
+  }
+}
+
 const requestBridgeData: BridgeDataRequest = async (action, app, key, value) => {
   try {
     const requestBody = JSON.stringify({ action, app, key, value });
@@ -111,6 +165,7 @@ const requestBridgeData: BridgeDataRequest = async (action, app, key, value) => 
 const bridgeDataHandler = createCoalescedBridgeDataHandler(requestBridgeData);
 
 export function AppViewer(props: AppViewerProps) {
+  if (props.sharedAppTarget) return <SharedAppWebViewer target={props.sharedAppTarget} />;
   const surface = remoteBrowserSurfaceForPath(props.path);
   if (surface) return <RemoteBrowserView key={`${getGatewayUrl()}:${surface}`} surface={surface} active={props.active ?? true}
     onOpenCloudDesktop={props.onOpenApp ? () => props.onOpenApp!("Cloud desktop", "__cloud-desktop__") : undefined}
@@ -122,13 +177,86 @@ export function AppViewer(props: AppViewerProps) {
   return <SandboxedAppViewer {...props} />;
 }
 
+function SharedAppWebViewer({ target }: { target: CollaborativeAppDirectoryItem }) {
+  const browserOrigin = useBrowserOrigin();
+  const stableTarget = useMemo<CollaborativeAppDirectoryItem>(() => ({
+    scopeId: target.scopeId,
+    runtimeId: target.runtimeId,
+    organizationId: target.organizationId,
+    authorityGeneration: target.authorityGeneration,
+    appId: target.appId,
+    catalogId: target.catalogId,
+    readinessId: target.readinessId,
+    registrationIncarnation: target.registrationIncarnation,
+    buildId: target.buildId,
+    shareRevision: target.shareRevision,
+    owner: { actorId: target.owner.actorId, displayName: target.owner.displayName },
+  }), [
+    target.scopeId, target.runtimeId, target.organizationId, target.authorityGeneration,
+    target.appId, target.catalogId, target.readinessId, target.registrationIncarnation,
+    target.buildId, target.shareRevision, target.owner.actorId, target.owner.displayName,
+  ]);
+  const [active, setActive] = useState<{
+    origin: string;
+    target: CollaborativeAppDirectoryItem;
+    transport: ReturnType<typeof createSharedAppTransport>;
+  } | null>(null);
+  useEffect(() => {
+    if (!browserOrigin) return;
+    const api = createShellCollaborationApi(browserOrigin);
+    const transport = createSharedAppTransport({ platform: api, direct: api.direct, target: stableTarget });
+    let cancelled = false;
+    queueMicrotask(() => {
+      if (!cancelled) setActive({ origin: browserOrigin, target: stableTarget, transport });
+    });
+    return () => {
+      cancelled = true;
+      releaseShellCollaborationApi(api);
+    };
+  }, [browserOrigin, stableTarget]);
+  const transport = active?.origin === browserOrigin && active.target === stableTarget ? active.transport : null;
+
+  if (!transport) return <p role="status" className="p-8">Loading shared app…</p>;
+  return <SharedAppViewer target={stableTarget} transport={transport} />;
+}
+
+// react-doctor-disable-next-line react-doctor/no-giant-component -- Legacy app-viewer orchestration remains one surface, while collaboration policy and transport are extracted into focused modules; this change only wires those bounded adapters.
 function SandboxedAppViewer({ path, sessionId, onOpenApp, onShareApp, visible = true }: AppViewerProps) {
   const [refreshKey, setRefreshKey] = useState(0);
   const [iframeHtml, setIframeHtml] = useState<string | null>(null);
   const iframeRef = useRef<HTMLIFrameElement>(null);
   const { send, subscribe } = useSocket();
+  const browserOrigin = useBrowserOrigin();
+  const ownerParticipant = useOwnerCollaborationParticipant();
   // react-doctor-disable-next-line react-doctor/no-event-handler -- pure derived value computed from the `path` prop during render, not a DOM event handler or effect-driven side effect.
   const appName = appIdentityFromPath(path);
+  const slug = extractSlug(path);
+  const notifyOwnerCollaborationChanged = useCallback(() => {
+    try {
+      iframeRef.current?.contentWindow?.postMessage({ type: "os:collaboration-change" }, "*");
+    } catch (error: unknown) {
+      if (!(error instanceof DOMException)) {
+        console.warn("[app-viewer] collaboration change postMessage failed", error instanceof Error ? error.name : "UnknownError");
+      }
+    }
+  }, []);
+  const ownerCollaborationRef = useRef<OwnerCollaborativeAppTransport | null>(null);
+  useEffect(() => {
+    if (!browserOrigin || !slug) return;
+    const collaborationApi = createShellCollaborationApi(browserOrigin);
+    const ownerCollaboration = createOwnerCollaborativeAppTransport({
+      appId: slug,
+      api: { get: shellApi.get, direct: collaborationApi.direct },
+      legacyRequest: requestOwnerLegacyAppDatabase,
+      onChanged: notifyOwnerCollaborationChanged,
+    });
+    ownerCollaborationRef.current = ownerCollaboration;
+    return () => {
+      if (ownerCollaborationRef.current === ownerCollaboration) ownerCollaborationRef.current = null;
+      ownerCollaboration.close();
+      releaseShellCollaborationApi(collaborationApi);
+    };
+  }, [browserOrigin, slug, notifyOwnerCollaborationChanged]);
 
   useFileWatcher((changedPath: string, event: string) => {
     if (changedPath === path && event === "change") {
@@ -147,7 +275,7 @@ function SandboxedAppViewer({ path, sessionId, onOpenApp, onShareApp, visible = 
     const onLoad = () => {
       try {
         const themeVars = readCurrentTheme();
-        const script = buildBridgeScript(appName, themeVars, readCurrentDesign());
+        const script = buildBridgeScript(appName, themeVars, readCurrentDesign(), ownerParticipant);
         // Inject bridge directly into iframe DOM, then trigger reload.
         const doc = iframe.contentDocument;
         if (doc) {
@@ -171,7 +299,7 @@ function SandboxedAppViewer({ path, sessionId, onOpenApp, onShareApp, visible = 
 
     iframe.addEventListener("load", onLoad);
     return () => iframe.removeEventListener("load", onLoad);
-  }, [appName, path, refreshKey]);
+  }, [appName, ownerParticipant, path, refreshKey]);
 
   // Observe theme changes and broadcast to iframe (T2071)
   useEffect(() => {
@@ -246,6 +374,21 @@ function SandboxedAppViewer({ path, sessionId, onOpenApp, onShareApp, visible = 
         void handleBridgeFetch(appName, data.payload, port, controller.signal).finally(() => pending.delete(port));
         return;
       }
+      if (
+        data?.type === "os:collaboration-request"
+        && event.source === iframeRef.current?.contentWindow
+        && (event.origin === window.location.origin || event.origin === "null")
+        && data.app === appName
+        && event.ports[0]
+      ) {
+        const port = event.ports[0];
+        if (pending.size >= 32) { port.postMessage({ ok: false, error: "Collaboration unavailable" }); port.close(); return; }
+        const controller = new AbortController();
+        pending.set(port, controller);
+        void handleOwnerCollaborationRequest(data.payload, port, ownerCollaborationRef.current, controller.signal)
+          .finally(() => pending.delete(port));
+        return;
+      }
       handleBridgeMessage(event, handler, {
         expectedSource: iframeRef.current?.contentWindow,
         expectedOrigins: new Set([window.location.origin, "null"]),
@@ -288,7 +431,6 @@ function SandboxedAppViewer({ path, sessionId, onOpenApp, onShareApp, visible = 
     });
   }, [subscribe, appName]);
 
-  const slug = extractSlug(path);
   const [sessionReady, setSessionReady] = useState(!slug);
   const lastRefreshAtRef = useRef(0);
   const refreshInFlightRef = useRef(false);
@@ -339,9 +481,17 @@ function SandboxedAppViewer({ path, sessionId, onOpenApp, onShareApp, visible = 
         if (!response.ok) throw new Error(`HTTP ${response.status}`);
         return response.text();
       })
-      .then((html) => {
+      .then(async (html) => {
+        let participant: CollaborativeAppParticipant | null = null;
+        try {
+          participant = await ownerCollaborationRef.current?.participant() ?? null;
+        } catch (error: unknown) {
+          console.warn("[app-viewer] owner collaboration context unavailable", error instanceof Error ? error.name : "UnknownError");
+        }
         if (!cancelled) {
-          setIframeHtml(injectBridgeIntoAppHtml(html, appName, readCurrentTheme(), baseHref, readCurrentDesign()));
+          setIframeHtml(injectBridgeIntoAppHtml(
+            html, appName, readCurrentTheme(), baseHref, readCurrentDesign(), participant ?? ownerParticipant,
+          ));
         }
       })
       .catch((err: unknown) => {
@@ -353,7 +503,7 @@ function SandboxedAppViewer({ path, sessionId, onOpenApp, onShareApp, visible = 
     return () => {
       cancelled = true;
     };
-  }, [slug, sessionReady, appName, refreshKey]);
+  }, [slug, sessionReady, appName, ownerParticipant, refreshKey]);
 
   // Cookie-expiry recovery: listen for matrix-os:session-expired from the
   // gateway's 401 interstitial HTML. Bumping refreshKey remounts the iframe
@@ -406,7 +556,14 @@ function SandboxedAppViewer({ path, sessionId, onOpenApp, onShareApp, visible = 
     <div className="flex h-full w-full flex-col">
       {slug && visible ? <div className="flex items-start justify-end gap-2 border-b px-3 py-1.5">
         {onShareApp ? <CollaborativeAppReadinessControls appId={slug} buildEpoch={refreshKey} onShareApp={onShareApp} />
-          : <OwnerCollaborativeAppSharingControls appId={slug} buildEpoch={refreshKey} />}
+          : <OwnerCollaborativeAppSharingControls appId={slug} buildEpoch={refreshKey} onShareChanged={async () => {
+            const participant = await ownerCollaborationRef.current?.refreshShare() ?? ownerParticipant;
+            try {
+              iframeRef.current?.contentWindow?.postMessage({ type: "os:collaboration-context", participant }, "*");
+            } catch (error: unknown) {
+              console.warn("[app-viewer] owner collaboration context update unavailable", error instanceof Error ? error.name : "UnknownError");
+            }
+          }} />}
         <AppSiteButton key={slug} appSlug={slug} />
       </div> : null}
       <iframe
@@ -422,10 +579,15 @@ function SandboxedAppViewer({ path, sessionId, onOpenApp, onShareApp, visible = 
   );
 }
 
-function OwnerCollaborativeAppSharingControls({ appId, buildEpoch }: { appId: string; buildEpoch: number }) {
+function OwnerCollaborativeAppSharingControls({ appId, buildEpoch, onShareChanged }: {
+  appId: string;
+  buildEpoch: number;
+  onShareChanged(): Promise<void>;
+}) {
   const organization = useCollaborationOrganization();
   if (organization.status !== "member" || !organization.organizationId) return null;
   return <CollaborativeAppShareButton appId={appId} api={COLLABORATION_API} buildEpoch={buildEpoch}
+    onShareChanged={onShareChanged}
     organizationId={organization.organizationId}
     organizationName={organization.organizationName ?? "your organization"} />;
 }

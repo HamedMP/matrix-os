@@ -62,6 +62,8 @@ import {
   createTerminalLayoutId,
   type TerminalPersistence,
 } from "@/lib/terminal-window-metadata";
+import type { CollaborativeAppDirectoryItem } from "@matrix-os/contracts";
+import { sharedAppWindowPath, sharedAppWindowTitle } from "@/lib/shared-app-target";
 
 interface OpenApp {
   id: string;
@@ -70,6 +72,7 @@ interface OpenApp {
   terminalLayoutId?: string;
   terminalPersistence?: TerminalPersistence;
   sharedTerminalScopeId?: string;
+  sharedAppTarget?: CollaborativeAppDirectoryItem;
 }
 
 const FETCH_TIMEOUT_MS = 10_000;
@@ -251,7 +254,10 @@ export function MobileShell({ launchAppPath, sharedTerminalScopeId, onOpenComman
   });
 
   // react-doctor-disable-next-line react-doctor/react-compiler-no-manual-memoization -- stable identity is consumed by the launch-path useEffect dependency array below; removing useCallback would re-run that effect on every render and could re-open the launch app.
-  const openApp = useCallback((app: MobileApp, options?: { sharedTerminalScopeId?: string }): boolean => {
+  const openApp = useCallback((app: MobileApp, options?: {
+    sharedTerminalScopeId?: string;
+    sharedAppTarget?: CollaborativeAppDirectoryItem;
+  }): boolean => {
     if (app.path.startsWith("__terminal__") && options?.sharedTerminalScopeId) {
       const currentTerminals = stackRef.current.filter((entry) => entry.app.path.startsWith("__terminal__"));
       if (mobileTerminalCapacityAction(currentTerminals, options.sharedTerminalScopeId).kind === "reject") {
@@ -284,15 +290,27 @@ export function MobileShell({ launchAppPath, sharedTerminalScopeId, onOpenComman
       if (existing >= 0) {
         const next = prev.slice();
         const [taken] = next.splice(existing, 1);
-        next.push(taken);
+        next.push(options?.sharedAppTarget ? { ...taken, sharedAppTarget: options.sharedAppTarget } : taken);
         return next;
       }
       const id = `${app.id}:${Date.now().toString(36)}`;
-      return [...prev, { id, app, openedAt: Date.now() }];
+      return [...prev, {
+        id,
+        app,
+        openedAt: Date.now(),
+        ...(options?.sharedAppTarget ? { sharedAppTarget: options.sharedAppTarget } : {}),
+      }];
     });
     setView("app");
     return true;
   }, []);
+
+  const openSharedApp = useCallback((target: CollaborativeAppDirectoryItem) => {
+    const path = sharedAppWindowPath(target);
+    openApp({ id: `shared-app:${target.scopeId}`, name: sharedAppWindowTitle(target), path, iconSlug: "apps" }, {
+      sharedAppTarget: target,
+    });
+  }, [openApp]);
 
   const openAppFromBridge = useCallback((name: string, requestedPath: string) => {
     routeAppBridgeLaunch(name, requestedPath, (title, path) => {
@@ -489,7 +507,8 @@ export function MobileShell({ launchAppPath, sharedTerminalScopeId, onOpenComman
                 background: "var(--background)",
               }}
             >
-              <MobileAppFrame openApp={o} chat={chat} visible={visible} onOpenApp={openAppFromBridge} />
+              <MobileAppFrame openApp={o} chat={chat} visible={visible} onOpenApp={openAppFromBridge}
+                onOpenSharedApp={openSharedApp} />
             </motion.div>
           );
         })}
@@ -598,11 +617,13 @@ function MobileAppFrame({
   chat,
   visible,
   onOpenApp,
+  onOpenSharedApp,
 }: {
   openApp: OpenApp;
   visible: boolean;
   chat: ReturnType<typeof useChatContext>;
   onOpenApp: (name: string, path: string) => void;
+  onOpenSharedApp: (target: CollaborativeAppDirectoryItem) => void;
 }) {
   const { app, id: openId } = openApp;
   if (app.path.startsWith("__terminal__")) {
@@ -639,6 +660,7 @@ function MobileAppFrame({
         onOpenSharedChat={chat.openSharedChat}
         onOpenSharedProject={chat.openSharedProject}
         onOpenSharedHome={chat.openSharedHome}
+        onOpenSharedApp={onOpenSharedApp}
                 filterUnreadOnly={chat.unreadOnly}
                 onUnreadFilterChange={chat.setUnreadOnly}
                 readState={chat.readState}
@@ -668,6 +690,9 @@ function MobileAppFrame({
         onComposerDraftConsumed={chat.consumeComposerDraft}
       />
     );
+  }
+  if (openApp.sharedAppTarget) {
+    return <AppViewer path={app.path} sharedAppTarget={openApp.sharedAppTarget} onOpenApp={onOpenApp} />;
   }
   if (app.path.startsWith("__")) {
     // Unknown built-in path: render a clear message instead of falling through

@@ -7,6 +7,7 @@ import {
   CollaborationRevisionSchema,
   type CollaborativeAppShare,
   type CollaborativeAppBuildRef,
+  type CollaborativeAppManifestDeclaration,
 } from "@matrix-os/contracts";
 import type { Context, Hono } from "hono";
 import { bodyLimit } from "hono/body-limit";
@@ -80,6 +81,7 @@ class ReadinessRouteError extends Error {
 export interface CurrentCollaborativeAppBuild {
   build: CollaborativeAppBuildRef;
   artifactRef: string;
+  declaration?: CollaborativeAppManifestDeclaration | null;
 }
 
 export interface CollaborativeAppReadinessRouteDependencies {
@@ -235,6 +237,7 @@ export function registerCollaborativeAppReadinessRoutes(
         organizationId: request.organizationId,
         build: current.build,
         artifactRef: current.artifactRef,
+        declaration: current.declaration ?? null,
       });
       return context.json(project(record));
     } catch (error: unknown) {
