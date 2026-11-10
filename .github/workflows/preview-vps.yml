@@ -236,7 +236,7 @@ jobs:
           head_repo="$EVENT_HEAD_REPO"
           has_preview_label="$HAS_LABEL"
           has_collaboration_label="$HAS_COLLABORATION_LABEL"
-          has_openmausbot_label="$HAS_OPENMAUSBOT_LABEL"
+          has_openmausbot_label="${HAS_OPENMAUSBOT_LABEL:-false}"
           author="$EVENT_AUTHOR"
           if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
             pr_json="$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}")"
