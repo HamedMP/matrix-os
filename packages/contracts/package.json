@@ -25,7 +25,9 @@
     "./preview-pair-artifact": "./src/preview-pair-artifact.ts",
     "./preview-pair-control": "./src/preview-pair-control.ts",
     "./preview-pair-launch": "./src/preview-pair-launch.ts",
-    "./http-request-deadlines": "./src/http-request-deadlines.ts"
+    "./http-request-deadlines": "./src/http-request-deadlines.ts",
+    "./ai-usage": "./src/ai-usage/index.ts",
+    "./ai-usage/node": "./src/ai-usage/node.ts"
   },
   "imports": {
     "#inference-response-limits": "./src/inference-response-limits.ts",
