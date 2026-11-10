@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
@@ -21,17 +21,39 @@ describe('platform/customer-vps-cloud-init', () => {
       ...input, supportPublicKey,
     });
     const document = parseDocument(rendered).toJS() as {
-      write_files: { path: string; owner: string; permissions: string; content: string }[];
+      write_files: { path: string; content: string }[];
       runcmd: string[];
     };
     const source = document.write_files.find((file) => file.path === '/etc/matrix/support/public-key');
-    expect(source).toEqual({
-      path: '/etc/matrix/support/public-key', owner: 'root:root', permissions: '0644',
-      content: `${supportPublicKey}\n`,
-    });
-    expect(document.runcmd.join('\n')).toContain('install -d -o root -g root -m 0700 /etc/matrix/support');
+    // cloud-init's write_files defaults (root:root 0644) are exactly what the helper enforces.
+    expect(source).toEqual({ path: '/etc/matrix/support/public-key', content: `${supportPublicKey}\n` });
+    const helper = readFileSync('distro/customer-vps/host-bin/matrix-support-access', 'utf8');
+    expect(helper).toContain(`|| fail 'support key must be root:root 0644'`);
+    expect(helper).toContain(`|| fail 'support key directory must be root:root 0700'`);
+    expect(document.runcmd.join('\n')).toContain('chmod 700 /etc/matrix/support');
     expect(document.runcmd.join('\n')).toContain('/usr/local/libexec/matrix-support-access install');
     expect(rendered).not.toContain('PRIVATE KEY');
+  });
+
+  it('renders a publishing location the Sites nginx helper accepts unchanged', async () => {
+    const rendered = renderCloudInitTemplate(await loadCustomerVpsCloudInitTemplate(), input);
+    const document = parseDocument(rendered).toJS() as { write_files: { path: string; content: string }[] };
+    const nginx = document.write_files.find((file) => file.path === '/etc/nginx/sites-available/matrix')?.content;
+    expect(nginx).toMatch(/# matrix-sites-publish-timeout-v1\n\s*location ~ "\^\/api\/apps\//);
+    const root = realpathSync(mkdtempSync(join(tmpdir(), 'matrix-sites-nginx-')));
+    try {
+      const target = join(root, 'etc/nginx/sites-available/matrix');
+      mkdirSync(join(root, 'etc/nginx/sites-available'), { recursive: true });
+      writeFileSync(target, nginx ?? '');
+      const helper = spawnSync('python3', ['-I', 'distro/customer-vps/host-bin/matrix-configure-sites-nginx', '--root', root], {
+        encoding: 'utf8', timeout: 15_000,
+      });
+      expect(helper.stderr).toBe('');
+      expect(helper.status).toBe(0);
+      expect(readFileSync(target, 'utf8')).toBe(nginx);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
   });
 
   it('rejects a missing or malformed operator key before rendering VPS user data', async () => {
