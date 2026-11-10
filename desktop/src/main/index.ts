@@ -86,6 +86,15 @@ import { createNativeAppOpenResolver } from "./embeds/native-app-open";
 import { installBrowserProductSessionCookie } from "./embeds/browser-product-session";
 import { createNativeAppChatNavigationBroker, registerNativeAppChatCompletionIpc } from "./embeds/native-app-chat-navigation";
 import { configureDesktopIdentity } from "./desktop-identity";
+import { createSenderPolicy } from "./ipc/sender-policy";
+import { createTerminalWindowController } from "./terminal-window/controller";
+import { createTerminalBrowserWindow } from "./terminal-window/window";
+import {
+  TERMINAL_WINDOW_EVENT_CHANNELS,
+  TERMINAL_WINDOW_QUERY_KEY,
+  TERMINAL_WINDOW_QUERY_VALUE,
+  terminalWindowUrl,
+} from "../shared/terminal-window";
 
 const DEFAULT_PLATFORM_HOST = "https://app.matrix-os.com";
 const desktopRendererUrl = resolveDesktopRendererUrl(process.env.ELECTRON_RENDERER_URL);
@@ -113,6 +122,8 @@ const bindPreviewStartupAcknowledgement = createPreviewStartupAcknowledgement(pr
   });
 
 let mainWindow: BrowserWindow | null = null;
+let terminalWindows: ReturnType<typeof createTerminalWindowController<BrowserWindow>> | null = null;
+const terminalWindowEvents = new Set<string>(TERMINAL_WINDOW_EVENT_CHANNELS);
 let reopenPreviewWindow: (() => Promise<void>) | undefined;
 let navigationCache: ReturnType<typeof createNavigationCache> | null = null;
 let chatgptPlan: ReturnType<typeof createNativeChatgptPlanService> | null = null;
@@ -148,8 +159,9 @@ function isMatrixOsDeepLink(value: string): boolean {
 }
 
 function focusMainWindow(): void {
-  const win = mainWindow ?? BrowserWindow.getAllWindows()[0];
-  if (!win) return;
+  // Never fall back to "any window": the Terminal window is not the main one.
+  const win = mainWindow;
+  if (!win || win.isDestroyed()) return;
   if (win.isMinimized()) win.restore();
   win.show();
   win.focus();
@@ -167,6 +179,21 @@ function sendEvent<C extends EventChannel>(channel: C, payload: EventPayload<C>)
     return;
   }
   mainWindow?.webContents.send(channel, parsed.data);
+  // A session change reaches the Terminal window too.
+  if (channel === "auth:changed") sendTerminalWindowEvent(channel, payload);
+}
+
+/** Events are addressed to a named window; the Terminal window gets only its allowlist. */
+function sendTerminalWindowEvent<C extends EventChannel>(channel: C, payload: EventPayload<C>): void {
+  if (!terminalWindowEvents.has(channel)) return;
+  const win = terminalWindows?.current();
+  if (!win || win.webContents.isDestroyed()) return;
+  const parsed = EVENT_CHANNELS[channel].safeParse(payload);
+  if (!parsed.success) {
+    console.warn(`[ipc] refusing to send invalid event on ${channel}`);
+    return;
+  }
+  win.webContents.send(channel, parsed.data);
 }
 
 async function openExternalHttpUrl(url: string): Promise<void> {
@@ -555,7 +582,46 @@ if (!gotLock) {
             && contents.getURL() === rendererUrl;
         },
       });
+      const packagedRendererPath = join(__dirname, "../renderer/index.html");
+      const mainRendererUrl = desktopRendererUrl ?? pathToFileURL(packagedRendererPath).toString();
+      const terminalRendererUrl = terminalWindowUrl(mainRendererUrl);
+      let reopenMainWindow: (() => Promise<void>) | undefined;
+      const terminalWindowController = createTerminalWindowController<BrowserWindow>({
+        create: (bounds) => {
+          const win = createTerminalBrowserWindow({
+            bounds,
+            preloadPath: join(__dirname, "../preload/index.cjs"),
+            devUrl: desktopRendererUrl ? terminalRendererUrl : null,
+            packagedRendererPath,
+            query: { [TERMINAL_WINDOW_QUERY_KEY]: TERMINAL_WINDOW_QUERY_VALUE },
+            onLoadError: (error) => logMainError("failed to load Terminal window", error),
+          });
+          win.on("focus", () => sendTerminalWindowEvent("window:focus-changed", { focused: true }));
+          win.on("blur", () => sendTerminalWindowEvent("window:focus-changed", { focused: false }));
+          return win;
+        },
+        loadBounds: () => store.get("terminalWindowBounds"),
+        saveBounds: (bounds) => store.set("terminalWindowBounds", bounds),
+        fitBounds: (bounds) => fitWindowBoundsToWorkArea(bounds, screen.getDisplayMatching({
+          x: bounds.x ?? 0, y: bounds.y ?? 0, width: bounds.width, height: bounds.height,
+        }).workArea),
+      });
+      terminalWindows = terminalWindowController;
       registerIpcHandlers(ipcMain, {
+        authorizeSender: createSenderPolicy({
+          mainWindow: () => mainWindow,
+          terminalWindow: () => terminalWindowController.current(),
+          mainUrl: mainRendererUrl,
+          terminalUrl: terminalRendererUrl,
+        }),
+        // Windows is out of scope for the Terminal window (spec 651).
+        openTerminalWindow: () => process.platform === "win32"
+          ? Promise.reject(new Error("invalid request"))
+          : terminalWindowController.openOrFocus(),
+        focusMainWindow: () => {
+          if (mainWindow && !mainWindow.isDestroyed()) { focusMainWindow(); return; }
+          void reopenMainWindow?.().catch((error: unknown) => logMainError("window restore failed", error));
+        },
         downloadFile: (request) => downloads.download(request),
         cancelFileDownload: (requestId) => downloads.cancel(requestId),
         uploadOrganizationDrive: (request) => driveTransfers.upload(request),
@@ -699,16 +765,33 @@ if (!gotLock) {
       };
 
       await openMainWindow();
+      // Single-flight: the menu, the Terminal window and app activation can all
+      // ask for the main window while one is still being created.
+      let reopening: Promise<void> | null = null;
+      reopenMainWindow = () => {
+        if (mainWindow && !mainWindow.isDestroyed()) { focusMainWindow(); return Promise.resolve(); }
+        reopening ??= (reopenPreviewWindow ? reopenPreviewWindow() : openMainWindow()).finally(() => { reopening = null; });
+        return reopening;
+      };
       if (previewContext) reopenPreviewWindow = createPreviewWindowReopener({
         current: () => mainWindow, open: openMainWindow, focus: focusMainWindow,
       });
-      installAppMenu(
-        () => mainWindow,
-        () => {
+      installAppMenu({
+        mainWindow: () => mainWindow,
+        terminalWindow: () => terminalWindowController.current(),
+        focusMain: focusMainWindow,
+        restoreMain: () => {
+          void reopenMainWindow?.().catch((error: unknown) => logMainError("window restore failed", error));
+        },
+        checkForUpdates: () => {
           focusMainWindow();
           void updater.check();
         },
-      );
+        openTerminalWindow: () => {
+          void terminalWindowController.openOrFocus()
+            .catch((error: unknown) => logMainError("failed to open Terminal window", error));
+        },
+      });
 
       void updater.check();
       updateCheckTimer = setInterval(() => {
@@ -716,9 +799,11 @@ if (!gotLock) {
       }, 60 * 60 * 1000);
 
       app.on("activate", () => {
-        if (BrowserWindow.getAllWindows().length === 0) {
-          void (reopenPreviewWindow ? reopenPreviewWindow() : openMainWindow())
-            .catch((error: unknown) => logMainError("window restore failed", error));
+        // The Terminal window may outlive the main window; restore the main one regardless.
+        if (!mainWindow || mainWindow.isDestroyed()) {
+          // Through the shared single-flight path, so activation cannot race a
+          // menu or Terminal-window request into creating a second window.
+          void reopenMainWindow?.().catch((error: unknown) => logMainError("window restore failed", error));
         }
       });
     })
@@ -780,6 +865,8 @@ if (!gotLock) {
     }
     closeCodingAgentThreadEvents?.();
     closeCodingAgentThreadEvents = null;
+    terminalWindows?.dispose();
+    terminalWindows = null;
     handleUpdateBeforeQuit?.(event);
   });
 

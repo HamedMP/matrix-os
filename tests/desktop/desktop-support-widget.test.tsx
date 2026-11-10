@@ -503,6 +503,7 @@ describe("Desktop support widget", () => {
     expect(screen.getAllByRole("button").map((button) => button.getAttribute("aria-label") ?? button.textContent))
       .toEqual([
         "Search",
+        "Terminal window",
         "Inbox",
         "Help",
         "Support",

@@ -75,8 +75,8 @@ Not verified in this repo:
 ## User Journeys
 
 ### J1 — Open the Terminal window (P1)
-The user clicks the terminal icon in the Electron Desktop top bar, or uses its
-shortcut shown in the tooltip. A separate native window opens. If the window is already open,
+The user clicks the terminal icon in the Electron Desktop top bar, or uses
+**View → Terminal Window** (Cmd/Ctrl+Alt+Shift+T). A separate native window opens. If the window is already open,
 the icon focuses it and does not open a second one. The sidebar shows local and
 cloud terminals together: **This Computer** first, then each Matrix computer by
 label, in inventory order. Each section shows its availability, workspaces and
@@ -140,7 +140,7 @@ owner device keys, or this slice must be revisited.
 
 ## Functional Requirements
 
-- **FR-001** The Terminal window is a second `BrowserWindow`, one instance per app, opened or focused from the top-bar terminal icon. Creation is single-flight: concurrent open requests share one in-progress creation and never produce two windows. It uses its own preload that exposes only terminal channels, and a renderer entry built from the trusted renderer bundle. It keeps `contextIsolation`, `sandbox`, no `nodeIntegration`, and deny-all `window.open` the same as the main window.
+- **FR-001** The Terminal window is a second `BrowserWindow`, one instance per app, opened or focused from the top-bar terminal icon. Creation is single-flight: concurrent open requests share one in-progress creation and never produce two windows. It loads the same sandboxed preload bundle as the main window (a sandboxed preload is a single bundled entry) with a role argument, so the bridge exposes only the Terminal window channel allowlist; the main-process sender policy enforces the same allowlist independently. It renders a dedicated root from the same trusted renderer bundle, selected by a `?window=terminal` query, so the main app's stores, analytics and embeds never load there. It runs in its own session partition, which the default session's bearer injection never touches, and that session grants no web permissions. It keeps `contextIsolation`, `sandbox`, no `nodeIntegration`, and deny-all `window.open` the same as the main window.
 - **FR-002** Every IPC channel the Terminal window uses must check the sender: the frame must be the Terminal window's main frame at its trusted URL. Main-window-only channels must reject it. Event fan-out must name its target window instead of assuming `mainWindow`.
 - **FR-003** A main-process **computer credential broker** holds at most one access token per `(handle, runtimeSlot)` in the current inventory. It gets them from `POST /api/auth/runtime-selection` and never writes them to the profile or credential store. The selected-computer credential remains the only persisted one. Broker tokens expire with the parent session, are dropped on sign-out or `authGeneration` change, and are never exposed to any renderer. Minting is single-flight per `(handle, runtimeSlot)`; a mint that completes after the `authGeneration` it started under has changed is discarded, never stored.
 - **FR-004** Requests from the Terminal window go through a dedicated session partition. Header injection picks the bearer from the request's runtime target (`runtime=` query or `/vm/<slot>` path, the same parser as `buildGatewayUrl`). It fails closed when the target is missing, unknown or not in the inventory, and only for the gateway origin.
@@ -362,7 +362,7 @@ Number note: `651` is also used by other in-flight specs with different names (`
    - (c) keep the existing agent hook bridge as the Matrix source and use OSC 7501 only for local tabs.
 
    Also unverified: whether Zellij 0.44.1 passes unknown OSC sequences through to attached clients.
-4. **Renderer bundle**: should the Terminal window be a second Vite entry or a route of the existing renderer? `electron.vite.config.ts:99` has one entry today.
+4. **Renderer bundle** (resolved in slice 1): one renderer bundle and one preload bundle serve both windows; the Terminal window is selected by `?window=terminal` and a preload role argument (FR-001).
 5. **herdr-core facts**: none of these are verified, and Q1–Q6 must establish them:
    - release artifacts per target, or whether it must be built from source;
    - socket-path configuration;

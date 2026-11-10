@@ -13,6 +13,8 @@ interface AppMenuTemplateOptions {
   checkForUpdates(): void;
   quitApp(): void;
   reloadWindow?(): void;
+  /** Opens or focuses the native Terminal window (macOS and Linux only). */
+  openTerminalWindow?(): void;
 }
 
 export function createAppMenuTemplate({
@@ -25,6 +27,7 @@ export function createAppMenuTemplate({
   checkForUpdates,
   quitApp,
   reloadWindow,
+  openTerminalWindow,
 }: AppMenuTemplateOptions): MenuItemConstructorOptions[] {
   const isMac = platform === "darwin";
   const primary = (keys: string) => `${isMac ? "Cmd" : "CmdOrCtrl"}+${keys}`;
@@ -44,6 +47,11 @@ export function createAppMenuTemplate({
       accelerator: primary("Alt+T"),
       click: () => send("menu:navigate", { kind: "terminals" }),
     },
+    ...(openTerminalWindow && platform !== "win32" ? [{
+      label: "Terminal Window",
+      accelerator: primary("Alt+Shift+T"),
+      click: () => openTerminalWindow(),
+    }] : []),
     {
       label: "Reload",
       accelerator: "CmdOrCtrl+R",

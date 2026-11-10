@@ -65,6 +65,7 @@ import {
 } from "./desktop-update";
 import { DesktopAnalyticsDetailSchema } from "./desktop-analytics";
 import { TerminalClipboardResultSchema } from "./terminal-clipboard";
+import { TERMINAL_WINDOW_INVOKE } from "./terminal-window";
 
 const Empty = z.object({}).strict();
 
@@ -146,6 +147,7 @@ const BoundedJsonValue = z.unknown().refine(
 );
 
 export const INVOKE_CHANNELS = {
+  ...TERMINAL_WINDOW_INVOKE,
   ...CHATGPT_PLAN_INVOKE,
   ...NAVIGATION_CACHE_INVOKE,
   ...LOCAL_CHAT_IMPORT_INVOKE,
