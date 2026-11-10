@@ -2,7 +2,7 @@
 
 **Feature Branch**: `spec/desktop-terminal-window`
 **Created**: 2026-11-10
-**Status**: Draft — owner review before planning
+**Status**: Draft — spec review findings applied 2026-11-10; implementation started
 **Tracking**: No Linear ticket recorded. Owner to confirm an existing ENG ticket or authorize a short one before any PR.
 **Input**: "A terminal app in the Electron Desktop client, separate from the OS-view Terminal, launched from the top bar in its own window. Like herdr, it shows spaces across machines: this computer and every Matrix computer the user has. Ideally the app can also SSH to the remote computer."
 
@@ -104,9 +104,9 @@ model, keyboard handling, copy/paste and theme as remote tabs. Local terminals
 are held by an `hc` holder process outside the app.
 
 **Acceptance**
-1. A new local tab starts the user's login shell in their home directory with an inherited, filtered environment.
+1. A new local tab starts the user's login shell in their home directory. Its environment is built from an allowlist (`HOME`, `USER`, `LOGNAME`, `SHELL`, `PATH`, `LANG`, `LC_*`, `TERM`, `COLORTERM`, `TMPDIR`, `SSH_AUTH_SOCK`, `XDG_*`) and the login shell's own startup files. Nothing else from the Electron process environment is passed, in particular no `MATRIX_*`, `ELECTRON_*`, `NODE_*`, `VITE_*`, `POSTHOG_*`, `CLERK_*` or token-bearing variables.
 2. Quitting and relaunching the app (including after a crash) reattaches every local terminal that was alive. Herdr recovers kept terminals with a fresh shell, not a replay. The UI must say so truthfully, for example "Restored — new shell", and must never imply that the scrollback or running process was preserved when it was not.
-3. Local terminal output and input never leave the device. They are never sent to a Matrix computer or to analytics.
+3. Local terminal output and input never leave the device. They are never sent to a Matrix computer or to analytics. The Terminal window loads no analytics capture, session replay or console capture, and its terminal surfaces carry `ph-no-capture`.
 4. If `hc` is missing, damaged or the wrong version, This Computer shows a recovery state (§Failure Modes). Matrix sections are unaffected.
 
 ### J4 — Cross-machine attention (P2)
@@ -127,7 +127,8 @@ straight to port 22 for a shell or a port forward.
 1. The private key is generated on the device and never leaves it. Only the public key is sent.
 2. Every attempt uses freshly fetched address and fingerprint data. The connection proceeds only if the presented host key matches that fingerprint. On a mismatch, the connection is blocked with a "computer identity changed" state. The app never offers a "trust anyway" prompt and never uses a cached address.
 3. A rebuilt computer, with a new address or host key, is reached on the next attempt without manual steps, provided the device key is registered again (§Failure Modes).
-4. Sign-out, device removal or revocation from another device removes the key from the computer's `authorized_keys`. Hand-added keys are untouched.
+4. Sign-out, device removal or revocation from another device removes the key from the computer's `authorized_keys`. Hand-added keys are untouched. Sign-out also destroys the device private key; the next sign-in generates a new one.
+5. Port forwards listen on loopback only (`127.0.0.1` and `::1`), never on other interfaces. At most 8 forwards per computer; each closes when its SSH session ends or the Terminal window closes.
 
 **Rationale for direct connection (owner decision 3)**:
 - Port 22 is already publicly reachable.
@@ -139,9 +140,9 @@ owner device keys, or this slice must be revisited.
 
 ## Functional Requirements
 
-- **FR-001** The Terminal window is a second `BrowserWindow`, one instance per app, opened or focused from the top-bar terminal icon. It uses its own preload that exposes only terminal channels, and a renderer entry built from the trusted renderer bundle. It keeps `contextIsolation`, `sandbox`, no `nodeIntegration`, and deny-all `window.open` the same as the main window.
+- **FR-001** The Terminal window is a second `BrowserWindow`, one instance per app, opened or focused from the top-bar terminal icon. Creation is single-flight: concurrent open requests share one in-progress creation and never produce two windows. It uses its own preload that exposes only terminal channels, and a renderer entry built from the trusted renderer bundle. It keeps `contextIsolation`, `sandbox`, no `nodeIntegration`, and deny-all `window.open` the same as the main window.
 - **FR-002** Every IPC channel the Terminal window uses must check the sender: the frame must be the Terminal window's main frame at its trusted URL. Main-window-only channels must reject it. Event fan-out must name its target window instead of assuming `mainWindow`.
-- **FR-003** A main-process **computer credential broker** holds at most one access token per `(handle, runtimeSlot)` in the current inventory. It gets them from `POST /api/auth/runtime-selection` and never writes them to the profile or credential store. The selected-computer credential remains the only persisted one. Broker tokens expire with the parent session, are dropped on sign-out or `authGeneration` change, and are never exposed to any renderer.
+- **FR-003** A main-process **computer credential broker** holds at most one access token per `(handle, runtimeSlot)` in the current inventory. It gets them from `POST /api/auth/runtime-selection` and never writes them to the profile or credential store. The selected-computer credential remains the only persisted one. Broker tokens expire with the parent session, are dropped on sign-out or `authGeneration` change, and are never exposed to any renderer. Minting is single-flight per `(handle, runtimeSlot)`; a mint that completes after the `authGeneration` it started under has changed is discarded, never stored.
 - **FR-004** Requests from the Terminal window go through a dedicated session partition. Header injection picks the bearer from the request's runtime target (`runtime=` query or `/vm/<slot>` path, the same parser as `buildGatewayUrl`). It fails closed when the target is missing, unknown or not in the inventory, and only for the gateway origin.
 - **FR-005** Token acquisition is lazy. It happens when a section is expanded or a tab is attached, never for all 20 computers at startup. It must stay under the platform limits (30/min per principal) with jittered backoff on 429.
 - **FR-006** The window gets its own attach manager. It allows one live socket per visible pane, at most 4 at once, and keeps a separate buffer LRU of 8. This preserves the main window's single-attachment rule (L4) for its own `AttachManager`.
@@ -162,6 +163,7 @@ owner device keys, or this slice must be revisited.
 - Bumping the `hc` version is a reviewed desktop PR and must respect the repo's 7-day `minimumReleaseAge` policy for the upstream release.
 
 ### Socket and process boundary
+- **Private config and state.** The bundled holder runs with an app-private config, state and template directory under `<userData>/herdr/` (through `XDG_*` variables or equivalent flags, whichever the spike proves). It never reads or writes the user's own herdr installation (`~/.config/herdr-core`, its machines, templates or sockets), and a user's own `hc` never sees the app's terminals. Core's `notes` feature (typing notes into parent terminals) is disabled in the app's config.
 - The app starts its holder with an explicit socket path in a private directory: `<userData>/herdr/`, created with mode 0700 and checked with `lstat` (not a symlink, owned by the user).
   - macOS `sun_path` limits paths to 104 bytes, so if `userData` is too long a short per-user directory under `$TMPDIR` is used with the same checks.
 - Only the Electron main process connects to that socket. It is never passed to a renderer, a webview or a preload, never bridged to TCP, and never forwarded over SSH. The app never runs `hc connect` or `hc machine add`; Matrix computers come only from J2.
@@ -175,7 +177,7 @@ owner device keys, or this slice must be revisited.
 - **On quit**, the app detaches but leaves the holder running. Survival across restarts is the point. "End all local terminals" is an explicit user action that stops the holder.
 - **Version mismatch** (the holder belongs to an older app version, or reports a version other than the bundled one):
   - The app speaks no protocol beyond the version handshake.
-  - This Computer shows "Local terminals were started by a different version". The user chooses **Restart local terminals**, which stops the old holder and starts the bundled one, so terminals come back as fresh shells, or **Leave running**.
+  - This Computer shows "Local terminals were started by a different version". The user chooses **Restart local terminals**, which stops the old holder and starts the bundled one, so terminals come back as fresh shells, or **Not now**. While deferred, This Computer shows only that notice and the restart action, and says that no new local terminals can be created until the restart. The old holder is stopped by signal to its recorded PID after verifying that PID owns the socket, since no JSON-RPC is spoken to it.
   - The app never sends JSON-RPC calls to a holder of an unknown version.
 - **Missing or damaged binary** (not found, checksum mismatch, exec fails): This Computer shows "Local terminals are unavailable — reinstall Matrix OS". Matrix sections keep working. The app makes no network fetch to "repair" the binary.
 
@@ -186,7 +188,7 @@ Its attribution must not suggest that herdr endorses Matrix OS.
 
 ### Qualification spike (must pass before slice 3 ships product code)
 The spike is throwaway code outside the shipped bundle. Its result is recorded in
-`specs/2692-desktop-terminal-window/research.md`. Every item is pass/fail on
+`specs/651-desktop-terminal-window/research.md`. Every item is pass/fail on
 macOS arm64, macOS x64 and Linux x64.
 
 | # | Pass criterion | How measured |
@@ -198,7 +200,8 @@ macOS arm64, macOS x64 and Linux x64.
 | Q5 | The holder survives app quit, a main-process crash (`kill -9`) and a renderer crash. After relaunch, every terminal is listed again and the UI can show its recovery mode (fresh shell). No orphaned or duplicate holders. | Scripted kill/relaunch × 20 |
 | Q6 | A version handshake exists, or can be implemented safely, so the app can tell matching and mismatched holders apart before any other call. | Protocol test with two pinned versions |
 | Q7 | Input-to-echo latency within 10 ms of the existing remote xterm path on loopback, and throughput of at least 50 MB/s with `yes` without renderer stalls | Scripted benchmark |
-| Q8 | A holder crash is detected within 2 s and reported. The app restarts it at most 3 times per 5 min. | Fault injection |
+| Q8 | A holder crash is detected within 2 s and reported. The app restarts it at most 3 times per 5 min. The spike records whether terminals die with the holder. | Fault injection |
+| Q9 | With a separate user-installed `hc` running on the same account, the bundled holder shares no config, state, socket, machine list or templates with it, and neither lists the other's terminals. | Side-by-side run with a populated `~/.config/herdr-core` |
 
 If any criterion fails, the owner is told which one. If the owner does not
 accept a patched or newer `hc`, the fallback is **`node-pty` in the Electron main process**:
@@ -234,7 +237,9 @@ or register keys.
 
 - Key routes accept only `ssh-ed25519 <base64> [comment]` matching the pattern used in `matrix-support-access`. Options, newlines and other key types are rejected.
 - `authorized_keys` changes touch only a marked managed block (`# >>> matrix device keys` … `# <<<`). Lines outside the block are preserved byte-for-byte. Writes are serialized per computer and use `lstat` to refuse symlinked files or a symlinked `.ssh` beyond the cloud-init link. The file is written to a temp file in the same directory, `fsync`ed, renamed, and set to 0600. If the file was edited between read and rename, the write is retried; it never clobbers.
-- Managed key lines carry `no-agent-forwarding,no-X11-forwarding` and an `expiry-time=` option when sshd supports it (version unverified), refreshed while the device stays signed in.
+- Managed key lines carry `restrict,pty,port-forwarding` and a mandatory `expiry-time=` (7 days, refreshed while the device stays signed in). Slice 5 is gated on confirming the fleet's OpenSSH supports `expiry-time` (8.2+); if it does not, the slice does not ship.
+- Every registration and revocation writes an owner-visible audit record (device label, key fingerprint, time, action), and the Terminal window lists registered devices. A registration made by another device raises a notice on the owner's other signed-in clients.
+- The 10-key cap is enforced inside the serialized `authorized_keys` write, not by a prior read.
 - The client validates the connection response with Zod before use: it must be an IP literal (no hostnames), in a public range (no loopback, private, link-local or multicast), with port fixed at 22 and SHA-256 fingerprints only.
 - A device key gives no more power than the existing owner terminal API, which already runs commands as `matrix`. It adds a direct network transport, which is why fleet-wide password-auth hardening is a prerequisite.
 
@@ -245,6 +250,20 @@ are never put in URLs except the existing `/ws/terminal/tab` query-token path, a
 never logged. Renderers receive fixed error codes such as `computer_unavailable`,
 `reconnect_required`, `identity_changed`, `local_unavailable` and
 `local_version_mismatch`.
+
+### Timeouts
+
+| Call | Timeout | On timeout |
+| --- | --- | --- |
+| `GET /api/auth/computers`, `POST /api/auth/runtime-selection` | 10 s (`AbortSignal.timeout`) | Section retry state |
+| `/api/terminal/workspaces*` from the window | 10 s | Section retry state |
+| `GET /api/ssh/connection`, device-key routes | 10 s | `computer_unavailable` |
+| Gateway → platform address lookup (if chosen, Q7) | 5 s | Generic 503 |
+| SSH TCP connect / handshake + auth | 10 s / 15 s | "Direct SSH unavailable" |
+| SSH keepalive | 15 s interval, 3 missed | Session ended state |
+| `hc` exec for version/handshake | 3 s | `local_unavailable` |
+| `hc` holder start until socket ready | 5 s | `local_unavailable` |
+| `hc` JSON-RPC unary call | 5 s | Per-tab error, no retry storm |
 
 ## Integration Wiring
 
@@ -260,7 +279,10 @@ never logged. Renderers receive fixed error codes such as `computer_unavailable`
   - two computer-scoped tokens attach to two real gateways at once while the main selection stays fixed;
   - a tab created in the window is listed by the shell Terminal's list call;
   - the packaged app restarts with the bundled `hc` and local terminals reattach;
-  - device key register, fetch connection details, connect with a fingerprint match, revoke, then connect is refused, against a real sshd in a fixture, including a host-key change.
+  - device key register, fetch connection details, connect with a fingerprint match, revoke, then connect is refused, against a real sshd in a fixture, including a host-key change;
+  - negative: every main-window-only channel rejects a Terminal-window sender, and every terminal channel rejects a main-window or unknown sender;
+  - negative: Terminal-partition header injection attaches no bearer for a missing, unknown or non-inventory runtime target, or for a non-gateway origin.
+- **Per-slice checkpoint**: each slice lands with its own integration test from this list (slice 1: sender-guard negatives and single-flight window; slice 2: two-computer attach and fail-closed injection; slice 3: packaged restart reattach; slice 4: parser-to-projection; slices 5–6: sshd fixture).
 
 ## Failure Modes
 
@@ -273,7 +295,7 @@ never logged. Renderers receive fixed error codes such as `computer_unavailable`
 | Socket handshake timeout | Existing `ShellSocket` timeout and reconnect apply per pane. |
 | Main window switches computer | Broker tokens are unaffected. The new window does not follow the selection. |
 | `hc` binary missing or checksum mismatch | `local_unavailable` with reinstall guidance. No network repair. |
-| Holder version differs from bundled | `local_version_mismatch`. The user chooses restart (fresh shells) or leave running. No other JSON-RPC calls. |
+| Holder version differs from bundled | `local_version_mismatch`. The user chooses restart (fresh shells) or defers; while deferred, no new local terminals. No other JSON-RPC calls. |
 | Holder crash | Detected within 2 s. At most 3 automatic restarts per 5 min, then a manual retry. Terminals show "Restored — new shell" or "ended" truthfully. |
 | Stale or foreign socket file | `lstat` plus ownership check. Remove only the app's own stale socket. A socket owned by another user or a symlink is refused and logged. |
 | OSC flood or malformed payload | Parser caps payloads at 4 KiB and events at 20/s per tab. Excess is dropped and counted. |
@@ -282,17 +304,17 @@ never logged. Renderers receive fixed error codes such as `computer_unavailable`
 | Host key mismatch against freshly fetched fingerprint | Block the connection (`identity_changed`) and log a correlation ID. Retry only after a new fetch. |
 | Computer rebuilt (new address and host key) | The next attempt fetches both fresh and connects if they match. The device key must be registered again on the new disk, and the app does this automatically while the device is signed in. |
 | Port 22 unreachable (future firewall, network) | Fixed "Direct SSH unavailable" copy. J2 terminals still work. |
-| Sign-out while offline | A local revocation intent is queued and retried on next sign-in. `expiry-time` bounds exposure if the retry never happens. |
+| Sign-out while offline | A local revocation intent (computer, key fingerprint, owner ID) is queued, at most 20 entries, and retried only when the same owner signs in again; intents for a different owner are discarded. The mandatory `expiry-time` bounds exposure if the retry never happens. |
 | Shutdown | Stop the timers, close sockets (detach only), and detach from the `hc` holder without stopping it. |
 
 ## Resource Management
 
 - Broker: at most 20 tokens (inventory cap). Entries are evicted on inventory change, sign-out and expiry, and the sweep timer is cleared on quit.
 - Attach: at most 4 live sockets, plus an LRU of 8 buffers using the existing serialized-buffer bounds.
-- Local tabs: a soft cap of 32 with a visible message, plus rate limiting on create. Each tab's output buffer before render is capped at 1 MiB. One holder per OS user and app channel, and its restarts are bounded (above).
+- Local tabs: a soft cap of 32 with a visible message, plus rate limiting on create. Renderer scrollback is capped at 10 000 lines per tab, and only visible panes keep a live xterm instance. Each tab's output buffer before render is capped at 1 MiB. One holder per OS user and app channel, and its restarts are bounded (above).
 - Holder files: the socket directory is the only `hc` state the app creates. "End all local terminals" and uninstall guidance remove it. Holder logs, if any, go under `userData` with size rotation (cap set in planning after the spike).
 - Status: the local projection holds at most 100 snapshots (same cap as the gateway store) with LRU eviction. The attention list is derived and never stored.
-- SSH: at most 10 managed device keys per computer, enforced in the route. Stale-device cleanup is offered in the UI. Connection details are held only for the duration of one attempt.
+- SSH: at most 4 SSH sessions and 8 loopback forwards per computer from one device. At most 10 managed device keys per computer, enforced in the route. Stale-device cleanup is offered in the UI. Connection details are held only for the duration of one attempt.
 - Third parties:
   - herdr-core is a bundled Apache-2.0 binary that runs locally and makes no network calls (Q4).
   - SSH goes directly from the device to the owner's VPS.
@@ -305,7 +327,7 @@ riskiest boundary, and SSH is split into server and client layers. Because
 herdr-core is decided, slice 3 runs the qualification spike and then ships
 herdr; there is no backend comparison.
 
-1. **Window shell**: second window, dedicated preload, sender-guarded IPC, top-bar terminal icon launcher (open/focus), and a sidebar with machine sections fed by the existing inventory. Includes empty, loading and error states. Matrix sections are read-only.
+1. **Window shell**: second window, dedicated preload, sender-guarded IPC, top-bar terminal icon launcher (open/focus), and a sidebar with machine sections fed by the existing inventory. Includes empty, loading and error states. Until slice 2, Matrix sections list computers and their availability only; they show no workspaces or tabs, because the window holds no per-computer credential yet.
 2. **Computer credential broker + aggregation**: per-computer tokens, Terminal-partition injection, independent attach manager, and tab CRUD through the existing gateway API, with cross-surface parity tests.
 3. **Local terminals via herdr-core**: the qualification spike result in `research.md` (throwaway code is not committed), then the `hc` manifest, build fetch and checksum, signing, `LocalTerminalHost`, version handshake, restart survival, licence notices and the missing or mismatched states. If the spike fails, this slice ships the `node-pty` fallback instead, after the owner confirms.
 4. **Status**: shared OSC 7501 parser, ingestion into the existing projection, local in-memory projection and the attention list.
@@ -322,12 +344,15 @@ hardening prerequisite and the firewall consequence).
 
 - **Credential fan-out**: holding up to 20 live computer tokens enlarges what an Electron main-process compromise can reach. This is mitigated by lazy minting, no persistence and dropping tokens on sign-out.
 - **IPC widening**: today's generic `handle()` trusts any frame with the preload. A second window makes the missing sender checks a real exposure; FR-002 must land in slice 1.
+- **Surface parity challenge**: local terminals and SSH are true Electron-only limits. The cross-computer Matrix view and attention list are Electron-only by design choice (credential custody in the main process), so a reviewer may ask for a web follow-up; the N/A needs explicit approval.
 - **Divergence**: the two terminal UIs could drift. Both must share the terminal view components and socket client and keep different window chrome only.
 - **herdr-core maturity**: Core was created 2026-10-16, is a 0.1.x preview protocol with effectively one maintainer and about 150 open issues. This is contained by exact pinning, no auto-update, the qualification spike, the version handshake and the `node-pty` fallback.
 - **Local socket = local code execution**: any process running as the user that can open the socket can run commands. This is equal to the user's own shell privileges but is a new long-lived endpoint; the spike must prove the owner-only boundary (Q3).
 - **Public port 22**: SSH value depends on keeping 22 reachable and on fleet hardening this spec does not do. With password auth on (one sample), the direct path is only as strong as the fleet's sshd configuration.
 
 ## Open Questions
+
+Number note: `651` is also used by other in-flight specs with different names (`651-ai-usage`, `651-hosted-bots`, `651-native-claude-chat-scheduling`); this repo already shares numbers across specs.
 
 1. **Linear ticket**: none recorded. No Linear tool was available in the session that wrote this spec.
 2. **OSC 7501 payload format**: no definition exists in the repo, and herdr's spec was not read here. Confirm the source and schema.
@@ -345,10 +370,10 @@ hardening prerequisite and the firewall consequence).
    - a version handshake;
    - whether a `NOTICE` file exists.
 6. **Linux targets**: does the desktop ship Linux arm64 as well as x64? This sets the `hc` binaries to bundle.
-7. **Connection address source**: should `/api/ssh/connection` return the platform's recorded `publicIPv4`/`publicIPv6`, which needs a gateway→platform call, or have the gateway read its own public address? Both must be authoritative, not taken from request headers.
-8. **sshd version and `expiry-time`**: not verified on the fleet.
+7. **Connection address source** (gate for slice 5): should `/api/ssh/connection` return the platform's recorded `publicIPv4`/`publicIPv6`, which needs a gateway→platform call, or have the gateway read its own public address? Both must be authoritative, not taken from request headers.
+8. **sshd version and `expiry-time`** (gate for slice 5): not verified on the fleet.
 9. **SSH client**: `ssh2` (new dependency) or the system OpenSSH binary? Not evaluated.
-10. **`~/.ssh` sync**: `/home/matrix/home/.ssh` lives under the owner home. Whether sync or backup copies it off the VPS, or restores old keys onto a rebuilt computer, was not verified.
+10. **`~/.ssh` sync** (gate for slice 5): `/home/matrix/home/.ssh` lives under the owner home. Whether sync or backup copies it off the VPS, or restores old keys onto a rebuilt computer, was not verified.
 11. **Fleet sshd posture**: the brief's single-VPS sample (password auth on, `ufw` inactive) needs a fleet audit by the platform owner.
 
 ## Not In Scope
