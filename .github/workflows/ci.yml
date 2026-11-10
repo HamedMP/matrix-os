@@ -841,8 +841,8 @@ jobs:
     needs: changes
     if: always() && !cancelled() && needs.changes.result == 'success' && (needs.changes.outputs.should_run == 'true')
     runs-on: ubuntu-latest
-    # Run 41831154874 finished every PG batch but exhausted 14m during cache
-    # cleanup. Keep the 120s runner budget and allow bounded job-level headroom.
+    # The remaining PostgreSQL runner has a 240s aggregate cap plus setup and cleanup.
+    # Keep job-level headroom for the earlier funded and routine PostgreSQL suites.
     timeout-minutes: 20
     services:
       postgres:
