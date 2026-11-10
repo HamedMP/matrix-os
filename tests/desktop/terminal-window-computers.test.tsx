@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import React from "react";
-import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, configure, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("@desktop/renderer/src/features/terminal/TerminalView", () => ({
@@ -10,6 +10,11 @@ vi.mock("@desktop/renderer/src/features/terminal/TerminalView", () => ({
 
 import TerminalWindowApp from "@desktop/renderer/src/features/terminal-window/TerminalWindowApp";
 import { useConnection } from "@desktop/renderer/src/stores/connection";
+
+// These tests render the whole window and wait on mocked network replies. The
+// default one-second wait is too tight for the first render on a loaded CI
+// runner (it failed there once); the assertions themselves are unchanged.
+configure({ asyncUtilTimeout: 5_000 });
 
 const HOST = "https://app.matrix-os.com";
 const WS = `tws_${"a".repeat(32)}`;
