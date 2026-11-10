@@ -146,6 +146,72 @@ describe('container owner databases', () => {
     expect(current.passwordEpoch).toBe(2);
   });
 
+  it('keeps the role on the newest recorded password when rotations interleave', async () => {
+    let rolePassword: string | null = null;
+    let holdFirstTerminate: (() => void) | null = null;
+    let release!: () => void;
+    const released = new Promise<void>(resolve => { release = resolve; });
+    let terminates = 0;
+    const fakeAdmin: OwnerClusterAdmin = {
+      async query(statement) {
+        const password = /PASSWORD '([A-Za-z0-9_-]{43})'/.exec(statement);
+        if (password) rolePassword = password[1]!;
+        if (statement.includes('pg_terminate_backend') && terminates++ === 0) {
+          holdFirstTerminate?.();
+          await released;
+        }
+        return statement.startsWith('SELECT 1 FROM') ? [{ '?column?': 1 }] : [];
+      },
+      async executeInDatabase() { return undefined; },
+    };
+    const owners = createContainerOwnerDatabases({ db, admin: fakeAdmin, passwordSecret: SECRET, sizeLimitBytes: 1024 });
+    const { roleName } = await owners.ensure('user_owner_a', 4, signal());
+
+    const firstHeld = new Promise<void>(resolve => { holdFirstTerminate = resolve; });
+    const newer = owners.rotate('user_owner_a', 6, signal());
+    await firstHeld;
+    const older = await owners.rotate('user_owner_a', 5, signal());
+    release();
+    await newer;
+
+    const row = await db.executor.selectFrom('container_owner_databases').selectAll().executeTakeFirstOrThrow();
+    expect(row.password_epoch).toBe(6);
+    expect(older).toEqual({ rotated: false, passwordEpoch: 6 });
+    expect(rolePassword).toBe(owners.passwordFor(roleName, 6));
+  });
+
+  it('re-applies the newest password when an older claimed rotation applies late', async () => {
+    let rolePassword: string | null = null;
+    let holding = false;
+    let onHeld!: () => void;
+    let release!: () => void;
+    const held = new Promise<void>(resolve => { onHeld = resolve; });
+    const released = new Promise<void>(resolve => { release = resolve; });
+    const fakeAdmin: OwnerClusterAdmin = {
+      async query(statement) {
+        const password = /^ALTER ROLE "[a-z0-9_]+" PASSWORD '([A-Za-z0-9_-]{43})'/.exec(statement);
+        if (password && holding) {
+          holding = false;
+          onHeld();
+          await released;
+        }
+        if (password) rolePassword = password[1]!;
+        return statement.startsWith('SELECT 1 FROM') ? [{ '?column?': 1 }] : [];
+      },
+      async executeInDatabase() { return undefined; },
+    };
+    const owners = createContainerOwnerDatabases({ db, admin: fakeAdmin, passwordSecret: SECRET, sizeLimitBytes: 1024 });
+    const { roleName } = await owners.ensure('user_owner_a', 4, signal());
+
+    holding = true;
+    const older = owners.rotate('user_owner_a', 5, signal());
+    await held;
+    expect(await owners.rotate('user_owner_a', 6, signal())).toEqual({ rotated: true, passwordEpoch: 6 });
+    release();
+    await older;
+    expect(rolePassword).toBe(owners.passwordFor(roleName, 6));
+  });
+
   it('ensure at a newer generation rotates before returning credentials', async () => {
     const owners = service();
     await owners.ensure('user_owner_a', 1, signal());

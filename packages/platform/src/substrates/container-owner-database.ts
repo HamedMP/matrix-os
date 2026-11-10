@@ -247,23 +247,34 @@ export function createContainerOwnerDatabases(deps: ContainerOwnerDatabasesDeps)
     });
   }
 
+  const MAX_ROTATION_PASSES = 5;
+
+  /**
+   * The epoch compare-and-set is the gate: only the caller that moves the
+   * recorded epoch forward applies a password, and after applying it re-reads
+   * the epoch and re-applies the newest one, so a slow older apply cannot
+   * leave the role behind the table.
+   */
   async function rotate(clerkUserId: string, generation: number, signal: AbortSignal) {
     assertGeneration(generation);
     const row = await load(clerkUserId);
     if (row.password_epoch >= generation) return { rotated: false, passwordEpoch: row.password_epoch };
-    await applyPassword(row, generation, signal);
-    const updated = await db.executor.updateTable('container_owner_databases')
+    const claimed = await db.executor.updateTable('container_owner_databases')
       .set({ password_epoch: generation })
       .where('clerk_user_id', '=', clerkUserId)
       .where('password_epoch', '<', generation)
       .where('state', '!=', 'deleting')
       .returning('password_epoch')
       .executeTakeFirst();
-    if (updated) return { rotated: true, passwordEpoch: generation };
-    // A newer rotation committed first; its password must be the one in force.
-    const newer = await load(clerkUserId);
-    await applyPassword(newer, newer.password_epoch, signal);
-    return { rotated: false, passwordEpoch: newer.password_epoch };
+    if (!claimed) return { rotated: false, passwordEpoch: (await load(clerkUserId)).password_epoch };
+    let epoch = generation;
+    for (let pass = 0; pass < MAX_ROTATION_PASSES; pass += 1) {
+      await applyPassword(row, epoch, signal);
+      const recorded = (await load(clerkUserId)).password_epoch;
+      if (recorded === epoch) return { rotated: true, passwordEpoch: generation };
+      epoch = recorded;
+    }
+    throw new Error('Owner database password rotation did not settle');
   }
 
   async function ensureLocked(clerkUserId: string, generation: number, signal: AbortSignal): Promise<OwnerDatabaseCredentials> {
