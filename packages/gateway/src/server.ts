@@ -517,6 +517,8 @@ export async function createGateway(config: GatewayConfig) {
   const terminalRuntimeOwnerId = process.env.MATRIX_USER_ID ?? process.env.MATRIX_CLERK_USER_ID;
   const supervisedBrowserRuntime = createSupervisedBrowserRuntime({ env: process.env, ownerId: terminalRuntimeOwnerId, clerkOwnerId: process.env.MATRIX_CLERK_USER_ID });
   const sharedBrowserRuntime = createSharedBrowserRuntime({ homePath, authorizeAction: supervisedBrowserRuntime?.control.authorizeAction,
+    supervisedRunExpiresAt: process.env.MATRIX_SUPERVISED_BROWSER_DEV_SCOPE === undefined
+      ? undefined : supervisedBrowserRuntime?.supervisedRunExpiresAt ?? (() => 0),
     enabled: isBrowserRuntimeEnabled(process.env), ownerId: terminalRuntimeOwnerId,
     clerkOwnerId: process.env.MATRIX_CLERK_USER_ID });
   const terminalRuntimeOwnerIds = terminalRuntimeOwnerId
