@@ -106,3 +106,11 @@ describe("web Desktop built-in app launch routing", () => {
     expect(resolveWebDesktopBuiltInLaunch("__chat__")).toBeNull();
   });
 });
+
+it("shows hosted Bots directly after Chat in both Web launchers when admitted", () => {
+  for (const mode of ["desktop", "canvas"] as const) {
+    expect(buildWebDesktopLauncherApps([], mode).map(app => app.path)).not.toContain("__bots__");
+    const paths = buildWebDesktopLauncherApps([], mode, true).map(app => app.path);
+    expect(paths[paths.indexOf("__chat__") + 1]).toBe("__bots__");
+  }
+});

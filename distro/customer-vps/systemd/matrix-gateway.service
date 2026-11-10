@@ -9,6 +9,8 @@ ConditionPathExists=/opt/matrix/bin/matrix-gateway
 [Service]
 User=matrix
 Group=matrix
+StateDirectory=matrix-hosted-bots
+StateDirectoryMode=0700
 EnvironmentFile=/opt/matrix/env/host.env
 Environment=MATRIX_NODE_PREFIX=/opt/matrix/runtime/node
 Environment=MATRIX_HOME_MIRROR=true

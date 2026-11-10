@@ -9,6 +9,7 @@ import { SHELL_Z_INDEX } from "@/lib/shell-layering";
 import { buildWebDesktopIconApps, webGalleryLauncherIconUrl } from "@/lib/web-desktop-app-launch";
 import {
   DEFAULT_OS_VIEW_DESKTOP_APP_PATHS,
+  HOSTED_BOTS_APP_PATH,
   createDefaultOsViewDesktopIcons,
   fitOsViewDesktopIconsToViewport,
   normalizeOsViewDesktopAppPath,
@@ -17,6 +18,7 @@ import {
 } from "@matrix-os/contracts";
 import {
   Blocks,
+  Bot,
   BrushIcon,
   Code2,
   FilePenLine,
@@ -73,6 +75,10 @@ export function desktopAppearanceForApp(app: AppEntry): DesktopIconAppearance {
   }
   if (app.path === "__chat__" || name === "chat" || name === "hermes") {
     return { color: "var(--surface-success-emphasis, #288A5B)", iconColor: "white", icon: MessageCircle };
+  }
+  if (app.path === HOSTED_BOTS_APP_PATH) {
+    const appearance = osViewFixedAppAppearanceForPath(app.path);
+    return { color: appearance?.background ?? "var(--accent-muted)", iconColor: appearance?.foreground ?? "white", icon: Bot };
   }
   if (app.path.startsWith("__terminal__")) {
     return { color: "var(--surface-warning-emphasis, #E0AA52)", iconColor: "white", icon: SquareTerminal };

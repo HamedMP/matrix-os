@@ -153,6 +153,11 @@ chmod 0755 "$STAGE_DIR/bin/matrix-support-access"
 cp -a "$ROOT_DIR/node_modules" "$STAGE_DIR/app/node_modules"
 install -m 0755 "$DIST_DIR/$GH_DIST/bin/gh" "$STAGE_DIR/app/node_modules/.bin/gh"
 cp -a "$ROOT_DIR/packages" "$STAGE_DIR/app/packages"
+# Keep OpenMausBot attribution next to the compiled code that redistributes it.
+HOSTED_BOTS_SOURCE_DIR="$ROOT_DIR/packages/gateway/src/hosted-bots/upstream"
+HOSTED_BOTS_NOTICE_DIR="$STAGE_DIR/app/packages/gateway/dist/hosted-bots/upstream"
+mkdir -p "$HOSTED_BOTS_NOTICE_DIR"
+install -m 0644 "$HOSTED_BOTS_SOURCE_DIR/LICENSE" "$HOSTED_BOTS_SOURCE_DIR/NOTICE" "$HOSTED_BOTS_NOTICE_DIR/"
 test -f "$STAGE_DIR/app/packages/gateway/dist/collaboration/filesystem-identity.node"
 # Check the copied native bytes against the customer ABI, then load the exact
 # staged dependency with the Node version shipped in this bundle.

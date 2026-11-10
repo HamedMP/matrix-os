@@ -82,6 +82,7 @@ function OsViewDestinationIcon({ path }: { path: string }) {
 export default function AppLauncher({
   presentation = "surface",
   launcherActive = true,
+  botsAvailable = false,
   onLaunch,
   onCreateApp,
   onOpenDesktopApp,
@@ -92,6 +93,7 @@ export default function AppLauncher({
 }: {
   presentation?: "surface" | "launchpad";
   launcherActive?: boolean;
+  botsAvailable?: boolean;
   onLaunch?: (tabId: string) => void;
   onCreateApp?: () => void;
   onOpenDesktopApp?: (app: DesktopAppConfig) => void;
@@ -149,7 +151,8 @@ export default function AppLauncher({
     if (presentation !== "launchpad") {
       return apps.map((app) => ({ type: "installed", key: `installed:${app.slug}`, name: app.name, app }));
     }
-    const fixedNames = new Set(FIXED_DESKTOP_APPS.map((app) => app.name.toLowerCase()));
+    const fixedApps = FIXED_DESKTOP_APPS.filter((app) => app.id !== "bots" || botsAvailable);
+    const fixedNames = new Set(fixedApps.map((app) => app.name.toLowerCase()));
     const destinationMode = osViewMode ? otherOsViewMode(osViewMode) : null;
     return [
       { type: "create", key: "__create-app__", name: "Create app" },
@@ -159,7 +162,7 @@ export default function AppLauncher({
         name: OS_VIEW_LABELS[destinationMode],
         mode: destinationMode,
       }] : []),
-      ...FIXED_DESKTOP_APPS.map((app) => {
+      ...fixedApps.map((app) => {
         const installed = apps.find((candidate) => candidate.name.toLowerCase() === app.name.toLowerCase());
         const appearance = osViewFixedAppAppearanceForPath(app.path);
         return {
@@ -175,7 +178,7 @@ export default function AppLauncher({
         .filter((app) => !fixedNames.has(app.name.toLowerCase()))
         .map((app) => ({ type: "installed" as const, key: `installed:${app.slug}`, name: app.name, app })),
     ];
-  }, [apps, osViewMode, platformHost, presentation, runtimeSlot]);
+  }, [apps, botsAvailable, osViewMode, platformHost, presentation, runtimeSlot]);
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();

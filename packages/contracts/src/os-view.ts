@@ -13,6 +13,8 @@ export const OS_VIEW_DESTINATION_PATHS: Readonly<Record<OsViewMode, string>> = {
   canvas: "__os-view-canvas__",
 };
 
+export const HOSTED_BOTS_APP_PATH = "__bots__";
+
 export const OS_VIEW_FIXED_APP_APPEARANCES = {
   canvas: {
     icon: "layout-grid",
@@ -32,6 +34,7 @@ export const OS_VIEW_FIXED_APP_APPEARANCES = {
     background: "var(--surface-error-emphasis, #BA5236)",
     foreground: "white",
   },
+  bots: { icon: "bot", iconSource: "fixed", background: "var(--surface-brand-emphasis, #748E59)", foreground: "white" },
   terminal: {
     icon: "square-terminal",
     iconSource: "fixed",
@@ -81,6 +84,7 @@ const OS_VIEW_FIXED_APP_ID_BY_PATH: Readonly<Record<string, OsViewFixedAppId>> =
   "__os-view-canvas__": "canvas",
   "__os-view-desktop__": "desktop",
   __chat__: "chat",
+  [HOSTED_BOTS_APP_PATH]: "bots",
   __terminal__: "terminal",
   "__file-browser__": "files",
   __editor__: "editor",
@@ -105,6 +109,7 @@ export function osViewFixedAppAppearanceForPath(path: string) {
 
 /** Bundled artwork is independent of runtime reachability and owner icon files. */
 export function osViewBundledIconUrlForPath(path: string): string | undefined {
+  if (path === HOSTED_BOTS_APP_PATH) return "/system-app-icons/v2/bots.svg";
   if (path === "__cloud-desktop__") return "/system-app-icons/v3/desktop.png";
   if (path === "__create-app__") return "/system-app-icons/v2/create-app.png";
   const id = OS_VIEW_FIXED_APP_ID_BY_PATH[path];

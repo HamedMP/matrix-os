@@ -5,6 +5,7 @@ import type { Tab } from "../../stores/tabs";
 import TaskWorkspace from "../workspace/TaskWorkspace";
 import TerminalView from "../terminal/TerminalView";
 import SettingsView, { type SettingsSectionId } from "../settings/SettingsView";
+import { DesktopBotsWorkspace } from "../bots/DesktopBotsWorkspace";
 import HomeTab from "./HomeTab";
 import AppLauncher from "../embeds/AppLauncher";
 import TerminalsTab from "../terminal/TerminalsTab";
@@ -81,6 +82,8 @@ export function TabPane({
         initialChatTitle={tab.chatTitle}
         sharedScopeId={tab.sharedScopeId}
       />;
+    case "bots":
+      return <DesktopBotsWorkspace active={active} />;
     case "chat":
       return <WorkTab tabId={tab.id} route="chat" active={active} visible={visible} initialChatId={tab.chatId} initialChatView={tab.chatView} initialChatTitle={tab.chatTitle} sharedScopeId={tab.sharedScopeId} />;
     case "terminals":

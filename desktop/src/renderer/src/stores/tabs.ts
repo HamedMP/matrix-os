@@ -10,6 +10,7 @@ export type TabKind =
   | "browser"
   | "work"
   | "chat"
+  | "bots"
   | "projects"
   | "project"
   | "task"

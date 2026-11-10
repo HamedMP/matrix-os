@@ -4,6 +4,7 @@ import { getGatewayUrl, gatewayAssetUrl } from "@/lib/gateway";
 import { iconUrlForSlug } from "@/lib/app-launch";
 import {
   DEFAULT_OS_VIEW_DESKTOP_APP_PATHS,
+  HOSTED_BOTS_APP_PATH,
   osViewIconUrlForApp,
   OS_VIEW_DESTINATION_PATHS,
   OS_VIEW_LABELS,
@@ -64,13 +65,14 @@ function namedDesktopApp(app: AppEntry | undefined, fallback: AppEntry): AppEntr
   return app ? { ...app, name: fallback.name, path: fallback.path } : fallback;
 }
 
-export function buildWebDesktopIconApps(apps: readonly AppEntry[]): AppEntry[] {
+export function buildWebDesktopIconApps(apps: readonly AppEntry[], botsAvailable = false): AppEntry[] {
   const chat = findCanonicalApp(apps, ["__chat__"]);
   const browserPaths = ["__browser__", "apps/browser/index.html", "apps/browser/dist/index.html"];
   const notesPaths = ["apps/notes/index.html", "apps/notes/dist/index.html"];
   const whiteboardPaths = ["apps/whiteboard/index.html", "apps/whiteboard/dist/index.html"];
   const firstClass: AppEntry[] = [
     chat ? { ...chat, name: "Chat" } : { name: "Chat", path: "__chat__" },
+    ...(botsAvailable ? [{ name: "Bots", path: HOSTED_BOTS_APP_PATH }] : []),
     findCanonicalApp(apps, ["__terminal__"]) ?? { name: "Terminal", path: "__terminal__" },
     findCanonicalApp(apps, ["__file-browser__"]) ?? { name: "Files", path: "__file-browser__" },
     { name: "Editor", path: "__editor__" },
@@ -84,6 +86,7 @@ export function buildWebDesktopIconApps(apps: readonly AppEntry[]): AppEntry[] {
   ];
   const firstClassPaths = new Set([
     ...DEFAULT_OS_VIEW_DESKTOP_APP_PATHS,
+    HOSTED_BOTS_APP_PATH,
     REMOTE_BROWSER_PATHS.desktop,
     ...browserPaths,
     ...notesPaths,
@@ -95,6 +98,7 @@ export function buildWebDesktopIconApps(apps: readonly AppEntry[]): AppEntry[] {
 export function buildWebDesktopLauncherApps(
   apps: readonly AppEntry[],
   currentMode: DesktopMode = "desktop",
+  botsAvailable = false,
 ): AppEntry[] {
   const destinationMode = otherOsViewMode(currentMode);
   const viewDestination: AppEntry = {
@@ -102,7 +106,7 @@ export function buildWebDesktopLauncherApps(
     path: OS_VIEW_DESTINATION_PATHS[destinationMode],
     iconUrl: gatewayAssetUrl(`/system-app-icons/v3/${destinationMode}.png`),
   };
-  return [viewDestination, ...buildWebDesktopIconApps(apps)];
+  return [viewDestination, ...buildWebDesktopIconApps(apps, botsAvailable)];
 }
 
 

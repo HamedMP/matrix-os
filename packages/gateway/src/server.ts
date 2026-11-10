@@ -138,6 +138,7 @@ import { createFundedAiRouteReadinessClient } from "./funded-ai-route-readiness-
 import { createFundedAiReadinessReader } from "./funded-ai-readiness.js";
 import { initializeJevRuntime } from "./jev/runtime.js";
 import { createJevRoutes } from "./jev/routes.js";
+import { initializeHostedBotsRuntime } from "./hosted-bots/runtime.js";
 import { createProductionJevInboxRuntime } from "./jev/inbox-production.js";
 import { createJevService } from "./jev/service.js";
 import { createHeartbeatRunner, type HeartbeatRunner } from "./heartbeat/runner.js";
@@ -1279,6 +1280,8 @@ export async function createGateway(config: GatewayConfig) {
         },
       })
     : undefined;
+  const hostedBotsRuntime = await initializeHostedBotsRuntime(kyselyInstance, process.env, homePath);
+  app.route("/api/hosted-bots", hostedBotsRuntime.routes);
   app.route("/api/speech", speechRuntime.routes);
   const isManagedFeatureRestartIdle = () => dispatcher.activeCount === 0 && dispatcher.queueLength === 0
     && (canonicalChatOrchestrator?.activeCount ?? 0) === 0
@@ -1918,6 +1921,7 @@ export async function createGateway(config: GatewayConfig) {
       await managedFeatureRestart.close();
       await githubDeveloperSetup.close();
       await jevInboxRuntime?.close();
+      await hostedBotsRuntime.close();
       chatDriveContext.close();
       matrixMcpCapabilities.close();
       workspaceStartupRecoveryController.close();

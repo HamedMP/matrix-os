@@ -334,3 +334,6 @@ export { ChatSpeechInputButton } from "./speech/ChatSpeechInputButton.js";
 export { ChatNewChatContent, ChatStarterCards, ChatComposerColumn } from "./chat/new-chat/ChatNewChatContent.js";
 
 export { providerCatalogObservationRetryDelay } from "./provider-observation.js";
+
+export { BotsWorkspace } from "./bots/BotsWorkspace.js";
+export { useHostedBotsAvailability, type HostedBotsTransport } from "./bots/hosted-bots-client.js";

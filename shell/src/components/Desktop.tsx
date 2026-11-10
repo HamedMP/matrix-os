@@ -1,5 +1,8 @@
 "use client";
 
+import { useHostedBotsAvailability } from "@matrix-os/ui";
+import { WebHostedBotsProvider, createWebHostedBotsTransport } from "./bots/WebBotsWorkspace";
+
 import { useState, useCallback, useEffect, useMemo, useRef, type ReactNode } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { appKeys, appsQueryOptions, hydrateAppIconUrls, type ApiAppEntry } from "@/api/apps";
@@ -138,7 +141,12 @@ export function Desktop({ launchAppPath, sharedTerminalScopeId, onOpenCommandPal
     })),
     [apiApps],
   );
-  const apps = useMemo(() => buildWebDesktopIconApps(installedApps), [installedApps]);
+  const botsGateway = getGatewayUrl();
+  const botsScope = cacheScope?.storageKey;
+  const botsRuntime = cacheScope?.runtimeScope;
+  const botsTransport = useMemo(() => createWebHostedBotsTransport(botsGateway, botsScope, botsRuntime), [botsGateway, botsScope, botsRuntime]);
+  const botsAvailable = useHostedBotsAvailability(botsTransport);
+  const apps = useMemo(() => buildWebDesktopIconApps(installedApps, botsAvailable), [installedApps, botsAvailable]);
 
   const [interacting, setInteracting] = useState(false);
   const [taskBoardOpen, setTaskBoardOpen] = useState(false);
@@ -841,8 +849,8 @@ export function Desktop({ launchAppPath, sharedTerminalScopeId, onOpenCommandPal
   ) : null;
 
   const launcherApps = useMemo(
-    () => buildWebDesktopLauncherApps(installedApps, desktopMode),
-    [installedApps, desktopMode],
+    () => buildWebDesktopLauncherApps(installedApps, desktopMode, botsAvailable),
+    [installedApps, desktopMode, botsAvailable],
   );
 
   const openLauncherDestination = useCallback((name: string, path: string) => {
@@ -868,6 +876,7 @@ export function Desktop({ launchAppPath, sharedTerminalScopeId, onOpenCommandPal
 
   return (
     <TooltipProvider delayDuration={300}>
+      <WebHostedBotsProvider value={botsTransport}>
       <ShellNotificationStack>
         <RuntimeIdentityBanner />
         <ConnectionIndicator />
@@ -1385,6 +1394,7 @@ export function Desktop({ launchAppPath, sharedTerminalScopeId, onOpenCommandPal
       {/* No fullscreen exit pill: every maximized window keeps its own header
           (Desktop CardHeader / Canvas in-window title bar) with traffic lights,
           and Escape still exits fullscreen as a keyboard fallback. */}
+      </WebHostedBotsProvider>
     </TooltipProvider>
   );
 }

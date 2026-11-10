@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import {
   Blocks,
+  Bot,
   BrushIcon,
   Code2,
   FilePenLine,
@@ -43,6 +44,7 @@ import "./launchpad.css";
 
 const BUILT_IN_ICON_COMPONENTS: Readonly<Record<OsViewFixedAppIcon, LucideIcon>> = {
   "message-square": MessageSquare,
+  bot: Bot,
   "square-terminal": SquareTerminal,
   "folder-tree": FolderTree,
   "file-pen": FilePenLine,
