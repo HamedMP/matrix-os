@@ -93,19 +93,34 @@ describe('session routing through runtime substrates', () => {
     ]);
   });
 
-  it('serves the unchanged provisioning responses for a VPS that is not routable', async () => {
-    await insertUserMachine(db, machine({ status: 'provisioning', publicIPv4: null }));
+  it.each(['provisioning', 'resizing'])('serves the unchanged boot responses while a VPS is %s', async (status) => {
+    await insertUserMachine(db, machine({ status, publicIPv4: status === 'resizing' ? '203.0.113.50' : null }));
     const platform = app(db);
 
     for (const path of ['/vm/alice/', '/vm/alice/api/health']) {
       const page = await platform.request(path, { headers: CLERK_SESSION });
       expect(page.status, path).toBe(503);
-      expect(await page.text(), path).toBe(getVpsBootPage({ status: 'provisioning' }));
+      expect(await page.text(), path).toBe(getVpsBootPage({ status }));
     }
 
     const session = await platform.request('/api/health', { headers: CLERK_SESSION });
     expect(session.status).toBe(503);
-    expect(await session.json()).toEqual({ error: 'VPS provisioning', status: 'provisioning' });
+    expect(await session.json()).toEqual({ error: 'VPS provisioning', status });
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('denies runtime access without a paid entitlement before checking routability', async () => {
+    await insertUserMachine(db, machine({ machineId: 'machine-running' }));
+    await insertUserMachine(db, machine({
+      machineId: 'machine-booting', handle: 'alice-two', runtimeSlot: 'two', status: 'provisioning', publicIPv4: null,
+    }));
+    const platform = app(db, { env: { ...process.env, MATRIX_PAID_BETA_ENTITLEMENT_STATUS: 'missing' } });
+
+    for (const path of ['/vm/alice/api/projects', '/vm/alice-two/api/projects', '/api/projects']) {
+      const res = await platform.request(path, { method: 'POST', headers: CLERK_SESSION, body: '{}' });
+      expect(res.status, path).toBe(402);
+      expect(await res.json(), path).toEqual({ error: 'Paid beta access required' });
+    }
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
