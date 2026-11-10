@@ -30,15 +30,22 @@ The manifest seals every captured original with SHA-256 and performs an independ
 
 ## Runtime wiring and authorization
 
-| Boundary | Authentication | Scope |
-|---|---|---|
-| GET /api/ai-usage | Existing verified gateway principal | Exact configured runtime owner; no path/query overrides |
-| Native recent scan | Trusted main-frame IPC + current signed-in runtime generation | Fixed OS-user roots; explicitly partial fallback |
-| Historical collector | Gateway owner-database dependency; owner configuration file | Standard roots and validated backup roots inside the owner's home |
-| Recovery CLI | Operator-selected private config + owner Postgres credentials | No public listener, no third-party upload |
-| Loopback preview | Local developer access only | Fixed report path; never expose publicly |
+| Boundary                                 | Authentication                                                | Scope                                                             |
+| ---------------------------------------- | ------------------------------------------------------------- | ----------------------------------------------------------------- |
+| GET /api/ai-usage                        | Existing verified gateway principal                           | Exact configured runtime owner; no path/query overrides           |
+| GET /api/files/blob (fixed usage export) | Existing authenticated owner-file API                         | Dated, content-free report; signed-in owner must match envelope   |
+| Native recent scan                       | Trusted main-frame IPC + current signed-in runtime generation | Fixed OS-user roots; explicitly partial fallback                  |
+| Historical collector                     | Gateway owner-database dependency; owner configuration file   | Standard roots and validated backup roots inside the owner's home |
+| Recovery CLI                             | Operator-selected private config + owner Postgres credentials | No public listener, no third-party upload                         |
+| Loopback preview                         | Local developer access only                                   | Fixed report path; never expose publicly                          |
 
 `system/ai-usage-sources.json` is owner configuration, not app data. It may add recovered machines with validated relative paths; symlink escapes and missing configured roots fail visibly. It does not let an HTTP client select arbitrary folders. Gateway indexing runs in the background, coalesces collection and drains on shutdown. Read responses identify backfill progress and incomplete coverage.
+
+Desktop prefers the live historical endpoint. On an older runtime with a missing endpoint or a valid recent-only report, it can read `exports/ai-usage/latest.json` through the existing owner-file API. The recovery CLI writes this envelope atomically with the verified Clerk owner ID. The desktop validates its schema and owner, honors cancellation and labels it “Matrix backup snapshot”; authentication, service failures and malformed live responses do not trigger fallback. The export carries the index timestamp and is a dated snapshot, not continuous synchronization.
+
+## Refresh behavior
+
+Settings reads usage when opened, then automatically checks again one hour after each completed check. The manual Refresh usage action runs immediately and resets that timer. Reads never overlap; closing the owner/runtime scope aborts the active read and clears its timer. A failed check retains the last successful graph, shows a safe error and retries next hour. Refreshing preserves agent/date filters. Last checked describes when the report was fetched, not when original archives were synchronized; dated backups remain snapshots.
 
 ## Verification and release
 

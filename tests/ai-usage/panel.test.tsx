@@ -3,6 +3,7 @@ import React from "react";
 import { afterEach, describe, it, expect } from "vitest";
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { AiUsagePanel } from "../../packages/ui/src/ai-usage/AiUsagePanel";
+import { createHistoryReports } from "../../packages/contracts/src/ai-usage/history-report";
 import type { UsageEvent } from "../../packages/contracts/src/ai-usage/types";
 afterEach(cleanup);
 const events: UsageEvent[] = [
@@ -58,4 +59,21 @@ describe("AI usage Settings", () => {
 it("blocks private usage totals, dates and models from session replay",()=>{
  render(<AiUsagePanel initialEvents={events} now={new Date("2026-11-09T12:00:00Z")} />);
  expect(screen.getByRole("region",{name:"Personal AI usage"}).classList.contains("ph-no-capture")).toBe(true);
+});
+
+it("keeps a valid range when refresh removes the selected historical year and shows report freshness", () => {
+ const history = (old: boolean) => {
+  const builder = createHistoryReports(old ? "2023-01-01T00:00:00Z" : events[0].timestamp, "UTC", new Date("2026-11-09T12:00:00Z"));
+  if (old) builder.push({...events[0], id:"old", timestamp:"2023-01-01T12:00:00Z"});
+  for (const event of events) builder.push(event);
+  return {timeZone:"UTC", reports:builder.finish(), coverage:{machines:["Mac"], files:2, bytes:100, indexedBytes:100, oldest:events[0].timestamp, newest:events[0].timestamp, issues:0, failedRoots:0, indexedAt:"2026-11-08T07:45:00Z"}};
+ };
+ const view = render(<AiUsagePanel history={history(true)} />);
+ fireEvent.change(screen.getByLabelText("Date range"), {target:{value:"year:2023"}});
+ expect(screen.getByTestId("token-total").textContent).toBe("150");
+ view.rerender(<AiUsagePanel history={history(false)} />);
+ expect(screen.getByLabelText("Date range").getAttribute("value") ?? (screen.getByLabelText("Date range") as HTMLSelectElement).value).toBe("all");
+ expect(screen.getByTestId("token-total").textContent).toBe("450");
+ expect(screen.getByText("Report updated")).toBeTruthy();
+ expect(screen.getByText(/Nov 8, 2026.*7:45/)).toBeTruthy();
 });
