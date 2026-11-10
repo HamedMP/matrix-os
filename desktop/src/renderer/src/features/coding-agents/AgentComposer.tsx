@@ -202,7 +202,7 @@ export function AgentComposer({ summary, seed, focusRequestId, onCreated }: {
         />
       </label>
       <div className="flex items-center justify-between gap-3">
-        <p className="min-h-5 text-sm" style={{ color: createError ? "var(--danger)" : "var(--text-tertiary)" }}>
+        <p className="min-h-5 text-sm" style={{ color: createError ? "var(--danger-text)" : "var(--text-tertiary)" }}>
           {createError ?? ""}
         </p>
         <Button variant="primary" type="submit" disabled={createStatus === "submitting"}>

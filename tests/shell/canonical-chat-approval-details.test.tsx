@@ -123,7 +123,7 @@ it.each([["approve", "Approved"], ["approve_for_session", "Approved"], ["decline
   resolve(detail, decision);
   render(<ConversationTranscript turns={canonicalChatPresentation(detail)} callbacks={{ copyText: vi.fn() }} />);
   expect(screen.getByText(label)).toBeTruthy();
-  if (decision === "decline" || decision === "cancel") expect(screen.getByRole("group", { name: /Approval resolved:/ }).querySelector('svg[style*="var(--success)"]')).toBeNull();
+  if (decision === "decline" || decision === "cancel") expect(screen.getByRole("group", { name: /Approval resolved:/ }).querySelector('svg[style*="var(--success"]')).toBeNull();
 });
 
 it.each([["approve", "Approved"], ["approve_for_session", "Approved"], ["decline", "Declined"], ["cancel", "Cancelled"]] as const)("renders the same %s outcome in the shared Web approval component", (decision, label) => {
@@ -139,7 +139,7 @@ it.each(["completed", "failed", "aborted"] as const)("keeps %s without a recorde
   detail.runs[0]!.status = status;
   render(<ConversationTranscript turns={canonicalChatPresentation(detail).map(turn => ({ ...turn, expandedByDefault: true }))} callbacks={{ copyText: vi.fn() }} />);
   expect(screen.getByText("Approval ended without a recorded decision")).toBeTruthy();
-  expect(screen.getByRole("group", { name: /Approval resolved:/ }).querySelector('svg[style*="var(--success)"]')).toBeNull();
+  expect(screen.getByRole("group", { name: /Approval resolved:/ }).querySelector('svg[style*="var(--success"]')).toBeNull();
 });
 
 it("does not borrow an identical approval ID's decision from another run", () => {

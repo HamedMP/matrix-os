@@ -229,7 +229,7 @@ export function HermesConfigurationDialog({
           </div>
         ) : !configuration ? (
           <div className="flex flex-1 flex-col items-center justify-center gap-3 p-8 text-center">
-            <p role="alert" className="text-sm" style={{ color: "var(--danger)" }}>{error ?? LOAD_ERROR}</p>
+            <p role="alert" className="text-sm" style={{ color: "var(--danger-text)" }}>{error ?? LOAD_ERROR}</p>
             <div className="flex gap-2">
               <Button onClick={() => void load(false)}>Try again</Button>
               <Button variant="primary" aria-label="Open setup terminal" onClick={() => void onOpenSetupTerminal()}>
@@ -329,7 +329,7 @@ export function HermesConfigurationDialog({
 
             <footer className="flex items-center justify-between border-t px-5 py-3" style={{ borderColor: "var(--border-subtle)" }}>
               <div>
-                {error ? <span role="alert" className="text-xs" style={{ color: "var(--danger)" }}>{error}</span> : (
+                {error ? <span role="alert" className="text-xs" style={{ color: "var(--danger-text)" }}>{error}</span> : (
                   <span className="text-xs" style={{ color: "var(--text-tertiary)" }}>
                     {dirtyPathCount} unsaved {dirtyPathCount === 1 ? "change" : "changes"}
                   </span>

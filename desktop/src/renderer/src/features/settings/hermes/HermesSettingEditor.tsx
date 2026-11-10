@@ -113,7 +113,7 @@ export function HermesSettingEditor({
           }}
         />
         {!listValid ? (
-          <p role="alert" className="mt-1 text-xs" style={{ color: "var(--danger)" }}>
+          <p role="alert" className="mt-1 text-xs" style={{ color: "var(--danger-text)" }}>
             Enter a JSON list of strings, numbers, or booleans.
           </p>
         ) : null}

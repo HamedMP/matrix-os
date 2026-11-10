@@ -156,7 +156,7 @@ export default function RuntimeSection() {
         ) : null}
 
         {switchError ? (
-          <p role="alert" className="text-xs" style={{ color: "var(--danger)" }}>
+          <p role="alert" className="text-xs" style={{ color: "var(--danger-text)" }}>
             Couldn&apos;t switch computers. Try again.
           </p>
         ) : null}

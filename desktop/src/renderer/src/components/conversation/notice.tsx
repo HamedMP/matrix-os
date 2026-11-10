@@ -51,7 +51,7 @@ export function ConversationNotice({
                   size={16}
                   aria-hidden
                   className="mt-0.5 shrink-0"
-                  style={{ color: "var(--danger)" }}
+                  style={{ color: "var(--danger-text)" }}
                 />
               ) : null}
               <div className="min-w-0">

@@ -24,7 +24,7 @@ export function HermesCredentialRow({ credentialKey, entry, busy, onSave, onRemo
             <KeyRound size={14} style={{ color: "var(--accent)" }} />
             <span className="text-sm font-medium" style={{ color: "var(--text-primary)" }}>{credentialKey}</span>
             {entry.is_set ? (
-              <span className="flex items-center gap-1 text-xs" style={{ color: "var(--success)" }}>
+              <span className="flex items-center gap-1 text-xs" style={{ color: "var(--success-text)" }}>
                 <Check size={12} />Configured
               </span>
             ) : null}

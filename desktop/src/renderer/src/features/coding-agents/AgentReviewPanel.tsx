@@ -98,7 +98,7 @@ export function ReviewList({
     <Section title="Review" count={items.length}>
       <div className="grid gap-3">
         {reviewsStatus === "error" ? (
-          <p className="rounded-md border p-3 text-sm" style={{ borderColor: "var(--border-subtle)", color: "var(--danger)" }}>
+          <p className="rounded-md border p-3 text-sm" style={{ borderColor: "var(--border-subtle)", color: "var(--danger-text)" }}>
             {reviewsError ?? "Review state unavailable"}
           </p>
         ) : null}
@@ -128,7 +128,7 @@ export function ReviewList({
             <div className="shrink-0 text-right text-xs" style={{ color: "var(--text-secondary)" }}>
               <p className="capitalize">{reviewStatusLabel(review.status)}</p>
               {review.findings ? (
-                <p style={{ color: review.findings.high > 0 ? "var(--danger)" : "var(--text-tertiary)" }}>
+                <p style={{ color: review.findings.high > 0 ? "var(--danger-text)" : "var(--text-tertiary)" }}>
                   {review.findings.high} high
                 </p>
               ) : null}
@@ -243,7 +243,7 @@ function ReviewSnapshotPanel({
   }
   if (status === "error") {
     return (
-      <p className="rounded-md border p-3 text-sm" style={{ borderColor: "var(--border-subtle)", color: "var(--danger)" }}>
+      <p className="rounded-md border p-3 text-sm" style={{ borderColor: "var(--border-subtle)", color: "var(--danger-text)" }}>
         {error ?? "Review details unavailable"}
       </p>
     );
@@ -272,17 +272,17 @@ function ReviewSnapshotPanel({
       {canPrepareCommit ? (
         <div className="flex min-w-0 flex-wrap items-center justify-start gap-2">
           {sourceCommitStatus === "prepared" ? (
-            <span className="text-xs" style={{ color: "var(--success)" }}>
+            <span className="text-xs" style={{ color: "var(--success-text)" }}>
               Commit prepared
             </span>
           ) : null}
           {sourceCommitStatus === "error" ? (
-            <span className="text-xs" style={{ color: "var(--danger)" }}>
+            <span className="text-xs" style={{ color: "var(--danger-text)" }}>
               {sourceCommitError ?? "Source commit could not be prepared. Refresh and try again."}
             </span>
           ) : null}
           {sourcePullRequestStatus === "ready" ? (
-            <span className="text-xs" style={{ color: "var(--success)" }}>
+            <span className="text-xs" style={{ color: "var(--success-text)" }}>
               Pull request ready
             </span>
           ) : null}
@@ -302,7 +302,7 @@ function ReviewSnapshotPanel({
             </Button>
           ) : null}
           {sourcePullRequestStatus === "error" ? (
-            <span className="text-xs" style={{ color: "var(--danger)" }}>
+            <span className="text-xs" style={{ color: "var(--danger-text)" }}>
               {sourcePullRequestError ?? "Pull request could not be created. Refresh and try again."}
             </span>
           ) : null}
@@ -401,7 +401,7 @@ function ReviewSnapshotPanel({
             {file.findings?.length ? (
               <div className="grid gap-1">
                 {file.findings.map((finding) => (
-                  <p key={finding.id} className="text-xs" style={{ color: finding.severity === "high" ? "var(--danger)" : "var(--text-secondary)" }}>
+                  <p key={finding.id} className="text-xs" style={{ color: finding.severity === "high" ? "var(--danger-text)" : "var(--text-secondary)" }}>
                     {finding.summary}
                   </p>
                 ))}
@@ -412,10 +412,10 @@ function ReviewSnapshotPanel({
               </p>
             )}
             <div className="flex flex-wrap items-center gap-2 text-xs">
-              <span className="rounded border px-2 py-1" style={{ borderColor: "var(--border-subtle)", color: "var(--success)" }}>
+              <span className="rounded border px-2 py-1" style={{ borderColor: "var(--border-subtle)", color: "var(--success-text)" }}>
                 +{file.additions}
               </span>
-              <span className="rounded border px-2 py-1" style={{ borderColor: "var(--border-subtle)", color: "var(--danger)" }}>
+              <span className="rounded border px-2 py-1" style={{ borderColor: "var(--border-subtle)", color: "var(--danger-text)" }}>
                 -{file.deletions}
               </span>
               {file.partial ? (
@@ -641,7 +641,7 @@ function ReviewFileBrowserPanel({
         </Button>
       </div>
       {browseStatus === "error" ? (
-        <p className="text-xs" style={{ color: "var(--danger)" }}>{browseError ?? "File list unavailable"}</p>
+        <p className="text-xs" style={{ color: "var(--danger-text)" }}>{browseError ?? "File list unavailable"}</p>
       ) : null}
       {browse?.entries.items.length ? (
         <div className="grid gap-1">
@@ -649,7 +649,7 @@ function ReviewFileBrowserPanel({
         </div>
       ) : null}
       {searchStatus === "error" ? (
-        <p className="text-xs" style={{ color: "var(--danger)" }}>{searchError ?? "File search unavailable"}</p>
+        <p className="text-xs" style={{ color: "var(--danger-text)" }}>{searchError ?? "File search unavailable"}</p>
       ) : null}
       {searchResult?.matches.items.length ? (
         <div className="grid gap-1">
@@ -694,7 +694,7 @@ function FileContentPanel({
   }
   if (status === "error") {
     return (
-      <p className="rounded-md border px-3 py-2 text-sm" style={{ borderColor: "var(--border-subtle)", color: "var(--danger)" }}>
+      <p className="rounded-md border px-3 py-2 text-sm" style={{ borderColor: "var(--border-subtle)", color: "var(--danger-text)" }}>
         {error ?? "File content unavailable"}
       </p>
     );
@@ -712,12 +712,12 @@ function FileContentPanel({
         </span>
         <div className="flex shrink-0 items-center gap-2">
           {writeStatus === "saved" ? (
-            <span className="text-xs" style={{ color: "var(--success)" }}>
+            <span className="text-xs" style={{ color: "var(--success-text)" }}>
               Saved
             </span>
           ) : null}
           {file.truncated ? (
-            <span className="text-xs" style={{ color: "var(--warning)" }}>
+            <span className="text-xs" style={{ color: "var(--warning-text)" }}>
               Truncated
             </span>
           ) : null}
@@ -749,7 +749,7 @@ function FileContentPanel({
         style={{ background: "transparent", color: "var(--text-primary)" }}
       />
       {writeStatus === "error" ? (
-        <p className="px-3 pb-2 text-xs" style={{ color: "var(--danger)" }}>
+        <p className="px-3 pb-2 text-xs" style={{ color: "var(--danger-text)" }}>
           {writeError ?? "File could not be saved. Refresh and try again."}
         </p>
       ) : null}

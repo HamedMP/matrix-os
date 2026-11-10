@@ -15,7 +15,7 @@ const bubbleVariants = cva(
         plain: "*:data-[slot=bubble-content]:bg-transparent *:data-[slot=bubble-content]:text-[var(--text-primary)]",
         outline: "*:data-[slot=bubble-content]:border-[var(--border-default)] *:data-[slot=bubble-content]:bg-[var(--bg-surface)]",
         ghost: "border-none *:data-[slot=bubble-content]:rounded-none *:data-[slot=bubble-content]:bg-transparent *:data-[slot=bubble-content]:px-0 *:data-[slot=bubble-content]:py-px",
-        destructive: "*:data-[slot=bubble-content]:bg-[var(--danger-muted)] *:data-[slot=bubble-content]:text-[var(--danger)]",
+        destructive: "*:data-[slot=bubble-content]:bg-[var(--danger-muted)] *:data-[slot=bubble-content]:text-[var(--danger-text)]",
       },
     },
     defaultVariants: { variant: "default" },
