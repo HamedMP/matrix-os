@@ -11,6 +11,7 @@ import {
   MAX_USAGE_FILES,
   MAX_USAGE_FILE_BYTES,
   mergeUsageEvents,
+  reconcileUsageEvents,
   readUsageSource,
   type UsageEvent,
 } from "./index.js";
@@ -123,7 +124,8 @@ export async function scanUsageRoots(
   return {
     version: 1 as const,
     events: merged.events,
-    issues: issues + merged.conflicts,
+    // Events stay raw so later merges reconcile from complete evidence; only the gap count is reported here.
+    issues: issues + merged.conflicts + reconcileUsageEvents(merged.events).dropped,
   };
 }
 /** Original-history backup allowlist. Credentials and account databases are deliberately absent. */

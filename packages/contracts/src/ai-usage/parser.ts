@@ -10,6 +10,13 @@ const obj = (v: unknown): Record<string, unknown> =>
     : {};
 const text = (v: unknown, fallback = "") =>
   typeof v === "string" && v.length <= 256 ? v : fallback;
+/** Offset-qualified ISO 8601 only: exports validate it and PostgreSQL must be able to order it. */
+const isoTime =
+  /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{1,9})?(Z|[+-]\d{2}:\d{2})$/;
+export const usageTime = (v: unknown) => {
+  const value = text(v);
+  return isoTime.test(value) && Number.isFinite(Date.parse(value)) ? value : "";
+};
 function count(v: unknown): number {
   if (v === undefined) return 0;
   if (typeof v !== "number" || !Number.isSafeInteger(v) || v < 0 || v > 1e12)
@@ -54,8 +61,8 @@ export function createUsageRecordParser(
       let issues = 0;
       let r = obj(raw),
         p = obj(r.payload);
-      const time = text(r.timestamp);
-      if (time && Number.isFinite(Date.parse(time))) {
+      const time = usageTime(r.timestamp);
+      if (time) {
         if (!firstSeen || time < firstSeen) firstSeen = time;
         if (!lastSeen || time > lastSeen) lastSeen = time;
       }
@@ -71,9 +78,8 @@ export function createUsageRecordParser(
       )
         return { events, issues };
       try {
-        const timestamp = text(r.timestamp);
-        if (!timestamp || !Number.isFinite(Date.parse(timestamp)))
-          throw new RangeError("Missing usage time");
+        const timestamp = time;
+        if (!timestamp) throw new RangeError("Missing usage time");
         let event: UsageEvent;
         if (agent === "codex" && r.type === "token_usage_record") {
           const id = text(p.response_id),
