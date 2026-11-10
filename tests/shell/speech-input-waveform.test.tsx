@@ -24,3 +24,26 @@ describe("shared speech input waveform", () => {
     expect((bar as HTMLElement).style.transition).toBe("");
   });
 });
+
+describe("shared chat speech input button", () => {
+  it("paints the recording waveform with the accessible danger text color inline", async () => {
+    // packages/ui/src/speech is outside both hosts' Tailwind @source roots, so an
+    // arbitrary color class would never be generated and the bars would inherit text color.
+    const { ChatSpeechInputButton } = await import("../../packages/ui/src/speech/ChatSpeechInputButton.js");
+    const noop = () => {};
+    const view = render(
+      <ChatSpeechInputButton
+        disabled={false}
+        speech={{
+          phase: "recording", error: null, isSupported: true, previewQuota: null, capabilitiesStale: false,
+          elapsedMs: 1_000, inputLevel: 0.5, inputLevelSequence: 1,
+          start: async () => {}, stop: noop, cancel: noop, retryCapabilities: async () => {},
+        } as unknown as Parameters<typeof ChatSpeechInputButton>[0]["speech"]}
+      />,
+    );
+
+    const waveform = view.getByTestId("speech-input-waveform");
+    expect(waveform.style.color).toBe("var(--danger-text, var(--destructive-text, var(--danger)))");
+    expect(waveform.className).not.toMatch(/text-\[/);
+  });
+});

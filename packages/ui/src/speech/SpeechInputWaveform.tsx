@@ -14,10 +14,13 @@ export function SpeechInputWaveform({
   level,
   sampleSequence,
   className,
+  color,
 }: {
   level: number;
   sampleSequence: number;
   className?: string;
+  /** Bar color; inline because hosts may not scan this package for Tailwind classes. */
+  color?: string;
 }) {
   const normalizedLevel = clampLevel(level);
   const [history, setHistory] = useState<number[]>(() => Array.from({ length: BAR_COUNT }, () => 0));
@@ -35,6 +38,7 @@ export function SpeechInputWaveform({
       className={className}
       style={{
         alignItems: "center",
+        color,
         display: "inline-flex",
         flexShrink: 0,
         gap: 2,

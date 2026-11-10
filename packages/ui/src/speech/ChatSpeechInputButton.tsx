@@ -59,7 +59,8 @@ export function ChatSpeechInputButton({ speech, disabled }: { speech: SpeechDraf
           <SpeechInputWaveform
             level={speech.inputLevel}
             sampleSequence={speech.inputLevelSequence}
-            className="mx-1 text-[var(--danger-text,var(--destructive-text,var(--danger)))]"
+            className="mx-1"
+            color="var(--danger-text, var(--destructive-text, var(--danger)))"
           />
           <span aria-live="polite" className="px-1 text-xs tabular-nums" style={{ color: "var(--text-tertiary)" }}>
             {Math.floor(speech.elapsedMs / 60_000)}:{String(Math.floor(speech.elapsedMs / 1_000) % 60).padStart(2, "0")}
