@@ -1,9 +1,13 @@
 // @vitest-environment jsdom
 import React from "react";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
 import { FilePreviewActions } from "../../packages/ui/src/files/FilePreviewActions";
-afterEach(cleanup);
+afterEach(async () => {
+  cleanup();
+  // Radix restores focus on a deferred timer after unmount; let it run before jsdom is torn down.
+  await act(async () => new Promise((resolve) => setTimeout(resolve, 0)));
+});
 it("offers path copying and Files navigation with safe error feedback", async () => {
   const copyPath = vi.fn(async () => {});
   const openFiles = vi.fn().mockRejectedValueOnce(new Error("private location")).mockResolvedValue(undefined);
