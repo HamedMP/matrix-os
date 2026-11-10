@@ -9,7 +9,8 @@ export const LOCAL_TERMINAL_SESSION_PREFIX = "local:";
 // most the core reports.
 export const LOCAL_TERMINAL_LIST_MAX = 1_000;
 const MAX_INPUT_CHARS = 65_536;
-const MAX_ACK_COUNT = 4_096;
+/** The most output events one acknowledgement may cover; larger batches are split. */
+export const LOCAL_TERMINAL_MAX_ACK_COUNT = 4_096;
 const BYTE_STRING = /^[\u0000-\u00ff]*$/;
 export const LOCAL_TERMINAL_MAX_OUTPUT_CHARS = 262_144;
 
@@ -71,7 +72,7 @@ export const LOCAL_TERMINAL_INVOKE = {
   "local-terminal:resize": { request: z.object({ attachId: AttachIdSchema, ...Size }).strict(), response: Ok },
   // Output the window has taken, so the trusted core can let more through.
   "local-terminal:ack": {
-    request: z.object({ attachId: AttachIdSchema, count: z.number().int().min(1).max(MAX_ACK_COUNT) }).strict(),
+    request: z.object({ attachId: AttachIdSchema, count: z.number().int().min(1).max(LOCAL_TERMINAL_MAX_ACK_COUNT) }).strict(),
     response: Ok,
   },
   "local-terminal:detach": { request: z.object({ attachId: AttachIdSchema }).strict(), response: Ok },

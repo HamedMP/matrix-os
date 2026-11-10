@@ -5,12 +5,13 @@
 import { invoke, onEvent } from "../../lib/operator";
 import type { ShellSocketEvents } from "../../lib/shell-socket";
 import type { SocketControl } from "../terminal/attach-manager";
-import { LOCAL_TERMINAL_SESSION_PREFIX } from "../../../../shared/local-terminals";
+import { LOCAL_TERMINAL_MAX_ACK_COUNT, LOCAL_TERMINAL_SESSION_PREFIX } from "../../../../shared/local-terminals";
 
 const INPUT_CHUNK_CHARS = 32_768;
 // Output can reach the window before the attach call returns its id (the
 // history replay does). It is held, bounded, until the id is known.
 const MAX_EARLY_EVENTS = 256;
+const MAX_EARLY_ATTACHMENTS = 16;
 const DEFAULT_SIZE = { cols: 100, rows: 30 };
 
 /** The end of the next input chunk, never between the halves of one character. */
@@ -35,34 +36,48 @@ export function createLocalTerminalSocket(sessionName: string, events: ShellSock
   let released = false;
   let unsubscribe: Array<() => void> = [];
   let early: Array<{ attachId: number; data: string }> = [];
+  // Early output that did not fit the buffer, per attachment. It is not shown,
+  // but its credit must still go back or the terminal would stall. At most a
+  // few attachments can be starting at once.
+  const earlyDropped = new Map<number, number>();
   let unacknowledged = 0;
   let ackScheduled = false;
 
   // Tells the trusted core how much output was taken, in one call per burst.
   // The core holds back the program's output until it hears this.
-  const acknowledge = () => {
-    unacknowledged += 1;
+  const acknowledge = (events_ = 1) => {
+    unacknowledged += events_;
     if (ackScheduled) return;
     ackScheduled = true;
     queueMicrotask(() => {
       ackScheduled = false;
-      const count = unacknowledged;
+      let remaining = unacknowledged;
       unacknowledged = 0;
-      if (attachId === null || released || count === 0) return;
-      void invoke("local-terminal:ack", { attachId, count }).catch((error: unknown) => warn("ack", error));
+      if (attachId === null || released) return;
+      // A hidden window draws in large slices, so one burst can cover more
+      // events than a single acknowledgement may carry.
+      while (remaining > 0) {
+        const count = Math.min(remaining, LOCAL_TERMINAL_MAX_ACK_COUNT);
+        remaining -= count;
+        void invoke("local-terminal:ack", { attachId, count }).catch((error: unknown) => warn("ack", error));
+      }
     });
   };
 
   // Credit goes back once the view has drawn the output, not when it was
   // merely handed over: a program that prints faster than the screen can
   // draw is slowed down instead of filling the window's memory.
+  // A window nobody is looking at must not slow the program down: browsers
+  // throttle hidden pages, so there the output is acknowledged on arrival.
   const deliver = (data: string) => {
     let done = false;
-    events.onOutput(data, ++seq, () => {
+    const drawn = () => {
       if (done) return;
       done = true;
       acknowledge();
-    });
+    };
+    events.onOutput(data, ++seq, drawn);
+    if (document.visibilityState === "hidden") drawn();
   };
 
   const release = () => {
@@ -71,6 +86,7 @@ export function createLocalTerminalSocket(sessionName: string, events: ShellSock
     for (const stop of unsubscribe) stop();
     unsubscribe = [];
     early = [];
+    earlyDropped.clear();
     if (attachId !== null) {
       const current = attachId;
       attachId = null;
@@ -107,7 +123,12 @@ export function createLocalTerminalSocket(sessionName: string, events: ShellSock
       unsubscribe = [
         onEvent("local-terminal:output", (event) => {
           if (event.attachId === attachId) deliver(event.data);
-          else if (attachId === null && !released && early.length < MAX_EARLY_EVENTS) early.push(event);
+          else if (attachId === null && !released) {
+            if (early.length < MAX_EARLY_EVENTS) early.push(event);
+            else if (earlyDropped.size < MAX_EARLY_ATTACHMENTS || earlyDropped.has(event.attachId)) {
+              earlyDropped.set(event.attachId, (earlyDropped.get(event.attachId) ?? 0) + 1);
+            }
+          }
         }),
         onEvent("local-terminal:closed", (event) => {
           if (event.attachId !== attachId) return;
@@ -129,6 +150,9 @@ export function createLocalTerminalSocket(sessionName: string, events: ShellSock
           const held = early;
           early = [];
           for (const event of held) if (event.attachId === result.attachId) deliver(event.data);
+          const dropped = earlyDropped.get(result.attachId) ?? 0;
+          earlyDropped.clear();
+          if (dropped > 0) acknowledge(dropped);
         })
         .catch((error: unknown) => { warn("attach", error); if (!released) { events.onState("ended"); release(); } });
     },

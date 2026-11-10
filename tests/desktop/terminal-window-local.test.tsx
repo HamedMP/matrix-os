@@ -296,6 +296,45 @@ describe("local terminal socket", () => {
     await waitFor(() => expect(acks()).toEqual([["local-terminal:ack", { attachId: 7, count: 1 }]]));
   });
 
+  it("splits a very large burst of acknowledgements instead of losing it", async () => {
+    const operator = installOperator({ "local-terminal:attach": () => ({ ok: true, attachId: 7 }), "local-terminal:ack": () => ({ ok: true }) });
+    const handlers = events();
+    createLocalTerminalSocket("local:t1", handlers).connect();
+    await waitFor(() => expect(handlers.onState).toHaveBeenCalledWith("attached"));
+    // A hidden window draws thousands of queued chunks in one slice.
+    for (let index = 0; index < 5_000; index += 1) operator.emit("local-terminal:output", { attachId: 7, data: "x" });
+    const acks = () => operator.invoke.mock.calls.filter(([channel]) => channel === "local-terminal:ack").map(([, payload]) => (payload as { count: number }).count);
+    await waitFor(() => expect(acks().reduce((sum, count) => sum + count, 0)).toBe(5_000));
+    expect(Math.max(...acks())).toBeLessThanOrEqual(4_096);
+  });
+
+  it("acknowledges output on arrival while the window is hidden, so a background program is not slowed", async () => {
+    const operator = installOperator({ "local-terminal:attach": () => ({ ok: true, attachId: 7 }), "local-terminal:ack": () => ({ ok: true }) });
+    // The view never reports drawing: a throttled, hidden page.
+    const handlers = { ...events(), onOutput: vi.fn() };
+    const visibility = vi.spyOn(document, "visibilityState", "get").mockReturnValue("hidden");
+    createLocalTerminalSocket("local:t1", handlers).connect();
+    await waitFor(() => expect(handlers.onState).toHaveBeenCalledWith("attached"));
+    operator.emit("local-terminal:output", { attachId: 7, data: "build output" });
+    await waitFor(() => expect(operator.invoke).toHaveBeenCalledWith("local-terminal:ack", { attachId: 7, count: 1 }));
+    expect(handlers.onOutput).toHaveBeenCalledTimes(1);
+    visibility.mockRestore();
+  });
+
+  it("returns credit for early output it had no room to keep", async () => {
+    let resolveAttach!: (value: unknown) => void;
+    const operator = installOperator({ "local-terminal:attach": () => new Promise((resolve) => { resolveAttach = resolve; }),
+      "local-terminal:ack": () => ({ ok: true }) });
+    const handlers = events();
+    createLocalTerminalSocket("local:t1", handlers).connect();
+    for (let index = 0; index < 300; index += 1) operator.emit("local-terminal:output", { attachId: 6, data: "h" });
+    resolveAttach({ ok: true, attachId: 6 });
+    const acked = () => operator.invoke.mock.calls.filter(([channel]) => channel === "local-terminal:ack")
+      .reduce((sum, [, payload]) => sum + (payload as { count: number }).count, 0);
+    await waitFor(() => expect(acked()).toBe(300));
+    expect(handlers.onOutput).toHaveBeenCalledTimes(256);
+  });
+
   it("never cuts a pasted character in half when splitting long input", async () => {
     const emoji = "\u{1F600}";
     const text = `${"a".repeat(32_767)}${emoji}${"b".repeat(10)}`;
