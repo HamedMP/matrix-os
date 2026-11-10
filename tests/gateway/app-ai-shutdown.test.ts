@@ -22,7 +22,10 @@ async function shutdownFixture(appAiRuntime: { close(): Promise<void> }) {
     supervisedBrowserRuntime: service("browser approvals"),
     managedFeatureRestart: service("managed feature restart"),
     githubDeveloperSetup: service("GitHub developer setup"),
-    jevInboxRuntime: null, chatDriveContext: service("drive"), matrixMcpCapabilities: service("mcp"),
+    jevInboxRuntime: null,
+    openMausBotGateway: { close: vi.fn(() => { calls.push("OpenMausBot gateway.close"); }) },
+    hostedBotsRuntime: service("Hosted Bots"),
+    chatDriveContext: service("drive"), matrixMcpCapabilities: service("mcp"),
     workspaceStartupRecoveryController: service("recovery"), terminalPasteAssetCleanup: service("paste"),
     chatIdleReaper: null, chatAttachmentCleanup: service("attachments"),
     hookRunner: { fireVoidHook: vi.fn(async () => undefined) }, pluginRegistry: { getServices: () => [] },
@@ -71,7 +74,10 @@ it("continues the actual gateway shutdown after app AI cleanup rejects", async (
   ]));
   expect(shutdown.calls.indexOf("browser approvals.close")).toBeLessThan(shutdown.calls.indexOf("platform database.destroy"));
   expect(shutdown.calls.at(-1)).toBe("HTTP.close");
-  expect(shutdown.calls.slice(0, 2)).toEqual(["managed feature restart.close", "GitHub developer setup.close"]);
+  expect(shutdown.calls.slice(0, 4)).toEqual([
+    "managed feature restart.close", "GitHub developer setup.close",
+    "OpenMausBot gateway.close", "Hosted Bots.close",
+  ]);
 });
 
 it("continues shutdown while retaining the real Pi writer fence after forced worker termination", async () => {
