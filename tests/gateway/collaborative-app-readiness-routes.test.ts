@@ -79,7 +79,7 @@ describe("collaborative app readiness routes", () => {
   afterEach(() => vi.unstubAllEnvs());
 
   it("returns only the owner current exact-build projection with private no-store caching", async () => {
-    const { routes } = setup();
+    const { routes, dependencies } = setup();
     const response = await routes.request(`/api/collaboration/apps/${appId}/readiness`, {
       headers: { "x-test-principal": "user_owner" },
     });
@@ -87,6 +87,9 @@ describe("collaborative app readiness routes", () => {
     expect(response.headers.get("cache-control")).toBe("private, no-store");
     const body = await response.json();
     expect(body).toMatchObject({ readinessId: blocked.id, status: "blocked", revision: "2", build });
+    expect(dependencies.repository.getCurrent).toHaveBeenCalledWith({
+      ownerId: "user_owner", catalogId: build.catalogId, buildId: build.buildId,
+    });
     expect(body).not.toHaveProperty("artifactRef");
     expect(body).not.toHaveProperty("ownerId");
 

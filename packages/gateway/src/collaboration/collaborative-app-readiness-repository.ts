@@ -236,12 +236,15 @@ export class CollaborativeAppReadinessRepository {
     return row ? toRecord(row) : null;
   }
 
-  async getCurrent(input: { ownerId: string; catalogId: string }): Promise<CollaborativeAppReadinessRecord | null> {
+  async getCurrent(input: { ownerId: string; catalogId: string; buildId: string }): Promise<CollaborativeAppReadinessRecord | null> {
+    const build = DigestSchema.safeParse(input.buildId);
+    if (!build.success) throw new CollaborativeAppReadinessRepositoryError("invalid");
     const row = await this.db.selectFrom("collaboration_app_readiness")
       .innerJoin("collaboration_resource_catalog", "collaboration_resource_catalog.id", "collaboration_app_readiness.catalog_id")
       .selectAll("collaboration_app_readiness")
       .where("collaboration_app_readiness.owner_id", "=", input.ownerId)
       .where("collaboration_app_readiness.catalog_id", "=", input.catalogId)
+      .where("collaboration_app_readiness.build_id", "=", build.data)
       .where("collaboration_resource_catalog.deleted_at", "is", null)
       .orderBy("collaboration_app_readiness.updated_at", "desc")
       .limit(1)

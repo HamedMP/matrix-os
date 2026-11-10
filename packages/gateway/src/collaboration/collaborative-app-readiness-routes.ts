@@ -133,7 +133,9 @@ export function registerCollaborativeAppReadinessRoutes(
       if (!readLimiter.check(ownerId)) return context.json({ error: "Too many readiness reads", code: "rate_limited" }, 429);
       const current = await dependencies.resolveCurrentBuild(ownerId, appId, { ensureCatalog: false });
       if (!current) throw new ReadinessRouteError("not_found");
-      const record = await dependencies.repository.getCurrent({ ownerId, catalogId: current.build.catalogId });
+      const record = await dependencies.repository.getCurrent({
+        ownerId, catalogId: current.build.catalogId, buildId: current.build.buildId,
+      });
       return context.json(record && record.build.buildId === current.build.buildId ? project(record) : null);
     } catch (error: unknown) {
       return failure(context, error);

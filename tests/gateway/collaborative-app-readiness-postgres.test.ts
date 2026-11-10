@@ -80,6 +80,29 @@ describe("collaborative app readiness persistence", () => {
     expect(await fixture.db.selectFrom("collaboration_app_readiness").select("id").execute()).toHaveLength(1);
   });
 
+  it("returns the current build result after an older build is invalidated later", async () => {
+    await repository.createOrGet({ ownerId: "user_owner", build,
+      artifactRef: "objects/old-build", verifierVersion: "collaborative-app-v1" });
+    const currentBuild = { ...build, buildId: "f".repeat(64) };
+    const currentId = "60000000-0000-4000-8000-000000000002";
+    const current = new CollaborativeAppReadinessRepository(fixture.db, {
+      now: () => new Date("2026-11-05T10:01:00.000Z"), createId: () => currentId,
+    });
+    await current.createOrGet({ ownerId: "user_owner", build: currentBuild,
+      artifactRef: "objects/current-build", verifierVersion: "collaborative-app-v1" });
+    await current.transition({ id: currentId, ownerId: "user_owner", expectedRevision: 1,
+      status: "ready", gateResults: [{ code: "declaration", status: "passed" }],
+      verifiedAt: new Date("2026-11-05T10:01:00.000Z") });
+    const late = new CollaborativeAppReadinessRepository(fixture.db, {
+      now: () => new Date("2026-11-05T10:02:00.000Z"),
+    });
+    await late.invalidateDriftedBuilds({ ownerId: "user_owner", catalogId,
+      currentBuildId: currentBuild.buildId });
+
+    expect(await current.getCurrent({ ownerId: "user_owner", catalogId,
+      buildId: currentBuild.buildId })).toMatchObject({ id: currentId, status: "ready" });
+  });
+
   it("enforces CAS transitions and ready/stale state constraints", async () => {
     await repository.createOrGet({
       ownerId: "user_owner",
@@ -176,9 +199,9 @@ describe("collaborative app readiness persistence", () => {
       artifactRef: "objects/team-tracker-build",
       verifierVersion: "collaborative-app-v1",
     });
-    expect(await repository.getCurrent({ ownerId: "user_owner", catalogId })).not.toBeNull();
+    expect(await repository.getCurrent({ ownerId: "user_owner", catalogId, buildId: build.buildId })).not.toBeNull();
     await catalog.remove({ id: catalogId, expectedRevision: 0 });
-    expect(await repository.getCurrent({ ownerId: "user_owner", catalogId })).toBeNull();
+    expect(await repository.getCurrent({ ownerId: "user_owner", catalogId, buildId: build.buildId })).toBeNull();
     expect(await repository.get({ id: readinessId, ownerId: "user_owner" })).toBeNull();
   });
 
