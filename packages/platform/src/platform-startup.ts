@@ -4,6 +4,7 @@ import { createAccountDeletionMutationGuard } from './account-deletion/integrati
 import { createConfiguredAccountDeletionRuntime } from './account-deletion/wiring.js';
 import type { AccountDeletionAdapterOptions } from './account-deletion/adapters.js';
 import { serve } from '@hono/node-server';
+import { configureEdgeRequestDeadlines } from '@matrix-os/contracts/http-request-deadlines';
 import {
   createPostHogErrorTracker,
   installPostHogProcessErrorTracking,
@@ -1148,6 +1149,7 @@ async function startPlatformServerWithCleanup(
   const server = serve({ fetch: app.fetch, hostname: process.env.MATRIX_BIND_HOST, port }, () => {
     console.log(`Platform listening on :${port}`);
   });
+  configureEdgeRequestDeadlines(server);
   if (backgroundWorkersEnabled) { whatsappRuntime?.start(); previewPairRuntime?.start(); }
 
   let shuttingDown = false;

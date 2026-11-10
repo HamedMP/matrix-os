@@ -16,6 +16,7 @@ import { createChatDriveProjectRoutes } from "./chat/drive-projects.js";
 import { createProductionChatDriveContext } from "./chat/drive-context-production.js";
 import { createOwnerAnthropicKeyPreflight } from "./ai-providers/owner-key-preflight.js";
 import { serve } from "@hono/node-server";
+import { configureEdgeRequestDeadlines } from "@matrix-os/contracts/http-request-deadlines";
 import { createNodeWebSocket } from "@hono/node-ws";
 import {
   backupModule,
@@ -1889,6 +1890,7 @@ export async function createGateway(config: GatewayConfig) {
   loadedPlugins = await startGatewayPlugins({ app, homePath, pluginsConfig, pluginRegistry, hookRunner, port });
 
   const server = serve({ fetch: app.fetch, hostname: process.env.MATRIX_BIND_HOST, port });
+  configureEdgeRequestDeadlines(server);
   injectWebSocket(server);
   const chatAttachmentCleanup = createChatAttachmentCleanupLifecycle({
     homePath,
