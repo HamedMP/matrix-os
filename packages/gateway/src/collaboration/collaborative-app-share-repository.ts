@@ -477,7 +477,7 @@ export class CollaborativeAppShareRepository {
     expectedBindingRevision: number;
     clientRequestId: string;
     payloadHash: string;
-  }): Promise<AtomicCollaborativeAppShareRecord> {
+  }): Promise<AtomicCollaborativeAppShareRecord & { didStop: boolean }> {
     if (!z.uuid().safeParse(input.scopeId).success || !OwnerIdSchema.safeParse(input.ownerId).success
       || !z.uuid().safeParse(input.clientRequestId).success || !DigestSchema.safeParse(input.payloadHash).success
       || !validRevision(input.expectedScopeRevision) || input.expectedScopeRevision < 1
@@ -501,7 +501,7 @@ export class CollaborativeAppShareRepository {
           }
           const replay = await trx.selectFrom("collaboration_app_bindings").selectAll()
             .where("scope_id", "=", scope.id).executeTakeFirstOrThrow();
-          return toShareRecord(scope, replay);
+          return { ...toShareRecord(scope, replay), didStop: false };
         }
         if (Number(scope.revision) !== input.expectedScopeRevision || scope.lifecycle !== "shared") {
           throw new CollaborativeAppShareRepositoryError("conflict");
@@ -549,7 +549,7 @@ export class CollaborativeAppShareRepository {
           created_at: timestamp,
           expires_at: new Date(timestamp.getTime() + OPERATION_RETENTION_MS),
         }).execute();
-        return toShareRecord(updatedScope, updatedBinding);
+        return { ...toShareRecord(updatedScope, updatedBinding), didStop: true };
       });
     } catch (error: unknown) {
       throw mapWriteError(error);

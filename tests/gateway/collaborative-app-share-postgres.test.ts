@@ -176,8 +176,8 @@ describe("collaborative app atomic share creation", () => {
       payloadHash: "9".repeat(64),
     };
     const stopped = await repository.stopAtomic(stopInput);
-    expect(stopped).toMatchObject({ scopeRevision: 2, authEpoch: 2, binding: { state: "stopped", revision: 2 } });
-    expect(await repository.stopAtomic(stopInput)).toEqual(stopped);
+    expect(stopped).toMatchObject({ scopeRevision: 2, authEpoch: 2, didStop: true, binding: { state: "stopped", revision: 2 } });
+    expect(await repository.stopAtomic(stopInput)).toMatchObject({ didStop: false, binding: { state: "stopped" } });
     await expect(repository.stopAtomic({ ...stopInput, payloadHash: "8".repeat(64) }))
       .rejects.toMatchObject({ code: "conflict" });
     expect(await fixture.db.selectFrom("collaboration_scopes").select(["lifecycle", "revision", "auth_epoch"])
@@ -208,6 +208,15 @@ describe("collaborative app atomic share creation", () => {
       scopeRevision: 3,
       authEpoch: 3,
       binding: { state: "active", revision: 3, stoppedAt: null },
+    });
+    const replayedStop = await repository.stopAtomic({
+      scopeId, ownerId: input.ownerId, expectedScopeRevision: 1, expectedBindingRevision: 1,
+      clientRequestId: "80000000-0000-4000-8000-000000000002", payloadHash: "9".repeat(64),
+    });
+    expect(replayedStop).toMatchObject({
+      didStop: false,
+      scopeRevision: 3,
+      binding: { state: "active", revision: 3 },
     });
   });
 });

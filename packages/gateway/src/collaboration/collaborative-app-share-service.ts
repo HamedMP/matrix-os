@@ -267,7 +267,7 @@ export class CollaborativeAppShareService {
       clientRequestId: input.clientRequestId,
       payloadHash,
     });
-    if (this.options.onStopped) {
+    if (stopped.didStop && this.options.onStopped) {
       try {
         await this.options.onStopped(stopped.scopeId);
       } catch (error: unknown) {

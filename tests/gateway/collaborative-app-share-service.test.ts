@@ -73,6 +73,7 @@ function setup(overrides: {
     createAtomic: vi.fn(async () => storedShare),
     stopAtomic: vi.fn(async () => ({
       ...storedShare,
+      didStop: true,
       scopeRevision: 2,
       updatedAt: (overrides.now ?? NOW).toISOString(),
       binding: { ...binding, state: "stopped" as const, revision: 2,
@@ -216,6 +217,23 @@ describe("CollaborativeAppShareService", () => {
       payloadHash: expect.stringMatching(/^[a-f0-9]{64}$/),
     }));
     expect(onStopped).toHaveBeenCalledWith(scopeId);
+  });
+
+  it("does not revoke current sessions when an old stop request replays after sharing restarts", async () => {
+    const { service, shares, onStopped } = setup({ existing: storedShare });
+    shares.stopAtomic.mockResolvedValueOnce({
+      ...storedShare,
+      scopeRevision: 3,
+      authEpoch: 3,
+      didStop: false,
+      binding: { ...binding, revision: 3 },
+    });
+    await expect(service.stop(ownerId, build.appId, {
+      clientRequestId: "80000000-0000-4000-8000-000000000002",
+      expectedShareRevision: "1",
+      expectedBindingRevision: "1",
+    })).resolves.toMatchObject({ scopeId, state: "active", shareRevision: "3" });
+    expect(onStopped).not.toHaveBeenCalled();
   });
 
   it("allows a stopped share to preflight again without treating it as active", async () => {
