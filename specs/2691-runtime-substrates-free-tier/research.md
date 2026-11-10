@@ -104,5 +104,5 @@ Decisions marked **Decided** rest on code read at the baseline commit. Decisions
 | S2 Chat without host systemd | In progress | |
 | S3 App build in the sandbox | Not run | |
 | S4 Hydrate and flush | Not run | |
-| S5 Shared Postgres | In progress | |
+| S5 Shared Postgres | Partial pass 2026-11-10 (funded chat turn not exercised) | Boots and migrates on a non-superuser role with `CONNECTION LIMIT 5`; all advisory locks are transaction-scoped. Owner pool must drop from 10 to 3. No pooler: PgBouncer rejects connection-level timeout settings. Fencing needs password rotation plus session termination. `/health` stays ok after losing the database. See `spikes/s5-shared-postgres.md` |
 | S6 Restore onto a VPS | Not run | |
