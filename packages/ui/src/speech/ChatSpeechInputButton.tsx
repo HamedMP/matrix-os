@@ -26,7 +26,7 @@ export function ChatSpeechQuotaStatus({ speech }: {
 }) {
   if (!speech.previewQuota) return null;
   return (
-    <p role="status" className="min-w-0 break-words px-[15px] pb-1 text-xs leading-4" style={{ color: "var(--text-tertiary)" }}>
+    <p role="status" className="min-w-0 break-words pb-1 text-xs leading-4" style={{ color: "var(--text-tertiary)", paddingInline: "1rem" }}>
       {platformSpeechPreviewQuotaLabel(speech.previewQuota)}
       {speech.capabilitiesStale ? " Last known quota; refresh required." : null}
     </p>
