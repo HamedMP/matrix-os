@@ -33,7 +33,7 @@ it("uses the authenticated scoped owner route for native reads and revisioned wr
     { url: endpoint, method: "POST", token: "Bearer host-only-token", body: { action: { action: "find", table: "tasks", app: appId } } },
     { url: endpoint, method: "GET", token: "Bearer host-only-token", body: null },
     { url: endpoint, method: "POST", token: "Bearer host-only-token", body: { action: { action: "insert", table: "tasks", data: { title: "New" }, app: appId },
-      expectedRevision: "4", clientRequestId: "60000000-0000-4000-8000-000000000001" } },
+      expectedRevision: "4", clientRequestId: "60000000-0000-4000-8000-000000000001", scopeId: participant.scopeId } },
   ]);
   expect(legacyRequest).not.toHaveBeenCalled();
 });

@@ -5,6 +5,7 @@ import {
   CollaborativeAppParticipantSchema,
   CollaborativeAppQueryResponseSchema,
   CollaborativeAppShareSchema,
+  CollaborationIdSchema,
 } from "@matrix-os/contracts";
 import type { Context, Hono } from "hono";
 import { bodyLimit } from "hono/body-limit";
@@ -16,6 +17,7 @@ import type { CollaborationRouteOptions } from "./route-support.js";
 import { handle } from "./route-support.js";
 
 const AppIdSchema = z.string().min(1).max(256).regex(/^[A-Za-z0-9_-]+$/);
+const OwnerMutationSchema = CollaborationAppActionRequestSchema.extend({ scopeId: CollaborationIdSchema });
 
 /** Electron's owner-only bearer path to the same scoped app adapter used by members. */
 export function registerNativeOwnerAppRoutes(routes: Hono, options: CollaborationRouteOptions): void {
@@ -77,7 +79,10 @@ export function registerNativeOwnerAppRoutes(routes: Hono, options: Collaboratio
       const response = await apps.query(current.authority, current.appId, BridgeQueryBodySchema.parse(view.data.action));
       return context.json(CollaborativeAppQueryResponseSchema.parse({ result: response.result, revision: String(response.revision) }));
     }
-    const mutation = CollaborationAppActionRequestSchema.parse(body);
+    const mutation = OwnerMutationSchema.parse(body);
+    if (mutation.scopeId !== current.share.scopeId) {
+      throw new CollaborationAuthorizationError("unavailable", "Shared app is unavailable");
+    }
     const authorized = await options.authority.authorize({ scopeId: current.share.scopeId, actorId: current.share.owner.actorId,
       action: "mutate_resource" });
     const result = await apps.mutate(authorized, current.appId, {

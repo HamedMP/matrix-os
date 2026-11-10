@@ -220,7 +220,7 @@ export function createNativeAppCollaborationRequester(options: NativeAppQueryReq
         : { result, revision: "0", replayed: false };
     }
     const body = request.kind === "query" ? { action } : {
-      action, clientRequestId: request.clientRequestId, expectedRevision: request.expectedRevision,
+      action, clientRequestId: request.clientRequestId, expectedRevision: request.expectedRevision, scopeId: request.scopeId,
     };
     const response = await fetchFn(endpoint, { method: "POST", redirect: "error",
       headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },

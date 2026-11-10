@@ -50,7 +50,7 @@ it("routes native owner reads and mutations through the same scoped adapter", as
   expect(read.status).toBe(200);
   expect(await read.json()).toEqual({ result: [{ id: "task-1" }], revision: "4" });
   const write = await routes.request(path, { method: "POST", headers,
-    body: JSON.stringify({ clientRequestId: "80000000-0000-4000-8000-000000000001", expectedRevision: "4",
+    body: JSON.stringify({ clientRequestId: "80000000-0000-4000-8000-000000000001", expectedRevision: "4", scopeId,
       action: { action: "insert", table: "tasks", data: { title: "New" }, app: appId } }) });
   expect(write.status).toBe(200);
   expect(await write.json()).toEqual({ result: { ok: true }, revision: 5, replayed: false });
@@ -89,6 +89,18 @@ it("rejects unchecked sharing instead of advertising an unshared legacy app", as
       action: { action: "insert", table: "tasks", data: { title: "New" }, app: appId } }) });
   expect(write.status).toBe(503);
   expect(apps.query).not.toHaveBeenCalled();
+  expect(apps.mutate).not.toHaveBeenCalled();
+});
+
+it("rejects a delayed write bound to an earlier share scope", async () => {
+  const { routes, apps } = setup();
+  const response = await routes.request(`/api/collaboration/apps/${appId}/owner-bridge`, {
+    method: "POST", headers: { "x-test-owner": "user_owner", "content-type": "application/json" },
+    body: JSON.stringify({ clientRequestId: "80000000-0000-4000-8000-000000000001", expectedRevision: "4",
+      scopeId: "90000000-0000-4000-8000-000000000001",
+      action: { action: "insert", table: "tasks", data: { title: "Old" }, app: appId } }),
+  });
+  expect(response.status).toBe(503);
   expect(apps.mutate).not.toHaveBeenCalled();
 });
 
