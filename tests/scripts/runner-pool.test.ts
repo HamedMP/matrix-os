@@ -103,6 +103,36 @@ describe("runner pool", () => {
     expect(token).toContain('{"repositories":["matrix-os"],"permissions":{"administration":"write","actions_variables":"write"}}');
   });
 
+  // Process tree: outer Runner.Listener (stands in for the CI runner hosting this suite) -> plain
+  // bash -> inner Runner.Worker -> hook. A marker written after the hook returns stands in for
+  // the workflow's next step.
+  function runHook(event: string, payload: unknown, options: { brokenPs?: boolean } = {}) {
+    const dir = mkdtempSync(join(tmpdir(), "runner-pool-hook-"));
+    dirs.push(dir);
+    writeFileSync(join(dir, "event.json"), JSON.stringify(payload));
+    const bash = spawnSync("bash", ["-c", "command -v bash"], { encoding: "utf8" }).stdout.trim();
+    for (const name of ["Runner.Worker", "Runner.Listener", "host-shell"]) {
+      copyFileSync(bash, join(dir, name));
+      chmodSync(join(dir, name), 0o755);
+    }
+    let path = process.env.PATH ?? "";
+    if (options.brokenPs) {
+      spawnSync("mkdir", [join(dir, "bin")]);
+      writeFileSync(join(dir, "bin", "ps"), "#!/usr/bin/env bash\nexit 1\n");
+      chmodSync(join(dir, "bin", "ps"), 0o755);
+      path = `${join(dir, "bin")}:${path}`;
+    }
+    const hook = resolve(import.meta.dirname, "../../scripts/ci/runner-pool/job-started.sh");
+    const inner = `"${dir}/Runner.Worker" -c 'bash "${hook}"; echo $? > "${dir}/next-step"; :'`;
+    const host = `"${dir}/host-shell" -c '${inner.replaceAll("'", `'\\''`)}; echo $? > "${dir}/inner-status"; :'`;
+    const result = spawnSync(join(dir, "Runner.Listener"), ["-c", `${host}; echo survived > "${dir}/outer"; :`], {
+      encoding: "utf8",
+      env: { PATH: path, GITHUB_EVENT_NAME: event, GITHUB_EVENT_PATH: join(dir, "event.json"), GITHUB_REPOSITORY: "HamedMP/matrix-os" },
+    });
+    const read = (name: string) => (existsSync(join(dir, name)) ? readFileSync(join(dir, name), "utf8").trim() : undefined);
+    return { result, outer: read("outer"), innerStatus: read("inner-status"), nextStep: read("next-step") };
+  }
+
   it.each([
     ["a main push", "push", {}, 0],
     ["a merge-queue run", "merge_group", {}, 0],
@@ -112,35 +142,26 @@ describe("runner pool", () => {
     ["a manual dispatch", "workflow_dispatch", {}, 1],
     ["a privileged fork event", "pull_request_target", { pull_request: { head: { repo: { full_name: "HamedMP/matrix-os" } } } }, 1],
   ])("job-started hook decides %s", (_, event, payload, status) => {
-    const dir = mkdtempSync(join(tmpdir(), "runner-pool-hook-"));
-    dirs.push(dir);
-    writeFileSync(join(dir, "event.json"), JSON.stringify(payload));
-    // Run the hook under a process named like the runner's worker, as the runner does. A marker
-    // written after the hook returns stands in for the workflow's next step.
-    // Process tree: outer Runner.Listener (stands in for the CI runner hosting this suite) ->
-    // plain bash -> inner Runner.Worker -> hook. Only the inner worker may be killed.
-    const bash = spawnSync("bash", ["-c", "command -v bash"], { encoding: "utf8" }).stdout.trim();
-    for (const name of ["Runner.Worker", "Runner.Listener", "host-shell"]) {
-      copyFileSync(bash, join(dir, name));
-      chmodSync(join(dir, name), 0o755);
-    }
-    const hook = resolve(import.meta.dirname, "../../scripts/ci/runner-pool/job-started.sh");
-    const inner = `"${dir}/Runner.Worker" -c 'bash "${hook}"; echo $? > "${dir}/next-step"; :'`;
-    const host = `"${dir}/host-shell" -c '${inner.replaceAll("'", `'\\''`)}; echo $? > "${dir}/inner-status"; :'`;
-    const result = spawnSync(join(dir, "Runner.Listener"), ["-c", `${host}; echo survived > "${dir}/outer"; :`], {
-      encoding: "utf8",
-      env: { PATH: process.env.PATH, GITHUB_EVENT_NAME: event, GITHUB_EVENT_PATH: join(dir, "event.json"), GITHUB_REPOSITORY: "HamedMP/matrix-os" },
-    });
+    const { result, outer, innerStatus, nextStep } = runHook(event, payload);
     // The hosting runner always survives.
     expect(result.status, result.stderr).toBe(0);
-    expect(readFileSync(join(dir, "outer"), "utf8").trim()).toBe("survived");
+    expect(outer).toBe("survived");
     if (status === 0) {
-      expect(readFileSync(join(dir, "next-step"), "utf8").trim()).toBe("0");
+      expect(nextStep).toBe("0");
     } else {
       // Rejection kills the inner runner (128 + SIGKILL), so an `if: always()` step never runs.
-      expect(readFileSync(join(dir, "inner-status"), "utf8").trim()).toBe("137");
-      expect(existsSync(join(dir, "next-step"))).toBe(false);
+      expect(innerStatus).toBe("137");
+      expect(nextStep).toBeUndefined();
     }
+  });
+
+  it("still kills the rejected job's runner when the process table cannot be read", () => {
+    const fork = { pull_request: { head: { repo: { full_name: "someone/matrix-os" } } } };
+    const { result, outer, innerStatus, nextStep } = runHook("pull_request", fork, { brokenPs: true });
+    expect(result.status, result.stderr).toBe(0);
+    expect(outer).toBe("survived");
+    expect(innerStatus).toBe("137");
+    expect(nextStep).toBeUndefined();
   });
 
   it("installs the job-started hook where a job cannot change it", () => {
