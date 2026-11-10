@@ -45,5 +45,11 @@ only a single-use JIT runner configuration. They run on the `matrix-ci-pool`
 network, whose firewall (`firewall.sh`, `matrix-ci-pool-firewall.service`)
 rejects new connections to the host and to private, link-local and multicast
 addresses; slots refuse to start without it. The App key and `pool.env` stay
-root-only on the host. Fork PRs never route here, and fork workflows require
-maintainer approval for every external contributor.
+root-only on the host, and the pool requests an installation token limited to
+this repository's Administration and Variables permissions.
+
+Fork source never runs here. `ci.yml` routes forks to hosted runners, but a
+fork PR can edit `ci.yml`, so the image enforces it: `job-started.sh` runs
+before every job and fails anything that is not a push, a merge-queue run or
+a same-repository PR. Slots share no traffic (`enable_icc=false`, no
+`NET_RAW`) and have IPv6 disabled.

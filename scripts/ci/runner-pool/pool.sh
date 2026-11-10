@@ -35,9 +35,13 @@ app_jwt() {
 refresh_token() {
   # Installation tokens last an hour; reuse one for 50 minutes.
   if [ -n "$TOKEN" ] && [ "$(date +%s)" -lt "$TOKEN_EXPIRES" ]; then return 0; fi
+  # Ask only for this repository and the two permissions the pool uses, whatever else the app holds.
+  local scope
+  scope=$(jq -nc --arg repo "${REPOSITORY#*/}" \
+    '{repositories: [$repo], permissions: {administration: "write", actions_variables: "write"}}')
   TOKEN=$(curl -fsS --max-time 30 -X POST \
     -H "Authorization: Bearer $(app_jwt)" -H "Accept: application/vnd.github+json" \
-    "$API/app/installations/${INSTALLATION_ID:?}/access_tokens" | jq -er .token) || { TOKEN=""; return 1; }
+    --data "$scope" "$API/app/installations/${INSTALLATION_ID:?}/access_tokens" | jq -er .token) || { TOKEN=""; return 1; }
   TOKEN_EXPIRES=$(( $(date +%s) + 3000 ))
 }
 
@@ -82,12 +86,14 @@ run_one_job() {
   refresh_token || return 1
   remove_offline_runners "$slot" || true
   jit=$(jit_config "$slot") && [ -n "$jit" ] || return 1
-  # Default capabilities keep in-container sudo for apt; no privileged mode, host mounts or Docker socket.
-  # The matrix-ci-pool network's firewall allows only public egress (firewall.sh).
+  # No privileged mode, host mounts or Docker socket. In-container sudo stays for apt, so
+  # no-new-privileges is not set; NET_RAW is dropped so a job cannot spoof ARP at other slots.
+  # The matrix-ci-pool network's firewall allows only public IPv4 egress (firewall.sh); IPv6 is off.
   timeout --kill-after=60 "$JOB_TIMEOUT_SECONDS" docker run --rm --name "$name" --network matrix-ci-pool \
     --cpuset-cpus "$(cpuset_for "$slot")" --memory "$SLOT_MEMORY" --memory-swap "$SLOT_MEMORY" \
-    --pids-limit 8192 --shm-size 2g --env "RUNNER_JIT=$jit" \
-    "$IMAGE" bash -c 'exec ./run.sh --jitconfig "$RUNNER_JIT"' || status=$?
+    --pids-limit 8192 --shm-size 2g --cap-drop NET_RAW --sysctl net.ipv6.conf.all.disable_ipv6=1 \
+    --env "RUNNER_JIT=$jit" \
+    "$IMAGE" bash -c 'jit=$RUNNER_JIT; unset RUNNER_JIT; exec ./run.sh --jitconfig "$jit"' || status=$?
   docker rm -f "$name" >/dev/null 2>&1 || true
   # A failed job still exits the runner with 0; non-zero means Docker, timeout or runner setup failed.
   return "$status"

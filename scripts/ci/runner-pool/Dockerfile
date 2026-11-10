@@ -19,5 +19,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
       fonts-ipafont-gothic fonts-wqy-zenhei fonts-tlwg-loma-otf fonts-freefont-ttf \
     && rg --version && jq --version
 
+# The host decides which source may run here; a workflow cannot remove or edit this hook.
+COPY --chown=root:root --chmod=0555 job-started.sh /opt/matrix-ci/job-started.sh
+ENV ACTIONS_RUNNER_HOOK_JOB_STARTED=/opt/matrix-ci/job-started.sh
+
 USER runner
 WORKDIR /home/runner

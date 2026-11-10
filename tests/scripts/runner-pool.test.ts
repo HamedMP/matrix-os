@@ -93,6 +93,34 @@ describe("runner pool", () => {
     for (const forbidden of ["--privileged", "docker.sock", "-v ", "--volume", "--network host"]) {
       expect(dockerRun).not.toContain(forbidden);
     }
+    expect(dockerRun).toContain("--cap-drop NET_RAW --sysctl net.ipv6.conf.all.disable_ipv6=1");
+    // The token request names one repository and only the permissions the pool uses.
+    const token = log.split("\n").find((line) => line.includes("access_tokens"));
+    expect(token).toContain('{"repositories":["matrix-os"],"permissions":{"administration":"write","actions_variables":"write"}}');
+  });
+
+  it.each([
+    ["a main push", "push", {}, 0],
+    ["a merge-queue run", "merge_group", {}, 0],
+    ["a same-repository PR", "pull_request", { pull_request: { head: { repo: { full_name: "HamedMP/matrix-os" } } } }, 0],
+    ["a fork PR", "pull_request", { pull_request: { head: { repo: { full_name: "someone/matrix-os" } } } }, 1],
+    ["a PR whose head repository was deleted", "pull_request", { pull_request: { head: { repo: null } } }, 1],
+    ["a manual dispatch", "workflow_dispatch", {}, 1],
+    ["a privileged fork event", "pull_request_target", { pull_request: { head: { repo: { full_name: "HamedMP/matrix-os" } } } }, 1],
+  ])("job-started hook decides %s", (_, event, payload, status) => {
+    const dir = mkdtempSync(join(tmpdir(), "runner-pool-hook-"));
+    dirs.push(dir);
+    writeFileSync(join(dir, "event.json"), JSON.stringify(payload));
+    const result = spawnSync("bash", [resolve(import.meta.dirname, "../../scripts/ci/runner-pool/job-started.sh")], {
+      encoding: "utf8",
+      env: { PATH: process.env.PATH, GITHUB_EVENT_NAME: event, GITHUB_EVENT_PATH: join(dir, "event.json"), GITHUB_REPOSITORY: "HamedMP/matrix-os" },
+    });
+    expect(result.status, result.stderr).toBe(status);
+  });
+
+  it("installs the job-started hook where a job cannot change it", () => {
+    expect(dockerfile).toContain("COPY --chown=root:root --chmod=0555 job-started.sh /opt/matrix-ci/job-started.sh");
+    expect(dockerfile).toContain("ENV ACTIONS_RUNNER_HOOK_JOB_STARTED=/opt/matrix-ci/job-started.sh");
   });
 
   it("reports API and Docker failures so the slot backs off", () => {
@@ -114,7 +142,9 @@ describe("runner pool", () => {
     }
     expect(firewall).toContain('iptables -I INPUT 1 -i "$bridge" -j REJECT');
     expect(readFileSync(join(dir, "matrix-ci-pool-slot@.service"), "utf8")).toMatch(/^Requires=.*matrix-ci-pool-firewall\.service$/m);
-    expect(readFileSync(join(dir, "install.sh"), "utf8")).toContain("com.docker.network.bridge.name=matrix-ci-pool0 matrix-ci-pool");
+    const install = readFileSync(join(dir, "install.sh"), "utf8");
+    expect(install).toContain("com.docker.network.bridge.name=matrix-ci-pool0");
+    expect(install).toContain("com.docker.network.bridge.enable_icc=false matrix-ci-pool");
   });
 
   it("pins the runner base image by digest", () => {

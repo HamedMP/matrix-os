@@ -37,8 +37,16 @@ fi
 
 docker build --pull -t "${IMAGE:-matrix-ci-runner:current}" "$source_dir"
 
+# Slots cannot reach each other (enable_icc=false). The firewall matches the bridge by name, so an
+# existing network with different options would run jobs unfiltered: refuse it.
+network_options='{{index .Options "com.docker.network.bridge.name"}} {{index .Options "com.docker.network.bridge.enable_icc"}}'
 docker network inspect matrix-ci-pool >/dev/null 2>&1 || docker network create --driver bridge \
-  --subnet 172.30.81.0/24 --opt com.docker.network.bridge.name=matrix-ci-pool0 matrix-ci-pool
+  --subnet 172.30.81.0/24 --opt com.docker.network.bridge.name=matrix-ci-pool0 \
+  --opt com.docker.network.bridge.enable_icc=false matrix-ci-pool
+if [ "$(docker network inspect -f "$network_options" matrix-ci-pool)" != "matrix-ci-pool0 false" ]; then
+  echo "Docker network matrix-ci-pool has unexpected options; remove it and rerun." >&2
+  exit 1
+fi
 
 systemctl daemon-reload
 systemctl enable matrix-ci-pool-firewall.service
