@@ -57,12 +57,16 @@ it("never sends an uncertain shared write through legacy storage after sharing s
   });
   const request = createNativeAppCollaborationRequester({ getGatewayOrigin: () => "https://gateway.test",
     getToken: () => "host-only-token", fetchFn: fetchFn as typeof fetch, legacyRequest });
-  const mutation = { kind: "mutate" as const, action: { action: "insert", table: "tasks", data: { title: "New" } },
-    expectedRevision: "4", clientRequestId: "60000000-0000-4000-8000-000000000001", scopeId: participant.scopeId };
-  await expect(request(appId, mutation)).rejects.toThrow();
+  const api = createNativeAppCollaboration((input) => request(appId, input), participant);
+  await expect(api.mutate({ action: "insert", table: "tasks", data: { title: "New" } }, "4"))
+    .rejects.toThrow("reply lost after commit");
   active = false;
-  await expect(request(appId, mutation)).rejects.toThrow("Collaboration unavailable");
+  await expect(api.retryMutation()).rejects.toMatchObject({ code: "forbidden" });
   expect(legacyRequest).not.toHaveBeenCalled();
+  await expect(api.retryMutation()).rejects.toThrow("Collaboration unavailable");
+  await expect(api.mutate({ action: "insert", table: "tasks", data: { title: "After stop" } }, "0"))
+    .resolves.toEqual({ result: { id: "duplicate" }, revision: "0", replayed: false });
+  expect(legacyRequest).toHaveBeenCalledTimes(1);
 });
 
 it("keeps owner reads and writes working after sharing stops when the app supplies its own identity", async () => {

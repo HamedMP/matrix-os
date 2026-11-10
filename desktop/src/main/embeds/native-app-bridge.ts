@@ -208,7 +208,7 @@ export function createNativeAppCollaborationRequester(options: NativeAppQueryReq
     const state = await getState();
     if (!isCurrent()) throw new Error("Collaboration unavailable");
     if (request.kind === "mutate" && request.scopeId !== (state.participant?.scopeId ?? null)) {
-      throw new Error("Collaboration unavailable");
+      throw new NativeAppCollaborationError("forbidden");
     }
     const action = { ...request.action, app: slug };
     if (!state.participant) {
