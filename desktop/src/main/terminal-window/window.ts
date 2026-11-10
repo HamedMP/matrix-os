@@ -1,6 +1,6 @@
 // Electron construction of the Terminal window. Kept thin: policy lives in
 // the controller and the sender policy.
-import { BrowserWindow, type Session } from "electron";
+import { BrowserWindow } from "electron";
 import type { FittedWindowBounds } from "../platform/window-bounds";
 import { windowChromeOptions } from "../platform/window-chrome";
 import { TERMINAL_WINDOW_ARG, TERMINAL_WINDOW_PARTITION } from "../../shared/terminal-window";
@@ -12,13 +12,34 @@ export interface TerminalBrowserWindowOptions {
   devUrl: string | null;
   packagedRendererPath: string;
   query: Record<string, string>;
+  /** Exact URL the document must have to be trusted. */
+  trustedUrl: string;
   onLoadError(error: unknown): void;
 }
 
-/** The Terminal session grants no web permissions; clipboard goes through IPC. */
-export function denyAllPermissions(session: Pick<Session, "setPermissionCheckHandler" | "setPermissionRequestHandler">): void {
-  session.setPermissionCheckHandler(() => false);
-  session.setPermissionRequestHandler((_contents, _permission, callback) => callback(false));
+const CLIPBOARD_PERMISSIONS = new Set(["clipboard-read", "clipboard-sanitized-write"]);
+
+type PermissionDetails = { isMainFrame?: boolean; requestingUrl?: string };
+interface PermissionSession {
+  setPermissionCheckHandler(handler: (contents: unknown, permission: string, origin: string, details: PermissionDetails) => boolean): void;
+  setPermissionRequestHandler(handler: (contents: unknown, permission: string, callback: (granted: boolean) => void, details: PermissionDetails) => void): void;
+}
+
+/**
+ * The Terminal session grants exactly one thing: clipboard access to the
+ * trusted Terminal document in its main frame (xterm copy and paste).
+ * Everything else, and every other frame or URL, is denied.
+ */
+export function installTerminalWindowPermissions(
+  session: PermissionSession,
+  trustedContents: { getURL(): string },
+  trustedUrl: string,
+): void {
+  const allowed = (contents: unknown, permission: string, details: PermissionDetails) =>
+    CLIPBOARD_PERMISSIONS.has(permission) && contents === trustedContents && details.isMainFrame === true
+    && details.requestingUrl === trustedUrl && trustedContents.getURL() === trustedUrl;
+  session.setPermissionCheckHandler((contents, permission, _origin, details) => allowed(contents, permission, details));
+  session.setPermissionRequestHandler((contents, permission, callback, details) => callback(allowed(contents, permission, details)));
 }
 
 export function createTerminalBrowserWindow(options: TerminalBrowserWindowOptions): BrowserWindow {
@@ -37,7 +58,7 @@ export function createTerminalBrowserWindow(options: TerminalBrowserWindowOption
       nodeIntegration: false,
     },
   });
-  denyAllPermissions(win.webContents.session);
+  installTerminalWindowPermissions(win.webContents.session as unknown as PermissionSession, win.webContents, options.trustedUrl);
   win.once("ready-to-show", () => win.show());
   win.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
   // The window is one trusted document; any navigation away is refused.

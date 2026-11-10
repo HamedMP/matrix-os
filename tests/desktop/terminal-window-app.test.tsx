@@ -111,6 +111,34 @@ describe("Terminal window", () => {
     expect(screen.queryByText("Main Computer")).toBeNull();
   });
 
+  it("lets a computer that finished starting be opened without reopening the window", async () => {
+    let inventory = { ...computers, items: computers.items.map((item, index) => (index === 0 ? { ...item, availability: "starting" } : item)) };
+    const operator = installOperator({ ...base, "auth:status": () => signedIn, "runtime:list-computers": () => inventory });
+    render(<TerminalWindowApp />);
+    const name = computers.items[0]!.label;
+    await screen.findByText(name);
+    // While it starts there is nothing to expand.
+    expect(screen.queryByRole("button", { name: new RegExp(name) })).toBeNull();
+    inventory = computers;
+    act(() => operator.emit("window:focus-changed", { focused: true }));
+    expect(await screen.findByRole("button", { name: new RegExp(name) })).toBeTruthy();
+    // The refresh never flashed the loading state over the list.
+    expect(screen.queryByText("Loading your computers…")).toBeNull();
+  });
+
+  it("keeps the listed computers when a background refresh fails", async () => {
+    let fail = false;
+    const operator = installOperator({ ...base, "auth:status": () => signedIn,
+      "runtime:list-computers": () => { if (fail) throw new Error("offline"); return computers; } });
+    render(<TerminalWindowApp />);
+    await screen.findByText(computers.items[0]!.label);
+    fail = true;
+    act(() => operator.emit("window:focus-changed", { focused: true }));
+    await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+    expect(screen.getByText(computers.items[0]!.label)).toBeTruthy();
+    expect(screen.queryByText("Couldn't load your computers.")).toBeNull();
+  });
+
   it("clears computers on sign-out", async () => {
     let status: unknown = signedIn;
     const operator = installOperator({ ...base, "auth:status": () => status, "runtime:list-computers": () => computers });

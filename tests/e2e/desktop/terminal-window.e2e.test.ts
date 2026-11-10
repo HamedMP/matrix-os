@@ -69,6 +69,25 @@ suite("Electron Desktop Terminal window", () => {
     await main.screenshot({ path: join(output, "electron-top-bar-launcher.png") });
   });
 
+  it("lists a computer's terminals and attaches one with that computer's credential", async () => {
+    const machines = terminal.getByRole("navigation", { name: "Machines" });
+    await machines.getByRole("button", { name: /Main Computer/ }).click();
+    const tab = machines.getByRole("button", { name: /matrix-task-1/ });
+    await tab.waitFor({ timeout: 15_000 });
+    await tab.click();
+    // The stub only upgrades a socket that carries the computer's bearer, which
+    // this window's renderer never holds: the trusted core attached it.
+    await terminal.locator(".xterm").first().waitFor({ timeout: 15_000 });
+    await expect.poll(() => gateway.state.terminalResizeEvents.length, { timeout: 15_000 }).toBeGreaterThan(0);
+    await terminal.locator(".xterm-helper-textarea").first().focus();
+    await terminal.keyboard.type("echo terminal-window");
+    await expect.poll(() => gateway.state.terminalInputs.join(""), { timeout: 10_000 }).toContain("echo terminal-window");
+    expect(await terminal.evaluate(() => document.cookie)).toBe("");
+    expect(await main.evaluate(() => window.operator.invoke("auth:status", {}).then((status) => status.runtimeSlot))).toBe("primary");
+    expect(gateway.state.runtimeSelections).toEqual([]);
+    await terminal.screenshot({ path: join(output, "electron-terminal-window-attached.png") });
+  });
+
   it("keeps privileged channels away from the Terminal window in both the preload and the main process", async () => {
     const blocked = await terminal.evaluate(async () => {
       const attempt = (channel: string, payload: unknown) => window.operator.invoke(channel, payload)

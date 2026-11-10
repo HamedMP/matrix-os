@@ -86,11 +86,14 @@ import { createNativeAppOpenResolver } from "./embeds/native-app-open";
 import { installBrowserProductSessionCookie } from "./embeds/browser-product-session";
 import { createNativeAppChatNavigationBroker, registerNativeAppChatCompletionIpc } from "./embeds/native-app-chat-navigation";
 import { configureDesktopIdentity } from "./desktop-identity";
-import { createSenderPolicy } from "./ipc/sender-policy";
+import { createSenderPolicy, senderRole } from "./ipc/sender-policy";
 import { createTerminalWindowController } from "./terminal-window/controller";
 import { createTerminalBrowserWindow } from "./terminal-window/window";
+import { createComputerCredentialBroker } from "./terminal-window/credential-broker";
+import { installTerminalWindowAuth } from "./terminal-window/gateway-auth";
 import {
   TERMINAL_WINDOW_EVENT_CHANNELS,
+  TERMINAL_WINDOW_PARTITION,
   TERMINAL_WINDOW_QUERY_KEY,
   TERMINAL_WINDOW_QUERY_VALUE,
   terminalWindowUrl,
@@ -124,6 +127,7 @@ const bindPreviewStartupAcknowledgement = createPreviewStartupAcknowledgement(pr
 let mainWindow: BrowserWindow | null = null;
 let terminalWindows: ReturnType<typeof createTerminalWindowController<BrowserWindow>> | null = null;
 const terminalWindowEvents = new Set<string>(TERMINAL_WINDOW_EVENT_CHANNELS);
+let computerCredentials: { clear(): void } | null = null;
 let reopenPreviewWindow: (() => Promise<void>) | undefined;
 let navigationCache: ReturnType<typeof createNavigationCache> | null = null;
 let chatgptPlan: ReturnType<typeof createNativeChatgptPlanService> | null = null;
@@ -179,8 +183,12 @@ function sendEvent<C extends EventChannel>(channel: C, payload: EventPayload<C>)
     return;
   }
   mainWindow?.webContents.send(channel, parsed.data);
-  // A session change reaches the Terminal window too.
-  if (channel === "auth:changed") sendTerminalWindowEvent(channel, payload);
+  // A session change reaches the Terminal window too, and voids every
+  // per-computer credential held for it.
+  if (channel === "auth:changed") {
+    computerCredentials?.clear();
+    sendTerminalWindowEvent(channel, payload);
+  }
 }
 
 /** Events are addressed to a named window; the Terminal window gets only its allowlist. */
@@ -397,6 +405,15 @@ if (!gotLock) {
         (detail) => sendEvent("analytics:capture", detail),
       );
 
+      // The Terminal window has its own session: per-computer bearers are
+      // attached there by target computer, never the selected-computer token.
+      const terminalSession = session.fromPartition(TERMINAL_WINDOW_PARTITION);
+      const terminalCredentials = createComputerCredentialBroker({ auth });
+      const terminalAuth = installTerminalWindowAuth(terminalSession, { broker: terminalCredentials, getGatewayOrigin: () => auth.getGatewayOrigin() });
+      // Signing out forgets the minted bearers and the record of which was last sent.
+      computerCredentials = { clear: () => { terminalCredentials.clear(); terminalAuth.clear(); } };
+      installGatewayCors(terminalSession, () => auth.getGatewayOrigin(), rendererOrigin);
+
       nativeAppChatNavigation = createNativeAppChatNavigationBroker({
         emit: (event) => sendEvent("app:open-chat", event),
         cancel: (event) => sendEvent("app:open-chat-cancel", event),
@@ -571,17 +588,6 @@ if (!gotLock) {
       });
       const downloads = fileDownloads;
       const driveTransfers = organizationDriveTransfers;
-      registerTerminalClipboardIpc(ipcMain, {
-        clipboard,
-        isTrustedSender: (rawEvent) => {
-          const event = rawEvent as IpcMainInvokeEvent;
-          const contents = mainWindow?.webContents;
-          const rendererUrl = desktopRendererUrl ?? pathToFileURL(join(__dirname, "../renderer/index.html")).toString();
-          return !!contents && !contents.isDestroyed()
-            && event.sender === contents && event.senderFrame === contents.mainFrame
-            && contents.getURL() === rendererUrl;
-        },
-      });
       const packagedRendererPath = join(__dirname, "../renderer/index.html");
       const mainRendererUrl = desktopRendererUrl ?? pathToFileURL(packagedRendererPath).toString();
       const terminalRendererUrl = terminalWindowUrl(mainRendererUrl);
@@ -594,6 +600,7 @@ if (!gotLock) {
             devUrl: desktopRendererUrl ? terminalRendererUrl : null,
             packagedRendererPath,
             query: { [TERMINAL_WINDOW_QUERY_KEY]: TERMINAL_WINDOW_QUERY_VALUE },
+            trustedUrl: terminalRendererUrl,
             onLoadError: (error) => logMainError("failed to load Terminal window", error),
           });
           win.on("focus", () => sendTerminalWindowEvent("window:focus-changed", { focused: true }));
@@ -607,13 +614,19 @@ if (!gotLock) {
         }).workArea),
       });
       terminalWindows = terminalWindowController;
+      const windowSenders = {
+        mainWindow: () => mainWindow,
+        terminalWindow: () => terminalWindowController.current(),
+        mainUrl: mainRendererUrl,
+        terminalUrl: terminalRendererUrl,
+      };
+      // Both trusted windows host terminals, so both may read copied files.
+      registerTerminalClipboardIpc(ipcMain, {
+        clipboard,
+        isTrustedSender: (event) => senderRole(windowSenders, event) !== null,
+      });
       registerIpcHandlers(ipcMain, {
-        authorizeSender: createSenderPolicy({
-          mainWindow: () => mainWindow,
-          terminalWindow: () => terminalWindowController.current(),
-          mainUrl: mainRendererUrl,
-          terminalUrl: terminalRendererUrl,
-        }),
+        authorizeSender: createSenderPolicy(windowSenders),
         // Windows is out of scope for the Terminal window (spec 651).
         openTerminalWindow: () => process.platform === "win32"
           ? Promise.reject(new Error("invalid request"))
@@ -867,6 +880,8 @@ if (!gotLock) {
     closeCodingAgentThreadEvents = null;
     terminalWindows?.dispose();
     terminalWindows = null;
+    computerCredentials?.clear();
+    computerCredentials = null;
     handleUpdateBeforeQuit?.(event);
   });
 
