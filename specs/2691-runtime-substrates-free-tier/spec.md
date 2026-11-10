@@ -469,10 +469,10 @@ owner data is sent to any new third party beyond the container provider.
 - **SC-002**: Saved samples survive 10 stop and start cycles, 3 container deletions, and
   1 forced crash, with the unflushed window measured and inside its bound.
 - **SC-003**: 20 cold starts and 20 wake-from-sleep trials are reported with raw
-  timings, median, and maximum, separating image pull from cached start. Targets are
-  agreed after the Phase 0 measurement, not before.
-  The target is a median under 5 seconds from an authenticated request to an
-  interactive runtime, and the provider choice (D1) is ranked on it.
+  timings, median, and maximum, separating image pull from cached start. The target is
+  a median under 5 seconds from an authenticated request to an interactive runtime, and
+  the provider choice (D1) is ranked on it. The maximum is agreed after the Phase 0
+  measurement.
 - **SC-004**: Two-owner denial tests pass: cross-owner database, object prefix, network,
   and credential access all fail. Limit races hold. Stale-generation credentials fail.
 - **SC-005**: An upgrade inventory (row counts per table, file manifest, app list,
