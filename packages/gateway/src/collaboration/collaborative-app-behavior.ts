@@ -11,6 +11,7 @@ const WRITE_ACTIONS = new Set(["insert", "bulkInsert", "update", "compareAndSwap
 const METHODS = new Set<Method>(["query", "mutate", "onChange"]);
 const MAX_NODES = 200_000;
 const MAX_ALIASES = 32;
+const MAX_FUNCTIONS = 4_096;
 
 function node(value: unknown): AstNode | null {
   return value && typeof value === "object" && typeof (value as AstNode).type === "string"
@@ -90,7 +91,7 @@ export function inspectBehaviorSource(source: string, signal: AbortSignal): Coll
     if (visited > MAX_NODES || depth > 64) throw new Error("Built app behavior inspection limit exceeded");
     if (current.type === "FunctionDeclaration") {
       const name = identifier(current.id);
-      if (name && functions.size < MAX_ALIASES) functions.set(name, current);
+      if (name && functions.size < MAX_FUNCTIONS) functions.set(name, current);
       return;
     }
     if (current.type === "FunctionExpression" || current.type === "ArrowFunctionExpression"
@@ -99,7 +100,7 @@ export function inspectBehaviorSource(source: string, signal: AbortSignal): Coll
       const name = identifier(current.id);
       const init = node(current.init);
       if (name && init && (init.type === "FunctionExpression" || init.type === "ArrowFunctionExpression")) {
-        if (functions.size < MAX_ALIASES) functions.set(name, init);
+        if (functions.size < MAX_FUNCTIONS) functions.set(name, init);
       } else if (name && init && bases.has(memberPath(init) ?? "") && bases.size < MAX_ALIASES) {
         bases.add(name);
       } else if (node(current.id)?.type === "ObjectPattern" && init && bases.has(memberPath(init) ?? "")) {
@@ -130,15 +131,32 @@ export function inspectBehaviorSource(source: string, signal: AbortSignal): Coll
       if (method === "query" && validAction(args[0], false)) behavior.sharedRead = true;
       if (method === "mutate" && args.length >= 2 && validAction(args[0], true)) behavior.revisionedWrite = true;
       if (method === "onChange" && args.length > 0) behavior.changeSignal = true;
-      const calledFunction = local ? functions.get(local) : node(current.callee);
-      if (calledFunction && (calledFunction.type === "FunctionDeclaration"
-        || calledFunction.type === "FunctionExpression" || calledFunction.type === "ArrowFunctionExpression")
-        && !activeFunctions.has(calledFunction)) {
-        activeFunctions.add(calledFunction);
-        const body = node(calledFunction.body);
+      const runFunction = (candidate: unknown): void => {
+        const name = identifier(candidate);
+        const called = name ? functions.get(name) : node(candidate);
+        if (!called || !["FunctionDeclaration", "FunctionExpression", "ArrowFunctionExpression"].includes(called.type)
+          || activeFunctions.has(called)) return;
+        activeFunctions.add(called);
+        const body = node(called.body);
         if (body) visit(body, depth + 1);
-        activeFunctions.delete(calledFunction);
+        activeFunctions.delete(called);
+      };
+      runFunction(current.callee);
+      // A rendered React component and its effect/event callbacks are reachable
+      // from the entry module even when React invokes them after this call.
+      if (path?.endsWith(".createElement") || path === "createElement"
+        || path?.endsWith(".jsx") || path?.endsWith(".jsxs") || path === "jsx" || path === "jsxs") {
+        runFunction(args[0]);
+        const props = node(args[1]);
+        if (props?.type === "ObjectExpression" && Array.isArray(props.properties)) {
+          for (const entry of props.properties) {
+            const property = node(entry);
+            const key = propertyName(property?.key);
+            if (key && /^on[A-Z]/.test(key)) runFunction(property?.value);
+          }
+        }
       }
+      if (path?.endsWith(".useEffect") || path === "useEffect") runFunction(args[0]);
     }
     for (const value of Object.values(current)) {
       if (Array.isArray(value)) {

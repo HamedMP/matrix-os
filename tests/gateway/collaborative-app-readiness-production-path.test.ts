@@ -315,6 +315,38 @@ describe("collaborative app production build resolution", () => {
     expect(behavior).toEqual({ sharedRead: true, revisionedWrite: true, changeSignal: true });
   });
 
+  it("recognizes behavior in a rendered React component, effect, and event handler", async () => {
+    const script = [
+      "function App(){",
+      "const shared=window.MatrixOS.collaboration;",
+      "const read=()=>shared.query({action:'find',table:'tasks'});",
+      "React.useEffect(()=>{read();shared.onChange(read)},[]);",
+      "return React.createElement('button',{onClick:()=>shared.mutate({action:'insert',table:'tasks',data:{title:'x'}},'0')})",
+      "}",
+      "ReactDOM.createRoot(document.getElementById('root')).render(React.createElement(App,null));",
+    ].join("");
+    await writeFile(join(appDir, "build.mjs"), [
+      "import {mkdir,writeFile} from 'node:fs/promises';",
+      "await mkdir('dist',{recursive:true});",
+      `await writeFile('dist/index.html',${JSON.stringify(`<div id="root"></div><script>${script}</script>`)});`,
+    ].join(""));
+    const resolver = new CollaborativeAppBuildResolver({
+      homePath: root, ownerId: "user_owner",
+      appRegistry: { get: async () => registration() } as never,
+      catalog: {
+        getLiveByPath: async () => null,
+        register: async (candidate) => ({ ...candidate, id: catalogId, parentId: null, revision: 0, updatedAt: createdAt, deletedAt: null }),
+      } as never,
+      readiness: { invalidateDriftedBuilds: async () => 0 }, store,
+    });
+    const resolved = await resolver.resolve("user_owner", "team-tracker", { ensureCatalog: true });
+    const behavior = await new CollaborativeAppBuildBehaviorProbe(store).inspect({
+      ownerId: "user_owner", organizationId: "org_matrix_team", build: resolved!.build,
+      artifactRef: resolved!.artifactRef, declaration: resolved!.declaration ?? null,
+    }, AbortSignal.timeout(10_000));
+    expect(behavior).toEqual({ sharedRead: true, revisionedWrite: true, changeSignal: true });
+  });
+
   it("fails closed for a foreign owner, missing registration, or read without a catalog identity", async () => {
     const resolver = new CollaborativeAppBuildResolver({
       homePath: root,
