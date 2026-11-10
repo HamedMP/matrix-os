@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { performance } from "node:perf_hooks";
 
-export type CodexCatalogTimingResult = "cache_hit" | "lookup" | "lookup_shared" | "failed";
+export type CodexCatalogTimingResult = "cache_hit" | "stale_hit" | "lookup" | "lookup_shared" | "failed";
 
 const LOG_PREFIX = "[chat-send-timing]";
 const activeSend = new AsyncLocalStorage<string>();

@@ -24,11 +24,27 @@ Records contain only fixed stage names, rounded millisecond durations, and opaqu
 
 `first_provider_delta` versus `first_persisted_text` isolates the runner's delta flush buffering. `dispatch_prepare` to `first_provider_event` covers runner spawn plus native startup as seen by the gateway.
 
+## Codex model catalog refresh
+
+The per-owner cache from ENG-318 (#2691) stays: at most 64 owner entries with oldest-first eviction, `invalidate(principal)` on confirmed native login or explicit catalog refresh, one native app-server child at a time across owners, and a short failure backoff.
+
+- A verified catalog is fresh for 60 seconds. Between 60 seconds and `CODEX_CATALOG_STALE_WINDOW_MS` (5 minutes, measured from the lookup that verified it), admission uses it immediately and starts one background lookup with the existing timeout and retry bounds. The refresh starts only when no native child is pending, no failure backoff applies, and no child exit is unconfirmed. Background failures are logged by error name only.
+- Each entry records the provider `authStatus` and `installStatus` it was verified under. A read under a different state drops the entry, fresh or stale, and blocks for a new lookup. Confirmed login deletes the entry outright. A refresh that started before invalidation or eviction never repopulates the cache.
+- Once the window lapses, a read blocks as it did before. If that lookup fails, the existing behavior applies: that harness's catalog becomes unavailable, while other harnesses are unaffected.
+- No per-send filesystem reads. #2871's `realpath`/`stat` fingerprint of the executable, `auth.json`, and `settings.json` is replaced by the I/O-free provider-state check plus the existing invalidation hooks.
+- The catalog grants no execution authority. Every send still observes runtime and Settings authority, native account proof, execution authorization, and per-run Browser leases.
+
+Owner review: the 5-minute window. A model withdrawn, or an executable upgraded, within the window can still be shown until the background refresh lands. Native `turn/start` stays the final model authority.
+
 ## Acceptance
 
 - Focused tests prove that nothing is emitted with the flag off, that stage order and correlation hold with the flag on, and that no prompt, reply, request ID, chat ID, or owner ID appears in the output.
 - Live acceptance (external): on an installed runtime, capture cold first turn, warm follow-up, follow-up after more than 60s idle, and a Browser-enabled follow-up. Report the Codex version and every stage. Do not claim the reported 21s/11s are explained without matching traces.
 
+- Catalog tests cover immediate stale serving, single-flight refresh, invalidation across an account change (including a late old-account refresh), provider-state change, window lapse, refresh failure then fail-closed, and cap eviction.
+
 ## Risks
+
+- If the provider inventory's `authStatus` flaps between values, the cache is dropped more often. That costs extra blocking lookups but is never incorrect.
 
 - Runner timing lines appear in the Codex tab scrollback while the flag is on. They are content-free, but the flag is meant for a bounded diagnostic window.
