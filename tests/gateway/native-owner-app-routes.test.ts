@@ -15,7 +15,7 @@ const share = {
   dataRevision: "4", createdAt: "2026-11-05T10:00:00.000Z", updatedAt: "2026-11-05T10:00:00.000Z",
 };
 
-function setup() {
+function setup(currentShare: typeof share = share) {
   const routes = new Hono();
   routes.use("*", async (context, next) => {
     markAuthContextReady(context);
@@ -31,7 +31,7 @@ function setup() {
   const authority = { authorize: vi.fn(async () => ({ resourceKind: "app", organizationId: "org_matrix_team", scopeId,
     actorId: "user_owner", ownerId: "user_owner" })) };
   const onScopeCommitted = vi.fn();
-  registerNativeOwnerAppRoutes(routes, { collaborativeAppReadiness: { ownerId: "user_owner", share: { get: async () => share } },
+  registerNativeOwnerAppRoutes(routes, { collaborativeAppReadiness: { ownerId: "user_owner", share: { get: async () => currentShare } },
     resources: { apps, catalog: { db: { selectFrom: () => ({ select: () => ({ where: () => ({ orderBy: () => ({ limit: () => ({
       executeTakeFirst: async () => ({ scope_seq: 9 }),
     }) }) }) }) }) } } }, authority, onScopeCommitted } as never);
@@ -76,6 +76,20 @@ it("rejects an owner read when the active binding no longer names the exact shar
   });
   expect(response.status).toBe(503);
   expect(apps.query).not.toHaveBeenCalled();
+});
+
+it("rejects unchecked sharing instead of advertising an unshared legacy app", async () => {
+  const { routes, apps } = setup({ ...share, state: "needs_recheck" });
+  const path = `/api/collaboration/apps/${appId}/owner-bridge`;
+  const headers = { "x-test-owner": "user_owner", "content-type": "application/json" };
+  const state = await routes.request(path, { headers });
+  expect(state.status).toBe(503);
+  const write = await routes.request(path, { method: "POST", headers,
+    body: JSON.stringify({ clientRequestId: "80000000-0000-4000-8000-000000000001", expectedRevision: "4",
+      action: { action: "insert", table: "tasks", data: { title: "New" }, app: appId } }) });
+  expect(write.status).toBe(503);
+  expect(apps.query).not.toHaveBeenCalled();
+  expect(apps.mutate).not.toHaveBeenCalled();
 });
 
 it("verifies the real owner bearer before entering the native owner route", async () => {

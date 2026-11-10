@@ -30,8 +30,10 @@ export function registerNativeOwnerAppRoutes(routes: Hono, options: Collaboratio
     if (principal.userId !== readiness.ownerId) return null;
     const appId = AppIdSchema.parse(context.req.param("appId"));
     const raw = await readiness.share!.get(principal.userId, appId);
-    if (!raw || raw.state !== "active") return { appId, share: null, authority: null };
+    if (!raw) return { appId, share: null, authority: null };
     const share = CollaborativeAppShareSchema.parse(raw);
+    if (share.state === "stopped") return { appId, share: null, authority: null };
+    if (share.state !== "active") throw new CollaborationAuthorizationError("unavailable", "Shared app is unavailable");
     if (share.owner.actorId !== principal.userId || share.build.appId !== appId) return null;
     const authority = await options.authority.authorize({ scopeId: share.scopeId, actorId: principal.userId, action: "read" });
     if (authority.resourceKind !== "app" || authority.organizationId !== share.organizationId) return null;
