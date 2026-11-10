@@ -15,6 +15,7 @@ interface AppRuntimeFrameProps {
   /** Verified against the authenticated owner catalog before creating this session. */
   runtimeSlug?: string;
   requestAppBridge?: MobileAppBridgeRequest;
+  openChat?: (chatId: string) => void;
   /** Host-reviewed web destinations only; this does not grant payment permission. */
   canOpenExternalUrl?: (url: string) => boolean;
 }
@@ -29,17 +30,21 @@ export default function AppRuntimeFrame(props: AppRuntimeFrameProps) {
   return <AppRuntimeFrameContent key={launchId} {...props} launchId={launchId} />;
 }
 
-function AppRuntimeFrameContent({ url, title, headers, canOpenExternalUrl, app, runtimeSlug, requestAppBridge, launchId }: AppRuntimeFrameProps & { launchId: string }) {
+function AppRuntimeFrameContent({ url, title, headers, canOpenExternalUrl, app, runtimeSlug, requestAppBridge, openChat, launchId }: AppRuntimeFrameProps & { launchId: string }) {
   const [linkBlocked, setLinkBlocked] = useState(false);
   // react-native-webview 14 defaults the class's extra-props parameter to
   // `undefined`, which would leave every prop typed `never` through the ref.
   const webViewRef = useRef<WebView<object>>(null);
   const brokerRef = useRef<ReturnType<typeof createMobileAppCapabilityBroker> | null>(null);
+  const openChatRef = useRef(openChat);
+  useEffect(() => { openChatRef.current = openChat; }, [openChat]);
   const bootstrap = app && requestAppBridge ? buildMobileAppBridgeScript(app, launchId) : undefined;
   useEffect(() => {
     if (!app || !requestAppBridge) return;
     try {
       const broker = createMobileAppCapabilityBroker({ app, runtimeSlug, runtimeUrl: url, launchId, request: requestAppBridge,
+        // A changed callback must not recreate the broker and strand the loaded document.
+        openChat: (chatId) => openChatRef.current?.(chatId),
         reply: (script) => webViewRef.current?.injectJavaScript(script) });
       brokerRef.current = broker;
       return () => { broker.dispose(); brokerRef.current = null; };

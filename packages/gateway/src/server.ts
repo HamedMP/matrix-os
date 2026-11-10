@@ -266,6 +266,7 @@ import { registerBridgeDataRoutes } from "./server/bridge-routes.js";
 import { registerCanvasGatewayRoutes } from "./server/canvas-gateway-routes.js";
 import { registerCodingAgentThreadWebSocketRoutes } from "./server/coding-agent-thread-ws-routes.js";
 import { registerCollaborationChatRoutes } from "./server/collaboration-chat-routes.js";
+import type { AppChatRuntime } from "./app-capabilities/chats.js";
 import { registerConversationHistoryRoutes } from "./server/conversation-history-routes.js";
 import { registerDeferredRuntimeRoutes } from "./server/deferred-runtime-routes.js";
 import { registerFileRoutes } from "./server/file-routes.js";
@@ -1420,8 +1421,9 @@ export async function createGateway(config: GatewayConfig) {
     logUnexpectedJsonParseFailure,
   });
 
+  let appChatRuntime: AppChatRuntime | null = null;
   registerAppIntegrationCapabilities(app, {
-    homePath, ownerIds: codingAgentOwnerIds,
+    homePath, ownerIds: codingAgentOwnerIds, appChatRuntime: () => appChatRuntime,
     integrationTransport: internalIntegrationBaseUrl && internalPlatformToken
       ? createPlatformIntegrationTransport({ baseUrl: internalIntegrationBaseUrl, machineToken: internalPlatformToken })
       : integrationRoutes ? createLocalIntegrationTransport(integrationRoutes) : null,
@@ -1805,6 +1807,10 @@ export async function createGateway(config: GatewayConfig) {
   const lookupJevGmailAccounts = createJevGmailAccountLookup({ db: platformDb,
     internalBaseUrl: internalIntegrationBaseUrl, machineToken: internalPlatformToken });
   const localChatImportLifecycle = registerCollaborationChatRoutes({
+    onAppChatRuntime: (runtime) => { appChatRuntime = runtime; },
+    listProjectsForApp: (principal) => codingAgentProjectManager.listManagedProjects({
+      visibility: "active", ownerScope: { type: "user", id: principal.userId },
+    }),
     browserApprovals: supervisedBrowserRuntime?.control,
     app, upgradeWebSocket, canonicalChatEventStream, chatRepository, gatewayCollaboration,
     syncR2, runtimeOwnerId: terminalRuntimeOwnerId, runtimeSlot: process.env.MATRIX_RUNTIME_SLOT,

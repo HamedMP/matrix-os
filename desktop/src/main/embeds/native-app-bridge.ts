@@ -1,5 +1,6 @@
 import { APP_GENERATE_CHANNEL, AppGenerateContextSchema, APP_AI_CHANNEL, MAX_APP_DATABASE_REPLY_BYTES, MAX_APP_DATABASE_REQUEST_BYTES, MAX_APP_RESPONSE_CHUNKS, AppAiInputSchema, AppCapabilityInputSchema, type AppCapabilityInput, type AppAiInput } from "@matrix-os/contracts";
 import type { IpcMain, IpcMainInvokeEvent } from "electron";
+import { AppChatReplySchema } from "@matrix-os/contracts";
 import { registerNativeAppCapabilityIpc } from "./native-app-capabilities";
 export { createNativeAppAiRequester } from "./native-app-ai";
 import { z } from "zod/v4";
@@ -413,6 +414,15 @@ export class NativeAppBridge {
     identity.openCount++;
     this.pendingChatOpens++;
     try {
+      if (request.view === "chat") {
+        // The stamped identity must hold Chat access before the owner's view moves.
+        if (!this.options.capabilityRequest) throw new Error("Capability requester is required");
+        const reply = AppChatReplySchema.parse(await this.options.capabilityRequest(identity.appIdentity, {
+          kind: "chats", request: { op: "get", chatId: request.chatId, limit: 1 },
+        }, identity.controller.signal));
+        if (!reply.ok) throw new Error("Chat navigation is unavailable");
+        if (!authorized()) throw new Error("not authorized");
+      }
       await this.options.openChat(request, identity.controller.signal);
       if (!authorized()) throw new Error("not authorized");
     } finally {

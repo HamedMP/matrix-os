@@ -14,6 +14,10 @@ supply authenticated requests without passing credentials into the app.
 - `service(service, action, params, accountLabel)` calls one exact connected account.
 - `ai.routes()` returns exact route selections and truthful availability.
 - `ai.generate({ prompt, route })` returns `{ text }` without file or tool access.
+- `chats.<operation>(params)` reads and drives the owner's Chats. See
+  [Chat access for apps](#chat-access-for-apps).
+- `openChat({ view: "chat", chatId })` opens one Chat in the native Chat surface on
+  every host, after the host verifies the app can read that Chat.
 - Electron apps may call `openChat({ view: "recipes", recipeId? })` to open
   native Chat's recipe list or one exact live recipe setup form. The Promise
   resolves only after native navigation acknowledges the request and rejects
@@ -72,6 +76,62 @@ An example `system/app-capabilities.json` restricting a trusted app to Drive rea
 The second example revokes all integration access for `drive-chat`. Omitting the
 app entry restores the trusted default for a visible personal first-party app.
 
+## Chat access for apps
+
+Apps can build their own Chat experiences, including a complete replacement Chat
+app, through `MatrixOS.chats`. It runs through `POST /api/bridge/capabilities`
+with `{ kind: "chats", request }`, so every host shares one enforcement point. Raw
+`/api/chats` routes stay closed to app frames.
+
+| Scope | Operations |
+| --- | --- |
+| `read` | `navigation`, `list`, `search`, `get`, `turnAdmission`, `events`, `projects`, `providers` |
+| `organize` | `create`, `setTitle`, `setProject`, `setPinned`, `setReadState`, `acknowledgeCompletion` |
+| `send` | `sendTurn`, `queueTurn`, `updateQueuedTurn`, `cancelQueuedTurn`, `reorderQueuedTurns`, `steerRun`, `steerQueuedTurn`, `cancelRun`, `submitInput`, `retryTurn` |
+| `approve` | `submitApproval` |
+| `delete` | `delete` |
+
+A visible personal first-party app built in place holds every scope by default.
+Imported, forked, community, shared, hidden and unknown apps hold none until the
+owner lists exact scopes in `system/app-capabilities.json`. A policy entry that
+omits `chats` grants none, including for a trusted app, and folder/slug aliases
+intersect. Policy and trust are read on every request:
+
+```json
+{ "apps": { "chat-board": { "chats": ["read", "organize"] } } }
+```
+
+`chats.access()` returns `{ scopes }` for the calling app. Operations resolve with
+the native route's response, or reject with a safe `message` plus `code`, `status`
+and `retryable`. `chats.request(op, params)` returns the raw
+`{ ok, status, result | error }` envelope instead of throwing; use it on Electron
+Desktop to read `code`, because Electron's context bridge passes only the message
+of a rejected error. Write bodies use the native request schemas, including
+`baseRevision`, `expectedTitleVersion` and `clientRequestId`, and the native route
+validates them.
+
+`chats.events({ cursor, waitMs })` long-polls for up to 25 seconds and returns
+`{ events, gap, nextCursor }`. Events are metadata only: refetch with `chats.get`.
+On `gap`, reload your list. Text arrives at the granularity of committed events;
+the token-level content stream is not exposed to apps.
+
+```ts
+let cursor: number | undefined;
+for (;;) {
+  const page = await MatrixOS.chats.events({ cursor, waitMs: 25_000 });
+  if (page.gap) await reloadEverything();
+  else await refetch(page.events.map(event => event.chatId));
+  cursor = page.nextCursor ?? cursor;
+}
+```
+
+Chat has its own budget of 600 requests per minute and 16 concurrent requests, so
+polling cannot starve integrations. Requests may reach 256 KiB and replies 8 MiB.
+
+Not available to apps: Chat sharing, provider credentials, imports, attachment
+upload, and approvals that need a platform proof (browser and Custom MCP), which
+fail closed and remain with the native approval surface.
+
 An example `system/app-ai.json` uses a selection returned by `ai.routes()`:
 
 ```json
@@ -128,7 +188,7 @@ immutable connection ID. A missing account fails; ambiguity requires selection.
 Read actions use `/read-call`; writes require an explicit exact action grant and
 use the existing platform mutation path. Uncertain results must not auto-retry.
 
-Capability requests are capped at 64 KiB, eight concurrent gateway requests and
+Integration capability requests are capped at 64 KiB, eight concurrent gateway requests and
 120 requests per minute. The gateway deadline is 30 seconds, with host deadlines
 and bounded replies shared across hosts: 256 KiB ordinarily, 1536 KiB for Gmail
 attachment JSON, and a bounded allowance for 512 KiB Drive text plus JSON escaping.

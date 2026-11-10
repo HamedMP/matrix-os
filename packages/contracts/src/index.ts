@@ -4,6 +4,8 @@ export * from "#browser-chat-approval";
 export { MatrixComputerRuntimeSlotSchema } from "#contract-primitives";
 export { APP_CAPABILITY_CHANNEL, APP_CAPABILITY_TIMEOUT_MS, MAX_APP_CAPABILITY_BYTES, MAX_APP_BRIDGE_REPLY_BYTES, MAX_APP_RESPONSE_CHUNKS, MAX_APP_DATABASE_REPLY_BYTES, MAX_APP_DATABASE_REQUEST_BYTES, MAX_APP_KV_REQUEST_BYTES, appRuntimeSlugFromIdentity, appIntegrationReplyBytes, appCapabilityReplyBytes, AppIdentitySchema, AppCapabilityInputSchema, AppCapabilityRequestSchema, AppConnectedServiceSchema, AppCapabilitiesSchema, AppServiceDescriptionSchema, createAppCapabilityClient } from "#app-capabilities";
 export type { AppCapabilityInput, AppCapabilities, AppServiceDescription } from "#app-capabilities";
+export { APP_CHAT_OPERATIONS, APP_CHAT_OPERATION_SCOPES, APP_CHAT_SCOPES, AppChatErrorSchema, AppChatEventsResultSchema, AppChatReplySchema, AppChatRequestSchema, AppChatScopeSchema, MAX_APP_CHAT_EVENT_WAIT_MS, appChatBridgeSource, createAppChatClient } from "#app-chats";
+export type { AppChatErrorBody, AppChatOperation, AppChatReply, AppChatRequest, AppChatScope } from "#app-chats";
 export * from "#sites";
 export * from "#chat-drive-project";
 import { TerminalScrollLineSchema, TerminalScrollStateSchema } from "#terminal-scroll";
