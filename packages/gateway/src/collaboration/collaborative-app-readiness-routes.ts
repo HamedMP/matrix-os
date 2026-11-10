@@ -251,7 +251,7 @@ export function registerCollaborativeAppReadinessRoutes(
   routes.get(sharePath, async (context) => {
     context.header("Cache-Control", "private, no-store");
     try {
-      const ownerId = owner(context, dependencies.ownerId);
+      const ownerId = readinessOwner(context, dependencies.ownerId);
       const appId = AppIdSchema.parse(context.req.param("appId"));
       const share = await dependencies.share!.get(ownerId, appId);
       return context.json(share === null ? null : CollaborativeAppShareSchema.parse(share));
@@ -262,7 +262,7 @@ export function registerCollaborativeAppReadinessRoutes(
   routes.post(`${sharePath}/preflight`, limit, async (context) => {
     context.header("Cache-Control", "private, no-store");
     try {
-      const ownerId = owner(context, dependencies.ownerId);
+      const ownerId = readinessOwner(context, dependencies.ownerId);
       const appId = AppIdSchema.parse(context.req.param("appId"));
       if (!limiter.check(ownerId)) return context.json({ error: "Too many share requests", code: "rate_limited" }, 429);
       const request = SharePreflightRequestSchema.parse(await context.req.json());
@@ -277,7 +277,7 @@ export function registerCollaborativeAppReadinessRoutes(
   routes.post(sharePath, limit, async (context) => {
     context.header("Cache-Control", "private, no-store");
     try {
-      const ownerId = owner(context, dependencies.ownerId);
+      const ownerId = readinessOwner(context, dependencies.ownerId);
       const appId = AppIdSchema.parse(context.req.param("appId"));
       if (!limiter.check(ownerId)) return context.json({ error: "Too many share requests", code: "rate_limited" }, 429);
       const request = ShareCreateRequestSchema.parse(await context.req.json());
@@ -292,7 +292,7 @@ export function registerCollaborativeAppReadinessRoutes(
   routes.delete(sharePath, limit, async (context) => {
     context.header("Cache-Control", "private, no-store");
     try {
-      const ownerId = owner(context, dependencies.ownerId);
+      const ownerId = readinessOwner(context, dependencies.ownerId);
       const appId = AppIdSchema.parse(context.req.param("appId"));
       if (!limiter.check(ownerId)) return context.json({ error: "Too many share requests", code: "rate_limited" }, 429);
       const request = ShareStopRequestSchema.parse(await context.req.json());

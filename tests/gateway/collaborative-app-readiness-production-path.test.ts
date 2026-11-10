@@ -45,7 +45,7 @@ describe("collaborative app production build resolution", () => {
       "import {mkdir,readFile,writeFile} from 'node:fs/promises';",
       "await mkdir('dist',{recursive:true});",
       "const input=await readFile('input.txt','utf8');",
-      "await writeFile('dist/index.html',`<main>${input}</main><script>const quote=/\"/g;const shared=window.MatrixOS.collaboration;const {query:readShared,mutate,onChange}=shared;readShared({action:'appInfo'});mutate({action:'update'},'0');onChange(()=>readShared({action:'appInfo'}));</script>`);",
+      "await writeFile('dist/index.html',`<main>${input}</main><script>const quote=/\"/g;const shared=window.MatrixOS.collaboration;const {query:readShared,mutate,onChange}=shared;readShared({action:'find',table:'tasks'});mutate({action:'insert',table:'tasks',data:{title:'sample'}},'0');onChange(()=>readShared({action:'find',table:'tasks'}));</script>`);",
     ].join(""));
     await writeFile(join(appDir, "matrix.json"), JSON.stringify({
       name: "Team Tracker",
@@ -219,7 +219,8 @@ describe("collaborative app production build resolution", () => {
     "<script>const sample = 'window.MatrixOS.collaboration.query({});window.MatrixOS.collaboration.mutate({},0);window.MatrixOS.collaboration.onChange(()=>{});';</script>",
     "<script type=\"application/json\">window.MatrixOS.collaboration.query({});window.MatrixOS.collaboration.mutate({},0);window.MatrixOS.collaboration.onChange(()=>{});</script>",
     "<script>/* window.MatrixOS.collaboration.query({});window.MatrixOS.collaboration.mutate({},0);window.MatrixOS.collaboration.onChange(()=>{}); */</script>",
-  ])("rejects collaboration calls present only in non-executable text: %s", async (html) => {
+    "<script>function neverCalled(){const shared=window.MatrixOS.collaboration;shared.query({action:'appInfo'});shared.mutate({action:'insert',table:'tasks',data:{title:'x'}},'0');shared.onChange(()=>{});}</script>",
+  ])("rejects collaboration calls that the built app cannot reach: %s", async (html) => {
     await writeFile(join(appDir, "build.mjs"), [
       "import {mkdir,writeFile} from 'node:fs/promises';",
       "await mkdir('dist',{recursive:true});",
@@ -240,6 +241,78 @@ describe("collaborative app production build resolution", () => {
       artifactRef: resolved!.artifactRef, declaration: resolved!.declaration ?? null,
     }, AbortSignal.timeout(10_000));
     expect(behavior).toEqual({ sharedRead: false, revisionedWrite: false, changeSignal: false });
+  });
+
+  it("does not award the write gate to an executable but invalid mutation", async () => {
+    await writeFile(join(appDir, "build.mjs"), [
+      "import {mkdir,writeFile} from 'node:fs/promises';",
+      "await mkdir('dist',{recursive:true});",
+      "await writeFile('dist/index.html',`<script>const shared=window.MatrixOS.collaboration;shared.query({action:'appInfo'});shared.mutate({action:'update'},'0');shared.onChange(()=>{});</script>`);",
+    ].join(""));
+    const resolver = new CollaborativeAppBuildResolver({
+      homePath: root, ownerId: "user_owner",
+      appRegistry: { get: async () => registration() } as never,
+      catalog: {
+        getLiveByPath: async () => null,
+        register: async (candidate) => ({ ...candidate, id: catalogId, parentId: null, revision: 0, updatedAt: createdAt, deletedAt: null }),
+      } as never,
+      readiness: { invalidateDriftedBuilds: async () => 0 }, store,
+    });
+    const resolved = await resolver.resolve("user_owner", "team-tracker", { ensureCatalog: true });
+    const behavior = await new CollaborativeAppBuildBehaviorProbe(store).inspect({
+      ownerId: "user_owner", organizationId: "org_matrix_team", build: resolved!.build,
+      artifactRef: resolved!.artifactRef, declaration: resolved!.declaration ?? null,
+    }, AbortSignal.timeout(10_000));
+    expect(behavior).toEqual({ sharedRead: false, revisionedWrite: false, changeSignal: true });
+  });
+
+  it("ignores valid-looking calls in a built JavaScript file the entry page never loads", async () => {
+    await writeFile(join(appDir, "build.mjs"), [
+      "import {mkdir,writeFile} from 'node:fs/promises';",
+      "await mkdir('dist',{recursive:true});",
+      "await writeFile('dist/index.html','<main>Static app</main>');",
+      "await writeFile('dist/unused.js',\"const shared=window.MatrixOS.collaboration;shared.query({action:'appInfo'});shared.mutate({action:'insert',table:'tasks',data:{title:'x'}},'0');shared.onChange(()=>{});\");",
+    ].join(""));
+    const resolver = new CollaborativeAppBuildResolver({
+      homePath: root, ownerId: "user_owner",
+      appRegistry: { get: async () => registration() } as never,
+      catalog: {
+        getLiveByPath: async () => null,
+        register: async (candidate) => ({ ...candidate, id: catalogId, parentId: null, revision: 0, updatedAt: createdAt, deletedAt: null }),
+      } as never,
+      readiness: { invalidateDriftedBuilds: async () => 0 }, store,
+    });
+    const resolved = await resolver.resolve("user_owner", "team-tracker", { ensureCatalog: true });
+    const behavior = await new CollaborativeAppBuildBehaviorProbe(store).inspect({
+      ownerId: "user_owner", organizationId: "org_matrix_team", build: resolved!.build,
+      artifactRef: resolved!.artifactRef, declaration: resolved!.declaration ?? null,
+    }, AbortSignal.timeout(10_000));
+    expect(behavior).toEqual({ sharedRead: false, revisionedWrite: false, changeSignal: false });
+  });
+
+  it("follows the built entry page's module import to executable collaboration calls", async () => {
+    await writeFile(join(appDir, "build.mjs"), [
+      "import {mkdir,writeFile} from 'node:fs/promises';",
+      "await mkdir('dist/assets',{recursive:true});",
+      "await writeFile('dist/index.html','<script type=\"module\" src=\"/assets/main.js\"></script>');",
+      "await writeFile('dist/assets/main.js',\"import './shared.js';\");",
+      "await writeFile('dist/assets/shared.js',\"const shared=window.MatrixOS.collaboration;shared.query({action:'find',table:'tasks'});shared.mutate({action:'insert',table:'tasks',data:{title:'x'}},'0');shared.onChange(()=>{});\");",
+    ].join(""));
+    const resolver = new CollaborativeAppBuildResolver({
+      homePath: root, ownerId: "user_owner",
+      appRegistry: { get: async () => registration() } as never,
+      catalog: {
+        getLiveByPath: async () => null,
+        register: async (candidate) => ({ ...candidate, id: catalogId, parentId: null, revision: 0, updatedAt: createdAt, deletedAt: null }),
+      } as never,
+      readiness: { invalidateDriftedBuilds: async () => 0 }, store,
+    });
+    const resolved = await resolver.resolve("user_owner", "team-tracker", { ensureCatalog: true });
+    const behavior = await new CollaborativeAppBuildBehaviorProbe(store).inspect({
+      ownerId: "user_owner", organizationId: "org_matrix_team", build: resolved!.build,
+      artifactRef: resolved!.artifactRef, declaration: resolved!.declaration ?? null,
+    }, AbortSignal.timeout(10_000));
+    expect(behavior).toEqual({ sharedRead: true, revisionedWrite: true, changeSignal: true });
   });
 
   it("fails closed for a foreign owner, missing registration, or read without a catalog identity", async () => {

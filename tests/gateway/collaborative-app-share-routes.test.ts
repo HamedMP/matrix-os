@@ -1,9 +1,10 @@
 import { Hono } from "hono";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
+import { authMiddleware } from "../../packages/gateway/src/auth.js";
 import { registerCollaborativeAppReadinessRoutes } from "../../packages/gateway/src/collaboration/collaborative-app-readiness-routes.js";
 import { CollaborativeAppShareRepositoryError } from "../../packages/gateway/src/collaboration/collaborative-app-share-repository.js";
-import { markAuthContextReady, setPlatformVerifiedPrincipal } from "../../packages/gateway/src/request-principal.js";
+import { markAuthContextReady, markVerifiedRuntimeBearer, setPlatformVerifiedPrincipal } from "../../packages/gateway/src/request-principal.js";
 
 const appId = "team-tracker";
 const build = {
@@ -56,7 +57,10 @@ function setup() {
   routes.use("*", async (context, next) => {
     markAuthContextReady(context);
     const principal = context.req.header("x-test-principal");
-    if (principal) setPlatformVerifiedPrincipal(context, principal);
+    if (principal) {
+      markVerifiedRuntimeBearer(context);
+      setPlatformVerifiedPrincipal(context, principal);
+    }
     await next();
   });
   const shareService = {
@@ -73,7 +77,7 @@ function setup() {
     stop: vi.fn(async () => ({ ...share, state: "stopped", shareRevision: "2" })),
   };
   const requireOrganizationMembership = vi.fn(async () => undefined);
-  registerCollaborativeAppReadinessRoutes(routes, {
+  const dependencies = {
     ownerId: "user_owner",
     repository: { getCurrent: async () => null },
     evaluator: { check: async () => { throw new Error("unused"); } },
@@ -81,8 +85,9 @@ function setup() {
     requireOrganizationMembership,
     rateLimiter: { check: () => true },
     share: shareService,
-  } as never);
-  return { routes, shareService, requireOrganizationMembership };
+  };
+  registerCollaborativeAppReadinessRoutes(routes, dependencies as never);
+  return { routes, shareService, requireOrganizationMembership, dependencies };
 }
 
 const request = (routes: Hono, suffix: string, method = "GET", body?: unknown) => routes.request(
@@ -92,6 +97,39 @@ const request = (routes: Hono, suffix: string, method = "GET", body?: unknown) =
 );
 
 describe("collaborative app share routes", () => {
+  afterEach(() => vi.unstubAllEnvs());
+
+  it("requires a verified owner bearer for every share lifecycle route at the real auth boundary", async () => {
+    vi.stubEnv("MATRIX_USER_ID", "user_owner");
+    const { dependencies, shareService } = setup();
+    const routes = new Hono();
+    routes.use("*", authMiddleware("owner-gateway-token"));
+    registerCollaborativeAppReadinessRoutes(routes, dependencies as never);
+
+    const attempts = [
+      ["", "GET", undefined, 200],
+      ["/preflight", "POST", preflight, 200],
+      ["", "POST", create, 201],
+      ["", "DELETE", stop, 200],
+    ] as const;
+    for (const [suffix, method, body, successStatus] of attempts) {
+      const path = `/api/collaboration/apps/${appId}/share${suffix}`;
+      const options = { method, headers: { "content-type": "application/json" },
+        ...(body === undefined ? {} : { body: JSON.stringify(body) }) };
+      expect((await routes.request(path, options)).status).toBe(401);
+      expect((await routes.request(path, { ...options,
+        headers: { ...options.headers, authorization: "Bearer incorrect-token" },
+      })).status).toBe(401);
+      expect((await routes.request(path, { ...options,
+        headers: { ...options.headers, authorization: "Bearer owner-gateway-token" },
+      })).status).toBe(successStatus);
+    }
+    expect(shareService.get).toHaveBeenCalledTimes(1);
+    expect(shareService.preflight).toHaveBeenCalledTimes(1);
+    expect(shareService.create).toHaveBeenCalledTimes(1);
+    expect(shareService.stop).toHaveBeenCalledTimes(1);
+  });
+
   it("supports owner get/preflight/create/stop without project, role, grant, invite, or acceptance fields", async () => {
     const { routes, shareService, requireOrganizationMembership } = setup();
     expect(await (await request(routes, "")).json()).toEqual(share);

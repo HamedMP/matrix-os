@@ -4,12 +4,13 @@ import {
   type CollaborativeAppBuildRef,
   type CollaborativeAppManifestDeclaration,
 } from "@matrix-os/contracts";
-import { lstat, readdir, readFile } from "node:fs/promises";
-import { extname, join } from "node:path";
-import { tokenizer } from "acorn";
+import { lstat, readFile, realpath } from "node:fs/promises";
+import { dirname, extname, isAbsolute, join, relative, resolve, sep } from "node:path";
+import { parse } from "acorn";
 import { z } from "zod/v4";
 
 import type { ImmutableCollaborativeBuildStore } from "../app-runtime/build-cache.js";
+import { inspectBehaviorSource } from "./collaborative-app-behavior.js";
 
 import {
   CollaborativeAppReadinessRepositoryError,
@@ -66,14 +67,11 @@ const blocked = (
 
 const SUPPORTED_BRIDGE_CONTRACT_VERSION = "matrix-app-bridge-v1";
 const SUPPORTED_RUNTIME_ABI = "matrix-runtime-v1";
-const BEHAVIOR_SOURCE_EXTENSIONS = new Set([".cjs", ".html", ".js", ".mjs"]);
+const BEHAVIOR_SOURCE_EXTENSIONS = new Set([".cjs", ".js", ".mjs"]);
 const MAX_BEHAVIOR_FILES = 256;
 const MAX_BEHAVIOR_FILE_BYTES = 2 * 1024 * 1024;
 const MAX_BEHAVIOR_TOTAL_BYTES = 8 * 1024 * 1024;
 const MAX_BEHAVIOR_DEPTH = 16;
-const MAX_BEHAVIOR_ALIASES = 32;
-const JS_IDENTIFIER = "[A-Za-z_$][A-Za-z0-9_$]{0,127}";
-const MATRIX_COLLABORATION_EXPRESSION = String.raw`(?:(?:window|globalThis)\s*(?:\?\.|\.)\s*)?MatrixOS(?:\?\.|\.)collaboration`;
 
 export interface CollaborativeAppBuildBehavior {
   sharedRead: boolean;
@@ -97,48 +95,49 @@ export class CollaborativeAppBuildBehaviorProbe implements CollaborativeAppBehav
     if (input.artifactRef !== `objects/${input.build.buildId}`) return missingBehavior();
     const snapshot = await this.builds.resolve(input.build.buildId);
     if (!snapshot) return missingBehavior();
+    const root = await realpath(snapshot.artifactPath);
     let files = 0;
     let bytes = 0;
     let sharedRead = false;
     let revisionedWrite = false;
     let changeSignal = false;
-    const visit = async (directory: string, depth: number): Promise<void> => {
-      if (depth > MAX_BEHAVIOR_DEPTH || files >= MAX_BEHAVIOR_FILES || bytes >= MAX_BEHAVIOR_TOTAL_BYTES) return;
-      const entries = await readdir(directory, { withFileTypes: true });
-      entries.sort((left, right) => left.name.localeCompare(right.name));
-      for (const entry of entries) {
-        signal.throwIfAborted();
-        if (files >= MAX_BEHAVIOR_FILES || bytes >= MAX_BEHAVIOR_TOTAL_BYTES) break;
-        if (entry.name.startsWith(".")) continue;
-        const path = join(directory, entry.name);
-        const info = await lstat(path);
-        if (info.isSymbolicLink()) continue;
-        if (info.isDirectory()) {
-          await visit(path, depth + 1);
-          continue;
+    const seen = new Set<string>();
+    const visitSource = async (source: string, from: string, depth: number): Promise<void> => {
+      const detected = inspectBehaviorSource(source, signal);
+      sharedRead ||= detected.sharedRead;
+      revisionedWrite ||= detected.revisionedWrite;
+      changeSignal ||= detected.changeSignal;
+      for (const specifier of staticModuleImports(source)) await visitFile(specifier, from, depth + 1);
+    };
+    const visitFile = async (specifier: string, from: string, depth: number): Promise<void> => {
+      signal.throwIfAborted();
+      if (depth > MAX_BEHAVIOR_DEPTH || files >= MAX_BEHAVIOR_FILES) throw new Error("Built app behavior inspection limit exceeded");
+      if (/^[A-Za-z][A-Za-z0-9+.-]*:/.test(specifier) || specifier.startsWith("//")) return;
+      const barePath = specifier.split(/[?#]/, 1)[0]!;
+      const candidate = resolve(barePath.startsWith("/") ? root : dirname(from), barePath.replace(/^\//, ""));
+      const candidateRelative = relative(root, candidate);
+      if (candidateRelative.startsWith(`..${sep}`) || candidateRelative === ".." || isAbsolute(candidateRelative)) return;
+      const path = await realpath(candidate);
+      const pathRelative = relative(root, path);
+      if (pathRelative.startsWith(`..${sep}`) || pathRelative === ".." || isAbsolute(pathRelative) || seen.has(path)) return;
+      seen.add(path);
+      const info = await lstat(path);
+      if (!info.isFile() || info.size > MAX_BEHAVIOR_FILE_BYTES || bytes + info.size > MAX_BEHAVIOR_TOTAL_BYTES) {
+        throw new Error("Built app behavior inspection limit exceeded");
+      }
+      files += 1;
+      bytes += info.size;
+      const source = await readFile(path, "utf8");
+      if (extname(path).toLowerCase() === ".html") {
+        for (const script of extractExecutableScripts(source)) {
+          if (script.src) await visitFile(script.src, path, depth + 1);
+          else await visitSource(script.body, path, depth + 1);
         }
-        if (!info.isFile() || !BEHAVIOR_SOURCE_EXTENSIONS.has(extname(entry.name).toLowerCase())
-          || info.size > MAX_BEHAVIOR_FILE_BYTES || bytes + info.size > MAX_BEHAVIOR_TOTAL_BYTES) continue;
-        files += 1;
-        bytes += info.size;
-        const source = await readFile(path, "utf8");
-        const executableSource = extname(entry.name).toLowerCase() === ".html"
-          ? extractExecutableScripts(source)
-          : source;
-        let detected = missingBehavior();
-        try {
-          detected = inspectBehaviorSource(executableTokens(executableSource, signal));
-        } catch (error: unknown) {
-          if (signal.aborted) throw error;
-          console.warn("[collaborative-app-readiness] built source could not be tokenized",
-            error instanceof Error ? error.name : "UnknownError");
-        }
-        sharedRead ||= detected.sharedRead;
-        revisionedWrite ||= detected.revisionedWrite;
-        changeSignal ||= detected.changeSignal;
+      } else if (BEHAVIOR_SOURCE_EXTENSIONS.has(extname(path).toLowerCase())) {
+        await visitSource(source, path, depth + 1);
       }
     };
-    await visit(snapshot.artifactPath, 0);
+    await visitFile("index.html", join(root, "index.html"), 0);
     return {
       sharedRead,
       revisionedWrite,
@@ -151,78 +150,28 @@ function missingBehavior(): CollaborativeAppBuildBehavior {
   return { sharedRead: false, revisionedWrite: false, changeSignal: false };
 }
 
-function extractExecutableScripts(html: string): string {
+function extractExecutableScripts(html: string): Array<{ body: string; src: string | null }> {
   const withoutComments = html.replace(/<!--[\s\S]*?-->/g, "");
-  const scripts: string[] = [];
+  const scripts: Array<{ body: string; src: string | null }> = [];
   for (const match of withoutComments.matchAll(/<script\b([^>]*)>([\s\S]*?)<\/script\s*>/gi)) {
     const type = /\btype\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))/i.exec(match[1]!);
     const language = (type?.[1] ?? type?.[2] ?? type?.[3] ?? "text/javascript").toLowerCase();
     if (language === "module" || language === "text/javascript" || language === "application/javascript") {
-      scripts.push(match[2]!);
+      const src = /\bsrc\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))/i.exec(match[1]!);
+      scripts.push({ body: match[2]!, src: src ? (src[1] ?? src[2] ?? src[3] ?? null) : null });
     }
   }
-  return scripts.join("\n");
+  return scripts;
 }
 
-/** Token positions preserve executable identifiers while blanking comments and literals. */
-function executableTokens(source: string, signal: AbortSignal): string {
-  const tokens = tokenizer(source, { ecmaVersion: "latest", sourceType: "module", allowHashBang: true });
-  const parts: string[] = [];
-  let position = 0;
-  let count = 0;
-  while (true) {
-    if (++count % 1024 === 0) signal.throwIfAborted();
-    const token = tokens.getToken();
-    parts.push(" ".repeat(token.start - position));
-    if (token.type.label === "eof") break;
-    const text = source.slice(token.start, token.end);
-    parts.push(["string", "regexp", "template", "num", "bigint"].includes(token.type.label)
-      ? " ".repeat(text.length) : text);
-    position = token.end;
-  }
-  return parts.join("");
-}
-
-function inspectBehaviorSource(source: string): CollaborativeAppBuildBehavior {
-  const bases = [MATRIX_COLLABORATION_EXPRESSION];
-  const aliasPattern = new RegExp(
-    String.raw`\b(?:const|let|var)\s+(${JS_IDENTIFIER})\s*=\s*${MATRIX_COLLABORATION_EXPRESSION}`,
-    "g",
-  );
-  for (const match of source.matchAll(aliasPattern)) {
-    if (bases.length > MAX_BEHAVIOR_ALIASES) break;
-    bases.push(match[1]!);
-  }
-
-  const localMethods: Array<{ method: "query" | "mutate" | "onChange"; local: string }> = [];
-  for (const base of bases) {
-    const destructuring = new RegExp(
-      String.raw`\b(?:const|let|var)\s*\{([^{}]{1,512})\}\s*=\s*(?:${base})(?![A-Za-z0-9_$])`,
-      "g",
-    );
-    for (const match of source.matchAll(destructuring)) {
-      for (const part of match[1]!.split(",")) {
-        if (localMethods.length >= MAX_BEHAVIOR_ALIASES) break;
-        const binding = /^\s*(query|mutate|onChange)(?:\s*:\s*([A-Za-z_$][A-Za-z0-9_$]{0,127}))?\s*$/.exec(part);
-        if (binding) localMethods.push({
-          method: binding[1] as "query" | "mutate" | "onChange",
-          local: binding[2] ?? binding[1]!,
-        });
-      }
-    }
-  }
-
-  const calledProperty = (method: "query" | "mutate" | "onChange") => bases.some((base) => new RegExp(
-    String.raw`(?:${base})(?:\?\.|\.)${method}\s*(?:\?\.)?\(`,
-  ).test(source));
-  const calledLocal = (method: "query" | "mutate" | "onChange") => localMethods.some((binding) =>
-    binding.method === method && new RegExp(String.raw`(?:^|[^A-Za-z0-9_$])${binding.local}\s*(?:\?\.)?\(`).test(source));
-
-  return {
-    sharedRead: calledProperty("query") || calledLocal("query"),
-    revisionedWrite: calledProperty("mutate") || calledLocal("mutate"),
-    changeSignal: calledProperty("onChange") || calledLocal("onChange"),
-  };
+function staticModuleImports(source: string): string[] {
+  const program = parse(source, { ecmaVersion: "latest", sourceType: "module", allowHashBang: true });
+  return program.body.flatMap((statement) => {
+    if ((statement.type === "ImportDeclaration" || statement.type === "ExportAllDeclaration"
+      || statement.type === "ExportNamedDeclaration") && statement.source?.value
+      && typeof statement.source.value === "string") return [statement.source.value];
+    return [];
+  });
 }
 
 /**
