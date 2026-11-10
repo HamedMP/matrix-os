@@ -37,9 +37,11 @@ single point of failure.
    run, or a same-repository PR. Otherwise `runner=ubuntu-latest`. Heavy lanes
    (unit shards, E2E, type check, shell build) use that output in `runs-on`.
    Lanes that need Docker services (PostgreSQL, Docker tests) stay hosted.
-4. **Forks never reach the host.** Fork PRs always route hosted, and fork
-   workflows already require maintainer approval for every external
-   contributor (`all_external_contributors`).
+4. **Forks never reach the host.** Routing sends fork PRs to hosted runners,
+   but a fork PR can edit `ci.yml`, so the runner image enforces it: a
+   job-started hook kills the runner, before any step starts, for any job
+   that is not a push, a merge-queue run or a same-repository PR. Fork workflows also require maintainer approval for
+   every external contributor (`all_external_contributors`).
 5. **One required check.** `CI Results` stays the only required check, with
    the same job inventory whichever runner executed it.
 6. **Retire fast-ci.** Delete `ci-dedicated.yml`, the `dedicated-*` scripts,
@@ -78,9 +80,13 @@ for the contributor CI page once the pool carries `main`.
 - The GitHub App private key stays on the host as a root-only file. Containers
   receive only a single-use JIT configuration, which GitHub invalidates after
   one job.
-- App: the existing Matrix CI gate app, extended with repository
+- App: a dedicated GitHub App installed only on this repository, holding only
   Administration (write) to mint JIT runners and Variables (write) for the
-  heartbeat.
+  heartbeat. The CI gate app is not reused: its key is passed into CI jobs,
+  and it must not gain repository administration. The pool requests
+  installation tokens limited to this repository and those two permissions.
+- Slots cannot reach each other (`enable_icc=false`, no `NET_RAW`) and have
+  IPv6 disabled.
 
 ## Acceptance
 
