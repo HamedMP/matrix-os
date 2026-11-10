@@ -801,8 +801,9 @@ if (!gotLock) {
       app.on("activate", () => {
         // The Terminal window may outlive the main window; restore the main one regardless.
         if (!mainWindow || mainWindow.isDestroyed()) {
-          void (reopenPreviewWindow ? reopenPreviewWindow() : openMainWindow())
-            .catch((error: unknown) => logMainError("window restore failed", error));
+          // Through the shared single-flight path, so activation cannot race a
+          // menu or Terminal-window request into creating a second window.
+          void reopenMainWindow?.().catch((error: unknown) => logMainError("window restore failed", error));
         }
       });
     })
