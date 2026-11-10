@@ -60,6 +60,43 @@ describe("computer credential broker", () => {
     expect(auth.issueRuntimeToken).not.toHaveBeenCalled();
   });
 
+  it("keeps using a token until it really expires when no replacement can be had", async () => {
+    // Near the end of the parent session the platform stops issuing
+    // replacements; the token in hand is still good for its last minute.
+    const { auth, broker, advance } = setup();
+    const first = await broker.token("review");
+    advance(HOUR - 30_000);
+    auth.issueRuntimeToken.mockRejectedValue(new Error("parent session too close to expiry"));
+    await expect(broker.credential("review")).resolves.toEqual({ token: first });
+    await expect(broker.credential("review")).resolves.toEqual({ token: first });
+    advance(31_000);
+    await expect(broker.credential("review")).resolves.toEqual({ token: null, reason: "unavailable" });
+  });
+
+  it("stays inside the owner's shared request budget across computers", async () => {
+    const slots = Array.from({ length: 19 }, (_, index) => `slot-${index}`);
+    const { auth, broker, advance } = setup({ slots: ["primary", ...slots] });
+    const results = await Promise.all(slots.map((slot) => broker.credential(slot)));
+    expect(auth.issueRuntimeToken).toHaveBeenCalledTimes(12);
+    expect(results.filter((result) => result.token === null)).toHaveLength(7);
+    expect(results.filter((result) => result.token === null).every((result) => "reason" in result && result.reason === "unavailable")).toBe(true);
+    // A minute later the rest can be fetched.
+    advance(61_000);
+    await Promise.all(slots.map((slot) => broker.credential(slot)));
+    expect(auth.issueRuntimeToken).toHaveBeenCalledTimes(19);
+  });
+
+  it("pauses every computer's requests for as long as the platform's rate limit asks", async () => {
+    const { auth, broker, advance } = setup();
+    auth.issueRuntimeToken.mockRejectedValueOnce(Object.assign(new Error("limited"), { retryAfterMs: 20_000 }));
+    await expect(broker.credential("review")).resolves.toEqual({ token: null, reason: "unavailable" });
+    // Another computer does not spend a request while the account is limited.
+    await expect(broker.credential("extra")).resolves.toEqual({ token: null, reason: "unavailable" });
+    expect(auth.issueRuntimeToken).toHaveBeenCalledTimes(1);
+    advance(20_001);
+    await expect(broker.credential("extra")).resolves.toEqual({ token: "token-extra-1" });
+  });
+
   it("re-mints shortly before expiry", async () => {
     const { auth, broker, advance } = setup();
     await broker.token("review");
@@ -134,7 +171,10 @@ describe("computer credential broker", () => {
 
   it("reaches only the first 20 computers of an oversized inventory", async () => {
     const slots = Array.from({ length: 25 }, (_, index) => `slot-${index}`);
-    const { auth, broker } = setup({ slots: ["primary", ...slots] });
+    const { auth, broker, advance } = setup({ slots: ["primary", ...slots] });
+    for (const slot of slots) await broker.token(slot);
+    // The shared request budget spreads the mints over two minutes.
+    advance(61_000);
     for (const slot of slots) await broker.token(slot);
     // "primary" uses the app's own bearer, so 19 of the first 20 are minted.
     expect(broker.size()).toBe(19);

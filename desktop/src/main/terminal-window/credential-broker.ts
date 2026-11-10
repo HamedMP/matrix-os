@@ -7,6 +7,10 @@ const EXPIRY_SKEW_MS = 60_000;
 const INVENTORY_TTL_MS = 60_000;
 const BACKOFF_BASE_MS = 1_000;
 const BACKOFF_MAX_MS = 30_000;
+// The platform allows each owner 30 credential requests a minute, shared with
+// computer switches in the main window. The broker keeps well under that.
+const MINT_WINDOW_MS = 60_000;
+const MAX_MINTS_PER_WINDOW = 12;
 
 interface BrokerAuth {
   getStatus(): { signedIn: boolean; authGeneration: number; runtimeSlot: string };
@@ -48,6 +52,10 @@ export function createComputerCredentialBroker(options: ComputerCredentialBroker
   let generation = -1;
   let inventory: { slots: Set<string>; fetchedAt: number } | null = null;
   let inventoryPending: Promise<Set<string> | null> | null = null;
+  // Start times of recent mints (at most MAX_MINTS_PER_WINDOW entries), and
+  // the time before which the platform asked for no more requests.
+  let mintTimes: number[] = [];
+  let pausedUntil = 0;
 
   function clear(): void {
     tokens.clear();
@@ -56,6 +64,18 @@ export function createComputerCredentialBroker(options: ComputerCredentialBroker
     strikes.clear();
     inventory = null;
     inventoryPending = null;
+    // The request budget and any pause belong to the owner's account on the
+    // platform, not to this session, so they survive a session change.
+  }
+
+  /** Whether one more mint fits the shared budget right now; counts it if so. */
+  function takeMintSlot(): boolean {
+    const time = now();
+    if (time < pausedUntil) return false;
+    mintTimes = mintTimes.filter((started) => time - started < MINT_WINDOW_MS);
+    if (mintTimes.length >= MAX_MINTS_PER_WINDOW) return false;
+    mintTimes.push(time);
+    return true;
   }
 
   function syncSession(): { signedIn: boolean; runtimeSlot: string } {
@@ -107,6 +127,11 @@ export function createComputerCredentialBroker(options: ComputerCredentialBroker
       })
       .catch((error: unknown) => {
         console.warn("[terminal-window] computer credential unavailable:", error instanceof Error ? error.name : "UnknownError");
+        // A rate limit is the account's, so it pauses every computer's mints.
+        const retryAfter = (error as { retryAfterMs?: unknown } | null)?.retryAfterMs;
+        if (typeof retryAfter === "number" && Number.isFinite(retryAfter) && retryAfter > 0) {
+          pausedUntil = Math.max(pausedUntil, now() + Math.min(retryAfter, 5 * 60_000));
+        }
         if (startedIn === generation) fail(slot);
         return null;
       })
@@ -132,10 +157,20 @@ export function createComputerCredentialBroker(options: ComputerCredentialBroker
     if (slot === status.runtimeSlot) return found(options.auth.getToken());
     const cached = tokens.get(slot);
     if (cached && cached.expiresAt - EXPIRY_SKEW_MS > now()) return { token: cached.token };
-    tokens.delete(slot);
+    // Close to expiry a replacement is tried first, but the token in hand
+    // stays usable until it really expires: near the end of the parent
+    // session the platform no longer issues replacements.
+    const stillValid = (): ComputerCredential | null => {
+      const held = tokens.get(slot);
+      return held && held.expiresAt > now() ? { token: held.token } : null;
+    };
+    if (cached && cached.expiresAt <= now()) tokens.delete(slot);
     const failure = failures.get(slot);
-    if (failure && failure.retryAt > now()) return UNAVAILABLE;
-    return found(await (pending.get(slot) ?? mint(slot)));
+    if (failure && failure.retryAt > now()) return stillValid() ?? UNAVAILABLE;
+    const inFlight = pending.get(slot);
+    if (!inFlight && !takeMintSlot()) return stillValid() ?? UNAVAILABLE;
+    const minted = await (inFlight ?? mint(slot));
+    return minted ? { token: minted } : stillValid() ?? UNAVAILABLE;
   }
 
   return {

@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import React from "react";
-import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("@desktop/renderer/src/features/terminal/TerminalView", () => ({
@@ -113,6 +113,43 @@ describe("Terminal window computers", () => {
     expect(await screen.findByText("Couldn't start a terminal. Try again.")).toBeTruthy();
     expect(screen.getByRole("button", { name: /build/ })).toBeTruthy();
     expect(screen.queryByText("Couldn't reach this computer.")).toBeNull();
+  });
+
+  it("does not open a terminal whose creation finished after the owner signed out", async () => {
+    let signedIn = true;
+    const listeners: Array<(payload: unknown) => void> = [];
+    window.operator = {
+      invoke: vi.fn(async (channel: string) => {
+        if (channel === "auth:status") return signedIn
+          ? { signedIn: true, handle: "neo", userId: "user_1", platformHost: HOST, runtimeSlot: "primary", authGeneration: 3 }
+          : { signedIn: false, platformHost: HOST, authGeneration: 4 };
+        if (channel === "runtime:list-computers") return computers;
+        if (channel === "app:get-zoom") return { factor: 1 };
+        return { ok: true };
+      }),
+      on: (channel, callback) => { if (channel === "auth:changed") listeners.push(callback); return () => undefined; },
+    };
+    let finishCreate!: (response: Response) => void;
+    fetchMock.mockImplementation(async (url: string, init?: RequestInit) => {
+      const path = new URL(String(url)).pathname;
+      if (init?.method === "POST" && path.endsWith("/ensure")) return json({ workspace: { id: WS } });
+      if (init?.method === "POST") return new Promise<Response>((resolve) => { finishCreate = resolve; });
+      return json(workspace([{ id: TAB_1, name: "build" }]));
+    });
+    render(<TerminalWindowApp />);
+    fireEvent.click(await screen.findByRole("button", { name: /Main Computer/ }));
+    await screen.findByRole("button", { name: /build/ });
+    fireEvent.click(screen.getByRole("button", { name: "New terminal" }));
+    await waitFor(() => expect(finishCreate).toBeTypeOf("function"));
+
+    signedIn = false;
+    act(() => { for (const listener of listeners) listener({ signedIn: false }); });
+    await screen.findByRole("button", { name: "Sign in" });
+    await act(async () => { finishCreate(json({ tab: { id: TAB_2, name: "Terminal" } }, 201)); });
+
+    expect(screen.queryByTestId("terminal-view")).toBeNull();
+    expect(useConnection.getState().status).not.toBe("signed-in");
+    expect(screen.getByRole("button", { name: "Sign in" })).toBeTruthy();
   });
 
   it("scopes a refused credential to its computer and recovers on reconnect", async () => {

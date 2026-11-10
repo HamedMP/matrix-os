@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { AuthService, type AuthStatus, type ConnectionProfile } from "@desktop/main/auth/auth-service";
+import { AuthService, type AuthStatus, type ConnectionProfile, RuntimeTokenRateLimitedError } from "@desktop/main/auth/auth-service";
 import type { CredentialStore, StoredCredential } from "@desktop/main/auth/credential-store";
 
 const HOUR_MS = 3_600_000;
@@ -1061,5 +1061,18 @@ describe("AuthService.issueRuntimeToken", () => {
     await rejected.auth.init();
     const failure = await rejected.auth.issueRuntimeToken("review").catch((error: Error) => error.message);
     expect(failure).not.toContain("pg:");
+  });
+
+  it("reports the platform's rate limit with a bounded retry delay", async () => {
+    vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const limited = (retryAfter: string | null) => makeService({ credential: VALID, profile: PROFILE, now: 10_000,
+      fetchFn: async () => new Response("{}", { status: 429, headers: retryAfter === null ? {} : { "retry-after": retryAfter } }) });
+    for (const [header, expected] of [["7", 7_000], [null, 60_000], ["0", 60_000], ["soon", 60_000], ["999999", 300_000]] as const) {
+      const { auth } = limited(header);
+      await auth.init();
+      const failure = await auth.issueRuntimeToken("review").catch((error: unknown) => error);
+      expect(failure, String(header)).toBeInstanceOf(RuntimeTokenRateLimitedError);
+      expect((failure as RuntimeTokenRateLimitedError).retryAfterMs, String(header)).toBe(expected);
+    }
   });
 });

@@ -36,13 +36,17 @@ describe("resolveRuntimeTarget", () => {
 type Sent = { requestHeaders?: Record<string, string>; cancel?: boolean };
 
 function setup(tokens: Record<string, string | "unavailable">) {
-  type BeforeSend = (details: { url: string; requestHeaders: Record<string, string> }, callback: (response: Sent) => void) => void;
-  type Completed = (details: { url: string; statusCode: number }) => void;
+  type BeforeSend = (details: { id: number; url: string; requestHeaders: Record<string, string> }, callback: (response: Sent) => void) => void;
+  type Completed = (details: { id: number; url: string; statusCode: number }) => void;
+  type Failed = (details: { id: number }) => void;
   let beforeSend!: BeforeSend;
   let completed!: Completed;
+  let failed!: Failed;
+  let nextId = 1;
   const session = { webRequest: {
     onBeforeSendHeaders: (listener: BeforeSend) => { beforeSend = listener; },
     onCompleted: (listener: Completed) => { completed = listener; },
+    onErrorOccurred: (listener: Failed) => { failed = listener; },
   } };
   const broker = {
     credential: vi.fn(async (slot: string) => {
@@ -54,10 +58,15 @@ function setup(tokens: Record<string, string | "unavailable">) {
     confirmed: vi.fn(),
   };
   const installed = installTerminalWindowAuth(session, { broker, getGatewayOrigin: () => GATEWAY });
+  let lastId = 0;
   const sendRaw = (url: string, requestHeaders: Record<string, string> = {}) =>
-    new Promise<Sent>((resolve) => beforeSend({ url, requestHeaders }, resolve));
+    new Promise<Sent>((resolve) => { lastId = nextId++; beforeSend({ id: lastId, url, requestHeaders }, resolve); });
   const send = async (url: string, requestHeaders: Record<string, string> = {}) => (await sendRaw(url, requestHeaders)).requestHeaders ?? {};
-  return { broker, installed, send, sendRaw, complete: (url: string, statusCode: number) => completed({ url, statusCode }) };
+  /** Sends a request and returns its id, for tests that finish requests out of order. */
+  const start = async (url: string) => { await sendRaw(url); return lastId; };
+  return { broker, installed, send, sendRaw, start, tokens,
+    complete: (url: string, statusCode: number, id = lastId) => completed({ id, url, statusCode }),
+    fail: (id: number) => failed({ id }) };
 }
 
 describe("Terminal window gateway authentication", () => {
@@ -104,6 +113,27 @@ describe("Terminal window gateway authentication", () => {
     expect(broker.confirmed).toHaveBeenCalledWith("review");
     complete("https://evil.example/x?runtime=review", 401);
     expect(broker.unauthorized).toHaveBeenCalledTimes(1);
+  });
+
+  it("charges a late 401 to the token that request carried, not to its replacement", async () => {
+    const { broker, start, tokens, complete, fail } = setup({ review: "token-a" });
+    const url = `${GATEWAY}/api/terminal/workspaces?runtime=review`;
+    const first = await start(url);
+    const second = await start(url);
+    complete(url, 401, first);
+    tokens.review = "token-b";
+    const third = await start(url);
+    // The second request was also sent with token A; its refusal says nothing about B.
+    complete(url, 401, second);
+    expect(broker.unauthorized.mock.calls).toEqual([["review", "token-a"], ["review", "token-a"]]);
+    complete(url, 200, third);
+    expect(broker.confirmed).toHaveBeenCalledWith("review");
+    // A finished or failed request is forgotten: a repeated completion reports nothing more.
+    complete(url, 401, third);
+    const dropped = await start(url);
+    fail(dropped);
+    complete(url, 401, dropped);
+    expect(broker.unauthorized).toHaveBeenCalledTimes(2);
   });
 
   it("counts an accepted terminal WebSocket as success and forgets attached bearers on sign-out", async () => {

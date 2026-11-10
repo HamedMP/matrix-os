@@ -27,6 +27,9 @@ export function useComputerTerminals(platformHost: string | null, sessionKey: st
   const [createFailed, setCreateFailed] = useState<string | null>(null);
   const generations = useRef<Record<string, number>>({});
   const boundSlot = useRef<string | null>(null);
+  // Counts signed-in sessions seen by this hook. Work started in one session
+  // must not open, list or report anything in the next.
+  const session = useRef(0);
 
   const client = useMemo<ApiClient | null>(
     () => (platformHost ? createApiClient({ baseUrl: platformHost, getRuntimeSlot: () => "primary" }) : null),
@@ -37,6 +40,7 @@ export function useComputerTerminals(platformHost: string | null, sessionKey: st
     // Bump rather than reset: a listing still in flight for the previous
     // session must never match a generation issued to the new one.
     for (const slot of Object.keys(generations.current)) generations.current[slot] = (generations.current[slot] ?? 0) + 1;
+    session.current += 1;
     boundSlot.current = null;
     setTerminals({});
     setActive(null);
@@ -77,22 +81,30 @@ export function useComputerTerminals(platformHost: string | null, sessionKey: st
 
   const create = useCallback(async (slot: string) => {
     if (!client || creating) return;
+    const startedIn = session.current;
+    const current = () => session.current === startedIn;
     setCreating(slot);
     setCreateFailed(null);
     try {
       const refKey = await createComputerTab(client.forRuntime(slot), "Terminal");
+      if (!current()) return;
       await load(slot);
+      // Signed out, or signed in as someone else, while the computer answered:
+      // the new terminal belongs to a session this window no longer shows.
+      if (!current()) return;
       open(slot, refKey);
     } catch (error: unknown) {
       console.warn("[terminal-window] tab create failed:", error instanceof Error ? error.name : "UnknownError");
+      if (!current()) return;
       // The tabs already listed stay shown unless the computer now refuses the session.
       if (terminalsFailure(error) === "reconnect") {
-        setTerminals((current) => ({ ...current, [slot]: { status: "failed", reason: "reconnect" } }));
+        setTerminals((existing) => ({ ...existing, [slot]: { status: "failed", reason: "reconnect" } }));
       } else {
         setCreateFailed(slot);
       }
     } finally {
-      setCreating(null);
+      // The session change already cleared this; do not clear the next session's.
+      if (current()) setCreating(null);
     }
   }, [client, creating, load, open]);
 
