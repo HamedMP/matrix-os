@@ -1,7 +1,9 @@
 import { spawn as nodeSpawn, type ChildProcessWithoutNullStreams, type SpawnOptionsWithoutStdio } from "node:child_process";
 import { z } from "zod/v4";
 import type { AgentProviderSummary } from "@matrix-os/contracts";
+import { performance } from "node:perf_hooks";
 import type { CodingModelCatalogProjection } from "./provider-catalog.js";
+import { recordCodexCatalogTiming, type CodexCatalogTimingResult } from "./send-timing.js";
 
 const MAX_RESPONSE_BYTES = 1024 * 1024;
 const MAX_MODELS = 64;
@@ -315,9 +317,8 @@ export function createCodexModelCatalogSource(options: {
   let unconfirmedChildExit: Promise<void> | null = null;
   let pending: { entry: Entry; promise: Promise<CodingModelCatalogProjection> } | null = null;
 
-  const source = async (provider: AgentProviderSummary, principal?: { userId: string }): Promise<CodingModelCatalogProjection | null> => {
-    if (provider.kind !== "codex" && provider.id !== "codex") return null;
-    if (provider.availability !== "available") return null;
+  type Read = { value: CodingModelCatalogProjection; result: CodexCatalogTimingResult };
+  const read = async (provider: AgentProviderSummary, principal?: { userId: string }): Promise<Read> => {
     const key = principal?.userId ?? null;
     let entry = entries.get(key);
     if (!entry) {
@@ -326,13 +327,13 @@ export function createCodexModelCatalogSource(options: {
       entries.set(key, entry);
     }
     const now = Date.now();
-    if (entry.cached && entry.cached.expiresAt > now) return entry.cached.value;
+    if (entry.cached && entry.cached.expiresAt > now) return { value: entry.cached.value, result: "cache_hit" };
     if (pending) {
-      if (pending.entry === entry) return pending.promise;
+      if (pending.entry === entry) return { value: await pending.promise, result: "lookup_shared" };
       // Invalidation never launches a second native child over an older one.
       // Its outcome is obsolete for this entry; read again only after reaping.
       await pending.promise.then(() => undefined, () => undefined);
-      return source(provider, principal);
+      return read(provider, principal);
     }
     if (entry.failedUntil > now || unconfirmedChildExit) throw new Error("Codex model catalog unavailable");
     const current = entry;
@@ -357,7 +358,20 @@ export function createCodexModelCatalogSource(options: {
       throw error;
     }).finally(() => { if (pending?.promise === promise) pending = null; });
     pending = { entry: current, promise };
-    return promise;
+    return { value: await promise, result: "lookup" };
+  };
+  const source = async (provider: AgentProviderSummary, principal?: { userId: string }): Promise<CodingModelCatalogProjection | null> => {
+    if (provider.kind !== "codex" && provider.id !== "codex") return null;
+    if (provider.availability !== "available") return null;
+    const startedAt = performance.now();
+    try {
+      const { value, result } = await read(provider, principal);
+      recordCodexCatalogTiming(result, performance.now() - startedAt);
+      return value;
+    } catch (error: unknown) {
+      recordCodexCatalogTiming("failed", performance.now() - startedAt);
+      throw error;
+    }
   };
   return Object.assign(source, {
     invalidate(principal?: { userId: string }): void {
