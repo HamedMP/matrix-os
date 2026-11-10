@@ -4,6 +4,7 @@
 // the main-process sender policy.
 import { z } from "zod/v4";
 import type { EventChannel, InvokeChannel } from "./ipc-contract";
+import { LOCAL_TERMINAL_EVENT_CHANNELS, LOCAL_TERMINAL_INVOKE_CHANNELS } from "./local-terminals";
 
 export const TERMINAL_WINDOW_ARG = "--matrix-terminal-window";
 export const TERMINAL_WINDOW_QUERY_KEY = "window";
@@ -26,7 +27,9 @@ export const TERMINAL_WINDOW_INVOKE = {
 } as const;
 
 /** Channels only the Terminal window may call. */
-export const TERMINAL_WINDOW_ONLY_INVOKE_CHANNELS = ["terminal-window:focus-main"] as const satisfies readonly InvokeChannel[];
+export const TERMINAL_WINDOW_ONLY_INVOKE_CHANNELS = [
+  "terminal-window:focus-main", ...LOCAL_TERMINAL_INVOKE_CHANNELS,
+] as const satisfies readonly InvokeChannel[];
 
 /** Everything the Terminal window may call. */
 export const TERMINAL_WINDOW_INVOKE_CHANNELS = [
@@ -42,7 +45,9 @@ export const TERMINAL_WINDOW_INVOKE_CHANNELS = [
 ] as const satisfies readonly InvokeChannel[];
 
 /** Events the Terminal window may subscribe to. */
-export const TERMINAL_WINDOW_EVENT_CHANNELS = ["auth:changed", "window:focus-changed"] as const satisfies readonly EventChannel[];
+export const TERMINAL_WINDOW_EVENT_CHANNELS = [
+  "auth:changed", "window:focus-changed", ...LOCAL_TERMINAL_EVENT_CHANNELS,
+] as const satisfies readonly EventChannel[];
 
 export type WindowRole = "main" | "terminal";
 

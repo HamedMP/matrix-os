@@ -34,6 +34,10 @@ export function useComputerTerminals(platformHost: string | null, sessionKey: st
   // Counts the user's choices of what to show. A terminal that finishes being
   // created is opened only if the user has not chosen something else since.
   const selection = useRef(0);
+  // Changes each time the shared attach manager was reset. Panes that are not
+  // cloud tabs (local terminals) remount on it, because the reset disposed
+  // their attachment too.
+  const [attachEpoch, setAttachEpoch] = useState(0);
 
   const client = useMemo<ApiClient | null>(
     () => (platformHost ? createApiClient({ baseUrl: platformHost, getRuntimeSlot: () => "primary" }) : null),
@@ -55,6 +59,7 @@ export function useComputerTerminals(platformHost: string | null, sessionKey: st
     setCreating(null);
     setCreateFailed(null);
     resetAttachManager();
+    setAttachEpoch((epoch) => epoch + 1);
     return () => { resetAttachManager(); };
   }, [client, sessionKey]);
 
@@ -132,5 +137,12 @@ export function useComputerTerminals(platformHost: string | null, sessionKey: st
     }
   }, [client, creating, load, open]);
 
-  return { terminals, active, creating, createFailed, load, open, create };
+  // Showing something else (a local terminal) is a choice too: a cloud
+  // terminal still being created must not replace it when it arrives.
+  const clearActive = useCallback(() => {
+    selection.current += 1;
+    setActive(null);
+  }, []);
+
+  return { terminals, active, creating, createFailed, attachEpoch, load, open, create, clearActive };
 }

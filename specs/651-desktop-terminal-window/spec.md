@@ -2,9 +2,19 @@
 
 **Feature Branch**: `spec/desktop-terminal-window`
 **Created**: 2026-11-10
-**Status**: Draft — spec review findings applied 2026-11-10; implementation started
+**Status**: Draft — slices 1–3 implemented locally (2026-11-10); see Implementation Status
 **Tracking**: No Linear ticket recorded. Owner to confirm an existing ENG ticket or authorize a short one before any PR.
 **Input**: "A terminal app in the Electron Desktop client, separate from the OS-view Terminal, launched from the top bar in its own window. Like herdr, it shows spaces across machines: this computer and every Matrix computer the user has. Ideally the app can also SSH to the remote computer."
+
+## Implementation Status (2026-11-10)
+
+| Slice | State |
+| --- | --- |
+| 1 Window shell | Implemented and exercised in the built app (macOS arm64). |
+| 2 Per-computer credentials and tabs | Implemented. Attach is exercised in the built app for the selected computer; minting for a second computer is covered by unit tests only. |
+| 3 Local terminals | Runtime implemented and exercised in the built app with a developer-supplied `hc` 0.1.19. **Not bundled**: packaged builds have no binary and show local terminals as unavailable. See `research.md`. |
+| 4 Status | Local status from herdr-core's stored reports and a local "Needs attention" list. Matrix tab status and a shared parser are not started. |
+| 5–6 SSH | Not started; gated on open questions 7, 8 and 10. |
 
 ## Goal
 
@@ -105,7 +115,7 @@ are held by an `hc` holder process outside the app.
 
 **Acceptance**
 1. A new local tab starts the user's login shell in their home directory. Its environment is built from an allowlist (`HOME`, `USER`, `LOGNAME`, `SHELL`, `PATH`, `LANG`, `LC_*`, `TERM`, `COLORTERM`, `TMPDIR`, `SSH_AUTH_SOCK`, `XDG_*`) and the login shell's own startup files. Nothing else from the Electron process environment is passed, in particular no `MATRIX_*`, `ELECTRON_*`, `NODE_*`, `VITE_*`, `POSTHOG_*`, `CLERK_*` or token-bearing variables.
-2. Quitting and relaunching the app (including after a crash) reattaches every local terminal that was alive. Herdr recovers kept terminals with a fresh shell, not a replay. The UI must say so truthfully, for example "Restored — new shell", and must never imply that the scrollback or running process was preserved when it was not.
+2. Quitting and relaunching the app (including after a crash) reattaches every local terminal that was alive, with its process still running. If the holder process itself dies, its terminals end and the UI shows them as ended; the app does not use herdr's `keep` recovery, because a shell herdr starts on its own would inherit the core's isolation variables (see `research.md`).
 3. Local terminal output and input never leave the device. They are never sent to a Matrix computer or to analytics. The Terminal window loads no analytics capture, session replay or console capture, and its terminal surfaces carry `ph-no-capture`.
 4. If `hc` is missing, damaged or the wrong version, This Computer shows a recovery state (§Failure Modes). Matrix sections are unaffected.
 
@@ -164,8 +174,7 @@ owner device keys, or this slice must be revisited.
 
 ### Socket and process boundary
 - **Private config and state.** The bundled holder runs with an app-private config, state and template directory under `<userData>/herdr/` (through `XDG_*` variables or equivalent flags, whichever the spike proves). It never reads or writes the user's own herdr installation (`~/.config/herdr-core`, its machines, templates or sockets), and a user's own `hc` never sees the app's terminals. Core's `notes` feature (typing notes into parent terminals) is disabled in the app's config.
-- The app starts its holder with an explicit socket path in a private directory: `<userData>/herdr/`, created with mode 0700 and checked with `lstat` (not a symlink, owned by the user).
-  - macOS `sun_path` limits paths to 104 bytes, so if `userData` is too long a short per-user directory under `$TMPDIR` is used with the same checks.
+- Sockets live in `~/.matrixos/dt/<8 hex of the profile>/`, because Unix socket paths are length-limited and `userData` is too long on macOS. State and config live in `<userData>/herdr/`. Every directory is created 0700 and checked with `lstat` (a directory, not a symlink, owned by the user, closed to group and others). A path that would exceed the limit makes local terminals unavailable.
 - Only the Electron main process connects to that socket. It is never passed to a renderer, a webview or a preload, never bridged to TCP, and never forwarded over SSH. The app never runs `hc connect` or `hc machine add`; Matrix computers come only from J2.
 - Anything that can open the socket can run commands as the user, because Core has no per-client permission checks. Owner-only filesystem permissions are therefore the whole boundary, and the spike must prove them.
 

@@ -27,7 +27,8 @@ describe("operator preload bridge", () => {
     ipc.invoke.mockClear();
     await bridge.invoke("auth:status", {});
     await bridge.invoke("terminal-window:focus-main", {});
-    expect(ipc.invoke.mock.calls).toEqual([["auth:status", {}], ["terminal-window:focus-main", {}]]);
+    await bridge.invoke("local-terminal:kill", { id: "t1" });
+    expect(ipc.invoke.mock.calls).toEqual([["auth:status", {}], ["terminal-window:focus-main", {}], ["local-terminal:kill", { id: "t1" }]]);
   });
 
   it("subscribes the Terminal window only to its event allowlist", () => {

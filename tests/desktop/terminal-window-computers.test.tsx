@@ -40,6 +40,7 @@ function installOperator() {
       if (channel === "auth:status") return { signedIn: true, handle: "neo", userId: "user_1", platformHost: HOST, runtimeSlot: "primary", authGeneration: 3 };
       if (channel === "runtime:list-computers") return computers;
       if (channel === "app:get-zoom") return { factor: 1 };
+      if (channel === "local-terminal:list") return { status: "ready", terminals: [] };
       return { ok: true };
     }),
     on: (channel, callback) => { if (channel === "window:focus-changed") focusListeners.push(callback); return () => undefined; },
@@ -130,8 +131,8 @@ describe("Terminal window computers", () => {
     });
     render(<TerminalWindowApp />);
     fireEvent.click(await screen.findByRole("button", { name: /Main Computer/ }));
-    expect(await screen.findByText("No terminals yet.")).toBeTruthy();
-    fireEvent.click(screen.getByRole("button", { name: "New terminal" }));
+    await screen.findByRole("list", { name: "Main Computer terminals" });
+    fireEvent.click(within(screen.getByRole("list", { name: "Main Computer terminals" })).getByRole("button", { name: "New terminal" }));
 
     expect((await screen.findByTestId("terminal-view")).textContent).toBe(`${WS}:${TAB_1}`);
     expect(requests()).toContain(`POST ${HOST}/api/terminal/workspaces/ensure`);
@@ -147,7 +148,7 @@ describe("Terminal window computers", () => {
     render(<TerminalWindowApp />);
     fireEvent.click(await screen.findByRole("button", { name: /Main Computer/ }));
     await screen.findByRole("button", { name: /build/ });
-    fireEvent.click(screen.getByRole("button", { name: "New terminal" }));
+    fireEvent.click(within(screen.getByRole("list", { name: "Main Computer terminals" })).getByRole("button", { name: "New terminal" }));
     expect(await screen.findByText("Couldn't start a terminal. Try again.")).toBeTruthy();
     expect(screen.getByRole("button", { name: /build/ })).toBeTruthy();
     expect(screen.queryByText("Couldn't reach this computer.")).toBeNull();
@@ -164,13 +165,14 @@ describe("Terminal window computers", () => {
     render(<TerminalWindowApp />);
     fireEvent.click(await screen.findByRole("button", { name: /Main Computer/ }));
     await screen.findByRole("button", { name: /build/ });
-    fireEvent.click(screen.getByRole("button", { name: "New terminal" }));
+    const cloud = screen.getByRole("list", { name: "Main Computer terminals" });
+    fireEvent.click(within(cloud).getByRole("button", { name: "New terminal" }));
     await waitFor(() => expect(finishCreate).toBeTypeOf("function"));
     // The user picks an existing terminal before the new one is ready.
     fireEvent.click(screen.getByRole("button", { name: /build/ }));
     expect((await screen.findByTestId("terminal-view")).textContent).toBe(`${WS}:${TAB_1}`);
     await act(async () => { finishCreate(json({ tab: { id: TAB_2, name: "Terminal" } }, 201)); });
-    await waitFor(() => expect(screen.getByRole("button", { name: "New terminal" }).hasAttribute("disabled")).toBe(false));
+    await waitFor(() => expect(within(cloud).getByRole("button", { name: "New terminal" }).hasAttribute("disabled")).toBe(false));
     expect(screen.getByTestId("terminal-view").textContent).toBe(`${WS}:${TAB_1}`);
   });
 
@@ -184,6 +186,7 @@ describe("Terminal window computers", () => {
           : { signedIn: false, platformHost: HOST, authGeneration: 4 };
         if (channel === "runtime:list-computers") return computers;
         if (channel === "app:get-zoom") return { factor: 1 };
+        if (channel === "local-terminal:list") return { status: "ready", terminals: [] };
         return { ok: true };
       }),
       on: (channel, callback) => { if (channel === "auth:changed") listeners.push(callback); return () => undefined; },
@@ -198,7 +201,7 @@ describe("Terminal window computers", () => {
     render(<TerminalWindowApp />);
     fireEvent.click(await screen.findByRole("button", { name: /Main Computer/ }));
     await screen.findByRole("button", { name: /build/ });
-    fireEvent.click(screen.getByRole("button", { name: "New terminal" }));
+    fireEvent.click(within(screen.getByRole("list", { name: "Main Computer terminals" })).getByRole("button", { name: "New terminal" }));
     await waitFor(() => expect(finishCreate).toBeTypeOf("function"));
 
     signedIn = false;
