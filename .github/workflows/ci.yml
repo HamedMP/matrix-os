@@ -75,7 +75,9 @@ jobs:
 
   changes:
     needs: redirect
-    if: always() && (needs.redirect.result == 'success' || needs.redirect.result == 'skipped')
+    # Drafts never run CI. Skipping here, before a runner is allocated, keeps draft pushes
+    # out of the hosted queue; every later job requires this one to succeed.
+    if: always() && (needs.redirect.result == 'success' || needs.redirect.result == 'skipped') && !(github.event_name == 'pull_request' && github.event.pull_request.draft == true)
     name: Detect CI-relevant changes
     runs-on: ubuntu-latest
     timeout-minutes: 12
