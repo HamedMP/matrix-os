@@ -142,6 +142,10 @@ describe("runner pool", () => {
     }
     expect(firewall).toContain('iptables -I INPUT 1 -i "$bridge" -j REJECT');
     expect(readFileSync(join(dir, "matrix-ci-pool-slot@.service"), "utf8")).toMatch(/^Requires=.*matrix-ci-pool-firewall\.service$/m);
+    // Stopped with Docker through Requires=, so each unit needs a start link from Docker to come back.
+    for (const unit of ["matrix-ci-pool-slot@.service", "matrix-ci-pool-firewall.service"]) {
+      expect(readFileSync(join(dir, unit), "utf8")).toMatch(/^WantedBy=multi-user\.target docker\.service$/m);
+    }
     const install = readFileSync(join(dir, "install.sh"), "utf8");
     expect(install).toContain("com.docker.network.bridge.name=matrix-ci-pool0");
     expect(install).toContain("com.docker.network.bridge.enable_icc=false matrix-ci-pool");

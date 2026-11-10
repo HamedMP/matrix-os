@@ -12,4 +12,5 @@ Restart=always
 RestartSec=10
 
 [Install]
-WantedBy=multi-user.target
+# Requires= stops the slot with Docker; this start link brings it back when Docker returns.
+WantedBy=multi-user.target docker.service
