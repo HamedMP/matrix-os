@@ -1,0 +1,396 @@
+# Feature Specification: Runtime substrates and the hosted free tier
+
+**Feature Branch**: `spec/2691-runtime-substrates-free-tier`
+**Created**: 2026-11-10
+**Status**: Draft, not approved for implementation
+**Tracking**: Linear ticket pending (see Open decisions D0)
+**Related**: [639-onprem-airgap](https://github.com/HamedMP/matrix-os/pull/3071) (ENG-423), [070-vps-per-user](../070-vps-per-user/spec.md), [103-self-host-installer](../103-self-host-installer/spec.md), [118-ai-gateway-provider-auth](../118-ai-gateway-provider-auth/), [543-matrix-ai-pi-routing](../543-matrix-ai-pi-routing/)
+
+## Goal
+
+Let a person use Matrix without paying and without a VPS. A free owner gets Chat and
+app building on a Matrix-operated container that sleeps when idle, and can later move
+everything to their own VPS.
+
+To do that, a Matrix runtime stops being synonymous with a Hetzner machine. The owner
+runtime (gateway, home, owner Postgres, object-store prefix, AI credential) runs on a
+**substrate**. Two substrates exist after this work:
+
+| Substrate | Who | Compute | Durable data |
+| --- | --- | --- | --- |
+| `vps` | Paid owners (unchanged) | One always-on Hetzner VPS | Local Postgres and home, backed up to R2 |
+| `container` | Free owners | One isolated container per owner, stopped when idle | Managed Postgres database per owner, home mirrored to R2 |
+
+One owner runtime codebase serves both. No second chat implementation, no second data
+model, no multi-tenant gateway process.
+
+## Non-goals
+
+- On-prem and air-gapped installation. Spec 639 owns it and keeps its host-native
+  delivery. This spec must not block it and shares its capability vocabulary (see FR-016).
+- Changing anything a paid VPS owner sees or pays for.
+- Always-on public backends, background agents, cron, channels, or bots on the free tier.
+- Terminal, code-server, and CLI coding harnesses (Codex, Claude Code, OpenCode, Pi CLI,
+  Hermes) on the free tier.
+- Migrating a VPS owner down to a container.
+- A new scheduler, multi-region placement, or high availability for containers.
+
+## Anti-goals
+
+These make the feature a failure even if it technically works:
+
+- A free owner's code or agent reaches another owner's data, a platform-wide secret, or
+  the host.
+- Free usage has no hard spend ceiling, or a limit can be bypassed by switching client,
+  racing requests, or recreating the container.
+- A free owner loses saved work because compute was stopped, crashed, or replaced.
+- Upgrading loses data or leaves the owner with two divergent copies.
+- A paid owner's routing, billing, or data changes because the free tier exists or fails.
+
+## User Scenarios & Testing
+
+Every journey is checked through the real product with normal sign-in. Surfaces are
+named exactly; see the surface matrix under Success Criteria.
+
+### User Story 1 - Start free and chat (Priority: P1)
+
+A new person signs up, chooses the free plan without entering a card, and is chatting
+with Matrix AI on Web Desktop within the measured start target.
+
+**Why this priority**: it is the whole acquisition path; nothing else matters without it.
+
+**Independent Test**: a newly registered account with no machine and no payment method
+sends a first message and receives a real model answer, with usage recorded to the owner.
+
+**Acceptance Scenarios**:
+
+1. **Given** a signed-in account with no runtime, **When** it selects the free plan,
+   **Then** a container runtime is created for it and Chat opens without a billing gate.
+2. **Given** free signup is invite-gated, **When** an uninvited account selects free,
+   **Then** it sees a waitlist state and no runtime is created.
+3. **Given** total free capacity is exhausted, **When** a new or sleeping owner requests
+   a start, **Then** they get a truthful busy state with a retry path, and no partial
+   runtime remains.
+
+### User Story 2 - Build and preview an app (Priority: P1)
+
+A free owner asks Chat to build an app. The agent writes real source, builds it, and the
+owner uses the app in a window. App records persist.
+
+**Why this priority**: app building is the product's differentiator and the reason a free
+owner would upgrade.
+
+**Independent Test**: generate a fresh interactive app, save a record in it, ask for a
+source change, rebuild, and see the change with the record intact.
+
+**Acceptance Scenarios**:
+
+1. **Given** an active runtime, **When** the agent finishes a build, **Then** the app
+   opens through the standard bridged app viewer and its data bridge works.
+2. **Given** a build fails, **When** the owner opens the app, **Then** source is kept and
+   the failure is shown; a stale build is never presented as the new one.
+3. **Given** the runtime slept after a successful build, **When** the owner reopens the
+   app, **Then** it loads without the owner asking for a rebuild.
+
+### User Story 3 - Leave and come back (Priority: P1)
+
+The owner closes the tab. The container stops. Days later they return and everything
+saved is there.
+
+**Why this priority**: scale-to-zero is what makes free affordable; persistence is what
+makes it trustworthy.
+
+**Independent Test**: save chat, files, and app records; force idle stop; destroy and
+recreate the container; reopen.
+
+**Acceptance Scenarios**:
+
+1. **Given** a stopped runtime, **When** the owner opens Matrix, **Then** they see a
+   truthful waking state, then their saved chats, files, apps, and app data.
+2. **Given** a run is in flight, **When** the browser disconnects, **Then** the run
+   continues to completion or its deadline, and the runtime stops only after it settles
+   and durable state is flushed.
+3. **Given** the container crashes, **When** it is recreated, **Then** every write
+   acknowledged as saved is present, interrupted work is labelled as interrupted, and
+   nothing is silently replaced with an empty home.
+
+### User Story 4 - Hit a limit (Priority: P1)
+
+The owner runs out of AI allowance, storage, or compute time.
+
+**Why this priority**: bounded cost is the launch precondition.
+
+**Independent Test**: exhaust each limit and confirm what is blocked and what still works.
+
+**Acceptance Scenarios**:
+
+1. **Given** the AI allowance is exhausted, **When** the owner sends a message, **Then**
+   new funded work is refused with a clear reason and an upgrade or own-account path;
+   reading, exporting, and deleting saved data still work.
+2. **Given** storage is full, **When** the agent or owner writes, **Then** the write
+   fails visibly, and read, export, and delete still work.
+3. **Given** a container is deleted and recreated, **When** the owner resumes, **Then**
+   usage and limits are unchanged and credentials from the old container are rejected.
+
+### User Story 5 - Upgrade to a VPS (Priority: P1)
+
+A free owner subscribes. Their chats, files, apps, app data, and remaining credit move
+to a new VPS. The container is removed after the VPS is verified.
+
+**Why this priority**: it is the revenue path and the promise made to free users.
+
+**Independent Test**: populate a free runtime with sample data across every data class,
+upgrade, and compare an inventory before and after.
+
+**Acceptance Scenarios**:
+
+1. **Given** a free owner completes checkout, **When** migration runs, **Then** the
+   runtime is read-only during the final sync, the VPS restores from that exact state,
+   and the owner lands on the VPS with the same handle and URLs.
+2. **Given** migration fails at any step, **When** it is retried or abandoned, **Then**
+   the container runtime is writable again with no data loss and the owner is not
+   charged for a machine they cannot use.
+3. **Given** migration succeeded, **When** verification passes, **Then** the container
+   and its database are deleted and funded-AI balances belong to the VPS runtime without
+   a second starter grant.
+
+### User Story 6 - Same experience on every client (Priority: P2)
+
+A free owner signs in on Electron Desktop and Native Mobile and gets the same Chat and
+apps, the same waking and limit states, and the same explanation of what needs an upgrade.
+
+**Why this priority**: clients currently refuse to proceed without a provisioned machine.
+Web proves the system first; the others follow in the same release train.
+
+**Independent Test**: sign in to each named surface with a free account that has a
+sleeping runtime.
+
+**Acceptance Scenarios**:
+
+1. **Given** a sleeping runtime, **When** any client connects, **Then** it shows waking,
+   then ready, and a draft typed during waking is sent once.
+2. **Given** a capability is unavailable on the free tier, **When** the owner reaches
+   it, **Then** it is shown as available on a paid computer, never as broken or missing.
+
+### User Story 7 - Paid owners are untouched (Priority: P1)
+
+**Independent Test**: run the same paid sign-in, chat, app, data, reconnect, Terminal, and
+billing checks on a paid test VPS before and after, including while free containers are
+failing, at capacity, and being migrated.
+
+**Acceptance Scenarios**:
+
+1. **Given** an existing paid owner, **When** the substrate model ships, **Then** their
+   runtime is recorded as `vps` with no migration step visible to them and no behaviour
+   change.
+2. **Given** the free tier is switched off, **When** paid owners use Matrix, **Then**
+   nothing changes, and free owners' saved data remains recoverable.
+
+### Edge Cases
+
+- Two tabs or two clients request a start at once: exactly one container is created.
+- Idle stop races with a newly accepted message: the message wins or is rejected with a
+  retryable state; it is never accepted and lost.
+- A stale container keeps running after replacement: it cannot write to the owner's
+  database or object prefix (generation fencing).
+- Polling, presence pings, and open-but-idle WebSockets do not keep a container alive.
+- Flush to object storage fails at stop: the stop is delayed up to a bound, then the
+  runtime is marked needing recovery; the next start does not hydrate over newer data.
+- The owner upgrades while a run is in flight: migration waits for settle or deadline.
+- The owner deletes their account: container, database, object prefix, and funded-AI
+  rows are removed under the existing deletion guarantees.
+- A free owner is inactive past the retention period: published notice first, then
+  deletion. Idle stop is never data expiry.
+
+## Requirements
+
+### Functional Requirements
+
+**Substrate model**
+
+- **FR-001**: Every runtime record MUST carry its substrate (`vps` or `container`).
+  Existing records become `vps` with no behaviour change.
+- **FR-002**: Routing, provisioning, lifecycle, and recovery MUST go through a substrate
+  interface. Hetzner behaviour moves behind the `vps` implementation unchanged.
+- **FR-003**: Clients MUST keep the existing address shape (`/vm/<handle>`, runtime slot).
+  A container runtime has a handle like any other.
+- **FR-004**: A runtime MUST declare its capabilities, and clients MUST render
+  unavailable capabilities from that declaration and not from the plan name.
+
+**Container runtime**
+
+- **FR-005**: The container runtime MUST be the same gateway, kernel, and shell code as
+  the VPS runtime, composed with a container profile. It MUST NOT require host systemd.
+- **FR-006**: Agent and build workloads MUST run inside a sandbox at least as strict as
+  the existing scope-runtime bot profile (no ambient network, no gateway secrets,
+  resource caps), using the existing launcher interface.
+- **FR-007**: Durable state MUST live outside the container: one Postgres database and
+  role per owner, and the owner's object-store prefix. Local disk is a cache.
+- **FR-008**: The runtime MUST reach "ready" only after the home is hydrated and the
+  database is reachable. It MUST never start on an empty home when durable data exists.
+- **FR-009**: The runtime MUST stop only after in-flight runs settle or reach their
+  deadline and a final flush succeeds. Meaningful activity is: an accepted message, a
+  running job or build, an open app or preview in use. Polling is not.
+- **FR-010**: Built app output MUST survive a stop, so reopening an app does not require
+  a rebuild.
+
+**Free plan, admission, limits**
+
+- **FR-011**: A free plan MUST exist as an entitlement that allows exactly one container
+  runtime and no VPS. Signup MAY be gated by invite and by a global capacity ceiling.
+- **FR-012**: Funded AI MUST reuse the existing owner-serialized admission, holds, and
+  settlement. A container runtime gets its own runtime policy with a model allowlist and
+  a budget. Starter credit stays once per owner across substrates.
+- **FR-013**: CPU, memory, process count, job duration, storage, database size, egress,
+  and concurrent runs MUST be enforced outside the container or by the substrate, never
+  only by code the owner's agent can modify.
+- **FR-014**: Exhausted limits MUST still allow bounded read, export, and delete.
+
+**Upgrade**
+
+- **FR-015**: Upgrade MUST move the owner's database, files including app sources and
+  project history, built apps, runtime configuration, and funded-AI balances to a VPS
+  using the existing VPS restore path. It MUST be resumable and reversible until
+  verification, and MUST keep the handle.
+
+**Coordination**
+
+- **FR-016**: Capability states and profile vocabulary MUST match the deployment
+  capability contract proposed in spec 639 so hosted-container and on-prem do not grow
+  two capability systems. Whichever lands first owns the contract file.
+- **FR-017**: The "VPS-native only" production rule in `AGENTS.md` and
+  `docs/dev/vps-deployment.md` MUST be amended in the same stack that enables the
+  container substrate, to say: paid runtimes are VPS-native; free runtimes are
+  platform-operated containers; Docker Compose remains unsupported as a customer runtime.
+- **FR-018**: Public docs in `FinnaAI/matrix-os-site` MUST describe the free plan, its
+  limits, what needs a computer, and the upgrade.
+
+### Key Entities
+
+- **Runtime**: an owner's Matrix instance. Has a substrate, handle, slot, generation,
+  status, and capability set.
+- **Substrate**: where a runtime's compute runs and how it is started, stopped,
+  addressed, and replaced.
+- **Runtime generation**: a counter that changes when compute is replaced. Stale
+  generations cannot write or authenticate.
+- **Free entitlement**: permits one container runtime; carries limits.
+- **Migration**: a recorded, resumable move of one owner from container to VPS.
+
+## Security architecture
+
+**Trust model**: a free container is untrusted. Its owner may be hostile, and its agent
+runs arbitrary code. Anything inside the container can be read by that owner. Therefore
+the container holds only credentials scoped to that one owner, and every limit is
+enforced by the platform or the substrate.
+
+| Boundary | Auth | Authorization and limits |
+| --- | --- | --- |
+| Client to platform | Existing Clerk session, sync JWT, or device token | Owner may reach only runtimes they can access today |
+| Platform to container | Per-handle platform verification token plus verified-user header (existing) | Routed only to the current generation's private address |
+| Container to platform internal routes | Per-runtime HMAC token bound to machine, slot, and token epoch (existing) | Rejected when generation is stale or runtime is not running |
+| Container to funded AI relay | Short-lived per-runtime lease (existing) | Owner-serialized holds, model allowlist, budget |
+| Container to object store | Platform broker with owner-prefix check and presigned URLs (existing) | Plus a per-owner byte quota enforced by the broker |
+| Container to Postgres | Per-owner role and database | Connection limit, statement timeout, size quota |
+| Container to internet | Substrate egress policy | Default deny; allowlist for package registry and platform; rate and byte caps |
+| Sandbox to gateway | Broker socket (existing) | Workload never holds a provider key or database URL |
+| Lifecycle and migration routes | Platform-internal bearer or owner session | See plan auth matrix |
+
+Input validation: every new route validates path, query, and body with Zod at the
+boundary and uses `bodyLimit`. Substrate addresses come from the platform's own records,
+never from client input. Errors to clients are generic; provider names, addresses, and
+quota internals stay in server logs.
+
+Residual risks to record: the owner can read their own runtime credentials (bounded by
+the quotas above); the in-container gateway still trusts the app name sent to the data
+bridge (threat-model finding F3), which crosses app boundaries only within one owner.
+
+## Integration wiring
+
+Flow: authenticate, resolve owner, resolve runtime and substrate, check entitlement and
+capacity, start or attach, hydrate, verify ready, serve, account, idle stop with flush.
+
+- Platform: substrate registry is built at startup from config; each substrate is
+  constructed only when its configuration is complete. A missing container configuration
+  is a 503-class state, not "no runtime found".
+- Gateway: profile is validated once at startup into an immutable capability set. The
+  sandbox launcher is chosen at startup by dependency injection, never probed at call time.
+- No `globalThis`, no client-side inference of substrate.
+
+## Failure modes
+
+| Failure | Outcome |
+| --- | --- |
+| Start exceeds its deadline | Runtime marked failed-start, compute cleaned up, client shows retry |
+| Hydration incomplete | Not ready; never serves a partial home |
+| Database unreachable | 503-class state; chat history is not replaced by file fallback |
+| Flush fails at stop | Bounded retries, then needs-recovery; no blind re-hydrate over it |
+| Container crash | Recreated on next request with a new generation; unflushed window is bounded and reported |
+| Duplicate start | One winner by unique constraint on (runtime, generation) |
+| Substrate API outage | Running containers keep serving; starts return busy |
+| Migration step fails | Step is idempotent and resumable; container returns to writable on abandon |
+| Uncertain external effect | Surfaced for the owner; never blindly replayed |
+
+All substrate and broker calls have timeouts. Lifecycle operations are idempotent and
+keyed by runtime and generation.
+
+## Resource management
+
+- Per-owner caps: CPU, memory, processes, job duration, concurrent runs, home size,
+  database size and connections, egress bytes, AI budget. Values are set in Open
+  decision D3 after measurement.
+- Global caps: running containers, total containers, daily funded spend, egress.
+- Cleanup: compute is deleted on stop or after a bounded sleep period; durable data is
+  deleted only by account deletion, retention expiry after notice, or completed upgrade.
+- Orphan sweep: compute with no current-generation record is deleted by a recurring
+  reconciler; databases and prefixes are never deleted by the sweep.
+- Platform registries for wake requests and in-flight starts are bounded with TTL.
+
+## Success Criteria
+
+- **SC-001**: Journeys 1 to 5 and 7 pass on Web Desktop with normal sign-in, real model
+  calls, real builds, and real storage. Journey 6 passes on each remaining surface.
+- **SC-002**: Saved samples survive 10 stop and start cycles, 3 container deletions, and
+  1 forced crash, with the unflushed window measured and inside its bound.
+- **SC-003**: 20 cold starts and 20 wake-from-sleep trials are reported with raw
+  timings, median, and maximum, separating image pull from cached start. Targets are
+  agreed after the Phase 0 measurement, not before.
+- **SC-004**: Two-owner denial tests pass: cross-owner database, object prefix, network,
+  and credential access all fail. Limit races hold. Stale-generation credentials fail.
+- **SC-005**: An upgrade inventory (row counts per table, file manifest, app list,
+  balances) matches before and after for three sample owners, including one failed and
+  resumed migration.
+- **SC-006**: Paid controls pass before and after, and during free-tier failure injection.
+- **SC-007**: Idle free owners cost no compute. Measured monthly cost per active free
+  owner is reported against the budget in D3.
+
+### Surface matrix
+
+| Surface | In scope | Notes |
+| --- | --- | --- |
+| Web Desktop | Yes, first | Proves the system |
+| Web Canvas | Yes | Same shell build; presentation switch must work |
+| Electron Desktop | Yes | Device sign-in must accept a container runtime |
+| Web Mobile | Yes | Follows Native Mobile behaviour |
+| Native Mobile | Yes | Journey gate must accept a sleeping container runtime |
+
+Each included surface needs its own live screenshots and recording. No surface becomes
+N/A without architectural rationale and reviewer approval.
+
+## Open decisions
+
+| # | Decision | Recommendation |
+| --- | --- | --- |
+| D0 | Linear ticket | Create one ENG ticket for this spec, assigned to Hamed; stacks share it |
+| D1 | Container provider | Decide by the Phase 0 bake-off against the criteria in plan.md; do not pick by preference |
+| D2 | Free AI allowance | Once-per-owner starter credit plus a small monthly allowance limited to the managed default model; own-account sources stay available |
+| D3 | Limits and retention | Set after Phase 0 measurement; propose 90 days inactivity, 30 days notice |
+| D4 | Signup gate | Invite-only until SC-004 and SC-007 hold in production for two weeks |
+| D5 | Free capability set | Chat (Matrix AI), Files, app build and use, Settings. Terminal, coding CLIs, channels, cron, bots, integrations with platform secrets: paid |
+| D6 | App preview sharing | Owner-only at launch; sharing via existing Sites private links later |
+| D7 | Relationship to spec 639 | Agree with ENG-423 owner who lands the capability contract first |
+
+## Stakeholder review
+
+Recommended before implementation: platform and billing owner (substrate model, free
+entitlement), security (trust model, egress), client owners for Electron Desktop and
+Native Mobile (sign-in without a machine), and the ENG-423 owner (shared contract).
