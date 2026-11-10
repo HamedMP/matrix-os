@@ -50,7 +50,7 @@ try {
     );
   }
   const snapshot = await readUsageHistory(repo, config.owner, {
-    timeZone: process.env.AI_USAGE_TIMEZONE ?? "Europe/Stockholm", failedRoots,
+    timeZone: process.env.AI_USAGE_TIMEZONE ?? "UTC", failedRoots,
   });
   const coverage = snapshot.history.coverage;
   coverage.machines = [...new Set(config.machines.map(m => m.label ?? m.id))];
@@ -104,7 +104,8 @@ try {
   console.error(
     `Full-history report ready: ${coverage.files} files, ${coverage.indexedBytes} indexed bytes; ${failedRoots} failed roots`,
   );
-  if (failedRoots) process.exitCode = 1;
+  // Unreadable files are reported inside the published report (coverage.failedRoots), which the dashboard flags.
+  // Exiting non-zero here would also skip cleanup of the staged upload on every later run.
 } finally {
   await db.destroy();
 }

@@ -32,7 +32,7 @@ The manifest seals every captured original with SHA-256 and performs an independ
 
 | Boundary                                 | Authentication                                                | Scope                                                             |
 | ---------------------------------------- | ------------------------------------------------------------- | ----------------------------------------------------------------- |
-| GET /api/ai-usage                        | Existing verified gateway principal                           | Exact configured runtime owner; no path/query overrides           |
+| GET /api/ai-usage                        | Existing verified gateway principal                           | Exact configured runtime owner; only a validated `timeZone` query          |
 | GET /api/files/blob (fixed usage export) | Existing authenticated owner-file API                         | Dated, content-free report; signed-in owner must match envelope   |
 | Native recent scan                       | Trusted main-frame IPC + current signed-in runtime generation | Fixed OS-user roots; explicitly partial fallback                  |
 | Historical collector                     | Gateway owner-database dependency; owner configuration file   | Standard roots and validated backup roots inside the owner's home |
@@ -66,3 +66,15 @@ The browser cannot read this Mac directly. It displays the report refreshed by a
 ## Calendar and coverage semantics
 
 The 90-day calendar uses fixed square cells. Ranges longer than a year use separate year rows and retain every recovered date. Horizontal overflow is confined to each calendar, including on mobile. “All recovered coding history” describes available coding counters, not lifetime AI usage. The visible scope line gives the actual token-record range and identifies earlier web activity without counters. Missing/deleted records and unqualified agent formats remain gaps; no counts are inferred from conversation text.
+
+## Review hardening (10 November 2026)
+
+- **Rollout:** the gateway collector starts only with `MATRIX_AI_USAGE_HISTORY=true`. Without it the route answers 404 to the verified owner, and clients use the owner-bound export exactly as on older computers. Released desktop builds do not start paired Mac sync; development builds and `MATRIX_DESKTOP_AI_USAGE_SYNC=1` do.
+- **One resolution on every surface:** Web Canvas, Web Desktop and Electron Desktop call the same loader: live index first, export only on 404, never after an authentication, service or validation failure, and never without a matching signed-in owner. A failed Mac transfer shows Matrix history with a "sync failed" label instead of an empty panel.
+- **Timezone:** the viewer's IANA zone is the only request input; it is checked against the runtime's zone list. The paired refresh uses the Mac's zone; the CLI defaults to UTC.
+- **Codex accounting outside Postgres:** recent scans, selected files and the CLI subtract native counter ranges from cumulative counters with the same rule as the SQL reader, so a drifting mirror is not counted twice. Counters that cannot be located are dropped and counted as incomplete.
+- **Report cost:** one report per timezone is built at a time, shared by simultaneous readers, reused for 60 seconds and discarded when indexing finishes. Only one build runs at a time across timezones, and waiting builds are capped. The report query has a 60-second statement timeout.
+- **Coverage truth:** an absent standard agent folder is not a gap; a missing configured backup root and any unreadable file are. Events dated outside the report range, and timestamps that are not offset-qualified ISO 8601, count as incomplete records.
+- **Backup seal:** a new manifest is written only if every previously sealed original still exists, byte-identical anywhere in the backup or as the leading bytes of the same file. Otherwise the run fails and the previous seal is kept.
+- **Locking and cancellation:** `refresh.ts` takes `.refresh.lock` itself, so manual and desktop runs serialize. The desktop runs it with a forced terminal so cancelling or disconnecting stops the remote job.
+- **Known limit:** the recovery config still has two owner fields (`owner` keys database rows, `desktopExport.ownerId` binds the export). The preview data uses different values, so unifying them needs a row re-key and is not done here.

@@ -1,4 +1,5 @@
 import { mergeUsageEvents } from "./parser.js";
+import { reconcileUsageEvents } from "./reconcile.js";
 import type {
   UsageAgent,
   UsageEvent,
@@ -44,15 +45,22 @@ export function estimateUsageUsd(e: UsageEvent): number | null {
     1e6
   );
 }
-export function usageDay(timestamp: string, timeZone: string): string {
-  const parts = new Intl.DateTimeFormat("en-CA", {
+/** Constructing a formatter costs far more than using one; a report formats every event. */
+export function usageDayFormatter(timeZone: string) {
+  const formatter = new Intl.DateTimeFormat("en-CA", {
     timeZone,
     year: "numeric",
     month: "2-digit",
     day: "2-digit",
-  }).formatToParts(new Date(timestamp));
-  const part = (type: string) => parts.find((p) => p.type === type)?.value;
-  return `${part("year")}-${part("month")}-${part("day")}`;
+  });
+  return (timestamp: string) => {
+    const parts = formatter.formatToParts(new Date(timestamp));
+    const part = (type: string) => parts.find((p) => p.type === type)?.value;
+    return `${part("year")}-${part("month")}-${part("day")}`;
+  };
+}
+export function usageDay(timestamp: string, timeZone: string): string {
+  return usageDayFormatter(timeZone)(timestamp);
 }
 export function shiftUsageDay(day: string, offset: number): string {
   return new Date(Date.parse(`${day}T12:00:00Z`) + offset * 86400000)
@@ -96,8 +104,6 @@ export function summarizeUsage(
     !/^\d{4}-\d{2}-\d{2}$/.test(options.endDay)
   )
     throw new RangeError("Invalid usage range");
-  // Validate the zone even for an empty dataset.
-  usageDay(new Date().toISOString(), options.timeZone);
   const daily = Array.from({ length: options.days }, (_, i) => ({
     day: shiftUsageDay(options.endDay, i - options.days + 1),
     ...empty(),
@@ -106,12 +112,7 @@ export function summarizeUsage(
     sessions = new Set<string>(); // Per-call, capped by MAX_USAGE_EVENTS and discarded on return.
   const byDay = new Map(daily.map((day) => [day.day, day]));
   const byModel = new Map<string, UsageSummary["models"][number]>(); // Same event cap.
-  const dayFormatter = new Intl.DateTimeFormat("en-CA", {
-    timeZone: options.timeZone,
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-  });
+  const dayOf = usageDayFormatter(options.timeZone);
   const total: UsageSummary = {
     ...empty(),
     daily,
@@ -119,12 +120,9 @@ export function summarizeUsage(
     sessions: 0,
     activeDays: 0,
   };
-  for (const e of mergeUsageEvents(events).events) {
+  for (const e of reconcileUsageEvents(mergeUsageEvents(events).events).events) {
     if (options.agent && options.agent !== e.agent) continue;
-    const parts = dayFormatter.formatToParts(new Date(e.timestamp));
-    const get = (type: string) => parts.find((p) => p.type === type)?.value;
-    const day = `${get("year")}-${get("month")}-${get("day")}`,
-      bucket = byDay.get(day);
+    const bucket = byDay.get(dayOf(e.timestamp));
     if (!bucket) continue;
     add(total, e);
     add(bucket, e);

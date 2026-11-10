@@ -1826,9 +1826,11 @@ export async function createGateway(config: GatewayConfig) {
     agentRuntimeController: agentRuntimeServices.controller,
     aiProviderService,
   });
-  const usageHistory = kyselyInstance && terminalRuntimeOwnerId ? startUsageHistory({db:kyselyInstance,owner:terminalRuntimeOwnerId,home:homePath}) : undefined;
+  // Persistent collection is opt-in per computer until product review approves a general rollout (spec 651).
+  const usageHistoryEnabled = process.env.MATRIX_AI_USAGE_HISTORY === "true";
+  const usageHistory = usageHistoryEnabled && kyselyInstance && terminalRuntimeOwnerId ? startUsageHistory({db:kyselyInstance,owner:terminalRuntimeOwnerId,home:homePath}) : undefined;
   registerSettingsRoutes({
-    app, homePath, settingsRoutes, botServices, runtimeOwnerId: terminalRuntimeOwnerId, usageHistory,
+    app, homePath, settingsRoutes, botServices, runtimeOwnerId: terminalRuntimeOwnerId, usageHistory, usageHistoryEnabled,
     getStartedEnabled: process.env.MATRIX_GET_STARTED_ENABLED === "true",
     getOwnerId: (c) => getOptionalRequestPrincipal(c)?.userId ?? null,
     osViewState: osViewStateRepository ? {

@@ -53,7 +53,6 @@
       var(--accent-foreground, var(--matrix-fg, inherit))
     );
     position: relative;
-    z-index: 100;
     min-width: 8rem;
     max-height: var(--radix-select-content-available-height);
     border: 1px solid

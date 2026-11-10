@@ -49,7 +49,7 @@ export function registerAiUsageIpc(
     if (!options.isTrusted(event)) throw new Error("Invalid request");
     const request =
       AI_USAGE_INVOKE["runtime:ai-usage-sync"].request.parse(input);
-    if (!options.sync) throw new Error("Usage sync unavailable");
+    if (!options.sync) return { status: "unpaired" as const };
     try {
       return AI_USAGE_INVOKE["runtime:ai-usage-sync"].response.parse(
         await options.sync.sync(request),

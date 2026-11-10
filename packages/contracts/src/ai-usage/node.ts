@@ -123,6 +123,8 @@ export async function scanUsageRoots(
   return {
     version: 1 as const,
     events: merged.events,
+    // Events stay raw so later merges reconcile from complete evidence. Counters that reconciliation leaves out
+    // are derived from these events by whoever displays them, so they are never counted here as well.
     issues: issues + merged.conflicts,
   };
 }

@@ -596,7 +596,9 @@ if (!gotLock) {
         const rendererUrl=desktopRendererUrl??pathToFileURL(join(__dirname,"../renderer/index.html")).toString();
         return !!contents&&!contents.isDestroyed()&&event.sender===contents&&event.senderFrame===contents.mainFrame&&contents.getURL()===rendererUrl;
       });
-      localUsage=registerAiUsageIpc(ipcMain,{home:app.getPath("home"),roots:{codexRoot:process.env.CODEX_HOME,claudeRoot:process.env.CLAUDE_CONFIG_DIR},auth,sync:createUsageSyncService({home:app.getPath("home"),pairingFile:join(app.getPath("userData"),"ai-usage-sync.json"),auth}),isTrusted:rawEvent=>{
+      // Paired Mac sync is an operator preview (spec 651): released builds do not run it until a reviewed pairing flow exists.
+      const usageSync=!app.isPackaged||process.env.MATRIX_DESKTOP_AI_USAGE_SYNC==="1"?createUsageSyncService({home:app.getPath("home"),pairingFile:join(app.getPath("userData"),"ai-usage-sync.json"),auth}):undefined;
+      localUsage=registerAiUsageIpc(ipcMain,{home:app.getPath("home"),roots:{codexRoot:process.env.CODEX_HOME,claudeRoot:process.env.CLAUDE_CONFIG_DIR},auth,sync:usageSync,isTrusted:rawEvent=>{
         const event=rawEvent as IpcMainInvokeEvent,contents=mainWindow?.webContents;
         const rendererUrl=desktopRendererUrl??pathToFileURL(join(__dirname,"../renderer/index.html")).toString();
         return !!contents&&!contents.isDestroyed()&&event.sender===contents&&event.senderFrame===contents.mainFrame&&contents.getURL()===rendererUrl;

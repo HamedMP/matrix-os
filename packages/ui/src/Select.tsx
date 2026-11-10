@@ -10,6 +10,7 @@ import { HugeiconsIcon } from "@hugeicons/react";
 import * as SelectPrimitive from "@radix-ui/react-select";
 
 import { twMerge } from "tailwind-merge";
+import { POPOVER_LAYER } from "./layering";
 import { cn as joinClasses } from "./cn";
 import "./select.css";
 const cn = (...values: (string | undefined | null | false)[]) =>
@@ -68,6 +69,8 @@ function SelectContent({
   children,
   position = "item-aligned",
   align = "center",
+  style,
+  onEscapeKeyDown,
   ...props
 }: React.ComponentProps<typeof SelectPrimitive.Content>) {
   return (
@@ -75,13 +78,20 @@ function SelectContent({
       <SelectPrimitive.Content
         data-slot="select-content"
         className={cn(
-          "matrix-select-content bg-popover text-popover-foreground data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 data-[side=bottom]:slide-in-from-top-2 data-[side=left]:slide-in-from-right-2 data-[side=right]:slide-in-from-left-2 data-[side=top]:slide-in-from-bottom-2 relative z-50 max-h-(--radix-select-content-available-height) min-w-[8rem] origin-(--radix-select-content-transform-origin) overflow-x-hidden overflow-y-auto rounded-md border shadow-md",
+          "matrix-select-content bg-popover text-popover-foreground data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 data-[side=bottom]:slide-in-from-top-2 data-[side=left]:slide-in-from-right-2 data-[side=right]:slide-in-from-left-2 data-[side=top]:slide-in-from-bottom-2 relative max-h-(--radix-select-content-available-height) min-w-[8rem] origin-(--radix-select-content-transform-origin) overflow-x-hidden overflow-y-auto rounded-md border shadow-md",
           position === "popper" &&
             "data-[side=bottom]:translate-y-1 data-[side=left]:-translate-x-1 data-[side=right]:translate-x-1 data-[side=top]:-translate-y-1",
           className,
         )}
         position={position}
         align={align}
+        // Menus portal to <body>; Radix copies this layer to its positioning wrapper.
+        style={{ zIndex: POPOVER_LAYER, ...style }}
+        onEscapeKeyDown={(event) => {
+          onEscapeKeyDown?.(event);
+          // Escape belongs to the menu while it is open; the hosting window must not also close.
+          event.stopPropagation();
+        }}
         {...props}
       >
         <SelectScrollUpButton />

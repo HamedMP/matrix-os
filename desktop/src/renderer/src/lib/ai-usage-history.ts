@@ -1,52 +1,55 @@
-import {
-  AiUsageBackupSchema,
-  readUsageExport,
-} from "@matrix-os/contracts/ai-usage";
+import { loadMatrixUsage as loadSharedUsage } from "@matrix-os/ui/ai-usage-load";
 import { AppError } from "../../../shared/app-error";
 import type { ApiClient } from "./api";
-const readOptions = (signal: AbortSignal) => ({
-  signal,
-  timeoutMs: 65000,
-  maxBytes: 16 * 1024 * 1024,
-  cache: "no-store" as const,
-});
+type Options = { syncedExport?: boolean; timeZone?: string };
 /** Preserve recent counters on older runtimes; a paired completed sync reads its authoritative export. */
-export async function loadMatrixUsage(
+export function loadMatrixUsage(
   api: Pick<ApiClient, "get">,
   owner: string | null,
   signal: AbortSignal,
-  options: { syncedExport?: boolean } = {},
+  options: Options = {},
 ) {
-  if (!owner) throw new Error("Usage unavailable");
-  signal.throwIfAborted();
-  let recent: ReturnType<typeof readUsageExport> | undefined;
-  if (!options.syncedExport) {
-    try {
-      const value = await api.get("/api/ai-usage", readOptions(signal));
-      signal.throwIfAborted();
-      const snapshot = readUsageExport(value);
-      if (snapshot.history) return { snapshot, backup: false };
-      recent = snapshot;
-    } catch (error: unknown) {
-      signal.throwIfAborted();
-      if (!(error instanceof AppError && error.httpStatus === 404)) throw error;
-    }
-  }
-  let value;
+  if (!owner) return Promise.reject(new Error("Usage unavailable"));
+  return loadSharedUsage(
+    {
+      get: (path, signal) =>
+        api.get(path, {
+          signal,
+          timeoutMs: 65000,
+          maxBytes: 16 * 1024 * 1024,
+          cache: "no-store" as const,
+        }),
+      status: (error) =>
+        error instanceof AppError ? error.httpStatus : undefined,
+    },
+    owner,
+    signal,
+    options,
+  );
+}
+/** A failed Mac transfer must not hide history the Matrix computer can already serve. */
+export async function loadDesktopUsage(input: {
+  sync(): Promise<{ status: "synced" | "unpaired" }>;
+  api: Pick<ApiClient, "get">;
+  owner: string | null;
+  signal: AbortSignal;
+  timeZone?: string;
+}) {
+  let sync: "synced" | "unpaired" | "failed";
   try {
-    value = await api.get(
-      `/api/files/blob?path=${encodeURIComponent("exports/ai-usage/latest.json")}`,
-      readOptions(signal),
-    );
+    sync = (await input.sync()).status;
   } catch (error: unknown) {
-    signal.throwIfAborted();
-    if (recent && error instanceof AppError && error.httpStatus === 404)
-      return { snapshot: recent, backup: false };
-    throw error;
+    input.signal.throwIfAborted();
+    console.warn(
+      "[ai-usage] Mac sync failed; showing Matrix history",
+      error instanceof Error ? error.name : "UnknownError",
+    );
+    sync = "failed";
   }
-  signal.throwIfAborted();
-  const backup = AiUsageBackupSchema.parse(value);
-  if (backup.ownerId !== owner || !backup.report.history)
-    throw new Error("Usage unavailable");
-  return { snapshot: backup.report, backup: true };
+  input.signal.throwIfAborted();
+  const result = await loadMatrixUsage(input.api, input.owner, input.signal, {
+    syncedExport: sync === "synced",
+    timeZone: input.timeZone,
+  });
+  return { ...result, sync };
 }

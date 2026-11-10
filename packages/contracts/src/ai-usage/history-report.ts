@@ -1,4 +1,4 @@
-import { estimateUsageUsd, shiftUsageDay, usageDay } from "./summary.js";
+import { estimateUsageUsd, shiftUsageDay, usageDayFormatter } from "./summary.js";
 import type {
   UsageAgent,
   UsageEvent,
@@ -77,8 +77,10 @@ export function createHistoryReports(
   zone = "UTC",
   now = new Date(),
 ) {
-  const endDay = usageDay(now.toISOString(), zone),
-    first = oldest ? usageDay(oldest, zone) : endDay;
+  const dayOf = usageDayFormatter(zone);
+  let outside = 0;
+  const endDay = dayOf(now.toISOString()),
+    first = oldest ? dayOf(oldest) : endDay;
   const oldestYear = Math.max(2000, Number(first.slice(0, 4))),
     year = Number(endDay.slice(0, 4));
   const ranges = [
@@ -135,7 +137,8 @@ export function createHistoryReports(
     }
   return {
     push(e: UsageEvent) {
-      const day = usageDay(e.timestamp, zone);
+      const day = dayOf(e.timestamp);
+      if (day < first || day > endDay) outside++;
       for (const state of states) {
         const { report } = state;
         if (
@@ -165,6 +168,8 @@ export function createHistoryReports(
         }
       }
     },
+    /** Events dated before the first known activity or after today appear in no report. */
+    outsideRange: () => outside,
     finish() {
       for (const { report } of states) {
         report.summary.activeDays = report.summary.daily.filter(

@@ -33,3 +33,8 @@ it('starts the new scan once a cancelled one from the previous computer has fini
  await expect(handler({},{runtimeSlot:'primary',authGeneration:2})).resolves.toEqual({version:1,events:[],issues:2});
  await expect(first).rejects.toThrow('Usage unavailable');expect(scan).toHaveBeenCalledTimes(2);await service.dispose();
 });
+it('reports this Mac as unpaired, without an error, in builds that ship no sync service',async()=>{
+ const handlers=new Map<string,(event:unknown,input:unknown)=>Promise<unknown>>();
+ const service=registerAiUsageIpc({handle:(name,fn)=>{handlers.set(name,fn);}},{home:'/local-user',auth:{getStatus:()=>({signedIn:true,userId:'owner',runtimeSlot:'primary',authGeneration:1})},isTrusted:()=>true});
+ expect(await handlers.get('runtime:ai-usage-sync')!({}, {runtimeSlot:'primary',authGeneration:1})).toEqual({status:'unpaired'});await service.dispose();
+});

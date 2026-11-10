@@ -31,17 +31,30 @@ async function* files(path: string, depth = 0): AsyncGenerator<string> {
       yield* files(join(path, item.name), depth + 1);
   }
 }
+async function exists(path: string) {
+  try {
+    await lstat(path);
+    return true;
+  } catch (error: unknown) {
+    if (error instanceof Error && "code" in error && error.code === "ENOENT")
+      return false;
+    throw error;
+  }
+}
 export async function indexUsageRoots(
   repo: UsageHistoryRepository,
   owner: string,
   machine: string,
-  roots: Array<{ path: string; agent: UsageAgent }>,
+  roots: Array<{ path: string; agent: UsageAgent; optional?: boolean }>,
   signal?: AbortSignal,
 ) {
   let indexed = 0,
     failed = 0;
   for (const root of roots) {
     try {
+      // An agent that was never installed has no history; that is not a coverage gap.
+      // Only the root itself may be absent: anything missing inside it is reported below.
+      if (root.optional && !(await exists(root.path))) continue;
       for await (const path of files(root.path)) {
         signal?.throwIfAborted();
         try {

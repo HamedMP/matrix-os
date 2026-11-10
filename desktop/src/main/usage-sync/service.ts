@@ -32,12 +32,17 @@ export function createUsageSyncService(options: {
     if (disposed) return;
     timer = setTimeout(() => {
       timer = undefined;
-      void sync(options.auth.getStatus()).catch((error: unknown) =>
-        console.warn(
-          "[ai-usage] background sync unavailable",
-          error instanceof Error ? error.name : "UnknownError",
-        ),
-      );
+      void sync(options.auth.getStatus())
+        .catch((error: unknown) =>
+          console.warn(
+            "[ai-usage] background sync unavailable",
+            error instanceof Error ? error.name : "UnknownError",
+          ),
+        )
+        // Signed-out and still-fresh ticks return before a transfer starts; keep the hourly cadence anyway.
+        .finally(() => {
+          if (!timer && !pending) schedule();
+        });
     }, delay);
     timer.unref?.();
   };

@@ -9,6 +9,7 @@ const billingState = vi.hoisted(() => ({
   active: true as boolean | null,
 }));
 
+vi.mock("@clerk/nextjs", () => ({ useUser: () => ({ user: { id: "user_owner" }, isLoaded: true }) }));
 vi.mock("@/hooks/useMatrixBillingAccess", () => ({
   useMatrixBillingAccess: () => ({
     active: billingState.active,

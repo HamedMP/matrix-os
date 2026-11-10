@@ -20,3 +20,19 @@ it('does not substitute a capped sample when the historical index is unconfigure
  const app=createAiUsageRoutes({homePath:'/owner',runtimeOwnerId:'owner',getOwnerId:()=> 'owner'});
  expect((await app.request('/api/ai-usage')).status).toBe(503);
 });
+it('buckets history in the requested reporting timezone and rejects anything else in the query',async()=>{
+ const read=vi.fn(async(timeZone?:string)=>({version:1 as const,events:[],issues:0,timeZone}));
+ const app=createAiUsageRoutes({homePath:'/owner',runtimeOwnerId:'owner',getOwnerId:()=> 'owner',history:{read}});
+ expect(await(await app.request('/api/ai-usage?timeZone=Europe%2FStockholm')).json()).toMatchObject({timeZone:'Europe/Stockholm'});
+ expect((await app.request('/api/ai-usage?timeZone=Asia%2FCalcutta')).status).toBe(200);
+ await app.request('/api/ai-usage');expect(read).toHaveBeenLastCalledWith(undefined);
+ for(const query of ['timeZone=Mars%2FOlympus','timeZone=','timeZone=UTC&home=/other','timeZone=UTC&timeZone=Asia%2FTokyo'])
+  expect((await app.request('/api/ai-usage?'+query)).status,query).toBe(400);
+ expect(read).toHaveBeenCalledTimes(3);
+});
+it('answers not-found on a computer where history collection is switched off, but only to its owner',async()=>{
+ let owner:string|null='guest';const read=vi.fn();
+ const app=createAiUsageRoutes({homePath:'/owner',runtimeOwnerId:'owner',getOwnerId:()=>owner,history:{read},enabled:false});
+ expect((await app.request('/api/ai-usage')).status).toBe(403);owner='owner';
+ expect((await app.request('/api/ai-usage')).status).toBe(404);expect(read).not.toHaveBeenCalled();
+});

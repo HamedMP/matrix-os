@@ -170,6 +170,7 @@ it("backs up only allowlisted history, preserves changed versions, then waits fo
       home,
       new AbortController().signal,
       run,
+      "America/New_York",
     );
     expect(run.mock.calls.map((c) => c[0])).toEqual(["ssh", "rsync", "ssh"]);
     const args = run.mock.calls[1][1] as string[];
@@ -184,6 +185,11 @@ it("backs up only allowlisted history, preserves changed versions, then waits fo
     expect((run.mock.calls.at(-1)![1] as string[]).at(-1)).toContain(
       "scripts/ai-usage/refresh.ts",
     );
+    const refresh = run.mock.calls.at(-1)![1] as string[];
+    // A forced terminal makes the remote job stop when this Mac cancels or disconnects.
+    expect(refresh).toContain("-tt");
+    expect(refresh.at(-1)).toContain("AI_USAGE_TIMEZONE='America/New_York'");
+    expect(refresh.at(-1)).not.toContain("flock");
   } finally {
     await rm(home, { recursive: true, force: true });
   }
@@ -223,4 +229,29 @@ it("drains a cancelled previous account sync before loading the new account", as
   await expect(next).resolves.toMatchObject({ status: "synced" });
   expect(transfer).toHaveBeenCalledTimes(2);
   await service.dispose();
+});
+
+it("keeps the hourly timer alive when a tick finds nobody signed in or a still-fresh result", async () => {
+  vi.useFakeTimers();
+  let signedIn = false;
+  const transfer = vi.fn(async () => {});
+  const service = createUsageSyncService({
+    home: "/mac",
+    pairingFile: "/private/config",
+    auth: {
+      getStatus: () => ({ signedIn, userId: "owner", runtimeSlot: "primary", authGeneration: 1 }),
+      getGatewayOrigin: () => pairing.gatewayOrigin,
+    },
+    readPairing: async () => pairing,
+    transfer,
+  });
+  await vi.advanceTimersByTimeAsync(0);
+  expect(transfer).not.toHaveBeenCalled();
+  signedIn = true; // No auth event reaches the service; the next tick must still run.
+  await vi.advanceTimersByTimeAsync(60 * 60 * 1000);
+  expect(transfer).toHaveBeenCalledTimes(1);
+  await vi.advanceTimersByTimeAsync(2 * 60 * 60 * 1000 + 5);
+  expect(transfer.mock.calls.length).toBeGreaterThanOrEqual(3);
+  await service.dispose();
+  vi.useRealTimers();
 });
