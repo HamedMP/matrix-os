@@ -113,20 +113,28 @@ describe("runner pool", () => {
     writeFileSync(join(dir, "event.json"), JSON.stringify(payload));
     // Run the hook under a process named like the runner's worker, as the runner does. A marker
     // written after the hook returns stands in for the workflow's next step.
-    const worker = join(dir, "Runner.Worker");
-    copyFileSync(spawnSync("bash", ["-c", "command -v bash"], { encoding: "utf8" }).stdout.trim(), worker);
-    chmodSync(worker, 0o755);
+    // Process tree: outer Runner.Listener (stands in for the CI runner hosting this suite) ->
+    // plain bash -> inner Runner.Worker -> hook. Only the inner worker may be killed.
+    const bash = spawnSync("bash", ["-c", "command -v bash"], { encoding: "utf8" }).stdout.trim();
+    for (const name of ["Runner.Worker", "Runner.Listener", "host-shell"]) {
+      copyFileSync(bash, join(dir, name));
+      chmodSync(join(dir, name), 0o755);
+    }
     const hook = resolve(import.meta.dirname, "../../scripts/ci/runner-pool/job-started.sh");
-    const result = spawnSync(worker, ["-c", `bash "${hook}"; echo $? > "${dir}/next-step"; :`], {
+    const inner = `"${dir}/Runner.Worker" -c 'bash "${hook}"; echo $? > "${dir}/next-step"; :'`;
+    const host = `"${dir}/host-shell" -c '${inner.replaceAll("'", `'\\''`)}; echo $? > "${dir}/inner-status"; :'`;
+    const result = spawnSync(join(dir, "Runner.Listener"), ["-c", `${host}; echo survived > "${dir}/outer"; :`], {
       encoding: "utf8",
       env: { PATH: process.env.PATH, GITHUB_EVENT_NAME: event, GITHUB_EVENT_PATH: join(dir, "event.json"), GITHUB_REPOSITORY: "HamedMP/matrix-os" },
     });
+    // The hosting runner always survives.
+    expect(result.status, result.stderr).toBe(0);
+    expect(readFileSync(join(dir, "outer"), "utf8").trim()).toBe("survived");
     if (status === 0) {
-      expect(result.status, result.stderr).toBe(0);
       expect(readFileSync(join(dir, "next-step"), "utf8").trim()).toBe("0");
     } else {
-      // Rejection kills the runner process, so an `if: always()` step never gets to run.
-      expect(result.signal).toBe("SIGKILL");
+      // Rejection kills the inner runner (128 + SIGKILL), so an `if: always()` step never runs.
+      expect(readFileSync(join(dir, "inner-status"), "utf8").trim()).toBe("137");
       expect(existsSync(join(dir, "next-step"))).toBe(false);
     }
   });
