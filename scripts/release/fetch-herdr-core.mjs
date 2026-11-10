@@ -22,6 +22,7 @@ const RELEASE_ORIGIN = "https://releases.herdr.dev";
 // What is taken from the archive, and the name it ships under.
 const PACKED_FILES = [["herdr-core", "hc"], ["LICENSE", "LICENSE"], ["THIRD-PARTY-NOTICES", "THIRD-PARTY-NOTICES"]];
 const NOTICE_FILE_LIMIT = 8 * 1024 * 1024;
+const MAX_BINARY_BYTES = 128 * 1024 * 1024;
 
 export async function readHerdrCoreManifest(path = join(ROOT, "desktop/herdr-core.json")) {
   const manifest = JSON.parse(await readFile(path, "utf8"));
@@ -97,7 +98,12 @@ export async function fetchHerdrCore({ platform, arch, outDir, manifest, fetchIm
     await mkdir(outDir, { recursive: true });
     for (const [name, packedAs] of PACKED_FILES) {
       const source = join(unpacked, name);
-      if (!(await lstat(source)).isFile()) throw new Error(`herdr-core archive member ${name} is not a regular file`);
+      const info = await lstat(source);
+      if (!info.isFile()) throw new Error(`herdr-core archive member ${name} is not a regular file`);
+      // A small archive can unpack to something huge; nothing oversized is copied or read.
+      if (info.size > (name === "herdr-core" ? MAX_BINARY_BYTES : NOTICE_FILE_LIMIT)) {
+        throw new Error(`herdr-core archive member ${name} is larger than expected`);
+      }
       await copyFile(source, join(outDir, packedAs));
     }
     await chmod(join(outDir, "hc"), 0o755);
@@ -105,9 +111,8 @@ export async function fetchHerdrCore({ platform, arch, outDir, manifest, fetchIm
     // One readable file for the app's Help > Third-Party Notices.
     const texts = [];
     for (const name of ["LICENSE", "THIRD-PARTY-NOTICES"]) {
-      const text = await readFile(join(outDir, name));
-      if (text.length > NOTICE_FILE_LIMIT) throw new Error(`herdr-core ${name} is larger than expected`);
-      texts.push(text.toString("utf8"));
+      // Size-checked above, before it was copied here.
+      texts.push(await readFile(join(outDir, name), "utf8"));
     }
     await writeFile(join(outDir, "NOTICES.txt"), [
       `Matrix OS includes herdr-core ${pinned.version} (${pinned.license ?? "see below"}), which runs local terminals.`,

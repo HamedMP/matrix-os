@@ -110,6 +110,22 @@ describe("pinned herdr-core", () => {
     expect(existsSync(join(outDir, "hc"))).toBe(false);
   });
 
+  it("refuses an archive member that unpacks larger than allowed, before reading it", async () => {
+    // Nine megabytes of zeros compress to a few kilobytes: the download cap alone would not catch it.
+    const dir = mkdtempSync(join(scratch, "bomb-"));
+    writeFileSync(join(dir, "herdr-core"), "#!/bin/sh\n");
+    writeFileSync(join(dir, "LICENSE"), "Apache License");
+    writeFileSync(join(dir, "THIRD-PARTY-NOTICES"), Buffer.alloc(9 * 1024 * 1024));
+    execFileSync("tar", ["-czf", join(dir, "a.tar.gz"), "-C", dir, "herdr-core", "LICENSE", "THIRD-PARTY-NOTICES"]);
+    const bytes = readFileSync(join(dir, "a.tar.gz"));
+    expect(bytes.length).toBeLessThan(1024 * 1024);
+    const outDir = join(scratch, "out-bomb");
+    await expect(fetchHerdrCore({ platform: "darwin", arch: "arm64", outDir,
+      manifest: manifestFor(createHash("sha256").update(bytes).digest("hex")), fetchImpl: serving(bytes) }))
+      .rejects.toThrow("THIRD-PARTY-NOTICES is larger than expected");
+    expect(existsSync(join(outDir, "NOTICES.txt"))).toBe(false);
+  });
+
   it("is fetched before packaging and packed where the app looks for it, on macOS and Linux only", () => {
     const builder = parse(readFileSync(join(root, "desktop/electron-builder.yml"), "utf8"));
     const packed = [{ from: "build/herdr", to: "herdr" }];
