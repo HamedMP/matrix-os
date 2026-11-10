@@ -3,6 +3,7 @@
 // gets a deliberately small IPC surface, enforced in the preload and again by
 // the main-process sender policy.
 import { z } from "zod/v4";
+import type { EventChannel, InvokeChannel } from "./ipc-contract";
 
 export const TERMINAL_WINDOW_ARG = "--matrix-terminal-window";
 export const TERMINAL_WINDOW_QUERY_KEY = "window";
@@ -20,7 +21,7 @@ export const TERMINAL_WINDOW_INVOKE = {
 } as const;
 
 /** Channels only the Terminal window may call. */
-export const TERMINAL_WINDOW_ONLY_INVOKE_CHANNELS = ["terminal-window:focus-main"] as const;
+export const TERMINAL_WINDOW_ONLY_INVOKE_CHANNELS = ["terminal-window:focus-main"] as const satisfies readonly InvokeChannel[];
 
 /** Everything the Terminal window may call. */
 export const TERMINAL_WINDOW_INVOKE_CHANNELS = [
@@ -29,12 +30,26 @@ export const TERMINAL_WINDOW_INVOKE_CHANNELS = [
   "app:get-version",
   "app:get-zoom",
   "app:set-zoom",
-  "state:get",
   ...TERMINAL_WINDOW_ONLY_INVOKE_CHANNELS,
-] as const;
+] as const satisfies readonly InvokeChannel[];
 
 /** Events the Terminal window may subscribe to. */
-export const TERMINAL_WINDOW_EVENT_CHANNELS = ["auth:changed", "window:focus-changed"] as const;
+export const TERMINAL_WINDOW_EVENT_CHANNELS = ["auth:changed", "window:focus-changed"] as const satisfies readonly EventChannel[];
+
+export type WindowRole = "main" | "terminal";
+
+const terminalInvoke = new Set<string>(TERMINAL_WINDOW_INVOKE_CHANNELS);
+const terminalOnlyInvoke = new Set<string>(TERMINAL_WINDOW_ONLY_INVOKE_CHANNELS);
+const terminalEvents = new Set<string>(TERMINAL_WINDOW_EVENT_CHANNELS);
+
+/** The one rule for which window may invoke which channel; the preload and the main process both apply it. */
+export function windowMayInvoke(role: WindowRole, channel: string): boolean {
+  return role === "terminal" ? terminalInvoke.has(channel) : !terminalOnlyInvoke.has(channel);
+}
+
+export function windowMayListen(role: WindowRole, channel: string): boolean {
+  return role === "main" || terminalEvents.has(channel);
+}
 
 export function isTerminalWindowLocation(search: string): boolean {
   return new URLSearchParams(search).get(TERMINAL_WINDOW_QUERY_KEY) === TERMINAL_WINDOW_QUERY_VALUE;

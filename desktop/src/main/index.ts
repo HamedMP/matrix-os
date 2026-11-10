@@ -179,6 +179,8 @@ function sendEvent<C extends EventChannel>(channel: C, payload: EventPayload<C>)
     return;
   }
   mainWindow?.webContents.send(channel, parsed.data);
+  // A session change reaches the Terminal window too.
+  if (channel === "auth:changed") sendTerminalWindowEvent(channel, payload);
 }
 
 /** Events are addressed to a named window; the Terminal window gets only its allowlist. */
@@ -331,16 +333,14 @@ if (!gotLock) {
           fileDownloads?.cancelAll();
           organizationDriveTransfers?.cancelAll();
           localChatImports?.cancelAll();
-          const authChanged = {
+          sendEvent("auth:changed", {
             signedIn: status.signedIn,
             ...(status.signedIn ? {
               handle: status.handle,
               ...(status.displayName ? { displayName: status.displayName } : {}),
               ...(status.imageUrl ? { imageUrl: status.imageUrl } : {}),
             } : {}),
-          };
-          sendEvent("auth:changed", authChanged);
-          sendTerminalWindowEvent("auth:changed", authChanged);
+          });
         },
       });
       await auth.init();

@@ -40,7 +40,6 @@ function installOperator(handlers: Record<string, (payload: unknown) => unknown>
 const signedIn = { signedIn: true, handle: "operator", userId: "user_1", platformHost: "https://app.matrix-os.com",
   runtimeSlot: "primary", authGeneration: 1 };
 const base = {
-  "state:get": () => ({ value: null }),
   "app:get-zoom": () => ({ factor: 1 }),
 };
 

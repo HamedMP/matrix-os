@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import { INVOKE_CHANNELS } from "@desktop/shared/ipc-contract";
 import { createOperatorBridge } from "@desktop/shared/operator-bridge";
 import { TERMINAL_WINDOW_EVENT_CHANNELS, TERMINAL_WINDOW_INVOKE_CHANNELS } from "@desktop/shared/terminal-window";
 
@@ -13,12 +14,15 @@ describe("operator preload bridge", () => {
     await expect(bridge.invoke("auth:sign-out", {})).rejects.toThrow("unknown channel");
     await expect(bridge.invoke("terminal-window:open", {})).rejects.toThrow("unknown channel");
     await expect(bridge.invoke("runtime:select", { slot: "primary" })).rejects.toThrow("unknown channel");
-    expect(ipc.invoke).not.toHaveBeenCalled();
-    for (const channel of TERMINAL_WINDOW_INVOKE_CHANNELS.filter((name) => name !== "state:get")) {
-      await bridge.invoke(channel, {}).catch(() => undefined);
+    // Every channel outside the allowlist is refused in the preload itself.
+    const allowed = new Set<string>(TERMINAL_WINDOW_INVOKE_CHANNELS);
+    for (const channel of Object.keys(INVOKE_CHANNELS).filter((name) => !allowed.has(name))) {
+      await expect(bridge.invoke(channel, {}), channel).rejects.toThrow("unknown channel");
     }
-    expect(ipc.invoke).toHaveBeenCalledWith("auth:status", {});
-    expect(ipc.invoke).toHaveBeenCalledWith("terminal-window:focus-main", {});
+    expect(ipc.invoke).not.toHaveBeenCalled();
+    await bridge.invoke("auth:status", {});
+    await bridge.invoke("terminal-window:focus-main", {});
+    expect(ipc.invoke.mock.calls).toEqual([["auth:status", {}], ["terminal-window:focus-main", {}]]);
   });
 
   it("subscribes the Terminal window only to its event allowlist", () => {

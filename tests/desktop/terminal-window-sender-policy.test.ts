@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { createSenderPolicy } from "@desktop/main/ipc/sender-policy";
-import { INVOKE_CHANNELS } from "@desktop/shared/ipc-contract";
+import { EVENT_CHANNELS, INVOKE_CHANNELS } from "@desktop/shared/ipc-contract";
 import {
+  TERMINAL_WINDOW_EVENT_CHANNELS,
   TERMINAL_WINDOW_INVOKE_CHANNELS,
   TERMINAL_WINDOW_ONLY_INVOKE_CHANNELS,
 } from "@desktop/shared/terminal-window";
@@ -33,11 +34,21 @@ describe("IPC sender policy", () => {
   const terminalAllowed = new Set<string>(TERMINAL_WINDOW_INVOKE_CHANNELS);
   const terminalOnly = new Set<string>(TERMINAL_WINDOW_ONLY_INVOKE_CHANNELS);
 
-  it("lets the Terminal window use only its allowlisted channels", () => {
+  it("lets the Terminal window use exactly these channels", () => {
+    // Written out here on purpose: widening the window's surface must be a
+    // reviewed change to this list, not a silent edit to the allowlist.
+    const expected = [
+      "app:get-version", "app:get-zoom", "app:set-zoom", "auth:status", "runtime:list-computers", "terminal-window:focus-main",
+    ].sort();
     const { terminal, authorize, from } = setup();
-    for (const channel of allChannels) {
-      expect(authorize(from(terminal), channel), channel).toBe(terminalAllowed.has(channel));
-    }
+    expect(allChannels.filter((channel) => authorize(from(terminal), channel)).sort()).toEqual(expected);
+  });
+
+  it("lets the Terminal window listen to exactly these events", () => {
+    expect([...TERMINAL_WINDOW_EVENT_CHANNELS].sort()).toEqual(
+      ["auth:changed", "window:focus-changed"],
+    );
+    for (const channel of TERMINAL_WINDOW_EVENT_CHANNELS) expect(Object.keys(EVENT_CHANNELS), channel).toContain(channel);
   });
 
   it("lets the main window use every channel except Terminal-window-only ones", () => {
@@ -48,7 +59,7 @@ describe("IPC sender policy", () => {
   });
 
   it("keeps privileged channels away from the Terminal window", () => {
-    for (const channel of ["auth:sign-out", "runtime:select", "state:set", "embed:open", "shell:open-external",
+    for (const channel of ["auth:sign-out", "runtime:select", "state:get", "state:set", "embed:open", "shell:open-external",
       "runtime:save-file-content", "terminal-window:open"]) {
       expect(terminalAllowed.has(channel), channel).toBe(false);
     }
