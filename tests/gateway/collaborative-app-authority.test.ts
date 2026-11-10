@@ -51,6 +51,7 @@ describe("collaborative app current-membership authority", () => {
     await shares.createAtomic({
       ownerId, organizationId, catalogId, readinessId,
       expectedResourceRevision: 0, expectedReadinessRevision: 2, expectedBuildId: build.buildId,
+      expectedBinding: null,
       clientRequestId: "80000000-0000-4000-8000-000000000001", payloadHash: "f".repeat(64), runtimeId: "runtime_owner",
     });
     authority = new CollaborationAuthority(new CollaborationRepository(fixture.db), {

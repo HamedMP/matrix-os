@@ -170,6 +170,7 @@ export class CollaborativeAppShareRepository {
     expectedResourceRevision: number;
     expectedReadinessRevision: number;
     expectedBuildId: string;
+    expectedBinding: { scopeId: string; scopeRevision: number; bindingRevision: number } | null;
     clientRequestId: string;
     payloadHash: string;
     runtimeId: string;
@@ -182,6 +183,9 @@ export class CollaborativeAppShareRepository {
       || !DigestSchema.safeParse(input.expectedBuildId).success
       || !DigestSchema.safeParse(input.payloadHash).success
       || !RuntimeIdSchema.safeParse(input.runtimeId).success
+      || (input.expectedBinding !== null && (!z.uuid().safeParse(input.expectedBinding.scopeId).success
+        || !validRevision(input.expectedBinding.scopeRevision) || input.expectedBinding.scopeRevision < 1
+        || !validRevision(input.expectedBinding.bindingRevision) || input.expectedBinding.bindingRevision < 1))
       || !validRevision(input.expectedResourceRevision)
       || !validRevision(input.expectedReadinessRevision) || input.expectedReadinessRevision < 1) {
       throw new CollaborativeAppShareRepositoryError("invalid");
@@ -231,6 +235,12 @@ export class CollaborativeAppShareRepository {
         }
         let binding = await trx.selectFrom("collaboration_app_bindings").selectAll()
           .where("scope_id", "=", scope.id).forUpdate().executeTakeFirst();
+        if (input.expectedBinding === null ? !!binding
+          : !binding || input.expectedBinding.scopeId !== scope.id
+            || input.expectedBinding.scopeRevision !== Number(scope.revision)
+            || input.expectedBinding.bindingRevision !== Number(binding.revision)) {
+          throw new CollaborativeAppShareRepositoryError("conflict");
+        }
         const restarting = scope.lifecycle === "archived" && binding?.state === "stopped";
         if (scope.organization_id !== input.organizationId || scope.membership_mode !== "direct"
           || scope.authority_runtime_id !== input.runtimeId

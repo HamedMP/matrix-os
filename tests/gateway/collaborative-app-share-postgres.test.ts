@@ -33,6 +33,7 @@ const input = {
   expectedResourceRevision: 0,
   expectedReadinessRevision: 2,
   expectedBuildId: build.buildId,
+  expectedBinding: null,
   clientRequestId: "80000000-0000-4000-8000-000000000001",
   payloadHash: "f".repeat(64),
   runtimeId: "runtime_owner",
@@ -199,6 +200,7 @@ describe("collaborative app atomic share creation", () => {
 
     const restarted = await repository.createAtomic({
       ...input,
+      expectedBinding: { scopeId, scopeRevision: 2, bindingRevision: 2 },
       clientRequestId: "80000000-0000-4000-8000-000000000003",
       payloadHash: "8".repeat(64),
     });
@@ -218,5 +220,17 @@ describe("collaborative app atomic share creation", () => {
       scopeRevision: 3,
       binding: { state: "active", revision: 3 },
     });
+  });
+
+  it("rejects a delayed first-create confirmation after another window stopped sharing", async () => {
+    await repository.createAtomic(input);
+    await repository.stopAtomic({ scopeId, ownerId: input.ownerId, expectedScopeRevision: 1,
+      expectedBindingRevision: 1, clientRequestId: "80000000-0000-4000-8000-000000000004",
+      payloadHash: "7".repeat(64) });
+    await expect(repository.createAtomic({ ...input, expectedBinding: null,
+      clientRequestId: "80000000-0000-4000-8000-000000000005", payloadHash: "6".repeat(64) }))
+      .rejects.toMatchObject({ code: "conflict" });
+    expect(await fixture.db.selectFrom("collaboration_app_bindings").select(["state"]).executeTakeFirstOrThrow())
+      .toMatchObject({ state: "stopped" });
   });
 });

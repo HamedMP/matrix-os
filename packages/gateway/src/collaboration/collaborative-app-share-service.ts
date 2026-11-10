@@ -35,6 +35,8 @@ const TokenSchema = z.object({
   readinessId: z.uuid(),
   readinessRevision: z.number().int().positive(),
   buildId: DigestSchema,
+  observedBinding: z.strictObject({ scopeId: z.uuid(), scopeRevision: z.number().int().positive(),
+    bindingRevision: z.number().int().positive() }).nullable(),
   expiresAt: z.number().int().positive(),
 }).strict();
 
@@ -149,6 +151,8 @@ export class CollaborativeAppShareService {
       readinessId: readiness.id,
       readinessRevision: readiness.revision,
       buildId: readiness.build.buildId,
+      observedBinding: existing ? { scopeId: existing.scopeId, scopeRevision: existing.scopeRevision,
+        bindingRevision: existing.binding.revision } : null,
       expiresAt: this.now().getTime() + TOKEN_LIFETIME_MS,
     });
     const encoded = Buffer.from(canonicalJson(token)).toString("base64url");
@@ -223,6 +227,7 @@ export class CollaborativeAppShareService {
       expectedResourceRevision: token.resourceRevision,
       expectedReadinessRevision: token.readinessRevision,
       expectedBuildId: token.buildId,
+      expectedBinding: token.observedBinding,
       clientRequestId: input.clientRequestId,
       payloadHash,
       runtimeId: this.options.runtimeId,

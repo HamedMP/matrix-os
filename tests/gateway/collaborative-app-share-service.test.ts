@@ -242,7 +242,7 @@ describe("CollaborativeAppShareService", () => {
       scopeRevision: 2,
       binding: { ...binding, state: "stopped" as const, revision: 2, stoppedAt: NOW.toISOString() },
     };
-    const { service } = setup({ existing: stopped });
+    const { service, shares } = setup({ existing: stopped });
 
     const result = await service.preflight(ownerId, build.appId, {
       organizationId,
@@ -252,6 +252,15 @@ describe("CollaborativeAppShareService", () => {
 
     expect(result).toMatchObject({ eligible: true, catalogId: build.catalogId });
     expect(result).not.toHaveProperty("existingShare");
+    if (!result.eligible) throw new Error("expected eligible preflight");
+    await service.create(ownerId, build.appId, {
+      organizationId, clientRequestId: "80000000-0000-4000-8000-000000000005",
+      expectedResourceRevision: result.resourceRevision, expectedReadinessRevision: "2",
+      readinessId: result.readinessId, buildId: result.buildId, confirmationToken: result.confirmationToken,
+    });
+    expect(shares.createAtomic).toHaveBeenCalledWith(expect.objectContaining({
+      expectedBinding: { scopeId, scopeRevision: 2, bindingRevision: 2 },
+    }));
   });
 
   it("replays a completed create before expired-token and changed-build preconditions", async () => {

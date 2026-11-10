@@ -74,6 +74,7 @@ describe("collaborative app readiness drift", () => {
       expectedResourceRevision: 0,
       expectedReadinessRevision: 2,
       expectedBuildId: build.buildId,
+      expectedBinding: null,
       clientRequestId: "80000000-0000-4000-8000-000000000001",
       payloadHash: "f".repeat(64),
       runtimeId,
