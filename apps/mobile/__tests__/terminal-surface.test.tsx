@@ -363,7 +363,7 @@ describe("native mobile terminal surface", () => {
     let openURL: jest.SpyInstance;
     let warn: jest.SpyInstance;
     beforeEach(() => {
-      openURL = jest.spyOn(Linking, "openURL").mockResolvedValue(true);
+      openURL = jest.spyOn(Linking, "openURL").mockResolvedValue(undefined);
       warn = jest.spyOn(console, "warn").mockImplementation(() => undefined);
     });
     afterEach(() => {
