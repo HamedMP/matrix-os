@@ -386,7 +386,7 @@ Provisional timeouts, all configuration-driven and revised after Phase 0:
 | Operation | Timeout |
 | --- | --- |
 | Provider API call | 10 s |
-| Start to ready, including hydrate | 90 s |
+| Start to ready, including hydrate | 90 s failure timeout; target is under 5 s at the median (SC-003) |
 | Quiesce (wait for runs to settle) | run deadline, at most 15 min |
 | Final flush | 120 s, 3 attempts |
 | Readiness probe | 5 s |
@@ -471,6 +471,8 @@ owner data is sent to any new third party beyond the container provider.
 - **SC-003**: 20 cold starts and 20 wake-from-sleep trials are reported with raw
   timings, median, and maximum, separating image pull from cached start. Targets are
   agreed after the Phase 0 measurement, not before.
+  The target is a median under 5 seconds from an authenticated request to an
+  interactive runtime, and the provider choice (D1) is ranked on it.
 - **SC-004**: Two-owner denial tests pass: cross-owner database, object prefix, network,
   and credential access all fail. Limit races hold. Stale-generation credentials fail.
 - **SC-005**: An upgrade inventory (row counts per table, file manifest, app list,
