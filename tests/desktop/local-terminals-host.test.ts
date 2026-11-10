@@ -430,7 +430,9 @@ if (process.env.MATRIX_DESKTOP_HC_REQUIRED === "1" && !binary) throw new Error(`
     expect(text).toContain("MX_42");
     const names = [...text.matchAll(/E:([A-Z_a-z0-9]+)=/g)].map((match) => match[1]!);
     expect(names).toEqual(expect.arrayContaining(["HOME", "PATH", "TERM"]));
-    for (const name of names) expect(name, name).not.toMatch(/^(XDG_|HC_|MATRIX_|ELECTRON_|NODE_)/);
+    // The login shell's own startup files may set other XDG_* names (Ubuntu's
+    // /etc/profile.d sets XDG_DATA_DIRS); the core's isolation variables must not appear.
+    for (const name of names) expect(name, name).not.toMatch(/^(XDG_(STATE_HOME|CONFIG_HOME|RUNTIME_DIR)$|HC_|MATRIX_|ELECTRON_|NODE_)/);
     host.detach(attachId);
   }, 30_000);
 
