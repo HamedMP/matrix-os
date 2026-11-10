@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
-  SiteAccessClaimSchema, SiteAccessLinkCreateResponseSchema, SiteAccessLinkSummarySchema,
+  SiteAccessClaimSchema, SiteAccessLinkCreateResponseSchema, SiteAccessLinkCursorSchema,
+  SiteAccessLinkSummarySchema, SiteAccessLinksQuerySchema, SiteAccessLinksResponseSchema,
   SiteAccessModeSchema, SiteDeploymentSchema, SitePublishingSchema, SiteSlugSchema,
   SiteSubmissionCursorSchema, SiteSubmissionsQuerySchema, validateSiteForm, SiteOwnerMutationSchema, SiteSubmitCapabilitySchema, SiteRecordSchema,
 } from "../../packages/contracts/src/sites.js";
@@ -67,6 +68,13 @@ describe("public site contracts", () => {
       `https://evil.example/${id}#access=${id}.${token}`,
       `https://matrix.page/${id}#other=${id}.${token}`,
     ]) expect(SiteAccessLinkCreateResponseSchema.safeParse({ link, url }).success).toBe(false);
+    const cursor = `${link.createdAt}|${link.id}`;
+    expect(SiteAccessLinkCursorSchema.parse(cursor)).toBe(cursor);
+    expect(SiteAccessLinksQuerySchema.parse({})).toEqual({ limit: 50 });
+    expect(SiteAccessLinksQuerySchema.parse({ limit: "100", cursor })).toEqual({ limit: 100, cursor });
+    expect(SiteAccessLinksQuerySchema.safeParse({ limit: 101 }).success).toBe(false);
+    expect(SiteAccessLinksResponseSchema.parse({ links: [link], nextCursor: cursor })).toEqual({ links: [link], nextCursor: cursor });
+    expect(SiteAccessLinksResponseSchema.safeParse({ links: Array(101).fill(link), nextCursor: null }).success).toBe(false);
   });
   it("accepts a valid large asset without overflowing the validator", () => {
     const files = [

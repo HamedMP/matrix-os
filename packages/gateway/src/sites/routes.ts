@@ -5,7 +5,7 @@ import { join, sep } from 'node:path';
 import { constants } from 'node:fs';
 import { open, realpath, stat } from 'node:fs/promises';
 import { isDeepStrictEqual } from 'node:util';
-import { SiteAccessLinkCreateRequestSchema, SiteIdSchema, SiteMetadataSchema, SitePublishRequestSchema, SiteSubmissionsQuerySchema, SiteRollbackSchema, SitePublishingSchema, type SiteRecord } from '@matrix-os/contracts';
+import { SiteAccessLinkCreateRequestSchema, SiteAccessLinksQuerySchema, SiteIdSchema, SiteMetadataSchema, SitePublishRequestSchema, SiteSubmissionsQuerySchema, SiteRollbackSchema, SitePublishingSchema, type SiteRecord } from '@matrix-os/contracts';
 import { requireRequestPrincipal, isRequestPrincipalError } from '../request-principal.js';
 import { resolveAppBySlug } from '../app-runtime/app-index.js';
 import { BuildOrchestrator } from '../app-runtime/build-orchestrator.js';
@@ -117,7 +117,8 @@ export function createSiteRoutes(options:SiteRouteOptions):Hono {
  app.delete(base,limit,async c=>{const parsed=await body(c,z.object({baseRevision:z.number().int().min(0)}));return parsed.success?call(c,'DELETE',parsed.data):c.json({error:'Invalid request'},400);});
  app.post(base+'/rollback',limit,async c=>{const parsed=await body(c,SiteRollbackSchema);return parsed.success?call(c,'POST',parsed.data,'/rollback'):c.json({error:'Invalid request'},400);});
  app.get(base+'/access-links',async c=>{
-  try{return c.json(await options.platform!.accessLinks(c.req.param('slug')!));}
+  const parsed=SiteAccessLinksQuerySchema.safeParse(c.req.query());if(!parsed.success)return c.json({error:'Invalid request'},400);
+  try{return c.json(await options.platform!.accessLinks(c.req.param('slug')!,parsed.data));}
   catch(error){if(error instanceof SitePlatformError)return c.json({error:error.status===400?'Invalid request':'Site unavailable'},error.status);throw error;}
  });
  app.post(base+'/access-links',limit,async c=>{

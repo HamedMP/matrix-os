@@ -10,6 +10,8 @@ import type { SitesService } from './service.js';
 import { APP_CSP, PAGE_CSP, PRIVATE_APP_CSP, siteAccessGate, siteFrame, sitePage } from './renderer.js';
 import { createSiteReadAdmission } from './read-admission.js';
 import { clearSiteViewerCookie } from './access-links.js';
+import { MATRIX_TELEMETRY_EVENTS } from '@matrix-os/observability';
+import { emitSiteTelemetry, type SiteTelemetryCapture } from './telemetry.js';
 const ID = z.uuid();
 function unavailable(c: Context, error: unknown) {
     if (error instanceof SiteError)
@@ -24,6 +26,7 @@ export function createSitePublicRoutes(options: {
     submit: (site: SiteRecord, trx: PlatformDB, formId: string, input: z.infer<typeof SiteFormSubmissionSchema>) => Promise<{
         accepted: true;
     }>;
+    captureEvent?: SiteTelemetryCapture;
 }): Hono {
     const app = new Hono();
     app.onError((error, c) => unavailable(c, error));
@@ -88,9 +91,18 @@ export function createSitePublicRoutes(options: {
         if (site.accessMode === 'private_link' && c.req.param('reference') !== site.id)
             return c.redirect(`/${site.id}`, 307);
         c.header('Content-Security-Policy', PAGE_CSP);
-        if (site.accessMode === 'private_link' && !await options.service.authorize(c.req.param('reference'), c.req.header('cookie'))) {
-            clearSiteCookies(c, site.id);
-            return c.html(siteAccessGate());
+        if (site.accessMode === 'private_link') {
+            if (!await options.service.authorize(c.req.param('reference'), c.req.header('cookie'))) {
+                emitSiteTelemetry(options.captureEvent, MATRIX_TELEMETRY_EVENTS.MATRIX_PAGE_VIEWED,
+                    { access_mode: 'private_link', access_state: 'claim_required' });
+                clearSiteCookies(c, site.id);
+                return c.html(siteAccessGate());
+            }
+            emitSiteTelemetry(options.captureEvent, MATRIX_TELEMETRY_EVENTS.MATRIX_PAGE_VIEWED,
+                { access_mode: 'private_link', access_state: 'authorized' });
+        } else {
+            emitSiteTelemetry(options.captureEvent, MATRIX_TELEMETRY_EVENTS.MATRIX_PAGE_VIEWED,
+                { access_mode: 'public', access_state: 'public' });
         }
         // A private-to-public transition invalidates the database session. Clear
         // any path-scoped browser remnants on the next canonical page request.
@@ -153,15 +165,18 @@ export function createSitePublicRoutes(options: {
         flights++;
         try {
             if (!await authorizedSite(c)) throw new SiteError('not_found');
-            return await options.service.admitted(c.req.param('reference'), async (site, trx) => {
+            const accessMode = await options.service.admitted(c.req.param('reference'), async (site, trx) => {
                 const form = site.config.forms.find(f => f.id === formId.data);
                 if (!form)
                     throw new SiteError('not_found');
                 if (!validateSiteForm(form, input.data.fields).success)
                     throw new SiteError('invalid_request');
                 await options.submit(site, trx, formId.data, input.data);
-                return c.json({ accepted: true });
+                return site.accessMode;
             }, c.req.header('cookie'));
+            emitSiteTelemetry(options.captureEvent, MATRIX_TELEMETRY_EVENTS.MATRIX_PAGE_FORM_SUBMITTED,
+                { access_mode: accessMode });
+            return c.json({ accepted: true });
         }
         finally {
             flights--;

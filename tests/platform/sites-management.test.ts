@@ -37,16 +37,17 @@ it('manages write-only access links through the verified machine owner route',as
  const siteId=randomUUID();
  await db.executor.insertInto('public_sites').values({id:siteId,owner_id:'user_launch',machine_id:identity.machineId,app_slug:'private-event',title:'Private event',description:'',slug:null,revision:1,status:'published',access_mode:'private_link',active_version:null,created_at:new Date().toISOString()}).execute();
  const url='/internal/containers/launch/sites/private-event/access-links?runtimeSlot=primary';
+ const listUrl=`${url}&limit=50`;
  const headers={authorization:`Bearer ${token}`,'content-type':'application/json'};
  const created=await app.request(url,{method:'POST',headers,body:JSON.stringify({baseRevision:1})});
  expect(created.status).toBe(200);
  const value=await created.json() as {link:{id:string};url:string};
  expect(value.url).toMatch(new RegExp(`^https://matrix\\.page/${siteId}#access=`));
- const listed=await (await app.request(url,{headers})).json();
- expect(listed).toEqual({links:[expect.objectContaining({id:value.link.id,status:'unclaimed'})]});
+ const listed=await (await app.request(listUrl,{headers})).json();
+ expect(listed).toEqual({links:[expect.objectContaining({id:value.link.id,status:'unclaimed'})],nextCursor:null});
  expect(JSON.stringify(listed)).not.toContain('#access=');
  expect((await app.request(`${url.replace('?runtimeSlot=primary','')}/${value.link.id}?runtimeSlot=primary`,{method:'DELETE',headers})).status).toBe(200);
- expect(await (await app.request(url,{headers})).json()).toEqual({links:[]});
+ expect(await (await app.request(listUrl,{headers})).json()).toEqual({links:[],nextCursor:null});
 });
 
 it('rejects legacy handle credentials, different machines, different slots and old token epochs',async()=>{

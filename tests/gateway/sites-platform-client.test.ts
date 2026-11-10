@@ -10,12 +10,12 @@ describe('bounded site management transport',()=>{
  it('validates private-link management responses and never accepts secret fields in listings',async()=>{
   const link={id:randomUUID(),status:'unclaimed',createdAt:'2026-11-05T12:00:00.000Z',claimExpiresAt:'2026-11-12T12:00:00.000Z',claimedAt:null,sessionExpiresAt:null};
   const fetch=vi.fn()
-   .mockResolvedValueOnce(new Response(JSON.stringify({links:[link]})))
+   .mockResolvedValueOnce(new Response(JSON.stringify({links:[link],nextCursor:null})))
    .mockResolvedValueOnce(new Response(JSON.stringify({link,url:`https://matrix.page/${randomUUID()}#access=${link.id}.${'a'.repeat(43)}`})))
    .mockResolvedValueOnce(new Response(JSON.stringify({ok:true})));
   vi.stubGlobal('fetch',fetch);
   const api=client();
-  expect(await api.accessLinks('event')).toEqual({links:[link]});
+  expect(await api.accessLinks('event')).toEqual({links:[link],nextCursor:null});
   expect((await api.createAccessLink('event',{baseRevision:3})).link).toEqual(link);
   await expect(api.revokeAccessLink('event',link.id)).resolves.toBeUndefined();
   expect(fetch.mock.calls.map(([url])=>new URL(String(url)).pathname)).toEqual([
@@ -23,6 +23,8 @@ describe('bounded site management transport',()=>{
    '/internal/containers/owner/sites/event/access-links',
    `/internal/containers/owner/sites/event/access-links/${link.id}`,
   ]);
+  const listQuery=new URL(String(fetch.mock.calls[0]![0])).searchParams;
+  expect({runtimeSlot:listQuery.get('runtimeSlot'),limit:listQuery.get('limit')}).toEqual({runtimeSlot:'main',limit:'50'});
   expect(fetch.mock.calls.map(([,options])=>options.method)).toEqual(['GET','POST','DELETE']);
   vi.stubGlobal('fetch',vi.fn().mockResolvedValue(new Response(JSON.stringify({links:[{...link,token:'secret'}]}))));
   await expect(api.accessLinks('event')).rejects.toMatchObject({status:503});

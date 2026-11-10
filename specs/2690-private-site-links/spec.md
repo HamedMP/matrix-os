@@ -7,7 +7,7 @@ Baseline: `origin/main` at `bc52a37f6841fd2a341e04f5b9722b6bd5c96af7`
 
 ## Goal and scope
 
-Add `Private — one-time links` as an access mode for an existing Matrix.page publication. An owner creates up to 50 independently claimable URLs. A visitor explicitly claims one URL in one browser and receives a site-specific 30-day browser session. The app then opens through the existing sandboxed Matrix.page wrapper, assets, and declared form boundary.
+Add `Private — one-time links` as an access mode for an existing Matrix.page publication. An owner creates independently claimable URLs without a per-site total cap. A visitor explicitly claims one URL in one browser and receives a site-specific 30-day browser session. The app then opens through the existing sandboxed Matrix.page wrapper, assets, and declared form boundary.
 
 No Clerk account, Matrix onboarding, computer provisioning, email delivery, visitor identity, private runtime access, new app capability, or native-mobile owner management is introduced. The existing iframe sandbox, CSP, opaque origin, `MatrixOS.site.data`, and declared form schema remain authoritative.
 
@@ -18,9 +18,10 @@ No Clerk account, Matrix onboarding, computer provisioning, email delivery, visi
 - The claim URL is returned once as `https://matrix.page/<permanent-site-id>#access=<link-id>.<secret>`. The fragment is not sent in the initial HTTP request, logs, or referrers.
 - The generic private wrapper reveals no app title or owner metadata. JavaScript reads the fragment but sends it only after the visitor clicks **Open shared app**, preventing preview scanners from claiming links.
 - After claim, the wrapper removes the fragment and reloads the canonical URL. Refreshes work with the site-scoped cookie. Reuse in another browser fails with the same generic unavailable result as other invalid credentials.
-- Owners can view non-secret link status (`Unclaimed`, `Claimed`, `Expired`), timestamps, and revoke links. Deleted rows free capacity.
+- Owners can page through non-secret link status (`Unclaimed`, `Claimed`, `Expired`), timestamps, and revoke links.
 - Switching private to public or unpublishing deletes all link and session rows in the same transaction. Switching back to private never restores them. Updates and rollbacks preserve valid access.
 - Revocation blocks new requests. Bytes already delivered to a browser cannot be remotely erased. Losing browser cookies requires a new link.
+- PostHog records successful Matrix.page lifecycle outcomes for publish/update, settings and access-mode changes, unpublish, rollback, link create/claim/revoke, canonical page views, and accepted form submissions. Events use only low-cardinality state such as access mode and operation; they never include site/link IDs, URLs, slugs, titles, descriptions, form IDs or fields, tokens, cookies, or source addresses.
 
 ## Data ownership and model
 
@@ -72,7 +73,7 @@ No user-controlled forwarding header, Clerk cookie, owner cookie, or Authorizati
 - The viewer cookie is Lax and scoped to `/<site-id>`. Private app code and resources are returned only inside the authenticated sealed frame response; there is no cross-site asset cookie or credentialed CORS route.
 - An invalid private wrapper session returns the generic gate and an exact `Max-Age=0` deletion for the site-scoped viewer cookie. A private-to-public transition clears the same remnant on the next canonical page request; the Worker forwards only a deletion whose cookie suffix and path match that permanent site ID.
 - Private packaging accepts at most 200 files and 10 MiB of source bytes, checks every resource substitution before materializing it, caps the produced frame at 15 MiB, loads at most eight objects concurrently, and uses a four-entry TTL/LRU cache. Missing or non-literal local build dependencies fail closed.
-- At most 50 link rows exist per site. Existing owner and public rate/in-flight admission caps apply; claim uses the bounded mutation admission path so revocation capacity remains available.
+- Link creation has no per-site total cap. Owner list responses are keyset-paginated at no more than 100 rows, while existing owner and public rate/in-flight admission caps apply; claim uses the bounded mutation admission path so revocation remains available.
 - Lock order is owner advisory lock → site row → link row. Related changes are transactional and optimistic publication revision checks occur in the write transaction.
 - All responses are `no-store`. Public errors are generic. Tokens and hashes are excluded from logs, owner list responses, and export.
 - Cross-site link IDs/tokens, expired claims/sessions, claimed link reuse, malformed/oversized cookies, cross-site claim requests, and direct private frame/asset/form access fail closed.
@@ -90,7 +91,7 @@ Rollback of shell/gateway controls leaves existing private publications enforcea
 
 ## Verification and delivery
 
-- Regression tests cover migration default, one concurrent claim winner on independent PostgreSQL connections, exact seven/30-day expiry, multiple links, 50-row cap, revocation, cross-site denial, public/private/unpublish transitions, secret absence, cookie allowlists, sealed opaque-frame packaging, cookie accumulation, and fail-closed wrapper/frame/asset/form routes.
+- Regression tests cover migration default, one concurrent claim winner on independent PostgreSQL connections, exact seven/30-day expiry, more than 50 links with bounded pagination, revocation, cross-site denial, public/private/unpublish transitions, secret absence, privacy-safe success-only telemetry, cookie allowlists, sealed opaque-frame packaging, cookie accumulation, and fail-closed wrapper/frame/asset/form routes.
 - UI tests cover mode changes, copy-once URL display, replay masking, revision-conflict recovery, metadata status, safe errors, and revocation.
 - A real browser journey uses two clean profiles: profile A claims and refreshes; profile B cannot reuse; revocation blocks A. Public Matrix.page and authenticated private form submission are checked separately.
 - Live evidence is required for Web Canvas, Web Desktop, Electron Desktop, Web Mobile, and desktop/mobile Matrix.page viewing. Native Mobile owner management is unsupported until separately approved.

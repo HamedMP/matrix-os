@@ -46,10 +46,10 @@ describe("app site client", () => {
   it("uses strict access-link response contracts and never reconstructs a claim URL",async()=>{
     const api=transport(),signal=new AbortController().signal;
     const link={id:"11111111-1111-4111-8111-111111111111",status:"unclaimed",createdAt:"2026-11-05T00:00:00.000Z",claimExpiresAt:"2026-11-12T00:00:00.000Z",claimedAt:null,sessionExpiresAt:null};
-    vi.mocked(api.get).mockResolvedValueOnce({links:[link]});
+    vi.mocked(api.get).mockResolvedValueOnce({links:[link],nextCursor:null});
     vi.mocked(api.post).mockResolvedValueOnce({link,url:`https://matrix.page/22222222-2222-4222-8222-222222222222#access=${link.id}.${"a".repeat(43)}`});
     const client=createSiteClient(api);
-    expect(await client.accessLinks("launch",signal)).toEqual({links:[link]});
+    expect(await client.accessLinks("launch",signal)).toEqual({links:[link],nextCursor:null});
     expect((await client.createAccessLink("launch",{baseRevision:4},signal)).url).toContain("#access=");
     await client.revokeAccessLink("launch",link.id,signal);
     expect(api.delete).toHaveBeenCalledWith(`/api/apps/launch/site/access-links/${link.id}`,undefined,{signal});
