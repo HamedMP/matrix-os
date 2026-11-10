@@ -90,8 +90,9 @@ describe("runner pool", () => {
     const dockerRun = log.split("\n").find((line) => line.startsWith("docker run"));
     expect(dockerRun).toContain("--rm --name matrix-ci-slot-1 --network matrix-ci-pool --cpuset-cpus 0-7 --memory 28g");
     expect(dockerRun).toContain("RUNNER_JIT=jit-config matrix-ci-runner:current");
-    // Fresh per-job volumes for work and temp: ext4 like hosted runners, never a host path.
-    expect(dockerRun).toContain("--mount type=volume,dst=/home/runner/_work --mount type=volume,dst=/tmp");
+    // A fresh per-job work volume and an executable in-memory /tmp, never a host path. /tmp must be
+    // tmpfs: the collaboration identity code rejects ext4 under a container's seccomp filter.
+    expect(dockerRun).toContain("--mount type=volume,dst=/home/runner/_work --tmpfs /tmp:rw,exec,nosuid,size=12g,mode=1777");
     expect(log).toContain("docker rm -f -v matrix-ci-slot-1");
     expect(dockerfile).toContain("mkdir -p /home/runner/_work && chown runner:runner /home/runner/_work");
     for (const forbidden of ["--privileged", "docker.sock", "-v ", "--volume", "--network host", "type=bind", "src=", "source="]) {

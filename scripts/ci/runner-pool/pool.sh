@@ -14,6 +14,7 @@ IMAGE=${IMAGE:-matrix-ci-runner:current}
 LABEL=${LABEL:-matrix-ci}
 SLOT_CPUS=${SLOT_CPUS:-8}
 SLOT_MEMORY=${SLOT_MEMORY:-28g}
+SLOT_TMP_SIZE=${SLOT_TMP_SIZE:-12g}
 JOB_TIMEOUT_SECONDS=${JOB_TIMEOUT_SECONDS:-7200}
 HEARTBEAT_VARIABLE=MATRIX_CI_POOL_HEARTBEAT
 API=${GITHUB_API_URL:-https://api.github.com}
@@ -86,16 +87,17 @@ run_one_job() {
   refresh_token || return 1
   remove_offline_runners "$slot" || true
   jit=$(jit_config "$slot") && [ -n "$jit" ] || return 1
-  # The work and temp directories are fresh anonymous volumes, removed with the container: the
-  # container's own overlayfs root is slower and is not a filesystem the collaboration identity
-  # code accepts, while hosted runners give jobs ext4.
+  # The work directory is a fresh anonymous ext4 volume, removed with the container; the
+  # container's own overlayfs root is slower. /tmp is a tmpfs: the collaboration identity code
+  # accepts ext4 only from a process without a seccomp filter, which a container always has, and
+  # accepts tmpfs as is. tmpfs pages count against the slot's memory limit.
   # No privileged mode, host mounts or Docker socket. In-container sudo stays for apt, so
   # no-new-privileges is not set; NET_RAW is dropped so a job cannot spoof ARP at other slots.
   # The matrix-ci-pool network's firewall allows only public IPv4 egress (firewall.sh); IPv6 is off.
   timeout --kill-after=60 "$JOB_TIMEOUT_SECONDS" docker run --rm --name "$name" --network matrix-ci-pool \
     --cpuset-cpus "$(cpuset_for "$slot")" --memory "$SLOT_MEMORY" --memory-swap "$SLOT_MEMORY" \
     --pids-limit 8192 --shm-size 2g --cap-drop NET_RAW --sysctl net.ipv6.conf.all.disable_ipv6=1 \
-    --mount type=volume,dst=/home/runner/_work --mount type=volume,dst=/tmp \
+    --mount type=volume,dst=/home/runner/_work --tmpfs "/tmp:rw,exec,nosuid,size=$SLOT_TMP_SIZE,mode=1777" \
     --env "RUNNER_JIT=$jit" \
     "$IMAGE" bash -c 'jit=$RUNNER_JIT; unset RUNNER_JIT; exec ./run.sh --jitconfig "$jit"' || status=$?
   docker rm -f -v "$name" >/dev/null 2>&1 || true
