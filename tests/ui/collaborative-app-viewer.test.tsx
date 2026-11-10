@@ -304,6 +304,28 @@ describe("SharedAppViewer", () => {
       { action: { action: "appInfo", app: "team-tracker" } });
   });
 
+  it("keeps an unfinished save visible when the same document is retried offline", async () => {
+    const { platform, direct, eventHandlers } = setup();
+    let rejectMutation!: (error: unknown) => void;
+    direct.request.mockImplementationOnce(() => new Promise((_resolve, reject) => { rejectMutation = reject; }));
+    const transport = createSharedAppTransport({ platform, direct: direct as never, target });
+    render(<SharedAppViewer target={target} transport={transport} />);
+    const frame = await screen.findByTitle("Team tracker shared by Owner") as HTMLIFrameElement;
+    act(() => signalBridgeReady(frame));
+    window.dispatchEvent(new MessageEvent("message", {
+      source: frame.contentWindow, origin: "null",
+      data: { type: "matrix:shared-app:mutate", requestId: "req_12345678", expectedRevision: "1",
+        action: { value: "unfinished" } },
+    }));
+    await waitFor(() => expect(direct.request).toHaveBeenCalledTimes(1));
+    act(() => eventHandlers()?.onUnavailable());
+    fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+    await waitFor(() => expect(screen.queryByText("Owner computer offline")).toBeNull());
+    await act(async () => { rejectMutation(new CollaborationDirectError("unavailable")); });
+    expect(screen.getByText("Change not confirmed")).toBeVisible();
+    expect(screen.getByRole("button", { name: "Retry" })).toBeVisible();
+  });
+
   it("retries an uncertain iframe mutation through retryMutation instead of relaunching", async () => {
     const { platform, direct } = setup();
     direct.request.mockRejectedValueOnce(new CollaborationDirectError("unavailable"));

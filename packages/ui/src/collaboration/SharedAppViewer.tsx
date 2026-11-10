@@ -39,6 +39,7 @@ export function SharedAppViewer({ target, transport }: {
   const iframeRef = useRef<HTMLIFrameElement>(null);
   const mounted = useRef(true);
   const requestGeneration = useRef(0);
+  const activeDocumentGeneration = useRef(0);
   const pendingMutationRecovery = useRef(false);
   const documentReady = useRef(false);
   const entryUrl = entry?.targetKey === targetKey ? entry.url : null;
@@ -58,6 +59,8 @@ export function SharedAppViewer({ target, transport }: {
       const launched = await transport.launch();
       if (verifyHome) await transport.query({ action: "appInfo", app: target.appId });
       if (!mounted.current || requestGeneration.current !== generation) return;
+      activeDocumentGeneration.current += 1;
+      pendingMutationRecovery.current = false;
       documentReady.current = false;
       setEntry({ targetKey, url: launched.entryUrl });
       setDocumentGeneration((value) => value + 1);
@@ -100,6 +103,7 @@ export function SharedAppViewer({ target, transport }: {
       active = false;
       mounted.current = false;
       requestGeneration.current += 1;
+      activeDocumentGeneration.current += 1;
       unsubscribe();
       transport.close();
     };
@@ -120,10 +124,12 @@ export function SharedAppViewer({ target, transport }: {
       const work = request.type === "matrix:shared-app:query"
         ? transport.query(request.action)
         : transport.mutate(request.action, request.expectedRevision);
-      const generation = requestGeneration.current;
-      void work.then((result) => reply(event, request.requestId, { ok: true, result }))
+      const generation = activeDocumentGeneration.current;
+      void work.then((result) => {
+        if (mounted.current && activeDocumentGeneration.current === generation) reply(event, request.requestId, { ok: true, result });
+      })
         .catch((error: unknown) => {
-          if (!mounted.current || requestGeneration.current !== generation) return;
+          if (!mounted.current || activeDocumentGeneration.current !== generation) return;
           applyFailure(error);
           const failure = error instanceof SharedAppTransportError ? error : new SharedAppTransportError("unavailable", true);
           reply(event, request.requestId, { ok: false, code: failure.code, message: failure.message });
