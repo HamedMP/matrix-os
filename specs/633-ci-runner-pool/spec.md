@@ -29,14 +29,18 @@ single point of failure.
    slot loops: mint a just-in-time runner configuration through a GitHub App,
    start a fresh container from the pinned runner image, run exactly one job,
    remove the container. No state survives between jobs.
-2. **Heartbeat.** While at least one slot is idle or busy, the service updates
-   the repository variable `MATRIX_CI_POOL_HEARTBEAT` (Unix seconds) every
-   minute. Stopping the service stops the heartbeat.
-3. **Routing.** The `changes` job picks `runner=matrix-ci` when the heartbeat is
-   fresher than 3 minutes and the run is a `main` push, a merge-queue or manual
-   run, or a same-repository PR. Otherwise `runner=ubuntu-latest`. Heavy lanes
-   (unit shards, E2E, type check, shell build) use that output in `runs-on`.
-   Lanes that need Docker services (PostgreSQL, Docker tests) stay hosted.
+2. **Heartbeat.** While slot services are active, the service sets the
+   repository variable `MATRIX_CI_POOL_HEARTBEAT` to `<unix seconds> <idle
+   slots>` every minute, counting this host's online, idle runners. Stopping
+   the service stops the heartbeat.
+3. **Routing.** The `changes` job sends the 4 unit shards (the critical path)
+   to `matrix-ci` when the run is a `main` push, a merge-queue run or a
+   same-repository PR, the heartbeat is under 3 minutes old and at least 4
+   slots are idle. Otherwise they run on `ubuntu-latest`. Manual dispatches
+   stay hosted because an exact-source refresh can check out a fork PR. E2E,
+   type check, builds and Docker-service lanes always stay hosted, so one run
+   never needs more slots than the pool has. Pool shards use 6 Vitest workers
+   on 8 CPUs.
 4. **Forks never reach the host.** Routing sends fork PRs to hosted runners,
    but a fork PR can edit `ci.yml`, so the runner image enforces it: a
    job-started hook kills the runner, before any step starts, for any job
@@ -90,8 +94,8 @@ for the contributor CI page once the pool carries `main`.
 
 ## Acceptance
 
-- Same-repo PR with the pool online: unit, E2E, type check and shell build run
-  on `matrix-ci`; `CI Results` passes.
+- `main` push or same-repository PR with the pool online and idle: all 4 unit
+  shards run on `matrix-ci`; `CI Results` passes.
 - Stop the pool service: within 3 minutes new runs route hosted and pass; no
   job waits for a self-hosted runner.
 - Fork PR: every job runs hosted.
@@ -104,10 +108,11 @@ for the contributor CI page once the pool carries `main`.
 1. Spec (this layer).
 2. Runner image, pool service and installer under `scripts/ci/runner-pool/`.
 3. Routing in `ci.yml` behind the heartbeat (no effect until the host runs).
-4. Retire fast-ci.
-5. Operator: add Administration and Variables write to the existing CI gate
-   app, install the pool on the host, watch
-   one PR and one `main` run, then remove the old lease service from the host.
+4. Operator: create the pool's dedicated GitHub App, install the pool on the
+   host, and compare pool and hosted shard times over one PR and one `main`
+   run.
+5. Retire fast-ci once pool runs are stable, then remove the old lease
+   service from the host.
 
 ## Risks
 
@@ -117,6 +122,11 @@ for the contributor CI page once the pool carries `main`.
 - **Image drift.** Jobs install their own toolchains through setup actions,
   as on hosted runners; the image only supplies OS packages and browsers'
   system libraries. Rebuild it when Playwright or Ubuntu changes.
-- **Capacity.** With 4 slots, a busy hour queues on the host. The heartbeat
-  only says the pool is alive, not idle; if host queueing outweighs hosted
-  queueing in practice, add slot-availability to the heartbeat.
+- **Capacity.** The idle count can be up to a minute old, so two runs that
+  start together may both route and queue briefly on the host.
+- **Mid-run outage.** Shards already routed to a pool that then goes down wait
+  for a runner until the job times out; re-run the job once the heartbeat
+  routes new runs hosted.
+- **Shared host during rollout.** Until fast-ci is retired, its lease workload
+  and the pool share the host's 32 CPUs. Start the pool with fewer CPUs per
+  slot, or pause fast-ci admission, while comparing timings.

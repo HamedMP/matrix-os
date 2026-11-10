@@ -99,6 +99,8 @@ jobs:
       dedicated_eligible: ${{ needs.redirect.outputs.routed == 'true' && 'false' || (steps.route.outputs.eligible) }}
       dedicated_mode: ${{ steps.route.outputs.mode }}
       dedicated_required: ${{ needs.redirect.outputs.routed == 'true' && 'false' || (steps.route.outputs.required) }}
+      # The dedicated host's runner pool (specs/633-ci-runner-pool) or ubuntu-latest.
+      unit_runner: ${{ steps.runner.outputs.unit_runner || 'ubuntu-latest' }}
     steps:
       - name: Authenticate isolated refresh workflow origin
         id: origin
@@ -254,6 +256,16 @@ jobs:
           appendFileSync(process.env.GITHUB_OUTPUT,`eligible=${eligible}\nrequired=${required}\nmode=${scoped?'delegated':'shadow'}\n`);
           NODE
 
+      - name: Select unit test runners
+        id: runner
+        if: needs.redirect.outputs.routed != 'true'
+        env:
+          POOL_HEARTBEAT: ${{ vars.MATRIX_CI_POOL_HEARTBEAT }}
+          # Fork PR code never reaches the self-hosted pool; refresh dispatches can carry it.
+          EVENT_NAME: ${{ github.event_name }}
+          HEAD_REPOSITORY: ${{ github.event.pull_request.head.repo.full_name }}
+          REPOSITORY: ${{ github.repository }}
+        run: node scripts/ci/select-runner.mjs
       - name: Record exact main coverage decision
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         env:
@@ -722,7 +734,8 @@ jobs:
     name: Unit Tests (${{ matrix.shard }}/4)
     needs: [changes, ci-backend]
     if: always() && needs.changes.result == 'success' && needs.changes.outputs.should_run == 'true' && (needs.changes.outputs.dedicated_eligible != 'true' || needs.ci-backend.outputs.provider == 'hosted')
-    runs-on: ubuntu-latest
+    # A fast-ci infrastructure fallback means the dedicated host failed, so recover on hosted runners.
+    runs-on: ${{ needs.ci-backend.outputs.infrastructure_fallback == 'true' && 'ubuntu-latest' || needs.changes.outputs.unit_runner }}
     # Full-source runs 41831133861/41831147916/41831159991/41831164971
     # exhausted 40m on shard 1 while assertions kept passing. Allow collection,
     # runner variance and cleanup within a bounded 55m window; test deadlines
@@ -827,6 +840,8 @@ jobs:
       - run: GITHUB_SHA="$UNIT_SOURCE_SHA" bun run test -- --shard=${{ matrix.shard }}/4 --reporter=default --reporter=json --outputFile.json=output/ci/unit-${{ matrix.shard }}.json
         env:
           UNIT_SOURCE_SHA: ${{ needs.changes.outputs.source_sha || github.sha }}
+          # Pool slots have 8 dedicated CPUs; hosted runners keep Vitest's 2 workers on 4 vCPUs.
+          MATRIX_TEST_WORKERS: ${{ runner.environment == 'self-hosted' && '6' || '2' }}
         if: needs.changes.outputs.should_run == 'true'
 
       - name: Upload unit profiling
