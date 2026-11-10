@@ -40,6 +40,7 @@ describe("collaborative app authenticated launch facade", () => {
   let sessions: CollaborativeAppLaunchSessions;
   let currentTime: number;
   let currentOrganizations: string[];
+  let currentMembership: boolean;
   let upstream: CollaborativeAppLaunchUpstream;
   const request = vi.fn();
   const close = vi.fn();
@@ -50,6 +51,7 @@ describe("collaborative app authenticated launch facade", () => {
     repository = new PlatformCollaborationRepository(fixture.collaborationDb, { now: () => nowDate });
     currentTime = nowDate.getTime();
     currentOrganizations = [organizationId];
+    currentMembership = true;
     request.mockReset();
     close.mockReset();
     request.mockImplementation(async (assetPath: string) => new Response(
@@ -79,6 +81,8 @@ describe("collaborative app authenticated launch facade", () => {
       resolveParticipant: async (id) => ({ actorId: id, displayName: id === platformCollaborationActors.owner ? "Owner" : "Member" }),
       resolveInvitationIdentifier: async () => null,
       listOrganizationIds: async () => currentOrganizations,
+      isCurrentOrganizationMember: async ({ organizationId: requestedOrganization, actorId: requestedActor }) =>
+        currentMembership && requestedOrganization === organizationId && requestedActor === actorId,
       now: () => nowDate,
     }));
     await repository.applyDirectoryEvent({
@@ -141,6 +145,18 @@ describe("collaborative app authenticated launch facade", () => {
     expect(request).toHaveBeenCalledWith("index.html", expect.any(AbortSignal));
   });
 
+  it("admits only a fresh member even when the organization listing is stale or truncated", async () => {
+    const create = () => routes.request(`/api/collaboration/shared-apps/${scopeId}/launch`, {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-test-actor": actorId },
+      body: JSON.stringify({ clientRequestId: requestId, expectedShareRevision: "1", expectedBuildId: app.buildId }),
+    });
+    currentOrganizations = Array.from({ length: 100 }, (_, index) => `org_stale_${index}`);
+    expect((await create()).status).toBe(201);
+    currentMembership = false;
+    expect((await create()).status).toBe(404);
+  });
+
   it("serves an owner ICO asset through the shared launch facade", async () => {
     await sessions.create({
       actorId, scopeId, organizationId, runtimeId: "runtime_owner", authorityGeneration: 1,
@@ -193,10 +209,12 @@ describe("collaborative app authenticated launch facade", () => {
     const url = `/api/collaboration/shared-apps/${scopeId}/runtime/${launchId}/index.html`;
     expect((await routes.request(url)).status).toBe(401);
     currentOrganizations = [];
+    currentMembership = false;
     expect((await routes.request(url, { headers: { "x-test-actor": actorId } })).status).toBe(404);
     expect(sessions.size).toBe(0);
     expect(close).toHaveBeenCalledTimes(1);
     currentOrganizations = [organizationId];
+    currentMembership = true;
     expect((await routes.request(`/api/collaboration/shared-apps/${scopeId}/runtime/${launchId}/%2e%2e%2fsecret`, {
       headers: { "x-test-actor": actorId },
     })).status).toBe(422);
