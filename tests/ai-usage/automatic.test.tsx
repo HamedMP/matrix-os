@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 import React from "react";
+import { chooseOption } from "./choose-option";
 import { afterEach, it, expect, vi } from "vitest";
 import {
   act,
@@ -158,7 +159,7 @@ it("shows all-time indexed history and backup coverage when the server returns a
       })}
     />,
   );
-  expect(await screen.findByText("All available history")).toBeTruthy();
+  expect(await screen.findByText("All recovered coding history")).toBeTruthy();
   expect(screen.getByTestId("token-total").textContent).toBe("30");
   expect(screen.getByText(/10 files verified on Matrix/)).toBeTruthy();
   const disclosure = screen.getByText("Details").closest("details")!;
@@ -196,12 +197,8 @@ it("refreshes hourly and on demand while preserving the selected agent and date 
     <AutomaticAiUsagePanel load={load} sourceLabel="This computer" />,
   );
   await act(async () => {});
-  fireEvent.change(screen.getByLabelText("Coding agent"), {
-    target: { value: "codex" },
-  });
-  fireEvent.change(screen.getByLabelText("Date range"), {
-    target: { value: "30" },
-  });
+  chooseOption("Coding agent", "Codex");
+  chooseOption("Date range", "Last 30 days");
   await act(async () => {
     await vi.advanceTimersByTimeAsync(hour - 1);
   });
@@ -212,11 +209,11 @@ it("refreshes hourly and on demand while preserving the selected agent and date 
   expect(load).toHaveBeenCalledTimes(2);
   expect(screen.getByTestId("token-total").textContent).toBe("9");
   expect(
-    (screen.getByLabelText("Coding agent") as HTMLSelectElement).value,
-  ).toBe("codex");
-  expect((screen.getByLabelText("Date range") as HTMLSelectElement).value).toBe(
-    "30",
-  );
+    screen.getByRole("combobox", { name: "Coding agent" }).textContent,
+  ).toContain("Codex");
+  expect(
+    screen.getByRole("combobox", { name: "Date range" }).textContent,
+  ).toContain("Last 30 days");
   await act(async () => {
     fireEvent.click(screen.getByRole("button", { name: "Refresh usage" }));
   });

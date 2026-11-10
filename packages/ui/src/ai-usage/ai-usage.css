@@ -179,14 +179,13 @@
 .au-calendar {
   display: flex;
   gap: 10px;
-  min-width: 500px;
 }
 .au-weekdays {
   width: 24px;
   flex-shrink: 0;
-  display: flex;
-  flex-direction: column;
-  justify-content: space-around;
+  display: grid;
+  gap: 3px;
+  align-items: center;
   font-size: 9px;
   color: var(--au-muted);
 }
@@ -195,7 +194,6 @@
   grid-auto-flow: column;
   grid-template-rows: repeat(7, 10px);
   gap: 3px;
-  flex: 1;
 }
 .ai-usage .au-day {
   border: 0;
@@ -203,7 +201,8 @@
   width: 100%;
   padding: 0;
   border-radius: 2px;
-  height: 10px;
+  height: 100%;
+  aspect-ratio: 1;
 }
 .ai-usage .au-level-0 {
   background: color-mix(in srgb, var(--au-muted) 10%, var(--au-surface));
@@ -544,5 +543,40 @@
   gap: 4px;
 }
 .ai-usage .au-auto-message small {
+  font-size: 12px;
+}
+
+.au-calendar-years {
+  display: grid;
+  gap: 24px;
+  min-width: 0;
+}
+.au-calendar-block {
+  width: max-content;
+}
+.au-calendar-block h4 {
+  margin: 0 0 12px 34px;
+  font-size: 13px;
+  font-weight: 600;
+}
+.au-weekdays span:nth-child(1) {
+  grid-row: 1;
+}
+.au-weekdays span:nth-child(2) {
+  grid-row: 3;
+}
+.au-weekdays span:nth-child(3) {
+  grid-row: 5;
+}
+.ai-usage .au-history-scope {
+  margin: -6px 0 20px;
+  color: var(--au-muted);
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.ai-usage .au-select-trigger {
+  height: 36px;
+  max-width: 100%;
   font-size: 12px;
 }

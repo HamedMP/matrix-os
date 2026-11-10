@@ -1,93 +1,115 @@
 import React from "react";
+import { UsageSelect } from "./UsageSelect";
 import type { UsageHistory, UsageSummary } from "@matrix-os/contracts/ai-usage";
 import { number, money, agentName, formatBytes } from "./format";
 const coverageDate = new Intl.DateTimeFormat("en", {
   dateStyle: "medium",
   timeZone: "UTC",
 });
+const reportTime = new Intl.DateTimeFormat("en", { dateStyle: "medium", timeStyle: "short", timeZone: "UTC" });
 const date = (value: string) => coverageDate.format(new Date(value));
 export function HistoryCoverage({ history }: { history: UsageHistory }) {
   const c = history.coverage,
     backup = c.backup;
   const uncertain = c.issues > 0 || c.failedRoots > 0;
   return (
-    <details className="au-coverage">
-      <summary>
-        <span className="au-coverage-status">
-          <svg
-            className={
-              backup && !c.indexing
-                ? "au-coverage-icon is-verified"
-                : "au-coverage-icon"
-            }
-            width="20"
-            height="20"
-            viewBox="0 0 20 20"
-            fill="none"
-            aria-hidden="true"
-          >
-            <circle
-              cx="10"
-              cy="10"
-              r="8"
-              stroke="currentColor"
-              strokeWidth="1.4"
-            />
-            {backup && !c.indexing && (
-              <path
-                d="m6 10 2.5 2.5L14 7"
-                stroke="currentColor"
-                strokeWidth="1.5"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-              />
-            )}
-          </svg>
-          <span>
-            <strong>
-              {c.indexing
-                ? "Recovering history…"
-                : backup
-                  ? "Backed up to Matrix"
-                  : "Backup not verified"}
-            </strong>
-            <small>
-              {c.indexing
-                ? "Older sessions are still being indexed."
-                : backup
-                  ? `${formatBytes(backup.verifiedBytes)} · ${date(backup.verifiedAt)}`
-                  : "Your recovered history has not been verified yet."}
-            </small>
-          </span>
-        </span>
-        <span className="au-coverage-actions">
-          {uncertain && (
-            <span className="au-coverage-caution">
-              Some usage is incomplete
-            </span>
-          )}
-          <span className="au-coverage-toggle">
-            Details{" "}
+    <>
+      <details className="au-coverage">
+        <summary>
+          <span className="au-coverage-status">
             <svg
-              width="14"
-              height="14"
-              viewBox="0 0 16 16"
+              className={
+                backup && !c.indexing
+                  ? "au-coverage-icon is-verified"
+                  : "au-coverage-icon"
+              }
+              width="20"
+              height="20"
+              viewBox="0 0 20 20"
               fill="none"
               aria-hidden="true"
             >
-              <path
-                d="m4 6 4 4 4-4"
+              <circle
+                cx="10"
+                cy="10"
+                r="8"
                 stroke="currentColor"
-                strokeWidth="1.5"
-                strokeLinecap="round"
-                strokeLinejoin="round"
+                strokeWidth="1.4"
               />
+              {backup && !c.indexing && (
+                <path
+                  d="m6 10 2.5 2.5L14 7"
+                  stroke="currentColor"
+                  strokeWidth="1.5"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                />
+              )}
             </svg>
+            <span>
+              <strong>
+                {c.indexing
+                  ? "Recovering history…"
+                  : backup
+                    ? "Backed up to Matrix"
+                    : "Backup not verified"}
+              </strong>
+              <small>
+                {c.indexing
+                  ? "Older sessions are still being indexed."
+                  : backup
+                    ? `${formatBytes(backup.verifiedBytes)} · ${date(backup.verifiedAt)}`
+                    : "Your recovered history has not been verified yet."}
+              </small>
+            </span>
           </span>
-        </span>
-      </summary>
-      <CoverageMetadata history={history} />
-    </details>
+          <span className="au-coverage-actions">
+            {uncertain && (
+              <span className="au-coverage-caution">
+                Some usage is incomplete
+              </span>
+            )}
+            <span className="au-coverage-toggle">
+              Details{" "}
+              <svg
+                width="14"
+                height="14"
+                viewBox="0 0 16 16"
+                fill="none"
+                aria-hidden="true"
+              >
+                <path
+                  d="m4 6 4 4 4-4"
+                  stroke="currentColor"
+                  strokeWidth="1.5"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                />
+              </svg>
+            </span>
+          </span>
+        </summary>
+        <CoverageMetadata history={history} />
+      </details>
+      <HistoryScope history={history} />
+    </>
+  );
+}
+export function HistoryScope({ history }: { history: UsageHistory }) {
+  const c = history.coverage;
+  return (
+    <p className="au-history-scope">
+      Recovered coding counters:{" "}
+      {c.oldest ? date(c.oldest) : "start unavailable"} –{" "}
+      {c.newest ? date(c.newest) : "end unavailable"}.
+      {c.webHistory?.first && (
+        <>
+          {" "}
+          Earlier web activity (since {date(c.webHistory.first)}) is shown
+          separately without token counts.
+        </>
+      )}
+    </p>
   );
 }
 function CoverageMetadata({ history }: { history: UsageHistory }) {
@@ -99,7 +121,7 @@ function CoverageMetadata({ history }: { history: UsageHistory }) {
       <dl className="au-coverage-grid">
         <div>
           <dt>Report updated</dt>
-          <dd>{new Intl.DateTimeFormat("en", { dateStyle: "medium", timeStyle: "short", timeZone: "UTC" }).format(new Date(c.indexedAt))} UTC</dd>
+          <dd>{reportTime.format(new Date(c.indexedAt))} UTC</dd>
         </div>
         <div>
           <dt>Connected sources</dt>
@@ -292,25 +314,7 @@ export function UsageFooter({
       </span>
       <label>
         Reporting timezone{" "}
-        <select
-          aria-label="Reporting timezone"
-          value={zone}
-          disabled={Boolean(history)}
-          onChange={(e) => onZoneChange(e.target.value)}
-        >
-          {[
-            ...new Set([
-              timeZone,
-              zone,
-              "UTC",
-              "Europe/Stockholm",
-              "America/New_York",
-              "America/Los_Angeles",
-            ]),
-          ].map((z) => (
-            <option key={z}>{z}</option>
-          ))}
-        </select>
+        <UsageSelect label="Reporting timezone" value={zone} disabled={Boolean(history)} onChange={onZoneChange} options={[...new Set([timeZone,zone,"UTC","Europe/Stockholm","America/New_York","America/Los_Angeles"])].map(value=>({value,label:value}))}/>
       </label>
       <p>
         {history

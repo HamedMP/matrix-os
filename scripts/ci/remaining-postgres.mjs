@@ -9,6 +9,7 @@ import { parse as parseYaml } from 'yaml';
 // hosted lane before qualification succeeds. Existing hosted selections stay put.
 export const REMAINING_POSTGRES_FILES = [
   'tests/ai-usage/history-db.test.ts',
+  'tests/ai-usage/history-refresh-db.test.ts',
   'tests/gateway/app-db-json-arrays-postgres.test.ts',
   'tests/gateway/bots/custom-direct-chat-postgres.test.ts',
   'tests/gateway/bots/deployed-v6-schema-postgres.test.ts',

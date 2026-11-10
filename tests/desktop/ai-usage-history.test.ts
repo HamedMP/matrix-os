@@ -89,6 +89,20 @@ it("uses the live index when available", async () => {
   ).toBe(false);
   expect(fetch).toHaveBeenCalledTimes(1);
 });
+it("reads the freshly synced owner export when the paired collector is its authority", async () => {
+  const fetch = vi
+    .fn()
+    .mockResolvedValueOnce(json({ version: 1, ownerId: "owner", report }));
+  const result = await loadMatrixUsage(
+    client(fetch),
+    "owner",
+    new AbortController().signal,
+    { syncedExport: true },
+  );
+  expect(result.backup).toBe(true);
+  expect(String(fetch.mock.calls[0][0])).toContain("/api/files/blob?");
+  expect(fetch).toHaveBeenCalledTimes(1);
+});
 it.each([401, 403, 503])(
   "does not hide an authority or service failure behind a backup (%s)",
   async (status) => {

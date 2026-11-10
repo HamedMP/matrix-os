@@ -1,9 +1,8 @@
 import React from "react";
 import { createRoot } from "react-dom/client";
 import { AutomaticAiUsagePanel } from "../../packages/ui/src/ai-usage/AutomaticAiUsagePanel";
-import {
-  readUsageExport,
-} from "../../packages/contracts/src/ai-usage/index";
+import { readUsageExport } from "../../packages/contracts/src/ai-usage/index";
+import "../../packages/ui/src/styles.css";
 import "../../packages/ui/src/ai-usage/ai-usage.css";
 import "./preview.css";
 const load = async (signal: AbortSignal) => {

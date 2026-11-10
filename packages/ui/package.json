@@ -29,22 +29,26 @@
     "./chat-scheduled-message": "./src/chat/scheduled-message.ts",
     "./ai-usage": "./src/ai-usage/AiUsagePanel.tsx",
     "./ai-usage.css": "./src/ai-usage/ai-usage.css",
-    "./ai-usage-auto": "./src/ai-usage/AutomaticAiUsagePanel.tsx"
+    "./ai-usage-auto": "./src/ai-usage/AutomaticAiUsagePanel.tsx",
+    "./select": "./src/Select.tsx",
+    "./ai-usage-select": "./src/ai-usage/UsageSelect.tsx"
   },
   "dependencies": {
+    "@hugeicons/core-free-icons": "^4.3.0",
+    "@hugeicons/react": "^1.1.9",
+    "@matrix-os/brand": "workspace:*",
     "@matrix-os/contracts": "workspace:*",
     "@noble/hashes": "2.3.0",
     "@radix-ui/react-context-menu": "^2.2.16",
     "@radix-ui/react-dialog": "^1.1.15",
     "@radix-ui/react-dropdown-menu": "^2.1.16",
     "@radix-ui/react-popover": "^1.1.15",
+    "@radix-ui/react-select": "2.2.6",
+    "lucide-react": "^0.563.0",
     "react-markdown": "^10.1.0",
     "remark-gfm": "^4.0.1",
-    "zod": "^4.6.6",
-    "lucide-react": "^0.563.0",
-    "@hugeicons/core-free-icons": "^4.3.0",
-    "@hugeicons/react": "^1.1.9",
-    "@matrix-os/brand": "workspace:*"
+    "tailwind-merge": "^3.6.0",
+    "zod": "^4.6.6"
   },
   "peerDependencies": {
     "react": "^19.0.0",
