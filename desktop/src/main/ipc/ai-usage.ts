@@ -18,6 +18,8 @@ export function registerAiUsageIpc(
   },
   options: {
     home: string;
+    /** Agent folders configured for this Mac's main process; never renderer input. */
+    roots?: { codexRoot?: string; claudeRoot?: string };
     auth: Auth;
     isTrusted(event: unknown): boolean;
     scan?: typeof scanUsageRoots;
@@ -46,9 +48,26 @@ export function registerAiUsageIpc(
     )
       throw new Error("Usage unavailable");
     const key = `${owner.userId}:${owner.runtimeSlot}:${owner.authGeneration}`;
-    if (operation && operation.key !== key) {
-      cancel();
-      throw new Error("Usage unavailable");
+    if (operation && (operation.key !== key || operation.controller.signal.aborted)) {
+      // A scan for the previous account or computer must finish stopping before this one starts,
+      // otherwise the new owner would be refused until they asked again.
+      const stale = operation;
+      stale.controller.abort();
+      try {
+        await stale.task;
+      } catch (error: unknown) {
+        console.warn(
+          "[ai-usage] previous scan stopped",
+          error instanceof Error ? error.name : "UnknownError",
+        );
+      }
+      if (operation === stale) operation = null;
+      const live = options.auth.getStatus();
+      if (
+        !live.signedIn ||
+        `${live.userId}:${live.runtimeSlot}:${live.authGeneration}` !== key
+      )
+        throw new Error("Usage unavailable");
     }
     if (!operation) {
       const controller = new AbortController();
@@ -56,7 +75,7 @@ export function registerAiUsageIpc(
         key,
         controller,
         task: scan(
-          usageRoots(options.home),
+          usageRoots(options.home, options.roots),
           AbortSignal.any([controller.signal, AbortSignal.timeout(60_000)]),
         ),
       };
