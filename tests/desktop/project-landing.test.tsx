@@ -1,11 +1,16 @@
 // @vitest-environment jsdom
 import React from "react";
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ProjectLanding } from "@desktop/renderer/src/features/project/ProjectLanding";
 import { CanonicalNewChatContent } from "@desktop/renderer/src/features/chat/CanonicalNewChatContent";
 import type { CanonicalChatRecord } from "@matrix-os/contracts";
 import type { Project } from "@desktop/renderer/src/stores/board";
+import { createApiClient } from "@desktop/renderer/src/lib/api";
+import { useConnection } from "@desktop/renderer/src/stores/connection";
+import { useUi } from "@desktop/renderer/src/stores/ui";
+import { useTabs } from "@desktop/renderer/src/stores/tabs";
+import { useDesktopEditor } from "@desktop/renderer/src/features/editor/desktop-editor-store";
 const actions = vi.hoisted(() => ({ showInFiles: vi.fn(), setDialog: vi.fn(), update: vi.fn(), dialog: null as null | "edit", pending: false, error: null, available: true }));
 vi.mock("@desktop/renderer/src/features/work/work-rail/use-project-actions", () => ({ useProjectActions: () => actions }));
 vi.mock("@desktop/renderer/src/features/chat/ChatProviderOnboarding", () => ({
@@ -14,6 +19,105 @@ vi.mock("@desktop/renderer/src/features/chat/ChatProviderOnboarding", () => ({
 afterEach(() => { cleanup(); vi.clearAllMocks(); });
 const project: Project = { id: "project_alpha_id", slug: "alpha", name: "Alpha", kind: "folder", description: "Build the customer portal" };
 describe("ProjectLanding", () => {
+  it("opens the owner project context and uses the existing Files and MCP destinations", async () => {
+    const previous = useConnection.getState().api;
+    const previousTabs = useTabs.getState();
+    const request = vi.fn(async () => Response.json({
+      instructions: ["AGENTS.md"],
+      skills: [{ name: "release-check", source: ".agents/skills" }],
+      mcpServers: [{ name: "docs", source: ".codex/config.toml" }],
+      incompleteSources: [],
+    }));
+    const api = createApiClient({ baseUrl: "https://fixture.test", getRuntimeSlot: () => "primary", fetchFn: request });
+    useConnection.setState({ api });
+    try {
+      render(<ProjectLanding project={project}><textarea aria-label="Project draft" /></ProjectLanding>);
+      expect(request).not.toHaveBeenCalled();
+      fireEvent.click(screen.getByRole("button", { name: "Agent configuration" }));
+      expect(await screen.findByText("release-check")).toBeTruthy();
+      expect(request).toHaveBeenCalledWith("https://fixture.test/api/projects/project_alpha_id/agent-context", expect.objectContaining({ method: "GET" }));
+      fireEvent.click(screen.getByRole("button", { name: "Config files" }));
+      expect(screen.getByRole("button", { name: "Open AGENTS.md" })).toBeTruthy();
+      fireEvent.click(screen.getByRole("button", { name: "Open project files" }));
+      expect(actions.showInFiles).toHaveBeenCalledExactlyOnceWith(true);
+      fireEvent.click(screen.getByRole("button", { name: "MCP" }));
+      expect(screen.getByRole("button", { name: "Open .codex/config.toml" })).toBeTruthy();
+      fireEvent.click(screen.getByRole("button", { name: "Open MCP settings" }));
+      expect(useUi.getState().requestedSettingsSection).toBe("mcps");
+      expect(useTabs.getState().tabs.some(tab => tab.kind === "settings")).toBe(true);
+    } finally {
+      cleanup();
+      useUi.getState().clearRequestedSettingsSection();
+      useTabs.setState(previousTabs);
+      useConnection.setState({ api: previous });
+    }
+  });
+
+  it("opens the selected project configuration file in the existing Editor", async () => {
+    const connection = useConnection.getState();
+    const editor = useDesktopEditor.getState();
+    const tabs = useTabs.getState();
+    const exactPath = "Projects/alpha%2Farchive/AGENTS.md";
+    const request = vi.fn(async (url: string) => url.endsWith("/agent-context")
+      ? Response.json({ instructions: ["AGENTS.md"], skills: [], mcpServers: [], incompleteSources: [] })
+      : Response.json({ path: exactPath }));
+    const api = createApiClient({ baseUrl: "https://fixture.test", getRuntimeSlot: () => "primary", fetchFn: request });
+    useConnection.setState({ api });
+    try {
+      render(<ProjectLanding project={project}><textarea aria-label="Project draft" /></ProjectLanding>);
+      fireEvent.click(screen.getByRole("button", { name: "Agent configuration" }));
+      fireEvent.click(await screen.findByRole("button", { name: "Config files" }));
+      const edit = await screen.findByRole("button", { name: "Open AGENTS.md" });
+      expect(request).toHaveBeenCalledTimes(1);
+      expect(useDesktopEditor.getState().paths).toEqual(editor.paths);
+      fireEvent.click(edit);
+      await waitFor(() => expect(useDesktopEditor.getState().activePath).toBe(exactPath));
+      expect(useTabs.getState().tabs.some(tab => tab.kind === "editor")).toBe(true);
+      expect(request).toHaveBeenCalledWith("https://fixture.test/api/projects/alpha/files-location?projectId=project_alpha_id&file=AGENTS.md", expect.anything());
+    } finally {
+      cleanup();
+      useDesktopEditor.setState(editor);
+      useTabs.setState(tabs);
+      useConnection.setState(connection);
+    }
+  });
+
+  it("creates an instruction file through the existing exclusive Files route", async () => {
+    const connection = useConnection.getState();
+    const editor = useDesktopEditor.getState();
+    const tabs = useTabs.getState();
+    const emptyContext = { configFiles: [], instructions: [], skills: [], mcpServers: [], incompleteSources: [] };
+    const request = vi.fn(async (url: string, init?: RequestInit) => {
+      if (url.endsWith("/agent-context")) return Response.json(emptyContext);
+      if (url.endsWith("/api/files/touch") && init?.method === "POST") return Response.json({ ok: true });
+      return Response.json({ path: "Projects/alpha" });
+    });
+    const api = createApiClient({ baseUrl: "https://fixture.test", getRuntimeSlot: () => "primary", fetchFn: request });
+    useConnection.setState({ api });
+    try {
+      render(<ProjectLanding project={project}><textarea aria-label="Project draft" /></ProjectLanding>);
+      fireEvent.click(screen.getByRole("button", { name: "Agent configuration" }));
+      fireEvent.click(await screen.findByRole("button", { name: "Config files" }));
+      const create = await screen.findByRole("button", { name: "Create AGENTS.md" });
+      expect(request).toHaveBeenCalledTimes(1);
+      fireEvent.click(create);
+      await waitFor(() => expect(useDesktopEditor.getState().activePath).toBe("Projects/alpha/AGENTS.md"));
+      const [lookup, touch] = request.mock.calls.slice(1);
+      expect(lookup?.[0]).toBe("https://fixture.test/api/projects/alpha/files-location?projectId=project_alpha_id");
+      expect(touch?.[0]).toBe("https://fixture.test/api/files/touch");
+      expect(touch?.[1]?.method).toBe("POST");
+      expect(JSON.parse(touch?.[1]?.body as string)).toEqual({
+        path: "Projects/alpha/AGENTS.md", content: "# Project instructions\n",
+        projectId: "project_alpha_id", projectFile: "AGENTS.md",
+      });
+    } finally {
+      cleanup();
+      useDesktopEditor.setState(editor);
+      useTabs.setState(tabs);
+      useConnection.setState(connection);
+    }
+  });
+
   it.each([true, false])("bounds the canonical workspace with metadata visible=%s", (showMetadata) => {
     const { container } = render(<ProjectLanding project={project} showMetadata={showMetadata}>
       <section aria-label="Canonical workspace" className="flex min-h-0 flex-1 flex-col">

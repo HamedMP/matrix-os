@@ -1,19 +1,47 @@
 "use client";
 
+import { ShellFileAuthority } from "@/components/file-browser/ShellFileAuthority";
 import { usePreviewWindow } from "@/hooks/usePreviewWindow";
-import { PreviewTabContent } from "./PreviewTab";
+import { isEditablePreviewTab, PreviewTabContent } from "./PreviewTab";
 import { cn } from "@/lib/utils";
 import { XIcon } from "@/lib/hugeicons";
-import { type KeyboardEvent } from "react";
+import { useState, type KeyboardEvent } from "react";
+
+const MAX_DIRTY_EDITORS = 3;
 
 export function PreviewWindow() {
-  const tabs = usePreviewWindow((s) => s.tabs);
+  return <ShellFileAuthority>{authority => <PreviewWindowForAuthority key={authority} authority={authority} />}</ShellFileAuthority>;
+}
+
+function PreviewWindowForAuthority({ authority }: { authority: string }) {
+  const allTabs = usePreviewWindow((s) => s.tabs);
+  const tabs = allTabs.filter(tab => !tab.authority || tab.authority === authority);
   const activeTabId = usePreviewWindow((s) => s.activeTabId);
-  const unsavedTabs = usePreviewWindow((s) => s.unsavedTabs);
+  // Drafts live in mounted editors. Do not retain a tab or block a new editor
+  // based on a dirty flag from a prior preview window or authority.
+  const [dirtyEditors, setDirtyEditors] = useState<Set<string>>(() => new Set());
   const setActiveTab = usePreviewWindow((s) => s.setActiveTab);
   const closeTab = usePreviewWindow((s) => s.closeTab);
 
-  const activeTab = tabs.find((t) => t.id === activeTabId);
+  function updateDirtyEditor(id: string, dirty: boolean) {
+    setDirtyEditors(current => {
+      if (current.has(id) === dirty) return current;
+      const next = new Set(current);
+      if (dirty) next.add(id);
+      else next.delete(id);
+      return next;
+    });
+  }
+
+  function closeEditor(id: string) {
+    updateDirtyEditor(id, false);
+    closeTab(id);
+  }
+
+  const activeTab = tabs.find((t) => t.id === activeTabId) ?? tabs.at(-1);
+  const dirtyTabs = tabs.filter(tab => dirtyEditors.has(tab.id));
+  const editorLimitReached = activeTab && isEditablePreviewTab(activeTab)
+    && !dirtyEditors.has(activeTab.id) && dirtyTabs.length >= MAX_DIRTY_EDITORS;
 
   if (tabs.length === 0) {
     return (
@@ -32,7 +60,7 @@ export function PreviewWindow() {
     <div className="flex flex-col h-full">
       <div className="flex items-center border-b overflow-x-auto shrink-0" role="tablist">
         {tabs.map((tab, i) => {
-          const active = tab.id === activeTabId;
+          const active = tab.id === activeTab?.id;
           const handleTabKeyDown = (e: KeyboardEvent<HTMLDivElement>) => {
             if (e.target !== e.currentTarget) return;
 
@@ -72,11 +100,11 @@ export function PreviewWindow() {
               )}
               onClick={() => setActiveTab(tab.id)}
               onAuxClick={(e) => {
-                if (e.button === 1) closeTab(tab.id);
+                if (e.button === 1) closeEditor(tab.id);
               }}
               onKeyDown={handleTabKeyDown}
             >
-              {unsavedTabs.has(tab.id) && (
+              {dirtyEditors.has(tab.id) && (
                 <span className="size-1.5 rounded-full bg-amber-400 shrink-0" />
               )}
               <span className="truncate max-w-32">{tab.name}</span>
@@ -85,7 +113,7 @@ export function PreviewWindow() {
                 className="size-4 rounded hover:bg-accent flex items-center justify-center shrink-0"
                 onClick={(e) => {
                   e.stopPropagation();
-                  closeTab(tab.id);
+                  closeEditor(tab.id);
                 }}
               >
                 <XIcon className="size-3" />
@@ -96,7 +124,16 @@ export function PreviewWindow() {
       </div>
 
       <div className="flex-1 min-h-0">
-        {activeTab && <PreviewTabContent tab={activeTab} />}
+        {editorLimitReached && (
+          <p role="status" className="flex h-full items-center justify-center p-3 text-sm text-muted-foreground">
+            Save or close an edited file to open another editor.
+          </p>
+        )}
+        {tabs.filter(tab => dirtyEditors.has(tab.id) || (!editorLimitReached && tab.id === activeTab?.id)).map(tab => (
+          <div key={tab.id} hidden={tab.id !== activeTab?.id} className="h-full">
+            <PreviewTabContent tab={tab} onDirtyChange={updateDirtyEditor} />
+          </div>
+        ))}
       </div>
     </div>
   );

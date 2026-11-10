@@ -31,6 +31,11 @@ export interface SearchResult {
   matches: SearchMatch[];
 }
 
+interface FileBrowserFolderRequest {
+  path: string;
+  identity: string;
+}
+
 interface FileBrowserState {
   currentPath: string;
   history: string[];
@@ -57,6 +62,7 @@ interface FileBrowserState {
    * requested view and clears the request via `consumeViewRequest`.
    */
   pendingView: "files" | "trash" | null;
+  pendingFolder: FileBrowserFolderRequest | null;
 }
 
 interface FileBrowserActions {
@@ -84,8 +90,8 @@ interface FileBrowserActions {
   createFolder(name: string): Promise<void>;
   createFile(name: string): Promise<void>;
   toggleFavorite(path: string): void;
-  requestView(view: "files" | "trash"): void;
-  consumeViewRequest(): void;
+  requestView(view: "files" | "trash", folder?: FileBrowserFolderRequest): void;
+  consumeViewRequest(expectedView?: "files" | "trash", expectedFolder?: FileBrowserFolderRequest | null): boolean;
 }
 
 async function fetchEntries(path: string): Promise<FileEntry[]> {
@@ -160,6 +166,7 @@ export const useFileBrowser = create<FileBrowserState & FileBrowserActions>()(
     searching: false,
     clipboard: null,
     pendingView: null,
+    pendingFolder: null,
 
     navigate(path: string) {
       const { history, historyIndex } = get();
@@ -440,12 +447,15 @@ export const useFileBrowser = create<FileBrowserState & FileBrowserActions>()(
       });
     },
 
-    requestView(view) {
-      set({ pendingView: view });
+    requestView(view, folder) {
+      set({ pendingView: view, pendingFolder: view === "files" ? folder ?? null : null });
     },
 
-    consumeViewRequest() {
-      set({ pendingView: null });
+    consumeViewRequest(expectedView, expectedFolder) {
+      const { pendingView, pendingFolder } = get();
+      if (expectedView && (pendingView !== expectedView || pendingFolder !== expectedFolder)) return false;
+      set({ pendingView: null, pendingFolder: null });
+      return true;
     },
   }),
 );

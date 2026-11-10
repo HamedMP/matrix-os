@@ -268,6 +268,7 @@ import { registerCollaborationChatRoutes } from "./server/collaboration-chat-rou
 import { registerConversationHistoryRoutes } from "./server/conversation-history-routes.js";
 import { registerDeferredRuntimeRoutes } from "./server/deferred-runtime-routes.js";
 import { registerFileRoutes } from "./server/file-routes.js";
+import { registerProjectAgentContextRoute } from "./project-agent-context-routes.js";
 import { registerHomeUtilityRoutes } from "./server/home-utility-routes.js";
 import { registerMainWebSocketRoutes } from "./server/main-ws-routes.js";
 import { registerMessageLayoutRoutes } from "./server/message-layout-routes.js";
@@ -1399,12 +1400,14 @@ export async function createGateway(config: GatewayConfig) {
   registerFileRoutes(app, {
     homePath,
     filePreviewService,
+    projectExecutionRoots: canonicalChatExecutionRoots,
     getPrincipal: (c) => requireRequestPrincipal(c),
     ...(legacyProjectPathAdmission ? {
       getOwnerId: (c) => requireRequestPrincipal(c).userId,
       projectPathAdmission: legacyProjectPathAdmission,
     } : {}),
   });
+  registerProjectAgentContextRoute(app, { executionRoots: canonicalChatExecutionRoots });
 
   const bridgeQueryBodyLimit = bodyLimit({ maxSize: 1_000_000 });
   const bridgeDataBodyLimit = bodyLimit({ maxSize: 1_000_000 });

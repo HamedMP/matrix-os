@@ -1,7 +1,5 @@
 "use client";
 
-import { useAuth } from "@clerk/nextjs";
-import { getGatewayUrl } from "@/lib/gateway";
 import { useEffect, useRef, useState } from "react";
 import { useFileBrowser } from "@/hooks/useFileBrowser";
 import { usePreviewWindow } from "@/hooks/usePreviewWindow";
@@ -19,36 +17,45 @@ import { FileContextMenu } from "./FileContextMenu";
 import { QuickLook } from "./QuickLook";
 import { FileDownloadProvider } from "./FileDownloadProvider";
 import { XpExplorer } from "./XpExplorer";
-import { organizationDriveNavigationIdentity, useOrganizationDriveNavigation } from "@/stores/organization-drive-navigation";
+import { useOrganizationDriveNavigation } from "@/stores/organization-drive-navigation";
 import { OrganizationDrivesView } from "./OrganizationDrivesView";
+import { ShellFileAuthority } from "./ShellFileAuthority";
 import { FileResourceSharing } from "./FileResourceSharing";
 import { useCollaborationOrganization } from "@/lib/collaboration-organization-state";
 
 interface FileBrowserProps {
   windowId: string;
   mobile?: boolean;
+  active?: boolean;
 }
 
-// react-doctor-disable-next-line react-doctor/no-high-complexity-react-function -- The pre-existing browser coordinates keyboard shortcuts, trash, search and organization drives; this change only removes a share row. Splitting it belongs in a focused refactor.
-export function FileBrowser({ windowId, mobile = false }: FileBrowserProps) {
+export function FileBrowser(props: FileBrowserProps) {
+  return <ShellFileAuthority>{identity => <FileBrowserForAuthority {...props} identity={identity} />}</ShellFileAuthority>;
+}
+
+// react-doctor-disable-next-line react-doctor/no-high-complexity-react-function -- The browser coordinates keyboard shortcuts, trash, search and organization drives.
+function FileBrowserForAuthority({ windowId, mobile = false, active, identity }: FileBrowserProps & { identity: string }) {
   const containerRef = useRef<HTMLDivElement>(null);
+  const initialized = useRef(false);
   const [showingTrash, setShowingTrash] = useState(false);
   const [showingOrganizationDrives, setShowingOrganizationDrives] = useState(false);
   const { status: organizationStatus } = useCollaborationOrganization();
   const organizationDrivesAvailable = organizationStatus !== "none";
   const organizationDrivesVisible = showingOrganizationDrives && organizationDrivesAvailable;
-  const {userId, sessionId} = useAuth();
-  const identity = organizationDriveNavigationIdentity(userId, sessionId, getGatewayUrl());
   const driveRequest = useOrganizationDriveNavigation(state => state.request);
   const [openedDriveRequest, setOpenedDriveRequest] = useState<typeof driveRequest>(null);
   const activeDriveRequest = openedDriveRequest?.identity === identity ? openedDriveRequest : null;
   useEffect(() => {
+    // The drive view belongs to the previous account, session or gateway.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setOpenedDriveRequest(null); setShowingOrganizationDrives(false);
   }, [identity]);
   useEffect(() => {
     if (!driveRequest) return;
     useOrganizationDriveNavigation.getState().consume(driveRequest);
     if (driveRequest.identity !== identity || !organizationDrivesAvailable) return;
+    // Keep the external drive selection visible after consuming its one-shot request.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setOpenedDriveRequest(driveRequest); setShowingOrganizationDrives(true);
   }, [driveRequest, identity, organizationDrivesAvailable]);
   const [renamingPath, setRenamingPath] = useState<string | null>(null);
@@ -72,6 +79,7 @@ export function FileBrowser({ windowId, mobile = false }: FileBrowserProps) {
   const setQuickLookPath = useFileBrowser((s) => s.setQuickLookPath);
   const togglePreviewPanel = useFileBrowser((s) => s.togglePreviewPanel);
   const pendingView = useFileBrowser((s) => s.pendingView);
+  const pendingFolder = useFileBrowser((s) => s.pendingFolder);
   const consumeViewRequest = useFileBrowser((s) => s.consumeViewRequest);
   const searchResults = useFileBrowser((s) => s.searchResults);
   const openFileTab = usePreviewWindow((s) => s.openFile);
@@ -93,25 +101,29 @@ export function FileBrowser({ windowId, mobile = false }: FileBrowserProps) {
     }
   };
 
-  // Load initial directory
-  useEffect(() => {
-    navigate("");
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [navigate]);
-
-  // Outside-in view requests (XP desktop icons: Recycle Bin / My Computer)
-  // arrive through the shared store. Consume them here so the trash toggle
-  // stays owned by this component, like the sidebar/task-pane Trash links.
-  // Only the focused Files window honors a request: with several Files
-  // windows open, an unfocused one must not jump views.
+  // Handle project-folder and XP icon requests in the foreground Files view.
+  // A cold launch opens Home unless it is already opening a project folder.
   const focusedWindowId = useWindowManager((s) => s.focusedWindowId);
+  const foreground = active ?? (focusedWindowId === windowId);
   useEffect(() => {
-    if (!pendingView) return;
-    if (focusedWindowId !== windowId) return;
-    // react-doctor-disable-next-line react-hooks-js/set-state-in-effect -- consumes a one-shot cross-component view request from the shared file-browser store; the trash flag is local UI state that cannot be derived from the store value in render
+    const requestedFolder = foreground && pendingView === "files" && pendingFolder?.identity === identity
+      ? pendingFolder.path
+      : undefined;
+    if (!initialized.current) {
+      initialized.current = true;
+      if (requestedFolder === undefined) navigate("");
+    }
+    if (!foreground || !pendingView || !consumeViewRequest(pendingView, pendingFolder)) return;
+    if (pendingFolder && requestedFolder === undefined) return;
+    if (requestedFolder !== undefined) {
+      // A one-shot folder request returns Files from the organization drive view to the personal filesystem.
+      // react-doctor-disable-next-line react-hooks-js/set-state-in-effect, react-doctor/no-adjust-state-on-prop-change -- the consumed external command closes the drive view; the user's drive selection remains independent UI state
+      setShowingOrganizationDrives(false); // eslint-disable-line react-hooks/set-state-in-effect
+      navigate(requestedFolder);
+    }
+    // react-doctor-disable-next-line react-hooks-js/set-state-in-effect -- reconcile local view with the consumed external request
     setShowingTrash(pendingView === "trash");
-    consumeViewRequest();
-  }, [pendingView, focusedWindowId, windowId, consumeViewRequest]);
+  }, [foreground, identity, pendingFolder, pendingView, consumeViewRequest, navigate]);
 
   // File watcher integration
   const onFileChange = (path: string, _event: "add" | "change" | "unlink") => {

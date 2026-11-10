@@ -6,14 +6,17 @@ import { useState, type ReactNode } from "react";
 import type { RenameableConversation } from "./ChatTitleRename";
 import { usePagedProjectChats } from "./usePagedProjectChats";
 import { WebChatLifecycleGroups } from "./WebChatLifecycleGroups";
+import { WebProjectAgentContext } from "./WebProjectAgentContext";
 import { ProjectChatPaging, ProjectChatRows, ProjectChatStatus } from "./WebProjectsNav";
 import type { WebProject } from "./web-projects";
 
 /** Sidebar narrowed to one project, as on Electron Desktop: its chats by lifecycle, older chats below, and a way back. */
 export function FocusedWebProject({ project, gatewayUrl, chats, listedChatIds, scopeKey, activeChatId, activeChatTitle,
-  onSelectChat, renderRow, onBack, mobile, unreadOnly, sourceFilter, searchQuery }: {
+  onSelectChat, renderRow, onBack, mobile, unreadOnly, sourceFilter, searchQuery, projectIdentity, isCurrentAuthority }: {
   project: WebProject;
   gatewayUrl: string;
+  projectIdentity?: string;
+  isCurrentAuthority?: () => boolean;
   /** The project's chats from navigation, pinned ones included. */
   chats: readonly RenameableConversation[];
   listedChatIds: ReadonlySet<string>;
@@ -43,6 +46,9 @@ export function FocusedWebProject({ project, gatewayUrl, chats, listedChatIds, s
       </button>
       <h2 title={project.name}>{project.name}</h2>
     </div>
+    {!mobile && <WebProjectAgentContext key={JSON.stringify([projectIdentity, gatewayUrl, project.id])}
+      gatewayUrl={gatewayUrl} identity={projectIdentity ?? gatewayUrl} project={project}
+      isCurrentAuthority={isCurrentAuthority} />}
     {empty ? <>
       <ProjectChatStatus rowCount={0} loading={loading} error={error} hasMore={hasMore} mobile={mobile} retry={retry}
         filtered={unreadOnly || sourceFilter !== "all" || Boolean(search)} />
