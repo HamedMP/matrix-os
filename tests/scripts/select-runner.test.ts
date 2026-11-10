@@ -42,11 +42,8 @@ describe("unit shard runner selection", () => {
       .filter(([, job]) => job["runs-on"] !== "ubuntu-latest" && !String(job["runs-on"]).startsWith("ubuntu-"))
       .map(([id]) => id);
     expect(routed).toEqual(["unit"]);
-    // A fast-ci infrastructure fallback means the shared host failed: never wait on its pool.
-    expect(workflow.jobs.unit["runs-on"]).toBe(
-      "${{ needs.ci-backend.outputs.infrastructure_fallback == 'true' && 'ubuntu-latest' || needs.changes.outputs.unit_runner }}",
-    );
-    expect(workflow.jobs.unit.needs).toContain("ci-backend");
+    expect(workflow.jobs.unit["runs-on"]).toBe("${{ needs.changes.outputs.unit_runner }}");
+    expect(workflow.jobs.unit.needs).toBe("changes");
     expect(workflow.jobs.changes.outputs.unit_runner).toBe("${{ steps.runner.outputs.unit_runner || 'ubuntu-latest' }}");
     const step = workflow.jobs.changes.steps.find((s: { id?: string }) => s.id === "runner");
     expect(step.env.EVENT_NAME).toBe("${{ github.event_name }}");
