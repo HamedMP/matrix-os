@@ -82,7 +82,7 @@ export interface ChatState {
     files?: Array<{ name: string; type: string; data: string }>,
     options?: ChatSubmitOptions,
   ) => void | Promise<boolean>;
-  newChat: () => Promise<void>;
+  newChat: (projectId?: string) => Promise<void>;
   switchConversation: (id: string) => void;
   /** Stops the in-flight agent run. No-op if nothing is running. */
   abortCurrent: () => void;

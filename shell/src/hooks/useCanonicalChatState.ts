@@ -579,10 +579,10 @@ export function useCanonicalChatState({ initialDraft, initialCollaborationView, 
     }
   }, [activeChatId, client, loadDetail, isCurrent]);
 
-  const newChat = useCallback(async () => {
+  const newChat = useCallback(async (projectId?: string) => {
     if (!isCurrent()) return;
     draftSendAttempt.current = null;
-    setDraftProjectId(undefined);
+    setDraftProjectId(projectId);
     activeChatIdRef.current = undefined;
     detailRef.current = null;
     detailRequestGeneration.current += 1;

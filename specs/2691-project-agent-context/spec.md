@@ -8,6 +8,8 @@ A project owner can configure skills, MCP declarations, and agent configuration 
 
 Open a personal project and expand **Agent configuration**. The three sections show Skills, MCP and Config files in the primary checkout. Each file has a direct action to open it in the existing editor or preview. Explicit creation can scaffold a project skill, an empty MCP declaration file, or a missing root instruction file through Files. Computer MCP settings manage separate, computer-wide connections and approvals. The inventory shows a partial state when a source cannot be safely read and supports retry after request failures.
 
+Selecting a project opens its overview in the main Chat area on Electron Desktop, Web Desktop and Web Canvas. Agent configuration appears below the project title. The sidebar holds project and chat navigation.
+
 On Electron Desktop and Web, the configuration panel starts closed. Opening it expands Skills
 and shows compact headers for MCP and Config files. Expanding a section closes the previous
 one, and selecting the open header closes it.
@@ -28,6 +30,7 @@ The Gateway registers the route with its project/workspace routes. Clients valid
 
 ## Acceptance
 
+- In Web Desktop and Web Canvas, selecting a project shows one Agent configuration panel in the main project overview. Selecting a chat opens its transcript. Selecting the project name in the sidebar returns to the overview with a draft scoped to that project.
 - Owners see only their active project's metadata, with paths relative to the project. Project switches discard older requests. Shared members gain no new access.
 - Valid Codex TOML and Claude JSON declarations appear with distinct source labels. Credentials, URLs, headers, executable arguments, instruction bodies, and skill bodies never appear in the response.
 - Exact file actions reach the existing editor or preview. Creation only writes an allowlisted path in the same active project and rejects overwrites. Files and computer MCP actions reach existing surfaces where supported. Loading, empty, partial, error and retry states remain legible at narrow widths.

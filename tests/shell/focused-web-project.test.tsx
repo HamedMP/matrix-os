@@ -3,6 +3,7 @@ import React, { StrictMode, useState } from "react";
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
 import { FocusedWebProject } from "../../shell/src/components/chat/FocusedWebProject";
+import { WebProjectHome } from "../../shell/src/components/chat/WebProjectHome";
 import { WebProjectAgentContextNavigation } from "../../shell/src/components/chat/WebProjectAgentContext";
 import { useFileBrowser } from "../../shell/src/hooks/useFileBrowser";
 import { resetWindowManagerLayoutPersistenceForTests, useWindowManager } from "../../shell/src/hooks/useWindowManager";
@@ -41,21 +42,12 @@ it("reads declarations only after opening Agent context for the selected project
     incompleteSources: [".codex/config.toml"],
   }));
   vi.stubGlobal("fetch", fetch);
-  render(<FocusedWebProject project={{ id: "proj_france", slug: "france", name: "France" }} gatewayUrl="https://example.test" chats={[]}
-    listedChatIds={new Set()} onSelectChat={vi.fn()} renderRow={() => null} onBack={vi.fn()}
-    mobile={false} unreadOnly={false} sourceFilter="all" searchQuery="" />);
+  render(<WebProjectHome project={{ id: "proj_france", slug: "france", name: "France" }} gatewayUrl="https://example.test" identity="owner" />);
   expect(fetch).not.toHaveBeenCalled();
   fireEvent.click(screen.getByRole("button", { name: "Agent configuration" }));
   expect(await screen.findByText("CLAUDE.md")).toBeTruthy();
   expect(screen.getByText(/Some sources could not be read/)).toBeTruthy();
   expect(fetch).toHaveBeenCalledWith("https://example.test/api/projects/proj_france/agent-context", expect.objectContaining({ cache: "no-store" }));
-});
-
-it("does not render project agent configuration in Web Mobile", () => {
-  render(<FocusedWebProject project={{ id: "proj_france", slug: "france", name: "France" }} gatewayUrl="https://example.test" chats={[]}
-    listedChatIds={new Set()} onSelectChat={vi.fn()} renderRow={() => null} onBack={vi.fn()}
-    mobile unreadOnly={false} sourceFilter="all" searchQuery="" />);
-  expect(screen.queryByRole("button", { name: "Agent configuration" })).toBeNull();
 });
 
 it("opens a cold Files window at the project folder", async () => {
@@ -75,9 +67,7 @@ it("opens a cold Files window at the project folder", async () => {
       setFilesOpen(true);
     };
     return <WebProjectAgentContextNavigation.Provider value={{ openFiles, openMcpSettings }}>
-      <FocusedWebProject project={{ id: "proj_france", slug: "france", name: "France" }} gatewayUrl={window.location.origin} chats={[]}
-        listedChatIds={new Set()} onSelectChat={vi.fn()} renderRow={() => null} onBack={vi.fn()}
-        mobile={false} unreadOnly={false} sourceFilter="all" searchQuery="" />
+      <WebProjectHome project={{ id: "proj_france", slug: "france", name: "France" }} gatewayUrl={window.location.origin} identity="owner" />
       {filesOpen ? <FileBrowser windowId="files" mobile={false} /> : null}
     </WebProjectAgentContextNavigation.Provider>;
   }
@@ -107,9 +97,7 @@ it("opens the selected skill in the existing file editor", async () => {
   const openFiles = vi.fn();
   const openPreview = vi.fn();
   render(<WebProjectAgentContextNavigation.Provider value={{ openFiles, openMcpSettings: vi.fn(), openPreview }}>
-    <FocusedWebProject project={{ id: "proj_france", slug: "france", name: "France" }} gatewayUrl={window.location.origin} chats={[]}
-      listedChatIds={new Set()} onSelectChat={vi.fn()} renderRow={() => null} onBack={vi.fn()}
-      mobile={false} unreadOnly={false} sourceFilter="all" searchQuery="" />
+    <WebProjectHome project={{ id: "proj_france", slug: "france", name: "France" }} gatewayUrl={window.location.origin} identity="owner" />
   </WebProjectAgentContextNavigation.Provider>);
   fireEvent.click(screen.getByRole("button", { name: "Agent configuration" }));
   const open = await screen.findByRole("button", { name: "Open .agents/skills/release/SKILL.md" });
@@ -139,9 +127,7 @@ it("hands keyboard focus to the requested Preview tab each time a project file i
       openMcpSettings: vi.fn(),
       openPreview: () => useWindowManager.getState().openWindow("Preview", "__preview-window__", 0),
     }}>
-      <FocusedWebProject project={{ id: "proj_france", slug: "france", name: "France" }} gatewayUrl={window.location.origin} chats={[]}
-        listedChatIds={new Set()} onSelectChat={vi.fn()} renderRow={() => null} onBack={vi.fn()}
-        mobile={false} unreadOnly={false} sourceFilter="all" searchQuery="" />
+      <WebProjectHome project={{ id: "proj_france", slug: "france", name: "France" }} gatewayUrl={window.location.origin} identity="owner" />
       {windows.map(window => window.path === "__preview-window__" && <PreviewWindow key={window.id} />)}
     </WebProjectAgentContextNavigation.Provider>;
   }
@@ -170,9 +156,7 @@ it("creates a project MCP config with an empty server map", async () => {
   const openPreview = vi.fn();
   const openMcpSettings = vi.fn();
   render(<WebProjectAgentContextNavigation.Provider value={{ openFiles: vi.fn(), openMcpSettings, openPreview }}>
-    <FocusedWebProject project={{ id: "proj_france", slug: "france", name: "France" }} gatewayUrl={window.location.origin} chats={[]}
-      listedChatIds={new Set()} onSelectChat={vi.fn()} renderRow={() => null} onBack={vi.fn()}
-      mobile={false} unreadOnly={false} sourceFilter="all" searchQuery="" />
+    <WebProjectHome project={{ id: "proj_france", slug: "france", name: "France" }} gatewayUrl={window.location.origin} identity="owner" />
   </WebProjectAgentContextNavigation.Provider>);
   fireEvent.click(screen.getByRole("button", { name: "Agent configuration" }));
   fireEvent.click(await screen.findByRole("button", { name: "MCP" }));
@@ -202,9 +186,7 @@ it.each([false, true])("drops a file action when the project changes before reso
   const openPreview = vi.fn();
   const renderProject = (id: string, slug: string) => (
     <WebProjectAgentContextNavigation.Provider value={{ openFiles: vi.fn(), openMcpSettings: vi.fn(), openPreview }}>
-      <FocusedWebProject project={{ id, slug, name: slug }} gatewayUrl={window.location.origin} chats={[]}
-        listedChatIds={new Set()} onSelectChat={vi.fn()} renderRow={() => null} onBack={vi.fn()}
-        mobile={false} unreadOnly={false} sourceFilter="all" searchQuery="" />
+      <WebProjectHome project={{ id, slug, name: slug }} gatewayUrl={window.location.origin} identity="owner" />
     </WebProjectAgentContextNavigation.Provider>
   );
   const { rerender } = render(renderProject("proj_france", "france"));
@@ -222,9 +204,7 @@ it.each([false, true])("drops a file action when the project changes before reso
 it("renders the project and Preview surfaces on a self-hosted shell without Clerk", () => {
   document.documentElement.dataset.matrixSelfHosted = "1";
   render(<>
-    <FocusedWebProject project={{ id: "proj_france", slug: "france", name: "France" }} gatewayUrl={window.location.origin} chats={[]}
-      listedChatIds={new Set()} onSelectChat={vi.fn()} renderRow={() => null} onBack={vi.fn()}
-      mobile={false} unreadOnly={false} sourceFilter="all" searchQuery="" />
+    <WebProjectHome project={{ id: "proj_france", slug: "france", name: "France" }} gatewayUrl={window.location.origin} identity="owner" />
     <PreviewWindow />
   </>);
   expect(screen.getByRole("button", { name: "Agent configuration" })).toBeTruthy();
