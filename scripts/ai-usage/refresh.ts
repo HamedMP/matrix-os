@@ -1,5 +1,5 @@
 /** Paired-computer recovery job. No listener, credentials in configuration, or renderer-selected command. */
-import { execFile } from "node:child_process";
+import { execFile, spawn } from "node:child_process";
 import { promisify } from "node:util";
 import { randomUUID } from "node:crypto";
 import { lstat, mkdir, readFile, writeFile, rename } from "node:fs/promises";
@@ -12,6 +12,21 @@ const [configFile, incomingId] = process.argv.slice(2);
 if (!configFile) throw new Error("Usage config required");
 const root = dirname(resolve(configFile)),
   config = JSON.parse(await readFile(configFile, "utf8"));
+// Publication, verification and indexing must never interleave. Re-run under the backup lock unless already inside it.
+if (process.env.AI_USAGE_REFRESH_LOCK !== root) {
+  const child = spawn(
+    "flock",
+    ["-w", "900", join(root, ".refresh.lock"), process.execPath, ...process.execArgv, ...process.argv.slice(1)],
+    { stdio: "inherit", env: { ...process.env, AI_USAGE_REFRESH_LOCK: root } },
+  );
+  for (const signal of ["SIGHUP", "SIGINT", "SIGTERM"] as const)
+    process.on(signal, () => child.kill(signal));
+  const code = await new Promise<number>((done, fail) => {
+    child.once("error", fail);
+    child.once("close", (status) => done(status ?? 1));
+  });
+  process.exit(code);
+}
 const run = async (command: string, args: string[]) => {
   await exec(command, args, {
     timeout: 20 * 60 * 1000,
