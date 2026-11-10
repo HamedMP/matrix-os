@@ -17,6 +17,10 @@ export interface RoutableMachine {
   publicIPv4: string | null;
   recoveryOldServerId?: number | null;
   recoveryOldPublicIPv4?: string | null;
+  machineId?: string;
+  generation?: number;
+  substrateRef?: string | null;
+  privateAddress?: string | null;
 }
 
 export interface RuntimeUpstreamTarget {
@@ -29,6 +33,8 @@ export interface RuntimeUpstream {
   url: string;
   hostHeader: string;
   tlsServerName?: string;
+  /** Platform-to-runtime credentials; never forwarded to clients. */
+  headers?: Readonly<Record<string, string>>;
 }
 
 export type EnsureRunningFailureCode = 'start_timeout' | 'provider_unavailable' | 'needs_recovery';
@@ -46,4 +52,17 @@ export interface RuntimeSubstrate {
   /** Upstream for proxying, or null when the runtime is not routable right now. */
   resolveUpstream(machine: RoutableMachine, target: RuntimeUpstreamTarget): RuntimeUpstream | null;
   ensureRunning(ref: RuntimeRef, signal: AbortSignal): Promise<EnsureRunningResult>;
+}
+
+export interface SubstrateComputeRecord {
+  computeRef: string;
+  state: 'starting' | 'running' | 'stopping' | 'suspended' | 'terminated' | 'unknown';
+  createdAt: string | null;
+}
+
+/** A substrate whose compute the platform starts, stops, and reconciles itself. */
+export interface OnDemandRuntimeSubstrate extends RuntimeSubstrate {
+  stop(ref: RuntimeRef, signal: AbortSignal): Promise<void>;
+  destroyCompute(ref: RuntimeRef, signal: AbortSignal): Promise<void>;
+  listCompute(signal: AbortSignal): Promise<SubstrateComputeRecord[]>;
 }
