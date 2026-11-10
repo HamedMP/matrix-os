@@ -212,7 +212,9 @@ export function createNativeAppCollaborationRequester(options: NativeAppQueryReq
     }
     const action = { ...request.action, app: slug };
     if (!state.participant) {
-      const legacy = NativeAppQuerySchema.parse(request.action);
+      const legacyAction = { ...request.action };
+      delete legacyAction.app;
+      const legacy = NativeAppQuerySchema.parse(legacyAction);
       const result = await options.legacyRequest(slug, legacy);
       if (!isCurrent()) throw new Error("Collaboration unavailable");
       return request.kind === "query"

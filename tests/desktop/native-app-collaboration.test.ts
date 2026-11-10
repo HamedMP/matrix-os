@@ -65,6 +65,25 @@ it("never sends an uncertain shared write through legacy storage after sharing s
   expect(legacyRequest).not.toHaveBeenCalled();
 });
 
+it("keeps owner reads and writes working after sharing stops when the app supplies its own identity", async () => {
+  const legacyRequest = vi.fn(async (_slug: string, query: { action: string }) => query.action === "count"
+    ? { count: 2 } : { saved: true });
+  const fetchFn = vi.fn(async () => Response.json({ participant: null, revision: "0", scopeSequence: "0" }));
+  const request = createNativeAppCollaborationRequester({ getGatewayOrigin: () => "https://gateway.test",
+    getToken: () => "host-only-token", fetchFn: fetchFn as typeof fetch, legacyRequest });
+
+  await expect(request(appId, { kind: "query", action: { action: "count", app: appId, table: "tasks" } }))
+    .resolves.toEqual({ result: 2, revision: "0" });
+  await expect(request(appId, { kind: "mutate", action: { action: "insert", app: appId,
+    table: "tasks", data: { title: "After stop" } }, expectedRevision: "0",
+  clientRequestId: "60000000-0000-4000-8000-000000000002", scopeId: null }))
+    .resolves.toEqual({ result: { saved: true }, revision: "0", replayed: false });
+  expect(legacyRequest).toHaveBeenNthCalledWith(1, appId, { action: "count", table: "tasks" });
+  expect(legacyRequest).toHaveBeenNthCalledWith(2, appId,
+    { action: "insert", table: "tasks", data: { title: "After stop" } });
+  expect(fetchFn).toHaveBeenCalledTimes(2);
+});
+
 it("notifies the native app from the shared scope sequence and replays uncertain writes with the same id", async () => {
   vi.useFakeTimers();
   try {
