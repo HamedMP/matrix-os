@@ -375,6 +375,25 @@ class BrowserRuntimeTest(unittest.TestCase):
         self.assertEqual(self.env.read_bytes(), original)
         self.assertFalse((prefix / 'activation.json').exists())
 
+    def test_dev_rollback_settles_after_operator_withdraws_opt_in(self):
+        self.runtime.prepare()
+        self.runtime.write(self.root / 'opt/matrix/release.json', '{"version":"v-test"}')
+        dev = self.env.read_text().replace('MATRIX_RUNTIME_SLOT=primary', 'MATRIX_RUNTIME_SLOT=dev')
+        app = self.runtime.prefix / 'app'
+        app.mkdir()
+        (app / 'candidate').write_text('interrupted install')
+        self.runtime.write(self.env, dev + 'MATRIX_BROWSER_LAB=false\n', 0o640, self.runtime.gid)
+        self.runtime.write(self.runtime.prefix / 'activation.json', json.dumps({
+            'hadApp': False, 'environment': module.base64.b64encode(
+                (dev + 'MATRIX_BROWSER_DEV_SETUP=true\n').encode()).decode(), 'files': {}}))
+        with patch.object(self.runtime, 'run', return_value=''):
+            self.runtime.recover_activation()
+        self.assertFalse(app.exists())
+        self.assertFalse((self.runtime.prefix / 'activation.json').exists())
+        self.assertEqual(self.env.read_text(), dev + 'MATRIX_BROWSER_LAB=false\n')
+        with self.assertRaises(ValueError):
+            self.runtime.product_status()
+
     def test_first_install_rollback_stops_units_before_removing_their_files(self):
         self.runtime.prepare()
         prefix = self.runtime.prefix
@@ -609,6 +628,25 @@ class BrowserRuntimeTest(unittest.TestCase):
         self.assertEqual(json.loads((self.runtime.prefix / 'status.json').read_text())['attempts'], 0)
         with patch.object(self.runtime, 'run', return_value='activating\n'):
             self.assertEqual(self.runtime.product_status(), {'status': 'installing', 'retryAvailable': False})
+
+    def test_dev_install_and_recovery_use_the_existing_bounded_retry(self):
+        self.runtime.prepare()
+        self.runtime.write(self.root / 'opt/matrix/release.json', '{"version":"v-test"}')
+        dev = self.env.read_text().replace('MATRIX_RUNTIME_SLOT=primary', 'MATRIX_RUNTIME_SLOT=dev')
+        with patch.object(self.runtime, 'run', return_value='') as run:
+            for rejected in ('', 'MATRIX_BROWSER_DEV_SETUP=1\n', 'MATRIX_BROWSER_DEV_SETUP=false\n'):
+                self.env.write_text(dev + rejected)
+                with self.assertRaises(ValueError):
+                    self.runtime.retry()
+            run.assert_not_called()
+            self.assertFalse((self.runtime.prefix / 'retry.json').exists())
+            self.env.write_text(dev + 'MATRIX_BROWSER_DEV_SETUP=true\n')
+            self.assertEqual(self.runtime.product_status(), {'status': 'pending', 'retryAvailable': True})
+            self.assertEqual(self.runtime.retry(), {'status': 'installing', 'retryAvailable': False})
+            run.assert_any_call(['/usr/bin/systemctl', 'start', '--no-block', 'matrix-browser-runtime.service'], timeout=10)
+            self.runtime.write(self.runtime.prefix / 'status.json', '{"version":"v-test","status":"ready"}')
+            run.return_value = 'active\n' * 5 + 'failed\n'
+            self.assertEqual(self.runtime.retry(), {'status': 'failed', 'retryAvailable': False})
 
     def test_retry_respects_optout_and_never_restarts_ready_browser(self):
         self.runtime.prepare()
