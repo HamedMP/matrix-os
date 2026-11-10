@@ -96,8 +96,8 @@ export function ProjectChatList({
         />
       )}
       ListHeaderComponent={header}
-      ListEmptyComponent={placeholder}
-      ListFooterComponent={footer}
+      ListEmptyComponent={placeholder ?? undefined}
+      ListFooterComponent={footer ?? undefined}
     />
   );
 }

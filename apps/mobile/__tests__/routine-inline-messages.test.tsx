@@ -13,7 +13,7 @@ it("draws the scheduled marker on its user bubble instead of a list header/foote
   render(<MessageList messages={[message]} chatId="chat_owner"/>);
   expect(screen.getByText("Sent by scheduled task")).toBeTruthy();
   expect(screen.getAllByText("Return READY.")).toHaveLength(1);
-  expect(screen.UNSAFE_getByType(FlatList).props.ListHeaderComponent).toBeNull();
+  expect(screen.UNSAFE_getByType(FlatList).props.ListHeaderComponent).toBeUndefined();
   expect(screen.queryByText("Scheduled task history")).toBeNull();
 });
 it("renders the durable unadmitted failure as a read-only message, not a successful send",()=>{
@@ -27,7 +27,7 @@ it("attaches native system-input metadata once without changing safe text or add
     scheduledMessage:{timestamp:occurrence.fire.scheduledFor}}]} chatId="chat_owner"/>);
   expect(screen.getAllByText("Sent by scheduled task")).toHaveLength(1);
   expect(screen.getAllByText("Scheduled task triggered.")).toHaveLength(1);
-  expect(screen.UNSAFE_getByType(FlatList).props.ListHeaderComponent).toBeNull();
+  expect(screen.UNSAFE_getByType(FlatList).props.ListHeaderComponent).toBeUndefined();
 });
 it("keeps manual same-text input plain",()=>{
   render(<MessageList messages={[{...message,text:"Scheduled task triggered.",scheduled:undefined}]} chatId="chat_owner"/>);

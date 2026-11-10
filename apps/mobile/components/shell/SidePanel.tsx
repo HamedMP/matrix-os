@@ -207,7 +207,7 @@ export function SidePanel({
           {recentLabelShown ? <SectionLabel>Recent</SectionLabel> : null}
         </View>
       }
-      ListFooterComponent={footer ? <View style={rows.length > 0 && styles.afterRows}>{footer}</View> : null}
+      ListFooterComponent={footer ? <View style={rows.length > 0 && styles.afterRows}>{footer}</View> : undefined}
     />
   );
 }

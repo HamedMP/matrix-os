@@ -145,7 +145,7 @@ export function NewAgentScreen({
                 <Text accessibilityRole="alert" style={styles.noticeText}>Some templates could not be loaded.</Text>
                 <Button variant="text" label="Try again" onPress={onRetry} />
               </View>
-            ) : null}
+            ) : undefined}
             ListEmptyComponent={(
               <EmptyState
                 icon={SearchIcon}
