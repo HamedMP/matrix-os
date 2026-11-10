@@ -107,7 +107,7 @@ const ROUTE_SCOPED_SIGNATURE_PATHS = [
 ];
 const COLLABORATION_HTTP_PREFIX = "/api/collaboration/";
 const COLLABORATION_OWNER_READINESS_PATH =
-  /^\/api\/collaboration\/apps\/[A-Za-z0-9_-]{1,256}\/readiness(?:\/(?:check|registration))?$/;
+  /^\/api\/collaboration\/apps\/[A-Za-z0-9_-]{1,256}\/(?:readiness(?:\/(?:check|registration))?|owner-bridge)$/;
 const COLLABORATION_WEBSOCKET_PATH =
   /^\/ws\/collaboration\/(?:direct\/)?scopes\/[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\/(?:events|terminal)$/;
 const MESSAGE_APPSERVICE_PREFIX = "/api/messages/appservice/";

@@ -25,6 +25,10 @@ it("exposes shared app capabilities while reserving activity access for Resource
   const [name, bridge] = electron.contextBridge.exposeInMainWorld.mock.calls[0];
   expect(name).toBe("MatrixOS");
   expect(bridge.db).toBeDefined();
+  expect(bridge.collaboration.query).toBeTypeOf("function");
+  expect(bridge.collaboration.mutate).toBeTypeOf("function");
+  expect(bridge.collaboration.retryMutation).toBeTypeOf("function");
+  expect(bridge.collaboration.onChange).toBeTypeOf("function");
   expect(bridge.ai.generate).toBeTypeOf("function");
   expect(bridge.ai.routes).toBeTypeOf("function");
   expect(bridge.integrations).toBeTypeOf("function");
@@ -36,6 +40,17 @@ it("exposes shared app capabilities while reserving activity access for Resource
   // the Resource Manager-only request path introduced by #1624.
   expect(typeof bridge.gatewayFetch === "function" ? "native" : "fallback").toBe("fallback");
   expect(electron.ipcRenderer.invoke).not.toHaveBeenCalled();
+});
+
+it("receives the owner participant from the trusted app launch without exposing a token", async () => {
+  const participant = { actorId: "user_owner", displayName: "Owner", organizationId: "org_matrix_team",
+    scopeId: "50000000-0000-4000-8000-000000000001", shareRevision: "1", buildId: "a".repeat(64) };
+  vi.spyOn(process, "argv", "get").mockReturnValue(["electron", "--matrix-app-bridge",
+    `--matrix-app-participant=${encodeURIComponent(JSON.stringify(participant))}`]);
+  await import("../../desktop/src/preload/index.js");
+  const [, bridge] = electron.contextBridge.exposeInMainWorld.mock.calls[0];
+  expect(bridge.collaboration.participant).toEqual(participant);
+  expect(JSON.stringify(bridge)).not.toContain("Bearer");
 });
 
 it("exposes the activity capability when the main process opts the app in", async () => {

@@ -27,6 +27,8 @@ import {
 } from "../shared/native-app-gateway";
 
 import { APP_CAPABILITY_CHANNEL, createNativeAppCapabilityClient } from "../shared/native-app-capabilities";
+import { NATIVE_APP_COLLABORATION_CHANNEL, createNativeAppCollaboration } from "../shared/native-app-collaboration";
+import { CollaborativeAppParticipantSchema } from "@matrix-os/contracts";
 
 const NATIVE_APP_BRIDGE_ARG = "--matrix-app-bridge";
 
@@ -56,10 +58,17 @@ const api = {
 export type OperatorBridge = typeof api;
 
 if (process.argv.includes(NATIVE_APP_BRIDGE_ARG)) {
+  const participantArgument = process.argv.find((value) => value.startsWith("--matrix-app-participant="));
+  let ownerParticipant = null;
+  if (participantArgument && participantArgument.length < 2_048) {
+    try { ownerParticipant = CollaborativeAppParticipantSchema.parse(JSON.parse(decodeURIComponent(participantArgument.slice("--matrix-app-participant=".length)))); }
+    catch (error: unknown) { console.warn("[native-app-preload] participant unavailable", error instanceof Error ? error.name : "UnknownError"); }
+  }
   const database = createNativeAppDatabase((query: NativeAppQuery) =>
     ipcRenderer.invoke(NATIVE_APP_QUERY_CHANNEL, query));
   contextBridge.exposeInMainWorld("MatrixOS", Object.freeze({
     db: database,
+    collaboration: createNativeAppCollaboration((request) => ipcRenderer.invoke(NATIVE_APP_COLLABORATION_CHANNEL, request), ownerParticipant),
     ...createNativeAppCapabilityClient((input) => ipcRenderer.invoke(APP_CAPABILITY_CHANNEL, input)),
     openApp: createNativeAppOpenClient((request) => ipcRenderer.invoke(NATIVE_APP_OPEN_CHANNEL, request)),
     openChat: createNativeAppOpenChatClient((request) => ipcRenderer.invoke(NATIVE_APP_OPEN_CHAT_CHANNEL, request)),

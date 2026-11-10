@@ -213,6 +213,35 @@ describe("collaborative app production build resolution", () => {
     ]));
   });
 
+  it.each([
+    "<main>Static app</main><!-- window.MatrixOS.collaboration.query({action:'appInfo'});window.MatrixOS.collaboration.mutate({action:'update'},'0');window.MatrixOS.collaboration.onChange(()=>{}); -->",
+    "<script>// window.MatrixOS.collaboration.query({});window.MatrixOS.collaboration.mutate({},'0');window.MatrixOS.collaboration.onChange(()=>{});</script>",
+    "<script>const sample = 'window.MatrixOS.collaboration.query({});window.MatrixOS.collaboration.mutate({},0);window.MatrixOS.collaboration.onChange(()=>{});';</script>",
+    "<script type=\"application/json\">window.MatrixOS.collaboration.query({});window.MatrixOS.collaboration.mutate({},0);window.MatrixOS.collaboration.onChange(()=>{});</script>",
+    "<script>/* window.MatrixOS.collaboration.query({});window.MatrixOS.collaboration.mutate({},0);window.MatrixOS.collaboration.onChange(()=>{}); */</script>",
+  ])("rejects collaboration calls present only in non-executable text: %s", async (html) => {
+    await writeFile(join(appDir, "build.mjs"), [
+      "import {mkdir,writeFile} from 'node:fs/promises';",
+      "await mkdir('dist',{recursive:true});",
+      `await writeFile('dist/index.html',${JSON.stringify(html)});`,
+    ].join(""));
+    const resolver = new CollaborativeAppBuildResolver({
+      homePath: root, ownerId: "user_owner",
+      appRegistry: { get: async () => registration() } as never,
+      catalog: {
+        getLiveByPath: async () => null,
+        register: async (candidate) => ({ ...candidate, id: catalogId, parentId: null, revision: 0, updatedAt: createdAt, deletedAt: null }),
+      } as never,
+      readiness: { invalidateDriftedBuilds: async () => 0 }, store,
+    });
+    const resolved = await resolver.resolve("user_owner", "team-tracker", { ensureCatalog: true });
+    const behavior = await new CollaborativeAppBuildBehaviorProbe(store).inspect({
+      ownerId: "user_owner", organizationId: "org_matrix_team", build: resolved!.build,
+      artifactRef: resolved!.artifactRef, declaration: resolved!.declaration ?? null,
+    }, AbortSignal.timeout(10_000));
+    expect(behavior).toEqual({ sharedRead: false, revisionedWrite: false, changeSignal: false });
+  });
+
   it("fails closed for a foreign owner, missing registration, or read without a catalog identity", async () => {
     const resolver = new CollaborativeAppBuildResolver({
       homePath: root,

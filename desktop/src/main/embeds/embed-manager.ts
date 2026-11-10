@@ -41,6 +41,7 @@ export type EmbedManagerOptions = {
     resolveNavigation?: (url: string) => RuntimeBrowserNavigationDecision;
     allowPublicNavigation?: boolean;
     sharedAppTarget?: CollaborativeAppDirectoryItem;
+    ownerAppParticipant?: import("@matrix-os/contracts").CollaborativeAppParticipant | null;
     onState: (state: "loading" | "ready" | "failed") => void;
   }) => EmbedViewLike;
   maxLive?: number;
@@ -113,6 +114,7 @@ export class EmbedManager {
       resolveNavigation?: (url: string) => RuntimeBrowserNavigationDecision;
       allowPublicNavigation?: boolean;
       sharedAppTarget?: CollaborativeAppDirectoryItem;
+      ownerAppParticipant?: import("@matrix-os/contracts").CollaborativeAppParticipant | null;
       retainOnFailure?: boolean;
       onState?: (state: "loading" | "ready" | "failed") => void;
       onDispose?: () => void;
@@ -160,6 +162,7 @@ export class EmbedManager {
       resolveNavigation: options?.resolveNavigation,
       allowPublicNavigation: options?.allowPublicNavigation,
       sharedAppTarget: options?.sharedAppTarget,
+      ownerAppParticipant: options?.ownerAppParticipant,
       onState: emitState,
     });
     record = {

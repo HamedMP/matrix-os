@@ -13,6 +13,7 @@ import { registerScopeRoutes } from "./scope-routes.js";
 import { registerTerminalRoutes } from "./terminal-routes.js";
 import { registerOrganizationDriveRoutes } from "../organization-drive/routes.js";
 import { registerCollaborativeAppReadinessRoutes } from "./collaborative-app-readiness-routes.js";
+import { registerNativeOwnerAppRoutes } from "./native-owner-app-routes.js";
 
 export type { CollaborationRouteOptions, Participant } from "./route-support.js";
 
@@ -65,6 +66,7 @@ export function createCollaborationRoutes(options: CollaborationRouteOptions): H
   registerExecutionPolicyRoutes(routes, options);
   // S12: files, folders and app instances (project-bound and standalone) after the baseline routes.
   registerResourceRoutes(routes, options);
+  registerNativeOwnerAppRoutes(routes, options);
   registerOrganizationDriveRoutes(routes, options);
   if (options.collaborativeAppReadiness) {
     registerCollaborativeAppReadinessRoutes(routes, options.collaborativeAppReadiness);

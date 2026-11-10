@@ -121,7 +121,10 @@ export class CollaborativeAppBuildBehaviorProbe implements CollaborativeAppBehav
         files += 1;
         bytes += info.size;
         const source = await readFile(path, "utf8");
-        const detected = inspectBehaviorSource(source);
+        const executableSource = extname(entry.name).toLowerCase() === ".html"
+          ? extractExecutableScripts(source)
+          : source;
+        const detected = inspectBehaviorSource(stripNonExecutableJavaScript(executableSource));
         sharedRead ||= detected.sharedRead;
         revisionedWrite ||= detected.revisionedWrite;
         changeSignal ||= detected.changeSignal;
@@ -138,6 +141,50 @@ export class CollaborativeAppBuildBehaviorProbe implements CollaborativeAppBehav
 
 function missingBehavior(): CollaborativeAppBuildBehavior {
   return { sharedRead: false, revisionedWrite: false, changeSignal: false };
+}
+
+function extractExecutableScripts(html: string): string {
+  const withoutComments = html.replace(/<!--[\s\S]*?-->/g, "");
+  const scripts: string[] = [];
+  for (const match of withoutComments.matchAll(/<script\b([^>]*)>([\s\S]*?)<\/script\s*>/gi)) {
+    const type = /\btype\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))/i.exec(match[1]!);
+    const language = (type?.[1] ?? type?.[2] ?? type?.[3] ?? "text/javascript").toLowerCase();
+    if (language === "module" || language === "text/javascript" || language === "application/javascript") {
+      scripts.push(match[2]!);
+    }
+  }
+  return scripts.join("\n");
+}
+
+/** Remove comments and literal text before looking for executable bridge calls. */
+function stripNonExecutableJavaScript(source: string): string {
+  let result = "";
+  let index = 0;
+  while (index < source.length) {
+    const current = source[index]!;
+    const next = source[index + 1];
+    if (current === "/" && (next === "/" || next === "*")) {
+      const line = next === "/";
+      index += 2;
+      while (index < source.length && (line ? source[index] !== "\n" : !(source[index] === "*" && source[index + 1] === "/"))) index++;
+      if (!line && index < source.length) index += 2;
+      result += " ";
+      continue;
+    }
+    if (current === "'" || current === '"' || current === "`") {
+      const quote = current;
+      index++;
+      while (index < source.length) {
+        if (source[index] === "\\") { index += 2; continue; }
+        if (source[index++] === quote) break;
+      }
+      result += " ";
+      continue;
+    }
+    result += current;
+    index++;
+  }
+  return result;
 }
 
 function inspectBehaviorSource(source: string): CollaborativeAppBuildBehavior {
