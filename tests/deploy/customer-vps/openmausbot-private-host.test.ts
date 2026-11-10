@@ -44,7 +44,7 @@ describe("OpenMausBot Private Preview workload", () => {
     expect(workflow).toContain('HOST_BUNDLE_OPENMAUSBOT_PREVIEW: ${{ needs.gate.outputs.openmausbot_preview }}');
     expect(gatewayUnit).not.toContain("matrix-openmausbot.service");
     expect(bundle).toContain('unit.replace(wants, "$& matrix-openmausbot.service")');
-    expect(unit).toContain("ConditionPathExists=/opt/matrix/bin/matrix-openmausbot.image-id");
+    expect(unit).toContain("ConditionPathExists=/opt/matrix/bin/matrix-openmausbot.image-ref");
     expect(unit).toContain("StateDirectory=matrix-openmausbot");
     expect(runtime).toContain('"$docker" run --rm --pull=never');
     expect(runtime).toContain('--network "$network"');
@@ -84,6 +84,26 @@ describe("OpenMausBot Private Preview workload", () => {
       }
     } finally {
       await rm(temp, { force: true, recursive: true });
+    }
+  });
+
+  it("loads the tagged archive and checks its build label across Docker image stores", async () => {
+    const [build, runtime] = await Promise.all([
+      readFile("scripts/openmausbot/build-private-preview.sh", "utf8"),
+      readFile("scripts/openmausbot/matrix-openmausbot-run", "utf8"),
+    ]);
+    expect(build).toContain('docker save --output "$stage/bin/matrix-openmausbot.image.tar" "$image"');
+    expect(build).toContain('--tag "$image" --label "org.matrix-os.openmausbot.bundle-sha=$build_sha"');
+    expect(build).not.toContain("--iidfile");
+    const check = runtime.match(/^matches_release\(\) \{\n[\s\S]*?^\}/m)?.[0];
+    expect(check).toBeDefined();
+    const sha = "a".repeat(40);
+    for (const [label, expected] of [[sha, 0], ["b".repeat(40), 1], ["", 1]] as const) {
+      const result = spawnSync("bash", ["-c", `image="$1"; docker=fake_docker
+fake_docker() { [[ "$1 $2" = "image inspect" && "$5" = "$image" && -n "$_LABEL" ]] || return 1; printf '%s\\n' "$_LABEL"; }
+${check}
+matches_release`, "bash", `matrix-openmausbot-oss:matrix-${sha}`], { env: { ...process.env, _LABEL: label } });
+      expect(result.status).toBe(expected);
     }
   });
 });

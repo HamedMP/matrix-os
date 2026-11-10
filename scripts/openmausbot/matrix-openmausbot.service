@@ -5,7 +5,9 @@ Requires=docker.service
 Wants=network-online.target
 PartOf=matrix-gateway.service
 ConditionPathExists=/opt/matrix/app/MATRIX_OPENMAUSBOT_PREVIEW
-ConditionPathExists=/opt/matrix/bin/matrix-openmausbot.image-id
+ConditionPathExists=/opt/matrix/bin/matrix-openmausbot.image-ref
+StartLimitIntervalSec=180
+StartLimitBurst=6
 
 [Service]
 Type=simple

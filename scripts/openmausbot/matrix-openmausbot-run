@@ -46,11 +46,16 @@ if [[ "${1:-}" = "--pair" ]]; then
       -X POST http://localhost/pairing
   exit
 fi
-image="$(cat "$image_dir/matrix-openmausbot.image-id")"
-[[ "$image" =~ ^sha256:[0-9a-f]{64}$ && "$(cat "$bundle_marker")" = "$image" ]]
-if ! "$docker" image inspect "$image" >/dev/null 2>&1; then
+image="$(cat "$image_dir/matrix-openmausbot.image-ref")"
+[[ "$image" =~ ^matrix-openmausbot-oss:matrix-[a-f0-9]{40}$ && "$(cat "$bundle_marker")" = "$image" ]]
+matches_release() {
+  local actual
+  actual="$("$docker" image inspect --format '{{index .Config.Labels "org.matrix-os.openmausbot.bundle-sha"}}' "$image" 2>/dev/null)" || return 1
+  [[ "$actual" = "${image##*:matrix-}" ]]
+}
+if ! matches_release; then
   "$docker" load --input "$image_dir/matrix-openmausbot.image.tar" >/dev/null
-  "$docker" image inspect "$image" >/dev/null
+  matches_release
 fi
 
 if ! "$docker" network inspect "$network" >/dev/null 2>&1; then
