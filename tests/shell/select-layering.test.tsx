@@ -19,7 +19,7 @@ it("opens shared select menus above the Settings window so filters stay clickabl
   const layer = Number(menu!.style.zIndex);
   expect(layer).toBeGreaterThan(SHELL_Z_INDEX.settings);
   expect(layer).toBeGreaterThan(SHELL_Z_INDEX.hardGate);
-  expect(layer).toBeLessThanOrEqual(SHELL_Z_INDEX.popover);
+  expect(layer).toBe(SHELL_Z_INDEX.popover);
 });
 
 it("closes only the open menu on Escape, not the window that hosts it", () => {

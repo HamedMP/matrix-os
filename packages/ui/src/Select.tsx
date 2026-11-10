@@ -10,6 +10,7 @@ import { HugeiconsIcon } from "@hugeicons/react";
 import * as SelectPrimitive from "@radix-ui/react-select";
 
 import { twMerge } from "tailwind-merge";
+import { POPOVER_LAYER } from "./layering";
 import { cn as joinClasses } from "./cn";
 import "./select.css";
 const cn = (...values: (string | undefined | null | false)[]) =>
@@ -63,10 +64,6 @@ function SelectTrigger({
   );
 }
 
-/** Menus portal to <body>, so they must outrank every window they can open from, Settings included.
- * Matches the shell's popover layer; Radix copies this value to its positioning wrapper. */
-const SELECT_LAYER = 11000;
-
 function SelectContent({
   className,
   children,
@@ -88,7 +85,8 @@ function SelectContent({
         )}
         position={position}
         align={align}
-        style={{ zIndex: SELECT_LAYER, ...style }}
+        // Menus portal to <body>; Radix copies this layer to its positioning wrapper.
+        style={{ zIndex: POPOVER_LAYER, ...style }}
         onEscapeKeyDown={(event) => {
           onEscapeKeyDown?.(event);
           // Escape belongs to the menu while it is open; the hosting window must not also close.
