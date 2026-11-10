@@ -100,9 +100,9 @@ Decisions marked **Decided** rest on code read at the baseline commit. Decisions
 
 | Spike | Status | Result |
 | --- | --- | --- |
-| S1 Provider bake-off | Not run | |
-| S2 Chat without host systemd | Not run | |
+| S1 Provider bake-off | Desk evaluation done 2026-11-10; measurement pending owner approval | Fly Machines eliminated (egress rules are port-only). Shortlist: Cloud Run gen2 first, Cloudflare Containers second, Hetzner microVMs as fallback. Unverified from docs: cold start, unprivileged user namespaces. See `spikes/s1-provider-desk-evaluation.md` |
+| S2 Chat without host systemd | In progress | |
 | S3 App build in the sandbox | Not run | |
 | S4 Hydrate and flush | Not run | |
-| S5 Shared Postgres | Not run | |
+| S5 Shared Postgres | In progress | |
 | S6 Restore onto a VPS | Not run | |
