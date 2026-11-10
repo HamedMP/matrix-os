@@ -81,6 +81,10 @@ function setup(overrides: {
   };
   const onStopped = vi.fn(async () => undefined);
   const resolveCurrentBuild = vi.fn(async () => current);
+  const readinessRepository = {
+    getCurrent: vi.fn(async () => overrides.readiness ?? readiness),
+    get: vi.fn(async () => overrides.readiness ?? readiness),
+  };
   const service = new CollaborativeAppShareService({
     ownerId,
     runtimeId: "runtime_owner",
@@ -89,22 +93,19 @@ function setup(overrides: {
       get: vi.fn(async () => catalog),
       getLiveByPath: vi.fn(async () => catalog),
     },
-    readiness: {
-      getCurrent: vi.fn(async () => overrides.readiness ?? readiness),
-      get: vi.fn(async () => overrides.readiness ?? readiness),
-    },
+    readiness: readinessRepository,
     shares,
     resolveCurrentBuild,
     resolveOwner: vi.fn(async () => ({ actorId: ownerId, displayName: "Owner" })),
     onStopped,
     now: () => overrides.now ?? NOW,
   });
-  return { service, shares, onStopped, resolveCurrentBuild };
+  return { service, shares, onStopped, resolveCurrentBuild, readinessRepository };
 }
 
 describe("CollaborativeAppShareService", () => {
   it("binds a short-lived confirmation to the exact ready build and atomically creates one share", async () => {
-    const { service, shares } = setup();
+    const { service, shares, readinessRepository } = setup();
     const preflight = await service.preflight(ownerId, build.appId, {
       organizationId,
       expectedReadinessRevision: "2",
@@ -136,6 +137,12 @@ describe("CollaborativeAppShareService", () => {
       state: "active",
       shareRevision: "1",
       dataRevision: "0",
+    });
+    expect(readinessRepository.getCurrent).toHaveBeenNthCalledWith(1, {
+      ownerId, catalogId: build.catalogId, buildId: build.buildId,
+    });
+    expect(readinessRepository.getCurrent).toHaveBeenNthCalledWith(2, {
+      ownerId, catalogId: build.catalogId, buildId: build.buildId,
     });
     expect(shares.createAtomic).toHaveBeenCalledWith(expect.objectContaining({
       ownerId,

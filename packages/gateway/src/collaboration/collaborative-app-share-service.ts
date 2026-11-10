@@ -123,6 +123,7 @@ export class CollaborativeAppShareService {
     const readiness = await this.options.readiness.getCurrent({
       ownerId,
       catalogId: resolved.current.build.catalogId,
+      buildId: resolved.current.build.buildId,
     });
     if (!readiness || readiness.status !== "ready" || readiness.invalidatedAt) {
       return { eligible: false, reason: "not_ready" };
@@ -207,7 +208,9 @@ export class CollaborativeAppShareService {
       || resolved.catalog.revision !== token.resourceRevision || resolved.current.build.buildId !== token.buildId) {
       throw new CollaborativeAppShareServiceError("conflict");
     }
-    const readiness = await this.options.readiness.getCurrent({ ownerId, catalogId: token.catalogId });
+    const readiness = await this.options.readiness.getCurrent({
+      ownerId, catalogId: token.catalogId, buildId: token.buildId,
+    });
     if (!readiness || readiness.id !== token.readinessId || readiness.revision !== token.readinessRevision
       || readiness.build.buildId !== token.buildId || readiness.status !== "ready" || readiness.invalidatedAt) {
       throw new CollaborativeAppShareServiceError("conflict");
