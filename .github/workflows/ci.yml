@@ -735,7 +735,7 @@ jobs:
     needs: [changes, ci-backend]
     if: always() && needs.changes.result == 'success' && needs.changes.outputs.should_run == 'true' && (needs.changes.outputs.dedicated_eligible != 'true' || needs.ci-backend.outputs.provider == 'hosted')
     # A fast-ci infrastructure fallback means the dedicated host failed, so recover on hosted runners.
-    runs-on: ${{ needs.ci-backend.outputs.infrastructure_fallback == 'true' && 'ubuntu-latest' || needs.changes.outputs.unit_runner }}
+    runs-on: ${{ 'matrix-ci' }}
     # Full-source runs 41831133861/41831147916/41831159991/41831164971
     # exhausted 40m on shard 1 while assertions kept passing. Allow collection,
     # runner variance and cleanup within a bounded 55m window; test deadlines
