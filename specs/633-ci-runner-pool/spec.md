@@ -108,9 +108,9 @@ for the contributor CI page once the pool carries `main`.
 1. Spec (this layer).
 2. Runner image, pool service and installer under `scripts/ci/runner-pool/`.
 3. Routing in `ci.yml` behind the heartbeat (no effect until the host runs).
-4. Operator: add Administration and Variables write to the existing CI gate
-   app, install the pool on the host, and compare pool and hosted shard times
-   over one PR and one `main` run.
+4. Operator: create the pool's dedicated GitHub App, install the pool on the
+   host, and compare pool and hosted shard times over one PR and one `main`
+   run.
 5. Retire fast-ci once pool runs are stable, then remove the old lease
    service from the host.
 
