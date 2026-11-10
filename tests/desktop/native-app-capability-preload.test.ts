@@ -1,15 +1,32 @@
 import { afterEach, expect, it, vi } from "vitest";
 
-const electron = vi.hoisted(() => ({
-  contextBridge: { exposeInMainWorld: vi.fn() },
-  ipcRenderer: { invoke: vi.fn() },
-}));
+const electron = vi.hoisted(() => {
+  let mainWorld: Record<string, unknown> = {};
+  const exposeInMainWorld = vi.fn((name: string, value: unknown) => { mainWorld[name] = value; });
+  const executeInMainWorld = vi.fn(({ func, args }: { func: (...args: unknown[]) => unknown; args: unknown[] }) => {
+    const previous = Object.getOwnPropertyDescriptor(globalThis, "window");
+    Object.defineProperty(globalThis, "window", { value: mainWorld, configurable: true });
+    try {
+      const result = func(...args);
+      if (mainWorld.MatrixOS && !exposeInMainWorld.mock.calls.some(([name]) => name === "MatrixOS")) {
+        exposeInMainWorld.mock.calls.unshift(["MatrixOS", mainWorld.MatrixOS]);
+      }
+      return result;
+    } finally {
+      if (previous) Object.defineProperty(globalThis, "window", previous);
+      else Reflect.deleteProperty(globalThis, "window");
+    }
+  });
+  return { contextBridge: { exposeInMainWorld, executeInMainWorld }, ipcRenderer: { invoke: vi.fn() },
+    resetMainWorld: () => { mainWorld = {}; } };
+});
 vi.mock("electron", () => electron);
 
 afterEach(() => {
   vi.restoreAllMocks();
   vi.clearAllMocks();
   vi.resetModules();
+  electron.resetMainWorld();
 });
 
 it.each([false, true])("advertises Browser setup only for a Browser-authorized native view: %s", async enabled => {
@@ -51,6 +68,21 @@ it("receives the owner participant from the trusted app launch without exposing 
   const [, bridge] = electron.contextBridge.exposeInMainWorld.mock.calls[0];
   expect(bridge.collaboration.participant).toEqual(participant);
   expect(JSON.stringify(bridge)).not.toContain("Bearer");
+});
+
+it("updates the public participant when sharing starts and stops without reloading the native app", async () => {
+  const participant = { actorId: "user_owner", displayName: "Owner", organizationId: "org_matrix_team",
+    scopeId: "50000000-0000-4000-8000-000000000001", shareRevision: "1", buildId: "a".repeat(64) };
+  vi.spyOn(process, "argv", "get").mockReturnValue(["electron", "--matrix-app-bridge"]);
+  electron.ipcRenderer.invoke.mockResolvedValue({ participant, revision: "4", scopeSequence: "9" });
+  await import("../../desktop/src/preload/index.js");
+  const [, bridge] = electron.contextBridge.exposeInMainWorld.mock.calls[0];
+  expect(bridge.collaboration.participant).toBeNull();
+  await bridge.collaboration.refreshParticipant();
+  expect(bridge.collaboration.participant).toEqual(participant);
+  electron.ipcRenderer.invoke.mockResolvedValue({ participant: null, revision: "0", scopeSequence: "10" });
+  await bridge.collaboration.refreshParticipant();
+  expect(bridge.collaboration.participant).toBeNull();
 });
 
 it("exposes the activity capability when the main process opts the app in", async () => {

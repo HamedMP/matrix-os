@@ -6,6 +6,7 @@ import {
 } from "@matrix-os/contracts";
 import { lstat, readdir, readFile } from "node:fs/promises";
 import { extname, join } from "node:path";
+import { tokenizer } from "acorn";
 import { z } from "zod/v4";
 
 import type { ImmutableCollaborativeBuildStore } from "../app-runtime/build-cache.js";
@@ -124,7 +125,14 @@ export class CollaborativeAppBuildBehaviorProbe implements CollaborativeAppBehav
         const executableSource = extname(entry.name).toLowerCase() === ".html"
           ? extractExecutableScripts(source)
           : source;
-        const detected = inspectBehaviorSource(stripNonExecutableJavaScript(executableSource));
+        let detected = missingBehavior();
+        try {
+          detected = inspectBehaviorSource(executableTokens(executableSource, signal));
+        } catch (error: unknown) {
+          if (signal.aborted) throw error;
+          console.warn("[collaborative-app-readiness] built source could not be tokenized",
+            error instanceof Error ? error.name : "UnknownError");
+        }
         sharedRead ||= detected.sharedRead;
         revisionedWrite ||= detected.revisionedWrite;
         changeSignal ||= detected.changeSignal;
@@ -156,35 +164,23 @@ function extractExecutableScripts(html: string): string {
   return scripts.join("\n");
 }
 
-/** Remove comments and literal text before looking for executable bridge calls. */
-function stripNonExecutableJavaScript(source: string): string {
-  let result = "";
-  let index = 0;
-  while (index < source.length) {
-    const current = source[index]!;
-    const next = source[index + 1];
-    if (current === "/" && (next === "/" || next === "*")) {
-      const line = next === "/";
-      index += 2;
-      while (index < source.length && (line ? source[index] !== "\n" : !(source[index] === "*" && source[index + 1] === "/"))) index++;
-      if (!line && index < source.length) index += 2;
-      result += " ";
-      continue;
-    }
-    if (current === "'" || current === '"' || current === "`") {
-      const quote = current;
-      index++;
-      while (index < source.length) {
-        if (source[index] === "\\") { index += 2; continue; }
-        if (source[index++] === quote) break;
-      }
-      result += " ";
-      continue;
-    }
-    result += current;
-    index++;
+/** Token positions preserve executable identifiers while blanking comments and literals. */
+function executableTokens(source: string, signal: AbortSignal): string {
+  const tokens = tokenizer(source, { ecmaVersion: "latest", sourceType: "module", allowHashBang: true });
+  const parts: string[] = [];
+  let position = 0;
+  let count = 0;
+  while (true) {
+    if (++count % 1024 === 0) signal.throwIfAborted();
+    const token = tokens.getToken();
+    parts.push(" ".repeat(token.start - position));
+    if (token.type.label === "eof") break;
+    const text = source.slice(token.start, token.end);
+    parts.push(["string", "regexp", "template", "num", "bigint"].includes(token.type.label)
+      ? " ".repeat(text.length) : text);
+    position = token.end;
   }
-  return result;
+  return parts.join("");
 }
 
 function inspectBehaviorSource(source: string): CollaborativeAppBuildBehavior {

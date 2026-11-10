@@ -66,9 +66,19 @@ if (process.argv.includes(NATIVE_APP_BRIDGE_ARG)) {
   }
   const database = createNativeAppDatabase((query: NativeAppQuery) =>
     ipcRenderer.invoke(NATIVE_APP_QUERY_CHANNEL, query));
-  contextBridge.exposeInMainWorld("MatrixOS", Object.freeze({
+  const collaboration = createNativeAppCollaboration(
+    (request) => ipcRenderer.invoke(NATIVE_APP_COLLABORATION_CHANNEL, request), ownerParticipant,
+    (participant) => contextBridge.executeInMainWorld({
+      func: (currentParticipant) => {
+        const api = (window as unknown as { MatrixOS?: { collaboration?: { participant: unknown } } }).MatrixOS;
+        if (api?.collaboration) api.collaboration.participant = currentParticipant;
+      },
+      args: [participant],
+    }),
+  );
+  contextBridge.exposeInMainWorld("__matrixNativeBridge", Object.freeze({
     db: database,
-    collaboration: createNativeAppCollaboration((request) => ipcRenderer.invoke(NATIVE_APP_COLLABORATION_CHANNEL, request), ownerParticipant),
+    collaboration,
     ...createNativeAppCapabilityClient((input) => ipcRenderer.invoke(APP_CAPABILITY_CHANNEL, input)),
     openApp: createNativeAppOpenClient((request) => ipcRenderer.invoke(NATIVE_APP_OPEN_CHANNEL, request)),
     openChat: createNativeAppOpenChatClient((request) => ipcRenderer.invoke(NATIVE_APP_OPEN_CHAT_CHANNEL, request)),
@@ -84,6 +94,18 @@ if (process.argv.includes(NATIVE_APP_BRIDGE_ARG)) {
       integrations: createNativeAppIntegrations((request) => ipcRenderer.invoke(NATIVE_APP_GATEWAY_CHANNEL, request)),
     } : {}),
   }));
+  // Electron freezes values copied through contextBridge. Construct a public
+  // wrapper in the page world so only the participant field can track sharing.
+  contextBridge.executeInMainWorld({
+    func: (participant) => {
+      const native = (window as unknown as { __matrixNativeBridge: { collaboration: Record<string, unknown> } }).__matrixNativeBridge;
+      Object.defineProperty(window, "MatrixOS", {
+        value: Object.freeze({ ...native, collaboration: { ...native.collaboration, participant } }),
+        configurable: false, writable: false,
+      });
+    },
+    args: [ownerParticipant],
+  });
 } else {
   contextBridge.exposeInMainWorld("operator", api);
 }

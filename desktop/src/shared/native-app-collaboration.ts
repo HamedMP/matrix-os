@@ -1,4 +1,4 @@
-import { CollaborativeAppParticipantSchema, CollaborationRevisionSchema, MAX_APP_DATABASE_REQUEST_BYTES } from "@matrix-os/contracts";
+import { CollaborativeAppParticipantSchema, CollaborationIdSchema, CollaborationRevisionSchema, MAX_APP_DATABASE_REQUEST_BYTES } from "@matrix-os/contracts";
 import { z } from "zod/v4";
 
 export const NATIVE_APP_COLLABORATION_CHANNEL = "native-app:collaboration";
@@ -7,10 +7,13 @@ export const NativeAppCollaborationRequestSchema = z.discriminatedUnion("kind", 
   z.strictObject({ kind: z.literal("state") }),
   z.strictObject({ kind: z.literal("query"), action: ActionSchema }),
   z.strictObject({ kind: z.literal("mutate"), action: ActionSchema,
-    expectedRevision: CollaborationRevisionSchema, clientRequestId: z.uuid() }),
+    expectedRevision: CollaborationRevisionSchema, clientRequestId: z.uuid(), scopeId: CollaborationIdSchema.nullable() }),
 ]).refine((request) => {
   try { return new TextEncoder().encode(JSON.stringify(request)).byteLength <= MAX_APP_DATABASE_REQUEST_BYTES; }
-  catch { return false; }
+  catch (error: unknown) {
+    console.warn("[native-app-collaboration] request serialization failed", error instanceof Error ? error.name : "UnknownError");
+    return false;
+  }
 });
 export const NativeAppCollaborationStateSchema = z.strictObject({
   participant: CollaborativeAppParticipantSchema.nullable(), revision: CollaborationRevisionSchema,
@@ -19,7 +22,8 @@ export const NativeAppCollaborationStateSchema = z.strictObject({
 export type NativeAppCollaborationRequest = z.infer<typeof NativeAppCollaborationRequestSchema>;
 
 export function createNativeAppCollaboration(invoke: (request: NativeAppCollaborationRequest) => Promise<unknown>,
-  initialParticipant: z.infer<typeof CollaborativeAppParticipantSchema> | null = null) {
+  initialParticipant: z.infer<typeof CollaborativeAppParticipantSchema> | null = null,
+  onParticipantChanged?: (participant: z.infer<typeof CollaborativeAppParticipantSchema> | null) => void) {
   let participant: z.infer<typeof CollaborativeAppParticipantSchema> | null = initialParticipant;
   let revision: string | null = null;
   let scopeSequence: string | null = null;
@@ -34,11 +38,18 @@ export function createNativeAppCollaboration(invoke: (request: NativeAppCollabor
     const next = NativeAppCollaborationStateSchema.parse(await invoke({ kind: "state" }));
     if (generation < appliedGeneration) return next;
     appliedGeneration = generation;
-    const changed = revision !== null && (revision !== next.revision || scopeSequence !== next.scopeSequence || participant?.scopeId !== next.participant?.scopeId
-      || participant?.shareRevision !== next.participant?.shareRevision);
+    const participantChanged = participant?.scopeId !== next.participant?.scopeId
+      || participant?.shareRevision !== next.participant?.shareRevision
+      || participant?.buildId !== next.participant?.buildId;
+    const changed = revision !== null && (revision !== next.revision || scopeSequence !== next.scopeSequence || participantChanged);
     participant = next.participant;
     revision = next.revision;
     scopeSequence = next.scopeSequence;
+    if (participantChanged && onParticipantChanged) {
+      try { onParticipantChanged(next.participant); } catch (error: unknown) {
+        console.warn("[native-app-collaboration] participant update failed", error instanceof Error ? error.name : "UnknownError");
+      }
+    }
     if (changed) for (const callback of callbacks) {
       try { callback(); } catch (error: unknown) {
         console.warn("[native-app-collaboration] change callback failed", error instanceof Error ? error.name : "UnknownError");
@@ -63,7 +74,8 @@ export function createNativeAppCollaboration(invoke: (request: NativeAppCollabor
       const current = await state();
       const parsed = ActionSchema.parse(action);
       const revision = CollaborationRevisionSchema.parse(expectedRevision);
-      const request = { kind: "mutate" as const, action: parsed, expectedRevision: revision, clientRequestId: crypto.randomUUID() };
+      const request = { kind: "mutate" as const, action: parsed, expectedRevision: revision,
+        clientRequestId: crypto.randomUUID(), scopeId: current.participant?.scopeId ?? null };
       try { return await execute(request); }
       catch (error: unknown) {
         if (current.participant && pending.length < 32) pending.push(request);

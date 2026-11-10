@@ -45,7 +45,7 @@ describe("collaborative app production build resolution", () => {
       "import {mkdir,readFile,writeFile} from 'node:fs/promises';",
       "await mkdir('dist',{recursive:true});",
       "const input=await readFile('input.txt','utf8');",
-      "await writeFile('dist/index.html',`<main>${input}</main><script>const shared=window.MatrixOS.collaboration;const {query:readShared,mutate,onChange}=shared;readShared({action:'appInfo'});mutate({action:'update'},'0');onChange(()=>readShared({action:'appInfo'}));</script>`);",
+      "await writeFile('dist/index.html',`<main>${input}</main><script>const quote=/\"/g;const shared=window.MatrixOS.collaboration;const {query:readShared,mutate,onChange}=shared;readShared({action:'appInfo'});mutate({action:'update'},'0');onChange(()=>readShared({action:'appInfo'}));</script>`);",
     ].join(""));
     await writeFile(join(appDir, "matrix.json"), JSON.stringify({
       name: "Team Tracker",

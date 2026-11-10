@@ -771,6 +771,9 @@ importers:
       '@types/node-cron':
         specifier: ^3.0.11
         version: 3.0.11
+      acorn:
+        specifier: 8.16.0
+        version: 8.16.0
       chokidar:
         specifier: ^4.0.0
         version: 4.0.3

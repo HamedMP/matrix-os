@@ -26,7 +26,7 @@ it("uses the authenticated scoped owner route for native reads and revisioned wr
   await expect(request(appId, { kind: "query", action: { action: "find", table: "tasks" } }))
     .resolves.toEqual({ result: [{ id: "task-1" }], revision: "4" });
   await expect(request(appId, { kind: "mutate", action: { action: "insert", table: "tasks", data: { title: "New" } },
-    expectedRevision: "4", clientRequestId: "60000000-0000-4000-8000-000000000001" }))
+    expectedRevision: "4", clientRequestId: "60000000-0000-4000-8000-000000000001", scopeId: participant.scopeId }))
     .resolves.toEqual({ result: { ok: true }, revision: "5", replayed: false });
   expect(calls).toEqual([
     { url: endpoint, method: "GET", token: "Bearer host-only-token", body: null },
@@ -45,6 +45,24 @@ it("fails closed without owner bearer or with a non-app identity", async () => {
   await expect(request(appId, { kind: "state" })).rejects.toThrow();
   await expect(request("tools/team-tracker", { kind: "state" })).rejects.toThrow();
   expect(fetchFn).not.toHaveBeenCalled();
+});
+
+it("never sends an uncertain shared write through legacy storage after sharing stops", async () => {
+  let active = true;
+  const legacyRequest = vi.fn(async () => ({ id: "duplicate" }));
+  const fetchFn = vi.fn(async (_url: string | URL | Request, init?: RequestInit) => {
+    if (init?.method === "GET") return Response.json({ participant: active ? participant : null,
+      revision: active ? "4" : "0", scopeSequence: active ? "9" : "0" });
+    throw new Error("reply lost after commit");
+  });
+  const request = createNativeAppCollaborationRequester({ getGatewayOrigin: () => "https://gateway.test",
+    getToken: () => "host-only-token", fetchFn: fetchFn as typeof fetch, legacyRequest });
+  const mutation = { kind: "mutate" as const, action: { action: "insert", table: "tasks", data: { title: "New" } },
+    expectedRevision: "4", clientRequestId: "60000000-0000-4000-8000-000000000001", scopeId: participant.scopeId };
+  await expect(request(appId, mutation)).rejects.toThrow();
+  active = false;
+  await expect(request(appId, mutation)).rejects.toThrow("Collaboration unavailable");
+  expect(legacyRequest).not.toHaveBeenCalled();
 });
 
 it("notifies the native app from the shared scope sequence and replays uncertain writes with the same id", async () => {

@@ -207,6 +207,9 @@ export function createNativeAppCollaborationRequester(options: NativeAppQueryReq
     if (request.kind === "state") return getState();
     const state = await getState();
     if (!isCurrent()) throw new Error("Collaboration unavailable");
+    if (request.kind === "mutate" && request.scopeId !== (state.participant?.scopeId ?? null)) {
+      throw new Error("Collaboration unavailable");
+    }
     const action = { ...request.action, app: slug };
     if (!state.participant) {
       const legacy = NativeAppQuerySchema.parse(request.action);
