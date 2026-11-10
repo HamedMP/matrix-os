@@ -295,6 +295,30 @@ enforced by the platform or the substrate.
 | Sandbox to gateway | Broker socket (existing) | Workload never holds a provider key or database URL |
 | Lifecycle and migration routes | Platform-internal bearer or owner session | See plan auth matrix |
 
+Additional routes covered by the plan's auth matrix: container registration (per-runtime
+HMAC token, current generation only), invite administration (platform operator auth),
+and the checkout-to-upgrade trigger (verified Stripe webhook, never a client claim).
+
+**Generation fencing.** Replacing compute bumps the runtime's generation and token
+epoch and rotates the owner database role password in one transaction before the new
+container starts. The object broker and every internal route reject a token from an
+older epoch. A stale container therefore loses database, object, and platform access
+even if it is still running.
+
+**Who may wake a runtime.** Only an authenticated request from the runtime's owner
+starts a stopped container. Collaborators, share-link viewers, webhooks, and
+unauthenticated traffic get a "not available" response and never start compute.
+
+**Egress.** Default deny, including private, link-local, and loopback ranges, the
+provider metadata endpoint, and platform-internal addresses other than the named
+internal routes. Package installs go through a platform-operated registry proxy with
+rate and byte caps. Agent web tools are brokered through the platform under the same
+per-owner caps; the container has no direct general internet route.
+
+**Secrets.** Runtime credentials are injected through the provider's secret mechanism
+at start. They are never baked into the image, written to logs, or placed in URLs. All
+token comparisons are constant-time.
+
 Input validation: every new route validates path, query, and body with Zod at the
 boundary and uses `bodyLimit`. Substrate addresses come from the platform's own records,
 never from client input. Errors to clients are generic; provider names, addresses, and
@@ -316,6 +340,30 @@ capacity, start or attach, hydrate, verify ready, serve, account, idle stop with
   sandbox launcher is chosen at startup by dependency injection, never probed at call time.
 - No `globalThis`, no client-side inference of substrate.
 
+Platform components, each constructed in platform startup, started after the database
+is ready, and stopped (timers cleared, in-flight work drained) on shutdown:
+
+| Component | Depends on | Owns |
+| --- | --- | --- |
+| `SubstrateRegistry` | config, `vps` and `container` substrates | Substrate lookup by runtime record |
+| `ContainerLifecycleService` | registry, database, provider adapter | Create, wake, quiesce, stop, replace |
+| `ActivityTracker` | routing middleware | Last owner activity per runtime, observed at the proxy |
+| `IdleReaper` | activity tracker, lifecycle service | Recurring idle sweep |
+| `OrphanReconciler` | provider adapter, database | Recurring deletion of compute with no current record |
+| `MigrationRunner` | lifecycle service, VPS provisioning, funding repository | Resumable upgrade state machine |
+
+**Idle authority.** The platform decides idleness from owner traffic it observes while
+proxying, plus the count of unsettled runs the platform already tracks through funded
+reservations. Activity reported by the container is advisory and can only shorten, never
+extend, a session. A hard maximum session length applies regardless.
+
+**Configuration.** Container substrate settings (provider credentials, region, image
+reference, private network), the shared database admin URL, per-owner limits, global
+ceilings, and the invite gate are read from environment at startup and validated once.
+The container itself receives: handle, owner id, machine id, runtime slot, generation,
+its own database URL, its runtime token, the platform internal URL, the funded relay
+URL, and the runtime profile name.
+
 ## Failure modes
 
 | Failure | Outcome |
@@ -333,6 +381,52 @@ capacity, start or attach, hydrate, verify ready, serve, account, idle stop with
 All substrate and broker calls have timeouts. Lifecycle operations are idempotent and
 keyed by runtime and generation.
 
+Provisional timeouts, all configuration-driven and revised after Phase 0:
+
+| Operation | Timeout |
+| --- | --- |
+| Provider API call | 10 s |
+| Start to ready, including hydrate | 90 s |
+| Quiesce (wait for runs to settle) | run deadline, at most 15 min |
+| Final flush | 120 s, 3 attempts |
+| Readiness probe | 5 s |
+| Migration step | 10 min per step, resumable |
+
+**File and database consistency.** Database writes are durable immediately; files are
+flushed on a timer (provisionally every 30 s) and at stop, so a crash can lose at most
+one flush interval of file changes. On start after a crash the runtime compares the
+flushed manifest with database references and marks affected chats and apps as
+interrupted. It never deletes database rows to match files.
+
+**Needs recovery.** A runtime whose final flush failed is not hydrated over. The next
+start reuses the surviving container disk if the provider still has it; otherwise it
+hydrates the last good manifest and reports the lost interval to the owner.
+
+**Billing on a failed upgrade.** The subscription begins at checkout as it does today.
+If migration has not completed within its deadline, the platform alerts support, keeps
+the container writable, and applies the existing refund path. No new billing mechanism
+is introduced.
+
+**Carried-forward debt.** Kernel state in `system/matrix.db` is existing SQLite, not
+new persistence. This spec only requires a consistent snapshot of it at flush.
+
+## Concurrency and state
+
+- **Single-flight start.** A start is a compare-and-set on the runtime row under a row
+  lock: `stopped` to `starting` with the generation the caller read. Losers attach to
+  the winner's start and do not create compute.
+- **Stop versus new work.** Stopping is a handshake. The platform sets `quiescing`; the
+  gateway atomically stops accepting new runs and replies with its unsettled count; the
+  platform holds new owner requests during the window and either cancels the stop or
+  replays them after restart. A request is never accepted by a runtime that then stops.
+- **Limits.** Every limit is enforced by one atomic statement or a held lock, never by
+  read-then-write.
+- **Balance transfer.** Upgrade takes the existing per-owner funding advisory lock,
+  waits for unsettled reservations, then moves balances and switches substrate in one
+  transaction.
+- **Migration state.** Transitions are compare-and-set on the migration row; each step
+  is idempotent so a crashed runner can be resumed by another.
+
 ## Resource management
 
 - Per-owner caps: CPU, memory, processes, job duration, concurrent runs, home size,
@@ -344,6 +438,29 @@ keyed by runtime and generation.
 - Orphan sweep: compute with no current-generation record is deleted by a recurring
   reconciler; databases and prefixes are never deleted by the sweep.
 - Platform registries for wake requests and in-flight starts are bounded with TTL.
+- Inside the container: build caches and hydrate temp files are capped and cleared at
+  stop; temp sweeps skip symlinks.
+
+Provisional per-owner defaults, configuration-driven, so limit tests can be written now:
+
+| Limit | Default |
+| --- | --- |
+| CPU and memory | 1 vCPU, 2 GiB |
+| Processes | 256 |
+| Concurrent runs | 1 |
+| Run duration | 15 min |
+| Idle before stop | 10 min |
+| Maximum session | 4 h |
+| Home size | 2 GiB |
+| Database size and connections | 500 MB, 5 connections |
+
+**Connection budget.** Running containers times 5 connections must stay under the
+shared cluster's limit with headroom; the global running-container ceiling is derived
+from it, and a pooler is added if S5 shows it is needed.
+
+**Data flow.** Owner data is processed in memory by the container provider in the
+owner's chosen region and stored in Matrix-controlled Postgres and object storage. No
+owner data is sent to any new third party beyond the container provider.
 
 ## Success Criteria
 

@@ -136,6 +136,18 @@ Done when: User Story 5 and SC-005 pass, including a failed and resumed migratio
 - F2 Site docs PR in `FinnaAI/matrix-os-site`.
 - F3 Staged enablement: internal accounts, invite list, open signup after D4's condition.
 
+## Test lanes per stack
+
+| Stack | Required lane beyond unit tests |
+| --- | --- |
+| A | Platform integration against real Postgres: routing resolves a `vps` runtime exactly as before; paid regression set (sign-in, proxy to VPS, entitlement 402, boot page, recovery, resize, funded credential issuance) |
+| B | Container integration: real image, real Postgres, S3-compatible store; chat turn with tool use, build, stop, destroy, restart; sandbox denial tests |
+| C | Staging platform: two owners, start races, stale-generation denial, limit races, capacity busy, idle reaping |
+| D | Per-surface end-to-end plus live evidence |
+| E | Staging: full upgrade with inventory comparison; injected failure at each step and resume |
+
+A lane that cannot run for a missing prerequisite fails; it does not skip.
+
 ## New and changed routes
 
 | Route | Auth | Limits |
@@ -146,6 +158,9 @@ Done when: User Story 5 and SC-005 pass, including a failed and resumed migratio
 | Gateway `POST /internal/runtime/quiesce`, `/flush` | Platform verification token | `bodyLimit` 4 KiB; bounded duration |
 | Gateway `GET /api/runtime/capabilities` | Verified runtime actor | Bounded static projection |
 | `POST /api/runtime/upgrade`, `GET /api/runtime/upgrade` | Clerk session, owner only | `bodyLimit`; idempotency key |
+| `POST /internal/containers/:handle/register` | Per-runtime HMAC token, current generation | `bodyLimit` 4 KiB; idempotent |
+| Invite administration | Platform operator auth | `bodyLimit`; validated identifiers |
+| Stripe webhook (existing) starts a migration | Stripe signature | Idempotent on event id; non-2xx on failure |
 
 Names are proposals; final naming is reconciled with the owning routers.
 
