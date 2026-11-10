@@ -6,7 +6,7 @@ import { lstat, mkdir, realpath } from "node:fs/promises";
 import { join } from "node:path";
 import { z } from "zod/v4";
 import {
-  LOCAL_TERMINAL_ID_PATTERN, LOCAL_TERMINAL_MAX, LOCAL_TERMINAL_MAX_OUTPUT_CHARS, LocalTerminalStatusSchema, type LocalTerminal,
+  LOCAL_TERMINAL_ID_PATTERN, LOCAL_TERMINAL_LIST_MAX, LOCAL_TERMINAL_MAX_OUTPUT_CHARS, LocalTerminalStatusSchema, type LocalTerminal,
 } from "../../shared/local-terminals";
 import { describeError } from "./describe-error";
 import { connectHc, HcVersionMismatchError, type HcConnection, type HcSocket, type HcStream } from "./hc-client";
@@ -21,6 +21,9 @@ const MAX_ATTACHMENTS = 8;
 // attachment was released cannot leave a channel open.
 const RESTART_WINDOW_MS = 5 * 60_000;
 const MAX_STARTS_PER_WINDOW = 3;
+// Terminal creation is rate-limited, never count-capped.
+const CREATE_WINDOW_MS = 10_000;
+const MAX_CREATES_PER_WINDOW = 10;
 const SHELL_ENV_NAMES = new Set(["HOME", "USER", "LOGNAME", "SHELL", "PATH", "LANG", "TMPDIR", "SSH_AUTH_SOCK"]);
 // Variables that exist only to isolate the core must not reach the user's shell.
 const CORE_ONLY_ENV = ["XDG_STATE_HOME", "XDG_CONFIG_HOME", "XDG_RUNTIME_DIR", "HC_SESSION", "HC_SCOPE", "HC_TERMINAL_ID", "HC_TERMINAL_SOCKET"];
@@ -28,7 +31,7 @@ const CORE_ONLY_ENV = ["XDG_STATE_HOME", "XDG_CONFIG_HOME", "XDG_RUNTIME_DIR", "
 const MAX_TITLE_CHARS = 256;
 // Each entry is read on its own: a terminal the core describes in a way this
 // build does not expect is skipped instead of hiding every other terminal.
-const ListedSchema = z.object({ terminals: z.array(z.unknown()).max(1_000) });
+const ListedSchema = z.object({ terminals: z.array(z.unknown()).max(LOCAL_TERMINAL_LIST_MAX) });
 const ListedTerminalSchema = z.object({
   address: z.string().regex(LOCAL_TERMINAL_ID_PATTERN),
   state: z.string().max(32),
@@ -103,12 +106,14 @@ export function createLocalTerminalHost(options: LocalTerminalHostOptions, sink:
   // Bounded by MAX_ATTACHMENTS; cleared on disconnect and dispose.
   const attachments = new Map<number, Attachment>();
   const starts: number[] = [];
+  // Start times of recent creations: at most MAX_CREATES_PER_WINDOW entries.
+  let creates: number[] = [];
   let connection: HcConnection | null = null;
   let connecting: Promise<HcConnection> | null = null;
   let status: LocalTerminalHostStatus = "unavailable";
   let nextAttachId = 1;
   let disposed = false;
-  // Creations run one at a time so the terminal limit cannot be raced past.
+  // Creations run one at a time, so the rate limit counts them in order.
   let creation: Promise<unknown> = Promise.resolve();
 
   function coreEnv(): Record<string, string> {
@@ -211,7 +216,10 @@ export function createLocalTerminalHost(options: LocalTerminalHostOptions, sink:
 
   async function run(size: { cols: number; rows: number }): Promise<string | null> {
     const core = await ensure();
-    if ((await live(core)).length >= LOCAL_TERMINAL_MAX) return null;
+    const time = now();
+    creates = creates.filter((started) => time - started < CREATE_WINDOW_MS);
+    if (creates.length >= MAX_CREATES_PER_WINDOW) return null;
+    creates.push(time);
     const ran = RanSchema.parse(await core.call("terminal.run", {
       argv: ["/usr/bin/env", ...CORE_ONLY_ENV.flatMap((name) => ["-u", name]), options.shell, "-l"],
       cwd: options.home,
@@ -235,12 +243,12 @@ export function createLocalTerminalHost(options: LocalTerminalHostOptions, sink:
   return {
     status: (): LocalTerminalHostStatus => status,
 
-    /** Every live terminal, capped at the limit the window shows. */
+    /** Every live terminal the core reports. */
     async list(): Promise<LocalTerminal[]> {
-      return (await live(await ensure())).slice(0, LOCAL_TERMINAL_MAX);
+      return live(await ensure());
     },
 
-    /** Starts the user's login shell at home. Returns null at the tab limit. */
+    /** Starts the user's login shell at home. Returns null when too many were started just now. */
     create(size: { cols: number; rows: number }): Promise<string | null> {
       const next = creation.then(() => run(size));
       // The chain itself never rejects; each caller still sees its own outcome.

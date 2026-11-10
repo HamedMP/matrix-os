@@ -560,7 +560,8 @@ export default function TerminalView({
       },
       onNativeScroll: (state) => nativeHistoryRef.current?.update(state),
       onNativeScrollSupported: (supported) => nativeHistoryRef.current?.attach(supported),
-      onOutput: (data) => terminal.write(data),
+      // xterm calls back once the chunk is parsed, which paces sources that wait for it.
+      onOutput: (data, _seq, written) => terminal.write(data, written),
       onCanonicalSize: (size) => {
         if (terminal.cols !== size.cols || terminal.rows !== size.rows) {
           terminal.resize(size.cols, size.rows);

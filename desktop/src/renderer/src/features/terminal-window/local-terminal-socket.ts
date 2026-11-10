@@ -13,6 +13,16 @@ const INPUT_CHUNK_CHARS = 32_768;
 const MAX_EARLY_EVENTS = 256;
 const DEFAULT_SIZE = { cols: 100, rows: 30 };
 
+/** The end of the next input chunk, never between the halves of one character. */
+export function inputChunkEnd(value: string, start: number): number {
+  const end = Math.min(start + INPUT_CHUNK_CHARS, value.length);
+  if (end >= value.length) return end;
+  const last = value.charCodeAt(end - 1);
+  const next = value.charCodeAt(end);
+  const splitsPair = last >= 0xd800 && last <= 0xdbff && next >= 0xdc00 && next <= 0xdfff;
+  return splitsPair ? end - 1 : end;
+}
+
 function warn(action: string, error: unknown): void {
   console.warn(`[local-terminal] ${action} failed:`, error instanceof Error ? error.name : "UnknownError");
 }
@@ -43,9 +53,16 @@ export function createLocalTerminalSocket(sessionName: string, events: ShellSock
     });
   };
 
+  // Credit goes back once the view has drawn the output, not when it was
+  // merely handed over: a program that prints faster than the screen can
+  // draw is slowed down instead of filling the window's memory.
   const deliver = (data: string) => {
-    events.onOutput(data, ++seq);
-    acknowledge();
+    let done = false;
+    events.onOutput(data, ++seq, () => {
+      if (done) return;
+      done = true;
+      acknowledge();
+    });
   };
 
   const release = () => {
@@ -73,10 +90,13 @@ export function createLocalTerminalSocket(sessionName: string, events: ShellSock
   const send = (data: string, binary: boolean) => {
     if (attachId === null || released) return;
     const current = attachId;
-    for (let offset = 0; offset < data.length; offset += INPUT_CHUNK_CHARS) {
-      void invoke("local-terminal:input", { attachId: current, data: data.slice(offset, offset + INPUT_CHUNK_CHARS), ...(binary ? { binary: true } : {}) })
+    for (let offset = 0; offset < data.length;) {
+      // Binary input is one byte per character and can be cut anywhere.
+      const end = binary ? Math.min(offset + INPUT_CHUNK_CHARS, data.length) : inputChunkEnd(data, offset);
+      void invoke("local-terminal:input", { attachId: current, data: data.slice(offset, end), ...(binary ? { binary: true } : {}) })
         .then((result) => { if (!result.ok) lost(current); })
         .catch((error: unknown) => warn("input", error));
+      offset = end;
     }
   };
 

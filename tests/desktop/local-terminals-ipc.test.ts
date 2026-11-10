@@ -81,10 +81,10 @@ describe("local terminal IPC", () => {
     await expect(invoke("local-terminal:list", {})).resolves.toEqual({ status: "unavailable" });
   });
 
-  it("reports the terminal limit, a failed end, and typing into a released attachment", async () => {
+  it("reports a start that came too fast, a failed end, and typing into a released attachment", async () => {
     const { host, invoke } = setup();
     host.create.mockResolvedValueOnce(null);
-    await expect(invoke("local-terminal:create", { cols: 80, rows: 24 })).resolves.toEqual({ status: "limit" });
+    await expect(invoke("local-terminal:create", { cols: 80, rows: 24 })).resolves.toEqual({ status: "rate-limited" });
     host.kill.mockRejectedValueOnce(new Error("gone"));
     await expect(invoke("local-terminal:kill", { id: "t1" })).resolves.toEqual({ ok: false });
     host.input.mockReturnValueOnce(false);

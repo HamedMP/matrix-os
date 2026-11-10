@@ -2,17 +2,17 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { invoke } from "../../lib/operator";
 import { setAlternateTerminalSockets } from "../terminal/terminal-runtime";
 import {
-  LOCAL_TERMINAL_MAX, LOCAL_TERMINAL_SESSION_PREFIX, type LocalTerminal, type LocalTerminalUnavailable,
+  LOCAL_TERMINAL_SESSION_PREFIX, type LocalTerminal, type LocalTerminalUnavailable,
 } from "../../../../shared/local-terminals";
 import { createLocalTerminalSocket } from "./local-terminal-socket";
 
 export type LocalTerminalsState =
   | { status: "loading" }
-  | { status: "ready"; terminals: LocalTerminal[]; atLimit: boolean }
+  | { status: "ready"; terminals: LocalTerminal[] }
   | { [S in LocalTerminalUnavailable]: { status: S } }[LocalTerminalUnavailable];
 
 /** The last action that did not take effect; the list it acted on stays shown. */
-export type LocalTerminalsNotice = "create-failed" | "end-failed" | null;
+export type LocalTerminalsNotice = "create-failed" | "create-rate-limited" | "end-failed" | null;
 
 const STATUS_POLL_MS = 3_000;
 
@@ -29,9 +29,9 @@ export function useLocalTerminals() {
     try {
       const result = await invoke("local-terminal:list", {});
       if (current !== generation.current) return;
-      setState((previous) => (result.status === "ready"
-        ? { status: "ready", terminals: result.terminals, atLimit: previous.status === "ready" && previous.atLimit && result.terminals.length >= LOCAL_TERMINAL_MAX }
-        : { status: result.status } as LocalTerminalsState));
+      setState(result.status === "ready"
+        ? { status: "ready", terminals: result.terminals }
+        : { status: result.status } as LocalTerminalsState);
     } catch (error: unknown) {
       if (current !== generation.current) return;
       console.warn("[local-terminal] list failed:", error instanceof Error ? error.name : "UnknownError");
@@ -63,8 +63,8 @@ export function useLocalTerminals() {
         await refresh();
         return result.id;
       }
-      if (result.status === "limit") {
-        setState((current) => (current.status === "ready" ? { ...current, atLimit: true } : current));
+      if (result.status === "rate-limited") {
+        setNotice("create-rate-limited");
         return null;
       }
     } catch (error: unknown) {

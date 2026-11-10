@@ -5,7 +5,9 @@ import { z } from "zod/v4";
 
 export const LOCAL_TERMINAL_VERSION = "0.1.19";
 export const LOCAL_TERMINAL_SESSION_PREFIX = "local:";
-export const LOCAL_TERMINAL_MAX = 32;
+// Terminals are not count-capped. This bounds one listing, and matches the
+// most the core reports.
+export const LOCAL_TERMINAL_LIST_MAX = 1_000;
 const MAX_INPUT_CHARS = 65_536;
 const MAX_ACK_COUNT = 4_096;
 const BYTE_STRING = /^[\u0000-\u00ff]*$/;
@@ -39,7 +41,7 @@ export const LOCAL_TERMINAL_INVOKE = {
   "local-terminal:list": {
     request: z.object({}).strict(),
     response: z.discriminatedUnion("status", [
-      z.object({ status: z.literal("ready"), terminals: z.array(LocalTerminalSchema).max(LOCAL_TERMINAL_MAX) }).strict(),
+      z.object({ status: z.literal("ready"), terminals: z.array(LocalTerminalSchema).max(LOCAL_TERMINAL_LIST_MAX) }).strict(),
       z.object({ status: Unavailable }).strict(),
     ]),
   },
@@ -47,7 +49,8 @@ export const LOCAL_TERMINAL_INVOKE = {
     request: z.object(Size).strict(),
     response: z.discriminatedUnion("status", [
       z.object({ status: z.literal("ready"), id: LocalTerminalIdSchema }).strict(),
-      z.object({ status: z.enum([...UNAVAILABLE, "limit"]) }).strict(),
+      // "rate-limited": too many terminals were started in a short time.
+      z.object({ status: z.enum([...UNAVAILABLE, "rate-limited"]) }).strict(),
     ]),
   },
   "local-terminal:kill": { request: z.object({ id: LocalTerminalIdSchema }).strict(), response: Ok },

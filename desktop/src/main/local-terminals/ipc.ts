@@ -41,7 +41,7 @@ export function registerLocalTerminalIpc(
     "local-terminal:create": async ({ cols, rows }) => {
       try {
         const id = await host.create({ cols, rows });
-        return id ? { status: "ready", id } : { status: "limit" };
+        return id ? { status: "ready", id } : { status: "rate-limited" };
       } catch (error: unknown) { logFailure("local-terminal:create", error); return unavailable(); }
     },
     "local-terminal:kill": async ({ id }) => {

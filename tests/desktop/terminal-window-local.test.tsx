@@ -1,21 +1,26 @@
 // @vitest-environment jsdom
 
 import React from "react";
-import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+// Records each mount of a terminal view, for tests that care about remounting.
+let mountLog: string[] | null = null;
 vi.mock("@desktop/renderer/src/features/terminal/TerminalView", () => ({
-  default: ({ sessionName }: { sessionName: string }) => <div data-testid="terminal-view">{sessionName}</div>,
+  default: function TerminalViewStub({ sessionName }: { sessionName: string }) {
+    React.useEffect(() => { mountLog?.push(sessionName); }, [sessionName]);
+    return <div data-testid="terminal-view">{sessionName}</div>;
+  },
 }));
 
 import TerminalWindowApp from "@desktop/renderer/src/features/terminal-window/TerminalWindowApp";
-import { createLocalTerminalSocket } from "@desktop/renderer/src/features/terminal-window/local-terminal-socket";
+import { createLocalTerminalSocket, inputChunkEnd } from "@desktop/renderer/src/features/terminal-window/local-terminal-socket";
 
 type Listener = (payload: unknown) => void;
 function installOperator(local: Record<string, (payload: never) => unknown>) {
   const listeners = new Map<string, Listener[]>();
   const invoke = vi.fn(async (channel: string, payload: unknown) => {
-    if (channel === "auth:status") return { signedIn: false, platformHost: "https://app.matrix-os.com", runtimeSlot: "primary", authGeneration: 0 };
+    if (channel === "auth:status" && !local[channel]) return { signedIn: false, platformHost: "https://app.matrix-os.com", runtimeSlot: "primary", authGeneration: 0 };
     if (channel === "state:get") return { value: null };
     if (channel === "app:get-zoom") return { factor: 1 };
     const handler = local[channel];
@@ -91,6 +96,60 @@ describe("This Computer terminals", () => {
     expect((await screen.findByTestId("terminal-view")).textContent).toBe("local:t1");
   });
 
+  it("lists more terminals than any fixed ceiling", async () => {
+    const terminals = Array.from({ length: 60 }, (_, index) => ({ id: `t${index + 1}`, title: `shell ${index + 1}`, status: null }));
+    installOperator({ "local-terminal:list": () => ({ status: "ready", terminals }) });
+    render(<TerminalWindowApp />);
+    const list = await screen.findByRole("list", { name: "This Computer terminals" });
+    expect(within(list).getByRole("button", { name: "shell 60" })).toBeTruthy();
+    expect(within(list).getByRole("button", { name: "New terminal" })).toBeTruthy();
+  });
+
+  it("keeps the pane of a shell that exited, marked ended, until the user closes it", async () => {
+    let terminals = [{ id: "t1", title: "build", status: null }];
+    installOperator({ "local-terminal:list": () => ({ status: "ready", terminals }) });
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      render(<TerminalWindowApp />);
+      fireEvent.click(await screen.findByRole("button", { name: "build" }));
+      await screen.findByTestId("terminal-view");
+      // The program exits: the next listing no longer has it.
+      terminals = [];
+      await act(async () => { await vi.advanceTimersByTimeAsync(3_100); });
+      const list = screen.getByRole("list", { name: "This Computer terminals" });
+      await waitFor(() => expect(within(list).getByText("ended")).toBeTruthy());
+      expect(screen.getByTestId("terminal-view").textContent).toBe("local:t1");
+      expect(screen.queryByText("No terminals yet.")).toBeNull();
+      fireEvent.click(within(list).getByRole("button", { name: "Close build" }));
+      expect(screen.queryByTestId("terminal-view")).toBeNull();
+      expect(await screen.findByText("No terminals yet.")).toBeTruthy();
+    } finally { vi.useRealTimers(); }
+  });
+
+  it("reattaches the open local terminal after a sign-in change resets attachments", async () => {
+    let status: unknown = { signedIn: false, platformHost: "https://app.matrix-os.com", runtimeSlot: "primary", authGeneration: 0 };
+    const mounts: string[] = [];
+    mountLog = mounts;
+    const operator = installOperator({
+      "auth:status": () => status,
+      "runtime:list-computers": () => ({
+        items: [{ handle: "neo", runtimeSlot: "primary", label: "Main Computer", availability: "available", kind: "customer", gatewayPath: "/vm/neo", capabilities: [] }],
+        selectedSlot: "primary", hasMore: false, limit: 20,
+      }),
+      "local-terminal:list": () => ({ status: "ready", terminals: [{ id: "t1", title: "zsh", status: null }] }),
+    });
+    render(<TerminalWindowApp />);
+    fireEvent.click(await screen.findByRole("button", { name: "zsh" }));
+    await screen.findByTestId("terminal-view");
+    const before = mounts.length;
+    status = { signedIn: true, handle: "neo", userId: "user_1", platformHost: "https://app.matrix-os.com", runtimeSlot: "primary", authGeneration: 1 };
+    act(() => operator.emit("auth:changed", { signedIn: true, handle: "neo" }));
+    // The same terminal stays open, in a pane mounted afresh so it attaches again.
+    await waitFor(() => expect(mounts.length).toBeGreaterThan(before));
+    expect(screen.getByTestId("terminal-view").textContent).toBe("local:t1");
+    mountLog = null;
+  });
+
   it("keeps the terminal on screen and says so when ending it did not work", async () => {
     installOperator({
       "local-terminal:list": () => ({ status: "ready", terminals: [{ id: "t1", title: "zsh", status: null }] }),
@@ -134,9 +193,9 @@ describe("This Computer terminals", () => {
     expect(await screen.findByText("No terminals yet.")).toBeTruthy();
   });
 
-  it("explains a version mismatch and the tab limit without offering what it cannot do", async () => {
+  it("explains a version mismatch and a too-fast start without offering what it cannot do", async () => {
     let listing: unknown = { status: "version-mismatch" };
-    installOperator({ "local-terminal:list": () => listing, "local-terminal:create": () => ({ status: "limit" }) });
+    installOperator({ "local-terminal:list": () => listing, "local-terminal:create": () => ({ status: "rate-limited" }) });
     const second = render(<TerminalWindowApp />);
     expect(await screen.findByText(/started by a different version/)).toBeTruthy();
     expect(screen.queryByRole("button", { name: "New terminal" })).toBeNull();
@@ -145,7 +204,7 @@ describe("This Computer terminals", () => {
     listing = { status: "ready", terminals: [] };
     render(<TerminalWindowApp />);
     fireEvent.click(await screen.findByRole("button", { name: "New terminal" }));
-    expect(await screen.findByText(/End a terminal to start another/)).toBeTruthy();
+    expect(await screen.findByText("Too many terminals started at once. Try again in a moment.")).toBeTruthy();
     expect(screen.queryByTestId("terminal-view")).toBeNull();
   });
 });
@@ -153,7 +212,9 @@ describe("This Computer terminals", () => {
 describe("local terminal socket", () => {
   beforeEach(() => { vi.spyOn(console, "warn").mockImplementation(() => undefined); });
   afterEach(() => { vi.restoreAllMocks(); });
-  const events = () => ({ onState: vi.fn(), onOutput: vi.fn(), onGap: vi.fn(), onExit: vi.fn(), onOwnershipChange: vi.fn() });
+  // The view draws output and then says so, as xterm's write callback does.
+  const events = () => ({ onState: vi.fn(), onOutput: vi.fn((_data: string, _seq: number, written?: () => void) => { written?.(); }),
+    onGap: vi.fn(), onExit: vi.fn(), onOwnershipChange: vi.fn() });
 
   it("attaches at the requested size, relays output in order and forwards input and resize", async () => {
     const operator = installOperator({ "local-terminal:attach": () => ({ ok: true, attachId: 5 }), "local-terminal:ack": () => ({ ok: true }),
@@ -168,7 +229,7 @@ describe("local terminal socket", () => {
     operator.emit("local-terminal:output", { attachId: 9, data: "someone else" });
     operator.emit("local-terminal:output", { attachId: 5, data: "one" });
     operator.emit("local-terminal:output", { attachId: 5, data: "two" });
-    expect(handlers.onOutput.mock.calls).toEqual([["one", 1], ["two", 2]]);
+    expect(handlers.onOutput.mock.calls.map(([data, seq]) => [data, seq])).toEqual([["one", 1], ["two", 2]]);
     // One acknowledgement for the burst, counting only this terminal's output.
     await waitFor(() => expect(operator.invoke).toHaveBeenCalledWith("local-terminal:ack", { attachId: 5, count: 2 }));
     expect(operator.invoke.mock.calls.filter(([channel]) => channel === "local-terminal:ack")).toHaveLength(1);
@@ -215,8 +276,44 @@ describe("local terminal socket", () => {
     operator.emit("local-terminal:output", { attachId: 6, data: "prompt$ " });
     expect(handlers.onOutput).not.toHaveBeenCalled();
     resolveAttach({ ok: true, attachId: 6 });
-    await waitFor(() => expect(handlers.onOutput.mock.calls).toEqual([["history ", 1], ["prompt$ ", 2]]));
+    await waitFor(() => expect(handlers.onOutput.mock.calls.map(([data, seq]) => [data, seq])).toEqual([["history ", 1], ["prompt$ ", 2]]));
     await waitFor(() => expect(operator.invoke).toHaveBeenCalledWith("local-terminal:ack", { attachId: 6, count: 2 }));
+  });
+
+  it("returns output credit only after the view has drawn the output", async () => {
+    const operator = installOperator({ "local-terminal:attach": () => ({ ok: true, attachId: 7 }), "local-terminal:ack": () => ({ ok: true }) });
+    const drawn: Array<() => void> = [];
+    const handlers = { ...events(), onOutput: vi.fn((_data: string, _seq: number, written?: () => void) => { if (written) drawn.push(written); }) };
+    createLocalTerminalSocket("local:t1", handlers).connect();
+    await waitFor(() => expect(handlers.onState).toHaveBeenCalledWith("attached"));
+    operator.emit("local-terminal:output", { attachId: 7, data: "a flood of output" });
+    await Promise.resolve();
+    await Promise.resolve();
+    const acks = () => operator.invoke.mock.calls.filter(([channel]) => channel === "local-terminal:ack");
+    expect(acks()).toEqual([]);
+    drawn[0]!();
+    drawn[0]!();
+    await waitFor(() => expect(acks()).toEqual([["local-terminal:ack", { attachId: 7, count: 1 }]]));
+  });
+
+  it("never cuts a pasted character in half when splitting long input", async () => {
+    const emoji = "\u{1F600}";
+    const text = `${"a".repeat(32_767)}${emoji}${"b".repeat(10)}`;
+    expect(inputChunkEnd(text, 0)).toBe(32_767);
+    expect(inputChunkEnd(text, 32_767)).toBe(text.length);
+    expect(inputChunkEnd("short", 0)).toBe(5);
+
+    const operator = installOperator({ "local-terminal:attach": () => ({ ok: true, attachId: 3 }), "local-terminal:input": () => ({ ok: true }) });
+    const handlers = events();
+    const socket = createLocalTerminalSocket("local:t1", handlers);
+    socket.connect();
+    await waitFor(() => expect(handlers.onState).toHaveBeenCalledWith("attached"));
+    socket.sendInput(text);
+    const sent = operator.invoke.mock.calls.filter(([channel]) => channel === "local-terminal:input").map(([, payload]) => (payload as { data: string }).data);
+    expect(sent.join("")).toBe(text);
+    // Each piece is well-formed on its own, so encoding it cannot corrupt the character.
+    for (const piece of sent) expect(piece.isWellFormed()).toBe(true);
+    expect(sent).toHaveLength(2);
   });
 
   it("stops accepting typing once the trusted core no longer holds the attachment", async () => {

@@ -4,7 +4,7 @@ import { connect } from "node:net";
 import { homedir, tmpdir, userInfo } from "node:os";
 import { join } from "node:path";
 import { EventEmitter } from "node:events";
-import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { encodeFrame, HC_FRAME } from "@desktop/main/local-terminals/hc-protocol";
 import { fakeCore } from "./fixtures/fake-herdr-core";
 import { createLocalTerminalHost, localShellEnv, type LocalTerminalHostOptions } from "@desktop/main/local-terminals/host";
@@ -42,10 +42,19 @@ describe("local terminal runtime location", () => {
   });
 });
 
+// Every temporary directory a test makes is removed when that test ends.
+const scratch: string[] = [];
+function scratchDir(prefix: string): string {
+  const dir = mkdtempSync(join(tmpdir(), prefix));
+  scratch.push(dir);
+  return dir;
+}
+afterEach(() => { for (const dir of scratch.splice(0)) rmSync(dir, { recursive: true, force: true }); });
+
 describe("local terminal host preconditions", () => {
   const sink = { output: vi.fn(), closed: vi.fn() };
   function options(overrides: Partial<LocalTerminalHostOptions>): LocalTerminalHostOptions {
-    const root = mkdtempSync(join(tmpdir(), "mx-host-"));
+    const root = scratchDir("mx-host-");
     return { binaryPath: process.execPath, expectedVersion: LOCAL_TERMINAL_VERSION, runtimeDir: join(root, "r"), dataDir: join(root, "d"),
       home: root, shell: "/bin/sh", env: {}, uid: userInfo().uid,
       startCore: vi.fn(async () => { throw new Error("no core"); }), openSocket: (path) => connect(path), ...overrides };
@@ -73,7 +82,7 @@ describe("local terminal host preconditions", () => {
   it("refuses a socket directory that is a symlink or open to other users", async () => {
     vi.spyOn(console, "warn").mockImplementation(() => undefined);
     const linked = options({});
-    const target = mkdtempSync(join(tmpdir(), "mx-target-"));
+    const target = scratchDir("mx-target-");
     symlinkSync(target, linked.runtimeDir);
     await expect(createLocalTerminalHost(linked, sink).list()).rejects.toThrow();
     expect(linked.startCore).not.toHaveBeenCalled();
@@ -113,7 +122,7 @@ describe("local terminal host against a scripted core", () => {
   beforeEach(() => { vi.spyOn(console, "warn").mockImplementation(() => undefined); });
 
   function start(script: (core: ReturnType<typeof fakeCore>, call: Call) => void, overrides: Partial<LocalTerminalHostOptions> = {}) {
-    const root = mkdtempSync(join(tmpdir(), "mx-host-"));
+    const root = scratchDir("mx-host-");
     const cores: Array<ReturnType<typeof fakeCore>> = [];
     const sink = { output: vi.fn(), closed: vi.fn() };
     const opts: LocalTerminalHostOptions = {
@@ -187,8 +196,9 @@ describe("local terminal host against a scripted core", () => {
     expect(Object.keys(runs[0]!.params.env as object).sort()).toEqual(["COLORTERM", "TERM", "TERM_PROGRAM"]);
   });
 
-  it("never runs past the terminal limit, even when creations arrive together", async () => {
-    const terminals: unknown[] = Array.from({ length: 31 }, (_, index) => ({ address: `t${index + 1}`, state: "live" }));
+  it("limits how fast terminals are started, not how many exist", async () => {
+    const terminals: unknown[] = Array.from({ length: 40 }, (_, index) => ({ address: `t${index + 1}`, state: "live" }));
+    let time = 1_000_000;
     let runs = 0;
     const { host } = start((core, call) => {
       if (call.method === "terminal.list") core.reply(call.id, { result: { terminals: [...terminals] } });
@@ -197,10 +207,16 @@ describe("local terminal host against a scripted core", () => {
         terminals.push({ address: `t${terminals.length + 1}`, state: "live" });
         core.reply(call.id, { result: { address: `t${terminals.length}` } });
       }
-    });
-    const results = await Promise.all([host.create({ cols: 80, rows: 24 }), host.create({ cols: 80, rows: 24 }), host.create({ cols: 80, rows: 24 })]);
-    expect(results).toEqual(["t32", null, null]);
-    expect(runs).toBe(1);
+    }, { now: () => time });
+    // Forty terminals already exist; that alone stops nothing.
+    expect(await host.list()).toHaveLength(40);
+    const burst = await Promise.all(Array.from({ length: 12 }, () => host.create({ cols: 80, rows: 24 })));
+    expect(burst.filter((id) => id !== null)).toHaveLength(10);
+    expect(burst.slice(10)).toEqual([null, null]);
+    expect(runs).toBe(10);
+    time += 10_001;
+    await expect(host.create({ cols: 80, rows: 24 })).resolves.toBe("t51");
+    expect(await host.list()).toHaveLength(51);
   });
 
   function attaching() {

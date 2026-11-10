@@ -185,6 +185,7 @@ describe("Terminal window computers", () => {
           : { signedIn: false, platformHost: HOST, authGeneration: 4 };
         if (channel === "runtime:list-computers") return computers;
         if (channel === "app:get-zoom") return { factor: 1 };
+        if (channel === "local-terminal:list") return { status: "ready", terminals: [] };
         return { ok: true };
       }),
       on: (channel, callback) => { if (channel === "auth:changed") listeners.push(callback); return () => undefined; },
@@ -199,7 +200,7 @@ describe("Terminal window computers", () => {
     render(<TerminalWindowApp />);
     fireEvent.click(await screen.findByRole("button", { name: /Main Computer/ }));
     await screen.findByRole("button", { name: /build/ });
-    fireEvent.click(screen.getByRole("button", { name: "New terminal" }));
+    fireEvent.click(within(screen.getByRole("list", { name: "Main Computer terminals" })).getByRole("button", { name: "New terminal" }));
     await waitFor(() => expect(finishCreate).toBeTypeOf("function"));
 
     signedIn = false;

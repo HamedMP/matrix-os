@@ -108,12 +108,15 @@ function ComputerTabs({ computer, state, active, creating, busy, createFailed, o
 
 const LOCAL_NOTICE: Record<Exclude<LocalTerminalsNotice, null>, string> = {
   "create-failed": "Couldn't start a terminal. Try again.",
+  "create-rate-limited": "Too many terminals started at once. Try again in a moment.",
   "end-failed": "Couldn't end that terminal. Try again.",
 };
 
-function LocalTabs({ state, activeId, creating, notice, onOpen, onCreate, onEnd, onRetry }: {
+function LocalTabs({ state, activeId, ended, creating, notice, onOpen, onCreate, onEnd, onDismissEnded, onRetry }: {
   state: LocalTerminalsState; activeId: string | null; creating: boolean; notice: LocalTerminalsNotice;
-  onOpen(id: string): void; onCreate(): void; onEnd(id: string): void; onRetry(): void;
+  /** The open terminal, when its program has exited: its pane stays until dismissed. */
+  ended: { id: string; title: string } | null;
+  onOpen(id: string): void; onCreate(): void; onEnd(id: string): void; onDismissEnded(): void; onRetry(): void;
 }) {
   if (state.status === "loading") {
     return <p role="status" className="py-1.5 pl-10 text-[12px]" style={secondaryText}>Loading terminals…</p>;
@@ -138,7 +141,7 @@ function LocalTabs({ state, activeId, creating, notice, onOpen, onCreate, onEnd,
   }
   return (
     <ul aria-label="This Computer terminals" className="flex flex-col gap-0.5 pb-1 pl-8">
-      {state.terminals.length === 0
+      {state.terminals.length === 0 && !ended
         ? <li className="px-2 py-1 text-[12px]" style={secondaryText}>No terminals yet.</li>
         : state.terminals.map((terminal) => {
           const current = activeId === terminal.id;
@@ -160,7 +163,19 @@ function LocalTabs({ state, activeId, creating, notice, onOpen, onCreate, onEnd,
             </li>
           );
         })}
-      {state.atLimit ? <li role="alert" className="px-2 py-1 text-[12px]">End a terminal to start another (32 at most).</li> : null}
+      {ended ? (
+        <li className="group flex items-center rounded-md" style={{ background: "var(--bg-selected)" }}>
+          <span aria-current="true" className="flex min-w-0 flex-1 items-center gap-2 px-2 py-1 text-[12px]">
+            <SquareTerminal size={12} aria-hidden="true" className="shrink-0" />
+            <span className="min-w-0 flex-1 truncate">{ended.title}</span>
+            <span className="shrink-0 text-[10px]" style={secondaryText}>ended</span>
+          </span>
+          <button type="button" aria-label={`Close ${ended.title}`} title="Close" onClick={onDismissEnded}
+            className="mr-1 flex size-5 shrink-0 items-center justify-center rounded outline-none hover:bg-black/10 focus-visible:ring-2 focus-visible:ring-current">
+            <X size={11} aria-hidden="true" />
+          </button>
+        </li>
+      ) : null}
       {notice ? <li role="alert" className="px-2 py-1 text-[12px]">{LOCAL_NOTICE[notice]}</li> : null}
       <li>
         <button type="button" disabled={creating} onClick={onCreate}
@@ -280,7 +295,10 @@ function useTerminalWindow() {
   const cloud = useComputerTerminals(ready?.platformHost ?? null, ready?.sessionKey ?? "");
   const local = useLocalTerminals();
   // A local terminal and a cloud terminal are never attached at once.
-  const [localActive, setLocalActive] = useState<string | null>(null);
+  // The title is kept so the pane can stay, labelled, after its program exits
+  // and the terminal leaves the listing.
+  const [localOpen, setLocalOpen] = useState<{ id: string; title: string } | null>(null);
+  const localActive = localOpen?.id ?? null;
   // Which computers are open, for one signed-in session: a new session starts
   // collapsed, because its listings are fetched only when a computer is opened.
   const sessionKey = ready?.sessionKey ?? "";
@@ -288,19 +306,26 @@ function useTerminalWindow() {
   const expanded = expansion.sessionKey === sessionKey ? expansion.slots : EMPTY_SLOTS;
 
   const localTerminals = local.state.status === "ready" ? local.state.terminals : [];
-  const localTerminal = localTerminals.find((terminal) => terminal.id === localActive);
+  const listedLocal = localTerminals.find((terminal) => terminal.id === localActive);
+  // Still open, but no longer running: shown as ended until the user closes it.
+  const endedLocal = localOpen && !listedLocal && local.state.status === "ready" ? localOpen : null;
+  const localTerminal = listedLocal ?? localOpen ?? undefined;
   const { clearActive, open, create, load } = cloud;
 
   return {
-    machines, ready, cloud, local, localActive, localTerminal, expanded,
+    machines, ready, cloud, local, localActive, localTerminal, endedLocal, expanded,
+    dismissEndedLocal: () => setLocalOpen(null),
     needsAttention: localTerminals.filter((terminal) => terminal.status === "blocked" || terminal.status === "error"),
-    openLocal: (id: string) => { clearActive(); setLocalActive(id); },
+    openLocal: (id: string) => {
+      clearActive();
+      setLocalOpen({ id, title: localTerminals.find((terminal) => terminal.id === id)?.title ?? "Terminal" });
+    },
     // The pane stays until the trusted core confirms the terminal ended.
     endLocal: (id: string) => {
-      void local.end(id).then((ended) => { if (ended) setLocalActive((current) => (current === id ? null : current)); });
+      void local.end(id).then((ended) => { if (ended) setLocalOpen((current) => (current?.id === id ? null : current)); });
     },
-    openCloud: (slot: string, refKey: string) => { setLocalActive(null); open(slot, refKey); },
-    createCloud: (slot: string) => { setLocalActive(null); void create(slot); },
+    openCloud: (slot: string, refKey: string) => { setLocalOpen(null); open(slot, refKey); },
+    createCloud: (slot: string) => { setLocalOpen(null); void create(slot); },
     toggle: (slot: string) => {
       const next = !expanded[slot];
       setExpansion({ sessionKey, slots: { ...expanded, [slot]: next } });
@@ -331,7 +356,7 @@ function LocalMachine({ view }: { view: TerminalWindow }) {
         <Disclosure open={open} />
       </button>
       {open ? (
-        <LocalTabs state={local.state} activeId={view.localActive} creating={local.creating} notice={local.notice} onOpen={view.openLocal}
+        <LocalTabs state={local.state} activeId={view.localActive} ended={view.endedLocal} onDismissEnded={view.dismissEndedLocal} creating={local.creating} notice={local.notice} onOpen={view.openLocal}
           onCreate={() => { void local.create().then((id) => { if (id) view.openLocal(id); }); }}
           onEnd={view.endLocal} onRetry={() => { void local.refresh(); }} />
       ) : null}
@@ -360,7 +385,11 @@ function MatrixMachines({ view }: { view: TerminalWindow }) {
 }
 
 function ActivePane({ view }: { view: TerminalWindow }) {
-  if (view.localTerminal) return <TerminalPane key={`local|${view.localTerminal.id}`} sessionName={localSessionName(view.localTerminal.id)} />;
+  // A session change resets the shared attach manager; the epoch remounts the
+  // local pane so it attaches again instead of staying on a disposed attachment.
+  if (view.localTerminal) {
+    return <TerminalPane key={`local|${view.localTerminal.id}|${view.cloud.attachEpoch}`} sessionName={localSessionName(view.localTerminal.id)} />;
+  }
   const active = view.cloud.active;
   if (active) return <TerminalPane key={`${active.slot}|${active.refKey}`} sessionName={active.refKey} />;
   return <EmptyPane signedIn={view.ready !== null} onFocusMain={focusMainWindow} />;
