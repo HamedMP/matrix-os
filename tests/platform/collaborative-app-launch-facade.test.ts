@@ -134,6 +134,24 @@ describe("collaborative app authenticated launch facade", () => {
     expect(request).toHaveBeenCalledWith("index.html", expect.any(AbortSignal));
   });
 
+  it("serves an owner ICO asset through the shared launch facade", async () => {
+    await sessions.create({
+      actorId, scopeId, organizationId, runtimeId: "runtime_owner", authorityGeneration: 1,
+      appId: app.appId, catalogId: app.catalogId, buildId: app.buildId, shareRevision: 1,
+      clientRequestId: requestId,
+    });
+    request.mockResolvedValueOnce(new Response(new Uint8Array([0, 0, 1, 0]), {
+      headers: { "content-type": "image/x-icon" },
+    }));
+    const icon = await routes.request(
+      `/api/collaboration/shared-apps/${scopeId}/runtime/${launchId}/favicon.ico`,
+      { headers: { "x-test-actor": actorId } },
+    );
+    expect(icon.status).toBe(200);
+    expect(icon.headers.get("content-type")).toBe("image/x-icon");
+    expect(new Uint8Array(await icon.arrayBuffer())).toEqual(new Uint8Array([0, 0, 1, 0]));
+  });
+
   it("keeps the owner relay alive for the full asset-download deadline", async () => {
     const timeout = vi.spyOn(AbortSignal, "timeout").mockReturnValue(new AbortController().signal);
     await sessions.create({ actorId, clientRequestId: requestId, scopeId, organizationId, runtimeId: "runtime_owner",

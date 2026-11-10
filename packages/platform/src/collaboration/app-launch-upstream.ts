@@ -3,6 +3,7 @@ import {
   COLLABORATION_DIRECT_PROTOCOL_VERSION,
   CollaborationDirectSessionSchema,
   CollaborationDirectSessionRequestSchema,
+  CollaborationDirectSessionRenewRequestSchema,
   CollaborationDirectRequestSignatureSchema,
   toLogicalRuntimeId,
 } from "@matrix-os/contracts";
@@ -50,10 +51,11 @@ export function createCollaborativeAppLaunchUpstreamFactory(options: {
 }): (identity: CollaborativeAppLaunchIdentity) => Promise<CollaborativeAppLaunchUpstream> {
   const now = options.now ?? (() => new Date());
   return async (identity) => {
-    if (!options.issuer) throw new CollaborativeAppLaunchError("unavailable");
+    const issuer = options.issuer;
+    if (!issuer) throw new CollaborativeAppLaunchError("unavailable");
     const pair = generateKeyPairSync("ed25519");
     const publicKey = ed25519PublicKeyRaw(pair.publicKey);
-    const issued = await options.issuer.issue({
+    const issued = await issuer.issue({
       actorId: identity.actorId,
       request: {
         clientRequestId: randomUUID(),
@@ -96,10 +98,83 @@ export function createCollaborativeAppLaunchUpstreamFactory(options: {
       throw new CollaborativeAppLaunchError("unavailable");
     }
 
+    let activeSession = session.data;
+    let maxActions = ticket.maxActions;
+    let actionsRemaining = maxActions;
+    let renewal: Promise<void> | null = null;
+    let closed = false;
+
+    const renewSession = async (): Promise<void> => {
+      const refreshed = await issuer.issue({
+        actorId: identity.actorId,
+        request: {
+          clientRequestId: randomUUID(),
+          scopeId: identity.scopeId,
+          purpose: "direct_session",
+          proofPublicKey: publicKey,
+        },
+      });
+      const refreshedTicket = refreshed.signedTicket.ticket;
+      if (refreshedTicket.actorId !== identity.actorId || refreshedTicket.resource.scopeId !== identity.scopeId
+        || refreshedTicket.organizationId !== identity.organizationId
+        || refreshedTicket.runtime.runtimeId !== logicalRuntimeId
+        || refreshedTicket.runtime.authorityGeneration !== identity.authorityGeneration
+        || refreshedTicket.proofKeyThumbprint !== ticket.proofKeyThumbprint) {
+        throw new CollaborativeAppLaunchError("conflict");
+      }
+      const renewRequest = CollaborationDirectSessionRenewRequestSchema.parse({
+        clientRequestId: randomUUID(),
+        signedTicket: refreshed.signedTicket,
+      });
+      const body = Buffer.from(JSON.stringify(renewRequest));
+      const response = await options.relay.forward({
+        actorId: identity.actorId,
+        method: "POST",
+        path: `/api/collaboration/direct-sessions/${activeSession.id}/renew`,
+        query: "",
+        headers: new Headers({ "content-type": "application/json", [RELAY_RUNTIME_HEADER]: refreshedTicket.runtime.runtimeId }),
+        body,
+        contentLength: body.byteLength,
+      });
+      if (response.status !== 200) {
+        await response.body?.cancel();
+        throw new CollaborativeAppLaunchError(response.status === 503 ? "host_offline" : "unavailable");
+      }
+      const renewed = CollaborationDirectSessionSchema.safeParse(await readBoundedJson(response));
+      if (!renewed.success || renewed.data.id !== activeSession.id || renewed.data.actorId !== identity.actorId
+        || renewed.data.scopeId !== identity.scopeId || renewed.data.organizationId !== identity.organizationId
+        || renewed.data.runtimeId !== logicalRuntimeId
+        || renewed.data.authorityGeneration !== identity.authorityGeneration
+        || renewed.data.proofKeyThumbprint !== ticket.proofKeyThumbprint) {
+        throw new CollaborativeAppLaunchError("unavailable");
+      }
+      activeSession = renewed.data;
+      maxActions = refreshedTicket.maxActions;
+      actionsRemaining = maxActions;
+    };
+
+    const reserveAction = async (method: "GET" | "DELETE"): Promise<void> => {
+      while (true) {
+        if (renewal) {
+          await renewal;
+          continue;
+        }
+        const closeReserve = method === "GET" ? Math.min(2, maxActions - 1) : 0;
+        if (actionsRemaining > closeReserve) {
+          actionsRemaining--;
+          return;
+        }
+        renewal = renewSession().finally(() => { renewal = null; });
+        await renewal;
+      }
+    };
+
     const signedRequest = async (method: "GET" | "DELETE", path: string, signal: AbortSignal): Promise<Response> => {
+      if (method === "GET" && closed) throw new CollaborativeAppLaunchError("unavailable");
+      await reserveAction(method);
       const signature = CollaborationDirectRequestSignatureSchema.parse({
         protocolVersion: COLLABORATION_DIRECT_PROTOCOL_VERSION,
-        sessionId: session.data.id,
+        sessionId: activeSession.id,
         method,
         path,
         query: "",
@@ -111,8 +186,8 @@ export function createCollaborativeAppLaunchUpstreamFactory(options: {
       const proof = signEd25519(pair.privateKey, `${REQUEST_DOMAIN}\n${canonicalJson(signature)}`);
       const headers = new Headers({
         accept: method === "GET" ? "*/*" : "application/json",
-        [SESSION_HEADER]: session.data.id,
-        [RELAY_RUNTIME_HEADER]: session.data.runtimeId,
+        [SESSION_HEADER]: activeSession.id,
+        [RELAY_RUNTIME_HEADER]: activeSession.runtimeId,
         [REQUEST_HEADER]: Buffer.from(JSON.stringify({ signature, proof })).toString("base64url"),
       });
       return options.relay.forward({
@@ -126,7 +201,6 @@ export function createCollaborativeAppLaunchUpstreamFactory(options: {
       }).then((response) => bindResponseToSignal(response, signal));
     };
 
-    let closed = false;
     return {
       request: (assetPath, signal) => {
         const encodedAssetPath = assetPath.split("/").map((segment) => encodeURIComponent(segment)).join("/");
@@ -141,7 +215,7 @@ export function createCollaborativeAppLaunchUpstreamFactory(options: {
         closed = true;
         const response = await signedRequest(
           "DELETE",
-          `/api/collaboration/direct-sessions/${session.data.id}`,
+          `/api/collaboration/direct-sessions/${activeSession.id}`,
           AbortSignal.timeout(10_000),
         );
         await response.body?.cancel();

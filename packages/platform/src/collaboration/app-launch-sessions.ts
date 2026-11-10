@@ -8,7 +8,7 @@ const DEFAULT_MAX_RESPONSE_BYTES = 256 * 1024 * 1024;
 const ASSET_DOWNLOAD_TIMEOUT_MS = 30_000;
 const SAFE_CONTENT_TYPES = new Set([
   "application/json", "application/json; charset=utf-8", "application/octet-stream", "application/wasm",
-  "font/woff", "font/woff2", "image/gif", "image/jpeg", "image/png", "image/svg+xml", "image/webp",
+  "font/woff", "font/woff2", "image/gif", "image/jpeg", "image/png", "image/svg+xml", "image/webp", "image/x-icon",
   "text/css", "text/css; charset=utf-8", "text/html", "text/html; charset=utf-8",
   "text/javascript", "text/javascript; charset=utf-8",
 ]);
