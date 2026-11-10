@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import React from "react";
-import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { useConnection } from "../../desktop/src/renderer/src/stores/connection";
 import type { MatrixAnthropicConnectionClient } from "../../packages/ui/src/agents-providers/matrix-anthropic-connection-client.js";
@@ -56,6 +56,19 @@ describe("desktop shared agents and providers adapter", () => {
     vi.restoreAllMocks();
     vi.unstubAllGlobals();
     useConnection.setState(useConnection.getInitialState(), true);
+  });
+
+  it("keeps provider recovery in Agents & providers", () => {
+    const refresh = vi.fn();
+    mocks.controller.mockReturnValue({
+      snapshot: null, selectedHarnessId: null, connectionAttempt: null,
+      busy: false, error: "Provider settings are unavailable.", refresh, mutate: vi.fn(), onSelectHarness: vi.fn(),
+    });
+    render(<AgentsProvidersAdapter />);
+
+    expect(screen.queryByText("GitHub Developer")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Retry provider settings" }));
+    expect(refresh).toHaveBeenCalledOnce();
   });
 
   it("binds the Settings dictation allowance read to the selected Electron runtime", async () => {

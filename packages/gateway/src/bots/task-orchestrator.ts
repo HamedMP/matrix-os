@@ -59,6 +59,7 @@ const MAX_QUEUED_EVENTS = 1_000;
 const SERVED_CAPABILITIES: readonly BotToolCapability[] = [
   "artifact.read", "artifact.write", "interaction.create", "memory.propose", "memory.search",
   "integration.inventory", "integration.call", "jev.inbox",
+  "github.developer",
 ];
 
 export type BotTurnEvent =
@@ -412,6 +413,7 @@ export function createBotTaskOrchestrator(deps: {
       return { ...await settle(task, input.signal.aborted ? "cancelled" : "blocked", "policy_denied"), inputUnavailable: !input.signal.aborted };
     }
     const capabilities = isolatedModel ? [] : recipe.capabilities.filter((capability) => SERVED_CAPABILITIES.includes(capability)
+      && (capability !== "github.developer" || !input.backgroundTaskId)
       && (!group || ["integration.inventory", "integration.call"].includes(capability)));
     if (!isolatedModel && !group && !input.backgroundTaskId && deps.routineTools) capabilities.push("routine.propose", "routine.control");
     if (run.inputs.fileAliases.length && !capabilities.includes("artifact.read")) return settle(task, "blocked", "policy_denied");

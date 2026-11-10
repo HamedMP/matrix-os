@@ -1,4 +1,4 @@
-import { type ReactNode, useEffect, useRef, useState } from "react";
+import { type ReactNode, useEffect, useLayoutEffect, useRef, useState } from "react";
 import type {
   ProviderHarnessInstance,
   ProviderAccessSource,
@@ -165,7 +165,9 @@ export function useHarnessWorkflowController({
       setFailure(null);
     }
   });
-  useEffect(() => {
+  // The committed controls must have their owning scope before interaction;
+  // an async capability render can expose them before passive effects run.
+  useLayoutEffect(() => {
     const controller = new AbortController();
     scope.current = controller;
     completionRefresh.current = null;

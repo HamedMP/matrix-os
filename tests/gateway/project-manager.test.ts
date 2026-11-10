@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createProjectManager, validateGitHubUrl } from "../../packages/gateway/src/project-manager.js";
 import { atomicWriteJson } from "../../packages/gateway/src/state-ops.js";
+import { githubClonePrerequisiteResult } from "../helpers/github-clone-prerequisites.js";
 
 describe("project-manager", () => {
   let homePath: string;
@@ -37,16 +38,138 @@ describe("project-manager", () => {
     });
   });
 
+  it("reports developer access ready only after GitHub, SSH, and owner identity are verified", async () => {
+    const runCommand = vi.fn(async (command: string, args: string[]) => {
+      if (command === "gh" && args[0] === "--version") {
+        return { stdout: "gh version 2.86.0\n", stderr: "" };
+      }
+      if (command === "gh" && args[0] === "auth" && args[1] === "status") {
+        return { stdout: "", stderr: "" };
+      }
+      if (command === "gh" && args[0] === "config" && args.includes("git_protocol")) {
+        return { stdout: "ssh\n", stderr: "" };
+      }
+      if (command === "gh" && args[0] === "api" && args[1] === "user") {
+        return { stdout: "octocat\n", stderr: "" };
+      }
+      if (command === "git" && args.includes("user.name")) {
+        return { stdout: "The Octocat\n", stderr: "" };
+      }
+      if (command === "git" && args.includes("user.email")) {
+        return { stdout: "583231+octocat@users.noreply.github.com\n", stderr: "" };
+      }
+      if (command === "ssh") {
+        expect(args).toEqual(expect.arrayContaining([
+          "-T",
+          "-o",
+          "BatchMode=yes",
+          "-o",
+          "StrictHostKeyChecking=yes",
+          "git@github.com",
+        ]));
+        expect(args.some((arg) => arg.startsWith("UserKnownHostsFile="))).toBe(true);
+        return { stdout: "", stderr: "Hi octocat! You've successfully authenticated, but GitHub does not provide shell access.\n" };
+      }
+      throw new Error(`Unexpected command: ${command} ${args.join(" ")}`);
+    });
+    const manager = createProjectManager({ homePath, runCommand });
+
+    await expect(manager.getGithubStatus()).resolves.toEqual({
+      installed: true,
+      authenticated: true,
+      user: "octocat",
+      gitProtocol: "ssh",
+      sshStatus: "verified",
+      commitIdentity: {
+        status: "ready",
+        label: "The Octocat <583231+octocat@users.noreply.github.com>",
+      },
+      ready: true,
+      errorCode: null,
+    });
+  });
+
+  it("uses the selected owner environment for managed private clone commands", async () => {
+    vi.stubEnv("GH_TOKEN", "synthetic-token");
+    vi.stubEnv("GIT_SSH_COMMAND", "synthetic-command");
+    try {
+      const runCommand = vi.fn(async (command: string, args: string[], options: { cwd: string; timeout: number; env?: NodeJS.ProcessEnv }) => {
+        expect(options.env).toMatchObject({ HOME: homePath, GH_CONFIG_DIR: join(homePath, ".config", "gh") });
+        expect(options.env?.GH_TOKEN).toBeUndefined();
+        if (command === "git" && args[0] === "clone") {
+          expect(options.env).toMatchObject({ GIT_CONFIG_GLOBAL: "/dev/null", GIT_ALLOW_PROTOCOL: "ssh" });
+          expect(options.env?.GIT_SSH_COMMAND).toContain("StrictHostKeyChecking=yes");
+          expect(options.env?.GIT_SSH_COMMAND).toContain(join(homePath, ".ssh", "matrix-github-known-hosts"));
+          expect(options.env?.GIT_SSH_COMMAND).not.toContain("synthetic-command");
+          await mkdir(join(args.at(-1)!, ".git"), { recursive: true });
+        } else {
+          expect(options.env?.GIT_CONFIG_GLOBAL).toBe(join(homePath, ".gitconfig"));
+          expect(options.env?.GIT_SSH_COMMAND).toBeUndefined();
+        }
+        return githubClonePrerequisiteResult(command, args);
+      });
+      const result = await createProjectManager({ homePath, runCommand }).createProject({ url: "https://github.com/owner/private", slug: "private", ownerScope: { type: "user", id: "owner" } });
+      expect(result.ok).toBe(true);
+      expect(runCommand).toHaveBeenCalled();
+    } finally { vi.unstubAllEnvs(); }
+  });
+
+  it("reports bounded partial setup state without leaking command errors", async () => {
+    const secret = "ghp_this_must_not_escape";
+    const runCommand = vi.fn(async (command: string, args: string[]) => {
+      if (command === "gh" && args[0] === "--version") {
+        return { stdout: "gh version 2.86.0\n", stderr: "" };
+      }
+      if (command === "gh" && args[0] === "auth") {
+        const error = new Error(`authentication failed: ${secret}`) as Error & { stderr: string };
+        error.stderr = secret;
+        throw error;
+      }
+      if (command === "git" && args.includes("user.name")) {
+        return { stdout: "The Octocat\n", stderr: "" };
+      }
+      if (command === "git" && args.includes("user.email")) {
+        const error = new Error("missing") as Error & { code: number };
+        error.code = 1;
+        throw error;
+      }
+      if (command === "ssh") {
+        const error = new Error(`Permission denied ${secret}`) as Error & { stderr: string; code: number };
+        error.stderr = `Permission denied ${secret}`;
+        error.code = 255;
+        throw error;
+      }
+      throw new Error("unexpected command");
+    });
+    const manager = createProjectManager({ homePath, runCommand });
+
+    const status = await manager.getGithubStatus();
+
+    expect(status).toEqual({
+      installed: true,
+      authenticated: false,
+      user: null,
+      gitProtocol: null,
+      sshStatus: "setup_required",
+      commitIdentity: { status: "missing", label: null },
+      ready: false,
+      errorCode: "github_auth_required",
+    });
+    expect(JSON.stringify(status)).not.toContain(secret);
+    expect(status.errorCode?.length).toBeLessThanOrEqual(64);
+  });
+
   it("creates a project through safe clone staging and writes owner-scoped config", async () => {
     const runCommand = vi.fn(async (command: string, args: string[], options) => {
-      expect(command).toMatch(/^(gh|git)$/);
+      expect(command).toMatch(/^(gh|git|ssh)$/);
       expect(args).not.toContain(";");
       if (command === "git" && args[0] === "clone") {
+        expect(args).toContain("git@github.com:Owner/Repo.git");
         const destination = args.at(-1);
         expect(typeof destination).toBe("string");
         await mkdir(join(destination as string, ".git"), { recursive: true });
       }
-      return { stdout: "", stderr: "" };
+      return githubClonePrerequisiteResult(command, args);
     });
     const manager = createProjectManager({ homePath, runCommand, now: () => "2026-04-26T00:00:00.000Z" });
 
@@ -61,7 +184,7 @@ describe("project-manager", () => {
       kind: "github",
       name: "Repo",
       slug: "repo",
-      remote: "https://github.com/Owner/Repo.git",
+      remote: "git@github.com:Owner/Repo.git",
       ownerScope: { type: "user", id: "user_123" },
       github: { owner: "Owner", repo: "Repo", authState: "ok" },
     });
@@ -1101,7 +1224,7 @@ describe("project-manager", () => {
         await mkdir(options.cwd, { recursive: true });
         throw new Error("fatal: token ghp_secret leaked");
       }
-      return { stdout: "", stderr: "" };
+      return githubClonePrerequisiteResult(command, args);
     });
     const manager = createProjectManager({ homePath, runCommand });
 

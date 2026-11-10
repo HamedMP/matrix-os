@@ -89,7 +89,7 @@ function ConnectedAgentsProvidersAdapter({
   const onCatalogChanged = useCallback((intent?: ProviderSettingsMutationIntent, snapshot?: ProviderSettingsSnapshot, receipt?: ProviderWorkflow) => {
     invalidateDesktopProviderCatalog(identityKey, intent, snapshot, receipt);
   }, [identityKey]);
-  const controller = useProviderSettingsController({ identityKey, transport, onCatalogChanged, automaticCreditRefreshEnabled });
+  const controller = useProviderSettingsController({ identityKey, transport, onCatalogChanged, automaticCreditRefreshEnabled, automaticNativeAuthRefreshEnabled: automaticCreditRefreshEnabled });
   const [actionError, setActionError] = useState<string | null>(null);
   const checkoutLifetime = useRef<AbortController | null>(null);
   const synchronizedInitialSnapshot = useRef(false);
@@ -167,21 +167,18 @@ function ConnectedAgentsProvidersAdapter({
   }, [api, isIdentityCurrent, runtimeSlot]);
 
   if (controller.snapshot === null) {
-    return (
-      <>
-      <ProviderSettingsUnavailable
-        signedOut={false}
-        failed={controller.error !== null}
-        onRetry={() => void controller.refresh()}
-      />
-      </>
-    );
+    return <ProviderSettingsUnavailable
+      signedOut={false}
+      failed={controller.error !== null}
+      onRetry={() => void controller.refresh()}
+    />;
   }
 
   return (
     <>
     <AgentsProvidersView
       snapshot={controller.snapshot}
+      capabilityRefreshRevision={controller.capabilityRefreshRevision}
       selectedHarnessId={controller.selectedHarnessId}
       connectionAttempt={controller.connectionAttempt}
       busy={controller.busy}

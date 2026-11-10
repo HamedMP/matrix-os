@@ -53,7 +53,7 @@ async function sendControl(path: string, payload: unknown): Promise<unknown> {
 }
 
 describe("Codex app-server control runtime", () => {
-  it("reuses a session approval for the next command approval request", async () => {
+  it("keeps session grants scoped to supported command kinds, including after replay", async () => {
     const homePath = await mkdtemp(join("/tmp", "codex-session-appr-"));
     const fakeCodexPath = join(homePath, "fake-codex-session-approval.mjs");
     const responsesPath = join(homePath, "responses.jsonl");
@@ -67,16 +67,25 @@ describe("Codex app-server control runtime", () => {
       "const input = createInterface({ input: process.stdin, crlfDelay: Infinity });",
       "for await (const line of input) {",
       "  const message = JSON.parse(line);",
-      "  if (message.method === 'initialize') console.log(JSON.stringify({ id: message.id, result: { userAgent: 'fake', platformFamily: 'unix', platformOs: 'linux', codexHome: '/private/codex' } }));",
+      "  if (message.method === 'initialize' && message.params.capabilities.requiredHumanApproval !== true) console.log(JSON.stringify({ id: message.id, result: { userAgent: 'fake', platformFamily: 'unix', platformOs: 'linux', codexHome: '/private/codex' } }));",
       "  else if (message.method === 'thread/start') console.log(JSON.stringify({ id: message.id, result: { thread: { id: 'native-thread-session-approval' }, modelProvider: 'openai', cwd: '/private/project', approvalPolicy: 'on-request', approvalsReviewer: 'user', sandbox: {} } }));",
       "  else if (message.method === 'turn/start') {",
       "    console.log(JSON.stringify({ id: message.id, result: { turn: { id: 'native-turn-session-approval' } } }));",
       "    console.log(JSON.stringify({ id: 41, method: 'item/commandExecution/requestApproval', params: { threadId: 'native-thread-session-approval', turnId: 'native-turn-session-approval', itemId: 'native-command-1', availableDecisions: ['accept', { acceptWithExecpolicyAmendment: { execpolicy_amendment: ['mkdir'] } }, 'decline', 'cancel'] } }));",
       "  } else if (message.id === 41) {",
       "    await appendFile(responsesPath, JSON.stringify(message) + '\\n');",
-      "    console.log(JSON.stringify({ id: 42, method: 'item/commandExecution/requestApproval', params: { threadId: 'native-thread-session-approval', turnId: 'native-turn-session-approval', itemId: 'native-command-2', availableDecisions: ['accept', { acceptWithExecpolicyAmendment: { execpolicy_amendment: ['rmdir'] } }, 'decline', 'cancel'] } }));",
-      "  } else if (message.id === 42) {",
+      "    const method = 'item/commandExecution/requestApproval';",
+      "    const params = { threadId: 'native-thread-session-approval', turnId: 'native-turn-session-approval', itemId: 'native-command-2' };",
+      "    const checkpoint = { id: 42, method, params: { ...params, kind: 'humanCommand', approvalId: 'checkpoint-1', availableDecisions: ['accept', 'decline', 'cancel'] } };",
+      "    console.log(JSON.stringify(checkpoint));",
+      "    console.log(JSON.stringify(checkpoint));",
+      "    console.log(JSON.stringify({ id: 43, method, params: { ...params, kind: 'futureCommand' } }));",
+      "    console.log(JSON.stringify({ id: 44, method, params: { ...params, kind: null } }));",
+      "    console.log(JSON.stringify({ id: 45, method, params: { ...params, kind: 'command', availableDecisions: ['accept', { acceptWithExecpolicyAmendment: { execpolicy_amendment: ['rmdir'] } }, 'decline', 'cancel'] } }));",
+      "    console.log(JSON.stringify({ id: 46, method, params: { ...params, kind: 'writeStdin', availableDecisions: ['accept', 'decline', 'cancel'] } }));",
+      "  } else if (message.id >= 42 && message.id <= 46) {",
       "    await appendFile(responsesPath, JSON.stringify(message) + '\\n');",
+      "    if (message.id !== 46) continue;",
       "    console.log(JSON.stringify({ method: 'turn/completed', params: { turn: { id: 'native-turn-session-approval', status: 'completed', items: [] } } }));",
       "    process.exit(0);",
       "  }",
@@ -109,7 +118,12 @@ describe("Codex app-server control runtime", () => {
       const responses = (await readFile(responsesPath, "utf8")).trim().split("\n").map((line) => JSON.parse(line));
       expect(responses).toEqual([
         { id: 41, result: { decision: { acceptWithExecpolicyAmendment: { execpolicy_amendment: ["mkdir"] } } } },
-        { id: 42, result: { decision: { acceptWithExecpolicyAmendment: { execpolicy_amendment: ["rmdir"] } } } },
+        ...[42, 42, 43, 44].map(id => ({
+          id,
+          error: { code: -32601, message: "This request is unavailable." },
+        })),
+        { id: 45, result: { decision: { acceptWithExecpolicyAmendment: { execpolicy_amendment: ["rmdir"] } } } },
+        { id: 46, result: { decision: "accept" } },
       ]);
       const transcript = await readFile(eventPath, "utf8");
       expect(transcript.match(/matrix\.codex\.approval\.requested/g)).toHaveLength(1);
@@ -191,12 +205,14 @@ describe("Codex app-server control runtime", () => {
       "    console.log(JSON.stringify({ id: message.id, result: { turn: { id: 'native-turn-artifacts' } } }));",
       "    console.log(JSON.stringify({ method: 'item/started', params: { turnId: 'native-turn-artifacts', item: { id: 'generated-image', type: 'imageGeneration', status: 'inProgress' } } }));",
       `    console.log(JSON.stringify({ method: 'item/completed', params: { turnId: 'native-turn-artifacts', item: { id: 'generated-image', type: 'imageGeneration', status: 'completed', result: '', savedPath: ${JSON.stringify(generatedPath)} } } }));`,
-      "    console.log(JSON.stringify({ method: 'item/completed', params: { turnId: 'native-turn-artifacts', item: { id: 'function-media', type: 'functionCallOutput', name: 'render', output: [{ type: 'input_image', image_url: 'data:image/png;base64,iVBORw0KGgo=' }] } } }));",
+      "    console.log(JSON.stringify({ method: 'item/completed', params: { turnId: 'native-turn-artifacts', item: { id: 'function-media', type: 'functionCallOutput', name: 'render', output: [{ type: 'input_image', image_url: 'data:image/png;base64,iVBORw0KGgo=' }, { type: 'input_audio', file_id: 'uploaded-audio-private' }, { type: 'input_audio', audio_url: 'data:audio/wav;base64,UklGRg==' }] } } }));",
       `    console.log(JSON.stringify({ method: 'item/completed', params: { turnId: 'native-turn-artifacts', item: { id: 'dynamic-media', type: 'dynamicToolCall', status: 'completed', tool: 'voice', arguments: {}, contentItems: [{ type: 'inputAudio', audioUrl: ${JSON.stringify(`file://${audioPath}`)} }] } } }));`,
       `    console.log(JSON.stringify({ method: 'item/completed', params: { turnId: 'native-turn-artifacts', item: { id: 'mcp-media', type: 'mcpToolCall', status: 'completed', server: 'files', tool: 'read', arguments: {}, result: { content: [{ type: 'resource_link', uri: ${JSON.stringify(`file://${generatedPath}`)}, name: 'generated.png', mimeType: 'image/png' }] } } } }));`,
       "    console.log(JSON.stringify({ method: 'item/completed', params: { turnId: 'native-turn-artifacts', item: { id: 'mcp-outside', type: 'mcpToolCall', status: 'completed', server: 'files', tool: 'read', arguments: {}, result: { content: [{ type: 'resource_link', uri: 'file:///etc/hosts', name: 'hosts.txt', mimeType: 'text/plain' }] } } } }));",
       `    console.log(JSON.stringify({ method: 'item/completed', params: { turnId: 'native-turn-artifacts', item: { id: 'mcp-missing', type: 'mcpToolCall', status: 'completed', server: 'files', tool: 'read', arguments: {}, result: { content: [{ type: 'resource_link', uri: ${JSON.stringify(`file://${join(homePath, "missing.png")}`)}, name: 'missing.png', mimeType: 'image/png' }] } } } }));`,
-      "    console.log(JSON.stringify({ method: 'turn/completed', params: { turn: { id: 'native-turn-artifacts', status: 'completed', items: [] } } }));",
+      "    const userAudio = { id: 'user-audio', type: 'userMessage', content: [{ type: 'audio', fileId: 'uploaded-input-private' }, { type: 'audio', url: 'data:audio/wav;base64,UklGRg==' }] };",
+      "    for (const method of ['item/started', 'item/completed']) console.log(JSON.stringify({ method, params: { turnId: 'native-turn-artifacts', item: userAudio } }));",
+      "    console.log(JSON.stringify({ method: 'turn/completed', params: { turn: { id: 'native-turn-artifacts', status: 'completed', items: [userAudio] } } }));",
       "    process.exit(0);",
       "  }",
       "}",
@@ -218,9 +234,9 @@ describe("Codex app-server control runtime", () => {
       const transcript = await readFile(eventPath, "utf8");
       const artifacts = transcript.trim().split("\n").map((line) => JSON.parse(line))
         .filter((entry) => entry.type === "matrix.codex.artifact.available");
-      expect(artifacts).toHaveLength(4);
+      expect(artifacts).toHaveLength(5);
       expect(artifacts.map((entry) => entry.providerItemId)).toEqual([
-        "generated-image", "function-media", "dynamic-media", "mcp-media",
+        "generated-image", "function-media", "function-media", "dynamic-media", "mcp-media",
       ]);
       expect(artifacts[0]).toMatchObject({
         ownerReference: expect.stringMatching(/^data\/chat-artifacts\/codex\/sha256\/[a-f0-9]{64}\.png$/),
@@ -233,6 +249,9 @@ describe("Codex app-server control runtime", () => {
         mimeType: "image/png",
       });
       expect(await readFile(join(homePath, artifacts[1].ownerReference))).toEqual(Buffer.from("iVBORw0KGgo=", "base64"));
+      expect(artifacts[2]).toMatchObject({ mimeType: "audio/wav", outputIndex: 1, sizeBytes: 4 });
+      expect(transcript).not.toMatch(/uploaded-(audio|input)-private|UklGRg==/);
+      expect(transcript).toContain('"type":"turn.completed"');
       expect(transcript).not.toContain("iVBORw0KGgo=");
       const records = transcript.trim().split("\n").map((line) => JSON.parse(line));
       const generationStarted = records.find((entry) => (

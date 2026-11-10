@@ -12,7 +12,7 @@ export interface SiteClient {
   rollback(app: string, value: { versionId: string; baseRevision: number }, signal: AbortSignal): Promise<SiteRecord>;
   unpublish(app: string, revision: number, signal: AbortSignal): Promise<SiteRecord>;
   getConfig(app: string, signal: AbortSignal): Promise<SitePublishing>;
-  accessLinks(app: string, signal: AbortSignal): Promise<SiteAccessLinksResponse>;
+  accessLinks(app: string, signal: AbortSignal, cursor?: string | null): Promise<SiteAccessLinksResponse>;
   createAccessLink(app: string, value: { baseRevision: number }, signal: AbortSignal): Promise<SiteAccessLinkCreateResponse>;
   revokeAccessLink(app: string, linkId: string, signal: AbortSignal): Promise<void>;
   submissions(app: string, cursor: string | null, signal: AbortSignal): Promise<SiteSubmissionsPage>;
@@ -64,7 +64,7 @@ export function createSiteClient(transport: SiteTransport): SiteClient {
       const value = await transport.get<{ manifest?: { publishing?: unknown } }>(`/api/apps/${encodeURIComponent(app)}/manifest`, { signal });
       return SitePublishingSchema.parse(value.manifest?.publishing ?? { data: {}, forms: [] });
     },
-    accessLinks: async (app, signal) => SiteAccessLinksResponseSchema.parse(await transport.get(`${sitePath(app)}/access-links`, { signal })),
+    accessLinks: async (app, signal, cursor = null) => SiteAccessLinksResponseSchema.parse(await transport.get(`${sitePath(app)}/access-links?limit=50${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ""}`, { signal })),
     createAccessLink: async (app, value, signal) => SiteAccessLinkCreateResponseSchema.parse(await transport.post(`${sitePath(app)}/access-links`, SiteAccessLinkCreateRequestSchema.parse(value), { signal })),
     revokeAccessLink: async (app, linkId, signal) => { await transport.delete(`${sitePath(app)}/access-links/${encodeURIComponent(linkId)}`, undefined, { signal }); },
     submissions: async (app, cursor, signal) => SiteSubmissionsResponseSchema.parse(await transport.get(`${sitePath(app)}/submissions?limit=50${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ""}`, { signal })),

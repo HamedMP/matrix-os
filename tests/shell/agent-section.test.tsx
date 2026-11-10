@@ -13,6 +13,7 @@ const providerControllerState = vi.hoisted(() => ({
   snapshot: {} as unknown,
   error: null as string | null,
   mutate: vi.fn(),
+  refresh: vi.fn(),
   addCredit: null as null | ((source: string, packageId: "usd_5", requestId: string) => Promise<void>),
   speechClient: null as BrowserSpeechClient | null,
 }));
@@ -52,7 +53,7 @@ vi.mock("@matrix-os/ui", async () => ({
     busy: false,
     error: providerControllerState.error,
     onSelectHarness: vi.fn(),
-    refresh: vi.fn(),
+    refresh: providerControllerState.refresh,
     mutate: providerControllerState.mutate,
   }),
   ProviderSettingsTransportError: class ProviderSettingsTransportError extends Error {
@@ -69,6 +70,7 @@ afterEach(() => {
   providerControllerState.snapshot = {};
   providerControllerState.error = null;
   providerControllerState.mutate.mockReset();
+  providerControllerState.refresh.mockReset();
   providerControllerState.addCredit = null;
   providerControllerState.speechClient = null;
   window.history.replaceState({}, "", "/");
@@ -77,6 +79,16 @@ afterEach(() => {
 });
 
 describe("Canvas settings sections", () => {
+  it("keeps provider recovery in Agents & providers", () => {
+    providerControllerState.snapshot = null;
+    providerControllerState.error = "Provider settings are unavailable.";
+    render(<AgentSection />);
+
+    expect(screen.queryByText("GitHub Developer")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Retry provider settings" }));
+    expect(providerControllerState.refresh).toHaveBeenCalledOnce();
+  });
+
   it("binds the Settings dictation allowance read to the explicit Preview computer", async () => {
     window.history.replaceState({}, "", "/vm/alice?runtime=studio");
     const capabilities = {
@@ -215,12 +227,13 @@ describe("Canvas settings sections", () => {
 
   it("shows a safe unavailable state when the first provider read fails", () => {
     providerControllerState.snapshot = null;
-    providerControllerState.error = "Provider settings are unavailable.";
+    providerControllerState.error = "Anthropic secret from /private/owner";
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(Response.json({ installed: true, authenticated: false, user: null, ready: false })));
 
     render(<AgentSection />);
 
     expect(screen.getByRole("alert")).toHaveTextContent("Provider settings are unavailable");
-    expect(screen.queryByText(/Anthropic|secret|private/i)).toBeNull();
+    expect(screen.queryByText(/Anthropic|secret|\/private\//i)).toBeNull();
   });
 
   it("opens the newly returned terminal action from Sign in once, without an effect", async () => {

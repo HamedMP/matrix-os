@@ -8,6 +8,7 @@ import { createProviderSettingsTransport, openWebProviderAgentSetup } from "@/li
 import { currentAiCreditRuntimeSlot, openWebAiCreditCheckout } from "@/lib/ai-credit-checkout";
 import { createWebProviderWorkflowClient, createWebMatrixAnthropicClient, loadWebAiCreditHistory, openWebProviderWorkflowAuthorization } from "@/lib/provider-workflow-transport";
 import { createBrowserSpeechClient } from "@/lib/platform-speech-client";
+import { PROVIDER_SETTINGS_CHANGED_EVENT } from "@/lib/canonical-provider-setup";
 
 export function AgentSection({
   onOpenTerminal,
@@ -19,6 +20,11 @@ export function AgentSection({
   const transport = useMemo(() => createProviderSettingsTransport(), []);
   const identityKey = getGatewayUrl();
   const runtimeSlot = currentAiCreditRuntimeSlot();
+  const onCatalogChanged = useCallback(() => {
+    if (getGatewayUrl() === identityKey && currentAiCreditRuntimeSlot() === runtimeSlot) {
+      window.dispatchEvent(new Event(PROVIDER_SETTINGS_CHANGED_EVENT));
+    }
+  }, [identityKey, runtimeSlot]);
   const speechClient = useMemo(() => createBrowserSpeechClient({ baseUrl: identityKey }), [identityKey]);
   const workflowClient = useMemo(() => createWebProviderWorkflowClient({
     isIdentityCurrent: () => getGatewayUrl() === identityKey && currentAiCreditRuntimeSlot() === runtimeSlot,
@@ -49,17 +55,31 @@ export function AgentSection({
   const controller = useProviderSettingsController({
     identityKey: `${identityKey}:${runtimeSlot}`,
     automaticCreditRefreshEnabled,
+    automaticNativeAuthRefreshEnabled: automaticCreditRefreshEnabled,
     transport,
+    onCatalogChanged,
   });
+  const synchronizedInitialSnapshot = useRef<string | null>(null);
+  useEffect(() => {
+    if (!automaticCreditRefreshEnabled || !controller.snapshot
+      || synchronizedInitialSnapshot.current === controller.identityKey
+      || getGatewayUrl() !== identityKey || currentAiCreditRuntimeSlot() !== runtimeSlot) return;
+    // Terminal may have signed in after an open Chat cached its catalog.
+    // Notify once per Computer; catalog listeners never refresh Settings back.
+    synchronizedInitialSnapshot.current = controller.identityKey;
+    onCatalogChanged();
+  }, [automaticCreditRefreshEnabled, controller.snapshot, controller.identityKey, identityKey, runtimeSlot, onCatalogChanged]);
 
   if (controller.snapshot === null) {
     const unavailable = controller.error !== null;
     return (
       <div className="px-5 py-6" data-provider-settings-adapter="shared">
-        <div className="matrix-agents-providers" aria-busy={unavailable ? undefined : "true"}>
-          <div className="matrix-ap-empty-state" role={unavailable ? "alert" : "status"}>
+        <div className="matrix-agents-providers">
+          <div className="matrix-ap-empty-state" role={unavailable ? "alert" : "status"} aria-busy={unavailable ? undefined : "true"}>
             <strong>{unavailable ? "Provider settings are unavailable" : "Loading agents & providers"}</strong>
             <span>{unavailable ? "Refresh Settings to try again." : "Checking this computer’s provider state…"}</span>
+            {unavailable ? <button type="button" className="matrix-ap-button matrix-ap-button-primary"
+              aria-label="Retry provider settings" disabled={controller.busy} onClick={() => void controller.refresh()}>Retry</button> : null}
           </div>
         </div>
       </div>
@@ -71,6 +91,7 @@ export function AgentSection({
       <AgentsProvidersView
         key={`${identityKey}:${runtimeSlot}`}
         snapshot={controller.snapshot}
+        capabilityRefreshRevision={controller.capabilityRefreshRevision}
         selectedHarnessId={controller.selectedHarnessId}
         connectionAttempt={controller.connectionAttempt}
         busy={controller.busy}

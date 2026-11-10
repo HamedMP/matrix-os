@@ -96,6 +96,7 @@ export * from "#get-started-recipe-bots";
 export * from "#get-started-connect";
 export * from "#get-started-wizard";
 export * from "#getting-started";
+export * from "#github-developer-access";
 export * from "#integration-connections";
 export * from "#onboarding-widget";
 export * from "#onboarding-widget-catalog";
@@ -1491,3 +1492,5 @@ export * from "#funded-host-activation";
 export * from "#routine-action";
 export * from "#routine-full-access";
 export * from "#routine-full-access-view";
+
+export * from "#routine-origin-proof";

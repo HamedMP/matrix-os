@@ -652,11 +652,15 @@ export class ZellijCliRuntimeAdapter implements ZellijRuntimeAdapter {
     const { sessionName, binaryPath } = await this.resolveWorkspaceTarget(sessionNameInput);
     const paneIds = z.array(z.string().regex(PANE_ID)).min(1).max(10_000).parse(input.paneIds);
     let eventChain = Promise.resolve();
+    let exited = false;
+    let closing = false;
+    let closePromise: Promise<void> | undefined;
     const args = ["--session", sessionName, "subscribe", "--pane-id", ...paneIds];
     // `--scrollback` accepts an optional variadic value, so keep it last. If it
     // precedes pane selectors clap can consume those selectors as values.
     args.push("--format", "json", "--ansi", "--scrollback");
     const onLine = (line: string) => {
+      if (closing) return;
       if (Buffer.byteLength(line) > MAX_SUBSCRIPTION_LINE_BYTES) return;
       const parsed = SubscribeEventSchema.safeParse(safeJson(line));
       if (!parsed.success) {
@@ -686,7 +690,8 @@ export class ZellijCliRuntimeAdapter implements ZellijRuntimeAdapter {
       });
     };
     const onExit = (exitCode: number | null) => {
-      if (exitCode !== 0 && exitCode !== null) {
+      exited = true;
+      if (!closing && exitCode !== 0 && exitCode !== null) {
         console.error("[terminal-runtime] Zellij observer exited unexpectedly", exitCode);
       }
     };
@@ -694,9 +699,14 @@ export class ZellijCliRuntimeAdapter implements ZellijRuntimeAdapter {
       ? this.spawnSubscriptionProcess(args, onLine, onExit)
       : this.spawnSubscriptionProcess(args, onLine, onExit, binaryPath);
     return {
-      close: async () => {
-        await process.close();
-        await eventChain;
+      get closed() { return closing || exited; },
+      close: () => {
+        closing = true;
+        closePromise ??= (async () => {
+          try { await process.close(); }
+          finally { await eventChain; }
+        })();
+        return closePromise;
       },
     };
   }

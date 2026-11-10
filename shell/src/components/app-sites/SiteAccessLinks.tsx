@@ -1,6 +1,6 @@
 "use client";
 import { useEffect, useState } from "react";
-import { SITE_MAX_ACCESS_LINKS, type SiteAccessLinkSummary, type SiteRecord } from "@matrix-os/contracts";
+import { type SiteAccessLinkSummary, type SiteRecord } from "@matrix-os/contracts";
 import { Button } from "@matrix-os/ui";
 import { siteActionError, type SiteClient } from "../../lib/site-client";
 import { formatSiteDate } from "./format-site-date";
@@ -15,12 +15,13 @@ export function SiteAccessLinks({ appSlug, client, site, state, disabled }: {
   const [generatedUrl, setGeneratedUrl] = useState<string | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [linksLoaded, setLinksLoaded] = useState(false);
+  const [nextCursor, setNextCursor] = useState<string | null>(null);
   const [reload, setReload] = useState(0);
   useEffect(() => {
     if (site.status !== "published" || site.accessMode !== "private_link") return;
     const controller = new AbortController();
     void client.accessLinks(appSlug, controller.signal).then(page => {
-      if (!controller.signal.aborted) { setLinks(page.links); setLoadError(null); setLinksLoaded(true); }
+      if (!controller.signal.aborted) { setLinks(page.links); setNextCursor(page.nextCursor); setLoadError(null); setLinksLoaded(true); }
     }).catch((error: unknown) => {
       if (!controller.signal.aborted) setLoadError(siteActionError(error));
     });
@@ -38,10 +39,17 @@ export function SiteAccessLinks({ appSlug, client, site, state, disabled }: {
     setLinks(current => current.filter(link => link.id !== revoked));
     setGeneratedUrl(current => current?.includes(revoked) ? null : current);
   }, "Link revoked.");
+  const loadMore = () => nextCursor ? state.action(
+    signal => client.accessLinks(appSlug, signal, nextCursor),
+    page => {
+      setLinks(current => [...current, ...page.links.filter(link => !current.some(existing => existing.id === link.id))]);
+      setNextCursor(page.nextCursor);
+    },
+  ) : Promise.resolve(false);
   return <section aria-label="One-time links" className="space-y-3 rounded-lg border p-3">
     <div className="space-y-1"><p className="text-sm font-medium">Private — one-time links</p>
       <p className="text-xs">Each link can be claimed by one browser. Unclaimed links expire after 7 days; access lasts 30 days.</p></div>
-    <Button size="sm" disabled={disabled || !linksLoaded || links.length >= SITE_MAX_ACCESS_LINKS} onClick={() => void create()}>Create one-time link</Button>
+    <Button size="sm" disabled={disabled || !linksLoaded} onClick={() => void create()}>Create one-time link</Button>
     {generatedUrl ? <div className="ph-no-capture space-y-2 rounded border p-2" role="status">
       <p className="text-xs font-medium">Save this URL now. It will not be shown again.</p>
       <p className="break-all text-sm" data-ph-mask="true">{generatedUrl}</p>
@@ -52,5 +60,6 @@ export function SiteAccessLinks({ appSlug, client, site, state, disabled }: {
       <span><strong>{link.status === "unclaimed" ? "Unclaimed" : link.status === "claimed" ? "Claimed" : "Expired"}</strong> · Created {formatSiteDate(link.createdAt)} · {link.status === "claimed" && link.sessionExpiresAt ? `Access expires ${formatSiteDate(link.sessionExpiresAt)}` : `Claim expires ${formatSiteDate(link.claimExpiresAt)}`}</span>
       <Button size="sm" variant="destructive" disabled={disabled} onClick={() => void revoke(link.id)}>Revoke link</Button>
     </li>)}</ul> : <p className="text-xs">No one-time links yet.</p>}
+    {nextCursor ? <Button size="sm" variant="secondary" disabled={disabled} onClick={() => void loadMore()}>Load more links</Button> : null}
   </section>;
 }

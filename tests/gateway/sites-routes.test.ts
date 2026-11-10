@@ -19,12 +19,12 @@ describe('owner publishing authentication',()=>{
  it('caps every mutation before JSON parsing',async()=>{const response=await ownerApp().request('/api/apps/event/site',{method:'DELETE',body:'x'.repeat(20000)});expect(response.status).toBe(413);});
  it('validates and forwards owner access-link management without exposing platform details',async()=>{
   const linkId=randomUUID();
-  const platform={request:vi.fn(),accessLinks:vi.fn().mockResolvedValue({links:[]}),createAccessLink:vi.fn().mockResolvedValue({link:{id:linkId},url:'https://matrix.page/link'}),revokeAccessLink:vi.fn().mockResolvedValue(undefined)};
+  const platform={request:vi.fn(),accessLinks:vi.fn().mockResolvedValue({links:[],nextCursor:null}),createAccessLink:vi.fn().mockResolvedValue({link:{id:linkId},url:'https://matrix.page/link'}),revokeAccessLink:vi.fn().mockResolvedValue(undefined)};
   const app=ownerApp('owner',platform);
   expect((await app.request('/api/apps/event/site/access-links')).status).toBe(200);
   expect((await app.request('/api/apps/event/site/access-links',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({baseRevision:4})})).status).toBe(200);
   expect((await app.request(`/api/apps/event/site/access-links/${linkId}`,{method:'DELETE'})).status).toBe(200);
-  expect(platform.accessLinks).toHaveBeenCalledWith('event');
+  expect(platform.accessLinks).toHaveBeenCalledWith('event',{limit:50});
   expect(platform.createAccessLink).toHaveBeenCalledWith('event',{baseRevision:4});
   expect(platform.revokeAccessLink).toHaveBeenCalledWith('event',linkId);
   expect((await app.request('/api/apps/event/site/access-links',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({baseRevision:4,token:'forbidden'})})).status).toBe(400);

@@ -12,7 +12,8 @@ import { categoryMessage } from "../../../../shared/app-error";
 import { RefreshButton } from "../settings/sections/ProvidersSection";
 import { useConnection } from "../../stores/connection";
 import { captureRuntimeGeneration, isCurrentRuntimeGeneration } from "../../stores/runtime-generation";
-import { IntegrationMarketplace } from "@matrix-os/ui";
+import { GITHUB_DEVELOPER_SERVICE_ID, IntegrationMarketplace, withGithubDeveloperCatalogEntry, type IntegrationRowPresentation } from "@matrix-os/ui";
+import { GithubDeveloperIntegration } from "./GithubDeveloperIntegration";
 import { AvailableServiceCard } from "./AvailableServiceCard";
 import { ConnectPendingBanner } from "./ConnectPendingBanner";
 import { DEFAULT_CONNECT_POLL_INTERVALS_MS, startConnectPoll } from "@matrix-os/ui";
@@ -27,9 +28,10 @@ const GENERIC_ERROR = categoryMessage("server");
 export interface IntegrationsSettingsSectionProps {
   // Test-only hook: override the connect poll backoff schedule.
   pollIntervals?: number[];
+  active?: boolean;
 }
 
-export function IntegrationsSettingsSection({ pollIntervals }: IntegrationsSettingsSectionProps = {}) {
+export function IntegrationsSettingsSection({ pollIntervals, active = true }: IntegrationsSettingsSectionProps = {}) {
   const api = useConnection((s) => s.api);
   const available = useIntegrations((s) => s.available);
   const connections = useIntegrations((s) => s.connections);
@@ -216,17 +218,43 @@ export function IntegrationsSettingsSection({ pollIntervals }: IntegrationsSetti
     });
   }, [available, connections]);
 
-  let body: ReactNode;
-  if (status === "idle" || status === "loading") {
-    body = <LoadingSkeleton />;
-  } else if (status === "unavailable") {
-    body = <UnavailableState />;
-  } else if (status === "error") {
-    body = <ErrorState message={errorMessage ?? GENERIC_ERROR} onRetry={refresh} />;
-  } else {
-    body = (
+  function renderCatalog(services: typeof catalogServices, developer?: IntegrationRowPresentation) {
+    const entries = developer ? withGithubDeveloperCatalogEntry(services) : services;
+    const connectedIds = connections.map(connection => connection.service).filter(id => id !== GITHUB_DEVELOPER_SERVICE_ID);
+    if (developer?.ready) connectedIds.push(GITHUB_DEVELOPER_SERVICE_ID);
+    if (entries.length === 0) return null;
+
+    return (
+      <IntegrationMarketplace services={entries} connectedIds={connectedIds} connectingId={connectingService}
+        onConnect={id => { if (id !== GITHUB_DEVELOPER_SERVICE_ID) void handleConnect(id); }}
+        renderService={service => {
+          const isDeveloper = service.id === GITHUB_DEVELOPER_SERVICE_ID;
+          return (
+            <AvailableServiceCard service={service} connected={connectedIds.includes(service.id)}
+              connections={isDeveloper ? [] : connections.filter(connection => connection.service === service.id)}
+              connecting={connectingService === service.id}
+              disabled={connectingService !== null}
+              connectDisabled={connectingService !== null || !available.some(app => app.id === service.id)}
+              onConnect={() => { if (!isDeveloper) void handleConnect(service.id); }}
+              onDisconnect={target => setConfirmId(target.id)}
+              presentation={isDeveloper ? developer : undefined} />
+          );
+        }} />
+    );
+  }
+
+  function renderBody(developer?: IntegrationRowPresentation): ReactNode {
+    const catalogReady = status === "ready";
+    let catalogState: ReactNode;
+    if (status === "idle" || status === "loading") catalogState = <LoadingSkeleton />;
+    else if (status === "unavailable") catalogState = <UnavailableState />;
+    else if (status === "error") catalogState = <ErrorState message={errorMessage ?? GENERIC_ERROR} onRetry={refresh} />;
+    else if (catalogServices.length === 0) catalogState = <EmptyCatalogState />;
+
+    return (
       <>
-        {errorMessage ? (
+        {catalogState}
+        {catalogReady && errorMessage ? (
           <p
             data-testid="integrations-error"
             className="mb-4 rounded-lg border px-3 py-2 text-sm"
@@ -236,22 +264,9 @@ export function IntegrationsSettingsSection({ pollIntervals }: IntegrationsSetti
           </p>
         ) : null}
 
-        <section>
-          {available.length === 0 && connections.length === 0 ? (
-            <EmptyCatalogState />
-          ) : (
-            <IntegrationMarketplace services={catalogServices} connectedIds={connections.map(c => c.service)} connectingId={connectingService}
-              onConnect={id => void handleConnect(id)} renderService={service => (
-                <AvailableServiceCard service={service} connected={connections.some(c => c.service === service.id)}
-                  connections={connections.filter(c => c.service === service.id)} connecting={connectingService === service.id}
-                  disabled={connectingService !== null}
-                  connectDisabled={connectingService !== null || !available.some(s => s.id === service.id)}
-                  onConnect={() => void handleConnect(service.id)} onDisconnect={target => setConfirmId(target.id)} />
-              )} />
-          )}
-        </section>
+        <section>{renderCatalog(catalogReady ? catalogServices : [], developer)}</section>
 
-        {connectingService ? (
+        {catalogReady && connectingService ? (
           <ConnectPendingBanner
             serviceName={connectingName ?? connectingService}
             manualBusy={manualBusy}
@@ -275,7 +290,7 @@ export function IntegrationsSettingsSection({ pollIntervals }: IntegrationsSetti
         {status === "ready" ? <RefreshButton onClick={refresh} /> : null}
       </div>
 
-      {body}
+      <GithubDeveloperIntegration active={active}>{renderBody}</GithubDeveloperIntegration>
 
       <DisconnectConfirmDialog
         connection={confirmConnection}

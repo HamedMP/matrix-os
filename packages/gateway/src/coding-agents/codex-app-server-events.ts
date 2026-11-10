@@ -6,6 +6,7 @@ import {
   UserInputQuestionSchema,
   type AgentThreadEvent,
 } from "@matrix-os/contracts";
+import { isSupportedCodexCommandApprovalKind } from "./codex-session-approvals.mjs";
 
 const MAX_APP_SERVER_LINE_BYTES = 64 * 1024;
 const NativeRequestIdSchema = z.union([
@@ -325,6 +326,8 @@ export function parseCodexAppServerRequestLine(
   const parsed = AppServerRequestSchema.safeParse(raw);
   if (!parsed.success) return { events: [] };
   if (parsed.data.method === "item/permissions/requestApproval") return { events: [] };
+  if (parsed.data.method === "item/commandExecution/requestApproval"
+    && !isSupportedCodexCommandApprovalKind(parsed.data.params.kind)) return { events: [] };
   return parsed.data.method === "item/tool/requestUserInput"
     ? inputResult(parsed.data, context)
     : approvalResult(parsed.data, context);

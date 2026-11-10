@@ -74,6 +74,7 @@ export async function constructOwnerCollaboration(options: OwnerCollaborationSta
   } = options;
   const ownerChatRepository = chatRepository;
   const projectGitDriver = createProjectGitDriver({
+    homePath,
     resolveProjectRoot: async ({ ownerId, projectId }) => {
       const root = await ownerChatExecutionRoots.resolve(
         { type: "personal", ownerId }, { kind: "project", projectId },

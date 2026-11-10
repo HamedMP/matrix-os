@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { initializeMatrixZellijConfig } from "../../packages/terminal-runtime/src/zellij-bootstrap.js";
-import { matrixZellijConfigPaths } from "../../packages/gateway/src/shell/zellij-config.js";
+import { matrixZellijConfigPaths, renderMatrixZellijConfig } from "../../packages/gateway/src/shell/zellij-config.js";
 
 const roots: string[] = [];
 afterEach(async () => { await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true }))); });
@@ -41,6 +41,38 @@ describe("terminal runtime Zellij bootstrap", () => {
     expect(await readFile(paths.file, "utf8")).toBe('theme "gruvbox-light"\n');
     expect(await readFile(paths.bashrcFile, "utf8")).toBe("# owner terminal customizations\n");
     expect(await readFile(paths.layoutFile, "utf8")).toContain("layout {");
+  });
+
+  it.each([
+    { generatedTheme: "dark", configTheme: "default" },
+    { generatedTheme: "light", configTheme: "gruvbox-light" },
+    { generatedTheme: "matrix", configTheme: "matrix" },
+  ] as const)("upgrades the shipped mirrored config with the $generatedTheme theme", async ({ generatedTheme, configTheme }) => {
+    const home = await freshHome();
+    const paths = matrixZellijConfigPaths(home);
+    await mkdir(paths.dir, { recursive: true });
+    const legacy = (await readFile(new URL("./fixtures/legacy-mirrored-config.kdl", import.meta.url), "utf8"))
+      .replace('"__MATRIX_SHELL_PATH__"', () => JSON.stringify(paths.shellFile))
+      .replace('theme "default"', `theme "${configTheme}"`);
+    await writeFile(paths.file, legacy, { mode: 0o600 });
+
+    await Promise.all(Array.from({ length: 4 }, () => initializeMatrixZellijConfig(home)));
+
+    expect(await readFile(paths.file, "utf8")).toBe(renderMatrixZellijConfig(paths, generatedTheme));
+    expect((await stat(paths.file)).mode & 0o777).toBe(0o600);
+    expect((await readdir(paths.dir)).filter((name) => name.startsWith(".bootstrap-"))).toEqual([]);
+  });
+
+  it("preserves owner edits to the shipped mirrored config", async () => {
+    const home = await freshHome();
+    const paths = matrixZellijConfigPaths(home);
+    await mkdir(paths.dir, { recursive: true });
+    const customized = (await readFile(new URL("./fixtures/legacy-mirrored-config.kdl", import.meta.url), "utf8"))
+      .replace('"__MATRIX_SHELL_PATH__"', () => JSON.stringify(paths.shellFile))
+      .replace("pane_frames false", "pane_frames true");
+    await writeFile(paths.file, customized);
+    await initializeMatrixZellijConfig(home);
+    expect(await readFile(paths.file, "utf8")).toBe(customized);
   });
 
   it("publishes complete assets without overwriting when initializers run concurrently", async () => {
