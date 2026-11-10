@@ -87,6 +87,8 @@ export async function publishCollaborativeAppRecovery(
     .innerJoin("collaboration_resource_catalog as catalog", "catalog.id", "binding.catalog_id")
     .select(["scope.id", "scope.owner_id", "scope.revision"])
     .where("binding.catalog_id", "=", readiness.catalog_id)
+    .where("binding.build_id", "=", readiness.build_id)
+    .where("binding.registration_incarnation", "=", readiness.registration_incarnation)
     .where("binding.state", "=", "needs_recheck")
     .where("scope.owner_id", "=", readiness.owner_id)
     .where("scope.lifecycle", "=", "shared")
@@ -102,6 +104,8 @@ export async function publishCollaborativeAppRecovery(
       .select("revision")
       .where("scope_id", "=", candidate.id)
       .where("catalog_id", "=", readiness.catalog_id)
+      .where("build_id", "=", readiness.build_id)
+      .where("registration_incarnation", "=", readiness.registration_incarnation)
       .where("state", "=", "needs_recheck")
       .forUpdate()
       .executeTakeFirst();
@@ -119,15 +123,15 @@ export async function publishCollaborativeAppRecovery(
     if (!scope) throw new Error("Collaborative app share changed during recovery");
 
     const recovered = await executor.updateTable("collaboration_app_bindings").set({
-      registration_incarnation: readiness.registration_incarnation,
       readiness_id: readiness.id,
-      build_id: readiness.build_id,
       state: "active",
       revision: Number(binding.revision) + 1,
       updated_at: timestamp,
       stopped_at: null,
     }).where("scope_id", "=", candidate.id)
       .where("revision", "=", Number(binding.revision))
+      .where("build_id", "=", readiness.build_id)
+      .where("registration_incarnation", "=", readiness.registration_incarnation)
       .where("state", "=", "needs_recheck")
       .returning("scope_id")
       .executeTakeFirst();

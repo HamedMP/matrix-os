@@ -161,6 +161,42 @@ describe("collaborative app readiness drift", () => {
     await worker.shutdown();
   });
 
+  it("keeps an edited build unshared when its new readiness check passes without owner rebind confirmation", async () => {
+    const { worker } = await createAndDeliverShare();
+    const editedBuildId = "f".repeat(64);
+    await readiness.invalidateDriftedBuilds({
+      ownerId: "user_owner", catalogId, currentBuildId: editedBuildId,
+    });
+    const editedReadinessId = "60000000-0000-4000-8000-000000000002";
+    const editedReadiness = new CollaborativeAppReadinessRepository(fixture.db, {
+      now: () => now, createId: () => editedReadinessId,
+    });
+    await editedReadiness.createOrGet({
+      ownerId: "user_owner",
+      build: { ...build, buildId: editedBuildId, assetDigest: "f".repeat(64) },
+      artifactRef: `objects/${editedBuildId}`,
+      verifierVersion: "collaborative-app-v1",
+    });
+    await editedReadiness.transition({
+      id: editedReadinessId,
+      ownerId: "user_owner",
+      expectedRevision: 1,
+      status: "ready",
+      gateResults: [{ code: "cleanup", status: "passed" }],
+      verifiedAt: now,
+    });
+
+    expect(await fixture.db.selectFrom("collaboration_app_bindings")
+      .select(["state", "revision", "build_id", "readiness_id"])
+      .where("scope_id", "=", scopeId).executeTakeFirstOrThrow()).toEqual({
+      state: "needs_recheck", revision: 2, build_id: build.buildId, readiness_id: readinessId,
+    });
+    expect(await worker.runOnce()).toBe(1);
+    expect(await fixture.db.selectFrom("collaboration_scopes").select(["revision", "auth_epoch"])
+      .where("id", "=", scopeId).executeTakeFirstOrThrow()).toEqual({ revision: 2, auth_epoch: 2 });
+    await worker.shutdown();
+  });
+
   it("publishes a newer needs-recheck directory event when the app registration changes", async () => {
     const { fetchImpl, worker } = await createAndDeliverShare();
 
