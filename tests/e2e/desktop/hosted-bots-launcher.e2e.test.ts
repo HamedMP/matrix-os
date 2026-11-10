@@ -70,6 +70,7 @@ it.skipIf(!existsSync(main)).each([
       if (url.pathname === prefix + "/assets/fixture.js") {
         outgoing.writeHead(200, { "content-type": "text/javascript" });
         outgoing.end([
+          'document.documentElement.dataset.skin = "midnight";',
           'const socketBase = document.querySelector(\'meta[name="matrix-bots-websocket-base"]\').content;',
           'const socket = new WebSocket(socketBase + "/api/bots/bot-1/browser/stream");',
           'socket.onmessage = event => document.body.dataset.socket = event.data;',
@@ -154,6 +155,7 @@ it.skipIf(!existsSync(main)).each([
     writeFileSync(join(profile, "credential.bin"), Buffer.from(encrypted));
     writeFileSync(join(profile, "state.json"), JSON.stringify({
       profile: { handle: "neo", userId: "user-1", platformHost: url, runtimeSlot },
+      appearance: { theme: "light", themeId: "matrix" },
     }));
     await closeElectronApp(app);
     app = await launch();
@@ -177,17 +179,40 @@ it.skipIf(!existsSync(main)).each([
           .flatMap(view => "webContents" in view ? [view.webContents as typeof browserWindow.webContents] : [])
           .find(child => child.getURL() === "https://matrix-bots.invalid/");
         if (!contents) return null;
-        return contents.executeJavaScript("[document.querySelector('#bots')?.textContent, document.body.dataset.socket]", false) as Promise<[string, string]>;
+        return contents.executeJavaScript(`{
+          const root = document.documentElement;
+          [document.querySelector('#bots')?.textContent, document.body.dataset.socket,
+            root.dataset.skin, getComputedStyle(root).getPropertyValue('--color-app').trim()];
+        }`, false) as Promise<[string, string, string, string]>;
       });
-      await expect.poll(() => readEmbedded(app!)).toEqual(["Paired Bots fixture", "Paired socket fixture"]);
+      const readShellBackground = () => page.evaluate(() =>
+        getComputedStyle(document.documentElement).getPropertyValue("--bg-app").trim());
+      const light = await readShellBackground();
+      await expect.poll(() => readEmbedded(app!)).toEqual(["Paired Bots fixture", "Paired socket fixture", "daylight", light]);
       expect(readinessRequests).toBeGreaterThanOrEqual(2);
       expect(embeddedRequests).toBeGreaterThanOrEqual(3);
+      expect(socketRequests).toBe(1);
+
+      // Changing Appearance in the Matrix shell must update the already-open
+      // upstream view without opening another document or losing its socket.
+      const documentCount = embeddedDocuments;
+      await page.getByRole("button", { name: "Open account menu", exact: true }).click();
+      await page.getByRole("menuitem", { name: "Settings", exact: true }).click();
+      const settings = page.getByRole("dialog", { name: "Settings window", exact: true });
+      await settings.getByRole("button", { name: "Appearance", exact: true }).click();
+      await settings.getByRole("button", { name: "Dark", exact: true }).click();
+      await page.waitForFunction(() => document.documentElement.dataset.theme === "dark");
+      const dark = await readShellBackground();
+      expect(dark).not.toBe(light);
+      await settings.getByRole("button", { name: "Close", exact: true }).click();
+      await expect.poll(() => readEmbedded(app!)).toEqual(["Paired Bots fixture", "Paired socket fixture", "midnight", dark]);
+      expect(embeddedDocuments).toBe(documentCount);
       expect(socketRequests).toBe(1);
 
       await closeElectronApp(app);
       app = await launch();
       await openBots(app);
-      await expect.poll(() => readEmbedded(app!)).toEqual(["Paired Bots fixture", "Paired socket fixture"]);
+      await expect.poll(() => readEmbedded(app!)).toEqual(["Paired Bots fixture", "Paired socket fixture", "midnight", dark]);
       expect(embeddedDocuments).toBeGreaterThanOrEqual(2);
       expect(socketRequests).toBeGreaterThanOrEqual(2);
     } else {

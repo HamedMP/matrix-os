@@ -347,7 +347,8 @@ export function registerIpcHandlers(ipcMain: IpcMainLike, ctx: HandlerContext): 
   handle("embed:open", async (request, event) => {
     try {
       const bounds = toWebContentsViewBounds(request.bounds, event);
-      if (request.kind === "hosted-shell" || request.kind === "code-editor" || request.kind === "hosted-bots") {
+      if (request.kind === "hosted-bots") return await ctx.embeds.open({ ...request, bounds });
+      if (request.kind === "hosted-shell" || request.kind === "code-editor") {
         return await ctx.embeds.open({ kind: request.kind, bounds, active: request.active });
       }
       if (request.kind === "browser") {
@@ -378,6 +379,9 @@ export function registerIpcHandlers(ipcMain: IpcMainLike, ctx: HandlerContext): 
   }));
   handle("embed:set-scale", ({ embedId, factor }) => ({
     ok: ctx.embeds.setScale(embedId, factor),
+  }));
+  handle("embed:set-bots-appearance", ({ embedId, appearance }) => ({
+    ok: ctx.embeds.setBotsAppearance(embedId, appearance),
   }));
   handle("embed:set-active", ({ embedId, active }) => ({
     ok: ctx.embeds.setActive(embedId, active),

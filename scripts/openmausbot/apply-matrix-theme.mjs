@@ -78,6 +78,46 @@ const css = [
   skinRule('[data-skin="daylight"], :root:not([data-skin])', false),
   skinRule('[data-skin="midnight"]', true),
   "@media (prefers-color-scheme: dark) {\n" + skinRule(":root:not([data-skin])", true) + "\n}",
+  `:root[data-matrix-bots-skin] .matrix-hosted-bots-theme-control {
+  display: none;
+}
+
+:root[data-matrix-bots-skin] [data-matrix-image-scrim] {
+  background: color-mix(in srgb, #000 55%, transparent);
+}
+
+:root[data-matrix-bots-skin] [data-matrix-image-dialog] {
+  background: var(--color-app);
+  border-color: var(--color-hairline);
+  color: var(--color-ink);
+}
+
+:root[data-matrix-bots-skin] [data-matrix-image-dialog] > header {
+  background: var(--color-panel);
+  border-color: var(--color-hairline);
+}
+
+:root[data-matrix-bots-skin] [data-matrix-image-dialog] > header .truncate {
+  color: var(--color-ink);
+}
+
+:root[data-matrix-bots-skin] [data-matrix-image-dialog] > header .truncate + div,
+:root[data-matrix-bots-skin] [data-matrix-image-dialog] [role="alert"],
+:root[data-matrix-bots-skin] [data-matrix-image-dialog] [role="status"] > span {
+  color: var(--color-ink-secondary);
+}
+
+:root[data-matrix-bots-skin] [data-matrix-image-dialog] [role="status"],
+:root[data-matrix-bots-skin] [data-matrix-image-dialog] :is(a, button) {
+  background: var(--color-raised);
+  border-color: var(--color-hairline);
+  color: var(--color-ink);
+}
+
+:root[data-matrix-bots-skin] [data-matrix-image-dialog] :is(a, button):hover {
+  background: var(--color-raised-hover);
+  color: var(--color-ink);
+}`,
 ].join("\n\n");
 const original = source.split("\n\n" + marker)[0];
 await writeFile(sourcePath, original + "\n\n" + css + "\n");
@@ -104,6 +144,33 @@ await Promise.all([
     icons: [{ src: "/app-icon.svg", sizes: "any", type: "image/svg+xml", purpose: "any" }],
   }, null, 2) + "\n"),
   writeFile(resolve(sourceRoot, "public/app-icon.svg"), icon),
+]);
+
+async function patchPinnedComponent(file, replacements) {
+  const path = resolve(sourceRoot, "src/components", file);
+  let component = await readFile(path, "utf8");
+  for (const [needle, replacement] of replacements) {
+    if (component.includes(replacement)) continue;
+    if (component.split(needle).length !== 2) throw new Error("The pinned OpenMausBot component changed: " + file);
+    component = component.replace(needle, replacement);
+  }
+  await writeFile(path, component);
+}
+
+await Promise.all([
+  patchPinnedComponent("AttachmentPreview.tsx", [
+    ['className="fixed inset-0 z-[70] flex items-center justify-center bg-black/80', 'data-matrix-image-scrim\n      className="fixed inset-0 z-[70] flex items-center justify-center bg-black/80'],
+    ['ref={dialogRef}\n        role="dialog"', 'ref={dialogRef}\n        data-matrix-image-dialog\n        role="dialog"'],
+  ]),
+  patchPinnedComponent("ThemeRow.tsx", [
+    ['<SettingRow\n      title={t(simple', '<SettingRow\n      className="matrix-hosted-bots-theme-control"\n      title={t(simple'],
+  ]),
+  patchPinnedComponent("SettingsSimplePages.tsx", [
+    ['<SettingRow title={t("settings.theme.title")} subtitle={hint}>', '<SettingRow className="matrix-hosted-bots-theme-control" title={t("settings.theme.title")} subtitle={hint}>'],
+  ]),
+  patchPinnedComponent("SettingsModal.tsx", [
+    ['<Card title={t("settings.skin.title")} subtitle={t("settings.skin.subtitle")}>\n              <SkinPicker />\n            </Card>', '<div className="matrix-hosted-bots-theme-control">\n              <Card title={t("settings.skin.title")} subtitle={t("settings.skin.subtitle")}>\n                <SkinPicker />\n              </Card>\n            </div>'],
+  ]),
 ]);
 
 async function replaceStreamEndpoint(file, needle, replacement) {

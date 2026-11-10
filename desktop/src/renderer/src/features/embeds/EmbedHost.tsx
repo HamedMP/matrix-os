@@ -1,7 +1,11 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Button } from "../../design/primitives";
 import { invoke, onEvent } from "../../lib/operator";
 import { useConnection } from "../../stores/connection";
+import { getThemeChrome, themeSemantics } from "../../design/themes";
+import { effectiveThemeMode } from "../../design/themes/apply";
+import { useAppearance } from "../../stores/appearance";
+import type { HostedBotsAppearance } from "../../../../shared/hosted-bots-appearance";
 import { useUi } from "../../stores/ui";
 import { readNativeEmbedBounds } from "./embed-bounds";
 import { nativeBrowserProduct } from "../../../../shared/browser-products";
@@ -49,6 +53,40 @@ export default function EmbedHost({
   const runtimeSlot = useConnection((connection) => connection.runtimeSlot);
   const product = nativeBrowserProduct(appIdentity ?? "", slug ?? "");
   const authGeneration = useConnection((connection) => product || kind === "hosted-bots" ? connection.authGeneration : 0);
+  const themeId = useAppearance((state) => kind === "hosted-bots" ? state.themeId : undefined);
+  const resolvedMode = useAppearance((state) => kind === "hosted-bots" ? state.resolvedMode : undefined);
+  const customTheme = useAppearance((state) => kind === "hosted-bots" ? state.customTheme : undefined);
+  const botsAppearance = useMemo<HostedBotsAppearance | undefined>(() => {
+    if (!themeId || !resolvedMode) return undefined;
+    const mode = effectiveThemeMode(themeId, resolvedMode);
+    const chrome = getThemeChrome(themeId, mode, customTheme);
+    const semantic = themeSemantics(chrome, themeId);
+    return {
+      mode,
+      background: chrome.background,
+      sidebar: chrome.sidebar,
+      surface: chrome.card,
+      raised: chrome.surface3,
+      sunken: chrome.surface0,
+      overlay: chrome.popover,
+      hover: chrome.accent,
+      border: chrome.border,
+      foreground: chrome.foreground,
+      muted: chrome.mutedForeground,
+      accent: chrome.primary,
+      accentText: semantic.accentText,
+      onAccent: chrome.primaryForeground,
+      focus: chrome.ring,
+      success: semantic.success,
+      onSuccess: semantic.successForeground,
+      danger: semantic.danger,
+      onDanger: semantic.dangerForeground,
+      warning: semantic.warningText,
+    };
+  }, [themeId, resolvedMode, customTheme]);
+  const initialBotsAppearanceRef = useRef(botsAppearance);
+  initialBotsAppearanceRef.current = botsAppearance;
+  const sentBotsAppearanceRef = useRef<HostedBotsAppearance | undefined>(undefined);
   const hostRef = useRef<HTMLDivElement>(null);
   const embedIdRef = useRef<string | null>(null);
   const activeRef = useRef(active);
@@ -90,9 +128,13 @@ export default function EmbedHost({
 
     const bounds = readNativeEmbedBounds(host, visualScale);
 
-    const openRequest = kind === "hosted-shell" || kind === "code-editor" || kind === "hosted-bots"
-      ? { kind, bounds, active: activeRef.current }
-      : kind === "browser"
+    const initialBotsAppearance = initialBotsAppearanceRef.current;
+    sentBotsAppearanceRef.current = initialBotsAppearance;
+    const openRequest = kind === "hosted-bots"
+      ? { kind, bounds, active: activeRef.current, appearance: initialBotsAppearance! }
+      : kind === "hosted-shell" || kind === "code-editor"
+        ? { kind, bounds, active: activeRef.current }
+        : kind === "browser"
         ? { kind, url: url!, bounds, active: activeRef.current }
         : {
             kind,
@@ -138,6 +180,15 @@ export default function EmbedHost({
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [appIdentity, kind, retryRevision, runtimeSlot, slug, url, authGeneration]);
+
+  useEffect(() => {
+    const embedId = embedIdRef.current;
+    if (!embedId || !botsAppearance || sentBotsAppearanceRef.current === botsAppearance) return;
+    sentBotsAppearanceRef.current = botsAppearance;
+    void invoke("embed:set-bots-appearance", { embedId, appearance: botsAppearance }).catch((error: unknown) => {
+      console.warn("[embeds] Bots appearance sync failed:", error instanceof Error ? error.name : "UnknownError");
+    });
+  }, [botsAppearance, openedEmbedRevision]);
 
   // Native views always paint above renderer windows. Keep a bounded local
   // frame under the detached view so obscured Matrix windows do not go blank.

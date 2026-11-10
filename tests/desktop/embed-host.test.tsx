@@ -6,6 +6,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import EmbedHost from "../../desktop/src/renderer/src/features/embeds/EmbedHost";
 import { invoke, onEvent } from "../../desktop/src/renderer/src/lib/operator";
 import { useConnection } from "../../desktop/src/renderer/src/stores/connection";
+import { useAppearance } from "../../desktop/src/renderer/src/stores/appearance";
+import { getThemeChrome } from "@matrix-os/brand/themes/index";
 import { useUi } from "../../desktop/src/renderer/src/stores/ui";
 
 const publishing = vi.hoisted(() => ({ client: { get: vi.fn(async () => null), getConfig: vi.fn(async () => ({ data: {}, forms: [] })) } }));
@@ -26,6 +28,7 @@ describe("EmbedHost", () => {
     vi.mocked(onEvent).mockReturnValue(() => undefined);
     useConnection.setState(useConnection.getInitialState(), true);
     useUi.setState(useUi.getInitialState(), true);
+    useAppearance.setState(useAppearance.getInitialState(), true);
     useConnection.setState({ runtimeSlot: "primary" });
     openResolve = null;
     rect = { left: 10, top: 20, width: 300, height: 200 };
@@ -346,6 +349,26 @@ describe("EmbedHost", () => {
         { embedId: "embed-2", active: true },
       );
     });
+  });
+
+  it("opens Bots with the Matrix palette and updates the same view when Appearance changes", async () => {
+    useAppearance.setState({ themeId: "matrix", resolvedMode: "light" });
+    render(<EmbedHost kind="hosted-bots" />);
+    const matrixLight = getThemeChrome("matrix", "light");
+    await waitFor(() => expect(invoke).toHaveBeenCalledWith("embed:open", expect.objectContaining({
+      kind: "hosted-bots",
+      appearance: expect.objectContaining({ mode: "light", background: matrixLight.background }),
+    })));
+
+    // A preference change while opening must reach the newly opened view.
+    act(() => useAppearance.setState({ themeId: "nord", resolvedMode: "dark" }));
+    const nordDark = getThemeChrome("nord", "dark");
+    await act(async () => openResolve?.({ embedId: "bots-view", state: "loading" }));
+    await waitFor(() => expect(invoke).toHaveBeenLastCalledWith("embed:set-bots-appearance", {
+      embedId: "bots-view",
+      appearance: expect.objectContaining({ mode: "dark", background: nordDark.background, foreground: nordDark.foreground }),
+    }));
+    expect(vi.mocked(invoke).mock.calls.filter(([channel]) => channel === "embed:open")).toHaveLength(1);
   });
 
   it("wires runtime Browser URLs through the typed embed request", async () => {

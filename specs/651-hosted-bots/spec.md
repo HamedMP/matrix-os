@@ -67,6 +67,12 @@ Only an opted-in Private Preview bundle includes the workload image. The first O
 | Tools and schedules | Preserve upstream approval policy and schedule state. Acceptance uses a disposable workspace, one approved and one rejected harmless tool action, and one bounded scheduled run. |
 | Computer | Use an isolated preview desktop or a separately paired upstream companion. Do not map the Matrix host or the user's personal desktop into the workload. Verify a harmless approved operation and show any unavailable dependency in the UI. |
 
+### Embedded appearance and connected apps
+
+The hosted Bots view follows the effective Matrix Electron Desktop theme, including single-variant and custom palettes. The app window supplies the effective `light` or `dark` mode and bounded palette values when it opens the view and when appearance changes. Apply updates only to the dedicated `https://matrix-bots.invalid` view, keep the current conversation mounted, and apply the current palette again when the view navigates or reopens. Standalone OpenMausBot retains its own appearance controls. The hosted attachment preview uses Matrix surface, border and foreground colors in both modes. Verify both themes and the attachment preview with the same running conversation.
+
+Connected Apps and custom MCP use upstream configuration on the preview. The app catalog can render before a self-hosted Connected Apps project key is configured. Validate a connector with an approved account and a successful, scoped tool call. A separate custom MCP check can use a disposable tool that returns a synthetic value and requires no third-party account.
+
 ### Preview event delivery and tool approval
 
 The owner-scoped `GET /api/hosted-bots/runtime/api/events` bridge relays the upstream SSE cursor in `?since=` and accepts a validated `Last-Event-ID` for reconnection. Only a successful SSE response on that path disables nginx buffering and transformation. The Gateway requests identity encoding and ends a preview stream cleanly within 24 seconds of admission, leaving time for the deployed shared Platform's 30-second response budget. The client reconnects with its last cursor. The Electron and Platform header deadlines remain bounded and release after headers on this exact stream. Non-stream requests retain their existing timeouts.

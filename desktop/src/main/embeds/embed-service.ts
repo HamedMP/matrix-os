@@ -5,6 +5,7 @@
 // so the renderer can show an inline re-auth prompt without ever touching the
 // native principal (L1).
 import { net, session, type BaseWindow } from "electron";
+import type { HostedBotsAppearance } from "../../shared/hosted-bots-appearance";
 import { randomUUID } from "node:crypto";
 import {
   startPortForward as startMatrixPortForward,
@@ -49,14 +50,19 @@ interface EmbedServiceDeps {
   startPortForward?: (options: StartPortForwardOptions) => Promise<PortForwardHandle>;
 }
 
-interface OpenRequest {
-  kind: "hosted-shell" | "code-editor" | "app" | "browser" | "hosted-bots";
+type OpenRequest = {
+  kind: "hosted-bots";
+  appearance: HostedBotsAppearance;
+  bounds: Bounds;
+  active?: boolean;
+} | {
+  kind: "hosted-shell" | "code-editor" | "app" | "browser";
   slug?: string;
   appIdentity?: string;
   url?: string;
   bounds: Bounds;
   active?: boolean;
-}
+};
 
 interface OpenResult {
   embedId: string;
@@ -112,6 +118,7 @@ export class EmbedService {
       createView: ({
         partition,
         kind,
+        botsAppearance,
         slug,
         routeSlug,
         allowedOrigins,
@@ -139,7 +146,7 @@ export class EmbedService {
           allowPublicNavigation,
           onState,
           ...(kind === "hosted-bots"
-            ? { registerViewerTransport: (contents) => hostedBots.register(contents, partition) }
+            ? { registerViewerTransport: (contents) => hostedBots.register(contents, partition), botsAppearance }
             : kind === "app" && routeSlug === "browser-lab" && viewerAdmission
               ? { registerViewerTransport: viewerAdmission.register } : {}),
           ...(kind === "app" && slug && routeSlug && nativeBrowserProduct(slug, routeSlug)
@@ -161,6 +168,7 @@ export class EmbedService {
       const embedId = randomUUID();
       this.manager.open("hosted-bots", identity.partition, request.bounds, HOSTED_BOTS_ORIGIN + "/", {
         id: embedId,
+        botsAppearance: request.appearance,
         active: request.active ?? true,
         allowedOrigins: [HOSTED_BOTS_ORIGIN],
         resolveNavigation: (url) => hostedBotsProviderLoginAllowed(url)
@@ -199,6 +207,10 @@ export class EmbedService {
 
   setScale(embedId: string, factor: number): boolean {
     return this.manager.setScale(embedId, factor);
+  }
+
+  setBotsAppearance(embedId: string, appearance: HostedBotsAppearance): boolean {
+    return this.manager.setBotsAppearance(embedId, appearance);
   }
 
   setActive(embedId: string, active: boolean): boolean {

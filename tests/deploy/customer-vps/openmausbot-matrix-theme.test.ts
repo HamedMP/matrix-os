@@ -16,6 +16,19 @@ async function withFixture(styles: string, fn: (root: string, css: string) => Pr
   try {
     await mkdir(join(root, "src", "lib"), { recursive: true });
     await mkdir(join(root, "public"));
+    await mkdir(join(root, "src", "components"));
+    await writeFile(join(root, "src", "components", "AttachmentPreview.tsx"), `<div
+      className="fixed inset-0 z-[70] flex items-center justify-center bg-black/80 p-3 backdrop-blur-sm sm:p-6"
+    >
+      <div
+        ref={dialogRef}
+        role="dialog"
+      />
+    </div>`);
+    await writeFile(join(root, "src", "components", "ThemeRow.tsx"), '<SettingRow\n      title={t(simple ? "settings.theme.lightOrDark" : "settings.theme.title")} />');
+    await writeFile(join(root, "src", "components", "SettingsSimplePages.tsx"), '<SettingRow title={t("settings.theme.title")} subtitle={hint}>');
+    await writeFile(join(root, "src", "components", "SettingsModal.tsx"), '<Card title={t("settings.skin.title")} subtitle={t("settings.skin.subtitle")}>\n              <SkinPicker />\n            </Card>');
+
     await writeFile(join(root, "src", "lib", "brand.ts"), 'export const PRODUCT_NAME = "MausBot";\n');
     await writeFile(join(root, "index.html"), '<title>MausBot</title><meta name="apple-mobile-web-app-title" content="OpenMausBot" />\n');
     await writeFile(join(root, "public", "manifest.webmanifest"), '{"name":"OpenMausBot","short_name":"OpenMausBot","icons":[]}');
@@ -36,6 +49,10 @@ describe("OpenMausBot Matrix skin", () => {
       const patched = await readFile(css, "utf8");
       expect(patched.startsWith(source)).toBe(true);
       expect(patched).toContain(marker);
+      expect(patched).toMatch(/:root\[data-matrix-bots-skin\] \[data-matrix-image-dialog\] \{[^}]*background: var\(--color-app\)/);
+      expect(patched).toMatch(/:root\[data-matrix-bots-skin\] \[data-matrix-image-dialog\] > header \{[^}]*background: var\(--color-panel\)/);
+      expect(await readFile(join(root, "src", "components", "AttachmentPreview.tsx"), "utf8"))
+        .toContain("data-matrix-image-dialog");
       expect(patched).toContain('--color-app: #fafafa');
       expect(patched).toContain('--color-app: #0d0c0c');
       expect(patched).toContain('--color-composer-ring');

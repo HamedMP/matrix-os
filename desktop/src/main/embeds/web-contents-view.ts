@@ -11,6 +11,8 @@ import { resolveBrowserAddress } from "../../shared/runtime-browser-url";
 import { isAppGalleryIdentity, isAppGalleryInventoryIdentity } from "@matrix-os/contracts/app-gallery-bridge-policy";
 import { NATIVE_APP_GALLERY_BRIDGE_ARG, NATIVE_APP_INTEGRATIONS_BRIDGE_ARG, NATIVE_APP_ACTIVITY_BRIDGE_ARG, NATIVE_APP_BROWSER_BRIDGE_ARG, isNativeAppActivityIdentity } from "../../shared/native-app-gateway";
 import { nativeBrowserProduct } from "../../shared/browser-products";
+import type { HostedBotsAppearance } from "../../shared/hosted-bots-appearance";
+import { createHostedBotsAppearanceController } from "./hosted-bots-appearance";
 import { createBrowserProductLifecycle } from "./browser-product-lifecycle";
 
 const MAX_PUBLIC_BROWSER_ORIGINS = 64;
@@ -46,6 +48,7 @@ function encodeBoundedSnapshot(source: NativeImage): string | null {
 }
 
 export function createWebContentsView(options: {
+  botsAppearance?: HostedBotsAppearance;
   registerViewerTransport?: (contents: WebContents) => () => void;
   browserProduct?: { origin: string; renew: () => Promise<unknown> };
   window: BaseWindow;
@@ -84,6 +87,7 @@ export function createWebContentsView(options: {
   });
 
   const contents = view.webContents;
+  const botsAppearance = options.botsAppearance ? createHostedBotsAppearanceController(contents, options.botsAppearance) : null;
   let revokeViewerTransport = options.registerViewerTransport?.(contents);
   const product = options.browserProduct ? createBrowserProductLifecycle({
     contents, ...options.browserProduct,
@@ -266,6 +270,7 @@ export function createWebContentsView(options: {
     setScale(factor: number) {
       contents.setZoomFactor(factor);
     },
+    ...(botsAppearance ? { setBotsAppearance: botsAppearance.update } : {}),
     async loadUrl(url: string) {
       if (product) await product.loadUrl(url);
       else await contents.loadURL(url);

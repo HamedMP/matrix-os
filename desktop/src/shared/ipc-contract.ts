@@ -7,6 +7,7 @@ import { DesktopPreviewSummarySchema } from "./preview-pair";
 import { z } from "zod/v4";
 import { NAVIGATION_CACHE_INVOKE } from "./navigation-cache-ipc";
 import { CHATGPT_PLAN_INVOKE } from "./chatgpt-plan-ipc";
+import { HostedBotsAppearanceSchema } from "./hosted-bots-appearance";
 import { LOCAL_CHAT_IMPORT_INVOKE, LOCAL_CHAT_IMPORT_EVENTS } from "./local-chat-import-ipc";
 import { NativeAppOpenEventSchema } from "./native-app-open";
 import { NativeAppChatCancellationSchema, NativeAppChatCompletionSchema, NativeAppOpenChatEventSchema } from "./native-app-chat";
@@ -386,6 +387,7 @@ export const INVOKE_CHANNELS = {
     request: z.discriminatedUnion("kind", [
       z.strictObject({
         kind: z.literal("hosted-bots"),
+        appearance: HostedBotsAppearanceSchema,
         bounds: BoundsSchema,
         active: z.boolean().optional(),
       }),
@@ -425,6 +427,10 @@ export const INVOKE_CHANNELS = {
   },
   "embed:set-scale": {
     request: z.strictObject({ embedId: z.string().min(1).max(64), factor: ZoomFactorSchema }),
+    response: Ok,
+  },
+  "embed:set-bots-appearance": {
+    request: z.strictObject({ embedId: z.string().min(1).max(64), appearance: HostedBotsAppearanceSchema }),
     response: Ok,
   },
   "embed:set-active": {
