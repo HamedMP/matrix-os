@@ -11,6 +11,7 @@ COPY package.json pnpm-lock.yaml ./
 RUN corepack pnpm@10.33.4 install --prod --ignore-scripts --frozen-lockfile --config.enableGlobalVirtualStore=false
 COPY dist ./dist
 COPY dist-server ./dist-server
+COPY matrix-drive-mcp.mjs ./matrix-drive-mcp.mjs
 COPY skills ./skills
 COPY LICENSE NOTICE ./
 COPY third_party ./third_party

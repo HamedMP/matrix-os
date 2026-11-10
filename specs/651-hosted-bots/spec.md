@@ -73,6 +73,21 @@ The hosted Bots view follows the effective Matrix Electron Desktop theme, includ
 
 Connected Apps and custom MCP use upstream configuration on the preview. The app catalog can render before a self-hosted Connected Apps project key is configured. Validate a connector with an approved account and a successful, scoped tool call. A separate custom MCP check can use a disposable tool that returns a synthetic value and requires no third-party account.
 
+### Matrix-managed Google Drive in Private Preview
+
+Offer one read-only tool that asks to read a single Google Drive file ID through Matrix's existing Pipedream connection. Only an eligible owner-only Private Preview with the opted-in OSS bundle can offer the tool. Use Platform's existing Private Preview personal integration checks and immutable account binding. No change to the shared Preview Chat Drive contract is required.
+
+| Boundary | Authority and behavior |
+| --- | --- |
+| OSS tool request | The isolated workload sends a validated file ID over the private broker socket. The Gateway issues a fresh request ID. The workload supplies no credentials, account, owner, or authority to execute. |
+| Matrix review | The exact Preview owner sees the requested file ID and chooses a connected account in Matrix Electron. An explicit approval applies to that request only. Rejection or expiry before dispatch must prevent any provider call. |
+| Provider call | The Gateway uses the existing Matrix integration client with its signed owner delegation, fixed `google_drive.read_file` action, and the selected immutable connection ID. Recheck the account at execution and return only a bounded text result to the waiting request. |
+| Revocation | Cancel the pending request or abort the in-progress read and suppress its result. A completed read has consumed its approval. A later request always needs a fresh approval. |
+
+The socket exposes only `POST /read` with `{fileId}` and returns at most 24 KiB of document text. The owner reviews requests through `GET /api/hosted-bots/drive`, approves or rejects via `POST /api/hosted-bots/drive/:requestId/decision`, and cancels via `DELETE /api/hosted-bots/drive/:requestId`. Pending requests expire after 90 seconds and do not survive a Gateway restart. A read-only mount exposes the socket to the workload. The Matrix UI fetches the account list only when the owner opens the review. There is no standing Bot grant. Revocation can prevent delivery of a result but cannot undo a provider request already dispatched.
+
+Acceptance uses a synthetic text file or a public sample document and a connected account. Verify exact file and account selection, successful receipt of the expected text in Pebble, no call after rejection, no result after cancellation, and no reuse of the earlier approval. Test wrong-owner, replay, timeout, unavailable integration, and refusal before any provider request. The Matrix shell review is required even when the upstream tool approval mode permits the call.
+
 ### Preview event delivery and tool approval
 
 The owner-scoped `GET /api/hosted-bots/runtime/api/events` bridge relays the upstream SSE cursor in `?since=` and accepts a validated `Last-Event-ID` for reconnection. Only a successful SSE response on that path disables nginx buffering and transformation. The Gateway requests identity encoding and ends a preview stream cleanly within 24 seconds of admission, leaving time for the deployed shared Platform's 30-second response budget. The client reconnects with its last cursor. The Electron and Platform header deadlines remain bounded and release after headers on this exact stream. Non-stream requests retain their existing timeouts.

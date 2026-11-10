@@ -4,6 +4,7 @@ import { createContext, useContext, useEffect, useMemo, useState } from "react";
 import { AppError } from "../../../../shared/app-error";
 import { useConnection } from "../../stores/connection";
 import EmbedHost from "../embeds/EmbedHost";
+import { HostedBotsDriveApproval } from "./HostedBotsDriveApproval";
 
 export function useDesktopHostedBotsCapability() {
   const api = useConnection((state) => state.api);
@@ -60,7 +61,12 @@ export function DesktopBotsWorkspace(props: {
   visualScale?: number;
 }) {
   const capability = useContext(desktopHostedBots);
-  if (capability?.mode === "oss") return <EmbedHost key={capability.scope} kind="hosted-bots" {...props} />;
+  if (capability?.mode === "oss") return (
+    <div key={capability.scope} className="flex min-h-0 flex-1 flex-col">
+      {props.visible && props.active && capability.transport ? <HostedBotsDriveApproval transport={capability.transport} /> : null}
+      <EmbedHost kind="hosted-bots" {...props} />
+    </div>
+  );
   if (capability?.mode === "matrix") return <BotsWorkspace key={capability.scope} transport={capability.transport} active={props.active} />;
   return <p className="m-auto p-6 text-sm" role="status">Bots is unavailable on this Computer.</p>;
 }

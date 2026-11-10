@@ -12,6 +12,7 @@ describe("OpenMausBot Private Preview workload", () => {
       'import { existsSync, realpathSync, rmSync } from "node:fs";',
       'import { basename, join } from "node:path";',
       'if (HOSTED_WORKSPACE) setDefaultApprovalMode("ask");',
+      '        const custom = await mcpServersHost.prepare(bot).then(() => teamConnections.turnMcp(bot, threadId, dispatchClaimId));',
       'const TUNNEL_SOCKET = process.env.OMB_TUNNEL_SOCKET?.trim() || null;',
       '    console.log(`openmausbot tunnel listener on ${TUNNEL_SOCKET}`);',
       '  });',
@@ -20,6 +21,9 @@ describe("OpenMausBot Private Preview workload", () => {
     ].join("\n");
     const patched = patchPrivateHost(sample);
     expect(patched).toContain('if (HOSTED_WORKSPACE || process.env.OMB_MATRIX_PAIR_SOCKET) setDefaultApprovalMode("ask");');
+    expect(patched).toContain('process.env.OMB_MATRIX_DRIVE_MCP === "1" && personLine');
+    expect(patched).toContain('opts?.trigger?.kind === "user"');
+    expect(patched).toContain('args: ["/opt/openmausbot/matrix-drive-mcp.mjs"], env: {}');
     expect(patched).toContain('req.method !== "POST" || req.url !== "/pairing"');
     expect(patched).toContain('chmodSync(pairSocket, 0o600)');
     expect(patched).toContain("matrixTimingSafeEqual(expectedProof, Buffer.from(presented[1]!))");

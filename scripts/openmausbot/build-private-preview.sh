@@ -33,6 +33,7 @@ package="$work/source/release/npm"
 test ! -e "$package/enterprise" && test ! -e "$package/dist-server/enterprise"
 install -m 0644 "$work/source/NOTICE" "$package/NOTICE"
 install -m 0644 "$root/scripts/openmausbot/runtime-pnpm-lock.yaml" "$package/pnpm-lock.yaml"
+install -m 0644 "$root/scripts/openmausbot/matrix-drive-mcp.mjs" "$package/matrix-drive-mcp.mjs"
 cp -a "$work/source/third_party" "$package/third_party"
 cp -a "$work/source/dist-native/browser/linux-x64" "$package/browser-engine"
 docker build --platform linux/amd64 --tag "$image" --label "org.matrix-os.openmausbot.bundle-sha=$build_sha" \

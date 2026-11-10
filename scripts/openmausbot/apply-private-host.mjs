@@ -63,6 +63,16 @@ export function patchPrivateHost(source) {
     'import { basename, dirname, join } from "node:path";');
   patched = replacePinned(patched, 'if (HOSTED_WORKSPACE) setDefaultApprovalMode("ask");',
     'if (HOSTED_WORKSPACE || process.env.OMB_MATRIX_PAIR_SOCKET) setDefaultApprovalMode("ask");');
+  const customMcpAnchor = '        const custom = await mcpServersHost.prepare(bot).then(() => teamConnections.turnMcp(bot, threadId, dispatchClaimId));';
+  patched = replacePinned(patched, customMcpAnchor, `${customMcpAnchor}
+        // Mount for direct paired-user turns only. The Matrix broker still
+        // requires a fresh owner decision for every read, even if called directly.
+        if (process.env.OMB_MATRIX_DRIVE_MCP === "1" && personLine && !opts?.unattended
+          && !opts?.app && !userMessage.relayed && opts?.trigger?.kind === "user") {
+          custom["matrix-drive-preview"] = {
+            command: "/usr/local/bin/node", args: ["/opt/openmausbot/matrix-drive-mcp.mjs"], env: {},
+          };
+        }`);
   const tunnelAnchor = [
     '    console.log(`openmausbot tunnel listener on ${TUNNEL_SOCKET}`);',
     '  });',

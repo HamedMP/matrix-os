@@ -12,6 +12,7 @@ readonly chain=MATRIX-OMB-EGRESS
 readonly workload_uid=65532
 readonly state_dir=/var/lib/matrix-openmausbot
 readonly socket_dir=/run/matrix-openmausbot
+readonly drive_dir=/run/matrix-openmausbot-drive
 readonly pair_key="$state_dir/pairing-key"
 
 admit() {
@@ -38,6 +39,11 @@ if [[ "${1:-}" = "--admit" ]]; then
 fi
 
 admit
+if [[ "${1:-}" = "--prepare-drive" ]]; then
+  [[ ! -L "$drive_dir" ]]
+  install -d -o matrix -g matrix -m 0750 "$drive_dir"
+  exit
+fi
 if [[ "${1:-}" = "--pair" ]]; then
   proof="$(cat "$pair_key")"
   [[ "$proof" =~ ^[a-f0-9]{64}$ ]]
@@ -95,6 +101,8 @@ exec "$docker" run --rm --pull=never --name "$name" --network "$network" \
   --sysctl net.ipv6.conf.all.disable_ipv6=1 --sysctl net.ipv6.conf.default.disable_ipv6=1 \
   --mount "type=bind,src=$state_dir/data,dst=/data" \
   --mount "type=bind,src=$socket_dir,dst=/sockets" \
+  --mount "type=bind,src=$drive_dir,dst=/matrix-drive,readonly" \
   --env HOME=/data --env OMB_DATA_DIR=/data/workspace --env OMB_STATIC_DIR=/opt/openmausbot/dist \
   --env OMB_TUNNEL_SOCKET=/sockets/http.sock --env OMB_MATRIX_PAIR_SOCKET=/sockets/admin/pair.sock \
+  --env OMB_MATRIX_DRIVE_MCP=1 \
   --env OMB_LOOPBACK_TRUST=service "$image" < "$pair_key"
