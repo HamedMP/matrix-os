@@ -18,6 +18,7 @@ import { runPlatformStartupMigrations } from './database/run-migrations.js';
 import { parseStringArray } from './database/json.js';
 import { mapUserMachine, type UserMachineProvisioningClass } from './database/user-machine-records.js';
 import { z } from 'zod/v4';
+import type { SubstrateKind } from '@matrix-os/contracts';
 import type {
   BillingEntitlementSource,
   BillingEntitlementStatus,
@@ -1033,6 +1034,13 @@ export interface UserMachineRecord {
   activationState: 'awaiting_billing' | 'authorized';
   prebillingIntentId: string | null;
   activationAuthorizedAt: string | null;
+  substrate: SubstrateKind;
+  /** Bumped whenever the runtime's compute is replaced. */
+  generation: number;
+  substrateRef: string | null;
+  privateAddress: string | null;
+  lastActivityAt: string | null;
+  startedAt: string | null;
 }
 
 export type BillingCheckoutAttemptStatus = 'creating' | 'open' | 'paid' | 'expired' | 'abandoned';
@@ -1332,6 +1340,12 @@ export interface NewUserMachine {
   activationState?: 'awaiting_billing' | 'authorized';
   prebillingIntentId?: string | null;
   activationAuthorizedAt?: string | null;
+  substrate?: SubstrateKind;
+  generation?: number;
+  substrateRef?: string | null;
+  privateAddress?: string | null;
+  lastActivityAt?: string | null;
+  startedAt?: string | null;
 }
 
 export interface NewProviderDeletionQueueRecord {
