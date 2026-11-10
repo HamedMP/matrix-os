@@ -139,7 +139,8 @@ for review, pushing and reopening run core CI and Docker classification; retarge
 reruns core CI only. Labels never start or gate it. Keep a PR as a draft while it is still being
 reviewed to avoid CI on every intermediate push. Drafts and title or body edits publish no
 `CI Results` check at all, so the required check shows as expected rather than red; a draft
-cannot be merged. Reviewers must use the checks attached to the exact head SHA rather than an
+cannot be merged. A draft run skips every job before a runner is allocated, so draft pushes do
+not wait in or lengthen the hosted queue. Reviewers must use the checks attached to the exact head SHA rather than an
 earlier green commit.
 
 ## Delivery Lane Router
