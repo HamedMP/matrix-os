@@ -5,12 +5,8 @@ import { APP_GENERATE_CHANNEL, createAppGenerateClient, APP_AI_CHANNEL, APP_AI_R
 import { contextBridge, ipcRenderer } from "electron";
 import { NATIVE_APP_OPEN_CHANNEL, createNativeAppOpenClient } from "../shared/native-app-open";
 import { NATIVE_APP_OPEN_CHAT_CHANNEL, createNativeAppOpenChatClient } from "../shared/native-app-chat";
-import {
-  EVENT_CHANNELS,
-  INVOKE_CHANNELS,
-  type EventChannel,
-  type InvokeChannel,
-} from "../shared/ipc-contract";
+import { createOperatorBridge } from "../shared/operator-bridge";
+import { TERMINAL_WINDOW_ARG } from "../shared/terminal-window";
 import {
   NATIVE_APP_QUERY_CHANNEL,
   createNativeAppDatabase,
@@ -30,28 +26,12 @@ import { APP_CAPABILITY_CHANNEL, createNativeAppCapabilityClient } from "../shar
 
 const NATIVE_APP_BRIDGE_ARG = "--matrix-app-bridge";
 
-const api = {
-  invoke(channel: string, payload: unknown): Promise<unknown> {
-    const entry = INVOKE_CHANNELS[channel as InvokeChannel];
-    if (!entry) return Promise.reject(new Error("unknown channel"));
-    const parsed = entry.request.safeParse(payload ?? {});
-    if (!parsed.success) return Promise.reject(new Error("invalid request"));
-    return ipcRenderer.invoke(channel, parsed.data);
-  },
-
-  on(channel: string, callback: (payload: unknown) => void): () => void {
-    const schema = EVENT_CHANNELS[channel as EventChannel];
-    if (!schema) return () => undefined;
-    const listener = (_event: unknown, payload: unknown) => {
-      const parsed = schema.safeParse(payload);
-      if (parsed.success) callback(parsed.data);
-    };
-    ipcRenderer.on(channel, listener);
-    return () => {
-      ipcRenderer.removeListener(channel, listener);
-    };
-  },
-};
+// The Terminal window loads this same preload (a sandboxed preload is one
+// bundled entry) but is given only its allowlisted channels.
+const api = createOperatorBridge(
+  ipcRenderer,
+  process.argv.includes(TERMINAL_WINDOW_ARG) ? "terminal" : "main",
+);
 
 export type OperatorBridge = typeof api;
 

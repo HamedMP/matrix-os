@@ -43,6 +43,9 @@ function makeHarness(overrides: Partial<HandlerContext> = {}) {
     getUpdateSnapshot: vi.fn(() => ({ status: "disabled" })),
     installUpdate: vi.fn(() => false),
     toggleWindowMaximize: vi.fn(),
+    authorizeSender: vi.fn(() => true),
+    openTerminalWindow: vi.fn(async () => undefined),
+    focusMainWindow: vi.fn(),
     getWhatsNew: vi.fn(async () => ({ release: null, shouldOpen: false })),
     acknowledgeWhatsNew: vi.fn(async () => undefined),
     getAppVersion: vi.fn(() => "1.4.0-canary.2"),
@@ -1276,5 +1279,33 @@ describe("registerIpcHandlers", () => {
 
     await expect(harness.invoke("app:get-zoom", {})).resolves.toEqual({ factor: 1 });
     await expect(harness.invoke("app:set-zoom", { factor: 0.8 })).resolves.toEqual({ factor: 0.8 });
+  });
+});
+
+describe("registerIpcHandlers sender authorization", () => {
+  beforeEach(() => {
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+  });
+
+  it("rejects an unauthorized sender before validating or running the handler", async () => {
+    const authorizeSender = vi.fn((_event: unknown, channel: string) => channel !== "auth:sign-out");
+    const harness = makeHarness({ authorizeSender });
+    const event = { sender: {}, senderFrame: {} };
+
+    await expect(harness.invoke("auth:sign-out", {}, event)).rejects.toThrow("invalid request");
+    expect(harness.ctx.auth.signOut).not.toHaveBeenCalled();
+    expect(authorizeSender).toHaveBeenCalledWith(event, "auth:sign-out");
+  });
+
+  it("opens the Terminal window and focuses the main window through their channels", async () => {
+    const harness = makeHarness();
+    await expect(harness.invoke("terminal-window:open")).resolves.toEqual({ ok: true });
+    expect(harness.ctx.openTerminalWindow).toHaveBeenCalledTimes(1);
+    await expect(harness.invoke("terminal-window:focus-main")).resolves.toEqual({ ok: true });
+    expect(harness.ctx.focusMainWindow).toHaveBeenCalledTimes(1);
+  });
+
+  it("refuses to register without window services", () => {
+    expect(() => makeHarness({ authorizeSender: undefined as never })).toThrow("window services unavailable");
   });
 });
