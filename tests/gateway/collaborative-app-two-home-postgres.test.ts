@@ -62,6 +62,7 @@ describe("collaborative app owner/member common Postgres data", () => {
     await shares.createAtomic({
       ownerId, organizationId, catalogId, readinessId,
       expectedResourceRevision: 0, expectedReadinessRevision: 2, expectedBuildId: build.buildId,
+      expectedBinding: null,
       clientRequestId: randomUUID(), payloadHash: "f".repeat(64), runtimeId: "runtime_owner",
     });
     authority = new CollaborationAuthority(new CollaborationRepository(fixture.db), {
