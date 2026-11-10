@@ -23,6 +23,8 @@ export function useComputerTerminals(platformHost: string | null, sessionKey: st
   const [terminals, setTerminals] = useState<Record<string, ComputerTerminalsState>>({});
   const [active, setActive] = useState<ActiveTerminal | null>(null);
   const [creating, setCreating] = useState<string | null>(null);
+  // The computer whose last "New terminal" did not take effect.
+  const [createFailed, setCreateFailed] = useState<string | null>(null);
   const generations = useRef<Record<string, number>>({});
   const boundSlot = useRef<string | null>(null);
 
@@ -32,11 +34,14 @@ export function useComputerTerminals(platformHost: string | null, sessionKey: st
   );
 
   useEffect(() => {
-    generations.current = {};
+    // Bump rather than reset: a listing still in flight for the previous
+    // session must never match a generation issued to the new one.
+    for (const slot of Object.keys(generations.current)) generations.current[slot] = (generations.current[slot] ?? 0) + 1;
     boundSlot.current = null;
     setTerminals({});
     setActive(null);
     setCreating(null);
+    setCreateFailed(null);
     resetAttachManager();
     return () => { resetAttachManager(); };
   }, [client, sessionKey]);
@@ -73,17 +78,23 @@ export function useComputerTerminals(platformHost: string | null, sessionKey: st
   const create = useCallback(async (slot: string) => {
     if (!client || creating) return;
     setCreating(slot);
+    setCreateFailed(null);
     try {
       const refKey = await createComputerTab(client.forRuntime(slot), "Terminal");
       await load(slot);
       open(slot, refKey);
     } catch (error: unknown) {
       console.warn("[terminal-window] tab create failed:", error instanceof Error ? error.name : "UnknownError");
-      setTerminals((current) => ({ ...current, [slot]: { status: "failed", reason: terminalsFailure(error) } }));
+      // The tabs already listed stay shown unless the computer now refuses the session.
+      if (terminalsFailure(error) === "reconnect") {
+        setTerminals((current) => ({ ...current, [slot]: { status: "failed", reason: "reconnect" } }));
+      } else {
+        setCreateFailed(slot);
+      }
     } finally {
       setCreating(null);
     }
   }, [client, creating, load, open]);
 
-  return { terminals, active, creating, load, open, create };
+  return { terminals, active, creating, createFailed, load, open, create };
 }

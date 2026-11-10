@@ -43,8 +43,10 @@ function MachineLabel({ icon, label, detail, dotColor }: {
   );
 }
 
-function ComputerTabs({ computer, state, active, creating, onOpen, onCreate, onRetry }: {
-  computer: MatrixComputer; state: ComputerTerminalsState | undefined; active: ActiveTerminal | null; creating: boolean;
+function ComputerTabs({ computer, state, active, creating, busy, createFailed, onOpen, onCreate, onRetry }: {
+  computer: MatrixComputer; state: ComputerTerminalsState | undefined; active: ActiveTerminal | null;
+  /** This computer is starting a terminal; `busy` is true while any computer is. */
+  creating: boolean; busy: boolean; createFailed: boolean;
   onOpen(refKey: string): void; onCreate(): void; onRetry(): void;
 }) {
   if (!state || state.status === "loading") {
@@ -80,8 +82,9 @@ function ComputerTabs({ computer, state, active, creating, onOpen, onCreate, onR
             </li>
           );
         })}
+      {createFailed ? <li role="alert" className="px-2 py-1 text-[12px]">Couldn't start a terminal. Try again.</li> : null}
       <li>
-        <button type="button" disabled={creating} onClick={onCreate}
+        <button type="button" disabled={busy} onClick={onCreate}
           className="flex w-full items-center gap-2 rounded-md px-2 py-1 text-left text-[12px] outline-none hover:bg-black/5 focus-visible:ring-2 focus-visible:ring-current disabled:opacity-50"
           style={secondaryText}>
           <Plus size={12} aria-hidden="true" className="shrink-0" />
@@ -115,13 +118,18 @@ function MatrixSection({ state, onRetry, onSignIn }: {
   );
 }
 
+const EMPTY_SLOTS: Record<string, boolean> = {};
+
 export default function TerminalWindowApp() {
   const loadAppearance = useAppearance((state) => state.load);
   const { state, retry } = useTerminalMachines();
   const ready = state.status === "ready" ? state : null;
-  const { terminals, active, creating, load, open, create } = useComputerTerminals(ready?.platformHost ?? null, ready?.sessionKey ?? "");
-  // Collapse state is a per-window layout preference, keyed by inventory slot.
-  const [expanded, setExpanded] = useState<Record<string, boolean>>({});
+  const sessionKey = ready?.sessionKey ?? "";
+  const { terminals, active, creating, createFailed, load, open, create } = useComputerTerminals(ready?.platformHost ?? null, sessionKey);
+  // Which computers are open, for one signed-in session: a new session starts
+  // collapsed, because its listings are fetched only when a computer is opened.
+  const [expansion, setExpansion] = useState<{ sessionKey: string; slots: Record<string, boolean> }>({ sessionKey, slots: {} });
+  const expanded = expansion.sessionKey === sessionKey ? expansion.slots : EMPTY_SLOTS;
 
   useEffect(() => { void loadAppearance(); }, [loadAppearance]);
   useEffect(() => { document.title = "Terminal"; }, []);
@@ -133,7 +141,7 @@ export default function TerminalWindowApp() {
   };
   const toggle = (slot: string) => {
     const next = !expanded[slot];
-    setExpanded((current) => ({ ...current, [slot]: next }));
+    setExpansion({ sessionKey, slots: { ...expanded, [slot]: next } });
     // Credentials and listings are fetched only for computers the user opens.
     if (next) void load(slot);
   };
@@ -175,6 +183,7 @@ export default function TerminalWindowApp() {
                   </button>
                   {isOpen ? (
                     <ComputerTabs computer={computer} state={terminals[slot]} active={active} creating={creating === slot}
+                      busy={creating !== null} createFailed={createFailed === slot}
                       onOpen={(refKey) => open(slot, refKey)} onCreate={() => { void create(slot); }} onRetry={() => { void load(slot); }} />
                   ) : null}
                 </li>

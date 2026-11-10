@@ -32,7 +32,6 @@ function installOperator() {
     invoke: vi.fn(async (channel: string) => {
       if (channel === "auth:status") return { signedIn: true, handle: "neo", userId: "user_1", platformHost: HOST, runtimeSlot: "primary", authGeneration: 3 };
       if (channel === "runtime:list-computers") return computers;
-      if (channel === "state:get") return { value: null };
       if (channel === "app:get-zoom") return { factor: 1 };
       return { ok: true };
     }),
@@ -101,6 +100,19 @@ describe("Terminal window computers", () => {
     expect(requests()).toContain(`POST ${HOST}/api/terminal/workspaces/${WS}/tabs`);
     const createCall = fetchMock.mock.calls.find(([url, init]) => String(url).endsWith("/tabs") && (init as RequestInit).method === "POST")!;
     expect(JSON.parse(String((createCall[1] as RequestInit).body))).toEqual({ name: "Terminal", cwd: "" });
+  });
+
+  it("keeps a computer's listed terminals when starting another one fails", async () => {
+    fetchMock.mockImplementation(async (url: string, init?: RequestInit) => (init?.method === "POST"
+      ? json({ error: "unavailable" }, 503)
+      : json(workspace([{ id: TAB_1, name: "build" }]))));
+    render(<TerminalWindowApp />);
+    fireEvent.click(await screen.findByRole("button", { name: /Main Computer/ }));
+    await screen.findByRole("button", { name: /build/ });
+    fireEvent.click(screen.getByRole("button", { name: "New terminal" }));
+    expect(await screen.findByText("Couldn't start a terminal. Try again.")).toBeTruthy();
+    expect(screen.getByRole("button", { name: /build/ })).toBeTruthy();
+    expect(screen.queryByText("Couldn't reach this computer.")).toBeNull();
   });
 
   it("scopes a refused credential to its computer and recovers on reconnect", async () => {

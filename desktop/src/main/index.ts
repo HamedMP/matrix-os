@@ -89,7 +89,7 @@ import { configureDesktopIdentity } from "./desktop-identity";
 import { createSenderPolicy, senderRole } from "./ipc/sender-policy";
 import { createTerminalWindowController } from "./terminal-window/controller";
 import { createTerminalBrowserWindow } from "./terminal-window/window";
-import { createComputerCredentialBroker, type ComputerCredentialBroker } from "./terminal-window/credential-broker";
+import { createComputerCredentialBroker } from "./terminal-window/credential-broker";
 import { installTerminalWindowAuth } from "./terminal-window/gateway-auth";
 import {
   TERMINAL_WINDOW_EVENT_CHANNELS,
@@ -127,7 +127,7 @@ const bindPreviewStartupAcknowledgement = createPreviewStartupAcknowledgement(pr
 let mainWindow: BrowserWindow | null = null;
 let terminalWindows: ReturnType<typeof createTerminalWindowController<BrowserWindow>> | null = null;
 const terminalWindowEvents = new Set<string>(TERMINAL_WINDOW_EVENT_CHANNELS);
-let computerCredentials: ComputerCredentialBroker | null = null;
+let computerCredentials: { clear(): void } | null = null;
 let reopenPreviewWindow: (() => Promise<void>) | undefined;
 let navigationCache: ReturnType<typeof createNavigationCache> | null = null;
 let chatgptPlan: ReturnType<typeof createNativeChatgptPlanService> | null = null;
@@ -409,8 +409,9 @@ if (!gotLock) {
       // attached there by target computer, never the selected-computer token.
       const terminalSession = session.fromPartition(TERMINAL_WINDOW_PARTITION);
       const terminalCredentials = createComputerCredentialBroker({ auth });
-      computerCredentials = terminalCredentials;
-      installTerminalWindowAuth(terminalSession, { broker: terminalCredentials, getGatewayOrigin: () => auth.getGatewayOrigin() });
+      const terminalAuth = installTerminalWindowAuth(terminalSession, { broker: terminalCredentials, getGatewayOrigin: () => auth.getGatewayOrigin() });
+      // Signing out forgets the minted bearers and the record of which was last sent.
+      computerCredentials = { clear: () => { terminalCredentials.clear(); terminalAuth.clear(); } };
       installGatewayCors(terminalSession, () => auth.getGatewayOrigin(), rendererOrigin);
 
       nativeAppChatNavigation = createNativeAppChatNavigationBroker({

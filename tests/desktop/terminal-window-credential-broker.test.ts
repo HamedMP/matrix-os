@@ -132,11 +132,57 @@ describe("computer credential broker", () => {
     expect(auth.issueRuntimeToken).toHaveBeenCalledTimes(3);
   });
 
-  it("never holds more than the inventory cap", async () => {
+  it("reaches only the first 20 computers of an oversized inventory", async () => {
     const slots = Array.from({ length: 25 }, (_, index) => `slot-${index}`);
-    const { broker } = setup({ slots: ["primary", ...slots] });
+    const { auth, broker } = setup({ slots: ["primary", ...slots] });
     for (const slot of slots) await broker.token(slot);
-    expect(broker.size()).toBeLessThanOrEqual(20);
+    // "primary" uses the app's own bearer, so 19 of the first 20 are minted.
+    expect(broker.size()).toBe(19);
+    expect(auth.issueRuntimeToken).toHaveBeenCalledTimes(19);
+    await expect(broker.credential("slot-24")).resolves.toEqual({ token: null, reason: "denied" });
+  });
+
+  it("says whether a missing bearer means no access or try again", async () => {
+    const { auth, broker, signOut } = setup();
+    await expect(broker.credential("not-mine")).resolves.toEqual({ token: null, reason: "denied" });
+    await expect(broker.credential("../x")).resolves.toEqual({ token: null, reason: "denied" });
+    auth.issueRuntimeToken.mockRejectedValueOnce(new Error("platform down"));
+    await expect(broker.credential("review")).resolves.toEqual({ token: null, reason: "unavailable" });
+    // Still backing off: unavailable, without another mint.
+    await expect(broker.credential("review")).resolves.toEqual({ token: null, reason: "unavailable" });
+    expect(auth.issueRuntimeToken).toHaveBeenCalledTimes(1);
+    signOut();
+    await expect(broker.credential("review")).resolves.toEqual({ token: null, reason: "denied" });
+  });
+
+  it("reports an unreachable inventory as try again, not as no access", async () => {
+    const { auth, broker } = setup();
+    auth.listRuntimeComputers.mockRejectedValueOnce(new Error("offline"));
+    await expect(broker.credential("review")).resolves.toEqual({ token: null, reason: "unavailable" });
+  });
+
+  it("never sends the newly selected computer's bearer for the previously selected one", async () => {
+    // The app switches computer while the inventory is loading: its own
+    // bearer now belongs to "review", so a request for "primary" must mint.
+    let selected = "primary";
+    let generation = 1;
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    const auth = {
+      getStatus: vi.fn(() => ({ signedIn: true, authGeneration: generation, runtimeSlot: selected })),
+      getToken: vi.fn(() => `own-token-for-${selected}`),
+      issueRuntimeToken: vi.fn(async (slot: string) => ({ accessToken: `minted-${slot}`, expiresAt: Date.now() + HOUR, handle: slot })),
+      listRuntimeComputers: vi.fn(async () => { await gate; return { items: [{ runtimeSlot: "primary" }, { runtimeSlot: "review" }] }; }),
+    };
+    const broker = createComputerCredentialBroker({ auth });
+    const pending = broker.credential("primary");
+    selected = "review";
+    generation = 2;
+    release();
+    const found = await pending;
+    expect(found.token).not.toBe("own-token-for-review");
+    await expect(broker.credential("primary")).resolves.toEqual({ token: "minted-primary" });
+    await expect(broker.credential("review")).resolves.toEqual({ token: "own-token-for-review" });
   });
 
   it("refreshes a stale inventory so a newly added computer becomes reachable", async () => {

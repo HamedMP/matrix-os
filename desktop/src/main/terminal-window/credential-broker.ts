@@ -1,8 +1,8 @@
 // Holds at most one computer-scoped access token per computer in the owner's
 // inventory, for the Terminal window only (spec 651 FR-003/FR-005). Tokens are
 // minted lazily, live in memory only, and never reach a renderer.
-const SLOT = /^[a-z0-9][a-z0-9-]{0,63}$/;
-const MAX_TOKENS = 20;
+import { RUNTIME_SLOT_PATTERN as SLOT, TERMINAL_WINDOW_MAX_COMPUTERS as MAX_TOKENS } from "../../shared/terminal-window";
+
 const EXPIRY_SKEW_MS = 60_000;
 const INVENTORY_TTL_MS = 60_000;
 const BACKOFF_BASE_MS = 1_000;
@@ -23,6 +23,15 @@ export interface ComputerCredentialBrokerOptions {
 
 interface Entry { token: string; expiresAt: number }
 interface Failure { count: number; retryAt: number }
+
+/**
+ * "denied": this session may not reach that computer (signed out, or not in
+ * the owner's inventory). "unavailable": it may, but no bearer can be had
+ * right now (platform unreachable, mint failed, backing off).
+ */
+export type ComputerCredential = { token: string } | { token: null; reason: "denied" | "unavailable" };
+const DENIED: ComputerCredential = { token: null, reason: "denied" };
+const UNAVAILABLE: ComputerCredential = { token: null, reason: "unavailable" };
 
 export type ComputerCredentialBroker = ReturnType<typeof createComputerCredentialBroker>;
 
@@ -106,21 +115,34 @@ export function createComputerCredentialBroker(options: ComputerCredentialBroker
     return request;
   }
 
+  /** The bearer for one of the owner's computers, or why there is none (fail closed). */
+  async function credential(slot: string): Promise<ComputerCredential> {
+    if (!SLOT.test(slot)) return DENIED;
+    if (!syncSession().signedIn) return DENIED;
+    const slots = await loadInventory();
+    // Read again after the wait: the app may have signed out or selected
+    // another computer meanwhile, and the app's own bearer follows that
+    // selection. Comparing against an older selection would attach the newly
+    // selected computer's bearer to a request for the previous one.
+    const status = syncSession();
+    if (!status.signedIn) return DENIED;
+    if (!slots) return UNAVAILABLE;
+    if (!slots.has(slot)) return DENIED;
+    const found = (token: string | null): ComputerCredential => (token ? { token } : UNAVAILABLE);
+    if (slot === status.runtimeSlot) return found(options.auth.getToken());
+    const cached = tokens.get(slot);
+    if (cached && cached.expiresAt - EXPIRY_SKEW_MS > now()) return { token: cached.token };
+    tokens.delete(slot);
+    const failure = failures.get(slot);
+    if (failure && failure.retryAt > now()) return UNAVAILABLE;
+    return found(await (pending.get(slot) ?? mint(slot)));
+  }
+
   return {
-    /** The bearer for one of the owner's computers, or null (fail closed). */
+    credential,
+
     async token(slot: string): Promise<string | null> {
-      if (!SLOT.test(slot)) return null;
-      const status = syncSession();
-      if (!status.signedIn) return null;
-      const slots = await loadInventory();
-      if (!slots?.has(slot) || !syncSession().signedIn) return null;
-      if (slot === status.runtimeSlot) return options.auth.getToken();
-      const cached = tokens.get(slot);
-      if (cached && cached.expiresAt - EXPIRY_SKEW_MS > now()) return cached.token;
-      tokens.delete(slot);
-      const failure = failures.get(slot);
-      if (failure && failure.retryAt > now()) return null;
-      return pending.get(slot) ?? mint(slot);
+      return (await credential(slot)).token;
     },
 
     /** A gateway answered 401 for this token: drop it; a second refusal backs off. */

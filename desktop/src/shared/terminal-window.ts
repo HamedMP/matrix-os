@@ -12,6 +12,11 @@ export const TERMINAL_WINDOW_QUERY_VALUE = "terminal";
 // here, so the window holds no gateway credential until it is given one.
 export const TERMINAL_WINDOW_PARTITION = "persist:terminal-window";
 
+/** A computer in the owner's inventory, as the platform names it. */
+export const RUNTIME_SLOT_PATTERN = /^[a-z0-9][a-z0-9-]{0,63}$/;
+/** The platform lists at most this many computers per owner. */
+export const TERMINAL_WINDOW_MAX_COMPUTERS = 20;
+
 const Empty = z.object({}).strict();
 const Ok = z.object({ ok: z.boolean() }).strict();
 

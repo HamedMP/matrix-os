@@ -38,7 +38,8 @@ describe("IPC sender policy", () => {
     // Written out here on purpose: widening the window's surface must be a
     // reviewed change to this list, not a silent edit to the allowlist.
     const expected = [
-      "app:get-version", "app:get-zoom", "app:set-zoom", "auth:status", "runtime:list-computers", "terminal-window:focus-main",
+      "app:get-version", "app:get-zoom", "app:set-zoom", "auth:status", "runtime:list-computers",
+      "terminal:read-clipboard-files", "terminal-window:focus-main",
     ].sort();
     const { terminal, authorize, from } = setup();
     expect(allChannels.filter((channel) => authorize(from(terminal), channel)).sort()).toEqual(expected);
