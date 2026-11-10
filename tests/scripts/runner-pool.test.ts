@@ -184,9 +184,14 @@ describe("runner pool", () => {
     expect(example).toMatch(/^INSTALLATION_ID=$/m);
   });
 
-  it("ships npm so pnpm/action-setup can bootstrap before setup-node", () => {
-    expect(dockerfile).toMatch(/^\s+nodejs npm \\$/m);
-    expect(dockerfile).toContain("npm --version");
+  it("ships a checksum-pinned Node the repository supports, so pnpm/action-setup can bootstrap", () => {
+    // pnpm's installer fails on Ubuntu's Node 18; the image must not fall back to the distro package.
+    const major = Number(/^ARG NODE_VERSION=(\d+)\./m.exec(dockerfile)?.[1]);
+    const engine = Number(/>=(\d+)/.exec(JSON.parse(readFileSync(resolve(import.meta.dirname, "../../package.json"), "utf8")).engines.node)?.[1]);
+    expect(major).toBeGreaterThanOrEqual(engine);
+    expect(dockerfile).toMatch(/^ARG NODE_SHA256=[a-f0-9]{64}$/m);
+    expect(dockerfile).toContain('echo "${NODE_SHA256}  /tmp/node.tar.xz" | sha256sum -c -');
+    expect(dockerfile).not.toMatch(/^\s+nodejs npm \\$/m);
   });
 
   it("pins the runner base image by digest", () => {
