@@ -24,9 +24,17 @@ interface WalletRow {
   settled_microusd: string; frozen: boolean; attempt_count: number;
 }
 /** Explicit operator action only. Exact configuration replay cannot refill or reset a wallet. */
-export async function initializeOperatorProbeBudget(db: Kysely<OperatorProbeDatabase>, raw: OperatorProbeBudgetConfig): Promise<void> {
+export async function initializeOperatorProbeBudget(db: Kysely<OperatorProbeDatabase>, raw: OperatorProbeBudgetConfig,
+  options: { dedicatedAuthority?: boolean } = {}): Promise<void> {
   const config = OperatorProbeBudgetConfigSchema.parse(raw), configHash = hash(config);
   await db.transaction().execute(async tx => {
+    if (options.dedicatedAuthority) {
+      // Serialize even different IDs on an empty dedicated store. Never open a second exposure
+      // because two operators supplied different budget names during bootstrap.
+      await sql`LOCK TABLE operator_probe_wallets IN SHARE ROW EXCLUSIVE MODE`.execute(tx);
+      const other = await sql`SELECT 1 FROM operator_probe_wallets WHERE budget_id <> ${config.budgetId} LIMIT 1`.execute(tx);
+      if (other.rows.length) throw new OperatorProbeBudgetError('conflict');
+    }
     await sql`INSERT INTO operator_probe_wallets (budget_id, config, config_hash)
       VALUES (${config.budgetId}, ${JSON.stringify(config)}::jsonb, ${configHash}) ON CONFLICT (budget_id) DO NOTHING`.execute(tx);
     const row = await sql<{ config_hash: string }>`SELECT config_hash FROM operator_probe_wallets

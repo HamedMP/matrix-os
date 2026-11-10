@@ -39,7 +39,7 @@ describe('operator-only bounded authority', () => {
       const result = await app.request(`${base}/begin`, { method: 'POST', headers: { authorization: `Bearer ${token}` }, body: wire(beginInput()) });
       expect(result.status).toBe(503); expect(await result.text()).not.toContain('secret');
       expect((await app.request(`${base}/status`, { headers: { authorization: `Bearer ${token}` } })).status).toBe(200);
-      expect(log).toHaveBeenCalledWith('[operator-probe-budget] Authority request failed', error);
+      expect(log.mock.calls).toEqual([['[operator-probe-budget] Authority request failed']]);
     } finally { log.mockRestore(); }
   });
   it('bounds and strictly validates both monetary callbacks and lookup before invoking the store', async () => {

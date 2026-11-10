@@ -23,6 +23,7 @@ export type ProfilesFile = z.infer<typeof ProfilesFileSchema>;
 export interface LoadProfilesOptions {
   configDir?: string;
   migrateLegacyFiles?: boolean;
+  readOnly?: boolean;
 }
 
 function profileNameConflictError(): Error & { code: string } {
@@ -93,6 +94,7 @@ export async function loadProfiles(
       "code" in err &&
       (err as NodeJS.ErrnoException).code === "ENOENT"
     ) {
+      if (options.readOnly) throw Object.assign(new Error("profile_not_found"), { code: "profile_not_found" });
       profiles = defaultProfiles();
       await mkdir(configDir, { recursive: true, mode: 0o700 });
       await writeUtf8FileAtomic(profilesPath, JSON.stringify(profiles, null, 2), 0o600);
@@ -101,7 +103,7 @@ export async function loadProfiles(
     }
   }
 
-  if (options.migrateLegacyFiles !== false) {
+  if (!options.readOnly && options.migrateLegacyFiles !== false) {
     await migrateLegacyProfileFiles(configDir);
   }
   assertNoCaseCollidingProfileNames(profiles);

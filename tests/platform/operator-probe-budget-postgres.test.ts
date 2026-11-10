@@ -1,3 +1,5 @@
+import "./operator-probe-wallet-ops-integration.js";
+
 import "./operator-probe-protocol-integration.js";
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -37,6 +39,13 @@ describe.skipIf(!process.env.MATRIX_TEST_POSTGRES_URL)('lifetime operator wallet
     });
     return { ...service, port: address.port };
   }
+  it('refuses a second budget ID in a dedicated authority namespace, including simultaneous bootstrap', async () => {
+    const grants = await Promise.allSettled([
+      initializeOperatorProbeBudget(db, config, { dedicatedAuthority: true }),
+      initializeOperatorProbeBudget(fixture.connect(), { ...config, budgetId: 'second' }, { dedicatedAuthority: true }),
+    ]);
+    expect(grants.filter(result => result.status === 'fulfilled')).toHaveLength(1);
+  });
   it('fails closed without an explicitly initialized wallet and never seeds at startup', async () => {
     await expect(store().begin(beginInput())).rejects.toThrow(); expect(await store().getStatus()).toBeNull();
   });

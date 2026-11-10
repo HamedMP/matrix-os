@@ -1,6 +1,6 @@
 import { EventEmitter } from "node:events";
 import { createConnection, type Socket } from "node:net";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -103,8 +103,71 @@ describe("matrix port forward", () => {
   it("trims trailing gateway slashes in linear time", () => {
     expect(createForwardWebSocketUrl("https://gateway.example///")).toBe("wss://gateway.example/ws/forward");
     const started = performance.now();
-    expect(() => createForwardWebSocketUrl(`https://gateway.example/${"/".repeat(100_000)}x`)).not.toThrow();
+    expect(() => createForwardWebSocketUrl(`https://gateway.example/${"/".repeat(100_000)}x`)).toThrow();
     expect(performance.now() - started).toBeLessThan(1_000);
+  });
+
+  it("preserves explicit VM and slot routes, rejects ambiguous inputs before binding", async () => {
+    for (const path of ["/vm/dev", "/vm/dev/~runtime/slot-1"]) {
+      expect(createForwardWebSocketUrl("https://gateway.example" + path + "/")).toBe("wss://gateway.example" + path + "/ws/forward");
+    }
+    for (const base of ["https://gateway.example/vm/dev/../main", "https://gateway.example/vm/dev/%2e%2e",
+      "https://gateway.example/vm/dev//~runtime/slot", "https://gateway.example/vm/dev/~runtime/",
+      "https://user:secret@gateway.example", "https://gateway.example?token=secret", "https://gateway.example#",
+      "https://gateway.example/%2f", "https://gateway.example/unknown", "file:///vm/dev", "http://gateway.example",
+      "https://gateway.example\\vm/dev", "https://gateway.example/vm/de\ntached", "https://@gateway.example"]) {
+      expect(() => createForwardWebSocketUrl(base)).toThrowError(expect.objectContaining({ code: "invalid_forward_gateway" }));
+    }
+    await expect(startPortForward({ ...parseForwardSpec("3000"), localPort: 0, gatewayUrl: "https://gateway.example?token=secret", token: "secret" }))
+      .rejects.toThrowError(expect.objectContaining({ code: "invalid_forward_gateway" }));
+  });
+
+  it.each([
+    "/vm/ab",
+    "/vm/a-",
+    "/vm/" + "a".repeat(63),
+    "/vm/ab/~runtime/a",
+    "/vm/ab/~runtime/a-b",
+    "/vm/ab/~runtime/" + "a".repeat(32),
+  ])("accepts Platform route boundary %s", (path) => {
+    expect(createForwardWebSocketUrl("https://gateway.example" + path))
+      .toBe("wss://gateway.example" + path + "/ws/forward");
+  });
+
+  it.each([
+    "/vm/a",
+    "/vm/" + "a".repeat(64),
+    "/vm/-a",
+    "/vm/a_b",
+    "/vm/Ab",
+    "/vm/ab/~runtime/slot_1",
+    "/vm/ab/~runtime/Dev",
+    "/vm/ab/~runtime/-dev",
+    "/vm/ab/~runtime/dev-",
+    "/vm/ab/~runtime/" + "a".repeat(33),
+  ])("rejects unsupported Platform route %s before binding", async (path) => {
+    const onEvent = vi.fn();
+    const result = startPortForward({ ...parseForwardSpec("3000"), localPort: 0,
+      gatewayUrl: "https://gateway.example" + path, token: "synthetic", onEvent })
+      .then(async handle => { await handle.close(); return handle; });
+    await expect(result).rejects.toMatchObject({ code: "invalid_forward_gateway" });
+    expect(onEvent).not.toHaveBeenCalled();
+  });
+
+  it.each(["localhost", "LOCALHOST", "localhost.", "127.1", "2130706433"])(
+    "rejects plaintext nonliteral host %s before binding without DNS lookup", async (host) => {
+      const onEvent = vi.fn();
+      const result = startPortForward({ ...parseForwardSpec("3000"), localPort: 0,
+        gatewayUrl: "http://" + host + ":4000", token: "synthetic", onEvent })
+        .then(async handle => { await handle.close(); return handle; });
+      await expect(result).rejects.toMatchObject({ code: "invalid_forward_gateway" });
+      expect(onEvent).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each(["127.0.0.1", "[::1]"])("allows literal-loopback HTTP host %s", (host) => {
+    expect(createForwardWebSocketUrl("http://" + host + ":4000/vm/ab/~runtime/dev"))
+      .toBe("ws://" + host + ":4000/vm/ab/~runtime/dev/ws/forward");
   });
 
   it("uses profile auth and gateway resolution for the command", async () => {
@@ -163,6 +226,40 @@ describe("matrix port forward", () => {
     ]);
   });
 
+  it("keeps the active profile unchanged for an explicitly targeted Dev forward", async () => {
+    const root = await tempHome(); await writeProfiles(root);
+    const path = join(root, ".matrixos", "profiles.json");
+    const before = await readFile(path, "utf8");
+    const legacy = join(root, ".matrixos", "auth.json");
+    await writeFile(legacy, "legacy-main-auth", { flag: "wx" });
+    const gateway = "https://gateway.example/vm/owned/~runtime/dev";
+    const startForward = vi.fn().mockResolvedValue({ ...parseForwardSpec("3000"), ready: Promise.resolve(), closed: Promise.resolve() });
+    captureLogs();
+    await portCommand.subCommands!.forward.run!({ args: { spec: "3000", profile: "local", gateway, token: "synthetic", startForward } } as never);
+    expect(startForward).toHaveBeenCalledWith(expect.objectContaining({ gatewayUrl: gateway }));
+    expect(await readFile(path, "utf8")).toBe(before);
+    expect(await readFile(legacy, "utf8")).toBe("legacy-main-auth");
+  });
+
+  it("fails an explicit named target without creating default profiles on first use", async () => {
+    const root = await tempHome(); const { errors } = captureLogs(); const startForward = vi.fn();
+    await portCommand.subCommands!.forward.run!({ args: { spec: "3000", json: true, profile: "unregistered", startForward } } as never);
+    expect(JSON.parse(errors[0]!)).toMatchObject({ error: { code: "profile_not_found" } });
+    expect(startForward).not.toHaveBeenCalled();
+    await expect(readFile(join(root, ".matrixos", "profiles.json"))).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("refuses an ambiguous explicit gateway before emitting ready or echoing a query credential", async () => {
+    const root = await tempHome(); await writeProfiles(root);
+    const { errors, stdout } = captureLogs();
+    await portCommand.subCommands!.forward.run!({ args: { spec: "3000", profile: "local", json: true,
+      gateway: "https://gateway.example/vm/dev?token=private-synthetic", token: "synthetic" } } as never);
+    expect(process.exitCode).toBe(1);
+    expect(stdout).toEqual([]);
+    expect(JSON.parse(errors[0]!)).toMatchObject({ error: { code: "invalid_forward_gateway" } });
+    expect(errors.join("")).not.toContain("private-synthetic");
+  });
+
   it("emits safe JSON errors for invalid specs", async () => {
     const root = await tempHome();
     await writeProfiles(root);
@@ -214,7 +311,7 @@ describe("matrix port forward", () => {
 
     const events: string[] = [];
     const handle = await startPortForward({
-      gatewayUrl: "http://gateway",
+      gatewayUrl: "https://gateway",
       token: "bearer-token",
       localHost: "127.0.0.1",
       localPort: 0,
@@ -273,7 +370,7 @@ describe("matrix port forward", () => {
     }
 
     const options = {
-      gatewayUrl: "http://gateway",
+      gatewayUrl: "https://gateway",
       token: "tok",
       localHost: "127.0.0.1" as const,
       localPort: 0,
@@ -336,7 +433,7 @@ describe("matrix port forward", () => {
     }
 
     const handle = await startPortForward({
-      gatewayUrl: "http://gateway",
+      gatewayUrl: "https://gateway",
       token: "tok",
       localHost: "127.0.0.1",
       localPort: 0,

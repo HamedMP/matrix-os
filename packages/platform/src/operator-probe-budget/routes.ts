@@ -23,7 +23,7 @@ export function createOperatorProbeBudgetApp({ token, store, budgetId }: { token
   app.onError((error, c) => {
     if (error instanceof ZodError || error instanceof SyntaxError) return c.json({ error: 'Invalid request' }, 400);
     if (error instanceof OperatorProbeBudgetError) return c.json({ error: 'Request unavailable' }, error.reason === 'conflict' ? 409 : 503);
-    console.error('[operator-probe-budget] Authority request failed', error);
+    console.error('[operator-probe-budget] Authority request failed');
     return c.json({ error: 'Request unavailable' }, 503);
   });
   const limit = () => bodyLimit({ maxSize: 16 * 1024, onError: c => c.json({ error: 'Request too large' }, 413) });

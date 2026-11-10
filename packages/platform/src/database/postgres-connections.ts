@@ -1,11 +1,9 @@
 import pg from 'pg';
 import { observePostgresClientErrors, observePostgresPoolErrors } from '@matrix-os/observability/postgres';
 
-export function createPostgresPool(config: pg.PoolConfig, source: string): pg.Pool {
+export function createPostgresPool(config: pg.PoolConfig, source: string, reportError?: (error: Error) => void): pg.Pool {
   const pool = new pg.Pool(config);
-  observePostgresPoolErrors(pool, (error) => {
-    console.error(`[${source}] Postgres connection error:`, error);
-  });
+  observePostgresPoolErrors(pool, reportError ?? ((error) => console.error(`[${source}] Postgres connection error:`, error)));
   return pool;
 }
 
