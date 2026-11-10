@@ -59,7 +59,12 @@ function literalAction(value: unknown): Record<string, unknown> | null {
       if (!nested) return null;
       result[name] = nested;
     } else if (valueNode?.type === "ArrayExpression") {
-      result[name] = [{ value: "probe" }];
+      result[name] = Array.isArray(valueNode.elements) ? valueNode.elements.map((entry) => {
+        const item = node(entry);
+        if (item?.type === "ObjectExpression") return literalAction(item);
+        if (item?.type === "Literal") return item.value;
+        return null;
+      }) : [];
     } else if (name === "data" || name === "expectedPayload") {
       result[name] = { value: "probe" };
     } else {

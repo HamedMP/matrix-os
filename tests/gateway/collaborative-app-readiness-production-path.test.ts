@@ -296,7 +296,7 @@ describe("collaborative app production build resolution", () => {
       "await mkdir('dist/assets',{recursive:true});",
       "await writeFile('dist/index.html','<script type=\"module\" src=\"/assets/main.js\"></script>');",
       "await writeFile('dist/assets/main.js',\"import './shared.js';\");",
-      "await writeFile('dist/assets/shared.js',\"const shared=window.MatrixOS.collaboration;shared.query({action:'find',table:'tasks'});shared.mutate({action:'insert',table:'tasks',data:{title:'x'}},'0');shared.onChange(()=>{});\");",
+      "await writeFile('dist/assets/shared.js',\"const shared=window.MatrixOS.collaboration;shared.query({action:'find',table:'tasks'});shared.mutate({action:'bulkUpdate',table:'tasks',updates:[{id:'one',data:{done:true}}]},'0');shared.onChange(()=>{});\");",
     ].join(""));
     const resolver = new CollaborativeAppBuildResolver({
       homePath: root, ownerId: "user_owner",
