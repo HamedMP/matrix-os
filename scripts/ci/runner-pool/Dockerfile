@@ -31,6 +31,10 @@ RUN curl -fsSL --max-time 300 -o /tmp/node.tar.xz "https://nodejs.org/dist/v${NO
     && tar -xJf /tmp/node.tar.xz -C /usr/local --strip-components=1 --no-same-owner \
     && rm /tmp/node.tar.xz && node --version && npm --version
 
+# Each job gets a fresh volume at the work directory; Docker gives a new volume the ownership of
+# the image directory it covers.
+RUN mkdir -p /home/runner/_work && chown runner:runner /home/runner/_work
+
 # Plain COPY and chmod: the CI host's Docker has no BuildKit, which `COPY --chmod` needs.
 COPY --chown=root:root job-started.sh /opt/matrix-ci/job-started.sh
 RUN chmod 0555 /opt/matrix-ci/job-started.sh

@@ -90,7 +90,11 @@ describe("runner pool", () => {
     const dockerRun = log.split("\n").find((line) => line.startsWith("docker run"));
     expect(dockerRun).toContain("--rm --name matrix-ci-slot-1 --network matrix-ci-pool --cpuset-cpus 0-7 --memory 28g");
     expect(dockerRun).toContain("RUNNER_JIT=jit-config matrix-ci-runner:current");
-    for (const forbidden of ["--privileged", "docker.sock", "-v ", "--volume", "--network host"]) {
+    // Fresh per-job volumes for work and temp: ext4 like hosted runners, never a host path.
+    expect(dockerRun).toContain("--mount type=volume,dst=/home/runner/_work --mount type=volume,dst=/tmp");
+    expect(log).toContain("docker rm -f -v matrix-ci-slot-1");
+    expect(dockerfile).toContain("mkdir -p /home/runner/_work && chown runner:runner /home/runner/_work");
+    for (const forbidden of ["--privileged", "docker.sock", "-v ", "--volume", "--network host", "type=bind", "src=", "source="]) {
       expect(dockerRun).not.toContain(forbidden);
     }
     expect(dockerRun).toContain("--cap-drop NET_RAW --sysctl net.ipv6.conf.all.disable_ipv6=1");

@@ -42,7 +42,9 @@ Rerun `install.sh` after changing the image or `pool.sh`; it restarts the slots.
 ## Isolation
 
 Containers get no Docker socket, host mounts or privileged mode, and receive
-only a single-use JIT runner configuration. They run on the `matrix-ci-pool`
+only a single-use JIT runner configuration. Each job's work and temp
+directories are fresh anonymous volumes on the host's ext4 disk, deleted with
+the container. They run on the `matrix-ci-pool`
 network, whose firewall (`firewall.sh`, `matrix-ci-pool-firewall.service`)
 rejects new connections to the host and to private, link-local and multicast
 addresses; slots refuse to start without it. The App key and `pool.env` stay

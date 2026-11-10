@@ -82,19 +82,23 @@ remove_offline_runners() {
 # apply inside functions called from `if`, so every step checks its own result.
 run_one_job() {
   local slot=$1 name="matrix-ci-slot-$1" jit status=0
-  docker rm -f "$name" >/dev/null 2>&1 || true
+  docker rm -f -v "$name" >/dev/null 2>&1 || true
   refresh_token || return 1
   remove_offline_runners "$slot" || true
   jit=$(jit_config "$slot") && [ -n "$jit" ] || return 1
+  # The work and temp directories are fresh anonymous volumes, removed with the container: the
+  # container's own overlayfs root is slower and is not a filesystem the collaboration identity
+  # code accepts, while hosted runners give jobs ext4.
   # No privileged mode, host mounts or Docker socket. In-container sudo stays for apt, so
   # no-new-privileges is not set; NET_RAW is dropped so a job cannot spoof ARP at other slots.
   # The matrix-ci-pool network's firewall allows only public IPv4 egress (firewall.sh); IPv6 is off.
   timeout --kill-after=60 "$JOB_TIMEOUT_SECONDS" docker run --rm --name "$name" --network matrix-ci-pool \
     --cpuset-cpus "$(cpuset_for "$slot")" --memory "$SLOT_MEMORY" --memory-swap "$SLOT_MEMORY" \
     --pids-limit 8192 --shm-size 2g --cap-drop NET_RAW --sysctl net.ipv6.conf.all.disable_ipv6=1 \
+    --mount type=volume,dst=/home/runner/_work --mount type=volume,dst=/tmp \
     --env "RUNNER_JIT=$jit" \
     "$IMAGE" bash -c 'jit=$RUNNER_JIT; unset RUNNER_JIT; exec ./run.sh --jitconfig "$jit"' || status=$?
-  docker rm -f "$name" >/dev/null 2>&1 || true
+  docker rm -f -v "$name" >/dev/null 2>&1 || true
   # A failed job still exits the runner with 0; non-zero means Docker, timeout or runner setup failed.
   return "$status"
 }
