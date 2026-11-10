@@ -67,7 +67,9 @@ per container; scale to zero with no idle compute charge; EU region; private add
 from the platform; enforceable egress policy; API for create, start, stop, delete;
 a non-root process can create user namespaces, that is the provider does not block
 `unshare`, `clone`, `mount`, `umount2`, `pivot_root`, or `setns` (S2; verified by running
-`bwrap --unshare-all` in the probe image). Soft: cgroup delegation for per-workload limits,
+`bwrap --unshare-all` in the probe image). Soft: writable cgroup v2 delegation (memory, pids, cpu) for per-workload limits, without
+which the agent workload has no real memory or CPU cap; a writable `/proc` for the
+hardened sandbox variant;
 cold start time, price per active hour, persistent volume option, image size limits.
 Candidates to measure: Cloudflare Containers, Fly Machines, Cloud Run (the platform
 already runs there), and self-operated microVMs on Hetzner as the fallback.
