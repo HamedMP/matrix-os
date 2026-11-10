@@ -29,6 +29,15 @@ describe("collaborative app production build resolution", () => {
     const invalid = "const shared=window.MatrixOS.collaboration;const row=42;shared.mutate({action:'bulkInsert',table:'tasks',rows:[row]},'0')";
     expect(inspectBehaviorSource(invalid, AbortSignal.timeout(1000)).revisionedWrite).toBe(false);
   });
+
+  it("bounds expansion of nested row bindings before readiness can monopolize the gateway", () => {
+    const bindings = ["const r0={title:'New'}"];
+    for (let index = 1; index <= 13; index++) bindings.push(`const r${index}={data:[r${index - 1},r${index - 1}]}`);
+    const source = `const shared=window.MatrixOS.collaboration;${bindings.join(";")};shared.mutate({action:'bulkInsert',table:'tasks',rows:[r13]},'0')`;
+    expect(() => inspectBehaviorSource(source, AbortSignal.timeout(1000))).toThrow(/inspection limit exceeded/);
+    const cycle = "const shared=window.MatrixOS.collaboration;const row={data:[row]};shared.mutate({action:'bulkInsert',table:'tasks',rows:[row]},'0')";
+    expect(() => inspectBehaviorSource(cycle, AbortSignal.timeout(1000))).toThrow(/inspection limit exceeded/);
+  });
   let root: string;
   let appDir: string;
   let store: ImmutableCollaborativeBuildStore;
