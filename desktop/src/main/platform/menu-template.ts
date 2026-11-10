@@ -15,6 +15,8 @@ interface AppMenuTemplateOptions {
   reloadWindow?(): void;
   /** Opens or focuses the native Terminal window (macOS and Linux only). */
   openTerminalWindow?(): void;
+  /** Opens the licence texts of bundled third-party components, when this build ships any. */
+  openThirdPartyNotices?(): void;
 }
 
 export function createAppMenuTemplate({
@@ -28,6 +30,7 @@ export function createAppMenuTemplate({
   quitApp,
   reloadWindow,
   openTerminalWindow,
+  openThirdPartyNotices,
 }: AppMenuTemplateOptions): MenuItemConstructorOptions[] {
   const isMac = platform === "darwin";
   const primary = (keys: string) => `${isMac ? "Cmd" : "CmdOrCtrl"}+${keys}`;
@@ -173,6 +176,7 @@ export function createAppMenuTemplate({
           label: "Matrix OS Documentation",
           click: () => openExternal("https://matrix-os.com/docs"),
         },
+        ...(openThirdPartyNotices ? [{ label: "Third-Party Notices", click: () => openThirdPartyNotices() }] : []),
       ],
     },
   ];

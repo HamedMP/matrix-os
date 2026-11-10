@@ -1,5 +1,7 @@
 export interface HerdrCoreManifest {
   version: string;
+  license?: string;
+  source?: string;
   targets: Record<string, { url: string; sha256: string }>;
 }
 
@@ -11,4 +13,5 @@ export function fetchHerdrCore(input: {
   outDir: string;
   manifest?: HerdrCoreManifest;
   fetchImpl?: typeof fetch;
+  maxArchiveBytes?: number;
 }): Promise<string>;

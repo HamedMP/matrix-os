@@ -47,6 +47,12 @@ describe("local terminal runtime location", () => {
     expect(resolveLocalTerminalRuntime({ ...base, isPackaged: false, env: { MATRIX_DESKTOP_HC_PATH: "/opt/hc" }, exists: () => false }).binaryPath).toBe("/opt/hc");
     expect(resolveLocalTerminalRuntime({ ...base, isPackaged: false, env: { MATRIX_DESKTOP_HC_PATH: "hc", PATH: "/usr/bin" }, exists: () => false }).binaryPath).toBeNull();
   });
+  it("offers the bundled licence notices only when they ship inside the app", () => {
+    const shipped = resolveLocalTerminalRuntime({ ...base, isPackaged: true, env: {}, exists: () => true });
+    expect(shipped.noticesPath).toBe("/app/resources/herdr/NOTICES.txt");
+    const dev = resolveLocalTerminalRuntime({ ...base, isPackaged: false, env: { MATRIX_DESKTOP_HC_PATH: "/opt/hc" }, exists: () => false });
+    expect(dev.noticesPath).toBeNull();
+  });
   it("keeps sockets in a short per-profile directory and state under userData", () => {
     const runtime = resolveLocalTerminalRuntime({ ...base, isPackaged: true, env: {}, exists: () => true });
     expect(runtime.runtimeDir).toMatch(/^\/Users\/neo\/\.matrixos\/dt\/[0-9a-f]{8}$/);

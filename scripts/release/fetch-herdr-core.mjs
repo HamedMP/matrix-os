@@ -21,6 +21,7 @@ const MAX_ARCHIVE_BYTES = 64 * 1024 * 1024;
 const RELEASE_ORIGIN = "https://releases.herdr.dev";
 // What is taken from the archive, and the name it ships under.
 const PACKED_FILES = [["herdr-core", "hc"], ["LICENSE", "LICENSE"], ["THIRD-PARTY-NOTICES", "THIRD-PARTY-NOTICES"]];
+const NOTICE_FILE_LIMIT = 8 * 1024 * 1024;
 
 export async function readHerdrCoreManifest(path = join(ROOT, "desktop/herdr-core.json")) {
   const manifest = JSON.parse(await readFile(path, "utf8"));
@@ -43,23 +44,43 @@ export function herdrCoreTarget(manifest, platform, arch) {
   return entry;
 }
 
-async function download(url, fetchImpl) {
+async function download(url, fetchImpl, maxBytes) {
   // A fixed origin, no redirects, bounded time and size.
   const response = await fetchImpl(url, { redirect: "error", signal: AbortSignal.timeout(DOWNLOAD_TIMEOUT_MS) });
   if (!response.ok) throw new Error(`herdr-core download failed with status ${response.status}`);
-  const bytes = Buffer.from(await response.arrayBuffer());
-  if (bytes.length === 0 || bytes.length > MAX_ARCHIVE_BYTES) throw new Error("herdr-core archive has an unexpected size");
-  return bytes;
+  // Read in chunks and stop at the cap: a response that is too large is
+  // refused before it is held in memory, whatever its Content-Length says.
+  const declared = Number(response.headers.get("content-length"));
+  if (Number.isFinite(declared) && declared > maxBytes) {
+    await response.body?.cancel();
+    throw new Error("herdr-core archive is larger than expected");
+  }
+  if (!response.body) throw new Error("herdr-core download has no body");
+  const chunks = [];
+  let size = 0;
+  const reader = response.body.getReader();
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    size += value.byteLength;
+    if (size > maxBytes) {
+      await reader.cancel();
+      throw new Error("herdr-core archive is larger than expected");
+    }
+    chunks.push(value);
+  }
+  if (size === 0) throw new Error("herdr-core archive is empty");
+  return Buffer.concat(chunks, size);
 }
 
 /**
  * Downloads, verifies and unpacks one target into `outDir`. Returns the path
  * of the binary. `fetchImpl` is injectable for tests.
  */
-export async function fetchHerdrCore({ platform, arch, outDir, manifest, fetchImpl = fetch }) {
+export async function fetchHerdrCore({ platform, arch, outDir, manifest, fetchImpl = fetch, maxArchiveBytes = MAX_ARCHIVE_BYTES }) {
   const pinned = manifest ?? await readHerdrCoreManifest();
   const target = herdrCoreTarget(pinned, platform, arch);
-  const archive = await download(target.url, fetchImpl);
+  const archive = await download(target.url, fetchImpl, maxArchiveBytes);
   const found = createHash("sha256").update(archive).digest("hex");
   if (found !== target.sha256) {
     throw new Error(`herdr-core ${platform}-${arch} checksum mismatch: expected ${target.sha256}, got ${found}`);
@@ -81,6 +102,19 @@ export async function fetchHerdrCore({ platform, arch, outDir, manifest, fetchIm
     }
     await chmod(join(outDir, "hc"), 0o755);
     await writeFile(join(outDir, "VERSION"), `${pinned.version}\n`);
+    // One readable file for the app's Help > Third-Party Notices.
+    const texts = [];
+    for (const name of ["LICENSE", "THIRD-PARTY-NOTICES"]) {
+      const text = await readFile(join(outDir, name));
+      if (text.length > NOTICE_FILE_LIMIT) throw new Error(`herdr-core ${name} is larger than expected`);
+      texts.push(text.toString("utf8"));
+    }
+    await writeFile(join(outDir, "NOTICES.txt"), [
+      `Matrix OS includes herdr-core ${pinned.version} (${pinned.license ?? "see below"}), which runs local terminals.`,
+      `Source: ${pinned.source ?? "https://github.com/herdrdev/herdr-core"}`,
+      "", "==== herdr-core licence ====", "", texts[0],
+      "", "==== herdr-core third-party notices ====", "", texts[1],
+    ].join("\n"));
     return join(outDir, "hc");
   } finally {
     await rm(work, { recursive: true, force: true });

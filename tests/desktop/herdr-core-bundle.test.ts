@@ -67,6 +67,11 @@ describe("pinned herdr-core", () => {
     expect(readFileSync(join(outDir, "LICENSE"), "utf8")).toBe("Apache License");
     expect(readFileSync(join(outDir, "VERSION"), "utf8")).toBe("0.1.19\n");
     expect(existsSync(join(outDir, "Herdr Core.app"))).toBe(false);
+    // One readable file for Help > Third-Party Notices.
+    const notices = readFileSync(join(outDir, "NOTICES.txt"), "utf8");
+    expect(notices).toContain("Matrix OS includes herdr-core 0.1.19");
+    expect(notices).toContain("Apache License");
+    expect(notices).toContain("notices");
     const [url, init] = fetchImpl.mock.calls[0] as unknown as [string, RequestInit];
     expect(url).toBe("https://releases.herdr.dev/core/0.1.19/herdr-core-macos-aarch64.tar.gz");
     expect(init.redirect).toBe("error");
@@ -83,6 +88,26 @@ describe("pinned herdr-core", () => {
       .rejects.toThrow("status 404");
     await expect(fetchHerdrCore({ platform: "linux", arch: "riscv64", outDir, manifest: manifestFor("b".repeat(64)), fetchImpl: serving(bytes) }))
       .rejects.toThrow("no pinned herdr-core build");
+  });
+
+  it("stops reading a response that is larger than allowed, before holding it in memory", async () => {
+    const outDir = join(scratch, "out-big");
+    let pulled = 0;
+    let cancelled = false;
+    const endless = () => new Response(new ReadableStream<Uint8Array>({
+      pull(controller) { pulled += 1; controller.enqueue(new Uint8Array(1024)); },
+      cancel() { cancelled = true; },
+    }));
+    await expect(fetchHerdrCore({ platform: "darwin", arch: "arm64", outDir, manifest: manifestFor("b".repeat(64)),
+      fetchImpl: vi.fn(async () => endless()), maxArchiveBytes: 10 * 1024 })).rejects.toThrow("larger than expected");
+    expect(cancelled).toBe(true);
+    // It read just past the cap and no further.
+    expect(pulled).toBeLessThan(20);
+
+    const declared = vi.fn(async () => new Response(new Uint8Array(8), { headers: { "content-length": String(11 * 1024) } }));
+    await expect(fetchHerdrCore({ platform: "darwin", arch: "arm64", outDir, manifest: manifestFor("b".repeat(64)),
+      fetchImpl: declared, maxArchiveBytes: 10 * 1024 })).rejects.toThrow("larger than expected");
+    expect(existsSync(join(outDir, "hc"))).toBe(false);
   });
 
   it("is fetched before packaging and packed where the app looks for it, on macOS and Linux only", () => {
@@ -102,6 +127,7 @@ describe("pinned herdr-core", () => {
       expect(workflow.indexOf(fetchStep)).toBeLessThan(workflow.indexOf(packageStep));
     }
     expect(workflow).toContain('hc_path="$app_path/Contents/Resources/herdr/hc"');
+    expect(workflow).toContain('"$app_path/Contents/Resources/herdr/NOTICES.txt"');
     expect(workflow).toContain("desktop/dist/linux-unpacked/resources/herdr/hc --version");
   });
 });

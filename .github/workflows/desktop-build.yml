@@ -413,6 +413,10 @@ jobs:
           codesign --verify --strict --verbose=2 "$hc_path"
           codesign -dv --verbose=4 "$hc_path" 2>&1 \
             | grep "Authority=Developer ID Application" >/dev/null
+          if [ ! -s "$app_path/Contents/Resources/herdr/NOTICES.txt" ]; then
+            echo "Packaged app is missing the herdr-core licence notices" >&2
+            exit 1
+          fi
           expected_hc="hc $(node -p "require('./desktop/herdr-core.json').version")"
           if [ "$("$hc_path" --version)" != "$expected_hc" ]; then
             echo "Packaged herdr-core is not $expected_hc" >&2

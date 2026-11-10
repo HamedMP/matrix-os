@@ -292,4 +292,17 @@ describe("createAppMenuTemplate", () => {
     exit.click({} as never, {} as never, {} as never);
     expect(quitApp).toHaveBeenCalledOnce();
   });
+
+  it("lists third-party notices under Help only when the build ships them", () => {
+    const base = { appName: "Matrix OS", isPackaged: true, platform: "darwin" as const, openExternal: vi.fn(), send: vi.fn(),
+      adjustZoom: vi.fn(), checkForUpdates: vi.fn(), quitApp: vi.fn() };
+    const help = (template: ReturnType<typeof createAppMenuTemplate>) =>
+      template.find((item) => item.role === "help")!.submenu as Array<{ label?: string; click?: () => void }>;
+    expect(help(createAppMenuTemplate(base)).map((item) => item.label)).toEqual(["Matrix OS Documentation"]);
+    const openThirdPartyNotices = vi.fn();
+    const withNotices = help(createAppMenuTemplate({ ...base, openThirdPartyNotices }));
+    expect(withNotices.map((item) => item.label)).toEqual(["Matrix OS Documentation", "Third-Party Notices"]);
+    withNotices[1]!.click!();
+    expect(openThirdPartyNotices).toHaveBeenCalledTimes(1);
+  });
 });
