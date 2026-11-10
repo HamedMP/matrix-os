@@ -150,6 +150,45 @@ describe("This Computer terminals", () => {
     mountLog = null;
   });
 
+  it("keeps a local terminal open when a cloud terminal finishes being created afterwards", async () => {
+    const WS = `tws_${"a".repeat(32)}`;
+    const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
+    let finishCreate!: (response: Response) => void;
+    const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
+      const path = new URL(String(url)).pathname;
+      if (init?.method === "POST" && path.endsWith("/ensure")) return json({ workspace: { id: WS } });
+      if (init?.method === "POST") return new Promise<Response>((resolve) => { finishCreate = resolve; });
+      return json({ workspaces: [{ id: WS, scope: "main", tabs: [] }] });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const mounts: string[] = [];
+    mountLog = mounts;
+    try {
+      installOperator({
+        "auth:status": () => ({ signedIn: true, handle: "neo", userId: "user_1", platformHost: "https://app.matrix-os.com", runtimeSlot: "primary", authGeneration: 1 }),
+        "runtime:list-computers": () => ({
+          items: [{ handle: "neo", runtimeSlot: "primary", label: "Main Computer", availability: "available", kind: "customer", gatewayPath: "/vm/neo", capabilities: [] }],
+          selectedSlot: "primary", hasMore: false, limit: 20,
+        }),
+        "local-terminal:list": () => ({ status: "ready", terminals: [{ id: "t1", title: "zsh", status: null }] }),
+      });
+      render(<TerminalWindowApp />);
+      fireEvent.click(await screen.findByRole("button", { name: /Main Computer/ }));
+      const cloud = await screen.findByRole("list", { name: "Main Computer terminals" });
+      fireEvent.click(within(cloud).getByRole("button", { name: "New terminal" }));
+      await waitFor(() => expect(finishCreate).toBeTypeOf("function"));
+      // While the computer is still creating it, the user opens a local terminal.
+      fireEvent.click(screen.getByRole("button", { name: "zsh" }));
+      expect((await screen.findByTestId("terminal-view")).textContent).toBe("local:t1");
+      const mounted = mounts.length;
+      await act(async () => { finishCreate(json({ tab: { id: `tt_${"2".repeat(32)}`, name: "Terminal" } }, 201)); });
+      await waitFor(() => expect(within(cloud).getByRole("button", { name: "New terminal" }).hasAttribute("disabled")).toBe(false));
+      // Still the local terminal, and its pane was not torn down underneath it.
+      expect(screen.getByTestId("terminal-view").textContent).toBe("local:t1");
+      expect(mounts.length).toBe(mounted);
+    } finally { mountLog = null; vi.unstubAllGlobals(); }
+  });
+
   it("keeps the terminal on screen and says so when ending it did not work", async () => {
     installOperator({
       "local-terminal:list": () => ({ status: "ready", terminals: [{ id: "t1", title: "zsh", status: null }] }),

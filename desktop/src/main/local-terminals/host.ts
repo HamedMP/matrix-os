@@ -112,6 +112,10 @@ export function createLocalTerminalHost(options: LocalTerminalHostOptions, sink:
   let connecting: Promise<HcConnection> | null = null;
   let status: LocalTerminalHostStatus = "unavailable";
   let nextAttachId = 1;
+  // Changes whenever every attachment is released (the window closed,
+  // reloaded or crashed). An attach that started before that belongs to a
+  // window that is gone and must not complete.
+  let releaseEpoch = 0;
   let disposed = false;
   // Creations run one at a time, so the rate limit counts them in order.
   let creation: Promise<unknown> = Promise.resolve();
@@ -262,7 +266,9 @@ export function createLocalTerminalHost(options: LocalTerminalHostOptions, sink:
     },
 
     async attach(id: string, size: { cols: number; rows: number }): Promise<number> {
+      const startedIn = releaseEpoch;
       const core = await ensure();
+      if (releaseEpoch !== startedIn) throw new Error("local terminal attachment ended");
       if (attachments.size >= MAX_ATTACHMENTS) throw new Error("too many local terminal attachments");
       const attachId = nextAttachId++;
       const decoder = new TextDecoder("utf-8");
@@ -325,12 +331,14 @@ export function createLocalTerminalHost(options: LocalTerminalHostOptions, sink:
      * reloading or gone, and can no longer detach for itself.
      */
     detachAll(): void {
+      releaseEpoch += 1;
       for (const attachId of [...attachments.keys()]) release(attachId);
     },
 
     /** Detaches from the core. The core and its terminals keep running. */
     dispose(): void {
       disposed = true;
+      releaseEpoch += 1;
       attachments.clear();
       connection?.close();
       connection = null;

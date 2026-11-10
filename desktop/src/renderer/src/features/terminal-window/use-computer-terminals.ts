@@ -137,7 +137,12 @@ export function useComputerTerminals(platformHost: string | null, sessionKey: st
     }
   }, [client, creating, load, open]);
 
-  const clearActive = useCallback(() => setActive(null), []);
+  // Showing something else (a local terminal) is a choice too: a cloud
+  // terminal still being created must not replace it when it arrives.
+  const clearActive = useCallback(() => {
+    selection.current += 1;
+    setActive(null);
+  }, []);
 
   return { terminals, active, creating, createFailed, attachEpoch, load, open, create, clearActive };
 }

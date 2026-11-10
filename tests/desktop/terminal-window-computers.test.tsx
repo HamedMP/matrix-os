@@ -165,13 +165,14 @@ describe("Terminal window computers", () => {
     render(<TerminalWindowApp />);
     fireEvent.click(await screen.findByRole("button", { name: /Main Computer/ }));
     await screen.findByRole("button", { name: /build/ });
-    fireEvent.click(screen.getByRole("button", { name: "New terminal" }));
+    const cloud = screen.getByRole("list", { name: "Main Computer terminals" });
+    fireEvent.click(within(cloud).getByRole("button", { name: "New terminal" }));
     await waitFor(() => expect(finishCreate).toBeTypeOf("function"));
     // The user picks an existing terminal before the new one is ready.
     fireEvent.click(screen.getByRole("button", { name: /build/ }));
     expect((await screen.findByTestId("terminal-view")).textContent).toBe(`${WS}:${TAB_1}`);
     await act(async () => { finishCreate(json({ tab: { id: TAB_2, name: "Terminal" } }, 201)); });
-    await waitFor(() => expect(screen.getByRole("button", { name: "New terminal" }).hasAttribute("disabled")).toBe(false));
+    await waitFor(() => expect(within(cloud).getByRole("button", { name: "New terminal" }).hasAttribute("disabled")).toBe(false));
     expect(screen.getByTestId("terminal-view").textContent).toBe(`${WS}:${TAB_1}`);
   });
 

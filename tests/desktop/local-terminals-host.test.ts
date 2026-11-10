@@ -256,6 +256,27 @@ describe("local terminal host against a scripted core", () => {
     await expect(host.attach("t1", { cols: 80, rows: 24 })).resolves.toEqual(expect.any(Number));
   });
 
+  it("does not complete an attach for a window that went away while the core was connecting", async () => {
+    let connect!: () => void;
+    const gate = new Promise<void>((resolve) => { connect = resolve; });
+    const live = attaching();
+    const slow = attaching();
+    const host = createLocalTerminalHost({ ...slow.opts,
+      // The first dial finds nothing; starting the core takes a while.
+      openSocket: (() => { let dials = 0; return () => (dials++ === 0 ? deadSocket("ENOENT") : live.opts.openSocket("")); })(),
+      startCore: vi.fn(async () => { await gate; }) }, slow.sink);
+    const pending = host.attach("t1", { cols: 80, rows: 24 });
+    const failure = expect(pending).rejects.toThrow("attachment ended");
+    // The window reloads before the core is up.
+    host.detachAll();
+    connect();
+    await failure;
+    // Nothing was opened on the core for the departed window.
+    expect(live.cores.flatMap((core) => core.sent.calls).filter((call) => call.method === "terminal.attach")).toEqual([]);
+    // The next window attaches normally.
+    await expect(host.attach("t1", { cols: 80, rows: 24 })).resolves.toEqual(expect.any(Number));
+  });
+
   it("tells the window when a terminal ends or the core goes away, exactly once", async () => {
     const { host, sink, cores, lastChannel } = attaching();
     const ended = await host.attach("t1", { cols: 80, rows: 24 });
