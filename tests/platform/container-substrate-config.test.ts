@@ -13,6 +13,7 @@ import { createTestPlatformDb, destroyTestPlatformDb } from './native-platform-d
 const SECRET = 'p'.repeat(40);
 const ENV = {
   MATRIX_CONTAINER_SUBSTRATE_ENABLED: 'true',
+  MATRIX_CONTAINER_REGION: 'eu-west-1',
   MATRIX_CONTAINER_IMAGE: 'arn:aws:lambda:eu-west-1:000000000000:microvm-image:matrix-runtime',
   MATRIX_CONTAINER_INGRESS_CONNECTORS: 'arn:aws:lambda:eu-west-1:aws:network-connector:aws-network-connector:HTTP_INGRESS',
   MATRIX_CONTAINER_EGRESS_CONNECTORS: 'arn:aws:lambda:eu-west-1:000000000000:network-connector:egress',
@@ -83,9 +84,21 @@ describe('container substrate registration', () => {
     expect(logs.join('\n')).toContain('MATRIX_CONTAINER_IMAGE');
   });
 
-  it('is not registered without a provider client, even with complete settings', () => {
-    expect(createConfiguredContainerSubstrate({ db, env: ENV, log })).toBeNull();
-    expect(logs.join('\n')).toContain('provider client');
+  it('builds the SDK client for the configured region when none is injected, and destroys it on shutdown', async () => {
+    const destroy = vi.fn();
+    const createClient = vi.fn(() => ({ send: vi.fn(), destroy }));
+    const configured = createConfiguredContainerSubstrate({ db, env: ENV, log, createClient });
+    expect(configured?.substrate.kind).toBe('container');
+    expect(createClient).toHaveBeenCalledWith({ region: 'eu-west-1' });
+    await configured!.shutdown();
+    expect(destroy).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not build a client when settings are incomplete', () => {
+    const createClient = vi.fn(() => ({ send: vi.fn(), destroy: vi.fn() }));
+    expect(createConfiguredContainerSubstrate({ db, env: { ...ENV, MATRIX_CONTAINER_REGION: 'nowhere' }, log, createClient })).toBeNull();
+    expect(createClient).not.toHaveBeenCalled();
+    expect(logs.join('\n')).toContain('MATRIX_CONTAINER_REGION');
   });
 
   it('registers alongside the vps substrate when complete', async () => {

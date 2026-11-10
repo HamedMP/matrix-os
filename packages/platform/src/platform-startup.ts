@@ -287,7 +287,7 @@ export interface StartPlatformServerOptions {
   codeServerPort: number;
   containerProxyDispatcher: Agent;
   customerVpsProxyDispatcher: Agent;
-  /** Container substrate provider client; the substrate stays unregistered without it. */
+  /** Test override for the container provider client; by default the SDK client is built from configuration. */
   containerProviderClient?: LambdaMicrovmsApi;
   createApp: CreatePlatformApp;
   checkUnsafeDefaultSecrets(): string[];
