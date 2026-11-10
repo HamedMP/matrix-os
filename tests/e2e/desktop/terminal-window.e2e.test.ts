@@ -1,6 +1,8 @@
+import { execFileSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { _electron, type ElectronApplication, type Page } from "playwright";
@@ -17,16 +19,30 @@ const executablePath = createRequire(join(root, "desktop/package.json"))("electr
 // Evidence stays outside the repository tree that git tracks.
 const output = process.env.MATRIX_TERMINAL_WINDOW_EVIDENCE_DIR ?? join(tmpdir(), "matrix-terminal-window-evidence");
 
+// Local terminals need the pinned herdr-core binary. CI provides it and sets
+// MATRIX_DESKTOP_HC_REQUIRED=1; elsewhere the local tests run when it is installed.
+const hcPath = [process.env.MATRIX_DESKTOP_HC_PATH, join(homedir(), ".local/bin/hc")].find((candidate) => {
+  try { return !!candidate && execFileSync(candidate, ["--version"], { encoding: "utf8", timeout: 3_000 }).trim().endsWith("0.1.19"); }
+  catch { return false; }
+});
+if (process.env.MATRIX_DESKTOP_HC_REQUIRED === "1" && !hcPath) throw new Error("herdr-core 0.1.19 is required for this lane");
+const localIt = hcPath ? it : it.skip;
+
 suite("Electron Desktop Terminal window", () => {
   let app: ElectronApplication, main: Page, terminal: Page, gateway: StubGateway, profile: string;
+  let launch: () => Promise<ElectronApplication>;
+  let coreEnv: Record<string, string> | null = null;
+  let runtimeDir = "";
+  const hc = (...args: string[]) => execFileSync(hcPath!, args, { env: coreEnv!, encoding: "utf8", timeout: 10_000 });
   const terminalPages = () => app.windows().filter((page) => page.url().includes("window=terminal"));
 
   beforeAll(async () => {
     mkdirSync(output, { recursive: true });
     gateway = await startStubGateway();
     profile = mkdtempSync(join(tmpdir(), "matrix-terminal-window-"));
-    const launch = () => _electron.launch({ executablePath, args: [join(root, "desktop/out/main/index.js")],
-      env: { ...process.env, OPERATOR_GATEWAY_URL: gateway.url, OPERATOR_USER_DATA_DIR: profile } });
+    launch = () => _electron.launch({ executablePath, args: [join(root, "desktop/out/main/index.js")],
+      env: { ...process.env, OPERATOR_GATEWAY_URL: gateway.url, OPERATOR_USER_DATA_DIR: profile,
+        ...(hcPath ? { MATRIX_DESKTOP_HC_PATH: hcPath } : {}) } });
     app = await launch();
     const encrypted = await app.evaluate(async ({ app: electronApp, safeStorage }) => {
       await electronApp.whenReady();
@@ -38,10 +54,22 @@ suite("Electron Desktop Terminal window", () => {
     app = await launch();
     main = await app.firstWindow();
     await main.getByRole("button", { name: "Terminal window", exact: true }).waitFor({ timeout: 30_000 });
+    const userData = await app.evaluate(({ app: electronApp }) => electronApp.getPath("userData"));
+    runtimeDir = join(homedir(), ".matrixos", "dt", createHash("sha256").update(userData).digest("hex").slice(0, 8));
+    coreEnv = { HOME: homedir(), PATH: "/usr/bin:/bin", HC_SESSION: "mx", XDG_STATE_HOME: join(userData, "herdr/state"),
+      XDG_CONFIG_HOME: join(userData, "herdr/config"), XDG_RUNTIME_DIR: runtimeDir };
   }, 90_000);
 
   afterAll(async () => {
     if (app) await closeElectronApp(app);
+    // The local core outlives the app by design, so the test ends it itself.
+    if (hcPath && coreEnv && existsSync(join(runtimeDir, "herdr-core/mx.sock"))) {
+      try {
+        for (const item of JSON.parse(hc("ls", "--json")).terminals as Array<{ address: string }>) hc("kill", item.address);
+        hc("server", "stop");
+      } catch (error: unknown) { console.error("local core cleanup failed", error instanceof Error ? error.name : error); }
+    }
+    if (runtimeDir) rmSync(runtimeDir, { recursive: true, force: true });
     await gateway?.close();
     if (profile) rmSync(profile, { recursive: true, force: true });
   });
@@ -141,6 +169,43 @@ suite("Electron Desktop Terminal window", () => {
       .then(() => "allowed", (error: Error) => error.message))).toBe("unknown channel");
     expect(gateway.state.runtimeSelections).toEqual([]);
   });
+
+  localIt("runs a local terminal privately and keeps it running across an app restart", async () => {
+    const localList = () => terminal.getByRole("list", { name: "This Computer terminals" });
+    await localList().getByRole("button", { name: "New terminal" }).click();
+    await terminal.locator(".xterm").first().waitFor({ timeout: 15_000 });
+    await expect.poll(() => (JSON.parse(hc("ls", "--json")).terminals as unknown[]).length, { timeout: 15_000 }).toBe(1);
+    const [{ address }] = JSON.parse(hc("ls", "--json")).terminals as Array<{ address: string }>;
+    await terminal.locator(".xterm-helper-textarea").first().focus();
+    await terminal.keyboard.type("echo LOCAL_$((6*7)); env | grep -c -E '^(MATRIX_|OPERATOR_|ELECTRON_|XDG_|HC_)'; echo ENV_CHECKED");
+    await terminal.keyboard.press("Enter");
+    // Wait for the command's output lines, not the echoed command itself.
+    const outputLines = () => hc("read", address).split("\n").map((line) => line.trim());
+    await expect.poll(outputLines, { timeout: 15_000 }).toContain("ENV_CHECKED");
+    const lines = outputLines();
+    expect(lines).toContain("LOCAL_42");
+    // grep -c prints 0: none of the app's or the core's variables reached the shell.
+    expect(lines.slice(lines.indexOf("LOCAL_42"), lines.indexOf("ENV_CHECKED") + 1)).toEqual(["LOCAL_42", "0", "ENV_CHECKED"]);
+    // Nothing local went to the gateway.
+    expect(gateway.state.terminalInputs.join("")).not.toContain("LOCAL_");
+    await terminal.screenshot({ path: join(output, "electron-terminal-window-local.png") });
+
+    await closeElectronApp(app);
+    expect((JSON.parse(hc("ls", "--json")).terminals as Array<{ address: string; state: string }>)
+      .filter((item) => item.state === "live").map((item) => item.address)).toEqual([address]);
+    app = await launch();
+    main = await app.firstWindow();
+    const reopened = app.waitForEvent("window");
+    await main.getByRole("button", { name: "Terminal window", exact: true }).click({ timeout: 30_000 });
+    terminal = await reopened;
+    await expect.poll(() => localList().getByRole("button", { name: /^(?!New terminal|End )/ }).count(), { timeout: 15_000 }).toBe(1);
+    await localList().getByRole("button", { name: /^(?!New terminal|End )/ }).click();
+    await terminal.locator(".xterm").first().waitFor({ timeout: 15_000 });
+    await terminal.locator(".xterm-helper-textarea").first().focus();
+    await terminal.keyboard.type("echo AGAIN_$((2+3))");
+    await terminal.keyboard.press("Enter");
+    await expect.poll(outputLines, { timeout: 15_000 }).toContain("AGAIN_5");
+  }, 120_000);
 
   it("closes without closing the main window and restores its bounds on reopen", async () => {
     await app.evaluate(({ BrowserWindow }) => {

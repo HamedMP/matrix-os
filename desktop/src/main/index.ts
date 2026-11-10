@@ -91,6 +91,12 @@ import { createTerminalWindowController } from "./terminal-window/controller";
 import { createTerminalBrowserWindow } from "./terminal-window/window";
 import { createComputerCredentialBroker } from "./terminal-window/credential-broker";
 import { installTerminalWindowAuth } from "./terminal-window/gateway-auth";
+import { createLocalTerminalHost, type LocalTerminalHost } from "./local-terminals/host";
+import { registerLocalTerminalIpc } from "./local-terminals/ipc";
+import { resolveLocalTerminalRuntime, startLocalTerminalCore } from "./local-terminals/runtime";
+import { LOCAL_TERMINAL_VERSION } from "../shared/local-terminals";
+import { connect as connectSocket } from "node:net";
+import { homedir, userInfo } from "node:os";
 import {
   TERMINAL_WINDOW_EVENT_CHANNELS,
   TERMINAL_WINDOW_PARTITION,
@@ -128,6 +134,7 @@ let mainWindow: BrowserWindow | null = null;
 let terminalWindows: ReturnType<typeof createTerminalWindowController<BrowserWindow>> | null = null;
 const terminalWindowEvents = new Set<string>(TERMINAL_WINDOW_EVENT_CHANNELS);
 let computerCredentials: { clear(): void } | null = null;
+let localTerminals: LocalTerminalHost | null = null;
 let reopenPreviewWindow: (() => Promise<void>) | undefined;
 let navigationCache: ReturnType<typeof createNavigationCache> | null = null;
 let chatgptPlan: ReturnType<typeof createNativeChatgptPlanService> | null = null;
@@ -605,6 +612,12 @@ if (!gotLock) {
           });
           win.on("focus", () => sendTerminalWindowEvent("window:focus-changed", { focused: true }));
           win.on("blur", () => sendTerminalWindowEvent("window:focus-changed", { focused: false }));
+          // A window that closes, reloads or crashes cannot detach for itself;
+          // without this its local terminal attachments would stay held.
+          const releaseLocalTerminals = () => localTerminals?.detachAll();
+          win.on("closed", releaseLocalTerminals);
+          win.webContents.on("did-start-loading", releaseLocalTerminals);
+          win.webContents.on("render-process-gone", releaseLocalTerminals);
           return win;
         },
         loadBounds: () => store.get("terminalWindowBounds"),
@@ -620,13 +633,32 @@ if (!gotLock) {
         mainUrl: mainRendererUrl,
         terminalUrl: terminalRendererUrl,
       };
+      const authorizeSender = createSenderPolicy(windowSenders);
+      const localRuntime = resolveLocalTerminalRuntime({
+        isPackaged: app.isPackaged, resourcesPath: process.resourcesPath, userData, home: homedir(), env: process.env,
+      });
+      const localTerminalHost = createLocalTerminalHost({
+        ...localRuntime,
+        expectedVersion: LOCAL_TERMINAL_VERSION,
+        home: homedir(),
+        shell: process.env.SHELL || "/bin/sh",
+        env: process.env,
+        uid: userInfo().uid,
+        startCore: startLocalTerminalCore,
+        openSocket: (path) => connectSocket(path),
+      }, {
+        output: (attachId, data) => sendTerminalWindowEvent("local-terminal:output", { attachId, data }),
+        closed: (attachId) => sendTerminalWindowEvent("local-terminal:closed", { attachId }),
+      });
+      localTerminals = localTerminalHost;
+      registerLocalTerminalIpc(ipcMain, localTerminalHost, authorizeSender);
       // Both trusted windows host terminals, so both may read copied files.
       registerTerminalClipboardIpc(ipcMain, {
         clipboard,
         isTrustedSender: (event) => senderRole(windowSenders, event) !== null,
       });
       registerIpcHandlers(ipcMain, {
-        authorizeSender: createSenderPolicy(windowSenders),
+        authorizeSender,
         // Windows is out of scope for the Terminal window (spec 651).
         openTerminalWindow: () => process.platform === "win32"
           ? Promise.reject(new Error("invalid request"))
@@ -882,6 +914,9 @@ if (!gotLock) {
     terminalWindows = null;
     computerCredentials?.clear();
     computerCredentials = null;
+    // Detach only: the local core and its terminals outlive the app.
+    localTerminals?.dispose();
+    localTerminals = null;
     handleUpdateBeforeQuit?.(event);
   });
 

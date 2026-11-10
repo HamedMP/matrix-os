@@ -2,13 +2,15 @@
 // Machines on the left, one attached terminal on the right. Every Matrix
 // computer is reached with its own credential, held by the trusted core.
 import { useEffect, useState } from "react";
-import { ChevronDown, ChevronRight, Cloud, Laptop, Plus, SquareTerminal } from "lucide-react";
+import { ChevronDown, ChevronRight, Cloud, Laptop, Plus, SquareTerminal, X } from "lucide-react";
 import type { MatrixComputer } from "@matrix-os/contracts";
 import { invoke } from "../../lib/operator";
 import { useAppearance } from "../../stores/appearance";
 import TerminalView from "../terminal/TerminalView";
 import { useTerminalMachines, type TerminalMachinesState } from "./use-terminal-machines";
 import { useComputerTerminals, type ActiveTerminal, type ComputerTerminalsState } from "./use-computer-terminals";
+import { localSessionName, useLocalTerminals, type LocalTerminalsNotice, type LocalTerminalsState } from "./use-local-terminals";
+import type { LocalTerminal } from "../../../../shared/local-terminals";
 
 const AVAILABILITY_LABEL: Record<MatrixComputer["availability"], string> = {
   available: "Available",
@@ -20,6 +22,15 @@ const AVAILABILITY_COLOR: Record<MatrixComputer["availability"], string> = {
   starting: "var(--color-warning)",
   unavailable: "var(--text-tertiary, var(--color-muted-foreground))",
 };
+
+// Status is whatever the program in the terminal reported about itself.
+const LOCAL_STATUS_LABEL = { working: "Working", done: "Done", blocked: "Needs you", error: "Error" } as const;
+const LOCAL_STATUS_COLOR = {
+  working: "var(--text-secondary, var(--color-muted-foreground))",
+  done: "var(--color-success)",
+  blocked: "var(--color-warning)",
+  error: "var(--color-danger)",
+} as const;
 
 const secondaryText = { color: "var(--text-secondary, var(--color-muted-foreground))" };
 const buttonClass = "no-drag rounded-md border px-2.5 py-1 text-[12px] font-medium outline-none transition-colors hover:bg-black/5 focus-visible:ring-2 focus-visible:ring-current disabled:opacity-50";
@@ -95,6 +106,74 @@ function ComputerTabs({ computer, state, active, creating, busy, createFailed, o
   );
 }
 
+const LOCAL_NOTICE: Record<Exclude<LocalTerminalsNotice, null>, string> = {
+  "create-failed": "Couldn't start a terminal. Try again.",
+  "end-failed": "Couldn't end that terminal. Try again.",
+};
+
+function LocalTabs({ state, activeId, creating, notice, onOpen, onCreate, onEnd, onRetry }: {
+  state: LocalTerminalsState; activeId: string | null; creating: boolean; notice: LocalTerminalsNotice;
+  onOpen(id: string): void; onCreate(): void; onEnd(id: string): void; onRetry(): void;
+}) {
+  if (state.status === "loading") {
+    return <p role="status" className="py-1.5 pl-10 text-[12px]" style={secondaryText}>Loading terminals…</p>;
+  }
+  if (state.status === "not-installed") {
+    return <p className="py-1.5 pl-10 pr-2 text-[12px]" style={secondaryText}>Local terminals are not included in this build.</p>;
+  }
+  if (state.status === "unavailable") {
+    return (
+      <div role="alert" className="flex flex-col items-start gap-1.5 py-1.5 pl-10 pr-2">
+        <p className="text-[12px]">Local terminals couldn't start.</p>
+        <button type="button" className={buttonClass} style={outlined} onClick={onRetry}>Retry</button>
+      </div>
+    );
+  }
+  if (state.status === "version-mismatch") {
+    return (
+      <p role="alert" className="py-1.5 pl-10 pr-2 text-[12px]">
+        Local terminals were started by a different version of Matrix OS. They keep running, but this version cannot show them or start new ones.
+      </p>
+    );
+  }
+  return (
+    <ul aria-label="This Computer terminals" className="flex flex-col gap-0.5 pb-1 pl-8">
+      {state.terminals.length === 0
+        ? <li className="px-2 py-1 text-[12px]" style={secondaryText}>No terminals yet.</li>
+        : state.terminals.map((terminal) => {
+          const current = activeId === terminal.id;
+          return (
+            <li key={terminal.id} className="group flex items-center rounded-md hover:bg-black/5"
+              style={current ? { background: "var(--bg-selected)" } : undefined}>
+              <button type="button" aria-current={current ? "true" : undefined} onClick={() => onOpen(terminal.id)}
+                className="flex min-w-0 flex-1 items-center gap-2 rounded-md px-2 py-1 text-left text-[12px] outline-none focus-visible:ring-2 focus-visible:ring-current">
+                <SquareTerminal size={12} aria-hidden="true" className="shrink-0" />
+                <span className="min-w-0 flex-1 truncate">{terminal.title}</span>
+                {terminal.status && terminal.status !== "idle" ? (
+                  <span className="shrink-0 text-[10px]" style={{ color: LOCAL_STATUS_COLOR[terminal.status] }}>{LOCAL_STATUS_LABEL[terminal.status]}</span>
+                ) : null}
+              </button>
+              <button type="button" aria-label={`End ${terminal.title}`} title="End terminal" onClick={() => onEnd(terminal.id)}
+                className="mr-1 flex size-5 shrink-0 items-center justify-center rounded opacity-0 outline-none hover:bg-black/10 focus-visible:opacity-100 focus-visible:ring-2 focus-visible:ring-current group-hover:opacity-100">
+                <X size={11} aria-hidden="true" />
+              </button>
+            </li>
+          );
+        })}
+      {state.atLimit ? <li role="alert" className="px-2 py-1 text-[12px]">End a terminal to start another (32 at most).</li> : null}
+      {notice ? <li role="alert" className="px-2 py-1 text-[12px]">{LOCAL_NOTICE[notice]}</li> : null}
+      <li>
+        <button type="button" disabled={creating} onClick={onCreate}
+          className="flex w-full items-center gap-2 rounded-md px-2 py-1 text-left text-[12px] outline-none hover:bg-black/5 focus-visible:ring-2 focus-visible:ring-current disabled:opacity-50"
+          style={secondaryText}>
+          <Plus size={12} aria-hidden="true" className="shrink-0" />
+          {creating ? "Starting…" : "New terminal"}
+        </button>
+      </li>
+    </ul>
+  );
+}
+
 function MatrixSection({ state, onRetry, onSignIn }: {
   state: Exclude<TerminalMachinesState, { status: "ready" }>; onRetry: () => void; onSignIn: () => void;
 }) {
@@ -118,93 +197,199 @@ function MatrixSection({ state, onRetry, onSignIn }: {
   );
 }
 
+function NeedsAttention({ terminals, onOpen }: { terminals: LocalTerminal[]; onOpen(id: string): void }) {
+  if (terminals.length === 0) return null;
+  return (
+    <section aria-label="Needs attention" className="mb-2 rounded-md border p-1.5" style={outlined}>
+      <h2 className="px-1 pb-1 text-[11px] font-medium" style={secondaryText}>Needs attention</h2>
+      <ul className="flex flex-col gap-0.5">
+        {terminals.map((terminal) => (
+          <li key={terminal.id}>
+            <button type="button" onClick={() => onOpen(terminal.id)}
+              className="flex w-full items-center gap-2 rounded-md px-1.5 py-1 text-left text-[12px] outline-none hover:bg-black/5 focus-visible:ring-2 focus-visible:ring-current">
+              <span className="min-w-0 flex-1 truncate">{terminal.title}</span>
+              <span className="shrink-0 text-[10px]" style={secondaryText}>This Computer</span>
+            </button>
+          </li>
+        ))}
+      </ul>
+    </section>
+  );
+}
+
+function Disclosure({ open }: { open: boolean }) {
+  return open ? <ChevronDown size={13} aria-hidden="true" /> : <ChevronRight size={13} aria-hidden="true" />;
+}
+
+function ComputerMachine({ computer, open, onToggle, children }: {
+  computer: MatrixComputer; open: boolean; onToggle(): void; children: React.ReactNode;
+}) {
+  const detail = `${computer.handle} · ${AVAILABILITY_LABEL[computer.availability]}`;
+  const label = <MachineLabel icon={<Cloud size={15} />} label={computer.label} detail={detail} dotColor={AVAILABILITY_COLOR[computer.availability]} />;
+  if (computer.availability !== "available") {
+    return <li data-machine={computer.runtimeSlot} className="flex items-center gap-2.5 rounded-md px-2.5 py-2 opacity-70">{label}</li>;
+  }
+  return (
+    <li data-machine={computer.runtimeSlot}>
+      <button type="button" aria-expanded={open} className={rowClass} onClick={onToggle}>
+        {label}
+        <Disclosure open={open} />
+      </button>
+      {open ? children : null}
+    </li>
+  );
+}
+
+function EmptyPane({ signedIn, onFocusMain }: { signedIn: boolean; onFocusMain(): void }) {
+  return (
+    <main className="flex min-w-0 flex-1 flex-col items-center justify-center gap-3 p-8 text-center">
+      <SquareTerminal size={28} aria-hidden="true" style={secondaryText} />
+      <h1 className="text-[15px] font-semibold">Terminals across your computers</h1>
+      <p className="max-w-sm text-[13px]" style={secondaryText}>
+        Open a computer on the left to see its terminals, or start a new one. Each terminal keeps running on its computer when you close this window.
+      </p>
+      {signedIn ? null : <button type="button" className={buttonClass} style={outlined} onClick={onFocusMain}>Go to main window</button>}
+    </main>
+  );
+}
+
+function TerminalPane({ sessionName }: { sessionName: string }) {
+  return (
+    <main aria-label="Terminal" className="flex min-h-0 min-w-0 flex-1 overflow-hidden" style={{ background: "var(--bg-surface)" }}>
+      <TerminalView key={sessionName} sessionName={sessionName} active />
+    </main>
+  );
+}
+
+function focusMainWindow(): void {
+  void invoke("terminal-window:focus-main", {}).catch((error: unknown) => {
+    console.warn("[terminal-window] main window handoff failed:", error instanceof Error ? error.name : "UnknownError");
+  });
+}
+
+function tabName(state: ComputerTerminalsState | undefined, refKey: string): string | undefined {
+  return state?.status === "ready" ? state.tabs.find((tab) => tab.refKey === refKey)?.name : undefined;
+}
+
 const EMPTY_SLOTS: Record<string, boolean> = {};
 
-export default function TerminalWindowApp() {
-  const loadAppearance = useAppearance((state) => state.load);
-  const { state, retry } = useTerminalMachines();
-  const ready = state.status === "ready" ? state : null;
-  const sessionKey = ready?.sessionKey ?? "";
-  const { terminals, active, creating, createFailed, load, open, create } = useComputerTerminals(ready?.platformHost ?? null, sessionKey);
+/** Everything the window shows: both inventories, and the one attached terminal. */
+function useTerminalWindow() {
+  const machines = useTerminalMachines();
+  const ready = machines.state.status === "ready" ? machines.state : null;
+  const cloud = useComputerTerminals(ready?.platformHost ?? null, ready?.sessionKey ?? "");
+  const local = useLocalTerminals();
+  // A local terminal and a cloud terminal are never attached at once.
+  const [localActive, setLocalActive] = useState<string | null>(null);
   // Which computers are open, for one signed-in session: a new session starts
   // collapsed, because its listings are fetched only when a computer is opened.
+  const sessionKey = ready?.sessionKey ?? "";
   const [expansion, setExpansion] = useState<{ sessionKey: string; slots: Record<string, boolean> }>({ sessionKey, slots: {} });
   const expanded = expansion.sessionKey === sessionKey ? expansion.slots : EMPTY_SLOTS;
 
+  const localTerminals = local.state.status === "ready" ? local.state.terminals : [];
+  const localTerminal = localTerminals.find((terminal) => terminal.id === localActive);
+  const { clearActive, open, create, load } = cloud;
+
+  return {
+    machines, ready, cloud, local, localActive, localTerminal, expanded,
+    needsAttention: localTerminals.filter((terminal) => terminal.status === "blocked" || terminal.status === "error"),
+    openLocal: (id: string) => { clearActive(); setLocalActive(id); },
+    // The pane stays until the trusted core confirms the terminal ended.
+    endLocal: (id: string) => {
+      void local.end(id).then((ended) => { if (ended) setLocalActive((current) => (current === id ? null : current)); });
+    },
+    openCloud: (slot: string, refKey: string) => { setLocalActive(null); open(slot, refKey); },
+    createCloud: (slot: string) => { setLocalActive(null); void create(slot); },
+    toggle: (slot: string) => {
+      const next = !expanded[slot];
+      setExpansion({ sessionKey, slots: { ...expanded, [slot]: next } });
+      // Credentials and listings are fetched only for computers the user opens.
+      if (next) void load(slot);
+    },
+  };
+}
+
+type TerminalWindow = ReturnType<typeof useTerminalWindow>;
+
+function windowTitle(view: TerminalWindow): string {
+  if (view.localTerminal) return `${view.localTerminal.title} — This Computer`;
+  const active = view.cloud.active;
+  if (!active) return "Terminal";
+  const computer = view.ready?.computers.find((candidate) => candidate.runtimeSlot === active.slot);
+  const name = tabName(view.cloud.terminals[active.slot], active.refKey);
+  return computer && name ? `${name} — ${computer.label}` : "Terminal";
+}
+
+function LocalMachine({ view }: { view: TerminalWindow }) {
+  const [open, setOpen] = useState(true);
+  const { local } = view;
+  return (
+    <li data-machine="local">
+      <button type="button" aria-expanded={open} className={rowClass} onClick={() => setOpen((shown) => !shown)}>
+        <MachineLabel icon={<Laptop size={15} />} label="This Computer" detail="Terminals on this device" />
+        <Disclosure open={open} />
+      </button>
+      {open ? (
+        <LocalTabs state={local.state} activeId={view.localActive} creating={local.creating} notice={local.notice} onOpen={view.openLocal}
+          onCreate={() => { void local.create().then((id) => { if (id) view.openLocal(id); }); }}
+          onEnd={view.endLocal} onRetry={() => { void local.refresh(); }} />
+      ) : null}
+    </li>
+  );
+}
+
+function MatrixMachines({ view }: { view: TerminalWindow }) {
+  const { ready, cloud } = view;
+  if (!ready) {
+    return <MatrixSection state={view.machines.state as Exclude<TerminalMachinesState, { status: "ready" }>} onRetry={view.machines.retry} onSignIn={focusMainWindow} />;
+  }
+  if (ready.computers.length === 0) {
+    return <li className="px-2.5 py-2 text-[12px]" style={secondaryText}>No Matrix computers yet.</li>;
+  }
+  return <>{ready.computers.map((computer) => {
+    const slot = computer.runtimeSlot;
+    return (
+      <ComputerMachine key={slot} computer={computer} open={view.expanded[slot] === true} onToggle={() => view.toggle(slot)}>
+        <ComputerTabs computer={computer} state={cloud.terminals[slot]} active={cloud.active} creating={cloud.creating === slot}
+          busy={cloud.creating !== null} createFailed={cloud.createFailed === slot}
+          onOpen={(refKey) => view.openCloud(slot, refKey)} onCreate={() => view.createCloud(slot)} onRetry={() => { void cloud.load(slot); }} />
+      </ComputerMachine>
+    );
+  })}</>;
+}
+
+function ActivePane({ view }: { view: TerminalWindow }) {
+  if (view.localTerminal) return <TerminalPane key={`local|${view.localTerminal.id}`} sessionName={localSessionName(view.localTerminal.id)} />;
+  const active = view.cloud.active;
+  if (active) return <TerminalPane key={`${active.slot}|${active.refKey}`} sessionName={active.refKey} />;
+  return <EmptyPane signedIn={view.ready !== null} onFocusMain={focusMainWindow} />;
+}
+
+export default function TerminalWindowApp() {
+  const loadAppearance = useAppearance((state) => state.load);
+  const view = useTerminalWindow();
+
   useEffect(() => { void loadAppearance(); }, [loadAppearance]);
   useEffect(() => { document.title = "Terminal"; }, []);
-
-  const focusMain = () => {
-    void invoke("terminal-window:focus-main", {}).catch((error: unknown) => {
-      console.warn("[terminal-window] main window handoff failed:", error instanceof Error ? error.name : "UnknownError");
-    });
-  };
-  const toggle = (slot: string) => {
-    const next = !expanded[slot];
-    setExpansion({ sessionKey, slots: { ...expanded, [slot]: next } });
-    // Credentials and listings are fetched only for computers the user opens.
-    if (next) void load(slot);
-  };
-  const activeComputer = active ? ready?.computers.find((computer) => computer.runtimeSlot === active.slot) : undefined;
-  const activeTab = active && terminals[active.slot]?.status === "ready"
-    ? (terminals[active.slot] as { tabs: Array<{ refKey: string; name: string }> }).tabs.find((tab) => tab.refKey === active.refKey)
-    : undefined;
 
   return (
     <div className="ph-no-capture flex h-screen w-screen flex-col" style={{ background: "var(--bg-app)", color: "var(--text-primary, var(--color-foreground))" }}>
       <header className="titlebar-drag flex shrink-0 items-center justify-center border-b text-[12px] font-medium"
         style={{ height: "var(--titlebar-height)", borderColor: "var(--border-subtle)", background: "var(--bg-sunken)" }}>
-        {activeComputer && activeTab ? `${activeTab.name} — ${activeComputer.label}` : "Terminal"}
+        {windowTitle(view)}
       </header>
       <div className="flex min-h-0 flex-1">
         <nav aria-label="Machines" className="flex w-64 shrink-0 flex-col overflow-y-auto border-r p-2"
           style={{ borderColor: "var(--border-subtle)", background: "var(--bg-sunken)" }}>
+          <NeedsAttention terminals={view.needsAttention} onOpen={view.openLocal} />
           <ul className="flex flex-col gap-0.5">
-            <li data-machine="local" className="flex items-center gap-2.5 rounded-md px-2.5 py-2">
-              <MachineLabel icon={<Laptop size={15} />} label="This Computer" detail="Local terminals are not available in this version" />
-            </li>
+            <LocalMachine view={view} />
             <li aria-hidden="true" role="presentation" className="mx-2.5 my-1 h-px" style={{ background: "var(--border-subtle)" }} />
-            {!ready ? <MatrixSection state={state as Exclude<TerminalMachinesState, { status: "ready" }>} onRetry={retry} onSignIn={focusMain} /> : null}
-            {ready && ready.computers.length === 0
-              ? <li className="px-2.5 py-2 text-[12px]" style={secondaryText}>No Matrix computers yet.</li> : null}
-            {ready?.computers.map((computer) => {
-              const slot = computer.runtimeSlot;
-              const detail = `${computer.handle} · ${AVAILABILITY_LABEL[computer.availability]}`;
-              const label = <MachineLabel icon={<Cloud size={15} />} label={computer.label} detail={detail} dotColor={AVAILABILITY_COLOR[computer.availability]} />;
-              if (computer.availability !== "available") {
-                return <li key={slot} data-machine={slot} className="flex items-center gap-2.5 rounded-md px-2.5 py-2 opacity-70">{label}</li>;
-              }
-              const isOpen = expanded[slot] === true;
-              return (
-                <li key={slot} data-machine={slot}>
-                  <button type="button" aria-expanded={isOpen} className={rowClass} onClick={() => toggle(slot)}>
-                    {label}
-                    {isOpen ? <ChevronDown size={13} aria-hidden="true" /> : <ChevronRight size={13} aria-hidden="true" />}
-                  </button>
-                  {isOpen ? (
-                    <ComputerTabs computer={computer} state={terminals[slot]} active={active} creating={creating === slot}
-                      busy={creating !== null} createFailed={createFailed === slot}
-                      onOpen={(refKey) => open(slot, refKey)} onCreate={() => { void create(slot); }} onRetry={() => { void load(slot); }} />
-                  ) : null}
-                </li>
-              );
-            })}
+            <MatrixMachines view={view} />
           </ul>
         </nav>
-        {active ? (
-          <main aria-label="Terminal" className="flex min-h-0 min-w-0 flex-1 overflow-hidden" style={{ background: "var(--bg-surface)" }}>
-            <TerminalView key={`${active.slot}|${active.refKey}`} sessionName={active.refKey} active />
-          </main>
-        ) : (
-          <main className="flex min-w-0 flex-1 flex-col items-center justify-center gap-3 p-8 text-center">
-            <SquareTerminal size={28} aria-hidden="true" style={secondaryText} />
-            <h1 className="text-[15px] font-semibold">Terminals across your computers</h1>
-            <p className="max-w-sm text-[13px]" style={secondaryText}>
-              Open a computer on the left to see its terminals, or start a new one. Each terminal keeps running on its computer when you close this window.
-            </p>
-            {!ready ? <button type="button" className={buttonClass} style={outlined} onClick={focusMain}>Go to main window</button> : null}
-          </main>
-        )}
+        <ActivePane view={view} />
       </div>
     </div>
   );

@@ -44,6 +44,7 @@ const base = {
   "app:get-zoom": () => ({ factor: 1 }),
   "app:set-zoom": () => ({ ok: true }),
   "state:get": () => ({ value: null }),
+  "local-terminal:list": () => ({ status: "ready", terminals: [] }),
 };
 
 describe("Terminal window", () => {
@@ -54,7 +55,7 @@ describe("Terminal window", () => {
     installOperator({ ...base, "auth:status": () => signedIn, "runtime:list-computers": () => computers });
     render(<TerminalWindowApp />);
     expect(await screen.findByText("Main Computer")).toBeTruthy();
-    const sections = screen.getAllByRole("listitem");
+    const sections = Array.from(document.querySelectorAll("[data-machine]"));
     expect(sections.map((item) => item.getAttribute("data-machine"))).toEqual(["local", "primary", "review", "old"]);
     expect(screen.getByText("Main Computer")).toBeTruthy();
     expect(screen.getByText("operator-review · Starting")).toBeTruthy();

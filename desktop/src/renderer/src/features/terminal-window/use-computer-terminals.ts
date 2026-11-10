@@ -132,5 +132,7 @@ export function useComputerTerminals(platformHost: string | null, sessionKey: st
     }
   }, [client, creating, load, open]);
 
-  return { terminals, active, creating, createFailed, load, open, create };
+  const clearActive = useCallback(() => setActive(null), []);
+
+  return { terminals, active, creating, createFailed, load, open, create, clearActive };
 }

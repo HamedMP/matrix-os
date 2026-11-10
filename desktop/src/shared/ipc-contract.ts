@@ -66,6 +66,7 @@ import {
 import { DesktopAnalyticsDetailSchema } from "./desktop-analytics";
 import { TerminalClipboardResultSchema } from "./terminal-clipboard";
 import { TERMINAL_WINDOW_INVOKE } from "./terminal-window";
+import { LOCAL_TERMINAL_EVENTS, LOCAL_TERMINAL_INVOKE } from "./local-terminals";
 
 const Empty = z.object({}).strict();
 
@@ -148,6 +149,7 @@ const BoundedJsonValue = z.unknown().refine(
 
 export const INVOKE_CHANNELS = {
   ...TERMINAL_WINDOW_INVOKE,
+  ...LOCAL_TERMINAL_INVOKE,
   ...CHATGPT_PLAN_INVOKE,
   ...NAVIGATION_CACHE_INVOKE,
   ...LOCAL_CHAT_IMPORT_INVOKE,
@@ -515,6 +517,7 @@ export const INVOKE_CHANNELS = {
 } as const;
 
 export const EVENT_CHANNELS = {
+  ...LOCAL_TERMINAL_EVENTS,
   ...LOCAL_CHAT_IMPORT_EVENTS,
   "app:generate": AppGenerateEventSchema,
   "app:open": NativeAppOpenEventSchema,
