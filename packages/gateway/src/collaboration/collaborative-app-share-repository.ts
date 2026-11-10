@@ -183,9 +183,10 @@ export class CollaborativeAppShareRepository {
       || !DigestSchema.safeParse(input.expectedBuildId).success
       || !DigestSchema.safeParse(input.payloadHash).success
       || !RuntimeIdSchema.safeParse(input.runtimeId).success
-      || (input.expectedBinding !== null && (!z.uuid().safeParse(input.expectedBinding.scopeId).success
+      || (input.expectedBinding !== null && input.expectedBinding !== undefined && (!z.uuid().safeParse(input.expectedBinding.scopeId).success
         || !validRevision(input.expectedBinding.scopeRevision) || input.expectedBinding.scopeRevision < 1
         || !validRevision(input.expectedBinding.bindingRevision) || input.expectedBinding.bindingRevision < 1))
+      || input.expectedBinding === undefined
       || !validRevision(input.expectedResourceRevision)
       || !validRevision(input.expectedReadinessRevision) || input.expectedReadinessRevision < 1) {
       throw new CollaborativeAppShareRepositoryError("invalid");
