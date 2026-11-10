@@ -51,6 +51,8 @@ import type { EntitlementAccessDecision } from './profile-routing.js';
 import type { BillingEntitlement } from './billing.js';
 import type { PlatformApp } from './platform-app-types.js';
 import { shutdownPlatformApp } from './shutdown-platform-app.js';
+import { createPlatformSubstrateRegistry } from './substrates/platform-substrates.js';
+import type { SubstrateRegistry } from './substrates/registry.js';
 import {
   PlatformStartupConfigError,
   loadPlatformRuntimeConfig,
@@ -272,6 +274,7 @@ type CreatePlatformApp = (deps: {
   sitesObjectStore?: CustomerVpsObjectStore;
   assertPrimaryStorageReady?: (options?: { force?: boolean }) => Promise<void>;
   assertSitesStorageReady?: (options?: { force?: boolean }) => Promise<void>;
+  substrateRegistry?: SubstrateRegistry;
   env?: NodeJS.ProcessEnv;
 }) => PlatformApp;
 
@@ -1155,6 +1158,7 @@ async function startPlatformServerWithCleanup(
     sitesObjectStore,
     assertPrimaryStorageReady: primaryStorageGate?.assertReady,
     assertSitesStorageReady: sitesStorageGate?.assertReady,
+    substrateRegistry: createPlatformSubstrateRegistry(db),
     env: appEnv,
   });
   const processPosthogErrorTracker = createPostHogErrorTracker({
