@@ -30,6 +30,7 @@ The Gateway registers the route with its project/workspace routes. Clients valid
 
 ## Acceptance
 
+- In the project composer, Preview dictation quota stays readable outside the toolbar. Attachment, model, reasoning, permission and send controls remain within the composer at narrow and wide widths.
 - In Web Desktop and Web Canvas, selecting a project shows one Agent configuration panel in the main project overview. Selecting a chat opens its transcript. Selecting the project name in the sidebar returns to the overview with a draft scoped to that project.
 - Owners see only their active project's metadata, with paths relative to the project. Project switches discard older requests. Shared members gain no new access.
 - Valid Codex TOML and Claude JSON declarations appear with distinct source labels. Credentials, URLs, headers, executable arguments, instruction bodies, and skill bodies never appear in the response.

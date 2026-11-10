@@ -5,10 +5,10 @@ import { SpeechInputWaveform } from "./SpeechInputWaveform.js";
 import {
   platformSpeechControlState,
   platformSpeechPreviewQuotaLabel,
-  type usePlatformSpeechDraft,
+  type UsePlatformSpeechDraftResult,
 } from "./use-platform-speech-draft.js";
 
-type SpeechDraft = Pick<ReturnType<typeof usePlatformSpeechDraft>,
+type SpeechDraft = Pick<UsePlatformSpeechDraftResult,
   "phase" | "error" | "isSupported" | "previewQuota" | "capabilitiesStale" | "elapsedMs" | "inputLevel"
   | "inputLevelSequence" | "start" | "stop" | "cancel" | "retryCapabilities">;
 
@@ -19,6 +19,19 @@ const ACTIVE_PHASES: Partial<Record<SpeechDraft["phase"], { label: string; icon:
   transcribing: { label: "Cancel transcription", icon: CancelCircleIcon },
 };
 const IDLE = { label: "Start voice input", icon: MicIcon, spin: false };
+
+/** Keep the full, wrapping quota notice out of the compact toolbar. */
+export function ChatSpeechQuotaStatus({ speech }: {
+  speech: Pick<SpeechDraft, "previewQuota" | "capabilitiesStale">;
+}) {
+  if (!speech.previewQuota) return null;
+  return (
+    <p role="status" className="min-w-0 break-words px-[15px] pb-1 text-xs leading-4" style={{ color: "var(--text-tertiary)" }}>
+      {platformSpeechPreviewQuotaLabel(speech.previewQuota)}
+      {speech.capabilitiesStale ? " Last known quota; refresh required." : null}
+    </p>
+  );
+}
 
 /**
  * Composer mic control shared by Web and Electron Desktop Chat: the waveform
@@ -38,13 +51,7 @@ export function ChatSpeechInputButton({ speech, disabled }: { speech: SpeechDraf
     else void speech.start();
   };
   return (
-    <div className="relative flex items-center gap-1">
-      {speech.previewQuota ? (
-        <span role="status" className="text-xs" style={{ color: "var(--text-tertiary)" }}>
-          {platformSpeechPreviewQuotaLabel(speech.previewQuota)}
-          {speech.capabilitiesStale ? " Last known quota; refresh required." : null}
-        </span>
-      ) : null}
+    <div className="relative flex shrink-0 items-center gap-1">
       {speech.error ? (
         <span
           role="alert"
@@ -72,7 +79,7 @@ export function ChatSpeechInputButton({ speech, disabled }: { speech: SpeechDraf
         title={control.label}
         disabled={(disabled || control.disabled) && !active}
         onClick={activate}
-        className="flex h-9 w-9 items-center justify-center rounded-full outline-none hover:bg-[var(--bg-hover)] focus-visible:ring-2 focus-visible:ring-[var(--composer-focus,var(--accent))] disabled:opacity-40"
+        className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full outline-none hover:bg-[var(--bg-hover)] focus-visible:ring-2 focus-visible:ring-[var(--composer-focus,var(--accent))] disabled:opacity-40"
         style={{ color: speech.phase === "recording" ? "var(--danger)" : "var(--text-secondary)" }}
       >
         <HugeiconsIcon icon={icon} size={16} strokeWidth={1.5} aria-hidden className={spin ? "animate-spin motion-reduce:animate-none" : undefined} />

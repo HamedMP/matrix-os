@@ -6,7 +6,7 @@ import type {
   CanonicalProviderInstanceDescriptor,
   CanonicalProviderSetupAction,
 } from "@matrix-os/contracts";
-import { ChatComposerAttachButton, ChatComposerOptionControls, chatPermissionModeLabel, type ChatComposerOptionControl } from "@matrix-os/ui";
+import { ChatComposerAttachButton, ChatComposerOptionControls, ChatSpeechInputButton, ChatSpeechQuotaStatus, chatPermissionModeLabel, platformSpeechControlState, type ChatComposerOptionControl } from "@matrix-os/ui";
 import { Box, SquareTerminal } from "@renderer/lib/hugeicons";
 import { useEffect, useMemo, useRef, useState, type ReactNode, type Ref } from "react";
 import { PromptInput } from "./elements/prompt-input";
@@ -24,7 +24,7 @@ import {
   type ComposerReferenceToken,
   type SharedChatComposerSubmission,
 } from "./composer-reference-tokens";
-import { ConnectedDesktopSpeechInput } from "./DesktopSpeechInputControl";
+import { useConnectedDesktopSpeechInput } from "./DesktopSpeechInputControl";
 
 export type { ComposerReferenceToken, SharedChatComposerSubmission } from "./composer-reference-tokens";
 
@@ -155,7 +155,8 @@ export function SharedChatComposer({
   const suggestionMenuRef = useRef<HTMLDivElement>(null);
   const editorRef = useRef<ComposerPromptEditorHandle>(null);
   const [cursor, setCursor] = useState(value.length);
-  const [speechActive, setSpeechActive] = useState(false);
+  const speechDraft = useConnectedDesktopSpeechInput(speech);
+  const speechActive = speechDraft ? platformSpeechControlState(speechDraft).active : false;
   const lastEditorValueRef = useRef(value);
   const lastObservedValueRef = useRef(value);
   useEffect(() => {
@@ -423,6 +424,7 @@ export function SharedChatComposer({
           />
         ) : null}
         footer={footer}
+        status={speechDraft ? <ChatSpeechQuotaStatus speech={speechDraft} /> : undefined}
         controls={(
           <>
             {canAttach ? <ChatComposerAttachButton disabled={disabled} onClick={() => onAttach?.()} /> : null}
@@ -431,14 +433,7 @@ export function SharedChatComposer({
         )}
         trailingControls={(
           <>
-            {speech ? (
-              <ConnectedDesktopSpeechInput
-                scopeKey={speech.scopeKey}
-                onDraft={speech.onDraft}
-                disabled={disabled || busy}
-                onActiveChange={setSpeechActive}
-              />
-            ) : null}
+            {speechDraft ? <ChatSpeechInputButton speech={speechDraft} disabled={disabled || busy} /> : null}
             {runActions}
             {automaticRouting ? botControls : <ProviderModelPicker
               catalog={catalog}
