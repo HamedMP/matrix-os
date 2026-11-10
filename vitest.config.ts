@@ -93,6 +93,10 @@ export default defineConfig({
         __dirname,
         "packages/kernel/src/security/ssrf-guard.ts",
       ),
+      "@matrix-os/kernel/security/pinned-fetch": path.resolve(
+        __dirname,
+        "packages/kernel/src/security/pinned-fetch.ts",
+      ),
       "@matrix-os/kernel/skill-registry": path.resolve(
         __dirname,
         "packages/kernel/src/skill-registry.ts",
