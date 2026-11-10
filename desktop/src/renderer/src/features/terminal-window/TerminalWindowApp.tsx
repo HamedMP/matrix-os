@@ -27,9 +27,9 @@ const AVAILABILITY_COLOR: Record<MatrixComputer["availability"], string> = {
 const LOCAL_STATUS_LABEL = { working: "Working", done: "Done", blocked: "Needs you", error: "Error" } as const;
 const LOCAL_STATUS_COLOR = {
   working: "var(--text-secondary, var(--color-muted-foreground))",
-  done: "var(--color-success)",
-  blocked: "var(--color-warning)",
-  error: "var(--color-danger)",
+  done: "var(--success-text, var(--color-success))",
+  blocked: "var(--warning-text, var(--color-warning))",
+  error: "var(--danger-text, var(--color-danger))",
 } as const;
 
 const secondaryText = { color: "var(--text-secondary, var(--color-muted-foreground))" };

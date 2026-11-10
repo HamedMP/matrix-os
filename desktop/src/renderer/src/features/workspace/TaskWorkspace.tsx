@@ -189,7 +189,7 @@ export default function TaskWorkspace({
           ? "ok"
           : "unknown";
   const previewColor =
-    previewHealth === "ok" ? "var(--success)" : previewHealth === "failed" ? "var(--danger)" : "var(--text-tertiary)";
+    previewHealth === "ok" ? "var(--success-text)" : previewHealth === "failed" ? "var(--danger-text)" : "var(--text-tertiary)";
 
   const stopAgent = async () => {
     if (!api || !attachName || stopAgentPending) return;

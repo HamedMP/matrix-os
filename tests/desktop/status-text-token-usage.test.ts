@@ -9,10 +9,13 @@ const ROOTS = [
   path.resolve(import.meta.dirname, "../../desktop/src/renderer/src"),
   path.resolve(import.meta.dirname, "../../packages/ui/src"),
 ];
-const FILL = String.raw`var\(\s*--(?:success|warning|danger|info)\s*\)`;
+// The Tailwind theme aliases (--color-success etc.) resolve to the same fills.
+const FILL = String.raw`var\(\s*--(?:color-)?(?:success|warning|danger|info)\s*\)`;
 // A fill named only as the last fallback of another variable is allowed.
 const PRIMARY_FILL = new RegExp(String.raw`(?<!,\s*)${FILL}`);
 const STYLE_COLOR = /(?<![\w-])color\s*:\s*([^,;}]*)/g;
+// A constant (string, ternary or status map, optionally type-annotated) whose value contains a primary fill.
+const FILL_CONSTANT = /(?<![\w$])const\s+([A-Za-z_$][\w$]*)\s*(?::[^=;]+)?=([^;]*);/g;
 const TAILWIND_TEXT = new RegExp(String.raw`(?<![\w-])text-\[(?:color:)?${FILL}\]`, "g");
 
 function collectSources(dir: string, out: string[] = []): string[] {
@@ -31,8 +34,16 @@ function lineOf(source: string, index: number): number {
 function findFillTokensUsedAsText(file: string, source: string): string[] {
   const findings: string[] = [];
   const relative = path.relative(path.resolve(import.meta.dirname, "../.."), file);
+  const fillConstants = new Set<string>();
+  for (const match of source.matchAll(FILL_CONSTANT)) {
+    if (PRIMARY_FILL.test(match[2]!)) fillConstants.add(match[1]!);
+  }
   for (const match of source.matchAll(STYLE_COLOR)) {
-    if (PRIMARY_FILL.test(match[1]!)) findings.push(`${relative}:${lineOf(source, match.index!)} color: ${match[1]!.trim()}`);
+    const value = match[1]!.trim();
+    const reference = /^([A-Za-z_$][\w$]*)(?:\[|$)/.exec(value)?.[1];
+    if (PRIMARY_FILL.test(value) || (reference && fillConstants.has(reference))) {
+      findings.push(`${relative}:${lineOf(source, match.index!)} color: ${value}`);
+    }
   }
   for (const match of source.matchAll(TAILWIND_TEXT)) {
     findings.push(`${relative}:${lineOf(source, match.index!)} ${match[0]}`);
@@ -49,6 +60,32 @@ describe("status text tokens", () => {
       `<b className="hover:text-[var(--info)]" />`,
     ].join("\n");
     expect(findFillTokensUsedAsText("/sample.tsx", sample)).toHaveLength(4);
+  });
+
+  it("detects fills and their --color-* aliases that reach text through variables and maps", () => {
+    const sample = [
+      `const previewColor = ok ? "var(--success)" : failed ? "var(--danger)" : "var(--text-tertiary)";`,
+      `const STATUS_COLOR = {`,
+      `  done: "var(--color-success)",`,
+      `  error: "var(--color-danger)",`,
+      `} as const;`,
+      `<span style={{ borderColor: "var(--border-default)", color: previewColor }} />`,
+      `<span style={{ color: STATUS_COLOR[terminal.status] }} />`,
+      `<i style={{ color: "var(--color-warning)" }} />`,
+      `const AVAILABILITY_COLOR: Record<Availability, string> = { available: "var(--color-success)" };`,
+      `<em style={{ color: AVAILABILITY_COLOR[computer.availability] }} />`,
+    ].join("\n");
+    expect(findFillTokensUsedAsText("/sample.tsx", sample)).toHaveLength(4);
+  });
+
+  it("allows fill variables that only reach backgrounds, borders and dots", () => {
+    const sample = [
+      `const dotColor = ok ? "var(--success)" : "var(--danger)";`,
+      `const labelColor = ok ? "var(--success-text, var(--color-success))" : "var(--text-tertiary)";`,
+      `<span style={{ background: dotColor, borderColor: dotColor, color: labelColor }} />`,
+      `<StatusDot color={dotColor} />`,
+    ].join("\n");
+    expect(findFillTokensUsedAsText("/sample.tsx", sample)).toEqual([]);
   });
 
   it("allows fills on backgrounds, borders, dots and as a last fallback", () => {
