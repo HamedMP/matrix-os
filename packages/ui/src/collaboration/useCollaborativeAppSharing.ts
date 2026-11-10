@@ -13,8 +13,8 @@ const RecheckInputSchema = z.object({
   clientRequestId: z.uuid().optional(),
 }).strict();
 const SAFE_UNAVAILABLE = "App collaboration readiness is unavailable.";
-const CHECKING_POLL_MS = 2_000;
-const MAX_CHECKING_POLLS = 90;
+const CHECKING_POLL_MS = 5_000;
+const MAX_CHECKING_POLLS = 36;
 
 export interface CollaborativeAppReadinessApi {
   get(path: string): Promise<unknown>;
@@ -96,7 +96,14 @@ export function useCollaborativeAppSharing(input: {
         setReadiness(next);
         if (next?.status === "checking") timer = setTimeout(() => { void poll(); }, CHECKING_POLL_MS);
       } catch (error: unknown) {
-        if (!cancelled && requestGeneration.current === generation) fail(generation, error, requestKey);
+        if (cancelled || requestGeneration.current !== generation) return;
+        if (error instanceof z.ZodError || (typeof error === "object" && error !== null
+          && "category" in error && (error.category === "unauthorized" || error.category === "notFound"))) {
+          fail(generation, error, requestKey);
+          return;
+        }
+        console.warn("[collaborative-app-readiness] poll retry", error instanceof Error ? error.name : "UnknownError");
+        timer = setTimeout(() => { void poll(); }, CHECKING_POLL_MS);
       }
     };
     timer = setTimeout(() => { void poll(); }, CHECKING_POLL_MS);

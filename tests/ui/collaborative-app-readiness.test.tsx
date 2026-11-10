@@ -88,14 +88,14 @@ describe("collaborative app owner readiness", () => {
     expect(view.result.current.state).toBe("checking");
     expect(view.result.current.canShare).toBe(false);
 
-    await act(async () => { await vi.advanceTimersByTimeAsync(2_000); });
+    await act(async () => { await vi.advanceTimersByTimeAsync(5_000); });
     expect(view.result.current.state).toBe("checking");
     expect(api.get).toHaveBeenCalledTimes(2);
-    await act(async () => { await vi.advanceTimersByTimeAsync(2_000); });
+    await act(async () => { await vi.advanceTimersByTimeAsync(5_000); });
     expect(view.result.current.state).toBe("ready");
     expect(view.result.current.canShare).toBe(true);
     expect(api.get).toHaveBeenCalledTimes(3);
-    await act(async () => { await vi.advanceTimersByTimeAsync(4_000); });
+    await act(async () => { await vi.advanceTimersByTimeAsync(10_000); });
     expect(api.get).toHaveBeenCalledTimes(3);
   });
 
@@ -113,6 +113,40 @@ describe("collaborative app owner readiness", () => {
     expect(view.result.current.state).toBe("blocked");
     await act(async () => { await vi.advanceTimersByTimeAsync(4_000); });
     expect(api.get).toHaveBeenCalledTimes(2);
+  });
+
+  it("keeps two owner windows below the shared readiness read limit", async () => {
+    vi.useFakeTimers();
+    const checking = { ...blocked, status: "checking" as const, checks: [] };
+    const api = { get: vi.fn(async () => checking), post: vi.fn() };
+    const first = renderHook(() => useCollaborativeAppSharing({ appId: "team-tracker", api }));
+    const second = renderHook(() => useCollaborativeAppSharing({ appId: "team-tracker", api }));
+    await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+    expect(first.result.current.state).toBe("checking");
+    expect(second.result.current.state).toBe("checking");
+
+    await act(async () => { await vi.advanceTimersByTimeAsync(30_000); });
+    expect(api.get.mock.calls.length).toBeLessThanOrEqual(24);
+    first.unmount();
+    second.unmount();
+  });
+
+  it("keeps polling after a rate-limited readiness read without discarding the saved check", async () => {
+    vi.useFakeTimers();
+    const checking = { ...blocked, status: "checking" as const, checks: [] };
+    const api = { get: vi.fn().mockResolvedValueOnce(checking)
+      .mockRejectedValueOnce(new Error("429 Too Many Requests"))
+      .mockResolvedValueOnce(ready), post: vi.fn() };
+    const view = renderHook(() => useCollaborativeAppSharing({ appId: "team-tracker", api }));
+    await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+    expect(view.result.current.state).toBe("checking");
+
+    await act(async () => { await vi.advanceTimersByTimeAsync(5_000); });
+    expect(view.result.current.state).toBe("checking");
+    expect(view.result.current.safeMessage).toBeNull();
+    await act(async () => { await vi.advanceTimersByTimeAsync(5_000); });
+    expect(view.result.current.state).toBe("ready");
+    expect(view.result.current.canShare).toBe(true);
   });
 
   it("withdraws sharing immediately and reloads readiness when the same app build changes", async () => {
