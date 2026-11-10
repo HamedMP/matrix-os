@@ -8,6 +8,8 @@ import { describeError } from "./describe-error";
 
 export interface LocalTerminalRuntime {
   binaryPath: string | null;
+  /** Licence texts shipped beside the bundled binary, or null when there is none. */
+  noticesPath: string | null;
   runtimeDir: string;
   dataDir: string;
 }
@@ -28,8 +30,11 @@ export function resolveLocalTerminalRuntime(input: {
   // Unix socket paths are short, so sockets live under the home directory in a
   // directory named for this profile; state and config stay in userData.
   const profile = createHash("sha256").update(input.userData).digest("hex").slice(0, 8);
+  const notices = join(input.resourcesPath, "herdr", "NOTICES.txt");
   return {
     binaryPath,
+    // Only what ships inside the app is offered; a developer-supplied binary has no bundled notices.
+    noticesPath: exists(notices) ? notices : null,
     runtimeDir: join(input.home, ".matrixos", "dt", profile),
     dataDir: join(input.userData, "herdr"),
   };

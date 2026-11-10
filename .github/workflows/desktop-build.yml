@@ -331,6 +331,9 @@ jobs:
           NODE_OPTIONS: --max-old-space-size=4096
         run: pnpm --filter desktop build
 
+      - name: Fetch pinned herdr-core
+        run: node scripts/release/fetch-herdr-core.mjs --platform darwin --arch ${{ matrix.arch }}
+
       - name: Package desktop app
         working-directory: desktop
         run: pnpm exec electron-builder --config electron-builder.yml --mac --${{ matrix.arch }} --publish never
@@ -404,6 +407,21 @@ jobs:
             | grep "Authority=Developer ID Application" >/dev/null
           xcrun stapler validate "$app_path"
           spctl --assess --type execute --verbose=4 "$app_path"
+          # Local terminals run this binary: it must be the pinned version and
+          # carry a valid Developer ID signature inside the notarized app.
+          hc_path="$app_path/Contents/Resources/herdr/hc"
+          codesign --verify --strict --verbose=2 "$hc_path"
+          codesign -dv --verbose=4 "$hc_path" 2>&1 \
+            | grep "Authority=Developer ID Application" >/dev/null
+          if [ ! -s "$app_path/Contents/Resources/herdr/NOTICES.txt" ]; then
+            echo "Packaged app is missing the herdr-core licence notices" >&2
+            exit 1
+          fi
+          expected_hc="hc $(node -p "require('./desktop/herdr-core.json').version")"
+          if [ "$("$hc_path" --version)" != "$expected_hc" ]; then
+            echo "Packaged herdr-core is not $expected_hc" >&2
+            exit 1
+          fi
           if pnpm exec asar list "$app_path/Contents/Resources/app.asar" \
             | grep "node_modules/@matrix-os/contracts" >/dev/null; then
             echo "Packaged app contains raw @matrix-os/contracts sources" >&2
@@ -718,6 +736,9 @@ jobs:
       - name: Build desktop app
         run: pnpm --filter desktop build
 
+      - name: Fetch pinned herdr-core
+        run: node scripts/release/fetch-herdr-core.mjs --platform linux --arch x64
+
       - name: Package desktop app
         working-directory: desktop
         run: pnpm exec electron-builder --config electron-builder.yml --linux AppImage --x64 --publish never
@@ -732,6 +753,11 @@ jobs:
           fi
           if [ ! -f desktop/dist/latest-linux.yml ]; then
             echo "Missing Linux update manifest: desktop/dist/latest-linux.yml" >&2
+            exit 1
+          fi
+          expected_hc="hc $(node -p "require('./desktop/herdr-core.json').version")"
+          if [ "$(desktop/dist/linux-unpacked/resources/herdr/hc --version)" != "$expected_hc" ]; then
+            echo "Packaged herdr-core is missing or is not $expected_hc" >&2
             exit 1
           fi
 

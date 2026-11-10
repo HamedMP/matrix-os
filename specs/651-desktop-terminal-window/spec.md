@@ -3,7 +3,7 @@
 **Feature Branch**: `spec/desktop-terminal-window`
 **Created**: 2026-11-10
 **Status**: Draft — slices 1–3 implemented locally (2026-11-10); see Implementation Status
-**Tracking**: No Linear ticket recorded. Owner to confirm an existing ENG ticket or authorize a short one before any PR.
+**Tracking**: [ENG-443](https://linear.app/matrix-os/issue/ENG-443/electron-desktop-terminal-window-local-and-all-matrix-computers)
 **Input**: "A terminal app in the Electron Desktop client, separate from the OS-view Terminal, launched from the top bar in its own window. Like herdr, it shows spaces across machines: this computer and every Matrix computer the user has. Ideally the app can also SSH to the remote computer."
 
 ## Implementation Status (2026-11-10)
@@ -12,9 +12,15 @@
 | --- | --- |
 | 1 Window shell | Implemented and exercised in the built app (macOS arm64). |
 | 2 Per-computer credentials and tabs | Implemented. Attach is exercised in the built app for the selected computer; minting for a second computer is covered by unit tests only. |
-| 3 Local terminals | Runtime implemented and exercised in the built app with a developer-supplied `hc` 0.1.19. **Not bundled**: packaged builds have no binary and show local terminals as unavailable. See `research.md`. |
+| 3 Local terminals | Runtime implemented and exercised in the built app with a developer-supplied `hc` 0.1.19. The pinned binary (`desktop/herdr-core.json`) is fetched, checksum-verified and packed into macOS and Linux builds by the release workflow; an unsigned local package was checked, a signed and notarized one has not been built yet. See `research.md`. |
 | 4 Status | Local status from herdr-core's stored reports and a local "Needs attention" list. Matrix tab status and a shared parser are not started. |
 | 5–6 SSH | Not started; gated on open questions 7, 8 and 10. |
+
+Known gaps against this spec, to close before the pinned `hc` version is ever changed:
+
+- **No "Restart local terminals" action.** A holder of another version is detected and reported, but the user is not yet offered the restart described under Local Backend. With one pinned version in the field this state cannot occur; it will on the first version bump.
+- **No runtime checksum of the binary.** The archive checksum is verified at build time, and the binary ships inside the signed, notarized macOS app or the read-only Linux AppImage. The per-app-version check before first spawn is not implemented.
+- **Matrix tab status** and the shared OSC 7501 parser are not started.
 
 ## Goal
 

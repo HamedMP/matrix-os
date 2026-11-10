@@ -11,6 +11,8 @@ export function installAppMenu(options: {
   restoreMain(): void;
   checkForUpdates(): void;
   openTerminalWindow(): void;
+  /** The bundled notices file, or null when this build ships no third-party binary. */
+  thirdPartyNoticesPath: string | null;
 }): void {
   const router = createMenuRouter(options);
   const template = createAppMenuTemplate({
@@ -26,6 +28,14 @@ export function installAppMenu(options: {
     quitApp: () => app.quit(),
     reloadWindow: router.reload,
     openTerminalWindow: options.openTerminalWindow,
+    ...(options.thirdPartyNoticesPath ? {
+      openThirdPartyNotices: () => {
+        // openPath resolves to an error string instead of rejecting.
+        void shell.openPath(options.thirdPartyNoticesPath!).then((failure) => {
+          if (failure) console.warn("[menu] could not open third-party notices");
+        });
+      },
+    } : {}),
   });
 
   Menu.setApplicationMenu(Menu.buildFromTemplate(template));

@@ -824,6 +824,7 @@ if (!gotLock) {
       installAppMenu({
         mainWindow: () => mainWindow,
         terminalWindow: () => terminalWindowController.current(),
+        thirdPartyNoticesPath: localRuntime.noticesPath,
         focusMain: focusMainWindow,
         restoreMain: () => {
           void reopenMainWindow?.().catch((error: unknown) => logMainError("window restore failed", error));

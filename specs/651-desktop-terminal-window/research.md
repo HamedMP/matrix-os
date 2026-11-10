@@ -27,6 +27,6 @@ Throwaway scripts were run outside the repository and are not committed. Only ma
 ## Not done
 
 - Linux and macOS x64.
-- Bundling, checksum verification, signing and notarization of the binary.
+- Signing and notarization of the app with the bundled binary. Fetch, checksum verification and packing are implemented (`scripts/release/fetch-herdr-core.mjs`) and were checked with an unsigned local macOS arm64 package; the release workflow, which is the only place the app is signed, has not run with it yet.
 - A second-OS-user socket test, packet capture, throughput, and the 20-cycle crash loop.
 - Emitting a real OSC 7501 report and seeing it in the UI.
