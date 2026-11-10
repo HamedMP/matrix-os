@@ -765,7 +765,14 @@ if (!gotLock) {
       };
 
       await openMainWindow();
-      reopenMainWindow = () => (reopenPreviewWindow ? reopenPreviewWindow() : openMainWindow());
+      // Single-flight: the menu, the Terminal window and app activation can all
+      // ask for the main window while one is still being created.
+      let reopening: Promise<void> | null = null;
+      reopenMainWindow = () => {
+        if (mainWindow && !mainWindow.isDestroyed()) { focusMainWindow(); return Promise.resolve(); }
+        reopening ??= (reopenPreviewWindow ? reopenPreviewWindow() : openMainWindow()).finally(() => { reopening = null; });
+        return reopening;
+      };
       if (previewContext) reopenPreviewWindow = createPreviewWindowReopener({
         current: () => mainWindow, open: openMainWindow, focus: focusMainWindow,
       });
