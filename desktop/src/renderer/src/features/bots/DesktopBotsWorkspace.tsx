@@ -4,7 +4,7 @@ import { createContext, useContext, useEffect, useMemo, useState } from "react";
 import { AppError } from "../../../../shared/app-error";
 import { useConnection } from "../../stores/connection";
 import EmbedHost from "../embeds/EmbedHost";
-import { HostedBotsDriveApproval } from "./HostedBotsDriveApproval";
+import { HostedBotsIntegrationApproval } from "./HostedBotsIntegrationApproval";
 
 export function useDesktopHostedBotsCapability() {
   const api = useConnection((state) => state.api);
@@ -63,7 +63,7 @@ export function DesktopBotsWorkspace(props: {
   const capability = useContext(desktopHostedBots);
   if (capability?.mode === "oss") return (
     <div key={capability.scope} className="flex min-h-0 flex-1 flex-col">
-      {props.visible && props.active && capability.transport ? <HostedBotsDriveApproval transport={capability.transport} /> : null}
+      {props.visible && props.active && capability.transport ? <HostedBotsIntegrationApproval transport={capability.transport} /> : null}
       <EmbedHost kind="hosted-bots" {...props} />
     </div>
   );

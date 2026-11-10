@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 // @ts-expect-error This is an isolated Node script copied into the preview image.
-import { driveToolReply } from "../../../scripts/openmausbot/matrix-drive-mcp.mjs";
+import { driveToolReply, integrationToolReply } from "../../../scripts/openmausbot/matrix-drive-mcp.mjs";
 
 const text = (result: { content: [{ text: string }] }) => result.content[0].text;
 
@@ -25,8 +25,10 @@ async function withBroker(
   }
 }
 
-describe("OpenMausBot Matrix Drive MCP", () => {
-  it("advertises one read-only tool over stdio without an available broker", () => {
+describe("OpenMausBot Matrix integration MCP", () => {
+  const githubRead = { service: "github", action: "list_prs", params: { repo: "HamedMP/matrix-os", per_page: 1 } };
+
+  it("advertises both read-only tools over stdio without an available broker", () => {
     const requests = [
       { jsonrpc: "2.0", id: 1, method: "initialize", params: { protocolVersion: "2025-06-18" } },
       { jsonrpc: "2.0", id: 2, method: "tools/list" },
@@ -38,8 +40,77 @@ describe("OpenMausBot Matrix Drive MCP", () => {
     expect(child.stderr).toBe("");
     const [initialized, listed] = child.stdout.trim().split("\n").map((line) => JSON.parse(line));
     expect(initialized).toMatchObject({ id: 1, result: { protocolVersion: "2025-06-18" } });
-    expect(listed.result.tools).toHaveLength(1);
-    expect(listed.result.tools[0]).toMatchObject({ name: "matrix_read_drive_document", annotations: { readOnlyHint: true } });
+    expect(listed.result.tools).toHaveLength(2);
+    expect(listed.result.tools).toEqual(expect.arrayContaining([
+      expect.objectContaining({ name: "matrix_read_drive_document", annotations: { readOnlyHint: true } }),
+      expect.objectContaining({ name: "matrix_read_integration", annotations: { readOnlyHint: true } }),
+    ]));
+  });
+
+  it("dispatches the generic tool over stdio and validates its inputs before contacting the broker", () => {
+    const child = spawnSync(process.execPath, ["scripts/openmausbot/matrix-drive-mcp.mjs"], {
+      input: JSON.stringify({
+        jsonrpc: "2.0", id: 1, method: "tools/call", params: {
+          name: "matrix_read_integration", arguments: { ...githubRead, connectionId: "injected" },
+        },
+      }) + "\n", encoding: "utf8", timeout: 3_000,
+    });
+    expect(child.status).toBe(0);
+    expect(child.stderr).toBe("");
+    expect(JSON.parse(child.stdout)).toMatchObject({ id: 1, result: {
+      isError: true, content: [{ type: "text", text: expect.stringContaining("service, action, and params") }],
+    } });
+  });
+
+  it("sends one exact integration request over the existing Unix socket", async () => {
+    const inputs: unknown[] = [];
+    const output = { data: [{ number: 1, title: "Synthetic public pull request" }] };
+    await withBroker(async (request, response) => {
+      expect(request.method).toBe("POST");
+      expect(request.url).toBe("/integration/read");
+      expect(request.headers.authorization).toBeUndefined();
+      let raw = "";
+      for await (const chunk of request) raw += chunk;
+      inputs.push(JSON.parse(raw));
+      response.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify(output));
+    }, async (socketPath) => {
+      const result = await integrationToolReply(githubRead, socketPath);
+      expect(result.isError).toBeUndefined();
+      expect(JSON.parse(text(result))).toEqual(output);
+      expect(inputs).toEqual([githubRead]);
+    });
+  });
+
+  it("rejects invalid integration arguments locally and withholds denied or oversized broker results", async () => {
+    let nested: unknown = null;
+    for (let i = 0; i < 8_000; i++) nested = [nested];
+    const replies = [
+      { status: 403, body: { data: "SECRET_RAW_UPSTREAM_ERROR" } },
+      { status: 200, body: { data: "x".repeat(24 * 1024) } },
+      { status: 200, body: { data: "ok", providerToken: "SECRET_WRONG_ENVELOPE" } },
+    ];
+    let requestCount = 0;
+    await withBroker((_, response) => {
+      const reply = replies[requestCount++]!;
+      response.writeHead(reply.status, { "content-type": "application/json" }).end(JSON.stringify(reply.body));
+    }, async (socketPath) => {
+      for (const input of [
+        { ...githubRead, accountId: "injected" },
+        { ...githubRead, service: "../../github" },
+        { ...githubRead, action: "list/prs" },
+        { ...githubRead, params: [] },
+        { ...githubRead, params: { query: "x".repeat(16 * 1024) } },
+        { ...githubRead, params: { nested } },
+      ]) expect((await integrationToolReply(input, socketPath)).isError).toBe(true);
+      expect(requestCount).toBe(0);
+      for (let i = 0; i < replies.length; i++) {
+        const result = await integrationToolReply(githubRead, socketPath);
+        expect(result.isError).toBe(true);
+        expect(text(result)).not.toContain("SECRET_");
+        if (i === 0) expect(text(result)).toContain("did not grant access");
+      }
+      expect(requestCount).toBe(replies.length);
+    });
   });
 
   it("sends only the exact file ID over Unix HTTP and returns bounded text", async () => {

@@ -73,20 +73,26 @@ The hosted Bots view follows the effective Matrix Electron Desktop theme, includ
 
 Connected Apps and custom MCP use upstream configuration on the preview. The app catalog can render before a self-hosted Connected Apps project key is configured. Validate a connector with an approved account and a successful, scoped tool call. A separate custom MCP check can use a disposable tool that returns a synthetic value and requires no third-party account.
 
-### Matrix-managed Google Drive in Private Preview
+### Matrix-managed Pipedream reads in Private Preview
 
-Offer one read-only tool that asks to read a single Google Drive file ID through Matrix's existing Pipedream connection. Only an eligible owner-only Private Preview with the opted-in OSS bundle can offer the tool. Use Platform's existing Private Preview personal integration checks and immutable account binding. No change to the shared Preview Chat Drive contract is required.
+**Scope.** Direct conversations with a paired user in an opted-in, owner-only Private Preview can request a registered read from an existing Matrix-managed Pipedream account. Matrix Electron Desktop reviews each request. Platform's existing personal integration checks still govern account access. Tool discovery in the upstream conversation exposes tool definitions. The Matrix review owns the connected-account list.
+
+**Signatures.** `matrix_read_integration({service,action,params})` submits the same object to `POST /integration/read` on the protected local Unix socket. The existing `matrix_read_drive_document({fileId})` and `POST /read` keep their original interface. `GET /api/hosted-bots/integrations` returns `requests: [{id,service,action,params,expiresAt,status}]` and `accounts: [{id,service,label}]`. An explicit `?includeAccounts=1` includes accounts for the requested services. `POST /api/hosted-bots/integrations/:requestId/decision` accepts `{decision:"allow",accountId}` or `{decision:"deny"}`. `DELETE /api/hosted-bots/integrations/:requestId` cancels. The legacy `/api/hosted-bots/drive` owner interface remains scoped to legacy Drive requests.
 
 | Boundary | Authority and behavior |
 | --- | --- |
-| OSS tool request | The isolated workload sends a validated file ID over the private broker socket. The Gateway issues a fresh request ID. The workload supplies no credentials, account, owner, or authority to execute. |
-| Matrix review | The exact Preview owner sees the requested file ID and chooses a connected account in Matrix Electron. An explicit approval applies to that request only. Rejection or expiry before dispatch must prevent any provider call. |
-| Provider call | The Gateway uses the existing Matrix integration client with its signed owner delegation, fixed `google_drive.read_file` action, and the selected immutable connection ID. Recheck the account at execution and return only a bounded text result to the waiting request. |
+| OSS tool request | The workload submits one validated service, action, and parameter object over the read-only socket mount. The Gateway issues a fresh request ID and holds the request in memory for up to 90 seconds. The shared queue holds up to four requests. |
+| Matrix review | The Preview owner reviews the exact application, action, and parameters and chooses a connected account for that service. Approval applies only to this request and lets the requesting conversation and its AI model see the result. |
+| Provider call | The Gateway checks the registry, the Platform read catalog, and the active connection before dispatch. The existing integration client calls `/read-call` with signed owner delegation and the selected immutable connection ID. Generic success contains only `{data}` with a 24 KiB serialized cap. The legacy Drive result retains its file ID, optional name, and 24 KiB text cap. |
 | Revocation | Cancel the pending request or abort the in-progress read and suppress its result. A completed read has consumed its approval. A later request always needs a fresh approval. |
 
-The socket exposes only `POST /read` with `{fileId}` and returns at most 24 KiB of document text. The owner reviews requests through `GET /api/hosted-bots/drive`, approves or rejects via `POST /api/hosted-bots/drive/:requestId/decision`, and cancels via `DELETE /api/hosted-bots/drive/:requestId`. Pending requests expire after 90 seconds and do not survive a Gateway restart. A read-only mount exposes the socket to the workload. The Matrix UI fetches the account list only when the owner opens the review. There is no standing Bot grant. Revocation can prevent delivery of a result but cannot undo a provider request already dispatched.
+**Validation and errors.** The generic request has a 4 KiB body limit and uses the registered action parameter definitions. Unknown fields or invalid values produce `400`, oversized requests `413`, and a full queue `429`. Unsupported or non-read actions, missing account authority, explicit denial, and expiry fail closed. Repeating an in-progress approval produces `409`. Provider failures or results larger than the output budget return a coarse error. Restarting the Gateway clears pending requests.
 
-Acceptance uses a synthetic text file or a public sample document and a connected account. Verify exact file and account selection, successful receipt of the expected text in Pebble, no call after rejection, no result after cancellation, and no reuse of the earlier approval. Test wrong-owner, replay, timeout, unavailable integration, and refusal before any provider request. The Matrix shell review is required even when the upstream tool approval mode permits the call.
+**Examples.** A `github.get_pr` read with `repo` set to `octocat/Hello-World` and `pullNumber` set to `1` shows those exact parameters in the review. Declining the request leaves the provider untouched. A `github.create_issue` request fails before it reaches the approval panel.
+
+**Verification.** Test exact parameters through the socket, review, and signed Platform request. Cover wrong owner, mismatched or disconnected accounts, stale approval, unsupported actions, expiry, size limits, and cancellation after dispatch. Exercise a bounded public read through Pebble on the live Preview and check the saved tool outcome. Repeat the existing Drive contract tests.
+
+**Authority rule.** Use the selected immutable connection ID and the dedicated `/read-call` route. An upstream approval, account label alone, or a model-supplied request is insufficient authority to dispatch.
 
 ### Preview event delivery and tool approval
 

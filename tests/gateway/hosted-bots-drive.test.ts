@@ -10,6 +10,8 @@ import { bindHostedBotsDriveSocket, HOSTED_BOTS_DRIVE_BASE } from "../../package
 const ownerId = "user_preview_owner";
 const fileId = "fixture-document";
 const accountId = "account-fixture";
+const githubAccountId = "account-github";
+const githubRead = { service: "github", action: "list_prs", params: { repo: "HamedMP/matrix-os", per_page: 1 } };
 const json = { "content-type": "application/json" };
 const authenticated = { ...json, "x-test-owner": ownerId };
 
@@ -17,13 +19,17 @@ function setup(options: { timeoutMs?: number; admitted?: boolean } = {}) {
   const inventory = vi.fn(async () => [
     { connectionId: accountId, service: "google_drive", label: "Test Drive", email: "fixture@example.com" },
     { connectionId: "another-service", service: "gmail", label: "Test Gmail" },
+    { connectionId: githubAccountId, service: "github", label: "Test GitHub", email: "hidden@example.com" },
   ]);
   const call = vi.fn<BotIntegrationClient["call"]>(async () => ({ data: { fileId, name: "Fixture", content: "QA receipt" } }));
+  const describeActions = vi.fn<BotIntegrationClient["describe"]>(async () => [
+    { id: "list_prs", description: "List pull requests", risk: "read", params: {} },
+  ]);
   const broker = createHostedBotsDriveApproval({
     admitted: options.admitted ?? true,
     ownerId,
     isOwner: (c) => c.req.header("x-test-owner") === ownerId,
-    integration: { inventory, call },
+    integration: { inventory, call, describe: describeActions },
     timeoutMs: options.timeoutMs,
   });
   const queue = (body: unknown = { fileId }, signal?: AbortSignal) => broker.guestRoutes.request("/read", {
@@ -43,7 +49,24 @@ function setup(options: { timeoutMs?: number; admitted?: boolean } = {}) {
     method: "POST", headers: authenticated, body: JSON.stringify(body),
   });
   const cancel = (id: string) => broker.ownerRoutes.request("/" + id, { method: "DELETE", headers: authenticated });
-  return { broker, inventory, call, queue, state, requestId, decision, cancel };
+  const queueIntegration = (body: unknown = githubRead) => broker.guestRoutes.request("/integration/read", {
+    method: "POST", headers: json, body: JSON.stringify(body),
+  });
+  const integrationState = (includeAccounts = false) => broker.integrationOwnerRoutes.request(includeAccounts ? "/?includeAccounts=1" : "/", {
+    headers: authenticated,
+  });
+  async function integrationRequestId(): Promise<string> {
+    return vi.waitFor(async () => {
+      const result = await (await integrationState()).json();
+      expect(result.requests).toHaveLength(1);
+      return result.requests[0].id;
+    });
+  }
+  const integrationDecision = (id: string, body: unknown) => broker.integrationOwnerRoutes.request("/" + id + "/decision", {
+    method: "POST", headers: authenticated, body: JSON.stringify(body),
+  });
+  return { broker, inventory, call, describeActions, queue, state, requestId, decision, cancel,
+    queueIntegration, integrationState, integrationRequestId, integrationDecision };
 }
 
 describe("Hosted Bots Drive approval", () => {
@@ -175,5 +198,85 @@ describe("Hosted Bots Drive approval", () => {
       await closeSocket?.();
       await rm(directory, { recursive: true, force: true });
     }
+  });
+});
+
+describe("Hosted Bots Pipedream integration approval", () => {
+  it("reviews one exact read against a connected GitHub account before dispatch", async () => {
+    const f = setup();
+    try {
+      const data = [{ number: 42, title: "Public sample pull request" }];
+      f.call.mockResolvedValueOnce({ data, summary: "Internal summary" });
+      const read = f.queueIntegration();
+      const id = await f.integrationRequestId();
+      expect(await (await f.integrationState()).json()).toEqual({
+        requests: [{ id, ...githubRead, expiresAt: expect.any(Number), status: "pending" }], accounts: [],
+      });
+      expect(f.inventory).not.toHaveBeenCalled();
+      expect(f.describeActions).not.toHaveBeenCalled();
+      expect(f.call).not.toHaveBeenCalled();
+      expect(await (await f.state(true)).json()).toEqual({ requests: [], accounts: [] });
+      expect(await (await f.integrationState(true)).json()).toMatchObject({
+        accounts: [{ id: githubAccountId, service: "github", label: "Test GitHub" }],
+      });
+      expect((await f.decision(id, { decision: "allow", accountId })).status).toBe(404);
+      expect((await f.broker.integrationOwnerRoutes.request("/" + id + "/decision", {
+        method: "POST", headers: json, body: JSON.stringify({ decision: "allow", accountId: githubAccountId }),
+      })).status).toBe(403);
+      expect((await f.integrationDecision(id, { decision: "allow", accountId: githubAccountId })).status).toBe(202);
+      expect(await (await read).json()).toEqual({ data });
+      expect(f.describeActions).toHaveBeenCalledExactlyOnceWith(ownerId, { service: "github", readOnly: true }, expect.any(AbortSignal));
+      expect(f.call).toHaveBeenCalledExactlyOnceWith(ownerId, {
+        ...githubRead, connectionId: githubAccountId, label: "Test GitHub", read: true,
+      }, expect.any(AbortSignal));
+      expect((await f.integrationDecision(id, { decision: "allow", accountId: githubAccountId })).status).toBe(404);
+    } finally { f.broker.close(); }
+  });
+
+  it("does not dispatch an unsupported read, invalid params, write, denied request, or wrong-service account", async () => {
+    const f = setup();
+    try {
+      expect((await f.queueIntegration({ ...githubRead, action: "create_issue" })).status).toBe(403);
+      expect((await f.queueIntegration({ ...githubRead, service: "constructor" })).status).toBe(403);
+      expect((await f.queueIntegration({ ...githubRead, params: { repo: "../oops", per_page: 500 } })).status).toBe(400);
+      expect((await f.queueIntegration({ ...githubRead, accountId: githubAccountId })).status).toBe(400);
+      expect((await f.queueIntegration({
+        service: "linear", action: "viewer", params: { undeclared: true },
+      })).status).toBe(400);
+      expect((await f.queueIntegration({
+        ...githubRead, params: JSON.parse('{"repo":"HamedMP/matrix-os","__proto__":{"unsafe":true}}'),
+      })).status).toBe(400);
+      const nested = Array.from({ length: 12 }).reduce((value) => ({ nested: value }), {});
+      expect((await f.queueIntegration({ ...githubRead, params: { repo: nested } })).status).toBe(400);
+      const denied = f.queueIntegration();
+      expect((await f.integrationDecision(await f.integrationRequestId(), { decision: "deny" })).status).toBe(202);
+      expect(await (await denied).json()).toEqual({ error: "forbidden" });
+      const wrong = f.queueIntegration();
+      expect((await f.integrationDecision(await f.integrationRequestId(), { decision: "allow", accountId })).status).toBe(202);
+      expect((await wrong).status).toBe(403);
+      const changed = f.queueIntegration();
+      f.describeActions.mockResolvedValueOnce([]);
+      await f.integrationDecision(await f.integrationRequestId(), { decision: "allow", accountId: githubAccountId });
+      expect((await changed).status).toBe(403);
+      expect(f.call).not.toHaveBeenCalled();
+    } finally { f.broker.close(); }
+  });
+
+  it("bounds request and response size and preserves the legacy Drive response via generic approval", async () => {
+    const f = setup();
+    try {
+      expect((await f.queueIntegration({ ...githubRead, params: { repo: "a".repeat(4096) } })).status).toBe(413);
+      f.call.mockResolvedValueOnce({ data: { description: "a".repeat(24 * 1024) } });
+      const read = f.queueIntegration();
+      await f.integrationDecision(await f.integrationRequestId(), { decision: "allow", accountId: githubAccountId });
+      expect((await read).status).toBe(503);
+      const legacy = f.queue();
+      const id = await f.integrationRequestId();
+      expect(await (await f.integrationState()).json()).toMatchObject({
+        requests: [{ id, service: "google_drive", action: "read_file", params: { fileId } }],
+      });
+      await f.integrationDecision(id, { decision: "allow", accountId });
+      expect(await (await legacy).json()).toEqual({ fileId, name: "Fixture", content: "QA receipt" });
+    } finally { f.broker.close(); }
   });
 });

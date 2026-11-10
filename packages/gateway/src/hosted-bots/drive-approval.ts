@@ -3,6 +3,8 @@ import { Hono, type Context } from "hono";
 import { bodyLimit } from "hono/body-limit";
 import { z } from "zod/v4";
 import { BotIntegrationError, type BotIntegrationClient } from "../bots/integration-client.js";
+import { validateActionParams } from "../integrations/parameter-validation.js";
+import { getService } from "../integrations/registry.js";
 
 const MAX_REQUESTS = 4;
 const MAX_ACCOUNTS = 16;
@@ -12,6 +14,13 @@ const AccountId = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$/);
 const AccountLabel = z.string().min(1).max(100).refine((label) => label === label.trim() && !/[\x00-\x1f\x7f]/.test(label));
 const FileId = z.string().regex(/^[A-Za-z0-9_-]{1,256}$/);
 const Read = z.strictObject({ fileId: FileId });
+const IntegrationId = z.string().regex(/^[a-z][a-z0-9_]{0,63}$/);
+const IntegrationRead = z.strictObject({
+  service: IntegrationId,
+  action: IntegrationId,
+  params: z.custom<Record<string, unknown>>(value =>
+    value !== null && typeof value === "object" && !Array.isArray(value) && safeJson(value)),
+});
 const Decision = z.discriminatedUnion("decision", [
   z.strictObject({ decision: z.literal("allow"), accountId: AccountId }),
   z.strictObject({ decision: z.literal("deny") }),
@@ -23,15 +32,51 @@ const Content = z.object({
 });
 
 type Failure = "forbidden" | "unavailable";
-type Outcome = { data: z.infer<typeof Content> } | { error: Failure };
+type Outcome = { data: unknown } | { error: Failure };
+type RequestedRead = { legacy: true; service: "google_drive"; action: "read_file"; params: z.infer<typeof Read> }
+  | ({ legacy: false } & z.infer<typeof IntegrationRead>);
 
-interface DriveRequest {
+interface ReadRequest {
   id: string;
-  fileId: string;
+  input: RequestedRead;
   expiresAt: number;
   status: "pending" | "reading";
   cancel: AbortController;
   settle: (outcome: Outcome) => void;
+}
+
+// The body is JSON at the wire. Bound nesting before provider schema checks
+// and reject prototype keys even in nested component properties.
+function safeJson(value: unknown, depth = 0): boolean {
+  if (depth > 8) return false;
+  if (value === null || typeof value === "string" || typeof value === "boolean") return true;
+  if (typeof value === "number") return Number.isFinite(value);
+  if (Array.isArray(value)) return value.every(item => safeJson(item, depth + 1));
+  if (typeof value !== "object") return false;
+  return Object.entries(value).every(([key, item]) => key.length <= 128
+    && key !== "__proto__" && key !== "prototype" && key !== "constructor" && safeJson(item, depth + 1));
+}
+
+function supportedPipedreamRead(input: Pick<RequestedRead, "service" | "action">) {
+  const service = getService(input.service);
+  if (service?.connectorKind !== "pipedream" || !service.pipedreamApp || !Object.hasOwn(service.actions, input.action)) return;
+  const action = service.actions[input.action];
+  if (action?.risk === "read") return action;
+}
+
+function approvalResponse(input: RequestedRead, value: unknown): Outcome {
+  if (input.legacy) {
+    const content = Content.safeParse(value);
+    return content.success && content.data.fileId === input.params.fileId
+      ? { data: content.data } : { error: "unavailable" };
+  }
+  // Platform returns parsed JSON. Keep its business data only, and cap the
+  // complete guest response so a result is either intact or unavailable.
+  const envelope = { data: value };
+  if (value === undefined || Buffer.byteLength(JSON.stringify(envelope), "utf8") > MAX_CONTENT_BYTES) {
+    return { error: "unavailable" };
+  }
+  return { data: envelope };
 }
 
 async function json<T extends z.ZodType>(c: Context, schema: T): Promise<z.infer<T> | null> {
@@ -55,16 +100,18 @@ export function createHostedBotsDriveApproval(options: {
   admitted: boolean;
   ownerId: string;
   isOwner: (c: Context) => boolean;
-  integration: Pick<BotIntegrationClient, "inventory" | "call">;
+  integration: Pick<BotIntegrationClient, "inventory" | "describe" | "call">;
   timeoutMs?: number;
 }) {
   const ownerRoutes = new Hono();
+  const integrationOwnerRoutes = new Hono();
   const guestRoutes = new Hono();
   // The cap and per-request deadline bound waiting connections and in-memory state.
-  const requests = new Map<string, DriveRequest>();
+  const requests = new Map<string, ReadRequest>();
   let closed = false;
-  const limit = bodyLimit({ maxSize: 1024, onError: (c) => c.json({ error: "too_large" }, 413) });
-  for (const routes of [ownerRoutes, guestRoutes]) {
+  const bodyBound = (maxSize: number) => bodyLimit({ maxSize, onError: (c) => c.json({ error: "too_large" }, 413) });
+  const limit = bodyBound(1024);
+  for (const routes of [ownerRoutes, integrationOwnerRoutes, guestRoutes]) {
     routes.use("*", async (c, next) => {
       c.header("cache-control", "no-store");
       c.header("x-content-type-options", "nosniff");
@@ -78,72 +125,90 @@ export function createHostedBotsDriveApproval(options: {
       return c.json({ error: "unavailable" }, 503);
     });
   }
-  ownerRoutes.use("*", async (c, next) => {
-    if (!options.isOwner(c)) return c.json({ error: "forbidden" }, 403);
-    await next();
-  });
-
-  async function accounts(signal: AbortSignal) {
+  async function accounts(signal: AbortSignal, services: ReadonlySet<string>) {
     const rows = await options.integration.inventory(options.ownerId, signal);
-    return rows.filter((row) => row.service === "google_drive" && AccountId.safeParse(row.connectionId).success
+    return rows.filter((row) => services.has(row.service) && AccountId.safeParse(row.connectionId).success
       && AccountLabel.safeParse(row.label).success)
-      .map((row) => ({ id: row.connectionId, label: row.label }));
+      .map((row) => ({ id: row.connectionId, service: row.service, label: row.label }));
   }
 
-  async function readApproved(request: DriveRequest, accountId: string) {
+  async function readApproved(request: ReadRequest, accountId: string) {
     const signal = request.cancel.signal;
+    const { input } = request;
     try {
-      const matches = (await accounts(signal)).filter((account) => account.id === accountId);
+      const matches = (await accounts(signal, new Set([input.service]))).filter((account) => account.id === accountId);
       if (matches.length !== 1 || signal.aborted) return request.settle({ error: "forbidden" });
+      if (!input.legacy) {
+        const actions = await options.integration.describe(options.ownerId, { service: input.service, readOnly: true }, signal);
+        if (signal.aborted || !supportedPipedreamRead(input)
+          || !actions.some(action => action.id === input.action && action.risk === "read")) {
+          return request.settle({ error: "forbidden" });
+        }
+      }
       const result = await options.integration.call(options.ownerId, {
-        service: "google_drive", action: "read_file", label: matches[0]!.label, connectionId: accountId,
-        params: { fileId: request.fileId }, read: true,
+        service: input.service, action: input.action, params: input.params,
+        label: matches[0]!.label, connectionId: accountId, read: true,
       }, signal);
-      const content = Content.safeParse(result.data);
-      request.settle(content.success && content.data.fileId === request.fileId
-        ? { data: content.data } : { error: "unavailable" });
+      request.settle(approvalResponse(input, result.data));
     } catch (error: unknown) {
       if (!signal.aborted) request.settle({ error: integrationFailure(error) });
     }
   }
 
-  ownerRoutes.get("/", async (c) => {
-    const search = new URL(c.req.url).search;
-    if (search !== "" && search !== "?includeAccounts=1") return c.json({ error: "invalid_request" }, 400);
-    const visibleAccounts = search && requests.size
-      ? (await accounts(c.req.raw.signal)).slice(0, MAX_ACCOUNTS) : [];
-    const visibleRequests = Array.from(requests.values(), ({ id, fileId, expiresAt, status }) => ({ id, fileId, expiresAt, status }));
-    return c.json({ requests: visibleRequests, accounts: visibleAccounts });
-  });
+  function configureOwnerRoutes(routes: Hono, legacyOnly: boolean) {
+    const visible = (request: ReadRequest) => !legacyOnly || request.input.legacy;
+    routes.use("*", async (c, next) => {
+      if (!options.isOwner(c)) return c.json({ error: "forbidden" }, 403);
+      await next();
+    });
 
-  ownerRoutes.post("/:requestId/decision", limit, async (c) => {
-    const id = z.uuid().safeParse(c.req.param("requestId"));
-    const decision = await json(c, Decision);
-    if (!id.success || !decision || new URL(c.req.url).search) return c.json({ error: "invalid_request" }, 400);
-    const request = requests.get(id.data);
-    if (!request) return c.json({ error: "not_found" }, 404);
-    if (request.status !== "pending") return c.json({ error: "conflict" }, 409);
-    if (decision.decision === "allow") {
-      request.status = "reading";
-      void readApproved(request, decision.accountId);
-    } else {
+    routes.get("/", async (c) => {
+      const search = new URL(c.req.url).search;
+      if (search !== "" && search !== "?includeAccounts=1") return c.json({ error: "invalid_request" }, 400);
+      const initial = Array.from(requests.values()).filter(visible);
+      const services = new Set(initial.map(({ input }) => input.service));
+      const visibleAccounts = search && services.size
+        ? (await accounts(c.req.raw.signal, services)).slice(0, MAX_ACCOUNTS) : [];
+      const visibleRequests = Array.from(requests.values()).filter(visible).map(({ id, input, expiresAt, status }) => {
+        const { service, action, params } = input;
+        return legacyOnly && input.legacy
+          ? { id, fileId: input.params.fileId, expiresAt, status }
+          : { id, service, action, params, expiresAt, status };
+      });
+      return c.json({ requests: visibleRequests, accounts: legacyOnly
+        ? visibleAccounts.map(({ id, label }) => ({ id, label })) : visibleAccounts });
+    });
+
+    routes.post("/:requestId/decision", limit, async (c) => {
+      const id = z.uuid().safeParse(c.req.param("requestId"));
+      const decision = await json(c, Decision);
+      if (!id.success || !decision || new URL(c.req.url).search) return c.json({ error: "invalid_request" }, 400);
+      const request = requests.get(id.data);
+      if (!request || !visible(request)) return c.json({ error: "not_found" }, 404);
+      if (request.status !== "pending") return c.json({ error: "conflict" }, 409);
+      if (decision.decision === "allow") {
+        request.status = "reading";
+        void readApproved(request, decision.accountId);
+      } else {
+        request.settle({ error: "forbidden" });
+      }
+      return c.json({ ok: true }, 202);
+    });
+
+    routes.delete("/:requestId", limit, (c) => {
+      const id = z.uuid().safeParse(c.req.param("requestId"));
+      if (!id.success || new URL(c.req.url).search) return c.json({ error: "invalid_request" }, 400);
+      const request = requests.get(id.data);
+      if (!request || !visible(request)) return c.json({ error: "not_found" }, 404);
       request.settle({ error: "forbidden" });
-    }
-    return c.json({ ok: true }, 202);
-  });
+      return c.json({ ok: true });
+    });
+  }
 
-  ownerRoutes.delete("/:requestId", limit, (c) => {
-    const id = z.uuid().safeParse(c.req.param("requestId"));
-    if (!id.success || new URL(c.req.url).search) return c.json({ error: "invalid_request" }, 400);
-    const request = requests.get(id.data);
-    if (!request) return c.json({ error: "not_found" }, 404);
-    request.settle({ error: "forbidden" });
-    return c.json({ ok: true });
-  });
+  configureOwnerRoutes(ownerRoutes, true);
+  configureOwnerRoutes(integrationOwnerRoutes, false);
 
-  guestRoutes.post("/read", limit, async (c) => {
-    const input = await json(c, Read);
-    if (!input || new URL(c.req.url).search) return c.json({ error: "invalid_request" }, 400);
+  async function waitForApproval(c: Context, input: RequestedRead) {
     if (closed || c.req.raw.signal.aborted) return c.json({ error: "forbidden" }, 403);
     if (requests.size >= MAX_REQUESTS) return c.json({ error: "limit" }, 429);
 
@@ -163,15 +228,33 @@ export function createHostedBotsDriveApproval(options: {
       cancel.abort();
       outcome.resolve(result);
     }
-    requests.set(id, { id, fileId: input.fileId, expiresAt: Date.now() + deadline, status: "pending", cancel, settle });
+    requests.set(id, { id, input, expiresAt: Date.now() + deadline, status: "pending", cancel, settle });
     c.req.raw.signal.addEventListener("abort", onAbort, { once: true });
 
     const result = await outcome.promise;
     if ("data" in result) return c.json(result.data);
     return c.json(result, result.error === "forbidden" ? 403 : 503);
+  }
+
+  guestRoutes.post("/read", limit, async (c) => {
+    const params = await json(c, Read);
+    if (!params || new URL(c.req.url).search) return c.json({ error: "invalid_request" }, 400);
+    return waitForApproval(c, { legacy: true, service: "google_drive", action: "read_file", params });
   });
 
-  return { ownerRoutes, guestRoutes, close() {
+  guestRoutes.post("/integration/read", bodyBound(4096), async (c) => {
+    const input = await json(c, IntegrationRead);
+    if (!input || new URL(c.req.url).search) return c.json({ error: "invalid_request" }, 400);
+    const action = supportedPipedreamRead(input);
+    if (!action) return c.json({ error: "forbidden" }, 403);
+    if (Object.keys(input.params).some(key => !Object.hasOwn(action.params, key))
+      || !validateActionParams(action, input.params).valid) {
+      return c.json({ error: "invalid_request" }, 400);
+    }
+    return waitForApproval(c, { ...input, legacy: false });
+  });
+
+  return { ownerRoutes, integrationOwnerRoutes, guestRoutes, close() {
     closed = true;
     for (const request of requests.values()) request.settle({ error: "forbidden" });
   } };

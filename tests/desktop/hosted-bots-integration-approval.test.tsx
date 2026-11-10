@@ -3,23 +3,34 @@ import React from "react";
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { DesktopBotsWorkspace, DesktopHostedBotsProvider } from "@renderer/features/bots/DesktopBotsWorkspace";
+import { AppError } from "../../desktop/src/shared/app-error";
 import type { ApiClient, JsonRequestOptions } from "@renderer/lib/api";
 import { useTabs } from "@renderer/stores/tabs";
 import { useUi } from "@renderer/stores/ui";
 
 vi.mock("@renderer/features/embeds/EmbedHost", () => ({ default: () => <main>Hosted Bots conversation</main> }));
 
-const PATH = "/api/hosted-bots/drive";
+const PATH = "/api/hosted-bots/integrations";
+const LEGACY_PATH = "/api/hosted-bots/drive";
 const ID = "c550fd7e-1933-4744-a1f9-9cb667af33c1";
 const FILE = "fixture_document_123";
-const ACCOUNT = { id: "work-connection", label: "Work account" };
+const ACCOUNT = { id: "work-connection", label: "Work account", service: "google_drive" };
+const GITHUB_ACCOUNT = { id: "github-connection", label: "GitHub work account", service: "github" };
+const DRIVE = { service: "google_drive", action: "read_file", params: { fileId: FILE } };
+const GITHUB = { service: "github", action: "list_prs", params: { repo: "HamedMP/matrix-os", per_page: 1 } };
 
-function setup(accounts = [ACCOUNT], initialStatus: "pending" | "reading" = "pending") {
-  let status: "pending" | "reading" | "finished" = initialStatus;
-  const get = vi.fn(async (path: string, _options?: JsonRequestOptions) => ({
-    requests: status === "finished" ? [] : [{ id: ID, fileId: FILE, expiresAt: Date.now() + 60_000, status }],
-    accounts: path === `${PATH}?includeAccounts=1` ? accounts : [],
-  }));
+function setup(accounts = [ACCOUNT], request: { service: string; action: string; params: Record<string, string | number> } = DRIVE, legacy = false) {
+  let status: "pending" | "reading" | "finished" = "pending";
+  const expiresAt = Date.now() + 60_000;
+  const get = vi.fn(async (path: string, _options?: JsonRequestOptions) => {
+    if (legacy && path === PATH) throw new AppError("notFound", { httpStatus: 404 });
+    return {
+      requests: status === "finished" ? [] : [{ id: ID, ...(legacy ? { fileId: FILE } : request), expiresAt, status }],
+      accounts: path.endsWith("?includeAccounts=1")
+        ? accounts.map(({ id, label, service }) => legacy ? { id, label } : { id, label, service })
+        : [],
+    };
+  });
   const post = vi.fn(async (_path: string, body: { decision: string }) => {
     status = body.decision === "allow" ? "reading" : "finished";
     return { ok: true };
@@ -44,7 +55,55 @@ afterEach(() => {
   useUi.setState(useUi.getInitialState(), true);
 });
 
-describe("Hosted Bots Drive approvals", () => {
+describe("Hosted Bots integration approvals", () => {
+  it("displays the exact GitHub action and parameters and only offers GitHub accounts", async () => {
+    const { get, post, workspace } = setup([ACCOUNT, GITHUB_ACCOUNT], GITHUB);
+    render(workspace(true));
+    fireEvent.click(await screen.findByRole("button", { name: "Review GitHub request" }));
+    expect(get.mock.calls.map(([path]) => path)).toEqual([PATH, `${PATH}?includeAccounts=1`]);
+    expect(screen.getByText("list_prs")).toBeTruthy();
+    expect(screen.getByText(/"repo": "HamedMP\/matrix-os"/).textContent).toContain('"per_page": 1');
+    expect(screen.getByText(/results will be shared with the requesting conversation/i)).toBeTruthy();
+    const account = await screen.findByRole("combobox", { name: "GitHub account" });
+    expect(screen.queryByRole("option", { name: "Work account" })).toBeNull();
+    const approve = screen.getByRole<HTMLButtonElement>("button", { name: "Allow once" });
+    expect(approve.disabled).toBe(true);
+    fireEvent.change(account, { target: { value: GITHUB_ACCOUNT.id } });
+    fireEvent.click(approve);
+    await waitFor(() => expect(post).toHaveBeenCalledWith(`${PATH}/${ID}/decision`, {
+      decision: "allow",
+      accountId: GITHUB_ACCOUNT.id,
+    }, expect.any(Object)));
+  });
+
+  it("requires a new review if the request parameters change before loading the account picker", async () => {
+    const { get, post, workspace } = setup([GITHUB_ACCOUNT], GITHUB);
+    render(workspace(true));
+    const review = await screen.findByRole("button", { name: "Review GitHub request" });
+    const advertised = await get.mock.results[0]!.value;
+    get.mockResolvedValueOnce({
+      requests: advertised.requests.map((request) => ({ ...request, params: { repo: "other/repo", per_page: 1 } })),
+      accounts: [GITHUB_ACCOUNT],
+    });
+    fireEvent.click(review);
+    await waitFor(() => expect(screen.queryByText("GitHub read requested")).toBeNull());
+    expect(screen.queryByRole("button", { name: "Allow once" })).toBeNull();
+    expect(post).not.toHaveBeenCalled();
+  });
+
+  it("preserves Drive approvals on a Preview with only the legacy route", async () => {
+    const { get, post, workspace } = setup([ACCOUNT], DRIVE, true);
+    render(workspace(true));
+    fireEvent.click(await screen.findByRole("button", { name: "Review Drive request" }));
+    expect(get.mock.calls.map(([path]) => path)).toEqual([PATH, LEGACY_PATH, `${LEGACY_PATH}?includeAccounts=1`]);
+    const account = await screen.findByRole("combobox", { name: "Google Drive account" });
+    fireEvent.change(account, { target: { value: ACCOUNT.id } });
+    fireEvent.click(screen.getByRole("button", { name: "Allow once" }));
+    await waitFor(() => expect(post).toHaveBeenCalledWith(`${LEGACY_PATH}/${ID}/decision`, {
+      decision: "allow",
+      accountId: ACCOUNT.id,
+    }, expect.any(Object)));
+  });
   it("keeps the exact document and account in Matrix before granting a one-time read", async () => {
     const { get, post, remove, workspace } = setup();
     render(workspace(true));

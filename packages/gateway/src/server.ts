@@ -142,7 +142,7 @@ import { createOpenMausBotGateway, OPENMAUSBOT_PROXY_BASE, OPENMAUSBOT_RUNTIME_S
 import { initializeHostedBotsRuntime } from "./hosted-bots/runtime.js";
 import { createOpenMausBotPreviewOwnerCheck } from "./hosted-bots/oss-preview-owner.js";
 import { admitsOpenMausBotPreviewBundle } from "./hosted-bots/preview-admission.js";
-import { HOSTED_BOTS_DRIVE_BASE, initializeHostedBotsDrive } from "./hosted-bots/drive-approval-runtime.js";
+import { HOSTED_BOTS_DRIVE_BASE, HOSTED_BOTS_INTEGRATIONS_BASE, initializeHostedBotsDrive } from "./hosted-bots/drive-approval-runtime.js";
 import { createProductionJevInboxRuntime } from "./jev/inbox-production.js";
 import { createJevService } from "./jev/service.js";
 import { createHeartbeatRunner, type HeartbeatRunner } from "./heartbeat/runner.js";
@@ -1304,6 +1304,7 @@ export async function createGateway(config: GatewayConfig) {
     } : {}),
   });
   app.route(HOSTED_BOTS_DRIVE_BASE, hostedBotsDrive.routes);
+  app.route(HOSTED_BOTS_INTEGRATIONS_BASE, hostedBotsDrive.integrationRoutes);
   const hostedBotsRuntime = await initializeHostedBotsRuntime(kyselyInstance, process.env, homePath);
   app.route("/api/hosted-bots", hostedBotsRuntime.routes);
   app.route("/api/speech", speechRuntime.routes);
