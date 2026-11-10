@@ -24,7 +24,15 @@ export async function loadMatrixUsage(
       const query = options.timeZone
         ? `?timeZone=${encodeURIComponent(options.timeZone)}`
         : "";
-      const value = await transport.get(`/api/ai-usage${query}`, signal);
+      let value;
+      try {
+        value = await transport.get(`/api/ai-usage${query}`, signal);
+      } catch (error: unknown) {
+        signal.throwIfAborted();
+        // A computer that predates the timezone parameter rejects every query; ask again the way it expects.
+        if (!query || transport.status(error) !== 400) throw error;
+        value = await transport.get("/api/ai-usage", signal);
+      }
       signal.throwIfAborted();
       const snapshot = readUsageExport(value);
       if (snapshot.history) return { snapshot, backup: false };

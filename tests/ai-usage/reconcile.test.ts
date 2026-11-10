@@ -152,3 +152,20 @@ it("rebuilds cumulative-only sessions from the counters, like the history index,
   expect(result.events.reduce((n, e) => n + e.input + e.output, 0)).toBe(1650);
   expect(result.events.every((e) => e.model === "gpt-5.5")).toBe(true);
 });
+
+it("reconciles a long session with gaps between native records without rescanning every range", () => {
+  // Every other request lost its native record, so native ranges cannot merge into one.
+  const events = [];
+  const count = 20_000;
+  for (let i = 1; i <= count; i++) {
+    const cumulative = { input: i * 100, cached: 0, output: i * 10 };
+    const base = { session: "long", agent: "codex" as const, model: "gpt-5.5", timestamp: new Date(1.78e12 + i * 1000).toISOString(), input: 100, cachedInput: 0, cacheWrite: 0, output: 10, cumulative };
+    events.push({ ...base, id: `legacy:${i}`, sourceKind: "cumulative" as const });
+    if (i % 2) events.push({ ...base, id: `native:${i}`, sourceKind: "response" as const });
+  }
+  const started = performance.now();
+  const result = reconcileUsageEvents(events);
+  expect(performance.now() - started).toBeLessThan(1500);
+  expect(result.dropped).toBe(0);
+  expect(result.events.reduce((n, e) => n + e.input + e.output, 0)).toBe(count * 110);
+});

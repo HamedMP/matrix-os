@@ -11,11 +11,28 @@ function union(ranges: Range[]): Range[] {
   }
   return merged;
 }
-function uncovered(start: number, end: number, covered: Range[]) {
-  let remaining = end - start;
-  for (const [from, to] of covered)
-    remaining -= Math.max(0, Math.min(end, to) - Math.max(start, from));
-  return remaining;
+/** Prefix totals over merged ranges, so each lookup is a binary search rather than a scan of every range. */
+function coverage(ranges: Range[]) {
+  const merged = union(ranges),
+    before: number[] = [];
+  let total = 0;
+  for (const [start, end] of merged) {
+    before.push(total);
+    total += end - start;
+  }
+  const below = (value: number) => {
+    let low = 0,
+      high = merged.length;
+    while (low < high) {
+      const middle = (low + high) >> 1;
+      if ((merged[middle] as Range)[0] < value) low = middle + 1;
+      else high = middle;
+    }
+    if (!low) return 0;
+    const [start, end] = merged[low - 1] as Range;
+    return (before[low - 1] as number) + Math.min(value, end) - start;
+  };
+  return (start: number, end: number) => end - start - (below(end) - below(start));
 }
 /** Codex writes each request twice: a native per-response record and a cumulative counter that can drift from it.
  * Subtract the counter ranges the native records already cover, matching canonicalHistoryQuery in the gateway.
@@ -61,7 +78,7 @@ export function reconcileUsageEvents(events: UsageEvent[]) {
       dropped += legacy.length;
       continue;
     }
-    const ranges = { input: union(covered.input), cached: union(covered.cached), output: union(covered.output) };
+    const uncovered = { input: coverage(covered.input), cached: coverage(covered.cached), output: coverage(covered.output) };
     const total = (e: UsageEvent) => e.cumulative ?? { input: 0, cached: 0, output: 0 };
     legacy.sort((a, b) => {
       const x = total(a), y = total(b);
@@ -76,9 +93,9 @@ export function reconcileUsageEvents(events: UsageEvent[]) {
         dropped++;
         continue;
       }
-      const input = uncovered(start.input, next.input, ranges.input),
-        cached = uncovered(start.cached, next.cached, ranges.cached),
-        output = uncovered(start.output, next.output, ranges.output);
+      const input = uncovered.input(start.input, next.input),
+        cached = uncovered.cached(start.cached, next.cached),
+        output = uncovered.output(start.output, next.output);
       if (input < cached) {
         replaced.set(event, null);
         dropped++;

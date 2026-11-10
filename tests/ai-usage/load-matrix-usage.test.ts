@@ -56,3 +56,15 @@ it("shows Matrix history when the Mac transfer fails instead of an empty panel",
   expect((await loadDesktopUsage({ sync: async () => ({ status: "synced" }), api: { get: synced } as never, owner: "owner", signal: signal() })).sync).toBe("synced");
   expect(String(synced.mock.calls[0][0])).toContain("/api/files/blob?");
 });
+it("retries without the timezone on a gateway that predates it, and still treats other rejections as final", async () => {
+  const older = transport([new HttpError(400), report]);
+  const result = await loadMatrixUsage(older, "owner", signal(), { timeZone: "Europe/Stockholm" });
+  expect(result.backup).toBe(false);
+  expect(older.get.mock.calls.map((c) => c[0])).toEqual(["/api/ai-usage?timeZone=Europe%2FStockholm", "/api/ai-usage"]);
+  const invalid = transport([new HttpError(400), new HttpError(400), report]);
+  await expect(loadMatrixUsage(invalid, "owner", signal(), { timeZone: "UTC" })).rejects.toThrow();
+  expect(invalid.get).toHaveBeenCalledTimes(2);
+  const plain = transport([new HttpError(400), report]);
+  await expect(loadMatrixUsage(plain, "owner", signal())).rejects.toThrow();
+  expect(plain.get).toHaveBeenCalledTimes(1);
+});
