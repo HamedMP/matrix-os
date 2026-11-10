@@ -92,6 +92,32 @@ export async function migrateUserMachines(db: PlatformMigrationExecutor): Promis
   `.execute(db);
   await sql`CREATE INDEX IF NOT EXISTS idx_user_machines_hetzner ON user_machines(hetzner_server_id)`.execute(db);
   await migratePrivatePreviewMachines(db);
+  await migrateRuntimeSubstrates(db);
+}
+
+/**
+ * Spec 2691: every runtime records the substrate that hosts it. Existing rows
+ * become generation-1 `vps` runtimes through the column defaults. `generation`
+ * is bumped whenever compute is replaced so a stale instance can be fenced.
+ */
+async function migrateRuntimeSubstrates(db: PlatformMigrationExecutor): Promise<void> {
+  await sql`
+    ALTER TABLE user_machines ADD COLUMN IF NOT EXISTS substrate TEXT NOT NULL DEFAULT 'vps'
+      CONSTRAINT user_machines_substrate_check CHECK (substrate IN ('vps', 'container'))
+  `.execute(db);
+  await sql`
+    ALTER TABLE user_machines ADD COLUMN IF NOT EXISTS generation INTEGER NOT NULL DEFAULT 1
+      CONSTRAINT user_machines_generation_check CHECK (generation >= 1)
+  `.execute(db);
+  await sql`ALTER TABLE user_machines ADD COLUMN IF NOT EXISTS substrate_ref TEXT`.execute(db);
+  await sql`ALTER TABLE user_machines ADD COLUMN IF NOT EXISTS private_address TEXT`.execute(db);
+  await sql`ALTER TABLE user_machines ADD COLUMN IF NOT EXISTS last_activity_at TIMESTAMPTZ`.execute(db);
+  await sql`ALTER TABLE user_machines ADD COLUMN IF NOT EXISTS started_at TIMESTAMPTZ`.execute(db);
+  await sql`
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_user_machines_clerk_active_container
+    ON user_machines(clerk_user_id)
+    WHERE substrate = 'container' AND deleted_at IS NULL
+  `.execute(db);
 }
 
 /**
