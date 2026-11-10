@@ -1,11 +1,15 @@
 "use client";
 
-import { ProjectAgentConfigFileSchema } from "@matrix-os/contracts";
+import { PROJECT_SKILL_FILE_MAX_BYTES, ProjectAgentConfigFileSchema } from "@matrix-os/contracts";
 import { ProjectAgentContextPanel } from "@matrix-os/ui";
 import {
   PROJECT_AGENT_CONTEXT_FILE_ERROR,
   PROJECT_AGENT_CONTEXT_OPEN_FILE_ERROR,
   PROJECT_AGENT_CONTEXT_RESPONSE_LIMIT,
+  PROJECT_INSTALLED_SKILLS_PATH,
+  PROJECT_INSTALLED_SKILLS_RESPONSE_LIMIT,
+  parseProjectInstalledSkills,
+  projectInstalledSkillFilePath,
   projectAgentContextFileLocationRequest,
   projectAgentContextFilesPath,
 } from "@matrix-os/ui/project-agent-context";
@@ -22,18 +26,18 @@ export const WebProjectAgentContextNavigation = createContext<{
   openMcpSettings: () => void;
 } | null>(null);
 
-async function readJson(response: Response): Promise<unknown> {
+async function readText(response: Response, maxBytes: number, preserveBom = false): Promise<string> {
   const reader = response.body?.getReader();
   if (!reader) throw new Error("Project context response missing");
   try {
     let bytes = 0;
     let body = "";
-    const decoder = new TextDecoder();
+    const decoder = new TextDecoder("utf-8", { fatal: true, ignoreBOM: preserveBom });
     while (true) {
       const chunk = await reader.read();
-      if (chunk.done) return JSON.parse(body + decoder.decode()) as unknown;
+      if (chunk.done) return body + decoder.decode();
       bytes += chunk.value.byteLength;
-      if (bytes > PROJECT_AGENT_CONTEXT_RESPONSE_LIMIT) {
+      if (bytes > maxBytes) {
         await reader.cancel();
         throw new Error("Project context response too large");
       }
@@ -42,6 +46,10 @@ async function readJson(response: Response): Promise<unknown> {
   } finally {
     reader.releaseLock();
   }
+}
+
+async function readJson(response: Response, maxBytes = PROJECT_AGENT_CONTEXT_RESPONSE_LIMIT): Promise<unknown> {
+  return JSON.parse(await readText(response, maxBytes)) as unknown;
 }
 
 function request(gatewayUrl: string, path: string, signal: AbortSignal, init?: RequestInit): Promise<Response> {
@@ -89,6 +97,24 @@ function WebProjectAgentContextScoped({ gatewayUrl, project, isCurrentAuthority,
   // The existing Files store is bound to the mounted OS view's gateway.
   // A separately routed chat must not send a folder path to that computer.
   const currentShell = gatewayUrl.replace(/\/$/, "") === shellGateway;
+  const isCurrentShell = () => currentShell && gatewayUrl.replace(/\/$/, "") === getGatewayUrl()
+    && (isCurrentAuthority?.() ?? true);
+  const readSkillSource = async <T,>(path: string, signal: AbortSignal, decode: (response: Response) => Promise<T>) => {
+    if (signal.aborted || !isCurrentShell()) throw new Error("Skill source unavailable");
+    const response = await request(gatewayUrl, path, signal, { redirect: "error" });
+    if (!response.ok) throw new Error("Skill source unavailable");
+    const result = await decode(response);
+    if (signal.aborted || !isCurrentShell()) throw new Error("Skill source unavailable");
+    return result;
+  };
+  const loadInstalledSkills = async (signal: AbortSignal) => parseProjectInstalledSkills(await readSkillSource(
+    PROJECT_INSTALLED_SKILLS_PATH, signal, response => readJson(response, PROJECT_INSTALLED_SKILLS_RESPONSE_LIMIT),
+  ));
+  const readInstalledSkill = async (file: string, signal: AbortSignal) => {
+    const path = projectInstalledSkillFilePath(file);
+    if (!path) throw new Error("Invalid skill source");
+    return readSkillSource(path, signal, response => readText(response, PROJECT_SKILL_FILE_MAX_BYTES, true));
+  };
   const openFiles = async (file?: string, content?: string): Promise<boolean> => {
     if (!navigation || filesRequest.current || !currentShell || (isCurrentAuthority && !isCurrentAuthority())) return false;
     if (file && (!navigation.openPreview || !ProjectAgentConfigFileSchema.safeParse(file).success)) return false;
@@ -139,6 +165,8 @@ function WebProjectAgentContextScoped({ gatewayUrl, project, isCurrentAuthority,
     onOpenFiles={navigation && currentShell ? () => { void openFiles(); } : undefined}
     onOpenFile={navigation?.openPreview && currentShell ? file => { void openFiles(file); } : undefined}
     onCreateFile={navigation?.openPreview && currentShell ? openFiles : undefined}
+    loadInstalledSkills={currentShell ? loadInstalledSkills : undefined}
+    readInstalledSkill={currentShell ? readInstalledSkill : undefined}
     filesPending={filesPending} filesError={filesError}
     onOpenMcpSettings={navigation && currentShell ? navigation.openMcpSettings : undefined} />;
 }

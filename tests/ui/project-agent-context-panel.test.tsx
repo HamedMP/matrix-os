@@ -78,6 +78,7 @@ it("opens only one configuration section at a time and can collapse it", async (
   expect(screen.queryByRole("region", { name: "MCP" })).toBeNull();
 
   fireEvent.click(screen.getByRole("button", { name: "Add skill" }));
+  fireEvent.click(screen.getByRole("button", { name: "New skill" }));
   fireEvent.change(screen.getByRole("textbox", { name: "Skill name" }), { target: { value: "release-review" } });
   fireEvent.click(mcp);
   expect(skills.getAttribute("aria-expanded")).toBe("false");
@@ -164,15 +165,20 @@ it("creates an explicit project skill with a safe name and refreshes the project
   open();
   const skills = within(await screen.findByRole("region", { name: "Skills" }));
   fireEvent.click(skills.getByRole("button", { name: "Add skill" }));
+  fireEvent.click(skills.getByRole("button", { name: "New skill" }));
   const name = skills.getByRole("textbox", { name: "Skill name" });
+  expect(document.activeElement).toBe(name);
   fireEvent.change(name, { target: { value: "../project-b" } });
   fireEvent.click(skills.getByRole("button", { name: "Create skill" }));
-  expect(skills.getByRole("alert").textContent).toMatch(/lowercase letters/i);
+  expect((await skills.findByRole("alert")).textContent).toMatch(/lowercase letters/i);
   expect(onCreateFile).not.toHaveBeenCalled();
   fireEvent.change(name, { target: { value: "release-review" } });
+  fireEvent.change(skills.getByRole("textbox", { name: "Description" }), { target: { value: 'Review releases: summarize #changes.' } });
+  fireEvent.change(skills.getByRole("textbox", { name: "Instructions" }), { target: { value: "Inspect the changelog.\nList risky changes." } });
   fireEvent.click(skills.getByRole("button", { name: "Create skill" }));
   expect(await screen.findByText("release-review")).toBeTruthy();
-  expect(onCreateFile).toHaveBeenCalledWith(".agents/skills/release-review/SKILL.md", expect.stringContaining("name: release-review"));
+  expect(onCreateFile).toHaveBeenCalledWith(".agents/skills/release-review/SKILL.md",
+    '---\nname: "release-review"\ndescription: "Review releases: summarize #changes."\n---\n\nInspect the changelog.\nList risky changes.\n');
   expect(read).toHaveBeenCalledTimes(2);
 });
 
@@ -222,4 +228,128 @@ it.each([
   fireEvent.click(settings.getByRole("button", { name: `Create ${path}` }));
   expect(onCreateFile).toHaveBeenCalledWith(path, contents);
   expect(await screen.findByText(`Created ${path}.`)).toBeTruthy();
+});
+
+const catalog = [
+  { name: "release-review", description: "Inspect changelogs", file: ".agents/skills/release-review/SKILL.md" },
+  { name: "api-notes", description: "Write API notes", file: "agents/skills/api-notes.md" },
+];
+const skillManifest = '---\r\nname: "release-review"\r\ndescription: >-\r\n  Inspect changelogs.\r\n---\r\n\r\n# Instructions\r\n';
+const readEditableContext = async () => ({ ...empty, configFiles: [] });
+
+async function selectSkillAction(name: string) {
+  fireEvent.click(await screen.findByRole("button", { name: "Add skill", exact: true }));
+  fireEvent.click(screen.getByRole("button", { name, exact: true }));
+}
+
+function setLocalSkillFile(content: string) {
+  const bytes = new TextEncoder().encode(content);
+  const file = new File([bytes], "SKILL.md", { type: "text/markdown" });
+  Object.defineProperty(file, "arrayBuffer", { value: async () => bytes.buffer });
+  fireEvent.change(screen.getByLabelText("SKILL.md file"), { target: { files: [file] } });
+}
+
+it("searches installed skills, reads only the selected manifest, and copies it on explicit submission", async () => {
+  const loadInstalledSkills = vi.fn(async () => catalog);
+  const readInstalledSkill = vi.fn(async () => skillManifest);
+  const onCreateFile = vi.fn(async () => true);
+  render(<ProjectAgentContextPanel scope="owner" projectId="project_a" read={readEditableContext} onCreateFile={onCreateFile}
+    loadInstalledSkills={loadInstalledSkills} readInstalledSkill={readInstalledSkill} />);
+  open();
+  await screen.findByRole("button", { name: "Add skill", exact: true });
+  expect(loadInstalledSkills).not.toHaveBeenCalled();
+  await selectSkillAction("Choose installed skill");
+  expect(await screen.findByRole("radio", { name: /api-notes/ })).toBeTruthy();
+  expect(screen.getByText(/Only the SKILL\.md file is copied/)).toBeTruthy();
+  fireEvent.change(screen.getByRole("searchbox", { name: "Search installed skills" }), { target: { value: "changelogs" } });
+  expect(screen.queryByRole("radio", { name: /api-notes/ })).toBeNull();
+  fireEvent.click(screen.getByRole("radio", { name: /release-review/ }));
+  expect(readInstalledSkill).not.toHaveBeenCalled();
+  expect(onCreateFile).not.toHaveBeenCalled();
+
+  fireEvent.click(screen.getByRole("button", { name: "Copy to project" }));
+  expect(await screen.findByText("Created .agents/skills/release-review/SKILL.md.")).toBeTruthy();
+  expect(readInstalledSkill).toHaveBeenCalledExactlyOnceWith(catalog[0].file, expect.any(AbortSignal));
+  expect(onCreateFile).toHaveBeenCalledExactlyOnceWith(".agents/skills/release-review/SKILL.md", skillManifest);
+});
+
+it("aborts a pending installed skill read when changing projects and never writes the previous selection", async () => {
+  let release!: (content: string) => void;
+  const pendingRead = new Promise<string>(resolve => { release = resolve; });
+  const readInstalledSkill = vi.fn((_path: string, _signal: AbortSignal) => pendingRead);
+  const onCreateFile = vi.fn(async () => true);
+  const props = { scope: "owner", read: readEditableContext, onCreateFile,
+    loadInstalledSkills: async () => catalog, readInstalledSkill };
+  const { rerender } = render(<ProjectAgentContextPanel {...props} projectId="project_a" />);
+  open();
+  await selectSkillAction("Choose installed skill");
+  fireEvent.click(await screen.findByRole("radio", { name: /release-review/ }));
+  fireEvent.click(screen.getByRole("button", { name: "Copy to project" }));
+  rerender(<ProjectAgentContextPanel {...props} projectId="project_b" />);
+  expect(readInstalledSkill.mock.calls[0]?.[1].aborted).toBe(true);
+  await act(async () => release(skillManifest));
+  expect(onCreateFile).not.toHaveBeenCalled();
+  expect(screen.queryByText(/Inspect changelogs/)).toBeNull();
+});
+
+it("allows retry after a catalog error without exposing runtime details", async () => {
+  vi.spyOn(console, "warn").mockImplementation(() => {});
+  const loadInstalledSkills = vi.fn<() => Promise<typeof catalog>>()
+    .mockRejectedValueOnce(new Error("sensitive fixture path"))
+    .mockResolvedValueOnce(catalog);
+  render(<ProjectAgentContextPanel scope="owner" projectId="project_a" read={readEditableContext} onCreateFile={vi.fn()}
+    loadInstalledSkills={loadInstalledSkills} readInstalledSkill={vi.fn()} />);
+  open();
+  await selectSkillAction("Choose installed skill");
+  expect(await screen.findByText("Installed skills could not be loaded.")).toBeTruthy();
+  expect(screen.queryByText(/sensitive fixture path/)).toBeNull();
+  fireEvent.click(screen.getByRole("button", { name: "Retry loading skills" }));
+  expect(await screen.findByRole("radio", { name: /release-review/ })).toBeTruthy();
+});
+
+it("imports the selected manifest unchanged after rejecting invalid names, byte-order marks, and oversized files", async () => {
+  const onCreateFile = vi.fn(async () => true);
+  render(<ProjectAgentContextPanel scope="owner" projectId="project_a" read={readEditableContext} onCreateFile={onCreateFile} />);
+  open();
+  await selectSkillAction("Import SKILL.md");
+  const submit = screen.getByRole("button", { name: "Import skill" });
+  expect(submit).toHaveProperty("disabled", true);
+
+  setLocalSkillFile(skillManifest.replace("release-review", "../project-b"));
+  fireEvent.click(submit);
+  expect(await screen.findByText(/Use up to 64 lowercase letters or numbers/)).toBeTruthy();
+  expect(onCreateFile).not.toHaveBeenCalled();
+
+  setLocalSkillFile("\uFEFF" + skillManifest);
+  fireEvent.click(submit);
+  expect(await screen.findByText(/without a byte-order mark/)).toBeTruthy();
+  expect(onCreateFile).not.toHaveBeenCalled();
+
+  setLocalSkillFile(skillManifest + "a".repeat(65 * 1024));
+  fireEvent.click(submit);
+  expect(await screen.findByText(/must be 64 KB or smaller/)).toBeTruthy();
+  expect(onCreateFile).not.toHaveBeenCalled();
+
+  setLocalSkillFile(skillManifest);
+  fireEvent.click(submit);
+  expect(await screen.findByText("Created .agents/skills/release-review/SKILL.md.")).toBeTruthy();
+  expect(onCreateFile).toHaveBeenCalledExactlyOnceWith(".agents/skills/release-review/SKILL.md", skillManifest);
+});
+
+it("retains the entered skill draft if the project create is rejected", async () => {
+  const onCreateFile = vi.fn(async () => false);
+  render(<ProjectAgentContextPanel scope="owner" projectId="project_a" read={readEditableContext} onCreateFile={onCreateFile} />);
+  open();
+  await selectSkillAction("New skill");
+  const name = screen.getByRole("textbox", { name: "Skill name" });
+  const description = screen.getByRole("textbox", { name: "Description" });
+  const instructions = screen.getByRole("textbox", { name: "Instructions" });
+  fireEvent.change(name, { target: { value: "release-review" } });
+  fireEvent.change(description, { target: { value: "Inspect the changelog" } });
+  fireEvent.change(instructions, { target: { value: "Call out breaking changes." } });
+  fireEvent.click(screen.getByRole("button", { name: "Create skill", exact: true }));
+  expect(await screen.findByText(/could not be created/i)).toBeTruthy();
+  expect(name).toHaveProperty("value", "release-review");
+  expect(description).toHaveProperty("value", "Inspect the changelog");
+  expect(instructions).toHaveProperty("value", "Call out breaking changes.");
 });

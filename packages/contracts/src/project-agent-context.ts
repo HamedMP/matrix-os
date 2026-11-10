@@ -16,6 +16,7 @@ const sources = [
 ] as const;
 const ProjectAgentContextSourceSchema = z.enum(sources);
 export const PROJECT_AGENT_CONTEXT_ITEMS_PER_SOURCE = 64;
+export const PROJECT_SKILL_FILE_MAX_BYTES = 64 * 1024;
 export const ProjectAgentContextNameSchema = z.string()
   .regex(/^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,79}$/)
   .pipe(canonicalSafeLabel(80, 80));
