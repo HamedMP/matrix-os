@@ -9,7 +9,7 @@ export type TerminalMachinesState =
   | { status: "loading" }
   | { status: "signed-out" }
   | { status: "error" }
-  | { status: "ready"; computers: MatrixComputer[] };
+  | { status: "ready"; computers: MatrixComputer[]; platformHost: string; sessionKey: string };
 
 export function useTerminalMachines(): { state: TerminalMachinesState; retry: () => void } {
   const [state, setState] = useState<TerminalMachinesState>({ status: "loading" });
@@ -28,7 +28,13 @@ export function useTerminalMachines(): { state: TerminalMachinesState; retry: ()
       const parsed = MatrixComputerListSchema.safeParse(await invoke("runtime:list-computers", {}));
       if (current !== generation.current) return;
       if (!parsed.success) throw new Error("invalid computer list");
-      setState({ status: "ready", computers: parsed.data.items });
+      setState({
+        status: "ready",
+        computers: parsed.data.items,
+        platformHost: status.platformHost,
+        // A replaced credential is a new session even for the same account.
+        sessionKey: `${status.platformHost}|${status.handle}|${status.authGeneration}`,
+      });
     } catch (error: unknown) {
       if (current !== generation.current) return;
       console.warn("[terminal-window] inventory unavailable:", error instanceof Error ? error.name : "UnknownError");
