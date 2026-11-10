@@ -32,6 +32,7 @@ export const TERMINAL_WINDOW_INVOKE_CHANNELS = [
   "app:set-zoom",
   // Only for the keys in TERMINAL_WINDOW_STATE_KEYS; see windowMayInvoke.
   "state:get",
+  "terminal:read-clipboard-files",
   ...TERMINAL_WINDOW_ONLY_INVOKE_CHANNELS,
 ] as const satisfies readonly InvokeChannel[];
 

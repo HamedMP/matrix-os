@@ -402,6 +402,28 @@ export class AuthService {
     };
   }
 
+  /**
+   * Mints a credential bound to another of the owner's computers without
+   * changing the selected computer and without persisting anything. The
+   * Terminal window's credential broker is the only caller (spec 651 FR-003).
+   */
+  async issueRuntimeToken(slot: string): Promise<{ accessToken: string; expiresAt: number; handle: string }> {
+    if (this.deps.previewContext && slot !== this.deps.previewContext.runtimeSlot) throw new Error(RUNTIME_SELECTION_ERROR);
+    this.expireCredentialIfNeeded();
+    const currentCredential = this.credential;
+    if (!currentCredential) throw new Error(RUNTIME_SELECTION_ERROR);
+    const generation = this.authGeneration;
+    try {
+      const issued = await this.exchangeRuntimeCredential(currentCredential, slot);
+      // A sign-out or credential replacement during the exchange voids the result.
+      if (generation !== this.authGeneration || this.credential !== currentCredential) throw new Error("stale runtime token");
+      return { accessToken: issued.accessToken, expiresAt: issued.expiresAt, handle: issued.handle };
+    } catch (err: unknown) {
+      console.warn("[auth] runtime token issue failed:", err instanceof Error ? err.name : typeof err);
+      throw new Error(RUNTIME_SELECTION_ERROR);
+    }
+  }
+
   async selectRuntime(slot: string): Promise<void> {
     if (this.deps.previewContext && slot !== this.deps.previewContext.runtimeSlot) throw new Error(RUNTIME_SELECTION_ERROR);
     this.expireCredentialIfNeeded();
