@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { createApiClient, type ApiClient } from "../../lib/api";
 import { resetAttachManager } from "../terminal/terminal-runtime";
 import { onEvent } from "../../lib/operator";
@@ -40,7 +40,11 @@ export function useComputerTerminals(platformHost: string | null, sessionKey: st
     [platformHost],
   );
 
-  useEffect(() => {
+  // A layout effect, not a passive one: it must finish before the user can
+  // click anything in the list this session just rendered. Run later, it
+  // discarded a listing the user had already asked for (the computer then
+  // showed "Loading terminals…" forever) and detached a tab they had opened.
+  useLayoutEffect(() => {
     // Bump rather than reset: a listing still in flight for the previous
     // session must never match a generation issued to the new one.
     for (const slot of Object.keys(generations.current)) generations.current[slot] = (generations.current[slot] ?? 0) + 1;

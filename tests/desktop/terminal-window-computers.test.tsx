@@ -91,6 +91,23 @@ describe("Terminal window computers", () => {
     expect(requests().every((request) => !request.includes("runtime=extra"))).toBe(true);
   });
 
+  it("lists a computer's terminals even when it is opened the instant the list appears", async () => {
+    // The click lands before React has run the passive effects of the render
+    // that showed the computer; a session reset there used to discard the listing.
+    fetchMock.mockImplementation(async () => json(workspace([{ id: TAB_1, name: "build" }])));
+    render(<TerminalWindowApp />);
+    let clicked = false;
+    const observer = new MutationObserver(() => {
+      const row = screen.queryByRole("button", { name: /Main Computer/ });
+      if (row && !clicked) { clicked = true; row.click(); }
+    });
+    observer.observe(document.body, { childList: true, subtree: true });
+    try {
+      expect(await screen.findByRole("button", { name: /build/ })).toBeTruthy();
+      expect(clicked).toBe(true);
+    } finally { observer.disconnect(); }
+  });
+
   it("attaches the chosen tab on its own computer without touching the app-wide selection", async () => {
     fetchMock.mockImplementation(async () => json(workspace([{ id: TAB_2, name: "deploy" }])));
     render(<TerminalWindowApp />);
