@@ -104,7 +104,10 @@ describe("Chat collaboration sharing", () => {
     const launchId = "20000000-0000-4000-8000-000000000001";
     const api = {
       baseUrl: "https://app.matrix-os.com",
-      get: vi.fn(async () => ({ items: [app] })),
+      get: vi.fn(async (path: string) => {
+        if (path === `/api/collaboration/shared-apps/${appScopeId}`) return app;
+        throw new Error(`Unexpected shared app request: ${path}`);
+      }),
       post: vi.fn(async () => ({
         target: { kind: "shared", scopeId: appScopeId, organizationId: app.organizationId,
           appId: app.appId, catalogId: app.catalogId, buildId: app.buildId, name: "Team tracker",
