@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createApiClient, type ApiClient } from "../../lib/api";
 import { resetAttachManager } from "../terminal/terminal-runtime";
+import { onEvent } from "../../lib/operator";
 import { useConnection } from "../../stores/connection";
 import {
   createComputerTab, listComputerTabs, terminalsFailure,
@@ -68,6 +69,17 @@ export function useComputerTerminals(platformHost: string | null, sessionKey: st
       setTerminals((current) => ({ ...current, [slot]: { status: "failed", reason: terminalsFailure(error) } }));
     }
   }, [client]);
+
+  // Tabs are also created and closed from other windows and devices. The
+  // listings already on screen are refreshed when this window regains focus;
+  // `load` keeps a listing visible while it refreshes.
+  const listed = useRef<string[]>([]);
+  useEffect(() => {
+    listed.current = Object.keys(terminals).filter((slot) => terminals[slot]?.status === "ready");
+  }, [terminals]);
+  useEffect(() => onEvent("window:focus-changed", ({ focused }) => {
+    if (focused) for (const slot of listed.current) void load(slot);
+  }), [load]);
 
   const open = useCallback((slot: string, refKey: string) => {
     if (!client || !platformHost) return;

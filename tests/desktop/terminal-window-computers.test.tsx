@@ -27,7 +27,9 @@ const workspace = (tabs: Array<{ id: string; name: string; status?: string }>) =
 });
 const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
 
+const focusListeners: Array<(payload: unknown) => void> = [];
 function installOperator() {
+  focusListeners.length = 0;
   window.operator = {
     invoke: vi.fn(async (channel: string) => {
       if (channel === "auth:status") return { signedIn: true, handle: "neo", userId: "user_1", platformHost: HOST, runtimeSlot: "primary", authGeneration: 3 };
@@ -35,7 +37,7 @@ function installOperator() {
       if (channel === "app:get-zoom") return { factor: 1 };
       return { ok: true };
     }),
-    on: () => () => undefined,
+    on: (channel, callback) => { if (channel === "window:focus-changed") focusListeners.push(callback); return () => undefined; },
   };
 }
 
@@ -68,6 +70,20 @@ describe("Terminal window computers", () => {
     expect(await screen.findByRole("button", { name: /build/ })).toBeTruthy();
     expect(requests()[1]).toBe(`GET ${HOST}/api/terminal/workspaces`);
     expect(fetchMock.mock.calls.every(([, init]) => !new Headers((init as RequestInit).headers).has("authorization"))).toBe(true);
+  });
+
+  it("shows tabs created elsewhere once the window regains focus, without a loading flash", async () => {
+    let tabs = [{ id: TAB_1, name: "build" }];
+    fetchMock.mockImplementation(async () => json(workspace(tabs)));
+    render(<TerminalWindowApp />);
+    fireEvent.click(await screen.findByRole("button", { name: /Main Computer/ }));
+    await screen.findByRole("button", { name: /build/ });
+    tabs = [...tabs, { id: TAB_2, name: "started on my phone" }];
+    act(() => { for (const listener of focusListeners) listener({ focused: true }); });
+    expect(await screen.findByRole("button", { name: /started on my phone/ })).toBeTruthy();
+    expect(screen.queryByText("Loading terminals…")).toBeNull();
+    // Computers that were never opened are still not asked.
+    expect(requests().every((request) => !request.includes("runtime=extra"))).toBe(true);
   });
 
   it("attaches the chosen tab on its own computer without touching the app-wide selection", async () => {
