@@ -40,6 +40,9 @@ export function createLocalTerminalSocket(sessionName: string, events: ShellSock
   // but its credit must still go back or the terminal would stall. At most a
   // few attachments can be starting at once.
   const earlyDropped = new Map<number, number>();
+  // Attachments reported closed before this socket knew its own id: a shell
+  // can end in the moment between the core attaching and the reply arriving.
+  const earlyClosed = new Set<number>();
   let unacknowledged = 0;
   let ackScheduled = false;
 
@@ -87,6 +90,7 @@ export function createLocalTerminalSocket(sessionName: string, events: ShellSock
     unsubscribe = [];
     early = [];
     earlyDropped.clear();
+    earlyClosed.clear();
     if (attachId !== null) {
       const current = attachId;
       attachId = null;
@@ -131,13 +135,19 @@ export function createLocalTerminalSocket(sessionName: string, events: ShellSock
           }
         }),
         onEvent("local-terminal:closed", (event) => {
+          if (attachId === null && !released) {
+            if (earlyClosed.size < MAX_EARLY_ATTACHMENTS) earlyClosed.add(event.attachId);
+            return;
+          }
           if (event.attachId !== attachId) return;
           attachId = null;
           events.onState("ended");
           release();
         }),
       ];
-      void invoke("local-terminal:attach", { id, ...size })
+      // The size the core was asked for; the pane may be resized before it answers.
+      const requested = size;
+      void invoke("local-terminal:attach", { id, ...requested })
         .then((result) => {
           if (released) {
             if (result.ok) void invoke("local-terminal:detach", { attachId: result.attachId }).catch((error: unknown) => warn("detach", error));
@@ -153,6 +163,23 @@ export function createLocalTerminalSocket(sessionName: string, events: ShellSock
           const dropped = earlyDropped.get(result.attachId) ?? 0;
           earlyDropped.clear();
           if (dropped > 0) acknowledge(dropped);
+          // It already ended: its last output is shown, then it reads as ended
+          // instead of as a live terminal that takes no input.
+          const alreadyClosed = earlyClosed.has(result.attachId);
+          earlyClosed.clear();
+          if (alreadyClosed) {
+            attachId = null;
+            events.onState("ended");
+            release();
+            return;
+          }
+          // Resized while attaching: the shell must learn the size now, not at the next resize.
+          if (size.cols !== requested.cols || size.rows !== requested.rows) {
+            const attached = result.attachId;
+            void invoke("local-terminal:resize", { attachId: attached, ...size })
+              .then((resized) => { if (!resized.ok) lost(attached); })
+              .catch((error: unknown) => warn("resize", error));
+          }
         })
         .catch((error: unknown) => { warn("attach", error); if (!released) { events.onState("ended"); release(); } });
     },

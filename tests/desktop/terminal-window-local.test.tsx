@@ -426,6 +426,38 @@ describe("local terminal socket", () => {
     expect(operator.invoke.mock.calls.filter(([channel]) => channel === "local-terminal:input")).toHaveLength(1);
   });
 
+  it("shows a shell that ended while it was attaching as ended, after its last output", async () => {
+    let resolveAttach!: (value: unknown) => void;
+    const operator = installOperator({ "local-terminal:attach": () => new Promise((resolve) => { resolveAttach = resolve; }),
+      "local-terminal:ack": () => ({ ok: true }) });
+    const handlers = events();
+    createLocalTerminalSocket("local:t1", handlers).connect();
+    operator.emit("local-terminal:output", { attachId: 6, data: "exit\r\n" });
+    operator.emit("local-terminal:closed", { attachId: 6 });
+    operator.emit("local-terminal:closed", { attachId: 9 });
+    resolveAttach({ ok: true, attachId: 6 });
+    await waitFor(() => expect(handlers.onState).toHaveBeenLastCalledWith("ended"));
+    expect(handlers.onOutput.mock.calls.map(([data]) => data)).toEqual(["exit\r\n"]);
+    // Nothing is left to detach, and typing goes nowhere.
+    expect(operator.invoke).not.toHaveBeenCalledWith("local-terminal:detach", expect.anything());
+    expect(operator.listening("local-terminal:closed")).toBe(0);
+  });
+
+  it("sends the pane's size to the shell when it was resized while attaching", async () => {
+    let resolveAttach!: (value: unknown) => void;
+    const operator = installOperator({ "local-terminal:attach": () => new Promise((resolve) => { resolveAttach = resolve; }),
+      "local-terminal:resize": () => ({ ok: true }) });
+    const handlers = events();
+    const socket = createLocalTerminalSocket("local:t1", handlers);
+    socket.resize(100, 30);
+    socket.connect();
+    socket.resize(140, 50);
+    expect(operator.invoke).not.toHaveBeenCalledWith("local-terminal:resize", expect.anything());
+    resolveAttach({ ok: true, attachId: 4 });
+    await waitFor(() => expect(operator.invoke).toHaveBeenCalledWith("local-terminal:resize", { attachId: 4, cols: 140, rows: 50 }));
+    expect(operator.invoke).toHaveBeenCalledWith("local-terminal:attach", { id: "t1", cols: 100, rows: 30 });
+  });
+
   it("detaches an attachment that completes after the view already left", async () => {
     let resolveAttach!: (value: unknown) => void;
     const operator = installOperator({ "local-terminal:attach": () => new Promise((resolve) => { resolveAttach = resolve; }),
