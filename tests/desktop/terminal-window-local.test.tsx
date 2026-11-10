@@ -64,6 +64,25 @@ describe("This Computer terminals", () => {
     expect(operator.invoke).toHaveBeenCalledWith("local-terminal:create", { cols: 100, rows: 30 });
   });
 
+  it("does not take the pane from a terminal the user opened while a new one was starting", async () => {
+    const terminals = [{ id: "t1", title: "zsh", status: null }];
+    let finishCreate!: (value: unknown) => void;
+    installOperator({
+      "local-terminal:list": () => ({ status: "ready", terminals: [...terminals] }),
+      "local-terminal:create": () => new Promise((resolve) => { finishCreate = resolve; }),
+    });
+    render(<TerminalWindowApp />);
+    fireEvent.click(await screen.findByRole("button", { name: "New terminal" }));
+    await waitFor(() => expect(finishCreate).toBeTypeOf("function"));
+    fireEvent.click(screen.getByRole("button", { name: "zsh" }));
+    expect((await screen.findByTestId("terminal-view")).textContent).toBe("local:t1");
+    terminals.push({ id: "t2", title: "Terminal", status: null });
+    await act(async () => { finishCreate({ status: "ready", id: "t2" }); });
+    // The new terminal is listed, but the one the user chose stays open.
+    expect(await screen.findByRole("button", { name: "Terminal" })).toBeTruthy();
+    expect(screen.getByTestId("terminal-view").textContent).toBe("local:t1");
+  });
+
   it("ends a terminal, closes its view and refreshes the list", async () => {
     let terminals = [{ id: "t1", title: "zsh", status: null }];
     const operator = installOperator({

@@ -1,7 +1,7 @@
 // The Electron Desktop Terminal window (specs/651-desktop-terminal-window).
 // Machines on the left, one attached terminal on the right. Every Matrix
 // computer is reached with its own credential, held by the trusted core.
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { ChevronDown, ChevronRight, Cloud, Laptop, Plus, SquareTerminal, X } from "lucide-react";
 import type { MatrixComputer } from "@matrix-os/contracts";
 import { invoke } from "../../lib/operator";
@@ -306,17 +306,35 @@ function useTerminalWindow() {
   const expanded = expansion.sessionKey === sessionKey ? expansion.slots : EMPTY_SLOTS;
 
   const localTerminals = local.state.status === "ready" ? local.state.terminals : [];
+  // Counts the user's choices of a local terminal or of closing one. A local
+  // terminal that finishes starting is opened only if nothing was chosen since.
+  const localChoice = useRef(0);
   const listedLocal = localTerminals.find((terminal) => terminal.id === localActive);
   // Still open, but no longer running: shown as ended until the user closes it.
   const endedLocal = localOpen && !listedLocal && local.state.status === "ready" ? localOpen : null;
   const localTerminal = listedLocal ?? localOpen ?? undefined;
   const { clearActive, open, create, load } = cloud;
+  // The cloud selection as of the latest render, for work that finishes later.
+  const cloudActive = useRef(cloud.active);
+  useEffect(() => { cloudActive.current = cloud.active; }, [cloud.active]);
 
   return {
     machines, ready, cloud, local, localActive, localTerminal, endedLocal, expanded,
-    dismissEndedLocal: () => setLocalOpen(null),
+    dismissEndedLocal: () => { localChoice.current += 1; setLocalOpen(null); },
+    createLocal: () => {
+      const chosen = localChoice.current;
+      const cloudChosen = cloud.active;
+      void local.create().then((id) => {
+        // Opened only if the user did not pick another terminal meanwhile.
+        if (!id || localChoice.current !== chosen || cloudActive.current !== cloudChosen) return;
+        localChoice.current += 1;
+        clearActive();
+        setLocalOpen({ id, title: "Terminal" });
+      });
+    },
     needsAttention: localTerminals.filter((terminal) => terminal.status === "blocked" || terminal.status === "error"),
     openLocal: (id: string) => {
+      localChoice.current += 1;
       clearActive();
       setLocalOpen({ id, title: localTerminals.find((terminal) => terminal.id === id)?.title ?? "Terminal" });
     },
@@ -324,8 +342,8 @@ function useTerminalWindow() {
     endLocal: (id: string) => {
       void local.end(id).then((ended) => { if (ended) setLocalOpen((current) => (current?.id === id ? null : current)); });
     },
-    openCloud: (slot: string, refKey: string) => { setLocalOpen(null); open(slot, refKey); },
-    createCloud: (slot: string) => { setLocalOpen(null); void create(slot); },
+    openCloud: (slot: string, refKey: string) => { localChoice.current += 1; setLocalOpen(null); open(slot, refKey); },
+    createCloud: (slot: string) => { localChoice.current += 1; setLocalOpen(null); void create(slot); },
     toggle: (slot: string) => {
       const next = !expanded[slot];
       setExpansion({ sessionKey, slots: { ...expanded, [slot]: next } });
@@ -357,7 +375,7 @@ function LocalMachine({ view }: { view: TerminalWindow }) {
       </button>
       {open ? (
         <LocalTabs state={local.state} activeId={view.localActive} ended={view.endedLocal} onDismissEnded={view.dismissEndedLocal} creating={local.creating} notice={local.notice} onOpen={view.openLocal}
-          onCreate={() => { void local.create().then((id) => { if (id) view.openLocal(id); }); }}
+          onCreate={view.createLocal}
           onEnd={view.endLocal} onRetry={() => { void local.refresh(); }} />
       ) : null}
     </li>
