@@ -233,8 +233,11 @@ export function createOwnerCollaborativeAppTransport(input: {
       for (const attempt of attempts) {
         try {
           result = await sendMutation(attempt, signal);
-        } catch {
-          if (!uncertain.some((candidate) => candidate.clientRequestId === attempt.clientRequestId)) {
+        } catch (error: unknown) {
+          const unresolved = uncertain.some((candidate) => candidate.clientRequestId === attempt.clientRequestId);
+          console.warn("[owner-collaboration] retry failed", error instanceof Error ? error.name : "UnknownError",
+            unresolved ? "uncertain" : "definite");
+          if (!unresolved) {
             pendingDefiniteFailure = true;
           }
         }

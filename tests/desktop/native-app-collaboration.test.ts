@@ -129,8 +129,11 @@ it("discards a definite conflict and recovers a later uncertain write", async ()
   await expect(api.mutate({ action: "insert", table: "tasks", data: { title: "old" } }, "4")).rejects.toThrow();
   await expect(api.mutate({ action: "insert", table: "tasks", data: { title: "saved" } }, "4")).rejects.toThrow();
   phase = "recovery";
-  await expect(api.retryMutation()).resolves.toEqual({ result: { ok: true }, revision: "5", replayed: true });
+  await expect(api.retryMutation()).rejects.toMatchObject({ code: "conflict" });
   expect(attempts[1]).toBe(attempts[3]);
+  expect(attempts).toHaveLength(4);
+  await expect(api.retryMutation()).rejects.toThrow("Collaboration unavailable");
+  expect(attempts).toHaveLength(4);
 });
 
 it("preserves only safe conflict codes from gateway failures", async () => {

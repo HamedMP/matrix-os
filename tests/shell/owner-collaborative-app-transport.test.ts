@@ -427,6 +427,7 @@ describe("owner collaborative app transport", () => {
   });
 
   it("settles later uncertain owner writes after a known conflict without reporting success", async () => {
+    const warning = vi.spyOn(console, "warn").mockImplementation(() => undefined);
     const direct = {
       request: vi.fn()
         .mockRejectedValueOnce(new Error("first response lost"))
@@ -447,9 +448,11 @@ describe("owner collaborative app transport", () => {
       .rejects.toThrow("Collaboration unavailable");
     await expect(transport.retryMutation()).rejects.toThrow("Collaboration unavailable");
     expect(direct.request).toHaveBeenCalledTimes(4);
+    expect(warning).toHaveBeenCalledWith("[owner-collaboration] retry failed", "Error", "definite");
     expect(direct.request.mock.calls[2]).toEqual(direct.request.mock.calls[0]);
     expect(direct.request.mock.calls[3]).toEqual(direct.request.mock.calls[1]);
     await expect(transport.retryMutation()).rejects.toThrow("Collaboration unavailable");
     expect(direct.request).toHaveBeenCalledTimes(4);
+    warning.mockRestore();
   });
 });

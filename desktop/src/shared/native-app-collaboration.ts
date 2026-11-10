@@ -39,6 +39,7 @@ export function createNativeAppCollaboration(invoke: (request: NativeAppCollabor
   let scopeSequence: string | null = null;
   let timer: ReturnType<typeof setInterval> | null = null;
   let pending: Array<{ request: Extract<NativeAppCollaborationRequest, { kind: "mutate" }>; inFlight: boolean }> = [];
+  let pendingDefiniteError: unknown;
   const callbacks = new Set<() => void>();
   let stateGeneration = 0;
   let appliedGeneration = 0;
@@ -104,7 +105,7 @@ export function createNativeAppCollaboration(invoke: (request: NativeAppCollabor
     async retryMutation() {
       if (!pending.length) throw new Error("Collaboration unavailable");
       let response: unknown;
-      let definiteError: unknown;
+      let uncertainError: unknown;
       for (const entry of [...pending]) {
         if (entry.inFlight || !pending.includes(entry)) continue;
         entry.inFlight = true;
@@ -114,12 +115,21 @@ export function createNativeAppCollaboration(invoke: (request: NativeAppCollabor
         } catch (error: unknown) {
           console.warn("[native-app-collaboration] retry failed", error instanceof Error ? error.name : "UnknownError");
           entry.inFlight = false;
-          if (!definitelyRejected(error)) throw error;
-          pending = pending.filter((item) => item !== entry);
-          definiteError = error;
+          if (definitelyRejected(error)) {
+            pending = pending.filter((item) => item !== entry);
+            pendingDefiniteError ??= error;
+          } else {
+            uncertainError ??= error;
+          }
         }
       }
-      if (response === undefined) throw definiteError ?? new Error("Collaboration unavailable");
+      if (pending.length) throw uncertainError ?? new Error("Collaboration unavailable");
+      if (pendingDefiniteError) {
+        const error = pendingDefiniteError;
+        pendingDefiniteError = undefined;
+        throw error;
+      }
+      if (response === undefined) throw new Error("Collaboration unavailable");
       return response;
     },
     onChange(callback: () => void) {
