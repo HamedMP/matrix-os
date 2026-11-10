@@ -62,6 +62,31 @@ function signalBridgeReady(frame: HTMLIFrameElement): void {
 }
 
 describe("shared app transport", () => {
+  it("keeps a second same-scope viewer subscribed when the first closes", async () => {
+    const { platform, direct } = setup();
+    const handlers: Array<{ onEvent(): void; onUnavailable(): void }> = [];
+    const releases: Array<ReturnType<typeof vi.fn>> = [];
+    direct.subscribeEvents.mockImplementation((_scope, callbacks) => {
+      handlers.push(callbacks!);
+      const release = vi.fn();
+      releases.push(release);
+      return release;
+    });
+    const first = createSharedAppTransport({ platform, direct: direct as never, target });
+    const second = createSharedAppTransport({ platform, direct: direct as never, target });
+    const view = render(<><SharedAppViewer key="first" target={target} transport={first} />
+      <SharedAppViewer key="second" target={target} transport={second} /></>);
+    await waitFor(() => expect(handlers).toHaveLength(2));
+
+    view.rerender(<SharedAppViewer key="second" target={target} transport={second} />);
+    expect(releases[0]).toHaveBeenCalledOnce();
+    expect(releases[1]).not.toHaveBeenCalled();
+    expect(direct.close).not.toHaveBeenCalled();
+    await act(async () => { await handlers[1]!.onEvent(); });
+    expect(direct.request).toHaveBeenCalledWith(scopeId, "POST",
+      `/api/collaboration/scopes/${scopeId}/apps/team-tracker/view`,
+      { action: { action: "appInfo", app: "team-tracker" } });
+  });
   it("returns the current data revision with every restricted query", async () => {
     const { platform, direct } = setup();
     const transport = createSharedAppTransport({ platform, direct: direct as never, target });

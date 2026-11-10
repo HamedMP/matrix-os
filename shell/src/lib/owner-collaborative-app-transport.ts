@@ -70,6 +70,7 @@ export function createOwnerCollaborativeAppTransport(input: {
   let subscriptionGeneration = 0;
   let closed = false;
   let uncertain: PendingMutation[] = [];
+  let pendingDefiniteFailure = false;
   const inFlight = new Set<string>();
 
   const stopSubscription = () => {
@@ -226,10 +227,24 @@ export function createOwnerCollaborativeAppTransport(input: {
     },
 
     async retryMutation(signal) {
-      const [first, ...remaining] = uncertain;
-      if (!first) throw unavailable();
-      let result = await sendMutation(first, signal);
-      for (const attempt of remaining) result = await sendMutation(attempt, signal);
+      const attempts = [...uncertain];
+      if (attempts.length === 0) throw unavailable();
+      let result: { result: unknown; revision: string; replayed: boolean } | undefined;
+      for (const attempt of attempts) {
+        try {
+          result = await sendMutation(attempt, signal);
+        } catch {
+          if (!uncertain.some((candidate) => candidate.clientRequestId === attempt.clientRequestId)) {
+            pendingDefiniteFailure = true;
+          }
+        }
+      }
+      if (uncertain.length > 0) throw unavailable();
+      if (pendingDefiniteFailure) {
+        pendingDefiniteFailure = false;
+        throw unavailable();
+      }
+      if (!result) throw unavailable();
       return result;
     },
 

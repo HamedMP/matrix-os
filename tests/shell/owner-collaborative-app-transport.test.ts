@@ -425,4 +425,31 @@ describe("owner collaborative app transport", () => {
     expect(direct.request.mock.calls[2]).toEqual(direct.request.mock.calls[0]);
     expect(direct.request.mock.calls[3]).toEqual(direct.request.mock.calls[1]);
   });
+
+  it("settles later uncertain owner writes after a known conflict without reporting success", async () => {
+    const direct = {
+      request: vi.fn()
+        .mockRejectedValueOnce(new Error("first response lost"))
+        .mockRejectedValueOnce(new Error("second response lost"))
+        .mockRejectedValueOnce(new CollaborationDirectError("invalid_request"))
+        .mockResolvedValueOnce({ result: { saved: "second" }, revision: 9, replayed: true }),
+      subscribeEvents: vi.fn().mockReturnValue(vi.fn()),
+    };
+    let nextId = 0;
+    const transport = createOwnerCollaborativeAppTransport({
+      appId, api: { get: vi.fn().mockResolvedValue(share("active")), direct },
+      legacyRequest: vi.fn(), onChanged: vi.fn(), createRequestId: () => `request-${++nextId}`,
+    });
+
+    await expect(transport.mutate({ action: "insert", data: { id: "first" } }, "7"))
+      .rejects.toThrow("Collaboration unavailable");
+    await expect(transport.mutate({ action: "insert", data: { id: "second" } }, "8"))
+      .rejects.toThrow("Collaboration unavailable");
+    await expect(transport.retryMutation()).rejects.toThrow("Collaboration unavailable");
+    expect(direct.request).toHaveBeenCalledTimes(4);
+    expect(direct.request.mock.calls[2]).toEqual(direct.request.mock.calls[0]);
+    expect(direct.request.mock.calls[3]).toEqual(direct.request.mock.calls[1]);
+    await expect(transport.retryMutation()).rejects.toThrow("Collaboration unavailable");
+    expect(direct.request).toHaveBeenCalledTimes(4);
+  });
 });

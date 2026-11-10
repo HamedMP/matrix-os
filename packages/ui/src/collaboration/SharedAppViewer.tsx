@@ -105,7 +105,6 @@ export function SharedAppViewer({ target, transport }: {
       requestGeneration.current += 1;
       activeDocumentGeneration.current += 1;
       unsubscribe();
-      transport.close();
     };
   }, [applyFailure, launch, target.appId, transport]);
 
