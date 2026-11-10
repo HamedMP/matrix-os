@@ -52,14 +52,14 @@ export function HistoryCoverage({ history }: { history: UsageHistory }) {
                   ? "Recovering history…"
                   : backup
                     ? "Backed up to Matrix"
-                    : "Backup not verified"}
+                    : "Indexed on your Matrix computer"}
               </strong>
               <small>
                 {c.indexing
                   ? "Older sessions are still being indexed."
                   : backup
                     ? `${formatBytes(backup.verifiedBytes)} · ${date(backup.verifiedAt)}`
-                    : "Your recovered history has not been verified yet."}
+                    : "Read from this computer's agent folders. No separate backup is configured."}
               </small>
             </span>
           </span>
@@ -139,7 +139,7 @@ function CoverageMetadata({ history }: { history: UsageHistory }) {
           <dd>
             {backup
               ? `${number(backup.verifiedFiles)} files verified on Matrix · ${formatBytes(backup.verifiedBytes)}`
-              : "Verification pending"}
+              : "Not configured"}
           </dd>
         </div>
         <div>

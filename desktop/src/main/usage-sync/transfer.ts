@@ -55,7 +55,10 @@ export async function transferUsageHistory(
   home: string,
   signal: AbortSignal,
   run = runSyncProcess,
+  timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone,
 ) {
+  // Reports are bucketed in this Mac's zone. Anything unexpected falls back to UTC rather than entering a shell.
+  const zone = /^[A-Za-z0-9_+/-]{1,80}$/.test(timeZone) ? timeZone : "UTC";
   const config = UsageSyncPairingSchema.parse(pairing),
     active: Array<{ relative: string; directory: boolean }> = [];
   for (const relative of USAGE_BACKUP_PATHS) {
@@ -106,12 +109,15 @@ export async function transferUsageHistory(
       signal,
     );
   }
+  // -tt: the remote job receives a hangup when this process is cancelled, instead of running on unattended.
+  // refresh.ts takes the backup lock itself, so every caller is serialized.
   await run(
     "ssh",
     [
+      "-tt",
       ...sshOptions,
       config.sshHost,
-      `cd '${config.checkout}' && set -a && . '${config.databaseEnv}' && set +a && AI_USAGE_TIMEZONE=Europe/Stockholm flock -w 900 '${config.backupRoot}/.refresh.lock' node --import tsx scripts/ai-usage/refresh.ts '${config.backupRoot}/collector.json' '${incomingId}'`,
+      `cd '${config.checkout}' && set -a && . '${config.databaseEnv}' && set +a && AI_USAGE_TIMEZONE='${zone}' node --import tsx scripts/ai-usage/refresh.ts '${config.backupRoot}/collector.json' '${incomingId}'`,
     ],
     signal,
   );
