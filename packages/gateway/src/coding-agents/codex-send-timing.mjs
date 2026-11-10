@@ -11,11 +11,13 @@ export function createCodexSendTiming(sessionId, write = (line) => process.stder
   if (!enabled) return DISABLED;
   const session = createHash("sha256").update(sessionId).digest("hex").slice(0, 20);
   let turnIndex = 0;
+  let turnKey;
   let turnStartedAt = 0;
   let providerDeltaSeen = false;
   let persistedTextSeen = false;
   const emit = (stage, durationMs, index) => {
     write(`${JSON.stringify({ event: "codex_send_timing", session, turnIndex: index,
+      ...(turnKey ? { turnKey } : {}),
       stage, durationMs: Math.max(0, Math.round(durationMs)) })}\n`);
   };
   const mark = (stage, startedAt, index = turnIndex) => emit(stage, performance.now() - startedAt, index);
@@ -24,8 +26,11 @@ export function createCodexSendTiming(sessionId, write = (line) => process.stder
     mark,
     // Time from runner process start (the perf_hooks time origin) to first use.
     runnerBoot() { emit("runner_boot", performance.now(), 0); },
-    beginTurn(index) {
+    beginTurn(index, clientRequestId) {
       turnIndex = index;
+      turnKey = clientRequestId
+        ? createHash("sha256").update(clientRequestId).digest("hex").slice(0, 20)
+        : undefined;
       turnStartedAt = performance.now();
       providerDeltaSeen = false;
       persistedTextSeen = false;

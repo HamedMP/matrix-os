@@ -1391,7 +1391,6 @@ async function runTurn(threadId, turn) {
     activeTurnOutcome = resolve;
   });
   activeTurn = true;
-  sendTiming.beginTurn(terminalEventCount + 1);
   subagentRuntime.reset();
   executionExpired = false;
   activeTurnTokenUsage = undefined;
@@ -1521,6 +1520,7 @@ try {
   let firstTurn = true;
   while (turn && !stopping) {
     pendingAdmittedTurn = true;
+    sendTiming.beginTurn(terminalEventCount + 1, turn.clientRequestId);
     if (!firstTurn && (currentBrowserLease || turn.browser)) {
       renewingNativeTurn = true;
       try {

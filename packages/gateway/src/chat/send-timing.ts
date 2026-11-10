@@ -21,6 +21,19 @@ export function chatSendTimingsEnabled(): boolean {
   return process.env.MATRIX_CODEX_SEND_TIMINGS === "1";
 }
 
+/** Join a Chat run to native runner logs without exposing thread or turn IDs. */
+export function recordCodexRunnerLink(runId: string, threadId: string, turnId?: string): void {
+  if (!chatSendTimingsEnabled() || !threadId.startsWith("thread_")
+    || (turnId !== undefined && !turnId.startsWith("turn_"))) return;
+  const sessionId = `sess_${threadId.slice("thread_".length)}`;
+  const session = createHash("sha256").update(sessionId).digest("hex").slice(0, 20);
+  emit({ runId, stage: "runner_link", session,
+    ...(turnId === undefined
+      ? { turnIndex: 1 }
+      : { turnKey: createHash("sha256").update(`req_${turnId.slice("turn_".length)}`).digest("hex").slice(0, 20) }),
+  });
+}
+
 export type ChatSendTimer = ReturnType<typeof createChatSendTimer>;
 
 export function createChatSendTimer(clientRequestId: string) {

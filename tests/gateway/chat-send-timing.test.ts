@@ -5,10 +5,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { CanonicalChatOrchestrator } from "../../packages/gateway/src/chat/orchestrator.js";
 import { CanonicalChatProviderRegistry } from "../../packages/gateway/src/chat/provider-adapter.js";
 import { ChatRepository } from "../../packages/gateway/src/chat/repository.js";
-import { createChatSendTimer, recordCodexCatalogTiming } from "../../packages/gateway/src/chat/send-timing.js";
+import { createChatSendTimer, recordCodexCatalogTiming, recordCodexRunnerLink } from "../../packages/gateway/src/chat/send-timing.js";
 import { codexCatalogFixture, codexProvider } from "../helpers/codex-model-catalog-fixture.js";
+import { createCodexSendTiming } from "../../packages/gateway/src/coding-agents/codex-send-timing.mjs";
 
-type TimingEvent = { traceId?: string; runId?: string; stage: string; durationMs?: number; result?: string; driver?: string };
+type TimingEvent = { traceId?: string; runId?: string; stage: string; durationMs?: number; result?: string; driver?: string; session?: string; turnKey?: string; turnIndex?: number };
 
 function captureTimings() {
   const lines: string[] = [];
@@ -19,6 +20,30 @@ function captureTimings() {
 }
 
 describe("Chat send timings", () => {
+  it("joins a Chat run to first and follow-up runner stages without raw thread IDs", () => {
+    const capture = captureTimings();
+    try {
+      recordCodexRunnerLink("run_private", "thread_private");
+      expect(capture.lines).toEqual([]);
+      vi.stubEnv("MATRIX_CODEX_SEND_TIMINGS", "1");
+      recordCodexRunnerLink("run_private", "thread_private");
+      recordCodexRunnerLink("run_followup", "thread_private", "turn_private_turn");
+      const [first, followup] = capture.events();
+      expect(first).toMatchObject({ runId: "run_private", stage: "runner_link", turnIndex: 1 });
+      expect(followup).toMatchObject({ runId: "run_followup", stage: "runner_link" });
+      expect(followup).not.toHaveProperty("turnIndex");
+      expect(first?.session).toBe(followup?.session);
+      expect(followup?.turnKey).toMatch(/^[a-f0-9]{20}$/);
+      const runnerLines: string[] = [];
+      const runner = createCodexSendTiming("sess_private", (line: string) => runnerLines.push(line), true);
+      runner.beginTurn(2, "req_private_turn");
+      runner.firstProviderDelta();
+      expect(JSON.parse(runnerLines[0]!) as Record<string, unknown>).toMatchObject({
+        session: followup?.session, turnIndex: 2, turnKey: followup?.turnKey,
+      });
+      expect(capture.lines.join(" ")).not.toMatch(/thread_private|turn_private|req_turn_private/);
+    } finally { capture.restore(); }
+  });
   let pglite: InstanceType<typeof KyselyPGlite>;
   let repository: ChatRepository;
 

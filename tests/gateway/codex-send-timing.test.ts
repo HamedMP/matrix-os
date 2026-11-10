@@ -50,6 +50,19 @@ describe("Codex runner send timings", () => {
     expect(lines.join(" ")).not.toContain("private-session-path");
   });
 
+  it("links a follow-up timing index through an opaque accepted-turn key", () => {
+    const lines: string[] = [];
+    const timing = createCodexSendTiming("private-session-path", (line: string) => lines.push(line), true);
+    timing.beginTurn(2, "req_private_turn");
+    timing.mark("previous_session_close", timing.now());
+    timing.firstProviderDelta();
+    const events = lines.map((line) => JSON.parse(line) as { session: string; turnIndex: number; turnKey: string });
+    expect(events).toHaveLength(2);
+    expect(events.every((event) => event.turnIndex === 2 && /^[a-f0-9]{20}$/.test(event.turnKey))).toBe(true);
+    expect(new Set(events.map((event) => event.turnKey)).size).toBe(1);
+    expect(lines.join(" ")).not.toContain("req_private_turn");
+  });
+
   it("emits nothing from the real runner when the flag is off", async () => {
     expect((await runnerStderr()).lines).toEqual([]);
   });

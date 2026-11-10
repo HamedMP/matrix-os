@@ -19,10 +19,11 @@ Records contain only fixed stage names, rounded millisecond durations, and opaqu
 | Source | Where it is written | Correlation | Stages |
 | --- | --- | --- | --- |
 | Admission | gateway log, `[chat-send-timing]` | `traceId` (hash of the client request ID); `run_link` maps it to `runId` | `admission_pre_catalog`, `codex_catalog` (`result`: `cache_hit`, `lookup`, `lookup_shared`, `failed`), `catalog_admission`, `admission_post_catalog`, `repository_admission`, `admission_total` |
-| Dispatch | gateway log, `[chat-send-timing]` | `runId`, `driver` | `dispatch_prepare`, `first_provider_event`, `first_displayable_text` (persisted and subscriber-notified; client paint excluded) |
-| Runner | runner stderr (Zellij tab scrollback, or `~/system/background-agents/<id>/output.log`), `codex_send_timing` | `session` (hash of the event file name), `turnIndex` | `runner_boot`, `native_proof_setup`, `browser_lease_wait`, `process_ready`, `thread_account_proof`, `thread_start` or `thread_resume`, `browser_mcp_ready`, `browser_release_wait`, `previous_session_close`, `turn_account_proof`, `turn_start`, `first_provider_delta`, `first_persisted_text` |
+| Dispatch | gateway log, `[chat-send-timing]` | `runId`, `driver`; `runner_link` joins `runId` to the hashed runner `session` and first `turnIndex: 1`, or to an opaque accepted-turn `turnKey` on follow-up | `runner_link`, `dispatch_prepare`, `first_provider_event`, `first_displayable_text` (persisted and subscriber-notified; client paint excluded) |
+| Runner | runner stderr (Zellij tab scrollback, or `~/system/background-agents/<id>/output.log`), `codex_send_timing` | `session` (hash of the event file name), `turnIndex`; follow-up records include the same `turnKey` as the gateway link | `runner_boot`, `native_proof_setup`, `browser_lease_wait`, `process_ready`, `thread_account_proof`, `thread_start` or `thread_resume`, `browser_mcp_ready`, `browser_release_wait`, `previous_session_close`, `turn_account_proof`, `turn_start`, `first_provider_delta`, `first_persisted_text` |
 
 `first_provider_delta` versus `first_persisted_text` isolates the runner's delta flush buffering. `dispatch_prepare` to `first_provider_event` covers runner spawn plus native startup as seen by the gateway.
+The follow-up `turnKey` is a truncated SHA-256 of the native accepted-turn request ID. The gateway derives it from the accepted turn ID; the runner derives it from the corresponding control frame. No raw thread, turn, request, or path ID is logged. The runner starts the follow-up timer before closing the prior Browser-enabled session so the restart cost is included.
 
 ## Codex model catalog refresh
 
