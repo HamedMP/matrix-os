@@ -30,6 +30,9 @@ export function useComputerTerminals(platformHost: string | null, sessionKey: st
   // Counts signed-in sessions seen by this hook. Work started in one session
   // must not open, list or report anything in the next.
   const session = useRef(0);
+  // Counts the user's choices of what to show. A terminal that finishes being
+  // created is opened only if the user has not chosen something else since.
+  const selection = useRef(0);
 
   const client = useMemo<ApiClient | null>(
     () => (platformHost ? createApiClient({ baseUrl: platformHost, getRuntimeSlot: () => "primary" }) : null),
@@ -76,6 +79,7 @@ export function useComputerTerminals(platformHost: string | null, sessionKey: st
       useConnection.setState({ status: "signed-in", platformHost, runtimeSlot: slot, api: client.forRuntime(slot) });
       boundSlot.current = slot;
     }
+    selection.current += 1;
     setActive({ slot, refKey });
   }, [client, platformHost]);
 
@@ -83,6 +87,7 @@ export function useComputerTerminals(platformHost: string | null, sessionKey: st
     if (!client || creating) return;
     const startedIn = session.current;
     const current = () => session.current === startedIn;
+    const chosen = selection.current;
     setCreating(slot);
     setCreateFailed(null);
     try {
@@ -92,6 +97,9 @@ export function useComputerTerminals(platformHost: string | null, sessionKey: st
       // Signed out, or signed in as someone else, while the computer answered:
       // the new terminal belongs to a session this window no longer shows.
       if (!current()) return;
+      // The user opened another terminal while this one was being created:
+      // it is listed, but it does not take the pane away from their choice.
+      if (selection.current !== chosen) return;
       open(slot, refKey);
     } catch (error: unknown) {
       console.warn("[terminal-window] tab create failed:", error instanceof Error ? error.name : "UnknownError");

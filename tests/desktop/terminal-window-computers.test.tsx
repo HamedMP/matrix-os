@@ -115,6 +115,27 @@ describe("Terminal window computers", () => {
     expect(screen.queryByText("Couldn't reach this computer.")).toBeNull();
   });
 
+  it("does not take the pane from a terminal the user opened while another was being created", async () => {
+    let finishCreate!: (response: Response) => void;
+    fetchMock.mockImplementation(async (url: string, init?: RequestInit) => {
+      const path = new URL(String(url)).pathname;
+      if (init?.method === "POST" && path.endsWith("/ensure")) return json({ workspace: { id: WS } });
+      if (init?.method === "POST") return new Promise<Response>((resolve) => { finishCreate = resolve; });
+      return json(workspace([{ id: TAB_1, name: "build" }]));
+    });
+    render(<TerminalWindowApp />);
+    fireEvent.click(await screen.findByRole("button", { name: /Main Computer/ }));
+    await screen.findByRole("button", { name: /build/ });
+    fireEvent.click(screen.getByRole("button", { name: "New terminal" }));
+    await waitFor(() => expect(finishCreate).toBeTypeOf("function"));
+    // The user picks an existing terminal before the new one is ready.
+    fireEvent.click(screen.getByRole("button", { name: /build/ }));
+    expect((await screen.findByTestId("terminal-view")).textContent).toBe(`${WS}:${TAB_1}`);
+    await act(async () => { finishCreate(json({ tab: { id: TAB_2, name: "Terminal" } }, 201)); });
+    await waitFor(() => expect(screen.getByRole("button", { name: "New terminal" }).hasAttribute("disabled")).toBe(false));
+    expect(screen.getByTestId("terminal-view").textContent).toBe(`${WS}:${TAB_1}`);
+  });
+
   it("does not open a terminal whose creation finished after the owner signed out", async () => {
     let signedIn = true;
     const listeners: Array<(payload: unknown) => void> = [];
