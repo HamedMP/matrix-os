@@ -1,6 +1,6 @@
 import type { SharedBrowserSupervisedPolicy } from "./approval-policy.js";
 import { z } from "zod/v4";
-import { createSharedBrowserBroker, type SharedBrowserDriver } from "./broker.js";
+import { createSharedBrowserBroker, type SharedBrowserBinding, type SharedBrowserDriver } from "./broker.js";
 import { createSharedBrowserCdpDriver } from "./cdp-driver.js";
 import { writeBrowserArtifactManifest } from "./artifact-manifest.js";
 
@@ -8,10 +8,12 @@ const Acknowledgement=z.object({humanControlAvailable:z.boolean()}).strict();
 /** Fixed owner/VPS composition. No model-supplied endpoint or owner is accepted. */
 export function createSharedBrowserRuntime(options:{
   homePath:string;enabled:boolean;ownerId?:string;clerkOwnerId?:string;
+  supervisedRunExpiresAt?: (identity: Pick<SharedBrowserBinding, "ownerId" | "chatId">) => number;
   driver?:SharedBrowserDriver;fetcher?:typeof fetch;authorizeAction?:SharedBrowserSupervisedPolicy["authorizeAction"];
 }) {
   if(!options.enabled || !options.ownerId || options.ownerId!==options.clerkOwnerId)return undefined;
   const broker=createSharedBrowserBroker({ownerId:options.ownerId,authorizeAction:options.authorizeAction,
+    supervisedRunExpiresAt: options.supervisedRunExpiresAt,
     driver:options.driver ?? createSharedBrowserCdpDriver({homePath:options.homePath}),
     exportArtifacts:(id,artifacts)=>writeBrowserArtifactManifest(options.homePath,id,artifacts),
     async setHumanControl(enabled){
