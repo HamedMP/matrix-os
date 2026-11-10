@@ -10,6 +10,7 @@ import {
   CollaborativeAppBuildResolver,
 } from "../../packages/gateway/src/collaboration/collaborative-app-build-resolver.js";
 import { appRegistryIncarnation } from "../../packages/gateway/src/collaboration/app-incarnation.js";
+import { inspectBehaviorSource } from "../../packages/gateway/src/collaboration/collaborative-app-behavior.js";
 import { canonicalJson } from "../../packages/gateway/src/collaboration/direct-crypto.js";
 import {
   CollaborativeAppBuildBehaviorProbe,
@@ -18,6 +19,16 @@ import {
 } from "../../packages/gateway/src/collaboration/collaborative-app-readiness.js";
 
 describe("collaborative app production build resolution", () => {
+  it("recognizes revisioned bulk inserts whose rows are bound variables", () => {
+    const source = "const shared=window.MatrixOS.collaboration;const row={title:'New'};shared.mutate({action:'bulkInsert',table:'tasks',rows:[row]},'0')";
+    expect(inspectBehaviorSource(source, AbortSignal.timeout(1000)).revisionedWrite).toBe(true);
+    const spread = "const shared=window.MatrixOS.collaboration;const rows=[{title:'New'}];shared.mutate({action:'bulkInsert',table:'tasks',rows:[...rows]},'0')";
+    expect(inspectBehaviorSource(spread, AbortSignal.timeout(1000)).revisionedWrite).toBe(true);
+    const update = "const shared=window.MatrixOS.collaboration;const patch={id:'one',data:{done:true}};shared.mutate({action:'bulkUpdate',table:'tasks',updates:[patch]},'0')";
+    expect(inspectBehaviorSource(update, AbortSignal.timeout(1000)).revisionedWrite).toBe(true);
+    const invalid = "const shared=window.MatrixOS.collaboration;const row=42;shared.mutate({action:'bulkInsert',table:'tasks',rows:[row]},'0')";
+    expect(inspectBehaviorSource(invalid, AbortSignal.timeout(1000)).revisionedWrite).toBe(false);
+  });
   let root: string;
   let appDir: string;
   let store: ImmutableCollaborativeBuildStore;

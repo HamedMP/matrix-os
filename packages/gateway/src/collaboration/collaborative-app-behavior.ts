@@ -42,7 +42,45 @@ function memberPath(value: unknown): string | null {
   return base && property ? `${base}.${property}` : null;
 }
 
-function literalAction(value: unknown): Record<string, unknown> | null {
+function resolveValue(value: unknown, knownValues: Map<string, AstNode>, seen = new Set<string>()): AstNode | null {
+  let current = node(value);
+  while (current?.type === "Identifier") {
+    const name = identifier(current);
+    if (!name || seen.has(name)) return current;
+    const known = knownValues.get(name);
+    if (!known) return current;
+    seen.add(name);
+    current = known;
+  }
+  return current;
+}
+
+function arrayProbe(name: string): unknown {
+  return name === "updates" ? { id: "probe", data: { value: "probe" } } : { value: "probe" };
+}
+
+function literalArray(value: AstNode, name: string, knownValues: Map<string, AstNode>, depth = 0): unknown[] {
+  if (depth > 8) return [arrayProbe(name)];
+  if (!Array.isArray(value.elements)) return [];
+  const result: unknown[] = [];
+  for (const entry of value.elements) {
+    const item = node(entry);
+    const resolved = resolveValue(item?.type === "SpreadElement" ? item.argument : item, knownValues);
+    if (item?.type === "SpreadElement") {
+      result.push(...(resolved?.type === "ArrayExpression"
+        ? literalArray(resolved, name, knownValues, depth + 1) : [arrayProbe(name)]));
+    } else if (resolved?.type === "ObjectExpression") {
+      result.push(literalAction(resolved, knownValues));
+    } else if (resolved?.type === "Literal") {
+      result.push(resolved.value);
+    } else {
+      result.push(arrayProbe(name));
+    }
+  }
+  return result;
+}
+
+function literalAction(value: unknown, knownValues: Map<string, AstNode>): Record<string, unknown> | null {
   const current = node(value);
   if (current?.type !== "ObjectExpression" || !Array.isArray(current.properties)) return null;
   const result: Record<string, unknown> = {};
@@ -55,16 +93,11 @@ function literalAction(value: unknown): Record<string, unknown> | null {
     if (valueNode?.type === "Literal") {
       result[name] = valueNode.value;
     } else if (valueNode?.type === "ObjectExpression") {
-      const nested = literalAction(valueNode);
+      const nested = literalAction(valueNode, knownValues);
       if (!nested) return null;
       result[name] = nested;
     } else if (valueNode?.type === "ArrayExpression") {
-      result[name] = Array.isArray(valueNode.elements) ? valueNode.elements.map((entry) => {
-        const item = node(entry);
-        if (item?.type === "ObjectExpression") return literalAction(item);
-        if (item?.type === "Literal") return item.value;
-        return null;
-      }) : [];
+      result[name] = literalArray(valueNode, name, knownValues);
     } else if (name === "data" || name === "expectedPayload") {
       result[name] = { value: "probe" };
     } else {
@@ -74,8 +107,8 @@ function literalAction(value: unknown): Record<string, unknown> | null {
   return result;
 }
 
-function validAction(value: unknown, write: boolean): boolean {
-  const action = literalAction(value);
+function validAction(value: unknown, write: boolean, knownValues: Map<string, AstNode>): boolean {
+  const action = literalAction(value, knownValues);
   if (!action || typeof action.action !== "string") return false;
   if (!(write ? WRITE_ACTIONS : READ_ACTIONS).has(action.action)) return false;
   return BridgeQueryBodySchema.safeParse({ ...action, app: "probe" }).success;
@@ -88,6 +121,7 @@ export function inspectBehaviorSource(source: string, signal: AbortSignal): Coll
   const bases = new Set(["MatrixOS.collaboration", "window.MatrixOS.collaboration", "globalThis.MatrixOS.collaboration"]);
   const methods = new Map<string, Method>();
   const functions = new Map<string, AstNode>();
+  const knownValues = new Map<string, AstNode>();
   const activeFunctions = new Set<AstNode>();
   let visited = 0;
 
@@ -104,6 +138,8 @@ export function inspectBehaviorSource(source: string, signal: AbortSignal): Coll
     if (current.type === "VariableDeclarator") {
       const name = identifier(current.id);
       const init = node(current.init);
+      if (name && init && ["ObjectExpression", "ArrayExpression", "Literal"].includes(init.type)
+        && knownValues.size < MAX_FUNCTIONS) knownValues.set(name, init);
       if (name && init && (init.type === "FunctionExpression" || init.type === "ArrowFunctionExpression")) {
         if (functions.size < MAX_FUNCTIONS) functions.set(name, init);
       } else if (name && init && bases.has(memberPath(init) ?? "") && bases.size < MAX_ALIASES) {
@@ -133,8 +169,8 @@ export function inspectBehaviorSource(source: string, signal: AbortSignal): Coll
         || (path && [...bases].find((base) => path === `${base}.query` || path === `${base}.mutate` || path === `${base}.onChange`)
           ? path.split(".").at(-1) as Method : null);
       const args = Array.isArray(current.arguments) ? current.arguments : [];
-      if (method === "query" && validAction(args[0], false)) behavior.sharedRead = true;
-      if (method === "mutate" && args.length >= 2 && validAction(args[0], true)) behavior.revisionedWrite = true;
+      if (method === "query" && validAction(args[0], false, knownValues)) behavior.sharedRead = true;
+      if (method === "mutate" && args.length >= 2 && validAction(args[0], true, knownValues)) behavior.revisionedWrite = true;
       if (method === "onChange" && args.length > 0) behavior.changeSignal = true;
       const runFunction = (candidate: unknown): void => {
         const name = identifier(candidate);
