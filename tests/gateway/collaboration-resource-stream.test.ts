@@ -12,6 +12,11 @@ describe("bounded collaboration resource streams", () => {
     await expect(new Response(watchResourceStream(source, 15, () => false)).text()).rejects.toThrow();
   });
 
+  it("awaits an asynchronous evidence check before delivering bytes", async () => {
+    const source = new Blob(["private content"]).stream();
+    await expect(new Response(watchResourceStream(source, 15, async () => false)).text()).rejects.toThrow();
+  });
+
   it("streams exact-length bytes while the lease remains active", async () => {
     const source = new Blob(["abc"]).stream();
     expect(await new Response(watchResourceStream(source, 3, () => true)).text()).toBe("abc");

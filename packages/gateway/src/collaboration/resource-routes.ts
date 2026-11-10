@@ -83,7 +83,7 @@ function mutationAction(context: Pick<AuthorizedCollaborationContext, "resourceK
 export function watchResourceStream(
   source: ReadableStream<Uint8Array>,
   declaredSize: number,
-  leaseActive: () => boolean,
+  leaseActive: () => boolean | Promise<boolean>,
 ): ReadableStream<Uint8Array> {
   const reader = source.getReader();
   let received = 0;
@@ -102,13 +102,18 @@ export function watchResourceStream(
   return new ReadableStream<Uint8Array>({
     start(controller) {
       watchdog = setInterval(() => {
-        if (!leaseActive()) stop(controller);
+        void Promise.resolve().then(leaseActive).then((active) => {
+          if (!active) stop(controller);
+        }).catch((checkError: unknown) => {
+          console.warn("[collaboration-resources] stream lease check failed", checkError instanceof Error ? checkError.name : "UnknownError");
+          stop(controller);
+        });
       }, 5_000);
       watchdog.unref();
     },
     async pull(controller) {
-      if (!leaseActive()) { stop(controller); return; }
       try {
+        if (!await leaseActive()) { stop(controller); return; }
         const next = await reader.read();
         if (closed) return;
         if (next.done) {
@@ -121,7 +126,7 @@ export function watchResourceStream(
         received += next.value.byteLength;
         if (received > declaredSize || received > MAX_STREAM_BYTES) { stop(controller); return; }
         // The lease can end while the read is pending; re-check it before this chunk reaches the client.
-        if (!leaseActive()) { stop(controller); return; }
+        if (!await leaseActive()) { stop(controller); return; }
         controller.enqueue(next.value);
       } catch (readError: unknown) {
         console.warn("[collaboration-resources] stream read failed", readError instanceof Error ? readError.name : "UnknownError");
@@ -144,10 +149,14 @@ function streamResponse(
 ): Response {
   if (!Number.isSafeInteger(input.size) || input.size < 0 || input.size > MAX_STREAM_BYTES) throw new ResourceCatalogError("unavailable");
   const credentials = readDirectCredentials(c);
-  const leaseActive = () => {
+  const leaseActive = async () => {
     if (!credentials) return true;
-    const session = options.directSessions?.describe(credentials.sessionId);
-    return Boolean(session && new Date(session.evidenceExpiresAt).getTime() > Date.now());
+    try {
+      return Boolean(await options.directSessions?.keepEvidenceFresh(credentials.sessionId));
+    } catch (checkError: unknown) {
+      console.warn("[collaboration-resources] stream evidence failed", checkError instanceof Error ? checkError.name : "UnknownError");
+      return false;
+    }
   };
   c.header("Content-Type", safeResponseContentType(input.contentType));
   c.header("Content-Length", String(input.size));

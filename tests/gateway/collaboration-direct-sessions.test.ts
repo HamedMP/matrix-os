@@ -152,6 +152,19 @@ describe("S05 direct sessions on the home", () => {
     await expect(service.create(body)).rejects.toMatchObject({ code: "replayed" });
   });
 
+  it("renews evidence during a long download and ends the session after membership removal", async () => {
+    const session = await service.create(sessionRequest(collaborationActors.editor).body);
+    const requireMembership = vi.spyOn(authority.organizationPrecondition, "require");
+    clock = new Date(clock.getTime() + 18_000);
+    const refreshed = await service.keepEvidenceFresh(session.id);
+    expect(Date.parse(refreshed.evidenceExpiresAt)).toBeGreaterThan(Date.parse(session.evidenceExpiresAt));
+    expect(requireMembership).toHaveBeenCalled();
+    members.delete(collaborationActors.editor);
+    clock = new Date(clock.getTime() + 18_000);
+    await expect(service.keepEvidenceFresh(session.id)).rejects.toThrow();
+    expect(service.describe(session.id)).toBeNull();
+  });
+
   it("normalizes stored app scopes to app_instance tickets for sessions and streams", async () => {
     await fixture.db.updateTable("collaboration_scopes").set({ kind: "app" })
       .where("id", "=", scopeId).execute();
