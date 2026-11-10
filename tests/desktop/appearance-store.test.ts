@@ -49,6 +49,21 @@ describe("appearance store", () => {
     });
   });
 
+  it("does not ask the main process to recolour an overlay outside the Windows main window", async () => {
+    Object.defineProperty(navigator, "platform", { configurable: true, value: "MacIntel" });
+    await useAppearance.getState().setMode("dark");
+
+    Object.defineProperty(navigator, "platform", { configurable: true, value: "Win32" });
+    window.history.replaceState(null, "", "/?window=terminal");
+    try {
+      await useAppearance.getState().setMode("light");
+    } finally {
+      window.history.replaceState(null, "", "/");
+    }
+
+    expect(window.operator.invoke).not.toHaveBeenCalledWith("window:set-titlebar-overlay", expect.anything());
+  });
+
   it('blocks writes while the initial preferences remain unread', async () => {
     useAppearance.setState({ hydrated: false });
     await useAppearance.getState().setMode('dark');
