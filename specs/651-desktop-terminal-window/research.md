@@ -125,12 +125,26 @@ It is not chosen because the core then owns the connection: it writes the SSH co
 whatever was stored at add time, not fetched for each attempt, and the app's private holder would
 become a network client the main process does not supervise.
 
+## `ssh2` check (open question 9)
+
+`ssh2` 1.17.0 installed without building its optional native add-ons and ran as pure JavaScript.
+With the private key passed in memory and a `hostVerifier` comparing the SHA-256 fingerprint of
+the presented host key:
+
+- matching fingerprint: connected, ran the remote line on an exec channel and received herdr's
+  `hello` reply (0.1.20, generation 1) in 328 ms;
+- wrong fingerprint: refused during the handshake ("Host denied (verification failed)"), before
+  authentication.
+
+The full list/attach/kill sequence was not repeated through `ssh2`; an exec channel is a plain
+byte stream, the same as the `ssh` child's stdin/stdout used above.
+
 ## Not tested
 
 - macOS, and a real Matrix computer. Which OS user the requester's Herdr app logs in as on their
   Matrix computer, and that herdr-core is at `~/.local/bin` there, are unverified.
-- The `ssh2` library. Only the system OpenSSH client was used.
-- A device key held by an agent or in memory; the spike read its key from a file.
+- `ssh2` beyond one check (below). The tables above used the system OpenSSH client.
+- The device key encrypted at rest and decrypted in the main process; the spikes read a plain key file.
 - `events.subscribe` (live updates instead of polling), `terminal.attach` with `observe` or `resumed`.
 - More than two viewers, long-lived connections (keepalive, sleep/wake), and high-latency links.
 - herdr-core older than 0.1.14, and a remote core of a different protocol generation.
