@@ -1,4 +1,4 @@
-import { APP_GENERATE_CHANNEL, AppGenerateContextSchema, APP_AI_CHANNEL, MAX_APP_DATABASE_REPLY_BYTES, MAX_APP_DATABASE_REQUEST_BYTES, MAX_APP_RESPONSE_CHUNKS, AppAiInputSchema, AppCapabilityInputSchema, type AppCapabilityInput, type AppAiInput } from "@matrix-os/contracts";
+import { APP_GENERATE_CHANNEL, AppGenerateContextSchema, APP_AI_CHANNEL, CollaborationSafeErrorCodeSchema, MAX_APP_DATABASE_REPLY_BYTES, MAX_APP_DATABASE_REQUEST_BYTES, MAX_APP_RESPONSE_CHUNKS, AppAiInputSchema, AppCapabilityInputSchema, type AppCapabilityInput, type AppAiInput } from "@matrix-os/contracts";
 import type { IpcMain, IpcMainInvokeEvent } from "electron";
 import { registerNativeAppCapabilityIpc } from "./native-app-capabilities";
 export { createNativeAppAiRequester } from "./native-app-ai";
@@ -13,7 +13,7 @@ import {
   type NativeAppQuery,
 } from "../../shared/native-app-bridge";
 import {
-  NATIVE_APP_COLLABORATION_CHANNEL, NativeAppCollaborationRequestSchema,
+  NATIVE_APP_COLLABORATION_CHANNEL, NATIVE_COLLABORATION_ERROR_KEY, NativeAppCollaborationError, NativeAppCollaborationRequestSchema,
   NativeAppCollaborationStateSchema, type NativeAppCollaborationRequest,
 } from "../../shared/native-app-collaboration";
 import { CollaborationAppActionResponseSchema, CollaborativeAppQueryResponseSchema } from "@matrix-os/contracts";
@@ -225,7 +225,15 @@ export function createNativeAppCollaborationRequester(options: NativeAppQueryReq
     const response = await fetchFn(endpoint, { method: "POST", redirect: "error",
       headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
       body: JSON.stringify(body), signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS) });
-    if (!response.ok) throw new Error("Collaboration unavailable");
+    if (!response.ok) {
+      const failure = await readBoundedJson(response).catch((error: unknown) => {
+        console.warn("[native-app-bridge] error response unavailable", error instanceof Error ? error.name : "UnknownError");
+        return null;
+      });
+      const code = CollaborationSafeErrorCodeSchema.safeParse(
+        failure && typeof failure === "object" && "code" in failure ? failure.code : undefined);
+      throw new NativeAppCollaborationError(code.success ? code.data : "unavailable");
+    }
     const value = await readBoundedJson(response);
     if (!isCurrent()) throw new Error("Collaboration unavailable");
     if (request.kind === "query") return CollaborativeAppQueryResponseSchema.parse(value);
@@ -504,7 +512,7 @@ export class NativeAppBridge {
         } }, rawRequest);
       } catch (error: unknown) {
         console.warn("[native-app-bridge] collaboration failed", error instanceof Error ? error.name : "UnknownError");
-        throw new Error("Collaboration unavailable");
+        return { [NATIVE_COLLABORATION_ERROR_KEY]: error instanceof NativeAppCollaborationError ? error.code : "unavailable" };
       }
     });
     if (this.options.capabilityRequest || this.options.aiRoutesRequest) {

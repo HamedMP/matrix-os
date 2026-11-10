@@ -96,3 +96,50 @@ it("notifies the native app from the shared scope sequence and replays uncertain
     off();
   } finally { vi.useRealTimers(); }
 });
+
+it("reserves all retry slots before sending and refuses an untrackable write", async () => {
+  let sent = 0;
+  const invoke = vi.fn(async (request) => {
+    if (request.kind === "state") return { participant, revision: "4", scopeSequence: "9" };
+    if (request.kind === "mutate") { sent++; throw new Error("reply lost"); }
+  });
+  const api = createNativeAppCollaboration(invoke, participant);
+  for (let index = 0; index < 32; index++) {
+    await expect(api.mutate({ action: "insert", table: "tasks", data: { title: String(index) } }, "4"))
+      .rejects.toThrow("reply lost");
+  }
+  await expect(api.mutate({ action: "insert", table: "tasks", data: { title: "overflow" } }, "4"))
+    .rejects.toThrow("Collaboration unavailable");
+  expect(sent).toBe(32);
+});
+
+it("discards a definite conflict and recovers a later uncertain write", async () => {
+  const attempts: string[] = [];
+  let phase = "initial";
+  const invoke = vi.fn(async (request) => {
+    if (request.kind === "state") return { participant, revision: "4", scopeSequence: "9" };
+    if (request.kind === "mutate") {
+      attempts.push(request.clientRequestId);
+      if (phase === "initial") throw new Error("reply lost");
+      if (attempts[0] === request.clientRequestId) throw Object.assign(new Error("Collaboration conflict"), { code: "conflict" });
+      return { result: { ok: true }, revision: "5", replayed: true };
+    }
+  });
+  const api = createNativeAppCollaboration(invoke, participant);
+  await expect(api.mutate({ action: "insert", table: "tasks", data: { title: "old" } }, "4")).rejects.toThrow();
+  await expect(api.mutate({ action: "insert", table: "tasks", data: { title: "saved" } }, "4")).rejects.toThrow();
+  phase = "recovery";
+  await expect(api.retryMutation()).resolves.toEqual({ result: { ok: true }, revision: "5", replayed: true });
+  expect(attempts[1]).toBe(attempts[3]);
+});
+
+it("preserves only safe conflict codes from gateway failures", async () => {
+  const fetchFn = vi.fn(async (_url: string | URL | Request, init?: RequestInit) => init?.method === "GET"
+    ? Response.json({ participant, revision: "4", scopeSequence: "9" })
+    : Response.json({ error: "private details", code: "conflict" }, { status: 409 }));
+  const request = createNativeAppCollaborationRequester({ getGatewayOrigin: () => "https://gateway.test",
+    getToken: () => "host-only-token", fetchFn: fetchFn as typeof fetch, legacyRequest: vi.fn() });
+  await expect(request(appId, { kind: "mutate", action: { action: "insert", table: "tasks", data: {} },
+    expectedRevision: "4", clientRequestId: "60000000-0000-4000-8000-000000000001", scopeId: participant.scopeId }))
+    .rejects.toMatchObject({ code: "conflict" });
+});

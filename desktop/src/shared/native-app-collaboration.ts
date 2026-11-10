@@ -1,4 +1,4 @@
-import { CollaborativeAppParticipantSchema, CollaborationIdSchema, CollaborationRevisionSchema, MAX_APP_DATABASE_REQUEST_BYTES } from "@matrix-os/contracts";
+import { CollaborativeAppParticipantSchema, CollaborationIdSchema, CollaborationRevisionSchema, CollaborationSafeErrorCodeSchema, MAX_APP_DATABASE_REQUEST_BYTES } from "@matrix-os/contracts";
 import { z } from "zod/v4";
 
 export const NATIVE_APP_COLLABORATION_CHANNEL = "native-app:collaboration";
@@ -20,6 +20,16 @@ export const NativeAppCollaborationStateSchema = z.strictObject({
   scopeSequence: CollaborationRevisionSchema,
 });
 export type NativeAppCollaborationRequest = z.infer<typeof NativeAppCollaborationRequestSchema>;
+export class NativeAppCollaborationError extends Error {
+  constructor(readonly code: z.infer<typeof CollaborationSafeErrorCodeSchema>) {
+    super(`Collaboration ${code}`);
+    this.name = "NativeAppCollaborationError";
+  }
+}
+export const NATIVE_COLLABORATION_ERROR_KEY = "__matrixCollaborationError";
+const definitelyRejected = (error: unknown) => error instanceof Error && "code" in error
+  && ["conflict", "invalid_request", "forbidden", "unauthorized", "not_found", "read_only", "expired"]
+    .includes(String(error.code));
 
 export function createNativeAppCollaboration(invoke: (request: NativeAppCollaborationRequest) => Promise<unknown>,
   initialParticipant: z.infer<typeof CollaborativeAppParticipantSchema> | null = null,
@@ -28,7 +38,7 @@ export function createNativeAppCollaboration(invoke: (request: NativeAppCollabor
   let revision: string | null = null;
   let scopeSequence: string | null = null;
   let timer: ReturnType<typeof setInterval> | null = null;
-  let pending: NativeAppCollaborationRequest[] = [];
+  let pending: Array<{ request: Extract<NativeAppCollaborationRequest, { kind: "mutate" }>; inFlight: boolean }> = [];
   const callbacks = new Set<() => void>();
   let stateGeneration = 0;
   let appliedGeneration = 0;
@@ -76,19 +86,40 @@ export function createNativeAppCollaboration(invoke: (request: NativeAppCollabor
       const revision = CollaborationRevisionSchema.parse(expectedRevision);
       const request = { kind: "mutate" as const, action: parsed, expectedRevision: revision,
         clientRequestId: crypto.randomUUID(), scopeId: current.participant?.scopeId ?? null };
-      try { return await execute(request); }
+      if (current.participant && pending.length >= 32) throw new Error("Collaboration unavailable");
+      const entry = { request, inFlight: true };
+      if (current.participant) pending.push(entry);
+      try {
+        const result = await execute(request);
+        pending = pending.filter((item) => item !== entry);
+        return result;
+      }
       catch (error: unknown) {
-        if (current.participant && pending.length < 32) pending.push(request);
+        console.warn("[native-app-collaboration] mutation failed", error instanceof Error ? error.name : "UnknownError");
+        entry.inFlight = false;
+        if (definitelyRejected(error)) pending = pending.filter((item) => item !== entry);
         throw error;
       }
     },
     async retryMutation() {
       if (!pending.length) throw new Error("Collaboration unavailable");
       let response: unknown;
-      while (pending.length) {
-        response = await execute(pending[0]!);
-        pending = pending.slice(1);
+      let definiteError: unknown;
+      for (const entry of [...pending]) {
+        if (entry.inFlight || !pending.includes(entry)) continue;
+        entry.inFlight = true;
+        try {
+          response = await execute(entry.request);
+          pending = pending.filter((item) => item !== entry);
+        } catch (error: unknown) {
+          console.warn("[native-app-collaboration] retry failed", error instanceof Error ? error.name : "UnknownError");
+          entry.inFlight = false;
+          if (!definitelyRejected(error)) throw error;
+          pending = pending.filter((item) => item !== entry);
+          definiteError = error;
+        }
       }
+      if (response === undefined) throw definiteError ?? new Error("Collaboration unavailable");
       return response;
     },
     onChange(callback: () => void) {

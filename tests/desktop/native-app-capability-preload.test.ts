@@ -70,6 +70,21 @@ it("receives the owner participant from the trusted app launch without exposing 
   expect(JSON.stringify(bridge)).not.toContain("Bearer");
 });
 
+it("keeps a safe native collaboration conflict code across IPC", async () => {
+  const participant = { actorId: "user_owner", displayName: "Owner", organizationId: "org_matrix_team",
+    scopeId: "50000000-0000-4000-8000-000000000001", shareRevision: "1", buildId: "a".repeat(64) };
+  vi.spyOn(process, "argv", "get").mockReturnValue(["electron", "--matrix-app-bridge",
+    `--matrix-app-participant=${encodeURIComponent(JSON.stringify(participant))}`]);
+  electron.ipcRenderer.invoke.mockImplementation(async (_channel: string, request: { kind: string }) => request.kind === "state"
+    ? { participant, revision: "4", scopeSequence: "9" }
+    : { __matrixCollaborationError: "conflict" });
+  await import("../../desktop/src/preload/index.js");
+  const [, bridge] = electron.contextBridge.exposeInMainWorld.mock.calls[0];
+  await expect(bridge.collaboration.mutate({ action: "insert", table: "tasks", data: {} }, "4"))
+    .rejects.toMatchObject({ code: "conflict" });
+  await expect(bridge.collaboration.retryMutation()).rejects.toThrow("Collaboration unavailable");
+});
+
 it("updates the public participant when sharing starts and stops without reloading the native app", async () => {
   const participant = { actorId: "user_owner", displayName: "Owner", organizationId: "org_matrix_team",
     scopeId: "50000000-0000-4000-8000-000000000001", shareRevision: "1", buildId: "a".repeat(64) };
