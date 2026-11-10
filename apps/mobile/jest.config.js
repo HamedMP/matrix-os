@@ -15,8 +15,8 @@ module.exports = {
   // decode-named-character-reference, devlop) are ESM-only and reach every suite
   // through the @matrix-os/contracts index, so they must be transformed too.
   transformIgnorePatterns: [
-    "node_modules/.pnpm/(?!(react-native|jest-react-native|@react-native\\+.*|expo(nent)?|expo-[^@]+|expo-modules-core|@expo(nent)?\\+.*|@expo-google-fonts\\+.*|react-navigation|@react-navigation\\+.*|@sentry\\+react-native|native-base|react-native-svg|react-native-unistyles|react-native-nitro-modules|react-native-edge-to-edge|nativewind|@react-native-async-storage\\+.*|micromark[^@]*|character-entities|decode-named-character-reference|devlop)@)",
-    "node_modules/(?!\\.pnpm|((jest-)?react-native|@react-native(-community)?)|expo(nent)?|expo-[^/]+|expo-modules-core|@expo(nent)?/.*|@expo-google-fonts/.*|react-navigation|@react-navigation/.*|@sentry/react-native|native-base|react-native-svg|react-native-unistyles|react-native-nitro-modules|react-native-edge-to-edge|nativewind|@react-native-async-storage|micromark|character-entities|decode-named-character-reference|devlop)",
+    "node_modules/.pnpm/(?!(react-native|react-native-gesture-handler|standard-navigation|jest-react-native|@react-native\\+.*|expo(nent)?|expo-[^@]+|expo-modules-core|@expo(nent)?\\+.*|@expo-google-fonts\\+.*|react-navigation|@react-navigation\\+.*|@sentry\\+react-native|native-base|react-native-svg|react-native-unistyles|react-native-nitro-modules|react-native-edge-to-edge|nativewind|@react-native-async-storage\\+.*|micromark[^@]*|character-entities|decode-named-character-reference|devlop)@)",
+    "node_modules/(?!\\.pnpm|((jest-)?react-native|@react-native(-community)?)|standard-navigation|expo(nent)?|expo-[^/]+|expo-modules-core|@expo(nent)?/.*|@expo-google-fonts/.*|react-navigation|@react-navigation/.*|@sentry/react-native|native-base|react-native-svg|react-native-unistyles|react-native-nitro-modules|react-native-edge-to-edge|nativewind|@react-native-async-storage|micromark|character-entities|decode-named-character-reference|devlop)",
   ],
   setupFiles: ["./jest.setup.js"],
   setupFilesAfterEnv: ["./jest.after-env.js"],

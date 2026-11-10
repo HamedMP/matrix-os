@@ -68,9 +68,12 @@ app/(drawer)/(tabs)/settings.tsx                /settings
 - **The group is still named `(drawer)`.** Sign-in, the journey gate and
   notification routing call `router.replace("/(drawer)")` and must keep landing
   on the chat screen.
-- **`(chats)` names its first screen with the `Stack`'s `initialRouteName`
-  prop, not `unstable_settings`.** With `unstable_settings`, opening `/` skips
-  the sign-in gate. `__tests__/route-tree.test.ts` pins this.
+- **`(chats)` and `(apps)` name their first screen as the stack's `anchor`**
+  (`unstable_settings`). A link that opens Shared with me, Projects, Files or
+  Connect Apps directly puts that screen beneath it. The anchor does not choose
+  what `/` opens: the root URL still reaches the sign-in gate.
+  `__tests__/route-tree.test.ts` and `__tests__/shell-navigation-router.test.tsx`
+  pin both.
 - **The tab bar is hidden on screens that take the whole display.** Add the
   route to `TAB_BAR_HIDDEN_ROUTES` in `lib/tab-bar-visibility.ts` (today: the
   new-agent screen and an agent's chat). While the keyboard is open it stays
@@ -82,18 +85,19 @@ app/(drawer)/(tabs)/settings.tsx                /settings
   on iOS and Android alike. On Android React Native reports the keyboard on
   its next layout pass, a moment after it appears, so the composer moves up
   just after the keyboard rather than with it.
-- **Moving between tabs from code** goes through the helpers in
-  `lib/shell-routes.ts`. They build new params on every call because the
-  navigator ignores params it has already used.
-- **A tab switch asked for in the same step as a change inside the current tab
-  is dropped.** The navigator ignores the params that carry the switch when its
-  own state, which holds the stacks of its tabs, changes in the same render. A
-  screen that closes itself and then shows another tab closes first, and the
-  tab is asked for from the tabs' next `state` event by something that outlives
-  the screen: `components/agents/chat-handoff.tsx` in the Agents tab's layout,
-  used by `agents/new.tsx`. The tab hides the closing screen at once, so that
-  screen also closes without a slide (`animation: "none"`); a slide cut short
-  plays when the tab is next opened.
+- **Moving between tabs from code** goes through the hrefs and hooks in
+  `lib/shell-routes.ts` and `lib/use-shell-navigation.ts`. Since Expo SDK 58 a
+  navigation call takes a complete href: `screen` and `params` no longer build
+  nested state. `router.navigate` pushes the href's screen onto its tab's
+  stack, so showing the chat screen from another tab switches to the Chats tab
+  by name and then `dismissTo`s the chat screen, which closes whatever was left
+  open above it.
+- **Navigation calls apply in order after the render commits.** A screen that
+  closes itself and then shows another tab can call both in the same step
+  (`agents/new.tsx`). Navigation state read right after a call does not show
+  it yet. The tab hides the closing screen at once, so that screen closes
+  without a slide (`animation: "none"`); a slide cut short plays when the tab
+  is next opened.
 - **The Agents tab badge** counts agents waiting on the person
   (`components/agents/use-agents-waiting-count.ts`). The status of an agent is
   derived in the app from its chat and tasks; the server has no status field.
@@ -760,7 +764,7 @@ pnpm --dir apps/mobile exec tsc --noEmit
 pnpm --dir apps/mobile run lint
 ```
 
-Manual checks in the SDK 57 dev client:
+Manual checks in the SDK 58 dev client:
 
 1. Open Agents, select a project, and confirm its project-level chats and task groups come from the live gateway projection.
 2. Open two different conversations attached to one task and confirm each route retains its exact project, task, and thread identity.
@@ -908,7 +912,7 @@ git diff --check
 - Confirm unavailable apps show a generic fallback, not raw gateway or filesystem errors.
 - Confirm Terminal path, prompt/cursor, command input, and touch controls are visible in portrait and landscape.
 
-## Coding-Agent SDK 57 Device Smoke
+## Coding-Agent SDK 58 Device Smoke
 
 Use this checklist before broad rollout of mobile coding-agent shell changes, and
 whenever a release touches Agents workspace routing, terminal handoff, review
@@ -950,7 +954,7 @@ summary behavior, run the matching gateway or contract tests listed in
 
 ### Phone Flow
 
-1. Launch the Expo SDK 57 dev client using the instructions above, then sign in
+1. Launch the Expo SDK 58 dev client using the instructions above, then sign in
    and select the intended Matrix computer.
 2. Confirm Chat, Mission Control, Terminal, Apps, and Settings still open from
    the mobile shell.

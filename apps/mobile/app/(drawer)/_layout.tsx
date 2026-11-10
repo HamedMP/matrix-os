@@ -1,17 +1,18 @@
 import { useAuth, useOrganizationList } from "@clerk/clerk-expo";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Keyboard } from "react-native";
-import type { PanGesture } from "react-native-gesture-handler";
+import type { LegacyPanGesture, PanGesture } from "react-native-gesture-handler";
 import { useUnistyles } from "react-native-unistyles";
-import { useSegments } from "expo-router";
+import { useRouter, useSegments } from "expo-router";
 import {
   Drawer,
   getDrawerStatusFromState,
   useDrawerStatus,
   type DrawerContentComponentProps,
+  type DrawerNavigationProp,
   type DrawerOptionsArgs,
 } from "expo-router/drawer";
-import type { ParamListBase } from "expo-router/react-navigation";
+import type { DrawerNavigationState, ParamListBase } from "expo-router/react-navigation";
 
 import { SidePanel } from "@/components/shell/SidePanel";
 import { useCanonicalChatSession } from "@/lib/canonical-chat-session-context";
@@ -25,11 +26,11 @@ import { useSettingsSystemInfo } from "@/lib/queries/use-settings-system-info";
 import { fetchCollaborationInbox } from "@/lib/requests/collaboration";
 import { subscribeCollaborationDiscoveryChanged } from "@/lib/collaboration-events";
 import {
+  CHAT_SCREEN_HREF,
+  PROJECTS_SCREEN_HREF,
+  SHARED_SCREEN_HREF,
   TABS_ROUTE,
-  chatScreenParams,
   isChatScreen,
-  projectsScreenParams,
-  sharedScreenParams,
 } from "@/lib/shell-routes";
 import { agentChatIds, withoutAgentChats } from "@/lib/side-panel-chats";
 
@@ -59,12 +60,20 @@ function DismissKeyboardOnClose() {
  * leftward swipe from the right edge. RNGH checks fail offsets first, so that
  * swipe now fails the pan instead.
  */
-function rightwardSwipeOnly(pan: PanGesture) {
-  return pan.failOffsetX(-5);
+function rightwardSwipeOnly(pan: PanGesture): PanGesture {
+  // react-native-drawer-layout still builds this pan with Gesture Handler's
+  // legacy builder (`Gesture.Pan()`), whatever the navigator's types say.
+  return (pan as unknown as LegacyPanGesture).failOffsetX(-5) as unknown as PanGesture;
+}
+
+/** What the side panel's status reads as before its state records one. */
+function drawerStatus(state: DrawerNavigationState<ParamListBase>) {
+  return getDrawerStatusFromState(state, "closed");
 }
 
 export default function DrawerLayout() {
   const { getToken } = useAuth();
+  const router = useRouter();
   const { isLoaded: organizationsLoaded, userMemberships } = useOrganizationList({
     userMemberships: { infinite: true },
   });
@@ -123,13 +132,13 @@ export default function DrawerLayout() {
 
   return (
     <Drawer
-      screenListeners={({ navigation }) => {
+      screenListeners={({ navigation }: { navigation: DrawerNavigationProp<ParamListBase> }) => {
         // Seed restored state without buzzing; shared state events can reach
         // multiple screens, so only an actual status change triggers feedback.
-        drawerStatusRef.current ??= getDrawerStatusFromState(navigation.getState());
+        drawerStatusRef.current ??= drawerStatus(navigation.getState());
         return {
-          state: ({ data }) => {
-            const status = getDrawerStatusFromState(data.state);
+          state: ({ data }: { data: { state: DrawerNavigationState<ParamListBase> } }) => {
+            const status = drawerStatus(data.state);
             if (status !== drawerStatusRef.current) {
               drawerStatusRef.current = status;
               tapHaptic();
@@ -139,7 +148,8 @@ export default function DrawerLayout() {
       }}
       drawerContent={({ navigation }: DrawerContentComponentProps) => {
         const showChatScreen = () => {
-          navigation.navigate(TABS_ROUTE, chatScreenParams());
+          // Already the screen under the panel: nothing above it to close.
+          router.dismissTo(CHAT_SCREEN_HREF as never);
           navigation.closeDrawer();
         };
         return (
@@ -172,11 +182,11 @@ export default function DrawerLayout() {
                 showChatScreen();
               }}
               onOpenProjects={() => {
-                navigation.navigate(TABS_ROUTE, projectsScreenParams());
+                router.navigate(PROJECTS_SCREEN_HREF as never);
                 navigation.closeDrawer();
               }}
               onOpenShared={() => {
-                navigation.navigate(TABS_ROUTE, sharedScreenParams());
+                router.navigate(SHARED_SCREEN_HREF as never);
                 navigation.closeDrawer();
               }}
             />
@@ -202,7 +212,7 @@ export default function DrawerLayout() {
         swipeEdgeWidth: 800,
         // An open panel keeps the leftward swipe that closes it.
         configureGestureHandler:
-          getDrawerStatusFromState(navigation.getState()) === "open" ? undefined : rightwardSwipeOnly,
+          drawerStatus(navigation.getState()) === "open" ? undefined : rightwardSwipeOnly,
         sceneStyle: { backgroundColor: theme.v2.colors.background },
       })}
     >
