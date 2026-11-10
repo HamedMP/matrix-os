@@ -1294,7 +1294,8 @@ describe("registerIpcHandlers sender authorization", () => {
 
     await expect(harness.invoke("auth:sign-out", {}, event)).rejects.toThrow("invalid request");
     expect(harness.ctx.auth.signOut).not.toHaveBeenCalled();
-    expect(authorizeSender).toHaveBeenCalledWith(event, "auth:sign-out");
+    // The raw request goes to the policy too: some channels are allowed only for certain requests.
+    expect(authorizeSender).toHaveBeenCalledWith(event, "auth:sign-out", {});
   });
 
   it("opens the Terminal window and focuses the main window through their channels", async () => {

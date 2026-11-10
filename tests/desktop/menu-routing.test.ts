@@ -20,8 +20,9 @@ function setup(terminalFocused: boolean) {
   const terminal = fakeWindow();
   terminal.isFocused.mockReturnValue(terminalFocused);
   const focusMain = vi.fn();
-  const router = createMenuRouter({ mainWindow: () => main, terminalWindow: () => terminal, focusMain });
-  return { main, terminal, focusMain, router };
+  const restoreMain = vi.fn();
+  const router = createMenuRouter({ mainWindow: () => main, terminalWindow: () => terminal, focusMain, restoreMain });
+  return { main, terminal, focusMain, restoreMain, router };
 }
 
 describe("application menu routing", () => {
@@ -50,6 +51,19 @@ describe("application menu routing", () => {
     expect(main.webContents.reload).not.toHaveBeenCalled();
   });
 
+  it("reopens a closed main window for a main-window action instead of silently dropping it", () => {
+    const terminal = fakeWindow();
+    terminal.isFocused.mockReturnValue(true);
+    const restoreMain = vi.fn();
+    const router = createMenuRouter({ mainWindow: () => null, terminalWindow: () => terminal, focusMain: vi.fn(), restoreMain });
+    router.send("menu:action", { action: "settings" });
+    expect(restoreMain).toHaveBeenCalledTimes(1);
+    // Closing the Terminal window itself still works without a main window.
+    router.send("menu:action", { action: "close-tab" });
+    expect(terminal.close).toHaveBeenCalledTimes(1);
+    expect(restoreMain).toHaveBeenCalledTimes(1);
+  });
+
   it("brings the main window forward for main-window actions chosen from the Terminal window", () => {
     const { main, terminal, focusMain, router } = setup(true);
     router.send("menu:action", { action: "palette" });
@@ -59,7 +73,7 @@ describe("application menu routing", () => {
   });
 
   it("does nothing when no window exists", () => {
-    const router = createMenuRouter({ mainWindow: () => null, terminalWindow: () => null, focusMain: vi.fn() });
+    const router = createMenuRouter({ mainWindow: () => null, terminalWindow: () => null, focusMain: vi.fn(), restoreMain: vi.fn() });
     expect(() => { router.send("menu:action", { action: "palette" }); router.adjustZoom("out"); router.reload(); }).not.toThrow();
   });
 });

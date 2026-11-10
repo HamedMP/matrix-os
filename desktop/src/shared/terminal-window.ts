@@ -30,6 +30,8 @@ export const TERMINAL_WINDOW_INVOKE_CHANNELS = [
   "app:get-version",
   "app:get-zoom",
   "app:set-zoom",
+  // Only for the keys in TERMINAL_WINDOW_STATE_KEYS; see windowMayInvoke.
+  "state:get",
   ...TERMINAL_WINDOW_ONLY_INVOKE_CHANNELS,
 ] as const satisfies readonly InvokeChannel[];
 
@@ -38,13 +40,27 @@ export const TERMINAL_WINDOW_EVENT_CHANNELS = ["auth:changed", "window:focus-cha
 
 export type WindowRole = "main" | "terminal";
 
+/**
+ * The saved state the Terminal window may read: the owner's theme and fonts,
+ * so it looks like the rest of the app. Everything else in the local store
+ * (recents, layouts, project views) stays with the main window.
+ */
+export const TERMINAL_WINDOW_STATE_KEYS: readonly string[] = ["appearance"];
+
 const terminalInvoke = new Set<string>(TERMINAL_WINDOW_INVOKE_CHANNELS);
 const terminalOnlyInvoke = new Set<string>(TERMINAL_WINDOW_ONLY_INVOKE_CHANNELS);
 const terminalEvents = new Set<string>(TERMINAL_WINDOW_EVENT_CHANNELS);
 
-/** The one rule for which window may invoke which channel; the preload and the main process both apply it. */
-export function windowMayInvoke(role: WindowRole, channel: string): boolean {
-  return role === "terminal" ? terminalInvoke.has(channel) : !terminalOnlyInvoke.has(channel);
+/**
+ * The one rule for which window may invoke which channel, and with what; the
+ * preload and the main process both apply it to the raw request.
+ */
+export function windowMayInvoke(role: WindowRole, channel: string, payload?: unknown): boolean {
+  if (role === "main") return !terminalOnlyInvoke.has(channel);
+  if (!terminalInvoke.has(channel)) return false;
+  if (channel !== "state:get") return true;
+  const key = (payload as { key?: unknown } | null | undefined)?.key;
+  return typeof key === "string" && TERMINAL_WINDOW_STATE_KEYS.includes(key);
 }
 
 export function windowMayListen(role: WindowRole, channel: string): boolean {

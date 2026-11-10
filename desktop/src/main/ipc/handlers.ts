@@ -34,7 +34,7 @@ export interface HandlerContext {
   installUpdate: () => Promise<boolean> | boolean;
   toggleWindowMaximize: () => void;
   /** Rejects invokes from any frame that is not a trusted window allowed on that channel. */
-  authorizeSender: (event: unknown, channel: string) => boolean;
+  authorizeSender: (event: unknown, channel: string, payload?: unknown) => boolean;
   openTerminalWindow: () => Promise<void>;
   focusMainWindow: () => void;
   getWhatsNew: () => Promise<{
@@ -195,7 +195,7 @@ export function registerIpcHandlers(ipcMain: IpcMainLike, ctx: HandlerContext): 
   }
   function handle<C extends InvokeChannel>(channel: C, handler: Handler<C>): void {
     ipcMain.handle(channel, async (_event, rawPayload) => {
-      if (!ctx.authorizeSender(_event, channel)) {
+      if (!ctx.authorizeSender(_event, channel, rawPayload)) {
         console.warn(`[ipc] rejected untrusted sender on ${channel}`);
         throw new Error("invalid request");
       }

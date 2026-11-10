@@ -83,7 +83,32 @@ suite("Electron Desktop Terminal window", () => {
     });
     expect(blocked).toEqual({ signOut: "unknown channel", select: "unknown channel", stateSet: "unknown channel",
       open: "unknown channel", status: "allowed" });
-    // The main process refuses the same channels even if a preload were bypassed.
+    // The main process refuses the same channels even with the preload out of
+    // the picture: the registered handlers are called directly, as each window.
+    const refused = await app.evaluate(async ({ BrowserWindow, ipcMain }) => {
+      const windows = BrowserWindow.getAllWindows();
+      const terminalWin = windows.find((candidate) => candidate.webContents.getURL().includes("window=terminal"))!;
+      const mainWin = windows.find((candidate) => candidate !== terminalWin)!;
+      const handlers = (ipcMain as unknown as { _invokeHandlers: Map<string, (event: unknown, payload: unknown) => unknown> })._invokeHandlers;
+      const call = (win: typeof mainWin, channel: string, payload: unknown) => Promise.resolve()
+        .then(() => handlers.get(channel)!({ sender: win.webContents, senderFrame: win.webContents.mainFrame }, payload))
+        .then(() => "allowed", (error: Error) => error.message);
+      return {
+        terminalSignOut: await call(terminalWin, "auth:sign-out", {}),
+        terminalSelect: await call(terminalWin, "runtime:select", { slot: "review" }),
+        terminalStateSet: await call(terminalWin, "state:set", { key: "recents", value: [] }),
+        terminalOtherState: await call(terminalWin, "state:get", { key: "recents" }),
+        terminalAppearance: await call(terminalWin, "state:get", { key: "appearance" }),
+        terminalStatus: await call(terminalWin, "auth:status", {}),
+        mainFocusMain: await call(mainWin, "terminal-window:focus-main", {}),
+        mainStatus: await call(mainWin, "auth:status", {}),
+      };
+    });
+    expect(refused).toEqual({
+      terminalSignOut: "invalid request", terminalSelect: "invalid request", terminalStateSet: "invalid request",
+      terminalOtherState: "invalid request", terminalAppearance: "allowed", terminalStatus: "allowed",
+      mainFocusMain: "invalid request", mainStatus: "allowed",
+    });
     const mainSide = await app.evaluate(async ({ BrowserWindow }) => {
       const win = BrowserWindow.getAllWindows().find((candidate) => candidate.webContents.getURL().includes("window=terminal"))!;
       return {

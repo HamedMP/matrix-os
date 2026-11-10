@@ -44,6 +44,16 @@ describe("IPC sender policy", () => {
     expect(allChannels.filter((channel) => authorize(from(terminal), channel)).sort()).toEqual(expected);
   });
 
+  it("lets the Terminal window read its appearance and no other saved state", () => {
+    const { main, terminal, authorize, from } = setup();
+    expect(authorize(from(terminal), "state:get", { key: "appearance" })).toBe(true);
+    for (const payload of [{ key: "recents" }, { key: "panelLayouts" }, { key: "terminalWindowBounds" }, {}, null, undefined, "appearance", { key: ["appearance"] }]) {
+      expect(authorize(from(terminal), "state:get", payload), JSON.stringify(payload)).toBe(false);
+    }
+    expect(authorize(from(terminal), "state:set", { key: "appearance", value: {} })).toBe(false);
+    expect(authorize(from(main), "state:get", { key: "recents" })).toBe(true);
+  });
+
   it("lets the Terminal window listen to exactly these events", () => {
     expect([...TERMINAL_WINDOW_EVENT_CHANNELS].sort()).toEqual(
       ["auth:changed", "window:focus-changed"],
@@ -59,7 +69,7 @@ describe("IPC sender policy", () => {
   });
 
   it("keeps privileged channels away from the Terminal window", () => {
-    for (const channel of ["auth:sign-out", "runtime:select", "state:get", "state:set", "embed:open", "shell:open-external",
+    for (const channel of ["auth:sign-out", "runtime:select", "state:set", "embed:open", "shell:open-external",
       "runtime:save-file-content", "terminal-window:open"]) {
       expect(terminalAllowed.has(channel), channel).toBe(false);
     }

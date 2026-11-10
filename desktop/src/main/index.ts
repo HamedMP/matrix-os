@@ -773,6 +773,9 @@ if (!gotLock) {
         mainWindow: () => mainWindow,
         terminalWindow: () => terminalWindowController.current(),
         focusMain: focusMainWindow,
+        restoreMain: () => {
+          void reopenMainWindow?.().catch((error: unknown) => logMainError("window restore failed", error));
+        },
         checkForUpdates: () => {
           focusMainWindow();
           void updater.check();

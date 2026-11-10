@@ -19,6 +19,8 @@ export interface MenuRouterOptions {
   mainWindow(): MenuWindow | null;
   terminalWindow(): MenuWindow | null;
   focusMain(): void;
+  /** Reopens the main window when it was closed while the Terminal window stayed open. */
+  restoreMain(): void;
 }
 
 function live(win: MenuWindow | null): MenuWindow | null {
@@ -44,7 +46,13 @@ export function createMenuRouter(options: MenuRouterOptions) {
         return;
       }
       const target = main();
-      if (!target) return;
+      if (!target) {
+        // The main window was closed: bring it back, so the menu visibly
+        // responds. The action itself is not replayed into a window that is
+        // still loading; it has no listener yet.
+        options.restoreMain();
+        return;
+      }
       if (terminal) options.focusMain();
       target.webContents.send(channel, payload);
     },

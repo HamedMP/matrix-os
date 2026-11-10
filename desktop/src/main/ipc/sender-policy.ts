@@ -22,7 +22,8 @@ export interface SenderPolicyOptions {
 }
 
 export type SenderRole = WindowRole;
-export type SenderAuthorizer = (event: unknown, channel: string) => boolean;
+/** `payload` is the raw request: some channels are allowed only for certain requests. */
+export type SenderAuthorizer = (event: unknown, channel: string, payload?: unknown) => boolean;
 
 function isSenderOf(event: unknown, win: PolicyWindow | null, trustedUrl: string): boolean {
   if (!win || win.isDestroyed()) return false;
@@ -40,8 +41,8 @@ export function senderRole(options: SenderPolicyOptions, event: unknown): Sender
 }
 
 export function createSenderPolicy(options: SenderPolicyOptions): SenderAuthorizer {
-  return (event, channel) => {
+  return (event, channel, payload) => {
     const role = senderRole(options, event);
-    return role !== null && windowMayInvoke(role, channel);
+    return role !== null && windowMayInvoke(role, channel, payload);
   };
 }

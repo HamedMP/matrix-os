@@ -19,7 +19,12 @@ describe("operator preload bridge", () => {
     for (const channel of Object.keys(INVOKE_CHANNELS).filter((name) => !allowed.has(name))) {
       await expect(bridge.invoke(channel, {}), channel).rejects.toThrow("unknown channel");
     }
+    // Saved state is readable only for the appearance key.
+    await expect(bridge.invoke("state:get", { key: "recents" })).rejects.toThrow("unknown channel");
     expect(ipc.invoke).not.toHaveBeenCalled();
+    await bridge.invoke("state:get", { key: "appearance" });
+    expect(ipc.invoke.mock.calls).toEqual([["state:get", { key: "appearance" }]]);
+    ipc.invoke.mockClear();
     await bridge.invoke("auth:status", {});
     await bridge.invoke("terminal-window:focus-main", {});
     expect(ipc.invoke.mock.calls).toEqual([["auth:status", {}], ["terminal-window:focus-main", {}]]);

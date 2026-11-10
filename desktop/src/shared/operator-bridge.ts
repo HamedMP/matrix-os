@@ -15,7 +15,7 @@ export function createOperatorBridge(ipc: IpcRendererLike, role: OperatorBridgeR
   return {
     invoke(channel: string, payload: unknown): Promise<unknown> {
       const entry = Object.hasOwn(INVOKE_CHANNELS, channel) ? INVOKE_CHANNELS[channel as InvokeChannel] : undefined;
-      if (!entry || !windowMayInvoke(role, channel)) return Promise.reject(new Error("unknown channel"));
+      if (!entry || !windowMayInvoke(role, channel, payload)) return Promise.reject(new Error("unknown channel"));
       const parsed = entry.request.safeParse(payload ?? {});
       if (!parsed.success) return Promise.reject(new Error("invalid request"));
       return ipc.invoke(channel, parsed.data);

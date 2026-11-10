@@ -8,6 +8,7 @@ export function installAppMenu(options: {
   mainWindow(): BrowserWindow | null;
   terminalWindow(): BrowserWindow | null;
   focusMain(): void;
+  restoreMain(): void;
   checkForUpdates(): void;
   openTerminalWindow(): void;
 }): void {

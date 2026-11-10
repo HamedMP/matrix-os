@@ -4,6 +4,7 @@ import React from "react";
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import TerminalWindowApp from "@desktop/renderer/src/features/terminal-window/TerminalWindowApp";
+import { useAppearance } from "@desktop/renderer/src/stores/appearance";
 
 const computers = {
   items: [
@@ -41,6 +42,8 @@ const signedIn = { signedIn: true, handle: "operator", userId: "user_1", platfor
   runtimeSlot: "primary", authGeneration: 1 };
 const base = {
   "app:get-zoom": () => ({ factor: 1 }),
+  "app:set-zoom": () => ({ ok: true }),
+  "state:get": () => ({ value: null }),
 };
 
 describe("Terminal window", () => {
@@ -57,6 +60,15 @@ describe("Terminal window", () => {
     expect(screen.getByText("operator-review · Starting")).toBeTruthy();
     expect(screen.getByText("operator-old · Unavailable")).toBeTruthy();
     expect(screen.getByRole("heading", { name: "Terminals across your computers" })).toBeTruthy();
+  });
+
+  it("uses the owner's saved theme, reading only the appearance key", async () => {
+    const operator = installOperator({ ...base, "auth:status": () => ({ ...signedIn, signedIn: false }),
+      "state:get": () => ({ value: { theme: "dark" } }) });
+    render(<TerminalWindowApp />);
+    await waitFor(() => expect(useAppearance.getState().mode).toBe("dark"));
+    const reads = operator.invoke.mock.calls.filter(([channel]) => channel === "state:get");
+    expect(reads).toEqual([["state:get", { key: "appearance" }]]);
   });
 
   it("shows a sign-in empty state that hands off to the main window while This Computer stays listed", async () => {
