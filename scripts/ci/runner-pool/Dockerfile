@@ -24,7 +24,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 # The host decides which source may run here; a workflow cannot remove or edit this hook. It
 # kills the runner on rejection (needs procps), so no step can run after it.
-COPY --chown=root:root --chmod=0555 job-started.sh /opt/matrix-ci/job-started.sh
+# Plain COPY and chmod: the CI host's Docker has no BuildKit, which `COPY --chmod` needs.
+COPY --chown=root:root job-started.sh /opt/matrix-ci/job-started.sh
+RUN chmod 0555 /opt/matrix-ci/job-started.sh
 ENV ACTIONS_RUNNER_HOOK_JOB_STARTED=/opt/matrix-ci/job-started.sh
 
 USER runner

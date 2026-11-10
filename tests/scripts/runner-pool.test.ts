@@ -140,7 +140,10 @@ describe("runner pool", () => {
   });
 
   it("installs the job-started hook where a job cannot change it", () => {
-    expect(dockerfile).toContain("COPY --chown=root:root --chmod=0555 job-started.sh /opt/matrix-ci/job-started.sh");
+    expect(dockerfile).toContain("COPY --chown=root:root job-started.sh /opt/matrix-ci/job-started.sh");
+    expect(dockerfile).toContain("RUN chmod 0555 /opt/matrix-ci/job-started.sh");
+    // The CI host builds with Docker's legacy builder, which rejects BuildKit-only flags.
+    expect(dockerfile).not.toMatch(/--chmod=|--mount=|^# syntax=/m);
     expect(dockerfile).toContain("ENV ACTIONS_RUNNER_HOOK_JOB_STARTED=/opt/matrix-ci/job-started.sh");
   });
 
