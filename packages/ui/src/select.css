@@ -44,6 +44,14 @@
     pointer-events: none;
   }
   .matrix-select-content {
+    --matrix-select-highlight-bg: var(
+      --bg-hover,
+      var(--accent, var(--matrix-muted, #edf0ed))
+    );
+    --matrix-select-highlight-fg: var(
+      --text-primary,
+      var(--accent-foreground, var(--matrix-fg, inherit))
+    );
     position: relative;
     z-index: 100;
     min-width: 8rem;
@@ -77,8 +85,8 @@
     user-select: none;
   }
   .matrix-select-item[data-highlighted] {
-    background: var(--accent, var(--bg-hover, var(--matrix-muted, #edf0ed)));
-    color: var(--accent-foreground, var(--text-primary, inherit));
+    background: var(--matrix-select-highlight-bg);
+    color: var(--matrix-select-highlight-fg);
   }
   .matrix-select-item[data-disabled] {
     opacity: 0.5;
