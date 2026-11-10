@@ -15,28 +15,28 @@ const EventSchema = z.object({
 });
 export type TimelineEvent = z.infer<typeof EventSchema>;
 
-/** Human-readable label + accent color for a workspace activity event. */
-export function describeEvent(event: TimelineEvent): { label: string; color: string } {
+/** Human-readable label + status dot color for a workspace activity event. */
+export function describeEvent(event: TimelineEvent): { label: string; dotColor: string } {
   const p = event.payload ?? {};
   const str = (k: string): string | null => (typeof p[k] === "string" ? (p[k] as string) : null);
   switch (event.type) {
     case "task.created":
-      return { label: "Task created", color: "var(--text-secondary)" };
+      return { label: "Task created", dotColor: "var(--text-secondary)" };
     case "task.updated":
-      return { label: str("status") ? `Status → ${str("status")}` : "Task updated", color: "var(--text-secondary)" };
+      return { label: str("status") ? `Status → ${str("status")}` : "Task updated", dotColor: "var(--text-secondary)" };
     case "session.started":
-      return { label: str("agent") ? `Agent launched (${str("agent")})` : "Session started", color: "var(--success)" };
+      return { label: str("agent") ? `Agent launched (${str("agent")})` : "Session started", dotColor: "var(--success)" };
     case "session.stopped":
-      return { label: "Session stopped", color: "var(--text-tertiary)" };
+      return { label: "Session stopped", dotColor: "var(--text-tertiary)" };
     case "preview.created":
-      return { label: "Preview created", color: "var(--highlight)" };
+      return { label: "Preview created", dotColor: "var(--highlight)" };
     case "preview.updated":
-      return { label: str("lastStatus") === "failed" ? "Preview unhealthy" : "Preview updated", color: "var(--highlight)" };
+      return { label: str("lastStatus") === "failed" ? "Preview unhealthy" : "Preview updated", dotColor: "var(--highlight)" };
     case "preview.deleted":
-      return { label: "Preview removed", color: "var(--text-tertiary)" };
+      return { label: "Preview removed", dotColor: "var(--text-tertiary)" };
     default:
-      if (event.type.startsWith("review.")) return { label: `Review ${event.type.slice(7).replace(/\./g, " ")}`, color: "var(--accent)" };
-      return { label: event.type.replace(/[._]/g, " "), color: "var(--text-secondary)" };
+      if (event.type.startsWith("review.")) return { label: `Review ${event.type.slice(7).replace(/\./g, " ")}`, dotColor: "var(--accent)" };
+      return { label: event.type.replace(/[._]/g, " "), dotColor: "var(--text-secondary)" };
   }
 }
 
@@ -125,10 +125,10 @@ export default function TimelinePanel({ taskId }: { taskId: string }) {
   return (
     <div className="flex min-h-0 flex-1 flex-col gap-px overflow-y-auto p-2">
       {events.map((event) => {
-        const { label, color } = describeEvent(event);
+        const { label, dotColor } = describeEvent(event);
         return (
           <div key={event.id} className="flex items-start gap-2.5 rounded-md px-2 py-1.5">
-            <span className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full" style={{ background: color }} />
+            <span className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full" style={{ background: dotColor }} />
             <span className="min-w-0 flex-1 text-sm" style={{ color: "var(--text-primary)" }}>{label}</span>
             <span className="shrink-0 text-xs tabular-nums" style={{ color: "var(--text-tertiary)" }}>{relativeTime(event.createdAt, now)}</span>
           </div>

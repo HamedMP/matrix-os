@@ -172,7 +172,7 @@ textarea,
 .hljs-attr,
 .hljs-addition,
 .hljs-template-tag {
-  color: var(--success);
+  color: var(--success-text);
 }
 .hljs-number,
 .hljs-type,

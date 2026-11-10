@@ -315,9 +315,9 @@ function ToolRun({
     const resultLabel = result === "completed" ? "Completed" : result[0]!.toUpperCase() + result.slice(1);
     const ResultIcon = result === "failed" ? X : result === "completed" ? Check : Minus;
     const resultColor = result === "failed"
-      ? "var(--danger)"
+      ? "var(--danger-text)"
       : result === "completed"
-        ? "var(--success)"
+        ? "var(--success-text)"
         : "var(--text-tertiary)";
     return (
       <section aria-label={`${countLabel}, ${result}`} className="flex min-w-0 flex-col gap-0.5">
@@ -494,11 +494,11 @@ function SystemEvent({ event, answeredInputs, resolvedApprovals }: {
         <Glyph
           size={12}
           className="shrink-0"
-          style={{ color: failed ? "var(--danger)" : "var(--text-tertiary)" }}
+          style={{ color: failed ? "var(--danger-text)" : "var(--text-tertiary)" }}
           aria-hidden="true"
         />
         <p className="min-w-0 flex-1 truncate text-[12px]" style={{ color: "var(--text-tertiary)" }}>
-          <span className="font-medium" style={{ color: failed ? "var(--danger)" : "var(--text-secondary)" }}>
+          <span className="font-medium" style={{ color: failed ? "var(--danger-text)" : "var(--text-secondary)" }}>
             {copy.title}
           </span>
           {copy.detail ? (
@@ -528,7 +528,7 @@ function SystemEvent({ event, answeredInputs, resolvedApprovals }: {
               {approvalKey && pendingApprovalKeys.includes(approvalKey) ? "Sending..." : approvalLabel(decision)}
             </Button>
           ))}
-          {approvalKey && approvalErrors[approvalKey] ? <span className="text-xs" style={{ color: "var(--danger)" }}>{approvalErrors[approvalKey]}</span> : null}
+          {approvalKey && approvalErrors[approvalKey] ? <span className="text-xs" style={{ color: "var(--danger-text)" }}>{approvalErrors[approvalKey]}</span> : null}
         </div>
       ) : null}
       {input && inputKey && !answeredInputs.has(inputKey) ? (
@@ -538,7 +538,7 @@ function SystemEvent({ event, answeredInputs, resolvedApprovals }: {
             <Button variant="primary" aria-label={`Send ${input.title}`} disabled={pendingInputKeys.includes(inputKey) || (input.required && !answer.trim())} onClick={() => void submitInput({ threadId: input.threadId, inputRequestId: input.requestId, answer, correlationId: input.correlationId })}>
               {pendingInputKeys.includes(inputKey) ? "Sending..." : "Send"}
             </Button>
-            {inputErrors[inputKey] ? <span className="text-xs" style={{ color: "var(--danger)" }}>{inputErrors[inputKey]}</span> : null}
+            {inputErrors[inputKey] ? <span className="text-xs" style={{ color: "var(--danger-text)" }}>{inputErrors[inputKey]}</span> : null}
           </div>
         </div>
       ) : null}
@@ -714,7 +714,7 @@ function ConversationComposer({
           rounded/shadowed surface itself lives on PromptInput's prompt-card. */}
       <div className={cn("mx-auto w-full", CHAT_CONTENT_WIDTH_CLASS)} data-slot="conversation-composer">
         {turnThreadId === threadId && turnError ? (
-          <p className="mb-1 px-1 text-xs" style={{ color: "var(--danger)" }}>{turnError}</p>
+          <p className="mb-1 px-1 text-xs" style={{ color: "var(--danger-text)" }}>{turnError}</p>
         ) : null}
         <input
           ref={fileInputRef}
@@ -843,7 +843,7 @@ export function AgentConversationView({
     .map((event) => codingAgentApprovalActionKey(event.threadId, event.approvalId))), [snapshot?.events.items]);
 
   if (status === "loading") return <div className="flex min-h-[360px] items-center justify-center text-sm" style={{ color: "var(--text-secondary)" }}>Loading conversation…</div>;
-  if (status === "error") return <div className="flex min-h-[360px] items-center justify-center p-6 text-sm" style={{ color: "var(--danger)" }}>{error ?? "Thread state unavailable"}</div>;
+  if (status === "error") return <div className="flex min-h-[360px] items-center justify-center p-6 text-sm" style={{ color: "var(--danger-text)" }}>{error ?? "Thread state unavailable"}</div>;
   if (!snapshot) return <div className="flex min-h-[360px] items-center justify-center p-6 text-center text-sm" style={{ color: "var(--text-secondary)" }}>Choose a conversation from the project navigator, or start a new chat.</div>;
 
   const running = threadRunning;
@@ -876,7 +876,7 @@ export function AgentConversationView({
             <span>{snapshot.thread.providerId}</span><span aria-hidden="true">·</span><span>{snapshot.thread.status.replaceAll("_", " ")}</span>
           </p>
         </div>
-        {snapshot.thread.attention !== "none" ? <span className="shrink-0 whitespace-nowrap rounded-full px-2 py-1 text-[10px] font-semibold capitalize" style={{ background: "var(--warning-muted)", color: "var(--warning)" }}>{snapshot.thread.attention.replaceAll("_", " ")}</span> : null}
+        {snapshot.thread.attention !== "none" ? <span className="shrink-0 whitespace-nowrap rounded-full px-2 py-1 text-[10px] font-semibold capitalize" style={{ background: "var(--warning-muted)", color: "var(--warning-text)" }}>{snapshot.thread.attention.replaceAll("_", " ")}</span> : null}
       </header>
       <Conversation key={`transcript:${snapshot.thread.id}`}>
         <ConversationContent>

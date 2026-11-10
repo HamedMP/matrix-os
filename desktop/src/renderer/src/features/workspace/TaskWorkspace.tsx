@@ -61,15 +61,15 @@ function describeAgentRun(
   const name = agent ? agent[0]!.toUpperCase() + agent.slice(1) : "Agent";
   switch (runtimeStatus) {
     case "waiting":
-      return { label: `${name} · needs input`, color: "var(--warning)", stoppable: true };
+      return { label: `${name} · needs input`, color: "var(--warning-text)", stoppable: true };
     case "failed":
-      return { label: `${name} · failed`, color: "var(--danger)", stoppable: false };
+      return { label: `${name} · failed`, color: "var(--danger-text)", stoppable: false };
     case "exited":
       return { label: `${name} · done`, color: "var(--text-tertiary)", stoppable: false };
     case "idle":
       return { label: `${name} · idle`, color: "var(--text-secondary)", stoppable: true };
     default:
-      return { label: `${name} · running`, color: "var(--success)", stoppable: true };
+      return { label: `${name} · running`, color: "var(--success-text)", stoppable: true };
   }
 }
 
@@ -277,13 +277,13 @@ export default function TaskWorkspace({
                   disabled={!api || stopAgentPending}
                   title={stopAgentPending ? "Stopping agent" : stopAgentError ?? "Stop agent"}
                   className="ml-0.5 flex h-4 w-4 items-center justify-center rounded"
-                  style={{ color: stopAgentPending ? "var(--text-tertiary)" : "var(--danger)" }}
+                  style={{ color: stopAgentPending ? "var(--text-tertiary)" : "var(--danger-text)" }}
                   onClick={() => void stopAgent()}
                 >
                   <CircleStop size={12} />
                 </button>
               ) : null}
-              {stopAgentError ? <span style={{ color: "var(--danger)" }}>{stopAgentError}</span> : null}
+              {stopAgentError ? <span style={{ color: "var(--danger-text)" }}>{stopAgentError}</span> : null}
             </span>
           ) : null}
           {worktree ? (
