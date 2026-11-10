@@ -186,8 +186,18 @@ its recorded tested base/merge, workflow, attempt and Actions issuer. Main-only
 advances retain that frozen coverage; non-main stack parents remain strictly current.
 Metadata verifications cannot qualify each other. Missing, failed, cancelled,
 pending or mismatched coverage fails closed; skipped workload jobs are never
-coverage evidence. Base edits retain normal full CI, and drafts still publish
-no required aggregate. No approval or required-check binding changes are needed.
+coverage evidence. Captured draft events use the same verifier and stable
+required name, so a late draft suite cannot hide ready CI. The verifier checks
+the live ready/head/repository/parent identity again before returning success;
+a still-draft PR fails closed. Base edits retain normal full CI. No approval
+or required-check binding changes are needed.
+
+Coverage discovery intentionally excludes metadata runs. Merge-readiness
+inspection must instead include every current-head PR suite: run
+`node scripts/ci/check-pr-readiness.mjs <pr>`. Its GET-only bounded inspection
+requires the newest suite's actual successful Actions job and check, with
+matching suite, run attempt, issuer and source. It does not inspect other
+required workflows or reviews, and does not dispatch or rerun CI.
 
 Controller discovery streams inclusive creation-time windows so unrelated
 traffic cannot bury evidence behind the former 300-run scan or GitHub's

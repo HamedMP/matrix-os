@@ -18,6 +18,7 @@ interface GitHubFixture {
 }
 const mainPush: GitHubFixture = { event_name: 'push', ref: 'refs/heads/main', event: {} };
 function evaluateJobExpression(value: string, needs: unknown, github: GitHubFixture) {
+  if (!value.startsWith('${{') && !/[().]/.test(value)) return value;
   const body = value.replace(/^\$\{\{\s*|\s*\}\}$/g, '').replaceAll('needs.ci-backend', 'needs["ci-backend"]');
   // Evaluate the actual trusted workflow expression with explicit GHA contexts.
   return Function('needs', 'github', 'inputs', 'vars', 'success', 'always', 'cancelled', `return (${body});`)(
@@ -103,12 +104,14 @@ describe('CI job admission for documentation changes', () => {
     expect(schedules('os-view-parity', false, false, false, github)).toBe(false);
   });
 
-  it.each(['opened', 'synchronize', 'reopened'])('publishes no required aggregate for a draft %s event', action => {
-    // A draft cannot merge; an absent CI Results reads as expected, never red.
+  it.each(['opened', 'synchronize', 'reopened'])('keeps draft %s events on the required coverage verifier', action => {
+    // Captured draft state may be stale by the time this newest suite executes.
     const github: GitHubFixture = { event_name: 'pull_request', ref: 'refs/pull/1/merge',
       event: { action, pull_request: { draft: true } } };
-    expect(schedules('ci-results', false, false, false, github)).toBe(false);
-    expect(evaluateJobExpression(workflow.jobs['ci-results'].name, {}, github)).toBe('CI Draft (ignored)');
+    expect(schedules('ci-results', false, false, false, github)).toBe(true);
+    expect(evaluateJobExpression(workflow.jobs['ci-results'].name, {}, github)).toBe('CI Results');
+    const verifier = workflow.jobs['ci-results'].steps.find(step => step.name === 'Verify exact-source coverage after metadata edit');
+    expect(evaluateJobExpression(verifier.if, {}, github)).toBe(true);
   });
 
   it('accepts intentional source-job skips while keeping the aggregate check', () => {

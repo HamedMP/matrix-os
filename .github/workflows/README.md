@@ -137,10 +137,17 @@ OTA payloads.
 Full PR validation runs on every non-draft PR head: opening a ready PR, marking a draft ready
 for review, pushing and reopening run core CI and Docker classification; retargeting the base
 reruns core CI only. Labels never start or gate it. Keep a PR as a draft while it is still being
-reviewed to avoid CI on every intermediate push. Drafts and title or body edits publish no
-`CI Results` check at all, so the required check shows as expected rather than red; a draft
-cannot be merged. Reviewers must use the checks attached to the exact head SHA rather than an
-earlier green commit.
+reviewed to avoid CI on every intermediate push. Draft and title/body events keep the
+stable `CI Results` name. They run only a lightweight verifier of live PR readiness
+and genuine previous coverage, never the heavy workload. A still-draft PR or missing,
+failed or stale coverage leaves that aggregate unsuccessful. A delayed draft event
+can reuse passing coverage once the same revision is ready; metadata suites never
+qualify each other. Retargeting still requires full CI.
+
+Use `node scripts/ci/check-pr-readiness.mjs <pr>` before reporting required CI green.
+It authenticates the Actions aggregate in the newest current-head PR suite, including
+metadata suites. An older green rollup entry does not qualify a newer suite with an
+absent required check. Other required workflows and review gates remain separate.
 
 ## Delivery Lane Router
 
