@@ -1,5 +1,4 @@
-import { useHostedBotsAvailability } from "@matrix-os/ui";
-import { useDesktopHostedBots } from "../bots/DesktopBotsWorkspace";
+import { DesktopHostedBotsProvider, useDesktopHostedBotsCapability } from "../bots/DesktopBotsWorkspace";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import {
   topmostVisibleDesktopSurfaceId,
@@ -89,8 +88,8 @@ export default function NativeDesktopShell({ overlayOpen }: { overlayOpen: boole
   const drawerOpen = useDesktopAppDrawer((state) => state.open);
   const setDrawerOpen = useDesktopAppDrawer((state) => state.setOpen);
   const api = useConnection((state) => state.api);
-  const { transport: botsTransport } = useDesktopHostedBots();
-  const botsAvailable = useHostedBotsAvailability(botsTransport);
+  const botsCapability = useDesktopHostedBotsCapability();
+  const botsAvailable = botsCapability.mode !== null;
   const platformHost = useConnection((state) => state.platformHost);
   const runtimeSlot = useConnection((state) => state.runtimeSlot);
   const { data: installedApps = [], refetch: refetchInstalledApps, isPending: appsLoading } = useAppsQuery();
@@ -404,6 +403,7 @@ export default function NativeDesktopShell({ overlayOpen }: { overlayOpen: boole
     && activeSurface?.mode === "tab";
 
   return (
+    <DesktopHostedBotsProvider value={botsCapability}>
     <div
       data-native-desktop-shell
       className="absolute inset-x-0 bottom-0 overflow-hidden"
@@ -488,5 +488,6 @@ export default function NativeDesktopShell({ overlayOpen }: { overlayOpen: boole
         </>
       ) : null}
     </div>
+    </DesktopHostedBotsProvider>
   );
 }

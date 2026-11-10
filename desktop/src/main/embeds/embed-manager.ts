@@ -24,7 +24,7 @@ export interface EmbedViewLike {
   destroy(): void;
 }
 
-export type EmbedKind = "hosted-shell" | "code-editor" | "app" | "browser";
+export type EmbedKind = "hosted-shell" | "code-editor" | "app" | "browser" | "hosted-bots";
 
 type EmbedOriginOptions =
   | { allowedOrigins: string[]; getAllowedOrigins?: never }

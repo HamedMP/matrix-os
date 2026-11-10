@@ -385,6 +385,11 @@ export const INVOKE_CHANNELS = {
   "embed:open": {
     request: z.discriminatedUnion("kind", [
       z.strictObject({
+        kind: z.literal("hosted-bots"),
+        bounds: BoundsSchema,
+        active: z.boolean().optional(),
+      }),
+      z.strictObject({
         kind: z.literal("hosted-shell"),
         bounds: BoundsSchema,
         active: z.boolean().optional(),

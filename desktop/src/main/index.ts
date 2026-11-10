@@ -437,6 +437,7 @@ if (!gotLock) {
 
       const embeds = new EmbedService({
         getWindow: () => mainWindow,
+        getHostedBotsAuth: () => auth.getStatus(),
         getGatewayOrigin: () => auth.getGatewayOrigin(),
         getToken: () => auth.getToken(),
         emitState: (embedId, state) => sendEvent("embed:state", { embedId, state }),

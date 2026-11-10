@@ -22,6 +22,7 @@ interface EmbedHostCommonProps {
 
 type EmbedHostProps = EmbedHostCommonProps & (
   | { kind: "hosted-shell" }
+  | { kind: "hosted-bots" }
   | { kind: "code-editor" }
   | { kind: "app"; slug: string; appIdentity?: string }
   | { kind: "browser"; url: string }
@@ -47,7 +48,7 @@ export default function EmbedHost({
   const url = props.kind === "browser" ? props.url : undefined;
   const runtimeSlot = useConnection((connection) => connection.runtimeSlot);
   const product = nativeBrowserProduct(appIdentity ?? "", slug ?? "");
-  const authGeneration = useConnection((connection) => product ? connection.authGeneration : 0);
+  const authGeneration = useConnection((connection) => product || kind === "hosted-bots" ? connection.authGeneration : 0);
   const hostRef = useRef<HTMLDivElement>(null);
   const embedIdRef = useRef<string | null>(null);
   const activeRef = useRef(active);
@@ -89,7 +90,7 @@ export default function EmbedHost({
 
     const bounds = readNativeEmbedBounds(host, visualScale);
 
-    const openRequest = kind === "hosted-shell" || kind === "code-editor"
+    const openRequest = kind === "hosted-shell" || kind === "code-editor" || kind === "hosted-bots"
       ? { kind, bounds, active: activeRef.current }
       : kind === "browser"
         ? { kind, url: url!, bounds, active: activeRef.current }

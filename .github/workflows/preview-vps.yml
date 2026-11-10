@@ -189,6 +189,7 @@ jobs:
       head_ref: ${{ steps.decide.outputs.head_ref }}
       requested_version: ${{ steps.decide.outputs.requested_version }}
       collaboration: ${{ steps.decide.outputs.collaboration }}
+      openmausbot_preview: ${{ steps.decide.outputs.openmausbot_preview }}
       author: ${{ steps.decide.outputs.author }}
       teardown_private: ${{ steps.decide.outputs.teardown_private }}
     steps:
@@ -204,6 +205,7 @@ jobs:
           HAS_LABEL: ${{ contains(github.event.pull_request.labels.*.name, 'preview-vps') }}
           HAS_COLLABORATION_LABEL: ${{ contains(github.event.pull_request.labels.*.name, 'preview-collaboration') }}
           HAS_BUNDLE_LABEL: ${{ contains(github.event.pull_request.labels.*.name, 'preview-bundle') }}
+          HAS_OPENMAUSBOT_LABEL: ${{ contains(github.event.pull_request.labels.*.name, 'openmausbot-preview') }}
           EVENT_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
           EVENT_HEAD_REF: ${{ github.event.pull_request.head.ref }}
           EVENT_HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
@@ -234,6 +236,7 @@ jobs:
           head_repo="$EVENT_HEAD_REPO"
           has_preview_label="$HAS_LABEL"
           has_collaboration_label="$HAS_COLLABORATION_LABEL"
+          has_openmausbot_label="$HAS_OPENMAUSBOT_LABEL"
           author="$EVENT_AUTHOR"
           if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
             pr_json="$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}")"
@@ -242,6 +245,7 @@ jobs:
             head_repo="$(jq -r .head.repo.full_name <<< "$pr_json")"
             has_preview_label="$(jq -r 'any(.labels[]?; .name == "preview-vps")' <<< "$pr_json")"
             has_collaboration_label="$(jq -r 'any(.labels[]?; .name == "preview-collaboration")' <<< "$pr_json")"
+            has_openmausbot_label="$(jq -r 'any(.labels[]?; .name == "openmausbot-preview")' <<< "$pr_json")"
             author="$(jq -r '.user.login // ""' <<< "$pr_json")"
           fi
           # Registered as bundle provenance; the platform accepts plain GitHub logins only.
@@ -315,6 +319,10 @@ jobs:
               exit 1
             fi
           fi
+          openmausbot_preview=false
+          if [ "$action" = "bundle" ] && [ "$has_openmausbot_label" = "true" ]; then
+            openmausbot_preview=true
+          fi
           {
             echo "action=$action"
             echo "pr=$PR_NUMBER"
@@ -323,6 +331,7 @@ jobs:
             echo "head_ref=$head_ref"
             echo "requested_version=$REQUESTED_VERSION"
             echo "collaboration=$collaboration"
+            echo "openmausbot_preview=$openmausbot_preview"
             echo "author=$author"
             echo "teardown_private=$teardown_private"
           } >> "$GITHUB_OUTPUT"
@@ -390,6 +399,7 @@ jobs:
         env:
           HOST_BUNDLE_VERSION: ${{ steps.version.outputs.version }}
           HOST_BUNDLE_CHANNEL: none
+          HOST_BUNDLE_OPENMAUSBOT_PREVIEW: ${{ needs.gate.outputs.openmausbot_preview }}
           MATRIX_BUILD_SHA: ${{ needs.gate.outputs.head_sha }}
           MATRIX_BUILD_REF: ${{ needs.gate.outputs.head_ref }}
         run: |

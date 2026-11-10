@@ -49,3 +49,22 @@ The gateway records a queued run before returning 202. One run may be queued or 
 3. Enqueue one bounded real run and record its ID and submission time. Quit the entire Electron process before the run reaches completion. Observe server-side completion after quit. Reopen the same client profile and verify the result for the same run ID. Report a run that finishes too early as invalid evidence and repeat the test.
 4. Record the preview machine identity and boot ID. Restart matrix-gateway and verify the saved Bot, configuration and run. Reboot that preview only. After its health returns and boot ID changes, reread the same records and verify the result is unchanged.
 5. Check wrong-owner, wrong-computer and revoked access. Record build versions, hosted run and reboot evidence, and Matrix UI screenshots in the PR. A registered artifact, signed-in UI or local test fixture does not satisfy hosted acceptance.
+
+## OpenMausBot OSS integration
+
+The next preview retains the pinned upstream server and frontend to preserve the provider catalog and connection flows, approval decisions, routines, and desktop controls. Matrix supplies the app window, theme, and admission to the selected owner's Private Preview Computer. Matrix sign-in is the outer session. The upstream session remains separate and uses the upstream pairing mechanism.
+
+The standalone application runs as an isolated workload on the preview. Its upstream data is owned by that preview's owner and is stored outside the Matrix synced home. Matrix records remain in owner Postgres. The initial preview's Bot records and provider credentials stay in their existing stores. The OSS runtime uses a separate workspace and credential store. Preview shutdown must preserve the workload's data, and preview teardown removes the disposable computer under the existing lifecycle.
+
+Only an opted-in Private Preview bundle includes the workload image. The first OSS surface is Electron Desktop, where the embedded app has a dedicated origin. Web Desktop and Web Canvas retain the initial Matrix Bots surface until the upstream UI can run at a dedicated web origin. The preview installs a headless browser inside the workload; controlling a separate graphical desktop still requires an isolated upstream companion. Matrix account sign-in gates the runtime; commissioning remains separate until an owner proof can reach the code issuer without granting that privilege to other Matrix Computer processes.
+
+| Boundary | Requirement |
+| --- | --- |
+| Matrix app shell to Gateway | Authenticate the Matrix owner and exact Private Preview. Check the same admission for reads, writes and any event or viewer upgrades. |
+| Gateway to upstream service | Use the protected local Unix socket. Strip Matrix tokens, Matrix cookies and client-supplied identity headers. Forward only the upstream session and allowed application requests. Do not export the upstream administrative listener. |
+| Pairing | A preview administrator commissions the upstream session using its private listener. Matrix still verifies the owner and exact preview before redemption through the app. Preserve expiry and one-time redemption. Do not expose code issuance or an upstream owner bypass through the Gateway. |
+| Renderer | Use a separate origin and owner-scoped session. The upstream view has no Matrix preload, parent window access or shared cookie jar. Style the upstream content area with Matrix tokens. |
+| Tools and schedules | Preserve upstream approval policy and schedule state. Acceptance uses a disposable workspace, one approved and one rejected harmless tool action, and one bounded scheduled run. |
+| Computer | Use an isolated preview desktop or a separately paired upstream companion. Do not map the Matrix host or the user's personal desktop into the workload. Verify a harmless approved operation and show any unavailable dependency in the UI. |
+
+Verify source licensing and absence of enterprise assets in the preview bundle. Verify the provider selector and a real provider connection, Matrix-owner admission and revocation, approval allow and deny, schedule persistence after a service restart, and approved desktop operation. Repeat the process-exit timing check for the OSS runtime. Validate each supported shell presentation separately and record which surfaces have a safe app origin and a qualified end-to-end flow. The first preview's Postgres evidence does not qualify the OSS runtime.

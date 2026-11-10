@@ -1,0 +1,95 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+readonly docker=/usr/bin/docker
+readonly image_dir=/opt/matrix/bin
+readonly bundle_marker=/opt/matrix/app/MATRIX_OPENMAUSBOT_PREVIEW
+readonly env_file=/opt/matrix/env/host.env
+readonly name=matrix-openmausbot
+readonly network=matrix-openmausbot
+readonly bridge=matrix-omb0
+readonly chain=MATRIX-OMB-EGRESS
+readonly workload_uid=65532
+readonly state_dir=/var/lib/matrix-openmausbot
+readonly socket_dir=/run/matrix-openmausbot
+readonly pair_key="$state_dir/pairing-key"
+
+admit() {
+  local key value preview='' collaboration='' handle='' slot='' origin='' manifest=''
+  local origin_pattern='^https://[a-zA-Z0-9.-]+(:[0-9]{1,5})?$'
+  while IFS='=' read -r key value; do
+    case "$key" in
+      MATRIX_PREVIEW_RUNTIME) preview="$value" ;;
+      MATRIX_COLLABORATION_DISABLED) collaboration="$value" ;;
+      MATRIX_HANDLE) handle="$value" ;;
+      MATRIX_RUNTIME_SLOT) slot="$value" ;;
+      PLATFORM_INTERNAL_URL) origin="$value" ;;
+      MATRIX_UPDATE_MANIFEST_BASE_URL) manifest="$value" ;;
+    esac
+  done < "$env_file"
+  [[ "$preview" = true && "$collaboration" = 1 && "$slot" = "$handle" ]] \
+    && [[ "$handle" =~ ^pv-[1-9][0-9]{0,8}-[0-9a-f]{8}$ && "$origin" =~ $origin_pattern ]] \
+    && [[ "$manifest" = "$origin/private-preview-updates/$handle" ]]
+}
+
+if [[ "${1:-}" = "--admit" ]]; then
+  admit
+  exit
+fi
+
+admit
+if [[ "${1:-}" = "--pair" ]]; then
+  proof="$(cat "$pair_key")"
+  [[ "$proof" =~ ^[a-f0-9]{64}$ ]]
+  printf 'header = "Authorization: Bearer %s"\n' "$proof" | \
+    curl --config - --fail --silent --show-error --max-time 10 --unix-socket "$socket_dir/admin/pair.sock" \
+      -X POST http://localhost/pairing
+  exit
+fi
+image="$(cat "$image_dir/matrix-openmausbot.image-id")"
+[[ "$image" =~ ^sha256:[0-9a-f]{64}$ && "$(cat "$bundle_marker")" = "$image" ]]
+if ! "$docker" image inspect "$image" >/dev/null 2>&1; then
+  "$docker" load --input "$image_dir/matrix-openmausbot.image.tar" >/dev/null
+  "$docker" image inspect "$image" >/dev/null
+fi
+
+if ! "$docker" network inspect "$network" >/dev/null 2>&1; then
+  "$docker" network create --driver bridge --ipv6=false --opt "com.docker.network.bridge.name=$bridge" \
+    --label org.matrix-os.workload=openmausbot "$network" >/dev/null
+fi
+network_config="$("$docker" network inspect --format '{{.Driver}}|{{.EnableIPv6}}|{{.Internal}}|{{index .Options "com.docker.network.bridge.name"}}|{{index .Labels "org.matrix-os.workload"}}' "$network")"
+[[ "$network_config" = "bridge|false|false|$bridge|openmausbot" ]]
+
+# Match Matrix's existing isolated-runner firewall. Host-addressed traffic
+# traverses INPUT, while forwarded traffic traverses DOCKER-USER.
+iptables() { /usr/sbin/iptables -w 10 "$@"; }
+{
+  printf '*filter\n:%s - [0:0]\n-F %s\n' "$chain" "$chain"
+  printf -- '-A %s -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT\n' "$chain"
+  for cidr in 0.0.0.0/8 10.0.0.0/8 100.64.0.0/10 127.0.0.0/8 169.254.0.0/16 \
+    172.16.0.0/12 192.0.0.0/24 192.0.2.0/24 192.168.0.0/16 198.18.0.0/15 \
+    198.51.100.0/24 203.0.113.0/24 224.0.0.0/4 240.0.0.0/4; do
+    printf -- '-A %s -d %s -j REJECT\n' "$chain" "$cidr"
+  done
+  printf -- '-A %s -j RETURN\nCOMMIT\n' "$chain"
+} | /usr/sbin/iptables-restore -w 10 --noflush
+iptables -C DOCKER-USER -i "$bridge" -j "$chain" 2>/dev/null || iptables -I DOCKER-USER 1 -i "$bridge" -j "$chain"
+iptables -C INPUT -i "$bridge" -j REJECT 2>/dev/null || iptables -I INPUT 1 -i "$bridge" -j REJECT
+
+gateway_gid="$(getent group matrix | cut -d: -f3)"
+[[ "$gateway_gid" =~ ^[1-9][0-9]*$ ]]
+install -d -o "$workload_uid" -g "$gateway_gid" -m 0700 "$state_dir/data"
+install -d -o "$workload_uid" -g "$gateway_gid" -m 0750 "$socket_dir"
+if [[ ! -e "$pair_key" && ! -L "$pair_key" ]]; then
+  (umask 077; set -o noclobber; openssl rand -hex 32 > "$pair_key")
+fi
+[[ -f "$pair_key" && ! -L "$pair_key" && "$(stat -c '%u:%a' "$pair_key")" = '0:600' ]]
+exec "$docker" run --rm --pull=never --name "$name" --network "$network" \
+  --user "$workload_uid:$gateway_gid" --interactive --init --cap-drop=ALL --security-opt=no-new-privileges \
+  --read-only --tmpfs /tmp:rw,nosuid,nodev,size=256m --shm-size=512m --pids-limit=256 --memory=1536m \
+  --sysctl net.ipv6.conf.all.disable_ipv6=1 --sysctl net.ipv6.conf.default.disable_ipv6=1 \
+  --mount "type=bind,src=$state_dir/data,dst=/data" \
+  --mount "type=bind,src=$socket_dir,dst=/sockets" \
+  --env HOME=/data --env OMB_DATA_DIR=/data/workspace --env OMB_STATIC_DIR=/opt/openmausbot/dist \
+  --env OMB_TUNNEL_SOCKET=/sockets/http.sock --env OMB_MATRIX_PAIR_SOCKET=/sockets/admin/pair.sock \
+  --env OMB_LOOPBACK_TRUST=service "$image" < "$pair_key"

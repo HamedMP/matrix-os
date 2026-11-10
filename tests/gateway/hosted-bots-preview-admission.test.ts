@@ -1,5 +1,5 @@
-import { describe, expect, it } from "vitest";
-import { admitsHostedBotsPrivatePreview } from "../../packages/gateway/src/hosted-bots/preview-admission.js";
+import { describe, expect, it, vi } from "vitest";
+import { admitsHostedBotsPrivatePreview, admitsOpenMausBotPreviewBundle } from "../../packages/gateway/src/hosted-bots/preview-admission.js";
 
 const handle = "pv-1907-3fa91c2e";
 const platform = "https://app.matrix-os.com";
@@ -13,6 +13,16 @@ const privatePreview: NodeJS.ProcessEnv = {
 };
 
 describe("Hosted Bots Private Preview admission", () => {
+  it("checks the fixed bundle marker only after owner-only preview admission", () => {
+    const markerExists = vi.fn().mockReturnValue(false);
+    expect(admitsOpenMausBotPreviewBundle({ ...privatePreview, MATRIX_RUNTIME_SLOT: "primary" }, markerExists)).toBe(false);
+    expect(markerExists).not.toHaveBeenCalled();
+    expect(admitsOpenMausBotPreviewBundle(privatePreview, markerExists)).toBe(false);
+    expect(markerExists).toHaveBeenCalledExactlyOnceWith("/opt/matrix/app/MATRIX_OPENMAUSBOT_PREVIEW");
+    markerExists.mockReturnValue(true);
+    expect(admitsOpenMausBotPreviewBundle(privatePreview, markerExists)).toBe(true);
+  });
+
   it("admits the exact owner-only preview projection emitted by Platform", () => {
     expect(admitsHostedBotsPrivatePreview(privatePreview)).toBe(true);
   });

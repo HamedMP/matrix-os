@@ -32,6 +32,7 @@ import type { NativeAppBridge } from "./native-app-bridge";
 import { createBrowserLabViewerAdmission, type BrowserLabViewerAuth } from "./browser-lab-viewer-admission";
 import { nativeBrowserProduct } from "../../shared/browser-products";
 import { browserProductLaunchUrl } from "./browser-product-launch";
+import { createHostedBotsTransport, hostedBotsIdentity, hostedBotsProviderLoginAllowed, HOSTED_BOTS_ORIGIN, type HostedBotsAuth } from "./hosted-bots-transport";
 
 export type EmbedState = "loading" | "ready" | "auth-required" | "failed";
 
@@ -39,6 +40,7 @@ interface EmbedServiceDeps {
   getWindow: () => BaseWindow | null;
   getGatewayOrigin: () => string;
   getToken: () => string | null;
+  getHostedBotsAuth?: () => HostedBotsAuth;
   emitState: (embedId: string, state: EmbedState) => void;
   appBridge?: NativeAppBridge;
   appPreloadPath?: string;
@@ -48,7 +50,7 @@ interface EmbedServiceDeps {
 }
 
 interface OpenRequest {
-  kind: "hosted-shell" | "code-editor" | "app" | "browser";
+  kind: "hosted-shell" | "code-editor" | "app" | "browser" | "hosted-bots";
   slug?: string;
   appIdentity?: string;
   url?: string;
@@ -100,6 +102,10 @@ export class EmbedService {
     this.deps = deps;
     const viewerAdmission = deps.browserLabViewerAuth ? createBrowserLabViewerAdmission(deps.browserLabViewerAuth) : undefined;
     this.viewerAdmission = viewerAdmission;
+    const hostedBots = createHostedBotsTransport({
+      getToken: deps.getToken,
+      getIdentity: () => deps.getHostedBotsAuth ? hostedBotsIdentity(deps.getHostedBotsAuth()) : null,
+    });
     this.manager = new EmbedManager({
       maxLive: 3,
       getAllowedOrigins: () => [this.deps.getGatewayOrigin()],
@@ -132,12 +138,14 @@ export class EmbedService {
           resolveNavigation,
           allowPublicNavigation,
           onState,
-          ...(kind === "app" && routeSlug === "browser-lab" && viewerAdmission
-            ? { registerViewerTransport: viewerAdmission.register } : {}),
+          ...(kind === "hosted-bots"
+            ? { registerViewerTransport: (contents) => hostedBots.register(contents, partition) }
+            : kind === "app" && routeSlug === "browser-lab" && viewerAdmission
+              ? { registerViewerTransport: viewerAdmission.register } : {}),
           ...(kind === "app" && slug && routeSlug && nativeBrowserProduct(slug, routeSlug)
             ? { browserProduct: { origin: new URL(this.deps.getGatewayOrigin()).origin,
                 renew: this.deps.renewBrowserProductSession ?? (() => Promise.reject(new Error("browser unavailable"))) } } : {}),
-          denyPermissions: kind === "code-editor" || kind === "browser",
+          denyPermissions: kind === "code-editor" || kind === "browser" || kind === "hosted-bots",
           ...(bridge ? { appBridge: bridge } : {}),
         });
       },
@@ -146,6 +154,22 @@ export class EmbedService {
 
   async open(request: OpenRequest): Promise<OpenResult> {
     const gatewayOrigin = this.deps.getGatewayOrigin();
+    if (request.kind === "hosted-bots") {
+      const auth = this.deps.getHostedBotsAuth?.();
+      const identity = auth ? hostedBotsIdentity(auth) : null;
+      if (!identity || !this.deps.getToken()) throw new Error("Bots workspace is unavailable");
+      const embedId = randomUUID();
+      this.manager.open("hosted-bots", identity.partition, request.bounds, HOSTED_BOTS_ORIGIN + "/", {
+        id: embedId,
+        active: request.active ?? true,
+        allowedOrigins: [HOSTED_BOTS_ORIGIN],
+        resolveNavigation: (url) => hostedBotsProviderLoginAllowed(url)
+          ? { disposition: "external", url }
+          : { disposition: "block" },
+        onState: (state) => this.deps.emitState(embedId, state),
+      });
+      return { embedId, state: "loading" };
+    }
     if (request.kind === "hosted-shell") {
       return this.openHostedShell(gatewayOrigin, request.bounds, request.active ?? true);
     }

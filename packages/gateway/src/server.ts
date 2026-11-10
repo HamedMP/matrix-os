@@ -138,7 +138,10 @@ import { createFundedAiRouteReadinessClient } from "./funded-ai-route-readiness-
 import { createFundedAiReadinessReader } from "./funded-ai-readiness.js";
 import { initializeJevRuntime } from "./jev/runtime.js";
 import { createJevRoutes } from "./jev/routes.js";
+import { createOpenMausBotGateway, OPENMAUSBOT_PROXY_BASE, OPENMAUSBOT_RUNTIME_SOCKET } from "./hosted-bots/oss-gateway.js";
 import { initializeHostedBotsRuntime } from "./hosted-bots/runtime.js";
+import { createOpenMausBotPreviewOwnerCheck } from "./hosted-bots/oss-preview-owner.js";
+import { admitsOpenMausBotPreviewBundle } from "./hosted-bots/preview-admission.js";
 import { createProductionJevInboxRuntime } from "./jev/inbox-production.js";
 import { createJevService } from "./jev/service.js";
 import { createHeartbeatRunner, type HeartbeatRunner } from "./heartbeat/runner.js";
@@ -1280,6 +1283,13 @@ export async function createGateway(config: GatewayConfig) {
         },
       })
     : undefined;
+  const openMausBotGateway = createOpenMausBotGateway({
+    socketPath: OPENMAUSBOT_RUNTIME_SOCKET,
+    admitted: admitsOpenMausBotPreviewBundle(process.env),
+    isOwner: createOpenMausBotPreviewOwnerCheck(process.env),
+    upgradeWebSocket,
+  });
+  app.route(OPENMAUSBOT_PROXY_BASE, openMausBotGateway.routes);
   const hostedBotsRuntime = await initializeHostedBotsRuntime(kyselyInstance, process.env, homePath);
   app.route("/api/hosted-bots", hostedBotsRuntime.routes);
   app.route("/api/speech", speechRuntime.routes);
@@ -1921,6 +1931,7 @@ export async function createGateway(config: GatewayConfig) {
       await managedFeatureRestart.close();
       await githubDeveloperSetup.close();
       await jevInboxRuntime?.close();
+      openMausBotGateway.close();
       await hostedBotsRuntime.close();
       chatDriveContext.close();
       matrixMcpCapabilities.close();

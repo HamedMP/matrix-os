@@ -83,7 +83,7 @@ export function TabPane({
         sharedScopeId={tab.sharedScopeId}
       />;
     case "bots":
-      return <DesktopBotsWorkspace active={active} />;
+      return <DesktopBotsWorkspace active={active} visible={visible} layoutRevision={layoutRevision} visualScale={visualScale} />;
     case "chat":
       return <WorkTab tabId={tab.id} route="chat" active={active} visible={visible} initialChatId={tab.chatId} initialChatView={tab.chatView} initialChatTitle={tab.chatTitle} sharedScopeId={tab.sharedScopeId} />;
     case "terminals":
