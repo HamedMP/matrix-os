@@ -101,6 +101,8 @@ export function createCollaborativeAppLaunchUpstreamFactory(options: {
     let activeSession = session.data;
     let maxActions = ticket.maxActions;
     let actionsRemaining = maxActions;
+    let inFlightActions = 0;
+    let resolveDrain: (() => void) | null = null;
     let renewal: Promise<void> | null = null;
     let closed = false;
 
@@ -153,7 +155,7 @@ export function createCollaborativeAppLaunchUpstreamFactory(options: {
       actionsRemaining = maxActions;
     };
 
-    const reserveAction = async (method: "GET" | "DELETE"): Promise<void> => {
+    const reserveAction = async (method: "GET" | "DELETE"): Promise<() => void> => {
       while (true) {
         if (renewal) {
           await renewal;
@@ -162,43 +164,61 @@ export function createCollaborativeAppLaunchUpstreamFactory(options: {
         const closeReserve = method === "GET" ? Math.min(2, maxActions - 1) : 0;
         if (actionsRemaining > closeReserve) {
           actionsRemaining--;
-          return;
+          inFlightActions++;
+          let released = false;
+          return () => {
+            if (released) return;
+            released = true;
+            inFlightActions--;
+            if (inFlightActions === 0) {
+              resolveDrain?.();
+              resolveDrain = null;
+            }
+          };
         }
-        renewal = renewSession().finally(() => { renewal = null; });
+        renewal = (async () => {
+          if (inFlightActions > 0) await new Promise<void>((resolve) => { resolveDrain = resolve; });
+          await renewSession();
+        })().finally(() => { renewal = null; });
         await renewal;
       }
     };
 
     const signedRequest = async (method: "GET" | "DELETE", path: string, signal: AbortSignal): Promise<Response> => {
       if (method === "GET" && closed) throw new CollaborativeAppLaunchError("unavailable");
-      await reserveAction(method);
-      const signature = CollaborationDirectRequestSignatureSchema.parse({
-        protocolVersion: COLLABORATION_DIRECT_PROTOCOL_VERSION,
-        sessionId: activeSession.id,
-        method,
-        path,
-        query: "",
-        bodyDigest: sha256(new Uint8Array()),
-        conditionalHeadersDigest: sha256(new Uint8Array()),
-        nonce: randomBytes(32).toString("hex"),
-        issuedAt: now().toISOString(),
-      });
-      const proof = signEd25519(pair.privateKey, `${REQUEST_DOMAIN}\n${canonicalJson(signature)}`);
-      const headers = new Headers({
-        accept: method === "GET" ? "*/*" : "application/json",
-        [SESSION_HEADER]: activeSession.id,
-        [RELAY_RUNTIME_HEADER]: activeSession.runtimeId,
-        [REQUEST_HEADER]: Buffer.from(JSON.stringify({ signature, proof })).toString("base64url"),
-      });
-      return options.relay.forward({
-        actorId: identity.actorId,
-        method,
-        path,
-        query: "",
-        headers,
-        body: null,
-        ...(method === "GET" ? { responseClass: "app_asset" as const } : {}),
-      }).then((response) => bindResponseToSignal(response, signal));
+      const releaseAction = await reserveAction(method);
+      try {
+        const signature = CollaborationDirectRequestSignatureSchema.parse({
+          protocolVersion: COLLABORATION_DIRECT_PROTOCOL_VERSION,
+          sessionId: activeSession.id,
+          method,
+          path,
+          query: "",
+          bodyDigest: sha256(new Uint8Array()),
+          conditionalHeadersDigest: sha256(new Uint8Array()),
+          nonce: randomBytes(32).toString("hex"),
+          issuedAt: now().toISOString(),
+        });
+        const proof = signEd25519(pair.privateKey, `${REQUEST_DOMAIN}\n${canonicalJson(signature)}`);
+        const headers = new Headers({
+          accept: method === "GET" ? "*/*" : "application/json",
+          [SESSION_HEADER]: activeSession.id,
+          [RELAY_RUNTIME_HEADER]: activeSession.runtimeId,
+          [REQUEST_HEADER]: Buffer.from(JSON.stringify({ signature, proof })).toString("base64url"),
+        });
+        const response = await options.relay.forward({
+          actorId: identity.actorId,
+          method,
+          path,
+          query: "",
+          headers,
+          body: null,
+          ...(method === "GET" ? { responseClass: "app_asset" as const } : {}),
+        });
+        return await bindResponseToSignal(response, signal);
+      } finally {
+        releaseAction();
+      }
     };
 
     return {

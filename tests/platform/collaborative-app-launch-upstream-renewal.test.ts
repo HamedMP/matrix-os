@@ -14,6 +14,7 @@ describe("collaborative app owner-session renewal", () => {
     let ticketCount = 0;
     let latestThumbprint = "";
     let actionsRemaining = 0;
+    let releaseSlow: (() => void) | undefined;
     const issuer = { issue: vi.fn(async ({ actorId: requestedActor, request }: {
       actorId: string;
       request: { proofPublicKey: string };
@@ -52,6 +53,14 @@ describe("collaborative app owner-session renewal", () => {
         }), { status: input.path.endsWith("/renew") ? 200 : 201,
           headers: { "content-type": "application/json" } });
       }
+      if (input.method === "GET" && input.path.endsWith("/slow.js")) {
+        return new Promise<Response>((resolve) => {
+          releaseSlow = () => {
+            if (actionsRemaining < 1) resolve(new Response(null, { status: 429 }));
+            else { actionsRemaining--; resolve(new Response("asset")); }
+          };
+        });
+      }
       if (actionsRemaining < 1) return new Response(null, { status: 429 });
       actionsRemaining--;
       return input.method === "GET"
@@ -64,6 +73,16 @@ describe("collaborative app owner-session renewal", () => {
     const upstream = await open({ actorId, scopeId, organizationId, runtimeId: "runtime_owner",
       authorityGeneration: 1, appId: "team-tracker", catalogId: "50000000-0000-4000-8000-000000000001",
       buildId: "b".repeat(64), shareRevision: 1 });
+
+    const slow = upstream.request("assets/slow.js", new AbortController().signal);
+    await vi.waitFor(() => expect(releaseSlow).toBeTypeOf("function"));
+    expect((await upstream.request("assets/fast.js", new AbortController().signal)).status).toBe(200);
+    const third = upstream.request("assets/third.js", new AbortController().signal);
+    await Promise.resolve();
+    expect(ticketCount).toBe(1);
+    releaseSlow!();
+    expect((await slow).status).toBe(200);
+    expect((await third).status).toBe(200);
 
     for (let index = 0; index < 5; index++) {
       const response = await upstream.request(`assets/${index}.js`, new AbortController().signal);
