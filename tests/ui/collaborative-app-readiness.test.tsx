@@ -38,7 +38,7 @@ const ready = {
   verifiedAt: "2026-11-05T10:00:00.000Z",
 };
 
-afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
+afterEach(() => { cleanup(); vi.unstubAllGlobals(); vi.useRealTimers(); });
 
 describe("collaborative app owner readiness", () => {
   it("loads and validates the current exact-build certificate before allowing share", async () => {
@@ -76,6 +76,43 @@ describe("collaborative app owner readiness", () => {
     await act(async () => { finish(ready); await pending; });
     expect(result.current.state).toBe("ready");
     expect(result.current.canShare).toBe(true);
+  });
+
+  it("polls a saved checking result after reload until it is ready, then stops", async () => {
+    vi.useFakeTimers();
+    const checking = { ...blocked, status: "checking" as const, checks: [] };
+    const api = { get: vi.fn().mockResolvedValueOnce(checking).mockResolvedValueOnce(checking)
+      .mockResolvedValueOnce(ready), post: vi.fn() };
+    const view = renderHook(() => useCollaborativeAppSharing({ appId: "team-tracker", api }));
+    await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+    expect(view.result.current.state).toBe("checking");
+    expect(view.result.current.canShare).toBe(false);
+
+    await act(async () => { await vi.advanceTimersByTimeAsync(2_000); });
+    expect(view.result.current.state).toBe("checking");
+    expect(api.get).toHaveBeenCalledTimes(2);
+    await act(async () => { await vi.advanceTimersByTimeAsync(2_000); });
+    expect(view.result.current.state).toBe("ready");
+    expect(view.result.current.canShare).toBe(true);
+    expect(api.get).toHaveBeenCalledTimes(3);
+    await act(async () => { await vi.advanceTimersByTimeAsync(4_000); });
+    expect(api.get).toHaveBeenCalledTimes(3);
+  });
+
+  it("cancels readiness polling when the active app changes", async () => {
+    vi.useFakeTimers();
+    const checking = { ...blocked, status: "checking" as const, checks: [] };
+    const api = { get: vi.fn().mockResolvedValueOnce(checking).mockResolvedValueOnce(blocked), post: vi.fn() };
+    const view = renderHook(({ appId }) => useCollaborativeAppSharing({ appId, api }), {
+      initialProps: { appId: "team-tracker" },
+    });
+    await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+    expect(view.result.current.state).toBe("checking");
+    view.rerender({ appId: "another-app" });
+    await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+    expect(view.result.current.state).toBe("blocked");
+    await act(async () => { await vi.advanceTimersByTimeAsync(4_000); });
+    expect(api.get).toHaveBeenCalledTimes(2);
   });
 
   it("withdraws sharing immediately and reloads readiness when the same app build changes", async () => {

@@ -13,6 +13,8 @@ const RecheckInputSchema = z.object({
   clientRequestId: z.uuid().optional(),
 }).strict();
 const SAFE_UNAVAILABLE = "App collaboration readiness is unavailable.";
+const CHECKING_POLL_MS = 2_000;
+const MAX_CHECKING_POLLS = 90;
 
 export interface CollaborativeAppReadinessApi {
   get(path: string): Promise<unknown>;
@@ -75,6 +77,31 @@ export function useCollaborativeAppSharing(input: {
     void refresh();
     return () => { requestGeneration.current += 1; };
   }, [refresh]);
+
+  useEffect(() => {
+    if (!path || readinessRequestKey !== requestKey || currentReadiness?.status !== "checking" || phase !== "idle") return;
+    const generation = requestGeneration.current;
+    let cancelled = false;
+    let attempts = 0;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const poll = async () => {
+      if (++attempts > MAX_CHECKING_POLLS) {
+        fail(generation, new Error("ReadinessCheckTimedOut"), requestKey);
+        return;
+      }
+      try {
+        const raw = await input.api.get(path);
+        const next = raw === null ? null : CollaborativeAppReadinessSchema.parse(raw);
+        if (cancelled || requestGeneration.current !== generation) return;
+        setReadiness(next);
+        if (next?.status === "checking") timer = setTimeout(() => { void poll(); }, CHECKING_POLL_MS);
+      } catch (error: unknown) {
+        if (!cancelled && requestGeneration.current === generation) fail(generation, error, requestKey);
+      }
+    };
+    timer = setTimeout(() => { void poll(); }, CHECKING_POLL_MS);
+    return () => { cancelled = true; if (timer) clearTimeout(timer); };
+  }, [currentReadiness?.status, fail, input.api, path, phase, readinessRequestKey, requestKey]);
 
   const recheck = useCallback(async (rawInput: {
     organizationId: string;
