@@ -65,7 +65,9 @@ Each spike has a pass condition. A failed spike changes the plan before any stac
 Provider criteria for S1. Hard: hardware-virtualized or equivalently strong isolation
 per container; scale to zero with no idle compute charge; EU region; private addressing
 from the platform; enforceable egress policy; API for create, start, stop, delete;
-supports whatever S2's launcher needs (for example unprivileged user namespaces). Soft:
+a non-root process can create user namespaces, that is the provider does not block
+`unshare`, `clone`, `mount`, `umount2`, `pivot_root`, or `setns` (S2; verified by running
+`bwrap --unshare-all` in the probe image). Soft: cgroup delegation for per-workload limits,
 cold start time, price per active hour, persistent volume option, image size limits.
 Candidates to measure: Cloudflare Containers, Fly Machines, Cloud Run (the platform
 already runs there), and self-operated microVMs on Hetzner as the fallback.
