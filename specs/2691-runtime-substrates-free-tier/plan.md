@@ -92,7 +92,9 @@ Done when: paid controls pass unchanged and no code outside the `vps` substrate 
   the workload cannot reach the network, gateway env, or database.
 - B3 Durable-home lifecycle: hydrate gate before ready, flush on stop, SQLite snapshot,
   container mirror profile that keeps built output and project history.
-- B4 Runtime image and entrypoint; pool sizing and timeouts from config.
+- B4 Runtime image and entrypoint; one connection budget across all gateway pools (at
+  most 5), timeouts from config, and fail-closed boot when the owner database rejects
+  credentials (no fallback to file storage; `/health` reports database readiness).
 - B5 Lifecycle routes: readiness, quiesce, flush, activity report.
 
 Done when: a locally run container passes User Stories 2 and 3 against real Postgres and

@@ -57,9 +57,13 @@ substrate only.
 | Column | Type | Notes |
 | --- | --- | --- |
 | `clerk_user_id` | text, primary key | |
-| `database_name` | text, not null, unique | Derived, validated identifier |
-| `role_name` | text, not null, unique | |
-| `password_epoch` | integer, not null | Equals the runtime generation that last rotated it |
+| `database_name` | text, not null, unique | Opaque generated identifier; never the handle or user id |
+| `role_name` | text, not null, unique | Opaque generated identifier |
+| `connection_limit` | integer, not null, default 5 | Applied to the role and the database |
+| `size_limit_bytes` | bigint, not null | Enforced by the platform, not Postgres |
+| `size_measured_at` | timestamptz, null | |
+| `state` | text, not null | `active`, `fenced`, `deleting` |
+| `password_epoch` | integer, not null | Equals the runtime generation that last rotated it; rotation also terminates the role's sessions |
 | `size_bytes` | bigint, null | Last measured |
 | `created_at`, `deleted_at` | timestamptz | |
 

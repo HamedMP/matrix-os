@@ -62,10 +62,20 @@ Decisions marked **Decided** rest on code read at the baseline commit. Decisions
 
 ## R6. Shared Postgres
 
-- **Decision (Pending spike S5)**: database and role per owner on one managed cluster,
-  gateway pool reduced from 10 to 5 connections by configuration.
-- **Open**: whether a pooler is needed and whether any session-scoped advisory lock
-  breaks under transaction pooling. Transaction-scoped locks are safe.
+- **Decision (S5, 2026-11-10)**: database and role per owner on one managed cluster,
+  direct connections, no pooler. The role has `CONNECTION LIMIT 5`; the gateway's
+  owner pool drops from 10 to 3 so that all pools together stay within 5.
+- **Rationale**: every advisory lock in the gateway is transaction-scoped. PgBouncer in
+  transaction mode refuses the three pools that pass timeouts as connection settings,
+  weakens fencing, and its server connections consume the role limit.
+- **Consequences**: database and role names are opaque because other owners can list
+  them. Postgres has no size cap, so the platform measures `pg_database_size` and
+  fences. Fencing is password rotation plus terminating the role's sessions. The
+  gateway must fail closed when its database credentials are rejected, and readiness
+  must check the database. The legacy orchestrator's provisioning is not reused.
+- **Open**: a cluster with `max_connections = 100` serves about 19 concurrently active
+  owners at 5 each; cluster sizing or a pooler is revisited with the provider choice.
+  A full funded chat turn was not exercised in the spike.
 
 ## R7. Upgrade path
 

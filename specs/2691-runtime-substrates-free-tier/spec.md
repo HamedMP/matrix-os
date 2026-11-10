@@ -290,7 +290,7 @@ enforced by the platform or the substrate.
 | Container to platform internal routes | Per-runtime HMAC token bound to machine, slot, and token epoch (existing) | Rejected when generation is stale or runtime is not running |
 | Container to funded AI relay | Short-lived per-runtime lease (existing) | Owner-serialized holds, model allowlist, budget |
 | Container to object store | Platform broker with owner-prefix check and presigned URLs (existing) | Plus a per-owner byte quota enforced by the broker |
-| Container to Postgres | Per-owner role and database | Connection limit, statement timeout, size quota |
+| Container to Postgres | Per-owner role and database | Connection limit and temp-file limit enforced by Postgres; size measured and enforced by the platform; statement timeout is a role default the owner can override, so the platform cancels long statements |
 | Container to internet | Substrate egress policy | Default deny; allowlist for package registry and platform; rate and byte caps |
 | Sandbox to gateway | Broker socket (existing) | Workload never holds a provider key or database URL |
 | Lifecycle and migration routes | Platform-internal bearer or owner session | See plan auth matrix |
@@ -456,7 +456,7 @@ Provisional per-owner defaults, configuration-driven, so limit tests can be writ
 
 **Connection budget.** Running containers times 5 connections must stay under the
 shared cluster's limit with headroom; the global running-container ceiling is derived
-from it, and a pooler is added if S5 shows it is needed.
+from it, and no pooler is used (S5): the gateway connects directly within a connection budget of 5.
 
 **Data flow.** Owner data is processed in memory by the container provider in the
 owner's chosen region and stored in Matrix-controlled Postgres and object storage. No
