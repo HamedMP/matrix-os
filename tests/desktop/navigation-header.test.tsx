@@ -57,6 +57,24 @@ describe("Desktop navigation header", () => {
     expect(screen.getByRole("button", { name: "Open account menu" })).toBeTruthy();
   });
 
+  it("does not reserve a left control column on Linux", () => {
+    setPlatform("Linux x86_64");
+    render(<Tooltip.Provider><NavigationHeader /></Tooltip.Provider>);
+
+    expect(screen.getByRole("banner").style.gridTemplateColumns).toBe("minmax(0, 1fr)");
+    expect(screen.getByRole("banner").children).toHaveLength(1);
+  });
+
+  it("keeps the macOS traffic-light column as a hidden drag spacer", () => {
+    setPlatform("MacIntel");
+    render(<Tooltip.Provider><NavigationHeader /></Tooltip.Provider>);
+
+    const banner = screen.getByRole("banner");
+    expect(banner.style.background).toBe("color-mix(in srgb, var(--bg-sunken) 82%, transparent)");
+    expect(banner.children).toHaveLength(2);
+    expect(banner.firstElementChild?.getAttribute("aria-hidden")).toBe("true");
+  });
+
   it("uses permanent workspace tabs instead of Browser breadcrumbs or actions in native desktop", () => {
     useTabs.getState().openTab({ kind: "home", title: "Browser", closable: false });
     render(<Tooltip.Provider><NavigationHeader /></Tooltip.Provider>);
