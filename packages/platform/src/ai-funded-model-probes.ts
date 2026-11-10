@@ -1,3 +1,5 @@
+import type { OperatorProbePlacement } from "./operator-probe-budget/adapter.js";
+import { currentOperatorPolicy, runOperatorProbe } from "./operator-probe-budget/readiness.js";
 import { MANAGED_WORKERS_AI_MODEL_IDS } from "@matrix-os/contracts";
 import { randomUUID } from "node:crypto";
 import { createSharedFundedProbeCache, fundedProbeCacheKey, SHARED_FUNDED_HEALTH_TTL_MS } from "./ai-funded-shared-probe-cache.js";
@@ -20,7 +22,7 @@ const ReadyEvidenceSchema = z.object({ ready: z.literal(true), priceValidThrough
 
 export interface FundedModelProbeResult { ready: boolean; checkedAt: string; staleAfter: string; priceValidThrough?: string }
 export interface FundedModelProbeCall { receiptId?: string; signal?: AbortSignal; deadlineAtMs?: number; runtime?: JevProbeRuntime }
-export interface FundedModelProbeService { readCached?(modelId: string, call?: FundedModelProbeCall): Promise<FundedModelProbeResult>; probe(modelId: string, call?: FundedModelProbeCall): Promise<FundedModelProbeResult> }
+export interface FundedModelProbeService { quiesce?(): Promise<void>; close?(): Promise<void>; readCached?(modelId: string, call?: FundedModelProbeCall): Promise<FundedModelProbeResult>; probe(modelId: string, call?: FundedModelProbeCall): Promise<FundedModelProbeResult> }
 
 export function loadFundedModelProbeLimits(env: NodeJS.ProcessEnv): { dailyLimit: number; minuteLimit: number } | undefined {
   const dailyLimit = Number(env.MATRIX_FUNDED_AI_MODEL_PROBE_DAILY_LIMIT);
@@ -120,6 +122,7 @@ async function readPriceValidThrough(response: Response, signal: AbortSignal): P
 /** A bounded, operator-funded route probe. Owner policy and ledger are never cached. */
 export function createFundedModelProbeService(input: {
   db: PlatformDB;
+  operator?: OperatorProbePlacement;
   relayBaseUrl?: string;
   relayControlToken?: string;
   dailyLimit?: number;
@@ -141,6 +144,8 @@ export function createFundedModelProbeService(input: {
     probeId?: string;
   }
   const inFlight = new Map<string, PendingProbe>();
+  const work = new Set<Promise<FundedModelProbeResult>>();
+  let closed = false;
   function remember(key: string, result: FundedModelProbeResult): void {
     for (const [id, value] of cache) if (Date.parse(value.staleAfter) <= now().getTime()) cache.delete(id);
     cache.delete(key);
@@ -149,12 +154,21 @@ export function createFundedModelProbeService(input: {
   }
   const base = input.relayBaseUrl && URL.canParse(input.relayBaseUrl)
     ? new URL(input.relayBaseUrl) : undefined;
-  const enabled = base?.protocol === "https:" && !base.username && !base.password
-    && base.pathname === "/" && !base.search && !base.hash
-    && !!input.relayControlToken && input.relayControlToken.length >= 32
+  const legacyEnabled = base?.protocol === "https:" && !base.username && !base.password
+    && base.pathname === "/" && !base.search && !base.hash;
+  const enabled = !!input.relayControlToken && input.relayControlToken.length >= 32
     && Number.isSafeInteger(input.dailyLimit) && (input.dailyLimit ?? 0) > 0
     && Number.isSafeInteger(input.minuteLimit) && (input.minuteLimit ?? 0) > 0;
 
+  async function cacheContext(modelId: string, signal: AbortSignal) {
+    const operator = input.operator;
+    const snapshot = operator ? await currentOperatorPolicy(operator, modelId, now, signal) : undefined;
+    if (operator && !snapshot) return undefined;
+    const key = fundedProbeCacheKey({ modelId, relayOrigin: operator?.relayOrigin ?? base!.origin,
+      controlToken: input.relayControlToken!, dailyLimit: input.dailyLimit!, minuteLimit: input.minuteLimit!,
+      operatorScope: snapshot?.cacheScope });
+    return { key, snapshot };
+  }
   const unavailable = (): FundedModelProbeResult => {
     const checked = now().getTime();
     return { ready: false, checkedAt: new Date(checked).toISOString(), staleAfter: new Date(checked + NEGATIVE_TTL_MS).toISOString() };
@@ -201,19 +215,33 @@ export function createFundedModelProbeService(input: {
     });
   }
   return {
+    ...(input.operator ? { quiesce: async () => {
+      closed = true;
+      await Promise.all([input.operator!.quiesce(), Promise.allSettled([...work])]);
+    } } : {}),
+    async close() {
+      closed = true;
+      for (const pending of inFlight.values()) pending.controller.abort();
+      await Promise.allSettled([...work]);
+      await input.operator?.close();
+    },
     async readCached(modelId, call = {}) {
-      if (!enabled || !FUNDED_PROBE_MODELS.includes(modelId as FundedProbeModel)) return unavailable();
+      if (closed || !enabled || (!input.operator && !legacyEnabled) || !FUNDED_PROBE_MODELS.includes(modelId as FundedProbeModel)) return unavailable();
       const deadline = Math.min(call.deadlineAtMs ?? Date.now() + 1500, Date.now() + 1500);
       if (deadline <= Date.now() || call.signal?.aborted) return unavailable();
-      const signal = AbortSignal.any([...(call.signal ? [call.signal] : []), AbortSignal.timeout(deadline - Date.now())]);
-      const key = fundedProbeCacheKey({ modelId, relayOrigin: base!.origin,
-        controlToken: input.relayControlToken!, dailyLimit: input.dailyLimit!, minuteLimit: input.minuteLimit! });
-      return shared.readCached(key, signal, unavailable);
+      const signal = AbortSignal.any([...(call.signal ? [call.signal] : []), AbortSignal.timeout(Math.max(1, deadline - Date.now()))]);
+      try {
+        const context = await cacheContext(modelId, signal);
+        return context ? await shared.readCached(context.key, signal, unavailable) : unavailable();
+      } catch (error: unknown) {
+        console.warn("[funded-ai] Cache context unavailable", { aborted: signal.aborted });
+        return unavailable();
+      }
     },
     async probe(modelId, call = {}) {
       const runtime = modelId === JEV_MODEL_ID ? JevProbeRuntimeSchema.safeParse(call.runtime).data : undefined;
-      if (!enabled || (modelId === JEV_MODEL_ID ? !runtime || !input.credentials
-        : !FUNDED_PROBE_MODELS.includes(modelId as FundedProbeModel))) return unavailable();
+      if (closed || !enabled || (modelId === JEV_MODEL_ID ? !legacyEnabled || !runtime || !input.credentials
+        : (!legacyEnabled && !input.operator) || !FUNDED_PROBE_MODELS.includes(modelId as FundedProbeModel))) return unavailable();
       if (call.signal?.aborted || (call.deadlineAtMs !== undefined && call.deadlineAtMs <= Date.now())) return unavailable();
       const model = runtime ? JSON.stringify([JEV_MODEL_ID, runtime.identity.ownerId, runtime.identity.machineId,
         runtime.identity.runtimeSlot, runtime.globalRevision, runtime.runtimeRevision]) : modelId;
@@ -222,13 +250,13 @@ export function createFundedModelProbeService(input: {
       if (cached && Date.parse(cached.staleAfter) > now().getTime()) return cached;
       const pending = inFlight.get(model);
       if (pending) return join(model, pending, call, windowMs);
-      if (inFlight.size >= MAX_KEYS) return unavailable();
+      if (work.size >= MAX_KEYS) return unavailable();
       const entry: PendingProbe = {
         controller: new AbortController(), waiters: new Map(), promise: undefined as unknown as Promise<FundedModelProbeResult>,
       };
       inFlight.set(model, entry);
       entry.promise = (async (): Promise<FundedModelProbeResult> => {
-        const performProbe = async (): Promise<FundedModelProbeResult> => {
+        const performProbe = async (snapshot?: Awaited<ReturnType<typeof currentOperatorPolicy>>): Promise<FundedModelProbeResult> => {
           const admitted = await (input.reserveProbe ?? reserveFundedModelProbe)({ db: input.db,
             dailyLimit: input.dailyLimit!, minuteLimit: input.minuteLimit!, deadlineMs: input.budgetDeadlineMs });
           if (entry.controller.signal.aborted || !hasActiveWaiter(entry)) return unavailable();
@@ -238,6 +266,7 @@ export function createFundedModelProbeService(input: {
             return result;
           }
           let priceValidThrough: string | undefined;
+          let walletExpiry = Infinity;
           const probeId = runtime ? undefined : randomUUID();
           try {
             if (runtime) {
@@ -245,6 +274,13 @@ export function createFundedModelProbeService(input: {
               priceValidThrough = await probeOwnerFundedJev({ runtime, credentials: input.credentials!, relayBase: base!,
                 relayControlToken: input.relayControlToken!, signal,
                 fetchFn: input.fetchFn ?? fetch, readReady: response => readPriceValidThrough(response, signal) });
+            } else if (input.operator) {
+              if (!snapshot) return unavailable();
+              entry.probeId = probeId;
+              const result = await runOperatorProbe({ operator: input.operator, model, probeId: probeId!,
+                token: input.relayControlToken!, fetchFn: input.fetchFn ?? fetch, now, signal: entry.controller.signal, cacheScope: snapshot.cacheScope, walletBinding: snapshot.walletBinding });
+              priceValidThrough = result?.policy.pricingValidThrough;
+              walletExpiry = Date.parse(result?.walletExpiry ?? "");
             } else {
               const signal = AbortSignal.any([entry.controller.signal, AbortSignal.timeout(FUNDED_AI_READINESS_TIMEOUTS.relayProbeMs)]);
               entry.probeId = probeId;
@@ -267,18 +303,22 @@ export function createFundedModelProbeService(input: {
           const checked = now().getTime();
           if (entry.controller.signal.aborted || !hasActiveWaiter(entry)) return unavailable();
           const priceExpiry = Date.parse(priceValidThrough ?? "");
-          const ready = Number.isFinite(priceExpiry) && priceExpiry > checked;
+          const ready = Number.isFinite(priceExpiry) && priceExpiry > checked && walletExpiry > checked;
           const result = { ready, ...(ready ? { priceValidThrough } : {}), checkedAt: new Date(checked).toISOString(),
-            staleAfter: new Date(ready ? Math.min(checked + (runtime ? POSITIVE_TTL_MS : SHARED_FUNDED_HEALTH_TTL_MS), priceExpiry)
+            staleAfter: new Date(ready ? Math.min(checked + (runtime ? POSITIVE_TTL_MS : SHARED_FUNDED_HEALTH_TTL_MS), priceExpiry, walletExpiry)
               : checked + NEGATIVE_TTL_MS).toISOString() };
           if (runtime) remember(model, result);
           return result;
         };
         if (runtime) return performProbe();
-        const key = fundedProbeCacheKey({ modelId: model, relayOrigin: base!.origin,
-          controlToken: input.relayControlToken!, dailyLimit: input.dailyLimit!, minuteLimit: input.minuteLimit! });
-        return shared.probe(key, entry.controller.signal, performProbe, unavailable);
-      })().finally(() => { if (inFlight.get(model) === entry) inFlight.delete(model); });
+        const context = await cacheContext(model, entry.controller.signal);
+        if (!context) return unavailable();
+        return shared.probe(context.key, entry.controller.signal, () => performProbe(context.snapshot), unavailable);
+      })().finally(() => {
+        work.delete(entry.promise);
+        if (inFlight.get(model) === entry) inFlight.delete(model);
+      });
+      work.add(entry.promise);
       return join(model, entry, call, windowMs);
     },
   };

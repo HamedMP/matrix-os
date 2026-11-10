@@ -5,31 +5,36 @@ import { createFundedOpenAiUsageTracker } from "./funded-relay-openai-usage.js";
 
 const DEFAULT_CAPTURE_LIMIT = 1024 * 1024;
 const TokenSchema = z.number().int().nonnegative().max(10_000_000);
-const CacheCreationSchema = z.object({
-  ephemeral_5m_input_tokens: TokenSchema,
-  ephemeral_1h_input_tokens: TokenSchema,
-}).strict();
-const UsageSchema = z.object({
-  input_tokens: TokenSchema,
-  output_tokens: TokenSchema.optional(),
-  cache_read_input_tokens: TokenSchema.optional(),
-  cache_creation_input_tokens: TokenSchema.optional(),
-  cache_creation: CacheCreationSchema.optional(),
-}).superRefine((usage, ctx) => {
-  const total = usage.cache_creation_input_tokens ?? 0;
-  if (total === 0 && usage.cache_creation === undefined) return;
-  if (usage.cache_creation === undefined) {
-    ctx.addIssue({ code: "custom", message: "Cache creation TTL breakdown is required" });
-    return;
-  }
-  if (
-    usage.cache_creation.ephemeral_5m_input_tokens
-      + usage.cache_creation.ephemeral_1h_input_tokens
-    !== total
-  ) {
-    ctx.addIssue({ code: "custom", message: "Cache creation usage is inconsistent" });
-  }
-});
+function anthropicUsageSchema(TokenSchema: z.ZodNumber) {
+  const CacheCreationSchema = z.object({
+    ephemeral_5m_input_tokens: TokenSchema,
+    ephemeral_1h_input_tokens: TokenSchema,
+  }).strict();
+  return z.object({
+    input_tokens: TokenSchema,
+    output_tokens: TokenSchema.optional(),
+    cache_read_input_tokens: TokenSchema.optional(),
+    cache_creation_input_tokens: TokenSchema.optional(),
+    cache_creation: CacheCreationSchema.optional(),
+  }).superRefine((usage, ctx) => {
+    const total = usage.cache_creation_input_tokens ?? 0;
+    if (total === 0 && usage.cache_creation === undefined) return;
+    if (usage.cache_creation === undefined) {
+      ctx.addIssue({ code: "custom", message: "Cache creation TTL breakdown is required" });
+      return;
+    }
+    if (
+      usage.cache_creation.ephemeral_5m_input_tokens
+        + usage.cache_creation.ephemeral_1h_input_tokens
+      !== total
+    ) {
+      ctx.addIssue({ code: "custom", message: "Cache creation usage is inconsistent" });
+    }
+  });
+}
+const UsageSchema = anthropicUsageSchema(TokenSchema);
+const observedTokens = z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER);
+export const ProbeAnthropicUsage = anthropicUsageSchema(observedTokens).safeExtend({ output_tokens: observedTokens });
 const JsonResponseSchema = z.object({
   type: z.literal("message"),
   model: z.string(),
@@ -45,7 +50,7 @@ export interface FundedUsageTracker {
   complete(): FundedFinalization;
 }
 
-function toUsage(input: z.infer<typeof UsageSchema>, outputTokens: number): FundedTokenUsage {
+export function toUsage(input: z.infer<typeof UsageSchema>, outputTokens: number): FundedTokenUsage {
   return {
     inputTokens: input.input_tokens,
     outputTokens,

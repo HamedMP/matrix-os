@@ -26,10 +26,10 @@ interface Row {
 /** Only the digest is stored. A changed Relay origin, credential or local probe
  * configuration cannot reuse another deployment's health receipt. */
 export function fundedProbeCacheKey(input: {
-  modelId: string; relayOrigin: string; controlToken: string; dailyLimit: number; minuteLimit: number;
+  operatorScope?: string; modelId: string; relayOrigin: string; controlToken: string; dailyLimit: number; minuteLimit: number;
 }): string {
   return createHash("sha256").update(JSON.stringify(["priced-readiness-v2", FUNDED_AI_READINESS_TIMEOUTS.relayProbeMs, LEASE_MS, input.modelId,
-    input.relayOrigin, input.controlToken, input.dailyLimit, input.minuteLimit])).digest("hex");
+    input.relayOrigin, input.controlToken, input.dailyLimit, input.minuteLimit, ...(input.operatorScope ? ["operator-v1", input.operatorScope] : [])])).digest("hex");
 }
 
 function fresh(row: Row | undefined, nowMs: number): FundedModelProbeResult | undefined {

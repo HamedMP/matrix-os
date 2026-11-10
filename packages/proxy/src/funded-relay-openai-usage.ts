@@ -3,15 +3,24 @@ import { priceActualUsageMicrousd, type FundedTokenUsage } from "./funded-relay-
 import type { FundedUsageTracker } from "./funded-relay-usage.js";
 
 const Tokens = z.number().int().nonnegative().max(10_000_000);
-const Usage = z.object({
-  prompt_tokens: Tokens, completion_tokens: Tokens, total_tokens: Tokens,
-  prompt_tokens_details: z.object({ cached_tokens: Tokens.optional() }).optional(),
-}).superRefine((value, ctx) => {
-  if (value.total_tokens !== value.prompt_tokens + value.completion_tokens
-    || (value.prompt_tokens_details?.cached_tokens ?? 0) > value.prompt_tokens) {
-    ctx.addIssue({ code: "custom", message: "Inconsistent token usage" });
-  }
-});
+function openAiUsageSchema(Tokens: z.ZodNumber) {
+  return z.object({
+    prompt_tokens: Tokens, completion_tokens: Tokens, total_tokens: Tokens,
+    prompt_tokens_details: z.object({ cached_tokens: Tokens.optional() }).optional(),
+  }).superRefine((value, ctx) => {
+    if (value.total_tokens !== value.prompt_tokens + value.completion_tokens
+      || (value.prompt_tokens_details?.cached_tokens ?? 0) > value.prompt_tokens) {
+      ctx.addIssue({ code: "custom", message: "Inconsistent token usage" });
+    }
+  });
+}
+const Usage = openAiUsageSchema(Tokens);
+export const ProbeOpenAiUsage = openAiUsageSchema(z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER));
+export function normalizeOpenAiUsage(usage: z.infer<typeof Usage>): FundedTokenUsage {
+  const cached = usage.prompt_tokens_details?.cached_tokens ?? 0;
+  return { inputTokens: usage.prompt_tokens - cached, outputTokens: usage.completion_tokens, cacheReadTokens: cached,
+    cacheWrite5mTokens: 0, cacheWrite1hTokens: 0 };
+}
 const Event = z.object({
   id: z.string().min(1).max(256), model: z.string(),
   choices: z.array(z.object({ index: z.literal(0), finish_reason: z.string().nullable().optional() })).max(1),
@@ -40,10 +49,7 @@ export function createFundedOpenAiUsageTracker(options: {
     responseId = event.id;
     if (event.choices.some((choice) => choice.finish_reason != null)) sawFinish = true;
     if (event.usage) {
-      const cached = event.usage.prompt_tokens_details?.cached_tokens ?? 0;
-      const next = { inputTokens: event.usage.prompt_tokens - cached,
-        outputTokens: event.usage.completion_tokens, cacheReadTokens: cached,
-        cacheWrite5mTokens: 0, cacheWrite1hTokens: 0 };
+      const next = normalizeOpenAiUsage(event.usage);
       // Duplicate final usage events are harmless; differing totals are not.
       if (usage !== null && JSON.stringify(usage) !== JSON.stringify(next)) invalid = true;
       usage = next;

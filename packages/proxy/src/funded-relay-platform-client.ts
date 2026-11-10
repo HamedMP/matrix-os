@@ -1,3 +1,6 @@
+import { operatorProbeRpc, assertOperatorReply, BoundOperatorGrant, BoundOperatorReceipt,
+  type OperatorProbeBeginInput, type OperatorProbeFinalizeInput } from "@matrix-os/contracts/funded-operator-probe";
+
 import {
   FundedAiAuthorizationResponseSchema,
   FundedAiTerminalOutcomeResponseSchema, type FundedAiTerminalOutcomeRequest, type FundedAiTerminalOutcomeResponse,
@@ -152,5 +155,15 @@ export function createFundedPlatformClient(options: Pick<
     release: (input, signal) => call("release", input, FundedAiReleaseResponseSchema, signal),
     terminal: (input, signal) => call("terminal", input, FundedAiTerminalOutcomeResponseSchema, signal),
     finalize: (input, signal) => call("finalize", input, FundedAiFinalizationResponseSchema, signal),
+  };
+}
+
+export function createOperatorProbeControlClient(config: FundedRelayConfig, fetchFn: typeof fetch) {
+  const rpc = operatorProbeRpc(config.platformBaseUrl, '/internal/ai/funded/operator-probe', config.relayControlToken, fetchFn);
+  return {
+    begin: async (operation: OperatorProbeBeginInput, walletBinding: string) =>
+      assertOperatorReply(await rpc('begin', { walletBinding, operation }, BoundOperatorGrant), walletBinding),
+    finalize: async (operation: OperatorProbeFinalizeInput, walletBinding: string) =>
+      assertOperatorReply(await rpc('finalize', { walletBinding, operation }, BoundOperatorReceipt), walletBinding),
   };
 }

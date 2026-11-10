@@ -45,6 +45,14 @@ const WORKERS_PRICING: FundedPricing[] = Object.entries(WORKERS_AI_PRICE_SNAPSHO
 }));
 const ALL_PRICING = [CURRENT_PRICING, ...WORKERS_PRICING];
 
+export function fundedProbeRates(canonicalModelId: string) {
+  const pricing = ALL_PRICING.find(item => item.canonicalModelId === canonicalModelId);
+  if (!pricing) throw new Error("Unsupported probe model");
+  const { inputRateThousandths, outputRateThousandths, cacheReadRateThousandths,
+    cacheWrite5mRateThousandths, cacheWrite1hRateThousandths } = pricing;
+  return { inputRateThousandths, outputRateThousandths, cacheReadRateThousandths, cacheWrite5mRateThousandths, cacheWrite1hRateThousandths };
+}
+
 /** Readiness and admission resolve the same model-specific review. */
 export function fundedModelPriceValidThrough(modelId: string, reviews: FundedPricingReviews = []): string | undefined {
   const pricing = ALL_PRICING.find((item) => item.canonicalModelId === modelId);
