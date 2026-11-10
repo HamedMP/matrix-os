@@ -30,7 +30,6 @@ import { SecuritySection } from "./settings/sections/SecuritySection";
 import { PluginsSection } from "./settings/sections/PluginsSection";
 import { SystemSection } from "./settings/sections/SystemSection";
 import { AiUsageSection } from "./settings/sections/AiUsageSection";
-import "@matrix-os/ui/ai-usage.css";
 import { ChatImportSection } from "./settings/sections/ChatImportSection";
 import { BillingSection } from "./settings/sections/BillingSection";
 import type { ComputerSetupSelection } from "./settings/sections/BillingPanel";
