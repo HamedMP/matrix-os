@@ -16,6 +16,11 @@ Hetzner [lists `hel1` in `eu-central` with shared AMD cloud servers](https://doc
 - Checkout accepts `region_hel1`; the resulting placement resolves to `hel1` and the EU machine shape for each plan.
 - Prebilling and customer VPS request validation accept `hel1`; unknown locations remain rejected.
 
+## Deliverables
+
+- This repository: shared catalog, checkout and provisioning validation, and the Web and Electron Desktop location pickers.
+- Public docs (owned outside this repository): add Helsinki, Finland to the hosted server location list in the `FinnaAI/matrix-os-site` docs under `content/docs/`, as a separate docs PR. Owner: site docs maintainer. Follow-up issue: _to be linked by the owner_. Ship the docs PR together with the platform/app-shell deploy that publishes Helsinki, so the public location list matches onboarding.
+
 ## Risk and scope
 
-The shared catalog is the source of truth for published regions. This change extends existing route schemas and provisioning validation; it adds no endpoint or persistence. Existing authentication, rate limits, and generic error handling continue to apply. Provider capacity is checked during provisioning, so checkout can still fail if a type is temporarily unavailable in Helsinki.
+The shared catalog is the source of truth for published regions. This change extends existing route schemas and provisioning validation; it adds no endpoint or persistence. Existing authentication, rate limits, and generic error handling continue to apply. Provider capacity is checked during provisioning, so checkout can still fail if a type is temporarily unavailable in Helsinki. A `MATRIX_RUNTIME_CATALOG_JSON` override replaces the default catalog; if it lists only region-specific profiles, it must add `region_hel1` entries (or region-less fallbacks), otherwise Helsinki is filtered out of allowed selections.
