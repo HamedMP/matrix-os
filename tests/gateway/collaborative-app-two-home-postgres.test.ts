@@ -141,6 +141,23 @@ describe("collaborative app owner/member common Postgres data", () => {
       .toEqual([{ id: "winner" }]);
   });
 
+  it("lets the owner stop sharing after a member changes app data", async () => {
+    const before = await shares.getActiveByCatalog({ ownerId, catalogId });
+    const member = await authority.authorize({ scopeId, actorId: memberId, action: "mutate_resource" });
+    await expect(adapter.mutate(member, appId, {
+      clientRequestId: randomUUID(), expectedRevision: 0,
+      action: { action: "insert", app: appId, table: "tasks", data: { id: "task-21", title: "Shared task" } },
+    })).resolves.toMatchObject({ revision: 1 });
+    expect(await shares.getActiveByCatalog({ ownerId, catalogId })).toMatchObject({
+      revision: before!.revision, dataRevision: 1,
+    });
+    await expect(shares.stopAtomic({
+      scopeId, ownerId, expectedScopeRevision: 1, expectedBindingRevision: before!.revision,
+      clientRequestId: randomUUID(), payloadHash: "a".repeat(64),
+    })).resolves.toMatchObject({ didStop: true, binding: { state: "stopped" } });
+    await expect(authority.authorize({ scopeId, actorId: memberId, action: "read" })).rejects.toThrow();
+  });
+
   it("does not wait on a readiness row lock after taking the live scope lock", async () => {
     let releaseReadiness!: () => void;
     let readinessLocked!: () => void;

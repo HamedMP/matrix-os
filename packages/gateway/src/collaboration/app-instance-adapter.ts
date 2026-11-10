@@ -302,7 +302,6 @@ export function createAppInstanceAdapter(options: {
         if (changed && binding) {
           const updated = await trx.updateTable("collaboration_app_bindings").set({
             data_revision: currentRevision + 1,
-            revision: Number(binding.revision) + 1,
             updated_at: now(),
           }).where("scope_id", "=", current.scopeId)
             .where("revision", "=", Number(binding.revision))
