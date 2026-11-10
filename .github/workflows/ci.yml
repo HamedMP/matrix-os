@@ -255,12 +255,12 @@ jobs:
             ./scripts/review/check-patterns.sh --diff origin/${{ github.base_ref }}
           elif [ "${{ github.event_name }}" = "push" ] && [ "${{ github.ref }}" = "refs/heads/main" ]; then
             BEFORE="$COVERAGE_BASE_SHA"
-            if [ -z "$BEFORE" ]; then
+            if [ "$COVERAGE_BOOTSTRAP" = "true" ]; then
+              # First push or unreachable previous commit: scan the whole tree.
+              ./scripts/review/check-patterns.sh
+            elif [ -z "$BEFORE" ]; then
               echo "Main CI coverage base is missing" >&2
               exit 1
-            fi
-            if [ "$COVERAGE_BOOTSTRAP" = "true" ]; then
-              ./scripts/review/check-patterns.sh
             else
               ./scripts/review/check-patterns.sh --diff "$BEFORE"
             fi

@@ -98,6 +98,30 @@ describe('change detector checkout', () => {
     expect(missing).toContain(`?${f.historicalBlob}`); expect(missing).toContain(`?${f.unrelatedBlob}`);
   });
 
+  it('scans the whole tree when a main push has no reachable previous commit', () => {
+    const f = fixture(), checkoutResult = execute(f);
+    expect(checkoutResult.status, checkoutResult.stderr).toBe(0);
+    const output = join(f.root, 'github-output'); writeFileSync(output, '');
+    const classified = spawnSync('bash', ['-c', sourceChangeScript], {
+      cwd: f.target, encoding: 'utf8', timeout: 10_000,
+      env: { ...process.env, GITHUB_EVENT_NAME: 'push', GITHUB_REF: 'refs/heads/main',
+        GITHUB_SHA: f.sha, GITHUB_OUTPUT: output, MAIN_BEFORE: '0'.repeat(40) },
+    });
+    expect(classified.status, classified.stderr).toBe(0);
+    const outputs = Object.fromEntries(readFileSync(output, 'utf8').trim().split('\n').map(line => line.split('=')));
+    expect(outputs).toMatchObject({ bootstrap: 'true', should_run: 'true' });
+    const scan = workflow.jobs.patterns.steps.find((step: { name?: string }) => step.name === 'Run CLAUDE.md pattern scanner on changed files');
+    const work = join(f.root, 'scan'), calls = join(f.root, 'scanner-calls');
+    mkdirSync(join(work, 'scripts/review'), { recursive: true });
+    writeFileSync(join(work, 'scripts/review/check-patterns.sh'), `#!/bin/sh\necho "args:$*" >> ${JSON.stringify(calls)}\n`);
+    chmodSync(join(work, 'scripts/review/check-patterns.sh'), 0o755);
+    const run = scan.run.replaceAll('${{ github.event_name }}', 'push').replaceAll('${{ github.ref }}', 'refs/heads/main');
+    const result = spawnSync('bash', ['-c', run], { cwd: work, encoding: 'utf8', timeout: 10_000,
+      env: { ...process.env, COVERAGE_BASE_SHA: outputs.base_sha ?? '', COVERAGE_BOOTSTRAP: outputs.bootstrap } });
+    expect(result.status, result.stderr).toBe(0);
+    expect(readFileSync(calls, 'utf8')).toBe('args:\n');
+  });
+
   it('keeps the complete fetch and materialization attempt bounded within the job budget', () => {
     const seconds = Number(checkout.env.CHECKOUT_TIMEOUT_SECONDS), attempts = Number(checkout.env.CHECKOUT_MAX_ATTEMPTS);
     expect(seconds).toBeGreaterThanOrEqual(120); expect(seconds).toBeLessThanOrEqual(180);
