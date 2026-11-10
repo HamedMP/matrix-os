@@ -39,7 +39,7 @@ single point of failure.
    slots are idle. Otherwise they run on `ubuntu-latest`. Manual dispatches
    stay hosted because an exact-source refresh can check out a fork PR. E2E,
    type check, builds and Docker-service lanes always stay hosted, so one run
-   never needs more slots than the pool has. Pool shards use 6 Vitest workers
+   never needs more slots than the pool has. Pool shards use 4 Vitest workers
    on 8 CPUs.
 4. **Forks never reach the host.** Routing sends fork PRs to hosted runners,
    but a fork PR can edit `ci.yml`, so the runner image enforces it: a
