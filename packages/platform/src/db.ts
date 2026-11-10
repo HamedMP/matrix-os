@@ -3,6 +3,7 @@ import {
   Kysely,
   PostgresDialect,
   sql,
+  type ColumnType,
   type Generated,
   type Insertable,
   type InsertObject,
@@ -100,6 +101,12 @@ export interface UserMachinesTable {
   activation_state: Generated<string>;
   prebilling_intent_id: Generated<string | null>;
   activation_authorized_at: Generated<string | null>;
+  substrate: Generated<string>;
+  generation: Generated<number>;
+  substrate_ref: Generated<string | null>;
+  private_address: Generated<string | null>;
+  last_activity_at: ColumnType<Date | null, Date | string | null | undefined, Date | string | null>;
+  started_at: ColumnType<Date | null, Date | string | null | undefined, Date | string | null>;
 }
 
 export interface AiFundedGlobalPolicyTable {
