@@ -1,6 +1,8 @@
 "use client";
 import React, { useMemo, useState } from "react";
 import {
+  mergeUsageEvents,
+  reconcileUsageEvents,
   summarizeUsage,
   usageDay,
   type UsageAgent,
@@ -53,6 +55,12 @@ export function AiUsagePanel({
         agent: agent || undefined,
       }),
     [events, zone, endDay, days, agent, report],
+  );
+  // Counters the summary leaves out are counted here, from the events on screen, and nowhere else:
+  // a scan, an export file and a re-import of either all show the same number.
+  const unplaced = useMemo(
+    () => reconcileUsageEvents(mergeUsageEvents(events).events).dropped,
+    [events],
   );
   const summary = report?.summary ?? computed;
   const hasUsage = summary.requests > 0;
@@ -133,7 +141,7 @@ export function AiUsagePanel({
         sources={sources}
         eventCount={events.length}
         requests={summary.requests}
-        issues={issues}
+        issues={issues + unplaced}
         initialSourceLabel={initialSourceLabel}
         zone={zone}
         timeZone={timeZone}

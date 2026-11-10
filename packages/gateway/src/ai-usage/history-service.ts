@@ -52,41 +52,63 @@ export async function readUsageHistory(
   };
   });
 }
-/** One report per timezone at a time: simultaneous readers share a build, and a finished build is reused briefly.
- * Each build scans the whole index, so repeated Settings opens must not repeat it. */
+/** Each build scans the whole index, so only one runs at a time, whichever timezone asked.
+ * Readers of the same timezone share an unfinished build; a finished one is reused briefly.
+ * Waiting builds are capped: a caller beyond the cap is refused rather than queued without limit. */
 export function createReportCache<T>(
   build: (timeZone: string) => Promise<T>,
-  options: { ttlMs: number; max?: number; now?: () => number },
+  options: { ttlMs: number; max?: number; maxWaiting?: number; now?: () => number },
 ) {
   const now = options.now ?? Date.now,
-    max = options.max ?? 4;
-  // Capped at `max` timezones, oldest evicted first; cleared whenever indexing changes the data.
-  const entries = new Map<string, { value: Promise<T>; at: number | null }>();
+    max = options.max ?? 4,
+    maxWaiting = options.maxWaiting ?? 8;
+  // Finished reports: at most `max` timezones, oldest evicted first, cleared when indexing changes the data.
+  const finished = new Map<string, { value: T; at: number }>();
+  // Unfinished builds: entries leave when they settle; `waiting` caps how many may exist.
+  const building = new Map<string, Promise<T>>();
+  let waiting = 0,
+    generation = 0,
+    tail: Promise<unknown> = Promise.resolve();
   return {
     read(timeZone: string): Promise<T> {
-      const cached = entries.get(timeZone);
-      if (cached && (cached.at === null || now() - cached.at < options.ttlMs))
-        return cached.value;
-      entries.delete(timeZone);
-      while (entries.size >= max)
-        entries.delete(entries.keys().next().value as string);
-      const entry: { value: Promise<T>; at: number | null } = {
-        value: build(timeZone),
-        at: null,
-      };
-      entries.set(timeZone, entry);
-      entry.value.then(
-        () => {
-          entry.at = now();
-        },
-        () => {
-          if (entries.get(timeZone) === entry) entries.delete(timeZone);
-        },
+      const cached = finished.get(timeZone);
+      if (cached && now() - cached.at < options.ttlMs)
+        return Promise.resolve(cached.value);
+      const shared = building.get(timeZone);
+      if (shared) return shared;
+      if (waiting >= maxWaiting)
+        return Promise.reject(new Error("Usage report queue is full"));
+      waiting++;
+      const started = generation;
+      const run = tail.then(() => build(timeZone));
+      tail = run.then(
+        () => undefined,
+        () => undefined, // The caller receives the failure; the queue only needs to move on.
       );
-      return entry.value;
+      const report = run
+        .then((value) => {
+          // A build that started before new indexing finished must not be kept as current.
+          if (started === generation) {
+            finished.delete(timeZone);
+            while (finished.size >= max)
+              finished.delete(finished.keys().next().value as string);
+            finished.set(timeZone, { value, at: now() });
+          }
+          return value;
+        })
+        .finally(() => {
+          waiting--;
+          if (building.get(timeZone) === report) building.delete(timeZone);
+        });
+      building.set(timeZone, report);
+      return report;
     },
-    invalidate: () => entries.clear(),
-    size: () => entries.size,
+    invalidate() {
+      generation++;
+      finished.clear();
+      building.clear(); // Later readers start a fresh build, still behind the running one.
+    },
+    size: () => finished.size,
   };
 }
 /** Gateway lifecycle owns the timer/abort; injected owner pool remains open until its existing shutdown. */

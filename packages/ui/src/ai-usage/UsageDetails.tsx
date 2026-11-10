@@ -59,7 +59,7 @@ export function HistoryCoverage({ history }: { history: UsageHistory }) {
                   ? "Older sessions are still being indexed."
                   : backup
                     ? `${formatBytes(backup.verifiedBytes)} · ${date(backup.verifiedAt)}`
-                    : "Read from this computer's agent folders. No separate backup is configured."}
+                    : "This view does not report backup verification."}
               </small>
             </span>
           </span>
@@ -139,7 +139,7 @@ function CoverageMetadata({ history }: { history: UsageHistory }) {
           <dd>
             {backup
               ? `${number(backup.verifiedFiles)} files verified on Matrix · ${formatBytes(backup.verifiedBytes)}`
-              : "Not configured"}
+              : "Not reported in this view"}
           </dd>
         </div>
         <div>

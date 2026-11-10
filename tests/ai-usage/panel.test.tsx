@@ -109,3 +109,22 @@ it("reports counters it had to leave out of a selected file as incomplete, not a
   await waitFor(() => expect(screen.getByTestId("token-total").textContent).toBe("1,050"));
   expect(screen.getByText(/1 incomplete, conflicting or unsupported records/)).toBeTruthy();
 });
+
+it("counts one unplaced counter once whether it arrives from a scan, an export file or both", async () => {
+  const cumulative = { input: 1000, cached: 200, output: 50 };
+  const raw = [
+    { id: "codex-response:r1", session: "thread", agent: "codex" as const, model: "gpt-5.5", timestamp: "2026-11-09T12:00:01Z", input: 800, cachedInput: 200, cacheWrite: 0, output: 50, sourceKind: "response" as const },
+    { id: "codex:thread:1000:200:50", session: "thread", agent: "codex" as const, model: "gpt-5.5", timestamp: "2026-11-09T12:00:02Z", input: 800, cachedInput: 200, cacheWrite: 0, output: 50, sourceKind: "cumulative" as const, cumulative },
+  ];
+  const view = render(<AiUsagePanel initialEvents={raw} now={new Date("2026-11-09T13:00:00Z")} timeZone="UTC" />);
+  expect(screen.getByTestId("token-total").textContent).toBe("1,050");
+  expect(screen.getByText(/· 1 incomplete, conflicting or unsupported records/)).toBeTruthy();
+  view.unmount();
+  render(<AiUsagePanel now={new Date("2026-11-09T13:00:00Z")} timeZone="UTC" />);
+  const exported = JSON.stringify({ version: 1, events: raw, issues: 0 });
+  fireEvent.change(screen.getByLabelText("Choose usage files"), {
+    target: { files: [Object.assign(new File([exported], "usage.json"), { text: async () => exported })] },
+  });
+  await waitFor(() => expect(screen.getByTestId("token-total").textContent).toBe("1,050"));
+  expect(screen.getByText(/· 1 incomplete, conflicting or unsupported records/)).toBeTruthy();
+});

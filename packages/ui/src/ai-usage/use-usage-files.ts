@@ -2,7 +2,6 @@
 import { useEffect, useRef, useState } from "react";
 import {
   mergeUsageEvents,
-  reconcileUsageEvents,
   type UsageEvent,
 } from "@matrix-os/contracts/ai-usage";
 import { readUsageFiles } from "./read-files";
@@ -30,15 +29,7 @@ export function useUsageFiles(
       controller.signal.throwIfAborted();
       const merged = mergeUsageEvents([...events, ...result.events]);
       setEvents(merged.events);
-      // Counters the summary cannot place are left out of totals; show them as incomplete, counted once.
-      const unplaced = Math.max(
-        0,
-        reconcileUsageEvents(merged.events).dropped -
-          reconcileUsageEvents(events).dropped,
-      );
-      setIssues(
-        (value) => value + result.issues + merged.conflicts + unplaced,
-      );
+      setIssues((value) => value + result.issues + merged.conflicts);
       setSources((value) => value + files.length);
     } catch (cause: unknown) {
       if (!controller.signal.aborted) {
