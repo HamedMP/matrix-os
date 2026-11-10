@@ -1,5 +1,5 @@
 import { request as unixRequest, type IncomingMessage, type OutgoingHttpHeaders } from "node:http";
-import { Readable } from "node:stream";
+import { PassThrough, Readable } from "node:stream";
 import type { createNodeWebSocket } from "@hono/node-ws";
 import { Hono, type Context } from "hono";
 import { bodyLimit } from "hono/body-limit";
@@ -37,6 +37,8 @@ const BODY_LIMIT = 8 * 1024 * 1024;
 const MAX_ACTIVE_REQUESTS = 24;
 const IDLE_MS = 120_000;
 const START_MS = 12_000;
+// The currently deployed shared Platform has a 30s whole-response budget on this route.
+const PREVIEW_EVENTS_WINDOW_MS = 24_000;
 
 function isSessionCookie(pair: string): boolean {
   const separator = pair.indexOf("=");
@@ -132,14 +134,44 @@ function requestUnix(socketPath: string, path: string, options: {
   });
 }
 
-function openResponse(reply: IncomingMessage, method: string): Response {
+function boundEventsWindow(reply: IncomingMessage, remainingMs: number): Readable {
+  const body = new PassThrough();
+  let windowEnded = false;
+  const timer = setTimeout(() => {
+    // End the downstream response cleanly before destroying the now-unused upstream request.
+    // The OSS EventSource reconnects with its last delivered cursor.
+    windowEnded = true;
+    reply.unpipe(body);
+    body.end();
+    reply.destroy();
+  }, Math.max(0, remainingMs));
+  timer.unref();
+  body.once("close", () => {
+    clearTimeout(timer);
+    reply.destroy();
+  });
+  reply.once("error", (error) => {
+    if (!windowEnded) body.destroy(error);
+  });
+  return reply.pipe(body);
+}
+
+function openResponse(reply: IncomingMessage, method: string, remainingEventsMs: number | null): Response {
   const status = reply.statusCode ?? 502;
   const headers = responseHeaders(reply);
+  const liveEvents = remainingEventsMs !== null && status === 200
+    && /^text\/event-stream(?:;|$)/i.test(headers.get("content-type") ?? "");
+  if (liveEvents) {
+    // VPS nginx honors this response control header. Without it, hello and ping frames buffer behind /api/.
+    headers.set("x-accel-buffering", "no");
+    headers.set("cache-control", "no-store, no-transform");
+    headers.delete("content-length");
+  }
   if (method === "HEAD" || status === 204 || status === 304 || status === 205) {
     reply.resume();
     return new Response(null, { status, headers });
   }
-  const body = Readable.toWeb(reply) as ReadableStream<Uint8Array>;
+  const body = Readable.toWeb(liveEvents ? boundEventsWindow(reply, remainingEventsMs) : reply) as ReadableStream<Uint8Array>;
   return new Response(body, { status, headers });
 }
 
@@ -148,6 +180,7 @@ export function createOpenMausBotGateway(options: {
   admitted: boolean;
   isOwner: (c: Context) => boolean;
   upgradeWebSocket?: ReturnType<typeof createNodeWebSocket>["upgradeWebSocket"];
+  eventsWindowMs?: number;
 }) {
   const app = new Hono();
   const active = new Set<AbortController>();
@@ -223,13 +256,21 @@ export function createOpenMausBotGateway(options: {
     active.add(lifetime);
     try {
       const headers = toOpenMausBotRequestHeaders(c.req.raw.headers);
+      const events = method === "GET" && path.split("?")[0] === "/api/events";
+      const eventsDeadline = events ? Date.now() + (options.eventsWindowMs ?? PREVIEW_EVENTS_WINDOW_MS) : null;
+      if (events) {
+        // A deliberately short SSE window cannot safely truncate an encoded body.
+        headers["accept-encoding"] = "identity";
+        const cursor = c.req.header("last-event-id");
+        if (cursor && /^[a-zA-Z0-9_-]{1,128}:\d{1,16}$/u.test(cursor)) headers["last-event-id"] = cursor;
+      }
       const body = c.req.raw.body ? new Uint8Array(await c.req.arrayBuffer()) : undefined;
       if (body) headers["content-length"] = body.byteLength;
       const reply = await requestUnix(options.socketPath, path, {
         method, headers, body, signal: AbortSignal.any([c.req.raw.signal, lifetime.signal]),
       });
       reply.once("close", () => active.delete(lifetime));
-      return openResponse(reply, method);
+      return openResponse(reply, method, eventsDeadline === null ? null : eventsDeadline - Date.now());
     } catch (error) {
       active.delete(lifetime);
       lifetime.abort();

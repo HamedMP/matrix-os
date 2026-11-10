@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { fetchRuntimeProxy } from "../../packages/platform/src/session-routing-middleware.js";
+import { fetchRuntimeProxy, shouldReleaseRuntimeProxyTimeout } from "../../packages/platform/src/runtime-proxy-fetch.js";
 
 describe("runtime proxy response streaming", () => {
   it.each([
@@ -19,6 +19,14 @@ describe("runtime proxy response streaming", () => {
   afterEach(() => {
     vi.useRealTimers();
     vi.restoreAllMocks();
+  });
+
+  it("releases the whole-body timeout only for the exact hosted Bots events GET", () => {
+    const eventsPath = "/api/hosted-bots/runtime/api/events";
+    expect(shouldReleaseRuntimeProxyTimeout("GET", eventsPath)).toBe(true);
+    expect(shouldReleaseRuntimeProxyTimeout("POST", eventsPath)).toBe(false);
+    expect(shouldReleaseRuntimeProxyTimeout("GET", eventsPath + "/anything")).toBe(false);
+    expect(shouldReleaseRuntimeProxyTimeout("GET", "/api/hosted-bots/runtime/api/bots")).toBe(false);
   });
 
   it("clears the upstream timeout after media response headers arrive", async () => {

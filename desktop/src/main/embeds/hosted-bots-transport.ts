@@ -204,13 +204,17 @@ export function createHostedBotsProtocolHandler(identity: HostedBotsIdentity, de
       if (cookie) headers.set("x-matrix-hosted-bots-session", cookie);
 
       const target = new URL(gatewayProxyBase(identity).href + url.pathname + url.search);
-      const timeout = AbortSignal.timeout(headers.get("accept")?.includes("text/event-stream") ? 120_000 : 30_000);
+      const events = request.method === "GET" && url.pathname === "/api/events";
+      const headerBudget = events ? new AbortController() : null;
+      const timer = headerBudget ? setTimeout(() => headerBudget.abort(), 120_000) : undefined;
+      const timeout = headerBudget?.signal ?? AbortSignal.timeout(headers.get("accept")?.includes("text/event-stream") ? 120_000 : 30_000);
       const signal = AbortSignal.any(deps.disposeSignal ? [request.signal, timeout, deps.disposeSignal] : [request.signal, timeout]);
       const init: RequestInit & { duplex?: "half" } = {
         method: request.method, headers, redirect: "manual", signal,
         ...(request.body ? { body: request.body, duplex: "half" } : {}),
       };
-      const response = await fetcher(target, init);
+      // The OSS heartbeat and caller/disposal signals govern a live stream after headers.
+      const response = await fetcher(target, init).finally(() => clearTimeout(timer));
       if (!isCurrent()) {
         await response.body?.cancel();
         return new Response(null, { status: 403 });

@@ -95,6 +95,62 @@ describe("hosted Bots Electron transport", () => {
     ]) expect(hostedBotsProviderLoginAllowed(url)).toBe(false);
   });
 
+  it("leaves a healthy live-events response open past the header deadline and still aborts on disconnect", async () => {
+    vi.useFakeTimers();
+    const timeout = vi.spyOn(AbortSignal, "timeout").mockImplementation((ms) => {
+      const deadline = new AbortController();
+      setTimeout(() => deadline.abort(), ms);
+      return deadline.signal;
+    });
+    try {
+      const { handler, fetcher } = setup();
+      const caller = new AbortController();
+      let requestSignal: AbortSignal | null | undefined;
+      let stream: ReadableStreamDefaultController<Uint8Array> | undefined;
+      fetcher.mockImplementation(async (_target, init) => {
+        requestSignal = init?.signal;
+        return new Response(new ReadableStream({ start(controller) { stream = controller; } }), {
+          headers: { "content-type": "text/event-stream" },
+        });
+      });
+      const response = await handler(new Request(HOSTED_BOTS_ORIGIN + "/api/events?since=old:9", {
+        signal: caller.signal, headers: { accept: "text/event-stream", "last-event-id": "old:12" },
+      }));
+      await vi.advanceTimersByTimeAsync(121_000);
+      expect(requestSignal?.aborted).toBe(false);
+      expect(new Headers(fetcher.mock.calls[0]?.[1]?.headers).get("last-event-id")).toBe("old:12");
+      stream?.enqueue(new TextEncoder().encode("data: ping\n\n"));
+      stream?.close();
+      expect(await response.text()).toBe("data: ping\n\n");
+      caller.abort();
+      expect(requestSignal?.aborted).toBe(true);
+    } finally {
+      timeout.mockRestore();
+      vi.useRealTimers();
+    }
+  });
+
+  it("aborts a live-events request whose headers never arrive", async () => {
+    vi.useFakeTimers();
+    const timeout = vi.spyOn(AbortSignal, "timeout").mockImplementation((ms) => {
+      const deadline = new AbortController();
+      setTimeout(() => deadline.abort(), ms);
+      return deadline.signal;
+    });
+    try {
+      const { handler, fetcher } = setup();
+      fetcher.mockImplementation(async (_target, init) => new Promise((_, reject) => {
+        init?.signal?.addEventListener("abort", () => reject(init.signal?.reason), { once: true });
+      }));
+      const response = handler(new Request(HOSTED_BOTS_ORIGIN + "/api/events"));
+      await vi.advanceTimersByTimeAsync(121_000);
+      expect((await response).status).toBe(502);
+    } finally {
+      timeout.mockRestore();
+      vi.useRealTimers();
+    }
+  });
+
   it("denies unexpected origins and invalidates all requests after an owner change", async () => {
     const { handler, changeScope, fetcher } = setup();
     expect((await handler(new Request("https://outside.test/"))).status).toBe(403);

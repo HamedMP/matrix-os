@@ -28,8 +28,15 @@ describe("OpenMausBot gateway transport", () => {
         res.end('{"app":"openmausbot"}');
         return;
       }
+      if (req.url === "/api/events?since=boot-id:1") {
+        res.writeHead(200, { "content-type": "text/event-stream", "x-accel-buffering": "no" });
+        const frame = req.headers["last-event-id"] === "boot-id:2" ? "approval" : "hello";
+        res.write("id: boot-id:2\ndata: " + frame + "\n\n");
+        return;
+      }
       if (req.url === "/api/events?ticket=example") {
         res.setHeader("content-type", "text/event-stream");
+        res.setHeader("x-accel-buffering", "no");
         res.end("data: {\"kind\":\"message\"}\n\n");
         return;
       }
@@ -48,8 +55,8 @@ describe("OpenMausBot gateway transport", () => {
     await rm(directory, { recursive: true, force: true });
   });
 
-  function mount(admitted = true, owner = true) {
-    const gateway = createOpenMausBotGateway({ socketPath, admitted, isOwner: () => owner });
+  function mount(admitted = true, owner = true, eventsWindowMs?: number) {
+    const gateway = createOpenMausBotGateway({ socketPath, admitted, isOwner: () => owner, eventsWindowMs });
     const app = new Hono();
     app.route(OPENMAUSBOT_PROXY_BASE, gateway.routes);
     return { app, gateway };
@@ -105,6 +112,23 @@ describe("OpenMausBot gateway transport", () => {
     expect(response.headers.get("x-matrix-hosted-bots-set-session")).toBe("omb_session_8799_abc123=omb_sess_fake; Path=/; HttpOnly; Secure; SameSite=Lax");
   });
 
+  it("closes a sparse SSE window cleanly before the Platform deadline and relays the reconnect cursor", async () => {
+    const { app } = mount(true, true, 200);
+    const path = OPENMAUSBOT_PROXY_BASE + "/api/events?since=boot-id:1";
+    const first = await app.request(path, { headers: proxyHeaders, signal: AbortSignal.timeout(1_500) });
+    expect(first.headers.get("x-accel-buffering")).toBe("no");
+    const reader = first.body!.getReader();
+    const frame = await reader.read();
+    expect(frame.done).toBe(false);
+    expect(new TextDecoder().decode(frame.value)).toBe("id: boot-id:2\ndata: hello\n\n");
+    expect((await reader.read()).done).toBe(true);
+    const resumed = await app.request(path, {
+      headers: { ...proxyHeaders, "last-event-id": "boot-id:2" }, signal: AbortSignal.timeout(1_500),
+    });
+    expect(await resumed.text()).toBe("id: boot-id:2\ndata: approval\n\n");
+    expect(received.map((request) => request.headers["last-event-id"])).toEqual([undefined, "boot-id:2"]);
+  });
+
   it("passes the SSE stream but blocks direct document navigation and bootstrap or internal paths", async () => {
     const { app } = mount();
     expect((await app.request(OPENMAUSBOT_PROXY_BASE + "/assets/index.js")).status).toBe(403);
@@ -114,8 +138,13 @@ describe("OpenMausBot gateway transport", () => {
     expect((await app.request(OPENMAUSBOT_PROXY_BASE + "/api/sync/changes", { headers: proxyHeaders })).status).toBe(404);
     expect((await app.request(OPENMAUSBOT_PROXY_BASE + "/api/x/status", { headers: proxyHeaders, method: "POST" })).status).toBe(405);
     expect(received).toHaveLength(0);
-    const stream = await app.request(OPENMAUSBOT_PROXY_BASE + "/api/events?ticket=example", { headers: proxyHeaders });
+    const stream = await app.request(OPENMAUSBOT_PROXY_BASE + "/api/events?ticket=example", {
+      headers: { ...proxyHeaders, "last-event-id": "boot-id:12" },
+    });
     expect(stream.headers.get("content-type")).toBe("text/event-stream");
+    expect(stream.headers.get("x-accel-buffering")).toBe("no");
+    expect(stream.headers.get("cache-control")).toContain("no-transform");
+    expect(received[0]?.headers["last-event-id"]).toBe("boot-id:12");
     expect(await stream.text()).toContain('"kind":"message"');
   });
 });
