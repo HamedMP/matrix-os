@@ -147,6 +147,12 @@ describe("runner pool", () => {
     expect(install).toContain("com.docker.network.bridge.enable_icc=false matrix-ci-pool");
   });
 
+  it("ships no app identity, so the pool cannot silently reuse the CI gate app", () => {
+    const example = readFileSync(resolve(import.meta.dirname, "../../scripts/ci/runner-pool/pool.env.example"), "utf8");
+    expect(example).toMatch(/^APP_ID=$/m);
+    expect(example).toMatch(/^INSTALLATION_ID=$/m);
+  });
+
   it("pins the runner base image by digest", () => {
     expect(dockerfile).toMatch(/^FROM ghcr\.io\/actions\/actions-runner:[0-9.]+@sha256:[a-f0-9]{64}$/m);
   });

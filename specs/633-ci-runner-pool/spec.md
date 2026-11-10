@@ -80,10 +80,11 @@ for the contributor CI page once the pool carries `main`.
 - The GitHub App private key stays on the host as a root-only file. Containers
   receive only a single-use JIT configuration, which GitHub invalidates after
   one job.
-- App: the existing Matrix CI gate app, extended with repository
+- App: a dedicated GitHub App installed only on this repository, holding only
   Administration (write) to mint JIT runners and Variables (write) for the
-  heartbeat. The pool requests installation tokens limited to this
-  repository and those two permissions.
+  heartbeat. The CI gate app is not reused: its key is passed into CI jobs,
+  and it must not gain repository administration. The pool requests
+  installation tokens limited to this repository and those two permissions.
 - Slots cannot reach each other (`enable_icc=false`, no `NET_RAW`) and have
   IPv6 disabled.
 
