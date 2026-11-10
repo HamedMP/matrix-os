@@ -16,9 +16,11 @@ export type ContainerStatus =
   | 'provisioning' | 'stopped' | 'starting' | 'running' | 'quiescing'
   | 'failed_start' | 'needs_recovery' | 'migrating';
 
-export type ContainerFailureCode = 'start_timeout' | 'provider_unavailable' | 'busy';
+export type ContainerFailureCode = 'start_timeout' | 'provider_unavailable' | 'busy' | 'quiesce_timeout';
 
 export const CONTAINER_START_TIMEOUT_MS = 90_000;
+/** Quiesce (at most 15 min) plus final flush (3 x 120 s), from spec.md, with a minute of margin. */
+export const CONTAINER_QUIESCE_TIMEOUT_MS = 22 * 60_000;
 const START_RETRY_COOLDOWN_MS = 30_000;
 /** Replace rather than resume a unit this close to its provider lifetime. */
 const UNIT_EXPIRY_MARGIN_MS = 15 * 60_000;
@@ -54,6 +56,7 @@ interface MachineRow {
   runtime_token_epoch: number;
   substrate_ref: string | null;
   started_at: Date | null;
+  status_changed_at: Date | null;
   failure_code: string | null;
   failure_at: string | null;
 }
@@ -99,7 +102,7 @@ export function createContainerLifecycleService(deps: ContainerLifecycleDeps) {
   async function load(machineId: string): Promise<MachineRow | undefined> {
     return db.executor.selectFrom('user_machines')
       .select(['machine_id', 'clerk_user_id', 'handle', 'runtime_slot', 'status', 'generation',
-        'runtime_token_epoch', 'substrate_ref', 'started_at', 'failure_code', 'failure_at'])
+        'runtime_token_epoch', 'substrate_ref', 'started_at', 'status_changed_at', 'failure_code', 'failure_at'])
       .where('machine_id', '=', machineId)
       .where('substrate', '=', 'container')
       .where('deleted_at', 'is', null)
@@ -113,7 +116,7 @@ export function createContainerLifecycleService(deps: ContainerLifecycleDeps) {
     set: Updateable<UserMachinesTable>,
   ): Promise<boolean> {
     const updated = await db.executor.updateTable('user_machines')
-      .set(set)
+      .set(set.status === undefined ? set : { ...set, status_changed_at: now() })
       .where('machine_id', '=', machineId)
       .where('substrate', '=', 'container')
       .where('deleted_at', 'is', null)
@@ -130,10 +133,15 @@ export function createContainerLifecycleService(deps: ContainerLifecycleDeps) {
     });
   }
 
-  function reusable(unit: ContainerUnit | null): boolean {
-    if (!unit || !unit.expiresAt) return false;
-    if (unit.expiresAt.getTime() - now().getTime() <= UNIT_EXPIRY_MARGIN_MS) return false;
-    return unit.state === 'running' || unit.state === 'suspended' || unit.state === 'pending';
+  /**
+   * Only a suspended unit is resumed in place: it was running and registered
+   * when it was suspended. A unit the provider reports running or pending
+   * behind a stopped or failed row never proved a healthy gateway, so it is
+   * replaced.
+   */
+  function resumable(unit: ContainerUnit | null): boolean {
+    if (!unit || unit.state !== 'suspended' || !unit.expiresAt) return false;
+    return unit.expiresAt.getTime() - now().getTime() > UNIT_EXPIRY_MARGIN_MS;
   }
 
   async function terminateQuietly(unitId: string, reason: string): Promise<void> {
@@ -168,9 +176,8 @@ export function createContainerLifecycleService(deps: ContainerLifecycleDeps) {
     let generation = row.generation;
     try {
       const previous = row.substrate_ref ? await provider.describe(row.substrate_ref, callSignal()) : null;
-      if (previous && reusable(previous)) {
-        if (previous.state === 'pending') return;
-        if (previous.state === 'suspended') await provider.resume(previous.unitId, callSignal());
+      if (previous && resumable(previous)) {
+        await provider.resume(previous.unitId, callSignal());
         await transition(row.machine_id, ['starting'], generation, { status: 'running', failure_code: null, failure_at: null });
         return;
       }
@@ -228,8 +235,15 @@ export function createContainerLifecycleService(deps: ContainerLifecycleDeps) {
         return { state: 'failed', code: 'start_timeout' };
       }
       case 'provisioning':
-      case 'quiescing':
         return { state: 'starting' };
+      case 'quiescing': {
+        const since = row.status_changed_at?.getTime() ?? 0;
+        if (now().getTime() - since <= CONTAINER_QUIESCE_TIMEOUT_MS) return { state: 'starting' };
+        await transition(machineId, ['quiescing'], row.generation, {
+          status: 'needs_recovery', failure_code: 'quiesce_timeout', failure_at: now().toISOString(),
+        });
+        return { state: 'failed', code: 'needs_recovery' };
+      }
       case 'failed_start': {
         const failedAt = row.failure_at ? Date.parse(row.failure_at) : 0;
         if (now().getTime() - failedAt < START_RETRY_COOLDOWN_MS) return resultForFailure(row.failure_code);
@@ -305,6 +319,7 @@ export function createContainerLifecycleService(deps: ContainerLifecycleDeps) {
         substrate_ref: null,
         private_address: null,
         status: sql<string>`CASE WHEN status IN ('running', 'starting', 'quiescing') THEN 'stopped' ELSE status END`,
+        status_changed_at: now(),
       })
       .where('machine_id', '=', machineId)
       .where('substrate', '=', 'container')
@@ -314,8 +329,24 @@ export function createContainerLifecycleService(deps: ContainerLifecycleDeps) {
     return 'destroyed';
   }
 
+  /** The provider ended a running unit (lifetime or loss): the runtime is stopped and the next start runs fresh. */
+  async function markComputeLost(machineId: string, generation: number, unitId: string): Promise<boolean> {
+    const updated = await db.executor.updateTable('user_machines')
+      .set({ status: 'stopped', status_changed_at: now(), substrate_ref: null, private_address: null })
+      .where('machine_id', '=', machineId)
+      .where('substrate', '=', 'container')
+      .where('deleted_at', 'is', null)
+      .where('status', '=', 'running')
+      .where('generation', '=', generation)
+      .where('substrate_ref', '=', unitId)
+      .returning('machine_id')
+      .executeTakeFirst();
+    return Boolean(updated);
+  }
+
   return {
     ensureStarted,
+    markComputeLost,
     markRegistered,
     stop,
     destroyCompute,
