@@ -52,9 +52,9 @@ describe("unit shard runner selection", () => {
     expect(step.env.EVENT_NAME).toBe("${{ github.event_name }}");
     expect(step.env.HEAD_REPOSITORY).toBe("${{ github.event.pull_request.head.repo.full_name }}");
     expect(step.env.REPOSITORY).toBe("${{ github.repository }}");
-    // Six workers only where a slot's 8 dedicated CPUs back them.
+    // One worker per two CPUs; more starves the gateway build inside customer-vps-runtime-loader.
     const test = workflow.jobs.unit.steps.find((s: { run?: string }) => s.run?.includes("bun run test -- --shard="));
-    expect(test.env.MATRIX_TEST_WORKERS).toBe("${{ runner.environment == 'self-hosted' && '6' || '2' }}");
+    expect(test.env.MATRIX_TEST_WORKERS).toBe("${{ runner.environment == 'self-hosted' && '4' || '2' }}");
     expect(step.env.POOL_HEARTBEAT).toBe("${{ vars.MATRIX_CI_POOL_HEARTBEAT }}");
   });
 });

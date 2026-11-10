@@ -840,8 +840,9 @@ jobs:
       - run: GITHUB_SHA="$UNIT_SOURCE_SHA" bun run test -- --shard=${{ matrix.shard }}/4 --reporter=default --reporter=json --outputFile.json=output/ci/unit-${{ matrix.shard }}.json
         env:
           UNIT_SOURCE_SHA: ${{ needs.changes.outputs.source_sha || github.sha }}
-          # Pool slots have 8 dedicated CPUs; hosted runners keep Vitest's 2 workers on 4 vCPUs.
-          MATRIX_TEST_WORKERS: ${{ runner.environment == 'self-hosted' && '6' || '2' }}
+          # One worker per two CPUs on both: 4 on a pool slot's 8 CPUs, 2 on a hosted runner's 4 vCPUs.
+          # Six starved customer-vps-runtime-loader's gateway build past its 120s limit on the pool.
+          MATRIX_TEST_WORKERS: ${{ runner.environment == 'self-hosted' && '4' || '2' }}
         if: needs.changes.outputs.should_run == 'true'
 
       - name: Upload unit profiling
