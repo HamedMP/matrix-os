@@ -175,7 +175,7 @@ export default function OrganizationSection() {
   const actions = useDesktopOrganizationActions(organization?.organizationId ?? null, refresh);
 
   if (listing.state === "loading" || (organization && directory.state === "loading")) return <p role="status" className="text-sm" style={{ color: "var(--text-tertiary)" }}>Loading organization…</p>;
-  if (listing.state === "failed" || directory.state === "failed") return <p role="alert" className="text-sm" style={{ color: "var(--danger)" }}>Organization settings are unavailable. Try again.</p>;
+  if (listing.state === "failed" || directory.state === "failed") return <p role="alert" className="text-sm" style={{ color: "var(--danger-text)" }}>Organization settings are unavailable. Try again.</p>;
   if (!organization) return <><SettingsSectionHeader title="Organization" description="Select an organization to see its details and members." /><div className="rounded-xl border p-6 text-center" style={{ borderColor: "var(--border-subtle)", color: "var(--text-secondary)" }}>Select an organization from the title bar to manage it here.</div></>;
   const selectedMember = directory.members.find((member) => member.actorId === memberActionActorId) ?? null;
   const leave = async () => {
@@ -191,7 +191,7 @@ export default function OrganizationSection() {
   };
   return <>
     <div className="w-full">
-      {actions.error ? <div role="alert" className="mb-4 rounded-lg border px-3 py-2 text-sm" style={{ borderColor: "var(--danger)", color: "var(--danger)" }}>{actions.error}</div> : null}
+      {actions.error ? <div role="alert" className="mb-4 rounded-lg border px-3 py-2 text-sm" style={{ borderColor: "var(--danger)", color: "var(--danger-text)" }}>{actions.error}</div> : null}
       <OrganizationSectionView
         organization={organization}
         currentActorId={currentActorId}
