@@ -47,7 +47,8 @@ entitlement, client handling of sleeping runtimes, and a container-to-VPS migrat
    not a new migration engine.
 5. **Capabilities are declared by the runtime.** Clients do not branch on plan or
    substrate. Vocabulary follows spec 639's proposed capability states.
-6. **Provider is chosen by measurement** (Phase 0), behind the substrate interface.
+6. **Provider is AWS Lambda MicroVMs**, chosen by measurement (Phase 0, research.md R4),
+   behind the substrate interface. Cloud Run gen2 is the fallback.
 
 ## Phase 0: Spikes (throwaway code, findings recorded in `research.md`)
 
@@ -106,7 +107,12 @@ an S3-compatible store.
 
 ### Stack C: Container substrate and free plan (platform)
 
-- C1 Container substrate adapter for the provider chosen in S1.
+- C1 Container substrate adapter for AWS Lambda MicroVMs: run from image, suspend,
+  resume, terminate, and list, each with a timeout and typed error codes. A stopped
+  runtime is a suspended unit while one exists and a fresh run otherwise; a unit is
+  replaced before its 8 hour lifetime ends. The platform reaches the unit through its
+  per-unit endpoint with a short-lived token it mints and never hands to clients. The
+  gateway process starts after restore so that no two units share random state.
 - C2 Lifecycle service: create, wake on request, idle stop, replace, reconcile orphans;
   generation fencing; single-flight starts.
 - C3 Free entitlement and plan; invite gate; global capacity ceiling; busy responses.

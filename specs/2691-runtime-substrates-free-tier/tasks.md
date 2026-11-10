@@ -17,13 +17,13 @@ Stack letters refer to plan.md.
 
 ### Spikes (throwaway code, never merged; results in research.md)
 
-- [ ] T004 [P] S1 provider bake-off against the hard criteria in plan.md; record versions, dates, timings, and price in `specs/2691-runtime-substrates-free-tier/research.md`
-- [ ] T005 [P] S2 run managed Pi chat in the root `Dockerfile` image with a non-systemd `ScopeRuntimeLauncher`; record whether user namespaces are required
+- [x] T004 [P] S1 provider bake-off against the hard criteria in plan.md; record versions, dates, timings, and price in `specs/2691-runtime-substrates-free-tier/research.md`
+- [x] T005 [P] S2 run managed Pi chat in the root `Dockerfile` image with a non-systemd `ScopeRuntimeLauncher`; record whether user namespaces are required
 - [ ] T006 [P] S5 boot the gateway against a per-owner role on a shared Postgres with pool size 5, with and without a pooler; list any session-scoped advisory locks
 - [ ] T007 S3 build a Vite app from the sandbox with registry-only egress (depends on T005)
 - [ ] T008 S4 measure hydrate and flush for small, medium, and large homes and verify the `system/matrix.db` snapshot after a kill (depends on T005)
 - [ ] T009 S6 restore a container-written object layout onto a test VPS with `distro/customer-vps/matrix-restore.sh` (depends on T008)
-- [ ] T010 Record provider decision D1 and revise plan.md Stacks B and C if any spike failed
+- [x] T010 Record provider decision D1 and revise plan.md Stacks B and C if any spike failed
 
 ### Stack A: substrate model (no behaviour change; serves US7)
 
@@ -54,7 +54,7 @@ Stack letters refer to plan.md.
 
 ### Stack C: container substrate and free plan (platform)
 
-- [ ] T026 [US1] Failing tests then implementation for the provider adapter chosen in T010 in `packages/platform/src/substrates/container-provider.ts` (every call with `AbortSignal.timeout(10_000)`, typed error codes)
+- [ ] T026 [US1] Failing tests then implementation for the AWS Lambda MicroVMs provider adapter in `packages/platform/src/substrates/container-provider.ts` (every call with `AbortSignal.timeout(10_000)`, typed error codes)
 - [ ] T027 [US1] Failing tests for per-owner database and role creation, password rotation by generation, and identifier validation in `tests/platform/container-owner-database.test.ts`, then implement `packages/platform/src/substrates/container-owner-database.ts` and the `container_owner_databases` migration
 - [ ] T028 [US1] Failing race tests (20 concurrent starts create one container; stale generation rejected) in `tests/platform/container-lifecycle.test.ts`, then implement `packages/platform/src/substrates/container-lifecycle-service.ts` with compare-and-set transitions
 - [ ] T029 [US1] Implement `packages/platform/src/substrates/container-substrate.ts` (`resolveUpstream`, `ensureRunning`, `stop`, `destroyCompute`, `listCompute`) and register it in `packages/platform/src/platform-startup.ts` only when configuration is complete

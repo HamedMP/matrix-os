@@ -42,75 +42,31 @@ Decisions marked **Decided** rest on code read at the baseline commit. Decisions
 
 ## R4. Container provider
 
-- **Decision (Pending spike S1)**: chosen by measurement against the criteria in plan.md.
-- **Candidates**: Cloudflare Containers, Fly Machines, Cloud Run, self-operated
-  microVMs on Hetzner.
-- **Note**: provider features and prices move quickly. Record the versions and dates
-  measured; do not rely on recalled product behaviour.
+- **Decision (2026-11-10, D1)**: AWS Lambda MicroVMs, region eu-west-1 or eu-central-1.
+  Cloud Run gen2 is the fallback behind the same substrate interface.
+- **Rationale**: it is the only candidate that met every hard criterion and woke in
+  under 5 seconds on every trial (30 of 30; cold median 2.6 s, resume median 0.95 s).
+  Cloud Run met the hard criteria and had a lower best-case wake, but 19 of 49 wakes
+  took over 5 seconds, several about a minute, cause unknown. See
+  `spikes/s1-measurements.md`.
+- **Accepted costs**: list price about twice Cloud Run ($0.1328 against $0.079 per
+  active hour); 8 hour maximum unit lifetime including suspended time; endpoint tokens
+  last at most 60 minutes; units restored from one snapshot share random state, so the
+  gateway process must start after restore, never inside the snapshot; no cgroup
+  delegation, so the agent workload has rlimits only.
+- **Alternatives considered**: Cloud Run gen2 (slow tail), Cloudflare Containers
+  (HTTP-only egress, no direct Postgres), Fly Machines (egress rules are port-only),
+  Fargate (slow start, user namespaces doubtful), self-run Firecracker (operations cost).
+- **Note**: provider features and prices move quickly. The measurements used a 1.5 GB
+  probe image, not the gateway image; repeat the wake measurement with the real image
+  before rollout.
 
-## R5. Durable home for disposable compute
-
-- **Decision (Decided, timing pending S4)**: Postgres and the owner object prefix are
-  the source of truth. The runtime hydrates before ready, flushes on a timer and at stop.
-- **Rationale**: the existing mirror already does initial pull and push
-  (`packages/gateway/src/sync/home-mirror.ts`), keyed by owner prefix and brokered by the
-  platform. It skips `.git`, `dist`, `build`, and `node_modules`
-  (`packages/gateway/src/sync/home-mirror-ignore.ts:21`), so the container profile adds
-  built output and packs project history.
-- **Alternatives**: provider volume as the only copy (ties data to one provider and
-  breaks the upgrade path); network filesystem (latency, cost, provider-specific).
-
-## R6. Shared Postgres
-
-- **Decision (S5, 2026-11-10)**: database and role per owner on one managed cluster,
-  direct connections, no pooler. The role has `CONNECTION LIMIT 5`; the gateway's
-  owner pool drops from 10 to 3 so that all pools together stay within 5.
-- **Rationale**: every advisory lock in the gateway is transaction-scoped. PgBouncer in
-  transaction mode refuses the three pools that pass timeouts as connection settings,
-  weakens fencing, and its server connections consume the role limit.
-- **Consequences**: database and role names are opaque because other owners can list
-  them. Postgres has no size cap, so the platform measures `pg_database_size` and
-  fences. Fencing is password rotation plus terminating the role's sessions. The
-  gateway must fail closed when its database credentials are rejected, and readiness
-  must check the database. The legacy orchestrator's provisioning is not reused.
-- **Open**: a cluster with `max_connections = 100` serves about 19 concurrently active
-  owners at 5 each; cluster sizing or a pooler is revisited with the provider choice.
-  A full funded chat turn was not exercised in the spike.
-
-## R7. Upgrade path
-
-- **Decision (Decided, verification pending S6)**: the container writes database
-  snapshots and files in the layout `matrix-restore` reads
-  (`distro/customer-vps/matrix-restore.sh:18`), so upgrade provisions a VPS that restores
-  from it.
-- **Rationale**: reuses the tested recovery path instead of a second migration engine.
-- **Known gap**: funded balances are per machine; the upgrade transfers them under the
-  per-owner funding lock.
-
-## R8. Idle detection authority
-
-- **Decision (Decided)**: the platform decides from traffic it proxies and reservations
-  it tracks. Container-reported activity is advisory.
-- **Rationale**: the container is untrusted and would otherwise keep itself alive.
-
-## R9. Capability vocabulary
-
-- **Decision (Decided)**: states are `available`, `disabled-by-policy`, `unsupported`,
-  `setup-required`, `temporarily-unavailable`, matching the contract proposed in spec 639.
-- **Rationale**: one capability system for hosted containers and on-prem.
-
-## R10. Free plan representation
-
-- **Decision (Decided)**: new plan slug `matrix_free` and entitlement source `free`
-  alongside `stripe` and `override` (`packages/platform/src/billing.ts:11`), with
-  `max_runtime_slots = 1` and substrate restricted to `container`.
-- **Alternatives**: reuse the legacy `users.plan = 'free'` column (nothing gates on it).
 
 ## Spike log
 
 | Spike | Status | Result |
 | --- | --- | --- |
-| S1 Provider bake-off | Desk evaluation done 2026-11-10; measurement pending owner approval | Fly Machines eliminated (egress rules are port-only). Shortlist: Cloud Run gen2 first, Cloudflare Containers second, Hetzner microVMs as fallback. Unverified from docs: cold start, unprivileged user namespaces. See `spikes/s1-provider-desk-evaluation.md`. AWS added 2026-11-10 (`spikes/s1-aws-desk-evaluation.md`): Lambda MicroVMs may pass on paper with snapshot restore, user namespaces unverified; Fargate likely fails user namespaces; with the under-5-second wake target the paper ranking is Lambda MicroVMs, Cloud Run, Cloudflare, self-run Firecracker, Fargate; measurement pending |
+| S1 Provider bake-off | Done 2026-11-10. Decision D1: AWS Lambda MicroVMs, Cloud Run gen2 as fallback | Fly Machines and Cloudflare Containers eliminated on egress. Measured: Lambda MicroVMs cold median 2.6 s, resume 0.95 s, 30 of 30 under 3.1 s; Cloud Run median 0.7 to 6.0 s with 19 of 49 wakes over 5 s. Both pass sandbox, egress, cross-tenant, and 15 minute WebSocket checks; neither delegates cgroups. See `spikes/s1-provider-desk-evaluation.md`, `spikes/s1-aws-desk-evaluation.md`, `spikes/s1-measurements.md` |
 | S2 Chat without host systemd | Pass 2026-11-10. Real funded turns with tool use completed through the production container launcher on Workers AI GLM Flash (8 of 8 turns, 29 of 29 isolation probes); see `spikes/s2-funded-turn.md`. Not exercised: the AI Gateway hop, reservation and settlement, x86_64, cgroup limits | A bubblewrap launcher runs a Pi turn in a non-root, capability-free container and passes 21 of 21 isolation probes. It requires unprivileged user namespaces, which Docker's default seccomp blocks. Fallback without them is Landlock plus seccomp (19 of 21; Unix sockets must move). Per-workload memory, CPU, and task limits are lost without cgroup delegation. See `spikes/s2-chat-without-systemd.md` |
 | S3 App build in the sandbox | Not run | |
 | S4 Hydrate and flush | Not run | |

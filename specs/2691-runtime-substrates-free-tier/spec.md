@@ -499,8 +499,8 @@ N/A without architectural rationale and reviewer approval.
 
 | # | Decision | Recommendation |
 | --- | --- | --- |
-| D0 | Linear ticket | Create one ENG ticket for this spec, assigned to Hamed; stacks share it |
-| D1 | Container provider | Decide by the Phase 0 bake-off against the criteria in plan.md; do not pick by preference |
+| D0 | Linear ticket | Decided: [ENG-446](https://linear.app/matrix-os/issue/ENG-446/runtime-substrates-container-based-free-tier-alongside-vps); stacks share it |
+| D1 | Container provider | Decided 2026-11-10: AWS Lambda MicroVMs, with Cloud Run gen2 as fallback (research.md R4) |
 | D2 | Free AI allowance | Once-per-owner starter credit plus a small monthly allowance limited to the managed default model; own-account sources stay available |
 | D3 | Limits and retention | Set after Phase 0 measurement; propose 90 days inactivity, 30 days notice |
 | D4 | Signup gate | Invite-only until SC-004 and SC-007 hold in production for two weeks |
