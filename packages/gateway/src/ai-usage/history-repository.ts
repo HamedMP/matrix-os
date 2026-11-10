@@ -190,7 +190,11 @@ export class UsageHistoryRepository {
     return this.db
       .transaction()
       .setIsolationLevel("repeatable read")
-      .execute((tx) => read(new UsageHistoryRepository(tx)));
+      .execute(async (tx) => {
+        // A report scans every observation; bound it so a slow owner database cannot hold a connection.
+        await sql`SET LOCAL statement_timeout = 60000`.execute(tx);
+        return read(new UsageHistoryRepository(tx));
+      });
   }
   async visitEvents(
     owner: string,

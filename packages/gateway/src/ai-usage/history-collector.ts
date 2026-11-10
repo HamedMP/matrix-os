@@ -35,7 +35,7 @@ export async function indexUsageRoots(
   repo: UsageHistoryRepository,
   owner: string,
   machine: string,
-  roots: Array<{ path: string; agent: UsageAgent }>,
+  roots: Array<{ path: string; agent: UsageAgent; optional?: boolean }>,
   signal?: AbortSignal,
 ) {
   let indexed = 0,
@@ -189,6 +189,14 @@ export async function indexUsageRoots(
       }
     } catch (error: unknown) {
       if (signal?.aborted) throw error;
+      // An agent that was never installed has no history; that is not a coverage gap.
+      if (
+        root.optional &&
+        error instanceof Error &&
+        "code" in error &&
+        error.code === "ENOENT"
+      )
+        continue;
       console.warn(
         "[ai-usage] history root incomplete",
         error instanceof Error ? error.name : "UnknownError",

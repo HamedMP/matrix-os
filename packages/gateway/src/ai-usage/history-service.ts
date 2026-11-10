@@ -32,7 +32,10 @@ export async function readUsageHistory(
     newest: bounds.newest,
     oldestActivity: activity.oldestActivity,
     activityOnlySessions: Number(activity.activityOnlySessions),
-    issues: progress.sources.reduce((n, s) => n + s.issues, normalized.issues),
+    issues: progress.sources.reduce(
+      (n, s) => n + s.issues,
+      normalized.issues + builder.outsideRange(),
+    ),
     failedRoots: options.failedRoots ?? 0,
     indexedAt: new Date().toISOString(),
     indexing: options.indexing ?? false,
@@ -49,6 +52,43 @@ export async function readUsageHistory(
   };
   });
 }
+/** One report per timezone at a time: simultaneous readers share a build, and a finished build is reused briefly.
+ * Each build scans the whole index, so repeated Settings opens must not repeat it. */
+export function createReportCache<T>(
+  build: (timeZone: string) => Promise<T>,
+  options: { ttlMs: number; max?: number; now?: () => number },
+) {
+  const now = options.now ?? Date.now,
+    max = options.max ?? 4;
+  // Capped at `max` timezones, oldest evicted first; cleared whenever indexing changes the data.
+  const entries = new Map<string, { value: Promise<T>; at: number | null }>();
+  return {
+    read(timeZone: string): Promise<T> {
+      const cached = entries.get(timeZone);
+      if (cached && (cached.at === null || now() - cached.at < options.ttlMs))
+        return cached.value;
+      entries.delete(timeZone);
+      while (entries.size >= max)
+        entries.delete(entries.keys().next().value as string);
+      const entry: { value: Promise<T>; at: number | null } = {
+        value: build(timeZone),
+        at: null,
+      };
+      entries.set(timeZone, entry);
+      entry.value.then(
+        () => {
+          entry.at = now();
+        },
+        () => {
+          if (entries.get(timeZone) === entry) entries.delete(timeZone);
+        },
+      );
+      return entry.value;
+    },
+    invalidate: () => entries.clear(),
+    size: () => entries.size,
+  };
+}
 /** Gateway lifecycle owns the timer/abort; injected owner pool remains open until its existing shutdown. */
 export function startUsageHistory(options: {
   db: Kysely<any>;
@@ -62,6 +102,15 @@ export function startUsageHistory(options: {
   let timer: ReturnType<typeof setTimeout> | undefined,
     pending: Promise<void> | undefined,
     failedRoots = 0;
+  const reports = createReportCache(
+    (timeZone: string) =>
+      readUsageHistory(repo, options.owner, {
+        timeZone,
+        indexing: Boolean(pending),
+        failedRoots,
+      }),
+    { ttlMs: 60_000 },
+  );
   const run = () => {
     pending = ready
       .then(async () => {
@@ -74,9 +123,9 @@ export function startUsageHistory(options: {
           options.owner,
           "Matrix computer",
           [
-            { path: claude, agent: "claude" },
-            { path: codex, agent: "codex" },
-            { path: archives, agent: "codex" },
+            { path: claude, agent: "claude", optional: true },
+            { path: codex, agent: "codex", optional: true },
+            { path: archives, agent: "codex", optional: true },
           ],
           controller.signal,
         );
@@ -104,6 +153,7 @@ export function startUsageHistory(options: {
       })
       .finally(() => {
         pending = undefined;
+        reports.invalidate();
         if (!controller.signal.aborted) {
           timer = setTimeout(run, options.intervalMs ?? 15 * 60 * 1000);
           timer.unref?.();
@@ -112,12 +162,9 @@ export function startUsageHistory(options: {
   };
   run();
   return {
-    async read() {
+    async read(timeZone = "UTC") {
       await ready;
-      return readUsageHistory(repo, options.owner, {
-        indexing: Boolean(pending),
-        failedRoots,
-      });
+      return reports.read(timeZone);
     },
     async dispose() {
       controller.abort();
