@@ -110,7 +110,7 @@ Decisions marked **Decided** rest on code read at the baseline commit. Decisions
 
 | Spike | Status | Result |
 | --- | --- | --- |
-| S1 Provider bake-off | Desk evaluation done 2026-11-10; measurement pending owner approval | Fly Machines eliminated (egress rules are port-only). Shortlist: Cloud Run gen2 first, Cloudflare Containers second, Hetzner microVMs as fallback. Unverified from docs: cold start, unprivileged user namespaces. See `spikes/s1-provider-desk-evaluation.md` |
+| S1 Provider bake-off | Desk evaluation done 2026-11-10; measurement pending owner approval | Fly Machines eliminated (egress rules are port-only). Shortlist: Cloud Run gen2 first, Cloudflare Containers second, Hetzner microVMs as fallback. Unverified from docs: cold start, unprivileged user namespaces. See `spikes/s1-provider-desk-evaluation.md`. AWS added 2026-11-10 (`spikes/s1-aws-desk-evaluation.md`): Lambda MicroVMs may pass on paper with snapshot restore, user namespaces unverified; Fargate likely fails user namespaces; ranking is Cloud Run, Lambda MicroVMs, Cloudflare |
 | S2 Chat without host systemd | Partial pass 2026-11-10 (funded turn not run: local keys out of quota; tool use passed with a scripted model) | A bubblewrap launcher runs a Pi turn in a non-root, capability-free container and passes 21 of 21 isolation probes. It requires unprivileged user namespaces, which Docker's default seccomp blocks. Fallback without them is Landlock plus seccomp (19 of 21; Unix sockets must move). Per-workload memory, CPU, and task limits are lost without cgroup delegation. See `spikes/s2-chat-without-systemd.md` |
 | S3 App build in the sandbox | Not run | |
 | S4 Hydrate and flush | Not run | |
