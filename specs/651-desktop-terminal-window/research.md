@@ -139,6 +139,14 @@ the presented host key:
 The full list/attach/kill sequence was not repeated through `ssh2`; an exec channel is a plain
 byte stream, the same as the `ssh` child's stdin/stdout used above.
 
+## After the spike: the committed host against real cores
+
+`tests/desktop/herdr-session-host.test.ts` has an opt-in lane that runs the committed
+`HerdrSessionHost` over the stdin/stdout of a real `herdr-core connect` (no SSH), with plain `hc`
+as the second client. It passed on Linux x64 against 0.1.14, 0.1.19 and 0.1.20. The older opt-in
+lane for local terminals passed against the pinned 0.1.19 on Linux x64 after the shared-module
+refactor; that lane had only ever run on macOS arm64.
+
 ## Not tested
 
 - macOS, and a real Matrix computer. Which OS user the requester's Herdr app logs in as on their
