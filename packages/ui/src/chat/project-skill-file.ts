@@ -37,14 +37,20 @@ async function existingProjectSkill(content: string, installedName?: string): Pr
   const match = /^---\r?\n([\s\S]*?)\r?\n---\r?\n([\s\S]*)$/.exec(content);
   if (!match || !match[2]?.trim() || content.includes("\0")) return { error: PROJECT_SKILL_IMPORT_ERROR };
 
-  const { parseDocument } = await import("yaml");
+  const { isScalar, parseDocument } = await import("yaml");
   const metadata = parseDocument(match[1] ?? "", { logLevel: "silent" });
   const name = metadata.get("name");
   const description = metadata.get("description");
   if (metadata.errors.length || typeof name !== "string" || typeof description !== "string" || !description.trim()) {
     return { error: PROJECT_SKILL_IMPORT_ERROR };
   }
-  if (installedName !== undefined && name !== installedName) return { error: PROJECT_SKILL_COPY_ERROR };
+  if (installedName !== undefined && name !== installedName) {
+    // Older catalog parsing preserves the quotes around YAML scalars.
+    const reported = parseDocument(installedName, { logLevel: "silent" });
+    if (reported.errors.length || !isScalar(reported.contents) || reported.contents.value !== name) {
+      return { error: PROJECT_SKILL_COPY_ERROR };
+    }
+  }
 
   // Legacy installed skills can have display names. Preserve the manifest and use a safe project directory.
   const destination = installedName === undefined ? name : name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");

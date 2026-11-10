@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { copyProjectSkill } from "../../packages/ui/src/chat/project-skill-file";
 import {
   parseProjectInstalledSkills,
   projectInstalledSkillFilePath,
@@ -24,9 +25,17 @@ describe("project installed skill sources", () => {
     ])).toEqual(allowed.map(({ name, file }) => ({ name, file, description: "A skill" })));
   });
 
-  it("checks the source again when building the Files request", () => {
-    expect(projectInstalledSkillFilePath("agents/skills/legacy.md")).toBe("/api/files/blob?path=agents%2Fskills%2Flegacy.md");
+  it("checks the source again when building the manifest request", () => {
+    expect(projectInstalledSkillFilePath("agents/skills/legacy.md")).toBe("/api/settings/skills/manifest?path=agents%2Fskills%2Flegacy.md");
     expect(projectInstalledSkillFilePath(".agents/skills/test\\other/SKILL.md")).toBeNull();
     expect(projectInstalledSkillFilePath("projects/other/AGENTS.md")).toBeNull();
   });
+});
+
+it("copies quoted legacy names without accepting a different manifest identity", async () => {
+  const content = "---\nname: 'release-review'\ndescription: Review a release.\n---\n\nReview the changelog.\n";
+  expect(await copyProjectSkill(content, "'release-review'")).toEqual({
+    path: ".agents/skills/release-review/SKILL.md", content,
+  });
+  expect(await copyProjectSkill(content, "'different-skill'")).toHaveProperty("error");
 });

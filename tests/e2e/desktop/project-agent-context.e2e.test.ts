@@ -111,7 +111,7 @@ describe.skipIf(!built)("Electron Desktop project agent context", () => {
         return;
       }
       const sourcePath = searchParams.get("path");
-      if (req.method === "GET" && path === "/api/files/blob" && sourcePath?.startsWith(".agents/skills/")) {
+      if (req.method === "GET" && path === "/api/settings/skills/manifest" && sourcePath?.startsWith(".agents/skills/")) {
         sourceReads.push(sourcePath);
         if (sourcePath !== copiedSkillPath) {
           res.writeHead(404).end();
