@@ -470,7 +470,7 @@ function CreateProjectForm({ onClose, shareAvailability, onCreatedProject, onPro
         />
       ) : null}
 
-      {error ? <span className="text-xs" style={{ color: "var(--danger)" }}>{error}</span> : null}
+      {error ? <span className="text-xs" style={{ color: "var(--danger-text)" }}>{error}</span> : null}
 
       {shareAvailability !== "none" ? <label className="flex items-start gap-2 rounded-lg border px-3 py-2" style={{ borderColor: "var(--border-subtle)" }}>
         <input

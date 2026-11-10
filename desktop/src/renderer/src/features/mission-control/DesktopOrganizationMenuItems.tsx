@@ -52,7 +52,7 @@ export function DesktopOrganizationMenuItems({ itemClass }: { itemClass: string 
           ))}
         </DropdownMenu.RadioGroup>
       ) : (
-        <p role="alert" className="px-2 py-1.5 text-[12px]" style={{ color: "var(--danger)" }}>
+        <p role="alert" className="px-2 py-1.5 text-[12px]" style={{ color: "var(--danger-text)" }}>
           Couldn&apos;t verify your organizations.
         </p>
       )}

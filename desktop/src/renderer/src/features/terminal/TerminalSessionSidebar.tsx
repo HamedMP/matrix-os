@@ -131,7 +131,7 @@ export function TerminalSessionSidebar({
                         <X size={13} />
                       </button>
                     </div>
-                    {renameError ? <span className="text-[10px]" style={{ color: "var(--danger)" }}>{renameError}</span> : null}
+                    {renameError ? <span className="text-[10px]" style={{ color: "var(--danger-text)" }}>{renameError}</span> : null}
                   </div>
                 ) : (
                   <>
@@ -268,7 +268,7 @@ function SessionAction({ icon, label, danger = false, onSelect }: { icon: React.
     <DropdownMenu.Item
       onSelect={onSelect}
       className="flex cursor-default items-center gap-2 rounded-md px-2.5 py-1.5 text-sm outline-none data-[highlighted]:bg-[var(--bg-hover)]"
-      style={{ color: danger ? "var(--danger)" : "var(--text-primary)" }}
+      style={{ color: danger ? "var(--danger-text)" : "var(--text-primary)" }}
     >
       {icon}
       {label}

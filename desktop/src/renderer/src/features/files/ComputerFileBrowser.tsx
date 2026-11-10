@@ -398,7 +398,7 @@ export default function ComputerFileBrowser({
   } else if (viewStatus === "error") {
     content = (
       <div className="flex h-full flex-col items-center justify-center gap-2 px-4 text-center">
-        <span className="text-sm" style={{ color: "var(--danger)" }}>{viewError}</span>
+        <span className="text-sm" style={{ color: "var(--danger-text)" }}>{viewError}</span>
         <Button variant="subtle" onClick={() => void load(viewCurrentPath)}>Try again</Button>
       </div>
     );

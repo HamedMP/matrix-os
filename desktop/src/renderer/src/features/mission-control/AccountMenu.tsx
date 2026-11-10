@@ -53,10 +53,10 @@ function MenuRow({
   return (
     <DropdownMenu.Item
       className={MENU_ROW_CLASS}
-      style={{ color: danger ? "var(--danger)" : "var(--text-primary)" }}
+      style={{ color: danger ? "var(--danger-text)" : "var(--text-primary)" }}
       onSelect={onSelect}
     >
-      <span aria-hidden="true" style={{ color: danger ? "var(--danger)" : "var(--text-tertiary)" }}>{icon}</span>
+      <span aria-hidden="true" style={{ color: danger ? "var(--danger-text)" : "var(--text-tertiary)" }}>{icon}</span>
       <span className="min-w-0 flex-1 truncate">{label}</span>
       {trailing ? <ChevronRight aria-hidden="true" size={13} style={{ color: "var(--text-tertiary)" }} /> : null}
     </DropdownMenu.Item>

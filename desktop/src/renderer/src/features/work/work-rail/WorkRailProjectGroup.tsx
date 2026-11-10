@@ -125,7 +125,7 @@ export function WorkRailProjectGroup({
 
         </div>
       </ProjectActionsMenu>
-      {actions.error && actions.dialog !== "edit" ? <p role="alert" className="px-2 text-xs" style={{ color: "var(--danger)" }}>{actions.error}</p> : null}
+      {actions.error && actions.dialog !== "edit" ? <p role="alert" className="px-2 text-xs" style={{ color: "var(--danger-text)" }}>{actions.error}</p> : null}
       {actions.dialog === "edit" ? <ProjectEditDialog returnFocusRef={actionButtonRef} project={group.project} pending={actions.pending} error={actions.error} onClose={() => actions.setDialog(null)} onSave={actions.update} /> : null}
       <RailCollapse expanded={expanded} className="flex flex-col gap-0.5">
           {group.chats.slice(0, shownCount).map((record) => (

@@ -438,7 +438,7 @@ export function ProjectChatDraft({
       <div className={`shrink-0 ${presentation === "landing" ? "" : "px-6 pb-5"}`}>
         <div className={cn("@container/project-composer mx-auto w-full", presentation === "landing" ? "max-w-none" : CHAT_CONTENT_WIDTH_CLASS)} data-slot="draft-composer">
           {submissionError || createError ? (
-            <p className="mb-1 px-1 text-xs" role="alert" style={{ color: "var(--danger)" }}>{submissionError ?? createError}</p>
+            <p className="mb-1 px-1 text-xs" role="alert" style={{ color: "var(--danger-text)" }}>{submissionError ?? createError}</p>
           ) : null}
           {canCreate ? (
             <>

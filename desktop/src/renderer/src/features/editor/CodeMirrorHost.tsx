@@ -254,7 +254,7 @@ export default function CodeMirrorHost({ taskId, path }: { taskId: string; path:
       {saveError ? (
         <div
           className="border-t px-3 py-2 text-xs"
-          style={{ borderColor: "var(--border-subtle)", color: "var(--danger)" }}
+          style={{ borderColor: "var(--border-subtle)", color: "var(--danger-text)" }}
         >
           {saveError}
         </div>

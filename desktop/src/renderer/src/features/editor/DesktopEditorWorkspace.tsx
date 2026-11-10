@@ -77,7 +77,7 @@ export default function DesktopEditorWorkspace() {
           })}
         </div>
         {error ? (
-          <div role="alert" className="flex items-center justify-between gap-3 border-b px-3 py-2 text-xs" style={{ borderColor: "var(--border-subtle)", color: "var(--danger)" }}>
+          <div role="alert" className="flex items-center justify-between gap-3 border-b px-3 py-2 text-xs" style={{ borderColor: "var(--border-subtle)", color: "var(--danger-text)" }}>
             <span>{error}</span><Button variant="ghost" onClick={clearError}>Dismiss</Button>
           </div>
         ) : null}

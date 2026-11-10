@@ -13,7 +13,7 @@ function Actions({ items }: { items: RailChatAction[] }) {
     {item.children ? <DropdownMenu.Sub>
       <DropdownMenu.SubTrigger disabled={item.disabled} className={itemClass}><span>{item.label}</span><span aria-hidden className="ml-auto">›</span></DropdownMenu.SubTrigger>
       <DropdownMenu.Portal><DropdownMenu.SubContent className={contentClass} style={contentStyle}><Actions items={item.children} /></DropdownMenu.SubContent></DropdownMenu.Portal>
-    </DropdownMenu.Sub> : <DropdownMenu.Item disabled={item.disabled} onSelect={item.onSelect} className={itemClass} style={{ color: item.danger ? "var(--danger)" : undefined }}>{item.label}</DropdownMenu.Item>}
+    </DropdownMenu.Sub> : <DropdownMenu.Item disabled={item.disabled} onSelect={item.onSelect} className={itemClass} style={{ color: item.danger ? "var(--danger-text)" : undefined }}>{item.label}</DropdownMenu.Item>}
   </Fragment>);
 }
 export function WorkRailChatMenu({ title, items, open, onOpenChange }: { title: string; items: RailChatAction[]; open: boolean; onOpenChange: (open: boolean) => void }) {

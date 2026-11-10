@@ -58,7 +58,7 @@ export function CloneStepFields({
         />
       </label>
       {showUrlError ? (
-        <span className="text-xs" style={{ color: "var(--danger)" }}>
+        <span className="text-xs" style={{ color: "var(--danger-text)" }}>
           Enter a GitHub URL like https://github.com/owner/repo.
         </span>
       ) : null}
@@ -73,7 +73,7 @@ export function CloneStepFields({
         />
       </label>
       {showFolderNameError ? (
-        <span className="text-xs" style={{ color: "var(--danger)" }}>
+        <span className="text-xs" style={{ color: "var(--danger-text)" }}>
           Use lowercase letters, numbers, and dashes only.
         </span>
       ) : null}
@@ -89,7 +89,7 @@ export function CloneStepFields({
         />
       </label>
       {showBranchError ? (
-        <span className="text-xs" style={{ color: "var(--danger)" }}>That branch name isn't valid.</span>
+        <span className="text-xs" style={{ color: "var(--danger-text)" }}>That branch name isn't valid.</span>
       ) : null}
       {submitting ? (
         <span className="text-xs" style={{ color: "var(--text-tertiary)" }}>
