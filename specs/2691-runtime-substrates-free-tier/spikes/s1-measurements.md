@@ -13,10 +13,16 @@ developer machine, so its figures include internet latency.
 | Lambda MicroVMs, resume after 5 min suspended | 10 | 0.95 s | 3.1 s | 0 |
 | Lambda MicroVMs, cold, gateway process started after restore | 20 | 2.9 s | 5.3 s | 1 |
 | Cloud Run, manual scaling 0 to 1 | 20 | 1.7 s | 33 s | 4 |
-| Cloud Run, request-triggered from zero | 20 | 0.66 s | 98 s | 9 |
+| Cloud Run, request-triggered from zero | 18 of 20 | 5.8 s | 98 s | 9 |
 | Cloud Run, request-triggered, longer idle | 9 of 10 | 6.0 s | 67 s | 5, plus 1 failure |
 
-The cause of the Cloud Run tail is not established.
+Two request-triggered trials (28 ms and 42 ms) are excluded: their instances had
+already started before the request, so they were not cold starts. The 18 valid trials
+are bimodal: 9 at 0.36 to 0.70 s and 9 at 10.9 to 97.6 s.
+
+In the slow Cloud Run wakes the time is an 18 to 97 s delay before Cloud Run starts the
+instance; the container itself was listening within 0.5 s of its start. The cause of
+that delay is not established.
 
 ## Hard criteria
 
@@ -42,6 +48,9 @@ The cause of the Cloud Run tail is not established.
 - Cloud Run limits: 60 minute WebSocket cap; the front end reserves paths ending in
   `z`, so `/healthz` never reaches the container; the metadata server issues tokens for
   the runtime service account, which must hold no roles.
-- List price per active hour: Lambda MicroVMs $0.1328, Cloud Run $0.079.
+- List price per active hour: Lambda MicroVMs $0.159 at the default baseline of 1 vCPU
+  and 2 GB (eu-central-1, ARM), Cloud Run $0.079. A unit bursts to 4 times its
+  baseline and burst is billed only while used, up to about $0.64 per hour if the
+  burst rate equals the baseline rate (not confirmed).
 
 Raw results are on the local branch `spike/2691-s1-measure` under `spikes/2691-s1/results/`.

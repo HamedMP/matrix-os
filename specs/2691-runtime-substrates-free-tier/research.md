@@ -46,11 +46,13 @@ Decisions marked **Decided** rest on code read at the baseline commit. Decisions
   Cloud Run gen2 is the fallback behind the same substrate interface.
 - **Rationale**: it is the only candidate that met every hard criterion and woke in
   under 5 seconds on every trial (30 of 30; cold median 2.6 s, resume median 0.95 s).
-  Cloud Run met the hard criteria and had a lower best-case wake, but 19 of 49 wakes
-  took over 5 seconds, several about a minute, cause unknown. See
-  `spikes/s1-measurements.md`.
-- **Accepted costs**: list price about twice Cloud Run ($0.1328 against $0.079 per
-  active hour); 8 hour maximum unit lifetime including suspended time; endpoint tokens
+  Cloud Run met the hard criteria and had a lower best-case wake, but its
+  request-triggered median from zero was 5.8 s (18 valid trials) and 19 of 47 wakes
+  took over 5 seconds or failed. The slow wakes are an 18 to 97 s delay before the
+  instance starts; the cause is not established. See `spikes/s1-measurements.md`.
+- **Accepted costs**: list price about twice Cloud Run ($0.159 against $0.079 per
+  active hour at the default 1 vCPU and 2 GB baseline in eu-central-1 ARM; burst is
+  billed only while used, up to about $0.64 per hour); 8 hour maximum unit lifetime including suspended time; endpoint tokens
   last at most 60 minutes; units restored from one snapshot share random state, so the
   gateway process must start after restore, never inside the snapshot; no cgroup
   delegation, so the agent workload has rlimits only.
@@ -66,7 +68,7 @@ Decisions marked **Decided** rest on code read at the baseline commit. Decisions
 
 | Spike | Status | Result |
 | --- | --- | --- |
-| S1 Provider bake-off | Done 2026-11-10. Decision D1: AWS Lambda MicroVMs, Cloud Run gen2 as fallback | Fly Machines and Cloudflare Containers eliminated on egress. Measured: Lambda MicroVMs cold median 2.6 s, resume 0.95 s, 30 of 30 under 3.1 s; Cloud Run median 0.7 to 6.0 s with 19 of 49 wakes over 5 s. Both pass sandbox, egress, cross-tenant, and 15 minute WebSocket checks; neither delegates cgroups. See `spikes/s1-provider-desk-evaluation.md`, `spikes/s1-aws-desk-evaluation.md`, `spikes/s1-measurements.md` |
+| S1 Provider bake-off | Done 2026-11-10. Decision D1: AWS Lambda MicroVMs, Cloud Run gen2 as fallback | Fly Machines and Cloudflare Containers eliminated on egress. Measured: Lambda MicroVMs cold median 2.6 s, resume 0.95 s, 30 of 30 under 3.1 s; Cloud Run median 1.7 to 6.0 s (5.8 s request-triggered from zero) with 19 of 47 wakes over 5 s or failed. Both pass sandbox, egress, cross-tenant, and 15 minute WebSocket checks; neither delegates cgroups. See `spikes/s1-provider-desk-evaluation.md`, `spikes/s1-aws-desk-evaluation.md`, `spikes/s1-measurements.md` |
 | S2 Chat without host systemd | Pass 2026-11-10. Real funded turns with tool use completed through the production container launcher on Workers AI GLM Flash (8 of 8 turns, 29 of 29 isolation probes); see `spikes/s2-funded-turn.md`. Not exercised: the AI Gateway hop, reservation and settlement, x86_64, cgroup limits | A bubblewrap launcher runs a Pi turn in a non-root, capability-free container and passes 21 of 21 isolation probes. It requires unprivileged user namespaces, which Docker's default seccomp blocks. Fallback without them is Landlock plus seccomp (19 of 21; Unix sockets must move). Per-workload memory, CPU, and task limits are lost without cgroup delegation. See `spikes/s2-chat-without-systemd.md` |
 | S3 App build in the sandbox | Not run | |
 | S4 Hydrate and flush | Not run | |
