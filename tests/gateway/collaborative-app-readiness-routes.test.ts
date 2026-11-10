@@ -168,6 +168,14 @@ describe("collaborative app readiness routes", () => {
     expect((await routes.request(`/api/collaboration/apps/${appId}/readiness`, {
       headers: { authorization: "Bearer owner-gateway-token" },
     })).status).toBe(200);
+    const registration = await routes.request(`/api/collaboration/apps/${appId}/readiness/registration`, {
+      headers: { authorization: "Bearer owner-gateway-token" },
+    });
+    expect(registration.status).toBe(200);
+    expect(await registration.json()).toEqual({ registrationIncarnation: build.registrationIncarnation });
+    expect((await routes.request(`/api/collaboration/apps/${appId}/readiness/registration`, {
+      headers: { authorization: "Bearer incorrect-token" },
+    })).status).toBe(401);
   });
 
   it("checks membership and persists the fail-closed result for the exact incarnation", async () => {
