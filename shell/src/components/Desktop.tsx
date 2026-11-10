@@ -586,6 +586,7 @@ export function Desktop({ launchAppPath, sharedTerminalScopeId, onOpenCommandPal
       previousMode,
       desktopMode,
       currentWindows,
+      { width: window.innerWidth, height: window.innerHeight },
     );
     osViewLayoutsRef.current = transition.memory;
     useWindowManager.setState({ windows: transition.windows });

@@ -11,6 +11,7 @@ import {
   SHELL_Z_INDEX,
 } from "../../shell/src/lib/shell-layering.js";
 import { useDesktopMode } from "../../shell/src/stores/desktop-mode.js";
+import { createOsViewLayoutMemory, transitionOsViewLayout } from "../../shell/src/lib/os-view-layout-memory.js";
 
 const fetchSpy = vi.fn().mockResolvedValue({ ok: true });
 vi.stubGlobal("fetch", fetchSpy);
@@ -90,6 +91,52 @@ describe("Window Manager Store", () => {
       const [w1, w2] = useWindowManager.getState().windows;
       expect(w2.x).toBe(w1.x + w1.width + 24);
       expect(w2.y).toBe(w1.y);
+    });
+
+    it("centers a Preview first opened in Canvas on Desktop and preserves Desktop placement on the next switch", () => {
+      Object.defineProperty(window, "innerWidth", { configurable: true, value: 1500 });
+      Object.defineProperty(window, "innerHeight", { configurable: true, value: 900 });
+      const manager = useWindowManager.getState();
+      const viewport = { width: 1500, height: 900 };
+      manager.openWindow("Chat", "__chat__", 0);
+      const toCanvas = transitionOsViewLayout(createOsViewLayoutMemory(), "desktop", "canvas",
+        useWindowManager.getState().windows, viewport);
+      useDesktopMode.getState().setMode("canvas");
+      manager.setWindows(toCanvas.windows);
+      manager.openWindow("Preview", "__preview-window__", 0);
+      const [chat, canvasPreview] = useWindowManager.getState().windows;
+      expect(canvasPreview.x).toBeGreaterThan(chat.x + chat.width);
+
+      const toDesktop = transitionOsViewLayout(toCanvas.memory, "canvas", "desktop",
+        useWindowManager.getState().windows, viewport);
+      const [, desktopPreview] = toDesktop.windows;
+      expect(desktopPreview).toMatchObject({ id: canvasPreview.id, x: 300, width: 900, zIndex: canvasPreview.zIndex });
+
+      const movedPreview = { ...desktopPreview, x: 125, y: 75 };
+      const backToCanvas = transitionOsViewLayout(toDesktop.memory, "desktop", "canvas", [chat, movedPreview], viewport);
+      expect(backToCanvas.windows[1]).toEqual(canvasPreview);
+      const restoredDesktop = transitionOsViewLayout(backToCanvas.memory, "canvas", "desktop", backToCanvas.windows, viewport);
+      expect(restoredDesktop.windows[1]).toEqual(movedPreview);
+    });
+
+    it("fits a previously clipped Preview when restoring it in Desktop", () => {
+      Object.defineProperty(window, "innerWidth", { configurable: true, value: 1500 });
+      Object.defineProperty(window, "innerHeight", { configurable: true, value: 900 });
+      const manager = useWindowManager.getState();
+      manager.loadLayout([{ title: "Preview", path: "__preview-window__", x: 632, y: 80, width: 900, height: 600, state: "minimized" }]);
+      const [preview] = useWindowManager.getState().windows;
+      const viewport = { width: 1500, height: 900 };
+      const toCanvas = transitionOsViewLayout(createOsViewLayoutMemory(), "desktop", "canvas", [preview], viewport);
+      const toDesktop = transitionOsViewLayout(toCanvas.memory, "canvas", "desktop", toCanvas.windows, viewport);
+      expect.soft(toDesktop.windows[0]).toMatchObject({ x: 600, y: 80, width: 900, height: 600 });
+
+      manager.restoreAndFocusWindow(preview.id);
+      expect.soft(manager.getFocusedWindow()).toMatchObject({ x: 600, y: 80, width: 900, height: 600, minimized: false });
+
+      manager.closeWindow(preview.id);
+      manager.loadLayout([{ title: "Preview", path: "__preview-window__", x: 632, y: 80, width: 900, height: 600, state: "closed" }]);
+      manager.openWindow("Preview", "__preview-window__", 0);
+      expect(manager.getFocusedWindow()).toMatchObject({ x: 600, y: 80, width: 900, height: 600, minimized: false });
     });
 
     it("fits a fresh terminal inside a narrow desktop work area", () => {

@@ -116,7 +116,7 @@ function WebProjectAgentContextScoped({ gatewayUrl, project, isCurrentAuthority,
         if (!current()) return false;
       }
       if (file && navigation.openPreview) {
-        usePreviewWindow.getState().openFile(path, { authority, mode: "source" });
+        usePreviewWindow.getState().openFile(path, { authority, mode: "source", focus: true });
         navigation.openPreview();
       } else {
         useFileBrowser.getState().requestView("files", { path, identity: authority });

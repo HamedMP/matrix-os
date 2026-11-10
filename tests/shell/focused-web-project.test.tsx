@@ -5,7 +5,7 @@ import { afterEach, expect, it, vi } from "vitest";
 import { FocusedWebProject } from "../../shell/src/components/chat/FocusedWebProject";
 import { WebProjectAgentContextNavigation } from "../../shell/src/components/chat/WebProjectAgentContext";
 import { useFileBrowser } from "../../shell/src/hooks/useFileBrowser";
-import { useWindowManager } from "../../shell/src/hooks/useWindowManager";
+import { resetWindowManagerLayoutPersistenceForTests, useWindowManager } from "../../shell/src/hooks/useWindowManager";
 import { usePreviewWindow } from "../../shell/src/hooks/usePreviewWindow";
 import { PreviewWindow } from "../../shell/src/components/preview-window/PreviewWindow";
 import { organizationDriveNavigationIdentity } from "../../shell/src/stores/organization-drive-navigation";
@@ -28,6 +28,7 @@ afterEach(() => {
   cleanup();
   delete document.documentElement.dataset.matrixSelfHosted;
   useFileBrowser.setState(useFileBrowser.getInitialState());
+  resetWindowManagerLayoutPersistenceForTests();
   useWindowManager.setState(useWindowManager.getInitialState());
   usePreviewWindow.setState(usePreviewWindow.getInitialState());
   vi.unstubAllGlobals();
@@ -119,6 +120,44 @@ it("opens the selected skill in the existing file editor", async () => {
   expect(usePreviewWindow.getState().tabs).toEqual([expect.objectContaining({ path: "Projects/france/.agents/skills/release/SKILL.md", mode: "source" })]);
   expect(openFiles).not.toHaveBeenCalled();
   expect(fetch).toHaveBeenCalledWith(`${window.location.origin}/api/projects/france/files-location?projectId=proj_france&file=.agents%2Fskills%2Frelease%2FSKILL.md`, expect.anything());
+});
+
+it("hands keyboard focus to the requested Preview tab each time a project file is opened", async () => {
+  const fetch = vi.fn(async (url: string) => {
+    if (url.endsWith("/agent-context")) {
+      return Response.json({ instructions: ["AGENTS.md"], skills: [], mcpServers: [], incompleteSources: [] });
+    }
+    if (url.includes("/files-location?")) return Response.json({ path: "Projects/france/AGENTS.md" });
+    if (url.includes("/api/files/blob?")) return new Response("# Instructions");
+    return Response.json({});
+  });
+  vi.stubGlobal("fetch", fetch);
+  function ShellFixture() {
+    const windows = useWindowManager(state => state.windows);
+    return <WebProjectAgentContextNavigation.Provider value={{
+      openFiles: vi.fn(),
+      openMcpSettings: vi.fn(),
+      openPreview: () => useWindowManager.getState().openWindow("Preview", "__preview-window__", 0),
+    }}>
+      <FocusedWebProject project={{ id: "proj_france", slug: "france", name: "France" }} gatewayUrl={window.location.origin} chats={[]}
+        listedChatIds={new Set()} onSelectChat={vi.fn()} renderRow={() => null} onBack={vi.fn()}
+        mobile={false} unreadOnly={false} sourceFilter="all" searchQuery="" />
+      {windows.map(window => window.path === "__preview-window__" && <PreviewWindow key={window.id} />)}
+    </WebProjectAgentContextNavigation.Provider>;
+  }
+  render(<ShellFixture />);
+  fireEvent.click(screen.getByRole("button", { name: "Agent configuration" }));
+  fireEvent.click(await screen.findByRole("button", { name: "Config files" }));
+  const open = await screen.findByRole("button", { name: "Open AGENTS.md" });
+
+  for (let attempt = 0; attempt < 2; attempt++) {
+    open.focus();
+    // A keyboard-activated button emits a click without a pointer event.
+    fireEvent.click(open, { detail: 0 });
+    const tab = await screen.findByRole("tab", { name: "AGENTS.md" });
+    await waitFor(() => expect(document.activeElement).toBe(tab));
+  }
+  expect(screen.getAllByRole("tab", { name: "AGENTS.md" })).toHaveLength(1);
 });
 
 it("creates a project MCP config with an empty server map", async () => {
