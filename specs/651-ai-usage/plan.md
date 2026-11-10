@@ -14,3 +14,7 @@ Authoritative feature worktree: /private/tmp/matrix-ai-usage-poc, branch codex/a
 ## Completion records
 
 Record implementation and verification outcomes in poc-status.md. Keep this plan stable while executing. Persistent ingestion, broad provider support and behavioral analysis require follow-on work and cannot be inferred from POC screenshots.
+
+## Approved full-history extension
+
+Hamed requested automatic recovery of all available local/Matrix history and backup to his Matrix computer. Execute the historical backend and shared all-time dashboard now; [full-history.md](full-history.md) defines accounting, recovery and coverage. Use three native stack layers (existing POC, recovery/backend, shared Settings) with ENG-440. Preserve originals before backfill, verify original-byte checksums and Postgres restore, and keep private recovery evidence outside Git. Do not claim three years of token counts when a source contains only activity or no recoverable records. Ongoing original-archive synchronization remains distinct from this initial verified recovery snapshot.
