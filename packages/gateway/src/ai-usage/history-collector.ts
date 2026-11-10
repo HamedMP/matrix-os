@@ -31,6 +31,16 @@ async function* files(path: string, depth = 0): AsyncGenerator<string> {
       yield* files(join(path, item.name), depth + 1);
   }
 }
+async function exists(path: string) {
+  try {
+    await lstat(path);
+    return true;
+  } catch (error: unknown) {
+    if (error instanceof Error && "code" in error && error.code === "ENOENT")
+      return false;
+    throw error;
+  }
+}
 export async function indexUsageRoots(
   repo: UsageHistoryRepository,
   owner: string,
@@ -42,6 +52,9 @@ export async function indexUsageRoots(
     failed = 0;
   for (const root of roots) {
     try {
+      // An agent that was never installed has no history; that is not a coverage gap.
+      // Only the root itself may be absent: anything missing inside it is reported below.
+      if (root.optional && !(await exists(root.path))) continue;
       for await (const path of files(root.path)) {
         signal?.throwIfAborted();
         try {
@@ -189,14 +202,6 @@ export async function indexUsageRoots(
       }
     } catch (error: unknown) {
       if (signal?.aborted) throw error;
-      // An agent that was never installed has no history; that is not a coverage gap.
-      if (
-        root.optional &&
-        error instanceof Error &&
-        "code" in error &&
-        error.code === "ENOENT"
-      )
-        continue;
       console.warn(
         "[ai-usage] history root incomplete",
         error instanceof Error ? error.name : "UnknownError",

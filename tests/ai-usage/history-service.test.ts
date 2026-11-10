@@ -1,5 +1,5 @@
 import { expect, it, vi } from "vitest";
-import { mkdtemp, mkdir, rm } from "node:fs/promises";
+import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createReportCache } from "../../packages/gateway/src/ai-usage/history-service";
@@ -62,6 +62,28 @@ it("treats an absent standard agent folder as nothing to index, but a missing co
     ])).toEqual({ indexed: 0, failed: 1 });
   } finally {
     await rm(root, { recursive: true });
+  }
+});
+it("reports a folder that disappears inside an existing optional root as a gap", async () => {
+  const root = await mkdtemp(join(tmpdir(), "usage-roots-"));
+  try {
+    for (const name of ["a", "b"]) {
+      await mkdir(join(root, name));
+      await writeFile(join(root, name, "session.jsonl"), "{}\n");
+    }
+    // Whichever folder is read first, the other vanishes before the walk reaches it.
+    const getSource = vi.fn(async (_owner: string, _machine: string, path: string) => {
+      await rm(join(root, path.includes(join(root, "a")) ? "b" : "a"), { recursive: true, force: true });
+      throw new Error("stop after the first file");
+    });
+    const repo = { getSource, commit: vi.fn() } as never;
+    const result = await indexUsageRoots(repo, "owner", "machine", [
+      { path: root, agent: "claude", optional: true },
+    ]);
+    expect(getSource).toHaveBeenCalledOnce();
+    expect(result).toEqual({ indexed: 0, failed: 2 });
+  } finally {
+    await rm(root, { recursive: true, force: true });
   }
 });
 it("runs one full-history build at a time and keeps sharing an unfinished one, however many timezones ask", async () => {
