@@ -91,6 +91,8 @@ export async function transferUsageHistory(
       "rsync",
       [
         "-a",
+        // Compare contents: a rewritten file can keep its size and timestamp.
+        "--checksum",
         "--no-links",
         "--no-devices",
         "--no-specials",

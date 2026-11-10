@@ -1,14 +1,61 @@
-import { lstat, mkdir, opendir, rm } from "node:fs/promises";
+import { chmod, copyFile, lstat, mkdir, opendir, rename, rm, utimes } from "node:fs/promises";
+import { constants, createReadStream } from "node:fs";
 import { join, dirname } from "node:path";
-import { randomUUID } from "node:crypto";
-import { execFile } from "node:child_process";
-import { promisify } from "node:util";
+import { createHash, randomUUID } from "node:crypto";
 import { USAGE_BACKUP_PATHS } from "../../packages/contracts/src/ai-usage/node";
-const exec = promisify(execFile);
 export const incomingName = /^auto-[a-f0-9-]{36}$/;
 function stagePath(root: string, id: string) {
   if (!incomingName.test(id)) throw new Error("Invalid incoming history");
   return join(root, "incoming", id);
+}
+async function digest(path: string) {
+  const hash = createHash("sha256");
+  for await (const chunk of createReadStream(path)) hash.update(chunk);
+  return hash.digest("hex");
+}
+/** Publishes staged files by content, never by size and time: a rewritten file with the same
+ * size and timestamp must still replace the verified original, whose bytes move to `replaced`. */
+async function publishTree(
+  source: string,
+  destination: string,
+  replaced: string,
+  depth = 0,
+): Promise<void> {
+  if (depth > 32) throw new Error("Staged history nesting limit");
+  const st = await lstat(source);
+  if (st.isSymbolicLink()) return;
+  if (st.isDirectory()) {
+    await mkdir(destination, { recursive: true, mode: 0o700 });
+    for await (const entry of await opendir(source))
+      await publishTree(
+        join(source, entry.name),
+        join(destination, entry.name),
+        join(replaced, entry.name),
+        depth + 1,
+      );
+    return;
+  }
+  if (!st.isFile()) return;
+  let current;
+  try {
+    current = await lstat(destination);
+  } catch (error: unknown) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+  }
+  if (current) {
+    if (
+      current.isFile() &&
+      current.size === st.size &&
+      (await digest(destination)) === (await digest(source))
+    )
+      return;
+    await mkdir(dirname(replaced), { recursive: true, mode: 0o700 });
+    await rename(destination, replaced);
+  }
+  // Exclusive create: nothing may appear at the destination between the check and the copy.
+  await copyFile(source, destination, constants.COPYFILE_EXCL);
+  await chmod(destination, 0o600);
+  await utimes(destination, st.atime, st.mtime);
 }
 /** Failed transfers expire after 24h; cap concurrent/stale attempts before accepting another. */
 export async function prepareIncoming(
@@ -75,21 +122,7 @@ export async function publishIncoming(root: string, id: string) {
       recursive: true,
       mode: 0o700,
     });
-    await exec(
-      "rsync",
-      [
-        "-a",
-        "--no-links",
-        "--no-devices",
-        "--no-specials",
-        "--chmod=Du=rwx,Dgo=,Fu=rw,Fgo=",
-        "--backup",
-        `--backup-dir=${join(revision, directory ? relative : dirname(relative))}`,
-        source + (directory ? "/" : ""),
-        destination + (directory ? "/" : ""),
-      ],
-      { timeout: 20 * 60 * 1000, maxBuffer: 1024 * 1024 },
-    );
+    await publishTree(source, destination, join(revision, relative));
   }
   return { finish: () => rm(incoming, { recursive: true }) };
 }

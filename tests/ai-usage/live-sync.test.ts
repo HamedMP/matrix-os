@@ -175,6 +175,8 @@ it("backs up only allowlisted history, preserves changed versions, then waits fo
     const args = run.mock.calls[1][1] as string[];
     expect(args.at(-1)).toContain("/incoming/auto-");
     expect(args.some((arg) => arg.startsWith("--link-dest="))).toBe(true);
+    // A linked old backup must not stand in for a file rewritten with the same size and time.
+    expect(args).toContain("--checksum");
     expect(args).toContain("--no-links");
     expect(args).not.toContain("--delete");
     expect(args).toContain(join(home, ".codex/sessions") + "/");

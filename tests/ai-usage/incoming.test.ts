@@ -95,3 +95,29 @@ it.each(["stat", "remove"])(
     }
   },
 );
+it("publishes a rewritten file even when its size and timestamp are unchanged, keeping the old bytes", async () => {
+  const root = await mkdtemp(join(tmpdir(), "usage-incoming-"));
+  const relative = "mac/.codex/sessions/day/one.jsonl",
+    current = join(root, relative),
+    when = new Date("2026-11-01T10:00:00Z");
+  try {
+    await mkdir(join(current, ".."), { recursive: true });
+    await writeFile(current, "history AAAA\n");
+    await utimes(current, when, when);
+    const id = `auto-${randomUUID()}`;
+    await prepareIncoming(root, id);
+    const staged = join(root, "incoming", id, relative);
+    await mkdir(join(staged, ".."), { recursive: true });
+    await writeFile(staged, "history BBBB\n");
+    await utimes(staged, when, when);
+    const published = await publishIncoming(root, id);
+    expect(await readFile(current, "utf8")).toBe("history BBBB\n");
+    expect((await lstat(current)).mode & 0o777).toBe(0o600);
+    const versions = await prepareBackupVersions(root);
+    expect(await readFile(versions.archives[0], "utf8")).toBe("history AAAA\n");
+    await versions.finish();
+    await published.finish();
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});

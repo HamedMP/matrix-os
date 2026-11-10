@@ -50,6 +50,8 @@ for (const home of config.captureHomes ?? []) {
     });
     await run("rsync", [
       "-a",
+      // Compare contents: a rewritten file can keep its size and timestamp.
+      "--checksum",
       "--no-links",
       "--no-specials",
       "--no-devices",
