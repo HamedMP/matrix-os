@@ -1,6 +1,6 @@
 import { spawnSync } from "node:child_process";
 import { createPublicKey, createVerify } from "node:crypto";
-import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, copyFileSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -111,11 +111,24 @@ describe("runner pool", () => {
     const dir = mkdtempSync(join(tmpdir(), "runner-pool-hook-"));
     dirs.push(dir);
     writeFileSync(join(dir, "event.json"), JSON.stringify(payload));
-    const result = spawnSync("bash", [resolve(import.meta.dirname, "../../scripts/ci/runner-pool/job-started.sh")], {
+    // Run the hook under a process named like the runner's worker, as the runner does. A marker
+    // written after the hook returns stands in for the workflow's next step.
+    const worker = join(dir, "Runner.Worker");
+    copyFileSync(spawnSync("bash", ["-c", "command -v bash"], { encoding: "utf8" }).stdout.trim(), worker);
+    chmodSync(worker, 0o755);
+    const hook = resolve(import.meta.dirname, "../../scripts/ci/runner-pool/job-started.sh");
+    const result = spawnSync(worker, ["-c", `bash "${hook}"; echo $? > "${dir}/next-step"; :`], {
       encoding: "utf8",
       env: { PATH: process.env.PATH, GITHUB_EVENT_NAME: event, GITHUB_EVENT_PATH: join(dir, "event.json"), GITHUB_REPOSITORY: "HamedMP/matrix-os" },
     });
-    expect(result.status, result.stderr).toBe(status);
+    if (status === 0) {
+      expect(result.status, result.stderr).toBe(0);
+      expect(readFileSync(join(dir, "next-step"), "utf8").trim()).toBe("0");
+    } else {
+      // Rejection kills the runner process, so an `if: always()` step never gets to run.
+      expect(result.signal).toBe("SIGKILL");
+      expect(existsSync(join(dir, "next-step"))).toBe(false);
+    }
   });
 
   it("installs the job-started hook where a job cannot change it", () => {
@@ -155,6 +168,11 @@ describe("runner pool", () => {
     const example = readFileSync(resolve(import.meta.dirname, "../../scripts/ci/runner-pool/pool.env.example"), "utf8");
     expect(example).toMatch(/^APP_ID=$/m);
     expect(example).toMatch(/^INSTALLATION_ID=$/m);
+  });
+
+  it("ships npm so pnpm/action-setup can bootstrap before setup-node", () => {
+    expect(dockerfile).toMatch(/^\s+nodejs npm \\$/m);
+    expect(dockerfile).toContain("npm --version");
   });
 
   it("pins the runner base image by digest", () => {

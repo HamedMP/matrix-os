@@ -39,8 +39,8 @@ single point of failure.
    Lanes that need Docker services (PostgreSQL, Docker tests) stay hosted.
 4. **Forks never reach the host.** Routing sends fork PRs to hosted runners,
    but a fork PR can edit `ci.yml`, so the runner image enforces it: a
-   job-started hook fails any job that is not a push, a merge-queue run or a
-   same-repository PR. Fork workflows also require maintainer approval for
+   job-started hook kills the runner, before any step starts, for any job
+   that is not a push, a merge-queue run or a same-repository PR. Fork workflows also require maintainer approval for
    every external contributor (`all_external_contributors`).
 5. **One required check.** `CI Results` stays the only required check, with
    the same job inventory whichever runner executed it.

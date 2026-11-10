@@ -51,6 +51,7 @@ this repository's Administration and Variables permissions.
 
 Fork source never runs here. `ci.yml` routes forks to hosted runners, but a
 fork PR can edit `ci.yml`, so the image enforces it: `job-started.sh` runs
-before every job and fails anything that is not a push, a merge-queue run or
-a same-repository PR. Slots share no traffic (`enable_icc=false`, no
+before every job and, for anything that is not a push, a merge-queue run or
+a same-repository PR, kills the runner before a step can start. Failing the
+hook alone is not enough: `if: always()` steps still run after a failed hook. Slots share no traffic (`enable_icc=false`, no
 `NET_RAW`) and have IPv6 disabled.
