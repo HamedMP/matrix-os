@@ -427,6 +427,26 @@ describe("desktop billing settings", () => {
     });
   });
 
+  it("suggests Helsinki to a browser in Finland and checks out there", async () => {
+    mockBrowserTimeZone("Europe/Helsinki");
+    const api = makeApi({
+      access: { runtimeProxyAllowed: false, reason: "no_entitlement" },
+      entitlement: null,
+      trialOffer: { eligible: true, durationDays: 3 },
+    });
+    useConnection.setState({ api: api as never });
+
+    render(<BillingSection />);
+    await screen.findByText("Billing required");
+    expect(screen.getByText(/Server location/).textContent).toContain("Helsinki, Finland");
+    fireEvent.click(screen.getByRole("button", { name: /Continue to checkout|Start 3-day trial/i }));
+
+    await waitFor(() => expect(api.post).toHaveBeenCalledWith(
+      "/billing/checkout",
+      { planSlug: "matrix_builder", interval: "monthly", regionSlug: "region_hel1" },
+    ));
+  });
+
   it("keeps the billing portal available for locked Stripe subscriptions", async () => {
     const api = makeApi({
       access: { runtimeProxyAllowed: false, reason: "payment_required" },

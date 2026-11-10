@@ -61,6 +61,13 @@ describe("hosted billing catalog", () => {
     expect(closestMatrixRegionSlug(undefined)).toBe("region_fsn1");
   });
 
+  it("suggests Helsinki only for Finnish timezones", () => {
+    expect(closestMatrixRegionSlug("Europe/Helsinki")).toBe("region_hel1");
+    expect(closestMatrixRegionSlug(" Europe/Mariehamn ")).toBe("region_hel1");
+    expect(closestMatrixRegionSlug("Europe/Tallinn")).toBe("region_nbg1");
+    expect(closestMatrixRegionSlug("Europe/Stockholm")).toBe("region_fsn1");
+  });
+
   it("limits only CPX22 to one preinstalled developer tool", () => {
     expect(getMatrixDeveloperToolPreinstallLimit("cpx22")).toBe(1);
     expect(getMatrixDeveloperToolPreinstallLimit("CPX22")).toBe(1);

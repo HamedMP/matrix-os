@@ -6,6 +6,10 @@ Ticket: [ENG-416](https://linear.app/matrix-os/issue/ENG-416/enable-finland-serv
 
 Offer Helsinki, Finland (`hel1`) alongside the existing locations in the hosted computer picker. A user can select it, continue through checkout, and have the selected region accepted by prebilling and customer VPS provisioning. The picker groups Helsinki under Finland while retaining the `eu-central` network zone.
 
+## Suggested location
+
+The shared `closestMatrixRegionSlug` helper (used by the Web and Electron Desktop pickers) suggests Helsinki for the Finnish timezones `Europe/Helsinki` and `Europe/Mariehamn`. Other nearby timezones are unchanged: the Baltics (`Europe/Tallinn`, `Europe/Riga`, `Europe/Vilnius`) still suggest Nuremberg, and the listed Nordic timezones (`Europe/Stockholm`, `Europe/Oslo`, `Europe/Copenhagen`) still suggest Falkenstein. Remapping them is a separate product decision.
+
 ## Availability and machine shapes
 
 Hetzner [lists `hel1` in `eu-central` with shared AMD cloud servers](https://docs.hetzner.com/cloud/general/locations/). Its [Germany/Finland product group](https://docs.hetzner.com/general/infrastructure-and-availability/price-adjustment/) includes CPX22, CPX42 and CPX52. Use the existing EU Starter, Builder and Max shapes respectively. Individual server types can still be temporarily unavailable for ordering at the provider.
@@ -13,6 +17,7 @@ Hetzner [lists `hel1` in `eu-central` with shared AMD cloud servers](https://doc
 ## Acceptance checks
 
 - Helsinki appears under Finland in onboarding and can be selected.
+- A browser in a Finnish timezone is suggested Helsinki; neighbouring timezones keep their existing suggestion.
 - Checkout accepts `region_hel1`; the resulting placement resolves to `hel1` and the EU machine shape for each plan.
 - Prebilling and customer VPS request validation accept `hel1`; unknown locations remain rejected.
 

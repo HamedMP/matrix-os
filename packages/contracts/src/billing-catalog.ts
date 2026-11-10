@@ -140,6 +140,8 @@ const FALKENSTEIN_TIMEZONES = new Set([
   "Europe/Warsaw",
 ]);
 
+const HELSINKI_TIMEZONES = new Set(["Europe/Helsinki", "Europe/Mariehamn"]);
+
 const HILLSBORO_AMERICAN_TIMEZONES = new Set([
   "America/Anchorage",
   "America/Boise",
@@ -156,6 +158,7 @@ export function closestMatrixRegionSlug(timeZone: string | null | undefined): Ma
   if (!normalized) return "region_fsn1";
   if (HILLSBORO_AMERICAN_TIMEZONES.has(normalized)) return "region_hil";
   if (normalized.startsWith("America/")) return "region_ash";
+  if (HELSINKI_TIMEZONES.has(normalized)) return "region_hel1";
   if (FALKENSTEIN_TIMEZONES.has(normalized)) return "region_fsn1";
   if (normalized.startsWith("Europe/") || normalized.startsWith("Africa/")) return "region_nbg1";
   if (
