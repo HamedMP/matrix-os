@@ -35,7 +35,7 @@ echo "curl $args $body" >> "${dir}/calls"
 case "$args" in
   *access_tokens*) echo '{"token":"installation-token"}' ;;
   *generate-jitconfig*) echo '{"encoded_jit_config":"jit-config"}' ;;
-  *"runners?per_page"*) echo '{"runners":[{"id":5,"name":"matrix-ci-host-1-9","status":"offline"},{"id":6,"name":"matrix-ci-host-2-9","status":"offline"},{"id":7,"name":"matrix-ci-host-1-8","status":"online"}]}' ;;
+  *"runners?per_page"*) echo '{"runners":[{"id":5,"name":"matrix-ci-host-1-9","status":"offline"},{"id":6,"name":"matrix-ci-host-2-9","status":"offline"},{"id":7,"name":"matrix-ci-host-1-8","status":"online"},{"id":8,"name":"matrix-ci-host-3-8","status":"online","busy":true},{"id":9,"name":"matrix-ci-other-1-8","status":"online"}]}' ;;
   *) echo '{}' ;;
 esac`,
   );
@@ -152,7 +152,7 @@ describe("runner pool", () => {
   it("publishes the heartbeat variable CI routes on", () => {
     const { run, calls } = sandbox();
     expect(run("publish_heartbeat").status).toBe(0);
-    // Only this host's online, idle runners count; the fixture has one online runner and no busy flag.
+    // Only this host's online, idle runners count: the fixture also has a busy slot and another host's runner.
     const patch = calls().split("\n").find((line) => line.includes("PATCH"));
     expect(patch).toContain("/actions/variables/MATRIX_CI_POOL_HEARTBEAT");
     expect(patch).toMatch(/"value":"[0-9]+ 1"/);
