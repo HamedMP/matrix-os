@@ -46,3 +46,20 @@ export function startLocalTerminalCore(binaryPath: string, env: Record<string, s
     });
   });
 }
+
+/**
+ * The shell local terminals start. An app opened from the Dock or a launcher
+ * often has no SHELL in its environment, so the account's login shell is
+ * asked next; `/bin/sh` is only the last resort.
+ */
+export function localLoginShell(env: NodeJS.ProcessEnv, accountShell: () => string | null | undefined): string {
+  const absolute = (value: string | null | undefined): string | null => (value && value.startsWith("/") ? value : null);
+  let account: string | null = null;
+  try {
+    account = absolute(accountShell());
+  } catch (error: unknown) {
+    // os.userInfo() throws when the account has no passwd entry.
+    console.warn("[local-terminals] login shell lookup failed:", describeError(error));
+  }
+  return absolute(env.SHELL) ?? account ?? "/bin/sh";
+}

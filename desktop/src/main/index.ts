@@ -93,7 +93,7 @@ import { createComputerCredentialBroker } from "./terminal-window/credential-bro
 import { installTerminalWindowAuth } from "./terminal-window/gateway-auth";
 import { createLocalTerminalHost, type LocalTerminalHost } from "./local-terminals/host";
 import { registerLocalTerminalIpc } from "./local-terminals/ipc";
-import { resolveLocalTerminalRuntime, startLocalTerminalCore } from "./local-terminals/runtime";
+import { localLoginShell, resolveLocalTerminalRuntime, startLocalTerminalCore } from "./local-terminals/runtime";
 import { LOCAL_TERMINAL_VERSION } from "../shared/local-terminals";
 import { connect as connectSocket } from "node:net";
 import { homedir, userInfo } from "node:os";
@@ -641,7 +641,7 @@ if (!gotLock) {
         ...localRuntime,
         expectedVersion: LOCAL_TERMINAL_VERSION,
         home: homedir(),
-        shell: process.env.SHELL || "/bin/sh",
+        shell: localLoginShell(process.env, () => userInfo().shell),
         env: process.env,
         uid: userInfo().uid,
         startCore: startLocalTerminalCore,

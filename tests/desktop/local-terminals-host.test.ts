@@ -8,7 +8,7 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } 
 import { encodeFrame, HC_FRAME } from "@desktop/main/local-terminals/hc-protocol";
 import { fakeCore } from "./fixtures/fake-herdr-core";
 import { createLocalTerminalHost, localShellEnv, type LocalTerminalHostOptions } from "@desktop/main/local-terminals/host";
-import { resolveLocalTerminalRuntime, startLocalTerminalCore } from "@desktop/main/local-terminals/runtime";
+import { localLoginShell, resolveLocalTerminalRuntime, startLocalTerminalCore } from "@desktop/main/local-terminals/runtime";
 import { LOCAL_TERMINAL_VERSION } from "@desktop/shared/local-terminals";
 
 describe("local shell environment", () => {
@@ -20,6 +20,19 @@ describe("local shell environment", () => {
       XDG_CONFIG_HOME: "/elsewhere", undefinedValue: undefined,
     })).toEqual({ HOME: "/Users/neo", USER: "neo", SHELL: "/bin/zsh", PATH: "/usr/bin", LANG: "en_US.UTF-8", LC_ALL: "C",
       TMPDIR: "/tmp/x", SSH_AUTH_SOCK: "/tmp/agent" });
+  });
+});
+
+describe("local terminal shell", () => {
+  it("uses SHELL, then the account's login shell, and /bin/sh only as a last resort", () => {
+    vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    expect(localLoginShell({ SHELL: "/bin/zsh" }, () => "/bin/bash")).toBe("/bin/zsh");
+    // Opened from the Dock: no SHELL in the environment.
+    expect(localLoginShell({}, () => "/opt/homebrew/bin/fish")).toBe("/opt/homebrew/bin/fish");
+    expect(localLoginShell({ SHELL: "" }, () => "/bin/zsh")).toBe("/bin/zsh");
+    expect(localLoginShell({ SHELL: "zsh" }, () => null)).toBe("/bin/sh");
+    expect(localLoginShell({}, () => "relative/shell")).toBe("/bin/sh");
+    expect(localLoginShell({}, () => { throw new Error("no passwd entry"); })).toBe("/bin/sh");
   });
 });
 
