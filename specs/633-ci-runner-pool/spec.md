@@ -47,6 +47,28 @@ single point of failure.
    `MATRIX_CI_*` routing variables, `ci-execution/*` refs and their contract
    tests. Remove routing hooks from `ci.yml`, preview and release workflows.
 
+## Failure modes
+
+- **Timeouts.** Every GitHub API call from the host (token, JIT configuration,
+  runner list and delete, heartbeat) is capped at 30 seconds. A job container
+  is killed after 2 hours (`JOB_TIMEOUT_SECONDS`), above the longest job
+  timeout in `ci.yml`.
+- **API or Docker failure.** The slot backs off 30 seconds per consecutive
+  failure, up to 5 minutes, and resets after one successful job.
+- **Crash or restart.** systemd restarts a failed slot or heartbeat service,
+  and slots start again when Docker does. A slot holds no state: before each
+  job it removes its own leftover container by name and deletes its own
+  offline runner registrations. Stopping a slot removes its container.
+- **Host down.** The heartbeat stops, so runs that start more than 3 minutes
+  later route hosted. Jobs already routed wait for a runner until re-run.
+
+## Documentation
+
+The pool is contributor-facing CI infrastructure, not a product surface. Update
+`docs/dev/fast-ci.md` and `.github/workflows/README.md` in this repository when
+routing lands, and open a `FinnaAI/matrix-os-site` PR under `content/docs/`
+for the contributor CI page once the pool carries `main`.
+
 ## Isolation
 
 - Runner containers: no Docker socket, no host mounts, no privileged mode,
