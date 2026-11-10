@@ -141,3 +141,14 @@ it("builds a large report with one date formatter and counts events outside its 
   expect(builder.outsideRange()).toBe(2);
   expect(builder.finish().find((r) => r.id === "all" && r.agent === "")?.summary.tokens).toBe(4000);
 });
+
+it("rebuilds cumulative-only sessions from the counters, like the history index, when files overlap", () => {
+  const file = (source: string, input: number, output: number) =>
+    parseUsageRecords("codex", [meta, model, legacy(input, 0, output)], source).events;
+  // The same session recorded in two files: each file's own delta starts from zero.
+  const events = [...file("a", 1000, 100), ...file("b", 1500, 150)];
+  expect(events.reduce((n, e) => n + e.input + e.output, 0)).toBe(2750);
+  const result = reconcileUsageEvents(events);
+  expect(result.events.reduce((n, e) => n + e.input + e.output, 0)).toBe(1650);
+  expect(result.events.every((e) => e.model === "gpt-5.5")).toBe(true);
+});

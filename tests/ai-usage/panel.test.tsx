@@ -2,7 +2,7 @@
 import React from "react";
 import { chooseOption } from "./choose-option";
 import { afterEach, describe, it, expect } from "vitest";
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { AiUsagePanel } from "../../packages/ui/src/ai-usage/AiUsagePanel";
 import { createHistoryReports } from "../../packages/contracts/src/ai-usage/history-report";
 import type { UsageEvent } from "../../packages/contracts/src/ai-usage/types";
@@ -84,4 +84,28 @@ it("keeps a valid range when refresh removes the selected historical year and sh
  expect(screen.getByTestId("token-total").textContent).toBe("450");
  expect(screen.getByText("Report updated")).toBeTruthy();
  expect(screen.getByText(/Nov 8, 2026.*7:45/)).toBeTruthy();
+});
+
+it("reports counters it had to leave out of a selected file as incomplete, not as a clean total", async () => {
+  const line = (value: unknown) => JSON.stringify(value) + "\n";
+  const total = { input_tokens: 1000, cached_input_tokens: 200, output_tokens: 50 };
+  // A native record without thread totals cannot place the cumulative counter that follows it.
+  const transcript =
+    line({ type: "session_meta", timestamp: "2026-11-09T12:00:00Z", payload: { id: "thread" } }) +
+    line({ type: "token_usage_record", timestamp: "2026-11-09T12:00:01Z", payload: { response_id: "r1", thread_id: "thread", usage: total } }) +
+    line({ type: "event_msg", timestamp: "2026-11-09T12:00:02Z", payload: { type: "token_count", info: { total_token_usage: total } } });
+  render(<AiUsagePanel now={new Date("2026-11-09T13:00:00Z")} timeZone="UTC" />);
+  fireEvent.change(screen.getByLabelText("Choose usage files"), {
+    // jsdom's File has no stream(); supply the bytes through the same reader interface the browser gives.
+    target: { files: [Object.assign(new File([transcript], "rollout.jsonl"), { stream: () => ({ getReader: () => {
+      let sent = false;
+      return {
+        read: async () => (sent ? { done: true } : ((sent = true), { done: false, value: Uint8Array.from(Buffer.from(transcript)) })),
+        cancel: async () => {},
+        releaseLock: () => {},
+      };
+    } }) })] },
+  });
+  await waitFor(() => expect(screen.getByTestId("token-total").textContent).toBe("1,050"));
+  expect(screen.getByText(/1 incomplete, conflicting or unsupported records/)).toBeTruthy();
 });

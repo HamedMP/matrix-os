@@ -1,9 +1,10 @@
 /** Seal and read back the original-byte backup. Never accepts paths from a browser. */
 import { createHash } from "node:crypto";
 import { createReadStream } from "node:fs";
+import { realpathSync } from "node:fs";
 import { lstat, opendir, readFile, writeFile, rename } from "node:fs/promises";
+import { fileURLToPath } from "node:url";
 import { join, resolve, relative } from "node:path";
-import { pathToFileURL } from "node:url";
 type Entry = { path: string; size: number; sha256: string };
 /** Returns the whole-file digest and, when asked, the digest of its first `prefix` bytes. */
 async function hash(path: string, prefix?: number) {
@@ -97,7 +98,12 @@ export async function sealBackup(destination: string, roots: string[]) {
   await rename(destination + ".pending", destination);
   return manifest;
 }
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+// Node resolves the main module to its real path while argv keeps a symlinked one; compare real paths
+// so a symlinked checkout can never turn this command into a silent no-op.
+if (
+  process.argv[1] &&
+  realpathSync(fileURLToPath(import.meta.url)) === realpathSync(process.argv[1])
+) {
   const [destination, ...roots] = process.argv.slice(2);
   if (!destination || !roots.length)
     throw new Error(

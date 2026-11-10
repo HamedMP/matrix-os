@@ -18,7 +18,9 @@ export function AiUsageSection() {
   return <ClerkUsageSection />;
 }
 function ClerkUsageSection() {
-  const { user } = useUser();
+  const { user, isLoaded } = useUser();
+  // Loading before the owner is known would show an error, then load again once Clerk resolves.
+  if (!isLoaded) return null;
   return <UsageSection owner={user?.id ?? null} />;
 }
 /** Same resolution as Electron Desktop: live index first, owner-bound export on computers without one. */

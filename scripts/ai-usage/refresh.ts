@@ -7,6 +7,7 @@ import { join, dirname, relative, resolve } from "node:path";
 import { USAGE_BACKUP_PATHS } from "../../packages/contracts/src/ai-usage/node";
 import { publishIncoming } from "./incoming";
 import { prepareBackupVersions } from "./backup-versions";
+import { sealBackup } from "./verify-backup";
 const exec = promisify(execFile);
 const [configFile, incomingId] = process.argv.slice(2);
 if (!configFile) throw new Error("Usage config required");
@@ -17,10 +18,18 @@ if (process.env.AI_USAGE_REFRESH_LOCK !== root) {
   const child = spawn(
     "flock",
     ["-w", "900", join(root, ".refresh.lock"), process.execPath, ...process.execArgv, ...process.argv.slice(1)],
-    { stdio: "inherit", env: { ...process.env, AI_USAGE_REFRESH_LOCK: root } },
+    // Own process group: flock does not pass signals to the job, so stopping this run signals both.
+    // Otherwise the job would keep running, and keep the lock, after its caller was stopped.
+    { stdio: "inherit", detached: true, env: { ...process.env, AI_USAGE_REFRESH_LOCK: root } },
   );
   for (const signal of ["SIGHUP", "SIGINT", "SIGTERM"] as const)
-    process.on(signal, () => child.kill(signal));
+    process.on(signal, () => {
+      try {
+        if (child.pid) process.kill(-child.pid, signal);
+      } catch (error: unknown) {
+        if ((error as NodeJS.ErrnoException)?.code !== "ESRCH") throw error;
+      }
+    });
   const code = await new Promise<number>((done, fail) => {
     child.once("error", fail);
     child.once("close", (status) => done(status ?? 1));
@@ -122,13 +131,8 @@ for (const name of ["mac", "matrix-runtime", "matrix-login", "recovered"]) {
     if ((error as NodeJS.ErrnoException)?.code !== "ENOENT") throw error;
   }
 }
-await run(process.execPath, [
-  "--import",
-  "tsx",
-  "scripts/ai-usage/verify-backup.ts",
-  config.backupManifest,
-  ...captured,
-]);
+// In-process: a failed or skipped seal must fail this run, never pass as a clean child exit.
+await sealBackup(config.backupManifest, captured);
 await run(process.execPath, [
   "--import",
   "tsx",

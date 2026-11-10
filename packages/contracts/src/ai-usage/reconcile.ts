@@ -31,7 +31,9 @@ export function reconcileUsageEvents(events: UsageEvent[]) {
   const replaced = new Map<UsageEvent, UsageEvent | null>(); // Same bound; released on return.
   let dropped = 0;
   for (const { native, legacy } of sessions.values()) {
-    if (!native.length || !legacy.length) continue;
+    // Without native records nothing is subtracted, but deltas are still rebuilt from the counters:
+    // a session copied into two files otherwise contributes each file's delta from zero.
+    if (!legacy.length) continue;
     const covered: Record<keyof Counters, Range[]> = { input: [], cached: [], output: [] };
     let uncertain = false;
     const prior: Counters = { input: 0, cached: 0, output: 0 };
@@ -82,7 +84,7 @@ export function reconcileUsageEvents(events: UsageEvent[]) {
         dropped++;
       } else if (input + output === 0) replaced.set(event, null);
       else
-        replaced.set(event, { ...event, model: "unknown", input: input - cached, cachedInput: cached, cacheWrite: 0, output });
+        replaced.set(event, { ...event, model: native.length ? "unknown" : event.model, input: input - cached, cachedInput: cached, cacheWrite: 0, output });
     }
   }
   if (!replaced.size) return { events, dropped };
