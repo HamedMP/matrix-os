@@ -90,6 +90,8 @@ Connected Apps and custom MCP use upstream configuration on the preview. The app
 
 **Examples.** A `github.get_pr` read with `repo` set to `octocat/Hello-World` and `pullNumber` set to `1` shows those exact parameters in the review. Declining the request leaves the provider untouched. A `github.create_issue` request fails before it reaches the approval panel.
 
+The Platform GitHub PR detail actions include `application/json` as a fallback in the `Accept` header. The Pipedream SDK uses that media type to select JSON decoding while GitHub can still return its preferred vendor JSON. The approved tool result includes the PR body within the generic result budget.
+
 **Verification.** Test exact parameters through the socket, review, and signed Platform request. Cover wrong owner, mismatched or disconnected accounts, stale approval, unsupported actions, expiry, size limits, and cancellation after dispatch. Exercise a bounded public read through Pebble on the live Preview and check the saved tool outcome. Repeat the existing Drive contract tests.
 
 **Authority rule.** Use the selected immutable connection ID and the dedicated `/read-call` route. An upstream approval, account label alone, or a model-supplied request is insufficient authority to dispatch.
