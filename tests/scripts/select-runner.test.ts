@@ -84,6 +84,9 @@ function runStep(command: string, environment: string) {
 
 describe("prepared CI image dependency setup", () => {
   const workflow = parse(readFileSync(resolve(import.meta.dirname, "../../.github/workflows/ci.yml"), "utf8"));
+  it("selects installed Chromium for suites that otherwise require host Google Chrome", () => {
+    expect(workflow.jobs.e2e.env.PLAYWRIGHT_CHROMIUM_CHANNEL).toBe("chromium");
+  });
   it.each([
     ["pull_request", "source_runner=matrix-ci\nbrowser_runner=matrix-ci\n"],
     ["workflow_dispatch", "source_runner=ubuntu-latest\nbrowser_runner=ubuntu-24.04\n"],

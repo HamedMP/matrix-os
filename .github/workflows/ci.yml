@@ -757,6 +757,8 @@ jobs:
     env:
       LANG: C.UTF-8
       LC_ALL: C.UTF-8
+      # Some suites default to host Google Chrome; use the locked browser installed below.
+      PLAYWRIGHT_CHROMIUM_CHANNEL: chromium
     strategy:
       fail-fast: false
       matrix:
