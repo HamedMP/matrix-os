@@ -19,6 +19,9 @@ import { CleanupCandidateRegistry, executeCleanupAction } from "../system-activi
 import { collectSystemActivity } from "../system-activity/collector.js";
 import { ActivityHistoryStore, AutoCleanupPolicyStore } from "../system-activity/history.js";
 import { createSystemActivityRoutes } from "../system-activity/routes.js";
+import { createTerminalInputActivity } from "../terminal-agent/input-activity.js";
+import { createTerminalAgentRoutes } from "../terminal-agent/routes.js";
+import { createTerminalAgentVerbs } from "../terminal-agent/verbs.js";
 
 export interface ShellTerminalRouteOptions {
   app: Hono;
@@ -175,6 +178,14 @@ export function registerShellTerminalRoutes(options: ShellTerminalRouteOptions) 
       projectOperationAdmission: gatewayCollaboration.projectOperationAdmission,
     } : {}),
   }));
+  const terminalInputActivity = createTerminalInputActivity();
+  app.route("/api/terminal", createTerminalAgentRoutes({
+    verbs: createTerminalAgentVerbs({ runtime: terminalWorkspaceRuntime, inputActivity: terminalInputActivity }),
+    getPrincipal: (c) => requireRequestPrincipal(c),
+    getPreviewTerminalOwner: readPreviewTerminalOwner,
+    terminalOwnerIds: terminalRuntimeOwnerIds,
+    projectAdmission: terminalWorkspaceProjectAdmission,
+  }));
   app.route("/api/terminal", createShellRoutes(shellRouteDeps));
   app.route(
     "/api/terminal/window-layouts",
@@ -189,6 +200,6 @@ export function registerShellTerminalRoutes(options: ShellTerminalRouteOptions) 
       run: (input) => shellCommandRunner.run(input),
     }));
   }
-  return { shellRouteDeps, terminalWorkspaceProjectAdmission,
+  return { shellRouteDeps, terminalWorkspaceProjectAdmission, terminalInputActivity,
     chatBoundWorkspaceRouteDeps, systemActivityCandidates };
 }

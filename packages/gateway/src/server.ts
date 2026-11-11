@@ -1694,7 +1694,7 @@ export async function createGateway(config: GatewayConfig) {
   });
   retireTerminalRoutineSource = terminalLaunchRuntime.admission.fence;
   preparedTerminalLaunch = input => terminalLaunchRuntime.admission.launchPrepared(input);
-  const { shellRouteDeps, terminalWorkspaceProjectAdmission,
+  const { shellRouteDeps, terminalWorkspaceProjectAdmission, terminalInputActivity,
     chatBoundWorkspaceRouteDeps, systemActivityCandidates } = registerShellTerminalRoutes({
     app, homePath, terminalWorkspaceRuntime, terminalRuntimeOwnerIds, managedLaunch: terminalLaunchRuntime.admission,
     terminalWindowLayoutStore, shellPreferencesStore, chatRepository,
@@ -1704,7 +1704,7 @@ export async function createGateway(config: GatewayConfig) {
   registerTerminalWebSocketRoutes({
     app, upgradeWebSocket, homePath, terminalWorkspaceRuntime, terminalLiveOwnership,
     workspaceSessionRuntimeBridge, terminalRuntimeOwnerIds, chatRepository,
-    terminalWorkspaceProjectAdmission, captureTerminalEvent,
+    terminalWorkspaceProjectAdmission, terminalInputActivity, captureTerminalEvent,
     getPrincipal: requireRequestPrincipal,
     logBestEffortFailure, logUnexpectedJsonParseFailure, logUnexpectedWsSendFailure,
   });

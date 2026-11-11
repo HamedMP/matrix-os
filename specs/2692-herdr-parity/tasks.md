@@ -20,13 +20,13 @@ where possible (hard limit 3000 additions / 50 files).
 
 ## Layer 2: verbs
 
-- [ ] T2.1 Failing tests: named-key encoder (normal vs application cursor mode, ctrl/alt letters, unknown key rejected).
-- [ ] T2.2 Failing tests: `read` returns screen-only for `lines=0`, last N history lines, `incomplete` when no snapshot.
-- [ ] T2.3 Failing tests: `send` uses bracketed paste only when enabled, then Enter; refuses `blocked` without `force`; waits for draft quiet.
-- [ ] T2.4 Failing tests: `interrupt` sends Esc for status-reporting tabs, Ctrl+C otherwise.
-- [ ] T2.5 Implement `packages/terminal-runtime/src/agent-verbs/`.
-- [ ] T2.6 Routes in `workspace-routes.ts` (extract to `agent-verb-routes.ts` to stay < 500 LOC), wired in `server/shell-terminal-routes.ts`.
-- [ ] T2.7 CLI `matrix shell read|send|keys|interrupt`; MCP tools.
+- [x] T2.1 Failing tests: named-key encoder (normal vs application cursor mode, ctrl/alt letters, unknown key rejected).
+- [x] T2.2 Failing tests: `read` returns screen-only for `lines=0`, last N history lines, `incomplete` when no snapshot.
+- [x] T2.3 Failing tests: `send` uses bracketed paste only when enabled, then Enter; refuses `blocked` without `force`; waits for draft quiet.
+- [x] T2.4 Failing tests: `interrupt` sends Esc for status-reporting tabs, Ctrl+C otherwise.
+- [x] T2.5 Implement `packages/gateway/src/terminal-agent/` (verbs, keys, input activity) over the runtime socket client.
+- [x] T2.6 Routes in `terminal-agent/routes.ts`, wired in `server/shell-terminal-routes.ts`; viewer keystrokes recorded in `server/terminal-ws-routes.ts`.
+- [x] T2.7 CLI `matrix shell read|send|keys|interrupt`; MCP tools.
 
 ## Layer 3: status, wait, events
 

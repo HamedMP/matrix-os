@@ -72,18 +72,20 @@ unsandboxed extension system, so it is out of scope.
 ### Verbs (layers 2–4)
 
 All verbs are routes under the existing `/api/terminal` mount, nested under a
-tab: `/api/terminal/workspaces/:workspaceId/tabs/:tabId/<verb>`. They reuse
-`createTerminalWorkspaceRoutes` auth (single owner principal, preview owner,
-project admission, chat-bound tab rules). The runtime logic lives in a new
-`packages/terminal-runtime/src/agent-verbs/` module that wraps
-`TerminalRuntime` (`runtime.ts` is already 1193 LOC; no behavior is added to it
-beyond narrow accessors).
+tab: `/api/terminal/workspaces/:workspaceId/tabs/:tabId/<verb>`. They use the
+same owner gate as `createTerminalWorkspaceRoutes` (single owner principal,
+preview owner, project admission) and reach only owner tabs (`accessScope:
+"owner"`); Chat-bound and legacy tabs keep their own paths. The logic lives
+in `packages/gateway/src/terminal-agent/` and runs over the existing
+`TerminalRuntimeSocketClient` operations (`ListWorkspaces`, `GetSnapshot`,
+`WriteInput` with `expectedIncarnation`). The runtime protocol doesn't change, and
+nothing is added to the 1193-LOC `runtime.ts`.
 
 | Verb | Route | Semantics |
 |---|---|---|
 | get | `GET …/tabs/:tabId` | Tab facts plus `agentStatus`, `labels`, `parentRef`, `exitCode`, `firstMessage` |
 | read | `GET …/tabs/:tabId/read?lines=N` | `{screen, history, lines, incomplete?, why?}` from the latest checkpoint snapshot. `lines` 0..10 000 (0 = screen only). While status is `working`/`blocked`/`error`, history reads stay available (snapshots never scroll the program). |
-| send | `POST …/tabs/:tabId/send` `{text, force?, wait?}` | Bracketed paste when the program enabled it, then Enter. Refuses `blocked` with 409 `terminal_agent_blocked` unless `force`. Holds while a viewer typed within `draftWaitMs` (default 60 s, hard cap 60 s), else after 3 s of output quiet, bounded by a 90 s total. |
+| send | `POST …/tabs/:tabId/send` `{text, force?}` | Single-line text is typed; multi-line text goes as one bracketed paste. Then Enter. Control and escape characters, including paste markers, are stripped. Refuses `blocked` with 409 `terminal_agent_blocked` unless `force`. If a person typed in a live viewer within the last 3 s, it holds until 3 s of keyboard quiet, never more than 60 s. Holding for output quiet comes with the layer 3 event stream. |
 | keys | `POST …/tabs/:tabId/keys` `{keys: KeyName[]}` | Named keys (`enter esc tab backspace up down left right home end pageup pagedown delete ctrl+<a-z> alt+<a-z> f1..f12 space`), max 64, encoded by the mouse/keyboard mode state (`application cursor` changes arrows). |
 | interrupt | `POST …/tabs/:tabId/interrupt` | Esc when the tab reports agent status, else Ctrl+C; returns `{pressed, observed: status-or-exit within 5 s}`. Never escalates. |
 | wait | `POST …/tabs/:tabId/wait` `{output?, timeoutMs?}` | Resolves `{reason: "stopped"|"exited"|"output"|"timeout", status?, exitCode?}`. Already not working → immediate. `output` matches text printed after the wait starts (literal, ≤256 chars). Timeout default 180 s, max 600 s. |

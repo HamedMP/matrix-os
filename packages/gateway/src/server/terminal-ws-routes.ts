@@ -13,6 +13,7 @@ import { createTerminalSizeLease } from "../terminal-size-lease.js";
 import { createTerminalLiveOwnership } from "../terminal-live-ownership.js";
 import { createTerminalWorkspaceProjectAdmission, terminalResourceOwnerId, terminalRuntimeRefAccess, shellWsMessageDataToString } from "../shell/index.js";
 import type { RequestPrincipal } from "../request-principal.js";
+import type { TerminalInputActivity } from "../terminal-agent/input-activity.js";
 
 interface TerminalWebSocketRouteOptions {
   app: Hono;
@@ -24,6 +25,8 @@ interface TerminalWebSocketRouteOptions {
   terminalRuntimeOwnerIds: readonly string[];
   chatRepository: ChatRepository | null;
   terminalWorkspaceProjectAdmission: ReturnType<typeof createTerminalWorkspaceProjectAdmission>;
+  /** Records human keystrokes so automated sends wait for an unfinished draft. */
+  terminalInputActivity?: TerminalInputActivity;
   captureTerminalEvent(event: string, properties?: Record<string, string | number | boolean | undefined>): void;
   getPrincipal(context: Context): RequestPrincipal;
   logBestEffortFailure(context: string, error: unknown): void;
@@ -36,7 +39,7 @@ export function registerTerminalWebSocketRoutes(options: TerminalWebSocketRouteO
   const {
     app, upgradeWebSocket, homePath, terminalWorkspaceRuntime, terminalLiveOwnership,
     workspaceSessionRuntimeBridge, terminalRuntimeOwnerIds, chatRepository,
-    terminalWorkspaceProjectAdmission, captureTerminalEvent, getPrincipal,
+    terminalWorkspaceProjectAdmission, terminalInputActivity, captureTerminalEvent, getPrincipal,
     logBestEffortFailure, logUnexpectedJsonParseFailure, logUnexpectedWsSendFailure,
   } = options;
   app.get(
@@ -243,6 +246,7 @@ export function registerTerminalWebSocketRoutes(options: TerminalWebSocketRouteO
                     || terminalLiveOwnership.allowsMutation(ownershipKey, ownershipViewerId);
                   if (terminalAttachmentAllowsFrame(attachmentMode, frame) && liveOwnershipAllowsFrame) {
                     stream.send(frame);
+                    if (frame.type === "input" || frame.type === "binary") terminalInputActivity?.record(refResult.data);
                   } else {
                     ws.send(JSON.stringify({ type: "error", code: "read_only", message: "Terminal is read-only" }));
                   }
