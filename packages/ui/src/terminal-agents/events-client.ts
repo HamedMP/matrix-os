@@ -84,7 +84,9 @@ export function createTerminalEventsClient(options: {
         catch (error: unknown) { console.warn("[terminal-events] ping failed", error instanceof Error ? error.name : "unknown_error"); }
       }, PING_MS);
     };
+    // react-doctor-disable-next-line react-doctor/postmessage-origin-risk -- a WebSocket from this client's own authenticated URL, not window.postMessage
     opened.onmessage = (event) => {
+      if (socket !== opened || stopped) return;
       if (typeof event.data !== "string" || event.data.length > MAX_FRAME_CHARS) return;
       let frame: unknown;
       try { frame = JSON.parse(event.data); }
@@ -95,9 +97,13 @@ export function createTerminalEventsClient(options: {
       publish(reduceTerminalEvents(state, frame));
     };
     opened.onclose = () => {
+      // Only the current socket of a running client may change state: a socket
+      // closed by stop() or replaced must not restore old tabs.
+      if (socket !== opened) return;
       if (ping !== null) clearRepeat(ping);
       ping = null;
-      if (socket === opened) socket = null;
+      socket = null;
+      if (stopped) return;
       publish({ ...state, connected: false });
       scheduleReconnect();
     };

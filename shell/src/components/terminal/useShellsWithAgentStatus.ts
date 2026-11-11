@@ -5,7 +5,11 @@ import { terminalVisualStatus, type TerminalTabFacts } from "@matrix-os/ui/termi
 import { useTerminalAgentEvents } from "@/stores/terminal-agent-events";
 import type { ShellSessionSummary } from "./terminal-session-state";
 
-/** Overlay live per-tab agent status from `/ws/terminal/events` onto listed shells. */
+/**
+ * Overlay live per-tab agent status from `/ws/terminal/events` onto listed shells,
+ * in its own field. The overlay is recomputed every time, so a copy written back
+ * into the saved list (a pin, a rename) never keeps a stale status.
+ */
 export function mergeShellAgentStatus(
   shells: ShellSessionSummary[],
   tabs: Readonly<Record<string, TerminalTabFacts>>,
@@ -13,14 +17,12 @@ export function mergeShellAgentStatus(
   let changed = false;
   const merged = shells.map((shell) => {
     const facts = tabs[shell.name];
-    const visualStatus = facts?.state === "live" ? terminalVisualStatus(facts.agentStatus) : undefined;
-    if (!visualStatus) return shell;
+    const agentVisualStatus = facts?.state === "live" ? terminalVisualStatus(facts.agentStatus) : undefined;
+    if (shell.agentVisualStatus === agentVisualStatus) return shell;
     changed = true;
-    return {
-      ...shell,
-      visualStatus,
-      ...(facts?.statusMessage ? { subtitle: facts.statusMessage } : {}),
-    };
+    const { agentVisualStatus: _previous, ...rest } = shell;
+    void _previous;
+    return agentVisualStatus ? { ...rest, agentVisualStatus } : rest;
   });
   return changed ? merged : shells;
 }

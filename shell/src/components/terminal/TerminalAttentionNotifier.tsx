@@ -10,6 +10,7 @@ import { OPEN_PROVIDER_TERMINAL_EVENT } from "@/lib/canonical-provider-setup";
 import { useTerminalAgentEvents } from "@/stores/terminal-agent-events";
 import { ShellNotificationCard } from "../ShellNotificationCard";
 import { ShellNotificationPortal } from "../ShellNotificationPortal";
+import { visibleTerminalSessions } from "./visible-terminal-sessions";
 
 const MAX_VISIBLE = 3;
 const DONE_TIMEOUT_MS = 12_000;
@@ -20,8 +21,9 @@ const COPY: Record<TerminalAttention["kind"], string> = {
   done: "finished",
 };
 
-function personIsLooking(): boolean {
-  return typeof document !== "undefined" && document.visibilityState === "visible" && document.hasFocus();
+function sameAlerts(left: TerminalAttention[], right: TerminalAttention[]): boolean {
+  return left.length === right.length
+    && left.every((alert, index) => alert.key === right[index]!.key && alert.kind === right[index]!.kind && alert.message === right[index]!.message);
 }
 
 /**
@@ -43,15 +45,16 @@ export function TerminalAttentionNotifier() {
     previous.current = next;
     // The first snapshot is the current state, not news.
     if (!before) return;
-    const seen = personIsLooking() ? new Set(next.keys()) : new Set<string>();
-    const changes = terminalAttentionChanges(before, next, seen);
+    const changes = terminalAttentionChanges(before, next, visibleTerminalSessions());
     setAlerts((current) => {
       const stillAlerting = current.filter((alert) => {
         const facts = next.get(alert.key);
         return facts?.state === "live" && facts.agentStatus === alert.kind;
       });
       const fresh = changes.filter((change) => !stillAlerting.some((alert) => alert.key === change.key));
-      return [...fresh, ...stillAlerting].slice(0, MAX_VISIBLE);
+      const updated = [...fresh, ...stillAlerting].slice(0, MAX_VISIBLE);
+      // Unchanged alerts keep their array, so the done timeout is not restarted.
+      return sameAlerts(current, updated) ? current : updated;
     });
   }, [tabs]);
 

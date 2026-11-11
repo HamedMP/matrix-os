@@ -4,6 +4,7 @@ import React from "react";
 import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { TerminalAttentionNotifier } from "../../shell/src/components/terminal/TerminalAttentionNotifier.js";
+import { visibleTerminalSessions } from "../../shell/src/components/terminal/visible-terminal-sessions.js";
 import { mergeShellAgentStatus } from "../../shell/src/components/terminal/useShellsWithAgentStatus.js";
 import { useTerminalAgentEvents } from "../../shell/src/stores/terminal-agent-events.js";
 import { OPEN_PROVIDER_TERMINAL_EVENT } from "../../shell/src/lib/canonical-provider-setup.js";
@@ -55,13 +56,17 @@ describe("terminal attention notifier", () => {
     expect(screen.queryByTestId("terminal-attention")).toBeNull();
   });
 
-  it("raises done only when the person is not looking, and clears an alert once it is resolved", () => {
+  // Fault detected (review of #3299): a focused browser counted every tab as seen, so a
+  // background agent finishing raised nothing.
+  it("raises done only for a tab that is not on screen, and clears an alert once it is resolved", () => {
     vi.spyOn(document, "hasFocus").mockReturnValue(true);
-    render(<TerminalAttentionNotifier />);
+    vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockReturnValue({ width: 300, height: 200 } as DOMRect);
+    render(<><div data-terminal-session={key} /><TerminalAttentionNotifier /></>);
     act(() => { useTerminalAgentEvents.setState({ tabs: facts("working") }); });
     act(() => { useTerminalAgentEvents.setState({ tabs: facts("done") }); });
     expect(screen.queryByTestId("terminal-attention")).toBeNull();
 
+    // The person switches to another app: the pane is no longer seen.
     vi.spyOn(document, "hasFocus").mockReturnValue(false);
     act(() => { useTerminalAgentEvents.setState({ tabs: facts("working") }); });
     act(() => { useTerminalAgentEvents.setState({ tabs: facts("done") }); });
@@ -72,14 +77,37 @@ describe("terminal attention notifier", () => {
   });
 });
 
+describe("visible terminal sessions", () => {
+  it("counts only panes rendered on screen in a focused document", () => {
+    vi.spyOn(document, "hasFocus").mockReturnValue(true);
+    const rect = vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockReturnValue({ width: 0, height: 0 } as DOMRect);
+    render(<div data-terminal-session={key} />);
+    expect([...visibleTerminalSessions()]).toEqual([]);
+    rect.mockReturnValue({ width: 10, height: 10 } as DOMRect);
+    expect([...visibleTerminalSessions()]).toEqual([key]);
+  });
+});
+
 describe("sidebar agent status overlay", () => {
+  // Fault detected (review of #3299): the status message replaced the terminal's name,
+  // and an overlay copied back into the saved list kept a stale badge.
+  it("keeps the name, and clears a stale overlay that was written back", () => {
+    const written = mergeShellAgentStatus(
+      [{ name: key, workspaceId, tabId, revision: 1, workspaceRevision: 1, subtitle: "review" }],
+      facts("blocked", "Allow edit?"),
+    );
+    expect(written[0]).toMatchObject({ agentVisualStatus: "waiting", subtitle: "review" });
+    expect(mergeShellAgentStatus(written, {})[0]).not.toHaveProperty("agentVisualStatus");
+  });
+
   it("shows live agent status on the matching shell only", () => {
     const shells = [
       { name: key, workspaceId, tabId, revision: 1, workspaceRevision: 1 },
       { name: `${workspaceId}:tt_${"b".repeat(32)}`, workspaceId, tabId: `tt_${"b".repeat(32)}`, revision: 1, workspaceRevision: 1 },
     ];
     const merged = mergeShellAgentStatus(shells, facts("blocked", "Allow edit?"));
-    expect(merged[0]).toMatchObject({ visualStatus: "waiting", subtitle: "Allow edit?" });
+    expect(merged[0]).toMatchObject({ agentVisualStatus: "waiting" });
+    expect(merged[0]).not.toHaveProperty("subtitle");
     expect(merged[1]).toBe(shells[1]);
     expect(mergeShellAgentStatus(shells, {})).toBe(shells);
   });
