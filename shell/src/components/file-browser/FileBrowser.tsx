@@ -389,7 +389,7 @@ function FileBrowserForAuthority({ windowId, mobile = false, active, identity, g
           {!mobile && <StatusBar />}
         </>
       )}
-      <QuickLook onOpenFile={openFile} />
+      <QuickLook gatewayUrl={gatewayUrl} onOpenFile={openFile} />
       </FileDownloadProvider>
     </div>
   );
