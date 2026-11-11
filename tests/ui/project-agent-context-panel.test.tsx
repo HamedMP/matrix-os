@@ -200,6 +200,18 @@ it("creates an explicit project skill with a safe name and refreshes the project
   expect(read).toHaveBeenCalledTimes(2);
 });
 
+it("returns focus to Add skill when cancelling the new skill form", async () => {
+  render(<ProjectAgentContextPanel scope="owner" projectId="project_a" read={readEditableContext} onCreateFile={vi.fn()} />);
+  open();
+  const addSkill = await screen.findByRole("button", { name: "Add skill" });
+  await selectSkillAction("New skill");
+  expect(document.activeElement).toBe(screen.getByRole("textbox", { name: "Skill name" }));
+  fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+
+  expect(screen.queryByRole("textbox", { name: "Skill name" })).toBeNull();
+  expect(document.activeElement).toBe(addSkill);
+});
+
 it("uses empty MCP and instruction templates and keeps a safe error on an unsuccessful create", async () => {
   const read = vi.fn<() => Promise<unknown>>()
     .mockResolvedValueOnce({ ...empty, configFiles: [] })

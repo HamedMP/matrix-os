@@ -1,5 +1,7 @@
 import { Plus } from "lucide-react";
 import { useEffect, useEffectEvent, useId, useLayoutEffect, useRef, useState, type FormEvent, type ReactNode } from "react";
+import { Button } from "../Button.js";
+import { Input } from "../Input.js";
 import {
   PROJECT_AGENT_CONFIG_CREATE_ERROR,
   PROJECT_SKILL_FILE_MAX_BYTES,
@@ -26,8 +28,18 @@ export interface ProjectSkillSourceActions {
 }
 
 const inputClass = "block min-h-8 w-full rounded-md border bg-transparent px-2.5 py-1 outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]";
-const buttonClass = "min-h-8 max-w-full rounded-md border px-2.5 py-1 text-left text-xs font-medium hover:bg-[var(--bg-hover,var(--accent))] focus-visible:outline-2 focus-visible:outline-[var(--accent)] disabled:opacity-50";
+const sharedInputClass = "[&>label]:text-xs! [&>label]:font-normal! [&>label]:[color:inherit]! [&>input:focus-visible]:ring-2 [&>input:focus-visible]:ring-[var(--accent)]";
+const buttonClass = "min-h-8 max-w-full enabled:[color:inherit]! enabled:hover:bg-[var(--bg-hover,var(--accent))]! focus-visible:ring-2 focus-visible:ring-[var(--accent)] disabled:opacity-50";
 const borderStyle = { borderColor: "var(--border-subtle, var(--border))" };
+const sharedInputStyle = {
+  ...borderStyle,
+  minHeight: "2rem",
+  padding: "0.25rem 0.625rem",
+  fontSize: "0.75rem",
+  lineHeight: "1rem",
+  background: "transparent",
+  color: "inherit",
+};
 const secondaryStyle = { color: "var(--text-secondary, var(--muted-foreground))" };
 
 interface Props extends ProjectSkillSourceActions {
@@ -83,23 +95,24 @@ export function ProjectSkillActions({ filesPending, onCreate, loadInstalledSkill
     }
   };
 
-  const actions = <button type="button" className={buttonClass} style={borderStyle} disabled={busy} onClick={() => { choose(null); addButton.current?.focus(); }}>Cancel</button>;
+  const actions = <Button variant="secondary" size="sm" className={buttonClass} style={borderStyle} disabled={busy}
+    onClick={() => { choose(null); addButton.current?.focus(); }}>Cancel</Button>;
   const canCopy = loadInstalledSkills && readInstalledSkill;
 
   return (
     <div className="min-w-0 space-y-2">
-      <button ref={addButton} type="button" className={buttonClass} style={borderStyle} disabled={busy} aria-controls={id} aria-expanded={open}
+      <Button ref={addButton} variant="secondary" size="sm" className={buttonClass} style={borderStyle} disabled={busy} aria-controls={id} aria-expanded={open}
         onClick={() => { setOpen(!open); choose(null); }}>
         <span className="flex items-center gap-1.5"><Plus size={13} aria-hidden className="shrink-0" />Add skill</span>
-      </button>
+      </Button>
       <div id={id} hidden={!open} aria-busy={busy}>
         {open && action === null ? <div className="flex min-w-0 flex-wrap gap-2">
-          {canCopy ? <button type="button" className={buttonClass} style={borderStyle} disabled={busy}
-            onClick={() => choose("installed")}>Choose installed skill</button> : null}
-          <button type="button" className={buttonClass} style={borderStyle} disabled={busy}
-            onClick={() => choose("new")}>New skill</button>
-          <button type="button" className={buttonClass} style={borderStyle} disabled={busy}
-            onClick={() => choose("import")}>Import SKILL.md</button>
+          {canCopy ? <Button variant="secondary" size="sm" className={buttonClass} style={borderStyle} disabled={busy}
+            onClick={() => choose("installed")}>Choose installed skill</Button> : null}
+          <Button variant="secondary" size="sm" className={buttonClass} style={borderStyle} disabled={busy}
+            onClick={() => choose("new")}>New skill</Button>
+          <Button variant="secondary" size="sm" className={buttonClass} style={borderStyle} disabled={busy}
+            onClick={() => choose("import")}>Import SKILL.md</Button>
         </div> : null}
         {open && action === "installed" && canCopy ? <InstalledSkillForm busy={busy} load={loadInstalledSkills}
           onSubmit={skill => { void submit(async signal => copyProjectSkill(await readInstalledSkill(skill.file, signal), skill.name), PROJECT_SKILL_COPY_ERROR); }}>
@@ -153,16 +166,14 @@ function InstalledSkillForm({ busy, load, onSubmit, children }: {
   return (
     <form className="space-y-2" onSubmit={event => { event.preventDefault(); if (!busy && selected) onSubmit(selected); }}>
       <p className="text-xs leading-relaxed" style={secondaryStyle}>Only the SKILL.md file is copied. Add any required scripts or other files separately.</p>
-      <label className="block space-y-1 text-xs">
-        <span>Search installed skills</span>
-        <input type="search" autoFocus className={inputClass} style={borderStyle} value={query} maxLength={128}
-          disabled={busy} onChange={event => { setQuery(event.target.value); setSelectedFile(null); }} />
-      </label>
+      <Input id={`${radioName}-search`} label="Search installed skills" type="search" autoFocus
+        className={sharedInputClass} style={sharedInputStyle} value={query} maxLength={128}
+        disabled={busy} onChange={event => { setQuery(event.target.value); setSelectedFile(null); }} />
       {list.kind === "loading" ? <p role="status" className="text-xs" style={secondaryStyle}>Loading installed skills…</p> : null}
       {list.kind === "error" ? <>
         <p role="alert" className="text-xs">Installed skills could not be loaded.</p>
-        <button type="button" className={buttonClass} style={borderStyle} disabled={busy}
-          onClick={() => { setList({ kind: "loading" }); setRevision(value => value + 1); }}>Retry loading skills</button>
+        <Button variant="secondary" size="sm" className={buttonClass} style={borderStyle} disabled={busy}
+          onClick={() => { setList({ kind: "loading" }); setRevision(value => value + 1); }}>Retry loading skills</Button>
       </> : null}
       {list.kind === "ready" && list.skills.length === 0 ? <p className="text-xs" style={secondaryStyle}>No installed skills on this computer.</p> : null}
       {list.kind === "ready" && list.skills.length > 0 ? <>
@@ -179,7 +190,7 @@ function InstalledSkillForm({ busy, load, onSubmit, children }: {
         </fieldset> : <p role="status" className="text-xs" style={secondaryStyle}>No installed skills match your search.</p>}
       </> : null}
       <div className="flex flex-wrap gap-2">
-        <button type="submit" className={buttonClass} style={borderStyle} disabled={busy || !selected}>Copy to project</button>
+        <Button type="submit" variant="secondary" size="sm" className={buttonClass} style={borderStyle} disabled={busy || !selected}>Copy to project</Button>
         {children}
       </div>
     </form>
@@ -191,29 +202,26 @@ function NewSkillForm({ busy, onSubmit, children }: {
   onSubmit: (name: string, description: string, instructions: string) => void;
   children: ReactNode;
 }) {
+  const id = useId();
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
   const [instructions, setInstructions] = useState("");
 
   return (
     <form className="space-y-2" onSubmit={event => { event.preventDefault(); if (!busy) onSubmit(name, description, instructions); }}>
-      <label className="block space-y-1 text-xs">
-        <span>Skill name</span>
-        <input type="text" autoFocus value={name} maxLength={64} placeholder="release-review" className={inputClass} style={borderStyle}
-          disabled={busy} onChange={event => setName(event.target.value)} />
-      </label>
-      <label className="block space-y-1 text-xs">
-        <span>Description</span>
-        <input type="text" value={description} maxLength={PROJECT_SKILL_DESCRIPTION_LIMIT} placeholder="When should the agent use this skill?"
-          className={inputClass} style={borderStyle} disabled={busy} onChange={event => setDescription(event.target.value)} />
-      </label>
+      <Input id={`${id}-name`} label="Skill name" type="text" autoFocus value={name} maxLength={64}
+        placeholder="release-review" className={sharedInputClass} style={sharedInputStyle}
+        disabled={busy} onChange={event => setName(event.target.value)} />
+      <Input id={`${id}-description`} label="Description" type="text" value={description}
+        maxLength={PROJECT_SKILL_DESCRIPTION_LIMIT} placeholder="When should the agent use this skill?"
+        className={sharedInputClass} style={sharedInputStyle} disabled={busy} onChange={event => setDescription(event.target.value)} />
       <label className="block space-y-1 text-xs">
         <span>Instructions</span>
         <textarea value={instructions} rows={4} maxLength={PROJECT_SKILL_FILE_MAX_BYTES} placeholder="What should the agent do?"
           className={`${inputClass} resize-y`} style={borderStyle} disabled={busy} onChange={event => setInstructions(event.target.value)} />
       </label>
       <div className="flex flex-wrap gap-2">
-        <button type="submit" className={buttonClass} style={borderStyle} disabled={busy}>Create skill</button>
+        <Button type="submit" variant="secondary" size="sm" className={buttonClass} style={borderStyle} disabled={busy}>Create skill</Button>
         {children}
       </div>
     </form>
@@ -242,7 +250,7 @@ function ImportSkillForm({ busy, onSubmit, children }: {
       </label>
       <p className="text-xs leading-relaxed" style={secondaryStyle}>Choose a Markdown file with a skill name, description, and instructions.</p>
       <div className="flex flex-wrap gap-2">
-        <button type="submit" className={buttonClass} style={borderStyle} disabled={busy || !file}>Import skill</button>
+        <Button type="submit" variant="secondary" size="sm" className={buttonClass} style={borderStyle} disabled={busy || !file}>Import skill</Button>
         {children}
       </div>
     </form>
