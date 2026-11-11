@@ -29,6 +29,13 @@ export type ClaudeActivity = {
 
 export function claudeActivity(name: string) {
   const normalized = name.trim().toLowerCase();
+  if (normalized === "croncreate") {
+    return {
+      kind: "dynamic_tool" as const,
+      label: "Schedule in this Claude session",
+      detail: "Runs while this session is active, for up to 7 days. A Matrix Computer restart or update can stop it.",
+    };
+  }
   if (["bash", "shell", "terminal", "execute", "run_command"].includes(normalized)) {
     return { kind: "command" as const, label: "Run command" };
   }

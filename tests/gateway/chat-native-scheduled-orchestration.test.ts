@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { createHash } from "node:crypto";
 import type { KyselyPGlite } from "kysely-pglite";
 import { CanonicalProviderCatalogSchema, type CanonicalChatRun } from "@matrix-os/contracts";
 import { createTestPGlite } from "../helpers/pglite-test-helper.js";
@@ -6,6 +7,7 @@ import { ChatRepository } from "../../packages/gateway/src/chat/repository.js";
 import { CanonicalChatOrchestrator } from "../../packages/gateway/src/chat/orchestrator.js";
 import { CanonicalChatProviderRegistry, type CanonicalChatProviderAdapter } from "../../packages/gateway/src/chat/provider-adapter.js";
 import { admitNativeScheduledPhase, type NativeScheduledAdmissionOptions } from "../../packages/gateway/src/chat/native-scheduled-admission.js";
+import { createClaudeNativeRecoveryHost } from "../../packages/gateway/src/chat/claude-native-recovery-host.js";
 
 const owner = { type: "personal" as const, ownerId: "owner_native_phase" };
 const sessionId = "3f04f47c-2639-4e74-b70c-b0ea347cf266";
@@ -46,6 +48,49 @@ describe("native scheduled phase orchestration", () => {
     await repository.finishRun(owner, { chatId: request.chatId, runId: run.id, outcome: "completed", completedAt: timestamp });
   });
   afterEach(async () => { await orchestrator?.close();await repository.kysely.destroy(); });
+  it("prepares the protected launch from the current owner, account, and canonical Chat history only", async () => {
+    const now = Date.now();
+    const sourceFingerprint = "a".repeat(64);
+    const checkpoint = { ownerId: owner.ownerId, chatId: request.chatId, sourceRunId: request.sourceRunId, sessionId,
+      sourceFingerprint, deadlineAt: new Date(now + 120_000).toISOString(), jobs: [{
+        id: "abcdef01", cron: "* * * * *", recurring: true, promptSha256: createHash("sha256").update(request.prompt).digest("hex"),
+        assistantUuid: "09f23651-fd98-4642-8b79-6dc2e5688c8e", receiptUuid: "40c465b2-37e0-4eb4-b51d-d8bef1c69a1b",
+        replay: { toolUseId: "toolu_fixture", assistantMessageId: "msg_fixture", prompt: request.prompt,
+          receivedAtMs: now - 1000, nextFireAtMs: now + 20_000 },
+      }],
+    };
+    const claimed = { ...checkpoint, status: "active" as const, generation: 3 };
+    const prepareNativeRecovery = vi.fn(async () => ({ command: "/bin/claude", cwd: "/owner",
+      args: ["--print"], env: { HOME: "/owner" }, sourceFingerprint, sessionId }));
+    const spawnProtected = vi.fn();
+    const getCatalog = vi.fn(async () => catalog());
+    const host = createClaudeNativeRecoveryHost({
+      ownerId: owner.ownerId, repository, adapter: { prepareNativeRecovery, stateSchemaVersion: 1 },
+      catalog: { getCatalog }, spawnProtected,
+    });
+    const signal = new AbortController().signal;
+    await expect(host.prepare({ ...claimed, ownerId: "foreign" }, signal)).resolves.toBeNull();
+    expect(getCatalog).not.toHaveBeenCalled();
+    const prepared = await host.prepare(claimed, signal);
+    expect(prepareNativeRecovery).toHaveBeenCalledWith(expect.objectContaining({
+      owner, run: expect.objectContaining({ id: request.sourceRunId, chatId: request.chatId }),
+      state: { sessionId }, sessionId, expectedSourceFingerprint: sourceFingerprint,
+    }));
+    expect(spawnProtected).not.toHaveBeenCalled();
+    prepared!.launchProtected();
+    const launch = spawnProtected.mock.calls[0]![0];
+    expect(launch.transcript.toString()).toContain("Create my schedule.");
+    expect(launch.transcript.toString()).toContain(request.prompt);
+    getCatalog.mockResolvedValueOnce(catalog(false));
+    await expect(host.revalidate(checkpoint, signal)).resolves.toBe(false);
+    prepareNativeRecovery.mockResolvedValueOnce({ command: "/bin/claude", cwd: "/owner", args: [],
+      env: {}, sourceFingerprint: "b".repeat(64), sessionId });
+    await expect(host.checkpointAfterClose(checkpoint, signal)).resolves.toBe(false);
+    const record = (await repository.get(owner, request.chatId))!;
+    await repository.update(owner, request.chatId, { baseRevision: record.chat.revision, lifecycle: "archived" });
+    await expect(host.prepare(claimed, signal)).resolves.toBeNull();
+    expect(spawnProtected).toHaveBeenCalledOnce();
+  });
   function provider(resume: CanonicalChatProviderAdapter<{ sessionId: string }>["resume"]) {
     return { driverKind: "claude_code" as const, stateSchemaVersion: 1,
       parseState: (value: unknown) => value as { sessionId: string }, serializeState: (value: unknown) => value,

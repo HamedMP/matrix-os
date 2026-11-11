@@ -44,8 +44,6 @@ def main():
     if fcntl.fcntl(snapshot, fcntl.F_GET_SEALS) != SEALS:
         raise ValueError("snapshot sealing failed")
     os.lseek(snapshot, 0, os.SEEK_SET)
-    # Bubblewrap closes extra FDs in its monitor/reaper, while its command
-    # inherits non-CLOEXEC FDs (verified with Ubuntu Noble 0.9.0-1ubuntu0.3).
     os.dup2(snapshot, 3, inheritable=True)
     os.close(snapshot)
 

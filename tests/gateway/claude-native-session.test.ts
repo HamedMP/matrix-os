@@ -56,6 +56,31 @@ it("ends a canonical phase while retaining only a child with a confirmed native 
   expect(children[0]!.ended).toBe(false); expect(children[0]!.kill).not.toHaveBeenCalled();
   expect(phase.settled).toHaveBeenCalledOnce(); await pool.close(); expect(children[0]!.kill).toHaveBeenCalledOnce();
 });
+it("drains a retained child at shutdown and refuses its scheduled input in a fresh Gateway pool", async () => {
+  const before = setup();
+  const initial = before.turn();
+  await ready();
+  before.children[0]!.createJob();
+  before.children[0]!.result();
+  await initial.promise;
+  expect(before.children[0]!.ended).toBe(false);
+
+  const closed = vi.fn();
+  before.children[0]!.once("close", closed);
+  await before.pool.close();
+  expect(closed).toHaveBeenCalledOnce();
+  expect(before.children[0]!.kill).toHaveBeenCalledWith("SIGTERM");
+
+  const after = setup();
+  const stale = after.turn({
+    ...input("run_after_restart"),
+    resumeState: { sessionId: "native_1" },
+    nativeScheduled: { sourceRunId: input().runId, sessionId: "native_1", promptId: "11111111-1111-4111-8111-111111111111" },
+  });
+  await expect(stale.promise).rejects.toThrow("Native session unavailable");
+  expect(after.spawnFn).not.toHaveBeenCalled();
+  expect(after.scheduled).not.toHaveBeenCalled();
+});
 it("does not treat model text or a failed CronCreate result as a live job", async () => {
   const { children, turn } = setup(); const phase = turn(); await ready();
   children[0]!.emitFrame({ type: "assistant", message: { content: [{ type: "text", text: "Scheduled recurring job abcdef01" }] } });
@@ -147,6 +172,26 @@ it("denies CronCreate before effect when source identity is unverified", async (
   children[0]!.toolHook("CronCreate", "denied_cron", args); await ready();
   expect(children[0]!.frames.find(f => f.response?.request_id?.startsWith("callback_denied_cron")).response.response.hookSpecificOutput.permissionDecision).toBe("deny");
   children[0]!.result(); await phase.promise; expect(children[0]!.ended).toBe(true);
+});
+it("denies project-persistent CronCreate in a session-scoped Chat before the native tool runs", async () => {
+  const { children, turn } = setup();
+  const phase = turn();
+  await ready();
+  const child = children[0]!;
+  const common = { cron: "* * * * *", prompt: "synthetic schedule", recurring: true };
+  for (const [id, durable] of [["durable_cron", true], ["session_cron", false]] as const) {
+    const args = { ...common, durable };
+    child.emitFrame({ type: "assistant", message: { content: [{ type: "tool_use", id, name: "CronCreate", input: args }] } });
+    child.toolHook("CronCreate", id, args);
+    await ready();
+  }
+  const responses = child.frames.filter(frame => frame.type === "control_response");
+  expect(responses.find(frame => frame.response?.request_id?.startsWith("callback_durable_cron"))
+    ?.response.response.hookSpecificOutput).toMatchObject({ permissionDecision: "deny" });
+  expect(responses.find(frame => frame.response?.request_id?.startsWith("callback_session_cron"))
+    ?.response.response).toEqual({});
+  child.result();
+  await phase.promise;
 });
 it("denies a new native task at the owner/global cap without evicting an existing task", async () => {
   const { children, turn } = setup({ maxSessions: 1, maxSessionsPerOwner: 1 }); const first = turn(); await ready(); children[0]!.createJob(); children[0]!.result(); await first.promise;

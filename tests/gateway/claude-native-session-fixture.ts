@@ -32,6 +32,7 @@ export class NativeChild extends EventEmitter {
     end: () => { this.ended = true; queueMicrotask(() => this.exit()); },
   });
   kill = vi.fn((_signal: NodeJS.Signals) => { queueMicrotask(() => this.exit(null, "SIGTERM")); });
+  confirmScopeClosed = vi.fn(async () => true);
   emitFrame(frame: any) { if (["assistant", "stream_event", "user"].includes(frame.type)) frame = { session_id: "native_1", parent_tool_use_id: null, ...frame }; this.stdout.emit("data", Buffer.from(`${JSON.stringify(frame)}\n`)); }
   ack(requestId: string) { this.emitFrame({ type: "control_response", response: { subtype: "success", request_id: requestId, response: { added: ["matrix-integrations"], removed: [], errors: {} } } }); }
   exit(code: number | null = 0, signal: NodeJS.Signals | null = null) { this.emit("exit", code, signal); this.emit("close", code, signal); }

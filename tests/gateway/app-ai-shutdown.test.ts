@@ -18,8 +18,11 @@ async function shutdownFixture(appAiRuntime: { close(): Promise<void> }) {
   const logBestEffortFailure = vi.fn();
   const terminalLaunchRuntime = service("terminal launch");
   const nativeClaudeChatRuntime = service("native Claude");
+  const beginNativeShutdown = vi.fn(() => { calls.push("native Claude.beginShutdown"); });
+  Object.assign(nativeClaudeChatRuntime, { beginShutdown: beginNativeShutdown });
   const dependencies = {
     appAiRuntime, closeAppAiCapabilities, logBestEffortFailure, terminalLaunchRuntime, nativeClaudeChatRuntime,
+    nativeClaudeRecovery: undefined,
     browserLab: service("browser lab"), sharedBrowserRuntime: service("shared browser"),
     supervisedBrowserRuntime: service("browser approvals"),
     managedFeatureRestart: service("managed feature restart"),
@@ -78,7 +81,7 @@ it("continues the actual gateway shutdown after app AI cleanup rejects", async (
   expect(shutdown.calls.indexOf("chats.close")).toBeLessThan(shutdown.calls.indexOf("native Claude.close"));
   expect(shutdown.calls.indexOf("native Claude.close")).toBeLessThan(shutdown.calls.indexOf("terminal launch.close"));
   expect(shutdown.calls.at(-1)).toBe("HTTP.close");
-  expect(shutdown.calls.slice(0, 2)).toEqual(["managed feature restart.close", "GitHub developer setup.close"]);
+  expect(shutdown.calls.slice(0, 3)).toEqual(["native Claude.beginShutdown", "managed feature restart.close", "GitHub developer setup.close"]);
 });
 
 it.each(["rejects", "throws"])("finishes gateway teardown when native Claude cleanup %s without hiding failure", async mode => {
@@ -146,7 +149,7 @@ export class ModelRuntime {
     expect(shutdown.calls).toContain("company bots.close");
     expect(shutdown.calls).toContain("platform database.destroy");
     expect(shutdown.calls.at(-1)).toBe("HTTP.close");
-    expect(shutdown.calls.slice(0, 2)).toEqual(["managed feature restart.close", "GitHub developer setup.close"]);
+    expect(shutdown.calls.slice(0, 3)).toEqual(["native Claude.beginShutdown", "managed feature restart.close", "GitHub developer setup.close"]);
     const fence = join(dirname(home), ".matrix-private", basename(home), "native-writers/pi.json");
     expect(await readFile(fence, "utf8")).toBeTruthy();
     await expect(createGenericNativeWriter(home).acquire("pi")).rejects.toThrow();

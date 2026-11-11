@@ -519,8 +519,8 @@ export class CanonicalChatOrchestrator {
             }
           }
           resumeState = claimed.run.context?.agent ? undefined : await loadChatResumeState({
+            ...claimed.run,
             repository: this.options.repository, owner, chatId, adapter,
-            instanceId: claimed.run.instanceId,
             executionRootFingerprint: resolvedRoot?.fingerprint ?? null,
             mode: "follow_up",
           });

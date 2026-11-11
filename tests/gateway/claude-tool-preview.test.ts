@@ -1,9 +1,18 @@
 import { describe, expect, it } from "vitest";
-import { projectClaudeToolPreview } from "../../packages/gateway/src/chat/claude-tool-preview.js";
+import { claudeActivity, projectClaudeToolPreview } from "../../packages/gateway/src/chat/claude-tool-preview.js";
 
 const owner = { homePath: "/safe/home", executionRoot: "/safe/project", showPrivatePaths: true };
 
 describe("Claude tool activity projection", () => {
+  it("explains the native schedule lifecycle without displaying its prompt", () => {
+    expect(claudeActivity("CronCreate")).toEqual({
+      kind: "dynamic_tool",
+      label: "Schedule in this Claude session",
+      detail: "Runs while this session is active, for up to 7 days. A Matrix Computer restart or update can stop it.",
+    });
+    expect(projectClaudeToolPreview("CronCreate", { prompt: "private reminder" }, owner)).toEqual({});
+  });
+
   it("preserves owner file previews and keeps shared file paths scoped", () => {
     expect(projectClaudeToolPreview("Read", { file_path: "/safe/project/src/streaming.ts" }, owner))
       .toEqual({ preview: "/safe/project/src/streaming.ts", previewKind: "path" });

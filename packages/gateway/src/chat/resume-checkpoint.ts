@@ -1,9 +1,9 @@
-import type { CanonicalChatProviderAdapter } from "./provider-adapter.js";
+import type { CanonicalChatProviderAdapter, ChatResumeSettings } from "./provider-adapter.js";
 import type { ChatOwner } from "./records.js";
 import type { ChatRepository } from "./repository.js";
 
 /** Shared policy for immediate follow-ups, durable queued turns, and Retry. */
-export async function loadChatResumeState(input: {
+export async function loadChatResumeState(input: ChatResumeSettings & {
   repository: Pick<ChatRepository, "getLatestAdapterStateForChat">;
   owner: ChatOwner;
   chatId: string;
@@ -22,6 +22,10 @@ export async function loadChatResumeState(input: {
     includeInterrupted: input.mode === "follow_up",
   });
   // Compatibility is filtered in SQL before choosing the newest checkpoint.
-  // An incompatible interruption must not hide an older compatible session.
-  return previous ? input.adapter.parseState(previous.state) : undefined;
+  if (!previous) return undefined;
+  const state = input.adapter.parseState(previous.state);
+  return input.adapter.selectResumeCheckpoint
+    ? input.adapter.selectResumeCheckpoint({ owner: input.owner, chatId: input.chatId, state,
+      settings: input, previousSettings: previous.settings })
+    : state;
 }

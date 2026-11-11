@@ -1,4 +1,6 @@
 import { assertPrivateRoutineRequest } from "./private-routine-authority.js";
+import { createHash } from "node:crypto";
+import { verifyClaudeNativeRecoveryGeneration, type ClaudeNativeRecoveryAdmissionFence } from "./claude-native-recovery-store.js";
 import { NATIVE_SCHEDULED_INPUT_TEXT, nativeScheduledRequestHash, nativeScheduledRequestId, NativeScheduledSourceSchema, readNativeScheduledSource, sameNativeScheduledRun, type NativeScheduledSource } from "./native-scheduled-source.js";
 import { associateAdmittedDriveChat } from "./drive-project-database.js";
 import { chatContextRequestHash } from "./agent-context.js";
@@ -33,12 +35,12 @@ export function admitChatTurn(deps: TurnAdmissionDependencies, ownerInput: ChatO
 
 /** Separate private entry: ordinary client admission can never enable the system input mode. */
 export function admitNativeScheduledChatTurn(deps: TurnAdmissionDependencies, ownerInput: ChatOwner,
-  input: AdmitTurnInput, source: NativeScheduledSource): Promise<AdmittedTurn> {
-  return admitOwnedChatTurn(deps, ownerInput, input, NativeScheduledSourceSchema.parse(source));
+  input: AdmitTurnInput, source: NativeScheduledSource, recovery?: ClaudeNativeRecoveryAdmissionFence): Promise<AdmittedTurn> {
+  return admitOwnedChatTurn(deps, ownerInput, input, NativeScheduledSourceSchema.parse(source), recovery);
 }
 
 async function admitOwnedChatTurn(deps: TurnAdmissionDependencies, ownerInput: ChatOwner, input: AdmitTurnInput,
-  source?: NativeScheduledSource): Promise<AdmittedTurn> {
+  source?: NativeScheduledSource, recovery?: ClaudeNativeRecoveryAdmissionFence): Promise<AdmittedTurn> {
     const owner = CanonicalOwnerScopeSchema.parse(ownerInput);
     CanonicalChatIdSchema.parse(input.chatId);
     const message = CanonicalChatMessageSchema.parse(input.message);
@@ -68,6 +70,12 @@ async function admitOwnedChatTurn(deps: TurnAdmissionDependencies, ownerInput: C
       if (source) {
         const origin = await readNativeScheduledSource(trx, owner, current, source);
         if (!sameNativeScheduledRun(origin.run, run)) throw new ChatConflictError(input.chatId, Number(current.revision));
+        if (recovery && (owner.type !== "personal" || recovery.ownerId !== owner.ownerId || recovery.chatId !== input.chatId
+          || recovery.sourceRunId !== source.sourceRunId || recovery.sessionId !== source.sessionId
+          || recovery.promptSha256 !== createHash("sha256").update(source.prompt).digest("hex")
+          || !await verifyClaudeNativeRecoveryGeneration(trx, recovery, new Date()))) {
+          throw new ChatConflictError(input.chatId, Number(current.revision));
+        }
       }
       const queued = await trx.selectFrom("chat_queued_turns").select("id")
         .where("chat_id", "=", input.chatId).where("client_request_id", "=", turn.clientRequestId).executeTakeFirst();

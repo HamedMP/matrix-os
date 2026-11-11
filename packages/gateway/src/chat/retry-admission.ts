@@ -89,8 +89,8 @@ export async function admitCanonicalRetry(deps: RetryAdmissionOptions, principal
       }
     }
     const resumeState = context.latestRun.context?.agent ? undefined : await loadChatResumeState({
+      ...context.latestRun, selection: validated.selection,
       repository: deps.repository, owner, chatId, adapter,
-      instanceId: context.latestRun.instanceId,
       executionRootFingerprint: resolvedRoot?.fingerprint ?? null,
       mode: "retry",
     });

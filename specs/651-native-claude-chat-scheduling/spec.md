@@ -10,7 +10,9 @@ This is distinct from Matrix Bot routines. Their approval, background authorizat
 
 The per-turn adapter sends stdin EOF at a native terminal result. The child exits before a later Cron deadline. Actual native 2.1.317 CronCreate/CronList records confirm creation; the same executable with open stdin triggers in stream-json print mode. Therefore merely exposing tools is insufficient, and an absent task in a later process is not evidence that it fired or was cancelled.
 
-Current 2.1.317 can restore some recurring tasks on a later resume. Restoration is separate from continuously running a native session; no automatic restart/reboot recovery is promised here.
+Current 2.1.317 can restore qualified recurring tasks after a confirmed Gateway stop and startup. Claude owns future timing. An unconfirmed stop, an expired session, an in-flight occurrence, a one-shot job or a source that no longer qualifies cannot be recovered by this path.
+
+Chat labels native task creation “Schedule in this Claude session” and explains that the session lasts at most seven days and can stop during a Computer restart or update. A host bundle update that stops Gateway drains its retained Claude processes. A retained transcript and a prior successful tool receipt do not show that a task is running after the service starts again. The private Chat denies project-wide native CronCreate requests before effect; the native project inventory does not carry the private Chat's authority.
 
 Actual native scheduled prompts pass through UserPromptSubmit before inference. A host can hold that callback while validating and admitting a new canonical phase. Native initialization during that pending callback cancels the prompt, even though the initialization ACK succeeds. Do not reinitialize or replay it. Install the native hooks once and route the current phase through a private registrar that retains exact callback/session/prompt/tool correlation.
 
@@ -53,7 +55,9 @@ No new public endpoint, credential source, background consent, scheduler or prov
 
 Explicit native CronDelete, canonical cancellation/abort, actual child failure, source/account drift, failed preparation, control timeout, bounds and shutdown drain the exact owned process and pending callbacks. Cleanup failures remain failures until actual process termination is confirmed. Do not infer cancellation from absence.
 
-Closing a browser interaction or detaching a terminal is separate from ending a Claude process. Service restart ends this in-memory host ownership; restart/recovery behavior must be stated from observed evidence. Preserve owner data and native transcript history.
+Closing a browser interaction or detaching a terminal leaves the owned process independent. During graceful Gateway shutdown the pool can hand off a fully attested idle recurring inventory after physical child close and exact process-scope drain. The owner Postgres receipt carries the original deadline, source and job digests, and a monotonic generation. Optional replay inputs are sealed using the existing owner tool-output key. Startup claims a released generation exclusively after run reconciliation and rechecks the latest successful private Chat source, current provider selection, root and owner credential fingerprint.
+
+The protected Linux launcher supplies only sealed job receipts and bounded committed text from the same canonical Chat. The pinned process keeps the default owner profile and working directory. Its private resume configuration excludes project-wide job inventory and disables writes to the original native transcript. It receives empty MCP at idle, then uses the existing per-phase capability checks and admission transaction on a future native callback. A later foreground phase uses the live protected process while it is qualified. If it has retired, canonical Chat history seeds a fresh ordinary session.
 
 The implementation stacks on the exact qualified Schedule B head. Shared hotspots are the Claude adapter and canonical phase composition. No duplicate routines hook, authority widening or changes to other-provider dispatch are allowed. Public docs in the private site repository must describe the final accepted behavior and limits through a separate PR.
 

@@ -42,6 +42,12 @@ export function createClaudeNativeSessionControl(options: {
     })();
     return initializePromise;
   };
+  const replaceMcp = async (servers: NativeRecord) => {
+    const response = await request({ subtype: "mcp_set_servers", servers });
+    const data = McpReplacementSchema.safeParse(response.response);
+    if (response.subtype !== "success" || !data.success || Object.keys(data.data.errors).length > 0) throw new Error("Native MCP replacement unavailable");
+    return data.data;
+  };
   return {
     promptCallbackId, cronCallbackId,
     get bashCallbackId() { return installedBashCallbackId; },
@@ -58,9 +64,13 @@ export function createClaudeNativeSessionControl(options: {
     },
     async prepare(servers: NativeRecord, requestId?: string) {
       await ensure(requestId);
-      const response = await request({ subtype: "mcp_set_servers", servers });
-      const data = McpReplacementSchema.safeParse(response.response);
-      if (response.subtype !== "success" || !data.success || Object.keys(data.data.errors).length > 0) throw new Error("Native MCP replacement unavailable");
+      await replaceMcp(servers);
+    },
+    async prepareIdle() {
+      await ensure();
+      if (!applied || version !== "2.1.317") throw new Error("Native idle protocol unavailable");
+      const mcp = await replaceMcp({});
+      if (mcp.added.length > 0) throw new Error("Native idle MCP configuration unavailable");
     },
     /** A local phase binding, not a second native initialize. Reinitialize cancels a held native prompt in 2.1.317. */
     async registerPhase(frame: NativeRecord, servers: NativeRecord) {

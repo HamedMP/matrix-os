@@ -134,6 +134,7 @@ export async function admitCanonicalTurn(
     const resumeState = prepared?.context?.agent ? undefined : await loadChatResumeState({
       repository: deps.repository, owner, chatId, adapter,
       instanceId: validated.instance.id,
+      selection: validated.selection, interactionMode: effective.interactionMode, permissionMode: effective.permissionMode,
       executionRootFingerprint: resolvedRoot?.fingerprint ?? null,
       mode: "follow_up",
     });

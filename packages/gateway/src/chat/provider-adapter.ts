@@ -170,6 +170,8 @@ export class CanonicalProviderRunRecoveryPendingError extends Error {
   }
 }
 
+export type ChatResumeSettings = Pick<CanonicalProviderRunInput, "selection" | "interactionMode" | "permissionMode">;
+
 export interface CanonicalChatProviderAdapter<State = unknown> {
   readonly driverKind: CanonicalProviderDriverKind;
   readonly stateSchemaVersion: number;
@@ -177,6 +179,9 @@ export interface CanonicalChatProviderAdapter<State = unknown> {
   readonly detachOnShutdown?: boolean;
   parseState(value: unknown): State;
   serializeState(value: State): unknown;
+  /** Some checkpoints can continue only on a live, owned provider process. */
+  selectResumeCheckpoint?(input: { owner: CanonicalOwnerScope; chatId: string; state: State;
+    settings: ChatResumeSettings; previousSettings: ChatResumeSettings }): State | undefined;
   /** Read-only admission guard for adapters whose execution can outlive projection. */
   isBackingRunActive?(input: { owner: CanonicalOwnerScope; state: State; signal: AbortSignal }): Promise<boolean>;
   /** A failed or timed-out recovery cannot safely establish this Run's outcome. */
