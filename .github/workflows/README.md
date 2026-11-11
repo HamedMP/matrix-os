@@ -71,14 +71,19 @@ target. Duration-based shard balancing, a timing manifest and profile-refresh
 tooling are planned in a separate follow-up; they are not included in this
 hosted-workflow layer.
 
-Core workflows stay GitHub-hosted, with one exception: the four unit shards run
-on the dedicated host's runner pool (`matrix-ci`) when its heartbeat is fresh
-and four slots are idle ([spec 633](../../specs/633-ci-runner-pool/spec.md),
+Core workflows stay GitHub-hosted, with one exception: unit shards, Pattern Scan
+and both E2E lanes use the dedicated host's runner pool (`matrix-ci`) when its
+heartbeat is fresh and four slots are idle ([spec 633](../../specs/633-ci-runner-pool/spec.md),
 [`scripts/ci/runner-pool`](../../scripts/ci/runner-pool/README.md)). A public
 repository must not expose a reusable self-hosted runner to PR workflow code,
 so pool runners are single-use containers with no host access, and the runner
-image itself rejects fork and manual-dispatch jobs. Fork PRs, manual dispatches
-and every run while the pool is busy or offline use hosted runners.
+image itself rejects fork and manual-dispatch jobs. The seven jobs may queue
+within four slots. The prepared image supplies ripgrep, Chromium/Electron OS
+libraries and Xvfb, so these jobs do not contact apt mirrors on the pool; each
+Playwright workspace still installs its exact browser revision. Fork PRs, manual
+dispatches and runs admitted while the pool is busy or offline use hosted
+runners (Ubuntu 24.04 for E2E), including their normal OS dependency setup.
+`CI Results` requires the same assertions on either runner.
 
 ## Release Artifacts
 
