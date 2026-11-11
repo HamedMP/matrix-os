@@ -38,6 +38,19 @@ export const LocalTerminalSchema = z.object({
 }).strict();
 export type LocalTerminal = z.infer<typeof LocalTerminalSchema>;
 
+/** Coding agents the Terminal window can start; the command line for each is fixed in the main process. */
+export const LocalTerminalAgentSchema = z.enum(["claude", "codex", "opencode", "pi"]);
+export type LocalTerminalAgent = z.infer<typeof LocalTerminalAgentSchema>;
+// A folder under the user's home: relative, no `..`, no empty or dot segments.
+export const LocalTerminalFolderSchema = z.string().min(1).max(1024)
+  .refine((value) => !value.startsWith("/") && !/[\u0000\\]/.test(value)
+    && value.split("/").every((part) => part !== "" && part !== "." && part !== ".."));
+export const LocalTerminalNameSchema = z.string().min(1).max(64).regex(/^[^\u0000-\u001f\u007f-\u009f]+$/);
+// Pasted images and files: at most 8 MB raw, as herdr-core accepts.
+export const LOCAL_TERMINAL_PUT_MAX_BYTES = 8 * 1024 * 1024;
+const PUT_BASE64_MAX = Math.ceil(LOCAL_TERMINAL_PUT_MAX_BYTES / 3) * 4;
+const PutFileNameSchema = z.string().min(1).max(128).regex(/^[A-Za-z0-9._ -]+$/).refine((name) => name !== "." && name !== "..");
+
 export const LOCAL_TERMINAL_INVOKE = {
   "local-terminal:list": {
     request: z.object({}).strict(),
@@ -47,7 +60,11 @@ export const LOCAL_TERMINAL_INVOKE = {
     ]),
   },
   "local-terminal:create": {
-    request: z.object(Size).strict(),
+    request: z.object({
+      ...Size,
+      agent: LocalTerminalAgentSchema.optional(),
+      folder: LocalTerminalFolderSchema.optional(),
+    }).strict(),
     response: z.discriminatedUnion("status", [
       z.object({ status: z.literal("ready"), id: LocalTerminalIdSchema }).strict(),
       // "rate-limited": too many terminals were started in a short time.
@@ -55,6 +72,20 @@ export const LOCAL_TERMINAL_INVOKE = {
     ]),
   },
   "local-terminal:kill": { request: z.object({ id: LocalTerminalIdSchema }).strict(), response: Ok },
+  "local-terminal:rename": { request: z.object({ id: LocalTerminalIdSchema, name: LocalTerminalNameSchema }).strict(), response: Ok },
+  // Writes a pasted file beside the terminal (herdr-core `terminal.put`) and
+  // returns where it landed, for the window to paste that path.
+  "local-terminal:put": {
+    request: z.object({
+      id: LocalTerminalIdSchema,
+      name: PutFileNameSchema,
+      dataBase64: z.string().min(1).max(PUT_BASE64_MAX).regex(/^[A-Za-z0-9+/]+={0,2}$/),
+    }).strict(),
+    response: z.union([
+      z.object({ ok: z.literal(true), path: z.string().min(1).max(4096) }).strict(),
+      z.object({ ok: z.literal(false) }).strict(),
+    ]),
+  },
   "local-terminal:attach": {
     request: z.object({ id: LocalTerminalIdSchema, ...Size }).strict(),
     response: z.union([

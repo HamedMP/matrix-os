@@ -60,5 +60,9 @@ where possible (hard limit 3000 additions / 50 files).
 
 ## Layer 6: Electron local terminals
 
-- [ ] T6.1 IPC: run with argv/cwd/name, label/rename, put, read, send, wait.
-- [ ] T6.2 Renderer: `+` menu agents, folder picker, rename, paste, find.
+Built against `main`'s local terminal host. The Herdr sessions work (ENG-443, `feat/desktop-terminal-herdr-sessions`) rebases on top of this stack; its shared `hc-sessions.ts` then takes over `rename` and `put` along with listing and attach.
+
+- [x] T6.1 IPC: start a known agent (fixed command table in main; Codex with `--no-daemon`) in its login shell, which stays open after it; folder under home (realpath-checked); rename via a `matrix.title` label shown to every client of the core; `put` for pasted files (8 MB, safe names).
+- [x] T6.2 Renderer: `+` menu (Shell, Claude Code, Codex, OpenCode, Pi) and inline rename.
+- [ ] T6.3 Folder picker and image paste in the Electron Terminal pane, using the IPC from T6.1. Follow-on.
+- [ ] T6.4 Electron attention for Matrix computers: a main-process `/ws/terminal/events` bridge (tokens stay in main) feeding `@matrix-os/ui/terminal-agents`. Follow-on.
