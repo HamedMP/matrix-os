@@ -262,7 +262,7 @@ describe("native mobile delete account screen", () => {
       ["after completion", { ...scheduled, status: "completed" }],
       ["after cancellation", { ...none, status: "cancelled" }],
     ])("keeps the instructions visible %s", (_name, status) => {
-      const openUrl = jest.spyOn(Linking, "openURL").mockResolvedValue(true);
+      const openUrl = jest.spyOn(Linking, "openURL").mockResolvedValue(undefined);
       mockUseAccountDeletion.mockReturnValue(deletionState({ status }));
       render(<DeleteAccountScreen />);
 
@@ -296,7 +296,7 @@ describe("native mobile delete account screen", () => {
     });
 
     it("opens a file's download link in the browser", () => {
-      const openUrl = jest.spyOn(Linking, "openURL").mockResolvedValue(true);
+      const openUrl = jest.spyOn(Linking, "openURL").mockResolvedValue(undefined);
       mockUseAccountExport.mockReturnValue(exportState({
         files: [{ name: "home/notes.md", url: "https://storage.example/notes?sig=1" }],
         instructions: ["Download all pages before erasure begins."],
@@ -398,7 +398,7 @@ describe("native mobile delete account screen", () => {
     });
 
     it("opens the computers on the web for migration", () => {
-      const openUrl = jest.spyOn(Linking, "openURL").mockResolvedValue(true);
+      const openUrl = jest.spyOn(Linking, "openURL").mockResolvedValue(undefined);
       render(<DeleteAccountScreen />);
 
       fireEvent.press(screen.getByLabelText("Open your computers"));

@@ -52,6 +52,12 @@ interface SessionRecord {
   ended?: boolean;
 }
 
+function ticketResourceKind(
+  kind: AuthorizedCollaborationContext["resourceKind"],
+): CollaborationConnectionTicket["resource"]["kind"] {
+  return kind === "app" ? "app_instance" : kind;
+}
+
 export type DirectSessionEndReason = "expired" | "denied" | "revoked" | "closed" | "shutdown" | "exhausted";
 export type DirectSessionEndedListener = (session: CollaborationDirectSession, reason: DirectSessionEndReason) => void;
 
@@ -226,6 +232,16 @@ export class DirectSessionService {
     return Date.parse(record.session.expiresAt) > this.now().getTime() ? { ...record.session } : null;
   }
 
+  /** Keeps organization evidence fresh while a previously authorized download is streaming. */
+  async keepEvidenceFresh(sessionId: string): Promise<CollaborationDirectSession> {
+    const record = this.live(sessionId);
+    await this.refreshEvidence(record, 5_000);
+    this.assertServing();
+    this.assertRecordLive(record);
+    if (this.live(sessionId) !== record) throw new DirectAuthError("expired", "Session is not active");
+    return { ...record.session };
+  }
+
   /** Verifies a signed request and returns the live session with fresh evidence. */
   async authenticate(input: Omit<DirectAuthorizeInput, "action">): Promise<CollaborationDirectSession> {
     const record = this.live(input.sessionId);
@@ -335,7 +351,8 @@ export class DirectSessionService {
       this.end(record, "expired");
       throw new DirectAuthError("expired", "Authority generation changed");
     }
-    if (context.resourceKind !== ticket.resource.kind || (ticket.purpose === "terminal" && context.resourceKind !== "terminal")) throw denied();
+    if (ticketResourceKind(context.resourceKind) !== ticket.resource.kind
+      || (ticket.purpose === "terminal" && context.resourceKind !== "terminal")) throw denied();
     const connection = this.connections.open({ sessionId: record.session.id });
     let reservation: ReturnType<DirectSessionService["reserve"]>;
     try {
@@ -456,7 +473,8 @@ export class DirectSessionService {
       .select(["id", "organization_id", "authority_runtime_id", "authority_generation", "kind", "membership_mode", "parent_scope_id", "deleted_at"])
       .where("id", "=", ticket.resource.scopeId).executeTakeFirst();
     if (!scope || scope.deleted_at !== null || scope.organization_id !== ticket.organizationId
-      || scope.kind !== ticket.resource.kind || toLogicalRuntimeId(scope.authority_runtime_id) !== ticket.runtime.runtimeId) throw denied();
+      || ticketResourceKind(scope.kind) !== ticket.resource.kind
+      || toLogicalRuntimeId(scope.authority_runtime_id) !== ticket.runtime.runtimeId) throw denied();
     if (Number(scope.authority_generation) !== ticket.runtime.authorityGeneration) {
       throw new DirectAuthError("stale_generation", "Ticket generation does not match the resource");
     }
@@ -504,10 +522,11 @@ export class DirectSessionService {
     }
   }
 
-  private async refreshEvidence(record: SessionRecord): Promise<void> {
-    if (Date.parse(record.session.evidenceExpiresAt) > this.now().getTime()) return;
+  private async refreshEvidence(record: SessionRecord, minimumRemainingMs = 0): Promise<void> {
+    if (Date.parse(record.session.evidenceExpiresAt) > this.now().getTime() + minimumRemainingMs) return;
     try {
       const expiresAt = await this.evidenceFor(record.session.organizationId, record.session.actorId);
+      if (expiresAt <= this.now().getTime()) throw new DirectAuthError("expired", "Organization evidence expired");
       record.session = { ...record.session, evidenceExpiresAt: new Date(Math.min(expiresAt, Date.parse(record.session.expiresAt))).toISOString() };
     } catch (error: unknown) {
       this.end(record, "denied");

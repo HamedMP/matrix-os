@@ -34,8 +34,9 @@ import { createBrowserLabViewerAdmission, type BrowserLabViewerAuth } from "./br
 import { nativeBrowserProduct } from "../../shared/browser-products";
 import { browserProductLaunchUrl } from "./browser-product-launch";
 import { createHostedBotsTransport, hostedBotsIdentity, hostedBotsProviderLoginAllowed, HOSTED_BOTS_ORIGIN, type HostedBotsAuth } from "./hosted-bots-transport";
+import type { CollaborativeAppDirectoryItem } from "@matrix-os/contracts";
 
-export type EmbedState = "loading" | "ready" | "auth-required" | "failed";
+export type EmbedState = "loading" | "ready" | "auth-required" | "host-offline" | "access-ended" | "needs-recheck" | "failed";
 
 interface EmbedServiceDeps {
   getWindow: () => BaseWindow | null;
@@ -56,9 +57,10 @@ type OpenRequest = {
   bounds: Bounds;
   active?: boolean;
 } | {
-  kind: "hosted-shell" | "code-editor" | "app" | "browser";
+  kind: "hosted-shell" | "code-editor" | "app" | "shared-app" | "browser";
   slug?: string;
   appIdentity?: string;
+  target?: CollaborativeAppDirectoryItem;
   url?: string;
   bounds: Bounds;
   active?: boolean;
@@ -124,6 +126,8 @@ export class EmbedService {
         allowedOrigins,
         resolveNavigation,
         allowPublicNavigation,
+        sharedAppTarget,
+        ownerAppParticipant,
         onState,
       }) => {
         const window = this.deps.getWindow();
@@ -133,6 +137,7 @@ export class EmbedService {
               appIdentity: slug,
               routeSlug: routeSlug ?? slug,
               preloadPath: this.deps.appPreloadPath,
+              participant: ownerAppParticipant ?? null,
               register: (senderId: number, appIdentity: string, appRouteSlug: string) =>
                 this.deps.appBridge!.register(senderId, appIdentity, appRouteSlug),
               unregister: (senderId: number) => this.deps.appBridge!.unregister(senderId),
@@ -153,6 +158,13 @@ export class EmbedService {
             ? { browserProduct: { origin: new URL(this.deps.getGatewayOrigin()).origin,
                 renew: this.deps.renewBrowserProductSession ?? (() => Promise.reject(new Error("browser unavailable"))) } } : {}),
           denyPermissions: kind === "code-editor" || kind === "browser" || kind === "hosted-bots",
+          ...(kind === "shared-app" && sharedAppTarget ? {
+            sharedAppAuth: {
+              target: sharedAppTarget,
+              getGatewayOrigin: this.deps.getGatewayOrigin,
+              getToken: this.deps.getToken,
+            },
+          } : {}),
           ...(bridge ? { appBridge: bridge } : {}),
         });
       },
@@ -191,6 +203,11 @@ export class EmbedService {
         request.bounds,
         request.active ?? true,
       );
+    }
+    if (request.kind === "shared-app") {
+      return request.target
+        ? this.openSharedApp(gatewayOrigin, request.target, request.bounds, request.active ?? true)
+        : { embedId: randomUUID(), state: "failed" };
     }
     return this.openApp(
       gatewayOrigin,
@@ -878,6 +895,26 @@ export class EmbedService {
     return { embedId, state: "loading" };
   }
 
+  private async openSharedApp(
+    gatewayOrigin: string,
+    target: CollaborativeAppDirectoryItem,
+    bounds: Bounds,
+    active: boolean,
+  ): Promise<OpenResult> {
+    const embedId = randomUUID();
+    const url = new URL(`/shared/app/${encodeURIComponent(target.scopeId)}`, gatewayOrigin);
+    url.searchParams.set("expectedBuildId", target.buildId);
+    url.searchParams.set("expectedShareRevision", target.shareRevision);
+    this.manager.open("shared-app", target.scopeId, bounds, url.toString(), {
+      id: embedId,
+      active,
+      retainOnFailure: true,
+      sharedAppTarget: target,
+      onState: (state) => this.deps.emitState(embedId, state === "failed" ? "host-offline" : state),
+    });
+    return { embedId, state: "loading" };
+  }
+
   private rememberPendingApp(embedId: string, pending: PendingAppEmbed, active: boolean): void {
     this.pendingApps.set(embedId, pending);
     this.pendingActive.set(embedId, active);
@@ -922,10 +959,16 @@ export class EmbedService {
       this.tokenCache.delete(slug);
       return "failed";
     }
+    const ownerAppParticipant = await this.deps.appBridge?.initialParticipant(slug).catch((error: unknown) => {
+      console.warn("[embed-service] owner collaboration state unavailable", error instanceof Error ? error.name : "UnknownError");
+      return null;
+    }) ?? null;
+    if (!shouldAttach()) return "failed";
     this.manager.open("app", appIdentity, bounds, resolved, {
       id: embedId,
       active,
       routeSlug: slug,
+      ownerAppParticipant,
       onState: (state) => this.deps.emitState(embedId, state),
     });
     return "loading";

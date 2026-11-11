@@ -1,6 +1,8 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { mkdir, mkdtemp, readFile, stat, writeFile } from "node:fs/promises";
 import { rmSync } from "node:fs";
+import { createServer } from "node:http";
+import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createPreviewManager } from "../../packages/gateway/src/preview-manager.js";
@@ -100,6 +102,36 @@ describe("preview-manager", () => {
       preview: { lastStatus: "failed" },
     });
     expect(probeUrl).toHaveBeenCalledTimes(1);
+  });
+
+  it("probes loopback previews directly but never connects public previews to a rebinding address", async () => {
+    let hits = 0;
+    const local = createServer((_req, res) => { hits += 1; res.end(); });
+    await new Promise<void>((resolve) => local.listen(0, "127.0.0.1", resolve));
+    const port = (local.address() as AddressInfo).port;
+    const resolvePreviewHost = vi.fn()
+      .mockResolvedValueOnce([{ address: "93.184.216.34", family: 4 }])
+      .mockResolvedValue([{ address: "127.0.0.1", family: 4 }]);
+    const manager = createPreviewManager({ homePath, resolvePreviewHost });
+
+    try {
+      await expect(manager.createPreview("repo", { label: "Local", url: `http://127.0.0.1:${port}` })).resolves.toMatchObject({
+        ok: true,
+        preview: { lastStatus: "ok" },
+      });
+      expect(hits).toBe(1);
+
+      await expect(manager.createPreview("repo", { label: "Rebound", url: `http://rebind.example:${port}` })).resolves.toMatchObject({
+        ok: true,
+        preview: { lastStatus: "failed" },
+      });
+    } finally {
+      local.closeAllConnections();
+      await new Promise<void>((resolve) => local.close(() => resolve()));
+    }
+
+    expect(resolvePreviewHost).toHaveBeenCalledTimes(2);
+    expect(hits).toBe(1);
   });
 
   it("keeps legacy previews readable and adopts valid records into the registry", async () => {

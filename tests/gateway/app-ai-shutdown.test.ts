@@ -29,6 +29,7 @@ async function shutdownFixture(appAiRuntime: { close(): Promise<void> }) {
     workspaceStartupRecoveryController: service("recovery"), terminalPasteAssetCleanup: service("paste"),
     chatIdleReaper: null, chatAttachmentCleanup: service("attachments"),
     hookRunner: { fireVoidHook: vi.fn(async () => undefined) }, pluginRegistry: { getServices: () => [] },
+    usageHistory: service("usage history"),
     heartbeat: service("heartbeat"), watchdog: service("watchdog"), proactiveHeartbeat: service("proactive"), cronService: service("cron"),
     localChatImportLifecycle: service("imports"), matrixAnthropicRuntime: service("anthropic"), providerWorkflowLifecycle: service("provider workflows"),
     backgroundChatProjection: service("projection"), slackRuntime: service("Slack"), companyBotSetup: service("company bots"), canonicalChatOrchestrator: service("chats"), botServices: service("bots"),

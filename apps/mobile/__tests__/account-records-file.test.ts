@@ -52,7 +52,7 @@ describe("saving account records", () => {
       let sharedContent: string | undefined;
       const share = jest.spyOn(Share, "share").mockImplementation(async (content) => {
         sharedContent = mockFiles[(content as { url: string }).url];
-        return { action: "sharedAction" };
+        return { action: "sharedAction", activityType: undefined };
       });
 
       await expect(saveAccountRecords(RECORDS)).resolves.toBe(true);
@@ -67,7 +67,7 @@ describe("saving account records", () => {
       let sharedContent: string | undefined;
       jest.spyOn(Share, "share").mockImplementation(async (content) => {
         sharedContent = mockFiles[(content as { url: string }).url];
-        return { action: "sharedAction" };
+        return { action: "sharedAction", activityType: undefined };
       });
 
       await saveAccountRecords(RECORDS);

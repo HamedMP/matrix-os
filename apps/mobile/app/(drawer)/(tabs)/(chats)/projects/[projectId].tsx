@@ -1,6 +1,6 @@
 import type { CanonicalChatModelSelection } from "@matrix-os/contracts";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Alert, type TextInput } from "react-native";
+import { Alert, type TextInputInstance } from "react-native";
 import { useLocalSearchParams, useNavigation, useRouter } from "expo-router";
 
 import { composerAddProps } from "@/components/chat/composer-add";
@@ -60,7 +60,7 @@ export default function ProjectRoute() {
   // A chat of this project asks for a new chat by coming back here with
   // `newChat`. The cursor goes to the composer once it is on screen, and the
   // request is taken so that it is answered once.
-  const composerInput = useRef<TextInput>(null);
+  const composerInput = useRef<TextInputInstance>(null);
   const composerShown = project !== null;
   useEffect(() => {
     if (!newChatRequested || !composerShown) return;

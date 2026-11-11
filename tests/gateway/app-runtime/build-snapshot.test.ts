@@ -1,8 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { mkdtemp, mkdir, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
+import { createHash } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import { BuildOrchestrator } from '../../../packages/gateway/src/app-runtime/build-orchestrator.js';
+import { ImmutableCollaborativeBuildStore } from '../../../packages/gateway/src/app-runtime/build-cache.js';
 let root: string; let dir: string;
 beforeEach(async () => {
  root = await mkdtemp(join(tmpdir(), 'build-snapshot-')); dir = join(root, 'app'); await mkdir(dir);
@@ -47,5 +49,34 @@ describe('BuildOrchestrator immutable capture', () => {
   const result = await new BuildOrchestrator({ concurrency: 1 }).buildWithSnapshot('app', dir, { deadlineAt: started + 150 }, collector);
   expect(result).toMatchObject({ ok: false, error: { code: 'timeout' } });
   expect(collector).not.toHaveBeenCalled(); expect(Date.now() - started).toBeLessThan(350);
+ });
+ it('captures the manifest output under the build lock and derives its final id from exact bytes', async () => {
+  const store = new ImmutableCollaborativeBuildStore({ rootDir: join(root, 'store'), maxSnapshots: 4, retentionMs: 60_000, cleanupIntervalMs: 60_000 });
+  try {
+   const result = await new BuildOrchestrator({ concurrency: 1 }).buildWithCollaborativeSnapshot('app', dir, {
+    store,
+    buildIdForAssetDigest: (assetDigest) => createHash('sha256').update(`identity:${assetDigest}`).digest('hex'),
+   });
+   expect(result).toMatchObject({ ok: true, snapshot: { assetDigest: expect.stringMatching(/^[a-f0-9]{64}$/) } });
+   if (!result.ok) throw result.error;
+   expect(result.snapshot.buildId).toBe(createHash("sha256")
+    .update(`identity:${result.snapshot.assetDigest}`).digest("hex"));
+   expect(await readFile(join(result.snapshot.artifactPath, 'index.html'), 'utf8')).toBe('first');
+  } finally { await store.close(); }
+ });
+ it('rejects a build output with a symlinked parent outside the app directory', async () => {
+  const outside = join(root, 'outside'); await mkdir(join(outside, 'dist'), { recursive: true });
+  await symlink(outside, join(dir, 'linked'));
+  await writeFile(join(dir, 'matrix.json'), JSON.stringify({ name: 'App', slug: 'app', version: '1.0.0', runtime: 'vite', runtimeVersion: '1.0.0', build: {
+   install: 'node -e "process.exit(0)"', command: 'node -e "process.exit(0)"', output: 'linked/dist', sourceGlobs: ['input.txt', 'matrix.json'],
+  } }));
+  await writeFile(join(outside, 'dist', 'index.html'), 'outside');
+  const store = new ImmutableCollaborativeBuildStore({ rootDir: join(root, 'store'), maxSnapshots: 4, retentionMs: 60_000, cleanupIntervalMs: 60_000 });
+  try {
+   const result = await new BuildOrchestrator({ concurrency: 1 }).buildWithCollaborativeSnapshot('app', dir, {
+    store, buildIdForAssetDigest: (assetDigest) => createHash('sha256').update(assetDigest).digest('hex'),
+   });
+   expect(result).toMatchObject({ ok: false, error: { code: 'build_failed', stage: 'prepare' } });
+  } finally { await store.close(); }
  });
 });

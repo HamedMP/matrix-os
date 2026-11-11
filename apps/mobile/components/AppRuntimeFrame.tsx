@@ -31,7 +31,9 @@ export default function AppRuntimeFrame(props: AppRuntimeFrameProps) {
 
 function AppRuntimeFrameContent({ url, title, headers, canOpenExternalUrl, app, runtimeSlug, requestAppBridge, launchId }: AppRuntimeFrameProps & { launchId: string }) {
   const [linkBlocked, setLinkBlocked] = useState(false);
-  const webViewRef = useRef<WebView>(null);
+  // react-native-webview 14 defaults the class's extra-props parameter to
+  // `undefined`, which would leave every prop typed `never` through the ref.
+  const webViewRef = useRef<WebView<object>>(null);
   const brokerRef = useRef<ReturnType<typeof createMobileAppCapabilityBroker> | null>(null);
   const bootstrap = app && requestAppBridge ? buildMobileAppBridgeScript(app, launchId) : undefined;
   useEffect(() => {

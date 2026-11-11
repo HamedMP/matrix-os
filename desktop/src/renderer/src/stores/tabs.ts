@@ -4,6 +4,7 @@
 // tab; openTabInstance() is the explicit user gesture for a separate top-level
 // app tab with independent mounted UI state.
 import { create } from "zustand";
+import type { CollaborativeAppDirectoryItem } from "@matrix-os/contracts";
 
 export type TabKind =
   | "home"
@@ -43,6 +44,7 @@ export interface Tab {
   sessionName?: string;
   slug?: string;
   appIdentity?: string;
+  sharedAppTarget?: CollaborativeAppDirectoryItem;
   closable: boolean;
 }
 
@@ -67,7 +69,7 @@ export const FILES_WORKSPACE_TAB_SPEC = {
 const MAX_TABS = 24;
 
 function identityKey(
-  spec: Pick<Tab, "kind" | "projectSlug" | "taskId" | "sessionName" | "slug" | "appIdentity">,
+  spec: Pick<Tab, "kind" | "projectSlug" | "taskId" | "sessionName" | "slug" | "appIdentity" | "sharedAppTarget">,
 ): string {
   if (spec.kind === "work") return "work";
   return [
@@ -76,7 +78,7 @@ function identityKey(
     spec.taskId ?? "",
     spec.sessionName ?? "",
     spec.slug ?? "",
-    spec.kind === "app" ? spec.appIdentity ?? spec.slug ?? "" : "",
+    spec.kind === "app" ? spec.sharedAppTarget?.scopeId ?? spec.appIdentity ?? spec.slug ?? "" : "",
   ].join("|");
 }
 
@@ -210,6 +212,8 @@ export const useTabs = create<TabsState>()((set, get) => ({
           && existing.sharedScopeId === nextSharedScopeId
           && existing.projectSlug === normalizedSpec.projectSlug
           && existing.workRoute === normalizedSpec.workRoute
+          && existing.sharedAppTarget?.buildId === normalizedSpec.sharedAppTarget?.buildId
+          && existing.sharedAppTarget?.shareRevision === normalizedSpec.sharedAppTarget?.shareRevision
           ? state.tabs
           : state.tabs.map((tab) => tab.id === existing.id
             ? {
@@ -222,6 +226,7 @@ export const useTabs = create<TabsState>()((set, get) => ({
                 chatView: nextChatView,
                 sharedScopeId: nextSharedScopeId,
                 workRoute: normalizedSpec.workRoute,
+                sharedAppTarget: normalizedSpec.sharedAppTarget,
               }
             : tab);
         return {

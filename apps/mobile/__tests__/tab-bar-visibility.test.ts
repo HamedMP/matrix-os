@@ -53,37 +53,23 @@ describe("isTabBarHidden", () => {
 });
 
 describe("focusedNestedRouteName", () => {
-  it("reads the focused screen of the tab's own navigator", () => {
-    expect(focusedNestedRouteName({
-      state: { index: 1, routes: [{ name: "apps" }, { name: "files" }] },
-    })).toBe("files");
-    expect(focusedNestedRouteName({
-      state: { index: 0, routes: [{ name: "apps" }, { name: "files" }] },
-    })).toBe("apps");
+  it("reads the screen after the tab's own segment", () => {
+    expect(focusedNestedRouteName(["(drawer)", "(tabs)", "agents", "new"], "agents")).toBe("new");
+    expect(focusedNestedRouteName(["(drawer)", "(tabs)", "agents", "[agentId]"], "agents")).toBe("[agentId]");
+    expect(focusedNestedRouteName(["(drawer)", "(tabs)", "(apps)", "files"], "(apps)")).toBe("files");
   });
 
-  it("takes the last screen of a stack restored from a link, which has no index", () => {
-    expect(focusedNestedRouteName({
-      state: { routes: [{ name: "apps" }, { name: "integrations" }] },
-    })).toBe("integrations");
-    expect(focusedNestedRouteName({
-      state: { type: "stack", routes: [{ name: "apps" }, { name: "integrations" }] },
-    })).toBe("integrations");
-  });
-
-  it("takes the first screen of any other navigator restored without an index", () => {
-    expect(focusedNestedRouteName({
-      state: { type: "tab", routes: [{ name: "first" }, { name: "second" }] },
-    })).toBe("first");
-  });
-
-  it("falls back to the screen the tab was asked to open before its navigator has rendered", () => {
-    expect(focusedNestedRouteName({ params: { screen: "shared" } })).toBe("shared");
-    expect(focusedNestedRouteName({ params: { screen: 4 } })).toBeUndefined();
+  it("is undefined on a tab's index screen, which adds no segment", () => {
+    expect(focusedNestedRouteName(["(drawer)", "(tabs)", "agents"], "agents")).toBeUndefined();
+    expect(focusedNestedRouteName(["(drawer)", "(tabs)", "(chats)"], "(chats)")).toBeUndefined();
   });
 
   it("is undefined for a tab that is a single screen", () => {
-    expect(focusedNestedRouteName({})).toBeUndefined();
-    expect(focusedNestedRouteName({ params: { name: "main" } })).toBeUndefined();
+    expect(focusedNestedRouteName(["(drawer)", "(tabs)", "settings"], "settings")).toBeUndefined();
+  });
+
+  it("is undefined while the segments name another tab", () => {
+    expect(focusedNestedRouteName(["(drawer)", "(tabs)", "agents", "new"], "(chats)")).toBeUndefined();
+    expect(focusedNestedRouteName([], "agents")).toBeUndefined();
   });
 });

@@ -55,7 +55,7 @@ export function MessageList({
       keyExtractor={keyExtractor}
       inverted
       // The list is drawn from the bottom up, so its header is what comes last.
-      ListHeaderComponent={footer ? <AnalyticsMask>{footer}</AnalyticsMask> : null}
+      ListHeaderComponent={footer ? <AnalyticsMask>{footer}</AnalyticsMask> : undefined}
       // In a chat that exists, a tap on the messages closes the keyboard. One
       // that is still being created shows only what was just sent, and a tap
       // there goes to whatever it lands on.

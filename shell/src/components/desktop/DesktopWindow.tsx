@@ -22,6 +22,8 @@ import { FileBrowser } from "@/components/file-browser/FileBrowser";
 import { PreviewWindow } from "@/components/preview-window/PreviewWindow";
 import { TerminalApp } from "@/components/terminal/TerminalApp";
 import { TrafficLights } from "./DesktopDockControls";
+import type { CollaborativeAppDirectoryItem } from "@matrix-os/contracts";
+import { sharedAppWindowPath, sharedAppWindowTitle } from "@/lib/shared-app-target";
 
 export function hasActiveWindowInteraction(
   drag: unknown | null,
@@ -90,6 +92,11 @@ export function DesktopWindow({
   topInset = 0,
 }: DesktopWindowProps) {
   const onAppOpen = useCallback((name: string, path: string) => routeAppBridgeLaunch(name, path, onOpenWindow), [onOpenWindow]);
+  const onSharedAppOpen = useCallback((target: CollaborativeAppDirectoryItem) => {
+    useWindowManager.getState().openWindow(
+      sharedAppWindowTitle(target), sharedAppWindowPath(target), 0, { sharedAppTarget: target },
+    );
+  }, []);
   const focusedWindowId = useWindowManager((state) => state.focusedWindowId);
   const isFullscreen = win.id === fullscreenWindowId;
   const isMinimizing = minimizingIds.has(win.id);
@@ -220,6 +227,7 @@ export function DesktopWindow({
                 onOpenSharedChat={chat.openSharedChat}
                 onOpenSharedProject={chat.openSharedProject}
                 onOpenSharedHome={chat.openSharedHome}
+                onOpenSharedApp={onSharedAppOpen}
                 filterUnreadOnly={chat.unreadOnly}
                 onUnreadFilterChange={chat.setUnreadOnly}
                 active={focusedWindowId === win.id && !win.minimized}
@@ -256,7 +264,7 @@ export function DesktopWindow({
           <ActivityMonitorApp />
         ) : (
           <AppViewer path={win.path} active={focusedWindowId === win.id && !win.minimized}
-            onOpenApp={onAppOpen} visible={!isHidden && !isMinimizing} />
+            sharedAppTarget={win.sharedAppTarget} onOpenApp={onAppOpen} visible={!isHidden && !isMinimizing} />
         )}
         {interacting && (
           <div className="absolute inset-0 z-10" />

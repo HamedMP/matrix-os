@@ -16,7 +16,6 @@ import type { AgentInspiration } from "@/components/agents/agent-inspirations.ge
 import { agentChatRoute } from "@/components/agents/agent-routes";
 import { templateSetupPrompt, type AgentTemplate } from "@/components/agents/agent-templates";
 import { requestChatDraft } from "@/components/agents/chat-draft-request";
-import { useShowChatAfterClosing } from "@/components/agents/chat-handoff";
 import { useCreateAgent } from "@/components/agents/use-create-agent";
 import { useCanonicalChatSession } from "@/lib/canonical-chat-session-context";
 import { useAgents } from "@/lib/queries/use-agents";
@@ -24,7 +23,7 @@ import { useBotRecipes } from "@/lib/queries/use-bot-recipes";
 import { useCanonicalChats } from "@/lib/queries/use-canonical-chats";
 import { mobileQueryKeys } from "@/lib/requests/query-keys";
 import { HOSTED_GATEWAY_URL } from "@/lib/storage";
-import { useShowChatScreen } from "@/lib/use-shell-navigation";
+import { useCloseAndShowChatScreen } from "@/lib/use-close-and-show-chat-screen";
 
 export default function NewAgentRoute() {
   const navigation = useNavigation();
@@ -34,8 +33,7 @@ export default function NewAgentRoute() {
   const { startDraftChat } = useCanonicalChatSession();
   const chats = useCanonicalChats();
   const agents = useAgents();
-  const showChatScreen = useShowChatScreen();
-  const showChatAfterClosing = useShowChatAfterClosing();
+  const closeAndShowChatScreen = useCloseAndShowChatScreen();
   const gatewayUrl = chats.computer ? `${HOSTED_GATEWAY_URL}${chats.computer.gatewayPath}` : null;
   const recipes = useBotRecipes(gatewayUrl, true);
   const [query, setQuery] = useState("");
@@ -80,20 +78,7 @@ export default function NewAgentRoute() {
     requestChatDraft(prompt);
     setTemplate(null);
     setInspiration(null);
-    const screensInTab = navigation.getState()?.routes.length ?? 0;
-    if (!showChatAfterClosing || !navigation.isFocused() || screensInTab < 2) {
-      showChatScreen();
-      return;
-    }
-    // This screen closes first, so the Agents tab is on its list the next
-    // time it is opened. The tab's layout shows the chat once the tabs have
-    // taken that in: asked for in this same step, the switch is dropped.
-    const stopWaiting = showChatAfterClosing();
-    navigation.goBack();
-    if ((navigation.getState()?.routes.length ?? 0) < screensInTab) return;
-    // Nothing closed, so no change is coming for the layout to wait for.
-    stopWaiting();
-    showChatScreen();
+    closeAndShowChatScreen();
   };
 
   // Without a computer there is nothing to read the templates from.

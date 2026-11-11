@@ -33,6 +33,10 @@ export interface HandlerContext {
   getUpdateSnapshot: () => DesktopUpdateSnapshot;
   installUpdate: () => Promise<boolean> | boolean;
   toggleWindowMaximize: () => void;
+  /** Rejects invokes from any frame that is not a trusted window allowed on that channel. */
+  authorizeSender: (event: unknown, channel: string, payload?: unknown) => boolean;
+  openTerminalWindow: () => Promise<void>;
+  focusMainWindow: () => void;
   getWhatsNew: () => Promise<{
     release: DesktopReleaseNotes | null;
     shouldOpen: boolean;
@@ -185,8 +189,16 @@ export function registerIpcHandlers(ipcMain: IpcMainLike, ctx: HandlerContext): 
     || typeof cancelOrganizationDriveTransfer !== "function") {
     throw new Error("download service unavailable");
   }
+  if (typeof ctx.authorizeSender !== "function" || typeof ctx.openTerminalWindow !== "function"
+    || typeof ctx.focusMainWindow !== "function") {
+    throw new Error("window services unavailable");
+  }
   function handle<C extends InvokeChannel>(channel: C, handler: Handler<C>): void {
     ipcMain.handle(channel, async (_event, rawPayload) => {
+      if (!ctx.authorizeSender(_event, channel, rawPayload)) {
+        console.warn(`[ipc] rejected untrusted sender on ${channel}`);
+        throw new Error("invalid request");
+      }
       const parsedRequest = INVOKE_CHANNELS[channel].request.safeParse(rawPayload ?? {});
       if (!parsedRequest.success) {
         console.warn(`[ipc] rejected malformed request on ${channel}`);
@@ -297,6 +309,14 @@ export function registerIpcHandlers(ipcMain: IpcMainLike, ctx: HandlerContext): 
     zoomTarget(event)?.setZoomFactor(factor);
     return { factor };
   });
+  handle("terminal-window:open", async () => {
+    await ctx.openTerminalWindow();
+    return { ok: true };
+  });
+  handle("terminal-window:focus-main", () => {
+    ctx.focusMainWindow();
+    return { ok: true };
+  });
   handle("window:toggle-maximize", () => {
     ctx.toggleWindowMaximize();
     return { ok: true };
@@ -355,6 +375,14 @@ export function registerIpcHandlers(ipcMain: IpcMainLike, ctx: HandlerContext): 
         return await ctx.embeds.open({
           kind: request.kind,
           url: request.url,
+          bounds,
+          active: request.active,
+        });
+      }
+      if (request.kind === "shared-app") {
+        return await ctx.embeds.open({
+          kind: request.kind,
+          target: request.target,
           bounds,
           active: request.active,
         });

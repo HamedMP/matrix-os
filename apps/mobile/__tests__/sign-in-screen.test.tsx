@@ -289,7 +289,7 @@ describe("SignInScreen email code flow", () => {
     ["Terms of Service", "https://matrix-os.com/terms"],
   ])("opens the %s from the consent line before signing in", (name, url) => {
     // App Review needs the privacy policy reachable in-app without an account.
-    const openUrl = jest.spyOn(Linking, "openURL").mockResolvedValue(true);
+    const openUrl = jest.spyOn(Linking, "openURL").mockResolvedValue(undefined);
     render(<SignInScreen />);
 
     fireEvent.press(screen.getByRole("link", { name }));

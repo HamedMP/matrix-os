@@ -20,6 +20,8 @@ import { useChatContext } from "@/stores/chat-context";
 import { TrafficLights } from "../window/TrafficLights";
 import { useThemeStyle } from "../window/useThemeStyle";
 import { resolveTitleBarVariant } from "../window/title-bar-variant";
+import type { CollaborativeAppDirectoryItem } from "@matrix-os/contracts";
+import { sharedAppWindowPath, sharedAppWindowTitle } from "@/lib/shared-app-target";
 import {
   MacGlassTitleBarChrome,
   MacTitleBarChrome,
@@ -65,6 +67,22 @@ interface CanvasWindowProps {
   deferAppContent?: boolean;
 }
 
+// react-doctor-disable-next-line react-doctor/only-export-components -- Imperative window-manager entrypoint is intentionally colocated with the Canvas renderer whose positioning stores it coordinates; moving it would create a component-to-component cycle.
+export function openSharedCanvasApp(target: CollaborativeAppDirectoryItem): void {
+  const path = sharedAppWindowPath(target);
+  useWindowManager.getState().openWindow(sharedAppWindowTitle(target), path, 0, { sharedAppTarget: target });
+  requestAnimationFrame(() => {
+    const win = useWindowManager.getState().windows.find((candidate) => candidate.path === path);
+    if (!win || win.minimized) return;
+    const canvas = useCanvasTransform.getState();
+    canvas.focusOnWindow(
+      win,
+      canvas.containerRect?.width ?? window.innerWidth,
+      canvas.containerRect?.height ?? window.innerHeight,
+    );
+  });
+}
+
 // react-doctor-disable-next-line react-doctor/no-giant-component, react-doctor/prefer-useReducer -- cohesive single-window renderer: the bulk is theme-specific title-bar selection plus drag/resize/fullscreen pointer handlers that all share the same window state and refs. Splitting would require threading every handler and ref through props with no readability or reuse gain.
 export function CanvasWindow({ win, iconUrl, hidden = false, deferAppContent = false }: CanvasWindowProps) {
   const chatState = useChatContext();
@@ -92,7 +110,7 @@ export function CanvasWindow({ win, iconUrl, hidden = false, deferAppContent = f
 
   // Iframe windows get a "click-to-interact" overlay so wheel events reach
   // the canvas instead of being swallowed by the iframe's browsing context.
-  const isIframeWindow = !win.path.startsWith("__");
+  const isIframeWindow = Boolean(win.sharedAppTarget) || !win.path.startsWith("__");
   const terminalOwnsChrome = win.path.startsWith("__terminal__");
   const isCanvasScrolling = useCanvasTransform((s) => s.isScrolling);
   const [contentFocused, setContentFocused] = useState(false);
@@ -483,6 +501,7 @@ export function CanvasWindow({ win, iconUrl, hidden = false, deferAppContent = f
                 onOpenSharedChat={chatState.openSharedChat}
                 onOpenSharedProject={chatState.openSharedProject}
                 onOpenSharedHome={chatState.openSharedHome}
+                onOpenSharedApp={openSharedCanvasApp}
                 filterUnreadOnly={chatState.unreadOnly}
                 onUnreadFilterChange={chatState.setUnreadOnly}
                 active={isFocused && !win.minimized}
@@ -533,7 +552,8 @@ export function CanvasWindow({ win, iconUrl, hidden = false, deferAppContent = f
           )}
         </div>
       ) : (
-        <CanvasAppViewer path={win.path} active={isFocused && !win.minimized && !hidden && !isPreview} />
+        <CanvasAppViewer path={win.path} sharedAppTarget={win.sharedAppTarget}
+          active={isFocused && !win.minimized && !hidden && !isPreview} />
       )}
     </>
   );

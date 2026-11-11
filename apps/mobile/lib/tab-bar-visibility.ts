@@ -20,30 +20,12 @@ export function isTabBarHidden(
   return hiddenRoutes[routeName].includes(nestedRouteName);
 }
 
-interface NestedNavigationState {
-  index?: number;
-  type?: string;
-  routes: readonly { name: string }[];
-}
-
-export interface RouteWithNestedState {
-  state?: NestedNavigationState;
-  params?: object;
-}
-
 /**
- * The screen focused inside a route's own navigator, read from the navigator
- * state a tab bar receives. Before that navigator has rendered there is no
- * state yet, only the `screen` it was asked to open.
+ * The screen focused inside a tab's own navigator, read from `useSegments()`:
+ * the segment after the tab's route. A tab's index screen adds no segment of
+ * its own, so it reads as `undefined`, as does a tab that is a single screen.
  */
-export function focusedNestedRouteName(route: RouteWithNestedState): string | undefined {
-  const { state } = route;
-  if (state) {
-    // A state restored from a link has no index: a stack then shows its last
-    // route, any other navigator its first.
-    const fallbackIndex = state.type !== undefined && state.type !== "stack" ? 0 : state.routes.length - 1;
-    return state.routes[state.index ?? fallbackIndex]?.name;
-  }
-  const screen = (route.params as { screen?: unknown } | undefined)?.screen;
-  return typeof screen === "string" ? screen : undefined;
+export function focusedNestedRouteName(segments: readonly string[], tabRoute: string): string | undefined {
+  const tabIndex = segments.indexOf(tabRoute);
+  return tabIndex === -1 ? undefined : segments[tabIndex + 1];
 }

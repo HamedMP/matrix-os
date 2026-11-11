@@ -51,7 +51,7 @@ describe("billing settings", () => {
     });
 
     it.each([true, false])("shows the current plan read-only with no Change plan row (portalAvailable=%s)", (portalAvailable) => {
-      const openUrl = jest.spyOn(Linking, "openURL").mockResolvedValue(true);
+      const openUrl = jest.spyOn(Linking, "openURL").mockResolvedValue(undefined);
       mockUseSettingsBilling.mockReturnValue(settingsBillingState(portalAvailable));
       render(<BillingSettingsScreen />);
 
@@ -72,7 +72,7 @@ describe("billing settings", () => {
     });
 
     it("opens billing management for an override-backed account with a linked customer", async () => {
-      const openUrl = jest.spyOn(Linking, "openURL").mockResolvedValue(true);
+      const openUrl = jest.spyOn(Linking, "openURL").mockResolvedValue(undefined);
       render(<BillingSettingsScreen />);
 
       fireEvent.press(screen.getByLabelText("Change plan"));
@@ -85,7 +85,7 @@ describe("billing settings", () => {
     });
 
     it("opens pricing when billing management is unavailable", async () => {
-      const openUrl = jest.spyOn(Linking, "openURL").mockResolvedValue(true);
+      const openUrl = jest.spyOn(Linking, "openURL").mockResolvedValue(undefined);
       mockUseSettingsBilling.mockReturnValue(settingsBillingState(false));
       render(<BillingSettingsScreen />);
 

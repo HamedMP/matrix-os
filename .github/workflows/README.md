@@ -86,11 +86,14 @@ trusted base-branch code with no checkout, validates the current live PR head,
 and cannot cancel main or another PR. Main per-commit runs and the coverage frontier
 remain unchanged. A denied or failed cancellation does not remove validation.
 
-Core workflows stay GitHub-hosted. An isolated Linux benchmark bridge is planned
-in a separate follow-up; this layer includes no dedicated dispatch workflow or
-runner tools. A public repository must not expose a reusable self-hosted runner
-label to PR workflow code. An 8-vCPU/32-GB host has been provisioned in Falkenstein;
-Linux validation and any automatic dedicated dispatch remain pending.
+Core workflows stay GitHub-hosted, with one exception: the four unit shards run
+on the dedicated host's runner pool (`matrix-ci`) when its heartbeat is fresh
+and four slots are idle ([spec 633](../../specs/633-ci-runner-pool/spec.md),
+[`scripts/ci/runner-pool`](../../scripts/ci/runner-pool/README.md)). A public
+repository must not expose a reusable self-hosted runner to PR workflow code,
+so pool runners are single-use containers with no host access, and the runner
+image itself rejects fork and manual-dispatch jobs. Fork PRs, manual dispatches
+and every run while the pool is busy or offline use hosted runners.
 
 ## Release Artifacts
 
@@ -139,7 +142,8 @@ for review, pushing and reopening run core CI and Docker classification; retarge
 reruns core CI only. Labels never start or gate it. Keep a PR as a draft while it is still being
 reviewed to avoid CI on every intermediate push. Drafts and title or body edits publish no
 `CI Results` check at all, so the required check shows as expected rather than red; a draft
-cannot be merged. Reviewers must use the checks attached to the exact head SHA rather than an
+cannot be merged. A draft run skips every job before a runner is allocated, so draft pushes do
+not wait in or lengthen the hosted queue. Reviewers must use the checks attached to the exact head SHA rather than an
 earlier green commit.
 
 ## Delivery Lane Router

@@ -282,7 +282,8 @@ describe("desktop release workflows", () => {
     expect(config).not.toContain('"app-bridge": resolve(');
     expect(preload).toContain('const NATIVE_APP_BRIDGE_ARG = "--matrix-app-bridge"');
     expect(preload).toContain("process.argv.includes(NATIVE_APP_BRIDGE_ARG)");
-    expect(preload).toContain('contextBridge.exposeInMainWorld("MatrixOS"');
+    expect(preload).toContain('contextBridge.exposeInMainWorld("__matrixNativeBridge"');
+    expect(preload).toContain('contextBridge.executeInMainWorld({');
     expect(main).toContain('appPreloadPath: join(__dirname, "../preload/index.cjs")');
   });
 

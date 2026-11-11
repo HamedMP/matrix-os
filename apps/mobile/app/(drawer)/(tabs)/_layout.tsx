@@ -1,4 +1,5 @@
 import { useUnistyles } from "react-native-unistyles";
+import { useSegments } from "expo-router";
 import { Tabs, type BottomTabBarProps } from "expo-router/tabs";
 
 import { useAgentsWaitingCount } from "@/components/agents/use-agents-waiting-count";
@@ -6,11 +7,14 @@ import { TABS, TabBar } from "@/components/shell/TabBar";
 import { focusedNestedRouteName, isTabBarHidden } from "@/lib/tab-bar-visibility";
 import { useReduceMotion } from "@/lib/use-reduce-motion";
 
-function ShellTabBar({ state, navigation }: BottomTabBarProps) {
+function ShellTabBar({ state, emitter, navigateToTab }: BottomTabBarProps) {
   const agentsWaiting = useAgentsWaitingCount();
+  // The bar's state lists the tabs only; the screen open inside a tab comes
+  // from the route's segments.
+  const segments = useSegments();
   const focused = state.routes[state.index];
 
-  if (isTabBarHidden(focused.name, focusedNestedRouteName(focused))) return null;
+  if (isTabBarHidden(focused.name, focusedNestedRouteName(segments, focused.name))) return null;
 
   // An open keyboard covers the bar where it stands, on Android too: the app
   // is edge to edge, so the window does not shrink for the keyboard.
@@ -23,14 +27,14 @@ function ShellTabBar({ state, navigation }: BottomTabBarProps) {
         if (!route) return;
         // A tab's own stack listens for this to return to its first screen
         // when the tab is pressed while it is already showing.
-        const event = navigation.emit({ type: "tabPress", target: route.key, canPreventDefault: true });
+        const event = emitter.emit({ type: "tabPress", target: route.key, canPreventDefault: true });
         if (route.key !== focused.key && !event.defaultPrevented) {
-          navigation.navigate(route.name, route.params);
+          navigateToTab(route.key);
         }
       }}
       onTabLongPress={(name) => {
         const route = state.routes.find((candidate) => candidate.name === name);
-        if (route) navigation.emit({ type: "tabLongPress", target: route.key });
+        if (route) emitter.emit({ type: "tabLongPress", target: route.key });
       }}
     />
   );

@@ -1,5 +1,5 @@
 import type { ReactNode, Ref } from "react";
-import { Platform, Text, TextInput, View } from "react-native";
+import { Platform, Text, TextInput, View, type TextInputInstance } from "react-native";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 
 import { IconButton, SendIcon, StopIcon } from "@/components/ui";
@@ -23,7 +23,7 @@ const SPEECH_PLACEHOLDERS: Partial<Record<ComposerSpeech["phase"], string>> = {
 };
 
 export interface ComposerProps {
-  inputRef?: Ref<TextInput>;
+  inputRef?: Ref<TextInputInstance>;
   draft: string;
   onChangeDraft: (text: string) => void;
   placeholder: string;

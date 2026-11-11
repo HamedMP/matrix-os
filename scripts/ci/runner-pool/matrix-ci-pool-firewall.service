@@ -1,0 +1,13 @@
+[Unit]
+Description=Block CI runner pool containers from host and private networks
+After=docker.service
+Requires=docker.service
+PartOf=docker.service
+
+[Service]
+Type=oneshot
+ExecStart=/opt/matrix-ci-pool/firewall.sh
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target docker.service

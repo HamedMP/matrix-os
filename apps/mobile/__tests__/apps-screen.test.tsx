@@ -1,10 +1,13 @@
 const mockPush = jest.fn();
 const mockNavigate = jest.fn();
-const mockNavigation = { navigate: mockNavigate };
+const mockDismissTo = jest.fn();
+const mockTabNavigate = jest.fn();
+const mockRouter = { push: mockPush, navigate: mockNavigate, dismissTo: mockDismissTo };
+const mockNavigation = { navigate: mockTabNavigate };
 const mockUseComputerApps = jest.fn();
 
 jest.mock("expo-router", () => ({
-  useRouter: () => ({ push: mockPush }),
+  useRouter: () => mockRouter,
   useNavigation: () => mockNavigation,
 }));
 
@@ -185,18 +188,16 @@ describe("drawer apps screen", () => {
     render(<AppsScreen />);
 
     fireEvent.press(screen.getByLabelText("Open Chat"));
-    expect(mockNavigate).toHaveBeenLastCalledWith("(tabs)", {
-      screen: "(chats)",
-      params: { screen: "index", pop: true },
-    });
+    expect(mockTabNavigate).toHaveBeenLastCalledWith("(chats)");
+    expect(mockDismissTo).toHaveBeenLastCalledWith("/(drawer)");
 
     fireEvent.press(screen.getByLabelText("Open Terminal"));
-    expect(mockNavigate).toHaveBeenLastCalledWith("(tabs)", { screen: "terminal" });
+    expect(mockNavigate).toHaveBeenLastCalledWith("/terminal");
 
     fireEvent.press(screen.getByLabelText("Open Settings"));
-    expect(mockNavigate).toHaveBeenLastCalledWith("(tabs)", { screen: "settings" });
+    expect(mockNavigate).toHaveBeenLastCalledWith("/settings");
 
-    expect(mockNavigate).toHaveBeenCalledTimes(3);
+    expect(mockNavigate).toHaveBeenCalledTimes(2);
     expect(mockPush).not.toHaveBeenCalled();
   });
 

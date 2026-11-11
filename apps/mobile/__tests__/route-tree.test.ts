@@ -1,6 +1,11 @@
 // Resolves URLs against the real files under app/ with Expo Router's own
 // resolver, so a moved or added route cannot quietly change where a URL lands.
 jest.mock("expo-router", () => ({ Stack: () => null }));
+// The Chats layout's provider loads Clerk, whose import opens a MessagePort
+// that keeps Jest from exiting. Only the layouts' settings are read here.
+jest.mock("@/components/chat/active-chat", () => ({
+  ActiveChatProvider: ({ children }: { children: unknown }) => children,
+}));
 
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import { join, relative } from "node:path";
@@ -74,10 +79,11 @@ describe("route tree", () => {
     expect(resolve("/agents")).toEqual([...TABS, ["agents"], ["index"]]);
   });
 
-  it("leaves Apps beneath Files and Connect Apps when a link opens them directly", () => {
-    expect(resolve("/files")).toEqual([...TABS, ["(apps)"], ["apps", "files"]]);
-    // The Connect Apps sign-in returns to the app through matrixos://integrations.
-    expect(resolve("/integrations")).toEqual([...TABS, ["(apps)"], ["apps", "integrations"]]);
+  it("opens Files and Connect Apps inside the Apps tab", () => {
+    // The screen a link puts beneath them is added when the router starts from
+    // the URL; shell-navigation-router.test.tsx checks that.
+    expect(resolve("/files")).toEqual([...TABS, ["(apps)"], ["files"]]);
+    expect(resolve("/integrations")).toEqual([...TABS, ["(apps)"], ["integrations"]]);
   });
 
   it("keeps the screens outside the tabs where they were", () => {
