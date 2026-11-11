@@ -39,9 +39,12 @@ function gateway(handler: (path: string, body: unknown) => Response) {
   const calls: Array<{ path: string; body: unknown }> = [];
   vi.stubGlobal("fetch", vi.fn(async (url: string, init?: RequestInit) => {
     const path = new URL(url).pathname;
-    if (path === "/api/coding-agents/summary") return json({ projects: { items: [] } });
+    if (path === "/api/coding-agents/summary") return json({ projects: { items: [{ id: "proj_0123456789abcdef", label: "app" }] } });
     if (path === "/api/terminal/workspaces") {
-      return json({ workspaces: [{ id: WORKSPACE_ID, scope: "main", tabs: [{ id: TAB_ID, name: "review", status: "running" }] }] });
+      return json({ workspaces: [
+        { id: WORKSPACE_ID, scope: "main", tabs: [{ id: TAB_ID, name: "review", status: "running" }] },
+        { id: "tws_00000000000000000000000000000002", scope: "project", projectId: "proj_0123456789abcdef", tabs: [] },
+      ] });
     }
     if (path === "/api/terminal/templates") return json({ templates: [{ name: "reviewer", description: "Reviews" }] });
     const body = init?.body ? JSON.parse(String(init.body)) : undefined;
@@ -128,5 +131,19 @@ describe("matrix shell orchestration", () => {
       path: `/api/terminal/workspaces/${WORKSPACE_ID}/tabs/${TAB_ID}/labels`,
       body: { set: { role: "lead" }, remove: ["old"] },
     }]);
+  });
+
+  // Fault detected (second review of #3298): `run --project app -- bun test` ran in
+  // home, and an explicit `--` command could be taken over by a same-named template.
+  it("defaults to the project's folder and never treats a -- command as a template", async () => {
+    vi.spyOn(console, "log").mockImplementation(() => undefined);
+    const calls = gateway(() => json({ tab: { id: TAB_ID } }, 201));
+    const loader = (shellCommand.subCommands as Record<string, unknown>).run as () => Promise<{ run: (input: unknown) => Promise<void> }>;
+    await (await loader()).run({
+      args: { dev: true, token: "tok", json: true, project: "app", _: ["reviewer", "x"] },
+      rawArgs: ["--project", "app", "--", "reviewer", "x"],
+    });
+    expect(calls.at(-1)?.body).toMatchObject({ projectId: "proj_0123456789abcdef", cwd: "projects/app", argv: ["reviewer", "x"] });
+    expect(calls.at(-1)?.body).not.toHaveProperty("template");
   });
 });

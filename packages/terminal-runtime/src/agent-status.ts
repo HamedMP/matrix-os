@@ -160,7 +160,10 @@ export function createTerminalAgentStatusIndex(options: { homePath: string; stor
       if (!SESSION_NAME.test(sessionName) || !PANE_NUMBER.test(paneId)) return undefined;
       for (const { id: workspaceId } of await options.store.listWorkspaces()) {
         const workspace = await options.store.getRuntimeWorkspace(workspaceId);
-        if (workspace?.zellijSessionName !== sessionName) continue;
+        // The caller's pane sees either the logical name or, on customer VPSes, the physical one.
+        if (!workspace || !LOGICAL_SESSION_NAME.test(workspace.zellijSessionName)) continue;
+        if (workspace.zellijSessionName !== sessionName
+          && `matrix-${workspaceRuntimeId(workspace.zellijSessionName)}` !== sessionName) continue;
         for (const [tabId, tab] of Object.entries(workspace.tabs)) {
           if (tab.zellijPaneId === `terminal_${paneId}` && tab.status !== "exited" && tab.status !== "failed") {
             return { workspaceId, tabId };

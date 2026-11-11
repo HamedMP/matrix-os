@@ -288,3 +288,39 @@ describe("terminal agents: limits, vanished children and admission", () => {
     await expect(h.registry.get(child.ref)).resolves.toBeDefined();
   });
 });
+
+// Fault detected (second review of #3298): wait-children returned on the status a
+// helper reported before it received its task.
+describe("terminal agents: children after a send", () => {
+  it("does not count a pre-send report as the child having stopped", async () => {
+    const h = await harness();
+    const parent = { workspaceId, tabId: parentId };
+    const child = await h.agents.run({ name: "review", cwd: "", argv: ["sh"], parent });
+    h.statuses.set(child.ref.tabId, "idle");
+    const agents = createTerminalAgents({
+      runtime: {
+        listWorkspaces: async () => [{
+          id: workspaceId, scope: "main", canonicalSize: { cols: 80, rows: 24 }, status: "running", revision: 1,
+          createdAt: "2026-11-11T10:00:00.000Z", updatedAt: "2026-11-11T10:00:00.000Z", tabs: [...h.tabs.values()],
+        }] as never,
+        ensureWorkspace: async () => ({ id: workspaceId }) as never,
+        createTab: async () => { throw new Error("unused"); },
+        terminateTab: async () => undefined,
+        getSnapshot: async () => ({ viewport: [] }),
+      },
+      verbs: h.verbs as never,
+      status: {
+        list: async () => new Map([[`${workspaceId}:${child.ref.tabId}`, {
+          ref: child.ref, status: "idle" as const, reportedAt: new Date(0).toISOString(), source: "hook" as const,
+        }]]),
+        get: async () => undefined,
+        sentAt: () => 1_000,
+      },
+      registry: h.registry,
+      templates: createTerminalTemplates({ homePath: h.home }),
+      now: () => 2_000,
+      sleep: async () => undefined,
+    });
+    await expect(agents.waitChildren(parent, { mode: "all", timeoutMs: 0 })).resolves.toEqual({ reason: "timeout" });
+  });
+});

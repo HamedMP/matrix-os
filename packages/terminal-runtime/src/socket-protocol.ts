@@ -36,7 +36,7 @@ export const TerminalRuntimeRequestSchema = z.discriminatedUnion("operation", [
     ...RequestBase,
     operation: z.literal("ResolvePane"),
     input: z.object({
-      sessionName: z.string().regex(/^matrix-w-[0-9a-f]{32}$/),
+      sessionName: z.string().regex(/^matrix-(?:w-|rt_)[0-9a-f]{32}$/),
       paneId: z.string().regex(/^[0-9]{1,9}$/),
     }).strict(),
   }).strict(),

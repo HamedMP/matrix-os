@@ -189,5 +189,7 @@ describe("terminal agent status", () => {
     await expect(index.resolvePane(session, "70")).resolves.toBeUndefined();
     await expect(index.resolvePane(`matrix-w-${"b".repeat(32)}`, "7")).resolves.toBeUndefined();
     await expect(index.resolvePane(session, "../7")).resolves.toBeUndefined();
+    // A pane on a customer VPS sees the workspace's physical session name.
+    await expect(index.resolvePane(`matrix-${workspaceRuntimeId(session)}`, "7")).resolves.toEqual({ workspaceId, tabId });
   });
 });

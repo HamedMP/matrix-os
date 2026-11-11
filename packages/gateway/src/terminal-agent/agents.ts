@@ -16,6 +16,8 @@ const MAX_FIRST_MESSAGE_CHARS = TERMINAL_SEND_TEXT_MAX_CHARS;
 const ENVELOPE_RESERVE_CHARS = 256;
 /** The longest report a child may send, so the enveloped text still fits one send. */
 export const TERMINAL_REPORT_MAX_CHARS = TERMINAL_SEND_TEXT_MAX_CHARS - ENVELOPE_RESERVE_CHARS;
+// As for single-tab waits: after a send, older reports describe the previous turn.
+const SEND_TURN_GRACE_MS = 15_000;
 // A record this young may belong to a tab created after the pass listed tabs.
 const PRUNE_GRACE_MS = 60_000;
 
@@ -29,7 +31,8 @@ export interface TerminalAgentRuntime {
 }
 
 export const TerminalCallerSchema = z.object({
-  sessionName: z.string().regex(/^matrix-w-[0-9a-f]{32}$/),
+  // zellij's own name for the caller's session: logical, or physical on customer VPSes.
+  sessionName: z.string().regex(/^matrix-(?:w-|rt_)[0-9a-f]{32}$/),
   paneId: z.string().regex(/^[0-9]{1,9}$/),
 }).strict();
 export type TerminalCaller = z.infer<typeof TerminalCallerSchema>;
@@ -234,7 +237,12 @@ export function createTerminalAgents(options: {
         for (const child of children) {
           const tab = await findTab(child.ref);
           const live = Boolean(tab && tab.status !== "exited" && tab.status !== "failed");
-          const status = statuses.get(terminalRefKey(child.ref))?.status;
+          const entry = statuses.get(terminalRefKey(child.ref));
+          // A report older than the child's latest task belongs to the previous turn.
+          const sentAt = options.status.sentAt?.(child.ref);
+          const previousTurn = entry !== undefined && sentAt !== undefined
+            && Date.parse(entry.reportedAt) < sentAt && now() - sentAt < SEND_TURN_GRACE_MS;
+          const status = previousTurn ? "working" : entry?.status;
           facts.set(terminalRefKey(child.ref), { ref: child.ref, live, ...(status ? { status } : {}) });
         }
         return facts;
