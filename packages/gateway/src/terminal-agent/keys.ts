@@ -39,7 +39,8 @@ const MODIFIED_LETTER = /^(ctrl|alt)\+([a-z])$/;
 export const TerminalKeyNameSchema = z.string()
   .max(16)
   .transform((value) => value.trim().toLowerCase())
-  .refine((value) => value in SIMPLE_KEYS || value in CURSOR_KEYS || MODIFIED_LETTER.test(value), {
+  // Own keys only: `in` would also accept inherited names such as `constructor`.
+  .refine((value) => Object.hasOwn(SIMPLE_KEYS, value) || Object.hasOwn(CURSOR_KEYS, value) || MODIFIED_LETTER.test(value), {
     message: "Unknown key",
   });
 
@@ -52,9 +53,8 @@ export function encodeTerminalKeys(
 ): string {
   return keys.map((input) => {
     const key = TerminalKeyNameSchema.parse(input);
-    const simple = SIMPLE_KEYS[key];
-    if (simple !== undefined) return simple;
-    const cursor = CURSOR_KEYS[key];
+    if (Object.hasOwn(SIMPLE_KEYS, key)) return SIMPLE_KEYS[key]!;
+    const cursor = Object.hasOwn(CURSOR_KEYS, key) ? CURSOR_KEYS[key] : undefined;
     if (cursor !== undefined) return `${options.applicationCursor ? "\x1bO" : "\x1b["}${cursor}`;
     const [, modifier, letter] = MODIFIED_LETTER.exec(key)!;
     if (modifier === "alt") return `\x1b${letter}`;
