@@ -26,7 +26,6 @@ import {
   createMemoryStore,
   createWatchdog,
   DEFAULT_APPROVAL_POLICY,
-  loadHandle,
   restoreModule,
   type ApprovalPolicy,
   type Heartbeat,
@@ -237,10 +236,8 @@ import { createHermesRoutes } from "./routes/hermes.js";
 import { createSettingsRoutes } from "./routes/settings.js";
 import { startGatewayPlugins } from "./server/plugin-startup.js";
 import { registerSettingsRoutes } from "./server/settings-routes.js";
-import { bootstrapSocialSchema, createSocialRoutes, type SocialRoutes } from "./social.js";
 import { createGatewayHomeMirrorLifecycle } from "./sync/home-mirror-lifecycle.js";
 import { initializeSyncInfrastructure } from "./sync/infrastructure.js";
-import { createSyncRoutes, createUnconfiguredSyncRoutes } from "./sync/routes.js";
 
 import type { WSContext } from "hono/ws";
 import {
@@ -249,7 +246,6 @@ import {
 import type { ChatRepository } from "./chat/repository.js";
 import { createForwardTunnelHub } from "./forward-ws.js";
 import type { MessagingKyselyRepository } from "./messages/repository.js";
-import { createMessagingRoutes } from "./messages/routes.js";
 import { wsConnectionsActive } from "./metrics.js";
 import { createOsViewAgentTools } from "./os-view-state/agent-tools.js";
 import type { OsViewStateRepository } from "./os-view-state/repository.js";
@@ -264,6 +260,7 @@ import { registerGatewayCodingAgentRoutes, registerGatewayProjectDriveRoutes, re
 import { registerHomeUtilityRoutes } from "./server/home-utility-routes.js";
 import { registerMainWebSocketRoutes } from "./server/main-ws-routes.js";
 import { registerMessageLayoutRoutes } from "./server/message-layout-routes.js";
+import { registerGatewayMessagingRoutes, registerGatewaySyncAndSocialRoutes } from "./server/owner-data-routes.js";
 import { registerOperationalRoutes } from "./server/operational-routes.js";
 import { registerShellTerminalRoutes } from "./server/shell-terminal-routes.js";
 import { registerSystemOperatorRoutes } from "./server/system-operator-routes.js";
@@ -1794,49 +1791,17 @@ export async function createGateway(config: GatewayConfig) {
   });
   app.route("/api/hermes", createHermesRoutes({ client: hermesClient }));
 
-  if (messagingRepository) {
-    app.route("/api/messages", createMessagingRoutes({
-      repository: messagingRepository,
-      getOwnerId: (c) => requireRequestPrincipal(c).userId,
-      appserviceToken: process.env.MATRIX_MESSAGING_APPSERVICE_TOKEN,
-      appserviceOwnerId: process.env.MATRIX_MESSAGING_APPSERVICE_OWNER_ID ?? process.env.MATRIX_USER_ID ?? process.env.MATRIX_HANDLE,
-      hermesCapabilitySecret: process.env.MATRIX_MESSAGING_HERMES_CAPABILITY_SECRET,
-    }));
-  } else {
-    app.all("/api/messages/*", (c) => c.json({ error: { code: "misconfigured", message: "Messaging is not configured" } }, 503));
-    app.all("/api/messages", (c) => c.json({ error: { code: "misconfigured", message: "Messaging is not configured" } }, 503));
-  }
+  registerGatewayMessagingRoutes(app, messagingRepository);
 
   registerCanvasGatewayRoutes({
     app, upgradeWebSocket, canvasService, canvasSubscriptionHub,
     gatewayCollaboration, logUnexpectedWsSendFailure,
   });
 
-  // 066: Sync API routes
-  if (syncDeps) {
-    app.route("/api/sync", createSyncRoutes({
-      ...syncDeps,
-      getHomeMirrorStatus: () => homeMirrorReadiness.getStatus(),
-    }));
-  } else {
-    app.route("/api/sync", createUnconfiguredSyncRoutes({
-      getHomeMirrorStatus: () => homeMirrorReadiness.getStatus(),
-    }));
-  }
-
-  // T2030-T2037: Social API routes
-  const getCurrentUser = () => {
-    const identity = loadHandle(homePath);
-    return identity.handle || "@me";
-  };
-  let socialRoutes: SocialRoutes | undefined;
-  if (appDb && queryEngine) {
-    await bootstrapSocialSchema(appDb);
-    socialRoutes = createSocialRoutes(appDb, queryEngine, getCurrentUser);
-    app.route("/api/social", socialRoutes);
-  } else {
-    app.all("/api/social/*", (c) => c.json({ error: "Database not configured (no DATABASE_URL)" }, 503));
-  }
+  const socialRoutes = await registerGatewaySyncAndSocialRoutes({
+    app, appDb, homePath, queryEngine, syncDeps,
+    getHomeMirrorStatus: () => homeMirrorReadiness.getStatus(),
+  });
 
   await registerOperationalRoutes({
     app, homePath, runningVersion, queryEngine, pluginRegistry,
