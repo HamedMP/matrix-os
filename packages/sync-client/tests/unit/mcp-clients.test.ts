@@ -197,4 +197,16 @@ describe("Matrix MCP gateway client", () => {
     await expect(client.sendTerminalTab({ workspaceId: `tws_${"0".repeat(32)}`, tabId: `tt_${"1".repeat(32)}` }, { text: "yes" }))
       .rejects.toMatchObject({ code: "conflict" });
   });
+
+  // Fault detected (third review of #3297): hosted MCP aborts a downstream request
+  // after 50 s, so a wait must check in well before that.
+  it("keeps a terminal wait inside hosted MCP's request deadline", async () => {
+    const fetcher = vi.fn<typeof fetch>().mockResolvedValue(new Response(JSON.stringify({ reason: "timeout" }), { status: 200 }));
+    const timeout = vi.spyOn(AbortSignal, "timeout");
+    await createMcpGatewayClient(runtime, { fetch: fetcher })
+      .waitTerminalTab({ workspaceId: `tws_${"0".repeat(32)}`, tabId: `tt_${"1".repeat(32)}` }, { timeoutMs: 40_000 });
+    expect(timeout).toHaveBeenCalledWith(45_000);
+    timeout.mockRestore();
+  });
 });
+
