@@ -155,6 +155,11 @@ it("aborts a pending old-authority save and never restores that draft into a new
   auth.sessionId = "second-session";
   rerender(<PreviewWindow />);
   expect(fetch.mock.calls[1]?.[1]?.signal.aborted).toBe(true);
+  expect(screen.getByText("No files open")).toBeInTheDocument();
+  expect(screen.queryByRole("tab", { name: config.name })).toBeNull();
+
+  const newAuthority = organizationDriveNavigationIdentity(auth.userId, auth.sessionId, getGatewayUrl());
+  act(() => usePreviewWindow.getState().openFile(config.path, { authority: newAuthority }));
   expect(await screen.findByRole("textbox")).toHaveValue("second session's file");
   await act(async () => { finishSave(Response.json({ ok: true })); });
   expect(screen.getByRole("textbox")).toHaveValue("second session's file");
