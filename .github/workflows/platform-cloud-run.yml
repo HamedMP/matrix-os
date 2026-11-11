@@ -155,7 +155,7 @@ jobs:
     steps:
       - name: Checkout
         timeout-minutes: 5
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           # Source ancestry must survive squash merges and ordinary main deployments.
           fetch-depth: 0
@@ -1516,7 +1516,7 @@ jobs:
 
       - name: Set up Node for Matrix.page Worker
         if: ${{ (github.event_name == 'push' || inputs.promote) && env.DEPLOY_ENVIRONMENT == 'production' && env.MATRIX_PUBLIC_SITES_ENABLED == 'true' }}
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@v7
         with:
           node-version: 24
           cache: pnpm
