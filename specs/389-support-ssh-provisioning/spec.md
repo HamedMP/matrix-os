@@ -23,6 +23,41 @@ mutated. A failed boot remains failed until the key or host prerequisite is
 fixed and provisioning is retried. Key rotation uses the helper's staged
 two-key flow and a verified new SSH session before finalization.
 
+## Error policy
+
+- Platform: a missing or invalid key throws in `buildHostConfig` before any
+  provider call. The provisioning or recovery job logs the error server-side
+  and marks the machine and job failed in one transaction with a generic
+  failure code. Clients never see the key, the validation detail or the
+  config variable name.
+- VPS: the helper exits non-zero with a short message and `set -eu` stops
+  bootstrap. Messages stay in the VPS cloud-init log and never contain key
+  material.
+
+## Concurrency and crash safety
+
+- Rendering is pure for each job; durable job leases already serialize
+  provisioning for a machine.
+- `install` runs once from the serial cloud-init `runcmd`. Rotation is a
+  manual, single-operator procedure; concurrent rotations are unsupported and
+  no lock is added.
+- Every write goes to a `mktemp` file in the destination directory and is
+  then renamed with `mv -T`, so a crash leaves either the old file or the new
+  one. Sudoers content is checked with `visudo -c` before the rename.
+  Rerunning `install` with the same key is idempotent; a different existing
+  key is refused until rotated. An interrupted `finalize-rotation` resumes.
+
+## Resource limits and cleanup
+
+- The key is one Ed25519 line of at most 1023 bytes with a fixed 51-byte
+  decoded blob. Cloud-init user data stays within the existing byte budget,
+  which tests enforce.
+- Temp files are removed on failure and by an `EXIT` trap. A hard kill can
+  leave at most one root-owned temp file per interrupted run. No recurring
+  sweep is added because nothing creates temp files repeatedly.
+- Not applicable: no new endpoints, WebSockets, IPC, in-memory caches or
+  outbound network calls.
+
 ## Acceptance checks
 
 - Rendered production user data has one validated public key and an installer
