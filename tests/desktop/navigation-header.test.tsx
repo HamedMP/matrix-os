@@ -16,6 +16,7 @@ function render(ui: React.ReactElement) {
 
 describe("Desktop navigation header", () => {
   const originalPlatform = Object.getOwnPropertyDescriptor(navigator, "platform");
+  const pristinePlatform = navigator.platform;
 
   function setPlatform(platform: string) {
     Object.defineProperty(navigator, "platform", { configurable: true, value: platform });
@@ -35,7 +36,11 @@ describe("Desktop navigation header", () => {
   afterEach(() => {
     cleanup();
     delete (window as { operator?: unknown }).operator;
+    // jsdom serves `platform` from Navigator.prototype; drop the test-owned
+    // override instead of leaving it for later tests.
     if (originalPlatform) Object.defineProperty(navigator, "platform", originalPlatform);
+    else Reflect.deleteProperty(navigator, "platform");
+    expect(navigator.platform).toBe(pristinePlatform);
   });
 
   it("removes sidebar-only chrome for the native desktop shell", () => {

@@ -7,6 +7,7 @@ import { useAppearance } from "../../desktop/src/renderer/src/stores/appearance"
 describe("appearance store", () => {
   let eventListeners: Map<string, (payload: unknown) => void>;
   const originalPlatform = Object.getOwnPropertyDescriptor(navigator, "platform");
+  const pristinePlatform = navigator.platform;
 
   beforeEach(() => {
     useAppearance.setState({ mode: "light", themeId: DEFAULT_THEME_ID, zoom: 1, hydrated: true, pending: false, error: null, fontId: "geist", monoFontId: "jetbrains", customTheme: null });
@@ -34,7 +35,11 @@ describe("appearance store", () => {
     root.removeAttribute("data-theme");
     root.removeAttribute("data-theme-id");
     root.removeAttribute("style");
+    // jsdom serves `platform` from Navigator.prototype; drop the test-owned
+    // override instead of leaving it for later tests.
     if (originalPlatform) Object.defineProperty(navigator, "platform", originalPlatform);
+    else Reflect.deleteProperty(navigator, "platform");
+    expect(navigator.platform).toBe(pristinePlatform);
     vi.restoreAllMocks();
   });
 
