@@ -45,6 +45,7 @@ import {
   ReviewSnapshotSchema,
   ReviewSummarySchema,
   MatrixComputerListSchema,
+  CollaborativeAppDirectoryItemSchema,
   RuntimeSelectionRequestSchema,
   RuntimeSummarySchema,
   SafeClientErrorSchema,
@@ -84,7 +85,15 @@ const CodingAgentCreateThreadResultSchema = z.discriminatedUnion("ok", [
   z.object({ ok: z.literal(true), snapshot: AgentThreadSnapshotSchema }).strict(),
   z.object({ ok: z.literal(false), error: SafeClientErrorSchema }).strict(),
 ]);
-const EmbedStateSchema = z.enum(["loading", "ready", "auth-required", "failed"]);
+const EmbedStateSchema = z.enum([
+  "loading",
+  "ready",
+  "auth-required",
+  "host-offline",
+  "access-ended",
+  "needs-recheck",
+  "failed",
+]);
 const ReviewIdSchema = z.string().regex(/^rev_[A-Za-z0-9_-]{1,128}$/);
 
 // App-wide Chromium zoom factor (webContents.setZoomFactor). Bounded so a
@@ -406,6 +415,12 @@ export const INVOKE_CHANNELS = {
         appIdentity: z.string().min(1).max(256)
           .regex(/^[a-z0-9][a-z0-9_-]*(?:\/[a-z0-9][a-z0-9_-]*)*$/)
           .optional(),
+        bounds: BoundsSchema,
+        active: z.boolean().optional(),
+      }),
+      z.strictObject({
+        kind: z.literal("shared-app"),
+        target: CollaborativeAppDirectoryItemSchema,
         bounds: BoundsSchema,
         active: z.boolean().optional(),
       }),

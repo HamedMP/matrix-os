@@ -50,13 +50,26 @@ const sharedChat = {
   revision: "1",
   messageCount: "0",
 } as const;
-const collaborationMock = vi.hoisted(() => ({ pending: 0, failInbox: false, projectInvitation: false }));
+const collaborationMock = vi.hoisted(() => ({ pending: 0, failInbox: false, projectInvitation: false, appAvailable: false }));
 
 vi.mock("../../desktop/src/renderer/src/lib/collaboration", () => ({
   releaseDesktopCollaborationApi: vi.fn(),
   createDesktopCollaborationApi: () => ({
     baseUrl: "https://app.matrix-os.com",
     get: vi.fn(async (path: string) => {
+      if (path.startsWith("/api/collaboration/shared-apps")) return { items: collaborationMock.appAvailable ? [{
+        scopeId: "10000000-0000-4000-8000-000000000099",
+        runtimeId: "runtime_owner",
+        organizationId: "org_matrix",
+        authorityGeneration: 2,
+        appId: "team-tracker",
+        catalogId: "30000000-0000-4000-8000-000000000001",
+        readinessId: "40000000-0000-4000-8000-000000000001",
+        registrationIncarnation: "a".repeat(64),
+        buildId: "b".repeat(64),
+        shareRevision: "7",
+        owner: { actorId: "user_owner", displayName: "Nima" },
+      }] : [] };
       if (path.endsWith("/inbox") && collaborationMock.failInbox) throw new Error("InboxUnavailable");
       if (path.endsWith("/inbox") && collaborationMock.projectInvitation) return { items: [{
         scopeId: projectScopeId,
@@ -128,6 +141,7 @@ describe("Electron Shared with me navigation", () => {
     collaborationMock.pending = 0;
     collaborationMock.failInbox = false;
     collaborationMock.projectInvitation = false;
+    collaborationMock.appAvailable = false;
     vi.stubGlobal("ResizeObserver", class {
       observe() {}
       unobserve() {}
@@ -175,6 +189,25 @@ describe("Electron Shared with me navigation", () => {
       sharedScopeId: scopeId,
     });
     expect(screen.queryByRole("heading", { name: "Launch plan" })).toBeNull();
+  });
+
+  it("opens an exact shared app target in a native app tab", async () => {
+    collaborationMock.appAvailable = true;
+    render(<DesktopChatCollaboration />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Open app" }));
+
+    const active = useTabs.getState().tabs.find((tab) => tab.id === useTabs.getState().activeTabId);
+    expect(active).toMatchObject({
+      kind: "app",
+      title: "team tracker",
+      sharedAppTarget: {
+        scopeId: "10000000-0000-4000-8000-000000000099",
+        appId: "team-tracker",
+        buildId: "b".repeat(64),
+        shareRevision: "7",
+      },
+    });
   });
 
   it("exposes Shared with me in the Chat rail and opens its native content", async () => {
