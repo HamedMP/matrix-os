@@ -93,11 +93,15 @@ admin provides (GitHub, Slack, HubSpot, Google Workspace, Asana, Box). These
 need the org-provided client support described under Architecture before
 they work for org-owned apps.
 
-**Drift.** `node scripts/mcp-catalog/verify-remote-mcp-catalog.mjs` probes
-every endpoint and compares its live registration mode to the catalog. Its
-first run corrected two entries that a rough manual probe had wrong (Asana and
-monday.com). Re-run it before changing the catalog. It makes network calls,
-so it is a maintenance tool, not a CI gate.
+**Drift.** `bun run mcp-catalog:verify [id ...]` probes every endpoint and
+compares its live registration mode to the catalog. Its first run corrected
+two entries that a rough manual probe had wrong (Asana and monday.com). It
+treats vendor-advertised metadata URLs as untrusted: each one is
+SSRF-validated, DNS-pinned, not redirected, and byte-capped. Missing metadata
+is reported as unverified, never as verified. Exit codes: `0` all verified,
+`1` any failure or unknown id, `2` only unverified entries remain (today, the
+three Google servers that authorize each call). Re-run it before changing the
+catalog. It makes network calls, so it is a maintenance tool, not a CI gate.
 
 ## User journeys
 
@@ -201,6 +205,28 @@ It is capped at 40 tools per session.
 
 ## Security architecture
 
+### Routes and authentication
+
+| Route | Host | Auth | Public | Notes |
+| --- | --- | --- | --- | --- |
+| `GET /.well-known/oauth-protected-resource[/mcp]` | platform | none | yes | Existing (`mcp-routes.ts`); advertises the Matrix authorization server |
+| `POST\|GET\|DELETE /mcp` | platform | Matrix OAuth bearer for the `/mcp` resource (Clerk-backed, `mcp-auth.ts`) | no | Existing endpoint; gains the Core tools. Origin allowlist, per-owner admission, `bodyLimit` |
+| Matrix OAuth authorize/token/register | platform | existing contract (spec 120) | authorize/register yes | Unchanged; this spec adds no OAuth endpoints |
+| `GET /api/mcp-catalog` | platform | Clerk session | no | Read-only catalog projection; Zod-validated `category`/`department` filters |
+| `GET\|POST\|PATCH\|DELETE /api/mcp-servers[...]` | gateway → platform broker | owner session, or a run-scoped capability bearer | no | Existing Custom MCP routes; gain `catalogId` and an optional `orgClientId` |
+| `GET /api/mcp-servers/oauth/callback` | platform | single-use hashed `state` bound to owner + server + revision | yes (state-gated) | Existing callback; org-provided clients reuse it |
+| `POST /api/mcp-approvals/:approvalId` | gateway | owner session only, never a run or external bearer | no | Confirms an external-client write; the approval digest binds tool + args |
+| `GET /api/orgs/:orgId/mcp/connections` | platform | Clerk session + `org:mcp_admin` | no | Member connection metadata only; cursor + limit validated |
+| `GET /api/orgs/:orgId/mcp/usage` | platform | Clerk session + `org:mcp_admin` | no | Daily aggregates; bounded date range |
+| `PUT\|DELETE /api/orgs/:orgId/mcp/servers/:serverDefId` | platform | Clerk session + `org:mcp_admin` | no | Allow/block/recommend and org OAuth client; secrets write-only |
+| `POST /api/orgs/:orgId/core-repo/sync` | platform | GitHub webhook HMAC, or `org:mcp_admin` | webhook only | Triggers repo sync; payload is ignored beyond the ref |
+
+Every path parameter (`orgId`, `serverDefId`, `approvalId`) is validated
+with Zod at the route boundary. Unknown or misconfigured dependencies return
+a generic 503, never a 404.
+
+### Permissions
+
 | Caller | list/search/describe | call (read) | call (write) | admin views |
 | --- | --- | --- | --- | --- |
 | Member via Matrix harness run | own connections | per policy and run scope | approval or full-access run | — |
@@ -250,6 +276,12 @@ It is capped at 40 tools per session.
    stdio bridge.
 5. Org governance and admin dashboard (connections, usage), plus the Matrix
    Core repo sync job and `matrix core sync` CLI.
+
+Public docs (required by the constitution's documentation-driven rule): a
+separate PR in `FinnaAI/matrix-os-site` under `content/docs/` ships with
+layers 4–5. It covers: connecting a preset or any MCP URL; using the Matrix
+Core MCP from Claude Code, Codex, Cursor, and other clients; approving
+external writes; the org admin view; and setting up the Matrix Core repo.
 
 ## Acceptance checks
 
