@@ -180,6 +180,9 @@ function ProjectConfigurationSectionContent({ section, onOpenFile, onOpenFiles, 
         {!partial && rows.length === 0 ? <p className="text-xs leading-relaxed" style={secondaryStyle}>
           {emptyMessage}{onCreate ? null : ` ${setupHint}`}
         </p> : null}
+        {id === "config" && onCreate && onOpenFile && !partial && createFiles.length === 0 ? (
+          <p className="text-xs leading-relaxed" style={secondaryStyle}>The starter config files already exist. Open a file to edit it.</p>
+        ) : null}
         {onCreate && createFiles.length > 0 ? <div className="flex flex-wrap gap-2">
           {createFiles.map(template => <button key={template.path} type="button" className={actionClass}
             style={borderStyle} disabled={filesPending} onClick={() => { void create(template); }}>

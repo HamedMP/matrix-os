@@ -16,6 +16,8 @@ one, and selecting the open header closes it.
 
 Within Skills, **Add skill** opens three options. **Choose installed skill** searches the current computer's Settings catalog by name or description and copies the selected Markdown file on confirmation. **New skill** accepts a name, description, and instructions in one form. **Import SKILL.md** accepts a local UTF-8 skill manifest. The project stores these as `.agents/skills/<name>/SKILL.md` in the primary checkout. Copy and import transfer the Markdown only. Related scripts and assets remain at their source, and the project does not inherit Settings permissions or connection state.
 
+Config files offers a Create action for each missing starter. When all starters exist, the section explains that they can be opened for editing.
+
 The inventory is available in Electron Desktop, Web Desktop and Web Canvas. Mobile is outside this feature’s scope. The list describes project files. Skill availability, config trust, and MCP connection status depend on the selected runtime. Worktree-specific inventory, automatic Markdown injection, and shared project inventory are deferred.
 
 ## Wiring and authorization
@@ -33,6 +35,7 @@ The Gateway registers the route with its project/workspace routes. Clients valid
 
 ## Acceptance
 
+- On Electron Desktop, the project composer keeps the `/` Skills and commands list and the `@` resource list visible and selectable when they open outside the composer. Hiding or leaving the surface dismisses its suggestions.
 - In the project composer, Preview dictation quota stays readable outside the toolbar. Attachment, model, reasoning, permission and send controls remain within the composer at narrow and wide widths.
 - In Web Desktop and Web Canvas, selecting a project shows one Agent configuration panel in the main project overview. Selecting a chat opens its transcript. Selecting the project name in the sidebar returns to the overview with a draft scoped to that project.
 - Owners see only their active project's metadata, with paths relative to the project. Project switches discard older requests. Shared members gain no new access.
