@@ -637,8 +637,8 @@ matrix shell connect --project main --tab <tab-id-or-unique-name>
 
 ### Unblock tickets
 
-- To clear decisions that are waiting on an author, use `.claude/commands/unblock-tickets.md`: `/unblock-tickets [github-login | ticket-ids | pr-numbers]`.
-- It reads the live ticket, PR, CI, Greptile, and agent-terminal state, asks one multiple-choice question per waiting item, and carries out each answer. An answer authorizes only the action named in the chosen option; every merge and review gate above still applies.
+- To clear decisions that are waiting on an author, use `.claude/commands/unblock-tickets.md` in Claude Code (`/unblock-tickets [github-login | ticket-ids | pr-numbers]`) or the `unblock-tickets` skill in `.agents/skills/unblock-tickets/` in Codex. Keep the two files in step when either changes.
+- It takes the current user's tickets from the Linear MCP server, reads the live PR, CI, Greptile, and agent-terminal state, asks one multiple-choice question per waiting item, and carries out each answer. An answer authorizes only the action named in the chosen option; every merge and review gate above still applies.
 
 ### Backlog
 
