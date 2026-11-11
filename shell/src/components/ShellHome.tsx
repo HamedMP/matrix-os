@@ -1,14 +1,16 @@
 "use client";
 
 import { GetStartedAnswersProvider, GettingStartedVisibilityProvider, resolveRecipeHandoff, type ChatCollaborationView } from "@matrix-os/ui";
-import { useState, useCallback, useEffect, useRef, useSyncExternalStore } from "react";
+import { useState, useCallback, useEffect, useLayoutEffect, useRef, useSyncExternalStore } from "react";
 import { useAuth } from "@clerk/nextjs";
 import { useTheme } from "@/hooks/useTheme";
 import { useDesktopConfig } from "@/hooks/useDesktopConfig";
 import { useCanonicalChatState } from "@/hooks/useCanonicalChatState";
 import { useGlobalShortcuts } from "@/hooks/useGlobalShortcuts";
+import { usePreviewWindow } from "@/hooks/usePreviewWindow";
 import { useCommandStore } from "@/stores/commands";
 import { ChatProvider } from "@/stores/chat-context";
+import { organizationDriveNavigationIdentity } from "@/stores/organization-drive-navigation";
 import { capturePostHogEvent } from "@/lib/posthog-client";
 import { MATRIX_TELEMETRY_EVENTS } from "@matrix-os/observability/events";
 
@@ -123,6 +125,12 @@ function ShellHomeBody({
   // Canonical Chat captures this transport on mount. Shared navigation rewrites
   // history without replacing it; actual Computer switches reload the document.
   const [chatGatewayUrl] = useState(getGatewayUrl);
+  const fileAuthority = organizationDriveNavigationIdentity(userId, sessionId, chatGatewayUrl);
+  useLayoutEffect(() => {
+    if (!localAuthBypass && !nativeCollaborationActorId) {
+      usePreviewWindow.getState().setDraftAuthority(fileAuthority);
+    }
+  }, [fileAuthority, nativeCollaborationActorId]);
   const cachePathname = typeof window === "undefined" ? "/" : window.location.pathname;
   const cacheScope = createShellSnapshotScope({ userId, pathname: cachePathname });
   useTheme({ cacheScope });

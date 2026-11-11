@@ -6,6 +6,8 @@ import { afterEach, expect, it, vi } from "vitest";
 import { PreviewTabContent } from "../../shell/src/components/preview-window/PreviewTab";
 import { PreviewWindow } from "../../shell/src/components/preview-window/PreviewWindow";
 import { usePreviewWindow, type PreviewTab } from "../../shell/src/hooks/usePreviewWindow";
+import { getGatewayUrl } from "../../shell/src/lib/gateway";
+import { organizationDriveNavigationIdentity } from "../../shell/src/stores/organization-drive-navigation";
 
 vi.mock("../../shell/src/components/preview-window/CodeEditor", () => ({
   CodeEditor: ({ content, filename, onChange }: {
@@ -13,15 +15,24 @@ vi.mock("../../shell/src/components/preview-window/CodeEditor", () => ({
   }) => <textarea aria-label={filename} value={content} onChange={e => onChange(e.target.value)} />,
 }));
 
-vi.mock("@clerk/nextjs", () => ({
-  useAuth: () => ({ userId: "owner", sessionId: "session" }),
-}));
+const auth = vi.hoisted(() => ({ userId: "owner", sessionId: "session" }));
+vi.mock("@clerk/nextjs", () => ({ useAuth: () => auth }));
 
 const config: PreviewTab = { id: "config", path: "projects/example/.mcp.json", name: ".mcp.json", type: "code" };
 
+function renderConfigEditor() {
+  const authority = organizationDriveNavigationIdentity(auth.userId, auth.sessionId, getGatewayUrl());
+  usePreviewWindow.setState({ tabs: [config] });
+  usePreviewWindow.getState().setDraftAuthority(authority);
+  return render(<PreviewTabContent tab={config} authority={authority} />);
+}
+
 afterEach(() => {
   cleanup();
+  usePreviewWindow.getState().setDraftAuthority(null);
   usePreviewWindow.setState(usePreviewWindow.getInitialState());
+  auth.userId = "owner";
+  auth.sessionId = "session";
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
 });
@@ -30,7 +41,7 @@ it("disables editing on a failed read and distinguishes an empty successful retr
   const fetch = vi.fn().mockResolvedValueOnce(new Response("private detail", { status: 403 }))
     .mockResolvedValueOnce(new Response(""));
   vi.stubGlobal("fetch", fetch);
-  render(<PreviewTabContent tab={config} />);
+  renderConfigEditor();
 
   expect(await screen.findByRole("alert")).toHaveTextContent("Could not open this file.");
   expect(screen.queryByText("private detail")).toBeNull();
@@ -47,7 +58,7 @@ it("keeps the draft after a failed save and can retry successfully", async () =>
     .mockResolvedValueOnce(new Response("private detail", { status: 500 }))
     .mockResolvedValueOnce(Response.json({ ok: true }));
   vi.stubGlobal("fetch", fetch);
-  render(<PreviewTabContent tab={config} />);
+  renderConfigEditor();
   const editor = await screen.findByRole("textbox");
 
   fireEvent.change(editor, { target: { value: "revised" } });
@@ -68,7 +79,7 @@ it("does not clear the unsaved indicator for edits made while a save is pending"
   const fetch = vi.fn().mockResolvedValueOnce(new Response("original"))
     .mockReturnValueOnce(new Promise<Response>(resolve => { resolveSave = resolve; }));
   vi.stubGlobal("fetch", fetch);
-  render(<PreviewTabContent tab={config} />);
+  renderConfigEditor();
   const editor = await screen.findByRole("textbox");
 
   fireEvent.change(editor, { target: { value: "first draft" } });
@@ -97,6 +108,56 @@ it("keeps an unsaved project config draft when switching preview tabs", async ()
   fireEvent.click(screen.getByRole("tab", { name: ".mcp.json" }));
   expect(screen.getByRole("textbox", { name: ".mcp.json" })).toHaveValue("unsaved draft");
   expect(read).toHaveBeenCalledTimes(2);
+});
+
+it("keeps the pending save and a newer draft when the presentation remounts Preview", async () => {
+  let finishSave!: (response: Response) => void;
+  const fetch = vi.fn()
+    .mockResolvedValueOnce(new Response("original"))
+    .mockReturnValueOnce(new Promise<Response>(resolve => { finishSave = resolve; }))
+    .mockResolvedValueOnce(Response.json({ ok: true }));
+  vi.stubGlobal("fetch", fetch);
+  usePreviewWindow.setState({ tabs: [config], activeTabId: config.id });
+  const desktop = render(<PreviewWindow />);
+  const editor = await screen.findByRole("textbox");
+  fireEvent.change(editor, { target: { value: "submitted draft" } });
+  fireEvent.click(screen.getByRole("button", { name: "Save" }));
+  fireEvent.change(editor, { target: { value: "newer draft" } });
+  const signal = fetch.mock.calls[1]?.[1]?.signal as AbortSignal;
+
+  desktop.unmount();
+  expect(signal.aborted).toBe(false);
+  render(<PreviewWindow />);
+  expect(await screen.findByRole("textbox")).toHaveValue("newer draft");
+  expect(screen.getByRole("button", { name: "Saving..." })).toBeDisabled();
+  expect(fetch).toHaveBeenCalledTimes(2);
+
+  await act(async () => { finishSave(new Response(null, { status: 500 })); });
+  expect(await screen.findByRole("alert")).toHaveTextContent("Your changes are still here.");
+  fireEvent.click(screen.getByRole("button", { name: "Save" }));
+  await screen.findByText("Saved");
+  expect(fetch).toHaveBeenLastCalledWith(expect.any(String),
+    expect.objectContaining({ method: "PUT", body: "newer draft" }));
+});
+
+it("aborts a pending old-authority save and never restores that draft into a new session", async () => {
+  let finishSave!: (response: Response) => void;
+  const fetch = vi.fn().mockResolvedValueOnce(new Response("first session's file"))
+    .mockReturnValueOnce(new Promise<Response>(resolve => { finishSave = resolve; }))
+    .mockResolvedValueOnce(new Response("second session's file"));
+  vi.stubGlobal("fetch", fetch);
+  usePreviewWindow.setState({ tabs: [config], activeTabId: config.id });
+  const { rerender } = render(<PreviewWindow />);
+  fireEvent.change(await screen.findByRole("textbox"), { target: { value: "old session draft" } });
+  fireEvent.click(screen.getByRole("button", { name: "Save" }));
+
+  auth.sessionId = "second-session";
+  rerender(<PreviewWindow />);
+  expect(fetch.mock.calls[1]?.[1]?.signal.aborted).toBe(true);
+  expect(await screen.findByRole("textbox")).toHaveValue("second session's file");
+  await act(async () => { finishSave(Response.json({ ok: true })); });
+  expect(screen.getByRole("textbox")).toHaveValue("second session's file");
+  expect(screen.queryByText("Saved")).toBeNull();
 });
 
 it("keeps all edited files accessible at the draft limit and allows media previews", async () => {

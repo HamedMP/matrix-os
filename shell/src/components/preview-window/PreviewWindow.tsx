@@ -1,14 +1,12 @@
 "use client";
 
 import { ShellFileAuthority } from "@/components/file-browser/ShellFileAuthority";
-import { usePreviewWindow } from "@/hooks/usePreviewWindow";
+import { MAX_DIRTY_PREVIEW_EDITORS, usePreviewWindow } from "@/hooks/usePreviewWindow";
 import { useWindowManager } from "@/hooks/useWindowManager";
 import { isEditablePreviewTab, PreviewTabContent } from "./PreviewTab";
 import { cn } from "@/lib/utils";
 import { XIcon } from "@/lib/hugeicons";
-import { useLayoutEffect, useRef, useState, type KeyboardEvent } from "react";
-
-const MAX_DIRTY_EDITORS = 3;
+import { useLayoutEffect, useRef, type KeyboardEvent } from "react";
 
 export function PreviewWindow() {
   return <ShellFileAuthority>{authority => <PreviewWindowForAuthority key={authority} authority={authority} />}</ShellFileAuthority>;
@@ -21,26 +19,15 @@ function PreviewWindowForAuthority({ authority }: { authority: string }) {
   const pendingFocusTabId = usePreviewWindow((s) => s.pendingFocusTabId);
   const foreground = useWindowManager((s) => s.getFocusedWindow()?.path === "__preview-window__");
   const activeTabRef = useRef<HTMLDivElement>(null);
-  // Drafts live in mounted editors. Do not retain a tab or block a new editor
-  // based on a dirty flag from a prior preview window or authority.
-  const [dirtyEditors, setDirtyEditors] = useState<Set<string>>(() => new Set());
+  const draftAuthority = usePreviewWindow((s) => s.draftAuthority);
+  const drafts = usePreviewWindow((s) => s.drafts);
+  const dirtyEditors = new Set(draftAuthority === authority ? drafts.map(draft => draft.tabId) : []);
   const setActiveTab = usePreviewWindow((s) => s.setActiveTab);
   const closeTab = usePreviewWindow((s) => s.closeTab);
 
-  function updateDirtyEditor(id: string, dirty: boolean) {
-    setDirtyEditors(current => {
-      if (current.has(id) === dirty) return current;
-      const next = new Set(current);
-      if (dirty) next.add(id);
-      else next.delete(id);
-      return next;
-    });
-  }
-
-  function closeEditor(id: string) {
-    updateDirtyEditor(id, false);
-    closeTab(id);
-  }
+  useLayoutEffect(() => {
+    usePreviewWindow.getState().setDraftAuthority(authority);
+  }, [authority]);
 
   const activeTab = tabs.find((t) => t.id === activeTabId) ?? tabs.at(-1);
   const visibleTabId = activeTab?.id;
@@ -53,7 +40,7 @@ function PreviewWindowForAuthority({ authority }: { authority: string }) {
 
   const dirtyTabs = tabs.filter(tab => dirtyEditors.has(tab.id));
   const editorLimitReached = activeTab && isEditablePreviewTab(activeTab)
-    && !dirtyEditors.has(activeTab.id) && dirtyTabs.length >= MAX_DIRTY_EDITORS;
+    && !dirtyEditors.has(activeTab.id) && dirtyTabs.length >= MAX_DIRTY_PREVIEW_EDITORS;
 
   if (tabs.length === 0) {
     return (
@@ -113,7 +100,7 @@ function PreviewWindowForAuthority({ authority }: { authority: string }) {
               )}
               onClick={() => setActiveTab(tab.id)}
               onAuxClick={(e) => {
-                if (e.button === 1) closeEditor(tab.id);
+                if (e.button === 1) closeTab(tab.id);
               }}
               onKeyDown={handleTabKeyDown}
             >
@@ -126,7 +113,7 @@ function PreviewWindowForAuthority({ authority }: { authority: string }) {
                 className="size-4 rounded hover:bg-accent flex items-center justify-center shrink-0"
                 onClick={(e) => {
                   e.stopPropagation();
-                  closeEditor(tab.id);
+                  closeTab(tab.id);
                 }}
               >
                 <XIcon className="size-3" />
@@ -144,7 +131,7 @@ function PreviewWindowForAuthority({ authority }: { authority: string }) {
         )}
         {tabs.filter(tab => dirtyEditors.has(tab.id) || (!editorLimitReached && tab.id === activeTab?.id)).map(tab => (
           <div key={tab.id} hidden={tab.id !== activeTab?.id} className="h-full">
-            <PreviewTabContent tab={tab} onDirtyChange={updateDirtyEditor} />
+            <PreviewTabContent tab={tab} authority={authority} />
           </div>
         ))}
       </div>
