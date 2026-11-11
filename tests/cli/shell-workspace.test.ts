@@ -45,6 +45,7 @@ describe("project-scoped shell CLI commands", () => {
       "read",
       "rm",
       "send",
+      "wait",
     ]);
   });
 

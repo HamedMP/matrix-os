@@ -269,6 +269,7 @@ import { createPlatformFundedAiHostConfigRoutes } from "./funded-host-activation
 import { createExecutionAdmissionFence } from "./execution-admission-fence.js";
 import { createManagedFeatureRestartCoordinator } from "./managed-feature-restart.js";
 import { registerTerminalWebSocketRoutes } from "./server/terminal-ws-routes.js";
+import { registerTerminalEventWebSocket } from "./terminal-agent/events-ws.js";
 import type { GatewayConfig, ServerMessage } from "./server/types.js";
 import { registerVoiceWebSocketRoutes } from "./server/voice-ws-routes.js";
 import {
@@ -1694,7 +1695,7 @@ export async function createGateway(config: GatewayConfig) {
   });
   retireTerminalRoutineSource = terminalLaunchRuntime.admission.fence;
   preparedTerminalLaunch = input => terminalLaunchRuntime.admission.launchPrepared(input);
-  const { shellRouteDeps, terminalWorkspaceProjectAdmission, terminalInputActivity,
+  const { shellRouteDeps, terminalWorkspaceProjectAdmission, terminalInputActivity, terminalWaiter, terminalEventHub,
     chatBoundWorkspaceRouteDeps, systemActivityCandidates } = registerShellTerminalRoutes({
     app, homePath, terminalWorkspaceRuntime, terminalRuntimeOwnerIds, managedLaunch: terminalLaunchRuntime.admission,
     terminalWindowLayoutStore, shellPreferencesStore, chatRepository,
@@ -1707,6 +1708,12 @@ export async function createGateway(config: GatewayConfig) {
     terminalWorkspaceProjectAdmission, terminalInputActivity, captureTerminalEvent,
     getPrincipal: requireRequestPrincipal,
     logBestEffortFailure, logUnexpectedJsonParseFailure, logUnexpectedWsSendFailure,
+  });
+
+  registerTerminalEventWebSocket({
+    app, upgradeWebSocket, hub: terminalEventHub,
+    getPrincipal: requireRequestPrincipal,
+    terminalOwnerIds: terminalRuntimeOwnerIds,
   });
 
   slackRuntime = await startOwnerSlack({
@@ -1926,6 +1933,9 @@ export async function createGateway(config: GatewayConfig) {
       await codingAgentWorkspaceRuntime?.close();
       codingAgentWorkspaceRuntime = null;
       workspaceSessionRuntimeBridge.close();
+      // Drain terminal event subscribers and waiters before the runtime client goes.
+      terminalEventHub.shutdown();
+      terminalWaiter.shutdown();
       terminalLiveOwnership.close();
       await agentRuntimeServices.controller.close();
       aiProviderService.close();

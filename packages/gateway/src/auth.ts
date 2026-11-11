@@ -118,6 +118,7 @@ const WS_QUERY_TOKEN_PATHS = [
   "/ws",
   "/ws/voice",
   "/ws/terminal/tab",
+  "/ws/terminal/events",
   "/ws/onboarding",
   "/ws/vocal",
 ];
@@ -166,7 +167,7 @@ function isPreviewOwnerApiPath(path: string, webSocket: boolean): boolean {
 }
 
 function isPreviewTerminalPath(path: string): boolean {
-  return path.startsWith("/api/terminal/") || path === "/ws/terminal/tab";
+  return path.startsWith("/api/terminal/") || path === "/ws/terminal/tab" || path === "/ws/terminal/events";
 }
 
 export function readPreviewTerminalOwner(c: Pick<Context, "get">): string | undefined {

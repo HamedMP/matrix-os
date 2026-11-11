@@ -32,7 +32,7 @@ describe("shell CLI command", () => {
   it("exports the project-scoped shell namespace", () => {
     expect(shellCommand.meta).toMatchObject({ name: "shell" });
     expect(Object.keys(shellCommand.subCommands ?? {}).sort()).toEqual([
-      "connect", "get", "interrupt", "keys", "list", "ls", "new", "read", "rm", "send",
+      "connect", "get", "interrupt", "keys", "list", "ls", "new", "read", "rm", "send", "wait",
     ]);
   });
 
@@ -41,7 +41,7 @@ describe("shell CLI command", () => {
     vi.spyOn(console, "log").mockImplementation((line?: unknown) => logs.push(String(line)));
     await shellCommand.run?.({ args: {}, rawArgs: [] } as never);
     expect(logs).toEqual([
-      "Usage: matrix shell list|new|connect|rm|get|read|send|keys|interrupt [--project <project>] [--tab <tab>]",
+      "Usage: matrix shell list|new|connect|rm|get|read|send|keys|interrupt|wait [--project <project>] [--tab <tab>]",
     ]);
   });
 

@@ -1,0 +1,110 @@
+import { lstat, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterEach, describe, expect, it } from "vitest";
+import {
+  agentStatusForHookEvent,
+  createTerminalAgentStatusIndex,
+  terminalPaneStatusPath,
+  writeTerminalPaneStatus,
+} from "../../packages/terminal-runtime/src/agent-status.js";
+
+const roots: string[] = [];
+afterEach(async () => {
+  await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
+});
+
+const session = `matrix-w-${"a".repeat(32)}`;
+const workspaceId = `tws_${"0".repeat(32)}`;
+const tabId = `tt_${"1".repeat(32)}`;
+const otherTabId = `tt_${"2".repeat(32)}`;
+
+async function home() {
+  const root = await mkdtemp(join(tmpdir(), "matrix-agent-status-"));
+  roots.push(root);
+  return root;
+}
+
+function storeWith(tabs: Array<{ id: string; zellijPaneId: string | null; status?: string }>) {
+  return {
+    listWorkspaces: async () => [{ id: workspaceId }],
+    getRuntimeWorkspace: async (id: string) => id !== workspaceId ? undefined : {
+      id: workspaceId,
+      zellijSessionName: session,
+      tabs: Object.fromEntries(tabs.map((tab) => [tab.id, { status: "running", ...tab }])),
+    },
+  };
+}
+
+describe("terminal agent status", () => {
+  // Fault detected: a status reported in one pane is shown on another tab, or a
+  // canonical workspace's tabs all share one status (today's per-session hooks).
+  it("maps each pane's report to exactly its own tab", async () => {
+    const homePath = await home();
+    await writeTerminalPaneStatus({ homePath, sessionName: session, paneId: "7", status: "blocked", message: "Allow edit?", source: "reporter", now: () => new Date("2026-11-11T10:00:00Z") });
+    const index = createTerminalAgentStatusIndex({
+      homePath,
+      store: storeWith([{ id: tabId, zellijPaneId: "terminal_7" }, { id: otherTabId, zellijPaneId: "terminal_8" }]),
+    });
+    await expect(index.list()).resolves.toEqual([{
+      ref: { workspaceId, tabId },
+      status: "blocked",
+      message: "Allow edit?",
+      reportedAt: "2026-11-11T10:00:00.000Z",
+      source: "reporter",
+    }]);
+  });
+
+  it("writes atomically with owner-only permissions and strips control characters", async () => {
+    const homePath = await home();
+    await writeTerminalPaneStatus({ homePath, sessionName: session, paneId: "3", status: "working", message: "\x1b]0;evil\x07build\nnow", source: "hook" });
+    const path = terminalPaneStatusPath(homePath, session, "3");
+    expect(((await lstat(path)).mode & 0o777)).toBe(0o600);
+    expect(JSON.parse(await readFile(path, "utf8"))).toMatchObject({ status: "working", message: "]0;evilbuildnow" });
+  });
+
+  it("rejects identities that could escape the status folder", async () => {
+    const homePath = await home();
+    for (const [sessionName, paneId] of [["../x", "1"], [session, "../../1"], [session, "1;rm"], ["matrix-w-short", "1"]]) {
+      await expect(writeTerminalPaneStatus({ homePath, sessionName: sessionName!, paneId: paneId!, status: "idle", source: "reporter" }))
+        .rejects.toThrow();
+    }
+  });
+
+  // Fault detected: a planted symlink or torn file crashes the index or redirects reads.
+  it("ignores symlinked, oversized and invalid status files", async () => {
+    const homePath = await home();
+    const dir = join(homePath, "system", "terminal-status", session);
+    await mkdir(dir, { recursive: true });
+    const outside = join(homePath, "outside.json");
+    await writeFile(outside, JSON.stringify({ version: 1, status: "done", reportedAt: "2026-11-11T10:00:00.000Z", source: "reporter" }));
+    await symlink(outside, join(dir, "terminal_1.json"));
+    await writeFile(join(dir, "terminal_2.json"), "{not json");
+    await writeFile(join(dir, "terminal_3.json"), JSON.stringify({ version: 1, status: "dancing", reportedAt: "2026-11-11T10:00:00.000Z", source: "reporter" }));
+    await writeFile(join(dir, "terminal_4.json"), "x".repeat(5_000));
+    const index = createTerminalAgentStatusIndex({
+      homePath,
+      store: storeWith(["1", "2", "3", "4"].map((pane, i) => ({ id: `tt_${String(i + 3).repeat(32)}`, zellijPaneId: `terminal_${pane}` }))),
+    });
+    await expect(index.list()).resolves.toEqual([]);
+  });
+
+  it("drops status for tabs that have ended", async () => {
+    const homePath = await home();
+    await writeTerminalPaneStatus({ homePath, sessionName: session, paneId: "7", status: "working", source: "reporter" });
+    const index = createTerminalAgentStatusIndex({
+      homePath,
+      store: storeWith([{ id: tabId, zellijPaneId: "terminal_7", status: "exited" }]),
+    });
+    await expect(index.list()).resolves.toEqual([]);
+  });
+
+  it("maps agent hook events to Herdr's status words", () => {
+    expect(agentStatusForHookEvent("session-started")).toBe("idle");
+    expect(agentStatusForHookEvent("turn-started")).toBe("working");
+    expect(agentStatusForHookEvent("attention-requested")).toBe("blocked");
+    expect(agentStatusForHookEvent("turn-completed")).toBe("done");
+    expect(agentStatusForHookEvent("session-ended")).toBe("idle");
+    expect(agentStatusForHookEvent("subtitle-updated")).toBeUndefined();
+  });
+});

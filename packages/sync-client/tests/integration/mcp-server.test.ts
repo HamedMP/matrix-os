@@ -82,6 +82,7 @@ describe("Matrix remote computer MCP server", () => {
       "send_terminal_tab",
       "press_terminal_keys",
       "interrupt_terminal_tab",
+      "wait_terminal_tab",
       "list_files",
       "read_file",
       "download_file",

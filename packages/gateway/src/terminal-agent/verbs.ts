@@ -101,7 +101,7 @@ export interface TerminalInterruptResult {
 export function createTerminalAgentVerbs(options: {
   runtime: TerminalAgentVerbRuntime;
   inputActivity: TerminalInputActivity;
-  agentStatus?: (ref: TerminalRef, tab: TerminalTab) => TerminalAgentStatus | undefined;
+  agentStatus?: (ref: TerminalRef, tab: TerminalTab) => TerminalAgentStatus | undefined | Promise<TerminalAgentStatus | undefined>;
   now?: () => number;
   sleep?: (ms: number) => Promise<void>;
   quietMs?: number;
@@ -150,7 +150,7 @@ export function createTerminalAgentVerbs(options: {
   return {
     async get(ref) {
       const tab = await requireTab(ref);
-      const agentStatus = options.agentStatus?.(ref, tab);
+      const agentStatus = await options.agentStatus?.(ref, tab);
       return { tab, state: isFinished(tab) ? "finished" : "live", ...(agentStatus ? { agentStatus } : {}) };
     },
 
@@ -175,7 +175,7 @@ export function createTerminalAgentVerbs(options: {
     async send(ref, input) {
       const text = sanitizeSendText(input.text);
       const tab = await requireLiveTab(ref);
-      if (!input.force && options.agentStatus?.(ref, tab) === "blocked") {
+      if (!input.force && await options.agentStatus?.(ref, tab) === "blocked") {
         throw new TerminalAgentVerbError("blocked");
       }
       const limitMs = Math.min(draftWaitMs, z.number().int().min(0).max(DEFAULT_DRAFT_WAIT_MS).parse(input.maxHoldMs ?? draftWaitMs));

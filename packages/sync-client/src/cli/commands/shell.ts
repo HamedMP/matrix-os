@@ -8,7 +8,7 @@ import { requireCliAuthToken } from "../auth-state.js";
 const TERMINAL_WORKSPACE_ID = /^tws_[0-9a-f]{32}$/;
 const TERMINAL_TAB_ID = /^tt_[0-9a-f]{32}$/;
 const PROJECT_ID = /^proj_[0-9a-f]{16,64}$/;
-const SHELL_USAGE = "Usage: matrix shell list|new|connect|rm|get|read|send|keys|interrupt [--project <project>] [--tab <tab>]";
+const SHELL_USAGE = "Usage: matrix shell list|new|connect|rm|get|read|send|keys|interrupt|wait [--project <project>] [--tab <tab>]";
 
 export const commonArgs = {
   profile: { type: "string", required: false },
@@ -236,6 +236,7 @@ export const shellCommand = defineCommand({
     send: () => import("./shell-agent.js").then((module) => module.shellSendCommand),
     keys: () => import("./shell-agent.js").then((module) => module.shellKeysCommand),
     interrupt: () => import("./shell-agent.js").then((module) => module.shellInterruptCommand),
+    wait: () => import("./shell-agent.js").then((module) => module.shellWaitCommand),
   },
   run: ({ rawArgs }) => {
     if (!rawArgs?.length) console.log(SHELL_USAGE);
