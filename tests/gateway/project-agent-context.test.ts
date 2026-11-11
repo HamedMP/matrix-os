@@ -5,11 +5,12 @@ import { dirname, join } from "node:path";
 import { Hono } from "hono";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createChatExecutionRootResolver, type ChatExecutionRootResolver } from "../../packages/gateway/src/chat/execution-root.js";
+import { createFilePreviewService } from "../../packages/gateway/src/file-preview-service.js";
 import { createProjectManager } from "../../packages/gateway/src/project-manager.js";
 import { registerProjectMetadataRoutes } from "../../packages/gateway/src/project-metadata-routes.js";
 import { createProjectFilesLocationService, createProjectMetadataService } from "../../packages/gateway/src/project-metadata.js";
 import { registerFileRoutes } from "../../packages/gateway/src/server/file-routes.js";
-import { registerProjectAgentContextRoute } from "../../packages/gateway/src/project-agent-context-routes.js";
+import { registerGatewayProjectFileRoutes } from "../../packages/gateway/src/server/project-routes.js";
 import { markAuthContextReady, setPlatformVerifiedPrincipal } from "../../packages/gateway/src/request-principal.js";
 
 const owner = { type: "user" as const, id: "owner" };
@@ -49,7 +50,16 @@ function setup() {
       if (principal) setPlatformVerifiedPrincipal(c, principal);
       await next();
     });
-    registerProjectAgentContextRoute(app, { executionRoots: roots });
+    registerGatewayProjectFileRoutes(app, {
+      homePath,
+      projects,
+      executionRoots: roots,
+      filePreviewService: createFilePreviewService({
+        homePath,
+        canAccessHome: () => false,
+        resolveProjectRoot: async () => null,
+      }),
+    });
     return app.request(`/api/projects/${encodeURIComponent(projectId)}/agent-context`);
   }
   return { project, projects, executionRoots, request, runCommand, getWorktree };
