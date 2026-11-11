@@ -28,6 +28,14 @@ When Chrome's related-target checks cause handoff, the same run may resume that 
 
 Request URL validation rejects private destinations and revalidates redirects. DNS validation is a preflight, **not DNS pinning**: Chrome resolves hosts itself, so DNS rebinding remains a limitation. Related-target behavior and initial network timing need actual pinned-Chrome validation. This integration does not claim whole-profile network isolation. Full-access native harnesses remain owner-controlled runtimes, not a sandbox against a malicious local operator or modified plugin.
 
+### Public-only browsing
+
+When the user requests public pages only, the first action after status may be `tab_new` with `context: "public"`. The broker binds that run to the separate driver before any browser action and never falls back to the owner context. The same owner lease, input gate, and per-action approval apply. No downloads or sign-in in this mode. Ordinary browsing still uses the owner's existing profile.
+
+The Gateway owns one isolated Chrome context and its loopback HTTPS tunnel. Chrome uses the tunnel from context creation, with the implicit loopback bypass removed and no direct fallback. The tunnel accepts only CONNECT on port 443, rejects nonpublic or mixed DNS results and connects directly to the validated IP. It has bounded connections, deadlines, and shutdown cleanup. Page/iframe Fetch rules still apply. Only a Service Worker with the exact known public context ID can continue, without granting document or raw protocol access; the tunnel is independent of page or action-session lifetime. Unknown targets and owner-context workers retain fail-closed behavior. This mode does not claim OS-wide network isolation.
+
+Public tabs remain visible after the Chat ends and after the action transport reconnects. Gateway shutdown or loss of its separate owning Chrome connection disposes only the public context, which is not an authenticated-session persistence mechanism. The owner profile and its tabs remain independent. Public workflow and full/supervised acceptance require the exact installed candidate and browser surface, in addition to transport tests.
+
 ## Original document exports
 
 Chrome native downloads retain the authenticated browser session. Each verified PDF is stored under owner-contained `data/browser-artifacts`, with original byte hash, source URL, document ID, size and retrieval time. Collection manifests export successful downloads, deduplicate by content hash and flag conflicting hashes for the same document ID. `coverage: downloads_only` expressly avoids claiming all invoices or all pagination pages were visited. Owner-reviewed workflow results record page coverage separately.

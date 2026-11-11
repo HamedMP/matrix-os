@@ -24,13 +24,13 @@ class SharedBrowserInterruptedError extends SharedBrowserError {
     readonly receipt?:Pick<SharedBrowserActionResult,"artifact"|"collectionManifest">,
     readonly relatedTarget?: { targetId: string | undefined; exhausted: boolean }) { super("browser_changed"); }
 }
-interface Registered { policy?:SharedBrowserSupervisedPolicy; binding: SharedBrowserBinding; signal: AbortSignal; controller: AbortController; expiresAt: number; expiryTimer?: ReturnType<typeof setTimeout>; hash: Buffer; onAbort(): void; closing?:Promise<void>; collectionId:string; artifacts:NonNullable<SharedBrowserActionResult["artifact"]>[]; relatedTargetHandoffs: Set<string | undefined> }
+interface Registered { policy?:SharedBrowserSupervisedPolicy; publicDriver?:SharedBrowserDriver; binding: SharedBrowserBinding; signal: AbortSignal; controller: AbortController; expiresAt: number; expiryTimer?: ReturnType<typeof setTimeout>; hash: Buffer; onAbort(): void; closing?:Promise<void>; collectionId:string; artifacts:NonNullable<SharedBrowserActionResult["artifact"]>[]; relatedTargetHandoffs: Set<string | undefined> }
 const digest = (value: string) => createHash("sha256").update(value).digest();
 const same = (a:SharedBrowserBinding,b:SharedBrowserBinding) => a.ownerId===b.ownerId && a.chatId===b.chatId && a.runId===b.runId && a.harness===b.harness;
 const SAFE_ID = /^[A-Za-z0-9_-]{1,128}$/;
 
 export function createSharedBrowserBroker(options: {
-  ownerId: string; driver: SharedBrowserDriver; setHumanControl(enabled:boolean):Promise<void>;
+  ownerId: string; driver: SharedBrowserDriver; publicDriver?:SharedBrowserDriver; setHumanControl(enabled:boolean):Promise<void>;
   runTtlMs?: number; drainTimeoutMs?: number; now?:()=>number;
   authorizeAction?: SharedBrowserSupervisedPolicy["authorizeAction"];
   supervisedRunExpiresAt?: (identity: Pick<SharedBrowserBinding, "ownerId" | "chatId">) => number;
@@ -49,7 +49,8 @@ export function createSharedBrowserBroker(options: {
   let waitingResume: { row: Registered; finish(error?:SharedBrowserError):void } | undefined;
   const report=(error:unknown)=>console.warn("[shared-browser] Operation unavailable",error instanceof SharedBrowserError?error.code:"operation_failed");
   const status=():SharedBrowserState=>({phase,revision,needsObservation,run:active?{chatId:active.binding.chatId,runId:active.binding.runId,harness:active.binding.harness}:null,...(handoff?{handoff}:{})});
-  const changed=(next:SharedBrowserState["phase"])=>{phase=next;if(["idle","agent","unavailable"].includes(next))handoff=undefined;revision++;needsObservation=true;options.driver.invalidateObservation();};
+  const currentDriver=()=>active?.publicDriver ?? options.driver;
+  const changed=(next:SharedBrowserState["phase"])=>{phase=next;if(["idle","agent","unavailable"].includes(next))handoff=undefined;revision++;needsObservation=true;currentDriver().invalidateObservation();};
   const unavailable=()=>{changed("unavailable");return new SharedBrowserError("browser_unavailable");};
   function registered(binding:SharedBrowserBinding,caller?:AbortSignal):Registered {
     const row=runs.get(binding.runId);
@@ -57,7 +58,7 @@ export function createSharedBrowserBroker(options: {
     return row;
   }
   async function gate(enabled:boolean) { try{await options.setHumanControl(enabled);}catch(error){report(error);throw unavailable();} }
-  async function detach() { try{await options.driver.detach();}catch(error){report(error);throw unavailable();} }
+  async function detach() { try{await currentDriver().detach();}catch(error){report(error);throw unavailable();} }
   async function drain() {
     if(!running)return;
     let timer:ReturnType<typeof setTimeout>|undefined;
@@ -165,6 +166,12 @@ export function createSharedBrowserBroker(options: {
     const result=actionTail.then(async():Promise<SharedBrowserDriverResult>=>{
       if(registered(binding,signal)!==row)throw new SharedBrowserError("run_unavailable");
       if(admittedRevision!==revision || active && active!==row || active && phase!=="agent")throw new SharedBrowserError("browser_changed");
+      if (parsed.data.action === "tab_new" && parsed.data.context === "public") {
+        if (!options.publicDriver) throw new SharedBrowserError("browser_unavailable");
+        if (active && row.publicDriver !== options.publicDriver) throw new SharedBrowserError("invalid_action");
+        row.publicDriver = options.publicDriver;
+      }
+      if (row.publicDriver && parsed.data.action === "download") throw new SharedBrowserError("invalid_action");
       const actionControl={controller:new AbortController(),action:undefined as "pause"|"takeover"|"stop"|undefined};
       runningControl=actionControl;
       const request=(async()=>{
@@ -180,7 +187,7 @@ export function createSharedBrowserBroker(options: {
               signal:AbortSignal.any([signal,row.signal,row.controller.signal,actionControl.controller.signal,AbortSignal.timeout(5*60_000)])});
             if(registered(binding,signal)!==row || revision!==approvalRevision || phase!=="agent")throw new SharedBrowserError("browser_changed");
           }
-          value=await options.driver.execute(parsed.data,AbortSignal.any([signal,row.signal,row.controller.signal,actionControl.controller.signal,AbortSignal.timeout(30_000)]));
+          value=await currentDriver().execute(parsed.data,AbortSignal.any([signal,row.signal,row.controller.signal,actionControl.controller.signal,AbortSignal.timeout(30_000)]));
         } catch(error) {
           // Owner control invalidates this action, but waits for the driver's
           // promise so its physical cleanup finishes before detach is allowed.

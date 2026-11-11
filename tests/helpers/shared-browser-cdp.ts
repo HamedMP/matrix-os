@@ -15,6 +15,9 @@ export function chrome() {
   let lookupError: { code: number; message: string } | undefined;
   let cursorError = { code: -32000, message: "Could not find object with given id" };
   let recoveryError = false;
+  let browserContextIds: string[] = [];
+  let targetContextId: string | undefined;
+  let nextAutoAttachment: Record<string, unknown> | undefined;
   const original = Buffer.from('%PDF-1.4\noriginal CDP invoice fixture\n%%EOF');
   const messages: any[] = [];
   class Socket extends EventEmitter {
@@ -44,7 +47,10 @@ export function chrome() {
       let result: any = {};
       if (packet.method === 'Target.createTarget') result = { targetId: ++created === 1 ? 'agent-tab' : `agent-tab-${created}` };
       if (packet.method === 'Target.attachToTarget') result = { sessionId: 'agent-session' };
-      if (packet.method === 'Target.getTargetInfo') result = { targetInfo: { targetId: packet.params.targetId, type: 'page', url, title: 'Invoices' } };
+      if (packet.method === 'Target.getBrowserContexts') result = { browserContextIds };
+      if (packet.method === 'Target.getTargetInfo') result = { targetInfo: {
+        targetId: packet.params.targetId, type: 'page', url, title: 'Invoices', browserContextId: targetContextId,
+      } };
       if (packet.method === 'Page.navigate') { url = packet.params.url; result = navigationError ? { errorText: 'net::ERR_CONNECTION_REFUSED' } : { frameId: 'agent-frame' }; }
       if (packet.method === 'Page.getFrameTree') result = { frameTree: { frame: { id: 'agent-frame', url } } };
       if (packet.method === 'Page.createIsolatedWorld') result = { executionContextId: 9 };
@@ -69,6 +75,11 @@ export function chrome() {
             this.emit('message', Buffer.from(JSON.stringify({ method: 'Target.detachedFromTarget', sessionId: parent, params: { sessionId: child } })));
           }
         }
+        if (packet.method === 'Target.setAutoAttach' && packet.params.autoAttach === true && nextAutoAttachment) {
+          const params = nextAutoAttachment;
+          nextAutoAttachment = undefined;
+          this.emit('message', Buffer.from(JSON.stringify({ method: 'Target.attachedToTarget', sessionId: packet.sessionId, params })));
+        }
         if (packet.method === 'Target.detachFromTarget') {
           sessionParents.delete(packet.params.sessionId);
           this.emit('message', Buffer.from(JSON.stringify({ method: 'Target.detachedFromTarget', ...(packet.sessionId ? { sessionId: packet.sessionId } : {}), params: { sessionId: packet.params.sessionId } })));
@@ -91,11 +102,15 @@ export function chrome() {
     },
     enforceChildSessions() { enforceChildSessions = true; },
     emitPrimaryAttachBeforeAck() { globalPrimaryAttachEvent = true; },
+    setBrowserContexts(...ids: string[]) { browserContextIds = ids; },
+    setTargetContext(id?: string) { targetContextId = id; },
+    emitRelatedOnAutoAttach(params: Record<string, unknown>) { nextAutoAttachment = params; },
     setUrl(value: string) { url = value; }, setHandoff(value: boolean) { handoff = value; }, skip(value: string) { skip = value; }, enableDownloads() { downloads = true; return original; },
     closeTarget(id: string) { missing.add(id); }, failLookup(error?: { code: number; message: string }) { lookupError = error; }, failNavigation() { navigationError = true; }, failCursor(error?: { code: number; message: string }) { missingCursor = true; if (error) cursorError = error; }, failCursorRecovery() { recoveryError = true; }, disconnect() { socket.close(); } };
 }
-export async function rig(commandTimeoutMs?:number) {
+export async function rig(commandTimeoutMs?:number,
+  options?: Pick<Parameters<typeof createSharedBrowserCdpDriver>[0], 'publicContext' | 'resolveHost'>) {
   const homePath = await mkdtemp(join(tmpdir(), 'shared-cdp-')); homes.push(homePath);
-  const fake = chrome(); const driver = createSharedBrowserCdpDriver({ homePath, ...fake, commandTimeoutMs });
+  const fake = chrome(); const driver = createSharedBrowserCdpDriver({ homePath, ...fake, commandTimeoutMs, ...options });
   return { driver, fake, homePath, signal: new AbortController().signal };
 }

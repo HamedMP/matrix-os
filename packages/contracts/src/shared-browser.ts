@@ -15,7 +15,7 @@ export const SharedBrowserActionSchema = z.discriminatedUnion("action", [
   z.object({ action: z.literal("tabs") }).strict(),
   z.object({ action: z.literal("snapshot") }).strict(),
   z.object({ action: z.literal("navigate"), url: Url }).strict(),
-  z.object({ action: z.literal("tab_new"), url: Url.optional() }).strict(),
+  z.object({ action: z.literal("tab_new"), url: Url.optional(), context: z.literal("public").optional() }).strict(),
   z.object({ action: z.literal("tab_switch"), targetId: Reference }).strict(),
   z.object({ action: z.literal("click"), ...Observed }).strict(),
   z.object({ action: z.literal("type"), ...Observed, text: z.string().max(4000) }).strict(),
@@ -27,8 +27,10 @@ export type SharedBrowserAction = z.infer<typeof SharedBrowserActionSchema>;
 
 /** Keep model-facing action guidance identical across direct and MCP harnesses. */
 export const SHARED_BROWSER_TERMINAL_GUIDANCE = "If the tool says the Browser run ended, do not wait for or suggest Resume. Stop Browser calls in this run and report only verified results.";
+export const SHARED_BROWSER_PUBLIC_GUIDANCE = 'When the user asks to use only public pages, make your first Browser action after status {"action":"tab_new","context":"public","url":"https://example.com"}, using the intended public HTTPS URL. This keeps all Browser actions in a separate context for the run. No sign-in or downloads. If unavailable, report it and do not fall back to the owner session.';
 
 export const SHARED_BROWSER_TOOL_DESCRIPTION = "Control the same visible Chrome as the Matrix Browser app. Matrix gates every action and human takeover. "
+  + SHARED_BROWSER_PUBLIC_GUIDANCE + " "
   + 'Open an authorized page with {"action":"tab_new","url":"https://example.com"}, then {"action":"snapshot"}. '
   + 'Snapshot observes the currently selected agent tab and accepts only {"action":"snapshot"}; do not add targetId. '
   + 'To select another known authorized agent tab, use {"action":"tab_switch","targetId":"RETURNED_TARGET_ID"}, then {"action":"snapshot"}. Use its exact returned targetId only for tab_switch. '
