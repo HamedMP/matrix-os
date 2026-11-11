@@ -62,13 +62,13 @@ function reviewModel(
   const retirementSource = evidence.retirementSourceUrl ?? FUNDED_PRICING_SOURCE_URLS.changelog;
   const deadline = previous?.validThrough ?? null;
   const sourceDigest = evidence.sourceDigest;
+  const activeBlock = previous?.blockedAt && previous.blockedAt <= nowIso ? previous.blockedAt : null;
 
   if (sourceDigest && (evidence.kind === "changed" || (retirement !== null && retirement <= nowIso))) {
     const blockedAt = evidence.kind === "changed" ? nowIso : retirement!;
-    const existingBlock = previous?.blockedAt && previous.blockedAt <= nowIso;
     const validThrough = deadline && deadline > nowIso ? deadline : nowIso;
     return {
-      ...(!existingBlock ? { update: { modelId, version, reviewedAt: nowIso, validThrough, sourceDigest, blockedAt } } : {}),
+      ...(!activeBlock ? { update: { modelId, version, reviewedAt: nowIso, validThrough, sourceDigest, blockedAt } } : {}),
       alert: alertFor(modelId, evidence.kind === "changed"
         ? "Official token prices differ from the active rate version. New admission has been blocked."
         : "The provider retirement date has passed. New admission has been blocked.",
@@ -76,10 +76,15 @@ function reviewModel(
     };
   }
 
+  const canRenew = evidence.kind === "match" && sourceDigest !== null;
+  if (activeBlock && !canRenew) return {
+    alert: alertFor(modelId, "Official pricing evidence is incomplete, inconsistent or unavailable. New admission remains blocked.",
+      evidence.sourceUrl, activeBlock, now),
+  };
+
   const currentWindow = deadline ? Date.parse(deadline) - nowMs : Number.NEGATIVE_INFINITY;
   const retireSooner = retirement !== null && (deadline === null || retirement < deadline);
   const retirementChanged = retirement !== (previous?.blockedAt ?? null);
-  const canRenew = evidence.kind === "match" && sourceDigest !== null;
   let update: FundedAiPricingReview | undefined;
   if (canRenew && (currentWindow <= RENEWAL_THRESHOLD || retireSooner || retirementChanged)) {
     const renewed = new Date(nowMs + RENEWAL_PERIOD).toISOString();

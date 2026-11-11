@@ -186,6 +186,40 @@ describe("funded pricing review job", () => {
     expect(opts.linear.notify).toHaveBeenCalledWith(expect.objectContaining({ key: glm, priority: 1 }), signal);
   });
 
+  it("keeps a confirmed price block until a new exact match, even when future retirement is published", async () => {
+    const blockedAt = "2026-11-10T00:00:00.000Z";
+    const retiredAt = "2026-11-13T00:00:00.000Z";
+    const store = jobStore([{ ...existing(glm, 6), reviewedAt: blockedAt, blockedAt }]);
+    const opts = options(store);
+
+    await runFundedPricingReview({
+      ...opts, readOfficial: async () => ({ [glm]: observation("inconclusive", retiredAt) }),
+    }, signal);
+    expect(store.save).not.toHaveBeenCalled();
+    expect(opts.linear.notify).toHaveBeenCalledWith(expect.objectContaining({
+      key: glm, priority: 1, deadline: blockedAt,
+    }), signal);
+
+    await runFundedPricingReview({
+      ...opts, readOfficial: async () => ({ [glm]: observation("match", retiredAt) }),
+    }, signal);
+    expect(store.save).toHaveBeenCalledWith(expect.objectContaining({
+      modelId: glm, blockedAt: retiredAt, validThrough: retiredAt,
+    }), "lease-1");
+  });
+
+  it("caps an unblocked approval at confirmed retirement when rates remain inconclusive", async () => {
+    const retiredAt = "2026-11-13T00:00:00.000Z";
+    const store = jobStore([existing(glm, 6)]);
+    const opts = options(store);
+    await runFundedPricingReview({
+      ...opts, readOfficial: async () => ({ [glm]: observation("inconclusive", retiredAt) }),
+    }, signal);
+    expect(store.save).toHaveBeenCalledWith(expect.objectContaining({
+      modelId: glm, blockedAt: retiredAt, validThrough: retiredAt,
+    }), "lease-1");
+  });
+
   it("publishes every verified block before attempting any external alert", async () => {
     const store = jobStore([existing(glm, 4), existing(qwen, 4)]);
     const opts = options(store);
