@@ -47,6 +47,7 @@ The Gateway registers the route with its project/workspace routes. Clients valid
 - Exact file actions reach the existing editor or preview. Creation only writes an allowlisted path in the same active project and rejects overwrites. Files and computer MCP actions reach existing surfaces where supported. Loading, empty, partial, error and retry states remain legible at narrow widths.
 - Opening a project file on Web raises Preview and places keyboard focus on the selected file tab. When switching from Canvas to Desktop, a Preview window without a previous Desktop position starts centered in the Desktop work area. An existing Desktop position is restored and adjusted only as needed to keep the editor inside the Desktop work area.
 - Opening the same file from Files, Quick Look, or Agent configuration on Web reuses its Preview tab and unsaved edits within the current account, session, and computer.
+- A pending Preview save and newer unsaved text survive switching between Web Desktop and Web Canvas. Switching account, session, or computer clears the old draft and cancels its pending write.
 - Verify all three Add skill actions create the expected Markdown in the selected project, preserve copied or imported content, and reject duplicates. The installed picker loads only the selected file.
 - A New skill draft survives an inventory refresh and retry. Switching the project, account, or computer discards that draft.
 - A message accepts up to five project skills. Trying to add another keeps the typed slash text and explains how to make room.

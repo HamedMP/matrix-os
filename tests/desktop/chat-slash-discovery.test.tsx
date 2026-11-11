@@ -120,6 +120,43 @@ it.each(["focus outside", "inert surface"] as const)("dismisses slash suggestion
   await waitFor(() => expect(screen.queryByRole("listbox", { name: "Skills and commands" })).toBeNull());
 });
 
+it("dismisses a pending @ search when its Chat surface becomes inactive", async () => {
+  const catalog = createCanonicalProviderCatalogFixture();
+  const selection = createCanonicalComposerSelection(catalog);
+  const oldResult = { kind: "file" as const, id: "old-notes", label: "notes-old.md" };
+  const newResult = { kind: "file" as const, id: "new-notes", label: "notes-new.md" };
+  let finishSearch!: (results: [typeof oldResult]) => void;
+  const pendingResults = new Promise<[typeof oldResult]>(resolve => { finishSearch = resolve; });
+  const resourceSearch = vi.fn<(query: string) => Promise<[typeof oldResult]>>()
+    .mockReturnValueOnce(pendingResults)
+    .mockResolvedValueOnce([newResult]);
+
+  function Harness({ inactive }: { inactive: boolean }) {
+    const [value, setValue] = React.useState("@notes");
+    return <div inert={inactive || undefined}>
+      <SharedChatComposer value={value} onChange={setValue} onSubmit={vi.fn()} busy={false}
+        catalog={catalog} selection={selection} onSelectionChange={vi.fn()} instanceLocked={false}
+        resourceSearch={resourceSearch} />
+    </div>;
+  }
+
+  const view = render(<Harness inactive={false} />);
+  const editor = screen.getByLabelText("Message chat");
+  expect(resourceSearch).toHaveBeenCalledExactlyOnceWith("notes");
+  expect(screen.queryByRole("listbox", { name: "Add" })).toBeNull();
+
+  await act(async () => view.rerender(<Harness inactive />));
+  await act(async () => view.rerender(<Harness inactive={false} />));
+  await act(async () => finishSearch([oldResult]));
+  expect(screen.queryByRole("listbox", { name: "Add" })).toBeNull();
+  expect(editor.textContent).toBe("@notes");
+
+  await appendSharedComposerText(editor, "-new");
+  expect(resourceSearch).toHaveBeenLastCalledWith("notes-new");
+  expect(await screen.findByRole("option", { name: /notes-new.md/ })).toBeTruthy();
+  expect(screen.queryByRole("option", { name: /notes-old.md/ })).toBeNull();
+});
+
 it.each(["pointer", "keyboard"] as const)("ignores deferred @ search results after %s dismissal", async (method) => {
   const catalog = createCanonicalProviderCatalogFixture();
   const resource = { kind: "file" as const, id: "readme", label: "README.md" };
