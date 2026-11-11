@@ -1,10 +1,11 @@
 import { execFile, spawn } from 'node:child_process';
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
-import { once } from 'node:events';
+import { EventEmitter, once } from 'node:events';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { promisify } from 'node:util';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { forwardDevstackWatchSignals } from '../../packages/sync-client/src/lib/devstack-watch-signals.mjs';
 
 const exec = promisify(execFile);
 const cli = resolve('packages/sync-client/bin/matrix.mjs');
@@ -42,6 +43,32 @@ function data(stdout: string) {
 }
 
 describe('matrix devstack watch', () => {
+  it.each([
+    { argv: ['devstack', 'connect', '--worktree', 'watch'] },
+    { argv: ['run', '--', 'devstack', 'watch'] },
+    { argv: ['--profile', 'devstack', 'shell', 'attach', 'watch'] },
+  ])('leaves signal handling unchanged for unrelated arguments $argv', ({ argv }) => {
+    const child = new EventEmitter();
+    const before = process.listenerCount('SIGTERM');
+    try {
+      forwardDevstackWatchSignals(child, argv);
+      expect(process.listenerCount('SIGTERM')).toBe(before);
+    } finally {
+      child.emit('exit');
+    }
+  });
+
+  it('recognizes watch with flags before the command and action', () => {
+    const child = new EventEmitter();
+    const before = process.listenerCount('SIGTERM');
+    try {
+      forwardDevstackWatchSignals(child, ['--json', 'devstack', '--stage', '3', 'watch']);
+      expect(process.listenerCount('SIGTERM')).toBe(before + 1);
+    } finally {
+      child.emit('exit');
+    }
+  });
+
   it('streams distinct content revisions and their test receipts', async () => {
     await installAdapter(`
 emit({type:'ready'});
