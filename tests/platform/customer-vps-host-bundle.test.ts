@@ -105,6 +105,7 @@ describe('customer VPS host bundle', () => {
     expect(script).toContain('matrix-shell');
     expect(script).toContain('matrix-code');
     expect(script).toContain('matrix-sync-agent');
+    expect(script).toContain('chmod 0755 "$STAGE_DIR/bin/matrix-status"');
     expect(script).toContain('sha256sum');
     expect(script).toContain("pnpm --filter '@matrix-os/gateway' rebuild node-pty");
     expect(script).toContain('scripts/build-default-apps.mjs');
