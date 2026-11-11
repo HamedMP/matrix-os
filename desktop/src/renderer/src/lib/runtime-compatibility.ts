@@ -8,7 +8,7 @@ const FOCUS_CHECK_COOLDOWN_MS = 15 * 60_000;
 
 /** One bounded probe at a time; changing computers aborts and fences old results. */
 export function useRuntimeCompatibility(api: ApiClient | null) {
-  const [result, setResult] = useState<{ api: ApiClient | null; status: ReturnType<typeof evaluateDesktopReleaseState>["status"] | "checking"; noticeKey: string | null }>({ api, status: "checking", noticeKey: null });
+  const [result, setResult] = useState<{ api: ApiClient | null; status: ReturnType<typeof evaluateDesktopReleaseState>["status"] | "checking"; protocol: ReturnType<typeof evaluateDesktopReleaseState>["protocol"] | null; noticeKey: string | null; checkId: number }>({ api, status: "checking", protocol: null, noticeKey: null, checkId: 0 });
   const [retry, setRetry] = useState(0);
   const refresh = useCallback(() => setRetry((value) => value + 1), []);
   useEffect(() => {
@@ -30,12 +30,12 @@ export function useRuntimeCompatibility(api: ApiClient | null) {
           invoke("app:get-version", {}),
         ]);
         const { status, protocol } = evaluateDesktopReleaseState(info, desktop.source);
-        if (active) setResult({ api, status,
-          noticeKey: status === "unavailable" ? null : `${desktop.source?.commit ?? "unknown"}:${readRunningCommit(info) ?? "unknown"}:${protocol}` });
+        if (active) setResult((previous) => ({ api, status, protocol, checkId: previous.checkId + 1,
+          noticeKey: status === "unavailable" ? null : `${desktop.source?.commit ?? "unknown"}:${readRunningCommit(info) ?? "unknown"}:${protocol}` }));
       } catch (error: unknown) {
         if (active) {
           console.warn("[runtime-compatibility] check failed:", error instanceof Error ? error.name : "UnknownError");
-          setResult({ api, status: "unavailable", noticeKey: null });
+          setResult((previous) => ({ api, status: "unavailable", protocol: null, noticeKey: null, checkId: previous.checkId + 1 }));
         }
       } finally { checking = false; }
     };
@@ -54,5 +54,7 @@ export function useRuntimeCompatibility(api: ApiClient | null) {
     };
   }, [api, retry]);
   return { status: result.api === api ? result.status : "checking",
-    noticeKey: result.api === api ? result.noticeKey : null, refresh };
+    protocol: result.api === api ? result.protocol : null,
+    noticeKey: result.api === api ? result.noticeKey : null,
+    checkId: result.api === api ? result.checkId : 0, refresh };
 }

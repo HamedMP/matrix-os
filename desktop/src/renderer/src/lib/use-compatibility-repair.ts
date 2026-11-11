@@ -13,31 +13,47 @@ function pause(signal: AbortSignal): Promise<void> {
   });
 }
 
-export function useCompatibilityRepair(api: ApiClient | null, runtimeSlot: string, open: boolean) {
-  const [plan, setPlan] = useState<RepairPlan | null>(null);
+export function useCompatibilityRepair(api: ApiClient | null, runtimeSlot: string, open: boolean, noticeKey: string | null = null, checkId = 0) {
+  const [planState, setPlan] = useState<{ noticeKey: string | null; api: ApiClient | null; runtimeSlot: string; value: RepairPlan } | null>(null);
   const [loading, setLoading] = useState(false);
   const [busy, setBusy] = useState(false);
   const [progress, setProgress] = useState("");
   const [error, setError] = useState(false);
   const [complete, setComplete] = useState(false);
   const flight = useRef(false);
+  const installing = useRef(false);
   const active = useRef<AbortController | null>(null);
+  const localCheck = useRef<Promise<unknown> | null>(null);
   const bound = useMemo(() => ({ api: api?.forRuntime(runtimeSlot) ?? null, generation: captureRuntimeGeneration() }), [api, runtimeSlot]);
   useEffect(() => {
     flight.current = false;
+    installing.current = false;
     setPlan(null);
     setBusy(false);
     return () => { active.current?.abort(); };
   }, [bound]);
+  // Electron's updater cannot cancel a check. Reuse the in-flight result when
+  // a reconnect supersedes a repair probe, instead of reading "checking".
+  const checkLocal = useCallback((): Promise<unknown> => {
+    if (localCheck.current) return localCheck.current;
+    const pending = invoke("update:check", {});
+    localCheck.current = pending;
+    void pending.then(
+      () => { if (localCheck.current === pending) localCheck.current = null; },
+      () => { if (localCheck.current === pending) localCheck.current = null; },
+    );
+    return pending;
+  }, []);
   const readLocal = useCallback(async () => {
-    const [version, snapshot] = await Promise.allSettled([invoke("app:get-version", {}), invoke("update:check", {})]);
+    const [version, snapshot] = await Promise.allSettled([invoke("app:get-version", {}), checkLocal()]);
     return { version: version.status === "fulfilled" ? version.value.version : undefined,
       source: version.status === "fulfilled" ? version.value.source : undefined,
       snapshot: snapshot.status === "fulfilled" ? snapshot.value : undefined };
-  }, []);
+  }, [checkLocal]);
   const perform = useCallback(async (install: boolean) => {
-    if (!bound.api || flight.current) return;
+    if (!bound.api || (flight.current && (install || installing.current))) return;
     flight.current = true;
+    installing.current = install;
     active.current?.abort();
     const controller = new AbortController();
     active.current = controller;
@@ -51,11 +67,11 @@ export function useCompatibilityRepair(api: ApiClient | null, runtimeSlot: strin
     try {
       const latest = await loadRepairPlan({ ...scope, readLocal });
       if (!current()) return;
-      setPlan(latest);
+      setPlan({ noticeKey, api, runtimeSlot, value: latest });
       setLoading(false);
       if (install && latest.targets.length) {
         await repairVersions(latest, { ...scope,
-          checkLocal: () => invoke("update:check", {}),
+          checkLocal,
           getLocal: () => invoke("update:get-state", {}),
           installLocal: () => invoke("update:install", {}),
           progress: (message) => { if (current()) setProgress(message); },
@@ -64,7 +80,7 @@ export function useCompatibilityRepair(api: ApiClient | null, runtimeSlot: strin
         if (current()) {
           const refreshed = await loadRepairPlan({ ...scope, readLocal });
           if (current()) {
-            setPlan(refreshed);
+            setPlan({ noticeKey, api, runtimeSlot, value: refreshed });
             setComplete(!refreshed.compatibilityUpdateRequired && !refreshed.targets.length);
             setProgress(refreshed.reason);
           }
@@ -77,11 +93,14 @@ export function useCompatibilityRepair(api: ApiClient | null, runtimeSlot: strin
         setProgress("");
       }
     } finally {
-      if (active.current === controller) flight.current = false;
+      if (active.current === controller) { flight.current = false; installing.current = false; }
       if (current()) { setLoading(false); setBusy(false); }
     }
-  }, [bound, readLocal]);
-  useEffect(() => { if (open) void perform(false); }, [open, perform]);
+  }, [api, bound, checkLocal, noticeKey, readLocal, runtimeSlot]);
+  useEffect(() => { if (open) void perform(false); }, [checkId, open, perform]);
+  const plan = planState?.noticeKey === noticeKey
+    && planState.api === api && planState.runtimeSlot === runtimeSlot
+    ? planState.value : null;
   return { plan, loading, busy, progress, error, complete,
     check: () => perform(false), update: () => perform(true) };
 }
