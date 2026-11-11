@@ -20,7 +20,10 @@ export function themeSemantics(c: ChromeColors, paletteId = 'matrix') {
     const muted = scale[dark ? 900 : 50];
     const text = scale[dark ? 200 : textStep];
     // Status text is checked against its tint and every surface, independently from solid button fills.
-    return { fill, muted, text: readable(text, [muted, ...surfaces]), foreground: foreground(fill) };
+    // When custom surfaces conflict so no color meets AA on all of them, keep AA on the tint.
+    const everywhere = readable(text, [muted, ...surfaces]);
+    const allPass = [muted, ...surfaces].every((bg) => contrastRatio(everywhere, bg) >= 4.5);
+    return { fill, muted, text: allPass ? everywhere : readable(text, [muted]), foreground: foreground(fill) };
   };
   const success = status(s.teal, 700);
   const warning = status(s.gold, 700);
