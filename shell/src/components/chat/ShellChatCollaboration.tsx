@@ -2,6 +2,7 @@
 
 import { useAuth } from "@clerk/nextjs";
 import { ChatCollaboration, type ChatCollaborationView } from "@matrix-os/ui";
+import type { CollaborativeAppDirectoryItem } from "@matrix-os/contracts";
 import { useRouter } from "next/navigation";
 import { useMemo } from "react";
 import { useBrowserOrigin } from "@/hooks/useBrowserOrigin";
@@ -9,6 +10,7 @@ import { createShellCollaborationApi } from "@/lib/collaboration";
 import { SHELL_Z_INDEX } from "@/lib/shell-layering";
 import { useCollaborationOrganization } from "@/lib/collaboration-organization-state";
 import { useNativeCollaborationActor } from "@/lib/native-collaboration-identity";
+import { sharedAppDeepLink } from "@/lib/shared-app-target";
 
 const e2eBypass = process.env.NEXT_PUBLIC_E2E_TEST_BYPASS === "1";
 const COLLABORATION_LAYERS = { dialog: SHELL_Z_INDEX.appDialog, popover: SHELL_Z_INDEX.popover };
@@ -20,6 +22,7 @@ export function ShellChatCollaboration({
   onOpenChat?: (scopeId: string) => void;
   /** Opens a shared project in this Chats app; never a standalone page. */
   onOpenProject?: (scopeId: string) => void;
+  onOpenApp?: (target: CollaborativeAppDirectoryItem) => void;
   onSessionMetadata?: (metadata: { title: string; role: "owner" | "editor" | "viewer" }) => void;
   headerContainer?: HTMLElement | null;
 }) {
@@ -33,6 +36,7 @@ function ClerkShellChatCollaboration(props: {
   view: ChatCollaborationView;
   onOpenChat?: (scopeId: string) => void;
   onOpenProject?: (scopeId: string) => void;
+  onOpenApp?: (target: CollaborativeAppDirectoryItem) => void;
   onSessionMetadata?: (metadata: { title: string; role: "owner" | "editor" | "viewer" }) => void;
   headerContainer?: HTMLElement | null;
 }) {
@@ -46,6 +50,7 @@ function ShellChatCollaborationContent({
   view,
   onOpenChat,
   onOpenProject,
+  onOpenApp,
   onSessionMetadata,
   headerContainer,
   actorId,
@@ -55,6 +60,7 @@ function ShellChatCollaborationContent({
   onOpenChat?: (scopeId: string) => void;
   /** Opens a shared project in this Chats app; never a standalone page. */
   onOpenProject?: (scopeId: string) => void;
+  onOpenApp?: (target: CollaborativeAppDirectoryItem) => void;
   onSessionMetadata?: (metadata: { title: string; role: "owner" | "editor" | "viewer" }) => void;
   headerContainer?: HTMLElement | null;
   actorId: string | null;
@@ -98,7 +104,10 @@ function ShellChatCollaborationContent({
       openProject={(scopeId) => {
         onOpenProject?.(scopeId);
       }}
-      openApp={(scopeId) => router.push(`/shared/app/${encodeURIComponent(scopeId)}`)}
+      openApp={(_scopeId, target) => {
+        if (onOpenApp) onOpenApp(target);
+        else router.push(sharedAppDeepLink(target));
+      }}
     />
   </div>;
 }

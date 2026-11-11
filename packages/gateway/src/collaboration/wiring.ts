@@ -95,7 +95,11 @@ import type { R2Client } from "../sync/r2-client.js";
 import type { AppRegistry } from "../app-db-registry.js";
 import type { ImmutableCollaborativeBuildStore } from "../app-runtime/build-cache.js";
 import { CollaborativeAppBuildResolver } from "./collaborative-app-build-resolver.js";
-import { CollaborativeAppReadinessEvaluator, UnconfiguredSecondPrincipalVerifier } from "./collaborative-app-readiness.js";
+import {
+  CollaborativeAppBuildBehaviorProbe,
+  CollaborativeAppCapabilityVerifier,
+  CollaborativeAppReadinessEvaluator,
+} from "./collaborative-app-readiness.js";
 import type { CollaborativeAppReadinessRepository } from "./collaborative-app-readiness-repository.js";
 import type { CollaborativeAppReadinessRouteDependencies } from "./collaborative-app-readiness-routes.js";
 import { CollaborativeAppShareService } from "./collaborative-app-share-service.js";
@@ -522,9 +526,10 @@ export async function createGatewayCollaboration(options: {
         repository: input.repository,
         evaluator: new CollaborativeAppReadinessEvaluator({
           repository: input.repository,
-          verifier: new UnconfiguredSecondPrincipalVerifier(),
+          verifier: new CollaborativeAppCapabilityVerifier(new CollaborativeAppBuildBehaviorProbe(input.builds)),
         }),
         resolveCurrentBuild: (ownerId, appId, resolveOptions) => resolver.resolve(ownerId, appId, resolveOptions),
+        registrationIncarnation: (ownerId, appId) => resolver.registrationIncarnation(ownerId, appId),
         requireOrganizationMembership: async (actorId, organizationId) => {
           await organizationPrecondition.require({ actorId, organizationId });
         },

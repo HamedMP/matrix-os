@@ -25,9 +25,9 @@ const blocked = {
   status: "blocked" as const,
   revision: "2",
   checks: [{
-    code: "two_principal_round_trip" as const,
+    code: "declaration" as const,
     status: "blocked" as const,
-    action: "A second authenticated verifier is not configured yet.",
+    action: "Declare collaborative capability.",
   }],
 };
 const ready = {
@@ -36,6 +36,19 @@ const ready = {
   revision: "3",
   checks: [{ code: "cleanup" as const, status: "passed" as const }],
   verifiedAt: "2026-11-05T10:00:00.000Z",
+};
+const activeShare = {
+  scopeId: "10000000-0000-4000-8000-000000000001",
+  organizationId: "org_matrix_team",
+  owner: { actorId: "user_owner", displayName: "Nima" },
+  build,
+  readinessId: ready.readinessId,
+  state: "active" as const,
+  shareRevision: "1",
+  bindingRevision: "1",
+  dataRevision: "0",
+  createdAt: "2026-11-05T10:00:00.000Z",
+  updatedAt: "2026-11-05T10:00:00.000Z",
 };
 
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); vi.useRealTimers(); });
@@ -274,10 +287,199 @@ describe("collaborative app owner readiness", () => {
     expect(api.post).toHaveBeenCalledWith(expect.any(String), expect.objectContaining({ clientRequestId: generated }));
   });
 
+  it("owns current-share, preflight, create, and CAS stop as one serializable controller", async () => {
+    const stopped = { ...activeShare, state: "stopped" as const, shareRevision: "2", bindingRevision: "2" };
+    const api = {
+      get: vi.fn(async (path: string) => path.endsWith("/readiness") ? ready : null),
+      post: vi.fn(async (path: string) => path.endsWith("/preflight") ? {
+        eligible: true,
+        catalogId: build.catalogId,
+        resourceRevision: "0",
+        readinessId: ready.readinessId,
+        buildId: build.buildId,
+        confirmationToken: "token_payload.signature_value",
+      } : activeShare),
+      delete: vi.fn(async () => stopped),
+    };
+    const { result } = renderHook(() => useCollaborativeAppSharing({
+      appId: "team-tracker",
+      api,
+      manageShare: true,
+    }));
+
+    await waitFor(() => expect(result.current.shareKnown).toBe(true));
+    expect(result.current.share).toBeNull();
+    await act(() => result.current.createShare({ organizationId: "org_matrix_team" }));
+    expect(result.current.share).toEqual(activeShare);
+    expect(result.current.actionState).toBe("idle");
+    expect(api.post).toHaveBeenLastCalledWith("/api/collaboration/apps/team-tracker/share", expect.objectContaining({
+      organizationId: "org_matrix_team",
+      expectedReadinessRevision: ready.revision,
+      expectedResourceRevision: "0",
+      buildId: build.buildId,
+    }));
+
+    await act(() => result.current.stopShare());
+    expect(result.current.share).toEqual(stopped);
+    expect(api.delete).toHaveBeenCalledWith("/api/collaboration/apps/team-tracker/share", expect.objectContaining({
+      expectedShareRevision: "1",
+      expectedBindingRevision: "1",
+    }));
+    expect(JSON.stringify(result.current)).not.toMatch(/token_payload|confirmationToken/);
+  });
+
+  it("loads an existing share and fails every unavailable share action with bounded copy", async () => {
+    const api = {
+      get: vi.fn(async (path: string) => path.endsWith("/readiness") ? ready : activeShare),
+      post: vi.fn(async () => ({ eligible: false, reason: "readiness_stale" })),
+    };
+    const view = renderHook(() => useCollaborativeAppSharing({
+      appId: "team-tracker", api, manageShare: true,
+    }));
+    await waitFor(() => expect(view.result.current.share).toEqual(activeShare));
+
+    expect(await act(() => view.result.current.createShare({ organizationId: "org_matrix_team" }))).toBeNull();
+    expect(view.result.current.actionState).toBe("failed");
+    expect(view.result.current.actionMessage).toBe("App sharing is unavailable. Try again.");
+
+    expect(await act(() => view.result.current.createShare({ organizationId: "bad organization" }))).toBeNull();
+    expect(await act(() => view.result.current.stopShare())).toBeNull();
+    expect(view.result.current.actionMessage).toBe("Sharing could not be stopped. Refresh and try again.");
+
+    api.get.mockRejectedValueOnce("private share failure");
+    await act(() => view.result.current.refreshShare());
+    expect(view.result.current.share).toEqual(activeShare);
+    expect(view.result.current.shareKnown).toBe(false);
+    expect(view.result.current.actionMessage).toBe("App sharing is unavailable. Try again.");
+    api.get.mockRejectedValueOnce(new Error("private share failure"));
+    await act(() => view.result.current.refreshShare());
+    expect(view.result.current.actionState).toBe("failed");
+  });
+
+  it("reuses an eligible preflight share and keeps share management idle when disabled", async () => {
+    const api = {
+      get: vi.fn(async (path: string) => path.endsWith("/readiness") ? ready : null),
+      post: vi.fn(async () => ({
+        eligible: true,
+        catalogId: build.catalogId,
+        resourceRevision: "0",
+        readinessId: ready.readinessId,
+        buildId: build.buildId,
+        confirmationToken: "token_payload.signature_value",
+        existingShare: activeShare,
+      })),
+    };
+    const managed = renderHook(() => useCollaborativeAppSharing({ appId: "team-tracker", api, manageShare: true }));
+    await waitFor(() => expect(managed.result.current.shareKnown).toBe(true));
+    await act(() => managed.result.current.createShare({
+      organizationId: "org_matrix_team",
+      clientRequestId: "80000000-0000-4000-8000-000000000001",
+    }));
+    expect(managed.result.current.share).toEqual(activeShare);
+    expect(api.post).toHaveBeenCalledTimes(1);
+
+    const unmanaged = renderHook(() => useCollaborativeAppSharing({ appId: "bad!", api }));
+    await act(() => unmanaged.result.current.refreshShare());
+    expect(unmanaged.result.current).toMatchObject({ share: null, shareKnown: true, actionState: "idle" });
+  });
+
+  it("drops stale create and stop completions after a newer share refresh", async () => {
+    let finishCreate!: (value: unknown) => void;
+    let finishStop!: (value: unknown) => void;
+    const api = {
+      get: vi.fn(async (path: string) => path.endsWith("/readiness") ? ready : activeShare),
+      post: vi.fn(async () => new Promise((resolve) => { finishCreate = resolve; })),
+      delete: vi.fn(async () => new Promise((resolve) => { finishStop = resolve; })),
+    };
+    const view = renderHook(() => useCollaborativeAppSharing({
+      appId: "team-tracker", api, manageShare: true,
+    }));
+    await waitFor(() => expect(view.result.current.share).toEqual(activeShare));
+
+    let create!: Promise<unknown>;
+    act(() => { create = view.result.current.createShare({ organizationId: "org_matrix_team" }); });
+    await waitFor(() => expect(api.post).toHaveBeenCalledOnce());
+    await act(() => view.result.current.refreshShare());
+    await act(async () => {
+      finishCreate({
+        eligible: true, catalogId: build.catalogId, resourceRevision: "0",
+        readinessId: ready.readinessId, buildId: build.buildId,
+        confirmationToken: "token_payload.signature_value", existingShare: activeShare,
+      });
+      expect(await create).toBeNull();
+    });
+
+    let stop!: Promise<unknown>;
+    act(() => { stop = view.result.current.stopShare(); });
+    await waitFor(() => expect(api.delete).toHaveBeenCalledOnce());
+    await act(() => view.result.current.refreshShare());
+    await act(async () => {
+      finishStop({ ...activeShare, state: "stopped", shareRevision: "2", bindingRevision: "2" });
+      expect(await stop).toBeNull();
+    });
+
+    api.post.mockRejectedValueOnce("private create failure");
+    await act(() => view.result.current.createShare({ organizationId: "org_matrix_team" }));
+    api.delete.mockRejectedValueOnce("private stop failure");
+    await act(() => view.result.current.stopShare());
+    expect(view.result.current.actionState).toBe("failed");
+  });
+
+  it("drops superseded share refresh and rejected action completions", async () => {
+    const shareRequests: Array<{ resolve(value: unknown): void; reject(error: unknown): void }> = [];
+    let rejectCreate!: (error: unknown) => void;
+    let rejectStop!: (error: unknown) => void;
+    const api = {
+      get: vi.fn(async (path: string) => path.endsWith("/readiness") ? ready
+        : new Promise((resolve, reject) => shareRequests.push({ resolve, reject }))),
+      post: vi.fn(async () => new Promise((_resolve, reject) => { rejectCreate = reject; })),
+      delete: vi.fn(async () => new Promise((_resolve, reject) => { rejectStop = reject; })),
+    };
+    const view = renderHook(() => useCollaborativeAppSharing({ appId: "team-tracker", api, manageShare: true }));
+    await waitFor(() => expect(shareRequests).toHaveLength(1));
+    act(() => { void view.result.current.refreshShare(); });
+    await waitFor(() => expect(shareRequests).toHaveLength(2));
+    await act(async () => { shareRequests[1]!.resolve(activeShare); await Promise.resolve(); });
+    await act(async () => { shareRequests[0]!.resolve(null); await Promise.resolve(); });
+    expect(view.result.current.share).toEqual(activeShare);
+
+    act(() => { void view.result.current.refreshShare(); });
+    await waitFor(() => expect(shareRequests).toHaveLength(3));
+    act(() => { void view.result.current.refreshShare(); });
+    await waitFor(() => expect(shareRequests).toHaveLength(4));
+    await act(async () => { shareRequests[2]!.reject("old refresh failure"); await Promise.resolve(); });
+    await act(async () => { shareRequests[3]!.resolve(activeShare); await Promise.resolve(); });
+
+    act(() => { void view.result.current.createShare({ organizationId: "org_matrix_team" }); });
+    await waitFor(() => expect(api.post).toHaveBeenCalledOnce());
+    act(() => { void view.result.current.refreshShare(); });
+    await waitFor(() => expect(shareRequests).toHaveLength(5));
+    await act(async () => { rejectCreate("stale create failure"); await Promise.resolve(); });
+    await act(async () => { shareRequests[4]!.resolve(activeShare); await Promise.resolve(); });
+
+    act(() => { void view.result.current.stopShare(); });
+    await waitFor(() => expect(api.delete).toHaveBeenCalledOnce());
+    act(() => { void view.result.current.refreshShare(); });
+    await waitFor(() => expect(shareRequests).toHaveLength(6));
+    await act(async () => { rejectStop("stale stop failure"); await Promise.resolve(); });
+    expect(shareRequests).toHaveLength(6);
+    await act(async () => { shareRequests[5]!.resolve(activeShare); await Promise.resolve(); });
+
+    const blockedApi = { get: vi.fn(async () => blocked), post: vi.fn() };
+    const blockedView = renderHook(() => useCollaborativeAppSharing({
+      appId: "team-tracker", api: blockedApi,
+    }));
+    await waitFor(() => expect(blockedView.result.current.state).toBe("blocked"));
+    await act(() => blockedView.result.current.createShare({ organizationId: "org_matrix_team" }));
+    const invalidView = renderHook(() => useCollaborativeAppSharing({ appId: "bad!", api }));
+    await act(() => invalidView.result.current.createShare({ organizationId: "org_matrix_team" }));
+    expect(invalidView.result.current.actionState).toBe("failed");
+  });
+
   it("renders actionable safe summaries for every readiness outcome", () => {
     const outcomes = [
       { value: { ...blocked, status: "checking" as const, checks: [] }, text: "Checking the exact app build" },
-      { value: blocked, text: "A second authenticated verifier is not configured yet." },
+      { value: blocked, text: "Declare collaborative capability." },
       { value: ready, text: "This exact app build is ready to share." },
       { value: { ...blocked, status: "stale" as const, invalidatedAt: "2026-11-05T11:00:00.000Z" }, text: "The app changed. Run readiness again." },
       { value: { ...blocked, status: "failed" as const, checks: [{ code: "cleanup" as const, status: "failed" as const, action: "Readiness could not be verified. Try again." }] }, text: "Readiness could not be verified. Try again." },

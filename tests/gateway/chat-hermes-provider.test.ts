@@ -2,6 +2,7 @@ import { ChatSteerNotDeliveredError } from "../../packages/gateway/src/chat/stee
 import { resolveHermesIntegrationCapability } from "../../packages/gateway/src/chat/hermes-integration-capability.js";
 import { describe, expect, it, vi } from "vitest";
 import { createHermesChatProviderAdapter } from "../../packages/gateway/src/chat/hermes-provider-adapter.js";
+import { resolveHermesPython } from "../../packages/gateway/src/chat/hermes-python-environment.js";
 import { ChatRunContextSchema } from "@matrix-os/contracts";
 import { openAssistantCredential } from "../../packages/gateway/src/chat/assistant-credential-crypto.js";
 
@@ -1018,7 +1019,7 @@ describe("Hermes canonical Chat Provider adapter", () => {
       { type: "run.completed", outcome: "completed" },
     ]);
     const [command, args, options] = gateway.spawnFn.mock.calls[0]!;
-    expect(command).toBe("/home/matrix/home/.hermes/hermes-agent/venv/bin/python");
+    expect(command).toBe(await resolveHermesPython("/home/matrix/home/.hermes/hermes-agent"));
     expect(args).toEqual(["-u", "-m", "tui_gateway.entry"]);
     expect(options).toMatchObject({
       cwd: "/safe/project",

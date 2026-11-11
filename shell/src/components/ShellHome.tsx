@@ -22,6 +22,7 @@ import { createShellChatNavigationScope } from "@/lib/chat-navigation-scope";
 import { getGatewayUrl } from "@/lib/gateway";
 import { isSelfHostedRuntime, SELF_HOSTED_SHELL_USER_ID } from "@/lib/self-host-mode";
 import { NativeCollaborationActorProvider } from "@/lib/native-collaboration-identity";
+import { OwnerCollaborationParticipantProvider } from "@/lib/owner-collaboration-participant";
 
 const LAUNCHABLE_BUILT_IN_PATHS = new Set([
   "__terminal__",
@@ -181,6 +182,7 @@ function ShellHomeBody({
 
   const gettingStartedScope = JSON.stringify([cacheScope?.storageKey ?? cachePathname, sessionId, runtimeSlot]);
   return (
+    <OwnerCollaborationParticipantProvider actorId={userId ?? (localAuthBypass ? "user_e2e" : null)}>
     <NativeCollaborationActorProvider actorId={nativeCollaborationActorId ?? null}>
     <GettingStartedVisibilityProvider scope={gettingStartedScope}>
     <GetStartedAnswersProvider scope={gettingStartedScope}>
@@ -214,5 +216,6 @@ function ShellHomeBody({
     </GetStartedAnswersProvider>
     </GettingStartedVisibilityProvider>
     </NativeCollaborationActorProvider>
+    </OwnerCollaborationParticipantProvider>
   );
 }

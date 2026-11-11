@@ -9,20 +9,20 @@ import {
 } from "./shared-app-transport.js";
 
 const BridgeMessageSchema = z.discriminatedUnion("type", [
-  z.object({
+  z.strictObject({
     type: z.literal("matrix:shared-app:ready"),
-  }).strict(),
-  z.object({
+  }),
+  z.strictObject({
     type: z.literal("matrix:shared-app:query"),
     requestId: z.string().min(8).max(128),
     action: z.json(),
-  }).strict(),
-  z.object({
+  }),
+  z.strictObject({
     type: z.literal("matrix:shared-app:mutate"),
     requestId: z.string().min(8).max(128),
     expectedRevision: z.string().regex(/^\d+$/),
     action: z.json(),
-  }).strict(),
+  }),
 ]);
 const BRIDGE_READY_TIMEOUT_MS = 10_000;
 
@@ -105,7 +105,6 @@ export function SharedAppViewer({ target, transport }: {
       requestGeneration.current += 1;
       activeDocumentGeneration.current += 1;
       unsubscribe();
-      transport.close();
     };
   }, [applyFailure, launch, target.appId, transport]);
 

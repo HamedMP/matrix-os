@@ -31,7 +31,7 @@ type CollaborativeAppReadiness = {
   checks: Array<{
     code:
       | "declaration" | "exact_build" | "owner_postgres" | "recipient_launch"
-      | "participant_identity" | "two_principal_round_trip" | "idempotent_retry"
+      | "participant_identity" | "idempotent_retry"
       | "conflict_write" | "change_signal" | "provider_safety" | "cleanup";
     status: "passed" | "blocked" | "failed";
     action?: string;
@@ -105,7 +105,7 @@ Request:
 - Authentication: owner Matrix session.
 - Authority: exact app owner and current organization membership.
 - Body limit: collaboration JSON limit before buffering.
-- Behavior: capture the immutable build and invoke the bounded two-principal production-path verifier. Until the second-principal source and authorization lifecycle are approved, persist a safe blocked result and never issue a ready certificate. Once configured, clean all tagged probe data after verification.
+- Behavior: capture the immutable build and invoke the bounded capability verifier. The exact declaration, owner schema digest, bridge/runtime compatibility, revisioned mutation path, participant identity, signal path, provider policy, and managed build lifecycle must match. This route creates no second identity; normal authenticated recipients prove the live path during qualification.
 - Idempotency: same request ID and payload replays the readiness result.
 - Result: `202` while checking or `200` for a completed replay.
 

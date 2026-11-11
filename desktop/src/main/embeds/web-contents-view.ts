@@ -107,6 +107,7 @@ export function createWebContentsView(options: {
     appIdentity: string;
     routeSlug: string;
     preloadPath: string;
+    participant?: import("@matrix-os/contracts").CollaborativeAppParticipant | null;
     register: (senderId: number, appIdentity: string, routeSlug: string) => void;
     unregister: (senderId: number) => void;
   };
@@ -121,6 +122,7 @@ export function createWebContentsView(options: {
         preload: options.appBridge.preloadPath,
         additionalArguments: [
           "--matrix-app-bridge",
+          ...(options.appBridge.participant ? [`--matrix-app-participant=${encodeURIComponent(JSON.stringify(options.appBridge.participant))}`] : []),
           ...(nativeBrowserProduct(options.appBridge.appIdentity, options.appBridge.routeSlug) ? [NATIVE_APP_BROWSER_BRIDGE_ARG] : []),
           ...(isNativeAppActivityIdentity(options.appBridge.appIdentity, options.appBridge.routeSlug)
             ? [NATIVE_APP_ACTIVITY_BRIDGE_ARG] : []),

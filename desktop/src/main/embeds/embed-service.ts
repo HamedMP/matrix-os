@@ -114,6 +114,7 @@ export class EmbedService {
         resolveNavigation,
         allowPublicNavigation,
         sharedAppTarget,
+        ownerAppParticipant,
         onState,
       }) => {
         const window = this.deps.getWindow();
@@ -123,6 +124,7 @@ export class EmbedService {
               appIdentity: slug,
               routeSlug: routeSlug ?? slug,
               preloadPath: this.deps.appPreloadPath,
+              participant: ownerAppParticipant ?? null,
               register: (senderId: number, appIdentity: string, appRouteSlug: string) =>
                 this.deps.appBridge!.register(senderId, appIdentity, appRouteSlug),
               unregister: (senderId: number) => this.deps.appBridge!.unregister(senderId),
@@ -921,10 +923,16 @@ export class EmbedService {
       this.tokenCache.delete(slug);
       return "failed";
     }
+    const ownerAppParticipant = await this.deps.appBridge?.initialParticipant(slug).catch((error: unknown) => {
+      console.warn("[embed-service] owner collaboration state unavailable", error instanceof Error ? error.name : "UnknownError");
+      return null;
+    }) ?? null;
+    if (!shouldAttach()) return "failed";
     this.manager.open("app", appIdentity, bounds, resolved, {
       id: embedId,
       active,
       routeSlug: slug,
+      ownerAppParticipant,
       onState: (state) => this.deps.emitState(embedId, state),
     });
     return "loading";

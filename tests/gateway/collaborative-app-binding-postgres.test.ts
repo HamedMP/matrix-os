@@ -103,7 +103,7 @@ describe("collaborative app exact binding persistence", () => {
       ownerId: "user_owner",
       expectedRevision: 1,
       status: "ready",
-      gateResults: [{ code: "two_principal_round_trip", status: "passed" }],
+      gateResults: [{ code: "recipient_launch", status: "passed" }],
       verifiedAt: now,
     });
   }
@@ -159,7 +159,7 @@ describe("collaborative app exact binding persistence", () => {
       expectedBindingRevision: 1,
       expectedDataRevision: 0,
     });
-    expect(advanced).toMatchObject({ dataRevision: 1, revision: 2 });
+    expect(advanced).toMatchObject({ dataRevision: 1, revision: 1 });
     await expect(repository.advanceDataRevision({
       scopeId: scopeOne,
       ownerId: "user_owner",
@@ -180,21 +180,21 @@ describe("collaborative app exact binding persistence", () => {
     const rebound = await repository.rebind({
       scopeId: scopeOne,
       ownerId: "user_owner",
-      expectedRevision: 2,
+      expectedRevision: 1,
       readinessId: readinessTwo,
       expectedBuildId: buildTwo.buildId,
     });
-    expect(rebound).toMatchObject({ buildId: buildTwo.buildId, readinessId: readinessTwo, dataRevision: 1, revision: 3 });
+    expect(rebound).toMatchObject({ buildId: buildTwo.buildId, readinessId: readinessTwo, dataRevision: 1, revision: 2 });
     await expect(repository.rebind({
       scopeId: scopeOne,
       ownerId: "user_owner",
-      expectedRevision: 2,
+      expectedRevision: 1,
       readinessId: readinessTwo,
       expectedBuildId: buildTwo.buildId,
     })).rejects.toMatchObject({ code: "conflict" });
-    const stopped = await repository.stop({ scopeId: scopeOne, ownerId: "user_owner", expectedRevision: 3 });
-    expect(stopped).toMatchObject({ state: "stopped", revision: 4 });
-    await expect(repository.stop({ scopeId: scopeOne, ownerId: "user_owner", expectedRevision: 4 }))
+    const stopped = await repository.stop({ scopeId: scopeOne, ownerId: "user_owner", expectedRevision: 2 });
+    expect(stopped).toMatchObject({ state: "stopped", revision: 3 });
+    await expect(repository.stop({ scopeId: scopeOne, ownerId: "user_owner", expectedRevision: 3 }))
       .rejects.toBeInstanceOf(CollaborativeAppShareRepositoryError);
     expect(await repository.getActiveByCatalog({ ownerId: "user_owner", catalogId })).toBeNull();
   });

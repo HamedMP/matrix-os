@@ -93,9 +93,9 @@ Exact build bound to one app scope.
 | `registration_incarnation` | text | Prevents same-slug inheritance. |
 | `readiness_id` | UUID | Certificate used for share/rebind. |
 | `build_id` | 64-char hex | Immutable build served. |
-| `data_revision` | bigint | Global V1 app mutation revision. |
+| `data_revision` | bigint | Global V1 app mutation revision; advances on changed data writes. |
 | `state` | enum | `active`, `needs_recheck`, `stopped`. |
-| `revision` | bigint | Binding CAS revision. |
+| `revision` | bigint | Share lifecycle CAS revision; data writes do not advance it, so an owner can stop sharing after a member write. |
 | timestamps | timestamp | Create/update/stop history. |
 
 Constraints:

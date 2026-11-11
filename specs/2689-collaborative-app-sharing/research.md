@@ -74,13 +74,13 @@ This research resolves the implementation choices behind [spec.md](spec.md), [jo
 
 **Alternatives considered**: Generic deletion loses distinctions; automatic build rebind would serve unqualified bytes.
 
-## 10. Readiness is a two-principal production-path certificate
+## 10. Readiness is an exact-build capability certificate
 
-**Decision**: Persist readiness only after two authenticated principals exercise the exact recipient launch, assets, participant identity, existing owner records, CRUD, idempotent retry, stale-write conflict, update signal, reload, and safe cleanup. A manifest declaration is necessary but insufficient.
+**Decision**: Persist readiness when the bounded collaboration declaration matches the immutable build, declared owner schema, bridge/runtime compatibility, Matrix-managed participant identity, revisioned mutation coordinator, content-free signal path, provider policy, and managed build lifecycle. Prove recipient launch, existing owner records, CRUD, retry, conflict, signal, reload, and recovery with two normal authenticated Matrix accounts during end-to-end qualification.
 
-**Rationale**: Manifest/API mocks cannot prove a rendered recipient UI or common persistence boundary. A purpose-bound provisional scope and tagged rollback/cleanup records avoid polluting user data.
+**Rationale**: Readiness can validate the Matrix-managed technical contract without fabricating a second credential. Live qualification, rather than a hidden pre-share identity, proves the rendered recipient UI and common persistence boundary.
 
-**Alternatives considered**: Declaration-only readiness admits browser-local apps; mocked bridges do not prove production boundaries; permanent probe rows pollute owner data.
+**Alternatives considered**: An unchecked declaration admits browser-local apps; a synthetic readiness account adds an identity system the product does not have; replacing live two-account qualification with mocks would not prove production boundaries.
 
 ## 11. Participant identity is context, not authority
 
@@ -114,10 +114,10 @@ This research resolves the implementation choices behind [spec.md](spec.md), [jo
 
 **Alternatives considered**: Docker is not production parity; isolated-layer demos do not prove the feature; a flag must not become an authorization input.
 
-## 15. Defer the second readiness principal and fail closed
+## 15. Use normal Matrix identities for qualification
 
-**Decision**: Implement the verifier boundary and a safe `blocked` outcome, but do not invent or impersonate the second authenticated participant. Until its identity source, authorization, lifecycle, and cleanup are approved, no readiness certificate may become `ready` and no share may be created.
+**Decision**: Readiness creates no credential source. An exact compatible build may become `ready`; the owner shares it explicitly, and recipients authenticate through their normal Matrix sessions. At every recipient boundary, `active share + current organization membership` is the complete V1 authorization rule.
 
-**Rationale**: The product decision was intentionally deferred. A synthetic or real-member strategy changes identity, consent, and security behavior and cannot be guessed during implementation.
+**Rationale**: Organization members are already authenticated Matrix principals. A second readiness identity would duplicate authentication and add a permission concept outside the confirmed V1 experience.
 
-**Alternatives considered**: Silently impersonating a member violates the identity boundary; declaration-only readiness violates the production-path requirement; allowing share while the verifier is unavailable fails open.
+**Alternatives considered**: Silently impersonating a member violates the identity boundary; bypassing current membership would widen access; requiring an additional acceptance, grant, or readiness login would create the permission system explicitly excluded from V1.

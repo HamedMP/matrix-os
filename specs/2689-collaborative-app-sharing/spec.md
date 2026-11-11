@@ -26,7 +26,7 @@ A member builds a team tracker with saved tasks, chooses **Share app** from that
 
 ### User Story 2 - Know whether an app is ready (Priority: P1)
 
-An app builder checks readiness before inviting colleagues. The check explains missing capabilities and points to changes the builder can make. A declaration alone cannot earn the collaborative label when the running app fails a multi-user round trip.
+An app builder checks readiness before inviting colleagues. The check validates the exact build's declared owner-backed storage, Matrix bridge compatibility, revisioned mutations, change signals, participant identity, and provider policy, and points to changes the builder can make. The live two-account journey remains release qualification rather than a separate credential prerequisite for sharing.
 
 **Why this priority**: A share control that leads to a broken multi-user app damages trust.
 
@@ -84,7 +84,7 @@ Colleagues understand that the app and its data are served by the creator's Matr
 
 ### Functional Requirements
 
-- **FR-001**: Matrix MUST define a collaborative app as an exact app version that passes an owner-visible technical readiness check for multiple authenticated users, one creator-hosted app and data store, safe multi-user writes, and update propagation. A declaration is necessary but insufficient.
+- **FR-001**: Matrix MUST define a collaborative app as an exact app version whose bounded capability declaration matches its immutable build, owner-backed data schema, Matrix bridge/runtime compatibility, revisioned mutation path, participant identity, provider policy, and update propagation. Release qualification MUST prove the resulting path with two normally authenticated Matrix accounts.
 - **FR-002**: Readiness MUST name each missing capability, bind to the exact app identity and version, and become invalid after a relevant app or runtime change.
 - **FR-003**: Any current organization member MUST be able to share an app they own directly from the app with one selected organization. Creating or sharing a project, obtaining organization-admin approval, choosing per-member grants, or assigning app roles MUST NOT be required.
 - **FR-004**: Every current member of the selected organization, including a guest, MUST be able to discover the share in **Shared with me** and open the creator-hosted app without a separate invitation, acceptance step, copied installation, or the creator's personal app session.
@@ -112,7 +112,7 @@ Colleagues understand that the app and its data are served by the creator's Matr
 
 - **Confirmed product decisions**: Collaborative apps are shared directly and independently of projects. Records remain solely owner-owned in the creator's database while the owner delegates revocable use to one organization. Any current organization member may share an app they own, and every current member, including a guest, gets full app access. Choosing the organization is the only sharing decision; there is no admin approval, additional app permission system, app role, per-person grant, acceptance flow, or record filter.
 - This feature reuses Matrix organizations, current membership, **Shared with me**, and the owner app catalog. It creates no second login or app permission vocabulary.
-- The first implementation must prove that owner and recipient launch against the same owner app and database. Existing asset routes alone are insufficient evidence. The exact mechanism that supplies the second authenticated readiness principal is intentionally deferred; readiness MUST fail closed and sharing MUST remain disabled until that mechanism is approved and wired.
+- The first implementation must prove through live qualification that owner and recipient launch against the same owner app and database. Both use their normal authenticated Matrix sessions; current organization membership is the only recipient authorization gate, and readiness introduces no synthetic identity or credential source.
 - V1 targets Web Canvas, Web Desktop, Electron desktop, and web mobile where owner-built apps already launch. Native Mobile parity is a separate planning decision.
 - A later skill may teach builders this contract. Public links, external guests, marketplace distribution, arbitrary custom app servers, cross-organization sharing of one owner database, creator departure while sharing, and Native Mobile parity are outside V1.
 - Implementation must use test-first coverage at real identity, authorization, and persistence boundaries and live owner/member/outsider journeys on every affected surface. The implementation plan must include a separate public documentation PR in FinnaAI/matrix-os-site.

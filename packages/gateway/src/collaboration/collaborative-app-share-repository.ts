@@ -392,7 +392,6 @@ export class CollaborativeAppShareRepository {
     const result = await sql<BindingRow>`
       UPDATE collaboration_app_bindings binding
       SET data_revision = binding.data_revision + 1,
-          revision = binding.revision + 1,
           updated_at = ${this.now()}
       FROM collaboration_scopes scope
       WHERE binding.scope_id = ${input.scopeId}

@@ -647,8 +647,9 @@ async function admitCollaborativeApp(
   const route = await options.repository.getDirectoryRoute(scopeId);
   if (!route || route.kind !== "app" || route.audience !== "current_membership"
     || !route.organizationId || !route.app || route.app.state !== "active") return null;
-  const organizationIds = options.listOrganizationIds ? await options.listOrganizationIds(actorId) : [];
-  return organizationIds.includes(route.organizationId) ? {
+  if (!options.isCurrentOrganizationMember) throw new Error("current organization membership unavailable");
+  const currentMember = await options.isCurrentOrganizationMember({ organizationId: route.organizationId, actorId });
+  return currentMember ? {
     ...route,
     organizationId: route.organizationId,
     app: route.app,

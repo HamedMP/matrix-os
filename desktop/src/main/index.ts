@@ -30,6 +30,7 @@ import { EmbedService } from "./embeds/embed-service";
 import {
   NativeAppBridge,
   createNativeAppQueryRequester,
+  createNativeAppCollaborationRequester,
   createNativeAppGatewayRequester,
   createNativeAppAiRequester,
 } from "./embeds/native-app-bridge";
@@ -436,6 +437,9 @@ if (!gotLock) {
           && event.senderFrame === contents.mainFrame && contents.getURL() === rendererUrl;
       });
 
+      const nativeAppQuery = createNativeAppQueryRequester({
+        getGatewayOrigin: () => auth.getGatewayOrigin(), getToken: () => auth.getToken(),
+      });
       const nativeAppBridge = new NativeAppBridge({
         getSenderLifecycle: (senderId) => webContents.fromId(senderId) ?? undefined,
         resolveApp: createNativeAppOpenResolver({ getGatewayOrigin: () => auth.getGatewayOrigin(), getToken: () => auth.getToken() }),
@@ -481,9 +485,11 @@ if (!gotLock) {
             headers, origin, isCurrent, session.fromPartition("persist:app-browser-lab").cookies),
         }),
         gatewayOrigin: () => auth.getGatewayOrigin(),
-        request: createNativeAppQueryRequester({
-          getGatewayOrigin: () => auth.getGatewayOrigin(),
-          getToken: () => auth.getToken(),
+        request: nativeAppQuery,
+        collaborationRequest: createNativeAppCollaborationRequester({
+          getGatewayOrigin: () => auth.getGatewayOrigin(), getToken: () => auth.getToken(),
+          getAuthGeneration: () => auth.getStatus().authGeneration,
+          legacyRequest: nativeAppQuery,
         }),
       });
       invalidateAppCapabilities = () => nativeAppBridge.clear();

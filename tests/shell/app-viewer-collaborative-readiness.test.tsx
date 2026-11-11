@@ -39,7 +39,7 @@ const blocked = {
   build,
   status: "blocked",
   revision: "2",
-  checks: [{ code: "two_principal_round_trip", status: "blocked", action: "A second authenticated verifier is not configured yet." }],
+  checks: [{ code: "declaration", status: "blocked", action: "Declare collaborative capability." }],
 };
 const ready = {
   ...blocked,
@@ -70,7 +70,7 @@ describe("AppViewer collaborative readiness", () => {
     const share = await screen.findByRole("button", { name: "Share app" });
     await waitFor(() => expect((share as HTMLButtonElement).disabled).toBe(true));
     expect(screen.getByLabelText("App collaboration readiness").textContent)
-      .toContain("A second authenticated verifier is not configured yet.");
+      .toContain("Declare collaborative capability.");
     fireEvent.click(share);
     expect(onShareApp).not.toHaveBeenCalled();
   });

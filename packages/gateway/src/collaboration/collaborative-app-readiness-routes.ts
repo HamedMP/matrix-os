@@ -7,6 +7,7 @@ import {
   CollaborationRevisionSchema,
   type CollaborativeAppShare,
   type CollaborativeAppBuildRef,
+  type CollaborativeAppManifestDeclaration,
 } from "@matrix-os/contracts";
 import type { Context, Hono } from "hono";
 import { bodyLimit } from "hono/body-limit";
@@ -80,6 +81,7 @@ class ReadinessRouteError extends Error {
 export interface CurrentCollaborativeAppBuild {
   build: CollaborativeAppBuildRef;
   artifactRef: string;
+  declaration?: CollaborativeAppManifestDeclaration | null;
 }
 
 export interface CollaborativeAppReadinessRouteDependencies {
@@ -91,6 +93,7 @@ export interface CollaborativeAppReadinessRouteDependencies {
     appId: string,
     options: { ensureCatalog: boolean },
   ): Promise<CurrentCollaborativeAppBuild | null>;
+  registrationIncarnation(ownerId: string, appId: string): Promise<string | null>;
   requireOrganizationMembership(actorId: string, organizationId: string): Promise<void>;
   rateLimiter?: RateLimiter;
   readRateLimiter?: RateLimiter;
@@ -209,9 +212,9 @@ export function registerCollaborativeAppReadinessRoutes(
     try {
       const ownerId = readinessOwner(context, dependencies.ownerId);
       const appId = AppIdSchema.parse(context.req.param("appId"));
-      const current = await dependencies.resolveCurrentBuild(ownerId, appId, { ensureCatalog: false });
-      if (!current) throw new ReadinessRouteError("not_found");
-      return context.json({ registrationIncarnation: current.build.registrationIncarnation });
+      const incarnation = await dependencies.registrationIncarnation(ownerId, appId);
+      if (!incarnation) throw new ReadinessRouteError("not_found");
+      return context.json({ registrationIncarnation: incarnation });
     } catch (error: unknown) {
       return failure(context, error);
     }
@@ -235,6 +238,7 @@ export function registerCollaborativeAppReadinessRoutes(
         organizationId: request.organizationId,
         build: current.build,
         artifactRef: current.artifactRef,
+        declaration: current.declaration ?? null,
       });
       return context.json(project(record));
     } catch (error: unknown) {
@@ -247,7 +251,7 @@ export function registerCollaborativeAppReadinessRoutes(
   routes.get(sharePath, async (context) => {
     context.header("Cache-Control", "private, no-store");
     try {
-      const ownerId = owner(context, dependencies.ownerId);
+      const ownerId = readinessOwner(context, dependencies.ownerId);
       const appId = AppIdSchema.parse(context.req.param("appId"));
       const share = await dependencies.share!.get(ownerId, appId);
       return context.json(share === null ? null : CollaborativeAppShareSchema.parse(share));
@@ -258,7 +262,7 @@ export function registerCollaborativeAppReadinessRoutes(
   routes.post(`${sharePath}/preflight`, limit, async (context) => {
     context.header("Cache-Control", "private, no-store");
     try {
-      const ownerId = owner(context, dependencies.ownerId);
+      const ownerId = readinessOwner(context, dependencies.ownerId);
       const appId = AppIdSchema.parse(context.req.param("appId"));
       if (!limiter.check(ownerId)) return context.json({ error: "Too many share requests", code: "rate_limited" }, 429);
       const request = SharePreflightRequestSchema.parse(await context.req.json());
@@ -273,7 +277,7 @@ export function registerCollaborativeAppReadinessRoutes(
   routes.post(sharePath, limit, async (context) => {
     context.header("Cache-Control", "private, no-store");
     try {
-      const ownerId = owner(context, dependencies.ownerId);
+      const ownerId = readinessOwner(context, dependencies.ownerId);
       const appId = AppIdSchema.parse(context.req.param("appId"));
       if (!limiter.check(ownerId)) return context.json({ error: "Too many share requests", code: "rate_limited" }, 429);
       const request = ShareCreateRequestSchema.parse(await context.req.json());
@@ -288,7 +292,7 @@ export function registerCollaborativeAppReadinessRoutes(
   routes.delete(sharePath, limit, async (context) => {
     context.header("Cache-Control", "private, no-store");
     try {
-      const ownerId = owner(context, dependencies.ownerId);
+      const ownerId = readinessOwner(context, dependencies.ownerId);
       const appId = AppIdSchema.parse(context.req.param("appId"));
       if (!limiter.check(ownerId)) return context.json({ error: "Too many share requests", code: "rate_limited" }, 429);
       const request = ShareStopRequestSchema.parse(await context.req.json());
