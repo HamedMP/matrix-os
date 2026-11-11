@@ -80,6 +80,7 @@ import {
 } from "./platform/window-bounds";
 import { windowChromeOptions } from "./platform/window-chrome";
 import { createUpdater } from "./updates";
+import { bundledDesktopChannel } from "./update-config";
 import { createUpdateAwareBeforeQuit } from "./update-quit";
 import { safeExternalHttpUrl, safeChatgptAuthorizationUrl } from "./external-url";
 import { desktopDevHostResolverRules, resolveDesktopRendererUrl } from "./renderer-url";
@@ -89,6 +90,7 @@ import { createNativeAppOpenResolver } from "./embeds/native-app-open";
 import { installBrowserProductSessionCookie } from "./embeds/browser-product-session";
 import { createNativeAppChatNavigationBroker, registerNativeAppChatCompletionIpc } from "./embeds/native-app-chat-navigation";
 import { configureDesktopIdentity } from "./desktop-identity";
+import { isDesktopDeepLink, resolveDesktopChannelIdentity } from "../shared/channel-identity";
 import { createSenderPolicy, senderRole } from "./ipc/sender-policy";
 import { createTerminalWindowController } from "./terminal-window/controller";
 import { createTerminalBrowserWindow } from "./terminal-window/window";
@@ -111,9 +113,11 @@ import {
 const DEFAULT_PLATFORM_HOST = "https://app.matrix-os.com";
 const desktopRendererUrl = resolveDesktopRendererUrl(process.env.ELECTRON_RENDERER_URL);
 
+const channelIdentity = resolveDesktopChannelIdentity(bundledDesktopChannel());
 configureDesktopIdentity(app, {
   qaIdentity: process.env.MATRIX_DESKTOP_QA_IDENTITY,
   userDataDir: process.env.OPERATOR_USER_DATA_DIR,
+  channel: channelIdentity.channel,
 });
 if (desktopRendererUrl && desktopRendererUrl !== process.env.ELECTRON_RENDERER_URL) {
   app.commandLine.appendSwitch("host-resolver-rules", desktopDevHostResolverRules());
@@ -164,13 +168,7 @@ let handleAnalyticsBeforeQuit: ((event: { preventDefault(): void }) => boolean) 
 let completePendingAnalyticsFlush: (() => void) | null = null;
 
 function isMatrixOsDeepLink(value: string): boolean {
-  try {
-    const url = new URL(value);
-    return url.protocol === "matrixos:" || url.protocol === "matrix-os:";
-  } catch (error: unknown) {
-    if (error instanceof TypeError) return false;
-    throw error;
-  }
+  return isDesktopDeepLink(value, channelIdentity);
 }
 
 function focusMainWindow(): void {
@@ -306,7 +304,7 @@ if (!gotLock) {
   void app
     .whenReady()
     .then(async () => {
-      const failedProtocolRegistrations = registerWindowsProtocolClients(app, process.platform, previewContext ?? undefined);
+      const failedProtocolRegistrations = registerWindowsProtocolClients(app, process.platform, previewContext ?? undefined, channelIdentity.deepLinkSchemes);
       if (failedProtocolRegistrations.length > 0) {
         console.warn(
           `[main] could not register Windows URL schemes: ${failedProtocolRegistrations.join(", ")}`,
@@ -337,6 +335,7 @@ if (!gotLock) {
       let invalidateAppCapabilities: (() => void) | undefined;
       const auth = new AuthService({
         ...(previewContext ? { previewContext } : {}),
+        authRedirectUri: channelIdentity.authRedirectUri,
         credentialStore,
         platformHost,
         runtimeSelectionOrigin,
@@ -745,6 +744,7 @@ if (!gotLock) {
         getPreviewContext: () => previewContext ? { role: previewContext.role, pr: previewContext.pr,
           sourceSha: previewContext.sourceSha, handle: previewContext.handle, organizationId: previewContext.organizationId } : null,
         getAppVersion: () => app.getVersion(),
+        desktopChannel: channelIdentity.channel,
         buildSource: readDesktopBuildSource(),
         completeAnalyticsFlush: () => {
           completePendingAnalyticsFlush?.();

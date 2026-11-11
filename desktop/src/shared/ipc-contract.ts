@@ -103,6 +103,7 @@ const ZoomFactorResultSchema = z.object({ factor: ZoomFactorSchema }).strict();
 const NativeAppVersionResultSchema = z.object({
   version: z.string().trim().min(1).max(128).regex(/^[A-Za-z0-9][A-Za-z0-9._-]*$/),
   source: BuildSourceSchema.nullable(),
+  channel: z.enum(["stable", "beta", "canary", "dev"]),
 }).strict();
 
 const ProfileSchema = z
