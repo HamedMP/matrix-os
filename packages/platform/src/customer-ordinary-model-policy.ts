@@ -9,6 +9,11 @@ export function ordinaryCustomerModelIds(globalModels: readonly string[]): strin
     .filter(model => globalModels.includes(model));
 }
 
+/** Free container runtimes get the managed default models only. */
+export function freeRuntimeModelIds(globalModels: readonly string[]): string[] {
+  return MANAGED_WORKERS_AI_MODEL_IDS.filter(model => globalModels.includes(model));
+}
+
 /** Run inside the global-policy transaction: a failed alignment must roll back
  * the global revision too. Use a set-based write and return only one aggregate,
  * so fleet size does not produce an unbounded in-process inventory. */

@@ -297,7 +297,7 @@ export function createAiFundedPolicyRepository(options: AiFundedPolicyRepository
           AND machine.activation_state = 'authorized'
           AND machine.deleted_at IS NULL
           AND (
-            machine.provisioning_class = 'customer'
+            machine.provisioning_class IN ('customer', 'free')
             OR (
               machine.provisioning_class IN ('preview', 'private-preview')
               AND EXISTS (
