@@ -39,13 +39,18 @@ describe("project-scoped shell CLI commands", () => {
       "get",
       "interrupt",
       "keys",
+      "label",
       "list",
       "ls",
       "new",
       "read",
+      "report",
       "rm",
+      "run",
       "send",
+      "templates",
       "wait",
+      "wait-children",
     ]);
   });
 

@@ -20,6 +20,8 @@ import {
   SendTerminalTabInputSchema,
   TerminalTabRefInputSchema,
   WaitTerminalTabInputSchema,
+  LabelTerminalTabInputSchema,
+  RunTerminalAgentInputSchema,
   TerminalInputSchema,
   UploadFileInputSchema,
   decodeUploadContent,
@@ -257,6 +259,34 @@ export function createMatrixMcpServer(options: MatrixMcpServerOptions = {}): Mcp
   }, async (input) => safely(() => withClient(input.computer, async (client, computer) => ({
     ok: true, computer, ...(await client.waitTerminalTab(tabRef(input), {
       timeoutMs: input.timeoutMs ?? 30_000, ...(input.output ? { output: input.output } : {}),
+    }) as Record<string, unknown>),
+  }))));
+
+  server.registerTool("list_terminal_templates", {
+    description: "List agent templates (roles such as reviewer) that run_terminal_agent can start with a task.",
+    inputSchema: ComputerInputSchema.shape,
+    annotations: readOnlyAnnotations,
+  }, async (input) => safely(() => withClient(input.computer, async (client, computer) => ({
+    ok: true, computer, ...(await client.listTerminalTemplates() as Record<string, unknown>),
+  }))));
+
+  server.registerTool("run_terminal_agent", {
+    description: "Start a program (argv) or agent template with a task in a new persistent terminal tab. The task is sent once the agent is ready; check firstMessage.sent and read the screen before resending. Give parent to make it report to and end with that tab.",
+    inputSchema: RunTerminalAgentInputSchema.shape,
+    annotations: executionAnnotations,
+  }, async (input) => safely(() => withClient(input.computer, async (client, computer) => {
+    const { computer: _computer, cwd, ...rest } = input;
+    void _computer;
+    return { ok: true, computer, ...(await client.runTerminalAgent({ ...rest, cwd: cwd && cwd !== "." ? cwd : "" }) as Record<string, unknown>) };
+  })));
+
+  server.registerTool("label_terminal_tab", {
+    description: "Set or remove free-form key=value labels on a terminal tab.",
+    inputSchema: LabelTerminalTabInputSchema.shape,
+    annotations: changeAnnotations,
+  }, async (input) => safely(() => withClient(input.computer, async (client, computer) => ({
+    ok: true, computer, ...(await client.labelTerminalTab(tabRef(input), {
+      ...(input.set ? { set: input.set } : {}), ...(input.remove ? { remove: input.remove } : {}),
     }) as Record<string, unknown>),
   }))));
 

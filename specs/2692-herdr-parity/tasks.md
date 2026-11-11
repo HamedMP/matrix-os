@@ -32,20 +32,20 @@ where possible (hard limit 3000 additions / 50 files).
 
 - [x] T3.1 `matrix-status` reporter in `/opt/matrix/bin`; status files indexed by the terminal runtime and served as `ListAgentStatuses`.
 - [x] T3.2 Hook events → Herdr words, written per pane by `matrix-agent-bridge`.
-- [ ] T3.3 `matrix-osc-tap` pass-through for launched agents (moved to layer 4, with template launches that use it).
+- [ ] T3.3 `matrix-osc-tap` pass-through for launched agents. Deferred to the follow-on stack: hooks cover Claude, Codex, OpenCode and Pi, and `matrix-status` covers scripts. Only programs that speak raw OSC 7501 still need the tap.
 - [x] T3.4 `wait` (status/exit/output/timeout) with bounded waiters; CLI `matrix shell wait`; MCP `wait_terminal_tab`.
 - [x] T3.5 `/ws/terminal/events` hub with snapshot, heartbeat, missed, sweep and shutdown drain; query-token allowlist.
 - [x] T3.6 Exit sweep: tabs whose held pane reports an exit become `exited` with `exit_status` (found on the #3300 preview).
 
 ## Layer 4: agents
 
-- [ ] T4.1 Labels + list filter.
-- [ ] T4.2 `MATRIX_TERMINAL_REF` per pane; `parentRef`, cascade end, `outliveParent`.
-- [ ] T4.3 Child notes to parent (`<matrix from=…>`).
-- [ ] T4.4 Templates from `~/agents/templates/`, first-message delivery, `firstMessage` persisted.
-- [ ] T4.5 `wait-children any|all`.
-- [ ] T4.6 Kernel IPC tools.
-- [ ] T4.7 Keep-as-shell on loss.
+- [x] T4.1 Labels + list filter.
+- [x] T4.2 Parent from the caller's pane (`ZELLIJ_SESSION_NAME` + `ZELLIJ_PANE_ID`, resolved by the runtime's `ResolvePane`); end-with-parent; `outliveParent`.
+- [x] T4.3 Child notes to parent (`<matrix from=…>`).
+- [x] T4.4 Templates from `~/agents/templates/`, first-message delivery, `firstMessage` persisted.
+- [x] T4.5 `wait-children any|all`.
+- [x] T4.6 Kernel IPC tools.
+- [ ] T4.7 Keep-as-shell on loss. Deferred to the follow-on stack: it needs a terminal runtime change (zellij command panes) and its own spike.
 
 ## Layer 5: attention UI
 
