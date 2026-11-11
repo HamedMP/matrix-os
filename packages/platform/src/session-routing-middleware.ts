@@ -61,7 +61,7 @@ import { getSignupBillingHandoffPage } from './signup-billing-handoff-page.js';
 import { isAppDomainHost, isCodeDomainHost } from './ws-upgrade.js';
 import { appOrigin } from './origins.js';
 import {
-  CLERK_SCRIPT_ORIGIN,
+  browserAuthContentSecurityPolicy,
   getAuthPage,
   getNoContainerPage,
   getVpsBootPage,
@@ -191,7 +191,7 @@ function applyAuthPageHeaders(
   c.header('X-Frame-Options', 'DENY');
   c.header(
     'Content-Security-Policy',
-    `frame-ancestors 'none'; script-src 'self' 'nonce-${scriptNonce}' ${CLERK_SCRIPT_ORIGIN} https://challenges.cloudflare.com https://www.googletagmanager.com; worker-src 'self' blob:; frame-src https://challenges.cloudflare.com; object-src 'none'; base-uri 'none'`,
+    browserAuthContentSecurityPolicy(scriptNonce),
   );
 }
 

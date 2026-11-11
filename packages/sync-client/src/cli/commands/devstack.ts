@@ -5,11 +5,14 @@ import { createInterface } from "node:readline/promises";
 import { promisify } from "node:util";
 import { defineCommand } from "citty";
 import { z } from "zod/v4";
+import { openBrowser } from "../../auth/oauth.js";
 import { getConfigDir } from "../../lib/config.js";
+import { loadProfiles } from "../../lib/profiles.js";
 import { cliError, formatCliError, formatCliSuccess } from "../output.js";
 
 const exec = promisify(execFile);
 const safeText = z.string().min(1).max(4096).refine(value => !/[\p{Cc}\p{Bidi_Control}\u2028\u2029]/u.test(value));
+const stageThreeSlug = z.string().regex(/^[a-z0-9](?:[a-z0-9-]{0,30}[a-z0-9])?$/).refine(value => !value.includes("\n"));
 const computerSchema = z.string().regex(/^[a-z0-9][a-z0-9-]{0,62}$/);
 const bindingSchema = z.object({
   computer: computerSchema,
@@ -133,7 +136,8 @@ async function currentWorktree(): Promise<string> {
     const { stdout } = await exec("git", ["rev-parse", "--show-toplevel"], { env, timeout: 5000, maxBuffer: 8192 });
     const worktree = stdout.replace(/\r?\n$/, "");
     if (isAbsolute(worktree)) return await canonicalPath(worktree);
-  } catch {
+  } catch (error: unknown) {
+    if (!(error instanceof Error)) throw error;
     // An explicit worktree is required when cwd cannot identify the binding.
   }
   throw cliError("devstack_selection_required", "Run from the enrolled worktree or pass --worktree <path>.");
@@ -225,16 +229,63 @@ const commandArgsSchema = z.strictObject({
   action: z.enum(actions).optional(),
   computer: computerSchema.optional(),
   worktree: safeText.optional(),
+  stage: z.enum(["2", "3"]).optional(),
+  profile: z.string().regex(/^[A-Za-z][A-Za-z0-9_-]{0,30}$/).optional(),
+  platform: safeText.max(512).optional(),
   open: z.boolean().optional(),
   json: z.boolean().optional(),
 });
 
+type CommandOptions = z.infer<typeof commandArgsSchema>;
+
+function httpsOrigin(value: string): string {
+  const url = URL.canParse(value) ? new URL(value) : null;
+  if (!url || url.protocol !== "https:" || ![url.origin, url.origin + "/"].includes(value)) {
+    throw cliError("devstack_invalid_origin", "Use the approved HTTPS DevStack origin without a path or credentials.");
+  }
+  return url.origin;
+}
+
+async function connectStageThree(options: CommandOptions, interactive: boolean, json: boolean): Promise<void> {
+  if (options._[0] && options._[0] !== "connect") {
+    throw cliError("devstack_action_unsupported", "Stage 3 opens a registered preview. Source updates belong to the agent's worktree.");
+  }
+  const { computer, worktree } = options;
+  if ((computer !== undefined || worktree !== undefined)
+    && (!stageThreeSlug.safeParse(computer).success || !stageThreeSlug.safeParse(worktree).success)) {
+    throw cliError("devstack_selection_required", "Use both --computer and --worktree with registered Stage 3 names, or omit both to choose in the browser.");
+  }
+
+  let platformUrl = options.platform;
+  if (!platformUrl) {
+    const { profiles } = await loadProfiles({ migrateLegacyFiles: false });
+    const name = options.profile ?? "devstack";
+    if (!Object.hasOwn(profiles, name)) {
+      throw cliError("devstack_profile_required", "Select a DevStack CLI profile or pass the approved HTTPS origin with --platform.");
+    }
+    platformUrl = profiles[name]!.platformUrl;
+  }
+  const path = computer && worktree ? `/devstack/${computer}/${worktree}` : "/devstack";
+  const entryUrl = httpsOrigin(platformUrl) + path;
+  if (json) {
+    console.log(formatCliSuccess({ ...(computer && worktree ? { computer, worktree } : {}), entryUrl }));
+  } else {
+    console.log(`Stage 3 preview entry: ${entryUrl}`);
+  }
+  // Stage 3 uses normal Clerk browser login. No Main profile bearer token is
+  // sent to the preview origin or placed in the URL.
+  if (options.open ?? interactive) openBrowser(entryUrl);
+}
+
 export const devstackCommand = defineCommand({
-  meta: { name: "devstack", description: "Connect or manage an isolated Stage 2 Git worktree" },
+  meta: { name: "devstack", description: "Connect to a DevStack worktree preview" },
   args: {
     action: { type: "positional", required: false, description: "connect (default), sync, diff, status, or reset" },
-    computer: { type: "string", description: "Approved Dev Computer handle" },
-    worktree: { type: "string", description: "Local Git worktree path" },
+    stage: { type: "string", description: "Stage 2 local sync (default) or Stage 3 registered browser preview" },
+    profile: { type: "string", description: "Stage 3 CLI profile (default: devstack)" },
+    platform: { type: "string", description: "Approved Stage 3 HTTPS origin" },
+    computer: { type: "string", description: "Approved Dev Computer name" },
+    worktree: { type: "string", description: "Stage 2 local path or Stage 3 registered worktree name" },
     open: { type: "boolean", description: "Open the connected preview in the configured browser" },
     json: { type: "boolean", description: "Print a machine-readable result" },
   },
@@ -245,11 +296,18 @@ export const devstackCommand = defineCommand({
       if (!parsed.success) {
         throw cliError("devstack_selection_required", "Use matrix devstack [connect|sync|diff|status|reset] --help.");
       }
+      const interactive = Boolean(process.stdin.isTTY && process.stderr.isTTY && !json);
+      if (parsed.data.stage === "3") {
+        await connectStageThree(parsed.data, interactive, json);
+        return;
+      }
+      if (parsed.data.profile || parsed.data.platform) {
+        throw cliError("devstack_selection_required", "--profile and --platform apply only to Stage 3 previews.");
+      }
       const action = parsed.data._[0] ?? "connect";
       if (action !== "connect" && parsed.data.open !== undefined) {
         throw cliError("devstack_selection_required", "--open applies only when connecting a Stage 2 preview.");
       }
-      const interactive = Boolean(process.stdin.isTTY && process.stderr.isTTY && !json);
       if (action === "connect" && !interactive && (!parsed.data.computer || !parsed.data.worktree)) {
         throw cliError("devstack_selection_required", "Use --computer <handle> and --worktree <path>.");
       }

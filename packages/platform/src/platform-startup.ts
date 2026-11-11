@@ -34,9 +34,10 @@ import { startAtsBackgroundWorker } from './ats-background-worker.js';
 import { startGooglePurchaseWorker } from './billing/google-purchases.js';
 import type { Orchestrator } from './orchestrator.js';
 import type { ClerkAuth } from './clerk-auth.js';
-import { DevstackRunConfigError, loadDevstackRunConfig } from './devstack-runs/config.js';
+import { DevstackRunConfigError, loadDevstackPreviewConfig, loadDevstackRunConfig } from './devstack-runs/config.js';
 import { createDevstackRunStore, migrateDevstackRuns } from './devstack-runs/store.js';
 import { createDevstackRunRoutes } from './devstack-runs/routes.js';
+import { createDevstackPreviewRoutes } from './devstack-preview-routes.js';
 import { executeDevstackRun } from './devstack-runs/execute.js';
 import { resolveRegisteredRuntimeEndpoint } from './devstack-registered-runtime.js';
 import {
@@ -123,6 +124,7 @@ import { createPreviewRuntimeAccessActivator, type PreviewRuntimeAccessActivator
 import { createConfiguredWhatsAppRuntime } from './whatsapp/startup.js';
 import { createAccountDeletionIntegrationWebhookAdmission } from './account-deletion/integration-webhook.js';
 import { appOrigin } from './origins.js';
+import { isAppDomainHost } from './ws-upgrade.js';
 import { createPreviewPairRuntimeOnlyService } from './preview-pair/candidate-runtime.js';
 
 interface GatewayPlatformUser {
@@ -248,6 +250,7 @@ type CreatePlatformApp = (deps: {
   docker?: Dockerode;
   registeredRuntimeInstance?: string;
   devstackRunRoutes?: ReturnType<typeof createDevstackRunRoutes>;
+  devstackPreviewRoutes?: ReturnType<typeof createDevstackPreviewRoutes>;
   orchestrator: Orchestrator;
   clerkAuth?: ClerkAuth;
   matrixProvisioner?: MatrixProvisioner;
@@ -352,16 +355,23 @@ async function startPlatformServerWithCleanup(
   let runtimeConfig;
   let speechConfig;
   let devstackRunConfig;
+  let devstackPreviewConfig;
   let isDevstackMember: ((actorId: string) => Promise<boolean>) | undefined;
   const clerkVerificationConfig = resolveClerkVerificationConfig(process.env);
   try {
     runtimeConfig = loadPlatformRuntimeConfig();
     devstackRunConfig = loadDevstackRunConfig(process.env.MATRIX_DEVSTACK_RUN_CONFIG, runtimeConfig.registeredRuntimeInstance);
-    if (devstackRunConfig) {
+    devstackPreviewConfig = loadDevstackPreviewConfig(process.env.MATRIX_DEVSTACK_PREVIEW_CONFIG, runtimeConfig.registeredRuntimeInstance);
+    if (devstackPreviewConfig && (!process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY?.trim()
+      || devstackPreviewConfig.previewOrigin !== appOrigin(process.env)
+      || !isAppDomainHost(new URL(devstackPreviewConfig.previewOrigin).host))) {
+      throw new DevstackRunConfigError('preview');
+    }
+    if (devstackRunConfig || devstackPreviewConfig) {
       const organizationId = parseInternalOrganizationId(process.env.MATRIX_INTERNAL_CLERK_ORG_ID);
       const secretKey = clerkVerificationConfig?.sessionRevocationSecret;
       if (!organizationId || !secretKey?.trim() || platformSecret.length < 32) {
-        throw new DevstackRunConfigError();
+        throw new DevstackRunConfigError(devstackRunConfig ? 'run' : 'preview');
       }
       const clerkOrganizations = new ClerkOrganizationUpstreamClient({ secretKey });
       // Registered runtimes intentionally omit the collaboration projection.
@@ -533,6 +543,22 @@ async function startPlatformServerWithCleanup(
         execute: (endpoint, target, command) => executeDevstackRun({
           endpoint, instance: devstackRunConfig.instance, target, command, platformSecret,
         }),
+      })
+    : undefined;
+
+  const devstackPublishableKey = process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY;
+  const devstackPreviewRoutes = devstackPreviewConfig && clerkAuth && isDevstackMember && devstackPublishableKey
+    ? createDevstackPreviewRoutes({
+        config: devstackPreviewConfig,
+        clerkAuth,
+        isMember: isDevstackMember,
+        publishableKey: devstackPublishableKey,
+        edgeRouterSecret: process.env.EDGE_ROUTER_SECRET,
+        resolve: target => resolveRegisteredRuntimeEndpoint(
+          db, devstackPreviewConfig.instance,
+          { source: 'auth', userId: target.owner, handle: target.handle, runtimeSlot: 'primary' },
+          target.handle, 'primary',
+        ),
       })
     : undefined;
 
@@ -1157,6 +1183,7 @@ async function startPlatformServerWithCleanup(
     docker,
     registeredRuntimeInstance,
     devstackRunRoutes,
+    devstackPreviewRoutes,
     orchestrator,
     clerkAuth,
     matrixProvisioner,

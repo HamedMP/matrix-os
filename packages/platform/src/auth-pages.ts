@@ -5,6 +5,10 @@ import { escapeHtmlAttr, escapeHtml, escapeInlineScriptJson } from './html-escap
 export { escapeHtmlAttr, escapeHtml, escapeInlineScriptJson } from './html-escaping.js';
 
 export const CLERK_SCRIPT_ORIGIN = 'https://clerk.matrix-os.com';
+export function browserAuthContentSecurityPolicy(scriptNonce: string): string {
+  return `frame-ancestors 'none'; script-src 'self' 'nonce-${scriptNonce}' ${CLERK_SCRIPT_ORIGIN} https://challenges.cloudflare.com https://www.googletagmanager.com; worker-src 'self' blob:; frame-src https://challenges.cloudflare.com; object-src 'none'; base-uri 'none'`;
+}
+
 const BROWSER_CLERK_SIGN_OUT_TIMEOUT_MS = 10_000;
 
 function deviceReturnTargetFromRedirectPath(redirectTarget: string): string {
