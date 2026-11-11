@@ -188,6 +188,27 @@ it("selects a project skill separately from the message and only passes its rela
   expect(submit.mock.calls[0]?.[0]).toContain(reviewSkillPath);
 });
 
+it("keeps the typed slash when a sixth project skill cannot be added", async () => {
+  const names = ["alpha", "beta", "delta", "epsilon", "gamma", "zeta"];
+  const read = vi.fn(async () => ({
+    ...inventory("alpha"),
+    skills: names.map(name => ({ source: ".agents/skills", name })),
+  }));
+  render(<Harness projectSlash={{ scope: "test-runtime", projectId: "proj_one", read }} />);
+  const input = screen.getByRole("textbox", { name: "Message chat" }) as HTMLTextAreaElement;
+  for (const name of names) {
+    fireEvent.change(input, { target: { value: `/${name}` } });
+    fireEvent.click(await screen.findByRole("option", { name: new RegExp(name, "i") }));
+  }
+  expect(input.value).toBe("/zeta");
+  expect(screen.getByText("Remove a project skill to add another.")).toBeTruthy();
+  expect(screen.getAllByRole("button", { name: /remove skill/i })).toHaveLength(5);
+  fireEvent.click(screen.getByRole("button", { name: "Remove skill alpha" }));
+  fireEvent.click(await screen.findByRole("option", { name: /zeta/i }));
+  expect(input.value).toBe("");
+  expect(screen.getByRole("button", { name: "Remove skill zeta" })).toBeTruthy();
+});
+
 it("discards a selected project skill when the same draft changes projects", async () => {
   const submit = vi.fn();
   const view = render(<Harness projectSlash={projectScope("proj_one", "review")} submit={submit} />);

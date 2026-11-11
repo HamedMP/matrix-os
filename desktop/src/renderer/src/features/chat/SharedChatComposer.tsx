@@ -273,17 +273,15 @@ export function SharedChatComposer({
     if (slashQuery !== null) {
       const entry = filteredSlashEntries[index];
       if (entry) {
-        // Dismiss synchronously. Lexical publishes the rewritten value on its
-        // update listener, so without this guard an immediate second Enter can
-        // still see the stale slash query and be swallowed by the old menu.
-        setDismissedSuggestionKey(suggestionKey);
-        if (entry.kind === "project_skill" && slashMatch) {
+        if (entry.kind === "project_skill") {
+          if (!slashMatch || !projectSkillDraft.select(entry.path)) return;
           const suffix = value.slice(slashMatch.end).match(/^[a-z0-9_.-]*/i)?.[0] ?? "";
-          projectSkillDraft.select(entry.path);
+          setDismissedSuggestionKey(suggestionKey);
           editorRef.current?.removeTrigger(slashMatch.token + suffix, cursor + suffix.length);
           return;
         }
-        if (entry.kind === "project_skill") return;
+        // Dismiss synchronously before Lexical publishes its rewritten value.
+        setDismissedSuggestionKey(suggestionKey);
         editorRef.current?.insertToken({
           type: "invocation",
           label: entry.displayName,

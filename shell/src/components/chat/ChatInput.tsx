@@ -248,7 +248,7 @@ export function ChatInput({
             let replacement = entry.invocation + " ";
             if (entry.kind === "project_skill") {
               if (isCurrentAuthority && !isCurrentAuthority()) return;
-              projectSkillDraft.select(entry.path);
+              if (!projectSkillDraft.select(entry.path)) return;
               replacement = "";
             }
             const next = input.slice(0, slashToken.start) + replacement + input.slice(slashToken.end + suffixLength);
