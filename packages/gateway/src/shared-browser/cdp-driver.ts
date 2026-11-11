@@ -27,7 +27,7 @@ export function createSharedBrowserCdpDriver(options: CdpDriverOptions): SharedB
   let pendingTabCreations = 0;
   const atTabLimit = () => owned.size + pendingTabCreations >= SHARED_BROWSER_MAX_OWNED_TABS;
   const paused = new Map<string, Promise<void>>(); // <=16 Fetch requests, DNS 2s + CDP 8s eviction.
-  const children = new Map<string, { targetId: string; parentSession: string; type: string; newlyPaused: boolean }>(); // <=16 related sessions, detached/run-close eviction.
+  const children = new Map<string, { targetId: string; parentSession: string; type: string; newlyPaused: boolean; opaque: boolean }>(); // <=16 related sessions, detached/run-close eviction.
   const childJobs = new Set<Promise<void>>(); // <=16 bounded initializations/duplicate detaches, settlement/close eviction.
   const blockedDownloadJobs = new Set<Promise<void>>(); // <=8 denied download cancellations, settlement/close eviction.
   const intentionalDetach = new Set<string>(); // <=17 current sessions; command settlement eviction.
@@ -193,7 +193,18 @@ export function createSharedBrowserCdpDriver(options: CdpDriverOptions): SharedB
       childJobs.add(job); void job.finally(() => childJobs.delete(job));
       return;
     }
-    children.set(child, { targetId: info.targetId, parentSession: event.sessionId!, type: info.type, newlyPaused: waitingForDebugger === true });
+    const opaque = Boolean(options.publicContext && info.type === 'iframe' && waitingForDebugger === false);
+    children.set(child, { targetId: info.targetId, parentSession: event.sessionId!, type: info.type, newlyPaused: waitingForDebugger === true, opaque });
+    if (opaque) {
+      // The context proxy already protects this iframe. Retain its attachment
+      // only for parent-scoped cleanup, without reading or controlling it.
+      const job = validateUrl(info.url).then(() => undefined, error => {
+        report(error);
+        requireHandoff('setup_failed', info.type);
+      });
+      childJobs.add(job); void job.finally(() => childJobs.delete(job));
+      return;
+    }
     if (options.publicContext && info.type === 'service_worker') {
       if (waitingForDebugger === false) return;
       if (waitingForDebugger !== true) { requireHandoff('malformed_attachment', info.type); return; }
@@ -244,7 +255,7 @@ export function createSharedBrowserCdpDriver(options: CdpDriverOptions): SharedB
     // disabling a parent's auto-attach also detaches all of its child sessions.
     for (const [child, info] of [...children].reverse()) {
       if (children.get(child) !== info) continue;
-      if (['page', 'iframe'].includes(info.type)) {
+      if (!info.opaque && ['page', 'iframe'].includes(info.type)) {
         await client!.request('Fetch.disable', {}, child);
         await client!.request('Network.setBypassServiceWorker', { bypass: false }, child);
         await client!.request('Target.setAutoAttach', { autoAttach: false, waitForDebuggerOnStart: false, flatten: true }, child);
@@ -259,6 +270,7 @@ export function createSharedBrowserCdpDriver(options: CdpDriverOptions): SharedB
     children.clear();
   }
   function event(event: CdpEvent) {
+    if (event.sessionId && children.get(event.sessionId)?.opaque) return;
     if (event.method === 'Browser.downloadWillBegin' && !collectingDownload && !options.publicContext) {
       const guid = event.params.guid;
       if (typeof guid !== 'string' || guid.length > 128 || blockedDownloadJobs.size >= 8) { requireHandoff('unexpected_download'); return; }

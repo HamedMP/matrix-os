@@ -8,6 +8,10 @@ const worker = (browserContextId?: string, waitingForDebugger = true) => ({
   sessionId: 'worker-session', waitingForDebugger,
   targetInfo: { targetId: 'worker-target', type: 'service_worker', url: publicUrl + 'sw.js', browserContextId },
 });
+const runningIframe = (browserContextId?: string, url = 'https://frame-fixture.test/login') => ({
+  sessionId: 'running-iframe', waitingForDebugger: false,
+  targetInfo: { targetId: 'iframe-target', type: 'iframe', url, browserContextId },
+});
 async function publicRig(createdId = contextId) {
   const create = vi.fn(async () => createdId);
   const result = await rig(undefined, { publicContext: { create },
@@ -101,6 +105,57 @@ describe('isolated public Chrome context', () => {
       expect(resume).toBeGreaterThan(gate);
     } finally { await driver.detach(); }
     expect(fake.messages.filter(row => row.method === 'Runtime.runIfWaitingForDebugger' && row.sessionId === 'worker-session')).toHaveLength(1);
+  });
+
+  it('switches back to a public tab with an already-running opaque HTTPS iframe', async () => {
+    const {driver, fake, signal} = await publicRig();
+    try {
+      await driver.execute({ action: 'tab_new', url: publicUrl }, signal);
+      await driver.execute({ action: 'tab_new', url: publicUrl }, signal);
+      fake.emitRelatedOnAutoAttach(runningIframe(contextId));
+      await expect(driver.execute({ action: 'tab_switch', targetId: 'agent-tab' }, signal)).resolves.toMatchObject({
+        success: true, targetId: 'agent-tab',
+      });
+      fake.event('Fetch.requestPaused', { requestId: 'iframe-request', request: { url: publicUrl } }, 'running-iframe');
+      fake.event('Target.attachedToTarget', worker('owner-context'), 'running-iframe');
+      await expect(driver.execute({ action: 'snapshot' }, signal)).resolves.toMatchObject({
+        success: true, targetId: 'agent-tab', content: 'Two invoices',
+      });
+    } finally { await driver.detach(); }
+    expect(fake.messages.some(row => row.sessionId === 'running-iframe'
+      || row.method === 'Target.getTargetInfo' && row.params.targetId === 'iframe-target')).toBe(false);
+    expect(fake.messages.filter(row => row.method === 'Target.detachFromTarget' && row.params.sessionId === 'running-iframe'))
+      .toEqual([expect.objectContaining({ sessionId: 'agent-session' })]);
+  });
+
+  it.each([
+    [undefined, 'https://frame-fixture.test/'],
+    ['owner-context', 'https://frame-fixture.test/'],
+    [contextId, 'http://frame-fixture.test/'],
+    [contextId, 'https://127.0.0.1/'],
+    [contextId, 'about:blank'],
+  ])('hands off an already-running iframe with unverified context or URL (%j, %j)', async (reportedContext, url) => {
+    const {driver, fake, signal} = await publicRig();
+    try {
+      await driver.execute({ action: 'tab_new', url: publicUrl }, signal);
+      fake.event('Target.attachedToTarget', runningIframe(reportedContext, url));
+      await expect(driver.execute({ action: 'snapshot' }, signal)).resolves.toMatchObject({
+        success: false, handoffRequested: true,
+      });
+    } finally { await driver.detach(); }
+    expect(fake.messages.some(row => row.sessionId === 'running-iframe')).toBe(false);
+  });
+
+  it('retains handoff for an already-running iframe in the owner Browser', async () => {
+    const {driver, fake, signal} = await rig();
+    try {
+      await driver.execute({ action: 'tab_new' }, signal);
+      fake.event('Target.attachedToTarget', runningIframe());
+      await expect(driver.execute({ action: 'snapshot' }, signal)).resolves.toMatchObject({
+        success: false, handoffRequested: true,
+      });
+    } finally { await driver.detach(); }
+    expect(fake.messages.some(row => row.method === 'Runtime.runIfWaitingForDebugger' && row.sessionId === 'running-iframe')).toBe(false);
   });
 
   it.each([undefined, 'owner-context'])('never inspects or resumes a related worker with context %j', async reportedContext => {
