@@ -1,7 +1,7 @@
 import "@/lib/hermes-polyfills";
 import "@/lib/unistyles";
 import { use, useEffect, useMemo, useState, createContext, useCallback, useRef } from "react";
-import { Stack, useRouter, usePathname } from "expo-router";
+import { Stack, usePathname } from "expo-router";
 import { PostHogProvider } from "posthog-react-native";
 import { Text } from "react-native";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
@@ -40,7 +40,7 @@ import { ROOT_SCREEN_OPTIONS } from "@/lib/root-screens";
 import { forgetJourneyConnectable } from "@/lib/journey-cache";
 import { getSelectedGatewayConnection, isHostedGatewayUrl, type GatewayConnection } from "@/lib/storage";
 import { authenticateBiometric } from "@/lib/auth";
-import { addNotificationResponseListener, handleNotificationTap } from "@/lib/push";
+import { NotificationRouter } from "@/components/NotificationRouter";
 import { AppStatusBar } from "@/components/AppStatusBar";
 import { StartupLoading, StartupScreen } from "@/components/StartupScreen";
 import { startMobileThemeController } from "@/lib/theme-preference";
@@ -399,31 +399,13 @@ function GatewayShell() {
             />
           </Stack>
           <ToastHost />
-          <NotificationRouter />
+          <NotificationRouter setGateway={setGateway} />
           <OtaUpdatePrompt />
           <AnalyticsScreenTracker />
         </CanonicalChatSessionProvider>
       </GatewayContext.Provider>
     </GestureHandlerRootView>
   );
-}
-
-function NotificationRouter() {
-  const router = useRouter();
-  const routerRef = useRef(router);
-
-  useEffect(() => {
-    routerRef.current = router;
-  }, [router]);
-
-  useEffect(() => {
-    const sub = addNotificationResponseListener((response) => {
-      handleNotificationTap(response, routerRef.current);
-    });
-    return () => sub.remove();
-  }, []);
-
-  return null;
 }
 
 const styles = StyleSheet.create((theme) => ({

@@ -3,74 +3,130 @@ import Constants from "expo-constants";
 import * as SecureStore from "expo-secure-store";
 import { Platform } from "react-native";
 import { z } from "zod/v4";
+import { CanonicalChatIdSchema, MatrixComputerHandleSchema, ThreadIdSchema } from "@matrix-os/contracts";
 
 import { updatePushRegistration } from "@/lib/requests/settings";
 
-// expo-router 57 renamed the exported `Router` type to `ImperativeRouter`.
-// A type-only `typeof import(...)` alias tracks the router shape without a
-// runtime import and stays correct across future renames.
-type Router = typeof import("expo-router").router;
-
-export const NotificationCategorySchema = z.enum(["message", "task", "cron", "security", "agent"]);
-export type NotificationCategory = z.infer<typeof NotificationCategorySchema>;
-
-const NotificationDataSchema = z.object({
-  category: NotificationCategorySchema.optional(),
-  taskId: z.unknown().optional(),
-  sessionId: z.unknown().optional(),
-  threadId: z.unknown().optional(),
-}).passthrough();
-
-export type NotificationData = z.input<typeof NotificationDataSchema>;
-
 const PUSH_TOKEN_KEY = "matrix_os_expo_push_token";
 
-Notifications.setNotificationHandler({
-  handleNotification: async () => ({
-    shouldShowAlert: true,
-    shouldPlaySound: true,
-    shouldSetBadge: true,
-    shouldShowBanner: true,
-    shouldShowList: true,
-  }),
+export const NotificationTargetSchema = z.discriminatedUnion("type", [
+  z.object({ type: z.literal("chat"), chatId: CanonicalChatIdSchema }),
+  z.object({ type: z.literal("thread"), threadId: ThreadIdSchema }),
+]);
+export type NotificationTarget = z.infer<typeof NotificationTargetSchema>;
+
+/**
+ * Where tapping a notification leads: the chat or coding-agent thread it is
+ * about, and the computer it came from when the payload names one. A null
+ * target opens the chat list.
+ */
+export interface NotificationDestination {
+  handle: string | null;
+  target: NotificationTarget | null;
+}
+
+// Spec 652's payload carries ids only, never a URL to open.
+const NotificationPayloadV1Schema = z.object({
+  v: z.literal(1),
+  notificationId: z.uuid(),
+  handle: MatrixComputerHandleSchema,
+  target: NotificationTargetSchema,
 });
 
-function parseNotificationData(data: unknown): z.infer<typeof NotificationDataSchema> {
-  const parsed = NotificationDataSchema.safeParse(data);
-  return parsed.success ? parsed.data : {};
-}
+// What gateways send until the notifications router: coding-agent pushes carry
+// `{ category: "agent", threadId, chatId: "coding-agents" }`, where `chatId`
+// names the push channel's own chat rather than a Matrix chat.
+const PreRouterPayloadSchema = z.object({
+  threadId: z.unknown().optional(),
+  chatId: z.unknown().optional(),
+});
 
-export function getRouteForNotification(data: unknown): string {
-  const notification = parseNotificationData(data);
+const CHAT_LIST: NotificationDestination = { handle: null, target: null };
 
-  switch (notification.category) {
-    case "task":
-      return "/(drawer)";
-    case "cron":
-      return "/(drawer)";
-    case "message":
-      return "/(drawer)";
-    case "security":
-      return "/(drawer)";
-    case "agent":
-      return "/(drawer)";
-    default:
-      return "/(drawer)";
+export function parseNotificationDestination(data: unknown): NotificationDestination {
+  if (typeof data === "object" && data !== null && "v" in data) {
+    const payload = NotificationPayloadV1Schema.safeParse(data);
+    return payload.success ? { handle: payload.data.handle, target: payload.data.target } : CHAT_LIST;
   }
+  const payload = PreRouterPayloadSchema.safeParse(data);
+  if (!payload.success) return CHAT_LIST;
+  const threadId = ThreadIdSchema.safeParse(payload.data.threadId);
+  if (threadId.success) return { handle: null, target: { type: "thread", threadId: threadId.data } };
+  const chatId = CanonicalChatIdSchema.safeParse(payload.data.chatId);
+  return chatId.success ? { handle: null, target: { type: "chat", chatId: chatId.data } } : CHAT_LIST;
 }
 
-export function handleNotificationTap(
-  response: Notifications.NotificationResponse,
-  router: Router,
-): void {
-  const data = response.notification.request.content.data ?? {};
-  const route = getRouteForNotification(data);
-  router.navigate(route as any);
+/** A tap on the notification itself, rather than one of its actions or a dismissal. */
+export function isNotificationTap(response: Notifications.NotificationResponse): boolean {
+  return response.actionIdentifier === Notifications.DEFAULT_ACTION_IDENTIFIER;
+}
+
+/** What is on screen that a notification could be about, and on which computer. */
+export type NotificationScreen =
+  | { kind: "chat"; handle: string | null; chatId: string }
+  /** A terminal tab, named `workspaceId:tabId` as the terminal screen names it. */
+  | { kind: "terminal"; handle: string | null; session: string };
+
+const SHOWN: Notifications.NotificationBehavior = {
+  shouldShowBanner: true,
+  shouldShowList: true,
+  shouldPlaySound: true,
+  shouldSetBadge: true,
+};
+const QUIET: Notifications.NotificationBehavior = {
+  shouldShowBanner: false,
+  shouldShowList: false,
+  shouldPlaySound: false,
+  shouldSetBadge: false,
+};
+
+export const defaultNotificationHandler: Notifications.NotificationHandler = {
+  handleNotification: async () => SHOWN,
+};
+
+// Until the shell's notification router takes over, every notification shows.
+Notifications.setNotificationHandler(defaultNotificationHandler);
+
+/**
+ * Shows a notification that arrives while the app is open, unless it is about
+ * the chat or thread already on screen. `threadTerminal` finds the terminal a
+ * coding-agent thread runs in; the answer must come within three seconds or
+ * the notification shows anyway.
+ */
+export function createNotificationHandler(input: {
+  screen: () => NotificationScreen | null;
+  threadTerminal: (threadId: string) => Promise<string | null>;
+}): Notifications.NotificationHandler {
+  return {
+    handleNotification: async (notification) => {
+      const destination = parseNotificationDestination(notification.request.content.data);
+      return (await isOnScreen(destination, input)) ? QUIET : SHOWN;
+    },
+  };
+}
+
+async function isOnScreen(
+  { handle, target }: NotificationDestination,
+  { screen, threadTerminal }: Parameters<typeof createNotificationHandler>[0],
+): Promise<boolean> {
+  const shown = screen();
+  if (!target || !shown) return false;
+  // Ids are per computer: a notification that names one is about this screen
+  // only when this screen is known to be on it.
+  if (handle !== null && shown.handle !== handle) return false;
+  if (target.type === "chat") return shown.kind === "chat" && shown.chatId === target.chatId;
+  if (shown.kind !== "terminal") return false;
+  try {
+    return (await threadTerminal(target.threadId)) === shown.session;
+  } catch (err: unknown) {
+    console.warn("[mobile] Notification thread lookup failed:", err instanceof Error ? err.message : "unknown");
+    return false;
+  }
 }
 
 export function addNotificationResponseListener(
   handler: (response: Notifications.NotificationResponse) => void,
-): Notifications.Subscription {
+): Notifications.EventSubscription {
   return Notifications.addNotificationResponseReceivedListener(handler);
 }
 

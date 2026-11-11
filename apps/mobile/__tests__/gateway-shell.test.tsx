@@ -60,9 +60,8 @@ jest.mock("@/lib/auth", () => ({
   authenticateBiometric: jest.fn(() => Promise.resolve(true)),
 }));
 
-jest.mock("@/lib/push", () => ({
-  addNotificationResponseListener: jest.fn(() => ({ remove: jest.fn() })),
-  handleNotificationTap: jest.fn(),
+jest.mock("@/components/NotificationRouter", () => ({
+  NotificationRouter: () => null,
 }));
 
 jest.mock("@/lib/theme-preference", () => ({

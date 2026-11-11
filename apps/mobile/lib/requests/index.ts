@@ -18,6 +18,7 @@ export {
   type InstalledApp,
 } from "./apps";
 export { fetchActiveComputer, fetchComputers } from "./computers";
+export { fetchThreadTerminalSession } from "./coding-agent-threads";
 export {
   AgentRequestError,
   archiveAgent,
