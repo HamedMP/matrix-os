@@ -4,22 +4,22 @@ import { describe, expect, it } from 'vitest';
 import { parse } from 'yaml';
 
 type Step = { name?: string; run?: string; uses?: string; if?: string; env?: Record<string, unknown>; with?: Record<string, unknown> };
-type Job = { 'timeout-minutes'?: number; needs?: string | string[]; 'runs-on': string; strategy?: { matrix?: Record<string, unknown> }; steps: Step[] };
+type Job = { 'timeout-minutes'?: number; needs?: string | string[]; 'runs-on': string; outputs?: Record<string, string>; strategy?: { matrix?: Record<string, unknown> }; steps: Step[] };
 const source = readFileSync(join(process.cwd(), '.github/workflows/ci.yml'), 'utf8');
 const workflow = parse(source) as { concurrency: Record<string, unknown>; jobs: Record<string, Job> };
 const scripts = JSON.parse(readFileSync(join(process.cwd(), 'package.json'), 'utf8')).scripts;
 const runs = (job: Job) => job.steps.map(step => step.run ?? '').join('\n');
 
 describe('fast CI preserves validation while removing serialized work', () => {
-  it('installs browsers on a pinned Ubuntu release supported by the locked Playwright toolchain', () => {
-    // Playwright 1.60.0 rejects Ubuntu 26.04 during dependency installation.
-    // Keep both real browser-install steps and the full E2E matrix on a stable
-    // supported image instead of allowing ubuntu-latest to change underneath it.
+  it('installs browsers on the prepared pool or a supported pinned Ubuntu release', () => {
+    // Browser installs must never fall through to ubuntu-latest's unsupported
+    // image. The pool selector and its actual emitted fallback are exercised
+    // by select-runner.test.ts; this checks every browser-install job is wired.
     const browserJobs = Object.values(workflow.jobs).filter(job =>
       job.steps.some(step => step.run?.includes('playwright install')),
     );
     expect(browserJobs).toContain(workflow.jobs.e2e);
-    for (const job of browserJobs) expect(['ubuntu-22.04', 'ubuntu-24.04']).toContain(job['runs-on']);
+    for (const job of browserJobs) expect(['ubuntu-22.04', 'ubuntu-24.04', '${{ needs.changes.outputs.browser_runner }}']).toContain(job['runs-on']);
   });
 
   it('bootstraps every Bun lane with the exact qualified version without API tag discovery', () => {
@@ -35,9 +35,9 @@ describe('fast CI preserves validation while removing serialized work', () => {
     }
   });
 
-  it('installs the real pattern scanner dependency before every unit shard', () => {
+  it('checks the real pattern scanner dependency before every unit shard', () => {
     const steps = workflow.jobs.unit.steps;
-    const scanner = steps.findIndex(step => step.run === 'sudo apt-get install -y ripgrep');
+    const scanner = steps.findIndex(step => step.run?.includes('rg --version'));
     const test = steps.findIndex(step => step.run?.startsWith('GITHUB_SHA="$UNIT_SOURCE_SHA" bun run test --'));
     expect(scanner).toBeGreaterThanOrEqual(0);
     expect(scanner).toBeLessThan(test);
@@ -95,10 +95,9 @@ describe('fast CI preserves validation while removing serialized work', () => {
     expect(workflow.jobs.e2e['timeout-minutes']).toBe(30);
   });
 
-  it('keeps Playwright E2E on a supported hosted Ubuntu image', () => {
-    // Playwright 1.60 rejects Chromium installation on the Ubuntu 26.04 image
-    // currently selected by ubuntu-latest, so this lane must remain explicit.
-    expect(workflow.jobs.e2e['runs-on']).toBe('ubuntu-24.04');
+  it('keeps the Playwright hosted fallback pinned to Ubuntu 24.04', () => {
+    expect(workflow.jobs.e2e['runs-on']).toBe('${{ needs.changes.outputs.browser_runner }}');
+    expect(workflow.jobs.changes.outputs?.browser_runner).toBe("${{ steps.runner.outputs.browser_runner || 'ubuntu-24.04' }}");
   });
 
   it('builds node-pty from source before E2E prerequisites', () => {
@@ -119,8 +118,8 @@ describe('fast CI preserves validation while removing serialized work', () => {
   });
 
   it('retains frozen installs and keyed Next and browser caches', () => {
-    // Only the unit shards are routed (to the runner pool); every other lane is pinned.
-    expect(source.match(/runs-on: \$\{\{/g)).toHaveLength(1);
+    // Docker-service and root-container jobs must stay hosted; exact pool job
+    // admission is covered by select-runner.test.ts.
     expect(workflow.jobs['funded-postgres']['runs-on']).toBe('ubuntu-latest');
     expect(workflow.jobs['funded-host-root']['runs-on']).toBe('ubuntu-latest');
     for (const id of ['shell-production-build', 'e2e']) {
