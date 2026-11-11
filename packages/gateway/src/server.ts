@@ -271,6 +271,7 @@ import { createManagedFeatureRestartCoordinator } from "./managed-feature-restar
 import { registerTerminalWebSocketRoutes } from "./server/terminal-ws-routes.js";
 import { registerTerminalEventWebSocket } from "./terminal-agent/events-ws.js";
 import { createTerminalAgentServices } from "./terminal-agent/services.js";
+import { createTerminalWorkspaceProjectAdmission } from "./shell/workspace-routes.js";
 import type { GatewayConfig, ServerMessage } from "./server/types.js";
 import { registerVoiceWebSocketRoutes } from "./server/voice-ws-routes.js";
 import {
@@ -337,7 +338,6 @@ export async function createGateway(config: GatewayConfig) {
     socketPath: process.env.MATRIX_TERMINAL_RUNTIME_SOCKET ?? "/run/matrix/terminal-runtime.sock",
   });
   const terminalLiveOwnership = createTerminalLiveOwnership();
-  const terminalAgentServices = createTerminalAgentServices({ runtime: terminalWorkspaceRuntime, homePath });
   const providerLoginTerminalRegistry = createProviderLoginTerminalRegistry(terminalWorkspaceRuntime);
   const nativeProviderProfileGuard = createNativeProviderProfileGuard({ homePath, registry: providerLoginTerminalRegistry });
   const workspaceSessionRuntimeBridge = createSessionRuntimeBridge();
@@ -886,6 +886,16 @@ export async function createGateway(config: GatewayConfig) {
   canonicalChatExecutionRoots = ownerDatabaseServices?.chatExecutionRoots ?? null;
   canonicalChatCollaborationGuard = ownerDatabaseServices?.chatCollaborationGuard ?? null;
   gatewayCollaboration = ownerDatabaseServices?.collaboration ?? null;
+  // After collaboration, so kernel terminal tools pass the same project fences as HTTP.
+  const terminalAgentServices = createTerminalAgentServices({
+    runtime: terminalWorkspaceRuntime,
+    homePath,
+    terminalOwnerIds: terminalRuntimeOwnerIds,
+    projectAdmission: createTerminalWorkspaceProjectAdmission({
+      runtime: terminalWorkspaceRuntime,
+      ...(gatewayCollaboration ? { projectOperationAdmission: gatewayCollaboration.projectOperationAdmission } : {}),
+    }),
+  });
   messagingRepository = ownerDatabaseServices?.messagingRepository ?? null;
 
   const trustedOsViewOwnerId = process.env.MATRIX_USER_ID?.trim();

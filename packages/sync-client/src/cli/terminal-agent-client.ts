@@ -21,7 +21,7 @@ export interface TerminalAgentClient {
   keys(ref: TerminalRef, keys: string[]): Promise<{ pressed: number }>;
   interrupt(ref: TerminalRef): Promise<TerminalInterruptOutput>;
   /** One server-side wait of at most 90 s; callers loop for longer waits. */
-  wait(ref: TerminalRef, input: { output?: string; timeoutMs: number }): Promise<TerminalWaitOutput>;
+  wait(ref: TerminalRef, input: { output?: string; seen?: number; timeoutMs: number }): Promise<TerminalWaitOutput>;
   templates(): Promise<Array<{ name: string; description: string }>>;
   run(input: Record<string, unknown>): Promise<Record<string, unknown>>;
   label(ref: TerminalRef, input: { set?: Record<string, string>; remove?: string[] }): Promise<Record<string, unknown>>;
@@ -61,6 +61,8 @@ export interface TerminalWaitOutput {
   status?: string;
   exitCode?: number | null;
   child?: TerminalRef;
+  /** How often the awaited output had appeared; passed back so one wait keeps one baseline. */
+  seen?: number;
 }
 
 export const TERMINAL_WAIT_REQUEST_MAX_MS = 90_000;
@@ -139,12 +141,13 @@ export function createTerminalAgentClient(options: {
       const timeoutMs = Math.min(Math.max(0, Math.floor(input.timeoutMs)), TERMINAL_WAIT_REQUEST_MAX_MS);
       const payload = await request(`${tabPath(ref)}/wait`, {
         method: "POST",
-        body: { timeoutMs, ...(input.output ? { output: input.output } : {}) },
+        body: { timeoutMs, ...(input.output ? { output: input.output } : {}), ...(input.seen !== undefined ? { seen: input.seen } : {}) },
       }, timeoutMs + 15_000);
       return {
         reason: typeof payload.reason === "string" ? payload.reason : "unknown",
         ...(typeof payload.status === "string" ? { status: payload.status } : {}),
         ...(typeof payload.exitCode === "number" || payload.exitCode === null ? { exitCode: payload.exitCode as number | null } : {}),
+        ...(typeof payload.seen === "number" ? { seen: payload.seen } : {}),
       };
     },
     async templates() {

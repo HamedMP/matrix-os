@@ -16,7 +16,11 @@ afterEach(async () => {
 
 type Status = "idle" | "working" | "done" | "blocked" | "error";
 
-async function harness(options: { statusAfterStart?: Status[]; template?: string } = {}) {
+async function harness(options: {
+  statusAfterStart?: Status[];
+  template?: string;
+  admitWorkspace?: <T>(workspaceId: string, operation: () => Promise<T>) => Promise<T>;
+} = {}) {
   const home = await mkdtemp(join(tmpdir(), "matrix-terminal-agents-"));
   roots.push(home);
   if (options.template) {
@@ -76,17 +80,18 @@ async function harness(options: { statusAfterStart?: Status[]; template?: string
       return { sent: true as const, heldMs: 0 };
     }),
   };
-  const registry = createTerminalAgentRegistry({ homePath: home });
+  const registry = createTerminalAgentRegistry({ homePath: home, now: () => new Date(now) });
   const agents = createTerminalAgents({
     runtime,
     verbs: verbs as never,
     status: statusSource,
     registry,
     templates: createTerminalTemplates({ homePath: home }),
+    ...(options.admitWorkspace ? { admitWorkspace: options.admitWorkspace } : {}),
     now: () => now,
     sleep: async (ms) => { now += ms; },
   });
-  return { home, agents, registry, tabs, statuses, createdCommands, sends, terminated, verbs };
+  return { home, agents, registry, tabs, statuses, createdCommands, sends, terminated, verbs, advance: (ms: number) => { now += ms; } };
 }
 
 const reviewer = `---
@@ -222,3 +227,64 @@ function createTerminalAgentsWithResolver(
     templates: createTerminalTemplates({ homePath: h.home }),
   });
 }
+
+// Fault detected (review of #3298): truncated tasks, oversized reports, children whose
+// record vanished, records pruned mid-run, and writes that bypass project fences.
+describe("terminal agents: limits, vanished children and admission", () => {
+  it("refuses a task that would not fit one send before starting anything", async () => {
+    const h = await harness({ template: reviewer });
+    await expect(h.agents.run({ name: "review", cwd: "", template: "reviewer", task: "x".repeat(8_200) }))
+      .rejects.toMatchObject({ code: "invalid_request" });
+    expect(h.createdCommands).toEqual([]);
+  });
+
+  it("refuses a report too long to fit with its envelope", async () => {
+    const h = await harness();
+    await expect(createTerminalAgentsWithResolver(h, async () => ({ workspaceId, tabId: parentId }))
+      .reportToParent({ caller: { sessionName: session, paneId: "9" }, text: "x".repeat(8_000) }))
+      .rejects.toMatchObject({ code: "invalid_request" });
+  });
+
+  it("reports a child whose record disappeared as exited", async () => {
+    const h = await harness();
+    const parent = { workspaceId, tabId: parentId };
+    const child = await h.agents.run({ name: "review", cwd: "", argv: ["sh"], parent });
+    h.statuses.set(child.ref.tabId, "working");
+    const waiting = h.agents.waitChildren(parent, { mode: "any", timeoutMs: 5_000 });
+    await h.registry.prune(new Set());
+    await expect(waiting).resolves.toEqual({ reason: "changed", child: child.ref, exited: true });
+  });
+
+  it("notes a removed child once, keeps a young record, and keeps the record while the note is owed", async () => {
+    const admitted: string[] = [];
+    const h = await harness({ admitWorkspace: async (workspace, operation) => { admitted.push(workspace); return operation(); } });
+    const parent = { workspaceId, tabId: parentId };
+    const child = await h.agents.run({ name: "review", cwd: "", argv: ["sh"], parent });
+    const state = new Map<string, string>();
+
+    h.tabs.delete(child.ref.tabId);
+    h.verbs.send.mockRejectedValueOnce(new (await import("../../packages/gateway/src/terminal-agent/verbs.js")).TerminalAgentVerbError("blocked"));
+    await h.agents.supervise(state);
+    // Refused while the parent was blocked: the record stays so the note can be retried.
+    h.advance(120_000);
+    await h.agents.supervise(state);
+    expect(h.sends.filter((send) => send.tabId === parentId).map((send) => send.text)).toEqual([
+      `<matrix from="${child.ref.tabId} ${child.ref.tabId}">exited</matrix>`,
+    ]);
+    expect(admitted.length).toBeGreaterThanOrEqual(2);
+    await h.agents.supervise(state);
+    await expect(h.registry.get(child.ref)).resolves.toBeUndefined();
+    expect(h.sends.filter((send) => send.tabId === parentId)).toHaveLength(1);
+  });
+
+  it("keeps the record of a tab created during a supervision pass", async () => {
+    const h = await harness();
+    const parent = { workspaceId, tabId: parentId };
+    const child = await h.agents.run({ name: "review", cwd: "", argv: ["sh"], parent });
+    // The tab is not listed yet, but its record is brand new.
+    h.tabs.delete(child.ref.tabId);
+    h.verbs.send.mockRejectedValueOnce(new Error("socket"));
+    await h.agents.supervise(new Map());
+    await expect(h.registry.get(child.ref)).resolves.toBeDefined();
+  });
+});

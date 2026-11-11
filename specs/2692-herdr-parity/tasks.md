@@ -39,7 +39,8 @@ where possible (hard limit 3000 additions / 50 files).
 
 ## Layer 4: agents
 
-- [x] T4.1 Labels + list filter.
+- [x] T4.1 Labels: set, remove, persisted per tab.
+- [ ] T4.1b Filter `matrix shell list` and the events stream by label, as `hc ls --label`. Deferred: follow-up issue linked from #3298.
 - [x] T4.2 Parent from the caller's pane (`ZELLIJ_SESSION_NAME` + `ZELLIJ_PANE_ID`, resolved by the runtime's `ResolvePane`); end-with-parent; `outliveParent`.
 - [x] T4.3 Child notes to parent (`<matrix from=…>`).
 - [x] T4.4 Templates from `~/agents/templates/`, first-message delivery, `firstMessage` persisted.

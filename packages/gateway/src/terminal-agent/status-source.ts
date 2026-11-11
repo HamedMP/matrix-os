@@ -7,7 +7,13 @@ export interface TerminalAgentStatusSource {
   /** Every tab's latest reported status, refreshed at most once per `ttlMs`. */
   list(): Promise<ReadonlyMap<string, TerminalAgentStatusEntry>>;
   get(ref: TerminalRef): Promise<TerminalAgentStatusEntry | undefined>;
+  /** When text was last sent into this tab by a terminal verb, if recently. */
+  sentAt?(ref: TerminalRef): number | undefined;
+  /** Record a send: the next read refreshes, and older reports describe the previous turn. */
+  noteSent?(ref: TerminalRef): void;
 }
+
+const MAX_SENT_TABS = 1_024;
 
 export function terminalRefKey(ref: TerminalRef): string {
   return `${ref.workspaceId}:${ref.tabId}`;
@@ -28,6 +34,8 @@ export function createTerminalAgentStatusSource(options: {
   let cached: { at: number; value: ReadonlyMap<string, TerminalAgentStatusEntry> } | null = null;
   let inFlight: Promise<ReadonlyMap<string, TerminalAgentStatusEntry>> | null = null;
   let warned = false;
+  // Bounded: least recently sent tabs drop out past MAX_SENT_TABS.
+  const sent = new Map<string, number>();
 
   async function load(): Promise<ReadonlyMap<string, TerminalAgentStatusEntry>> {
     if (!options.runtime.listAgentStatuses) return new Map();
@@ -56,6 +64,20 @@ export function createTerminalAgentStatusSource(options: {
     list,
     async get(ref) {
       return (await list()).get(terminalRefKey(ref));
+    },
+    sentAt(ref) {
+      return sent.get(terminalRefKey(ref));
+    },
+    noteSent(ref) {
+      const key = terminalRefKey(ref);
+      sent.delete(key);
+      sent.set(key, now());
+      while (sent.size > MAX_SENT_TABS) {
+        const oldest = sent.keys().next().value;
+        if (oldest === undefined) break;
+        sent.delete(oldest);
+      }
+      cached = null;
     },
   };
 }

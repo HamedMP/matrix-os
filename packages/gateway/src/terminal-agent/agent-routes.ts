@@ -14,7 +14,7 @@ import {
   terminalRuntimeOwnerAccess,
   type TerminalWorkspaceProjectAdmission,
 } from "../shell/workspace-routes.js";
-import { TerminalCallerSchema, TerminalLabelsSchema, type TerminalAgents } from "./agents.js";
+import { TERMINAL_REPORT_MAX_CHARS, TerminalCallerSchema, TerminalLabelsSchema, type TerminalAgents } from "./agents.js";
 import { MAX_TERMINAL_LABELS, TerminalLabelKeySchema } from "./registry.js";
 import type { TerminalTemplates } from "./templates.js";
 import { TerminalAgentVerbError, TERMINAL_SEND_TEXT_MAX_CHARS } from "./verbs.js";
@@ -37,7 +37,7 @@ const LabelSchema = z.object({
   set: TerminalLabelsSchema.optional(),
   remove: z.array(TerminalLabelKeySchema).max(MAX_TERMINAL_LABELS).optional(),
 }).strict();
-const ReportSchema = z.object({ caller: TerminalCallerSchema, text: z.string().min(1).max(TERMINAL_SEND_TEXT_MAX_CHARS) }).strict();
+const ReportSchema = z.object({ caller: TerminalCallerSchema, text: z.string().min(1).max(TERMINAL_REPORT_MAX_CHARS) }).strict();
 const ResolveSchema = z.object({ caller: TerminalCallerSchema }).strict();
 const WaitChildrenSchema = z.object({
   parent: TerminalRefSchema.optional(),

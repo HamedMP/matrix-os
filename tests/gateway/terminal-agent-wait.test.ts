@@ -114,4 +114,38 @@ describe("terminal wait", () => {
     const { waiter } = harness({ accessScope: "chat" });
     await expect(waiter.wait(ref, {})).rejects.toMatchObject({ code: "not_found" });
   });
+
+  // Fault detected: a script sends a task and waits, but the wait returns at once
+  // on the status the agent reported before it received the task.
+  it("ignores a status reported before the latest send until the agent answers or a grace period passes", async () => {
+    let now = 10_000;
+    let reportedAt = new Date(5_000).toISOString();
+    let status: "done" | "working" = "done";
+    const waiter = createTerminalWaiter({
+      runtime: {
+        listWorkspaces: async () => [{
+          id: workspaceId, scope: "main", canonicalSize: { cols: 80, rows: 24 }, status: "running", revision: 1,
+          createdAt: "2026-11-11T10:00:00.000Z", updatedAt: "2026-11-11T10:00:00.000Z",
+          tabs: [{ id: tabId, workspaceId, name: "t", cwd: "", status: "running", revision: 1, order: 0, accessScope: "owner",
+            createdAt: "2026-11-11T10:00:00.000Z", updatedAt: "2026-11-11T10:00:00.000Z" }],
+        }] as never,
+        getSnapshot: async () => undefined,
+      },
+      status: {
+        list: async () => new Map(),
+        get: async () => ({ ref, status, reportedAt, source: "hook" as const }),
+        sentAt: () => 9_000,
+      },
+      now: () => now,
+      sleep: async (ms) => {
+        now += ms;
+        // The agent picks the task up, works, then finishes.
+        if (now === 11_000) { status = "working"; reportedAt = new Date(now).toISOString(); }
+        if (now === 12_000) { status = "done"; reportedAt = new Date(now).toISOString(); }
+      },
+      pollMs: 500,
+    });
+    await expect(waiter.wait(ref, { timeoutMs: 30_000 })).resolves.toEqual({ reason: "stopped", status: "done" });
+    expect(now).toBe(12_000);
+  });
 });

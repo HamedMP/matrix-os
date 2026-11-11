@@ -11,6 +11,10 @@ export const TERMINAL_WAIT_MAX_MS = 90_000;
 export const TERMINAL_WAIT_DEFAULT_MS = 60_000;
 export const TERMINAL_WAIT_OUTPUT_MAX_CHARS = 256;
 const DEFAULT_POLL_MS = 500;
+// After a send, a report older than the send describes the previous turn. Herdr waits
+// for the turn the send started; an agent that never reports again counts as stopped
+// once this grace has passed.
+const SEND_TURN_GRACE_MS = 15_000;
 const MAX_WAITERS = 256;
 const MAX_WAITERS_PER_TAB = 16;
 
@@ -98,8 +102,12 @@ export function createTerminalWaiter(options: {
       if (input.output) {
         if (countOccurrences(await screenText(ref), input.output) > baseline) return { reason: "output" };
       } else {
-        lastStatus = (await options.status.get(ref))?.status;
-        if (lastStatus && lastStatus !== "working") return { reason: "stopped", status: lastStatus };
+        const entry = await options.status.get(ref);
+        lastStatus = entry?.status;
+        const sentAt = options.status.sentAt?.(ref);
+        const previousTurn = entry !== undefined && sentAt !== undefined
+          && Date.parse(entry.reportedAt) < sentAt && now() - sentAt < SEND_TURN_GRACE_MS;
+        if (lastStatus && lastStatus !== "working" && !previousTurn) return { reason: "stopped", status: lastStatus };
       }
       const remaining = deadline - now();
       if (remaining <= 0) {

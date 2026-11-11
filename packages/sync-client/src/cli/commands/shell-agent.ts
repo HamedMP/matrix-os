@@ -126,12 +126,15 @@ export async function waitUntil(
 ): Promise<TerminalWaitOutput> {
   const now = input.now ?? Date.now;
   const deadline = now() + input.totalMs;
+  let seen: number | undefined;
   for (;;) {
     const remaining = deadline - now();
     const result = await client.wait(ref, {
       timeoutMs: Math.max(0, Math.min(remaining, TERMINAL_WAIT_REQUEST_MAX_MS)),
       ...(input.output ? { output: input.output } : {}),
+      ...(seen !== undefined ? { seen } : {}),
     });
+    seen = result.seen ?? seen;
     // A server check-in is not the caller's timeout: keep waiting until ours runs out.
     if (result.reason !== "timeout" || deadline - now() <= 0) return result;
   }

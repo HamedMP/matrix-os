@@ -102,6 +102,8 @@ export function createTerminalAgentVerbs(options: {
   runtime: TerminalAgentVerbRuntime;
   inputActivity: TerminalInputActivity;
   agentStatus?: (ref: TerminalRef, tab: TerminalTab) => TerminalAgentStatus | undefined | Promise<TerminalAgentStatus | undefined>;
+  /** Told after every successful send, so a following wait waits for the new turn. */
+  onSent?: (ref: TerminalRef) => void;
   now?: () => number;
   sleep?: (ms: number) => Promise<void>;
   quietMs?: number;
@@ -190,6 +192,7 @@ export function createTerminalAgentVerbs(options: {
       // Newlines would submit line by line and tabs would trigger completion, so both paste.
       const paste = text.includes("\n") || text.includes("\t");
       await write(ref, current, `${paste ? `${PASTE_OPEN}${text}${PASTE_CLOSE}` : text}\r`);
+      options.onSent?.(ref);
       return { sent: true, heldMs };
     },
 
