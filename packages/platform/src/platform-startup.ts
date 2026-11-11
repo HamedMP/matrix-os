@@ -1138,6 +1138,7 @@ async function startPlatformServerWithCleanup(
   const atsBackgroundWorker = atsDb && backgroundWorkersEnabled ? startAtsBackgroundWorker(atsDb, appEnv) : undefined;
   registerCustomMcpStartupCleanup(async () => { await atsBackgroundWorker?.shutdown(); });
   const freeTierConfig = loadConfiguredFreeTier(appEnv);
+  const substrateRegistry = createPlatformSubstrateRegistry(db, containerSubstrate ? [containerSubstrate.substrate] : []);
   const app = createPlatformApp({
     accountDeletion,
     db,
@@ -1179,7 +1180,7 @@ async function startPlatformServerWithCleanup(
     sitesObjectStore,
     assertPrimaryStorageReady: primaryStorageGate?.assertReady,
     assertSitesStorageReady: sitesStorageGate?.assertReady,
-    substrateRegistry: createPlatformSubstrateRegistry(db, containerSubstrate ? [containerSubstrate.substrate] : []),
+    substrateRegistry,
     freeTier: createFreeTierRuntime({ db, config: freeTierConfig, ownerDatabases: containerSubstrate?.ownerDatabases }),
     env: appEnv,
   });
@@ -1280,6 +1281,7 @@ async function startPlatformServerWithCleanup(
     getRuntimeEntitlementDecision,
     getRuntimeEntitlementDecisionForUser,
     collaborationDirect: collaboration?.direct,
+    substrates: substrateRegistry,
   });
 }
 

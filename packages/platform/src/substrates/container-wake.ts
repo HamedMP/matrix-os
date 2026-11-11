@@ -1,10 +1,10 @@
 import type { Context } from 'hono';
 import type { RuntimeState } from '@matrix-os/contracts';
-import { getUserMachine } from '../database/user-machines.js';
 import type { PlatformDB, UserMachineRecord } from '../db.js';
 import { getVpsBootPage } from '../vps-boot-page.js';
 import type { SubstrateRegistry } from './registry.js';
-import type { EnsureRunningResult, RuntimeUpstream } from './types.js';
+import type { RuntimeUpstream } from './types.js';
+import { decideContainerWake } from './container-websocket.js';
 
 /**
  * Only an authenticated request from a container runtime's owner starts its
@@ -14,7 +14,6 @@ import type { EnsureRunningResult, RuntimeUpstream } from './types.js';
  * lifecycle's single-flight compare-and-set.
  */
 
-const ENSURE_RUNNING_TIMEOUT_MS = 15_000;
 const WAKING_RETRY_AFTER_SECONDS = '3';
 const BUSY_RETRY_AFTER_SECONDS = '30';
 
@@ -34,11 +33,6 @@ export interface ContainerWakeInput {
   logError?: (message: string, detail: Record<string, string>) => void;
 }
 
-function isOwnerRequest(input: ContainerWakeInput): boolean {
-  return input.identity.source === 'auth' && Boolean(input.identity.userId)
-    && input.identity.userId === input.machine.clerkUserId;
-}
-
 function stateResponse(input: ContainerWakeInput, state: RuntimeState, retryAfter: string | null): Response {
   const { c } = input;
   input.applyNoStoreHeaders(c);
@@ -47,11 +41,9 @@ function stateResponse(input: ContainerWakeInput, state: RuntimeState, retryAfte
   return c.html(getVpsBootPage({ status: state === 'waking' ? 'starting' : state }), 503);
 }
 
-function respondTo(input: ContainerWakeInput, result: Exclude<EnsureRunningResult, { state: 'running' }>): Response {
-  if (result.state === 'starting') return stateResponse(input, 'waking', WAKING_RETRY_AFTER_SECONDS);
-  if (result.state === 'busy') return stateResponse(input, 'busy', BUSY_RETRY_AFTER_SECONDS);
-  return stateResponse(input, 'failed', null);
-}
+const RETRY_AFTER: Record<'waking' | 'busy' | 'failed', string | null> = {
+  waking: WAKING_RETRY_AFTER_SECONDS, busy: BUSY_RETRY_AFTER_SECONDS, failed: null,
+};
 
 /**
  * Called after authorization and entitlement checks, before the upstream is
@@ -59,29 +51,13 @@ function respondTo(input: ContainerWakeInput, result: Exclude<EnsureRunningResul
  * substrate also passes through so routing reports it as unavailable.
  */
 export async function prepareContainerUpstream(input: ContainerWakeInput): Promise<ContainerWakeOutcome> {
-  const { machine } = input;
-  if (machine.substrate !== 'container') return { kind: 'proceed', machine };
-  const lookup = input.substrates.get('container');
-  if (!lookup.ok) return { kind: 'proceed', machine };
-  if (!isOwnerRequest(input)) {
-    if (input.substrates.resolveUpstream(machine, { path: '/' }).kind === 'upstream') return { kind: 'proceed', machine };
+  const decision = await decideContainerWake(input);
+  if (decision.kind === 'proceed') return decision;
+  if (decision.kind === 'unavailable') {
     input.applyNoStoreHeaders(input.c);
     return { kind: 'respond', response: input.c.json({ error: 'Matrix computer unavailable', code: 'runtime_unavailable' }, 503) };
   }
-  let result: EnsureRunningResult;
-  try {
-    result = await lookup.substrate.ensureRunning({
-      machineId: machine.machineId, handle: machine.handle, runtimeSlot: machine.runtimeSlot, generation: machine.generation,
-    }, AbortSignal.timeout(ENSURE_RUNNING_TIMEOUT_MS));
-  } catch (error: unknown) {
-    (input.logError ?? ((message, detail) => console.error(message, detail)))(
-      '[container-wake] ensure running failed', { cause: error instanceof Error ? error.name : 'unknown' });
-    result = { state: 'failed', code: 'provider_unavailable' };
-  }
-  if (result.state !== 'running') return { kind: 'respond', response: respondTo(input, result) };
-  const current = await getUserMachine(input.db, machine.machineId);
-  if (!current || current.deletedAt) return { kind: 'respond', response: respondTo(input, { state: 'failed', code: 'needs_recovery' }) };
-  return { kind: 'proceed', machine: current };
+  return { kind: 'respond', response: stateResponse(input, decision.state, RETRY_AFTER[decision.state]) };
 }
 
 /** Platform-to-runtime credentials are set last so a client header of the same name cannot replace them. */

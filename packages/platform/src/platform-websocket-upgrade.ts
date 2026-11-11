@@ -49,6 +49,9 @@ import { isRejectingWebSocketUpgrade, rejectWebSocketUpgrade, type WebSocketUpgr
 import { shouldVerifyCustomerVpsTls } from './customer-vps-tls.js';
 import { handleInternalGeminiLiveProxyUpgrade } from './gemini-live-proxy.js';
 import { isCollaborationWebSocketCandidate, parseRelaySocketPath } from './collaboration/relay.js';
+import { getActiveUserMachineByHandle } from './database/user-machines.js';
+import type { SubstrateRegistry } from './substrates/registry.js';
+import { decideContainerWake, relayContainerWebSocket } from './substrates/container-websocket.js';
 
 interface PlatformWebSocketTelemetry {
   capturePlatformEvent(event: MatrixTelemetryEvent, properties: Record<string, unknown>): void;
@@ -79,6 +82,8 @@ export interface RegisterPlatformWebSocketUpgradeHandlerOpts {
     runtimeSlot?: string,
     provisioningClass?: string,
   ): Promise<EntitlementAccessDecision>;
+  /** Container runtimes are woken and addressed through their substrate; absent, they are unavailable. */
+  substrates?: SubstrateRegistry;
   /** S05: runtime control-stream upgrade (`/internal/collaboration/control`); handled before session routing. */
   collaborationDirect?: {
     handleUpgrade(req: IncomingMessage, socket: Socket, head: Buffer): Promise<boolean>;
@@ -103,6 +108,7 @@ export function registerPlatformWebSocketUpgradeHandler(
     getRuntimeEntitlementDecision,
     getRuntimeEntitlementDecisionForUser,
     collaborationDirect,
+    substrates,
   } = opts;
 
   server.on('upgrade', async (req: IncomingMessage, socket, head) => {
@@ -276,11 +282,10 @@ export function registerPlatformWebSocketUpgradeHandler(
       runtimeSlot = authorityMachine.runtimeSlot;
       webSocketProxyPath = directUpgrade.upstreamPath;
     } else if (explicitVmRoute) {
-      const explicitMachine = await getRunningUserMachineByHandle(
-        db,
-        explicitVmRoute.handle,
-        explicitVmRoute.runtimeSlot,
-      );
+      // A stopped container is not running yet; the owner's upgrade below may wake it.
+      const explicitMachine = await getRunningUserMachineByHandle(db, explicitVmRoute.handle, explicitVmRoute.runtimeSlot)
+        ?? await getActiveUserMachineByHandle(db, explicitVmRoute.handle, explicitVmRoute.runtimeSlot)
+          .then((machine) => (machine?.substrate === 'container' ? machine : undefined));
       if (!explicitMachine || !canRouteMachineOnPreviewHost(host, explicitMachine)
         || (identity.userId && !canClerkUserAccessMachine(explicitMachine, identity.userId))) {
         refuse(404);
@@ -294,7 +299,9 @@ export function registerPlatformWebSocketUpgradeHandler(
     }
     if (!runningMachine && identity.userId) {
       requestedActiveMachine = await getAccessibleActiveUserMachineByClerkId(db, identity.userId, runtimeSlot);
-      if (!requestedActiveMachine) {
+      if (requestedActiveMachine?.substrate === 'container') {
+        runningMachine = requestedActiveMachine;
+      } else if (!requestedActiveMachine) {
         const handleMachine = await getRunningUserMachineByHandle(db, identity.handle);
         if (handleMachine && canClerkUserAccessMachine(handleMachine, identity.userId)) {
           runningMachine = handleMachine;
@@ -417,6 +424,23 @@ export function registerPlatformWebSocketUpgradeHandler(
           pathClass,
         });
         refuse(403);
+        return;
+      }
+      if (runningMachine.substrate === 'container') {
+        if (!substrates) { refuse(503); return; }
+        const wake = await decideContainerWake({ db, substrates, machine: runningMachine, identity });
+        if (wake.kind !== 'proceed') { refuse(503); return; }
+        const resolution = substrates.resolveUpstream(wake.machine, { path: webSocketProxyPath });
+        if (resolution.kind !== 'upstream' || !isSafeWebSocketUpgradePath(webSocketProxyPath)) {
+          refuse(resolution.kind === 'upstream' ? 400 : 503);
+          return;
+        }
+        relayContainerWebSocket({
+          req, socket: socket as Socket, head, upstream: resolution.upstream,
+          upstreamPath: stripWebSocketUpgradeToken(webSocketProxyPath),
+          forwardedHeaders: buildUpgradeHeaders(wake.machine.handle, true),
+          refuse, adoptUpstream, onResponded: () => { upstreamResponded = true; },
+        });
         return;
       }
       if (!runningMachine.publicIPv4) {
