@@ -108,7 +108,7 @@ beforeEach(() => {
   mockActiveChatId = null;
   mockGateway.computer = ALICE;
   mockGateway.isComputerPending = false;
-  notifications.getLastNotificationResponseAsync.mockResolvedValue(null);
+  notifications.getLastNotificationResponse.mockReturnValue(null);
   mockFetchTerminalSessions.mockResolvedValue([{ id: TERMINAL }]);
   mockFetchThreadTerminalSession.mockResolvedValue(TERMINAL);
 });
@@ -122,7 +122,7 @@ describe("tapping a notification while the app runs", () => {
     await waitFor(() => expect(mockShowChatScreen).toHaveBeenCalledWith(mockNavigation, mockRouter));
     expect(mockSelectChat).toHaveBeenCalledWith(CHAT_ID);
     expect(mockSelectChat.mock.invocationCallOrder[0]).toBeLessThan(mockShowChatScreen.mock.invocationCallOrder[0]);
-    expect(notifications.clearLastNotificationResponseAsync).toHaveBeenCalled();
+    expect(notifications.clearLastNotificationResponse).toHaveBeenCalled();
     expect(mockShowChatList).not.toHaveBeenCalled();
   });
 
@@ -173,7 +173,7 @@ describe("tapping a notification while the app runs", () => {
 
 describe("a notification that launched the app", () => {
   it("opens once the sign-in gate has handed over to the shell", async () => {
-    notifications.getLastNotificationResponseAsync.mockResolvedValue(chatTap());
+    notifications.getLastNotificationResponse.mockReturnValue(chatTap());
     mockSegments = [];
     const view = renderRouter();
     await act(async () => {});
@@ -184,11 +184,11 @@ describe("a notification that launched the app", () => {
 
     await waitFor(() => expect(mockShowChatScreen).toHaveBeenCalledTimes(1));
     expect(mockSelectChat).toHaveBeenCalledWith(CHAT_ID);
-    expect(notifications.clearLastNotificationResponseAsync).toHaveBeenCalled();
+    expect(notifications.clearLastNotificationResponse).toHaveBeenCalled();
   });
 
   it("waits for the computer to be known", async () => {
-    notifications.getLastNotificationResponseAsync.mockResolvedValue(chatTap());
+    notifications.getLastNotificationResponse.mockReturnValue(chatTap());
     mockGateway.isComputerPending = true;
     const view = renderRouter();
     await act(async () => {});
@@ -201,7 +201,7 @@ describe("a notification that launched the app", () => {
   });
 
   it("opens once when the listener reports the same tap", async () => {
-    notifications.getLastNotificationResponseAsync.mockResolvedValue(chatTap());
+    notifications.getLastNotificationResponse.mockReturnValue(chatTap());
     renderRouter();
     tapWhileRunning(chatTap());
 

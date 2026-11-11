@@ -57,8 +57,8 @@ export function NotificationRouter({ setGateway }: { setGateway: (gateway: Gatew
   const { session: sessionParam } = useGlobalSearchParams<{ session?: string | string[] }>();
   const queryClient = useQueryClient();
   const { activeChatId, selectChat } = useCanonicalChatSession();
-  const gateway = useActiveGateway();
-  const handle = gateway.computer?.handle ?? null;
+  const { computer, session: gatewaySession, userId, isComputerPending } = useActiveGateway();
+  const handle = computer?.handle ?? null;
 
   const screen = useMemo<NotificationScreen | null>(() => {
     if (activeChatId && isChatOnScreen(segments)) return { kind: "chat", handle, chatId: activeChatId };
@@ -68,10 +68,10 @@ export function NotificationRouter({ setGateway }: { setGateway: (gateway: Gatew
   }, [activeChatId, segments, sessionParam, handle]);
 
   const screenRef = useRef(screen);
-  const gatewaySessionRef = useRef(gateway.session);
+  const gatewaySessionRef = useRef(gatewaySession);
   useEffect(() => {
     screenRef.current = screen;
-    gatewaySessionRef.current = gateway.session;
+    gatewaySessionRef.current = gatewaySession;
   });
 
   useEffect(() => {
@@ -88,10 +88,9 @@ export function NotificationRouter({ setGateway }: { setGateway: (gateway: Gatew
 
   /** The computer a notification came from, switched to first when another one is on screen. */
   const gatewayFor = useCallback(async (wanted: string | null): Promise<GatewaySession | null> => {
-    const current = gateway.computer;
-    const session = current ? await gateway.session() : null;
-    if (!current || !session) return null;
-    if (wanted === null || wanted === current.handle) return session;
+    const session = computer ? await gatewaySession() : null;
+    if (!computer || !session) return null;
+    if (wanted === null || wanted === computer.handle) return session;
     const inventory = await fetchComputers(session.token);
     const matches = inventory.items.filter((computer) => computer.handle === wanted);
     // The account's own choice of computer outranks the phone's.
@@ -99,9 +98,9 @@ export function NotificationRouter({ setGateway }: { setGateway: (gateway: Gatew
       return null;
     }
     setGateway(await saveSelectedHostedComputer(matches[0]));
-    await queryClient.invalidateQueries({ queryKey: mobileQueryKeys.activeComputer(gateway.userId) });
+    await queryClient.invalidateQueries({ queryKey: mobileQueryKeys.activeComputer(userId) });
     return { token: session.token, gatewayUrl: `${HOSTED_GATEWAY_URL}${matches[0].gatewayPath}` };
-  }, [gateway, queryClient, setGateway]);
+  }, [computer, gatewaySession, userId, queryClient, setGateway]);
 
   const open = useCallback(async ({ handle: wanted, target }: NotificationDestination) => {
     try {
@@ -147,23 +146,27 @@ export function NotificationRouter({ setGateway }: { setGateway: (gateway: Gatew
 
   useEffect(() => {
     const subscription = addNotificationResponseListener(receive);
-    Notifications.getLastNotificationResponseAsync()
-      .then((response) => {
-        if (response) receive(response);
-      })
-      .catch((err: unknown) => warn("Launch notification unavailable", err));
+    try {
+      const launchTap = Notifications.getLastNotificationResponse();
+      if (launchTap) receive(launchTap);
+    } catch (err: unknown) {
+      warn("Launch notification unavailable", err);
+    }
     return () => subscription.remove();
   }, [receive]);
 
-  const ready = segments.length > 0 && !BEFORE_SHELL.has(segments[0]) && !gateway.isComputerPending;
+  const ready = segments.length > 0 && !BEFORE_SHELL.has(segments[0]) && !isComputerPending;
 
   useEffect(() => {
     const response = pendingRef.current;
     if (!ready || !response) return;
     pendingRef.current = null;
     // Opened once: the next launch does not open it again.
-    Notifications.clearLastNotificationResponseAsync()
-      .catch((err: unknown) => warn("Launch notification not cleared", err));
+    try {
+      Notifications.clearLastNotificationResponse();
+    } catch (err: unknown) {
+      warn("Launch notification not cleared", err);
+    }
     void open(parseNotificationDestination(response.notification.request.content.data));
   }, [ready, taps, open]);
 
