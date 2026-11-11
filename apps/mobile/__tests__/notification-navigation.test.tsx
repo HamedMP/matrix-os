@@ -62,6 +62,7 @@ const ROUTES = {
   "(drawer)/(tabs)/(apps)/_layout": { default: () => <Stack />, unstable_settings: appsSettings },
   "(drawer)/(tabs)/(apps)/apps": Empty,
   "(drawer)/(tabs)/(apps)/files": Empty,
+  "(drawer)/(tabs)/(apps)/integrations": Empty,
   "(drawer)/(tabs)/terminal": Empty,
   "(drawer)/(tabs)/settings": Empty,
   // Screens the app opens above the shell, in the root stack.
@@ -81,10 +82,14 @@ async function run(step: () => void) {
   });
 }
 
-/** Starts at the chat screen, then opens what the steps name, as the person would. */
+/**
+ * Starts at the chat screen, then opens what the steps name, as the person
+ * would. A first step starting with `link:` is the URL the app opened at instead.
+ */
 async function openApp(steps: string[]) {
-  app = await renderRouter(ROUTES, { initialUrl: "/(drawer)" });
-  for (const step of steps) {
+  const link = steps[0]?.startsWith("link:") ? steps[0].slice(5) : null;
+  app = await renderRouter(ROUTES, { initialUrl: link ?? "/(drawer)" });
+  for (const step of link ? steps.slice(1) : steps) {
     await run(() => (step.startsWith("push:") ? router.push(step.slice(5) as never) : router.navigate(step as never)));
   }
 }
@@ -113,6 +118,7 @@ const STARTS: [string, string[]][] = [
   ["the Terminal tab", ["/terminal"]],
   ["a terminal above the shell", ["/shared", `push:/terminal-session/${TERMINAL}`]],
   ["a settings page above the Agents tab", ["/shared", "/agents", "push:/settings-detail/account"]],
+  ["Connect Apps opened by a link, before the Chats tab was ever shown", ["link:/integrations"]],
 ];
 
 describe("showChatScreenFromRoot", () => {
@@ -138,22 +144,35 @@ describe("showChatScreenFromRoot", () => {
 });
 
 describe("showChatListFromRoot", () => {
-  it("shows the chat screen, then opens the side panel that lists the chats", async () => {
-    await openApp(["/agents", "push:/settings-detail/account"]);
-    const navigation = root.navigation!;
-    const sidePanel = (app.getRouterState() as State).routes[0].state!.routes[0].state!.key;
+  /** Records where the app was each time the side panel was asked to open. */
+  function watchSidePanel(navigation: RootNavigation) {
     const dispatch = navigation.dispatch.bind(navigation);
+    const openedAt: string[][] = [];
     // The stand-in side panel is a slot, which has no panel to open.
-    const opened = jest.spyOn(navigation, "dispatch").mockImplementation((action) => {
-      if ((action as { type: string }).type !== "OPEN_DRAWER") dispatch(action);
+    const spy = jest.spyOn(navigation, "dispatch").mockImplementation((action) => {
+      if ((action as { type: string }).type === "OPEN_DRAWER") openedAt.push([...app.getSegments()]);
+      else dispatch(action);
     });
+    return { openedAt, restore: () => spy.mockRestore() };
+  }
 
-    await run(() => showChatListFromRoot(navigation, router));
+  it.each(STARTS)("opens the side panel over the chat screen from %s", async (_start, steps) => {
+    await openApp(steps);
+    const sidePanel = watchSidePanel(root.navigation!);
+
+    await run(() => showChatListFromRoot(root.navigation!, router));
 
     expect(app.getSegments()).toEqual(CHAT_SCREEN);
     expect(rootStack()).toEqual(["(drawer)"]);
-    expect(opened).toHaveBeenCalledWith({ type: "OPEN_DRAWER", target: sidePanel });
-    opened.mockRestore();
+    // Asked from the chat screen, the request reaches the side panel above it;
+    // asked from a screen still closing, it reaches no navigator.
+    expect(sidePanel.openedAt).toEqual([CHAT_SCREEN]);
+
+    // Nothing is left waiting to open it again later.
+    await run(() => router.navigate("/apps" as never));
+    await run(() => showChatScreenFromRoot(root.navigation!, router));
+    expect(sidePanel.openedAt).toHaveLength(1);
+    sidePanel.restore();
   });
 });
 

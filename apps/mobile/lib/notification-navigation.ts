@@ -1,7 +1,7 @@
 import type { useNavigationContainerRef } from "expo-router";
 import { DrawerActions, StackActions } from "expo-router/react-navigation";
 
-import { CHATS_TAB_ROUTE, CHAT_SCREEN_HREF } from "@/lib/shell-routes";
+import { CHATS_TAB_ROUTE, CHAT_SCREEN_HREF, TABS_ROUTE } from "@/lib/shell-routes";
 
 // A notification is opened from the root layout, where any screen may be open:
 // a tab, a screen pushed inside one, or a screen the root stack shows above the
@@ -42,11 +42,45 @@ export function showChatScreenFromRoot(navigation: RootNavigation, router: Route
   router.dismissTo(CHAT_SCREEN_HREF as never);
 }
 
+/** The chat screen, as the routes focused from the root down name it. */
+const CHAT_SCREEN_ROUTES = [SHELL_ROUTE, TABS_ROUTE, CHATS_TAB_ROUTE, "index"];
+/**
+ * How long the side panel waits for the chat screen before giving up on
+ * opening. A Chats tab shown for the first time can take seconds to mount on
+ * a slow phone.
+ */
+const SIDE_PANEL_WAIT_MS = 10_000;
+
+function isChatScreenFocused(navigation: RootNavigation): boolean {
+  let state = rootStack(navigation);
+  for (const name of CHAT_SCREEN_ROUTES) {
+    const route = focusedRoute(state);
+    if (route?.name !== name) return false;
+    state = route.state;
+  }
+  return true;
+}
+
 /** Shows the chat screen with the side panel, which lists the chats, open over it. */
 export function showChatListFromRoot(navigation: RootNavigation, router: Router): void {
-  const sidePanel = rootStack(navigation)?.routes.find((route) => route.name === SHELL_ROUTE)?.state?.key;
+  // The request to open the side panel goes to the focused screen and climbs
+  // from there, so it is sent once the chat screen under the panel is focused.
+  const openSidePanel = () => navigation.dispatch(DrawerActions.openDrawer());
+  if (isChatScreenFocused(navigation)) {
+    openSidePanel();
+    return;
+  }
+  const stopWaiting = () => {
+    clearTimeout(timer);
+    unsubscribe();
+  };
+  const unsubscribe = navigation.addListener("state", () => {
+    if (!isChatScreenFocused(navigation)) return;
+    stopWaiting();
+    openSidePanel();
+  });
+  const timer = setTimeout(stopWaiting, SIDE_PANEL_WAIT_MS);
   showChatScreenFromRoot(navigation, router);
-  if (sidePanel) navigation.dispatch({ ...DrawerActions.openDrawer(), target: sidePanel });
 }
 
 /** Opens a terminal tab above the shell, closing any other screen open there first. */
