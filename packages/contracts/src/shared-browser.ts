@@ -10,20 +10,40 @@ export const SHARED_BROWSER_MAX_OWNED_TABS = 12;
 const Reference = z.string().min(1).max(128).regex(/^[A-Za-z0-9_-]+$/);
 const Observed = { observationId: Reference, ref: Reference };
 const Url = z.string().min(1).max(2048);
+const PublicContext = z.literal("public");
+const InputText = z.string().max(4000);
+const OptionValue = z.string().max(512);
+const WaitTimeout = z.number().int().min(1).max(10_000);
+const DocumentId = z.string().min(1).max(80).regex(/^[A-Za-z0-9][A-Za-z0-9_-]*$/);
 export const SharedBrowserActionSchema = z.discriminatedUnion("action", [
   z.object({ action: z.literal("status") }).strict(),
   z.object({ action: z.literal("tabs") }).strict(),
   z.object({ action: z.literal("snapshot") }).strict(),
   z.object({ action: z.literal("navigate"), url: Url }).strict(),
-  z.object({ action: z.literal("tab_new"), url: Url.optional(), context: z.literal("public").optional() }).strict(),
+  z.object({ action: z.literal("tab_new"), url: Url.optional(), context: PublicContext.optional() }).strict(),
   z.object({ action: z.literal("tab_switch"), targetId: Reference }).strict(),
   z.object({ action: z.literal("click"), ...Observed }).strict(),
-  z.object({ action: z.literal("type"), ...Observed, text: z.string().max(4000) }).strict(),
-  z.object({ action: z.literal("select"), ...Observed, value: z.string().max(512) }).strict(),
-  z.object({ action: z.literal("wait"), ...Observed, timeout: z.number().int().min(1).max(10_000).optional() }).strict(),
-  z.object({ action: z.literal("download"), ...Observed, documentId: z.string().min(1).max(80).regex(/^[A-Za-z0-9][A-Za-z0-9_-]*$/) }).strict(),
+  z.object({ action: z.literal("type"), ...Observed, text: InputText }).strict(),
+  z.object({ action: z.literal("select"), ...Observed, value: OptionValue }).strict(),
+  z.object({ action: z.literal("wait"), ...Observed, timeout: WaitTimeout.optional() }).strict(),
+  z.object({ action: z.literal("download"), ...Observed, documentId: DocumentId }).strict(),
 ]);
 export type SharedBrowserAction = z.infer<typeof SharedBrowserActionSchema>;
+
+/** The native MCP SDK only advertises object inputs. Validate the resulting
+ * envelope again with SharedBrowserActionSchema before dispatch. */
+export const SharedBrowserMcpActionInputSchema = z.object({
+  action: z.enum(SharedBrowserActionSchema.options.map(action => action.shape.action.value)),
+  url: Url.optional(),
+  context: PublicContext.optional(),
+  targetId: Reference.optional(),
+  observationId: Reference.optional(),
+  ref: Reference.optional(),
+  text: InputText.optional(),
+  value: OptionValue.optional(),
+  timeout: WaitTimeout.optional(),
+  documentId: DocumentId.optional(),
+}).strict();
 
 /** Keep model-facing action guidance identical across direct and MCP harnesses. */
 export const SHARED_BROWSER_TERMINAL_GUIDANCE = "If the tool says the Browser run ended, do not wait for or suggest Resume. Stop Browser calls in this run and report only verified results.";

@@ -46,3 +46,23 @@ it("fails closed on missing bearer or invalid port before creating any browser t
   expect(() => createSharedBrowserMcpServer({ gatewayPort: 4000, token: "" })).toThrow();
   expect(() => createSharedBrowserMcpServer({ gatewayPort: 0, token: "a".repeat(43) })).toThrow();
 });
+
+it("exposes public context in native discovery and still validates fields per action", async () => {
+  const fetcher = vi.fn(async () => Response.json({ success: true, targetId: "public-tab" }));
+  const server = createSharedBrowserMcpServer({ gatewayPort: 4000, token: "a".repeat(43), fetcher });
+  const client = new Client({ name: "public-browser-native-discovery", version: "1" });
+  const [a,b] = InMemoryTransport.createLinkedPair();
+  await Promise.all([server.connect(b), client.connect(a)]);
+  try {
+    const [tool] = (await client.listTools()).tools;
+    expect(tool?.inputSchema).toMatchObject({
+      type: "object", required: ["action"], properties: { context: { const: "public" }, action: { enum: expect.arrayContaining(["tab_new", "snapshot"]) } },
+    });
+    const args = { action: "tab_new", context: "public", url: "https://example.com/" };
+    await expect(client.callTool({ name: "shared_browser", arguments: args })).resolves.not.toHaveProperty("isError", true);
+    expect(fetcher).toHaveBeenCalledWith(expect.any(String), expect.objectContaining({ body: JSON.stringify({ action: "tab_new", url: args.url, context: "public" }) }));
+    const invalid = await client.callTool({ name: "shared_browser", arguments: { action: "snapshot", context: "public" } });
+    expect(invalid.isError).toBe(true);
+    expect(fetcher).toHaveBeenCalledOnce();
+  } finally { await client.close(); await server.close(); }
+});
