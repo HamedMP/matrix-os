@@ -59,8 +59,8 @@ describe("This Computer terminals", () => {
       "local-terminal:create": () => { terminals.push({ id: "t7", title: "Terminal", status: null }); return { status: "ready", id: "t7" }; },
     });
     render(<TerminalWindowApp />);
-    fireEvent.click(await screen.findByRole("button", { name: "New terminal" }));
-    fireEvent.click(screen.getByRole("button", { name: "Shell" }));
+    fireEvent.pointerDown(await screen.findByRole("button", { name: "New terminal" }), { button: 0, ctrlKey: false });
+    fireEvent.click(await screen.findByRole("menuitem", { name: "Shell" }));
     expect((await screen.findByTestId("terminal-view")).textContent).toBe("local:t7");
     expect(operator.invoke).toHaveBeenCalledWith("local-terminal:create", { cols: 100, rows: 30 });
   });
@@ -73,8 +73,8 @@ describe("This Computer terminals", () => {
       "local-terminal:create": () => new Promise((resolve) => { finishCreate = resolve; }),
     });
     render(<TerminalWindowApp />);
-    fireEvent.click(await screen.findByRole("button", { name: "New terminal" }));
-    fireEvent.click(screen.getByRole("button", { name: "Shell" }));
+    fireEvent.pointerDown(await screen.findByRole("button", { name: "New terminal" }), { button: 0, ctrlKey: false });
+    fireEvent.click(await screen.findByRole("menuitem", { name: "Shell" }));
     await waitFor(() => expect(finishCreate).toBeTypeOf("function"));
     fireEvent.click(screen.getByRole("button", { name: "zsh" }));
     expect((await screen.findByTestId("terminal-view")).textContent).toBe("local:t1");
@@ -230,8 +230,8 @@ describe("This Computer terminals", () => {
       "local-terminal:create": () => ({ status: "unavailable" }),
     });
     render(<TerminalWindowApp />);
-    fireEvent.click(await screen.findByRole("button", { name: "New terminal" }));
-    fireEvent.click(screen.getByRole("button", { name: "Shell" }));
+    fireEvent.pointerDown(await screen.findByRole("button", { name: "New terminal" }), { button: 0, ctrlKey: false });
+    fireEvent.click(await screen.findByRole("menuitem", { name: "Shell" }));
     expect(await screen.findByText("Couldn't start a terminal. Try again.")).toBeTruthy();
     expect(screen.getByRole("button", { name: "zsh" })).toBeTruthy();
     expect(screen.queryByTestId("terminal-view")).toBeNull();
@@ -264,8 +264,8 @@ describe("This Computer terminals", () => {
 
     listing = { status: "ready", terminals: [] };
     render(<TerminalWindowApp />);
-    fireEvent.click(await screen.findByRole("button", { name: "New terminal" }));
-    fireEvent.click(screen.getByRole("button", { name: "Shell" }));
+    fireEvent.pointerDown(await screen.findByRole("button", { name: "New terminal" }), { button: 0, ctrlKey: false });
+    fireEvent.click(await screen.findByRole("menuitem", { name: "Shell" }));
     expect(await screen.findByText("Too many terminals started at once. Try again in a moment.")).toBeTruthy();
     expect(screen.queryByTestId("terminal-view")).toBeNull();
   });
@@ -282,8 +282,8 @@ describe("This Computer agents and names", () => {
       "local-terminal:rename": () => { terminals[0] = { ...terminals[0]!, title: "review" }; return { ok: true }; },
     });
     render(<TerminalWindowApp />);
-    fireEvent.click(await screen.findByRole("button", { name: "New terminal" }));
-    fireEvent.click(screen.getByRole("button", { name: "Claude Code" }));
+    fireEvent.pointerDown(await screen.findByRole("button", { name: "New terminal" }), { button: 0, ctrlKey: false });
+    fireEvent.click(await screen.findByRole("menuitem", { name: "Claude Code" }));
     expect((await screen.findByTestId("terminal-view")).textContent).toBe("local:t9");
     expect(operator.invoke).toHaveBeenCalledWith("local-terminal:create", { cols: 100, rows: 30, agent: "claude" });
 
@@ -294,6 +294,32 @@ describe("This Computer agents and names", () => {
     expect(await screen.findByRole("button", { name: "review" })).toBeTruthy();
     expect(operator.invoke).toHaveBeenCalledWith("local-terminal:rename", { id: "t1", name: "review" });
     expect(operator.invoke.mock.calls.filter(([channel]) => channel === "local-terminal:rename")).toHaveLength(1);
+  });
+
+  // Fault detected (review of #3300): the open pane kept the old name after a rename.
+  it("keeps the new name on the open terminal after it ends", async () => {
+    let terminals = [{ id: "t1", title: "zsh", status: null as null }];
+    installOperator({
+      "local-terminal:list": () => ({ status: "ready", terminals: [...terminals] }),
+      "local-terminal:rename": () => { terminals = [{ ...terminals[0]!, title: "review" }]; return { ok: true }; },
+    });
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      render(<TerminalWindowApp />);
+      fireEvent.click(await screen.findByRole("button", { name: "zsh" }));
+      fireEvent.click(screen.getByRole("button", { name: "Rename zsh" }));
+      const input = screen.getByRole("textbox", { name: "Terminal name" });
+      fireEvent.change(input, { target: { value: "review" } });
+      fireEvent.keyDown(input, { key: "Enter" });
+      expect(await screen.findByRole("button", { name: "review" })).toBeTruthy();
+      // The program exits: the next listing no longer has it.
+      terminals = [];
+      await act(async () => { await vi.advanceTimersByTimeAsync(3_100); });
+      const list = screen.getByRole("list", { name: "This Computer terminals" });
+      await waitFor(() => expect(within(list).getByText("ended")).toBeTruthy());
+      expect(within(list).getByText("review")).toBeTruthy();
+      expect(within(list).queryByText("zsh")).toBeNull();
+    } finally { vi.useRealTimers(); }
   });
 });
 

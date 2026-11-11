@@ -351,6 +351,12 @@ function useTerminalWindow() {
       clearActive();
       setLocalOpen({ id, title: localTerminals.find((terminal) => terminal.id === id)?.title ?? "Terminal" });
     },
+    // The open pane keeps the new name too, including once its program exits.
+    renameLocal: (id: string, name: string) => {
+      void local.rename(id, name).then((renamed) => {
+        if (renamed) setLocalOpen((current) => (current?.id === id ? { ...current, title: name } : current));
+      });
+    },
     // The pane stays until the trusted core confirms the terminal ended.
     endLocal: (id: string) => {
       void local.end(id).then((ended) => { if (ended) setLocalOpen((current) => (current?.id === id ? null : current)); });
@@ -388,7 +394,7 @@ function LocalMachine({ view }: { view: TerminalWindow }) {
       </button>
       {open ? (
         <LocalTabs state={local.state} activeId={view.localActive} ended={view.endedLocal} onDismissEnded={view.dismissEndedLocal} creating={local.creating} notice={local.notice} onOpen={view.openLocal}
-          onCreate={view.createLocal} onRename={(id, name) => { void local.rename(id, name); }}
+          onCreate={view.createLocal} onRename={view.renameLocal}
           onEnd={view.endLocal} onRetry={() => { void local.refresh(); }} />
       ) : null}
     </li>
