@@ -257,6 +257,13 @@ export function createSessionRoutingMiddleware(opts: CreateSessionRoutingMiddlew
     logRouteError,
   } = opts;
 
+  function redirectToHostedRuntimeManager(c: Context): Response {
+    applyNoStoreHeaders(c);
+    c.header('Referrer-Policy', 'no-referrer');
+    // Registered previews serve a worktree. The hosted account manager owns the account inventory.
+    return c.redirect(new URL('/runtime', appOrigin({})).href, 302);
+  }
+
   async function proxyAuthShell(
     c: Context,
     host: string,
@@ -579,6 +586,13 @@ export function createSessionRoutingMiddleware(opts: CreateSessionRoutingMiddlew
     }
 
     const explicitVmRoute = isAppDomain ? readExplicitVmRoute(path) : null;
+    const registeredRuntimeManager = Boolean(registeredRuntimeInstance && isAppDomain
+      && (explicitVmRoute?.upstreamPath ?? path) === '/runtime');
+    if (registeredRuntimeManager && c.req.method !== 'GET' && c.req.method !== 'HEAD') {
+      applyNoStoreHeaders(c);
+      c.header('Allow', 'GET, HEAD');
+      return c.text('Method Not Allowed', 405);
+    }
     const verifiedAssetSlot = explicitVmRoute && verifiedExplicitVmAppAssetSlot({
       method: c.req.method,
       rawUrl: c.req.url,
@@ -691,6 +705,11 @@ export function createSessionRoutingMiddleware(opts: CreateSessionRoutingMiddlew
 
     // No session/JWT -- serve Clerk auth directly from the platform.
     if (!identity) {
+      if (registeredRuntimeManager) {
+        if (!explicitVmRoute) return redirectToHostedRuntimeManager(c);
+        applyNoStoreHeaders(c);
+        return c.text('Unauthorized', 401);
+      }
       if (registeredBrowserUrl && !registeredBrowserUrl.search && isDevstackPreviewRoot(registeredBrowserUrl.pathname)) {
         applyNoStoreHeaders(c);
         return c.redirect(`/sign-in?redirect_url=${encodeURIComponent(registeredBrowserUrl.pathname)}`, 302);
@@ -899,7 +918,7 @@ export function createSessionRoutingMiddleware(opts: CreateSessionRoutingMiddlew
       userId: identity.userId,
       identitySource: identity.source,
     });
-    if (servePlatformRuntimeShell) {
+    if (servePlatformRuntimeShell && !registeredRuntimeManager) {
       return proxyAuthShell(c, host, { redirectToBillingOnFailure: false });
     }
 
@@ -910,6 +929,7 @@ export function createSessionRoutingMiddleware(opts: CreateSessionRoutingMiddlew
       applyNoStoreHeaders(c);
       return c.text('Matrix OS computer unavailable', 404);
     }
+    if (registeredRuntimeManager && registeredEndpoint) return redirectToHostedRuntimeManager(c);
     const upstreamPath = registeredEndpoint && explicitVmRoute ? explicitVmRoute.upstreamPath : path;
 
     let runtimeSlot = identity.runtimeSlot ?? requestRuntimeSlot;
