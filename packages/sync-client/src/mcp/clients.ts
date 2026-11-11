@@ -119,6 +119,7 @@ export interface McpTerminalRef { workspaceId: string; tabId: string }
 // for a person's draft at most 30 s and waits 45 s for the answer.
 const TERMINAL_SEND_MAX_HOLD_MS = 30_000;
 const TERMINAL_SEND_TIMEOUT_MS = 45_000;
+const TERMINAL_RUN_READY_TIMEOUT_MS = 25_000;
 const terminalTabPath = (ref: McpTerminalRef) =>
   `/api/terminal/workspaces/${encodeURIComponent(ref.workspaceId)}/tabs/${encodeURIComponent(ref.tabId)}`;
 
@@ -306,8 +307,10 @@ export function createMcpGatewayClient(
     interruptTerminalTab: (ref) => request(`${terminalTabPath(ref)}/interrupt`, { method: "POST", body: "{}" }),
     listTerminalTemplates: () => request("/api/terminal/templates"),
     // A template launch waits up to 60 s for the agent before sending its first task.
+    // The gateway waits at most 25 s for a template's agent to be ready, so the launch
+    // answers inside hosted MCP's 50 s request limit (firstMessage says if the task went out).
     runTerminalAgent: (input) => request("/api/terminal/agents/run", {
-      method: "POST", body: JSON.stringify(input),
+      method: "POST", body: JSON.stringify({ ...input, readyTimeoutMs: TERMINAL_RUN_READY_TIMEOUT_MS }),
     }, { timeoutMs: TERMINAL_SEND_TIMEOUT_MS }),
     labelTerminalTab: (ref, input) => request(`${terminalTabPath(ref)}/labels`, {
       method: "PATCH", body: JSON.stringify(input),

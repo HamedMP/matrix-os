@@ -7,8 +7,12 @@ import type { TerminalAgentStatusSource } from "./status-source.js";
 import { terminalRefKey } from "./status-source.js";
 import type { TerminalTemplates } from "./templates.js";
 import { TERMINAL_SEND_TEXT_MAX_CHARS, TerminalAgentVerbError, type TerminalAgentStatus, type TerminalAgentVerbs } from "./verbs.js";
+import { TerminalWaitCapacityError } from "./wait.js";
 
 const READY_TIMEOUT_MS = 60_000;
+// Child waits each poll the registry and runtime; bound them like single-tab waits.
+const MAX_CHILD_WAITS = 64;
+const MAX_CHILD_WAITS_PER_PARENT = 4;
 const READY_POLL_MS = 500;
 const SCREEN_SETTLE_MS = 3_000;
 const MAX_FIRST_MESSAGE_CHARS = TERMINAL_SEND_TEXT_MAX_CHARS;
@@ -52,6 +56,8 @@ export interface TerminalRunInput {
   noParent?: boolean;
   outliveParent?: boolean;
   labels?: Record<string, string>;
+  /** Longest wait for the agent to be ready for its task (1 to 60 s; default 60 s). */
+  readyTimeoutMs?: number;
 }
 
 export interface TerminalRunResult {
@@ -115,11 +121,11 @@ export function createTerminalAgents(options: {
   }
 
   /** Wait until a just-started agent can take input, then send its first message once. */
-  async function deliverFirstMessage(ref: TerminalRef, text: string): Promise<TerminalFirstMessage> {
+  async function deliverFirstMessage(ref: TerminalRef, text: string, readyTimeoutMs: number): Promise<TerminalFirstMessage> {
     const started = now();
     let screen = await screenText(ref);
     let screenSince = now();
-    while (now() - started < READY_TIMEOUT_MS) {
+    while (now() - started < readyTimeoutMs) {
       const tab = await findTab(ref);
       if (!tab || tab.status === "exited" || tab.status === "failed") return { sent: false, reason: "finished" };
       const status = (await options.status.get(ref))?.status;
@@ -146,6 +152,54 @@ export function createTerminalAgents(options: {
       await sleep(READY_POLL_MS);
     }
     return { sent: false, reason: "not_ready" };
+  }
+
+  // Child waits in progress: bounded, released when each wait ends.
+  const childWaits = new Map<string, number>();
+  let childWaitTotal = 0;
+
+  async function waitForChildren(parent: TerminalRef, input: { mode: "any" | "all"; timeoutMs: number; signal?: AbortSignal }): Promise<TerminalChildrenWaitResult> {
+    const deadline = now() + input.timeoutMs;
+    const snapshot = async () => {
+      const children = await options.registry.children(parent);
+      const statuses = await options.status.list();
+      const facts = new Map<string, { ref: TerminalRef; status?: TerminalAgentStatus; live: boolean }>();
+      for (const child of children) {
+        const tab = await findTab(child.ref);
+        const live = Boolean(tab && tab.status !== "exited" && tab.status !== "failed");
+        const entry = statuses.get(terminalRefKey(child.ref));
+        // A report older than the child's latest task belongs to the previous turn.
+        const sentAt = options.status.sentAt?.(child.ref);
+        const previousTurn = entry !== undefined && sentAt !== undefined
+          && Date.parse(entry.reportedAt) < sentAt && now() - sentAt < SEND_TURN_GRACE_MS;
+        const status = previousTurn ? "working" : entry?.status;
+        facts.set(terminalRefKey(child.ref), { ref: child.ref, live, ...(status ? { status } : {}) });
+      }
+      return facts;
+    };
+    const initial = await snapshot();
+    if (initial.size === 0) return { reason: "none" };
+    for (;;) {
+      if (input.signal?.aborted) return { reason: "timeout" };
+      const current = await snapshot();
+      if (input.mode === "all") {
+        // A child without status counts as working until it exits.
+        const working = [...current.values()].some((child) => child.live && (child.status === undefined || child.status === "working"));
+        if (!working) return { reason: "idle" };
+      } else {
+        for (const [key, before] of initial) {
+          const child = current.get(key);
+          // A child whose record is gone was removed: that is its exit.
+          if (!child) return { reason: "changed", child: before.ref, exited: true };
+          if (before.live && !child.live) return { reason: "changed", child: child.ref, exited: true };
+          if (child.status !== before.status && child.status !== "working") {
+            return { reason: "changed", child: child.ref, ...(child.status ? { status: child.status } : {}) };
+          }
+        }
+      }
+      if (now() >= deadline) return { reason: "timeout" };
+      await sleep(Math.min(READY_POLL_MS * 2, Math.max(1, deadline - now())));
+    }
   }
 
   return {
@@ -188,7 +242,9 @@ export function createTerminalAgents(options: {
         ...(template ? { template: template.name } : {}),
       }));
       if (!wrapped) return { ref, tab, ...(parent ? { parent } : {}) };
-      const firstMessage = await deliverFirstMessage(ref, wrapped);
+      // A caller with its own request deadline (hosted MCP) shortens the readiness wait.
+      const readyTimeoutMs = Math.min(READY_TIMEOUT_MS, Math.max(1_000, input.readyTimeoutMs ?? READY_TIMEOUT_MS));
+      const firstMessage = await deliverFirstMessage(ref, wrapped, readyTimeoutMs);
       await options.registry.upsert(ref, (current) => ({ ...current, firstMessage }));
       return { ref, tab, ...(parent ? { parent } : {}), firstMessage };
     },
@@ -228,49 +284,22 @@ export function createTerminalAgents(options: {
     },
 
     /** Herdr's `wait --children any|all` for one parent. */
-    async waitChildren(parent: TerminalRef, input: { mode: "any" | "all"; timeoutMs: number; signal?: AbortSignal }): Promise<TerminalChildrenWaitResult> {
-      const deadline = now() + input.timeoutMs;
-      const snapshot = async () => {
-        const children = await options.registry.children(parent);
-        const statuses = await options.status.list();
-        const facts = new Map<string, { ref: TerminalRef; status?: TerminalAgentStatus; live: boolean }>();
-        for (const child of children) {
-          const tab = await findTab(child.ref);
-          const live = Boolean(tab && tab.status !== "exited" && tab.status !== "failed");
-          const entry = statuses.get(terminalRefKey(child.ref));
-          // A report older than the child's latest task belongs to the previous turn.
-          const sentAt = options.status.sentAt?.(child.ref);
-          const previousTurn = entry !== undefined && sentAt !== undefined
-            && Date.parse(entry.reportedAt) < sentAt && now() - sentAt < SEND_TURN_GRACE_MS;
-          const status = previousTurn ? "working" : entry?.status;
-          facts.set(terminalRefKey(child.ref), { ref: child.ref, live, ...(status ? { status } : {}) });
-        }
-        return facts;
-      };
-      const initial = await snapshot();
-      if (initial.size === 0) return { reason: "none" };
-      for (;;) {
-        if (input.signal?.aborted) return { reason: "timeout" };
-        const current = await snapshot();
-        if (input.mode === "all") {
-          // A child without status counts as working until it exits.
-          const working = [...current.values()].some((child) => child.live && (child.status === undefined || child.status === "working"));
-          if (!working) return { reason: "idle" };
-        } else {
-          for (const [key, before] of initial) {
-            const child = current.get(key);
-            // A child whose record is gone was removed: that is its exit.
-            if (!child) return { reason: "changed", child: before.ref, exited: true };
-            if (before.live && !child.live) return { reason: "changed", child: child.ref, exited: true };
-            if (child.status !== before.status && child.status !== "working") {
-              return { reason: "changed", child: child.ref, ...(child.status ? { status: child.status } : {}) };
-            }
-          }
-        }
-        if (now() >= deadline) return { reason: "timeout" };
-        await sleep(Math.min(READY_POLL_MS * 2, Math.max(1, deadline - now())));
+    waitChildren(parent: TerminalRef, input: { mode: "any" | "all"; timeoutMs: number; signal?: AbortSignal }): Promise<TerminalChildrenWaitResult> {
+      const key = terminalRefKey(parent);
+      const forParent = childWaits.get(key) ?? 0;
+      if (childWaitTotal >= MAX_CHILD_WAITS || forParent >= MAX_CHILD_WAITS_PER_PARENT) {
+        return Promise.reject(new TerminalWaitCapacityError());
       }
+      childWaitTotal += 1;
+      childWaits.set(key, forParent + 1);
+      return waitForChildren(parent, input).finally(() => {
+        childWaitTotal -= 1;
+        const left = (childWaits.get(key) ?? 1) - 1;
+        if (left <= 0) childWaits.delete(key);
+        else childWaits.set(key, left);
+      });
     },
+
 
     /**
      * One supervision pass: end children whose parent ended (unless they outlive it),

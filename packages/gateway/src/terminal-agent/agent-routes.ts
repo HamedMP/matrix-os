@@ -18,7 +18,7 @@ import { TERMINAL_REPORT_MAX_CHARS, TerminalCallerSchema, TerminalLabelsSchema, 
 import { MAX_TERMINAL_LABELS, TerminalLabelKeySchema } from "./registry.js";
 import type { TerminalTemplates } from "./templates.js";
 import { TerminalAgentVerbError, TERMINAL_SEND_TEXT_MAX_CHARS } from "./verbs.js";
-import { TERMINAL_WAIT_MAX_MS } from "./wait.js";
+import { TERMINAL_WAIT_MAX_MS, TerminalWaitCapacityError } from "./wait.js";
 
 const RunSchema = z.object({
   projectId: ProjectIdSchema.optional(),
@@ -32,6 +32,7 @@ const RunSchema = z.object({
   noParent: z.boolean().optional(),
   outliveParent: z.boolean().optional(),
   labels: TerminalLabelsSchema.optional(),
+  readyTimeoutMs: z.number().int().min(1_000).max(60_000).optional(),
 }).strict().refine((input) => !(input.argv && input.template), { message: "Use argv or template, not both" });
 const LabelSchema = z.object({
   set: TerminalLabelsSchema.optional(),
@@ -138,6 +139,7 @@ function refFrom(c: Context) {
 
 function failure(c: Context, error: unknown) {
   if (error instanceof z.ZodError || error instanceof SyntaxError) return c.json({ error: "Invalid request" }, 400);
+  if (error instanceof TerminalWaitCapacityError) return c.json({ error: "terminal_capacity_reached" }, 429);
   if (error instanceof TerminalAgentVerbError) {
     if (error.code === "blocked") return c.json({ error: "terminal_agent_blocked" }, 409);
     if (error.code === "finished") return c.json({ error: "terminal_finished" }, 409);
