@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { SHARED_BROWSER_MAX_OWNED_TABS, SharedBrowserActionSchema, type SharedBrowserAction, type SharedBrowserActionResult } from '@matrix-os/contracts';
-import { SharedBrowserError, type SharedBrowserDriver } from './broker.js';
+import { SharedBrowserError, type SharedBrowserDriver, type SharedBrowserDriverResult } from './broker.js';
 import { BrowserCdpMissingObjectError, BrowserCdpMissingTargetError, connectBrowserCdp, type BrowserCdpClient, type CdpConnectOptions, type CdpEvent } from './cdp-client.js';
 import { CURSOR_ACTION_FUNCTION, CLEAR_CURSOR_FUNCTION } from './cdp-cursor.js';
 import { ACTION_FUNCTION, SNAPSHOT_FUNCTION } from './cdp-dom.js';
@@ -8,6 +8,8 @@ import { collectChromeDownload, cleanupDownloadTemps } from './cdp-downloads.js'
 import { validateBrowserUrl, type BrowserResolver } from './url-policy.js';
 
 interface Observation { id: string; document: string; frameId: string; contextId: number; url: string; refs: Set<string>; generation: number }
+type HandoffTrigger = 'malformed_attachment' | 'session_limit' | 'duplicate_detach_failed' | 'unsupported_target'
+  | 'already_running' | 'popup_limit' | 'setup_failed' | 'transport_disconnected' | 'unexpected_download';
 export function createSharedBrowserCdpDriver(options: CdpConnectOptions & { homePath: string; resolveHost?: BrowserResolver }): SharedBrowserDriver {
   let client: BrowserCdpClient | undefined, connecting: Promise<BrowserCdpClient> | undefined;
   let targetId: string | undefined, sessionId: string | undefined, observation: Observation | undefined;
@@ -20,7 +22,8 @@ export function createSharedBrowserCdpDriver(options: CdpConnectOptions & { home
   const childJobs = new Set<Promise<void>>(); // <=16 bounded initializations/duplicate detaches, settlement/close eviction.
   const blockedDownloadJobs = new Set<Promise<void>>(); // <=8 denied download cancellations, settlement/close eviction.
   const intentionalDetach = new Set<string>(); // <=17 current sessions; command settlement eviction.
-  let handoffRequired = false, collectingDownload = false;
+  let handoffRequired: 'related_target' | 'unexpected_download' | undefined;
+  let collectingDownload = false;
   let unsubscribe: (() => unknown) | undefined;
   let maintenance: ReturnType<typeof setInterval> | undefined;
   const report = (error: unknown) => console.warn('[shared-browser] Chrome operation unavailable', error instanceof SharedBrowserError ? error.code : 'operation_failed');
@@ -62,7 +65,19 @@ export function createSharedBrowserCdpDriver(options: CdpConnectOptions & { home
     if (!owned.delete(id)) return;
     if (targetId === id) { cursorDocument=undefined;clearingCursor=clearingCursor.catch(report);targetId = undefined; sessionId = undefined; invalidateObservation(); }
   };
-  const handoff = (): SharedBrowserActionResult & { handoffRequested: true } => ({ success: false, handoffRequested: true, targetId, elements: [], content: 'The owner must take over Chrome and review this page before automation continues. A related browser target could not be safely controlled.' });
+  function requireHandoff(trigger: HandoffTrigger, targetType?: unknown) {
+    if (!handoffRequired) {
+      const type = typeof targetType === 'string' && ['page', 'iframe', 'worker', 'service_worker', 'shared_worker'].includes(targetType)
+        ? targetType : 'other';
+      console.warn('[shared-browser] Chrome handoff required', trigger, type);
+      handoffRequired = trigger === 'unexpected_download' ? 'unexpected_download' : 'related_target';
+    }
+    invalidateObservation();
+  }
+  const handoff = (content: string): SharedBrowserDriverResult => ({ success: false, handoffRequested: true, targetId, elements: [], content });
+  const pendingHandoff = (): SharedBrowserDriverResult => handoffRequired === 'related_target'
+    ? { ...handoff('The owner must take over Chrome and review this page before automation continues. A related browser target could not be safely controlled.'), relatedTargetHandoff: true }
+    : handoff('The owner must take over Chrome and review the unexpected download before automation continues.');
   const expireTargets = () => {
     for (const [id, touched] of owned) if (Date.now() - touched >= 24 * 60 * 60_000) {
       owned.delete(id); if (targetId === id) { targetId = undefined; invalidateObservation(); }
@@ -110,14 +125,17 @@ export function createSharedBrowserCdpDriver(options: CdpConnectOptions & { home
   }
   function related(event: CdpEvent) {
     const { sessionId: child, targetInfo: info, waitingForDebugger } = event.params;
-    if (typeof child !== 'string' || child.length > 128 || !info || typeof info.targetId !== 'string' || !/^[A-Za-z0-9_-]{1,128}$/.test(info.targetId) || children.size >= 16 || childJobs.size >= 16) { handoffRequired = true; invalidateObservation(); return; }
+    if (typeof child !== 'string' || child.length > 128 || !info || typeof info.targetId !== 'string' || !/^[A-Za-z0-9_-]{1,128}$/.test(info.targetId)) {
+      requireHandoff('malformed_attachment', info?.type); return;
+    }
+    if (children.size >= 16 || childJobs.size >= 16) { requireHandoff('session_limit', info.type); return; }
     // Chrome can auto-attach a second session to the page we already own and
     // control. Release only that duplicate; it is not a newly related target.
     if (typeof sessionId === 'string' && sessionId.length > 0 && child.length > 0 && child !== sessionId && event.sessionId === sessionId
       && info.type === 'page' && info.targetId === targetId && owned.has(info.targetId)
       && waitingForDebugger === false) {
       const job = detachSession(child, undefined, event.sessionId).catch(error => {
-        report(error); handoffRequired = true; invalidateObservation();
+        report(error); requireHandoff('duplicate_detach_failed', info.type);
       });
       childJobs.add(job); void job.finally(() => childJobs.delete(job));
       return;
@@ -128,7 +146,8 @@ export function createSharedBrowserCdpDriver(options: CdpConnectOptions & { home
     // Related-target interception is not whole-profile network isolation:
     // Chrome resolves DNS separately and initial child requests require live
     // qualification. The controller never promises containment of owner tabs.
-    if (!['page', 'iframe'].includes(info.type) || waitingForDebugger !== true) { handoffRequired = true; invalidateObservation(); return; }
+    if (!['page', 'iframe'].includes(info.type)) { requireHandoff('unsupported_target', info.type); return; }
+    if (waitingForDebugger !== true) { requireHandoff('already_running', info.type); return; }
     const job = (async () => {
       try {
         // A newly paused iframe can precede its first committed URL. Install
@@ -142,11 +161,11 @@ export function createSharedBrowserCdpDriver(options: CdpConnectOptions & { home
         await client!.request('Target.setAutoAttach', { autoAttach: true, waitForDebuggerOnStart: true, flatten: true }, child);
         if (detaching) return;
         if (info.type === 'page') {
-          if (atTabLimit()) { handoffRequired = true; invalidateObservation(); return; }
+          if (atTabLimit()) { requireHandoff('popup_limit', info.type); return; }
           owned.set(info.targetId, Date.now());
         }
         await client!.request('Runtime.runIfWaitingForDebugger', {}, child);
-      } catch (error) { report(error); handoffRequired = true; invalidateObservation(); }
+      } catch (error) { report(error); requireHandoff('setup_failed', info.type); }
     })();
     childJobs.add(job); void job.finally(() => childJobs.delete(job));
   }
@@ -173,9 +192,9 @@ export function createSharedBrowserCdpDriver(options: CdpConnectOptions & { home
   function event(event: CdpEvent) {
     if (event.method === 'Browser.downloadWillBegin' && !collectingDownload) {
       const guid = event.params.guid;
-      if (typeof guid !== 'string' || guid.length > 128 || blockedDownloadJobs.size >= 8) { handoffRequired = true; invalidateObservation(); return; }
+      if (typeof guid !== 'string' || guid.length > 128 || blockedDownloadJobs.size >= 8) { requireHandoff('unexpected_download'); return; }
       const job = client!.request('Browser.cancelDownload', { guid }).then(() => undefined, error => {
-        report(error); handoffRequired = true; invalidateObservation();
+        report(error); requireHandoff('unexpected_download');
       });
       blockedDownloadJobs.add(job); void job.finally(() => blockedDownloadJobs.delete(job));
       return;
@@ -202,8 +221,9 @@ export function createSharedBrowserCdpDriver(options: CdpConnectOptions & { home
   async function connect() {
     if (client?.available) return;
     if (client) {
-      unsubscribe?.(); unsubscribe = undefined; sessionId = undefined; invalidateObservation();
-      if (children.size || childJobs.size) handoffRequired = true;
+      unsubscribe?.(); unsubscribe = undefined; sessionId = undefined;
+      if (children.size || childJobs.size) requireHandoff('transport_disconnected');
+      else invalidateObservation();
       await Promise.all(childJobs); children.clear(); paused.clear();
     }
     detaching = false;
@@ -275,7 +295,7 @@ export function createSharedBrowserCdpDriver(options: CdpConnectOptions & { home
     if (typeof doc.result?.objectId !== 'string') throw new SharedBrowserError('browser_unavailable');
     const id = randomUUID(); const value = await call(doc.result.objectId, SNAPSHOT_FUNCTION, [id], signal);
     if (snapshotGeneration !== generation) throw new SharedBrowserError('observe_again');
-    if (value.handoff === true) return { ...handoff(), url: current.sourceUrl, content: 'The owner must sign in or approve authentication using Take over before automation continues.' };
+    if (value.handoff === true) return { ...handoff('The owner must sign in or approve authentication using Take over before automation continues.'), url: current.sourceUrl };
     if (typeof value.content !== 'string' || value.content.length > 16000 || typeof value.title !== 'string' || value.title.length > 160 || !Array.isArray(value.elements) || value.elements.length > 100) throw new SharedBrowserError('browser_unavailable');
     const elements: Array<{ ref: string; role: string; name: string }> = value.elements.map((row: unknown) => {
       if (!row || typeof row !== 'object' || !('ref' in row) || !('role' in row) || !('name' in row) || typeof row.ref !== 'string' || !/^r\d{1,3}$/.test(row.ref) || typeof row.role !== 'string' || row.role.length > 40 || typeof row.name !== 'string' || row.name.length > 180) throw new SharedBrowserError('browser_unavailable');
@@ -284,13 +304,13 @@ export function createSharedBrowserCdpDriver(options: CdpConnectOptions & { home
     observation = { id, document: doc.result.objectId, frameId: current.id, contextId: world.executionContextId, url: current.url, refs: new Set(elements.map(row => row.ref)), generation };
     return { success: true, observationId: id, targetId, url: current.sourceUrl, title: value.title, content: value.content, elements };
   }
-  async function execute(raw: SharedBrowserAction, signal: AbortSignal): Promise<SharedBrowserActionResult> {
+  async function execute(raw: SharedBrowserAction, signal: AbortSignal): Promise<SharedBrowserDriverResult> {
     signal.throwIfAborted(); const parsed = SharedBrowserActionSchema.safeParse(raw);
     if (!parsed.success) throw new SharedBrowserError('invalid_action'); const input = parsed.data;
     expireTargets();
     await connect(); await Promise.all(childJobs); signal.throwIfAborted();
     if (input.action === 'status') return { success: client!.available };
-    if (handoffRequired) { if (input.action === 'snapshot') return handoff(); throw new SharedBrowserError('browser_changed'); }
+    if (handoffRequired) { if (input.action === 'snapshot') return pendingHandoff(); throw new SharedBrowserError('browser_changed'); }
     if (input.action === 'tab_switch') {
       if (!owned.has(input.targetId)) throw new SharedBrowserError('invalid_action');
       const info = await targetInfo(input.targetId, signal); if (!info) throw new SharedBrowserError('observe_again'); await ownedUrl(info.targetInfo?.url);
@@ -326,7 +346,7 @@ export function createSharedBrowserCdpDriver(options: CdpConnectOptions & { home
       const checked = await validateBrowserUrl(input.url, options.resolveHost); invalidateObservation();
       const result = await request('Page.navigate', { url: checked.url }, signal);
       if (result.errorText) throw new SharedBrowserError('browser_unavailable');
-      if (handoffRequired) return handoff();
+      if (handoffRequired) return pendingHandoff();
       return { success: true, targetId, url: checked.sourceUrl };
     }
     if (input.action === 'snapshot') return snapshot(signal);
@@ -361,13 +381,13 @@ export function createSharedBrowserCdpDriver(options: CdpConnectOptions & { home
         documentId: input.documentId, signal, resolveHost: options.resolveHost, restoreBehavior: 'deny',
         onCollectingChange: collecting => { collectingDownload = collecting; },
         trigger: async () => { decorate(); const result = await call(observed.document, CURSOR_ACTION_FUNCTION, [observed.id, input.ref, 'click', null], signal); if (!result.ok) throw new SharedBrowserError('observe_again'); } });
-      if ('recoveryPath' in artifact) return { ...handoff(), content: `Chrome started additional downloads. Its files were preserved for owner review in ${artifact.recoveryPath}. Automation must stop until the owner reviews this recovery folder.` };
+      if ('recoveryPath' in artifact) return handoff(`Chrome started additional downloads. Its files were preserved for owner review in ${artifact.recoveryPath}. Automation must stop until the owner reviews this recovery folder.`);
       return { success: true, targetId, artifact };
     }
     decorate();
     const result = await call(observed.document, CURSOR_ACTION_FUNCTION, [observed.id, input.ref, input.action, input.action === 'type' ? input.text : input.action === 'select' ? input.value : null], signal);
     if (!result.ok) { invalidateObservation(); throw new SharedBrowserError('observe_again'); }
-    if (handoffRequired) return handoff();
+    if (handoffRequired) return pendingHandoff();
     return { success: true, targetId };
   }
   async function detach() {
@@ -411,7 +431,7 @@ export function createSharedBrowserCdpDriver(options: CdpConnectOptions & { home
         }
         await recovery.request('Browser.setDownloadBehavior',{behavior:'default',eventsEnabled:false});recoveryRequired=false;
       }
-      finally{await recovery.close();paused.clear();children.clear();childJobs.clear();blockedDownloadJobs.clear();handoffRequired=false;}
+      finally{await recovery.close();paused.clear();children.clear();childJobs.clear();blockedDownloadJobs.clear();handoffRequired=undefined;}
       return;
     }
     recoveryRequired=true;
@@ -425,7 +445,7 @@ export function createSharedBrowserCdpDriver(options: CdpConnectOptions & { home
       }
       await request('Browser.setDownloadBehavior', { behavior: 'default', eventsEnabled: false }, undefined, true);
       recoveryRequired=false;
-    } finally { unsubscribe?.(); unsubscribe = undefined; await client.close(); client = undefined; sessionId = undefined; paused.clear(); children.clear(); childJobs.clear(); blockedDownloadJobs.clear(); handoffRequired = false; }
+    } finally { unsubscribe?.(); unsubscribe = undefined; await client.close(); client = undefined; sessionId = undefined; paused.clear(); children.clear(); childJobs.clear(); blockedDownloadJobs.clear(); handoffRequired = undefined; }
   }
   return { execute, invalidateObservation, detach };
 }
