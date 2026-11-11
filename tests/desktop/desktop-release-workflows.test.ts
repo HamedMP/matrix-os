@@ -569,8 +569,20 @@ describe("Matrix OS Canary release pipeline", () => {
     expect(workflow.on.push.branches).toEqual(["main"]);
     expect(workflow.on.push.paths).toEqual(expect.arrayContaining([
       "desktop/**", "packages/contracts/**", "packages/ui/**", "packages/brand/**", "pnpm-lock.yaml",
+      "package.json", "pnpm-workspace.yaml",
     ]));
     expect(workflow.on.push.paths).not.toContain("shell/**");
+    // The renderer compiles these shell and home files directly.
+    const renderer = execFileSync("git", ["grep", "-hoE", String.raw`(\.\./)+(shell|home)/[A-Za-z0-9_./-]+`, "--", "desktop/src"], { cwd: root, encoding: "utf8" });
+    const imported = [...new Set(renderer.split("\n").filter(Boolean).map((path) => path.replace(/^(\.\.\/)+/, "")))];
+    expect(imported.length).toBeGreaterThan(0);
+    for (const path of imported) {
+      const covered = (workflow.on.push.paths as string[]).some((pattern) => {
+        const prefix = pattern.replace(/\*\*$/, "").replace(/\*$/, "");
+        return pattern.endsWith("*") ? path.startsWith(prefix) : path === pattern;
+      });
+      expect(covered, `${path} is built into the desktop app`).toBe(true);
+    }
     expect(workflow.concurrency).toEqual({ group: "desktop-release-canary", "cancel-in-progress": false });
   });
 

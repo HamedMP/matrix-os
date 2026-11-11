@@ -16,6 +16,9 @@ export function withCanaryIdentity(base) {
     ...base,
     appId: "com.matrix-os.operator.canary",
     productName: APP_NAME,
+    // electron-updater caches downloads under `<package name>-updater`. A
+    // separate name keeps stable and Canary from discarding each other's update.
+    extraMetadata: { ...base.extraMetadata, name: "desktop-canary" },
     protocols: [{ name: APP_NAME, schemes: ["matrixos-canary"] }],
     mac: { ...base.mac, icon: MAC_ICON },
     dmg: { ...base.dmg, title: APP_NAME, icon: MAC_ICON },

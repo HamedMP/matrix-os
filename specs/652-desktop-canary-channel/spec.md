@@ -43,7 +43,8 @@ gains one accepted redirect scheme.
   and a parity test keeps the two in step. It does not use `extends`: electron-builder concatenates
   arrays when extending, so Canary would also claim `matrixos://`.
 - Canary uses its own user data directory (`Matrix OS Canary`), Safe Storage service, single-instance
-  lock, and Windows NSIS registration (derived from appId).
+  lock, Windows NSIS registration (derived from appId), and updater download cache
+  (`desktop-canary-updater`, from `extraMetadata.name`).
 - Canary registers only `matrixos-canary`, so it never takes stable's `matrixos://` links.
 
 ### Sign-in to one computer from both apps
@@ -71,8 +72,11 @@ gains one accepted redirect scheme.
 ### Release pipeline
 
 - `desktop-release-canary.yml` runs on `push` to `main` when desktop inputs change (`desktop/**`,
-  `packages/{brand,ui,contracts,sync-client}/**`, `scripts/release/**`, desktop workflows and
-  release actions, `pnpm-lock.yaml`), plus `workflow_dispatch`. The cron is removed.
+  `packages/{brand,ui,contracts,sync-client}/**`, the shell and home files the renderer compiles in
+  (`shell/public/**`, `shell/src/components/app-sites/**`, `shell/src/lib/site-client*`,
+  `home/system/icons/**`), `scripts/release/**`, desktop workflows and release actions, and root
+  workspace manifests), plus `workflow_dispatch`. The cron is removed. A test fails when the renderer
+  imports a shell or home path that the filter does not cover.
 - `concurrency: desktop-release-canary` with `cancel-in-progress: false` keeps one running and
   one pending build, so a burst of merges collapses into the next build.
 - The canary caller grants `actions: read`.
@@ -89,10 +93,13 @@ gains one accepted redirect scheme.
    the other signed in.
 3. Against a computer on the stable bundle, and against one on the dev bundle, canary opens no
    release-alignment dialog while protocols are compatible.
-4. A merge that touches only `shell/` does not start a canary build. A merge that touches
-   `desktop/` does.
+4. A merge that touches only shell files the desktop app does not import does not start a canary
+   build. A merge that touches `desktop/` or an imported shell file does.
 
 ## Migration
+
+- Windows: an old canary-channel install with the stable app id keeps its own feed and is not
+  replaced. Uninstall it by hand if one exists.
 
 - The current `/Applications/Matrix OS.app` is a canary-channel build with the stable identity.
   Squirrel.Mac rejects an update whose designated requirement (bundle identifier) differs, so it

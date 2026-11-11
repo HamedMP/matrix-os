@@ -46,6 +46,10 @@ describe("desktop channel identity", () => {
     // Canary must not claim stable's schemes, or approval links would open the wrong app.
     expect(config.protocols).toEqual([{ name: canary.appName, schemes: [...canary.deepLinkSchemes] }]);
     expect(config.dmg.title).toBe(canary.appName);
+    // electron-updater caches downloads under `<package name>-updater`; a shared
+    // name would let each app discard the other's pending update.
+    expect(config.extraMetadata).toEqual({ name: "desktop-canary" });
+    expect(base.extraMetadata).toBeUndefined();
     expect(config.nsis).toMatchObject({ shortcutName: canary.appName, uninstallDisplayName: canary.appName });
     expect(base.appId).toBe(stable.appId);
     expect(base.productName).toBe(stable.appName);

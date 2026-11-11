@@ -12,11 +12,18 @@ on:
       - "packages/ui/**"
       - "packages/contracts/**"
       - "packages/sync-client/**"
+      # Shell and home files the desktop renderer compiles in directly.
+      - "shell/public/**"
+      - "shell/src/components/app-sites/**"
+      - "shell/src/lib/site-client*"
+      - "home/system/icons/**"
       - "scripts/release/**"
       - ".github/workflows/desktop-build.yml"
       - ".github/workflows/desktop-release-canary.yml"
       - ".github/actions/**"
       - "pnpm-lock.yaml"
+      - "package.json"
+      - "pnpm-workspace.yaml"
   workflow_dispatch:
 
 permissions:
