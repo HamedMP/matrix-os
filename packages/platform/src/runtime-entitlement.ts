@@ -72,9 +72,11 @@ export async function getRuntimeEntitlementDecisionForUser(
   if (!stripeBillingEntitlementsEnabled(env)) {
     return getRuntimeEntitlementDecision(env);
   }
-  return billingAccessToProfileDecision(
-    getRuntimeAccessDecision(await resolveEffectiveBillingEntitlement(db, clerkUserId, now, runtimeSlot, env), now),
-  );
+  // Only the free class is a container runtime, and only a container may use a free entitlement.
+  return billingAccessToProfileDecision(getRuntimeAccessDecision(
+    await resolveEffectiveBillingEntitlement(db, clerkUserId, now, runtimeSlot, env), now,
+    provisioningClass === 'free' ? 'container' : undefined,
+  ));
 }
 
 function billingAccessToProfileDecision(decision: RuntimeAccessDecision): EntitlementAccessDecision {
