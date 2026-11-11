@@ -75,6 +75,7 @@ try:
         os.environ.update({"DEPLOY_ENVIRONMENT": "production", "GITHUB_REF": "refs/heads/main", "GITHUB_ENV": "/dev/null", "GITHUB_SHA": "${sha}"})
         os.environ.update({key: config[field] for field, key in gate.CONFIG_ENV.items()})
         os.environ.update(config["pricing"])
+        if config.get("pricingRegistryEnabled"): os.environ["MATRIX_FUNDED_AI_PRICING_REGISTRY_ENABLED"] = "true"
         # A supplied emitted environment is the complete candidate input; never
         # mask missing or drifted workflow values with receipt fixture defaults.
         emitted = data["workflowEnvironment"] if "workflowEnvironment" in data else {
@@ -180,9 +181,19 @@ describe("reviewed funded Relay release evidence", () => {
   it("verifies actual candidate configuration before promotion", () => {
     expect(verify(productionFixture(), { promotion: true, exercisePromotion: true }).status).toBe(0);
   });
-  it.each([false, true])("promotes the exact emitted environment with Workers review %s", withWorkers => {
+  it.each(["legacy", "workers", "registry"])("promotes the exact emitted environment for %s", mode => {
     const receipt = productionFixture();
-    if (withWorkers) Object.assign(receipt.configuration.pricing, workersReview());
+    if (mode === "workers") Object.assign(receipt.configuration.pricing, workersReview());
+    if (mode === "registry") {
+      Object.assign(receipt.configuration, { pricingRegistryEnabled: true });
+      for (const key of Object.keys(receipt.configuration.pricing)) {
+        if (key.startsWith("MATRIX_FUNDED_")) delete receipt.configuration.pricing[key];
+      }
+      receipt.checks.pricing_registry = { status: "passed", path: "pricing_registry.json" };
+      const incomplete = { ...receipt, checks: { ...receipt.checks } };
+      delete incomplete.checks.pricing_registry;
+      expect(verify(incomplete, { promotion: true }).status).toBe(1);
+    }
     const workflow = readFileSync(join(root, ".github/workflows/ai-relay-cloud-run.yml"), "utf8");
     const block = workflow.split("- name: Deploy candidate revision")[1]!
       .split("- name: Smoke candidate relay")[0]!.split("run: |\n")[1]!;
@@ -202,6 +213,7 @@ ${script}
       WORKERS_TOKEN_SECRET: "cloudflare-workers-ai-token-production", WORKERS_TOKEN_VERSION: "2",
       CONTROL_TOKEN_SECRET: "ai-relay-control-token", CONTROL_TOKEN_VERSION: "3",
       METADATA_SECRET_SECRET: "ai-relay-metadata-secret", METADATA_SECRET_VERSION: "4",
+      MATRIX_FUNDED_AI_PRICING_REGISTRY_ENABLED: mode === "registry" ? "true" : "",
       WORKERS_PRICING_BINDINGS: Object.entries(config.pricing)
         .filter(([key]) => key.startsWith("MATRIX_FUNDED_WORKERS_PRICING_"))
         .map(([key, value]) => `|${key}=${value}`).join(""),
@@ -216,7 +228,7 @@ ${script}
       return [entry.slice(0, index), entry.slice(index + 1)];
     }));
     expect(workflowEnvironment.MATRIX_FUNDED_AI_BETAS).toContain("advisor-tool-2026-03-01");
-    if (withWorkers) {
+    if (mode === "workers") {
       expect(workflowEnvironment.MATRIX_FUNDED_WORKERS_PRICING_REVIEW_VERSION)
         .toBe("cloudflare-2026-10-15-workers-eight");
     }

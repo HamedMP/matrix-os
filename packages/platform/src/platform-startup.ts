@@ -87,6 +87,10 @@ import { registerPlatformWebSocketUpgradeHandler } from './platform-websocket-up
 import { createAiFundedPolicyRepository, type AiFundedPolicyRepository } from './ai-funded-policy-repository.js';
 import { cleanupExpiredReservations } from './ai-funded-reservation-cleanup.js';
 import { createAiFundedReservationCleanupWorker } from './ai-funded-reservation-cleanup-worker.js';
+import { createFundedPricingReviewStore } from './funded-pricing-review-store.js';
+import { fundedPricingReviewRuntimeConfig } from './funded-pricing-review-runtime.js';
+import { startFundedPricingReviewJob } from './funded-pricing-review-job.js';
+import { createFundedPricingReviewLinear } from './funded-pricing-review-linear.js';
 import {
   createAiFundedOperatorRoutes,
   createAiFundedRelayRoutes,
@@ -382,7 +386,17 @@ async function startPlatformServerWithCleanup(
     : undefined;
   let fundedAiRepository: AiFundedPolicyRepository | undefined;
   let fundedModelProbes: FundedModelProbeService | undefined;
+  let pricingJob: ReturnType<typeof startFundedPricingReviewJob> | undefined;
+  const pricingJobConfig = fundedPricingReviewRuntimeConfig(process.env, fundedAiConfig.enabled, backgroundWorkersEnabled);
   if (fundedAiConfig.enabled) {
+    const pricingStore = createFundedPricingReviewStore(db);
+    const pricingRegistryEnabled = process.env.MATRIX_FUNDED_AI_PRICING_REGISTRY_ENABLED === 'true';
+    if (pricingJobConfig) {
+      pricingJob = startFundedPricingReviewJob({
+        store: pricingStore, linear: createFundedPricingReviewLinear(pricingJobConfig.linear), mode: pricingJobConfig.mode,
+      });
+      registerCustomMcpStartupCleanup(async () => { await pricingJob?.shutdown(); });
+    }
     fundedAiRepository = createAiFundedPolicyRepository({
       db,
       credentialHashSecret: fundedAiConfig.credentialHashSecret,
@@ -397,6 +411,12 @@ async function startPlatformServerWithCleanup(
       relayBaseUrl: process.env.MATRIX_FUNDED_AI_RELAY_URL,
       relayControlToken: fundedAiConfig.relayControlToken,
       ...probeLimits,
+      ...(pricingRegistryEnabled ? { readPricingReview: async (modelId: string, signal: AbortSignal) => {
+        signal.throwIfAborted();
+        const review = await pricingStore.readCurrent(modelId);
+        signal.throwIfAborted();
+        return review;
+      } } : {}),
     });
     internalFundedAiRuntimeRoutes = createAiFundedRuntimeRoutes({
       db,
@@ -411,6 +431,8 @@ async function startPlatformServerWithCleanup(
     internalFundedAiRelayRoutes = createAiFundedRelayRoutes({
       relayControlToken: fundedAiConfig.relayControlToken,
       repository: fundedAiRepository,
+      listPricingReviews: pricingStore.list,
+      ...(pricingRegistryEnabled ? { invalidatePricingRoute: fundedModelProbes.invalidateAfterUpstreamFailure } : {}),
     });
     internalFundedAiOperatorRoutes = createAiFundedOperatorRoutes({
       db,
@@ -1190,6 +1212,7 @@ async function startPlatformServerWithCleanup(
           slack.close(),
           whatsappRuntime?.shutdown(),
           fundedReservationCleanupWorker?.shutdown(),
+          pricingJob?.shutdown(),
           Promise.resolve(speechService.shutdown()),
           containerProxyDispatcher.close(),
           customerVpsProxyDispatcher.close(),

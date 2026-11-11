@@ -78,7 +78,7 @@ describe("funded relay Cloud Run service", () => {
       for (const field of ["REVIEW_VERSION", "REVIEWED_AT", "VALID_THROUGH"]) {
         const name = `MATRIX_FUNDED_${model}_PRICING_${field}`;
         expect(workflow).toContain(`${name}: \${{ vars.${name} }}`);
-        expect(workflow).toContain(`${name}=\${${name}}`);
+        expect(workflow).toContain(`              ${name} \\`);
       }
     }
     expect(workflow).not.toContain('date -u +');
@@ -358,4 +358,19 @@ it("validates the optional Workers review bundle before Cloud Run authentication
   for(const extra of [{...env,MATRIX_FUNDED_WORKERS_PRICING_REVIEW_VERSION:'bad'},{...env,MATRIX_FUNDED_WORKERS_PRICING_REVIEWED_AT:'2026-02-30T00:00:00.000Z'},{...env,MATRIX_FUNDED_WORKERS_PRICING_VALID_THROUGH:new Date(Date.now()+40*dayMs).toISOString()},{MATRIX_FUNDED_WORKERS_PRICING_REVIEW_VERSION:env.MATRIX_FUNDED_WORKERS_PRICING_REVIEW_VERSION}]){
     const result=runDeploymentValidation(start,end,extra);expect(result.status).toBe(1);expect(result.stderr).toContain('Workers AI review');
   }
+});
+
+it("accepts registry mode without requiring legacy managed review dates", () => {
+  const start = new Date(Date.now() - dayMs).toISOString();
+  const end = new Date(Date.now() + dayMs).toISOString();
+  const result = runDeploymentValidation(start, end, {
+    MATRIX_FUNDED_AI_PRICING_REGISTRY_ENABLED: "true",
+    MATRIX_FUNDED_SONNET_PRICING_REVIEW_VERSION: "",
+    MATRIX_FUNDED_GLM_PRICING_REVIEW_VERSION: "",
+    MATRIX_FUNDED_WORKERS_PRICING_REVIEW_VERSION: "stale",
+  });
+  expect(result.status).toBe(0);
+  expect(runDeploymentValidation(start, end, {
+    MATRIX_FUNDED_AI_PRICING_REGISTRY_ENABLED: "yes",
+  }).status).toBe(1);
 });
