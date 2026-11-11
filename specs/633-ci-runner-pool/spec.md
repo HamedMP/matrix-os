@@ -50,8 +50,11 @@ single point of failure.
    the same job inventory whichever runner executed it.
 6. **Retire fast-ci.** Delete `ci-dedicated.yml`, the `dedicated-*` scripts,
    the lease runtime under `scripts/ci/runner/`, the qualification harness,
-   `MATRIX_CI_*` routing variables, `ci-execution/*` refs and their contract
-   tests. Remove routing hooks from `ci.yml`, preview and release workflows.
+   the `MATRIX_CI_DEDICATED_*` and `MATRIX_CI_RUNNER_*` variables and their
+   contract tests. Remove routing hooks from `ci.yml`. The preview workflow's
+   isolated execution origin (`MATRIX_CI_ISOLATED_EXECUTION`,
+   `MATRIX_CI_CONTROLLER_SHA`, `ci-execution/*`) is a separate mechanism and
+   stays; see `docs/dev/preview-environments.md`.
 
 ## Failure modes
 
@@ -71,8 +74,8 @@ single point of failure.
 ## Documentation
 
 The pool is contributor-facing CI infrastructure, not a product surface. Update
-`docs/dev/fast-ci.md` and `.github/workflows/README.md` in this repository when
-routing lands, and open a `FinnaAI/matrix-os-site` PR under `content/docs/`
+`scripts/ci/runner-pool/README.md` and `.github/workflows/README.md` in this
+repository when routing lands, and open a `FinnaAI/matrix-os-site` PR under `content/docs/`
 for the contributor CI page once the pool carries `main`.
 
 ## Isolation
@@ -111,8 +114,11 @@ for the contributor CI page once the pool carries `main`.
 4. Operator: create the pool's dedicated GitHub App, install the pool on the
    host, and compare pool and hosted shard times over one PR and one `main`
    run.
-5. Retire fast-ci once pool runs are stable, then remove the old lease
-   service from the host.
+5. Retire fast-ci once pool runs are stable (the retirement stack under
+   ENG-240). After it merges, the operator deletes the `MATRIX_CI_DEDICATED_*`
+   and `MATRIX_CI_RUNNER_*_DIGEST` variables, stops the old lease and
+   controller services on the host, and uninstalls the `matrix-ci-qualification`
+   app.
 
 ## Risks
 
@@ -127,6 +133,5 @@ for the contributor CI page once the pool carries `main`.
 - **Mid-run outage.** Shards already routed to a pool that then goes down wait
   for a runner until the job times out; re-run the job once the heartbeat
   routes new runs hosted.
-- **Shared host during rollout.** Until fast-ci is retired, its lease workload
-  and the pool share the host's 32 CPUs. Start the pool with fewer CPUs per
-  slot, or pause fast-ci admission, while comparing timings.
+- **Shared host during rollout.** Until the old lease services are stopped on
+  the host, they and the pool share its 32 CPUs.
