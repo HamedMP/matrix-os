@@ -54,6 +54,7 @@ import { shutdownPlatformApp } from './shutdown-platform-app.js';
 import { createPlatformSubstrateRegistry } from './substrates/platform-substrates.js';
 import { createConfiguredContainerSubstrate } from './substrates/container-substrate-config.js';
 import { loadConfiguredFreeTier, type FreeTierConfig } from './free-tier/config.js';
+import { createFreeTierRuntime, type FreeRuntimeProvisioner } from './free-tier/provision-free-runtime.js';
 import type { LambdaMicrovmsApi } from './substrates/container-provider.js';
 import type { SubstrateRegistry } from './substrates/registry.js';
 import {
@@ -278,7 +279,7 @@ type CreatePlatformApp = (deps: {
   assertPrimaryStorageReady?: (options?: { force?: boolean }) => Promise<void>;
   assertSitesStorageReady?: (options?: { force?: boolean }) => Promise<void>;
   substrateRegistry?: SubstrateRegistry;
-  freeTier?: { config: FreeTierConfig };
+  freeTier?: { config: FreeTierConfig; provisioner?: FreeRuntimeProvisioner };
   env?: NodeJS.ProcessEnv;
 }) => PlatformApp;
 
@@ -1168,7 +1169,7 @@ async function startPlatformServerWithCleanup(
     assertPrimaryStorageReady: primaryStorageGate?.assertReady,
     assertSitesStorageReady: sitesStorageGate?.assertReady,
     substrateRegistry: createPlatformSubstrateRegistry(db, containerSubstrate ? [containerSubstrate.substrate] : []),
-    freeTier: freeTierConfig ? { config: freeTierConfig } : undefined,
+    freeTier: createFreeTierRuntime({ db, config: freeTierConfig, ownerDatabases: containerSubstrate?.ownerDatabases }),
     env: appEnv,
   });
   const processPosthogErrorTracker = createPostHogErrorTracker({
