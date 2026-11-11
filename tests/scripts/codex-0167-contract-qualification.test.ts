@@ -28,7 +28,18 @@ describe("exact published Codex 0.167.0 qualification", () => {
     expect(sha256(execBytes)).toBe("dafa872d7e86a099e56e28a329dcb9c03db90ed768c3b88cca8c91d46dc1d0e5");
     expect(sha256(schemaBytes)).toBe("486c7c8daa5dc7f3ab2a1fb56de5316804caf7a4210fda1dc28d3f0f4e90cfe1");
     expect(() => verifyCodexProviderContracts({
-      version: "0.167.0", execContract, appServerContract,
+      version: "0.167.0",
+      execContract: { ...execContract, latestVerifiedVersion: "0.167.0" },
+      appServerContract: { ...appServerContract, latestVerifiedVersion: "0.167.0" },
+      execSchemaBytes: execBytes, appServerSchemaBytes: schemaBytes, runtimeTarget,
+    })).not.toThrow();
+  });
+
+  it.each(["linux-x64", "darwin-arm64"])("verifies identical published 0.167.1 schemas on %s", runtimeTarget => {
+    expect(execContract.verifiedVersions["0.167.1"]).toEqual(execContract.verifiedVersions["0.167.0"]);
+    expect(appServerContract.verifiedVersions["0.167.1"]).toEqual(appServerContract.verifiedVersions["0.167.0"]);
+    expect(() => verifyCodexProviderContracts({
+      version: "0.167.1", execContract, appServerContract,
       execSchemaBytes: execBytes, appServerSchemaBytes: schemaBytes, runtimeTarget,
     })).not.toThrow();
   });
@@ -46,14 +57,14 @@ describe("exact published Codex 0.167.0 qualification", () => {
 
   it("keeps unknown releases fail closed and detects altered published bytes", () => {
     expect(codexContractStatus("codex-cli 0.167.0", execContract)).toEqual({ status: "verified", version: "0.167.0" });
-    expect(codexContractStatus("codex-cli 0.167.1", execContract)).toEqual({ status: "unverified_newer", version: "0.167.1" });
+    expect(codexContractStatus("codex-cli 0.167.1", execContract)).toEqual({ status: "verified", version: "0.167.1" });
     expect(codexContractStatus("codex-cli 0.166.1", execContract)).toEqual({ status: "unverified_older", version: "0.166.1" });
     expect(() => verifyCodexProviderContracts({
-      version: "0.167.1", execContract, appServerContract,
+      version: "0.167.2", execContract, appServerContract,
       execSchemaBytes: execBytes, appServerSchemaBytes: schemaBytes, runtimeTarget: "linux-x64",
-    })).toThrow("Codex 0.167.1 is not verified");
+    })).toThrow("Codex 0.167.2 is not verified");
     expect(() => verifyCodexProviderContracts({
-      version: "0.167.0", execContract, appServerContract,
+      version: "0.167.1", execContract, appServerContract,
       execSchemaBytes: execBytes, appServerSchemaBytes: Buffer.concat([schemaBytes, Buffer.from("\n")]),
       runtimeTarget: "darwin-arm64",
     })).toThrow("Codex app-server schema digest changed");
