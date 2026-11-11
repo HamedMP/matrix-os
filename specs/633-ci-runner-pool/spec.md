@@ -33,14 +33,18 @@ single point of failure.
    repository variable `MATRIX_CI_POOL_HEARTBEAT` to `<unix seconds> <idle
    slots>` every minute, counting this host's online, idle runners. Stopping
    the service stops the heartbeat.
-3. **Routing.** The `changes` job sends the 4 unit shards (the critical path)
-   to `matrix-ci` when the run is a `main` push, a merge-queue run or a
-   same-repository PR, the heartbeat is under 3 minutes old and at least 4
-   slots are idle. Otherwise they run on `ubuntu-latest`. Manual dispatches
-   stay hosted because an exact-source refresh can check out a fork PR. E2E,
-   type check, builds and Docker-service lanes always stay hosted, so one run
-   never needs more slots than the pool has. Pool shards use 4 Vitest workers
-   on 8 CPUs.
+3. **Routing.** The `changes` job sends the four unit shards, Pattern Scan and
+   both E2E lanes to `matrix-ci` when the run is a `main` push, merge-queue run
+   or same-repository PR, the heartbeat is under three minutes old and at least
+   four slots are idle. The seven jobs may queue within the four slots; no slot
+   runs two jobs concurrently. Otherwise unit/pattern jobs use `ubuntu-latest`
+   and E2E uses `ubuntu-24.04`. Manual dispatches stay hosted because an
+   exact-source refresh can check out a fork PR. Other lanes always stay hosted.
+   Pool shards use four Vitest workers on eight CPUs.
+   The prepared image supplies ripgrep, browser/Electron system libraries and
+   Xvfb. Pool setup must not call apt: check ripgrep and install only the exact
+   Chromium revisions required by the workspace lockfile. Hosted fallback keeps
+   its dependency installation. Missing image dependencies fail qualification.
 4. **Forks never reach the host.** Routing sends fork PRs to hosted runners,
    but a fork PR can edit `ci.yml`, so the runner image enforces it: a
    job-started hook kills the runner, before any step starts, for any job
@@ -97,8 +101,12 @@ for the contributor CI page once the pool carries `main`.
 
 ## Acceptance
 
-- `main` push or same-repository PR with the pool online and idle: all 4 unit
-  shards run on `matrix-ci`; `CI Results` passes.
+- `main` push or same-repository PR with the pool online and idle: all four unit
+  shards, Pattern Scan and both E2E lanes run on `matrix-ci`; system setup makes
+  no apt request; real browser/Electron assertions execute and `CI Results` passes.
+- Reproduce the setup fault with workflow command tests: the original commands
+  invoke apt/`--with-deps` on a prepared runner; the fixed commands do not.
+  Fork/manual/stale/busy cases retain hosted routing.
 - Stop the pool service: within 3 minutes new runs route hosted and pass; no
   job waits for a self-hosted runner.
 - Fork PR: every job runs hosted.
