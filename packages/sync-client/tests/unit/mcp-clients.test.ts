@@ -208,5 +208,10 @@ describe("Matrix MCP gateway client", () => {
     expect(timeout).toHaveBeenCalledWith(45_000);
     timeout.mockRestore();
   });
-});
 
+  it("caps a template launch's readiness wait so it answers inside the hosted deadline", async () => {
+    const fetcher = vi.fn<typeof fetch>().mockResolvedValue(new Response(JSON.stringify({ tab: {} }), { status: 201 }));
+    await createMcpGatewayClient(runtime, { fetch: fetcher }).runTerminalAgent({ name: "review", cwd: "", template: "reviewer", task: "go" });
+    expect(JSON.parse(String(fetcher.mock.calls[0]?.[1]?.body))).toMatchObject({ template: "reviewer", readyTimeoutMs: 25_000 });
+  });
+});

@@ -91,7 +91,7 @@ async function harness(options: {
     now: () => now,
     sleep: async (ms) => { now += ms; },
   });
-  return { home, agents, registry, tabs, statuses, createdCommands, sends, terminated, verbs, advance: (ms: number) => { now += ms; } };
+  return { home, agents, registry, tabs, statuses, createdCommands, sends, terminated, verbs, advance: (ms: number) => { now += ms; }, time: () => now };
 }
 
 const reviewer = `---
@@ -322,5 +322,29 @@ describe("terminal agents: children after a send", () => {
       sleep: async () => undefined,
     });
     await expect(agents.waitChildren(parent, { mode: "all", timeoutMs: 0 })).resolves.toEqual({ reason: "timeout" });
+  });
+});
+
+// Fault detected (third review of #3298): a launch outlived its caller's request, and
+// repeated child waits multiplied runtime polling without a bound.
+describe("terminal agents: launch deadline and wait limits", () => {
+  it("gives up on readiness at the caller's deadline and says so", async () => {
+    const h = await harness({ template: reviewer, statusAfterStart: Array(200).fill("working") });
+    const started = h.time();
+    const result = await h.agents.run({ name: "review", cwd: "", template: "reviewer", task: "go", readyTimeoutMs: 5_000 });
+    expect(result.firstMessage).toEqual({ sent: false, reason: "not_ready" });
+    expect(h.time() - started).toBeLessThanOrEqual(5_500);
+    expect(h.sends).toEqual([]);
+  });
+
+  it("caps concurrent child waits per parent and releases each slot when it ends", async () => {
+    const h = await harness();
+    const parent = { workspaceId, tabId: parentId };
+    const child = await h.agents.run({ name: "review", cwd: "", argv: ["sh"], parent });
+    h.statuses.set(child.ref.tabId, "working");
+    const waits = Array.from({ length: 4 }, () => h.agents.waitChildren(parent, { mode: "all", timeoutMs: 2_000 }));
+    await expect(h.agents.waitChildren(parent, { mode: "all", timeoutMs: 2_000 })).rejects.toMatchObject({ code: "capacity" });
+    await Promise.all(waits);
+    await expect(h.agents.waitChildren(parent, { mode: "all", timeoutMs: 0 })).resolves.toEqual({ reason: "timeout" });
   });
 });
