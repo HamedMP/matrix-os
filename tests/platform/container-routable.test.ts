@@ -119,4 +119,13 @@ describe('non-owner access to a container on an instance without a cached creden
     expect(registry.resolveUpstream({ ...machine, substrateRef: 'mvm-a', generation: 3 }, { path: '/' }).kind).toBe('not_routable');
   });
 
+  it('does not wake for a share-link identity carrying the owner user id', async () => {
+    await seed('stopped', { substrateRef: null, privateAddress: null });
+    const provider = fakeProvider();
+    const { registry, ensureStarted } = setup(provider);
+    expect(await decide(registry, { userId: OWNER, source: 'static-route' })).toEqual({ kind: 'unavailable' });
+    expect(ensureStarted).not.toHaveBeenCalled();
+    expect(provider.run).not.toHaveBeenCalled();
+    expect(provider.mintEndpointCredential).not.toHaveBeenCalled();
+  });
 });
