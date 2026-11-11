@@ -9,8 +9,10 @@ import type { ContainerProvider, ContainerUnit } from '../../packages/platform/s
 import { createContainerSubstrate } from '../../packages/platform/src/substrates/container-substrate.js';
 import {
   buildContainerSubprotocols,
+  relayContainerWebSocket,
   sanitizeUpstreamHandshake,
 } from '../../packages/platform/src/substrates/container-websocket.js';
+import type { Socket } from 'node:net';
 import { createSubstrateRegistry } from '../../packages/platform/src/substrates/registry.js';
 import { createVpsSubstrate } from '../../packages/platform/src/substrates/vps-substrate.js';
 import { JWT_SECRET, cleanupProxyRoutingTest, setupProxyRoutingTest } from './proxy-routing-test-utils.js';
@@ -208,5 +210,64 @@ describe('container WebSocket upgrades through the platform', () => {
     tls.upstreams.at(-1)!.emit('data', Buffer.alloc(20_000, 'a'));
     expect(statusLine(socket)).toBe('HTTP/1.1 502 Bad Gateway');
     expect(socket.writes.join('')).not.toContain('aaaa');
+  });
+});
+
+describe('container WebSocket handshake deadline', () => {
+  class HangingUpstream extends EventEmitter {
+    writes: string[] = [];
+    destroyed = false;
+    write(value: string | Buffer) { this.writes.push(String(value)); return true; }
+    pipe() { return this; }
+    destroy() { if (!this.destroyed) { this.destroyed = true; this.emit('close'); } return this; }
+  }
+
+  beforeEach(() => { vi.useFakeTimers(); });
+  afterEach(() => { vi.useRealTimers(); });
+
+  function relay(options: { answerConnect: boolean }) {
+    const upstream = new HangingUpstream();
+    const client = new ClientSocket();
+    const refuse = vi.fn();
+    relayContainerWebSocket({
+      req: { method: 'GET', headers: {} } as IncomingMessage,
+      socket: client as unknown as Socket, head: Buffer.alloc(0),
+      upstream: { url: 'https://x', hostHeader: ENDPOINT, headers: { 'X-aws-proxy-auth': TOKEN, 'X-aws-proxy-port': '4000' } },
+      upstreamPath: '/ws', forwardedHeaders: '', refuse, adoptUpstream: () => true, onResponded: vi.fn(),
+      logError: () => {},
+      connect: (_options, onConnect) => {
+        if (options.answerConnect) queueMicrotask(onConnect);
+        return upstream as unknown as Socket;
+      },
+    });
+    return { upstream, client, refuse };
+  }
+
+  it('refuses with 502 when the endpoint never accepts the connection', async () => {
+    const { upstream, refuse } = relay({ answerConnect: false });
+    await vi.advanceTimersByTimeAsync(9_999);
+    expect(refuse).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(1);
+    expect(refuse).toHaveBeenCalledWith(502);
+    expect(upstream.destroyed).toBe(true);
+  });
+
+  it('refuses with 502 when the endpoint accepts but never answers the upgrade', async () => {
+    const { upstream, refuse } = relay({ answerConnect: true });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(upstream.writes.length).toBeGreaterThan(0);
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(refuse).toHaveBeenCalledWith(502);
+    expect(upstream.destroyed).toBe(true);
+  });
+
+  it('clears the deadline once the handshake has been relayed', async () => {
+    const { upstream, client, refuse } = relay({ answerConnect: true });
+    await vi.advanceTimersByTimeAsync(0);
+    upstream.emit('data', Buffer.from('HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\n\r\n'));
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(refuse).not.toHaveBeenCalled();
+    expect(upstream.destroyed).toBe(false);
+    expect(client.writes.join('')).toContain('101 Switching Protocols');
   });
 });

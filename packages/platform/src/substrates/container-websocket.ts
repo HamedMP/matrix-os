@@ -18,6 +18,8 @@ import type { EnsureRunningResult, RuntimeUpstream } from './types.js';
 
 const ENSURE_RUNNING_TIMEOUT_MS = 15_000;
 const MAX_HANDSHAKE_BYTES = 16 * 1024;
+/** Bounds the TLS connect plus the wait for the upstream handshake head. */
+const HANDSHAKE_TIMEOUT_MS = 10_000;
 const PROVIDER_PROTOCOL = 'lambda-microvms';
 const AUTH_HEADER = 'x-aws-proxy-auth';
 const PORT_HEADER = 'x-aws-proxy-port';
@@ -147,8 +149,22 @@ export function relayContainerWebSocket(relay: ContainerWebSocketRelay): void {
   const host = relay.upstream.hostHeader;
   const connect = relay.connect ?? ((options, onConnect) => connectTls({ ...options, rejectUnauthorized: true }, onConnect));
   const headers = withoutLines(relay.forwardedHeaders, ['sec-websocket-protocol', AUTH_HEADER, PORT_HEADER, 'host']);
+  let settled = false;
+  const deadline = setTimeout(() => {
+    if (settled) return;
+    settled = true;
+    logError('[container-websocket] upstream handshake timed out', { cause: 'timeout' });
+    upstream.destroy();
+    relay.refuse(502);
+  }, HANDSHAKE_TIMEOUT_MS);
+  deadline.unref?.();
   const upstream = connect({ host, port: 443, servername: relay.upstream.tlsServerName ?? host }, () => {
-    if (!relay.adoptUpstream(upstream)) return;
+    if (settled) return;
+    if (!relay.adoptUpstream(upstream)) {
+      settled = true;
+      clearTimeout(deadline);
+      return;
+    }
     const lines = [`${relay.req.method ?? 'GET'} ${relay.upstreamPath} HTTP/1.1`, `Host: ${host}`,
       ...(headers ? [headers] : []), `Sec-WebSocket-Protocol: ${protocols}`];
     upstream.write(`${lines.join('\r\n')}\r\n\r\n`);
@@ -159,12 +175,16 @@ export function relayContainerWebSocket(relay: ContainerWebSocketRelay): void {
       const end = buffered.indexOf('\r\n\r\n');
       if (end < 0) {
         if (buffered.length > MAX_HANDSHAKE_BYTES) {
+          settled = true;
+          clearTimeout(deadline);
           upstream.destroy();
           relay.refuse(502);
         }
         return;
       }
       upstream.off('data', onData);
+      settled = true;
+      clearTimeout(deadline);
       relay.onResponded();
       relay.socket.write(`${sanitizeUpstreamHandshake(buffered.subarray(0, end).toString('latin1'), token)}\r\n\r\n`, 'latin1');
       const rest = buffered.subarray(end + 4);
@@ -173,9 +193,11 @@ export function relayContainerWebSocket(relay: ContainerWebSocketRelay): void {
       relay.socket.pipe(upstream);
     };
     upstream.on('data', onData);
-    upstream.on('close', () => relay.refuse(502));
+    upstream.on('close', () => { settled = true; clearTimeout(deadline); relay.refuse(502); });
   });
   upstream.on('error', (err: Error) => {
+    settled = true;
+    clearTimeout(deadline);
     upstream.destroy();
     logError('[container-websocket] upstream failed', { cause: err.name });
     relay.refuse(502);
