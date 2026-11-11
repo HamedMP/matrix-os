@@ -50,15 +50,15 @@ function requireCaller() {
 function command(
   meta: { name: string; description: string },
   args: Record<string, unknown>,
-  run: (input: { args: Record<string, unknown>; json: boolean }) => Promise<string>,
+  run: (input: { args: Record<string, unknown>; json: boolean; rawArgs: string[] }) => Promise<string>,
 ) {
   return defineCommand({
     meta,
     args: { ...commonArgs, ...args } as typeof commonArgs,
-    run: async ({ args: parsed }) => {
+    run: async ({ args: parsed, rawArgs }) => {
       const json = parsed.json === true;
       try {
-        const text = await run({ args: parsed, json });
+        const text = await run({ args: parsed, json, rawArgs: Array.isArray(rawArgs) ? rawArgs : [] });
         if (text) console.log(text);
       } catch (err) {
         writeError(err, json);
@@ -94,19 +94,21 @@ export const shellRunCommand = command(
     "outlive-parent": { type: "boolean", required: false, default: false },
     "no-parent": { type: "boolean", required: false, default: false },
   },
-  async ({ args, json }) => {
+  async ({ args, json, rawArgs }) => {
     const words = positionals(args);
     if (words.length === 0) throw codedError("A template or command is required");
+    // `-- <command...>` is always a command, even if a template shares its first word.
+    const explicitCommand = rawArgs.includes("--");
     const { shell, agents } = await clients(args);
     const { project } = await resolveWorkspace(shell, args.project);
-    const templates = await agents.templates();
-    const template = templates.find((candidate) => candidate.name === words[0]);
+    const template = explicitCommand ? undefined : (await agents.templates()).find((candidate) => candidate.name === words[0]);
     const caller = args["no-parent"] === true ? undefined : terminalCallerFromEnv();
     const task = template ? words.slice(1).join(" ") : undefined;
     const result = await agents.run({
       ...(project ? { projectId: project.id } : {}),
       name: typeof args.name === "string" && args.name ? args.name : template?.name ?? words[0]!.slice(0, 64),
-      cwd: typeof args.cwd === "string" ? args.cwd : "",
+      // As `matrix shell new`: a project's terminals start in its folder unless --cwd says otherwise.
+      cwd: typeof args.cwd === "string" ? args.cwd : project ? `projects/${project.label}` : "",
       ...(template ? { template: template.name } : { argv: words }),
       ...(task ? { task } : {}),
       ...(caller ? { caller } : {}),

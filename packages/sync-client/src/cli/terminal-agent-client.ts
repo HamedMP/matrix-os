@@ -35,7 +35,7 @@ export interface TerminalCaller { sessionName: string; paneId: string }
 export function terminalCallerFromEnv(env: NodeJS.ProcessEnv = process.env): TerminalCaller | undefined {
   const sessionName = env.ZELLIJ_SESSION_NAME ?? "";
   const paneId = env.ZELLIJ_PANE_ID ?? "";
-  return /^matrix-w-[0-9a-f]{32}$/.test(sessionName) && /^[0-9]{1,9}$/.test(paneId) ? { sessionName, paneId } : undefined;
+  return /^matrix-(?:w-|rt_)[0-9a-f]{32}$/.test(sessionName) && /^[0-9]{1,9}$/.test(paneId) ? { sessionName, paneId } : undefined;
 }
 
 /** What changed within five seconds of the stop key; null when nothing did. */
