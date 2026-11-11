@@ -96,6 +96,12 @@ gains one accepted redirect scheme.
 4. A merge that touches only shell files the desktop app does not import does not start a canary
    build. A merge that touches `desktop/` or an imported shell file does.
 
+## Documentation
+
+- Public docs: [FinnaAI/matrix-os-site#352](https://github.com/FinnaAI/matrix-os-site/pull/352) adds
+  a **Matrix OS Canary** section to `content/docs/desktop.mdx`. It covers the separate identity,
+  side-by-side sign-in, update-dialog behavior and the one-time reinstall.
+
 ## Migration
 
 - Windows: an old canary-channel install with the stable app id keeps its own feed and is not
