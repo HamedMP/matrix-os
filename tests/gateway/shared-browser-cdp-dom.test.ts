@@ -74,6 +74,43 @@ it('caps references and text, excluding hidden controls', () => {
   const result = snapshot.call(document, 'obs');
   expect(result.elements).toHaveLength(100); expect(result.content.length).toBeLessThanOrEqual(16000);
 });
+it('uses the active modal for content and refs when background controls exhaust the normal budget', () => {
+  document.body.innerHTML = '<p>' + 'background content '.repeat(100) + '</p>'
+    + '<button>Background control</button>'.repeat(110)
+    + '<section role="dialog" aria-modal="true"><h2>Cookie preferences</h2><button>Reject all</button><button>Accept all</button></section>';
+  const rejected = vi.fn();
+  document.querySelector('[role="dialog"] button')!.addEventListener('click', rejected);
+  const observed = snapshot.call(document, 'obs');
+  expect(observed.content).toBe('Cookie preferences Reject all Accept all');
+  expect(observed.elements).toEqual([
+    { ref: 'r1', role: 'button', name: 'Reject all' }, { ref: 'r2', role: 'button', name: 'Accept all' },
+  ]);
+  expect(action.call(document, 'obs', 'r1', 'click', null)).toEqual({ ok: true });
+  expect(rejected).toHaveBeenCalledOnce();
+});
+it('requires a fresh observation when the active modal changes without replacing the observed node', () => {
+  document.body.innerHTML = '<button>Guide</button><section role="alertdialog" aria-modal="true" hidden><button>Continue</button></section>';
+  const [background, modalButton] = document.querySelectorAll('button');
+  const clicked = vi.fn();
+  background.addEventListener('click', clicked);
+  modalButton.addEventListener('click', clicked);
+  const dialog = document.querySelector('section')!;
+  expect(snapshot.call(document, 'background').elements[0].name).toBe('Guide');
+  dialog.hidden = false;
+  expect(action.call(document, 'background', 'r1', 'inspect', null)).toEqual({ ok: false, reason: 'stale' });
+  expect(action.call(document, 'background', 'r1', 'click', null)).toEqual({ ok: false, reason: 'stale' });
+  expect(snapshot.call(document, 'modal').elements[0].name).toBe('Continue');
+  dialog.setAttribute('aria-modal', 'false');
+  expect(action.call(document, 'modal', 'r1', 'click', null)).toEqual({ ok: false, reason: 'stale' });
+  expect(clicked).not.toHaveBeenCalled();
+});
+it('keeps modeless dialogs in the ordinary observation and checks credentials across the document', () => {
+  document.body.innerHTML = '<button>Guide</button><section role="dialog"><button>Dismiss</button></section>';
+  expect(snapshot.call(document, 'obs').elements.map((row: { name: string }) => row.name)).toEqual(['Guide', 'Dismiss']);
+  document.body.insertAdjacentHTML('beforeend', '<input type="password" value="private credential">');
+  document.querySelector('section')!.setAttribute('aria-modal', 'true');
+  expect(snapshot.call(document, 'obs')).toEqual({ handoff: true });
+});
 it('distinguishes a temporarily hidden wait target from a stale or replaced node', () => {
   document.body.innerHTML = '<button>Collect</button>'; snapshot.call(document, 'obs');
   const button = document.querySelector('button')!; button.hidden = true;
