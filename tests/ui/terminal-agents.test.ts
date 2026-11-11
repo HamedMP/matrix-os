@@ -125,4 +125,38 @@ describe("terminal events client", () => {
     expect(timers).toHaveLength(2);
     expect(states.length).toBeGreaterThan(0);
   });
+
+  // Fault detected (review of #3299): a socket closed by stop() republishes the old
+  // tabs after the store has cleared itself.
+  it("ignores close and messages from a socket it stopped", async () => {
+    const sockets: FakeSocket[] = [];
+    const states: Array<{ tabs: Record<string, unknown> }> = [];
+    const client = createTerminalEventsClient({
+      url: () => "wss://example.test/ws/terminal/events",
+      createSocket: () => { const socket = new FakeSocket(); sockets.push(socket); return socket; },
+      onState: (state) => states.push(state),
+      setTimer: () => 1, clearTimer: () => undefined, setRepeat: () => 1, clearRepeat: () => undefined,
+    });
+    client.start();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    sockets[0]!.onmessage?.({ data: JSON.stringify({ type: "snapshot", seq: 1, tabs: [fact(tabA)] }) });
+    const published = states.length;
+    client.stop();
+    sockets[0]!.onmessage?.({ data: JSON.stringify({ type: "snapshot", seq: 2, tabs: [fact(tabB)] }) });
+    sockets[0]!.onclose?.({});
+    expect(states).toHaveLength(published);
+  });
+
+  it("rejects frames with unknown fields or oversized values", () => {
+    const snapshot = reduceTerminalEvents(EMPTY_TERMINAL_EVENTS_STATE, { type: "snapshot", seq: 1, tabs: [fact(tabA)] });
+    for (const frame of [
+      { type: "event", seq: 2, event: { kind: "status", ref: { workspaceId, tabId: tabA }, status: "working", extra: 1 } },
+      { type: "event", seq: 2, event: { kind: "title", ref: { workspaceId, tabId: tabA }, name: "x".repeat(500) } },
+    ]) {
+      expect(reduceTerminalEvents(snapshot, frame)).toBe(snapshot);
+    }
+    // A snapshot drops only the tab that does not match.
+    const next = reduceTerminalEvents(snapshot, { type: "snapshot", seq: 3, tabs: [{ ...fact(tabA), injected: "<script>" }, fact(tabB)] });
+    expect(Object.keys(next.tabs)).toEqual([`${workspaceId}:${tabB}`]);
+  });
 });

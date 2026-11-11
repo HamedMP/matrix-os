@@ -1,8 +1,43 @@
-import { terminalFactsKey, type TerminalAgentWord, type TerminalTabFacts } from "./attention.js";
+import { z } from "zod/v4";
+import { terminalFactsKey, type TerminalTabFacts } from "./attention.js";
 
 const MAX_TABS = 1_024;
-const WORDS = new Set<TerminalAgentWord>(["idle", "working", "done", "blocked", "error"]);
-const TERMINAL_ID = /^(tws|tt)_[0-9a-f]{32}$/;
+const TerminalIdSchema = z.string().regex(/^(tws|tt)_[0-9a-f]{32}$/);
+const RefSchema = z.strictObject({ workspaceId: TerminalIdSchema, tabId: TerminalIdSchema });
+const WordSchema = z.enum(["idle", "working", "done", "blocked", "error"]);
+const SeqSchema = z.number().int().min(0).max(Number.MAX_SAFE_INTEGER);
+
+/** One tab's facts as the gateway sends them; bounded, unknown fields rejected. */
+const TabFactsSchema = z.strictObject({
+  ref: RefSchema,
+  name: z.string().max(128),
+  cwd: z.string().max(4096),
+  projectId: z.string().min(1).max(128).optional(),
+  state: z.enum(["live", "finished"]),
+  exitCode: z.number().int().nullable().optional(),
+  agentStatus: WordSchema.optional(),
+  statusMessage: z.string().max(200).optional(),
+  statusAt: z.string().max(64).optional(),
+});
+
+const EventSchema = z.discriminatedUnion("kind", [
+  z.strictObject({ kind: z.literal("created"), ref: RefSchema, tab: TabFactsSchema }),
+  z.strictObject({ kind: z.literal("removed"), ref: RefSchema }),
+  z.strictObject({ kind: z.literal("finished"), ref: RefSchema, exitCode: z.number().int().nullable() }),
+  z.strictObject({ kind: z.literal("status"), ref: RefSchema, status: WordSchema.nullable(), message: z.string().max(200).optional() }),
+  z.strictObject({ kind: z.literal("title"), ref: RefSchema, name: z.string().max(128) }),
+]);
+
+/** Every `/ws/terminal/events` server frame, checked before anything is stored. */
+export const TerminalEventsFrameSchema = z.discriminatedUnion("type", [
+  // Tabs are checked one by one below: one malformed tab must not hide the others.
+  z.strictObject({ type: z.literal("snapshot"), seq: SeqSchema, tabs: z.array(z.unknown()).max(MAX_TABS) }),
+  z.strictObject({ type: z.literal("event"), seq: SeqSchema, event: EventSchema }),
+  z.strictObject({ type: z.literal("heartbeat"), seq: SeqSchema }),
+  z.strictObject({ type: z.literal("missed"), seq: SeqSchema }),
+  z.strictObject({ type: z.literal("shutdown"), seq: SeqSchema }),
+  z.strictObject({ type: z.literal("pong") }),
+]);
 
 export interface TerminalEventsState {
   connected: boolean;
@@ -13,95 +48,64 @@ export interface TerminalEventsState {
 
 export const EMPTY_TERMINAL_EVENTS_STATE: TerminalEventsState = { connected: false, seq: 0, tabs: {} };
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
+function withoutStatus(facts: TerminalTabFacts): TerminalTabFacts {
+  const { agentStatus: _status, statusMessage: _message, ...rest } = facts;
+  void _status; void _message;
+  return rest;
 }
 
-function parseRef(value: unknown) {
-  if (!isRecord(value) || typeof value.workspaceId !== "string" || typeof value.tabId !== "string") return null;
-  if (!TERMINAL_ID.test(value.workspaceId) || !TERMINAL_ID.test(value.tabId)) return null;
-  return { workspaceId: value.workspaceId, tabId: value.tabId };
-}
-
-function text(value: unknown, max: number): string | undefined {
-  return typeof value === "string" ? value.slice(0, max) : undefined;
-}
-
-function word(value: unknown): TerminalAgentWord | undefined {
-  return typeof value === "string" && WORDS.has(value as TerminalAgentWord) ? value as TerminalAgentWord : undefined;
-}
-
-/** Validate one tab's facts from the server; unknown or malformed input is dropped. */
+/** Validate one tab's facts from the server; malformed input is dropped. */
 export function parseTerminalTabFacts(value: unknown): TerminalTabFacts | null {
-  if (!isRecord(value)) return null;
-  const ref = parseRef(value.ref);
-  const name = text(value.name, 128);
-  if (!ref || name === undefined || (value.state !== "live" && value.state !== "finished")) return null;
-  const agentStatus = word(value.agentStatus);
-  const statusMessage = text(value.statusMessage, 200);
-  const projectId = text(value.projectId, 128);
-  const statusAt = text(value.statusAt, 64);
-  return {
-    ref, name, cwd: text(value.cwd, 4096) ?? "", state: value.state,
-    ...(projectId ? { projectId } : {}),
-    ...(typeof value.exitCode === "number" || value.exitCode === null ? { exitCode: value.exitCode as number | null } : {}),
-    ...(agentStatus ? { agentStatus } : {}),
-    ...(statusMessage ? { statusMessage } : {}),
-    ...(statusAt ? { statusAt } : {}),
-  };
+  const parsed = TabFactsSchema.safeParse(value);
+  return parsed.success ? parsed.data : null;
 }
 
 /** Apply one `/ws/terminal/events` frame. Pure: returns the same object when nothing changed. */
-export function reduceTerminalEvents(state: TerminalEventsState, frame: unknown): TerminalEventsState {
-  if (!isRecord(frame) || typeof frame.type !== "string") return state;
-  const seq = typeof frame.seq === "number" ? frame.seq : state.seq;
-  if (frame.type === "snapshot" && Array.isArray(frame.tabs)) {
+export function reduceTerminalEvents(state: TerminalEventsState, input: unknown): TerminalEventsState {
+  const parsed = TerminalEventsFrameSchema.safeParse(input);
+  if (!parsed.success) return state;
+  const frame = parsed.data;
+  if (frame.type === "snapshot") {
     const tabs: Record<string, TerminalTabFacts> = {};
-    for (const raw of frame.tabs.slice(0, MAX_TABS)) {
+    for (const raw of frame.tabs) {
       const facts = parseTerminalTabFacts(raw);
       if (facts) tabs[terminalFactsKey(facts.ref)] = facts;
     }
-    return { connected: true, seq, tabs };
+    return { connected: true, seq: frame.seq, tabs };
   }
-  if (frame.type !== "event" || !isRecord(frame.event)) return state;
-  const event = frame.event;
-  const ref = parseRef(event.ref);
-  if (!ref) return state;
-  const key = terminalFactsKey(ref);
+  if (frame.type !== "event") return state;
+  const { event, seq } = frame;
+  const key = terminalFactsKey(event.ref);
   const current = state.tabs[key];
   switch (event.kind) {
-    case "created": {
-      const facts = parseTerminalTabFacts(event.tab);
-      if (!facts || Object.keys(state.tabs).length >= MAX_TABS) return state;
-      return { ...state, seq, tabs: { ...state.tabs, [key]: facts } };
-    }
+    case "created":
+      if (Object.keys(state.tabs).length >= MAX_TABS) return state;
+      return { ...state, seq, tabs: { ...state.tabs, [key]: event.tab } };
     case "removed": {
       if (!current) return state;
       const { [key]: _removed, ...rest } = state.tabs;
       void _removed;
       return { ...state, seq, tabs: rest };
     }
-    case "finished": {
+    case "finished":
       if (!current) return state;
-      const { agentStatus: _status, statusMessage: _message, ...facts } = current;
-      void _status; void _message;
-      const exitCode = typeof event.exitCode === "number" ? event.exitCode : null;
-      return { ...state, seq, tabs: { ...state.tabs, [key]: { ...facts, state: "finished", exitCode } } };
-    }
-    case "status": {
+      return { ...state, seq, tabs: { ...state.tabs, [key]: { ...withoutStatus(current), state: "finished", exitCode: event.exitCode } } };
+    case "status":
       if (!current) return state;
-      const { agentStatus: _status, statusMessage: _message, ...facts } = current;
-      void _status; void _message;
-      const next = word(event.status);
-      const message = text(event.message, 200);
-      return { ...state, seq, tabs: { ...state.tabs, [key]: { ...facts, ...(next ? { agentStatus: next } : {}), ...(message ? { statusMessage: message } : {}) } } };
-    }
-    case "title": {
-      const name = text(event.name, 128);
-      if (!current || name === undefined) return state;
-      return { ...state, seq, tabs: { ...state.tabs, [key]: { ...current, name } } };
-    }
-    default:
-      return state;
+      return {
+        ...state,
+        seq,
+        tabs: {
+          ...state.tabs,
+          [key]: {
+            ...withoutStatus(current),
+            ...(event.status ? { agentStatus: event.status } : {}),
+            ...(event.message ? { statusMessage: event.message } : {}),
+          },
+        },
+      };
+    case "title":
+      if (!current) return state;
+      return { ...state, seq, tabs: { ...state.tabs, [key]: { ...current, name: event.name } } };
   }
 }
