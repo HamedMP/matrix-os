@@ -7,6 +7,8 @@ export interface CanonicalCliProcess {
   once(event: "exit", listener: (code: number | null, signal: NodeJS.Signals | null) => void): void;
   once(event: "error", listener: (error: Error) => void): void;
   kill(signal: NodeJS.Signals): void;
+  /** Required for handing recovery authority to another process after stdio has closed. */
+  confirmScopeClosed?(): Promise<boolean>;
 }
 
 export type CanonicalCliSpawn = (
