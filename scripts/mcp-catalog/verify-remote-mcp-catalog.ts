@@ -126,13 +126,19 @@ interface PinnedResponse { status: number; headers: Record<string, string>; text
 /** One deadline covers URL validation, DNS, connect, and the full body read. */
 async function pinnedRequest(rawUrl: string, method: "GET" | "POST", body?: string): Promise<PinnedResponse | undefined> {
   const deadline = AbortSignal.timeout(TIMEOUT_MS);
+  const settled = new AbortController();
   const expired = new Promise<undefined>((resolve) => {
     deadline.addEventListener("abort", () => {
       console.warn("[mcp-catalog] request deadline exceeded");
       resolve(undefined);
-    }, { once: true });
+    }, { once: true, signal: settled.signal });
   });
-  return Promise.race([boundedRequest(rawUrl, method, body, deadline), expired]);
+  try {
+    return await Promise.race([boundedRequest(rawUrl, method, body, deadline), expired]);
+  } finally {
+    // Detach the deadline listener so a finished request never logs a timeout.
+    settled.abort();
+  }
 }
 
 async function boundedRequest(rawUrl: string, method: "GET" | "POST", body: string | undefined, signal: AbortSignal): Promise<PinnedResponse | undefined> {
