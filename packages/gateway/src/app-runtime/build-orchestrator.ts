@@ -107,9 +107,10 @@ export class BuildOrchestrator {
     appDir: string,
     opts: BuildOptions & {
       store: ImmutableCollaborativeBuildStore;
-      buildIdForAssetDigest: (assetDigest: string) => string;
+      buildIdForAssetDigest: (assetDigest: string, manifest: AppManifest) => string;
+      afterCapture?: (snapshot: CollaborativeBuildSnapshot & { manifest: AppManifest }) => Promise<void>;
     },
-  ): Promise<BuildSnapshotResult<CollaborativeBuildSnapshot>> {
+  ): Promise<BuildSnapshotResult<CollaborativeBuildSnapshot & { manifest: AppManifest }>> {
     return this.buildWithSnapshot(slug, appDir, opts, async (_result, canonicalDir) => {
       const raw = await readFile(join(canonicalDir, "matrix.json"), "utf8");
       const parsed = await parseManifest(JSON.parse(raw));
@@ -135,10 +136,13 @@ export class BuildOrchestrator {
       if (!realConfinedPath || realConfinedPath === ".." || realConfinedPath.startsWith(`..${sep}`)) {
         throw new BuildError("build_failed", "prepare", null, "manifest build output must stay within the app directory");
       }
-      return opts.store.captureIdentified({
+      const snapshot = await opts.store.captureIdentified({
         buildRoot: artifactRoot,
-        buildIdForAssetDigest: opts.buildIdForAssetDigest,
+        buildIdForAssetDigest: (assetDigest) => opts.buildIdForAssetDigest(assetDigest, parsed.manifest),
       });
+      const captured = { ...snapshot, manifest: parsed.manifest };
+      await opts.afterCapture?.(captured);
+      return captured;
     });
   }
 

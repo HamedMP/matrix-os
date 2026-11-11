@@ -15,6 +15,7 @@ const ArtifactRefSchema = z.string().min(1).max(4_096).refine((value) => {
 });
 const VerifierVersionSchema = z.string().min(1).max(128).regex(/^[A-Za-z0-9][A-Za-z0-9._-]*$/);
 const OwnerIdSchema = z.string().min(1).max(128).regex(/^[A-Za-z0-9_-]+$/);
+const DigestSchema = z.string().regex(/^[a-f0-9]{64}$/);
 const GateResultsSchema = z.array(CollaborativeAppReadinessGateResultSchema).max(12);
 
 export type CollaborativeAppReadinessStatus = "checking" | "ready" | "blocked" | "stale" | "failed";
@@ -197,6 +198,33 @@ export class CollaborativeAppReadinessRepository {
     return toRecord(row);
   }
 
+  async restart(input: {
+    id: string;
+    ownerId: string;
+    expectedRevision: number;
+  }): Promise<CollaborativeAppReadinessRecord> {
+    const id = z.uuid().safeParse(input.id);
+    const owner = OwnerIdSchema.safeParse(input.ownerId);
+    if (!id.success || !owner.success || !Number.isSafeInteger(input.expectedRevision) || input.expectedRevision < 1) {
+      throw new CollaborativeAppReadinessRepositoryError("invalid");
+    }
+    const row = await this.db.updateTable("collaboration_app_readiness").set({
+      status: "checking",
+      gate_results: sql`'[]'::jsonb`,
+      verified_at: null,
+      invalidated_at: null,
+      invalidation_reason: null,
+      revision: input.expectedRevision + 1,
+      updated_at: this.now(),
+    }).where("id", "=", id.data)
+      .where("owner_id", "=", owner.data)
+      .where("revision", "=", input.expectedRevision)
+      .where("status", "in", ["stale", "failed"])
+      .returningAll().executeTakeFirst();
+    if (!row) throw new CollaborativeAppReadinessRepositoryError("conflict");
+    return toRecord(row);
+  }
+
   async get(input: { id: string; ownerId: string }): Promise<CollaborativeAppReadinessRecord | null> {
     const row = await this.db.selectFrom("collaboration_app_readiness")
       .innerJoin("collaboration_resource_catalog", "collaboration_resource_catalog.id", "collaboration_app_readiness.catalog_id")
@@ -208,16 +236,46 @@ export class CollaborativeAppReadinessRepository {
     return row ? toRecord(row) : null;
   }
 
-  async getCurrent(input: { ownerId: string; catalogId: string }): Promise<CollaborativeAppReadinessRecord | null> {
+  async getCurrent(input: { ownerId: string; catalogId: string; buildId: string }): Promise<CollaborativeAppReadinessRecord | null> {
+    const build = DigestSchema.safeParse(input.buildId);
+    if (!build.success) throw new CollaborativeAppReadinessRepositoryError("invalid");
     const row = await this.db.selectFrom("collaboration_app_readiness")
       .innerJoin("collaboration_resource_catalog", "collaboration_resource_catalog.id", "collaboration_app_readiness.catalog_id")
       .selectAll("collaboration_app_readiness")
       .where("collaboration_app_readiness.owner_id", "=", input.ownerId)
       .where("collaboration_app_readiness.catalog_id", "=", input.catalogId)
+      .where("collaboration_app_readiness.build_id", "=", build.data)
       .where("collaboration_resource_catalog.deleted_at", "is", null)
       .orderBy("collaboration_app_readiness.updated_at", "desc")
       .limit(1)
       .executeTakeFirst();
     return row ? toRecord(row) : null;
+  }
+
+  async invalidateDriftedBuilds(input: {
+    ownerId: string;
+    catalogId: string;
+    currentBuildId: string;
+  }): Promise<number> {
+    const owner = OwnerIdSchema.safeParse(input.ownerId);
+    const catalog = z.uuid().safeParse(input.catalogId);
+    const build = DigestSchema.safeParse(input.currentBuildId);
+    if (!owner.success || !catalog.success || !build.success) {
+      throw new CollaborativeAppReadinessRepositoryError("invalid");
+    }
+    const timestamp = this.now();
+    const rows = await this.db.updateTable("collaboration_app_readiness").set({
+      status: "stale",
+      invalidated_at: timestamp,
+      invalidation_reason: "build_drift",
+      revision: sql`revision + 1`,
+      updated_at: timestamp,
+    }).where("owner_id", "=", owner.data)
+      .where("catalog_id", "=", catalog.data)
+      .where("build_id", "!=", build.data)
+      .where("invalidated_at", "is", null)
+      .returning("id")
+      .execute();
+    return rows.length;
   }
 }

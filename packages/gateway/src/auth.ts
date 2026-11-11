@@ -106,6 +106,8 @@ const ROUTE_SCOPED_SIGNATURE_PATHS = [
   "/api/internal/terminal-acceptance/run",
 ];
 const COLLABORATION_HTTP_PREFIX = "/api/collaboration/";
+const COLLABORATION_OWNER_READINESS_PATH =
+  /^\/api\/collaboration\/apps\/[A-Za-z0-9_-]{1,256}\/readiness(?:\/check)?$/;
 const COLLABORATION_WEBSOCKET_PATH =
   /^\/ws\/collaboration\/(?:direct\/)?scopes\/[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\/(?:events|terminal)$/;
 const MESSAGE_APPSERVICE_PREFIX = "/api/messages/appservice/";
@@ -302,7 +304,8 @@ export function authMiddleware(
     // those route-specific verifiers can run. Their bounded proof decoder and
     // verifier rate-limit each authenticated actor independently; applying a
     // transport-address quota here would let one collaborator block the rest.
-    if (normalizedPath.startsWith(COLLABORATION_HTTP_PREFIX)
+    if ((normalizedPath.startsWith(COLLABORATION_HTTP_PREFIX)
+      && !COLLABORATION_OWNER_READINESS_PATH.test(normalizedPath))
       || COLLABORATION_WEBSOCKET_PATH.test(normalizedPath)) {
       return nextWithReady(c, next);
     }
