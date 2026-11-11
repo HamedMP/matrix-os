@@ -14,6 +14,10 @@ where possible (hard limit 3000 additions / 50 files).
 | 5 | `feat/herdr-parity-attention` | feat(shell): show agent attention across OS views |
 | 6 | `feat/herdr-parity-desktop` | feat(desktop): bring local terminals to parity |
 
+## Public documentation (separate PR in `FinnaAI/matrix-os-site`)
+
+- [ ] D1 `content/docs/`: document the terminal agent commands (`matrix shell run|get|read|send|keys|interrupt|wait|wait-children|label|report|templates`), `matrix-status`, the template format (`~/agents/templates/<name>.md`), the MCP terminal tools, and their limits: 8 KiB sends, 90 s per wait request, 256-character output matches, owner terminals only. Open it once this stack's interfaces are reviewed, before the stack merges.
+
 ## Layer 2: verbs
 
 - [ ] T2.1 Failing tests: named-key encoder (normal vs application cursor mode, ctrl/alt letters, unknown key rejected).
