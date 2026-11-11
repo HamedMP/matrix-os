@@ -62,32 +62,48 @@ waiting on them that a one-line answer could have unblocked.
 ## Steps
 
 1. **Collect the work.** Run the independent lookups together.
-   - Linear, through the Linear MCP server: get the current user, then list the
-     issues assigned to them (`assignee: me`) whose state type is started, plus
-     unstarted ones in the current cycle. Keep ID, title, state, priority, URL,
-     and any linked PR or branch name. For a ticket that looks stuck, read its
-     latest comments for a question addressed to the author.
+   - Linear, through the Linear MCP server: `whoami` for the current user,
+     then `list_issues` with `assignee: "me"`, `state: "started"`, and
+     `updatedAt: "-P7D"`. Add unstarted issues in the current cycle: cycles are
+     per team, so `list_cycles` with `type: "current"` for each of the user's
+     teams, then one `list_issues` per team. Tool names can differ between
+     Linear MCP versions; use the equivalent and say which you used.
+   - Keep ID, title, state, priority, URL, and `gitBranchName`. The list call
+     does not return linked PRs; match PRs as described below, and call
+     `get_issue` only for a ticket that looks stuck, to read its latest
+     comments for a question addressed to the author.
+   - Count the started tickets older than 7 days with a second list call and
+     report them as one number per team.
    - GitHub: `gh pr list --author <login> --state open --json number,title,headRefName,baseRefName,isDraft,headRefOid,mergeStateStatus,reviewDecision,updatedAt,url`.
-     Pass `--limit 100`. Match each PR to its ticket by the Linear link, or by
-     the ticket ID in the branch name, title, or body. Also list PRs merged in the last 2 days, since those often have
-     rollout or ticket follow-ups.
+     Pass `--limit 100`; if exactly 100 come back, say "100 or more". Match
+     each PR to its ticket by `gitBranchName`, or by a ticket ID of any team
+     (`[A-Z]+-[0-9]+`, so `GTM-305` as well as `ENG-123`) in the branch name,
+     title, or body. Also list PRs merged in the last 2 days
+     (`gh pr list --author <login> --state merged --search "merged:>=<date>"`),
+     since those often have rollout or ticket follow-ups.
    - Keep the round small. Without explicit IDs, look closely only at the
-     tickets from Linear, PRs updated in the last 7 days, and PRs that have a
-     live agent terminal. Report the older open PRs as
+     tickets from Linear, PRs updated in the last 7 days, and PRs whose
+     worktree has a live agent terminal (step 3; run `hc ls` early). Report the older open PRs as
      one count with their age range, and offer a separate pass over them.
    - A ticket with no PR and a PR with no ticket are both worth a row.
 
 2. **Read the live state of each PR.**
-   - Checks: `gh pr checks <n> --json name,bucket`. Draft PRs skip most of CI;
-     say "CI not run (draft)" instead of "passing".
+   - Checks: `gh pr checks <n> --json name,bucket`. On an older `gh` without
+     that flag, use `gh pr view <n> --json statusCheckRollup`, where a null
+     conclusion means still running. Draft PRs skip most of CI; say "CI not run
+     (draft)" instead of "passing".
+   - Retry a GitHub 5xx once before reporting the source as unavailable.
    - Mergeability: `gh pr view <n> --json mergeable,mergeStateStatus`.
      `CONFLICTING` is a blocker even when checks look fine.
    - Greptile: read the score and `Last reviewed commit` from the comment that
      contains `greptile_summary`, not from the newest Greptile comment (it also
-     posts status notes). Compare that SHA to `headRefOid`. When they differ,
+     posts status notes). The score reads `N/5` and the reviewed commit is the
+     SHA in that line's commit link. Compare that SHA to `headRefOid`. When they differ,
      run `node scripts/review/review-carryover.mjs check <n>` and follow the
      stale-review table in `AGENTS.md`; a score for an older head is not a
-     score for this one unless the check accepts it.
+     score for this one unless the check accepts it. The script needs `node`
+     (run it under `flox activate` if needed); any exit code other than 0, 1,
+     or 3 means the check did not run, not that the review is stale.
    - Unresolved review threads: GraphQL `reviewThreads { isResolved }`.
    - Stack membership: note the base when it is not `main`.
 
