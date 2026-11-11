@@ -356,12 +356,13 @@ export function SharedChatComposer({
   ] : [];
   const showResourceSuggestions = resourceMenuOpen && (canAttach || filteredResources.length > 0);
   const suggestionMenuOpen = slashMenuOpen || showResourceSuggestions;
+  const suggestionSessionOpen = slashMenuOpen || resourceMenuOpen;
   const dismissSuggestion = useEffectEvent(() => setDismissedSuggestionKey(suggestionKey));
   useLayoutEffect(() => {
     const anchor = anchorRef.current;
-    if (!suggestionMenuOpen || !anchor) return;
+    if (!suggestionSessionOpen || !anchor) return;
 
-    // A retained desktop surface can become inert without changing its geometry.
+    // A retained desktop surface can become inert before a pending search has rows.
     const dismissIfInactive = () => {
       if (anchor.closest('[inert], [hidden], [aria-hidden="true"]')) dismissSuggestion();
     };
@@ -371,7 +372,7 @@ export function SharedChatComposer({
     }
     dismissIfInactive();
     return () => observer.disconnect();
-  }, [suggestionMenuOpen]);
+  }, [suggestionSessionOpen]);
   const searchingWithoutMenu = Boolean(resourceSearch) && resourceMenuOpen && !suggestionMenuOpen;
   useLayoutEffect(() => {
     const anchor = anchorRef.current;
