@@ -81,6 +81,7 @@ export default function ComputerFileBrowser({
   onPathChange,
   onOpenFolderInNewTab,
   onRequestCreateFolder,
+  onRequestCreateFile,
   refreshRevision = 0,
 }: {
   compact?: boolean;
@@ -105,6 +106,7 @@ export default function ComputerFileBrowser({
   onPathChange?: (path: string) => void;
   onOpenFolderInNewTab?: (path: string, name: string) => void;
   onRequestCreateFolder?: (parentPath: string) => void;
+  onRequestCreateFile?: (parentPath: string) => void;
   refreshRevision?: number;
 }) {
   const api = useConnection((state) => state.api);
@@ -507,6 +509,10 @@ export default function ComputerFileBrowser({
         onNavigate={navigate}
         onRefresh={() => void load(viewCurrentPath)}
         onUpload={mode === "browse" && !viewReadOnly ? () => fileInputRef.current?.click() : undefined}
+        onCreateFile={onRequestCreateFile && mode === "browse" && api && viewStatus === "ready"
+          && !isProtectedFolderCreationParentPath(viewCurrentPath)
+          ? () => onRequestCreateFile(viewCurrentPath)
+          : undefined}
         searchOpen={searchOpen}
         searchQuery={searchQuery}
         onSearchOpen={() => setSearchOpen(true)}

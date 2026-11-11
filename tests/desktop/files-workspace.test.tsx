@@ -62,8 +62,8 @@ function makeApi(overrides?: ApiOverrides) {
     overrides?.textFor ? overrides.textFor(path) : "# Matrix files\n\nA remote home you can inspect.",
   );
   const getBlob = vi.fn(async () => new Blob([new Uint8Array([1, 2, 3, 4])], { type: "image/png" }));
-  const post = vi.fn(async () => ({ ok: true }));
-  return { get, getText, getBlob, post, baseUrl: "https://app.matrix-os.com" };
+  const post = vi.fn(async (_path: string, _body: unknown, _options?: { signal?: AbortSignal }) => ({ ok: true }));
+  return { get, getText, getBlob, post, forRuntime: vi.fn(() => ({ post })), baseUrl: "https://app.matrix-os.com" };
 }
 
 async function flushMicrotasks(): Promise<void> {
@@ -268,6 +268,52 @@ describe("Files workspace", () => {
 
     fireEvent.click(screen.getByRole("tab", { name: "Matrix home" }));
     expect(await screen.findByRole("button", { name: "Open README.md" })).toBeTruthy();
+  });
+
+  it("creates a named file in the current writable folder and opens the exact path for editing", async () => {
+    render(<Tooltip.Provider><FilesWorkspace /></Tooltip.Provider>);
+    fireEvent.doubleClick(await screen.findByRole("button", { name: "Open workspaces" }));
+    await screen.findByRole("button", { name: "Open app.ts" });
+    fireEvent.click(screen.getByRole("button", { name: "New file", exact: true }));
+
+    const name = screen.getByRole("textbox", { name: "File name" });
+    expect(document.activeElement).toBe(name);
+    expect(screen.getByText("Create inside workspaces.")).toBeTruthy();
+    fireEvent.change(name, { target: { value: "../another-project.md" } });
+    fireEvent.click(screen.getByRole("button", { name: "Create file" }));
+    expect(screen.getByRole("alert").textContent).toMatch(/file name without slashes/);
+    expect(api.post).not.toHaveBeenCalled();
+
+    api.post.mockRejectedValueOnce(new AppError("server", { httpStatus: 409 }));
+    fireEvent.change(name, { target: { value: "app.ts" } });
+    fireEvent.click(screen.getByRole("button", { name: "Create file" }));
+    expect(await screen.findByText("The file name or folder is unavailable. Check the name and try again.")).toBeTruthy();
+    expect(name).toHaveProperty("value", "app.ts");
+
+    fireEvent.change(name, { target: { value: "notes%20.md:123" } });
+    fireEvent.click(screen.getByRole("button", { name: "Create file" }));
+    await waitFor(() => expect(api.post).toHaveBeenLastCalledWith("/api/files/touch", {
+      path: "workspaces/notes%20.md:123",
+    }, expect.objectContaining({ signal: expect.any(AbortSignal) })));
+    await waitFor(() => expect(useDesktopEditor.getState().activePath).toBe("workspaces/notes%20.md:123"));
+    expect(api.get.mock.calls.filter(([path]) => path === "/api/files/list?path=workspaces")).toHaveLength(2);
+  });
+
+  it("does not open a created file after switching computers during the request", async () => {
+    let finishCreate!: (result: { ok: boolean }) => void;
+    api.post.mockReturnValueOnce(new Promise(resolve => { finishCreate = resolve; }));
+    render(<Tooltip.Provider><FilesWorkspace /></Tooltip.Provider>);
+    fireEvent.click(await screen.findByRole("button", { name: "New file", exact: true }));
+    fireEvent.change(screen.getByRole("textbox", { name: "File name" }), { target: { value: "notes.md" } });
+    fireEvent.click(screen.getByRole("button", { name: "Create file" }));
+
+    const request = api.post.mock.calls[0]!;
+    expect(api.forRuntime).toHaveBeenCalledExactlyOnceWith("pr-919");
+    expect(request[1]).toEqual({ path: "notes.md" });
+    act(() => useConnection.setState({ runtimeSlot: "primary", authGeneration: 4, api: makeApi() as never }));
+    expect(request[2]?.signal?.aborted).toBe(true);
+    await act(async () => finishCreate({ ok: true }));
+    expect(useDesktopEditor.getState().activePath).toBeNull();
   });
 
   it("creates a folder from the listing context menu and refreshes the active tab", async () => {

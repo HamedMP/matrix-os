@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 import { FolderOpenIcon, Loader2Icon } from "@/lib/hugeicons";
 import { useFileBrowser } from "@/hooks/useFileBrowser";
 import { FileContextMenu } from "./FileContextMenu";
@@ -22,6 +22,7 @@ interface XpExplorerProps {
   onOpenFile: (path: string) => void;
   showingTrash: boolean;
   onTrashClick: () => void;
+  newFileAction?: ReactNode;
 }
 
 /**
@@ -37,6 +38,7 @@ export function XpExplorer({
   onOpenFile,
   showingTrash,
   onTrashClick,
+  newFileAction,
 }: XpExplorerProps) {
   const viewMode = useFileBrowser((s) => s.viewMode);
   const loading = useFileBrowser((s) => s.loading);
@@ -89,6 +91,7 @@ export function XpExplorer({
       <XpToolbar
         taskPaneOpen={taskPaneOpen}
         onToggleTaskPane={() => setTaskPaneOpen((v) => !v)}
+        newFileAction={newFileAction}
       />
       <XpAddressBar />
       <div className="xp-explorer-body">

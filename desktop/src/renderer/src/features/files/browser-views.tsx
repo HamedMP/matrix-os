@@ -288,6 +288,7 @@ export function BrowserToolbar({
   onNavigate,
   onRefresh,
   onUpload,
+  onCreateFile,
   searchOpen,
   searchQuery,
   onSearchOpen,
@@ -309,6 +310,7 @@ export function BrowserToolbar({
   onNavigate: (path: string) => void;
   onRefresh: () => void;
   onUpload?: () => void;
+  onCreateFile?: () => void;
   searchOpen: boolean;
   searchQuery: string;
   onSearchOpen: () => void;
@@ -402,6 +404,7 @@ export function BrowserToolbar({
           <Search size={16} />
         </IconButton>
       )}
+      {onCreateFile ? <Button variant="subtle" className="h-8 shrink-0 px-2 text-xs" onClick={onCreateFile}>New file</Button> : null}
       {onUpload ? (
         <IconButton label="Upload files" className="h-8 w-8 shrink-0 border" style={{ borderColor: "var(--border-subtle)", background: "var(--bg-raised)" }} onClick={onUpload}>
           <Upload size={16} />

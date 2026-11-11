@@ -284,6 +284,31 @@ describe("useFileBrowser store", () => {
       );
     });
 
+    it("rejects traversal and reports duplicate filenames without a refresh", async () => {
+      useFileBrowser.setState({ currentPath: "workspaces/example" });
+      const create = useFileBrowser.getState().createFile;
+      await expect(create("../other-project.md")).resolves.toEqual({ ok: false, error: "Enter a file name without slashes." });
+      expect(mockFetch).not.toHaveBeenCalled();
+      mockFetch.mockResolvedValueOnce({ ok: false, status: 409 });
+      await expect(create("notes.md")).resolves.toEqual({ ok: false, error: "The file name or folder is unavailable. Check the name and try again." });
+      expect(mockFetch).toHaveBeenCalledExactlyOnceWith(expect.stringContaining("/api/files/touch"), expect.objectContaining({
+        body: JSON.stringify({ path: "workspaces/example/notes.md" }),
+      }));
+    });
+
+    it("does not refresh a different folder if an earlier create completes after navigation", async () => {
+      let finishCreate!: (response: { ok: boolean }) => void;
+      mockFetch.mockReturnValueOnce(new Promise(resolve => { finishCreate = resolve; }));
+      useFileBrowser.setState({ currentPath: "workspaces/alpha" });
+      const operation = useFileBrowser.getState().createFile("notes.md");
+      useFileBrowser.setState({ currentPath: "workspaces/beta" });
+      finishCreate({ ok: true });
+      await expect(operation).resolves.toMatchObject({ ok: false });
+      expect(mockFetch).toHaveBeenCalledOnce();
+      expect(useFileBrowser.getState().currentPath).toBe("workspaces/beta");
+      expect(useFileBrowser.getState().error).toBeNull();
+    });
+
     it("deleteFiles calls delete API for each path", async () => {
       mockFetch.mockResolvedValue({
         ok: true,

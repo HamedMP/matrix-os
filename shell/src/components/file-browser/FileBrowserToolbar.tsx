@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, type ReactNode } from "react";
 import { useFileBrowser } from "@/hooks/useFileBrowser";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -14,7 +14,7 @@ import {
 } from "@/lib/hugeicons";
 import { cn } from "@/lib/utils";
 
-export function FileBrowserToolbar({ mobile = false }: { mobile?: boolean }) {
+export function FileBrowserToolbar({ mobile = false, newFileAction }: { mobile?: boolean; newFileAction?: ReactNode }) {
   const currentPath = useFileBrowser((s) => s.currentPath);
   const historyIndex = useFileBrowser((s) => s.historyIndex);
   const history = useFileBrowser((s) => s.history);
@@ -102,6 +102,7 @@ export function FileBrowserToolbar({ mobile = false }: { mobile?: boolean }) {
         ))}
       </div>
 
+      {newFileAction}
       <div className="flex items-center border rounded-md shrink-0">
         {(
           [

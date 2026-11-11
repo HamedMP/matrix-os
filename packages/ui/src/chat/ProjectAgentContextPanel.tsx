@@ -172,6 +172,12 @@ function ProjectConfigurationSectionContent({ section, onOpenFile, onOpenFiles, 
         <p className="text-xs leading-relaxed" style={secondaryStyle}>{description}</p>
         {onCreate && id === "skills" ? <ProjectSkillActions filesPending={Boolean(filesPending)} onCreate={onCreate}
           loadInstalledSkills={loadInstalledSkills} readInstalledSkill={readInstalledSkill} /> : null}
+        {onCreate && createFiles.length > 0 ? <div className="flex flex-wrap gap-2">
+          {createFiles.map(template => <button key={template.path} type="button" className={actionClass}
+            style={borderStyle} disabled={filesPending} onClick={() => { void create(template); }}>
+            Create {template.path}
+          </button>)}
+        </div> : null}
         {showBrowse ? <button type="button" className={actionClass} style={borderStyle} disabled={filesPending}
           onClick={onOpenFiles}>
           <span className="flex items-center gap-1.5"><FolderOpen size={13} aria-hidden className="shrink-0" />{browseLabel}</span>
@@ -183,12 +189,6 @@ function ProjectConfigurationSectionContent({ section, onOpenFile, onOpenFiles, 
         {id === "config" && onCreate && onOpenFile && !partial && createFiles.length === 0 ? (
           <p className="text-xs leading-relaxed" style={secondaryStyle}>The starter config files already exist. Open a file to edit it.</p>
         ) : null}
-        {onCreate && createFiles.length > 0 ? <div className="flex flex-wrap gap-2">
-          {createFiles.map(template => <button key={template.path} type="button" className={actionClass}
-            style={borderStyle} disabled={filesPending} onClick={() => { void create(template); }}>
-            Create {template.path}
-          </button>)}
-        </div> : null}
         {createError ? <p role="alert" className="text-xs">{createError}</p> : null}
       </div>
       {rows.length > 0 ? <ul className="max-h-56 overflow-y-auto">

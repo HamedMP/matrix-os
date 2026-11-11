@@ -146,3 +146,36 @@ it.each(["pointer", "keyboard"] as const)("ignores deferred @ search results aft
   expect(document.querySelector('[role="listbox"][aria-label="Add"]')).toBeNull();
   expect(editor.textContent).toBe("@read");
 });
+
+it("uses a project manifest from slash without invoking an installed skill of the same name", async () => {
+  const catalog = createCanonicalProviderCatalogFixture();
+  catalog.instances[0]!.skills = [{ id: "global-review", displayName: "Review", description: "Installed review", invocation: "/review" }];
+  const onSubmit = vi.fn();
+  const read = vi.fn(async () => ({
+    skills: [{ name: "review", source: ".agents/skills" }], instructions: [], mcpServers: [], incompleteSources: [],
+  }));
+  function Harness({ projectId }: { projectId: string }) {
+    const [value, setValue] = React.useState("");
+    return <SharedChatComposer value={value} onChange={setValue} onSubmit={onSubmit} busy={false} catalog={catalog}
+      selection={createCanonicalComposerSelection(catalog)} onSelectionChange={vi.fn()} instanceLocked={false}
+      projectSlashScope={{ scope: "preview", projectId, read }} />;
+  }
+  const view = render(<Harness projectId="alpha" />);
+  const editor = screen.getByLabelText("Message chat");
+  editor.focus();
+  await appendSharedComposerText(editor, "/");
+  const option = await screen.findByRole("option", { name: /review.*\.agents\/skills\/review\/SKILL.md/i });
+  expect(screen.queryByRole("option", { name: /installed review/i })).toBeNull();
+  fireEvent.click(option);
+  expect(await screen.findByRole("button", { name: "Remove skill review" })).toBeTruthy();
+  expect(onSubmit).not.toHaveBeenCalled();
+  fireEvent.keyDown(editor, { key: "Enter" });
+  expect(onSubmit).toHaveBeenCalledWith(expect.objectContaining({
+    text: expect.stringContaining(".agents/skills/review/SKILL.md"),
+    invocations: [],
+    projectSkill: expect.objectContaining({ projectId: "alpha" }),
+  }));
+  view.rerender(<Harness projectId="beta" />);
+  expect(screen.queryByRole("button", { name: "Remove skill review" })).toBeNull();
+  expect(onSubmit.mock.calls[0]![0].projectSkill.isCurrent()).toBe(false);
+});

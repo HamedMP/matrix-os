@@ -18,6 +18,10 @@ Within Skills, **Add skill** opens three options. **Choose installed skill** sea
 
 Config files offers a Create action for each missing starter. When all starters exist, the section explains that they can be opened for editing.
 
+In a personal primary-checkout Chat, `/` shows skills from the selected project and commands from the selected runtime. No installed computer skills replace a missing, unavailable, or empty project list. Selecting a skill adds a removable item bound to the current draft, project and runtime. On Send, the user message asks the agent to read that exact relative manifest in the admitted project. The action does not alter runtime permissions. Chats using a different execution root do not offer primary-checkout skills.
+
+The **Config files** section offers explicit **Create** buttons for missing starters. In a writable Files folder on Electron Desktop, Web Desktop and Web Canvas, **New file** accepts a filename, creates it exclusively, and opens the new file in the existing editor or preview.
+
 The inventory is available in Electron Desktop, Web Desktop and Web Canvas. Mobile is outside this feature’s scope. The list describes project files. Skill availability, config trust, and MCP connection status depend on the selected runtime. Worktree-specific inventory, automatic Markdown injection, and shared project inventory are deferred.
 
 ## Wiring and authorization

@@ -7,6 +7,7 @@ import { useWindowManager } from "@/hooks/useWindowManager";
 import { useFileWatcher } from "@/hooks/useFileWatcher";
 import { useThemeStyle } from "../window/useThemeStyle";
 import { FileBrowserToolbar } from "./FileBrowserToolbar";
+import { NewFileAction } from "./NewFileAction";
 import { FileBrowserSidebar } from "./FileBrowserSidebar";
 import { FileBrowserContent } from "./FileBrowserContent";
 import { PreviewPanel } from "./PreviewPanel";
@@ -30,11 +31,11 @@ interface FileBrowserProps {
 }
 
 export function FileBrowser(props: FileBrowserProps) {
-  return <ShellFileAuthority>{identity => <FileBrowserForAuthority {...props} identity={identity} />}</ShellFileAuthority>;
+  return <ShellFileAuthority>{(identity, gatewayUrl) => <FileBrowserForAuthority {...props} identity={identity} gatewayUrl={gatewayUrl} />}</ShellFileAuthority>;
 }
 
 // react-doctor-disable-next-line react-doctor/no-high-complexity-react-function -- The browser coordinates keyboard shortcuts, trash, search and organization drives.
-function FileBrowserForAuthority({ windowId, mobile = false, active, identity }: FileBrowserProps & { identity: string }) {
+function FileBrowserForAuthority({ windowId, mobile = false, active, identity, gatewayUrl }: FileBrowserProps & { identity: string; gatewayUrl: string }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const initialized = useRef(false);
   const [showingTrash, setShowingTrash] = useState(false);
@@ -61,6 +62,7 @@ function FileBrowserForAuthority({ windowId, mobile = false, active, identity }:
   const [renamingPath, setRenamingPath] = useState<string | null>(null);
 
   const currentPath = useFileBrowser((s) => s.currentPath);
+  const loading = useFileBrowser((s) => s.loading);
   const navigate = useFileBrowser((s) => s.navigate);
   const goBack = useFileBrowser((s) => s.goBack);
   const goForward = useFileBrowser((s) => s.goForward);
@@ -83,22 +85,18 @@ function FileBrowserForAuthority({ windowId, mobile = false, active, identity }:
   const consumeViewRequest = useFileBrowser((s) => s.consumeViewRequest);
   const searchResults = useFileBrowser((s) => s.searchResults);
   const openFileTab = usePreviewWindow((s) => s.openFile);
-  const wmWindows = useWindowManager((s) => s.windows);
-  const wmOpenWindow = useWindowManager((s) => s.openWindow);
-  const wmFocusWindow = useWindowManager((s) => s.focusWindow);
   const themeStyle = useThemeStyle();
   // Windows XP gets a faithful Explorer layout; every other design style
   // (flat/neumorphic/macos-glass/win11) keeps the classic chrome below.
   const isXpExplorer = themeStyle === "winxp" && !mobile;
 
-  const openFile = (path: string) => {
-    openFileTab(path);
-    const previewWin = wmWindows.find((w) => w.path === "__preview-window__");
-    if (previewWin) {
-      wmFocusWindow(previewWin.id);
-    } else {
-      wmOpenWindow("Preview", "__preview-window__", 0);
-    }
+  const openFile = (path: string, options?: Parameters<typeof openFileTab>[1]) => {
+    if (options) openFileTab(path, options);
+    else openFileTab(path);
+    const { windows, restoreAndFocusWindow, openWindow } = useWindowManager.getState();
+    const preview = windows.find((window) => window.path === "__preview-window__");
+    if (preview) restoreAndFocusWindow(preview.id);
+    else openWindow("Preview", "__preview-window__", 0);
   };
 
   // Handle project-folder and XP icon requests in the foreground Files view.
@@ -318,6 +316,12 @@ function FileBrowserForAuthority({ windowId, mobile = false, active, identity }:
   const selectedKind = selectedEntry?.type === "file" ? "file" : selectedEntry?.type === "directory" ? "folder" : null;
   const selectedPath = selectedName ? (currentPath ? `${currentPath}/${selectedName}` : selectedName) : null;
 
+  const newFileAction = !mobile && !showingTrash && !searchResults && !organizationDrivesVisible ? (
+    <NewFileAction key={JSON.stringify([identity, currentPath])} xp={isXpExplorer}
+      parentPath={currentPath} gatewayUrl={gatewayUrl} disabled={loading}
+      onCreated={path => openFile(path, { authority: identity, mode: "source", focus: true })} />
+  ) : null;
+
   return (
     <div
       ref={containerRef}
@@ -351,10 +355,11 @@ function FileBrowserForAuthority({ windowId, mobile = false, active, identity }:
           onOpenFile={openFile}
           showingTrash={showingTrash}
           onTrashClick={() => setShowingTrash(!showingTrash)}
+          newFileAction={newFileAction}
         />
       ) : (
         <>
-          <FileBrowserToolbar mobile={mobile} />
+          <FileBrowserToolbar mobile={mobile} newFileAction={newFileAction} />
           <div className="flex flex-1 min-h-0">
             {!mobile && (
               <FileBrowserSidebar

@@ -287,7 +287,7 @@ export { createMatrixAnthropicConnectionClient, type MatrixAnthropicConnectionCl
 
 export { requestChatSearchShortcut, useChatSearchShortcut, chatSearchShortcutLabel } from "./chat-search-shortcut.js";
 
-export { listCanonicalSlashEntries, matchChatSlashToken, filterCanonicalSlashEntries, chatSlashStatusMessage, type CanonicalSlashEntry } from "./chat/canonical-slash-entries.js";
+export { listCanonicalSlashEntries, matchChatSlashToken, filterCanonicalSlashEntries, chatSlashStatusMessage, type CanonicalSlashEntry, type ProjectChatSkillCatalog } from "./chat/canonical-slash-entries.js";
 export { useBotExecution } from "./chat-agents/bots/use-bot-execution.js";
 export { botSubmissionParts } from "./chat-agents/bots/bot-submission.js";
 
@@ -336,3 +336,5 @@ export { ChatNewChatContent, ChatStarterCards, ChatComposerColumn } from "./chat
 export { providerCatalogObservationRetryDelay } from "./provider-observation.js";
 
 export { ProjectAgentContextPanel } from "./chat/ProjectAgentContextPanel.js";
+
+export { useProjectChatSlashSkills, useProjectSkillDraft, ProjectSkillDraftChips, type ProjectChatSlashScope } from "./chat/project-chat-slash-skills.js";

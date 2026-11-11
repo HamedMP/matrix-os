@@ -1118,6 +1118,7 @@ export function buildCreateAgentThreadRequestFromComposer(input: {
 }
 
 export const FilePathSchema = safeRelativePath();
+export { FileLeafNameSchema } from "#legacy-contract-primitives";
 export const FileMetadataSchema = z.object({
   path: FilePathSchema,
   kind: z.enum(["file", "directory", "symlink", "unknown"]),

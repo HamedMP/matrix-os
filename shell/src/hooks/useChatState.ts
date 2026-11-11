@@ -53,6 +53,7 @@ export interface ChatState {
   canSteerQueuedTurns?: boolean;
   /** The open Chat's project, or the project a new Chat will be created in. */
   chatProjectId?: string;
+  projectSkillRootAvailable?: boolean;
   /** Picks the project for a new Chat or moves the open Chat; resolves false when it was not saved. */
   setChatProject?: (projectId: string | null) => Promise<boolean>;
   messages: ChatMessage[];
@@ -101,6 +102,8 @@ export interface ChatSubmitOptions {
   clientRequestId?: string;
   displayText?: string;
   promptText?: string;
+  /** The selected Skill belongs to this project’s primary checkout. */
+  projectSkillProjectId?: string;
   instanceId?: string;
   model?: string;
   interactionMode?: string;

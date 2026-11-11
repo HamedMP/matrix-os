@@ -40,7 +40,7 @@ interface DesktopEditorState {
   dirtyPaths: string[];
   error: string | null;
   ensureScope(scope: string): void;
-  openFile(path: string, resource?: Extract<FileResourceRef, { kind: "project" }>): boolean;
+  openFile(path: string, resource?: Extract<FileResourceRef, { kind: "project" }>, options?: { exactPath?: boolean }): boolean;
   setActive(path: string): void;
   setDirty(path: string, dirty: boolean): void;
   closeFile(path: string): void;
@@ -64,10 +64,12 @@ export const useDesktopEditor = create<DesktopEditorState>()((set, get) => ({
     error: null,
   }),
 
-  openFile: (rawPath, resource) => {
+  openFile: (rawPath, resource, options) => {
     const parsedResource = resource ? FileResourceRefSchema.safeParse(resource) : null;
     if (resource && (!parsedResource?.success || parsedResource.data.kind !== "project")) return false;
-    const path = resource ? `@project/${encodeURIComponent(resource.projectId)}/${encodeURIComponent(resource.worktreeId ?? "root")}/${resource.path}` : normalizeDesktopEditorPath(rawPath);
+    const path = resource
+      ? `@project/${encodeURIComponent(resource.projectId)}/${encodeURIComponent(resource.worktreeId ?? "root")}/${resource.path}`
+      : options?.exactPath ? FilePathSchema.safeParse(rawPath).data ?? null : normalizeDesktopEditorPath(rawPath);
     if (!path) {
       set({ error: "That file path is outside Matrix home." });
       return false;
@@ -135,10 +137,10 @@ export function currentDesktopEditorScope(): string {
   return `${runtimeSlot}|${authGeneration}`;
 }
 
-export function openFileInDesktopEditor(rawPath: string): boolean {
+export function openFileInDesktopEditor(rawPath: string, options?: { exactPath?: boolean }): boolean {
   const editor = useDesktopEditor.getState();
   editor.ensureScope(currentDesktopEditorScope());
-  if (!useDesktopEditor.getState().openFile(rawPath)) return false;
+  if (!useDesktopEditor.getState().openFile(rawPath, undefined, options)) return false;
   useTabs.getState().openTab(EDITOR_WORKSPACE_TAB_SPEC);
   return true;
 }
