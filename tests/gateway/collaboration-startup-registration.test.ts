@@ -1,14 +1,41 @@
 import { describe, expect, it, vi } from "vitest";
+import { mkdtemp, rm } from "node:fs/promises";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
 import { Hono } from "hono";
 import type { UpgradeWebSocket } from "hono/ws";
 import {
   enableOwnerSharedAi,
+  createCollaborativeAppInfrastructure,
   registerOwnerCollaborationRoutes,
 } from "../../packages/gateway/src/startup/collaboration.js";
 
 const upgradeWebSocket = (() => async () => new Response(null, { status: 500 })) as unknown as UpgradeWebSocket;
 
 describe("owner collaboration startup registration", () => {
+  it("closes only the owned immutable-build store and never the injected shared database", async () => {
+    const root = await mkdtemp(join(tmpdir(), "collaborative-app-startup-"));
+    const destroy = vi.fn();
+    const infrastructure = createCollaborativeAppInfrastructure({
+      db: { destroy } as never,
+      buildStoreRoot: root,
+      startTimers: false,
+    });
+    try {
+      expect(infrastructure.readiness).toBeDefined();
+      expect(infrastructure.shares).toBeDefined();
+      await infrastructure.close();
+      await infrastructure.close();
+      expect(destroy).not.toHaveBeenCalled();
+      await expect(infrastructure.builds.capture({
+        buildRoot: root,
+        buildId: "a".repeat(64),
+      })).rejects.toMatchObject({ code: "invalid_snapshot" });
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   it("registers the ready runtime with the original app and WebSocket upgrader", async () => {
     const app = new Hono();
     const register = vi.fn(({ app: target }: { app: Hono }) => {

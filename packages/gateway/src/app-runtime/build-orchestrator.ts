@@ -1,6 +1,6 @@
 import { spawn } from "node:child_process";
-import { readFile, writeFile, stat, truncate, open } from "node:fs/promises";
-import { join } from "node:path";
+import { lstat, readFile, realpath, writeFile, stat, truncate, open } from "node:fs/promises";
+import { isAbsolute, join, relative, resolve, sep } from "node:path";
 import { existsSync } from "node:fs";
 import { BuildError } from "./errors.js";
 import {
@@ -9,6 +9,8 @@ import {
   readBuildStamp,
   writeBuildStamp,
   isBuildStale,
+  type CollaborativeBuildSnapshot,
+  type ImmutableCollaborativeBuildStore,
   type BuildStamp,
 } from "./build-cache.js";
 import { parseManifest, type AppManifest } from "./manifest-schema.js";
@@ -81,19 +83,62 @@ export class BuildOrchestrator {
     slug: string,
     appDir: string,
     opts: BuildOptions,
-    collect: (result: Extract<BuildResult, { ok: true }>) => Promise<T>,
+    collect: (
+      result: Extract<BuildResult, { ok: true }>,
+      canonicalDir: string,
+    ) => Promise<T>,
   ): Promise<BuildSnapshotResult<T>> {
     return withAppBuildLock(appDir, async (canonicalDir) => {
       const result = await this.doBuild(slug, canonicalDir, opts);
       if (!result.ok) return result;
       const beforeCapture = this.deadlineFailure(opts, 'build');
       if (beforeCapture) return beforeCapture;
-      const snapshot = await collect(result);
+      const snapshot = await collect(result, canonicalDir);
       const afterCapture = this.deadlineFailure(opts, 'build');
       return afterCapture ?? { ...result, snapshot };
     }, { deadlineAt: opts.deadlineAt }).catch((error: unknown): BuildSnapshotResult<T> => {
       if (error instanceof BuildError) return { ok: false, error };
       throw error;
+    });
+  }
+
+  async buildWithCollaborativeSnapshot(
+    slug: string,
+    appDir: string,
+    opts: BuildOptions & {
+      store: ImmutableCollaborativeBuildStore;
+      buildIdForAssetDigest: (assetDigest: string) => string;
+    },
+  ): Promise<BuildSnapshotResult<CollaborativeBuildSnapshot>> {
+    return this.buildWithSnapshot(slug, appDir, opts, async (_result, canonicalDir) => {
+      const raw = await readFile(join(canonicalDir, "matrix.json"), "utf8");
+      const parsed = await parseManifest(JSON.parse(raw));
+      if (!parsed.ok || !parsed.manifest.build) {
+        throw new BuildError("build_failed", "prepare", null, "manifest has no valid build output");
+      }
+      const output = parsed.manifest.build.output;
+      const artifactRoot = resolve(canonicalDir, output);
+      const confinedPath = relative(canonicalDir, artifactRoot);
+      if (!confinedPath || isAbsolute(output) || isAbsolute(confinedPath)
+        || confinedPath === ".." || confinedPath.startsWith(`..${sep}`)) {
+        throw new BuildError("build_failed", "prepare", null, "manifest build output must stay within the app directory");
+      }
+      let component = canonicalDir;
+      for (const segment of confinedPath.split(sep)) {
+        component = join(component, segment);
+        if ((await lstat(component)).isSymbolicLink()) {
+          throw new BuildError("build_failed", "prepare", null, "manifest build output must not contain symlinks");
+        }
+      }
+      const [canonicalRealPath, artifactRealPath] = await Promise.all([realpath(canonicalDir), realpath(artifactRoot)]);
+      const realConfinedPath = relative(canonicalRealPath, artifactRealPath);
+      if (!realConfinedPath || realConfinedPath === ".." || realConfinedPath.startsWith(`..${sep}`)) {
+        throw new BuildError("build_failed", "prepare", null, "manifest build output must stay within the app directory");
+      }
+      return opts.store.captureIdentified({
+        buildRoot: artifactRoot,
+        buildIdForAssetDigest: opts.buildIdForAssetDigest,
+      });
     });
   }
 
