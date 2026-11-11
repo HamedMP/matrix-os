@@ -36,10 +36,15 @@ describe("project-scoped shell CLI commands", () => {
   it("exposes only workspace/tab commands and removes native zellij pane commands", () => {
     expect(Object.keys(shellCommand.subCommands ?? {}).sort()).toEqual([
       "connect",
+      "get",
+      "interrupt",
+      "keys",
       "list",
       "ls",
       "new",
+      "read",
       "rm",
+      "send",
     ]);
   });
 
