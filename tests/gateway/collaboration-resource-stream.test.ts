@@ -12,6 +12,11 @@ describe("bounded collaboration resource streams", () => {
     await expect(new Response(watchResourceStream(source, 15, () => false)).text()).rejects.toThrow();
   });
 
+  it("awaits an asynchronous evidence check before delivering bytes", async () => {
+    const source = new Blob(["private content"]).stream();
+    await expect(new Response(watchResourceStream(source, 15, async () => false)).text()).rejects.toThrow();
+  });
+
   it("streams exact-length bytes while the lease remains active", async () => {
     const source = new Blob(["abc"]).stream();
     expect(await new Response(watchResourceStream(source, 3, () => true)).text()).toBe("abc");
@@ -19,6 +24,8 @@ describe("bounded collaboration resource streams", () => {
 
   it("never delivers a chunk whose lease ended while the read was in flight", async () => {
     let active = true;
+    let releaseSecond!: () => void;
+    const secondMayFinish = new Promise<void>((resolve) => { releaseSecond = resolve; });
     const chunks = ["first", "second"].map((part) => new TextEncoder().encode(part));
     let index = 0;
     const source = new ReadableStream<Uint8Array>({
@@ -31,14 +38,17 @@ describe("bounded collaboration resource streams", () => {
         }
         // Revocation lands while this read is pending, after the watch checked the lease.
         if (index === 2) {
-          await Promise.resolve();
+          await secondMayFinish;
           active = false;
         }
         controller.enqueue(chunk);
       },
     });
-    const delivered = await drain(watchResourceStream(source, 11, () => active));
-    expect(delivered).toEqual({ text: "first", errored: true });
+    const reader = watchResourceStream(source, 11, () => active).getReader();
+    const first = await reader.read();
+    expect(new TextDecoder().decode(first.value)).toBe("first");
+    releaseSecond();
+    await expect(reader.read()).rejects.toThrow("Shared resource stream unavailable");
   });
 });
 

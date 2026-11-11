@@ -1,6 +1,8 @@
 import {
   CollaborationChatMessagesResponseSchema,
   CollaborationChatSchema,
+  CollaborativeAppDirectoryItemSchema,
+  CollaborativeAppDirectoryResponseSchema,
   CollaborationDiscoveryResponseSchema,
   CollaborationDiscoveryItemSchema,
   CollaborationInvitationSchema,
@@ -8,6 +10,7 @@ import {
   CollaborationScopeSchema,
   CollaborationSharedChatMessageSchema,
   type CanonicalChatMessagePart,
+  type CollaborativeAppDirectoryItem,
 } from "@matrix-os/contracts";
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
 import { createPortal } from "react-dom";
@@ -25,6 +28,9 @@ import { SessionDiscussionLayer, type CollaborationOverlayLayers } from "./Sessi
 import { useSessionDiscussion } from "./useSessionDiscussion.js";
 import { notifyCollaborationDiscoveryChanged } from "./discovery-events.js";
 import { isAcceptedProjectOwnedByRail } from "./discovery-visibility.js";
+import { SharedAppViewer } from "./SharedAppViewer.js";
+import { createSharedAppTransport } from "./shared-app-transport.js";
+import type { CollaborationDirectClient } from "./direct-client.js";
 
 type DiscoveryItem = z.infer<typeof CollaborationDiscoveryItemSchema>;
 type SharedMessage = z.infer<typeof CollaborationSharedChatMessageSchema>;
@@ -35,7 +41,8 @@ export type ChatCollaborationView =
   | { kind: "chat"; scopeId: string }
   | { kind: "canonical-chat"; chatId: string }
   | { kind: "terminal"; scopeId: string }
-  | { kind: "project"; scopeId: string };
+  | { kind: "project"; scopeId: string }
+  | { kind: "app"; scopeId: string; expectedBuildId?: string; expectedShareRevision?: string };
 
 export function ChatCollaboration({
   view,
@@ -47,6 +54,7 @@ export function ChatCollaboration({
   openChat = () => undefined,
   openTerminal = () => undefined,
   openProject = () => undefined,
+  openApp = () => undefined,
   onChatMetadata,
   headerContainer,
   layers,
@@ -61,6 +69,7 @@ export function ChatCollaboration({
   openChat?: (scopeId: string, chatId?: string, title?: string) => void;
   openTerminal?: (scopeId: string) => void;
   openProject?: (scopeId: string) => void;
+  openApp?: (scopeId: string, target: CollaborativeAppDirectoryItem) => void;
   onChatMetadata?: (metadata: { title: string; role: "owner" | "editor" | "viewer" }) => void;
   headerContainer?: HTMLElement | null;
   layers?: CollaborationOverlayLayers;
@@ -69,7 +78,7 @@ export function ChatCollaboration({
 }) {
   if (view.kind === "home") {
     return <CollaborationHome api={api} openInvitation={openInvitation} openChat={openChat}
-      openTerminal={openTerminal} openProject={openProject} hideAcceptedProjects={hideAcceptedProjects} />;
+      openTerminal={openTerminal} openProject={openProject} openApp={openApp} hideAcceptedProjects={hideAcceptedProjects} />;
   }
   if (view.kind === "invitation") {
     return <InvitationView api={api} invitationId={view.invitationId} openChat={openChat}
@@ -77,6 +86,10 @@ export function ChatCollaboration({
   }
   if (view.kind === "terminal") return <SharedTerminalView api={api} actorId={actorId} scopeId={view.scopeId} layers={layers} />;
   if (view.kind === "project") return <SharedProjectView api={api} scopeId={view.scopeId} openChat={openChat} />;
+  if (view.kind === "app") return <SharedAppScopeView
+    key={`${view.scopeId}:${view.expectedBuildId ?? ""}:${view.expectedShareRevision ?? ""}`}
+    api={api} scopeId={view.scopeId}
+    expectedBuildId={view.expectedBuildId} expectedShareRevision={view.expectedShareRevision} />;
   if (view.kind === "canonical-chat") return <CanonicalSharedChatPanel api={api} actorId={actorId}
     runtimeId={runtimeId ?? "platform"} chatId={view.chatId} storage={storage} onMetadata={onChatMetadata}
     headerContainer={headerContainer} layers={layers} />;
@@ -84,12 +97,60 @@ export function ChatCollaboration({
     scopeId={view.scopeId} storage={storage} onMetadata={onChatMetadata} headerContainer={headerContainer} layers={layers} />;
 }
 
-function CollaborationHome({ api, openInvitation, openChat, openTerminal, openProject, hideAcceptedProjects }: {
+function SharedAppScopeView({ api, scopeId, expectedBuildId, expectedShareRevision }: {
+  api: CollaborationApi;
+  scopeId: string;
+  expectedBuildId?: string;
+  expectedShareRevision?: string;
+}) {
+  const [target, setTarget] = useState<CollaborativeAppDirectoryItem | null>(null);
+  const [failed, setFailed] = useState(false);
+  useEffect(() => {
+    let active = true;
+    void findSharedApp(api, scopeId)
+      .then((value) => {
+        if ((expectedBuildId && value.buildId !== expectedBuildId)
+          || (expectedShareRevision && value.shareRevision !== expectedShareRevision)) {
+          throw new Error("SharedAppTargetChanged");
+        }
+        if (active) setTarget(value);
+      })
+      .catch((failure: unknown) => {
+        console.warn("[shared-app] discovery failed", failure instanceof Error ? failure.name : "UnknownError");
+        if (active) setFailed(true);
+      });
+    return () => { active = false; };
+  }, [api, expectedBuildId, expectedShareRevision, scopeId]);
+  const direct = directClientOf(api);
+  const transport = useMemo(() => target && direct
+    ? createSharedAppTransport({ platform: api, direct, target })
+    : null, [api, direct, target]);
+  if (failed || (target && !direct)) return <SafeError title="Shared app unavailable" />;
+  if (!target || !transport) return <p role="status" className="p-8">Loading shared app…</p>;
+  return <SharedAppViewer target={target} transport={transport} />;
+}
+
+function directClientOf(api: CollaborationApi): Pick<CollaborationDirectClient, "request" | "subscribeEvents" | "close"> | null {
+  if (!("direct" in api) || !api.direct || typeof api.direct !== "object") return null;
+  const direct = api.direct as Partial<CollaborationDirectClient>;
+  return typeof direct.request === "function" && typeof direct.subscribeEvents === "function" && typeof direct.close === "function"
+    ? direct as Pick<CollaborationDirectClient, "request" | "subscribeEvents" | "close">
+    : null;
+}
+
+async function findSharedApp(api: CollaborationApi, scopeId: string): Promise<CollaborativeAppDirectoryItem> {
+  return CollaborativeAppDirectoryItemSchema.parse(await api.get(
+    `/api/collaboration/shared-apps/${encodeURIComponent(scopeId)}`,
+  ));
+}
+
+function CollaborationHome({ api, openInvitation, openChat, openTerminal, openProject, openApp, hideAcceptedProjects }: {
   api: CollaborationApi;
   openInvitation: (invitationId: string) => void;
   openChat: (scopeId: string, chatId?: string, title?: string) => void;
   openTerminal: (scopeId: string) => void;
   openProject: (scopeId: string) => void;
+  openApp: (scopeId: string, target: CollaborativeAppDirectoryItem) => void;
   hideAcceptedProjects: boolean;
 }) {
   const [items, setItems] = useState<DiscoveryItem[]>([]);
@@ -103,6 +164,11 @@ function CollaborationHome({ api, openInvitation, openChat, openTerminal, openPr
   const [invitationError, setInvitationError] = useState(false);
   const [organizationPending, setOrganizationPending] = useState<string | null>(null);
   const [organizationError, setOrganizationError] = useState<string | null>(null);
+  const [apps, setApps] = useState<CollaborativeAppDirectoryItem[]>([]);
+  const [appCursor, setAppCursor] = useState<string | null>(null);
+  const [appsLoading, setAppsLoading] = useState(true);
+  const [appsLoadingMore, setAppsLoadingMore] = useState(false);
+  const [appsUnavailable, setAppsUnavailable] = useState(false);
   const visibleItems = useMemo(() => hideAcceptedProjects
     ? items.filter((item) => !isAcceptedProjectOwnedByRail(item))
     : items, [hideAcceptedProjects, items]);
@@ -128,6 +194,42 @@ function CollaborationHome({ api, openInvitation, openChat, openTerminal, openPr
       .finally(() => { if (active) setLoading(false); });
     return () => { active = false; };
   }, [api]);
+  useEffect(() => {
+    let active = true;
+    void api.get("/api/collaboration/shared-apps?limit=50")
+      .then((value) => {
+        const page = CollaborativeAppDirectoryResponseSchema.parse(value);
+        if (!active) return;
+        setApps(page.items);
+        setAppCursor(page.nextCursor ?? null);
+        setAppsUnavailable(false);
+      })
+      .catch((failure: unknown) => {
+        console.warn("[chat-collaboration] app discovery failed", failure instanceof Error ? failure.name : "UnknownError");
+        if (active) setAppsUnavailable(true);
+      })
+      .finally(() => { if (active) setAppsLoading(false); });
+    return () => { active = false; };
+  }, [api]);
+  const loadMoreApps = async () => {
+    if (!appCursor || appsLoadingMore) return;
+    setAppsLoadingMore(true);
+    try {
+      const page = CollaborativeAppDirectoryResponseSchema.parse(await api.get(
+        `/api/collaboration/shared-apps?limit=50&cursor=${encodeURIComponent(appCursor)}`,
+      ));
+      setApps((current) => page.items.reduce<CollaborativeAppDirectoryItem[]>((all, item) => (
+        all.some((candidate) => candidate.scopeId === item.scopeId) ? all : [...all, item]
+      ), current));
+      setAppCursor(page.nextCursor ?? null);
+      setAppsUnavailable(false);
+    } catch (failure: unknown) {
+      console.warn("[chat-collaboration] app discovery page failed", failure instanceof Error ? failure.name : "UnknownError");
+      setAppsUnavailable(true);
+    } finally {
+      setAppsLoadingMore(false);
+    }
+  };
   const loadMore = async () => {
     if (loadingMore || (!inboxCursor && !sharedCursor)) return;
     setLoadingMore(true);
@@ -220,7 +322,7 @@ function CollaborationHome({ api, openInvitation, openChat, openTerminal, openPr
       <p className="font-medium">Shared items are unavailable</p>
       <p className="mt-1 text-sm">Refresh the page to try again.</p>
     </div> : null}
-    {!loading && !error && visibleItems.length === 0 ? <div className="rounded-2xl border p-10 text-center">
+    {!loading && !appsLoading && !error && visibleItems.length === 0 && apps.length === 0 ? <div className="rounded-2xl border p-10 text-center">
       <div aria-hidden className="text-3xl">◇</div>
       <h2 className="mt-3 text-lg font-medium">Nothing shared yet</h2>
       <p className="mt-1 text-sm" style={{ color: "var(--text-secondary)" }}>{hideAcceptedProjects
@@ -228,6 +330,13 @@ function CollaborationHome({ api, openInvitation, openChat, openTerminal, openPr
         : "Invitations and accepted shared items will appear here."}</p>
     </div> : null}
     <div className="grid gap-3">
+      {apps.map((app) => <article key={`app:${app.scopeId}`} className="flex flex-wrap items-center gap-4 rounded-2xl border p-4">
+        <div className="min-w-0 flex-1">
+          <p className="truncate font-medium">{appDisplayName(app.appId)}</p>
+          <p className="text-sm" style={{ color: "var(--text-secondary)" }}>App · shared by {app.owner.displayName}</p>
+        </div>
+        <button type="button" className={buttonClass} onClick={() => openApp(app.scopeId, app)}>Open app</button>
+      </article>)}
       {visibleItems.map((item) => item.status === "organization_pending"
         ? <article key={`org:${item.scopeId}`} className="flex flex-wrap items-center gap-4 rounded-2xl border p-4">
           <div className="min-w-0 flex-1">
@@ -274,12 +383,20 @@ function CollaborationHome({ api, openInvitation, openChat, openTerminal, openPr
               : <button type="button" className={buttonClass} onClick={() => openProject(item.scopeId)}>Open project</button>}
         </article>)}
     </div>
+    {appsUnavailable ? <p role="status" className="text-sm">Shared apps are temporarily unavailable.</p> : null}
+    {appCursor ? <button type="button" className={buttonClass} disabled={appsLoadingMore} onClick={() => void loadMoreApps()}>
+      {appsLoadingMore ? "Loading…" : "Load more shared apps"}
+    </button> : null}
     {invitationError ? <p role="alert" className="text-sm">Invitation could not be updated. Try again.</p> : null}
     {paginationError ? <p role="alert" className="text-sm">More shared items could not be loaded. Try again.</p> : null}
     {inboxCursor || sharedCursor ? <button type="button" className={buttonClass} disabled={loadingMore} onClick={() => void loadMore()}>
       {loadingMore ? "Loading…" : "Load more shared items"}
     </button> : null}
   </main>;
+}
+
+function appDisplayName(appId: string): string {
+  return appId.replaceAll(/[-_]+/g, " ").replace(/^./, (value) => value.toUpperCase());
 }
 
 function SharedTerminalView({ api, actorId, scopeId, layers }: {

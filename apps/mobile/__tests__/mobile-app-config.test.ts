@@ -165,11 +165,48 @@ describe("mobile native orientation configuration", () => {
   });
 });
 
+describe("mobile iOS scene life cycle", () => {
+  // Apps built with Xcode 27 (the iOS 27 SDK) must start through UIKit scenes,
+  // or they open to a black screen on iOS 27. SDK 58 does this by default; SDK
+  // 57 only does it when expo-build-properties sets `ios.enableSceneSupport`,
+  // and SDK 58 warns that the flag is left over. See
+  // https://github.com/expo/fyi/blob/main/ios-scene-lifecycle.md
+  const plugin = (appConfig.expo?.plugins ?? []).find(
+    (entry) => Array.isArray(entry) && entry[0] === "expo-build-properties",
+  );
+  const options = (Array.isArray(plugin) ? plugin[1] : undefined) as
+    | { ios?: { enableSceneSupport?: boolean } }
+    | undefined;
+  const sdkMajor = Number(/\d+/.exec(packageConfig.dependencies?.expo ?? "")?.[0]);
+
+  it("starts through scenes so Xcode 27 builds open on iOS 27", () => {
+    if (sdkMajor >= 58) {
+      expect(options?.ios?.enableSceneSupport).toBeUndefined();
+    } else {
+      expect(options?.ios?.enableSceneSupport).toBe(true);
+    }
+  });
+});
+
 describe("mobile Android release configuration", () => {
+  it("keeps R8 off in release builds until a minified build has been checked", () => {
+    // SDK 58 turns R8 on for release builds by default. Code that a library
+    // reaches by reflection can be stripped, which only shows up as a crash in
+    // a store build, so the switch is a separate, tested change.
+    const plugin = (appConfig.expo?.plugins ?? []).find(
+      (entry) => Array.isArray(entry) && entry[0] === "expo-build-properties",
+    );
+    const options = (Array.isArray(plugin) ? plugin[1] : undefined) as
+      | { android?: { enableMinifyInReleaseBuilds?: boolean } }
+      | undefined;
+
+    expect(options?.android?.enableMinifyInReleaseBuilds).toBe(false);
+  });
+
   it("declares the Expo config plugin dependency used by native plugins", () => {
-    // Expo config plugins must stay aligned with SDK 57; upgrades should update
+    // Expo config plugins must stay aligned with SDK 58; upgrades should update
     // this pin deliberately instead of accepting an arbitrary transitive version.
-    expect(packageConfig.devDependencies?.["@expo/config-plugins"]).toBe("57.0.9");
+    expect(packageConfig.devDependencies?.["@expo/config-plugins"]).toBe("58.0.12");
   });
 
   it("builds a versioned Android App Bundle with the supported toolchain", () => {
@@ -203,7 +240,7 @@ describe("mobile Sign in with Apple configuration", () => {
   });
 
   it("ships the native module and the plugin that writes its entitlement", () => {
-    expect(packageConfig.dependencies?.["expo-apple-authentication"]).toBe("~57.0.2");
+    expect(packageConfig.dependencies?.["expo-apple-authentication"]).toBe("~58.0.2");
     expect(pluginNames).toContain("expo-apple-authentication");
   });
 });
@@ -229,7 +266,7 @@ describe("workspace package extensions", () => {
     );
 
     expect(keys).toEqual(["react-native-edge-to-edge@*"]);
-    expect(extensions[keys[0]]?.dependencies?.["@expo/config-plugins"]).toBe("57.0.9");
+    expect(extensions[keys[0]]?.dependencies?.["@expo/config-plugins"]).toBe("58.0.12");
   });
 
   it("keeps package extensions out of pnpm-workspace.yaml, where they are ignored", () => {
@@ -239,7 +276,7 @@ describe("workspace package extensions", () => {
 
 describe("mobile over-the-air update configuration", () => {
   it("ships expo-updates so builds can fetch JS updates without a store release", () => {
-    expect(packageConfig.dependencies?.["expo-updates"]).toBe("~57.0.24");
+    expect(packageConfig.dependencies?.["expo-updates"]).toBe("~58.0.21");
   });
 
   it("points updates at the EAS Update endpoint for this project", () => {

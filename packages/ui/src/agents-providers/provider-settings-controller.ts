@@ -11,6 +11,8 @@ import {
   type ProviderWorkflow,
 } from "@matrix-os/contracts";
 import { ManagedCreditRefresh } from "./managed-credit-refresh.js";
+import { useNativeAuthRefresh } from "./use-native-auth-refresh.js";
+import { nativeAuthenticationFingerprint } from "./native-auth-refresh.js";
 import { useManagedCreditRefresh } from "./use-managed-credit-refresh.js";
 import type { ProviderSettingsMutationIntent } from "./types.js";
 
@@ -51,6 +53,8 @@ export interface ProviderSettingsTransport {
 export interface ProviderSettingsControllerState {
   identityKey: string;
   snapshot: ProviderSettingsSnapshot | null;
+  /** Discovery changes independently from native proof timestamp renewal. */
+  capabilityRefreshRevision: number;
   selectedHarnessId: string | null;
   connectionAttempt: ProviderConnectionAttempt | null;
   busy: boolean;
@@ -60,6 +64,7 @@ export interface ProviderSettingsControllerState {
 export interface ProviderSettingsControllerOptions {
   identityKey: string;
   automaticCreditRefreshEnabled?: boolean;
+  automaticNativeAuthRefreshEnabled?: boolean;
   transport: ProviderSettingsTransport;
   /** Called only after an explicit refresh or mutation snapshot is accepted. */
   onCatalogChanged?: (intent?: ProviderSettingsMutationIntent, previousSnapshot?: ProviderSettingsSnapshot, loginReceipt?: ProviderWorkflow) => void;
@@ -73,6 +78,7 @@ export interface ProviderSettingsMutationOptions {
 interface ApplySnapshotOptions {
   operationId: number;
   connectionAttempt?: ProviderConnectionAttempt | null;
+  refreshCapabilities?: boolean;
 }
 
 function hasErrorCode(error: unknown, code: ProviderSettingsTransportErrorCode): boolean {
@@ -115,6 +121,7 @@ export class ProviderSettingsController {
   private appliedOperationId = 0;
   private activeRefreshes = 0;
   private pendingMutations = 0;
+  private nativeObservationPending = false;
   private mutationTail: Promise<void> = Promise.resolve();
   private disposed = false;
   private readonly managedCredit: ManagedCreditRefresh;
@@ -129,6 +136,7 @@ export class ProviderSettingsController {
     this.state = {
       identityKey: options.identityKey,
       snapshot: null,
+      capabilityRefreshRevision: 0,
       selectedHarnessId: null,
       connectionAttempt: null,
       busy: false,
@@ -153,6 +161,13 @@ export class ProviderSettingsController {
   };
 
   refreshManagedCredit = (signal?: AbortSignal) => this.managedCredit.refresh(signal);
+
+  refreshNativeAuthentication = async (signal: AbortSignal): Promise<void> => {
+    if (this.disposed || this.state.busy || this.nativeObservationPending || signal.aborted) return;
+    this.nativeObservationPending = true;
+    try { await this.runRefresh(false, true, signal); }
+    finally { this.nativeObservationPending = false; }
+  };
 
   refresh = async (options: { refresh?: boolean } = { refresh: true }): Promise<void> => {
     if (this.disposed) return;
@@ -205,17 +220,29 @@ export class ProviderSettingsController {
     this.listeners.clear();
   };
 
-  private async runRefresh(refresh = true): Promise<boolean> {
-    this.managedCredit.invalidate();
+  private async runRefresh(refresh = true, nativeAuthOnly = false, signal?: AbortSignal): Promise<boolean> {
+    if (!nativeAuthOnly) this.managedCredit.invalidate();
     const operationId = ++this.operationClock;
-    const request = this.beginRequest("refresh");
+    const kind = nativeAuthOnly ? "observation" : "refresh";
+    const request = this.beginRequest(kind);
+    const abort = () => request.abort();
+    signal?.addEventListener("abort", abort, { once: true });
     try {
+      if (signal?.aborted) request.abort();
+      request.signal.throwIfAborted();
+      const previous = this.state.snapshot;
       const raw = await this.options.transport.getSnapshot(request.signal, { refresh });
       request.signal.throwIfAborted();
       const parsed = ProviderSettingsSnapshotSchema.safeParse(raw);
       if (!parsed.success) throw new ProviderSettingsTransportError("invalid_response");
-      const applied = this.applySnapshot(parsed.data, { operationId });
-      if (applied && refresh) this.options.onCatalogChanged?.();
+      if (this.disposed || operationId < this.appliedOperationId) return false;
+      const snapshot = nativeAuthOnly
+        ? this.managedCredit.reconcileNativeSnapshot(parsed.data) : parsed.data;
+      const nativeAuthChanged = previous !== null
+        && nativeAuthenticationFingerprint(previous) !== nativeAuthenticationFingerprint(snapshot);
+      const applied = this.applySnapshot(snapshot, { operationId,
+        refreshCapabilities: !nativeAuthOnly || previous?.revision !== snapshot.revision || nativeAuthChanged });
+      if (applied && (refresh || nativeAuthOnly && nativeAuthChanged)) this.options.onCatalogChanged?.();
       return applied;
     } catch (error) {
       if (request.signal.aborted) return false;
@@ -223,7 +250,8 @@ export class ProviderSettingsController {
       if (!this.disposed && operationId >= this.appliedOperationId) this.update({ error: LOAD_ERROR });
       return false;
     } finally {
-      this.endRequest(request, "refresh");
+      signal?.removeEventListener("abort", abort);
+      this.endRequest(request, kind);
     }
   }
 
@@ -269,6 +297,7 @@ export class ProviderSettingsController {
       }
       const applied = this.applySnapshot(parsed.data.snapshot, {
         operationId,
+        refreshCapabilities: true,
         connectionAttempt: parsed.data.kind === "login_attempt" ? parsed.data.attempt : null,
       });
       if (applied) this.options.onCatalogChanged?.(intent, current);
@@ -328,11 +357,15 @@ export class ProviderSettingsController {
       && isConnectionAttemptActive(candidateAttempt, snapshot)
       ? candidateAttempt
       : null;
-    this.update({ snapshot, selectedHarnessId, connectionAttempt, error: null });
+    const nativeAuthChanged = this.state.snapshot !== null
+      && nativeAuthenticationFingerprint(this.state.snapshot) !== nativeAuthenticationFingerprint(snapshot);
+    const capabilityRefreshRevision = this.state.capabilityRefreshRevision
+      + (options.refreshCapabilities || nativeAuthChanged ? 1 : 0);
+    this.update({ snapshot, selectedHarnessId, connectionAttempt, capabilityRefreshRevision, error: null });
     return true;
   }
 
-  private beginRequest(kind: "refresh" | "mutation"): AbortController {
+  private beginRequest(kind: "refresh" | "mutation" | "observation"): AbortController {
     if (this.requests.size >= MAX_ACTIVE_REQUESTS) {
       const oldest = this.requests.values().next().value;
       if (oldest !== undefined) {
@@ -349,7 +382,7 @@ export class ProviderSettingsController {
     return request;
   }
 
-  private endRequest(request: AbortController, kind: "refresh" | "mutation"): void {
+  private endRequest(request: AbortController, kind: "refresh" | "mutation" | "observation"): void {
     this.requests.delete(request);
     if (kind === "refresh") {
       this.activeRefreshes -= 1;
@@ -409,6 +442,7 @@ export function useProviderSettingsController(
   const controller = lifecycle.controller;
   const state = useSyncExternalStore(controller.subscribe, controller.getState, controller.getState);
 
+  useNativeAuthRefresh(controller, options.automaticNativeAuthRefreshEnabled === true);
   useManagedCreditRefresh(controller, options.automaticCreditRefreshEnabled === true && state.snapshot !== null);
 
   useEffect(() => {

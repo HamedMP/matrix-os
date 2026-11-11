@@ -75,6 +75,7 @@ export type ZellijObserverEvent =
   | { type: "pane-update"; paneId: string; ansi: string; viewport: string[]; scrollback: string[] }
   | { type: "pane-closed"; paneId: string };
 export interface ZellijObserver {
+  readonly closed?: boolean;
   close(): Promise<void>;
 }
 export interface TerminalRuntimeOptions {
@@ -799,7 +800,9 @@ export class TerminalRuntime {
     const workspace = await this.requireRuntimeWorkspace(workspaceId);
     const paneRefs = new Map<string, TerminalRef>();
     for (const tab of Object.values(workspace.tabs)) {
-      if (tab.zellijPaneId) paneRefs.set(tab.zellijPaneId, { workspaceId: workspace.id, tabId: tab.id });
+      if (tabOccupiesAdmission(tab) && tab.zellijPaneId) {
+        paneRefs.set(tab.zellijPaneId, { workspaceId: workspace.id, tabId: tab.id });
+      }
     }
     if (paneRefs.size === 0) {
       if (existing) {
@@ -846,7 +849,11 @@ export class TerminalRuntime {
           });
       },
     };
-    const subscribeObserver = () => this.zellij.subscribeWorkspace(workspace.zellijSessionName, observerInput);
+    if (this.shuttingDown) return;
+    const subscribeObserver = () => {
+      if (this.shuttingDown) throw new TerminalRuntimeError("unavailable");
+      return this.zellij.subscribeWorkspace(workspace.zellijSessionName, observerInput);
+    };
     let replacement: ZellijObserver;
     try {
       replacement = await subscribeObserver();
@@ -885,13 +892,15 @@ export class TerminalRuntime {
   private queueMissingObserverRetry(): void {
     if (this.shuttingDown || this.observerRetryQueued) return;
     this.observerRetryQueued = true;
-    const operation = this.observerChain.then(async () => {
+    // Reconcile on the workspace chain: native pane IDs may have disappeared
+    // while the child was down. Running on observerChain would deadlock when
+    // reconciliation queues its replacement observer on that same chain.
+    const operation = this.runWorkspaceMutation(async () => {
       for (const [workspaceId, observer] of this.observers) {
+        if (this.shuttingDown) return;
         if (observer.size > 0) continue;
         try {
-          const restored = await observer.restore();
-          if (this.observers.get(workspaceId) === observer) this.observers.set(workspaceId, restored);
-          else await restored.close();
+          await this.reconcileWorkspaceNow(workspaceId);
         } catch (error) {
           console.error(
             "[terminal-runtime] failed to restore workspace observer",
@@ -900,7 +909,7 @@ export class TerminalRuntime {
         }
       }
     });
-    this.observerChain = operation.then(
+    void operation.then(
       () => { this.observerRetryQueued = false; },
       (error: unknown) => {
         this.observerRetryQueued = false;
@@ -1161,7 +1170,7 @@ function createObserverState(
   const observers = new Set([initialObserver]);
   let restoreObserver = initialRestore;
   return {
-    get size() { return observers.size; },
+    get size() { return [...observers].filter((observer) => !observer.closed).length; },
     add: (observer, restore) => {
       observers.add(observer);
       restoreObserver = restore;

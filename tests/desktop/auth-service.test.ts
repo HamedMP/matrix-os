@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { AuthService, type AuthStatus, type ConnectionProfile } from "@desktop/main/auth/auth-service";
+import { AuthService, type AuthStatus, type ConnectionProfile, RuntimeTokenRateLimitedError } from "@desktop/main/auth/auth-service";
 import type { CredentialStore, StoredCredential } from "@desktop/main/auth/credential-store";
 
 const HOUR_MS = 3_600_000;
@@ -1010,5 +1010,69 @@ describe("AuthService auth generation", () => {
 
     await auth.signOut();
     expect(auth.getStatus().authGeneration).not.toBe(afterSwitch);
+  });
+});
+
+describe("AuthService.issueRuntimeToken", () => {
+  const issued = { accessToken: "t".repeat(64), expiresAt: 1_800_000_000_000, handle: "neo-review", slot: "review" };
+
+  it("mints a slot-bound token without persisting it or changing the selected computer", async () => {
+    vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const fetchFn = vi.fn(async () => jsonResponse(issued));
+    const { auth, store, getProfile, peekCredential, changes } = makeService({ credential: VALID, profile: PROFILE, now: 10_000, fetchFn });
+    await auth.init();
+    const before = auth.getStatus();
+    const saves = vi.mocked(store.save).mock.calls.length;
+
+    await expect(auth.issueRuntimeToken("review")).resolves.toEqual({
+      accessToken: issued.accessToken, expiresAt: issued.expiresAt, handle: "neo-review",
+    });
+
+    expect(vi.mocked(store.save).mock.calls.length).toBe(saves);
+    expect(peekCredential()).toEqual(VALID);
+    expect(getProfile()).toEqual(PROFILE);
+    expect(auth.getStatus()).toEqual(before);
+    expect(auth.getToken()).toBe(VALID.accessToken);
+    expect(changes.filter((status) => status.authGeneration !== before.authGeneration)).toEqual([]);
+  });
+
+  it("discards a token minted across a sign-out", async () => {
+    vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const started = deferred<void>();
+    const release = deferred<Response>();
+    const fetchFn = vi.fn(async () => { started.resolve(); return release.promise; });
+    const { auth } = makeService({ credential: VALID, profile: PROFILE, now: 10_000, fetchFn });
+    await auth.init();
+    const pending = auth.issueRuntimeToken("review");
+    await started.promise;
+    await auth.signOut();
+    release.resolve(jsonResponse(issued));
+    await expect(pending).rejects.toThrow();
+  });
+
+  it("fails with a generic error when signed out or rejected", async () => {
+    vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const signedOut = makeService({ now: 10_000 });
+    await signedOut.auth.init();
+    await expect(signedOut.auth.issueRuntimeToken("review")).rejects.toThrow();
+
+    const rejected = makeService({ credential: VALID, profile: PROFILE, now: 10_000,
+      fetchFn: async () => jsonResponse({ error: "pg: relation \"machines\" does not exist" }, 500) });
+    await rejected.auth.init();
+    const failure = await rejected.auth.issueRuntimeToken("review").catch((error: Error) => error.message);
+    expect(failure).not.toContain("pg:");
+  });
+
+  it("reports the platform's rate limit with a bounded retry delay", async () => {
+    vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const limited = (retryAfter: string | null) => makeService({ credential: VALID, profile: PROFILE, now: 10_000,
+      fetchFn: async () => new Response("{}", { status: 429, headers: retryAfter === null ? {} : { "retry-after": retryAfter } }) });
+    for (const [header, expected] of [["7", 7_000], [null, 60_000], ["0", 60_000], ["soon", 60_000], ["999999", 300_000]] as const) {
+      const { auth } = limited(header);
+      await auth.init();
+      const failure = await auth.issueRuntimeToken("review").catch((error: unknown) => error);
+      expect(failure, String(header)).toBeInstanceOf(RuntimeTokenRateLimitedError);
+      expect((failure as RuntimeTokenRateLimitedError).retryAfterMs, String(header)).toBe(expected);
+    }
   });
 });

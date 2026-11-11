@@ -24,7 +24,9 @@ function AppSiteForm({ appSlug, client, state, variant, ownerIdentity }: { appSl
   const [title, setTitle] = useState(site?.title ?? appSlug);
   const [description, setDescription] = useState(site?.description ?? "");
   const [slug, setSlug] = useState(site?.slug ?? "");
-  const [accessMode, setAccessMode] = useState<"public" | "private_link">(site?.accessMode ?? "public");
+  const [accessModeOverride, setAccessModeOverride] = useState<"public" | "private_link" | null>(null);
+  const accessMode = accessModeOverride ?? site?.accessMode ?? "public";
+  const setAccessMode = (value: "public" | "private_link") => setAccessModeOverride(value);
   const [reviewOpen, setReviewOpen] = useState(false);
   const [reviewed, setReviewed] = useState(false);
   const [config, setConfig] = useState<SitePublishing | null>(null);

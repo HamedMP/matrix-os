@@ -110,3 +110,88 @@ it.each([{ models: ["unknown"] }, { models: ["sonnet", "sonnet"] }])("rejects an
   expect(ProviderSettingsSnapshotSchema.safeParse({ ...valid,
     gatewayPolicy: { ...valid.gatewayPolicy, effectiveAllowedModelIds: models } }).success).toBe(false);
 });
+
+it.each(["original", "accepted"])("retains narrowed models when %s native snapshots replay a later widened credit policy", async nativeSnapshot => {
+  const t = setup();
+  try {
+    await t.controller.refresh({ refresh: false });
+    await t.controller.refreshManagedCredit();
+    vi.setSystemTime(Date.now() + 45_000);
+    const widened = observation();
+    widened.policy.allowedModelIds = ["anthropic/sonnet", "anthropic/opus", "anthropic/new-model"];
+    t.getManagedCredit.mockResolvedValue(widened);
+    await t.controller.refreshManagedCredit();
+    expect(t.controller.getState().snapshot!.gatewayPolicy!.effectiveAllowedModelIds).toEqual(["sonnet"]);
+    if (nativeSnapshot === "accepted") t.getSnapshot.mockResolvedValue(structuredClone(t.controller.getState().snapshot!));
+    await t.controller.refreshNativeAuthentication(new AbortController().signal);
+    expect(t.controller.getState().snapshot!.gatewayPolicy!.effectiveAllowedModelIds).toEqual(["sonnet"]);
+  } finally { t.controller.dispose(); }
+});
+
+it.each(["original", "accepted"])("retains source revocation when %s native snapshots replay a later widened credit policy", async nativeSnapshot => {
+  const t = setup();
+  try {
+    await t.controller.refresh({ refresh: false });
+    const disabled = observation();
+    disabled.policy.enabled = false;
+    disabled.policy.allowedModelIds = [];
+    t.getManagedCredit.mockResolvedValue(disabled);
+    await t.controller.refreshManagedCredit();
+    const revoked = t.controller.getState().snapshot!;
+    vi.setSystemTime(Date.now() + 45_000);
+    const widened = observation();
+    widened.policy.allowedModelIds.push("anthropic/opus");
+    t.getManagedCredit.mockResolvedValue(widened);
+    await t.controller.refreshManagedCredit();
+    const incoming = structuredClone(nativeSnapshot === "accepted" ? t.controller.getState().snapshot! : t.original);
+    incoming.accessSources[0]!.readiness.checkedAt = new Date().toISOString();
+    t.getSnapshot.mockResolvedValue(incoming);
+    await t.controller.refreshNativeAuthentication(new AbortController().signal);
+    const accepted = t.controller.getState().snapshot!;
+    expect(accepted.accessSources[0]!.readiness).toEqual({ ...revoked.accessSources[0]!.readiness,
+      checkedAt: incoming.accessSources[0]!.readiness.checkedAt });
+    expect(accepted.gatewayPolicy!.effectiveAllowedModelIds).toEqual([]);
+    expect(matrixGatewayEligibleModels(accepted.accessSources[0]!, accepted.gatewayPolicy, accepted.modelProviders[0]!)).toEqual([]);
+  } finally { t.controller.dispose(); }
+});
+
+it.each(["original", "accepted"])("does not restore a suppressed credit purchase action through %s native replay", async nativeSnapshot => {
+  const t = setup();
+  t.original.gatewayPolicy!.topUpEnabled = true;
+  t.original.supportedActions.push("add_credit");
+  try {
+    await t.controller.refresh({ refresh: false });
+    await t.controller.refreshManagedCredit();
+    expect(t.controller.getState().snapshot!.supportedActions).not.toContain("add_credit");
+    vi.setSystemTime(Date.now() + 45_000);
+    const widened = observation();
+    widened.topUpEnabled = true;
+    t.getManagedCredit.mockResolvedValue(widened);
+    await t.controller.refreshManagedCredit();
+    expect(t.controller.getState().snapshot!.supportedActions).not.toContain("add_credit");
+    if (nativeSnapshot === "accepted") t.getSnapshot.mockResolvedValue(structuredClone(t.controller.getState().snapshot!));
+    await t.controller.refreshNativeAuthentication(new AbortController().signal);
+    expect(t.controller.getState().snapshot!.supportedActions).not.toContain("add_credit");
+  } finally { t.controller.dispose(); }
+});
+
+it("retains model restrictions when a pending credit response crosses native reconciliation", async () => {
+  const t = setup();
+  try {
+    await t.controller.refresh({ refresh: false });
+    await t.controller.refreshManagedCredit();
+    vi.setSystemTime(Date.now() + 45_000);
+    const widened = observation();
+    widened.policy.allowedModelIds.push("anthropic/opus");
+    let release!: (value: typeof widened) => void;
+    t.getManagedCredit.mockImplementationOnce(() => new Promise(resolve => { release = resolve; }));
+    const pending = t.controller.refreshManagedCredit();
+    await Promise.resolve();
+    await t.controller.refreshNativeAuthentication(new AbortController().signal);
+    release(widened);
+    expect(await pending).toBe("updated");
+    expect(t.controller.getState().snapshot!.gatewayPolicy!.effectiveAllowedModelIds).toEqual(["sonnet"]);
+    await t.controller.refreshNativeAuthentication(new AbortController().signal);
+    expect(t.controller.getState().snapshot!.gatewayPolicy!.effectiveAllowedModelIds).toEqual(["sonnet"]);
+  } finally { t.controller.dispose(); }
+});

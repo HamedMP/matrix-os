@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import React from "react";
-import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const { buildAuthenticatedWebSocketUrl } = vi.hoisted(() => ({
@@ -12,12 +12,18 @@ vi.mock("@/lib/websocket-auth", () => ({
   buildAuthenticatedWebSocketUrl,
 }));
 
-vi.mock("@/lib/gateway", () => ({
-  getGatewayUrl: () => "http://gateway.test",
-  getGatewayWs: () => "ws://gateway.test/ws",
-}));
+vi.mock("@/lib/gateway", async (importOriginal) => {
+  const gateway = await importOriginal<typeof import("@/lib/gateway")>();
+  return {
+    ...gateway,
+    getGatewayUrl: () => window.location.pathname.startsWith("/vm/") ? gateway.getGatewayUrl() : "http://gateway.test",
+    getGatewayWs: () => "ws://gateway.test/ws",
+  };
+});
 
+import * as providerTransport from "../../shell/src/lib/provider-settings-transport.js";
 import { IntegrationsSection } from "../../shell/src/components/settings/sections/IntegrationsSection.js";
+import { GithubDeveloperIntegration } from "../../shell/src/components/settings/sections/GithubDeveloperIntegration.js";
 
 function createDeferred<T>() {
   let resolve!: (value: T) => void;
@@ -143,5 +149,146 @@ describe("Connect Apps consent window", () => {
     expect(await screen.findByText("Could not open sign-in. Allow popups and try again.")).toBeTruthy();
     expect(fetchMock.mock.calls.some(([url]) => String(url).endsWith("/connect"))).toBe(false);
     expect((screen.getByRole("button", { name: "Connect Asana" }) as HTMLButtonElement).disabled).toBe(false);
+  });
+});
+
+describe("Connect Apps GitHub Developer entry", () => {
+  afterEach(() => {
+    cleanup();
+    window.history.replaceState({}, "", "/");
+    vi.restoreAllMocks();
+    vi.unstubAllGlobals();
+  });
+
+  it.each(["/vm/alice?runtime=studio", "/"])("only cleans up a switched setup when its original Computer route is explicit (%s)", async (initialPath) => {
+    HTMLDialogElement.prototype.showModal = function () { this.setAttribute("open", ""); };
+    window.history.replaceState({}, "", initialPath);
+    vi.spyOn(providerTransport, "createProviderSettingsTransport").mockReturnValue({
+      getSnapshot: vi.fn().mockResolvedValue({ access: { mode: "writable" } }),
+    } as never);
+    const setupId = "016d31b0-50d7-4dca-ae0d-b6083bdcd219";
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, _init?: RequestInit) => {
+      if (String(input).endsWith("/api/github/setup")) {
+        return Response.json({ id: setupId, state: "awaiting_authorization", deviceCode: "ABCD-EFGH" });
+      }
+      if (String(input).endsWith("/api/github/status")) {
+        return Response.json({ installed: true, authenticated: false, ready: false });
+      }
+      return Response.json({ id: setupId, state: "cancelled" });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const card = () => <GithubDeveloperIntegration active>{({ action }) => action ? (
+      <button disabled={action.disabled} onClick={action.onClick}>{action.text}</button>
+    ) : null}</GithubDeveloperIntegration>;
+    const view = render(card());
+    const connect = await screen.findByRole("button", { name: "Connect" });
+    await waitFor(() => expect(connect).toHaveProperty("disabled", false));
+    fireEvent.click(connect);
+    expect(await screen.findByText("ABCD-EFGH")).toBeTruthy();
+
+    window.history.replaceState({}, "", "/vm/alice?runtime=primary");
+    await act(async () => { view.rerender(card()); });
+    expect(screen.queryByText("ABCD-EFGH")).toBeNull();
+    const cancellations = fetchMock.mock.calls.filter(([url]) => String(url).endsWith("/cancel"));
+    expect(cancellations.map(([url, init]) => [url, init?.method])).toEqual(initialPath.startsWith("/vm/")
+      ? [[`${window.location.origin}/vm/alice/~runtime/studio/api/github/setup/${setupId}/cancel`, "POST"]]
+      : []);
+  });
+
+  it("connects the selected computer in Settings and preserves Terminal disconnect", async () => {
+    HTMLDialogElement.prototype.showModal = function () { this.setAttribute("open", ""); };
+    HTMLDialogElement.prototype.close = function () { this.removeAttribute("open"); };
+    window.history.replaceState({}, "", "/vm/alice?runtime=studio");
+    buildAuthenticatedWebSocketUrl.mockReturnValue(new Promise(() => {}));
+    vi.spyOn(providerTransport, "createProviderSettingsTransport").mockReturnValue({
+      getSnapshot: vi.fn().mockResolvedValue({ access: { mode: "writable" } }),
+    } as never);
+    let ready = false;
+    const setupId = "016d31b0-50d7-4dca-ae0d-b6083bdcd219";
+    const workspaceId = `tws_${"a".repeat(32)}`;
+    const tabId = `tt_${"b".repeat(32)}`;
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, _init?: RequestInit) => {
+      if (String(input).endsWith("/api/github/setup")) {
+        return Response.json({ id: setupId, state: "awaiting_authorization", deviceCode: "ABCD-EFGH" });
+      }
+      if (String(input).endsWith(`/api/github/setup/${setupId}`)) {
+        ready = true;
+        return Response.json({ id: setupId, state: "succeeded" });
+      }
+      if (String(input).endsWith("/api/github/status")) {
+        return Response.json({
+          installed: true, authenticated: ready, user: ready ? "octocat" : null,
+          gitProtocol: ready ? "ssh" : null, sshStatus: ready ? "verified" : "setup_required",
+          commitIdentity: { status: ready ? "ready" : "missing", label: ready ? "Octocat" : null },
+          ready,
+        });
+      }
+      if (String(input).endsWith("/api/integrations/available")) {
+        return Response.json({ services: [
+          ...["a", "b"].map(id => ({ id, name: id, category: "developer" })),
+          { id: "github", name: "GitHub", category: "developer" },
+          { id: "c", name: "c", category: "developer" },
+        ] });
+      }
+      if (String(input).endsWith("/api/integrations")) return Response.json({ connections: [] });
+      if (String(input).endsWith("/api/terminal/workspaces/ensure")) return Response.json({ workspace: { id: workspaceId } });
+      if (String(input).endsWith(`/api/terminal/workspaces/${workspaceId}/tabs`)) return Response.json({ tab: { id: tabId } });
+      return new Response(null, { status: 503 });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const open = vi.spyOn(window, "open").mockReturnValue(null);
+    const disconnect = vi.fn();
+    const terminalCallbacks = { onOpenGithubDisconnectTerminal: disconnect };
+    const view = render(<IntegrationsSection {...terminalCallbacks} />);
+    const connect = await screen.findByRole("button", { name: "Connect GitHub Developer", exact: true });
+    await waitFor(() => expect((connect as HTMLButtonElement).disabled).toBe(false));
+    const github = await screen.findByTestId("integration-card-github");
+    const developer = screen.getByTestId("integration-card-github-developer");
+    expect(github.nextElementSibling).toBe(developer);
+    expect(developer.className).toBe(github.className);
+    expect(connect.className).toBe(screen.getByRole("button", { name: "Connect GitHub", exact: true }).className);
+    expect(fetchMock).toHaveBeenCalledWith(
+      expect.stringMatching(/\/vm\/alice\/~runtime\/studio\/api\/github\/status$/),
+      expect.objectContaining({ cache: "no-store" }),
+    );
+    fireEvent.click(connect);
+    const setupDialog = within(await screen.findByRole("dialog", { name: "Connect GitHub Developer" }));
+    expect(await setupDialog.findByText("ABCD-EFGH")).toBeTruthy();
+    fireEvent.click(setupDialog.getByRole("button", { name: "Open GitHub" }));
+    expect(open).toHaveBeenCalledExactlyOnceWith("https://github.com/login/device", "_blank", "noopener,noreferrer");
+    expect(fetchMock).toHaveBeenCalledWith(
+      expect.stringMatching(/\/vm\/alice\/~runtime\/studio\/api\/github\/setup$/),
+      expect.objectContaining({ method: "POST", body: "{}", cache: "no-store" }),
+    );
+    expect(fetchMock).not.toHaveBeenCalledWith(expect.stringMatching(/integrations\/connect$/), expect.anything());
+    expect(await screen.findByText("Ready", {}, { timeout: 3_000 })).toBeTruthy();
+    expect(fetchMock).toHaveBeenCalledWith(
+      expect.stringContaining(`/vm/alice/~runtime/studio/api/github/setup/${setupId}`),
+      expect.objectContaining({ method: "GET", cache: "no-store" }),
+    );
+    expect(fetchMock.mock.calls.some(([url]) => String(url).includes("/api/terminal"))).toBe(false);
+    expect(screen.queryByRole("button", { name: "Connect GitHub Developer", exact: true })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Connected (1)" }));
+    expect(screen.getByTestId("integration-card-github-developer")).toBeTruthy();
+    expect(screen.queryByTestId("integration-card-github")).toBeNull();
+
+    const disconnectButton = await screen.findByRole("button", { name: "Disconnect GitHub Developer" });
+    fireEvent.click(disconnectButton);
+    const dialog = within(screen.getByRole("dialog", { name: "Disconnect GitHub Developer?" }));
+    fireEvent.click(dialog.getByRole("button", { name: "Disconnect", exact: true }));
+    await waitFor(() => expect(disconnect).toHaveBeenCalledExactlyOnceWith(`${workspaceId}:${tabId}`));
+    const commandRequest = fetchMock.mock.calls.find(([url]) => String(url).endsWith(`/workspaces/${workspaceId}/tabs`));
+    expect(commandRequest?.[0]).toMatch(/\/vm\/alice\/~runtime\/studio\/api\/terminal\/workspaces/);
+    expect(JSON.parse(String(commandRequest?.[1]?.body)).command).toEqual([
+      "/bin/sh", "-c", expect.stringContaining('auth logout --hostname github.com --user "$1"'), "matrix-github-developer-disconnect", "octocat",
+    ]);
+    expect(fetchMock).not.toHaveBeenCalledWith(expect.stringMatching(/\/api\/integrations\/connect$/), expect.anything());
+
+    view.rerender(<IntegrationsSection active={false} {...terminalCallbacks} />);
+    ready = false;
+    view.rerender(<IntegrationsSection active {...terminalCallbacks} />);
+    expect(await screen.findByText("No integrations found")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "All apps" }));
+    expect(await screen.findByRole("button", { name: "Connect GitHub Developer", exact: true })).toBeTruthy();
   });
 });

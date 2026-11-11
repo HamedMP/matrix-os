@@ -1,3 +1,4 @@
+import { startUsageHistory } from "./ai-usage/history-service.js";
 import { createSupervisedBrowserRuntime } from "./startup/browser-approvals.js";
 import { createRuntimeProviderSettings, executableChatDrivers } from "./server/provider-discovery-composition.js";
 import { composePhaseCatalog } from "./chat/phase-catalog-composition.js";
@@ -16,6 +17,7 @@ import { createChatDriveProjectRoutes } from "./chat/drive-projects.js";
 import { createProductionChatDriveContext } from "./chat/drive-context-production.js";
 import { createOwnerAnthropicKeyPreflight } from "./ai-providers/owner-key-preflight.js";
 import { serve } from "@hono/node-server";
+import { configureEdgeRequestDeadlines } from "@matrix-os/contracts/http-request-deadlines";
 import { createNodeWebSocket } from "@hono/node-ws";
 import {
   backupModule,
@@ -167,6 +169,7 @@ import { createToolPackRoutes } from "./onboarding/tool-pack-routes.js";
 import { createHostToolPackInstaller, createToolPackService, InMemoryToolPackRepository } from "./onboarding/tool-packs.js";
 import { createPreviewManager } from "./preview-manager.js";
 import { createProjectManager } from "./project-manager.js";
+import { registerGithubDeveloperSetup } from "./github-developer-setup.js";
 import { createProvisioner } from "./provisioner.js";
 import { getOptionalRequestPrincipal, requireRequestPrincipal } from "./request-principal.js";
 import { createCodexNativeKeyReadinessReader } from "./ai-providers/codex-native-key-readiness.js";
@@ -1778,6 +1781,16 @@ export async function createGateway(config: GatewayConfig) {
   });
 
   if (!providerSettingsStore) throw new Error("Provider settings are unavailable");
+  const githubSettingsStore = providerSettingsStore;
+  const githubDeveloperSetup = registerGithubDeveloperSetup({
+    app, homePath,
+    ownerId: terminalRuntimeOwnerId ?? (!process.env.MATRIX_AUTH_TOKEN && process.env.NODE_ENV !== "production" ? "default" : null),
+    getPrincipal: getOptionalRequestPrincipal,
+    canWrite: async signal => (await githubSettingsStore.getSnapshot({
+      refresh: true, signal, suppressFundedProbes: true,
+    })).access.mode === "writable",
+    checkReady: async () => (await codingAgentProjectManager.getGithubStatus()).ready,
+  });
   const workflowStore = createProviderTerminalLoginHandoff(providerSettingsStore, providerLoginTerminalRegistry.resolveTerminalRef, providerLoginCoordinator.resolveTerminalIdentity);
   matrixAnthropicRuntime ??= createMatrixAnthropicRuntime({ app, homePath, ownerId: terminalRuntimeOwnerId ?? null, providerSnapshotReader: aiProviderService,
     profileGuard: nativeProviderProfileGuard, getPrincipal: getOptionalRequestPrincipal,
@@ -1813,8 +1826,11 @@ export async function createGateway(config: GatewayConfig) {
     agentRuntimeController: agentRuntimeServices.controller,
     aiProviderService,
   });
+  // Persistent collection is opt-in per computer until product review approves a general rollout (spec 651).
+  const usageHistoryEnabled = process.env.MATRIX_AI_USAGE_HISTORY === "true";
+  const usageHistory = usageHistoryEnabled && kyselyInstance && terminalRuntimeOwnerId ? startUsageHistory({db:kyselyInstance,owner:terminalRuntimeOwnerId,home:homePath}) : undefined;
   registerSettingsRoutes({
-    app, homePath, settingsRoutes, botServices,
+    app, homePath, settingsRoutes, botServices, runtimeOwnerId: terminalRuntimeOwnerId, usageHistory, usageHistoryEnabled,
     getStartedEnabled: process.env.MATRIX_GET_STARTED_ENABLED === "true",
     getOwnerId: (c) => getOptionalRequestPrincipal(c)?.userId ?? null,
     osViewState: osViewStateRepository ? {
@@ -1878,6 +1894,7 @@ export async function createGateway(config: GatewayConfig) {
   loadedPlugins = await startGatewayPlugins({ app, homePath, pluginsConfig, pluginRegistry, hookRunner, port });
 
   const server = serve({ fetch: app.fetch, hostname: process.env.MATRIX_BIND_HOST, port });
+  configureEdgeRequestDeadlines(server);
   injectWebSocket(server);
   const chatAttachmentCleanup = createChatAttachmentCleanupLifecycle({
     homePath,
@@ -1905,6 +1922,7 @@ export async function createGateway(config: GatewayConfig) {
     hookRunner,
     async close() {
       await managedFeatureRestart.close();
+      await githubDeveloperSetup.close();
       await jevInboxRuntime?.close();
       chatDriveContext.close();
       matrixMcpCapabilities.close();
@@ -1937,6 +1955,7 @@ export async function createGateway(config: GatewayConfig) {
         }
       }
 
+      await usageHistory?.dispose();
       heartbeat.stop();
       watchdog.stop();
       proactiveHeartbeat.stop();

@@ -102,7 +102,7 @@ export function SessionDiscussionSheet({ open, scope, actorId, getToken, onClose
         {loading ? <ActivityIndicator accessibilityLabel="Loading discussion" style={styles.loading} /> : null}
         <FlatList data={messages} keyExtractor={(message) => message.id} contentContainerStyle={styles.messages}
           accessibilityLiveRegion="polite"
-          ListEmptyComponent={!loading ? <Text style={styles.empty}>No notes yet.</Text> : null}
+          ListEmptyComponent={!loading ? <Text style={styles.empty}>No notes yet.</Text> : undefined}
           renderItem={({ item }) => <View style={styles.note}>
             <View style={styles.noteHeader}>
               <Text style={styles.author}>{item.actor.displayName}</Text>

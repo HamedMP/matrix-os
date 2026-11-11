@@ -281,6 +281,33 @@ describe("OS Bridge", () => {
       expect(script).toContain('action: "appInfo"');
     });
 
+    it("exposes the owner collaboration API through a bounded parent bridge", () => {
+      const script = buildBridgeScript("clock");
+
+      expect(script).toContain("collaboration: {");
+      expect(script).toContain("query: function(action)");
+      expect(script).toContain("mutate: function(action, expectedRevision)");
+      expect(script).toContain("retryMutation: function()");
+      expect(script).toContain("onChange: function(callback)");
+      expect(script).toContain('type: "os:collaboration-request"');
+      expect(script).toContain('kind: "query"');
+      expect(script).toContain('kind: "mutate"');
+      expect(script).toContain('kind: "retry_mutation"');
+      expect(script).toContain("[MatrixOS bridge] collaboration payload serialization failed");
+      expect(script).toContain("collaborationChangeCallbacks.length >= 32");
+      expect(script).toContain('e.data.type === "os:collaboration-change"');
+    });
+
+    it("exposes only the validated authenticated owner identity to collaborative apps", () => {
+      const script = buildBridgeScript("clock", undefined, undefined, {
+        actorId: "user_owner",
+        displayName: "App owner </script>",
+      });
+
+      expect(script).toContain('participant: Object.freeze({"actorId":"user_owner","displayName":"App owner \\u003c/script>"})');
+      expect(script).not.toContain("App owner </script>");
+    });
+
     it("includes app metadata", () => {
       const script = buildBridgeScript("expense-tracker");
       expect(script).toContain("expense-tracker");

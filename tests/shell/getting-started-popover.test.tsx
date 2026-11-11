@@ -37,7 +37,16 @@ const CONNECTION_ID = "11111111-1111-4111-8111-111111111111";
 
 function responseFor(url: string): unknown {
   if (url.endsWith("/api/github/status")) {
-    return { installed: true, authenticated: false, user: null };
+    return {
+      installed: true,
+      authenticated: true,
+      user: "octocat",
+      gitProtocol: "ssh",
+      sshStatus: "verified",
+      commitIdentity: { status: "ready", label: "The Octocat <octocat@users.noreply.github.com>" },
+      ready: true,
+      errorCode: null,
+    };
   }
   if (url.endsWith("/api/integrations")) {
     return [
@@ -219,7 +228,7 @@ describe("web getting started status", () => {
           : url.endsWith("/api/workspace/projects") ? { projects: [] }
             : url.endsWith("/api/chats?limit=1") ? { items: [] }
               : url.includes("/billing/status") ? { access: { runtimeProxyAllowed: false } }
-                : { authenticated: false };
+                : { ready: false };
       return new Response(JSON.stringify(body), { status: 200 });
     });
 
@@ -238,7 +247,7 @@ describe("web getting started status", () => {
             : url.endsWith("/api/workspace/projects") ? { projects: [] }
               : url.endsWith("/api/chats?limit=1") ? { items: [] }
                 : url.includes("/billing/status") ? { access: { runtimeProxyAllowed: true } }
-                  : { authenticated: false };
+                  : { ready: false };
         return new Response(JSON.stringify(body), { status: 200 });
       });
     }
@@ -255,13 +264,13 @@ describe("web getting started status", () => {
       connections.connectApp.mockReset();
     });
 
-    it("starts GitHub's own sign-in and reloads the moment a connection changes", async () => {
+    it("opens GitHub developer access and still reloads when other connections change", async () => {
       const fetcher = installFetch([]);
       const onOpenSettings = vi.fn();
       const dialog = await openPopover(vi.fn(), onOpenSettings);
       fireEvent.click(await within(dialog).findByRole("button", { name: "Connect GitHub" }));
-      expect(connections.connectApp).toHaveBeenCalledWith("github");
-      expect(onOpenSettings).not.toHaveBeenCalled();
+      expect(connections.connectApp).not.toHaveBeenCalled();
+      expect(onOpenSettings).toHaveBeenCalledWith("integrations");
       const reads = () => fetcher.mock.calls.filter(([input]) => String(input).endsWith("/api/integrations")).length;
       const before = reads();
       act(() => connections.onChanged?.());
@@ -270,7 +279,7 @@ describe("web getting started status", () => {
 
     it("says when a sign-in did not finish", async () => {
       installFetch([]);
-      connections.failedServices = new Set(["github"]);
+      connections.failedServices = new Set(["gmail"]);
       try {
         const dialog = await openPopover();
         expect(await within(dialog).findByText("Sign-in didn't finish. Click to try again.")).toBeTruthy();
@@ -313,7 +322,7 @@ describe("web getting started status", () => {
             : url.endsWith("/api/workspace/projects") ? { projects: [] }
               : url.endsWith("/api/chats?limit=1") ? { items: [] }
                 : url.includes("/billing/status") ? { access: { runtimeProxyAllowed: false } }
-                  : { authenticated: false };
+                  : { ready: false };
         return new Response(JSON.stringify(body), { status: 200 });
       });
     }
@@ -359,7 +368,7 @@ describe("web getting started status", () => {
                 : url.endsWith("/api/workspace/projects") ? { projects: [] }
                   : url.endsWith("/api/chats?limit=1") ? { items: [] }
                     : url.includes("/billing/status") ? { access: { runtimeProxyAllowed: false } }
-                      : { authenticated: false };
+                      : { ready: false };
         return new Response(JSON.stringify(body), { status: 200 });
       });
       const onOpenSettings = vi.fn();
@@ -402,7 +411,7 @@ describe("web getting started status", () => {
                 : url.endsWith("/api/workspace/projects") ? { projects: [] }
                   : url.endsWith("/api/chats?limit=1") ? { items: [] }
                     : url.includes("/billing/status") ? { access: { runtimeProxyAllowed: false } }
-                      : { authenticated: false };
+                      : { ready: false };
         return new Response(JSON.stringify(body), { status: 200 });
       });
       render(
@@ -440,7 +449,7 @@ describe("web getting started status", () => {
           : url.endsWith("/api/workspace/projects") ? { projects: [] }
             : url.endsWith("/api/chats?limit=1") ? { items: [] }
               : url.includes("/billing/status") ? { access: { runtimeProxyAllowed: false } }
-                : { authenticated: false };
+                : { ready: false };
       return new Response(JSON.stringify(body), { status: 200 });
     });
     function WidgetShowing() {
@@ -474,7 +483,16 @@ describe("web getting started status", () => {
           : url.endsWith("/api/workspace/projects") ? { projects: completed ? [{}] : [] }
             : url.endsWith("/api/chats?limit=1") ? { items: [] }
               : url.includes("/billing/status") ? { access: { runtimeProxyAllowed: completed } }
-                : { authenticated: completed };
+                : completed ? {
+                  installed: true,
+                  authenticated: true,
+                  user: "octocat",
+                  gitProtocol: "ssh",
+                  sshStatus: "verified",
+                  commitIdentity: { status: "ready", label: "The Octocat <octocat@users.noreply.github.com>" },
+                  ready: true,
+                  errorCode: null,
+                } : { installed: true, authenticated: false, user: null, ready: false, errorCode: null };
       return new Response(JSON.stringify(body), { status: 200 });
     });
 

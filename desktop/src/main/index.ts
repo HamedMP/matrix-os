@@ -30,6 +30,7 @@ import { EmbedService } from "./embeds/embed-service";
 import {
   NativeAppBridge,
   createNativeAppQueryRequester,
+  createNativeAppCollaborationRequester,
   createNativeAppGatewayRequester,
   createNativeAppAiRequester,
 } from "./embeds/native-app-bridge";
@@ -63,6 +64,8 @@ import {
 } from "./hermes/configuration-client";
 import { createNativeChatImportService } from "./files/local-chat-import";
 import { discoverLocalChats } from "./files/local-chat-discovery";
+import {registerAiUsageIpc} from "./ipc/ai-usage";
+import {createUsageSyncService} from "./usage-sync/service";
 import { registerLocalChatImportIpc } from "./ipc/local-chat-import";
 import { registerIpcHandlers } from "./ipc/handlers";
 import { fetchDesktopSupportIdentity } from "./support/support-identity-client";
@@ -86,6 +89,24 @@ import { createNativeAppOpenResolver } from "./embeds/native-app-open";
 import { installBrowserProductSessionCookie } from "./embeds/browser-product-session";
 import { createNativeAppChatNavigationBroker, registerNativeAppChatCompletionIpc } from "./embeds/native-app-chat-navigation";
 import { configureDesktopIdentity } from "./desktop-identity";
+import { createSenderPolicy, senderRole } from "./ipc/sender-policy";
+import { createTerminalWindowController } from "./terminal-window/controller";
+import { createTerminalBrowserWindow } from "./terminal-window/window";
+import { createComputerCredentialBroker } from "./terminal-window/credential-broker";
+import { installTerminalWindowAuth } from "./terminal-window/gateway-auth";
+import { createLocalTerminalHost, type LocalTerminalHost } from "./local-terminals/host";
+import { registerLocalTerminalIpc } from "./local-terminals/ipc";
+import { localLoginShell, resolveLocalTerminalRuntime, startLocalTerminalCore } from "./local-terminals/runtime";
+import { LOCAL_TERMINAL_VERSION } from "../shared/local-terminals";
+import { connect as connectSocket } from "node:net";
+import { homedir, userInfo } from "node:os";
+import {
+  TERMINAL_WINDOW_EVENT_CHANNELS,
+  TERMINAL_WINDOW_PARTITION,
+  TERMINAL_WINDOW_QUERY_KEY,
+  TERMINAL_WINDOW_QUERY_VALUE,
+  terminalWindowUrl,
+} from "../shared/terminal-window";
 
 const DEFAULT_PLATFORM_HOST = "https://app.matrix-os.com";
 const desktopRendererUrl = resolveDesktopRendererUrl(process.env.ELECTRON_RENDERER_URL);
@@ -113,6 +134,10 @@ const bindPreviewStartupAcknowledgement = createPreviewStartupAcknowledgement(pr
   });
 
 let mainWindow: BrowserWindow | null = null;
+let terminalWindows: ReturnType<typeof createTerminalWindowController<BrowserWindow>> | null = null;
+const terminalWindowEvents = new Set<string>(TERMINAL_WINDOW_EVENT_CHANNELS);
+let computerCredentials: { clear(): void } | null = null;
+let localTerminals: LocalTerminalHost | null = null;
 let reopenPreviewWindow: (() => Promise<void>) | undefined;
 let navigationCache: ReturnType<typeof createNavigationCache> | null = null;
 let chatgptPlan: ReturnType<typeof createNativeChatgptPlanService> | null = null;
@@ -125,6 +150,7 @@ let planDrained = false;
 let drainingPlan = false;
 let updateCheckTimer: ReturnType<typeof setInterval> | null = null;
 let fileDownloads: ReturnType<typeof createFileDownloadService> | null = null;
+let localUsage:ReturnType<typeof registerAiUsageIpc>|null=null;
 let localChatImports:ReturnType<typeof createNativeChatImportService>|null=null;
 let nativeAppChatNavigation: ReturnType<typeof createNativeAppChatNavigationBroker> | null = null;
 let importsDrained=false;
@@ -148,8 +174,9 @@ function isMatrixOsDeepLink(value: string): boolean {
 }
 
 function focusMainWindow(): void {
-  const win = mainWindow ?? BrowserWindow.getAllWindows()[0];
-  if (!win) return;
+  // Never fall back to "any window": the Terminal window is not the main one.
+  const win = mainWindow;
+  if (!win || win.isDestroyed()) return;
   if (win.isMinimized()) win.restore();
   win.show();
   win.focus();
@@ -167,6 +194,25 @@ function sendEvent<C extends EventChannel>(channel: C, payload: EventPayload<C>)
     return;
   }
   mainWindow?.webContents.send(channel, parsed.data);
+  // A session change reaches the Terminal window too, and voids every
+  // per-computer credential held for it.
+  if (channel === "auth:changed") {
+    computerCredentials?.clear();
+    sendTerminalWindowEvent(channel, payload);
+  }
+}
+
+/** Events are addressed to a named window; the Terminal window gets only its allowlist. */
+function sendTerminalWindowEvent<C extends EventChannel>(channel: C, payload: EventPayload<C>): void {
+  if (!terminalWindowEvents.has(channel)) return;
+  const win = terminalWindows?.current();
+  if (!win || win.webContents.isDestroyed()) return;
+  const parsed = EVENT_CHANNELS[channel].safeParse(payload);
+  if (!parsed.success) {
+    console.warn(`[ipc] refusing to send invalid event on ${channel}`);
+    return;
+  }
+  win.webContents.send(channel, parsed.data);
 }
 
 async function openExternalHttpUrl(url: string): Promise<void> {
@@ -305,7 +351,7 @@ if (!gotLock) {
           chatgptPlan?.resume();
           fileDownloads?.cancelAll();
           organizationDriveTransfers?.cancelAll();
-          localChatImports?.cancelAll();
+          localChatImports?.cancelAll();localUsage?.cancel();
           sendEvent("auth:changed", {
             signedIn: status.signedIn,
             ...(status.signedIn ? {
@@ -370,6 +416,15 @@ if (!gotLock) {
         (detail) => sendEvent("analytics:capture", detail),
       );
 
+      // The Terminal window has its own session: per-computer bearers are
+      // attached there by target computer, never the selected-computer token.
+      const terminalSession = session.fromPartition(TERMINAL_WINDOW_PARTITION);
+      const terminalCredentials = createComputerCredentialBroker({ auth });
+      const terminalAuth = installTerminalWindowAuth(terminalSession, { broker: terminalCredentials, getGatewayOrigin: () => auth.getGatewayOrigin() });
+      // Signing out forgets the minted bearers and the record of which was last sent.
+      computerCredentials = { clear: () => { terminalCredentials.clear(); terminalAuth.clear(); } };
+      installGatewayCors(terminalSession, () => auth.getGatewayOrigin(), rendererOrigin);
+
       nativeAppChatNavigation = createNativeAppChatNavigationBroker({
         emit: (event) => sendEvent("app:open-chat", event),
         cancel: (event) => sendEvent("app:open-chat-cancel", event),
@@ -382,6 +437,9 @@ if (!gotLock) {
           && event.senderFrame === contents.mainFrame && contents.getURL() === rendererUrl;
       });
 
+      const nativeAppQuery = createNativeAppQueryRequester({
+        getGatewayOrigin: () => auth.getGatewayOrigin(), getToken: () => auth.getToken(),
+      });
       const nativeAppBridge = new NativeAppBridge({
         getSenderLifecycle: (senderId) => webContents.fromId(senderId) ?? undefined,
         resolveApp: createNativeAppOpenResolver({ getGatewayOrigin: () => auth.getGatewayOrigin(), getToken: () => auth.getToken() }),
@@ -427,9 +485,11 @@ if (!gotLock) {
             headers, origin, isCurrent, session.fromPartition("persist:app-browser-lab").cookies),
         }),
         gatewayOrigin: () => auth.getGatewayOrigin(),
-        request: createNativeAppQueryRequester({
-          getGatewayOrigin: () => auth.getGatewayOrigin(),
-          getToken: () => auth.getToken(),
+        request: nativeAppQuery,
+        collaborationRequest: createNativeAppCollaborationRequester({
+          getGatewayOrigin: () => auth.getGatewayOrigin(), getToken: () => auth.getToken(),
+          getAuthGeneration: () => auth.getStatus().authGeneration,
+          legacyRequest: nativeAppQuery,
         }),
       });
       invalidateAppCapabilities = () => nativeAppBridge.clear();
@@ -542,20 +602,87 @@ if (!gotLock) {
         const rendererUrl=desktopRendererUrl??pathToFileURL(join(__dirname,"../renderer/index.html")).toString();
         return !!contents&&!contents.isDestroyed()&&event.sender===contents&&event.senderFrame===contents.mainFrame&&contents.getURL()===rendererUrl;
       });
+      // Paired Mac sync is an operator preview (spec 651): released builds do not run it until a reviewed pairing flow exists.
+      const usageSync=!app.isPackaged||process.env.MATRIX_DESKTOP_AI_USAGE_SYNC==="1"?createUsageSyncService({home:app.getPath("home"),pairingFile:join(app.getPath("userData"),"ai-usage-sync.json"),auth}):undefined;
+      localUsage=registerAiUsageIpc(ipcMain,{home:app.getPath("home"),roots:{codexRoot:process.env.CODEX_HOME,claudeRoot:process.env.CLAUDE_CONFIG_DIR},auth,sync:usageSync,isTrusted:rawEvent=>{
+        const event=rawEvent as IpcMainInvokeEvent,contents=mainWindow?.webContents;
+        const rendererUrl=desktopRendererUrl??pathToFileURL(join(__dirname,"../renderer/index.html")).toString();
+        return !!contents&&!contents.isDestroyed()&&event.sender===contents&&event.senderFrame===contents.mainFrame&&contents.getURL()===rendererUrl;
+      }});
       const downloads = fileDownloads;
       const driveTransfers = organizationDriveTransfers;
+      const packagedRendererPath = join(__dirname, "../renderer/index.html");
+      const mainRendererUrl = desktopRendererUrl ?? pathToFileURL(packagedRendererPath).toString();
+      const terminalRendererUrl = terminalWindowUrl(mainRendererUrl);
+      let reopenMainWindow: (() => Promise<void>) | undefined;
+      const terminalWindowController = createTerminalWindowController<BrowserWindow>({
+        create: (bounds) => {
+          const win = createTerminalBrowserWindow({
+            bounds,
+            preloadPath: join(__dirname, "../preload/index.cjs"),
+            devUrl: desktopRendererUrl ? terminalRendererUrl : null,
+            packagedRendererPath,
+            query: { [TERMINAL_WINDOW_QUERY_KEY]: TERMINAL_WINDOW_QUERY_VALUE },
+            trustedUrl: terminalRendererUrl,
+            onLoadError: (error) => logMainError("failed to load Terminal window", error),
+          });
+          win.on("focus", () => sendTerminalWindowEvent("window:focus-changed", { focused: true }));
+          win.on("blur", () => sendTerminalWindowEvent("window:focus-changed", { focused: false }));
+          // A window that closes, reloads or crashes cannot detach for itself;
+          // without this its local terminal attachments would stay held.
+          const releaseLocalTerminals = () => localTerminals?.detachAll();
+          win.on("closed", releaseLocalTerminals);
+          win.webContents.on("did-start-loading", releaseLocalTerminals);
+          win.webContents.on("render-process-gone", releaseLocalTerminals);
+          return win;
+        },
+        loadBounds: () => store.get("terminalWindowBounds"),
+        saveBounds: (bounds) => store.set("terminalWindowBounds", bounds),
+        fitBounds: (bounds) => fitWindowBoundsToWorkArea(bounds, screen.getDisplayMatching({
+          x: bounds.x ?? 0, y: bounds.y ?? 0, width: bounds.width, height: bounds.height,
+        }).workArea),
+      });
+      terminalWindows = terminalWindowController;
+      const windowSenders = {
+        mainWindow: () => mainWindow,
+        terminalWindow: () => terminalWindowController.current(),
+        mainUrl: mainRendererUrl,
+        terminalUrl: terminalRendererUrl,
+      };
+      const authorizeSender = createSenderPolicy(windowSenders);
+      const localRuntime = resolveLocalTerminalRuntime({
+        isPackaged: app.isPackaged, resourcesPath: process.resourcesPath, userData, home: homedir(), env: process.env,
+      });
+      const localTerminalHost = createLocalTerminalHost({
+        ...localRuntime,
+        expectedVersion: LOCAL_TERMINAL_VERSION,
+        home: homedir(),
+        shell: localLoginShell(process.env, () => userInfo().shell),
+        env: process.env,
+        uid: userInfo().uid,
+        startCore: startLocalTerminalCore,
+        openSocket: (path) => connectSocket(path),
+      }, {
+        output: (attachId, data) => sendTerminalWindowEvent("local-terminal:output", { attachId, data }),
+        closed: (attachId) => sendTerminalWindowEvent("local-terminal:closed", { attachId }),
+      });
+      localTerminals = localTerminalHost;
+      registerLocalTerminalIpc(ipcMain, localTerminalHost, authorizeSender);
+      // Both trusted windows host terminals, so both may read copied files.
       registerTerminalClipboardIpc(ipcMain, {
         clipboard,
-        isTrustedSender: (rawEvent) => {
-          const event = rawEvent as IpcMainInvokeEvent;
-          const contents = mainWindow?.webContents;
-          const rendererUrl = desktopRendererUrl ?? pathToFileURL(join(__dirname, "../renderer/index.html")).toString();
-          return !!contents && !contents.isDestroyed()
-            && event.sender === contents && event.senderFrame === contents.mainFrame
-            && contents.getURL() === rendererUrl;
-        },
+        isTrustedSender: (event) => senderRole(windowSenders, event) !== null,
       });
       registerIpcHandlers(ipcMain, {
+        authorizeSender,
+        // Windows is out of scope for the Terminal window (spec 651).
+        openTerminalWindow: () => process.platform === "win32"
+          ? Promise.reject(new Error("invalid request"))
+          : terminalWindowController.openOrFocus(),
+        focusMainWindow: () => {
+          if (mainWindow && !mainWindow.isDestroyed()) { focusMainWindow(); return; }
+          void reopenMainWindow?.().catch((error: unknown) => logMainError("window restore failed", error));
+        },
         downloadFile: (request) => downloads.download(request),
         cancelFileDownload: (requestId) => downloads.cancel(requestId),
         uploadOrganizationDrive: (request) => driveTransfers.upload(request),
@@ -584,7 +711,7 @@ if (!gotLock) {
           chatgptPlan?.resume();
           downloads.cancelAll();
           driveTransfers.cancelAll();
-          localChatImports?.cancelAll();
+          localChatImports?.cancelAll();localUsage?.cancel();
           nativeAppChatNavigation?.cancelAll();
           // Switching runtime invalidates embed cookies/tokens; tear them down so
           // they re-handshake against the new slot (Integration Wiring rule).
@@ -699,16 +826,34 @@ if (!gotLock) {
       };
 
       await openMainWindow();
+      // Single-flight: the menu, the Terminal window and app activation can all
+      // ask for the main window while one is still being created.
+      let reopening: Promise<void> | null = null;
+      reopenMainWindow = () => {
+        if (mainWindow && !mainWindow.isDestroyed()) { focusMainWindow(); return Promise.resolve(); }
+        reopening ??= (reopenPreviewWindow ? reopenPreviewWindow() : openMainWindow()).finally(() => { reopening = null; });
+        return reopening;
+      };
       if (previewContext) reopenPreviewWindow = createPreviewWindowReopener({
         current: () => mainWindow, open: openMainWindow, focus: focusMainWindow,
       });
-      installAppMenu(
-        () => mainWindow,
-        () => {
+      installAppMenu({
+        mainWindow: () => mainWindow,
+        terminalWindow: () => terminalWindowController.current(),
+        thirdPartyNoticesPath: localRuntime.noticesPath,
+        focusMain: focusMainWindow,
+        restoreMain: () => {
+          void reopenMainWindow?.().catch((error: unknown) => logMainError("window restore failed", error));
+        },
+        checkForUpdates: () => {
           focusMainWindow();
           void updater.check();
         },
-      );
+        openTerminalWindow: () => {
+          void terminalWindowController.openOrFocus()
+            .catch((error: unknown) => logMainError("failed to open Terminal window", error));
+        },
+      });
 
       void updater.check();
       updateCheckTimer = setInterval(() => {
@@ -716,9 +861,11 @@ if (!gotLock) {
       }, 60 * 60 * 1000);
 
       app.on("activate", () => {
-        if (BrowserWindow.getAllWindows().length === 0) {
-          void (reopenPreviewWindow ? reopenPreviewWindow() : openMainWindow())
-            .catch((error: unknown) => logMainError("window restore failed", error));
+        // The Terminal window may outlive the main window; restore the main one regardless.
+        if (!mainWindow || mainWindow.isDestroyed()) {
+          // Through the shared single-flight path, so activation cannot race a
+          // menu or Terminal-window request into creating a second window.
+          void reopenMainWindow?.().catch((error: unknown) => logMainError("window restore failed", error));
         }
       });
     })
@@ -762,7 +909,7 @@ if (!gotLock) {
     }
     if(!importsDrained&&localChatImports){
       event.preventDefault();
-      if(!drainingImports){drainingImports=true;void localChatImports.dispose().catch((error:unknown)=>logMainError("import cleanup failed",error)).finally(()=>{importsDrained=true;app.quit();});}
+      if(!drainingImports){drainingImports=true;void Promise.all([localChatImports.dispose(),localUsage?.dispose()]).catch((error:unknown)=>logMainError("import cleanup failed",error)).finally(()=>{importsDrained=true;app.quit();});}
       return;
     }
     if (!downloadsDrained && fileDownloads) {
@@ -780,6 +927,13 @@ if (!gotLock) {
     }
     closeCodingAgentThreadEvents?.();
     closeCodingAgentThreadEvents = null;
+    terminalWindows?.dispose();
+    terminalWindows = null;
+    computerCredentials?.clear();
+    computerCredentials = null;
+    // Detach only: the local core and its terminals outlive the app.
+    localTerminals?.dispose();
+    localTerminals = null;
     handleUpdateBeforeQuit?.(event);
   });
 

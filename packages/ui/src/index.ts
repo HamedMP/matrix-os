@@ -26,6 +26,18 @@ export type { TooltipProps } from "./Tooltip.js";
 export { cn } from "./cn.js";
 
 export { AgentsProvidersView } from "./agents-providers/AgentsProvidersView.js";
+export {
+  GITHUB_DEVELOPER_SERVICE_ID,
+  GithubDeveloperAccess,
+  githubDeveloperDisconnectCommand,
+  withGithubDeveloperCatalogEntry,
+  parseGithubDeveloperAccessStatus,
+} from "./integrations/GithubDeveloperAccess.js";
+export { GITHUB_DEVELOPER_DEVICE_URL } from "./integrations/GithubDeveloperSetupDialog.js";
+export type {
+  GithubDeveloperAccessClient,
+  GithubDeveloperAccessStatus,
+} from "./integrations/GithubDeveloperAccess.js";
 export type {
   AgentsProvidersViewProps,
   ProviderSettingsMutationIntent,
@@ -146,6 +158,15 @@ export {
   type ProjectSharingController,
 } from "./collaboration/useProjectSharing.js";
 export { ReadinessSummary } from "./collaboration/ReadinessSummary.js";
+export { useCollaborativeAppSharing } from "./collaboration/useCollaborativeAppSharing.js";
+export { CollaborativeAppShareButton } from "./collaboration/CollaborativeAppShareButton.js";
+export { CollaborativeAppShareDialog } from "./collaboration/CollaborativeAppShareDialog.js";
+export { SharedAppViewer } from "./collaboration/SharedAppViewer.js";
+export type {
+  CollaborativeAppReadinessApi,
+  CollaborativeAppSharingActionState,
+  CollaborativeAppSharingState,
+} from "./collaboration/useCollaborativeAppSharing.js";
 export { ProjectSourceSummary } from "./collaboration/ProjectSourceSummary.js";
 export {
   deriveProjectPresentation,
@@ -261,7 +282,7 @@ export { ChatRailOrderContext, ChatRailOrderItem } from "./chat/RailOrderItem.js
 export { createProviderWorkflowClient, isProviderWorkflowAuthorizationUrl, providerWorkflowTimeoutMs, ProviderWorkflowClientError, type ProviderWorkflowRequest } from "./agents-providers/provider-workflow-client.js";
 export type { ProviderWorkflowClient } from "./agents-providers/types.js";
 
-export { IntegrationMarketplace } from "./integrations/IntegrationMarketplace.js";
+export { IntegrationMarketplace, type IntegrationRowPresentation } from "./integrations/IntegrationMarketplace.js";
 export {
   DEFAULT_CONNECT_POLL_INTERVALS_MS,
   activeConnectionIds,

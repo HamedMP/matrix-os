@@ -174,7 +174,7 @@ class MemoryDriver implements CollaborationResourceDriver {
     this.onAssetRead?.();
     const bytes = this.assets.get(`${input.appId}/${input.assetPath}`);
     if (!bytes) throw new ResourceCatalogError("not_found");
-    return { size: bytes.byteLength, contentType: "text/javascript", stream: new Blob([bytes]).stream() };
+    return { size: bytes.byteLength, contentType: "text/javascript; charset=utf-8", stream: new Blob([bytes]).stream() };
   }
 }
 
@@ -585,7 +585,7 @@ describe("S12 direct resource policy", () => {
       expect(await instance.json()).toMatchObject({ appId: APP_ID, catalogId: ids.app, revision: "0", readiness: "ready" });
       const asset = await signed({ actorId: collaborationActors.viewer, scopeId: APP_SCOPE, method: "GET", path: `/api/collaboration/scopes/${APP_SCOPE}/apps/${APP_ID}/assets/main.js` });
       expect(asset.status).toBe(200);
-      expect(asset.headers.get("content-type")).toContain("text/javascript");
+      expect(asset.headers.get("content-type")).toBe("text/javascript; charset=utf-8");
       const view = await signed({ actorId: collaborationActors.viewer, scopeId: APP_SCOPE, method: "POST", path: `/api/collaboration/scopes/${APP_SCOPE}/apps/${APP_ID}/view`, body: { action: { action: "find", app: "board", table: "cards" } } });
       expect(view.status).toBe(200);
       expect(bridgeCalls).toHaveLength(1);

@@ -698,7 +698,7 @@ export function createApp(deps: {
 
   registerSiteRoutes(app, { db, platformSecret, storage: deps.sitesObjectStore,
     edgeSecret: appEnv.SITES_EDGE_SECRET, edgePreviousSecret: appEnv.SITES_EDGE_SECRET_PREVIOUS,
-    dispatcher: customerVpsProxyDispatcher, env: appEnv });
+    dispatcher: customerVpsProxyDispatcher, env: appEnv, captureEvent: capturePlatformEvent });
 
   // Sync object uploads authenticate with their own machine credential and
   // allow up to 100 MiB. Mount them before the generic 10 MiB session-proxy

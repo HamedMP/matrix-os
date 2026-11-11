@@ -11,6 +11,7 @@
     "./chat-diagram-policy": "./src/chat/diagram-policy.ts",
     ".": "./src/index.ts",
     "./collaboration-direct-client": "./src/collaboration/direct-client.ts",
+    "./collaborative-app-sharing": "./src/collaboration/collaborative-app-sharing.ts",
     "./default-organization": "./src/collaboration/default-organization.ts",
     "./feature-flags": "./src/feature-flags.ts",
     "./speech": "./src/speech/index.ts",
@@ -26,28 +27,39 @@
     "./chat-import.css": "./src/chat-import/chat-import.css",
     "./bot-routine-messages": "./src/chat-agents/bots/use-routine-messages.ts",
     "./bot-routine-transcript": "./src/chat-agents/bots/routine-transcript.ts",
-    "./chat-scheduled-message": "./src/chat/scheduled-message.ts"
+    "./chat-scheduled-message": "./src/chat/scheduled-message.ts",
+    "./ai-usage": "./src/ai-usage/AiUsagePanel.tsx",
+    "./ai-usage.css": "./src/ai-usage/ai-usage.css",
+    "./ai-usage-auto": "./src/ai-usage/AutomaticAiUsagePanel.tsx",
+    "./select": "./src/Select.tsx",
+    "./layering": "./src/layering.ts",
+    "./ai-usage-select": "./src/ai-usage/UsageSelect.tsx",
+    "./ai-usage-load": "./src/ai-usage/load-matrix-usage.ts"
   },
   "dependencies": {
+    "@hugeicons/core-free-icons": "^4.3.0",
+    "@hugeicons/react": "^1.1.9",
+    "@matrix-os/brand": "workspace:*",
     "@matrix-os/contracts": "workspace:*",
     "@noble/hashes": "2.3.0",
     "@radix-ui/react-context-menu": "^2.2.16",
     "@radix-ui/react-dialog": "^1.1.15",
     "@radix-ui/react-dropdown-menu": "^2.1.16",
     "@radix-ui/react-popover": "^1.1.15",
+    "@radix-ui/react-select": "2.2.6",
+    "lucide-react": "^0.563.0",
     "react-markdown": "^10.1.0",
     "remark-gfm": "^4.0.1",
-    "zod": "^4.6.6",
-    "lucide-react": "^0.563.0",
-    "@hugeicons/core-free-icons": "^4.3.0",
-    "@hugeicons/react": "^1.1.9",
-    "@matrix-os/brand": "workspace:*"
+    "tailwind-merge": "^3.6.0",
+    "zod": "^4.6.6"
   },
   "peerDependencies": {
     "react": "^19.0.0",
     "react-dom": "^19.0.0"
   },
   "devDependencies": {
+    "@types/react": "~19.2.14",
+    "@types/react-dom": "~19.2.3",
     "typescript": "^5.5.0",
     "react": "^19.2.6",
     "react-dom": "^19.2.6"

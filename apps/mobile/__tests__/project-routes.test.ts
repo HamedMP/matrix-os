@@ -5,10 +5,15 @@ import { join, relative } from "node:path";
 import { getStateFromPath } from "expo-router/build/fork/getStateFromPath";
 import { getMockConfig } from "expo-router/build/testing-library/mock-config";
 
-import { projectsScreenParams } from "../lib/shell-routes";
+import { PROJECTS_SCREEN_HREF } from "../lib/shell-routes";
 import { TAB_BAR_HIDDEN_ROUTES, isTabBarHidden } from "../lib/tab-bar-visibility";
 
 jest.mock("expo-router", () => ({ Stack: () => null }));
+// The Chats layout's provider loads Clerk, whose import opens a MessagePort
+// that keeps Jest from exiting. Only the layouts' settings are read here.
+jest.mock("@/components/chat/active-chat", () => ({
+  ActiveChatProvider: ({ children }: { children: unknown }) => children,
+}));
 
 const appDirectory = join(__dirname, "../app");
 
@@ -72,10 +77,7 @@ describe("project routes", () => {
   });
 
   it("is where the side panel's Projects row goes", () => {
-    const [, , tabs, chats, screen] = resolve("/projects").path;
-
-    expect(tabs).toBe("(tabs)");
-    expect(projectsScreenParams()).toEqual({ screen: chats, params: { screen } });
+    expect(resolve(PROJECTS_SCREEN_HREF).path).toEqual([...CHATS_STACK, "projects/index"]);
   });
 
   it("keeps the tab bar on every Projects screen", () => {

@@ -5,6 +5,11 @@ import {BotStateError} from "../bots/repositories/shared.js";
 import { createBotInputHistoryReader } from "../bots/historical-input.js";
 import { createSharedAttachmentSource } from "../bots/shared-integration-attachment.js";
 import { createHash } from "node:crypto";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
+import { getGithubDeveloperStatus } from "../github-developer-status.js";
+import { createGithubDeveloperService } from "../bots/github-developer-service.js";
+import { createBotGithubDeveloperTools } from "../bots/github-developer-tools.js";
 import { parseIsolatedChatEnvelope } from "@matrix-os/contracts";
 import { readReleaseInfo } from "../system-info.js";
 import { createIsolatedChatAuthority } from "../chat/isolated-chat-envelope.js";
@@ -360,16 +365,23 @@ export async function startBots(options: {
   const admission = createPrivateBotAdmission({ db, host, roots: options.executionRoots, registry, homePath: options.homePath,
     ...(options.group ? { authorizeGroup: options.group.authorizeGroup, getGroupRevocation: options.group.getGroupRevocation } : {}) });
   const managedCapabilities: import("@matrix-os/contracts").BotToolCapability[] = [
+    "github.developer",
     ...(options.sharedBrowser ? ["browser.action"] as const : []),
     ...(integrationClient ? ["integration.inventory", "integration.describe", "integration.call"] as const : []),
     ...(options.managedMcp ? ["mcp.inventory", "mcp.describe", "mcp.call"] as const : []),
   ];
   const managedAdmission = createManagedPiAdmission({ ...(options.matrixAnthropic ? { matrixAnthropic: options.matrixAnthropic } : {}), ...(chatgptPlanPeers ? { chatgptPlan: chatgptPlanPeers } : {}), db, homePath: options.homePath, host, registry, roots: options.executionRoots,
     supervisedBrowser: typeof options.sharedBrowser?.authorizeAction === "function", toolCapabilities: managedCapabilities });
-  const ownerTools = createManagedPiOwnerTools({ toolOutputKey: options.toolOutputKey, authority: managedAdmission.toolAuthority, signalFor: binding => registry.inferenceSignal(binding),
+  const ownerTools = createManagedPiOwnerTools({ githubDeveloper: true, toolOutputKey: options.toolOutputKey, authority: managedAdmission.toolAuthority, signalFor: binding => registry.inferenceSignal(binding),
     ...(options.sharedBrowser ? { sharedBrowser: options.sharedBrowser } : {}),
     ...(integrationClient ? { integrations: integrationClient } : {}),
     ...(options.managedMcp ? { mcp: options.managedMcp.client, approvals: options.managedMcp.approvals } : {}) });
+  const githubDeveloperService = createGithubDeveloperService({ homePath: options.homePath, status: signal => getGithubDeveloperStatus({ homePath: options.homePath,
+      runCommand: (command, args, commandOptions) => promisify(execFile)(command, args, { ...commandOptions,
+        encoding: "utf8", killSignal: "SIGKILL", signal: AbortSignal.any([signal, lifetime.signal, AbortSignal.timeout(commandOptions.timeout)]) }) }) });
+  const githubDeveloper = createBotGithubDeveloperTools({ transact, now: options.now, service: githubDeveloperService,
+    authorizeManaged: (binding, request, plan, signal) => ownerTools.authorizeGithub(binding, request, plan, signal),
+  });
   let forgetRun: (runId: string) => void = () => undefined;
   const inputHistory = createBotInputHistoryReader(options.repository);
   const orchestrator = createBotTaskOrchestrator({
@@ -412,7 +424,7 @@ export async function startBots(options: {
   const managed = createManagedPiRuntime({ toolOutputKey: options.toolOutputKey, personality: { homePath: options.homePath, runtimeOwnerId: options.runtimeOwnerId }, inputHistory, homePath: options.homePath, expectedOwnerId: options.runtimeOwnerId, assertSource: revalidateSource, ...(isolatedChat ? { isolatedChat } : {}), ...(options.matrixAnthropic ? { matrixAnthropic: options.matrixAnthropic } : {}), ...(chatgptPlanPeers ? { chatgptPlan: chatgptPlanPeers } : {}), ownerTools, admission: managedAdmission, host, providers: options.providers, lifetime: lifetime.signal,
     forgetRun: (runId) => forgetRun(runId), cancelInference: (binding) => registry.cancelInference(binding) });
   const tools = createBotToolDispatcher({
-    homePath: options.homePath, routines, ...(jevTools ? { jev: jevTools } : {}), managedTools: ownerTools, managedWorkspace: managedAdmission.workspace, interactions, memory,
+    homePath: options.homePath, githubDeveloper, routines, ...(jevTools ? { jev: jevTools } : {}), managedTools: ownerTools, managedWorkspace: managedAdmission.workspace, interactions, memory,
     assertSource: revalidateSource,
     submittedArtifact: (binding, args) => isManagedPiBinding(binding) ? managed.readSubmittedArtifact(binding, args) : orchestrator.readSubmittedArtifact(binding, args),
     ...(integrationTools ? { integrations: integrationTools } : {}), ...(nativeTasks ? { nativeTask: nativeTasks } : {}),
@@ -466,7 +478,7 @@ export async function startBots(options: {
     },
   });
   brokerTool = actions.callTool;
-  forgetRun = (runId) => actions.forgetRun(runId);
+  forgetRun = (runId) => { githubDeveloper.closeRun(runId); actions.forgetRun(runId); };
   const unregister = registerBotBroker(host, actions);
   const adapter = createMatrixBotChatProviderAdapter({
     orchestrator, routines,
@@ -493,6 +505,7 @@ export async function startBots(options: {
       await routines.stop();
       chatgptPlanPeers?.close();
       lifetime.abort();
+      await githubDeveloperService.close();
       unregister();
       registry.shutdown();
       await jevTools?.close();

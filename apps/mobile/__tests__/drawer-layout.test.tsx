@@ -1,7 +1,7 @@
 import { cleanup, fireEvent, render, screen, within } from "@testing-library/react-native";
 import * as Haptics from "expo-haptics";
 import { Keyboard } from "react-native";
-import type { PanGesture } from "react-native-gesture-handler";
+import type { LegacyPanGesture } from "react-native-gesture-handler";
 
 import * as mockLayout from "./drawer-layout-test-utils";
 import { chatRows } from "./side-panel-test-utils";
@@ -35,20 +35,23 @@ jest.mock("@/lib/canonical-chat-session-context", () => ({
 jest.mock("@/lib/queries/use-settings-system-info", () => ({
   useSettingsSystemInfo: () => mockLayout.mocks.useSettingsSystemInfo(),
 }));
-jest.mock("expo-router", () => ({ useSegments: () => mockLayout.drawer.segments }));
+jest.mock("expo-router", () => ({
+  useSegments: () => mockLayout.drawer.segments,
+  useRouter: () => ({ navigate: mockLayout.mocks.navigate, dismissTo: mockLayout.mocks.dismissTo }),
+}));
 jest.mock("expo-router/drawer", () => mockLayout.drawerModule());
 
 const { drawer, mocks, chatPages } = mockLayout;
 
 // The real builder, without the native module that the package index loads.
-const { PanGesture: RealPanGesture } = jest.requireActual<{ PanGesture: new () => PanGesture }>(
-  "react-native-gesture-handler/lib/commonjs/handlers/gestures/panGesture",
+const { PanGesture: RealPanGesture } = jest.requireActual<{ PanGesture: new () => LegacyPanGesture }>(
+  "react-native-gesture-handler/lib/module/handlers/gestures/panGesture",
 );
 
 /** The pan react-native-drawer-layout 4.2.5 builds, passed through the layout's hook. */
 function panelPan() {
   const pan = new RealPanGesture().activeOffsetX([-5, 5]).failOffsetY([-5, 5]);
-  const configure = drawer.options?.configureGestureHandler as ((gesture: PanGesture) => PanGesture) | undefined;
+  const configure = drawer.options?.configureGestureHandler as ((gesture: LegacyPanGesture) => LegacyPanGesture) | undefined;
   return configure ? configure(pan) : pan;
 }
 
@@ -57,7 +60,7 @@ function panelPan() {
  * RNPanHandler.m and PanGestureHandler.kt both check the fail offsets before the
  * active ones, so a fail offset wins where a move crosses both.
  */
-function firstMove(pan: PanGesture, dx: number): "fails" | "activates" | "waits" {
+function firstMove(pan: LegacyPanGesture, dx: number): "fails" | "activates" | "waits" {
   const { failOffsetXStart, failOffsetXEnd, activeOffsetXStart, activeOffsetXEnd } = pan.config as Record<
     string,
     number | undefined
@@ -71,9 +74,8 @@ function firstMove(pan: PanGesture, dx: number): "fails" | "activates" | "waits"
 
 const OPEN_PANEL: mockLayout.DrawerState = { history: [{ type: "drawer", status: "open" }] };
 
-const SHOW_CHAT_SCREEN = ["(tabs)", { screen: "(chats)", params: { screen: "index" } }];
-const SHOW_SHARED_SCREEN = ["(tabs)", { screen: "(chats)", params: { screen: "shared" } }];
-const SHOW_PROJECTS_SCREEN = ["(tabs)", { screen: "(chats)", params: { screen: "projects/index" } }];
+const SHOW_SHARED_SCREEN = ["/shared"];
+const SHOW_PROJECTS_SCREEN = ["/projects"];
 
 describe("side panel layout", () => {
   beforeEach(mockLayout.resetDrawerLayout);
@@ -133,13 +135,12 @@ describe("side panel layout", () => {
     });
 
     it("does not buzz for a restored open panel, then buzzes once when it closes", () => {
-      drawer.state = { history: [], default: "open" };
+      // A restored state records an open panel in its history, as a live one does.
+      drawer.state = OPEN_PANEL;
       render(<DrawerLayout />);
       drawer.listeners?.state?.({ data: { state: drawer.state } });
       expect(Haptics.impactAsync).not.toHaveBeenCalled();
-      drawer.listeners?.state?.({
-        data: { state: { default: "open", history: [{ type: "drawer", status: "closed" }] } },
-      });
+      drawer.listeners?.state?.({ data: { state: { history: [] } } });
       expect(Haptics.impactAsync).toHaveBeenCalledTimes(1);
     });
 
@@ -188,13 +189,8 @@ describe("side panel layout", () => {
       expect(firstMove(panelPan(), -4)).toBe("waits");
     });
 
-    it("keeps the leftward swipe that closes an open panel, also when the panel was restored open", () => {
+    it("keeps the leftward swipe that closes an open panel", () => {
       drawer.state = OPEN_PANEL;
-      render(<DrawerLayout />);
-      expect(firstMove(panelPan(), -6)).toBe("activates");
-      cleanup();
-
-      drawer.state = { history: [], default: "open" };
       render(<DrawerLayout />);
       expect(firstMove(panelPan(), -6)).toBe("activates");
     });
@@ -250,7 +246,7 @@ describe("side panel layout", () => {
       fireEvent.press(screen.getByTestId("side-panel-chat-chat-q4"));
 
       expect(mocks.selectChat).toHaveBeenCalledWith("chat-q4");
-      expect(mocks.navigate).toHaveBeenCalledWith(...SHOW_CHAT_SCREEN);
+      expect(mocks.dismissTo).toHaveBeenCalledWith("/(drawer)");
       expect(mocks.closeDrawer).toHaveBeenCalledTimes(1);
     });
 
@@ -261,23 +257,8 @@ describe("side panel layout", () => {
 
       expect(mocks.startDraftChat).toHaveBeenCalledWith();
       expect(mocks.selectChat).not.toHaveBeenCalled();
-      expect(mocks.navigate).toHaveBeenCalledWith(...SHOW_CHAT_SCREEN);
+      expect(mocks.dismissTo).toHaveBeenCalledWith("/(drawer)");
       expect(mocks.closeDrawer).toHaveBeenCalledTimes(1);
-    });
-
-    it("hands the navigator new params on every press, because it ignores ones it has used", () => {
-      render(<DrawerLayout />);
-
-      fireEvent.press(screen.getByTestId("side-panel-chat-chat-q4"));
-      fireEvent.press(screen.getByRole("button", { name: "New chat" }));
-      fireEvent.press(screen.getByTestId("side-panel-projects"));
-      fireEvent.press(screen.getByTestId("side-panel-projects"));
-
-      const [chat, newChat, projects, projectsAgain] = mocks.navigate.mock.calls;
-      expect(chat[1]).not.toBe(newChat[1]);
-      expect(chat[1].params).not.toBe(newChat[1].params);
-      expect(projects[1]).not.toBe(projectsAgain[1]);
-      expect(projects[1].params).not.toBe(projectsAgain[1].params);
     });
   });
 

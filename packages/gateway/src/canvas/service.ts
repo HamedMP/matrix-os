@@ -3,6 +3,7 @@ import { realpath, stat } from "node:fs/promises";
 import { isIP } from "node:net";
 import { isAbsolute, relative, sep } from "node:path";
 import { TerminalRefSchema, type TerminalRef, type TerminalTab, type TerminalWorkspace } from "@matrix-os/contracts";
+import { createPinnedFetch } from "@matrix-os/kernel/security/pinned-fetch";
 import { resolveWithinHome } from "../path-security.js";
 import {
   CANVAS_MAX_NODES,
@@ -229,7 +230,7 @@ export class CanvasService {
   private readonly terminalOwnerIds: readonly string[];
   private readonly homePath?: string;
   private readonly resolveProjectWorkingDirectory?: (ownerId: string, projectId: string) => Promise<string | null>;
-  private readonly fetchImpl: typeof fetch;
+  private readonly fetchImpl: (url: string, init?: RequestInit) => Promise<Pick<Response, "ok">>;
   private readonly resolvePreviewHost: (hostname: string) => Promise<Array<{ address: string; family: number }>>;
 
   constructor(private readonly repository: CanvasRepository, options: CanvasServiceOptions = {}) {
@@ -237,8 +238,11 @@ export class CanvasService {
     this.terminalOwnerIds = options.terminalOwnerIds ?? [];
     this.homePath = options.homePath;
     this.resolveProjectWorkingDirectory = options.resolveProjectWorkingDirectory;
-    this.fetchImpl = options.fetchImpl ?? fetch;
     this.resolvePreviewHost = options.resolvePreviewHost ?? ((hostname) => lookup(hostname, { all: true, verbatim: true }));
+    this.fetchImpl = options.fetchImpl ?? createPinnedFetch({
+      resolve: this.resolvePreviewHost,
+      isAllowedAddress: isPublicIpAddress,
+    });
   }
 
   async listCanvases(userId: string, query: { scopeType?: string; scopeId?: string; limit?: number; cursor?: string; q?: string } = {}): Promise<CanvasListResult> {
@@ -540,8 +544,7 @@ export class CanvasService {
     if (addresses.length === 0 || addresses.some((entry) => !isPublicIpAddress(entry.address))) {
       throw new CanvasNotFoundError("preview");
     }
-    // Node fetch resolves DNS independently; the preflight above blocks obvious SSRF
-    // targets, while HEAD-only fetches stay bounded by the request timeout.
+    // The default transport re-validates the address it connects to.
     return url.toString();
   }
 

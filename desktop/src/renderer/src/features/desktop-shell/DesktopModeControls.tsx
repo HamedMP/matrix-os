@@ -11,6 +11,9 @@ import { openCodingAgentThread } from "../../lib/project-chat";
 import { useConnection } from "../../stores/connection";
 import { useUi } from "../../stores/ui";
 
+// The native Terminal window ships on macOS and Linux only (spec 651).
+const terminalWindowSupported = !/\bWindows\b/i.test(navigator.userAgent);
+
 const menuOverlay = {
   acquire: () => useUi.getState().acquireRendererOverlay(),
   release: () => useUi.getState().releaseRendererOverlay(),
@@ -26,8 +29,13 @@ export default function DesktopModeControls() {
     return invoke("runtime:get-summary", {});
   }, [generation, runtimeSlot]);
   const openSupport = () => { void openDesktopSupport(); };
+  const openTerminalWindow = () => {
+    void invoke("terminal-window:open", {}).catch((error: unknown) => {
+      console.warn("[terminal-window] open failed:", error instanceof Error ? error.name : "UnknownError");
+    });
+  };
   return <div className="no-drag ml-auto flex h-full shrink-0 items-center border-l pl-3" style={{ borderColor: "var(--border-subtle)" }}>
-    <DesktopTopBarActions onSearch={() => setPaletteOpen(true)} onSupport={openSupport}
+    <DesktopTopBarActions onSearch={() => setPaletteOpen(true)} onSupport={openSupport} onTerminal={terminalWindowSupported ? openTerminalWindow : undefined}
       inbox={<DesktopActivityInbox overlay={menuOverlay} scope={`${generation}:${runtimeSlot}`} load={loadActivity} onOpenTask={id => { void openCodingAgentThread(id); }} />}
       help={<GettingStartedPopover helpMenu={{ onSupport: openSupport, discordIcon: <span aria-hidden="true" className="size-3.5 shrink-0 bg-current" style={{ mask: `url(${discordIconUrl}) center/contain no-repeat` }} /> }} />}
       computer={<RuntimeComputerMenu collapsed={false} />} update={<DesktopUpdateButton />} account={<AccountMenu collapsed compact />} />

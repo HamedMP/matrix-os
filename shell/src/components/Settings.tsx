@@ -29,6 +29,7 @@ import { CronSection } from "./settings/sections/CronSection";
 import { SecuritySection } from "./settings/sections/SecuritySection";
 import { PluginsSection } from "./settings/sections/PluginsSection";
 import { SystemSection } from "./settings/sections/SystemSection";
+import { AiUsageSection } from "./settings/sections/AiUsageSection";
 import { ChatImportSection } from "./settings/sections/ChatImportSection";
 import { BillingSection } from "./settings/sections/BillingSection";
 import type { ComputerSetupSelection } from "./settings/sections/BillingPanel";
@@ -55,6 +56,7 @@ const sections = [
   { id: "integrations", label: "Connect Apps", icon: CableIcon },
   { id: "channels", label: "Channels", icon: MessageSquareIcon },
   { id: "skills", label: "Skills", icon: SparklesIcon },
+  { id: "ai-usage", label: "AI usage", icon: SparklesIcon },
   { id: "chat-import", label: "Import chats", icon: UploadIcon },
   { id: "plugins", label: "Plugins", icon: PuzzleIcon },
   { id: "appearance", label: "Appearance", icon: PaletteIcon },
@@ -159,6 +161,7 @@ interface SettingsProps {
   };
   onOpenAgentTerminal?: (action: TerminalLaunchAction) => void;
   onOpenProviderTerminalSession?: (sessionId: string) => void;
+  onOpenGithubDisconnectTerminal?: (sessionId: string) => void;
   onOpenImportedChat?: (chatId: string) => void;
 }
 
@@ -199,6 +202,7 @@ function SettingsFrame({
   billingCheckoutRuntimeSlot,
   onboardingDefaultInstalls,
   onOpenProviderTerminalSession,
+  onOpenGithubDisconnectTerminal,
   onOpenImportedChat,
   billingActive,
   showBillingSection,
@@ -420,8 +424,11 @@ function SettingsFrame({
               )}
               {activeSection === "identity-personality" && <IdentityPersonalitySection />}
               {activeSection === "channels" && <ChannelsSection />}
-              {activeSection === "integrations" && <IntegrationsSection />}
+              {activeSection === "integrations" && (
+                <IntegrationsSection active={open} onOpenGithubDisconnectTerminal={onOpenGithubDisconnectTerminal} />
+              )}
               {activeSection === "skills" && <SkillsSection />}
+              {activeSection === "ai-usage" && <AiUsageSection />}
               {activeSection === "chat-import" && <ChatImportSection onOpenChat={onOpenImportedChat} />}
               {activeSection === "cron" && <CronSection />}
               {activeSection === "security" && <SecuritySection />}

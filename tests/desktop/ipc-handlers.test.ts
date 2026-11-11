@@ -43,6 +43,9 @@ function makeHarness(overrides: Partial<HandlerContext> = {}) {
     getUpdateSnapshot: vi.fn(() => ({ status: "disabled" })),
     installUpdate: vi.fn(() => false),
     toggleWindowMaximize: vi.fn(),
+    authorizeSender: vi.fn(() => true),
+    openTerminalWindow: vi.fn(async () => undefined),
+    focusMainWindow: vi.fn(),
     getWhatsNew: vi.fn(async () => ({ release: null, shouldOpen: false })),
     acknowledgeWhatsNew: vi.fn(async () => undefined),
     getAppVersion: vi.fn(() => "1.4.0-canary.2"),
@@ -266,6 +269,37 @@ describe("registerIpcHandlers", () => {
       url: "http://127.0.0.1:3000/dashboard",
       bounds: { x: 20, y: 30, width: 640, height: 480 },
       active: false,
+    });
+  });
+
+  it("routes an exact shared-app target without owner launch fields", async () => {
+    const harness = makeHarness();
+    const target = {
+      scopeId: "10000000-0000-4000-8000-000000000001",
+      runtimeId: "runtime_owner",
+      organizationId: "org_matrix",
+      authorityGeneration: 2,
+      appId: "team-tracker",
+      catalogId: "30000000-0000-4000-8000-000000000001",
+      readinessId: "40000000-0000-4000-8000-000000000001",
+      registrationIncarnation: "a".repeat(64),
+      buildId: "b".repeat(64),
+      shareRevision: "7",
+      owner: { actorId: "user_owner", displayName: "Nima" },
+    };
+    vi.mocked(harness.ctx.embeds.open).mockResolvedValue({ embedId: "shared-1", state: "loading" });
+
+    await expect(harness.invoke("embed:open", {
+      kind: "shared-app",
+      target,
+      bounds: { x: 20, y: 30, width: 640, height: 480 },
+      active: true,
+    })).resolves.toEqual({ embedId: "shared-1", state: "loading" });
+    expect(harness.ctx.embeds.open).toHaveBeenCalledWith({
+      kind: "shared-app",
+      target,
+      bounds: { x: 20, y: 30, width: 640, height: 480 },
+      active: true,
     });
   });
 
@@ -1276,5 +1310,34 @@ describe("registerIpcHandlers", () => {
 
     await expect(harness.invoke("app:get-zoom", {})).resolves.toEqual({ factor: 1 });
     await expect(harness.invoke("app:set-zoom", { factor: 0.8 })).resolves.toEqual({ factor: 0.8 });
+  });
+});
+
+describe("registerIpcHandlers sender authorization", () => {
+  beforeEach(() => {
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+  });
+
+  it("rejects an unauthorized sender before validating or running the handler", async () => {
+    const authorizeSender = vi.fn((_event: unknown, channel: string) => channel !== "auth:sign-out");
+    const harness = makeHarness({ authorizeSender });
+    const event = { sender: {}, senderFrame: {} };
+
+    await expect(harness.invoke("auth:sign-out", {}, event)).rejects.toThrow("invalid request");
+    expect(harness.ctx.auth.signOut).not.toHaveBeenCalled();
+    // The raw request goes to the policy too: some channels are allowed only for certain requests.
+    expect(authorizeSender).toHaveBeenCalledWith(event, "auth:sign-out", {});
+  });
+
+  it("opens the Terminal window and focuses the main window through their channels", async () => {
+    const harness = makeHarness();
+    await expect(harness.invoke("terminal-window:open")).resolves.toEqual({ ok: true });
+    expect(harness.ctx.openTerminalWindow).toHaveBeenCalledTimes(1);
+    await expect(harness.invoke("terminal-window:focus-main")).resolves.toEqual({ ok: true });
+    expect(harness.ctx.focusMainWindow).toHaveBeenCalledTimes(1);
+  });
+
+  it("refuses to register without window services", () => {
+    expect(() => makeHarness({ authorizeSender: undefined as never })).toThrow("window services unavailable");
   });
 });

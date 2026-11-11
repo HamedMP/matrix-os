@@ -70,7 +70,7 @@ const RECIPES: readonly BotRecipe[] = [
     name: "Matrix Bot",
     description: "Your personal Matrix assistant, using the identity and style you save in Settings.",
     instructions: "Help the owner with questions, planning and writing. Use available tools only within this private chat's authorized workspace. Ask before actions that require approval, and report only results you can verify.",
-    capabilities: [...CONVERSATION, ...ARTIFACTS],
+    capabilities: [...CONVERSATION, ...ARTIFACTS, "github.developer"],
     integrations: [],
     output: "A useful answer or requested workspace artifact, with clear evidence and any limitations.",
     identitySource: "owner_soul",

@@ -103,7 +103,8 @@ function stepRow(step: GettingStartedStep, connected: ReadonlySet<string> | null
     return action ? { ...row, try: action } : row;
   }
   switch (step.id) {
-    case "github": return { ...row, connect: "github" };
+    // GitHub developer access is configured on the owner computer, outside Connect Apps.
+    case "github": return row;
     case "email-calendar": {
       const missing = EMAIL_CALENDAR_SERVICES.filter((service) => !connected?.has(service));
       const next = missing[0] ?? "gmail";

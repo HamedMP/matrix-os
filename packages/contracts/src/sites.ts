@@ -8,9 +8,10 @@ export const SITE_PUBLISH_CLIENT_TIMEOUT_MS = SITE_PUBLISH_PROXY_TIMEOUT_MS + 15
 export const SITE_MAX_FILES = 200;
 export const SITE_MAX_BUNDLE_BYTES = 10 * 1024 * 1024;
 export const SITE_MAX_FORM_BYTES = 16 * 1024;
-export const SITE_MAX_ACCESS_LINKS = 50;
 export const SITE_ACCESS_LINK_CLAIM_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 export const SITE_VIEWER_SESSION_TTL_MS = 30 * 24 * 60 * 60 * 1000;
+export const SITE_MANAGEMENT_CONTRACT_VERSION_HEADER = "x-matrix-sites-contract-version";
+export const SITE_MANAGEMENT_CONTRACT_VERSION = "2";
 const reserved = new Set(["api", "public", "assets", "frame", "forms", "preview", "admin", "auth", "health", "robots", "favicon", "index", "sites", "www"]);
 const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 export const SiteIdSchema = z.uuid();
@@ -127,8 +128,19 @@ export const SiteAccessLinkSummarySchema = z.object({
   sessionExpiresAt: z.string().datetime().nullable(),
 }).strict();
 export type SiteAccessLinkSummary = z.infer<typeof SiteAccessLinkSummarySchema>;
+export const SiteAccessLinkCursorSchema = z.string().max(80).refine((value) => {
+  const [createdAt, id, extra] = value.split("|");
+  return extra === undefined && Boolean(createdAt)
+    && z.string().datetime().safeParse(createdAt).success
+    && SiteIdSchema.safeParse(id).success;
+}, "Invalid access-link cursor");
+export const SiteAccessLinksQuerySchema = z.object({
+  limit: z.coerce.number().int().min(1).max(100).default(50),
+  cursor: SiteAccessLinkCursorSchema.optional(),
+}).strict();
 export const SiteAccessLinksResponseSchema = z.object({
-  links: z.array(SiteAccessLinkSummarySchema).max(SITE_MAX_ACCESS_LINKS),
+  links: z.array(SiteAccessLinkSummarySchema).max(100),
+  nextCursor: SiteAccessLinkCursorSchema.nullable(),
 }).strict();
 export type SiteAccessLinksResponse = z.infer<typeof SiteAccessLinksResponseSchema>;
 export const SiteAccessLinkCreateResponseSchema = z.object({

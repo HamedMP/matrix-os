@@ -1,3 +1,22 @@
+<!--
+Sync Impact Report
+- Version change: 2.4.0 → 2.5.0
+- Modified principles:
+  - I. Data Belongs to Its Owner: added explicit revocable delegation without ownership transfer.
+  - VII. Multi-Tenancy: clarified creator-hosted live app sharing for every current org member.
+  - VIII. Defense in Depth: scoped org-admin control to org-owned apps and preserved live-share audit.
+- Added sections: none.
+- Removed sections: none.
+- Templates reviewed:
+  - ✅ .specify/templates/plan-template.md
+  - ✅ .specify/templates/spec-template.md
+  - ✅ .specify/templates/tasks-template.md
+  - ✅ .specify/templates/constitution-template.md
+  - ✅ .specify/templates/agent-file-template.md
+  - ✅ .specify/templates/checklist-template.md
+- Runtime guidance reviewed: ✅ AGENTS.md, ✅ README.md, ✅ docs/ (no conflicting wording found).
+- Follow-up TODOs: none.
+-->
 # Matrix OS Constitution
 
 ## Core Principles
@@ -7,7 +26,7 @@
 Every piece of data has a clear owner -- never the platform. Owners can inspect, export, delete, and take their data with them. No vendor lock-in, no opaque systems, no data that exists only in the platform's control.
 
 **Ownership scopes**:
-- **Personal**: belongs to the individual user. Only they can access it. Fully portable.
+- **Personal**: belongs to the individual user. It is private by default and fully portable. The owner MAY explicitly delegate revocable use of a specific owner-controlled app and its data to an organization without transferring ownership, copying the data into organization storage, or creating a second app permission system.
 - **Org**: belongs to the organization. Admins control access, members use it. Survives employee departure.
 - **Shared**: co-owned by collaborators (e.g., a shared project board). All collaborators have access. Ownership transfers are explicit.
 - **Published**: creator retains IP, installers own their instance data (e.g., app store apps).
@@ -30,7 +49,8 @@ Every piece of data has a clear owner -- never the platform. Owners can inspect,
 - Export: full data dump at any time, any scope
 - Delete: owner can erase everything in their scope
 - Portability: no data lives outside the owner's control
-- Separation: personal data never merges with org data -- leaving an org takes nothing that isn't yours
+- Delegated access: the owner remains the sole owner, may stop sharing without deleting records, and never delegates credentials, connected providers, AI spending authority, export rights, or deletion rights merely by sharing an app
+- Separation: personal data never merges with org data -- explicit delegated use remains owner-controlled, and leaving an org ends delegated access without taking or deleting the owner's records
 
 ### II. AI Is the Kernel
 
@@ -94,9 +114,9 @@ Matrix OS serves individuals and organizations. An org is a group of users with 
 
 - **Personal OS**: one user, their data, their apps, their agent. The default.
 - **Org OS**: a company or team provisions Matrix OS for members. Shared apps, shared data, centralized admin.
-- **RBAC**: orgs have roles (owner, admin, member, guest) with scoped permissions. Admins manage apps, members use them, guests get limited access.
+- **RBAC**: orgs have roles (owner, admin, member, guest) with scoped permissions for organization-owned resources. Creator-hosted live app sharing is an explicit exception: any current organization member, including a guest, MAY share an app they own with that organization, and every current member receives the app's full declared functionality while the share is active. This uses current organization membership only; it MUST NOT create per-app roles, grants, invitations, acceptance records, or an additional permission system.
 - **Shared workspaces**: org members collaborate on shared apps and data. Changes are visible to all members with access.
-- **Org apps**: admins deploy apps to all members. Members can't uninstall org-mandated apps but can add personal apps alongside them.
+- **Org apps**: admins deploy organization-owned apps to all members. Members can't uninstall org-mandated apps but can add personal apps alongside them. A creator-hosted live share remains owner-owned and is not an org-mandated app.
 - **Boundary**: personal data and org data are strictly separated. Leaving an org removes access to org data but personal data is untouched.
 
 ## Technology Constraints
@@ -141,8 +161,9 @@ Every new endpoint, WebSocket, and webhook requires explicit auth design before 
 - Self-built apps get full access; app-store apps are sandboxed by default
 
 **Org and access control**:
-- RBAC for org resources: owner > admin > member > guest
-- Org admins control which apps are available, who has access to what data
+- RBAC for org-owned resources: owner > admin > member > guest
+- Org admins control organization-owned apps and data. An owner-controlled live app share follows the explicit membership-derived exception in Principle VII: any current member may share their own app, and all current members receive full app use without a second permission system.
+- Creator-hosted live share creation, stop, readiness, membership denial, and app mutations MUST remain auditable even though they do not use per-app grants.
 - Audit logs for security-sensitive actions (permission changes, data exports, admin operations)
 
 **Compliance**:
@@ -194,9 +215,11 @@ This principle exists because PR review discipline plus an automated quality flo
 
 This constitution supersedes all other development practices for Matrix OS. Amendments require updating this file with rationale. If a principle conflicts with implementation reality (e.g., SDK limitation), document the deviation in SDK-VERIFICATION.md and propose the simplest workaround.
 
-**Version**: 2.4.0 | **Ratified**: 2026-02-11 | **Last Amended**: 2026-10-25
+**Version**: 2.5.0 | **Ratified**: 2026-02-11 | **Last Amended**: 2026-11-05
 
 ### Amendment Log
+
+- **2.5.0** (2026-11-05): Added explicit owner-retained delegated access for creator-hosted live apps. Personal app data remains in the owner's PostgreSQL database and never becomes organization-owned or platform-owned. Any current organization member, including a guest, may share an app they own with the organization; every current member receives full app functionality through existing organization membership, with no per-app roles, grants, invitations, acceptance flow, or second permission system. Sharing never delegates owner credentials, connected providers, AI spending authority, export rights, or deletion rights.
 
 - **2.4.0** (2026-10-25): Added test-effectiveness and boundary-fidelity requirements to TDD. The suite audit found tests exercising local replicas and fixtures accepting invalid production messages; require named fault detection, regression red/green evidence, real failing boundaries, and non-skipping qualification. Existing coverage targets remain unchanged. Canonical guidance: `docs/dev/testing-effectiveness.md`.
 

@@ -36,6 +36,11 @@ const write = (relPath: string, content = "# Acme", extra: Record<string, unknow
 const read = (relPath: string) => ({ toolCallId: "call_r", capability: "artifact.read", args: { relPath } }) as never;
 
 describe("bot tool dispatcher", () => {
+  it.each(["repo/.git/config", "repo/.GIT/hooks/pre-commit", ".github-clone-private/config"])("never exposes Git metadata or clone staging through artifacts: %s", async path => {
+    const tools = createBotToolDispatcher({ homePath: home });
+    await expect(tools.dispatch(binding, write(path, "untrusted command"), signal)).rejects.toMatchObject({ code: "invalid_arguments" });
+    await expect(tools.dispatch(binding, read(path), signal)).rejects.toMatchObject({ code: "invalid_arguments" });
+  });
   it("reports a routine model mismatch before the broker can dispatch an effect checkpoint", async () => {
     const propose = vi.fn();
     const tools = createBotToolDispatcher({ homePath: home, routines: { propose, list: vi.fn(), control: vi.fn() } as never });

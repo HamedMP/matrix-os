@@ -96,6 +96,7 @@ file so the rules have one source of truth.
 
 ## Development Rules
 
+- **Reuse the component library first**: inspect existing components before changing UI. Use the project's shadcn controls and shared `packages/ui` components; extract a shared implementation when web and Electron both need it. Avoid native controls styled to imitate library components or parallel custom versions of existing controls.
 - **TDD**: failing tests FIRST, then implement (Red -> Green -> Refactor)
 - **Test effectiveness**: follow `docs/dev/testing-effectiveness.md`. Name the user outcome and fault a test detects; exercise production code, preserve real producer/consumer boundaries, and show regression red/green evidence. Do not test local replicas, freeze invented policy, or add duplicate suites for coverage. Delete only with recorded no-protection or equivalent-retained-coverage proof. Required lanes must execute assertions, not silently skip.
 - **Conventional Commits and PR Titles**: commits and PR titles use semantic Conventional Commit style such as `feat(canvas): add workspace canvas`; never prefix PR titles with agent/tool tags like `[codex]`.
@@ -541,7 +542,7 @@ Read these on demand, not every session:
 
 - `ARCHITECTURE.md` and root `DOMAIN.md` (if present) -- when changing package ownership, cross-package imports, or domain boundaries; if a package/context has its own `ARCHITECTURE.md` / `DOMAIN.md`, read the nearest relevant docs before moving code
 - `docs/dev/review-pipeline.md` -- when reviewing or opening PRs (three-pass structure, checklists, CI gates)
-- `docs/dev/fast-ci.md` -- when using the `fast-ci` label, reading Linux CI checks (skipped hosted lanes, `Dedicated CI Results`), or merging a fast-ci PR
+- `scripts/ci/runner-pool/README.md` -- when operating the dedicated CI host's runner pool or reading why a CI job ran on `matrix-ci`
 - `docs/dev/stacked-prs.md` -- when creating, reviewing or merging GitHub native stacks
 - `docs/dev/onboarding.md` -- developer setup, API keys, and getting started
 - `docs/dev/mobile-shell.md` -- when working on the Expo/native mobile shell, physical-device testing, or terminal resume controls
@@ -588,6 +589,8 @@ Read these on demand, not every session:
 - Owner Postgres bot tables via versioned `bot_schema_migrations`; bot definition files via `agent-store.ts`; bot workspaces under `~/bots/<botId>/`; platform `ai_funded_priority_claims` and credential `request_class` (536-conversational-bots)
 - TypeScript 5.9 strict on Node 24; Bash/Python 3 for existing Spec Kit helpers; native workflow YAML. + Existing Hono, Zod 4, Kysely, pg, jose, Electron 41, official GitHub Actions and `github/gh-stack`; no new persistence engine or credential store. (codex/eng-418-preview-pair-foundation)
 - Platform Postgres for pair/generation/fixture leases; owner Postgres remains collaboration authority; credential-free local context/profile files use the existing Electron stores. (codex/eng-418-preview-pair-foundation)
+- TypeScript 5.5+ strict ES modules on Node.js 24+ + Hono gateway/WS, Next.js 16, React 19, Electron `WebContentsView`, Kysely, Zod 4 (`zod/v4`), existing Matrix direct-session/relay/event infrastructure (2689-collaborative-app-sharing)
+- Owner-controlled PostgreSQL through Kysely for app records and collaboration state; owner filesystem/build cache for immutable qualified app assets; platform PostgreSQL for metadata/routing only (2689-collaborative-app-sharing)
 
 - TypeScript 5.5+ strict, ES modules + node-pty (backend), @xterm/xterm + addon-webgl + addon-search + addon-serialize + addon-fit (frontend), Hono WebSocket (gateway), Zod 4 (validation) (056-terminal-upgrade)
 - Files — `~/system/terminal-sessions.json` (session metadata), `~/system/terminal-layout.json` (layout with sessionId) (056-terminal-upgrade)

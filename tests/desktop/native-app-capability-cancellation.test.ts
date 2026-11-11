@@ -25,11 +25,11 @@ function authHooks() {
   expect(callback).not.toBe("");
   expect(binding).not.toBe("");
   const nativeAppChatNavigation = { cancelAll: vi.fn() };
-  return new Function("navigationCache", "chatgptPlan", "fileDownloads", "organizationDriveTransfers", "localChatImports", "nativeAppChatNavigation", "sendEvent", `
+  return new Function("navigationCache", "chatgptPlan", "fileDownloads", "organizationDriveTransfers", "localChatImports", "localUsage", "nativeAppChatNavigation", "sendEvent", `
     let invalidateAppCapabilities;
     const onAuthChanged = ${callback};
     return { nativeAppChatNavigation, onAuthChanged, bind(nativeAppBridge) { ${binding}; } };
-  `)(undefined, undefined, undefined, undefined, undefined, nativeAppChatNavigation, vi.fn()) as {
+  `)(undefined, undefined, undefined, undefined, undefined, undefined, nativeAppChatNavigation, vi.fn()) as {
     nativeAppChatNavigation: typeof nativeAppChatNavigation;
     onAuthChanged(status: { signedIn: boolean }): void;
     bind(bridge: NativeAppBridge): void;

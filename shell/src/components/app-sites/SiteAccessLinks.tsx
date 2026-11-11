@@ -1,6 +1,6 @@
 "use client";
 import { useEffect, useRef, useState } from "react";
-import { SITE_MAX_ACCESS_LINKS, type SiteAccessLinkSummary, type SiteRecord } from "@matrix-os/contracts";
+import { type SiteAccessLinkSummary, type SiteRecord } from "@matrix-os/contracts";
 import { Button } from "@matrix-os/ui";
 import { siteActionError, type SiteClient } from "../../lib/site-client";
 import { formatSiteDate } from "./format-site-date";
@@ -17,6 +17,7 @@ export function SiteAccessLinks({ appSlug, client, site, state, disabled, varian
   const [generatedLink, setGeneratedLink] = useState<{ url: string; publicationKey: string } | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [linksLoaded, setLinksLoaded] = useState(false);
+  const [nextCursor, setNextCursor] = useState<string | null>(null);
   const [reload, setReload] = useState(0);
   const linksMutationVersion = useRef(0);
   const invite = variant === "invite";
@@ -30,7 +31,7 @@ export function SiteAccessLinks({ appSlug, client, site, state, disabled, varian
     void client.accessLinks(appSlug, controller.signal).then(page => {
       if (controller.signal.aborted) return;
       if (linksMutationVersion.current !== requestVersion) { setReload(value => value + 1); return; }
-      setLinks(page.links); setLoadError(null); setLinksLoaded(true);
+      setLinks(page.links); setNextCursor(page.nextCursor); setLoadError(null); setLinksLoaded(true);
     }).catch((error: unknown) => {
       if (controller.signal.aborted) return;
       if (linksMutationVersion.current !== requestVersion) { setReload(value => value + 1); return; }
@@ -82,6 +83,18 @@ export function SiteAccessLinks({ appSlug, client, site, state, disabled, varian
     setLinks(current => current.filter(link => link.id !== revoked));
     setGeneratedLink(current => current?.url.includes(revoked) ? null : current);
   }, "Link revoked.");
+  const loadMore = () => {
+    if (!nextCursor) return Promise.resolve(false);
+    const requestVersion = linksMutationVersion.current;
+    return state.action(
+      signal => client.accessLinks(appSlug, signal, nextCursor),
+      page => {
+        if (linksMutationVersion.current !== requestVersion) { setReload(value => value + 1); return; }
+        setLinks(current => [...current, ...page.links.filter(link => !current.some(existing => existing.id === link.id))]);
+        setNextCursor(page.nextCursor);
+      },
+    );
+  };
   const readinessCopy = "Unclaimed links expire after 7 days.";
   return <section aria-label={invite ? "Invite link" : "One-time links"} className={invite ? "space-y-2 border-t pt-2" : "space-y-3 rounded-lg border p-3"}>
     <div className={invite ? "flex items-center justify-between gap-4" : "space-y-1"}>
@@ -92,9 +105,9 @@ export function SiteAccessLinks({ appSlug, client, site, state, disabled, varian
           <p className="text-xs">{invite ? readinessCopy : "Each link can be claimed by one browser. Unclaimed links expire after 7 days; access lasts 30 days."}</p>
         </div>
       </div>
-      {invite ? <Button aria-label="Create invite link" size="sm" disabled={disabled || (ready && (!linksLoaded || links.length >= SITE_MAX_ACCESS_LINKS))} onClick={() => void create()}>Create</Button> : null}
+      {invite ? <Button aria-label="Create invite link" size="sm" disabled={disabled || (ready && !linksLoaded)} onClick={() => void create()}>Create</Button> : null}
     </div>
-    {!invite ? <Button size="sm" disabled={disabled || !linksLoaded || links.length >= SITE_MAX_ACCESS_LINKS} onClick={() => void create()}>Create one-time link</Button> : null}
+    {!invite ? <Button size="sm" disabled={disabled || !linksLoaded} onClick={() => void create()}>Create one-time link</Button> : null}
     {ready && generatedUrl ? <div className="ph-no-capture space-y-2 rounded border p-2" role="status">
       <p className="text-xs font-medium">Save this URL now. It will not be shown again.</p>
       <p className="break-all text-sm" data-ph-mask="true">{generatedUrl}</p>
@@ -104,6 +117,7 @@ export function SiteAccessLinks({ appSlug, client, site, state, disabled, varian
     {ready && links.length ? <ul className="space-y-2">{links.map(link => <li key={link.id} className="flex flex-wrap items-center justify-between gap-2 rounded border p-2 text-xs">
       <span><strong>{link.status === "unclaimed" ? "Unclaimed" : link.status === "claimed" ? "Claimed" : "Expired"}</strong> · Created {formatSiteDate(link.createdAt)} · {link.status === "claimed" && link.sessionExpiresAt ? `Access expires ${formatSiteDate(link.sessionExpiresAt)}` : `Claim expires ${formatSiteDate(link.claimExpiresAt)}`}</span>
       <Button size="sm" variant="destructive" disabled={disabled} onClick={() => void revoke(link.id)}>Revoke link</Button>
-    </li>)}</ul> : ready ? <p className="text-xs">No invite links yet.</p> : null}
+    </li>)}</ul> : ready ? <p className="text-xs">{invite ? "No invite links yet." : "No one-time links yet."}</p> : null}
+    {ready && nextCursor ? <Button size="sm" variant="secondary" disabled={disabled} onClick={() => void loadMore()}>Load more links</Button> : null}
   </section>;
 }

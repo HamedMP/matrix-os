@@ -6,7 +6,10 @@ import { NativeAppBridge, createNativeAppGatewayRequester } from "@desktop/main/
 import App from "../../home/apps/resource-manager/src/App.js";
 
 const electron = vi.hoisted(() => ({
-  contextBridge: { exposeInMainWorld: vi.fn() },
+  contextBridge: {
+    exposeInMainWorld: vi.fn(),
+    executeInMainWorld: vi.fn(({ func, args }: { func: (...args: unknown[]) => unknown; args: unknown[] }) => func(...args)),
+  },
   ipcRenderer: { invoke: vi.fn() },
 }));
 vi.mock("electron", () => electron);
@@ -53,6 +56,8 @@ it("loads Resource Manager through the actual native app preload", async () => {
     } }, request);
   });
   await import("../../desktop/src/preload/index.js");
+  expect(electron.contextBridge.executeInMainWorld).toHaveBeenCalledOnce();
+  expect(window.MatrixOS?.collaboration).toBeDefined();
   render(React.createElement(App));
   await waitFor(() => expect(screen.getByText("4 cores")).toBeTruthy());
   expect(screen.queryByText("Resource data is unavailable.")).toBeNull();

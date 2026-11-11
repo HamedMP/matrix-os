@@ -306,7 +306,7 @@ describe("platform serving-source compatibility", () => {
 
   it("keeps the reviewed production manifest bounded and source-only", () => {
     const manifest = validateCompatibilityManifest(readFileSync("specs/639-managed-model-selection/current-runtime-compatibility.json", "utf8"));
-    expect(manifest.exceptions).toHaveLength(1);
+    expect(manifest.exceptions).toHaveLength(2);
     expect(manifest.exceptions[0]).toMatchObject({
       sourceSha: "10ce63461e3658f6f2de9366754efb57c1adeae9",
       imageDigest: "sha256:e12d00150b7d592d16605b2afefca88237a153f2caf446007b9ec0c3f4d5e210",
@@ -328,5 +328,27 @@ describe("platform serving-source compatibility", () => {
       "packages/platform/src/session-routing-proxy.ts",
       "packages/platform/src/session-routing-websocket.ts",
     ]);
+    const sourceChat = manifest.exceptions[1];
+    expect(sourceChat).toMatchObject({
+      sourceSha: "3da721c31a7ef2c824e469a789e4e4bd5d9e76e3",
+      imageDigest: "sha256:c07e77584da8f81bebc624cc1fe69a2707cc79373f6200ab49ed1b6c3495d976",
+      preserveRuntimeConfiguration: true,
+    });
+    expect(sourceChat.preservedFiles.map(({ path }) => path)).toEqual([
+      "packages/contracts/src/canonical-chat-api.ts",
+      "packages/contracts/src/chat-agent-context.ts",
+      "packages/contracts/src/routine-origin-proof.ts",
+      "packages/platform/src/browser-chat-approval-proof.ts",
+      "packages/platform/src/browser-chat-approval-registration.ts",
+      "packages/platform/src/owner-approval-proofs.ts",
+      "packages/platform/src/routine-origin-proof-routes.ts",
+      "packages/platform/src/routine-origin-proof.ts",
+      "packages/platform/src/routine-origin-proxy.ts",
+      "packages/platform/src/session-routing-middleware.ts",
+      "packages/platform/src/session-routing-proxy.ts",
+    ]);
+    const imports = JSON.parse(readFileSync("packages/contracts/package.json", "utf8")).imports;
+    expect(imports["#routine-origin-proof"]).toBe("./src/routine-origin-proof.ts");
+    expect(readFileSync("packages/contracts/src/index.ts", "utf8")).toContain('export * from "#routine-origin-proof";');
   });
 });

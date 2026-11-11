@@ -1,11 +1,10 @@
 import {
+  CHAT_SCREEN_HREF,
+  PROJECTS_SCREEN_HREF,
+  SHARED_SCREEN_HREF,
   TABS_ROUTE,
-  chatScreenFromAnotherTabParams,
-  chatScreenParams,
   isChatScreen,
-  projectsScreenParams,
-  sharedScreenParams,
-  tabScreenParams,
+  tabScreenHref,
 } from "../lib/shell-routes";
 
 describe("isChatScreen", () => {
@@ -30,43 +29,22 @@ describe("isChatScreen", () => {
   });
 });
 
-describe("navigation params", () => {
+describe("shell hrefs", () => {
   it("names the tabs as the side panel's screen", () => {
     expect(TABS_ROUTE).toBe("(tabs)");
   });
 
-  it("shows the chat screen from the side panel without leaving a param on its URL", () => {
-    expect(chatScreenParams()).toEqual({ screen: "(chats)", params: { screen: "index" } });
+  it("reaches the chat screen through the side panel's group, since the bare / is the sign-in gate", () => {
+    expect(CHAT_SCREEN_HREF).toBe("/(drawer)");
   });
 
-  it("shows the chat screen from another tab by returning the Chats stack to it", () => {
-    expect(chatScreenFromAnotherTabParams()).toEqual({ screen: "(chats)", params: { screen: "index", pop: true } });
+  it("opens Shared with me and Projects by their URLs in the Chats stack", () => {
+    expect(SHARED_SCREEN_HREF).toBe("/shared");
+    expect(PROJECTS_SCREEN_HREF).toBe("/projects");
   });
 
-  it("opens Shared with me inside the Chats stack", () => {
-    expect(sharedScreenParams()).toEqual({ screen: "(chats)", params: { screen: "shared" } });
-  });
-
-  it("opens Projects inside the Chats stack, by the name its route file gives the screen", () => {
-    expect(projectsScreenParams()).toEqual({ screen: "(chats)", params: { screen: "projects/index" } });
-  });
-
-  it("shows a tab that is a single screen by naming it", () => {
-    expect(tabScreenParams("terminal")).toEqual({ screen: "terminal" });
-    expect(tabScreenParams("settings")).toEqual({ screen: "settings" });
-    expect(tabScreenParams("terminal")).not.toBe(tabScreenParams("terminal"));
-    expect(Object.isFrozen(tabScreenParams("settings"))).toBe(false);
-  });
-
-  it("builds new objects on every call, because a used params object is ignored", () => {
-    for (const build of [chatScreenParams, chatScreenFromAnotherTabParams, sharedScreenParams, projectsScreenParams]) {
-      const first = build();
-      const second = build();
-      expect(first).not.toBe(second);
-      expect(first.params).not.toBe(second.params);
-      // React Navigation tags the object it acted on; a frozen one would throw.
-      expect(Object.isFrozen(first)).toBe(false);
-      expect(Object.isFrozen(first.params)).toBe(false);
-    }
+  it("shows a tab that is a single screen by its URL", () => {
+    expect(tabScreenHref("terminal")).toBe("/terminal");
+    expect(tabScreenHref("settings")).toBe("/settings");
   });
 });

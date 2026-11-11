@@ -28,6 +28,8 @@ describe("collaboration owner database", () => {
       .execute();
 
     expect(tables.map((row) => row.table_name).sort()).toEqual([
+      "collaboration_app_bindings",
+      "collaboration_app_readiness",
       "collaboration_audit",
       "collaboration_cutover_journal",
       "collaboration_cutover_shadow_grants",

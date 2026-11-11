@@ -7,6 +7,7 @@ import { readNativeEmbedBounds } from "./embed-bounds";
 import { nativeBrowserProduct } from "../../../../shared/browser-products";
 import { DesktopAppSiteButton } from "../app-sites/DesktopAppSiteButton";
 import { useSurfaceChromeHost } from "../desktop-shell/SurfaceChrome";
+import type { CollaborativeAppDirectoryItem } from "@matrix-os/contracts";
 
 // Hosts a main-process WebContentsView positioned over this element's rect.
 // The remote content renders in an isolated partition with no IPC access.
@@ -25,9 +26,11 @@ type EmbedHostProps = EmbedHostCommonProps & (
   | { kind: "hosted-shell" }
   | { kind: "code-editor" }
   | { kind: "app"; slug: string; appIdentity?: string }
+  | { kind: "shared-app"; target: CollaborativeAppDirectoryItem }
   | { kind: "browser"; url: string }
 );
 
+// react-doctor-disable-next-line react-doctor/no-high-complexity-react-function -- Native embed lifecycle, fallback states, and window chrome share one host and must stay synchronized.
 export default function EmbedHost({
   ...props
 }: EmbedHostProps) {
@@ -45,6 +48,7 @@ export default function EmbedHost({
   const active = requestedActive && !overlayOpen;
   const slug = props.kind === "app" ? props.slug : undefined;
   const appIdentity = props.kind === "app" ? props.appIdentity : undefined;
+  const sharedAppTarget = props.kind === "shared-app" ? props.target : undefined;
   const url = props.kind === "browser" ? props.url : undefined;
   const runtimeSlot = useConnection((connection) => connection.runtimeSlot);
   const product = nativeBrowserProduct(appIdentity ?? "", slug ?? "");
@@ -55,10 +59,10 @@ export default function EmbedHost({
   const embedIdRef = useRef<string | null>(null);
   const activeRef = useRef(active);
   const lastRefreshRequestRef = useRef(refreshRequest);
-  activeRef.current = active;
+  useLayoutEffect(() => { activeRef.current = active; }, [active]);
   const [openedEmbedRevision, setOpenedEmbedRevision] = useState(0);
   const [retryRevision, setRetryRevision] = useState(0);
-  const [state, setState] = useState<"loading" | "ready" | "auth-required" | "failed">("loading");
+  const [state, setState] = useState<"loading" | "ready" | "auth-required" | "host-offline" | "access-ended" | "needs-recheck" | "failed">("loading");
   const [snapshotDataUrl, setSnapshotDataUrl] = useState<string | null>(null);
   const publishingChrome = useMemo(() => slug && visible ? ({
     rightActions: (
@@ -111,6 +115,8 @@ export default function EmbedHost({
       ? { kind, bounds, active: activeRef.current }
       : kind === "browser"
         ? { kind, url: url!, bounds, active: activeRef.current }
+        : kind === "shared-app"
+          ? { kind, target: sharedAppTarget!, bounds, active: activeRef.current }
         : {
             kind,
             slug: slug!,
@@ -154,7 +160,7 @@ export default function EmbedHost({
       if (id) void invoke("embed:close", { embedId: id });
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [appIdentity, kind, retryRevision, runtimeSlot, slug, url, authGeneration]);
+  }, [appIdentity, kind, retryRevision, runtimeSlot, sharedAppTarget, slug, url, authGeneration]);
 
   // Native views always paint above renderer windows. Keep a bounded local
   // frame under the detached view so obscured Matrix windows do not go blank.
@@ -189,6 +195,15 @@ export default function EmbedHost({
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [active]);
+
+  // Retained WebContentsViews survive transient failures, but native views
+  // always paint above React. Detach the retained view while a recovery or
+  // terminal-state overlay is visible so the user can actually use it.
+  useEffect(() => {
+    if (state !== "failed" && state !== "host-offline" && state !== "access-ended" && state !== "needs-recheck") return;
+    const id = embedIdRef.current;
+    if (id) void invoke("embed:set-active", { embedId: id, active: false });
+  }, [state]);
 
   // ResizeObserver sees size changes but not a pure move of the renderer host.
   // Native desktop surfaces pass their layout identity so position-only drags
@@ -281,6 +296,29 @@ export default function EmbedHost({
             </Button>
           </div>
         ) : null}
+      {state === "host-offline" || state === "access-ended" || state === "needs-recheck" ? (
+        <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 bg-[var(--bg-app)]">
+          <span className="text-sm" style={{ color: "var(--text-secondary)" }}>
+            {state === "host-offline"
+              ? "The owner’s computer is offline. This app is still open."
+              : state === "needs-recheck"
+                ? "The owner needs to check this app again."
+                : "Access to this shared app has ended."}
+          </span>
+          {state === "host-offline" ? <Button variant="primary" onClick={() => {
+            const id = embedIdRef.current;
+            if (!id) return;
+            setState("loading");
+            void invoke("embed:reload", { embedId: id }).then((result) => {
+              if (embedIdRef.current !== id) return;
+              if (result.ok) reportBounds();
+              else setState("host-offline");
+            }).catch(() => {
+              if (embedIdRef.current === id) setState("host-offline");
+            });
+          }}>Try again</Button> : null}
+        </div>
+      ) : null}
       </div>
     </div>
   );

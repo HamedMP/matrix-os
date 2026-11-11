@@ -2,10 +2,10 @@
 import { createHash } from "node:crypto";
 import { sql, type RawBuilder } from "kysely";
 import { BridgeQueryBodySchema, type BridgeQueryBody } from "../app-db-contracts.js";
-import { isSafeName } from "../app-db-types.js";
+import { isSafeName, type TableDef } from "../app-db-types.js";
 import { ProjectAppAdapterError, type ProjectAppBridge } from "./project-app-adapter.js";
 
-type AppRecord = { storageSchema: string; tables: readonly string[] };
+type AppRecord = { storageSchema: string; tables: Record<string, TableDef>; installedVersion: string | null };
 type Filter = NonNullable<Extract<BridgeQueryBody, { action: "find" }>["filter"]>;
 
 function expectedNamespace(scopeId: string, appId: string, kind: "project" | "standalone"): string {
@@ -84,9 +84,9 @@ export function createScopedAppBridge(options: {
       if (!action.success || action.data.action === "listApps" || action.data.app !== input.namespace) {
         throw new ProjectAppAdapterError("invalid_action");
       }
-      if (action.data.action === "appInfo") return { id: input.appId };
-      if (action.data.action === "schema") return { tables: record.tables };
-      if (!record.tables.includes(action.data.table) || !isSafeName(action.data.table)) {
+      if (action.data.action === "appInfo") return { installedVersion: record.installedVersion };
+      if (action.data.action === "schema") return record.tables;
+      if (!Object.hasOwn(record.tables, action.data.table) || !isSafeName(action.data.table)) {
         throw new ProjectAppAdapterError("forbidden");
       }
       const table = sql`${sql.id(record.storageSchema)}.${sql.id(action.data.table)}`;

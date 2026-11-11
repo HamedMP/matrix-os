@@ -6,7 +6,11 @@
  */
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { clearMatrixAppSession } from "../../shell/src/lib/sign-out";
-import { closeShellCollaborationSessions, createShellCollaborationApi } from "../../shell/src/lib/collaboration";
+import {
+  closeShellCollaborationSessions,
+  createShellCollaborationApi,
+  releaseShellCollaborationApi,
+} from "../../shell/src/lib/collaboration";
 
 const scopeId = "10000000-0000-4000-8000-000000000201";
 
@@ -39,5 +43,16 @@ describe("shell direct collaboration wiring", () => {
     expect(closeSecond).toHaveBeenCalledTimes(1);
     closeShellCollaborationSessions();
     expect(closeFirst).toHaveBeenCalledTimes(1);
+  });
+
+  it("shares one live client across more than 32 mounted viewers without evicting open windows", () => {
+    const viewers = Array.from({ length: 33 }, () => createShellCollaborationApi("https://app.matrix-os.com"));
+    const directClose = vi.spyOn(viewers[0]!.direct, "close");
+
+    expect(new Set(viewers)).toHaveLength(1);
+    for (const viewer of viewers.slice(0, -1)) releaseShellCollaborationApi(viewer);
+    expect(directClose).not.toHaveBeenCalled();
+    releaseShellCollaborationApi(viewers.at(-1)!);
+    expect(directClose).toHaveBeenCalledOnce();
   });
 });

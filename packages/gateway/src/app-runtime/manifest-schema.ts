@@ -1,5 +1,5 @@
 import { z } from "zod/v4";
-import { SitePublishingSchema } from "@matrix-os/contracts";
+import { CollaborativeAppManifestDeclarationSchema, SitePublishingSchema } from "@matrix-os/contracts";
 import { ManifestError } from "./errors.js";
 
 export const SAFE_SLUG = /^[a-z0-9][a-z0-9-]{0,63}$/;
@@ -49,6 +49,7 @@ const BaseManifestSchema = z.object({
   permissions: z.array(z.string()).default([]),
   storage: z.unknown().optional(),
   publishing: SitePublishingSchema.optional(),
+  collaboration: CollaborativeAppManifestDeclarationSchema.optional(),
   listingTrust: z.string().optional(),
   /** When true, the app is not surfaced in the launcher/app list (and not registered). Use to park unfinished apps. */
   hidden: z.boolean().optional(),

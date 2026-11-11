@@ -25,12 +25,12 @@ describe("Agent SDK compatibility CI gate", () => {
     expect(workflow.on.pull_request.branches).toBeUndefined();
     expect(workflow.on.pull_request["branches-ignore"]).toBeUndefined();
     expect(workflow.on.pull_request.types).toEqual(
-      expect.arrayContaining(["opened", "synchronize", "edited"]),
+      expect.arrayContaining(["opened", "synchronize"]),
     );
     expect(compatibility?.name).toBe("Agent SDK 0.3.251 Compatibility");
-    expect(compatibility?.needs).toEqual(["changes", "ci-backend"]);
+    expect(compatibility?.needs).toBe("changes");
     expect(compatibility?.if).toBe(
-      "always() && needs.changes.result == 'success' && needs.changes.outputs.should_run == 'true' && (needs.changes.outputs.dedicated_eligible != 'true' || needs.ci-backend.outputs.provider == 'hosted')",
+      "always() && needs.changes.result == 'success' && needs.changes.outputs.should_run == 'true'",
     );
     const installStep = compatibility?.steps?.find(
       (step) => step.name === "Install exact Agent SDK",

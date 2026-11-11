@@ -3,10 +3,12 @@
 import React, { type ReactElement, type ReactNode } from "react";
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { headers } from "next/headers";
 import { toast } from "sonner";
 import SharedChatPage from "../../shell/src/app/shared/chat/[scopeId]/page";
 import SharedTerminalPage from "../../shell/src/app/shared/terminal/[scopeId]/page";
 import SharedProjectPage from "../../shell/src/app/shared/project/[scopeId]/page";
+import SharedAppPage from "../../shell/src/app/shared/app/[scopeId]/page";
 import SharedInvitationPage from "../../shell/src/app/shared/invitations/[invitationId]/page";
 import { MobileShell } from "../../shell/src/components/mobile/MobileShell";
 import {
@@ -144,6 +146,56 @@ describe("shared project deep link", () => {
     await expect(SharedProjectPage({
       params: Promise.resolve({ scopeId: "../../not-a-scope" }),
     })).rejects.toThrow("NEXT_NOT_FOUND");
+  });
+});
+
+describe("shared app deep link", () => {
+  it("opens the common shared-app renderer inside the complete shell", async () => {
+    const page = await SharedAppPage({ params: Promise.resolve({ scopeId }) });
+    const names = componentNames(page);
+
+    expect(names).toContain("ShellHome");
+    expect(names).not.toContain("CollaborationPage");
+    expect(JSON.stringify(page)).toContain(`"kind":"app","scopeId":"${scopeId}"`);
+  });
+
+  it("carries a bounded exact build and share revision into the common renderer", async () => {
+    const buildId = "b".repeat(64);
+    const page = await SharedAppPage({
+      params: Promise.resolve({ scopeId }),
+      searchParams: Promise.resolve({ expectedBuildId: buildId, expectedShareRevision: "7" }),
+    });
+
+    expect(JSON.stringify(page)).toContain(`"expectedBuildId":"${buildId}"`);
+    expect(JSON.stringify(page)).toContain('"expectedShareRevision":"7"');
+  });
+
+  it.each([
+    { expectedBuildId: "short", expectedShareRevision: "7" },
+    { expectedBuildId: "b".repeat(64), expectedShareRevision: "01" },
+    { expectedBuildId: ["b".repeat(64)], expectedShareRevision: "7" },
+    { expectedBuildId: "b".repeat(64), expectedShareRevision: "7", extra: "ignored" },
+  ])("rejects malformed or ambiguous app launch constraints", async (searchParams) => {
+    await expect(SharedAppPage({
+      params: Promise.resolve({ scopeId }),
+      searchParams: Promise.resolve(searchParams),
+    })).rejects.toThrow("NEXT_NOT_FOUND");
+  });
+
+  it("passes only a proxy-verified native participant identity into the shared renderer", async () => {
+    vi.mocked(headers).mockResolvedValueOnce(new Headers({
+      "x-matrix-platform-session": "native",
+      "x-platform-user-id": "user_native_member",
+    }));
+
+    const page = await SharedAppPage({ params: Promise.resolve({ scopeId }) });
+
+    expect(JSON.stringify(page)).toContain('"nativeCollaborationActorId":"user_native_member"');
+  });
+
+  it("rejects malformed app scope IDs at the server route boundary", async () => {
+    await expect(SharedAppPage({ params: Promise.resolve({ scopeId: "../../not-a-scope" }) }))
+      .rejects.toThrow("NEXT_NOT_FOUND");
   });
 });
 

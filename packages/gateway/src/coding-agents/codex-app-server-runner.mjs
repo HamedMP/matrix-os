@@ -17,7 +17,7 @@ import { createInterface } from "node:readline";
 import { CodexTransportError, MAX_CODEX_TRANSPORT_BYTES } from "./codex-provider-output.mjs";
 import { z } from "zod/v4";
 import { assertCodexProviderVersion } from "./codex-provider-version-check.mjs";
-import { createCodexSessionApprovalGrants } from "./codex-session-approvals.mjs";
+import { createCodexSessionApprovalGrants, isSupportedCodexCommandApprovalKind } from "./codex-session-approvals.mjs";
 import { createCodexExecutionWatchdog } from "./codex-execution-watchdog.mjs";
 import { CodexHibernateControlSchema, CodexExecutionIdleControlSchema, createCodexIdleHibernation, createCodexExecutionObservation } from "./codex-idle-hibernation.mjs";
 import { CodexDeferredInputControlSchema, deferCodexNativeInput } from "./codex-deferred-input.mjs";
@@ -667,6 +667,10 @@ function decisionMapping(request) {
 async function handleApproval(raw) {
   const parsed = ApprovalRequestSchema.safeParse(raw);
   if (!parsed.success) return false;
+  if (parsed.data.method === "item/commandExecution/requestApproval"
+    && !isSupportedCodexCommandApprovalKind(parsed.data.params.kind)) {
+    return rejectCodexServerRequest(parsed.data, sendProvider);
+  }
   if (parsed.data.method === "item/permissions/requestApproval") {
     sendProvider({
       id: parsed.data.id,

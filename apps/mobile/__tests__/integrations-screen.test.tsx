@@ -8,11 +8,12 @@ const mockSyncConnections = jest.fn();
 const mockRefreshIntegrations = jest.fn();
 const mockSwipeableClose = jest.fn();
 
-jest.mock("react-native-gesture-handler", () => {
+jest.mock("react-native-gesture-handler/ReanimatedSwipeable", () => {
   const React = require("react");
   const { View } = require("react-native");
   return {
-    Swipeable: React.forwardRef(function MockSwipeable(
+    __esModule: true,
+    default: React.forwardRef(function MockSwipeable(
       { children, renderRightActions }: { children: React.ReactNode; renderRightActions?: () => React.ReactNode },
       ref: React.ForwardedRef<unknown>,
     ) {
@@ -155,7 +156,7 @@ describe("drawer integrations screen", () => {
       "https://pipedream.com/connect/project?token=connect-token&app=github",
     );
     mockSyncConnections.mockResolvedValue(undefined);
-    const openUrl = jest.spyOn(Linking, "openURL").mockResolvedValue(true);
+    const openUrl = jest.spyOn(Linking, "openURL").mockResolvedValue(undefined);
     const view = render(<IntegrationsScreen />);
 
     fireEvent.press(screen.getByLabelText("Connect GitHub integration"));

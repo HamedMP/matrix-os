@@ -6,6 +6,7 @@ export * from "#bots/tasks";
 export * from "#bots/interactions";
 export * from "#bots/authority";
 export * from "#bots/broker";
+export * from "#bots/github-developer";
 export * from "#bots/worker";
 export * from "#bots/view-model";
 export * from "#bots/selection";

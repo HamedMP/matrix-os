@@ -78,8 +78,10 @@ export class AttachManager {
       onState: (state: ShellSocketState, detail?: { code?: string }) => {
         if (this.isLive(generation)) events.onState(state, detail);
       },
-      onOutput: (data: string, seq: number) => {
-        if (this.isLive(generation)) events.onOutput(data, seq);
+      onOutput: (data: string, seq: number, written?: () => void) => {
+        if (this.isLive(generation)) events.onOutput(data, seq, written);
+        // Output for a view that is gone is dropped; that still counts as taken.
+        else written?.();
       },
       onNativeScroll: (state) => { if (this.isLive(generation)) events.onNativeScroll?.(state); },
       onNativeScrollSupported: (supported) => { if (this.isLive(generation)) events.onNativeScrollSupported?.(supported); },

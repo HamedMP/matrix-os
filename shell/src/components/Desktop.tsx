@@ -451,6 +451,11 @@ export function Desktop({ launchAppPath, sharedTerminalScopeId, onOpenCommandPal
     });
   }, [focusTerminalForHandoff]);
 
+  const openSettingsTerminal = useCallback((sessionId: string) => {
+    setSettingsOpen(false);
+    openExistingProviderTerminal(sessionId);
+  }, [openExistingProviderTerminal, setSettingsOpen]);
+
   useEffect(() => {
     const openProviderSettings = () => {
       openSettings();
@@ -1369,10 +1374,8 @@ export function Desktop({ launchAppPath, sharedTerminalScopeId, onOpenCommandPal
           setSettingsOpen(false);
           openSetupTerminal(action);
         }}
-        onOpenProviderTerminalSession={(sessionId) => {
-          setSettingsOpen(false);
-          openExistingProviderTerminal(sessionId);
-        }}
+        onOpenProviderTerminalSession={openSettingsTerminal}
+        onOpenGithubDisconnectTerminal={openSettingsTerminal}
         onOpenImportedChat={(chatId) => {
           chat?.switchConversation(chatId);
           setSettingsOpen(false);

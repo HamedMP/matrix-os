@@ -1,8 +1,9 @@
 import { execFile } from "node:child_process";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
+import { pathToFileURL } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
 import { createProjectGitDriver } from "../../packages/gateway/src/collaboration/project-git-operations.js";
 
@@ -32,6 +33,7 @@ async function repository(): Promise<string> {
 
 const ambientHome = process.env.HOME;
 const ambientXdgConfigHome = process.env.XDG_CONFIG_HOME;
+const ambientPath = process.env.PATH;
 
 /** Identity reads honour ordinary Git config precedence, so tests pin the owner home they assert against. */
 async function ownerHome(gitconfig?: string): Promise<string> {
@@ -48,6 +50,8 @@ afterEach(async () => {
   else process.env.HOME = ambientHome;
   if (ambientXdgConfigHome === undefined) delete process.env.XDG_CONFIG_HOME;
   else process.env.XDG_CONFIG_HOME = ambientXdgConfigHome;
+  if (ambientPath === undefined) delete process.env.PATH;
+  else process.env.PATH = ambientPath;
   await Promise.all(rootPaths.splice(0).map((path) => rm(path, { recursive: true, force: true })));
 });
 
@@ -197,5 +201,143 @@ describe("owner Git driver", () => {
     await git(root, "remote", "add", "origin", root);
     await expect(driver.run({ ...common, request: { type: "push", clientRequestId: "80000000-0000-4000-8000-000000000004", expectedRevision: "1", payloadHash: "b".repeat(64), branch: "feature/member", expectedHeadSha: await git(root, "rev-parse", "HEAD") } }))
       .rejects.toMatchObject({ code: "unavailable" });
+  });
+
+  it.each([
+    ["SSH", "git@github.com:HamedMP/matrix-os.git"],
+    ["HTTPS", "https://github.com/HamedMP/matrix-os.git"],
+  ])("preserves an existing %s GitHub remote for owner-authenticated pushes", async (_label, remoteUrl) => {
+    const root = await repository();
+    const home = await ownerHome();
+    await git(root, "remote", "add", "origin", remoteUrl);
+    const realGit = (await run("which", ["git"], { encoding: "utf8" })).stdout.trim();
+    const fakeBin = join(home, "bin");
+    const logPath = join(home, "git-commands.log");
+    await mkdir(fakeBin);
+    await writeFile(join(fakeBin, "git"), `#!/usr/bin/env bash
+printf '%s\\n' "$*" >> ${JSON.stringify(logPath)}
+case " $* " in
+  *" push "*) exit 0 ;;
+esac
+exec ${JSON.stringify(realGit)} "$@"
+`);
+    await chmod(join(fakeBin, "git"), 0o755);
+    process.env.PATH = `${fakeBin}:${ambientPath ?? "/usr/bin:/bin"}`;
+
+    const driver = createProjectGitDriver({ resolveProjectRoot: async () => root });
+    const ownerIdentity = await driver.resolveOwnerIdentity({ ownerId: OWNER, projectId: PROJECT });
+    const head = await git(root, "rev-parse", "HEAD");
+    await expect(driver.run({
+      operationId: "80000000-0000-4000-8000-000000000011",
+      scopeId: "80000000-0000-4000-8000-000000000012",
+      ownerId: OWNER,
+      projectId: PROJECT,
+      requestingActorId: "user_member",
+      ownerIdentity,
+      request: {
+        type: "push",
+        clientRequestId: "80000000-0000-4000-8000-000000000013",
+        expectedRevision: "1",
+        payloadHash: "d".repeat(64),
+        branch: "feature/member",
+        expectedHeadSha: head,
+      },
+    })).resolves.toEqual({ commitSha: head, remoteBranch: "feature/member" });
+    expect(await readFile(logPath, "utf8")).toContain(`push --porcelain -- ${remoteUrl} ${head}:refs/heads/feature/member`);
+  });
+
+  it.each(["ordinary checkout", "linked worktree", "shallow clone"])("isolates the SSH transport for a %s", async (kind) => {
+    const main = await repository();
+    const home = await ownerHome();
+    const linked = kind === "linked worktree";
+    const shallow = kind === "shallow clone";
+    const root = linked || shallow ? join(home, "checkout") : main;
+    const branch = linked ? "feature/linked" : "feature/member";
+    if (linked) await git(main, "worktree", "add", "-b", branch, root);
+    const remote = join(home, "remote.git");
+    if (shallow) {
+      await git(main, "commit", "--allow-empty", "-m", "base history");
+      await git(home, "clone", "--depth=1", pathToFileURL(main).href, root);
+      await git(home, "clone", "--bare", main, remote);
+      await git(root, "-c", "user.name=Member", "-c", "user.email=member@example.test", "commit", "--allow-empty", "-m", "shallow change");
+    } else {
+      await git(home, "init", "--bare", remote);
+    }
+    // The fixture only connects to the local bare remote through a fake SSH process.
+    const fakeBin = join(home, "bin");
+    const sshLog = join(home, "ssh.log");
+    const unsafeMarker = join(home, "unsafe-command-executed");
+    const unsafeCommand = join(home, "checkout-ssh");
+    await mkdir(fakeBin);
+    await writeFile(unsafeCommand, `#!/bin/sh
+touch "${unsafeMarker}"
+exit 1
+`, { mode: 0o700 });
+    await git(root, "remote", shallow ? "set-url" : "add", "origin", "git@github.com:owner/private-repo");
+    await git(root, "config", "core.sshCommand", unsafeCommand);
+    await git(root, "config", "ssh.variant", "ssh");
+    // A rewrite that applies only to the normalized outbound URL.
+    await writeFile(join(linked ? main : root, ".git", "extra-config"), `[url "ext::${unsafeCommand}"]\n\tinsteadOf = git@github.com:owner/private-repo.git\n[protocol "ext"]\n\tallow = always\n`);
+    await git(root, "config", "include.path", "extra-config");
+    await writeFile(join(fakeBin, "ssh"), `#!/bin/sh
+printf '%s\\n' "$@" >> "${sshLog}"
+for arg do command=$arg; done
+case "$command" in
+  "git-receive-pack "*) exec git receive-pack "${remote}" ;;
+  "git-upload-pack "*) exec git upload-pack "${remote}" ;;
+  *) exit 1 ;;
+esac
+`, { mode: 0o700 });
+    const head = await git(root, "rev-parse", "HEAD");
+    const tree = await git(root, "rev-parse", "HEAD^{tree}");
+    const next = await git(root, "-c", "user.name=Member", "-c", "user.email=member@example.test",
+      "commit-tree", tree, "-p", head, "-m", "concurrent branch update");
+    const realGit = (await run("which", ["git"], { encoding: "utf8" })).stdout.trim();
+    await writeFile(join(fakeBin, "git"), `#!/bin/sh
+for arg do
+  if [ "$arg" = push ]; then
+    [ "$("${realGit}" rev-parse --is-shallow-repository)" = "${shallow}" ] || exit 1
+    "${realGit}" -C "${root}" update-ref "refs/heads/${branch}" "${next}" || exit 1
+    break
+  fi
+done
+exec "${realGit}" "$@"
+`, { mode: 0o700 });
+    process.env.PATH = `${fakeBin}:${ambientPath ?? "/usr/bin:/bin"}`;
+
+    const driver = createProjectGitDriver({ homePath: home, resolveProjectRoot: async () => root });
+    const execution = {
+      operationId: "80000000-0000-4000-8000-000000000021",
+      scopeId: "80000000-0000-4000-8000-000000000022",
+      ownerId: OWNER,
+      projectId: PROJECT,
+      requestingActorId: "user_member",
+      ownerIdentity: { name: "Owner", email: "owner@example.test", label: "Owner <owner@example.test>" },
+      request: {
+        type: "push" as const,
+        clientRequestId: "80000000-0000-4000-8000-000000000023",
+        expectedRevision: "1",
+        payloadHash: "e".repeat(64),
+        branch,
+        expectedHeadSha: head,
+      },
+    };
+    await expect(driver.run(execution)).resolves.toEqual({ commitSha: head, remoteBranch: branch });
+    expect(await git(root, "rev-parse", "HEAD")).toBe(next);
+    expect(await git(remote, "rev-parse", `refs/heads/${branch}`)).toBe(head);
+    await expect(driver.reconcile(execution)).resolves.toEqual({ commitSha: head, remoteBranch: branch });
+    await expect(readFile(unsafeMarker)).rejects.toMatchObject({ code: "ENOENT" });
+    const sshArgs = await readFile(sshLog, "utf8");
+    expect(sshArgs).toContain("StrictHostKeyChecking=yes");
+    expect(sshArgs).toContain(`UserKnownHostsFile=${join(home, ".ssh", "matrix-github-known-hosts")}`);
+    if (linked) {
+      const forged = join(home, "forged");
+      await mkdir(forged);
+      await writeFile(join(forged, ".git"), await readFile(join(root, ".git")));
+      const forgedDriver = createProjectGitDriver({ homePath: home, resolveProjectRoot: async () => forged });
+      await expect(forgedDriver.run({ ...execution, request: { ...execution.request, expectedHeadSha: next } }))
+        .rejects.toMatchObject({ code: "unavailable" });
+      expect(await readFile(sshLog, "utf8")).toBe(sshArgs);
+    }
   });
 });

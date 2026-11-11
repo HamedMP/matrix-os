@@ -1,5 +1,5 @@
 import { buildBridgeScript, withCredentialedAssets, type ThemeVars } from "@/lib/os-bridge";
-import { appRuntimeSlugFromIdentity, remoteBrowserSurfaceForPath } from "@matrix-os/contracts";
+import { appRuntimeSlugFromIdentity, remoteBrowserSurfaceForPath, type CollaborationParticipant } from "@matrix-os/contracts";
 
 const LEGACY_NESTED_RUNTIME_APP_SLUGS = new Set([
   "2048",
@@ -77,8 +77,9 @@ export function injectBridgeIntoAppHtml(
   themeVars: ThemeVars,
   baseHref: string,
   design?: string,
+  participant?: CollaborationParticipant | null,
 ): string {
-  const bridgeScript = buildBridgeScript(appName, themeVars, design)
+  const bridgeScript = buildBridgeScript(appName, themeVars, design, participant)
     + `\n;if(window.MatrixOS&&window.MatrixOS.db){useDb=true;}if(typeof loadData==="function"){loadData();}\n`;
   const escapedBaseHref = baseHref.replace(/"/g, "&quot;");
   const injection = [
