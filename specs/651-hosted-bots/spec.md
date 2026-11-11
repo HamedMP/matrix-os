@@ -73,9 +73,9 @@ The hosted Bots view follows the effective Matrix Electron Desktop theme, includ
 
 Connected Apps and custom MCP use upstream configuration on the preview. The app catalog can render before a self-hosted Connected Apps project key is configured. Validate a connector with an approved account and a successful, scoped tool call. A separate custom MCP check can use a disposable tool that returns a synthetic value and requires no third-party account.
 
-### Matrix-managed Pipedream reads in Private Preview
+### Matrix-managed integration reads in Private Preview
 
-**Scope.** Direct conversations with a paired user in an opted-in, owner-only Private Preview can request a registered read from an existing Matrix-managed Pipedream account. Matrix Electron Desktop reviews each request. Platform's existing personal integration checks still govern account access. Tool discovery in the upstream conversation exposes tool definitions. The Matrix review owns the connected-account list.
+**Scope.** Direct conversations with a paired user in an opted-in, owner-only Private Preview can request a registered integration read. Matrix Electron Desktop reviews each request. GitHub reads use GitHub Developer on the selected computer. Other supported apps use existing Matrix-managed Pipedream accounts under Platform's personal integration checks. Tool discovery in the upstream conversation exposes tool definitions. The Matrix review owns the connected-account list.
 
 **Signatures.** `matrix_read_integration({service,action,params})` submits the same object to `POST /integration/read` on the protected local Unix socket. The existing `matrix_read_drive_document({fileId})` and `POST /read` keep their original interface. `GET /api/hosted-bots/integrations` returns `requests: [{id,service,action,params,expiresAt,status}]` and `accounts: [{id,service,label}]`. An explicit `?includeAccounts=1` includes accounts for the requested services. `POST /api/hosted-bots/integrations/:requestId/decision` accepts `{decision:"allow",accountId}` or `{decision:"deny"}`. `DELETE /api/hosted-bots/integrations/:requestId` cancels. The legacy `/api/hosted-bots/drive` owner interface remains scoped to legacy Drive requests.
 
@@ -83,18 +83,20 @@ Connected Apps and custom MCP use upstream configuration on the preview. The app
 | --- | --- |
 | OSS tool request | The workload submits one validated service, action, and parameter object over the read-only socket mount. The Gateway issues a fresh request ID and holds the request in memory for up to 90 seconds. The shared queue holds up to four requests. |
 | Matrix review | The Preview owner reviews the exact application, action, and parameters and chooses a connected account for that service. Approval applies only to this request and lets the requesting conversation and its AI model see the result. |
-| Provider call | The Gateway checks the registry, the Platform read catalog, and the active connection before dispatch. The existing integration client calls `/read-call` with signed owner delegation and the selected immutable connection ID. Generic success contains only `{data}` with a 24 KiB serialized cap. The legacy Drive result retains its file ID, optional name, and 24 KiB text cap. |
+| GitHub call | Gateway uses shell-free `gh` on the selected Matrix Computer, with the owner's GitHub Developer configuration and a fixed read query to `github.com`. The query returns the viewer identity alongside repository data. The Gateway checks both against the approved account and repository before releasing the result. |
+| Other provider calls | The Gateway checks the registry, Platform read catalog, and active connection before dispatch. The integration client calls `/read-call` with signed owner delegation and the selected immutable connection ID. |
+| Output | Generic success contains only `{data}` with a 24 KiB serialized cap. The legacy Drive result retains its file ID, optional name, and 24 KiB text cap. |
 | Revocation | Cancel the pending request or abort the in-progress read and suppress its result. A completed read has consumed its approval. A later request always needs a fresh approval. |
 
 **Validation and errors.** The generic request has a 4 KiB body limit and uses the registered action parameter definitions. Unknown fields or invalid values produce `400`, oversized requests `413`, and a full queue `429`. Unsupported or non-read actions, missing account authority, explicit denial, and expiry fail closed. Repeating an in-progress approval produces `409`. Provider failures or results larger than the output budget return a coarse error. Restarting the Gateway clears pending requests.
 
 **Examples.** A `github.get_pr` read with `repo` set to `octocat/Hello-World` and `pullNumber` set to `1` shows those exact parameters in the review. Declining the request leaves the provider untouched. A `github.create_issue` request fails before it reaches the approval panel.
 
-The Platform GitHub PR detail actions include `application/json` as a fallback in the `Accept` header. The Pipedream SDK uses that media type to select JSON decoding while GitHub can still return its preferred vendor JSON. The approved tool result includes the PR body within the generic result budget.
+Hosted Bots supports GitHub `get_pr` and `list_prs`. The list accepts page 1, one to ten results, and `open`, `closed`, or `all`. `get_pr` includes the PR body and base and head refs. The owner review offers the local GitHub Developer identity under an ID derived from the GitHub viewer. Both actions require that identity and take the native path even when a separate Pipedream GitHub connection exists. The model receives only the approved result. The local `gh` login and SSH keys stay on the computer.
 
-**Verification.** Test exact parameters through the socket, review, and signed Platform request. Cover wrong owner, mismatched or disconnected accounts, stale approval, unsupported actions, expiry, size limits, and cancellation after dispatch. Exercise a bounded public read through Pebble on the live Preview and check the saved tool outcome. Repeat the existing Drive contract tests.
+**Verification.** Test exact parameters through the socket, owner review, and the relevant native GitHub or Platform transport. Cover wrong owner, mismatched or disconnected accounts, stale approval, unsupported actions, expiry, size limits, and cancellation after dispatch. Assert that native GitHub dispatch makes zero Pipedream calls. Exercise a bounded public read through Pebble on the live Preview and check the saved tool outcome. Repeat the existing Drive contract tests.
 
-**Authority rule.** Use the selected immutable connection ID and the dedicated `/read-call` route. An upstream approval, account label alone, or a model-supplied request is insufficient authority to dispatch.
+**Authority rule.** Bind each approval to the selected immutable connection ID. Use the native GitHub Developer query for GitHub and the dedicated `/read-call` route for Pipedream. An upstream approval, account label alone, or a model-supplied request is insufficient authority to dispatch.
 
 ### Preview event delivery and tool approval
 

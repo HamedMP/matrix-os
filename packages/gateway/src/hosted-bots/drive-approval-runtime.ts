@@ -75,11 +75,11 @@ export async function bindHostedBotsDriveSocket(path: string, app: Hono): Promis
   return close;
 }
 
-export async function initializeHostedBotsDrive(options: Omit<Parameters<typeof createHostedBotsDriveApproval>[0], "integration">
-  & { integration?: Parameters<typeof createHostedBotsDriveApproval>[0]["integration"]; socketPath?: string }) {
+export async function initializeHostedBotsDrive(options: Parameters<typeof createHostedBotsDriveApproval>[0]
+  & { socketPath?: string }) {
   if (!options.admitted) return { routes: new Hono(), integrationRoutes: new Hono(), close: async () => {} };
-  if (options.integration && options.ownerId) {
-    const broker = createHostedBotsDriveApproval({ ...options, integration: options.integration });
+  if ((options.github || options.integration) && options.ownerId) {
+    const broker = createHostedBotsDriveApproval(options);
     try {
       const stop = await bindHostedBotsDriveSocket(options.socketPath ?? HOSTED_BOTS_DRIVE_SOCKET, broker.guestRoutes);
       return { routes: broker.ownerRoutes, integrationRoutes: broker.integrationOwnerRoutes, close: async () => { broker.close(); await stop(); } };

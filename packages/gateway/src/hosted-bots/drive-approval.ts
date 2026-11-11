@@ -5,6 +5,7 @@ import { z } from "zod/v4";
 import { BotIntegrationError, type BotIntegrationClient } from "../bots/integration-client.js";
 import { validateActionParams } from "../integrations/parameter-validation.js";
 import { getService } from "../integrations/registry.js";
+import { validateHostedBotsGithubReadParams, type createHostedBotsGithubRead } from "./github-developer-read.js";
 
 const MAX_REQUESTS = 4;
 const MAX_ACCOUNTS = 16;
@@ -57,9 +58,14 @@ function safeJson(value: unknown, depth = 0): boolean {
     && key !== "__proto__" && key !== "prototype" && key !== "constructor" && safeJson(item, depth + 1));
 }
 
-function supportedPipedreamRead(input: Pick<RequestedRead, "service" | "action">) {
+function isGithubReadAction(action: string): action is "get_pr" | "list_prs" {
+  return action === "get_pr" || action === "list_prs";
+}
+
+function supportedRegistryRead(input: Pick<RequestedRead, "service" | "action">) {
   const service = getService(input.service);
-  if (service?.connectorKind !== "pipedream" || !service.pipedreamApp || !Object.hasOwn(service.actions, input.action)) return;
+  if (service?.id !== input.service || !Object.hasOwn(service.actions, input.action)) return;
+  if (input.service !== "github" && (service.connectorKind !== "pipedream" || !service.pipedreamApp)) return;
   const action = service.actions[input.action];
   if (action?.risk === "read") return action;
 }
@@ -70,8 +76,7 @@ function approvalResponse(input: RequestedRead, value: unknown): Outcome {
     return content.success && content.data.fileId === input.params.fileId
       ? { data: content.data } : { error: "unavailable" };
   }
-  // Platform returns parsed JSON. Keep its business data only, and cap the
-  // complete guest response so a result is either intact or unavailable.
+  // Apply the response budget to the complete guest envelope.
   const envelope = { data: value };
   if (value === undefined || Buffer.byteLength(JSON.stringify(envelope), "utf8") > MAX_CONTENT_BYTES) {
     return { error: "unavailable" };
@@ -100,7 +105,8 @@ export function createHostedBotsDriveApproval(options: {
   admitted: boolean;
   ownerId: string;
   isOwner: (c: Context) => boolean;
-  integration: Pick<BotIntegrationClient, "inventory" | "describe" | "call">;
+  github?: ReturnType<typeof createHostedBotsGithubRead>;
+  integration?: Pick<BotIntegrationClient, "inventory" | "describe" | "call">;
   timeoutMs?: number;
 }) {
   const ownerRoutes = new Hono();
@@ -126,10 +132,16 @@ export function createHostedBotsDriveApproval(options: {
     });
   }
   async function accounts(signal: AbortSignal, services: ReadonlySet<string>) {
-    const rows = await options.integration.inventory(options.ownerId, signal);
-    return rows.filter((row) => services.has(row.service) && AccountId.safeParse(row.connectionId).success
-      && AccountLabel.safeParse(row.label).success)
-      .map((row) => ({ id: row.connectionId, service: row.service, label: row.label }));
+    const [github, rows] = await Promise.all([
+      services.has("github") ? options.github?.account(signal) : undefined,
+      options.integration && [...services].some(service => service !== "github")
+        ? options.integration.inventory(options.ownerId, signal) : [],
+    ]);
+    const connected = rows.filter(row => row.service !== "github" && services.has(row.service))
+      .map(row => ({ id: row.connectionId, service: row.service, label: row.label }));
+    if (github) connected.unshift(github);
+    return connected.filter(account => AccountId.safeParse(account.id).success
+      && AccountLabel.safeParse(account.label).success);
   }
 
   async function readApproved(request: ReadRequest, accountId: string) {
@@ -138,14 +150,21 @@ export function createHostedBotsDriveApproval(options: {
     try {
       const matches = (await accounts(signal, new Set([input.service]))).filter((account) => account.id === accountId);
       if (matches.length !== 1 || signal.aborted) return request.settle({ error: "forbidden" });
+      if (input.service === "github") {
+        if (!options.github || !isGithubReadAction(input.action)) return request.settle({ error: "forbidden" });
+        const data = await options.github.read(input.action, input.params, accountId, signal);
+        return request.settle(approvalResponse(input, data));
+      }
+      const integration = options.integration;
+      if (!integration) return request.settle({ error: "unavailable" });
       if (!input.legacy) {
-        const actions = await options.integration.describe(options.ownerId, { service: input.service, readOnly: true }, signal);
-        if (signal.aborted || !supportedPipedreamRead(input)
+        const actions = await integration.describe(options.ownerId, { service: input.service, readOnly: true }, signal);
+        if (signal.aborted || !supportedRegistryRead(input)
           || !actions.some(action => action.id === input.action && action.risk === "read")) {
           return request.settle({ error: "forbidden" });
         }
       }
-      const result = await options.integration.call(options.ownerId, {
+      const result = await integration.call(options.ownerId, {
         service: input.service, action: input.action, params: input.params,
         label: matches[0]!.label, connectionId: accountId, read: true,
       }, signal);
@@ -239,17 +258,25 @@ export function createHostedBotsDriveApproval(options: {
   guestRoutes.post("/read", limit, async (c) => {
     const params = await json(c, Read);
     if (!params || new URL(c.req.url).search) return c.json({ error: "invalid_request" }, 400);
+    if (!options.integration) return c.json({ error: "unavailable" }, 503);
     return waitForApproval(c, { legacy: true, service: "google_drive", action: "read_file", params });
   });
 
   guestRoutes.post("/integration/read", bodyBound(4096), async (c) => {
     const input = await json(c, IntegrationRead);
     if (!input || new URL(c.req.url).search) return c.json({ error: "invalid_request" }, 400);
-    const action = supportedPipedreamRead(input);
+    const action = supportedRegistryRead(input);
     if (!action) return c.json({ error: "forbidden" }, 403);
     if (Object.keys(input.params).some(key => !Object.hasOwn(action.params, key))
       || !validateActionParams(action, input.params).valid) {
       return c.json({ error: "invalid_request" }, 400);
+    }
+    if (input.service === "github") {
+      if (!isGithubReadAction(input.action)) return c.json({ error: "forbidden" }, 403);
+      if (!validateHostedBotsGithubReadParams(input.action, input.params)) return c.json({ error: "invalid_request" }, 400);
+      if (!options.github) return c.json({ error: "unavailable" }, 503);
+    } else if (!options.integration) {
+      return c.json({ error: "unavailable" }, 503);
     }
     return waitForApproval(c, { ...input, legacy: false });
   });

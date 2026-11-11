@@ -10,26 +10,38 @@ import { bindHostedBotsDriveSocket, HOSTED_BOTS_DRIVE_BASE } from "../../package
 const ownerId = "user_preview_owner";
 const fileId = "fixture-document";
 const accountId = "account-fixture";
-const githubAccountId = "account-github";
+const githubAccountId = "github-developer:fixture";
+const githubLabel = "GitHub Developer · fixture";
+const pipedreamGithubAccountId = "pipedream-github";
+const linearAccountId = "account-linear";
+const linearRead = { service: "linear", action: "viewer", params: {} };
 const githubRead = { service: "github", action: "list_prs", params: { repo: "HamedMP/matrix-os", per_page: 1 } };
 const json = { "content-type": "application/json" };
 const authenticated = { ...json, "x-test-owner": ownerId };
 
-function setup(options: { timeoutMs?: number; admitted?: boolean } = {}) {
+function setup(options: { timeoutMs?: number; admitted?: boolean; nativeOnly?: boolean } = {}) {
   const inventory = vi.fn(async () => [
     { connectionId: accountId, service: "google_drive", label: "Test Drive", email: "fixture@example.com" },
     { connectionId: "another-service", service: "gmail", label: "Test Gmail" },
-    { connectionId: githubAccountId, service: "github", label: "Test GitHub", email: "hidden@example.com" },
+    { connectionId: pipedreamGithubAccountId, service: "github", label: "Pipedream GitHub", email: "hidden@example.com" },
+    { connectionId: linearAccountId, service: "linear", label: "Test Linear" },
   ]);
   const call = vi.fn<BotIntegrationClient["call"]>(async () => ({ data: { fileId, name: "Fixture", content: "QA receipt" } }));
   const describeActions = vi.fn<BotIntegrationClient["describe"]>(async () => [
-    { id: "list_prs", description: "List pull requests", risk: "read", params: {} },
+    { id: "viewer", description: "Read the current Linear user", risk: "read", params: {} },
   ]);
+  const github = {
+    account: vi.fn<(signal: AbortSignal) => Promise<{ id: string; service: "github"; label: string } | null>>(
+      async () => ({ id: githubAccountId, service: "github", label: githubLabel }),
+    ),
+    read: vi.fn<(action: "get_pr" | "list_prs", params: Record<string, unknown>, accountId: string, signal: AbortSignal) => Promise<unknown>>(),
+  };
   const broker = createHostedBotsDriveApproval({
     admitted: options.admitted ?? true,
     ownerId,
     isOwner: (c) => c.req.header("x-test-owner") === ownerId,
-    integration: { inventory, call, describe: describeActions },
+    github,
+    ...(options.nativeOnly ? {} : { integration: { inventory, call, describe: describeActions } }),
     timeoutMs: options.timeoutMs,
   });
   const queue = (body: unknown = { fileId }, signal?: AbortSignal) => broker.guestRoutes.request("/read", {
@@ -65,7 +77,7 @@ function setup(options: { timeoutMs?: number; admitted?: boolean } = {}) {
   const integrationDecision = (id: string, body: unknown) => broker.integrationOwnerRoutes.request("/" + id + "/decision", {
     method: "POST", headers: authenticated, body: JSON.stringify(body),
   });
-  return { broker, inventory, call, describeActions, queue, state, requestId, decision, cancel,
+  return { broker, inventory, call, describeActions, github, queue, state, requestId, decision, cancel,
     queueIntegration, integrationState, integrationRequestId, integrationDecision };
 }
 
@@ -201,12 +213,12 @@ describe("Hosted Bots Drive approval", () => {
   });
 });
 
-describe("Hosted Bots Pipedream integration approval", () => {
-  it("reviews one exact read against a connected GitHub account before dispatch", async () => {
+describe("Hosted Bots integration approval", () => {
+  it("reviews one exact read against the native GitHub Developer account", async () => {
     const f = setup();
     try {
       const data = [{ number: 42, title: "Public sample pull request" }];
-      f.call.mockResolvedValueOnce({ data, summary: "Internal summary" });
+      f.github.read.mockResolvedValueOnce(data);
       const read = f.queueIntegration();
       const id = await f.integrationRequestId();
       expect(await (await f.integrationState()).json()).toEqual({
@@ -215,9 +227,11 @@ describe("Hosted Bots Pipedream integration approval", () => {
       expect(f.inventory).not.toHaveBeenCalled();
       expect(f.describeActions).not.toHaveBeenCalled();
       expect(f.call).not.toHaveBeenCalled();
+      expect(f.github.account).not.toHaveBeenCalled();
+      expect(f.github.read).not.toHaveBeenCalled();
       expect(await (await f.state(true)).json()).toEqual({ requests: [], accounts: [] });
       expect(await (await f.integrationState(true)).json()).toMatchObject({
-        accounts: [{ id: githubAccountId, service: "github", label: "Test GitHub" }],
+        accounts: [{ id: githubAccountId, service: "github", label: githubLabel }],
       });
       expect((await f.decision(id, { decision: "allow", accountId })).status).toBe(404);
       expect((await f.broker.integrationOwnerRoutes.request("/" + id + "/decision", {
@@ -225,20 +239,25 @@ describe("Hosted Bots Pipedream integration approval", () => {
       })).status).toBe(403);
       expect((await f.integrationDecision(id, { decision: "allow", accountId: githubAccountId })).status).toBe(202);
       expect(await (await read).json()).toEqual({ data });
-      expect(f.describeActions).toHaveBeenCalledExactlyOnceWith(ownerId, { service: "github", readOnly: true }, expect.any(AbortSignal));
-      expect(f.call).toHaveBeenCalledExactlyOnceWith(ownerId, {
-        ...githubRead, connectionId: githubAccountId, label: "Test GitHub", read: true,
-      }, expect.any(AbortSignal));
+      expect(f.github.read).toHaveBeenCalledExactlyOnceWith(
+        "list_prs", githubRead.params, githubAccountId, expect.any(AbortSignal),
+      );
+      expect(f.inventory).not.toHaveBeenCalled();
+      expect(f.describeActions).not.toHaveBeenCalled();
+      expect(f.call).not.toHaveBeenCalled();
       expect((await f.integrationDecision(id, { decision: "allow", accountId: githubAccountId })).status).toBe(404);
     } finally { f.broker.close(); }
   });
 
   it("does not dispatch an unsupported read, invalid params, write, denied request, or wrong-service account", async () => {
-    const f = setup();
+    const f = setup({ timeoutMs: 400 });
     try {
       expect((await f.queueIntegration({ ...githubRead, action: "create_issue" })).status).toBe(403);
+      expect((await f.queueIntegration({ ...githubRead, action: "list_issues" })).status).toBe(403);
       expect((await f.queueIntegration({ ...githubRead, service: "constructor" })).status).toBe(403);
       expect((await f.queueIntegration({ ...githubRead, params: { repo: "../oops", per_page: 500 } })).status).toBe(400);
+      expect((await f.queueIntegration({ ...githubRead, params: { ...githubRead.params, per_page: 11 } })).status).toBe(400);
+      expect((await f.queueIntegration({ ...githubRead, params: { ...githubRead.params, page: 2 } })).status).toBe(400);
       expect((await f.queueIntegration({ ...githubRead, accountId: githubAccountId })).status).toBe(400);
       expect((await f.queueIntegration({
         service: "linear", action: "viewer", params: { undeclared: true },
@@ -252,13 +271,59 @@ describe("Hosted Bots Pipedream integration approval", () => {
       expect((await f.integrationDecision(await f.integrationRequestId(), { decision: "deny" })).status).toBe(202);
       expect(await (await denied).json()).toEqual({ error: "forbidden" });
       const wrong = f.queueIntegration();
-      expect((await f.integrationDecision(await f.integrationRequestId(), { decision: "allow", accountId })).status).toBe(202);
+      expect((await f.integrationDecision(await f.integrationRequestId(), {
+        decision: "allow", accountId: pipedreamGithubAccountId,
+      })).status).toBe(202);
       expect((await wrong).status).toBe(403);
-      const changed = f.queueIntegration();
-      f.describeActions.mockResolvedValueOnce([]);
+      expect(f.github.read).not.toHaveBeenCalled();
+      expect(f.inventory).not.toHaveBeenCalled();
+      expect(f.describeActions).not.toHaveBeenCalled();
+      expect(f.call).not.toHaveBeenCalled();
+    } finally { f.broker.close(); }
+  });
+
+  it("runs approved GitHub reads without Pipedream and denies a disconnected GitHub account", async () => {
+    const f = setup({ nativeOnly: true, timeoutMs: 400 });
+    const input = { service: "github", action: "get_pr", params: { repo: "octocat/Hello-World", pullNumber: 1 } };
+    try {
+      expect((await f.queueIntegration(linearRead)).status).toBe(503);
+      expect((await f.queue()).status).toBe(503);
+      const disconnected = f.queueIntegration(input);
+      f.github.account.mockResolvedValueOnce(null);
       await f.integrationDecision(await f.integrationRequestId(), { decision: "allow", accountId: githubAccountId });
+      expect((await disconnected).status).toBe(403);
+      expect(f.github.read).not.toHaveBeenCalled();
+      const read = f.queueIntegration(input);
+      f.github.read.mockResolvedValueOnce({ number: 1 });
+      await f.integrationDecision(await f.integrationRequestId(), { decision: "allow", accountId: githubAccountId });
+      expect(await (await read).json()).toEqual({ data: { number: 1 } });
+      expect(f.github.read).toHaveBeenCalledExactlyOnceWith("get_pr", input.params, githubAccountId, expect.any(AbortSignal));
+    } finally { f.broker.close(); }
+  });
+
+  it("keeps the live Pipedream catalog and account checks for non-GitHub apps", async () => {
+    const f = setup();
+    try {
+      const changed = f.queueIntegration(linearRead);
+      f.describeActions.mockResolvedValueOnce([]);
+      await f.integrationDecision(await f.integrationRequestId(), { decision: "allow", accountId: linearAccountId });
       expect((await changed).status).toBe(403);
       expect(f.call).not.toHaveBeenCalled();
+
+      const read = f.queueIntegration(linearRead);
+      const id = await f.integrationRequestId();
+      expect(await (await f.integrationState(true)).json()).toMatchObject({
+        accounts: [{ id: linearAccountId, service: "linear", label: "Test Linear" }],
+      });
+      f.call.mockResolvedValueOnce({ data: { id: "linear-user" }, summary: "Internal summary" });
+      await f.integrationDecision(id, { decision: "allow", accountId: linearAccountId });
+      expect(await (await read).json()).toEqual({ data: { id: "linear-user" } });
+      expect(f.describeActions).toHaveBeenCalledWith(ownerId, { service: "linear", readOnly: true }, expect.any(AbortSignal));
+      expect(f.call).toHaveBeenCalledExactlyOnceWith(ownerId, {
+        ...linearRead, connectionId: linearAccountId, label: "Test Linear", read: true,
+      }, expect.any(AbortSignal));
+      expect(f.github.account).not.toHaveBeenCalled();
+      expect(f.github.read).not.toHaveBeenCalled();
     } finally { f.broker.close(); }
   });
 
@@ -266,7 +331,7 @@ describe("Hosted Bots Pipedream integration approval", () => {
     const f = setup();
     try {
       expect((await f.queueIntegration({ ...githubRead, params: { repo: "a".repeat(4096) } })).status).toBe(413);
-      f.call.mockResolvedValueOnce({ data: { description: "a".repeat(24 * 1024) } });
+      f.github.read.mockResolvedValueOnce({ description: "a".repeat(24 * 1024) });
       const read = f.queueIntegration();
       await f.integrationDecision(await f.integrationRequestId(), { decision: "allow", accountId: githubAccountId });
       expect((await read).status).toBe(503);

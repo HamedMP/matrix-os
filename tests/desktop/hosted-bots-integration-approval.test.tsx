@@ -15,7 +15,8 @@ const LEGACY_PATH = "/api/hosted-bots/drive";
 const ID = "c550fd7e-1933-4744-a1f9-9cb667af33c1";
 const FILE = "fixture_document_123";
 const ACCOUNT = { id: "work-connection", label: "Work account", service: "google_drive" };
-const GITHUB_ACCOUNT = { id: "github-connection", label: "GitHub work account", service: "github" };
+const GITHUB_ACCOUNT = { id: "github-developer:octocat", label: "GitHub Developer · octocat", service: "github" };
+const PIPEDREAM_GITHUB_ACCOUNT = { id: "github-connection", label: "GitHub work account", service: "github" };
 const DRIVE = { service: "google_drive", action: "read_file", params: { fileId: FILE } };
 const GITHUB = { service: "github", action: "list_prs", params: { repo: "HamedMP/matrix-os", per_page: 1 } };
 
@@ -56,16 +57,18 @@ afterEach(() => {
 });
 
 describe("Hosted Bots integration approvals", () => {
-  it("displays the exact GitHub action and parameters and only offers GitHub accounts", async () => {
-    const { get, post, workspace } = setup([ACCOUNT, GITHUB_ACCOUNT], GITHUB);
+  it("displays the exact GitHub action and parameters and offers the GitHub Developer account", async () => {
+    const { get, post, workspace } = setup([ACCOUNT, PIPEDREAM_GITHUB_ACCOUNT, GITHUB_ACCOUNT], GITHUB);
     render(workspace(true));
-    fireEvent.click(await screen.findByRole("button", { name: "Review GitHub request" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Review GitHub Developer request" }));
     expect(get.mock.calls.map(([path]) => path)).toEqual([PATH, `${PATH}?includeAccounts=1`]);
     expect(screen.getByText("list_prs")).toBeTruthy();
     expect(screen.getByText(/"repo": "HamedMP\/matrix-os"/).textContent).toContain('"per_page": 1');
     expect(screen.getByText(/results will be shared with the requesting conversation/i)).toBeTruthy();
-    const account = await screen.findByRole("combobox", { name: "GitHub account" });
+    const account = await screen.findByRole("combobox", { name: "GitHub Developer account" });
+    expect(screen.getByRole("option", { name: "GitHub Developer · octocat" })).toBeTruthy();
     expect(screen.queryByRole("option", { name: "Work account" })).toBeNull();
+    expect(screen.queryByRole("option", { name: "GitHub work account" })).toBeNull();
     const approve = screen.getByRole<HTMLButtonElement>("button", { name: "Allow once" });
     expect(approve.disabled).toBe(true);
     fireEvent.change(account, { target: { value: GITHUB_ACCOUNT.id } });
@@ -76,17 +79,28 @@ describe("Hosted Bots integration approvals", () => {
     }, expect.any(Object)));
   });
 
+  it("directs the owner to GitHub Developer when that connection is missing", async () => {
+    const { post, workspace } = setup([PIPEDREAM_GITHUB_ACCOUNT], GITHUB);
+    render(workspace(true));
+    fireEvent.click(await screen.findByRole("button", { name: "Review GitHub Developer request" }));
+    expect(await screen.findByText("Connect GitHub Developer in Connect Apps to approve this read.")).toBeTruthy();
+    expect(screen.getByRole<HTMLButtonElement>("button", { name: "Allow once" }).disabled).toBe(true);
+    fireEvent.click(screen.getByRole("button", { name: "Open Connect Apps" }));
+    expect(useUi.getState().requestedSettingsSection).toBe("services");
+    expect(post).not.toHaveBeenCalled();
+  });
+
   it("requires a new review if the request parameters change before loading the account picker", async () => {
     const { get, post, workspace } = setup([GITHUB_ACCOUNT], GITHUB);
     render(workspace(true));
-    const review = await screen.findByRole("button", { name: "Review GitHub request" });
+    const review = await screen.findByRole("button", { name: "Review GitHub Developer request" });
     const advertised = await get.mock.results[0]!.value;
     get.mockResolvedValueOnce({
       requests: advertised.requests.map((request) => ({ ...request, params: { repo: "other/repo", per_page: 1 } })),
       accounts: [GITHUB_ACCOUNT],
     });
     fireEvent.click(review);
-    await waitFor(() => expect(screen.queryByText("GitHub read requested")).toBeNull());
+    await waitFor(() => expect(screen.queryByText("GitHub Developer read requested")).toBeNull());
     expect(screen.queryByRole("button", { name: "Allow once" })).toBeNull();
     expect(post).not.toHaveBeenCalled();
   });

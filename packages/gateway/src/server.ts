@@ -143,6 +143,7 @@ import { initializeHostedBotsRuntime } from "./hosted-bots/runtime.js";
 import { createOpenMausBotPreviewOwnerCheck } from "./hosted-bots/oss-preview-owner.js";
 import { admitsOpenMausBotPreviewBundle } from "./hosted-bots/preview-admission.js";
 import { HOSTED_BOTS_DRIVE_BASE, HOSTED_BOTS_INTEGRATIONS_BASE, initializeHostedBotsDrive } from "./hosted-bots/drive-approval-runtime.js";
+import { createHostedBotsGithubRead } from "./hosted-bots/github-developer-read.js";
 import { createProductionJevInboxRuntime } from "./jev/inbox-production.js";
 import { createJevService } from "./jev/service.js";
 import { createHeartbeatRunner, type HeartbeatRunner } from "./heartbeat/runner.js";
@@ -1297,6 +1298,7 @@ export async function createGateway(config: GatewayConfig) {
     admitted: openMausBotAdmitted,
     isOwner: isOpenMausBotOwner,
     ownerId: process.env.MATRIX_CLERK_USER_ID?.trim() || process.env.MATRIX_USER_ID?.trim() || "",
+    ...(openMausBotAdmitted ? { github: createHostedBotsGithubRead({ homePath }) } : {}),
     ...(internalIntegrationBaseUrl && internalPlatformToken ? {
       integration: createBotIntegrationClient(createPlatformIntegrationTransport({
         baseUrl: internalIntegrationBaseUrl, machineToken: internalPlatformToken,

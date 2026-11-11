@@ -55,7 +55,7 @@ function matchesRequest(first: IntegrationRequest, second: IntegrationRequest) {
 }
 
 function appName(service: string) {
-  if (service === "github") return "GitHub";
+  if (service === "github") return "GitHub Developer";
   if (service === "gmail") return "Gmail";
   return service.split("_").map((word) => word.charAt(0).toUpperCase() + word.slice(1)).join(" ");
 }
@@ -169,7 +169,8 @@ export function HostedBotsIntegrationApproval({ transport }: { transport: ApiCli
         setReview(undefined);
         return;
       }
-      const accounts = result.accounts.filter((account) => account.service === request.service);
+      const accounts = result.accounts.filter((account) => account.service === request.service
+        && (request.service !== "github" || account.id.startsWith("github-developer:")));
       setReview({ request, accounts, accountId: "" });
     }, "Couldn’t load connected accounts.");
   }
@@ -244,7 +245,9 @@ export function HostedBotsIntegrationApproval({ transport }: { transport: ApiCli
                   </label>
                 ) : current.accounts ? (
                   <div className="flex flex-wrap items-center gap-2">
-                    <span>No connected {name} account.</span>
+                    <span>{request.service === "github"
+                      ? "Connect GitHub Developer in Connect Apps to approve this read."
+                      : `No connected ${name} account.`}</span>
                     <Button disabled={busy} onClick={() => {
                       useUi.getState().requestSettingsSection("services");
                       useTabs.getState().openTab({ kind: "settings", title: "Connect Apps" });
