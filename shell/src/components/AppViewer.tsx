@@ -8,10 +8,12 @@ import { prepareBridgeFetchRequest, resolveBridgeFetchUrl } from "./app-viewer-b
 import { readAppBridgeResponse, appBridgeTimeoutMs } from "./app-capability-request";
 import { AppSiteButton } from "./app-sites/AppSiteButton";
 import {
+  CollaborativeAppShareButton,
   ReadinessSummary,
   useCollaborativeAppSharing,
 } from "@matrix-os/ui/collaborative-app-sharing";
 import { shellApi } from "@/api/http";
+import { useCollaborationOrganization } from "@/lib/collaboration-organization-state";
 
 import { useState, useEffect, useRef } from "react";
 import { useFileWatcher } from "@/hooks/useFileWatcher";
@@ -403,7 +405,8 @@ function SandboxedAppViewer({ path, sessionId, onOpenApp, onShareApp, visible = 
   return (
     <div className="flex h-full w-full flex-col">
       {slug && visible ? <div className="flex items-start justify-end gap-2 border-b px-3 py-1.5">
-        {onShareApp ? <CollaborativeAppReadinessControls appId={slug} buildEpoch={refreshKey} onShareApp={onShareApp} /> : null}
+        {onShareApp ? <CollaborativeAppReadinessControls appId={slug} buildEpoch={refreshKey} onShareApp={onShareApp} />
+          : <OwnerCollaborativeAppSharingControls appId={slug} buildEpoch={refreshKey} />}
         <AppSiteButton key={slug} appSlug={slug} />
       </div> : null}
       <iframe
@@ -417,6 +420,14 @@ function SandboxedAppViewer({ path, sessionId, onOpenApp, onShareApp, visible = 
       />
     </div>
   );
+}
+
+function OwnerCollaborativeAppSharingControls({ appId, buildEpoch }: { appId: string; buildEpoch: number }) {
+  const organization = useCollaborationOrganization();
+  if (organization.status !== "member" || !organization.organizationId) return null;
+  return <CollaborativeAppShareButton appId={appId} api={COLLABORATION_API} buildEpoch={buildEpoch}
+    organizationId={organization.organizationId}
+    organizationName={organization.organizationName ?? "your organization"} />;
 }
 
 function CollaborativeAppReadinessControls({ appId, buildEpoch, onShareApp }: {

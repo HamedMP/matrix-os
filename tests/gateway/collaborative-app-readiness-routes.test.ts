@@ -135,6 +135,17 @@ describe("collaborative app readiness routes", () => {
     expect(limited.dependencies.resolveCurrentBuild).not.toHaveBeenCalled();
   });
 
+  it("returns the current registration incarnation so an unchecked exact build can be checked", async () => {
+    const { routes } = setup({ repository: { getCurrent: async () => null } });
+    const response = await routes.request(`/api/collaboration/apps/${appId}/readiness/registration`, {
+      headers: { "x-test-principal": "user_owner" },
+    });
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get("cache-control")).toBe("private, no-store");
+    expect(await response.json()).toEqual({ registrationIncarnation: build.registrationIncarnation });
+  });
+
   it("rejects missing and foreign principals before resolving app state", async () => {
     const { routes, dependencies } = setup();
     expect((await routes.request(`/api/collaboration/apps/${appId}/readiness`)).status).toBe(401);
@@ -157,6 +168,14 @@ describe("collaborative app readiness routes", () => {
     expect((await routes.request(`/api/collaboration/apps/${appId}/readiness`, {
       headers: { authorization: "Bearer owner-gateway-token" },
     })).status).toBe(200);
+    const registration = await routes.request(`/api/collaboration/apps/${appId}/readiness/registration`, {
+      headers: { authorization: "Bearer owner-gateway-token" },
+    });
+    expect(registration.status).toBe(200);
+    expect(await registration.json()).toEqual({ registrationIncarnation: build.registrationIncarnation });
+    expect((await routes.request(`/api/collaboration/apps/${appId}/readiness/registration`, {
+      headers: { authorization: "Bearer incorrect-token" },
+    })).status).toBe(401);
   });
 
   it("checks membership and persists the fail-closed result for the exact incarnation", async () => {

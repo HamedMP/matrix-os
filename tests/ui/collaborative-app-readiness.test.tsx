@@ -202,15 +202,25 @@ describe("collaborative app owner readiness", () => {
     nonError.unmount();
   });
 
-  it("handles unchecked and invalid apps without issuing an unbound recheck", async () => {
-    const api = { get: vi.fn(async () => null), post: vi.fn() };
+  it("checks an unchecked app by first resolving its current registration incarnation", async () => {
+    const api = {
+      get: vi.fn(async (path: string) => path.endsWith("/registration")
+        ? { registrationIncarnation: build.registrationIncarnation }
+        : null),
+      post: vi.fn(async () => ready),
+    };
     const view = renderHook(({ appId }) => useCollaborativeAppSharing({ appId, api }), {
       initialProps: { appId: "team-tracker" },
     });
     await waitFor(() => expect(view.result.current.state).toBe("idle"));
     await act(() => view.result.current.recheck({ organizationId: "org_matrix_team" }));
-    expect(view.result.current.state).toBe("failed");
-    expect(api.post).not.toHaveBeenCalled();
+    expect(view.result.current.state).toBe("ready");
+    expect(api.get).toHaveBeenCalledWith("/api/collaboration/apps/team-tracker/readiness/registration");
+    expect(api.post).toHaveBeenCalledWith("/api/collaboration/apps/team-tracker/readiness/check", {
+      organizationId: "org_matrix_team",
+      clientRequestId: expect.any(String),
+      expectedRegistrationIncarnation: build.registrationIncarnation,
+    });
 
     view.rerender({ appId: "bad!" });
     await waitFor(() => expect(view.result.current.state).toBe("failed"));
@@ -218,7 +228,7 @@ describe("collaborative app owner readiness", () => {
       organizationId: "org_matrix_team",
       expectedRegistrationIncarnation: build.registrationIncarnation,
     }));
-    expect(api.post).not.toHaveBeenCalled();
+    expect(api.post).toHaveBeenCalledTimes(1);
   });
 
   it("drops stale load, failure, and recheck completions after the active app/request changes", async () => {

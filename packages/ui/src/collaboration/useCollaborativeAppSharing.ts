@@ -12,6 +12,9 @@ const RecheckInputSchema = z.object({
   expectedRegistrationIncarnation: z.string().regex(/^[a-f0-9]{64}$/).optional(),
   clientRequestId: z.uuid().optional(),
 }).strict();
+const CurrentRegistrationSchema = z.object({
+  registrationIncarnation: z.string().regex(/^[a-f0-9]{64}$/),
+}).strict();
 const SAFE_UNAVAILABLE = "App collaboration readiness is unavailable.";
 const CHECKING_POLL_MS = 5_000;
 const MAX_CHECKING_POLLS = 36;
@@ -120,9 +123,10 @@ export function useCollaborativeAppSharing(input: {
     setSafeMessage(null);
     try {
       const parsed = RecheckInputSchema.parse(rawInput);
+      if (!path) throw new Error("ReadinessUnavailable");
       const expectedRegistrationIncarnation = parsed.expectedRegistrationIncarnation
-        ?? currentReadiness?.build.registrationIncarnation;
-      if (!path || !expectedRegistrationIncarnation) throw new Error("ReadinessUnavailable");
+        ?? currentReadiness?.build.registrationIncarnation
+        ?? CurrentRegistrationSchema.parse(await input.api.get(`${path}/registration`)).registrationIncarnation;
       const response = await input.api.post(`${path}/check`, {
         organizationId: parsed.organizationId,
         clientRequestId: parsed.clientRequestId ?? crypto.randomUUID(),

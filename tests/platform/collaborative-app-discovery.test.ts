@@ -96,6 +96,21 @@ describe("collaborative app current-membership discovery", () => {
     expect(recipientRows).toEqual([]);
   });
 
+  it("resolves one deep-linked app only for a current organization member", async () => {
+    const path = `/api/collaboration/shared-apps/${scopeId}`;
+    const actorId = platformCollaborationActors.recipientWithoutComputer;
+    const allowed = await routes.request(path, { headers: { "x-test-actor": actorId } });
+    expect(allowed.status).toBe(200);
+    expect(await allowed.json()).toMatchObject({ scopeId, buildId: app.buildId });
+
+    currentMemberships.delete(`${actorId}:org_matrix_team`);
+    expect((await routes.request(path, { headers: { "x-test-actor": actorId } })).status).toBe(404);
+    expect((await routes.request(path, { headers: { "x-test-actor": platformCollaborationActors.outsider } })).status).toBe(404);
+    expect((await routes.request("/api/collaboration/shared-apps/not-a-uuid", {
+      headers: { "x-test-actor": actorId },
+    })).status).toBe(422);
+  });
+
   it("omits outsiders, wrong organizations, stopped shares, and rejects malformed pagination", async () => {
     expect(await (await routes.request("/api/collaboration/shared-apps", {
       headers: { "x-test-actor": platformCollaborationActors.outsider },
@@ -104,6 +119,9 @@ describe("collaborative app current-membership discovery", () => {
     expect(await (await routes.request("/api/collaboration/shared-apps", {
       headers: { "x-test-actor": platformCollaborationActors.recipientWithoutComputer },
     })).json()).toEqual({ items: [] });
+    expect((await routes.request(`/api/collaboration/shared-apps/${scopeId}`, {
+      headers: { "x-test-actor": platformCollaborationActors.recipientWithoutComputer },
+    })).status).toBe(404);
     organizations.set(platformCollaborationActors.recipientWithoutComputer, ["org_matrix_team"]);
     await repository.applyDirectoryEvent({
       eventId: "20000000-0000-4000-8000-000000000002",
@@ -120,6 +138,9 @@ describe("collaborative app current-membership discovery", () => {
     expect(await (await routes.request("/api/collaboration/shared-apps", {
       headers: { "x-test-actor": platformCollaborationActors.recipientWithoutComputer },
     })).json()).toEqual({ items: [] });
+    expect((await routes.request(`/api/collaboration/shared-apps/${scopeId}`, {
+      headers: { "x-test-actor": platformCollaborationActors.recipientWithoutComputer },
+    })).status).toBe(404);
     expect((await routes.request("/api/collaboration/shared-apps?limit=101", {
       headers: { "x-test-actor": platformCollaborationActors.recipientWithoutComputer },
     })).status).toBe(422);

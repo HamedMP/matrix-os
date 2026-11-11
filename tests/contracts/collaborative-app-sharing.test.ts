@@ -112,6 +112,7 @@ describe("collaborative app sharing contracts", () => {
       state: "active",
       shareRevision: "2",
       dataRevision: "7",
+      bindingRevision: "3",
       createdAt: now,
       updatedAt: now,
     };

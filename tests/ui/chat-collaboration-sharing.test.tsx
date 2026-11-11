@@ -15,6 +15,77 @@ const scopeId = "10000000-0000-4000-8000-000000000001";
 const chatId = "chat_one";
 
 describe("Chat collaboration sharing", () => {
+  it("opens a shared app beyond the tenth directory page", async () => {
+    const appScopeId = "10000000-0000-4000-8000-000000000099";
+    const app = {
+      scopeId: appScopeId, runtimeId: "vps:50000000-0000-4000-8000-000000000001",
+      organizationId: "org_matrix_team", authorityGeneration: 2, appId: "team-tracker",
+      catalogId: "30000000-0000-4000-8000-000000000001",
+      readinessId: "40000000-0000-4000-8000-000000000001",
+      registrationIncarnation: "a".repeat(64), buildId: "b".repeat(64), shareRevision: "2",
+      owner: { actorId: "user_owner", displayName: "Owner" },
+    };
+    const api = {
+      get: vi.fn(async (path: string) => {
+        if (path === `/api/collaboration/shared-apps/${appScopeId}`) return app;
+        const cursor = new URL(path, "https://app.matrix-os.com").searchParams.get("cursor");
+        const page = cursor ? Number(cursor) : 0;
+        return { items: page === 10 ? [app] : [], ...(page < 10 ? { nextCursor: String(page + 1) } : {}) };
+      }),
+      post: vi.fn(async () => ({
+        target: { kind: "shared", scopeId: appScopeId, organizationId: app.organizationId,
+          appId: app.appId, catalogId: app.catalogId, buildId: app.buildId,
+          name: "Team tracker", owner: app.owner, shareRevision: app.shareRevision },
+        launchId: "20000000-0000-4000-8000-000000000001",
+        entryUrl: `/api/collaboration/shared-apps/${appScopeId}/runtime/20000000-0000-4000-8000-000000000001/index.html`,
+        expiresAt: "2026-11-05T10:05:00.000Z",
+      })),
+      delete: vi.fn(),
+      direct: { request: vi.fn(), subscribeEvents: vi.fn(() => vi.fn()), close: vi.fn() },
+    };
+    render(<ChatCollaboration view={{ kind: "app", scopeId: appScopeId }} api={api as never} actorId="user_member" />);
+
+    await waitFor(() => expect(api.post).toHaveBeenCalledWith(
+      `/api/collaboration/shared-apps/${appScopeId}/launch`, expect.any(Object),
+    ));
+    expect(api.get).toHaveBeenCalledWith(`/api/collaboration/shared-apps/${appScopeId}`);
+  });
+
+  it("lists current-organization app shares separately and opens the exact scope", async () => {
+    const appScopeId = "10000000-0000-4000-8000-000000000099";
+    const app = {
+      scopeId: appScopeId,
+      runtimeId: "vps:50000000-0000-4000-8000-000000000001",
+      organizationId: "org_matrix_team",
+      authorityGeneration: 2,
+      appId: "team-tracker",
+      catalogId: "30000000-0000-4000-8000-000000000001",
+      readinessId: "40000000-0000-4000-8000-000000000001",
+      registrationIncarnation: "a".repeat(64),
+      buildId: "b".repeat(64),
+      shareRevision: "2",
+      owner: { actorId: "user_owner", displayName: "Nima" },
+    };
+    const api = {
+      baseUrl: "https://app.matrix-os.com",
+      get: vi.fn(async (path: string) => path.startsWith("/api/collaboration/shared-apps")
+        ? { items: [app], nextCursor: "next-app-page" }
+        : { items: [] }),
+      post: vi.fn(), delete: vi.fn(),
+    };
+    const openApp = vi.fn();
+    render(<ChatCollaboration view={{ kind: "home" }} api={api} actorId="user_member" openApp={openApp} />);
+
+    expect(await screen.findByText("Team tracker")).toBeVisible();
+    expect(screen.getByText("App · shared by Nima")).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: "Open app" }));
+    expect(openApp).toHaveBeenCalledWith(appScopeId);
+    fireEvent.click(screen.getByRole("button", { name: "Load more shared apps" }));
+    await waitFor(() => expect(api.get).toHaveBeenCalledWith(
+      "/api/collaboration/shared-apps?limit=50&cursor=next-app-page",
+    ));
+  });
+
   it("can reserve accepted shared projects for the Chats rail while keeping project invitations visible", async () => {
     const projectScopeId = "10000000-0000-4000-8000-000000000101";
     const projectInvitationId = "30000000-0000-4000-8000-000000000101";
