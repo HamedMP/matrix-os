@@ -27,8 +27,11 @@ entitlement, client handling of sleeping runtimes, and a container-to-VPS migrat
 | Database-per-owner on a shared cluster already exists | `packages/platform/src/orchestrator.ts:157` | Reuse the role and database creation pattern |
 | Object access is brokered with an owner-prefix check | `packages/platform/src/internal-sync-routes.ts:105` | Containers hold no bucket credentials; add a byte quota |
 | Home mirror skips `.git`, `dist`, `build`, `node_modules` | `packages/gateway/src/sync/home-mirror-ignore.ts:21` | Not sufficient as the only durable home; see Phase 2 |
-| Kernel state is a live SQLite file in the home | `packages/gateway/src/dispatcher.ts:136` | Needs a consistent snapshot at flush |
-| VPS restore reads a fixed object layout | `distro/customer-vps/matrix-restore.sh:18` | A container that writes the same layout can be restored onto a VPS |
+| Home mirror pushes one manifest per changed file, pulls serially, and `stop()` has a 10 s deadline | `packages/gateway/src/sync/home-mirror.ts:542`, S4 | Cannot serve a medium or large home (S4); flush and hydrate are rebuilt in Stack B3 |
+| Boot runs template setup and `git init` before the mirror pulls | `packages/kernel/src/boot.ts:40,332`, S4 | Template copy can win over owner files (reproduced; affects VPS restores); `git init` costs 2-92 s per hydrate |
+| Gateway waits up to 4.25 s for a terminal runtime before listening | `packages/gateway/src/agent-session-manager.ts:353`, `server.ts:1756` | Must move off the listen path for the wake target |
+| Kernel state is a live SQLite file in the home | `packages/gateway/src/dispatcher.ts:136` | Needs a consistent snapshot at flush; `VACUUM INTO` (S4) |
+| VPS restore reads Postgres dumps at a fixed key | `distro/customer-vps/matrix-restore.sh:18` | It restores only Postgres; home files come back through the mirror's `initialPull`. A container that writes the same dump keys and manifest schema can be restored onto a VPS (S6 still to prove) |
 | Clients require a handle and a running machine | `packages/platform/src/auth-routes.ts:242`, `apps/mobile/lib/journey.ts:58` | Journey and device sign-in must accept a container runtime |
 | No free plan | `packages/platform/src/billing.ts:14` | Add an entitlement source and plan |
 
@@ -42,9 +45,11 @@ entitlement, client handling of sleeping runtimes, and a container-to-VPS migrat
    roughly 1,900 places. Tenant isolation comes from the substrate boundary.
 3. **Durable truth is Postgres plus the object prefix. Local disk is a cache.** A
    provider volume may be used as an optimisation, never as the only copy.
-4. **The same object layout as a VPS backup.** The container writes database snapshots
-   and files where `matrix-restore` already looks, so upgrade is "restore onto a VPS",
-   not a new migration engine.
+4. **The same object layout as a VPS backup.** The container writes database dumps where
+   `matrix-restore` already looks and files through the same sync manifest the VPS
+   mirror reads, so upgrade is "restore onto a VPS", not a new migration engine. S4
+   changes the file layout to packs plus blobs; that change lands in the shared mirror,
+   so both substrates read it (data-model.md, Object layout).
 5. **Capabilities are declared by the runtime.** Clients do not branch on plan or
    substrate. Vocabulary follows spec 639's proposed capability states.
 6. **Provider is AWS Lambda MicroVMs**, chosen by measurement (Phase 0, research.md R4),
@@ -58,8 +63,8 @@ Each spike has a pass condition. A failed spike changes the plan before any stac
 | --- | --- | --- |
 | S1 Provider bake-off | Which provider meets the criteria below? | One provider meets every hard criterion |
 | S2 Chat without host systemd | Can the gateway image run managed Pi chat with a non-systemd launcher? | Real funded chat turn with tool use completes; workload has no network and no gateway secrets |
-| S3 App build in the sandbox | Can the agent build a Vite app with egress limited to the package registry? | Fresh app builds and loads through the bridged viewer |
-| S4 Hydrate and flush | How long do hydrate and flush take, and is the SQLite snapshot consistent? | Measured for small, medium, and large homes; snapshot opens cleanly after a kill |
+| S3 App build in the sandbox | Can the agent build a Vite app with egress limited to the package registry? | Fresh app builds and loads through the bridged viewer. **Partial pass**: builds pass with five fixes; the bridged viewer and agent loop were not exercised (`spikes/s3-sandbox-build.md`) |
+| S4 Hydrate and flush | How long do hydrate and flush take, and is the SQLite snapshot consistent? | Measured for small, medium, and large homes; snapshot opens cleanly after a kill. **Pass** (`spikes/s4-hydrate-flush.md`) |
 | S5 Shared Postgres | Do gateway advisory locks and pools work behind a pooler with per-owner roles? | Full gateway boot and chat with pool size reduced; no session-lock breakage |
 | S6 Restore onto a VPS | Does `matrix-restore` accept a container-written layout? | A test VPS boots with the container's data |
 
@@ -96,8 +101,21 @@ Done when: paid controls pass unchanged and no code outside the `vps` substrate 
 - B2 Non-systemd scope-runtime launcher behind the existing interface, with tests that
   the workload cannot reach the network, gateway env, or database.
 - B3 Durable-home lifecycle: hydrate gate before ready, flush on stop, SQLite snapshot,
-  container mirror profile that keeps built output and project history.
-- B4 Runtime image and entrypoint; one connection budget across all gateway pools (at
+  container mirror profile that keeps built output and project history. After S4 this
+  means: the template ordering fix (T010a, lands first and also fixes VPS restores);
+  no boot-time `git init`; a boot-set archive written at every flush and readiness
+  gated on it; lazy background fill with not-yet-local handling on file and app routes,
+  agent turns gated on full fill; batched flush with one manifest and a barrier;
+  manifest sharding or deltas; packs plus blobs with repack GC; `VACUUM INTO` for
+  `matrix.db` and `matrix.db*` excluded from sync; a configurable 120 s final-flush
+  deadline; stop order files, manifest, Postgres dump; a durable hydrated-manifest
+  record; the 50,000-file cap. This is larger than one layer and is split across B3
+  and a follow-on layer if it exceeds the size limit.
+- B3b Build workload (S3): gateway-side build tool with fixed argv in the same sandbox,
+  dedicated egress socket, pinned pnpm in the runtime node directory, per-owner store
+  bind under quota, fixed build environment, timeout and free-space check.
+- B4 Runtime image and entrypoint, with prebuilt JS (no tsx at boot) and the
+  terminal-runtime retry moved off the listen path; one connection budget across all gateway pools (at
   most 5), timeouts from config, and fail-closed boot when the owner database rejects
   credentials (no fallback to file storage; `/health` reports database readiness).
 - B5 Lifecycle routes: readiness, quiesce, flush, activity report.
@@ -168,6 +186,8 @@ A lane that cannot run for a missing prerequisite fails; it does not skip.
 | `POST /internal/containers/:handle/lifecycle/activity` | Per-runtime HMAC token | `bodyLimit` 4 KiB; rate limited |
 | `POST /internal/containers/:handle/lifecycle/flushed` | Per-runtime HMAC token, current generation | `bodyLimit` 4 KiB |
 | Gateway `POST /internal/runtime/quiesce`, `/flush` | Platform verification token | `bodyLimit` 4 KiB; bounded duration |
+| Gateway build egress socket (Unix socket in the build sandbox, not an HTTP route) | Reachable only from the build workload; the gateway adds the runtime token when forwarding | GET and HEAD of registry paths only; size cap; per-owner byte cap at the platform mirror |
+| Platform registry mirror | Per-runtime HMAC token, current generation | GET and HEAD only; rate and byte caps; upstream `redirect: "error"`, 30 s timeout |
 | Gateway `GET /api/runtime/capabilities` | Verified runtime actor | Bounded static projection |
 | `POST /api/runtime/upgrade`, `GET /api/runtime/upgrade` | Clerk session, owner only | `bodyLimit`; idempotency key |
 | `POST /internal/containers/:handle/register` | Per-runtime HMAC token, current generation | `bodyLimit` 4 KiB; idempotent |
@@ -196,7 +216,10 @@ One governance change is required and is not an exception: FR-017 amends the
 | Risk | Mitigation |
 | --- | --- |
 | No provider meets the isolation and launcher criteria | Fallback candidate in S1; decision before Stack B |
-| Cold start too slow for a first-message experience | Measure in S4; hydrate lazily by directory; consider a provider volume as cache |
+| Cold start too slow for a first-message experience | S4: ready after a boot-set archive (0.23-0.64 s hydrate), then lazy fill. Gateway boot alone missed 5 s on a loaded host; needs prebuilt JS, no `git init`, no terminal wait, and a 1 vCPU re-measure with the real image (T077) |
+| Pack layout changes the manifest schema on paid VPSes too | The mirror is shared; T047d keeps legacy blob entries readable and is covered by the paid regression lane |
+| Build fails on new native tools under the address-space limit (S3) | Fixed worker and arena caps; timeout and `needs_build`; pair with a cgroup memory limit wherever a provider allows one |
+| Registry mirror becomes trusted for integrity hashes (S3) | TLS-only fixed upstream, redirects refused, metadata size cap, `minimumReleaseAge` |
 | Free tier abuse (mining, spam, scraping) | Default-deny egress, hard caps, invite gate, global ceiling |
 | Shared Postgres becomes a single point of failure for all free owners | Provider-managed backups; per-owner snapshots in the object store; paid tier unaffected |
 | Divergence between VPS and container runtime behaviour | One codebase, profile composition, shared qualification suite run on both |
