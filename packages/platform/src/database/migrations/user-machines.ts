@@ -136,6 +136,15 @@ async function migratePrivatePreviewMachines(db: PlatformMigrationExecutor): Pro
   await sql`
     DO $$
     BEGIN
+      -- Spec 2691 adds the free class; an older definition is replaced once.
+      IF EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conrelid = 'user_machines'::regclass
+          AND conname = 'user_machines_provisioning_class_check'
+          AND pg_get_constraintdef(oid) NOT LIKE '%''free''%'
+      ) THEN
+        ALTER TABLE user_machines DROP CONSTRAINT user_machines_provisioning_class_check;
+      END IF;
       IF NOT EXISTS (
         SELECT 1 FROM pg_constraint
         WHERE conrelid = 'user_machines'::regclass
@@ -143,7 +152,7 @@ async function migratePrivatePreviewMachines(db: PlatformMigrationExecutor): Pro
       ) THEN
         ALTER TABLE user_machines
           ADD CONSTRAINT user_machines_provisioning_class_check
-          CHECK (provisioning_class IN ('customer', 'preview', 'private-preview')) NOT VALID;
+          CHECK (provisioning_class IN ('customer', 'preview', 'private-preview', 'free')) NOT VALID;
       END IF;
       IF NOT EXISTS (
         SELECT 1 FROM pg_constraint

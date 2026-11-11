@@ -18,7 +18,7 @@ import { parseStringArray } from './json.js';
 
 /** Extracted verbatim from packages/platform/src/db.ts (S01 / T007): user machine and provider deletion row mappers. */
 
-export const UserMachineProvisioningClassSchema = z.enum(['customer', 'preview', 'private-preview']);
+export const UserMachineProvisioningClassSchema = z.enum(['customer', 'preview', 'private-preview', 'free']);
 
 export type UserMachineProvisioningClass = z.infer<typeof UserMachineProvisioningClassSchema>;
 
@@ -92,7 +92,7 @@ export function toUserMachineRow(record: NewUserMachine): Insertable<UserMachine
     handle: record.handle,
     runtime_slot: record.runtimeSlot ?? 'primary',
     runtime_token_epoch: record.runtimeTokenEpoch ?? 1,
-    provisioning_class: record.provisioningClass ?? 'customer',
+    provisioning_class: record.provisioningClass ?? (record.substrate === 'container' ? 'free' : 'customer'),
     access_clerk_user_ids: record.accessClerkUserIds ?? [],
     source_pr: record.sourcePr ?? null,
     confirmed_bundle_version: record.confirmedBundleVersion ?? null,
