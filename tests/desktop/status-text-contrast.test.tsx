@@ -14,6 +14,9 @@ const MATRIX_VARIANTS = [
   ["matrix", "dark"],
   ["matrix-neon", "light"],
   ["matrix-neon", "dark"],
+  // Nord dark once rendered --info-text at 4.46:1 on raised and hover surfaces.
+  ["nord", "light"],
+  ["nord", "dark"],
 ] as const;
 const STATUSES = ["success", "warning", "danger", "info"] as const;
 // Every surface a status label is rendered on in Electron Desktop.
