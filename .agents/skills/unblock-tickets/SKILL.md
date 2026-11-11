@@ -23,7 +23,10 @@ waiting on them that a one-line answer could have unblocked.
 - No arguments: the current user. Linear is the source of the ticket list: the
   Linear MCP viewer and the issues assigned to them. `gh api user -q .login`
   gives the matching GitHub author.
-- A GitHub login: that author's open work. Report and ask as usual, but act on
+- A GitHub login: that author's open work. Find their Linear user (by name or
+  email from the Linear user list) and use it as the assignee in every Linear
+  lookup below in place of `me`. If no Linear user can be matched, say so and
+  report "PRs only, tickets not checked". Report and ask as usual, but act on
   an answer only when the person answering is that author or says they decide
   for them.
 - Ticket IDs or PR numbers: only those items.
@@ -63,7 +66,8 @@ waiting on them that a one-line answer could have unblocked.
 
 1. **Collect the work.** Run the independent lookups together.
    - Linear, through the Linear MCP server: `whoami` for the current user,
-     then `list_issues` with `assignee: "me"`, `state: "started"`, and
+     then `list_issues` with `assignee: "me"` (or the matched Linear user when
+     a login was given), `state: "started"`, and
      `updatedAt: "-P7D"`. Add unstarted issues in the current cycle: cycles are
      per team, so `list_cycles` with `type: "current"` for each of the user's
      teams, then one `list_issues` per team. Tool names can differ between
