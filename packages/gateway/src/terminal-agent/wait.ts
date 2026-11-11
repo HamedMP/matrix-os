@@ -3,6 +3,7 @@ import { TerminalRefSchema, type TerminalRef, type TerminalTab } from "@matrix-o
 import { z } from "zod/v4";
 import type { TerminalAgentStatusSource } from "./status-source.js";
 import { terminalRefKey } from "./status-source.js";
+import { visibleTerminalText } from "./screen-text.js";
 import { TerminalAgentVerbError, type TerminalAgentStatus, type TerminalAgentVerbRuntime } from "./verbs.js";
 
 /** One HTTP wait stays below common proxy idle limits; callers wait again after a check-in. */
@@ -78,7 +79,8 @@ export function createTerminalWaiter(options: {
       viewport: z.array(z.string()).max(200),
       scrollback: z.array(z.string()).max(100_000),
     }).safeParse(await options.runtime.getSnapshot(ref));
-    return snapshot.success ? [...snapshot.data.scrollback, ...snapshot.data.viewport].join("\n") : "";
+    // Match what the terminal shows: snapshot rows keep their colour codes.
+    return snapshot.success ? [...snapshot.data.scrollback, ...snapshot.data.viewport].map(visibleTerminalText).join("\n") : "";
   }
 
   async function run(ref: TerminalRef, input: { output?: string; seen?: number; timeoutMs: number; signal?: AbortSignal }): Promise<TerminalWaitResult> {

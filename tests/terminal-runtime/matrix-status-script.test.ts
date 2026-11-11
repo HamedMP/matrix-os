@@ -83,4 +83,13 @@ describe("matrix-status reporter", () => {
     const left = (await readdir(dir)).filter((name) => name.endsWith(".tmp") && !/^\.terminal_5\.\d+\.tmp$/.test(name));
     expect(left).toEqual([]);
   });
+
+  it("reports from a pane in a physical matrix-rt_ zellij session", async () => {
+    const home = await mkdtemp(join(tmpdir(), "matrix-status-"));
+    roots.push(home);
+    const physical = `matrix-rt_${"e".repeat(32)}`;
+    await report(home, ["blocked"], { ZELLIJ_SESSION_NAME: physical });
+    const written = JSON.parse(await readFile(join(home, "system", "terminal-status", physical, "terminal_5.json"), "utf8"));
+    expect(written).toMatchObject({ status: "blocked", source: "reporter" });
+  });
 });
