@@ -143,6 +143,20 @@ node "$ROOT_DIR/scripts/inline-sync-agent-recovery.mjs" \
   "$STAGE_DIR/bin/matrix-update-request-rejection"
 cp -a "$ROOT_DIR/distro/customer-vps/systemd/." "$STAGE_DIR/systemd/"
 cp -a "$ROOT_DIR/distro/customer-vps/systemd-user/." "$STAGE_DIR/user-systemd/"
+if [ "${HOST_BUNDLE_OPENMAUSBOT_PREVIEW:-false}" = "true" ]; then
+  test "${HOST_BUNDLE_CHANNEL:-}" = none
+  install -m 0755 "$ROOT_DIR/scripts/openmausbot/matrix-openmausbot-run" "$STAGE_DIR/bin/"
+  install -m 0644 "$ROOT_DIR/scripts/openmausbot/matrix-openmausbot.service" "$STAGE_DIR/systemd/"
+  node - "$STAGE_DIR/systemd/matrix-gateway.service" <<'NODE'
+const { readFileSync, writeFileSync } = require("node:fs");
+const unitPath = process.argv[2];
+const unit = readFileSync(unitPath, "utf8");
+const wants = /^Wants=matrix-terminal-runtime\.service matrix-scope-runtime\.service$/m;
+if (!wants.test(unit)) throw new Error("Unexpected Matrix gateway unit dependencies");
+writeFileSync(unitPath, unit.replace(wants, "$& matrix-openmausbot.service"));
+NODE
+  bash "$ROOT_DIR/scripts/openmausbot/build-private-preview.sh" "$STAGE_DIR"
+fi
 # The bundle is usually extracted as root:root during in-place upgrades, while
 # the systemd units execute these wrappers as the matrix user.
 chmod 0755 "$STAGE_DIR/bin/matrix-configure-platform-speech.py"
@@ -153,6 +167,11 @@ chmod 0755 "$STAGE_DIR/bin/matrix-support-access"
 cp -a "$ROOT_DIR/node_modules" "$STAGE_DIR/app/node_modules"
 install -m 0755 "$DIST_DIR/$GH_DIST/bin/gh" "$STAGE_DIR/app/node_modules/.bin/gh"
 cp -a "$ROOT_DIR/packages" "$STAGE_DIR/app/packages"
+# Keep OpenMausBot attribution next to the compiled code that redistributes it.
+HOSTED_BOTS_SOURCE_DIR="$ROOT_DIR/packages/gateway/src/hosted-bots/upstream"
+HOSTED_BOTS_NOTICE_DIR="$STAGE_DIR/app/packages/gateway/dist/hosted-bots/upstream"
+mkdir -p "$HOSTED_BOTS_NOTICE_DIR"
+install -m 0644 "$HOSTED_BOTS_SOURCE_DIR/LICENSE" "$HOSTED_BOTS_SOURCE_DIR/NOTICE" "$HOSTED_BOTS_NOTICE_DIR/"
 test -f "$STAGE_DIR/app/packages/gateway/dist/collaboration/filesystem-identity.node"
 # Check the copied native bytes against the customer ABI, then load the exact
 # staged dependency with the Node version shipped in this bundle.

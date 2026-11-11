@@ -1,5 +1,8 @@
 "use client";
 
+import { HOSTED_BOTS_APP_PATH } from "@matrix-os/contracts";
+import { WebBotsWorkspace } from "../bots/WebBotsWorkspace";
+
 import { AppWindowResizeControls } from "../window/AppWindowResizeControls";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useCanvasTransform, INTERACTION_THRESHOLD } from "@/hooks/useCanvasTransform";
@@ -488,6 +491,8 @@ export function CanvasWindow({ win, iconUrl, hidden = false, deferAppContent = f
         <FileBrowser windowId={win.id} mobile={isMobile} />
       ) : win.path === "__preview-window__" ? (
         <PreviewWindow />
+      ) : win.path === HOSTED_BOTS_APP_PATH ? (
+        <WebBotsWorkspace active={isFocused && !win.minimized} />
       ) : win.path === "__chat__" ? (
         <div className="h-full overflow-hidden">
           {chatState && (

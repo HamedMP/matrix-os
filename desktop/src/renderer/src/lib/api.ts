@@ -106,6 +106,8 @@ export function createApiClient(options: ApiClientOptions): ApiClient {
     try {
       response = await fetchFn(url, {
         ...init,
+        // Never replay a model credential body to a redirected destination.
+        ...(init.method === "PUT" && path === "/api/hosted-bots/model" ? { redirect: "error" } : {}),
         ...(/^\/api\/chats(?:[/?]|$)/.test(path) ? {
           headers: { ...Object.fromEntries(new Headers(init.headers)), "X-Matrix-Chat-Metadata": "1" },
         } : {}),

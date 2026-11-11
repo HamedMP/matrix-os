@@ -29,5 +29,6 @@ export async function fetchRuntimeProxy(
 }
 
 export function shouldReleaseRuntimeProxyTimeout(method: string, path: string): boolean {
-  return method === "GET" && (path === "/api/files/media" || path === "/api/chats/events");
+  return method === "GET" && (path === "/api/files/media" || path === "/api/chats/events"
+    || path === "/api/hosted-bots/runtime/api/events");
 }

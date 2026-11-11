@@ -49,6 +49,20 @@ describe("buildGatewayUrl", () => {
 });
 
 describe("createApiClient", () => {
+  it("does not follow redirects when sending a Hosted Bots model credential", async () => {
+    const fetchFn = vi.fn().mockResolvedValue(jsonResponse(200, { connected: true }));
+    const client = createApiClient({
+      baseUrl: "https://app.matrix-os.com", getRuntimeSlot: () => "pv-1907-3fa91c2e", fetchFn,
+    });
+
+    await client.put("/api/hosted-bots/model", { apiKey: "test-only-key" });
+
+    expect(fetchFn).toHaveBeenCalledWith(
+      "https://app.matrix-os.com/api/hosted-bots/model?runtime=pv-1907-3fa91c2e",
+      expect.objectContaining({ method: "PUT", redirect: "error" }),
+    );
+  });
+
   it("sends a bounded text range to the pinned Preview runtime", async () => {
     const fetchFn = vi.fn().mockResolvedValue(new Response("first part", { status: 206 }));
     const client = createApiClient({ baseUrl: "https://app.matrix-os.com", getRuntimeSlot: () => "primary", fetchFn }).forRuntime("pr-2047");

@@ -113,7 +113,7 @@ export default function DesktopSurfaceFrame({
     ? isWindow
     : isDesktopHidden || isDesktopTransition || (isDesktopWindow && !tabWorkspaceActive) || (isTabbed && tabWorkspaceActive && active);
   const interactive = visible && active;
-  const isNativeEmbed = tab.kind === "home" || tab.kind === "app" || tab.kind === "browser" || tab.kind === "vscode";
+  const isNativeEmbed = tab.kind === "bots" || tab.kind === "home" || tab.kind === "app" || tab.kind === "browser" || tab.kind === "vscode";
   const nativeClearance = isNativeEmbed && !isCanvas && viewport;
   const minimum = { width: Math.min(440, surface.bounds.width), height: Math.min(300, surface.bounds.height) };
   const bounds = nativeClearance

@@ -1,0 +1,10 @@
+OpenMausBot
+Copyright 2026 Milind Soni and OpenMausBot contributors
+
+The hosted Bots preview adapts the conversational setup flow from
+server/setup-mode.ts and the Responses request/output and function-call
+handling from server/drivers/openai-responses.ts, at upstream v0.1.150
+(commit 5491874882378603aef2536790650a192e63d56d).
+
+The adapted code is provided under the Apache License, Version 2.0.
+https://github.com/milind-soni/OpenMausBot/tree/5491874882378603aef2536790650a192e63d56d

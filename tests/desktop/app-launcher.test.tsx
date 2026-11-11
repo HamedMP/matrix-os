@@ -85,6 +85,19 @@ describe("AppLauncher", () => {
     });
   });
 
+  it("places Bots next to Chat only on an admitted Computer", () => {
+    const onOpenDesktopApp = vi.fn();
+    const view = render(<AppLauncher presentation="launchpad" onOpenDesktopApp={onOpenDesktopApp} />);
+    expect(screen.queryByRole("button", { name: "Bots" })).toBeNull();
+
+    view.rerender(<AppLauncher presentation="launchpad" botsAvailable onOpenDesktopApp={onOpenDesktopApp} />);
+    const buttons = screen.getAllByRole("button");
+    expect(buttons[buttons.indexOf(screen.getByRole("button", { name: "Chat" })) + 1])
+      .toBe(screen.getByRole("button", { name: "Bots" }));
+    fireEvent.click(screen.getByRole("button", { name: "Bots" }));
+    expect(onOpenDesktopApp).toHaveBeenCalledWith(expect.objectContaining({ kind: "bots", path: "__bots__" }));
+  });
+
   it("notifies a transient launcher after an app opens", async () => {
     const onLaunch = vi.fn();
     render(<AppLauncher presentation="launchpad" onLaunch={onLaunch} />);

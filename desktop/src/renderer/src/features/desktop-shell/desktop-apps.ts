@@ -1,5 +1,6 @@
 import {
   Blocks,
+  Bot,
   BrushIcon,
   Code2,
   FilePenLine,
@@ -13,7 +14,7 @@ import {
   type LucideIcon,
 } from "@renderer/lib/hugeicons";
 import type { TabKind } from "../../stores/tabs";
-import { OS_VIEW_FIXED_APP_APPEARANCES } from "@matrix-os/contracts";
+import { HOSTED_BOTS_APP_PATH, OS_VIEW_FIXED_APP_APPEARANCES } from "@matrix-os/contracts";
 import { bundledDesktopIconForPath } from "./bundled-app-icons";
 import vscodeIconUrl from "../../../../../../shell/public/vscode.png";
 
@@ -21,6 +22,7 @@ const APPEARANCE = OS_VIEW_FIXED_APP_APPEARANCES;
 
 export type DesktopAppId =
   | "work"
+  | "bots"
   | "terminal"
   | "files"
   | "editor"
@@ -55,6 +57,16 @@ export const FIXED_DESKTOP_APPS: readonly DesktopAppConfig[] = [
     name: "Chat",
     color: APPEARANCE.chat.background,
     iconColor: APPEARANCE.chat.foreground,
+  },
+  {
+    id: "bots",
+    path: HOSTED_BOTS_APP_PATH,
+    iconUrl: bundledDesktopIconForPath(HOSTED_BOTS_APP_PATH),
+    kind: "bots",
+    icon: Bot,
+    name: "Bots",
+    color: APPEARANCE.bots.background,
+    iconColor: APPEARANCE.bots.foreground,
   },
   {
     id: "terminal",

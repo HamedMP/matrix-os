@@ -140,6 +140,12 @@ import { createFundedAiRouteReadinessClient } from "./funded-ai-route-readiness-
 import { createFundedAiReadinessReader } from "./funded-ai-readiness.js";
 import { initializeJevRuntime } from "./jev/runtime.js";
 import { createJevRoutes } from "./jev/routes.js";
+import { createOpenMausBotGateway, OPENMAUSBOT_PROXY_BASE, OPENMAUSBOT_RUNTIME_SOCKET } from "./hosted-bots/oss-gateway.js";
+import { initializeHostedBotsRuntime } from "./hosted-bots/runtime.js";
+import { createOpenMausBotPreviewOwnerCheck } from "./hosted-bots/oss-preview-owner.js";
+import { admitsOpenMausBotPreviewBundle } from "./hosted-bots/preview-admission.js";
+import { HOSTED_BOTS_DRIVE_BASE, HOSTED_BOTS_INTEGRATIONS_BASE, initializeHostedBotsDrive } from "./hosted-bots/drive-approval-runtime.js";
+import { createHostedBotsGithubRead } from "./hosted-bots/github-developer-read.js";
 import { createProductionJevInboxRuntime } from "./jev/inbox-production.js";
 import { createJevService } from "./jev/service.js";
 import { createHeartbeatRunner, type HeartbeatRunner } from "./heartbeat/runner.js";
@@ -188,7 +194,7 @@ import { startBots, type BotServices } from "./startup/bots.js";
 import { createCompanyBotSetup } from "./startup/slack-company.js";
 import { startOwnerSlack } from "./startup/slack-owner.js";
 import { withBotProviderInstance } from "./bots/provider-instance.js";
-import { createLocalIntegrationTransport, createPlatformIntegrationTransport } from "./bots/integration-client.js";
+import { createBotIntegrationClient, createLocalIntegrationTransport, createPlatformIntegrationTransport } from "./bots/integration-client.js";
 import { createBotContinuationAdmitter } from "./bots/continuations.js";
 import { ChatAgentStore } from "./chat/agent-store.js";
 import { initializePlatformIntegrations } from "./startup/platform-integrations.js";
@@ -1281,6 +1287,30 @@ export async function createGateway(config: GatewayConfig) {
         },
       })
     : undefined;
+  const openMausBotAdmitted = admitsOpenMausBotPreviewBundle(process.env);
+  const isOpenMausBotOwner = createOpenMausBotPreviewOwnerCheck(process.env);
+  const openMausBotGateway = createOpenMausBotGateway({
+    socketPath: OPENMAUSBOT_RUNTIME_SOCKET,
+    admitted: openMausBotAdmitted,
+    isOwner: isOpenMausBotOwner,
+    upgradeWebSocket,
+  });
+  app.route(OPENMAUSBOT_PROXY_BASE, openMausBotGateway.routes);
+  const hostedBotsDrive = await initializeHostedBotsDrive({
+    admitted: openMausBotAdmitted,
+    isOwner: isOpenMausBotOwner,
+    ownerId: process.env.MATRIX_CLERK_USER_ID?.trim() || process.env.MATRIX_USER_ID?.trim() || "",
+    ...(openMausBotAdmitted ? { github: createHostedBotsGithubRead({ homePath }) } : {}),
+    ...(internalIntegrationBaseUrl && internalPlatformToken ? {
+      integration: createBotIntegrationClient(createPlatformIntegrationTransport({
+        baseUrl: internalIntegrationBaseUrl, machineToken: internalPlatformToken,
+      })),
+    } : {}),
+  });
+  app.route(HOSTED_BOTS_DRIVE_BASE, hostedBotsDrive.routes);
+  app.route(HOSTED_BOTS_INTEGRATIONS_BASE, hostedBotsDrive.integrationRoutes);
+  const hostedBotsRuntime = await initializeHostedBotsRuntime(kyselyInstance, process.env, homePath);
+  app.route("/api/hosted-bots", hostedBotsRuntime.routes);
   app.route("/api/speech", speechRuntime.routes);
   const isManagedFeatureRestartIdle = () => dispatcher.activeCount === 0 && dispatcher.queueLength === 0
     && (canonicalChatOrchestrator?.activeCount ?? 0) === 0
@@ -1924,6 +1954,9 @@ export async function createGateway(config: GatewayConfig) {
       await managedFeatureRestart.close();
       await githubDeveloperSetup.close();
       await jevInboxRuntime?.close();
+      openMausBotGateway.close();
+      await hostedBotsDrive.close();
+      await hostedBotsRuntime.close();
       chatDriveContext.close();
       matrixMcpCapabilities.close();
       workspaceStartupRecoveryController.close();

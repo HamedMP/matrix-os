@@ -1,0 +1,25 @@
+[Unit]
+Description=OpenMausBot OSS Private Preview workload
+After=docker.service network-online.target
+Before=matrix-gateway.service
+Requires=docker.service
+Wants=network-online.target
+PartOf=matrix-gateway.service
+ConditionPathExists=/opt/matrix/app/MATRIX_OPENMAUSBOT_PREVIEW
+ConditionPathExists=/opt/matrix/bin/matrix-openmausbot.image-ref
+StartLimitIntervalSec=180
+StartLimitBurst=6
+
+[Service]
+Type=simple
+StateDirectory=matrix-openmausbot
+StateDirectoryMode=0700
+RuntimeDirectory=matrix-openmausbot
+RuntimeDirectoryMode=0750
+ExecCondition=/opt/matrix/bin/matrix-openmausbot-run --admit
+ExecStartPre=/opt/matrix/bin/matrix-openmausbot-run --prepare-drive
+ExecStart=/opt/matrix/bin/matrix-openmausbot-run
+ExecStop=-/usr/bin/docker stop --time 25 matrix-openmausbot
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=35

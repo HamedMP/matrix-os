@@ -13,6 +13,11 @@ export function resolveThemeMode(mode: ThemeMode): "dark" | "light" {
   return window.matchMedia?.("(prefers-color-scheme: dark)")?.matches ? "dark" : "light";
 }
 
+export function effectiveThemeMode(themeId: string, requested: "dark" | "light"): "dark" | "light" {
+  const theme = getUnifiedTheme(themeId);
+  return theme[requested] ? requested : theme.dark ? "dark" : "light";
+}
+
 /**
  * Applies a unified theme to the document: sets data-theme for the stylesheet
  * variant and overrides the semantic variables with
@@ -21,14 +26,7 @@ export function resolveThemeMode(mode: ThemeMode): "dark" | "light" {
 export function applyUnifiedTheme(themeId: string, mode: ThemeMode, custom?: CustomTheme | null): void {
   const root = document.documentElement;
   const theme = getUnifiedTheme(themeId);
-  const requested = resolveThemeMode(mode);
-  // A single-variant theme renders its own variant regardless of mode, and
-  // data-theme must match so stylesheet fallbacks stay coherent.
-  const effective = (requested === "dark" ? theme.dark : theme.light)
-    ? requested
-    : theme.dark
-      ? "dark"
-      : "light";
+  const effective = effectiveThemeMode(themeId, resolveThemeMode(mode));
   root.setAttribute("data-theme", effective);
   const paletteId = themeId === "custom" && custom ? "custom" : theme.id;
   root.setAttribute("data-theme-id", paletteId);

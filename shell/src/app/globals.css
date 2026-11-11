@@ -4,6 +4,7 @@
 @source "../../../packages/ui/src/chat-import";
 @source "../../../packages/ui/src/organization-drive";
 @source "../../../packages/ui/src/chat";
+@source "../../../packages/ui/src/bots";
 @source "../../../packages/ui/src/chat-agents";
 @source "../../../packages/ui/src/collaboration";
 @import "tw-animate-css";

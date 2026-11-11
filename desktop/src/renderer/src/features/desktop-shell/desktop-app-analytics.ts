@@ -4,6 +4,7 @@ import type { DesktopAppId } from "./desktop-apps";
 
 export const FIXED_APP_ANALYTICS_KINDS: Record<DesktopAppId, DesktopAppKind> = {
   work: "chat",
+  bots: "installed_app",
   terminal: "terminal",
   files: "files",
   editor: "editor",
@@ -18,6 +19,7 @@ export const FIXED_APP_ANALYTICS_KINDS: Record<DesktopAppId, DesktopAppKind> = {
 
 const TAB_ANALYTICS_KINDS: Partial<Record<TabKind, DesktopAppKind>> = {
   browser: "browser",
+  bots: "installed_app",
   files: "files",
   editor: "editor",
   vscode: "vscode",

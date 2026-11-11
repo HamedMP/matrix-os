@@ -1,3 +1,5 @@
+import { HOSTED_BOTS_APP_PATH } from "@matrix-os/contracts";
+import { WebBotsWorkspace } from "../bots/WebBotsWorkspace";
 import { useWindowManager } from "@/hooks/useWindowManager";
 import { AppWindowResizeControls } from "../window/AppWindowResizeControls";
 import { useCallback, type CSSProperties, type PointerEvent } from "react";
@@ -215,6 +217,8 @@ export function DesktopWindow({
           <FileBrowser windowId={win.id} />
         ) : win.path === "__preview-window__" ? (
           <PreviewWindow />
+        ) : win.path === HOSTED_BOTS_APP_PATH ? (
+          <WebBotsWorkspace active={focusedWindowId === win.id && !win.minimized} />
         ) : win.path === "__chat__" ? (
           <div className="h-full overflow-hidden">
             {chat && (
