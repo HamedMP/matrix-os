@@ -256,7 +256,7 @@ export function createMatrixMcpServer(options: MatrixMcpServerOptions = {}): Mcp
     annotations: readOnlyAnnotations,
   }, async (input) => safely(() => withClient(input.computer, async (client, computer) => ({
     ok: true, computer, ...(await client.waitTerminalTab(tabRef(input), {
-      timeoutMs: input.timeoutMs ?? 60_000, ...(input.output ? { output: input.output } : {}),
+      timeoutMs: input.timeoutMs ?? 30_000, ...(input.output ? { output: input.output } : {}),
     }) as Record<string, unknown>),
   }))));
 
