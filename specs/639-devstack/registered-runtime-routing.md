@@ -17,12 +17,19 @@ The existing bootstrap transaction remains the registration writer. It pins the 
 | Path | Existing authority | Additional profile requirement |
 | --- | --- | --- |
 | Authenticated app or `/vm/<handle>` proxy | Existing verified owner and entitlement checks; existing forwarded Gateway proof | Exact live registration in this instance's registry and fixed private alias |
+| All computers, `GET/HEAD /runtime` | The hosted account manager signs in the browser and owns account-wide inventory | Signed requests resolve the registered owner; unsigned root requests can go directly to hosted sign-in |
 | WebSocket upgrade | Existing session/owner and entitlement checks | Same registration lookup and target as HTTP |
 | Create, wake, replace or stop | Existing route authentication | Disabled orchestrator; no host control calls |
 | Legacy admin proxy, Code, Preview or VPS-specific forwarding | Existing behavior outside this profile | Unavailable in the registered-runtime profile |
 | Offline bootstrap | Operator with access to the dedicated local DB | Existing transaction, owner marker and real immutable ID; no credit grant |
 
 Existing auth, billing, funded-policy, and provider access rules stay in force. The profile neither enables funded AI nor requires changing the test account's Clerk project. No new endpoints, DB schema, host Docker/D-Bus access, public listeners, cloud resources or runtime deployments are required. Keep immutable source, owned data and operator privileges separate.
+
+### Account computer manager
+
+A registered preview's All computers link opens the canonical Matrix account manager. The registered profile returns a 302 to the fixed `https://app.matrix-os.com/runtime` URL with no request query, `Cache-Control: no-store`, and `Referrer-Policy: no-referrer`. The preview keeps serving the worktree at its registered URL. The separate Platform auth shell still serves the account manager in the normal Platform profile.
+
+An unsigned root request gets the same redirect so the hosted manager can authenticate it. An unsigned `/vm/<handle>/runtime` gets 401. A signed request with a missing or foreign registration gets 404. Other methods get 405 with `Allow: GET, HEAD`. Test the exact redirect, unsigned root and scoped requests, wrong owner and handle, query stripping, and normal Platform routing. A registered preview should never proxy this page to an auth shell that serves a different inventory.
 
 ## Implementation and acceptance
 
