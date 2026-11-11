@@ -80,7 +80,7 @@ describe('hosted Streamable HTTP MCP', () => {
       await client.connect(transport);
       expect(transport.sessionId).toBeUndefined();
       const tools = await client.listTools();
-      expect(tools.tools).toHaveLength(21);
+      expect(tools.tools).toHaveLength(22);
       const result = await client.callTool({ name: 'list_computers', arguments: {} });
       expect(JSON.stringify(result)).toContain('alice-primary');
       const run = await client.callTool({ name: 'run_command', arguments: { computer: 'primary', command: ['pwd'] } });
