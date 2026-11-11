@@ -12,7 +12,7 @@ import ComputerFileBrowser, { type BrowserSelection } from "./ComputerFileBrowse
 import { DesktopResourceSharing } from "./DesktopResourceSharing";
 import { DesktopOrganizationDrivesView } from "./DesktopOrganizationDrivesView";
 import { PreviewPane, resolveActivePath, type FileSelection } from "./FilePreviewPane";
-import { openFileInDesktopEditor } from "../editor/desktop-editor-store";
+import { openExactFileInDesktopEditor, openFileInDesktopEditor } from "../editor/desktop-editor-store";
 
 export { resolveActivePath } from "./FilePreviewPane";
 export type { FileSelection } from "./FilePreviewPane";
@@ -210,7 +210,7 @@ export default function FilesWorkspace() {
         [request.tabId]: (current[request.tabId] ?? 0) + 1,
       }));
       setNewItemRequest(null);
-      if (request.kind === "file" && !openFileInDesktopEditor(path, { exactPath: true })) {
+      if (request.kind === "file" && !openExactFileInDesktopEditor(path)) {
         toast.error("File created, but it could not be opened in the editor.");
       }
     } catch (error: unknown) {

@@ -137,7 +137,15 @@ export function currentDesktopEditorScope(): string {
   return `${runtimeSlot}|${authGeneration}`;
 }
 
-export function openFileInDesktopEditor(rawPath: string, options?: { exactPath?: boolean }): boolean {
+export function openFileInDesktopEditor(rawPath: string): boolean {
+  return openDesktopEditor(rawPath);
+}
+
+export function openExactFileInDesktopEditor(path: string): boolean {
+  return openDesktopEditor(path, { exactPath: true });
+}
+
+function openDesktopEditor(rawPath: string, options?: { exactPath?: boolean }): boolean {
   const editor = useDesktopEditor.getState();
   editor.ensureScope(currentDesktopEditorScope());
   if (!useDesktopEditor.getState().openFile(rawPath, undefined, options)) return false;
