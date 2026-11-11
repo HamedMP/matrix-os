@@ -15,14 +15,14 @@ import {
 interface XpToolbarProps {
   taskPaneOpen: boolean;
   onToggleTaskPane: () => void;
-  newFileAction?: ReactNode;
+  creationMenu?: ReactNode;
 }
 
 function pathLabel(path: string): string {
   return path === "" ? "Home" : path;
 }
 
-export function XpToolbar({ taskPaneOpen, onToggleTaskPane, newFileAction }: XpToolbarProps) {
+export function XpToolbar({ taskPaneOpen, onToggleTaskPane, creationMenu }: XpToolbarProps) {
   const currentPath = useFileBrowser((s) => s.currentPath);
   const history = useFileBrowser((s) => s.history);
   const historyIndex = useFileBrowser((s) => s.historyIndex);
@@ -168,7 +168,7 @@ export function XpToolbar({ taskPaneOpen, onToggleTaskPane, newFileAction }: XpT
       <span className="xp-tool-separator" />
 
       <div className="xp-tool-group">
-        {newFileAction}
+        {creationMenu}
         <button
           type="button"
           className="xp-tool-btn"

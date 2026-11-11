@@ -1,6 +1,7 @@
 import { FilePathSchema, FileResourceRefSchema, type FileResourceRef } from "@matrix-os/contracts";
 import { create } from "zustand";
 import { useConnection } from "../../stores/connection";
+import { useDesktopSurfaces } from "../../stores/desktop-surfaces";
 import { useTabs } from "../../stores/tabs";
 
 export const MAX_DESKTOP_EDITOR_TABS = 16;
@@ -149,8 +150,14 @@ function openDesktopEditor(rawPath: string, options?: { exactPath?: boolean }): 
   const editor = useDesktopEditor.getState();
   editor.ensureScope(currentDesktopEditorScope());
   if (!useDesktopEditor.getState().openFile(rawPath, undefined, options)) return false;
-  useTabs.getState().openTab(EDITOR_WORKSPACE_TAB_SPEC);
+  showEditorWorkspace();
   return true;
+}
+
+function showEditorWorkspace(): void {
+  const tabId = useTabs.getState().openTab(EDITOR_WORKSPACE_TAB_SPEC);
+  // Selecting a retained tab does not restore its minimized or closed window.
+  useDesktopSurfaces.getState().activateSurface(tabId);
 }
 
 export async function openResourceInDesktopEditor(resource: FileResourceRef, isCurrent: () => boolean = () => true): Promise<boolean> {
@@ -169,6 +176,6 @@ export async function openResourceInDesktopEditor(resource: FileResourceRef, isC
   }
   useDesktopEditor.getState().ensureScope(scope);
   if (!useDesktopEditor.getState().openFile(target.path, target)) return false;
-  useTabs.getState().openTab(EDITOR_WORKSPACE_TAB_SPEC);
+  showEditorWorkspace();
   return true;
 }

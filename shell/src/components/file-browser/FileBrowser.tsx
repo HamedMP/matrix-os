@@ -7,7 +7,7 @@ import { useWindowManager } from "@/hooks/useWindowManager";
 import { useFileWatcher } from "@/hooks/useFileWatcher";
 import { useThemeStyle } from "../window/useThemeStyle";
 import { FileBrowserToolbar } from "./FileBrowserToolbar";
-import { NewFileAction } from "./NewFileAction";
+import { FileCreationMenu } from "./FileCreationMenu";
 import { FileBrowserSidebar } from "./FileBrowserSidebar";
 import { FileBrowserContent } from "./FileBrowserContent";
 import { PreviewPanel } from "./PreviewPanel";
@@ -316,10 +316,10 @@ function FileBrowserForAuthority({ windowId, mobile = false, active, identity, g
   const selectedKind = selectedEntry?.type === "file" ? "file" : selectedEntry?.type === "directory" ? "folder" : null;
   const selectedPath = selectedName ? (currentPath ? `${currentPath}/${selectedName}` : selectedName) : null;
 
-  const newFileAction = !mobile && !showingTrash && !searchResults && !organizationDrivesVisible ? (
-    <NewFileAction key={JSON.stringify([identity, currentPath])} xp={isXpExplorer}
+  const creationMenu = !mobile && !showingTrash && !searchResults && !organizationDrivesVisible ? (
+    <FileCreationMenu key={JSON.stringify([identity, currentPath])} xp={isXpExplorer}
       parentPath={currentPath} gatewayUrl={gatewayUrl} disabled={loading}
-      onCreated={path => openFile(path, { authority: identity, mode: "source", focus: true })} />
+      onFileCreated={path => openFile(path, { authority: identity, mode: "source", focus: true })} />
   ) : null;
 
   return (
@@ -355,11 +355,11 @@ function FileBrowserForAuthority({ windowId, mobile = false, active, identity, g
           onOpenFile={openFile}
           showingTrash={showingTrash}
           onTrashClick={() => setShowingTrash(!showingTrash)}
-          newFileAction={newFileAction}
+          creationMenu={creationMenu}
         />
       ) : (
         <>
-          <FileBrowserToolbar mobile={mobile} newFileAction={newFileAction} />
+          <FileBrowserToolbar mobile={mobile} creationMenu={creationMenu} />
           <div className="flex flex-1 min-h-0">
             {!mobile && (
               <FileBrowserSidebar

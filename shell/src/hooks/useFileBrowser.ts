@@ -66,13 +66,13 @@ interface FileBrowserState {
   pendingFolder: FileBrowserFolderRequest | null;
 }
 
-interface FileCreationTarget {
+interface ItemCreationTarget {
   parentPath: string;
   gatewayUrl: string;
   signal: AbortSignal;
 }
 
-type FileCreationResult = { ok: true; path: string } | { ok: false; error: string };
+type ItemCreationResult = { ok: true; path: string } | { ok: false; error: string };
 
 interface FileBrowserActions {
   navigate(path: string): void;
@@ -96,8 +96,8 @@ interface FileBrowserActions {
   rename(from: string, to: string): Promise<{ ok: boolean; error?: string }>;
   deleteFiles(paths: string[]): Promise<void>;
   duplicate(paths: string[]): Promise<void>;
-  createFolder(name: string): Promise<void>;
-  createFile(name: string, target?: FileCreationTarget): Promise<FileCreationResult>;
+  createFolder(name: string, target?: ItemCreationTarget): Promise<ItemCreationResult>;
+  createFile(name: string, target?: ItemCreationTarget): Promise<ItemCreationResult>;
   toggleFavorite(path: string): void;
   requestView(view: "files" | "trash", folder?: FileBrowserFolderRequest): void;
   consumeViewRequest(expectedView?: "files" | "trash", expectedFolder?: FileBrowserFolderRequest | null): boolean;
@@ -151,6 +151,50 @@ function sortEntries(
   };
 
   return [...dirs.sort(compare), ...files.sort(compare)];
+}
+
+async function createItem(
+  kind: "file" | "folder",
+  name: string,
+  target: ItemCreationTarget | undefined,
+  get: () => Pick<FileBrowserState, "currentPath"> & Pick<FileBrowserActions, "refresh">,
+  set: (state: Pick<FileBrowserState, "error">) => void,
+): Promise<ItemCreationResult> {
+  const parentPath = target?.parentPath ?? get().currentPath;
+  const gatewayUrl = target?.gatewayUrl ?? getGatewayUrl();
+  const current = () => !target?.signal.aborted && gatewayUrl === getGatewayUrl() && get().currentPath === parentPath;
+  const fail = (error: string) => {
+    if (!target && current()) set({ error });
+    return { ok: false, error } as const;
+  };
+  const parsed = FileLeafNameSchema.safeParse(name);
+  if (!parsed.success) return fail(`Enter a ${kind} name without slashes.`);
+  const folderChanged = `The current folder changed. Reopen New ${kind} and try again.`;
+  if (!current()) return fail(folderChanged);
+
+  const path = parentPath ? `${parentPath}/${parsed.data}` : parsed.data;
+  const endpoint = kind === "folder" ? "mkdir" : "touch";
+  const timeout = AbortSignal.timeout(10_000);
+  try {
+    const response = await fetch(`${gatewayUrl}/api/files/${endpoint}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ path }),
+      redirect: "error",
+      signal: target ? AbortSignal.any([target.signal, timeout]) : timeout,
+    });
+    if (!current()) return fail(folderChanged);
+    if (!response.ok) {
+      return fail(response.status === 409 && kind === "file"
+        ? "The file name or folder is unavailable. Check the name and try again."
+        : `Failed to create ${kind}`);
+    }
+    get().refresh();
+    return { ok: true, path };
+  } catch (error: unknown) {
+    if (current()) console.warn(`[file-browser] Could not create ${kind}:`, error instanceof Error ? error.name : "Unknown error");
+    return fail(`Failed to create ${kind}`);
+  }
 }
 
 export const useFileBrowser = create<FileBrowserState & FileBrowserActions>()(
@@ -421,48 +465,12 @@ export const useFileBrowser = create<FileBrowserState & FileBrowserActions>()(
       get().refresh();
     },
 
-    async createFolder(name) {
-      const { currentPath } = get();
-      const path = currentPath ? `${currentPath}/${name}` : name;
-      const res = await fetch(`${GATEWAY_URL}/api/files/mkdir`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ path }),
-        signal: AbortSignal.timeout(10_000),
-      });
-      if (!res.ok) set({ error: "Failed to create folder" });
-      get().refresh();
+    createFolder(name, target) {
+      return createItem("folder", name, target, get, set);
     },
 
-    async createFile(name, target) {
-      const parentPath = target?.parentPath ?? get().currentPath;
-      const gatewayUrl = target?.gatewayUrl ?? getGatewayUrl();
-      const current = () => !target?.signal.aborted && gatewayUrl === getGatewayUrl() && get().currentPath === parentPath;
-      const fail = (error: string) => {
-        if (!target && current()) set({ error });
-        return { ok: false, error } as const;
-      };
-      const parsed = FileLeafNameSchema.safeParse(name);
-      if (!parsed.success) return fail("Enter a file name without slashes.");
-      if (!current()) return fail("The current folder changed. Reopen New file and try again.");
-      const path = parentPath ? `${parentPath}/${parsed.data}` : parsed.data;
-      const timeout = AbortSignal.timeout(10_000);
-      try {
-        const response = await fetch(`${gatewayUrl}/api/files/touch`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ path }),
-          redirect: "error",
-          signal: target ? AbortSignal.any([target.signal, timeout]) : timeout,
-        });
-        if (!current()) return fail("The current folder changed. Reopen New file and try again.");
-        if (!response.ok) return fail(response.status === 409 ? "The file name or folder is unavailable. Check the name and try again." : "Failed to create file");
-        get().refresh();
-        return { ok: true, path };
-      } catch (error: unknown) {
-        if (current()) console.warn("[file-browser] Could not create file:", error instanceof Error ? error.name : "Unknown error");
-        return fail("Failed to create file");
-      }
+    createFile(name, target) {
+      return createItem("file", name, target, get, set);
     },
 
     toggleFavorite(path) {

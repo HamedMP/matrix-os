@@ -22,7 +22,7 @@ interface XpExplorerProps {
   onOpenFile: (path: string) => void;
   showingTrash: boolean;
   onTrashClick: () => void;
-  newFileAction?: ReactNode;
+  creationMenu?: ReactNode;
 }
 
 /**
@@ -38,7 +38,7 @@ export function XpExplorer({
   onOpenFile,
   showingTrash,
   onTrashClick,
-  newFileAction,
+  creationMenu,
 }: XpExplorerProps) {
   const viewMode = useFileBrowser((s) => s.viewMode);
   const loading = useFileBrowser((s) => s.loading);
@@ -91,7 +91,7 @@ export function XpExplorer({
       <XpToolbar
         taskPaneOpen={taskPaneOpen}
         onToggleTaskPane={() => setTaskPaneOpen((v) => !v)}
-        newFileAction={newFileAction}
+        creationMenu={creationMenu}
       />
       <XpAddressBar />
       <div className="xp-explorer-body">

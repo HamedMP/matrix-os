@@ -14,7 +14,7 @@ import {
 } from "@/lib/hugeicons";
 import { cn } from "@/lib/utils";
 
-export function FileBrowserToolbar({ mobile = false, newFileAction }: { mobile?: boolean; newFileAction?: ReactNode }) {
+export function FileBrowserToolbar({ mobile = false, creationMenu }: { mobile?: boolean; creationMenu?: ReactNode }) {
   const currentPath = useFileBrowser((s) => s.currentPath);
   const historyIndex = useFileBrowser((s) => s.historyIndex);
   const history = useFileBrowser((s) => s.history);
@@ -102,7 +102,7 @@ export function FileBrowserToolbar({ mobile = false, newFileAction }: { mobile?:
         ))}
       </div>
 
-      {newFileAction}
+      {creationMenu}
       <div className="flex items-center border rounded-md shrink-0">
         {(
           [

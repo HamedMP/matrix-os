@@ -486,6 +486,9 @@ export default function ComputerFileBrowser({
       );
   }
 
+  const canCreateInFolder = mode === "browse" && api && viewStatus === "ready"
+    && !isProtectedFolderCreationParentPath(viewCurrentPath);
+
   return (
     <div
       className={`flex min-h-0 flex-1 flex-col overflow-hidden${framed ? " rounded-lg border" : ""}`}
@@ -509,10 +512,8 @@ export default function ComputerFileBrowser({
         onNavigate={navigate}
         onRefresh={() => void load(viewCurrentPath)}
         onUpload={mode === "browse" && !viewReadOnly ? () => fileInputRef.current?.click() : undefined}
-        onCreateFile={onRequestCreateFile && mode === "browse" && api && viewStatus === "ready"
-          && !isProtectedFolderCreationParentPath(viewCurrentPath)
-          ? () => onRequestCreateFile(viewCurrentPath)
-          : undefined}
+        onCreateFolder={canCreateInFolder && onRequestCreateFolder ? () => onRequestCreateFolder(viewCurrentPath) : undefined}
+        onCreateFile={canCreateInFolder && onRequestCreateFile ? () => onRequestCreateFile(viewCurrentPath) : undefined}
         searchOpen={searchOpen}
         searchQuery={searchQuery}
         onSearchOpen={() => setSearchOpen(true)}

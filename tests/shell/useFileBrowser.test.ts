@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { useFileBrowser } from "../../shell/src/hooks/useFileBrowser.js";
+import { getGatewayUrl } from "../../shell/src/lib/gateway.js";
 
 // Mock fetch globally
 const mockFetch = vi.fn();
@@ -270,6 +271,23 @@ describe("useFileBrowser store", () => {
           body: JSON.stringify({ path: "agents/new-folder" }),
         }),
       );
+    });
+
+    it("scopes a named folder to its captured parent and validates the leaf name", async () => {
+      const create = useFileBrowser.getState().createFolder;
+      const target = { parentPath: "workspaces/alpha", gatewayUrl: getGatewayUrl(), signal: new AbortController().signal };
+      useFileBrowser.setState({ currentPath: "workspaces/beta" });
+      await expect(create("notes", target)).resolves.toMatchObject({ ok: false });
+      useFileBrowser.setState({ currentPath: "workspaces/alpha" });
+      await expect(create("../notes", target)).resolves.toEqual({ ok: false, error: "Enter a folder name without slashes." });
+      expect(mockFetch).not.toHaveBeenCalled();
+
+      mockFetch.mockResolvedValue({ ok: true, json: () => Promise.resolve({ entries: [] }) });
+      await expect(create("Notes", target)).resolves.toEqual({ ok: true, path: "workspaces/alpha/Notes" });
+      expect(mockFetch).toHaveBeenCalledWith(expect.stringContaining("/api/files/mkdir"), expect.objectContaining({
+        method: "POST",
+        body: JSON.stringify({ path: "workspaces/alpha/Notes" }),
+      }));
     });
 
     it("createFile calls touch API", async () => {

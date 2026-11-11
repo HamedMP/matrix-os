@@ -10,7 +10,8 @@ import FilesWorkspace, {
 import { AppError } from "../../desktop/src/renderer/src/lib/errors";
 import { useConnection } from "../../desktop/src/renderer/src/stores/connection";
 import { useTabs } from "../../desktop/src/renderer/src/stores/tabs";
-import { useDesktopEditor } from "../../desktop/src/renderer/src/features/editor/desktop-editor-store";
+import { EDITOR_WORKSPACE_TAB_SPEC, useDesktopEditor } from "../../desktop/src/renderer/src/features/editor/desktop-editor-store";
+import { isDesktopSurfaceVisible, useDesktopSurfaces } from "../../desktop/src/renderer/src/stores/desktop-surfaces";
 
 import { useFilesNavigation } from "../../desktop/src/renderer/src/stores/files-navigation";
 
@@ -99,6 +100,7 @@ describe("Files workspace", () => {
       api: api as never,
     });
     useTabs.setState({ tabs: [], activeTabId: null });
+    useDesktopSurfaces.setState(useDesktopSurfaces.getInitialState(), true);
     useDesktopEditor.setState(useDesktopEditor.getInitialState(), true);
   });
 
@@ -274,7 +276,14 @@ describe("Files workspace", () => {
     render(<Tooltip.Provider><FilesWorkspace /></Tooltip.Provider>);
     fireEvent.doubleClick(await screen.findByRole("button", { name: "Open workspaces" }));
     await screen.findByRole("button", { name: "Open app.ts" });
-    fireEvent.click(screen.getByRole("button", { name: "New file", exact: true }));
+    const create = screen.getByRole("button", { name: "Create", exact: true });
+    expect(create.textContent).toBe("");
+    expect(create.getAttribute("aria-haspopup")).toBe("menu");
+    expect(screen.queryByRole("menu")).toBeNull();
+    fireEvent.keyDown(create, { key: "Enter" });
+    const menu = await screen.findByRole("menu");
+    expect(within(menu).getAllByRole("menuitem").map((item) => item.textContent?.trim())).toEqual(["New Folder", "New File"]);
+    fireEvent.click(within(menu).getByRole("menuitem", { name: "New File", exact: true }));
 
     const name = screen.getByRole("textbox", { name: "File name" });
     expect(document.activeElement).toBe(name);
@@ -303,7 +312,8 @@ describe("Files workspace", () => {
     let finishCreate!: (result: { ok: boolean }) => void;
     api.post.mockReturnValueOnce(new Promise(resolve => { finishCreate = resolve; }));
     render(<Tooltip.Provider><FilesWorkspace /></Tooltip.Provider>);
-    fireEvent.click(await screen.findByRole("button", { name: "New file", exact: true }));
+    fireEvent.keyDown(await screen.findByRole("button", { name: "Create", exact: true }), { key: "Enter" });
+    fireEvent.click(await screen.findByRole("menuitem", { name: "New File", exact: true }));
     fireEvent.change(screen.getByRole("textbox", { name: "File name" }), { target: { value: "notes.md" } });
     fireEvent.click(screen.getByRole("button", { name: "Create file" }));
 
@@ -331,15 +341,26 @@ describe("Files workspace", () => {
     await waitFor(() => expect(api.get).toHaveBeenCalledTimes(2));
   });
 
-  it("keeps folder creation scoped to the tab that opened the dialog", async () => {
+  it("returns keyboard focus to the plus after cancelling a creation dialog", async () => {
+    render(<Tooltip.Provider><FilesWorkspace /></Tooltip.Provider>);
+    const create = await screen.findByRole("button", { name: "Create", exact: true });
+    create.focus();
+    fireEvent.keyDown(create, { key: "Enter" });
+    fireEvent.click(await screen.findByRole("menuitem", { name: "New Folder", exact: true }));
+    expect(screen.getByRole("textbox", { name: "Folder name" })).toBe(document.activeElement);
+    fireEvent.click(screen.getByRole("button", { name: "Cancel", exact: true }));
+    await waitFor(() => expect(document.activeElement).toBe(create));
+  });
+
+  it("keeps folder creation from the plus menu scoped to the tab that opened the dialog", async () => {
     render(<Tooltip.Provider><FilesWorkspace /></Tooltip.Provider>);
     const workspaces = await screen.findByRole("button", { name: "Open workspaces" });
     fireEvent.contextMenu(workspaces);
     fireEvent.click(await screen.findByText("Open in new tab"));
     await screen.findByRole("button", { name: "Open app.ts" });
 
-    fireEvent.contextMenu(screen.getAllByTestId("files-listing").at(-1)!);
-    fireEvent.click(await screen.findByText("New folder…"));
+    fireEvent.keyDown(screen.getByRole("button", { name: "Create", exact: true }), { key: "Enter" });
+    fireEvent.click(await screen.findByRole("menuitem", { name: "New Folder", exact: true }));
     fireEvent.change(screen.getByRole("textbox", { name: "Folder name" }), {
       target: { value: "Ideas" },
     });
@@ -396,6 +417,33 @@ describe("Files workspace", () => {
 
     expect(useDesktopEditor.getState().activePath).toBe("workspaces/app.ts");
     expect(useTabs.getState().tabs).toContainEqual(expect.objectContaining({ kind: "editor" }));
+  });
+
+  it.each(["closed", "minimized"] as const)("restores and raises the %s Editor from an empty file preview", async (mode) => {
+    const editorId = useTabs.getState().openTab(EDITOR_WORKSPACE_TAB_SPEC);
+    const filesId = useTabs.getState().openTab({ kind: "files", title: "Files", slug: "files", closable: false });
+    const surfaces = useDesktopSurfaces.getState();
+    surfaces.reconcileTabs([editorId, filesId], { width: 1280, height: 800 });
+    if (mode === "closed") surfaces.closeSurface(editorId);
+    else surfaces.minimizeSurface(editorId);
+    surfaces.activateSurface(filesId);
+    expect(isDesktopSurfaceVisible(editorId, useDesktopSurfaces.getState())).toBe(false);
+    api = makeApi({ statFor: () => ({ size: 0 }), textFor: () => "" });
+    useConnection.setState({ api: api as never });
+    render(<Tooltip.Provider><FilesWorkspace /></Tooltip.Provider>);
+    fireEvent.doubleClick(await screen.findByRole("button", { name: "Open workspaces" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Open app.ts" }));
+    await waitFor(() => expect(api.getText).toHaveBeenCalled());
+
+    fireEvent.keyDown(screen.getByRole("button", { name: "File actions" }), { key: "ArrowDown" });
+    fireEvent.click(await screen.findByRole("menuitem", { name: "Open in Editor" }));
+
+    const updated = useDesktopSurfaces.getState();
+    expect(useDesktopEditor.getState().activePath).toBe("workspaces/app.ts");
+    expect(isDesktopSurfaceVisible(editorId, updated)).toBe(true);
+    expect(updated.surfaces[editorId]!.zIndex).toBeGreaterThan(updated.surfaces[filesId]!.zIndex);
+    expect(useTabs.getState().activeTabId).toBe(editorId);
+    expect(useTabs.getState().tabs.filter(tab => tab.kind === "editor").map(tab => tab.id)).toEqual([editorId]);
   });
 
   it("shows an unsupported state without reading unknown file bytes", async () => {

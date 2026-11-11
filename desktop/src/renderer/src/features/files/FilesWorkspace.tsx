@@ -12,7 +12,7 @@ import ComputerFileBrowser, { type BrowserSelection } from "./ComputerFileBrowse
 import { DesktopResourceSharing } from "./DesktopResourceSharing";
 import { DesktopOrganizationDrivesView } from "./DesktopOrganizationDrivesView";
 import { PreviewPane, resolveActivePath, type FileSelection } from "./FilePreviewPane";
-import { openExactFileInDesktopEditor, openFileInDesktopEditor } from "../editor/desktop-editor-store";
+import { openExactFileInDesktopEditor } from "../editor/desktop-editor-store";
 
 export { resolveActivePath } from "./FilePreviewPane";
 export type { FileSelection } from "./FilePreviewPane";
@@ -293,7 +293,9 @@ export default function FilesWorkspace() {
               selection={previewSelection}
               onDownload={download.download}
               downloadPending={download.pending}
-              onEdit={openFileInDesktopEditor}
+              onEdit={(path) => {
+                if (!openExactFileInDesktopEditor(path)) toast.error("The file could not be opened in the editor.");
+              }}
               onClose={() => setSelections((current) => ({ ...current, [activeTabId]: null }))}
             />
           </Suspense>
