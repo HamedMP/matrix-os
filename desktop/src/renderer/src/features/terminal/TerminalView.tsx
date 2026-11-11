@@ -844,7 +844,7 @@ export default function TerminalView({
       />
       {clipboardError ? (
         <div className="pointer-events-none absolute inset-x-0 bottom-3 flex justify-center px-3" aria-live="polite">
-          <span className="rounded-md px-3 py-1.5 text-xs" style={{ background: "var(--danger-muted)", color: "var(--danger)" }}>
+          <span className="rounded-md px-3 py-1.5 text-xs" style={{ background: "var(--danger-muted)", color: "var(--danger-text)" }}>
             {clipboardError}
           </span>
         </div>

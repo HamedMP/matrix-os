@@ -150,7 +150,7 @@ export function CanonicalChatIndex({
                 <button
                   type="button"
                   aria-label={`Delete ${record.chat.title}`}
-                  className="absolute right-3 top-1/2 z-10 flex size-6 -translate-y-1/2 items-center justify-center rounded-md bg-[var(--surface-base-background,#FFFFFD)] text-[var(--text-tertiary)] opacity-0 transition-opacity hover:bg-[var(--bg-hover)] hover:text-[var(--danger)] focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[var(--accent)] group-hover/chat:opacity-100"
+                  className="absolute right-3 top-1/2 z-10 flex size-6 -translate-y-1/2 items-center justify-center rounded-md bg-[var(--surface-base-background,#FFFFFD)] text-[var(--text-tertiary)] opacity-0 transition-opacity hover:bg-[var(--bg-hover)] hover:text-[var(--danger-text)] focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[var(--accent)] group-hover/chat:opacity-100"
                   onClick={() => onDelete(record)}
                 >
                   <Trash2 size={14} aria-hidden="true" />

@@ -313,7 +313,7 @@ export default function MonacoEditorHost({
     return <div className="flex flex-1 items-center justify-center text-sm" style={{ color: "var(--text-tertiary)" }}>Opening {path}…</div>;
   }
   if (loadState === "error") {
-    return <div role="alert" className="flex flex-1 items-center justify-center px-6 text-center text-sm" style={{ color: "var(--danger)" }}>{loadError}</div>;
+    return <div role="alert" className="flex flex-1 items-center justify-center px-6 text-center text-sm" style={{ color: "var(--danger-text)" }}>{loadError}</div>;
   }
 
   return (
@@ -350,7 +350,7 @@ export default function MonacoEditorHost({
       </section> : null}
       </div>
       {saveError ? (
-        <div role="alert" className="flex items-center justify-between gap-3 border-t px-3 py-2 text-xs" style={{ borderColor: "var(--border-subtle)", color: "var(--danger)" }}>
+        <div role="alert" className="flex items-center justify-between gap-3 border-t px-3 py-2 text-xs" style={{ borderColor: "var(--border-subtle)", color: "var(--danger-text)" }}>
           <span>{saveError}</span><Button variant="ghost" onClick={() => setSaveError(null)}>Dismiss</Button>
         </div>
       ) : null}

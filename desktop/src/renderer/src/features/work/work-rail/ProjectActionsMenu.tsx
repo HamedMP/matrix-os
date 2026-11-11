@@ -21,7 +21,7 @@ export function ProjectActionsMenu({ items, children }: { items: ProjectMenuActi
     <ContextMenu.Portal><ContextMenu.Content className={contentClass} style={contentStyle}>
       {items.map(item => <Fragment key={item.label}>
         {item.danger ? <ContextMenu.Separator className="my-1 h-px" style={{ background: "var(--border-subtle)" }} /> : null}
-        <ContextMenu.Item disabled={item.disabled} onSelect={item.onSelect} className={itemClass} style={{ color: item.danger ? "var(--danger)" : "var(--text-primary)" }}>{item.icon}{item.label}</ContextMenu.Item>
+        <ContextMenu.Item disabled={item.disabled} onSelect={item.onSelect} className={itemClass} style={{ color: item.danger ? "var(--danger-text)" : "var(--text-primary)" }}>{item.icon}{item.label}</ContextMenu.Item>
       </Fragment>)}
     </ContextMenu.Content></ContextMenu.Portal>
   </ContextMenu.Root>;
@@ -37,7 +37,7 @@ export function ProjectActionsButton({ name, items, buttonRef }: { name: string;
     <DropdownMenu.Portal><DropdownMenu.Content align="end" sideOffset={4} className={contentClass} style={contentStyle}>
       {items.map(item => <Fragment key={item.label}>
         {item.danger ? <DropdownMenu.Separator className="my-1 h-px" style={{ background: "var(--border-subtle)" }} /> : null}
-        <DropdownMenu.Item disabled={item.disabled} onSelect={item.onSelect} className={itemClass} style={{ color: item.danger ? "var(--danger)" : "var(--text-primary)" }}>{item.icon}{item.label}</DropdownMenu.Item>
+        <DropdownMenu.Item disabled={item.disabled} onSelect={item.onSelect} className={itemClass} style={{ color: item.danger ? "var(--danger-text)" : "var(--text-primary)" }}>{item.icon}{item.label}</DropdownMenu.Item>
       </Fragment>)}
     </DropdownMenu.Content></DropdownMenu.Portal>
   </DropdownMenu.Root>;

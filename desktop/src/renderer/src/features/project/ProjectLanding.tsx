@@ -49,7 +49,7 @@ export function ProjectLanding({ project, children, showMetadata = true, records
         </button>)}
       </div> : null}
       {loaded.error ? <p role="alert" className="mt-2 text-xs">Project chats could not be refreshed. Try again.</p> : null}
-      {actions.error && actions.dialog !== "edit" ? <p role="alert" className="mt-2 text-xs" style={{ color: "var(--danger)" }}>{actions.error}</p> : null}
+      {actions.error && actions.dialog !== "edit" ? <p role="alert" className="mt-2 text-xs" style={{ color: "var(--danger-text)" }}>{actions.error}</p> : null}
     </header> : null}
     {/* Metadata owns spare height; the draft uses its content height and may
         shrink for scrollable provider guidance in a short window. */}

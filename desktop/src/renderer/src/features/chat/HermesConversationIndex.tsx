@@ -91,7 +91,7 @@ function ConversationRow({
           aria-label={`Delete ${conversation.title}`}
           aria-describedby={running ? runningDescriptionId : undefined}
           className="pointer-events-none inline-flex h-8 w-8 items-center justify-center rounded-md opacity-0 transition-colors hover:bg-[var(--danger-muted)] focus:bg-[var(--danger-muted)] focus:opacity-100 focus:pointer-events-auto focus-visible:outline-2 focus-visible:outline-[var(--danger)] group-hover:opacity-100 group-hover:pointer-events-auto group-focus-within:opacity-100 group-focus-within:pointer-events-auto disabled:cursor-not-allowed disabled:opacity-40"
-          style={{ color: "var(--danger)" }}
+          style={{ color: "var(--danger-text)" }}
           disabled={!api || running || deleting || deletingConversationId !== null}
           onClick={() => onRequestDelete(conversation)}
         >

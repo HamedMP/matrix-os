@@ -104,7 +104,7 @@ export default function StartSessionControls({
               ? "flex max-w-36 items-center gap-1 truncate text-xs"
               : "flex items-center gap-1 text-xs"
           }
-          style={{ color: "var(--danger)" }}
+          style={{ color: "var(--danger-text)" }}
           title={compact ? shownError ?? undefined : undefined}
           aria-live="polite"
         >

@@ -67,7 +67,7 @@ export default function CompatibilityUpdatePanel({ repair, close }: {
           {restart ? "The desktop app will restart after downloading. Save your work before updating." : "The cloud connection may briefly restart during the update."}
           {plan?.channel ? ` Cloud update channel: ${plan.channel}.` : ""}
         </p> : null}
-        {error ? <p role="alert" className="mt-3 text-sm" style={{ color: "var(--danger)" }}>We couldn't confirm the update completed. Check versions again before retrying.</p> : null}
+        {error ? <p role="alert" className="mt-3 text-sm" style={{ color: "var(--danger-text)" }}>We couldn't confirm the update completed. Check versions again before retrying.</p> : null}
       </div>
       <div className="flex justify-end gap-2 border-t px-6 py-4" style={{ borderColor: "var(--border-subtle)" }}>
         {!done ? <Button variant="ghost" onClick={close}>{busy ? "Hide" : "Later"}</Button> : null}

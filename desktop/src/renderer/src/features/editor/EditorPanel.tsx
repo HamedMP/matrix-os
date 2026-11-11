@@ -130,7 +130,7 @@ export function ConflictBar({
       className="flex items-center justify-between gap-3 border-t px-3 py-2"
       style={{ background: "var(--warning-muted)", borderColor: "var(--border-default)" }}
     >
-      <span className="text-sm" style={{ color: "var(--warning)" }}>
+      <span className="text-sm" style={{ color: "var(--warning-text)" }}>
         This file changed on your computer since you opened it.
       </span>
       <div className="flex gap-2">

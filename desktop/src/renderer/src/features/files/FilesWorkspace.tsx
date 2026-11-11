@@ -263,7 +263,7 @@ export default function FilesWorkspace() {
           <h2 className="text-base font-semibold" style={{ color: "var(--text-primary)" }}>New folder</h2>
           <p className="mt-1 text-xs" style={{ color: "var(--text-tertiary)" }}>Create inside {newFolderRequest?.parentPath || "Matrix home"}.</p>
           <input ref={newFolderInputRef} aria-label="Folder name" value={newFolderName} onChange={(event) => setNewFolderName(event.target.value)} className="mt-4 h-10 w-full rounded-lg border px-3 text-sm outline-none focus:ring-2 focus:ring-[var(--accent)]" style={{ borderColor: "var(--border-default)", background: "var(--bg-surface)", color: "var(--text-primary)" }} />
-          {newFolderError ? <p role="alert" className="mt-2 text-xs" style={{ color: "var(--danger)" }}>{newFolderError}</p> : null}
+          {newFolderError ? <p role="alert" className="mt-2 text-xs" style={{ color: "var(--danger-text)" }}>{newFolderError}</p> : null}
           <div className="mt-5 flex justify-end gap-2"><Button type="button" variant="ghost" onClick={() => setNewFolderRequest(null)}>Cancel</Button><Button type="submit" variant="primary" disabled={creatingFolder}>{creatingFolder ? "Creating…" : "Create folder"}</Button></div>
         </form>
       </Dialog>
