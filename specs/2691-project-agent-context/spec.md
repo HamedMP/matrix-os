@@ -51,6 +51,7 @@ The Gateway registers the route with its project/workspace routes. Clients valid
 - Verify all three Add skill actions create the expected Markdown in the selected project, preserve copied or imported content, and reject duplicates. The installed picker loads only the selected file.
 - A New skill draft survives an inventory refresh and retry. Switching the project, account, or computer discards that draft.
 - A message accepts up to five project skills. Trying to add another keeps the typed slash text and explains how to make room.
+- Web Desktop, Web Canvas, and Electron Desktop can queue a selected project skill during a run in the same primary checkout.
 - Verify the actual editor can create, modify and save a project skill, MCP declaration and instruction file. Refresh shows the new declarations only in their project. A failed read cannot be saved as an empty file, and a failed write preserves the draft.
 - Verify instruction behavior using the pinned native process and synthetic local inference, plus Gateway tests for project/worktree dispatch, retry/resume provenance and intentional suppression. Keep local runtime and release/production evidence separate.
 

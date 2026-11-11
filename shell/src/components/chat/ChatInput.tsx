@@ -106,7 +106,8 @@ export function ChatInput({
   const query = queryMatch && dismissedQuery !== input ? queryMatch[1]! : null;
   const permissionResources = botConsentResources.length ? botConsentResources : resources;
   const permission = useChatMentionPermission(scope, permissionResources, permissionMode, composer.permissionIdentity);
-  const mayQueue = resources.length > 0;
+  const referenceCount = resources.length + projectSkillDraft.paths.length;
+  const mayQueue = referenceCount > 0;
   const canAbort = Boolean(activeRunId && onAbortCurrent);
 
 
@@ -139,7 +140,7 @@ export function ChatInput({
   const speechBusy = speech.phase === "requesting_permission" || speech.phase === "recording" || speech.phase === "transcribing";
   const contextEnabled = driveContextEnabled && !botContext;
   const blockedDriveContext = resources.some(resource => resource.kind === "organization_drive") && !contextEnabled;
-  const canSend = (!botRequiresFullAccess || permission.confirmed) && !blockedDriveContext && !speechBusy && canSendChatInput({ connected, sending, busy, references: resources.length + (busy ? 0 : projectSkillDraft.paths.length), text: input, attachments: attachments.length });
+  const canSend = (!botRequiresFullAccess || permission.confirmed) && !blockedDriveContext && !speechBusy && canSendChatInput({ connected, sending, busy, references: referenceCount, text: input, attachments: attachments.length });
 
   useEffect(() => {
     if (inputRef.current !== input) setCursor(input.length);

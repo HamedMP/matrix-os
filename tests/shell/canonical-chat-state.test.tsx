@@ -3,6 +3,7 @@ import { stubLegacyChatFetch } from "./legacy-navigation-fetch-fixture";
 
 import { act, renderHook, waitFor } from "@testing-library/react";
 import React, { StrictMode, type ReactNode } from "react";
+import type { CanonicalChatQueuedTurn } from "@matrix-os/contracts";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { useCanonicalChatState } from "../../shell/src/hooks/useCanonicalChatState.js";
 import { createCanonicalChatFixture } from "../contracts/fixtures/canonical-chat";
@@ -627,6 +628,68 @@ it("only submits a selected skill to its bound project and requests that checkou
     parts: [{ type: "text", text: "Read .agents/skills/review/SKILL.md" }],
   });
 });
+
+it.each(["primary checkout", "other project", "worktree"] as const)(
+  "queues a skill-only draft only for the active run's primary checkout (%s)",
+  async (scope) => {
+    const { snapshot } = createCanonicalChatFixture("running");
+    const { project, providerBinding: _binding, activeRun, ...chat } = snapshot.chat;
+    const projectId = project!.projectId;
+    const root = { kind: "project" as const, projectId };
+    const current = { chat, projectId, activeRun };
+    const runs = scope === "worktree" ? snapshot.runs.map(run => ({
+      ...run, executionRoot: { kind: "worktree", projectId, worktreeId: "worktree_one" },
+    })) : snapshot.runs;
+    const prompt = "Read .agents/skills/review/SKILL.md";
+    const queued: CanonicalChatQueuedTurn = {
+      id: "qturn_project_skill", chatId: chat.id, clientRequestId: "req_project_skill", position: 1,
+      parts: [{ type: "text", text: prompt }], selection: { instanceId: "codex_fixture", model: "gpt-5.6-sol" },
+      interactionMode: "default", permissionMode: "supervised", executionRoot: root,
+      createdAt: chat.createdAt, updatedAt: chat.updatedAt,
+    };
+    let queuedTurns: CanonicalChatQueuedTurn[] = [];
+    const fetchFn = vi.fn(async (url: string, init?: RequestInit) => {
+      if (url.includes("/api/chats?")) return Response.json({ items: [current] });
+      if (url.includes(`/api/chats/${chat.id}?`)) return Response.json({
+        record: current, messages: snapshot.messages, turns: snapshot.turns, activities: snapshot.activities, runs, queuedTurns,
+      });
+      if (new URL(url).pathname === `/api/chats/${chat.id}/queued-turns` && init?.method === "POST") {
+        queuedTurns = [queued];
+        return Response.json({ queuedTurn: queued, queueDepth: 1 }, { status: 201 });
+      }
+      if (url.includes(`/api/chats/${chat.id}/turns`) && init?.method === "POST") {
+        return Response.json({ error: "Unexpected direct turn" }, { status: 400 });
+      }
+      throw new Error(`Unexpected request: ${url}`);
+    });
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    stubLegacyChatFetch(fetchFn);
+    const { result } = renderHook(() => useCanonicalChatState());
+    await waitFor(() => expect(result.current.messages.length).toBeGreaterThan(0));
+    expect(result.current.busy).toBe(true);
+    expect(result.current.projectSkillRootAvailable).toBe(scope !== "worktree");
+
+    let accepted: unknown;
+    await act(async () => {
+      accepted = await result.current.submitMessage(prompt, undefined, {
+        instanceId: "codex_fixture", model: "gpt-5.6-sol", interactionMode: "default", permissionMode: "supervised",
+        clientRequestId: "req_project_skill", projectSkillProjectId: scope === "other project" ? "proj_other" : projectId,
+      });
+    });
+    const admissions = fetchFn.mock.calls.filter(([url, init]) => init?.method === "POST" && /\/(queued-)?turns(?:\?|$)/.test(url));
+    if (scope === "primary checkout") {
+      expect(admissions.map(([url]) => new URL(url).pathname)).toEqual([`/api/chats/${chat.id}/queued-turns`]);
+      expect(JSON.parse(String(admissions[0]?.[1]?.body))).toMatchObject({
+        clientRequestId: "req_project_skill", executionRoot: root, parts: [{ type: "text", text: prompt }],
+      });
+      expect(accepted).toBe(true);
+      expect(result.current.queuedTurns).toEqual([queued]);
+    } else {
+      expect(admissions).toEqual([]);
+      expect(accepted).toBe(false);
+    }
+  },
+);
 
 it("withholds primary checkout skills after a worktree run", async () => {
   const { snapshot } = createCanonicalChatFixture("completed");

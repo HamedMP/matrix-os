@@ -519,7 +519,7 @@ export function useCanonicalChatState({ initialDraft, initialCollaborationView, 
           ...(projectSkillProjectId ? { executionRoot: { kind: "project" as const, projectId: projectSkillProjectId } } : {}),
         };
         const requestScope = record.chat.id;
-        let operation = record.activeRun && options.resources?.length ? "queue" as const : "send" as const;
+        let operation = record.activeRun && (options.resources?.length || projectSkillProjectId) ? "queue" as const : "send" as const;
         {
           const { clientRequestId: _generatedId, baseRevision: _revision, ...semanticInput } = input;
           const attempt = mentionRequests.resolve(authority.summaryClient ?? client, requestScope, semanticInput, operation, draftRequestId ?? options.clientRequestId);

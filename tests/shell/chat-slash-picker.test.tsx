@@ -15,13 +15,14 @@ const instance:CanonicalProviderInstanceDescriptor={...createCanonicalProviderCa
  {id:"research",displayName:"Research",description:"Research sources",invocation:"/research"},
 ]};
 const capture={isSupported:()=>false,start:vi.fn()};
-function Harness({selected=instance,scope="one",loading=false,submit=vi.fn(),initial="/",attachmentPolicy,projectSlash,isCurrentAuthority}: {
+function Harness({selected=instance,scope="one",loading=false,submit=vi.fn(),initial="/",attachmentPolicy,projectSlash,isCurrentAuthority,busy=false}: {
  selected?:CanonicalProviderInstanceDescriptor;scope?:string;loading?:boolean;submit?:(text:string)=>void;initial?:string;attachmentPolicy?:(files:readonly File[])=>string|null;
- projectSlash?:ProjectChatSlashScope;isCurrentAuthority?:()=>boolean;
+ projectSlash?:ProjectChatSlashScope;isCurrentAuthority?:()=>boolean;busy?:boolean;
 }) {
  const [text,setText]=useState(initial);
  const composer={text,setText,resources:[],setResources:vi.fn(),setDraft:vi.fn(),clear:vi.fn(),requestId:"req_web_slash"} as unknown as ChatComposerDraft;
- return <ChatInput composer={composer} scope={scope} permissionMode="supervised" connected busy={false} attachmentsEnabled
+ return <ChatInput composer={composer} scope={scope} permissionMode="supervised" connected busy={busy} attachmentsEnabled
+  activeRunId={busy ? "run_web_slash" : undefined} onAbortCurrent={busy ? () => undefined : undefined}
   onSubmit={submit} attachmentPolicy={attachmentPolicy} slashInstance={selected} slashCatalogLoading={loading} projectSlash={projectSlash} isCurrentAuthority={isCurrentAuthority} speechCaptureAdapter={capture}/>;
 }
 it("uses only selected runtime descriptors and inserts the selected Skill without submitting",()=>{
@@ -186,6 +187,26 @@ it("selects a project skill separately from the message and only passes its rela
   fireEvent.keyDown(input, { key: "Enter" });
   await waitFor(() => expect(submit).toHaveBeenCalledTimes(1));
   expect(submit.mock.calls[0]?.[0]).toContain(reviewSkillPath);
+});
+
+it("offers Queue next for a project skill alone during an active run", async () => {
+  const submit = vi.fn();
+  render(<Harness projectSlash={projectScope("proj_one", "review")} initial="Wait for this turn" submit={submit} busy />);
+  const input = screen.getByRole("textbox", { name: "Message chat" }) as HTMLTextAreaElement;
+  expect(screen.getByRole("button", { name: "Stop" })).toBeTruthy();
+  fireEvent.keyDown(input, { key: "Enter" });
+  expect(submit).not.toHaveBeenCalled();
+
+  fireEvent.change(input, { target: { value: "/" } });
+  fireEvent.click(await screen.findByRole("option", { name: /review/i }));
+  expect(input.value).toBe("");
+  expect(screen.getByRole("button", { name: "Remove skill review" })).toBeTruthy();
+  fireEvent.click(screen.getByRole("button", { name: "Queue next" }));
+  await waitFor(() => expect(submit).toHaveBeenCalledExactlyOnceWith(
+    expect.stringContaining(reviewSkillPath),
+    undefined,
+    expect.objectContaining({ resources: [], projectSkillProjectId: "proj_one", permissionMode: "supervised" }),
+  ));
 });
 
 it("keeps the typed slash when a sixth project skill cannot be added", async () => {
