@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { mkdtemp, readdir, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { promisify } from "node:util";
@@ -66,5 +66,21 @@ describe("matrix-status reporter", () => {
     await expect(report(home, ["working"], { ZELLIJ_SESSION_NAME: "my-own-zellij" })).resolves.toBeDefined();
     await expect(report(home, ["working"], { ZELLIJ_PANE_ID: "../../x" })).resolves.toBeDefined();
     await expect(readdir(join(home, "system"))).rejects.toThrow();
+  });
+
+  // Fault detected: a predictable temporary name lets another file or link be overwritten.
+  it("never writes through a file planted at a predictable temporary path", async () => {
+    const home = await mkdtemp(join(tmpdir(), "matrix-status-"));
+    roots.push(home);
+    const dir = join(home, "system", "terminal-status", session);
+    await mkdir(dir, { recursive: true });
+    const victim = join(home, "victim.txt");
+    await writeFile(victim, "keep");
+    for (let pid = 1; pid < 64; pid += 1) await symlink(victim, join(dir, `.terminal_5.${pid}.tmp`)).catch(() => undefined);
+    await report(home, ["working"]);
+    expect(await readFile(victim, "utf8")).toBe("keep");
+    await expect(index(home).list()).resolves.toEqual([expect.objectContaining({ status: "working" })]);
+    const left = (await readdir(dir)).filter((name) => name.endsWith(".tmp") && !/^\.terminal_5\.\d+\.tmp$/.test(name));
+    expect(left).toEqual([]);
   });
 });

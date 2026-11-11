@@ -36,6 +36,7 @@ const KeysSchema = z.object({ keys: z.array(z.string().min(1).max(16)).min(1).ma
 const InterruptSchema = z.object({}).strict();
 const WaitSchema = z.object({
   output: z.string().min(1).max(TERMINAL_WAIT_OUTPUT_MAX_CHARS).optional(),
+  seen: z.number().int().min(0).max(1_000_000).optional(),
   timeoutMs: z.number().int().min(0).max(TERMINAL_WAIT_MAX_MS).optional(),
 }).strict();
 

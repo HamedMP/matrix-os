@@ -17,7 +17,8 @@ export type TerminalWaitResult =
   | { reason: "stopped"; status: TerminalAgentStatus }
   | { reason: "exited"; exitCode: number | null }
   | { reason: "output" }
-  | { reason: "timeout"; status?: TerminalAgentStatus }
+  /** `seen`: how often `output` had appeared, to pass back on the next wait. */
+  | { reason: "timeout"; status?: TerminalAgentStatus; seen?: number }
   | { reason: "cancelled" }
   | { reason: "shutdown" };
 
@@ -30,7 +31,7 @@ export class TerminalWaitCapacityError extends Error {
 }
 
 export interface TerminalWaiter {
-  wait(ref: TerminalRef, input: { output?: string; timeoutMs?: number; signal?: AbortSignal }): Promise<TerminalWaitResult>;
+  wait(ref: TerminalRef, input: { output?: string; seen?: number; timeoutMs?: number; signal?: AbortSignal }): Promise<TerminalWaitResult>;
   shutdown(): void;
 }
 
@@ -80,9 +81,11 @@ export function createTerminalWaiter(options: {
     return snapshot.success ? [...snapshot.data.scrollback, ...snapshot.data.viewport].join("\n") : "";
   }
 
-  async function run(ref: TerminalRef, input: { output?: string; timeoutMs: number; signal?: AbortSignal }): Promise<TerminalWaitResult> {
+  async function run(ref: TerminalRef, input: { output?: string; seen?: number; timeoutMs: number; signal?: AbortSignal }): Promise<TerminalWaitResult> {
     const deadline = now() + input.timeoutMs;
-    const baseline = input.output ? countOccurrences(await screenText(ref), input.output) : 0;
+    // A follow-up request continues the caller's baseline, so text printed between
+    // two check-ins still counts as new.
+    const baseline = input.output ? input.seen ?? countOccurrences(await screenText(ref), input.output) : 0;
     const signal = input.signal ? AbortSignal.any([input.signal, shutdownController.signal]) : shutdownController.signal;
     let lastStatus: TerminalAgentStatus | undefined;
     for (;;) {
@@ -97,7 +100,9 @@ export function createTerminalWaiter(options: {
         if (lastStatus && lastStatus !== "working") return { reason: "stopped", status: lastStatus };
       }
       const remaining = deadline - now();
-      if (remaining <= 0) return { reason: "timeout", ...(lastStatus ? { status: lastStatus } : {}) };
+      if (remaining <= 0) {
+        return { reason: "timeout", ...(lastStatus ? { status: lastStatus } : {}), ...(input.output ? { seen: baseline } : {}) };
+      }
       await sleep(Math.min(pollMs, remaining), signal);
     }
   }
@@ -107,13 +112,19 @@ export function createTerminalWaiter(options: {
       const ref = TerminalRefSchema.parse(refInput);
       const timeoutMs = z.number().int().min(0).max(TERMINAL_WAIT_MAX_MS).parse(input.timeoutMs ?? TERMINAL_WAIT_DEFAULT_MS);
       const output = input.output === undefined ? undefined : z.string().min(1).max(TERMINAL_WAIT_OUTPUT_MAX_CHARS).parse(input.output);
+      const seen = input.seen === undefined ? undefined : z.number().int().min(0).max(1_000_000).parse(input.seen);
       if (shutdownController.signal.aborted) return Promise.resolve({ reason: "shutdown" });
       const key = terminalRefKey(ref);
       const forTab = perTab.get(key) ?? 0;
       if (total >= MAX_WAITERS || forTab >= MAX_WAITERS_PER_TAB) return Promise.reject(new TerminalWaitCapacityError());
       total += 1;
       perTab.set(key, forTab + 1);
-      return run(ref, { timeoutMs, ...(output ? { output } : {}), ...(input.signal ? { signal: input.signal } : {}) })
+      return run(ref, {
+        timeoutMs,
+        ...(output ? { output } : {}),
+        ...(output && seen !== undefined ? { seen } : {}),
+        ...(input.signal ? { signal: input.signal } : {}),
+      })
         .finally(() => {
           total -= 1;
           const left = (perTab.get(key) ?? 1) - 1;
