@@ -9,6 +9,7 @@ import { openBrowser } from "../../auth/oauth.js";
 import { getConfigDir } from "../../lib/config.js";
 import { loadProfiles } from "../../lib/profiles.js";
 import { cliError, formatCliError, formatCliSuccess } from "../output.js";
+import { watchStageThree } from "./devstack-stage3-watch.js";
 
 const exec = promisify(execFile);
 const safeText = z.string().min(1).max(4096).refine(value => !/[\p{Cc}\p{Bidi_Control}\u2028\u2029]/u.test(value));
@@ -36,8 +37,9 @@ const diffSchema = z.object({
   changes: z.array(z.object({ path: safeText, status: safeText.max(16) })).max(2000),
   excluded: z.array(safeText).max(2000).optional(),
 });
-const actions = ["connect", "sync", "diff", "status", "reset"] as const;
-type Action = typeof actions[number];
+const stageTwoActions = ["connect", "sync", "diff", "status", "reset"] as const;
+const actions = [...stageTwoActions, "watch"] as const;
+type Action = typeof stageTwoActions[number];
 
 const errors: Record<Action | "list" | "discover" | "enroll", string> = {
   list: "Could not read the enrolled Stage 2 bindings.",
@@ -51,9 +53,9 @@ const errors: Record<Action | "list" | "discover" | "enroll", string> = {
 };
 
 // The operator installs an owner-only adapter outside any Git worktree.
-async function localAdapter(): Promise<string> {
+async function localAdapter(stage: 2 | 3): Promise<string> {
   const directory = getConfigDir();
-  const path = join(directory, "devstack-adapter");
+  const path = join(directory, stage === 3 ? "devstack-stage3-adapter" : "devstack-adapter");
   try {
     const [parent, stat] = await Promise.all([lstat(directory), lstat(path)]);
     const owner = process.getuid?.();
@@ -63,10 +65,10 @@ async function localAdapter(): Promise<string> {
     }
   } catch (error) {
     if (!(error instanceof Error && "code" in error && error.code === "ENOENT")) {
-      throw cliError("devstack_adapter_unavailable", "Could not inspect the local Stage 2 adapter.");
+      throw cliError("devstack_adapter_unavailable", `Could not inspect the local Stage ${stage} adapter.`);
     }
   }
-  throw cliError("devstack_adapter_unavailable", "A private Stage 2 adapter must be enrolled on this computer first.");
+  throw cliError("devstack_adapter_unavailable", `A private Stage ${stage} adapter must be enrolled on this computer first.`);
 }
 
 type AdapterAction = keyof typeof errors;
@@ -280,7 +282,7 @@ async function connectStageThree(options: CommandOptions, interactive: boolean, 
 export const devstackCommand = defineCommand({
   meta: { name: "devstack", description: "Connect to a DevStack worktree preview" },
   args: {
-    action: { type: "positional", required: false, description: "connect (default), sync, diff, status, or reset" },
+    action: { type: "positional", required: false, description: "connect (default), sync, diff, status, reset, or watch (Stage 3)" },
     stage: { type: "string", description: "Stage 2 local sync (default) or Stage 3 registered browser preview" },
     profile: { type: "string", description: "Stage 3 CLI profile (default: devstack)" },
     platform: { type: "string", description: "Approved Stage 3 HTTPS origin" },
@@ -294,9 +296,22 @@ export const devstackCommand = defineCommand({
     try {
       const parsed = commandArgsSchema.safeParse(args);
       if (!parsed.success) {
-        throw cliError("devstack_selection_required", "Use matrix devstack [connect|sync|diff|status|reset] --help.");
+        throw cliError("devstack_selection_required", "Use matrix devstack [connect|sync|diff|status|reset|watch] --help.");
       }
       const interactive = Boolean(process.stdin.isTTY && process.stderr.isTTY && !json);
+      const action = parsed.data._[0] ?? "connect";
+      if (action === "watch") {
+        if (parsed.data.stage !== "3") {
+          throw cliError("devstack_action_unsupported", "Watch requires --stage 3.");
+        }
+        const computer = stageThreeSlug.safeParse(parsed.data.computer);
+        const worktree = stageThreeSlug.safeParse(parsed.data.worktree);
+        if (!computer.success || !worktree.success || parsed.data.profile || parsed.data.platform || parsed.data.open !== undefined) {
+          throw cliError("devstack_selection_required", "Use watch with the enrolled --computer and --worktree names.");
+        }
+        await watchStageThree(await localAdapter(3), computer.data, worktree.data, json);
+        return;
+      }
       if (parsed.data.stage === "3") {
         await connectStageThree(parsed.data, interactive, json);
         return;
@@ -304,7 +319,6 @@ export const devstackCommand = defineCommand({
       if (parsed.data.profile || parsed.data.platform) {
         throw cliError("devstack_selection_required", "--profile and --platform apply only to Stage 3 previews.");
       }
-      const action = parsed.data._[0] ?? "connect";
       if (action !== "connect" && parsed.data.open !== undefined) {
         throw cliError("devstack_selection_required", "--open applies only when connecting a Stage 2 preview.");
       }
@@ -312,7 +326,7 @@ export const devstackCommand = defineCommand({
         throw cliError("devstack_selection_required", "Use --computer <handle> and --worktree <path>.");
       }
 
-      const adapter = await localAdapter();
+      const adapter = await localAdapter(2);
       const bindings = await adapterRequest(adapter, bindingsSchema, "list");
       const worktree = parsed.data.worktree === undefined ? undefined : await canonicalPath(parsed.data.worktree);
       const options = { computer: parsed.data.computer, worktree, json };
@@ -325,7 +339,7 @@ export const devstackCommand = defineCommand({
       const code = error instanceof Error && "code" in error && typeof error.code === "string" &&
         error.code.startsWith("devstack_") ? error.code : "devstack_failed";
       const message = code !== "devstack_failed" && error instanceof Error
-        ? error.message : "Could not complete the Stage 2 operation.";
+        ? error.message : "Could not complete the DevStack operation.";
       console.error(json ? formatCliError(code, message) : message);
       process.exitCode = 1;
     }

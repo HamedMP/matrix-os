@@ -14,6 +14,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { existsSync } from 'node:fs';
 import { findTsxLoader } from '../src/lib/find-tsx-loader.mjs';
 import { assertSupportedNodeRuntime } from '../src/lib/node-runtime-guard.mjs';
+import { forwardDevstackWatchSignals } from '../src/lib/devstack-watch-signals.mjs';
 
 assertSupportedNodeRuntime(process.argv.slice(2), process.version);
 
@@ -40,6 +41,7 @@ const child = spawn(
   { stdio: 'inherit', env: process.env },
 );
 
+forwardDevstackWatchSignals(child, process.argv.slice(2));
 child.on('exit', (code, signal) => {
   if (signal) process.kill(process.pid, signal);
   else process.exit(code ?? 0);

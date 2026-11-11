@@ -14,3 +14,22 @@ The CLI entry URL does not assert readiness. The launcher checks current members
 4. From a fresh workstation, verify that the CLI opens the preview without a local tunnel, root privileges, hosts changes, custom trust, or a dedicated browser profile. Sign in with the owner, verify the selected worktree, and exercise an agent edit through the source transport and browser hot update. Verify another signed-in account and a stale registration cannot open it. Verify each available runtime through its own route and check that the shared ingress preserves HMR WebSocket upgrades.
 
 Retain the ordinary Private Preview workflow for exact PR bundle validation. Update the separate Matrix OS site guide when this flow is deployed and qualified.
+
+## Stage 3 foreground sync pilot
+
+Run `matrix devstack watch --stage 3 --computer <registered-runtime> --worktree <registered-worktree>` after an operator enrolls that exact binding. The command stays in the foreground. The separate `connect` command still provides the preview link. Watch does not change the active Matrix profile or accept a user-supplied adapter executable.
+
+Install the adapter as an owner-only executable at `~/.matrixos/devstack-stage3-adapter`. The CLI invokes it without a shell as `watch <registered-runtime> <registered-worktree>`. The adapter owns source access, source and runtime generation checks, publishing, test execution, conflict handling, and restoration. The pilot adapter must fence writes to its enrolled source and exact target. An interrupted watcher must restore its verified baseline before releasing the write lease. Provisioning and the hosted connection entry remain separate.
+
+The adapter writes one JSON object per stdout line in this order:
+
+| Event | Fields | Meaning |
+| --- | --- | --- |
+| `ready` | `type` | The binding and its watcher are ready |
+| `update` | `type`, `revision` | The exact source content was applied |
+| `test` | `type`, `revision`, `exitCode`, `log` | The matching test run completed |
+| `stopped` | `type` | The adapter has finished cleanup |
+
+`revision` is a 64-character lowercase SHA-256 digest, `exitCode` is an integer from 0 through 255, and `log` is a normalized, single-line test summary of up to 4096 characters. A test failure is reported and leaves the watcher available for the next edit. Each update has one matching test event. Interruption may end an update before its test finishes. The CLI rejects unknown fields, malformed or oversized lines, and out-of-order receipts. Adapter stderr stays private.
+
+With `--json`, each receipt uses the standard CLI response envelope and includes the selected Computer and worktree. The command succeeds only after `stopped` and a zero adapter exit. SIGINT and SIGTERM request adapter cleanup and allow up to 45 seconds for it to finish. The CLI also bounds startup to 90 seconds. The adapter remains responsible for recovery if it loses its process before cleanup finishes.
