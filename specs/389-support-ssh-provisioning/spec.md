@@ -33,5 +33,14 @@ two-key flow and a verified new SSH session before finalization.
 - Exercise a missing-key provisioning failure and a repaired retry without
   touching a live customer VPS.
 
+## Public documentation deliverable
+
+A separate PR in `FinnaAI/matrix-os-site` under `content/docs/` explains, for
+customers, that new Matrix computers include a dedicated `matrix-support`
+login for recovery, that it is separate from the owner's own credentials, and
+that existing computers are unchanged. It stays
+public-safe: no key material, hostnames, account handles, or operator
+commands. Done when that PR is linked from the ENG-389 ticket and this PR.
+
 Stakeholder review: platform operations and support should review the access
 and rotation procedure before production rollout.
