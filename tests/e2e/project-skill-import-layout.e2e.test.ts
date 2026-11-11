@@ -17,11 +17,19 @@ beforeAll(async () => {
   const bundle = await build({
     stdin: {
       contents: `
+        import { useState } from "react";
         import { createRoot } from "react-dom/client";
-        import { ProjectSkillActions } from "./${component}";
-        createRoot(document.getElementById("root")).render(
-          <ProjectSkillActions filesPending={false} onCreate={async () => true} />,
-        );
+        import { ProjectSkillActions, type NewSkillDraft } from "./${component}";
+
+        function SkillActionsHarness() {
+          const [draft, setDraft] = useState<NewSkillDraft | null>(null);
+          return (
+            <ProjectSkillActions filesPending={false} onCreate={async () => true}
+              newSkillDraft={draft} onNewSkillDraftChange={setDraft} />
+          );
+        }
+
+        createRoot(document.getElementById("root")).render(<SkillActionsHarness />);
       `,
       loader: "tsx",
       resolveDir: root,
