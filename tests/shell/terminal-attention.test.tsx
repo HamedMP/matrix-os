@@ -7,7 +7,7 @@ import { TerminalAttentionNotifier } from "../../shell/src/components/terminal/T
 import { visibleTerminalSessions } from "../../shell/src/components/terminal/visible-terminal-sessions.js";
 import { mergeShellAgentStatus } from "../../shell/src/components/terminal/useShellsWithAgentStatus.js";
 import { useTerminalAgentEvents } from "../../shell/src/stores/terminal-agent-events.js";
-import { OPEN_PROVIDER_TERMINAL_EVENT } from "../../shell/src/lib/canonical-provider-setup.js";
+import { OPEN_TERMINAL_SESSION_EVENT } from "../../shell/src/lib/terminal-session-open.js";
 
 const workspaceId = `tws_${"0".repeat(32)}`;
 const tabId = `tt_${"a".repeat(32)}`;
@@ -44,7 +44,7 @@ describe("terminal attention notifier", () => {
     expect(alert.textContent).toContain("review needs you: Allow edit?");
 
     const opened = vi.fn();
-    window.addEventListener(OPEN_PROVIDER_TERMINAL_EVENT, (event) => opened((event as CustomEvent).detail));
+    window.addEventListener(OPEN_TERMINAL_SESSION_EVENT, (event) => opened((event as CustomEvent).detail));
     fireEvent.click(screen.getByRole("button", { name: "Open" }));
     expect(opened).toHaveBeenCalledWith({ sessionId: key });
     expect(screen.queryByTestId("terminal-attention")).toBeNull();
