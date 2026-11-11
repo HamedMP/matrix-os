@@ -201,6 +201,10 @@ failing, at capacity, and being migrated.
   rows are removed under the existing deletion guarantees.
 - A free owner is inactive past the retention period: published notice first, then
   deletion. Idle stop is never data expiry.
+- A fresh disk boots: template setup must not write over an owner file that the accepted
+  manifest holds. S4 reproduced this loss with today's boot order (template copy before
+  hydrate; `system/soul.md` is not in the user-owned list). It affects VPS restores too.
+- A home reaches the file-count cap: the write fails visibly, like a full home.
 
 ## Requirements
 
@@ -226,13 +230,37 @@ failing, at capacity, and being migrated.
   resource caps), using the existing launcher interface.
 - **FR-007**: Durable state MUST live outside the container: one Postgres database and
   role per owner, and the owner's object-store prefix. Local disk is a cache.
-- **FR-008**: The runtime MUST reach "ready" only after the home is hydrated and the
-  database is reachable. It MUST never start on an empty home when durable data exists.
+- **FR-008**: The runtime MUST reach "ready" only after the boot set matching the
+  accepted manifest is hydrated and the database is reachable. It MUST never start on an
+  empty home when durable data exists. The boot set is owner-owned configuration, agent
+  definitions, owner app manifests and icons, and the kernel database snapshot; template
+  files come from the image. The rest of the home fills in the background. File routes
+  answer from the manifest or fetch on miss while the fill runs. Agent turns (and a
+  terminal, on profiles that have one) MUST wait for the full hydrate, because their
+  child processes read the home directly. (Revised after S4: the earlier text gated
+  ready on the whole home.)
 - **FR-009**: The runtime MUST stop only after in-flight runs settle or reach their
   deadline and a final flush succeeds. Meaningful activity is: an accepted message, a
-  running job or build, an open app or preview in use. Polling is not.
+  running job or build, an open app or preview in use. Polling is not. The final flush
+  MUST run in this order: files, then the manifest commit, then the owner Postgres dump,
+  because the manifest pointer lives in owner Postgres and an earlier dump restores an
+  older pointer.
 - **FR-010**: Built app output MUST survive a stop, so reopening an app does not require
   a rebuild.
+- **FR-019**: Template setup MUST NOT write over any owner file present in the accepted
+  manifest, on any substrate. `system/soul.md` is owner-owned.
+- **FR-020**: The container profile MUST NOT run boot-time `git init` on the home. How
+  project history is persisted, and whether `.git` counts against the home size limit,
+  is open (D8).
+- **FR-021**: App builds MUST run as a separate build workload in the same sandbox as
+  agent work, launched by a gateway-side build tool with fixed argv. The agent worker
+  gets no shell. The build workload runs no package scripts, uses a pinned pnpm from the
+  runtime, reaches only the platform's registry mirror, and has a wall-clock timeout and
+  a free-space check. A timeout, a full disk, or a failed build reports `needs_build`
+  with a safe error and keeps the previous output (US2 scenario 2). Basis: S3; the agent
+  loop and the bridged viewer were not exercised there.
+- **FR-022**: The home MUST have a file-count limit as well as a byte limit (default
+  50,000 files, the current mirror state cap).
 
 **Free plan, admission, limits**
 
@@ -311,8 +339,12 @@ unauthenticated traffic get a "not available" response and never start compute.
 
 **Egress.** Default deny, including private, link-local, and loopback ranges, the
 provider metadata endpoint, and platform-internal addresses other than the named
-internal routes. Package installs go through a platform-operated registry proxy with
-rate and byte caps. Agent web tools are brokered through the platform under the same
+internal routes. Package installs go through a platform-operated pull-through registry
+mirror with rate and byte caps. It allows only GET and HEAD of package metadata and
+tarballs, fetches upstream over TLS with redirects refused, and caps metadata size. The
+build workload reaches it only through a dedicated Unix socket in its sandbox (S3). The
+recommended design has the gateway forward that socket and add the runtime token, so the
+workload never holds it; this is open (D9). Agent web tools are brokered through the platform under the same
 per-owner caps; the container has no direct general internet route.
 
 **Secrets.** Runtime credentials are injected through the provider's secret mechanism
@@ -369,7 +401,8 @@ URL, and the runtime profile name.
 | Failure | Outcome |
 | --- | --- |
 | Start exceeds its deadline | Runtime marked failed-start, compute cleaned up, client shows retry |
-| Hydration incomplete | Not ready; never serves a partial home |
+| Boot set not hydrated | Not ready; never serves a home without its owner configuration |
+| Background fill incomplete | Ready, but agent turns wait; file routes answer from the manifest or fetch on miss |
 | Database unreachable | 503-class state; chat history is not replaced by file fallback |
 | Flush fails at stop | Bounded retries, then needs-recovery; no blind re-hydrate over it |
 | Container crash | Recreated on next request with a new generation; unflushed window is bounded and reported |
@@ -386,15 +419,27 @@ Provisional timeouts, all configuration-driven and revised after Phase 0:
 | Operation | Timeout |
 | --- | --- |
 | Provider API call | 10 s |
-| Start to ready, including hydrate | 90 s failure timeout; target is under 5 s at the median (SC-003) |
+| Start to ready (cold start, any home size) | 90 s failure timeout |
+| Wake to ready after the boot set | Target under 5 s at the median (SC-003); not a failure timeout |
 | Quiesce (wait for runs to settle) | run deadline, at most 15 min |
-| Final flush | 120 s, 3 attempts |
+| Final flush | 120 s, 3 attempts; read from configuration (today's mirror `stop()` has a hard-coded 10 s) |
+
+S4 measured these with the proposed layout (packs, one manifest per flush) at 20 ms per
+request: large home (2.44 GB, 49,494 files) hydrate 18-19 s and full flush 21-25 s;
+owner Postgres dump 0.5 s at 53 MB and 2.6 s at 525 MB. Today's mirror does not fit:
+medium hydrate took 145-233 s and `stop()` landed 32-56 of 100 changes. The 5 s wake
+target is not proven. A loaded Linux host took 11 s to boot the gateway alone on one
+CPU, 4.25 s of it a terminal-runtime retry before listen. No idle 1 vCPU measurement
+exists yet.
 | Readiness probe | 5 s |
 | Migration step | 10 min per step, resumable |
 
 **File and database consistency.** Database writes are durable immediately; files are
 flushed on a timer (provisionally every 30 s) and at stop, so a crash can lose at most
-one flush interval of file changes. On start after a crash the runtime compares the
+one flush interval of file changes. Each flush is one batch with one manifest
+generation, not one manifest per file, and ends at a barrier: every change seen before
+the flush started is in the accepted manifest. The timer flush, the final flush, and the
+upgrade drain all use that barrier. On start after a crash the runtime compares the
 flushed manifest with database references and marks affected chats and apps as
 interrupted. It never deletes database rows to match files.
 
@@ -408,7 +453,11 @@ the container writable, and applies the existing refund path. No new billing mec
 is introduced.
 
 **Carried-forward debt.** Kernel state in `system/matrix.db` is existing SQLite, not
-new persistence. This spec only requires a consistent snapshot of it at flush.
+new persistence. This spec only requires a consistent snapshot of it at flush: a
+`VACUUM INTO` copy taken from a separate read-only connection, stored in the boot set,
+and restored before the gateway opens the database. `system/matrix.db*` is excluded from
+file sync. In S4, `VACUUM INTO` restored cleanly after 30 of 30 kills; copying the files,
+as the mirror does today, restored cleanly 0 to 2 times in 30.
 
 ## Concurrency and state
 
@@ -440,6 +489,15 @@ new persistence. This spec only requires a consistent snapshot of it at flush.
 - Platform registries for wake requests and in-flight starts are bounded with TTL.
 - Inside the container: build caches and hydrate temp files are capped and cleared at
   stop; temp sweeps skip symlinks.
+- Build store: a per-owner pnpm store and metadata cache outside the flushed home, under
+  a disk quota. The sandbox's 256 MiB `/workspace` tmpfs cannot hold a medium resolve
+  (S3). Where it lives is open (D9); about 0.5 GB covered the heaviest S3 app.
+- Build memory: S3 measured 0.3 to 0.9 GB per build and 1.24 GB for a heavy resolve. The
+  providers do not delegate cgroups, so only rlimits apply per workload. The 4 GiB
+  address-space limit holds only with `PNPM_MAX_WORKERS=2` and `MALLOC_ARENA_MAX=2`.
+- Packs: superseded bytes are reclaimed by a recurring repack. Manifests are sharded or
+  written as deltas, because S4 measured a 16 MB manifest upload on every flush of a
+  large home.
 
 Provisional per-owner defaults, configuration-driven, so limit tests can be written now:
 
@@ -452,6 +510,7 @@ Provisional per-owner defaults, configuration-driven, so limit tests can be writ
 | Idle before stop | 10 min |
 | Maximum session | 4 h |
 | Home size | 2 GiB |
+| Home files | 50,000 |
 | Database size and connections | 500 MB, 5 connections |
 
 **Connection budget.** Running containers times 5 connections must stay under the
@@ -469,10 +528,13 @@ owner data is sent to any new third party beyond the container provider.
 - **SC-002**: Saved samples survive 10 stop and start cycles, 3 container deletions, and
   1 forced crash, with the unflushed window measured and inside its bound.
 - **SC-003**: 20 cold starts and 20 wake-from-sleep trials are reported with raw
-  timings, median, and maximum, separating image pull from cached start. The target is
-  a median under 5 seconds from an authenticated request to an interactive runtime, and
-  the provider choice (D1) is ranked on it. The maximum is agreed after the Phase 0
-  measurement.
+  timings, median, and maximum, separating image pull from cached start. The wake target
+  is a median under 5 seconds from an authenticated request to an interactive runtime,
+  where interactive means ready after the boot set (FR-008), not after the full home.
+  The provider choice (D1) is ranked on it. Cold start is held to the 90 s ceiling
+  instead. The maximum is agreed after the Phase 0 measurement. Whether 5 s holds on
+  1 vCPU with the real image is open: S4 needed prebuilt JS, no boot-time `git init`,
+  and no terminal-runtime wait before listen to get near it, and did not measure 1 vCPU.
 - **SC-004**: Two-owner denial tests pass: cross-owner database, object prefix, network,
   and credential access all fail. Limit races hold. Stale-generation credentials fail.
 - **SC-005**: An upgrade inventory (row counts per table, file manifest, app list,
@@ -507,6 +569,8 @@ N/A without architectural rationale and reviewer approval.
 | D5 | Free capability set | Chat (Matrix AI), Files, app build and use, Settings. Terminal, coding CLIs, channels, cron, bots, integrations with platform secrets: paid |
 | D6 | App preview sharing | Owner-only at launch; sharing via existing Sites private links later |
 | D7 | Relationship to spec 639 | Agree with ENG-423 owner who lands the capability contract first |
+| D8 | `.git` and project history | Open. `.git` is not mirrored today, and S4 measured 1.4 GB of it for a large home and 65-92 s of boot-time `git init`. Options: pack history into the home (plan T045) and count it against the home size, or keep a size cap on history |
+| D9 | Build store and egress token | Open (S3). Store as a second writable bind under quota or a quota'd cache inside the home excluded from flush; egress through a gateway-forwarded socket (recommended) or a direct platform endpoint. Also open: whether default apps are ever rebuilt in the container |
 
 ## Stakeholder review
 
