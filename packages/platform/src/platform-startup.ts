@@ -53,6 +53,7 @@ import type { PlatformApp } from './platform-app-types.js';
 import { shutdownPlatformApp } from './shutdown-platform-app.js';
 import { createPlatformSubstrateRegistry } from './substrates/platform-substrates.js';
 import { createConfiguredContainerSubstrate } from './substrates/container-substrate-config.js';
+import { createContainerInternalRoutes } from './substrates/container-internal-routes.js';
 import { loadConfiguredFreeTier, type FreeTierConfig } from './free-tier/config.js';
 import { createFreeTierRuntime, type FreeRuntimeProvisioner } from './free-tier/provision-free-runtime.js';
 import type { LambdaMicrovmsApi } from './substrates/container-provider.js';
@@ -262,6 +263,7 @@ type CreatePlatformApp = (deps: {
   internalFundedAiRelayRoutes?: Hono<any>;
   internalFundedAiOperatorRoutes?: Hono<any>;
   internalSpeechRuntimeRoutes?: Hono<any>;
+  containerInternalRoutes?: Hono;
   whatsappRoutes?: Hono<any>;
   fundedAiRepository?: AiFundedPolicyRepository;
   fundedModelProbes?: FundedModelProbeService;
@@ -1154,6 +1156,11 @@ async function startPlatformServerWithCleanup(
     internalFundedAiRelayRoutes,
     internalFundedAiOperatorRoutes,
     internalSpeechRuntimeRoutes,
+    containerInternalRoutes: containerSubstrate
+      ? createContainerInternalRoutes({
+        db, lifecycle: containerSubstrate.lifecycle, platformSecret: containerSubstrate.platformSecret,
+      })
+      : undefined,
     whatsappRoutes: whatsappRuntime?.routes,
     fundedAiRepository,
     fundedModelProbes,

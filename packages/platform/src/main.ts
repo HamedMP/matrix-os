@@ -283,6 +283,7 @@ export function createApp(deps: {
   internalFundedAiRelayRoutes?: Hono<any>;
   internalFundedAiOperatorRoutes?: Hono<any>;
   internalSpeechRuntimeRoutes?: Hono<any>;
+  containerInternalRoutes?: Hono;
   whatsappRoutes?: Hono<any>;
   fundedAiRepository?: import('./ai-funded-policy-repository.js').AiFundedPolicyRepository;
   fundedModelProbes?: import('./ai-funded-model-probes.js').FundedModelProbeService;
@@ -688,6 +689,8 @@ export function createApp(deps: {
 
   // Runtime speech uses its own runtime-bound credential and must never fall
   // through to Clerk session routing or the tenant proxy.
+  // Container runtimes authenticate with their own per-epoch token.
+  if (deps.containerInternalRoutes) app.route('/', deps.containerInternalRoutes);
   if (deps.internalSpeechRuntimeRoutes) {
     app.route('/internal/containers/:handle/speech', deps.internalSpeechRuntimeRoutes);
   }

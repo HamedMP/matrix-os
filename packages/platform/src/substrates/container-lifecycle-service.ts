@@ -272,9 +272,16 @@ export function createContainerLifecycleService(deps: ContainerLifecycleDeps) {
    * beats `launch` saving the unit asks the runtime to retry, so the save
    * still finds the row starting and never fences the new unit.
    */
-  async function markRegistered(machineId: string, generation: number): Promise<RegisterOutcome> {
+  async function markRegistered(
+    machineId: string,
+    generation: number,
+    details: { imageVersion?: string } = {},
+  ): Promise<RegisterOutcome> {
     const ok = await db.executor.updateTable('user_machines')
-      .set({ status: 'running', last_activity_at: now() })
+      .set({
+        status: 'running', last_activity_at: now(),
+        ...(details.imageVersion !== undefined ? { image_version: details.imageVersion } : {}),
+      })
       .where('machine_id', '=', machineId)
       .where('substrate', '=', 'container')
       .where('deleted_at', 'is', null)
