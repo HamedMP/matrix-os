@@ -7,6 +7,7 @@ export const MATRIX_HOSTED_BILLING_PLAN_SLUGS = [
 export const MATRIX_HOSTED_BILLING_REGION_SLUGS = [
   "region_fsn1",
   "region_nbg1",
+  "region_hel1",
   "region_ash",
   "region_hil",
 ] as const;
@@ -25,10 +26,10 @@ export interface MatrixHostedBillingPlan {
 
 export interface MatrixHostedBillingRegion {
   slug: MatrixHostedBillingRegionSlug;
-  location: "fsn1" | "nbg1" | "ash" | "hil";
-  flag: "🇩🇪" | "🇺🇸";
+  location: "fsn1" | "nbg1" | "hel1" | "ash" | "hil";
+  flag: "🇩🇪" | "🇫🇮" | "🇺🇸";
   label: string;
-  countryLabel: "Germany" | "United States";
+  countryLabel: "Germany" | "Finland" | "United States";
   networkZone: "eu-central" | "us-east" | "us-west";
 }
 
@@ -71,6 +72,14 @@ export const MATRIX_HOSTED_BILLING_REGIONS: readonly MatrixHostedBillingRegion[]
     flag: "🇩🇪",
     label: "Nuremberg, Germany",
     countryLabel: "Germany",
+    networkZone: "eu-central",
+  },
+  {
+    slug: "region_hel1",
+    location: "hel1",
+    flag: "🇫🇮",
+    label: "Helsinki, Finland",
+    countryLabel: "Finland",
     networkZone: "eu-central",
   },
   {
@@ -131,6 +140,8 @@ const FALKENSTEIN_TIMEZONES = new Set([
   "Europe/Warsaw",
 ]);
 
+const HELSINKI_TIMEZONES = new Set(["Europe/Helsinki", "Europe/Mariehamn"]);
+
 const HILLSBORO_AMERICAN_TIMEZONES = new Set([
   "America/Anchorage",
   "America/Boise",
@@ -147,6 +158,7 @@ export function closestMatrixRegionSlug(timeZone: string | null | undefined): Ma
   if (!normalized) return "region_fsn1";
   if (HILLSBORO_AMERICAN_TIMEZONES.has(normalized)) return "region_hil";
   if (normalized.startsWith("America/")) return "region_ash";
+  if (HELSINKI_TIMEZONES.has(normalized)) return "region_hel1";
   if (FALKENSTEIN_TIMEZONES.has(normalized)) return "region_fsn1";
   if (normalized.startsWith("Europe/") || normalized.startsWith("Africa/")) return "region_nbg1";
   if (

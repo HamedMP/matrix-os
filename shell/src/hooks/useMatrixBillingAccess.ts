@@ -174,10 +174,12 @@ export function useMatrixBillingAccess(runtimeSlot?: string): BillingAccessState
         allowedSelections: [
           { planSlug: "matrix_starter", regionSlug: "region_fsn1" },
           { planSlug: "matrix_starter", regionSlug: "region_nbg1" },
+          { planSlug: "matrix_starter", regionSlug: "region_hel1" },
           { planSlug: "matrix_starter", regionSlug: "region_ash" },
           { planSlug: "matrix_starter", regionSlug: "region_hil" },
           { planSlug: "matrix_builder", regionSlug: "region_fsn1" },
           { planSlug: "matrix_builder", regionSlug: "region_nbg1" },
+          { planSlug: "matrix_builder", regionSlug: "region_hel1" },
           { planSlug: "matrix_builder", regionSlug: "region_ash" },
           { planSlug: "matrix_builder", regionSlug: "region_hil" },
         ],
