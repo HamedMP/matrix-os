@@ -1,7 +1,8 @@
 # Data model: Runtime substrates and the hosted free tier
 
 All tables are in the platform Postgres database, accessed through Kysely. Owner data
-models are unchanged.
+models are unchanged, except the sync manifest record and the object layout described at
+the end of this file.
 
 ## `user_machines` (changed)
 
@@ -98,7 +99,49 @@ A container runtime gets rows in `ai_funded_runtime_policies` and
 re-pointed to the target machine id in the same transaction that completes the
 migration, under the per-owner funding advisory lock.
 
-## Object layout (unchanged)
+## Object layout
 
-Container runtimes write the same keys as a VPS: `matrixos-sync/{ownerId}/files/...`,
-`.../manifest.json`, and `.../system/db/snapshots/*.dump` with `system/db/latest`.
+Corrected after S4. The earlier text said files live at `.../files/<path>`; current
+writes do not. Keys sit under the owner's sync prefix, `matrixos-sync/{ownerId}` for the
+primary runtime slot (`buildSyncStoragePrefix` in `packages/contracts/src/sync.ts`).
+
+### Today (both substrates)
+
+| Key | Content |
+| --- | --- |
+| `objects/sha256/<hex>` | One content-addressed blob per file |
+| `staging/<uuid>` | Upload staging; hashed, then copied to `objects/` |
+| `manifests/<version>-<sha256>.json` | One manifest generation |
+| `files/<path>` | Legacy per-path keys; still readable, not written |
+| `system/db/snapshots/*.dump`, `system/db/latest` | Owner Postgres dumps written by `matrix-db-backup.sh` |
+
+The pointer to the accepted manifest is not an object. It is
+`sync_manifests.accepted_manifest_key` in **owner Postgres**. A Postgres dump therefore
+carries the manifest pointer, and it must be taken after the final manifest commit.
+
+`matrix-restore.sh` restores only the Postgres dump. Home files come back through the
+gateway mirror's `initialPull`.
+
+### Added by this work (container profile first; the manifest schema change reaches both)
+
+| Key or field | Content |
+| --- | --- |
+| `packs/<id>` | A plain ustar archive of about 16 MiB holding files of 256 KiB or less. `tar -x` can read it for break-glass recovery. Larger files stay in `objects/sha256/<hex>` |
+| Manifest pack entry | `ManifestEntrySchema` gains `{ packKey, offset, size }` next to the existing hash and size, so a file can be read from a pack by range |
+| `boot/<version>-<sha256>.tar` | The boot-set object: one archive written at every flush with owner-owned config (`system/*.json`, `soul.md`, `user.md`, `identity.md` and similar), `agents/custom`, owner app manifests, owner icons, and the `VACUUM INTO` copy of `system/matrix.db`. Template files come from the image |
+| Manifest version reference to its boot set | So readiness can check that the boot set matches the accepted manifest |
+| Dump key names | Seconds plus generation, replacing minute resolution (`%Y-%m-%dT%H%MZ`), which lets a stop and a quick restart overwrite one key |
+
+Key names for packs and the boot set are proposals. Superseded bytes in packs need
+repacking and garbage collection. The manifest for a large home is about 16 MB, so it is
+sharded or written as deltas (plan.md, T047c); the sharded shape is not designed yet.
+
+`system/matrix.db`, `-wal`, and `-shm` are excluded from file sync. Only the `VACUUM INTO`
+copy inside the boot set is stored.
+
+### Hydrated-manifest record
+
+Needs-recovery and crash-window reporting need to know which manifest a runtime last
+hydrated. Today that lives in local `.matrix-home-mirror/state.json`, which dies with the
+container. The container profile records the hydrated manifest version and sha256 in
+owner Postgres next to the accepted pointer. Exact column names are left to T047f.
