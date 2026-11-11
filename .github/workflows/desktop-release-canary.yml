@@ -1,8 +1,22 @@
 name: Desktop Canary Release
 
+# Every merge that changes what the desktop app is built from publishes a new
+# Matrix OS Canary. The concurrency group keeps one running and one pending
+# build, so a burst of merges collapses into the next build.
 on:
-  schedule:
-    - cron: "17 */12 * * *"
+  push:
+    branches: [main]
+    paths:
+      - "desktop/**"
+      - "packages/brand/**"
+      - "packages/ui/**"
+      - "packages/contracts/**"
+      - "packages/sync-client/**"
+      - "scripts/release/**"
+      - ".github/workflows/desktop-build.yml"
+      - ".github/workflows/desktop-release-canary.yml"
+      - ".github/actions/**"
+      - "pnpm-lock.yaml"
   workflow_dispatch:
 
 permissions:
@@ -44,6 +58,7 @@ jobs:
   build:
     needs: prepare
     permissions:
+      actions: read
       contents: read
       id-token: write
     uses: ./.github/workflows/desktop-build.yml

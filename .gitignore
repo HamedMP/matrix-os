@@ -6,6 +6,8 @@ build/
 desktop/build/*
 !desktop/build/dmg-background.png
 !desktop/build/dmg-background@2x.png
+!desktop/build/icon-canary.icns
+!desktop/build/icon-canary.png
 .next/
 *.tsbuildinfo
 .build-stamp

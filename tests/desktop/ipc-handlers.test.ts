@@ -128,8 +128,14 @@ describe("registerIpcHandlers", () => {
     await expect(harness.invoke("app:get-version")).resolves.toEqual({
       version: "1.4.0-canary.2",
       source: null,
+      channel: "stable",
     });
     expect(getAppVersion).toHaveBeenCalledOnce();
+  });
+
+  it("reports the build channel so prerelease builds can quiet advisory notices", async () => {
+    const harness = makeHarness({ desktopChannel: "canary" });
+    await expect(harness.invoke("app:get-version")).resolves.toMatchObject({ channel: "canary" });
   });
 
   it("captures and validates build provenance when handlers register", async () => {
@@ -137,7 +143,7 @@ describe("registerIpcHandlers", () => {
     const harness = makeHarness({ buildSource: source });
     source.commit = "c".repeat(40);
     await expect(harness.invoke("app:get-version")).resolves.toEqual({
-      version: "1.4.0-canary.2", source: { commit: "b".repeat(40), ancestors: ["a".repeat(40)] },
+      version: "1.4.0-canary.2", source: { commit: "b".repeat(40), ancestors: ["a".repeat(40)] }, channel: "stable",
     });
     expect(() => makeHarness({ buildSource: { commit: "unknown", ancestors: [] } })).toThrow();
   });
