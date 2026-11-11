@@ -28,8 +28,8 @@ This spec replaces all of that with one gateway-owned router. It is delivered as
 
 | ID | Release | Code | Ships via | Needs | What the owner gets |
 | --- | --- | --- | --- | --- | --- |
-| A1 | Tapping a notification opens the right chat | `apps/mobile` | EAS Update | none | Existing coding-agent pushes open the exact thread or chat, on the right computer, from warm or cold start. No banner for the chat already on screen. |
-| A2 | Push tokens survive restarts | gateway | host bundle | none | Pushes keep working after gateway updates and restarts |
+| A1 | Tapping a notification opens the right chat | `apps/mobile` | EAS Update | none | Existing coding-agent pushes open the exact thread or chat from warm or cold start, on the right computer once pushes name it (A2). No banner for the chat already on screen. |
+| A2 | Push tokens survive restarts | gateway | host bundle | none | Pushes keep working after gateway updates and restarts, and name the computer they came from |
 | A3 | One native build | `apps/mobile` | TestFlight, Play | none | Android receives pushes. Channels, background push and the Time Sensitive capability are in place for later releases. |
 | A4 | Approvals and questions from every chat | gateway | host bundle | A2 | Every harness notifies when it needs the owner, not only Codex, Pi and OpenCode threads |
 | A5 | Reading on the phone counts as read | `apps/mobile` | EAS Update | none | Reading a chat on the phone advances the same read cursor as the computers |
@@ -58,19 +58,20 @@ Estimated effort (engineer-days): Track A 15–20, Track B 11–16, Track C 15�
 ### Release details
 
 **A1 · Tapping a notification opens the right chat** (`apps/mobile/lib/push.ts`, `app/_layout.tsx`)
-- Parse `data` with a Zod schema that accepts both today's shape (`{ category, threadId?, chatId? }`) and the v1 shape (`{ v: 1, notificationId, handle, target }`). An invalid payload opens the chat list.
-- If `handle` is present and differs from the active computer, switch computers first.
+- Parse `data` with a Zod schema that accepts both today's shape (`{ category, threadId?, chatId?, handle? }`; A2 adds `handle`) and the v1 shape (`{ v: 1, notificationId, handle, target }`). An invalid payload opens the chat list.
+- If `handle` is present and differs from the active computer, switch computers first. Without `handle` (a VPS before A2), open the target on the active computer; if it isn't found there, open the chat list rather than guess.
 - Chats: `selectChat(chatId)`, then show the chats tab root. Expo Router 58's `navigate` pushes and `dismissTo` does not cross tabs. Use `navigation.navigate("<tab route>")` and then `router.dismissTo(href)`, as worked out in the SDK 58 upgrade.
 - Threads: open `agents/[agentId]` or the thread route.
 - Cold start: `getLastNotificationResponseAsync()` once the gateway client is ready, then `clearLastNotificationResponseAsync()`.
 - Foreground: `setNotificationHandler` returns no banner, sound or badge when the notification targets the chat or thread on screen.
 - Replace the "always `/(drawer)`" behaviour and its pinned test in `__tests__/push.test.ts`.
-- Done when: a warm tap and a cold tap each open the exact target, on iOS and Android. Evidence: Native Mobile.
+- Done when: a warm tap and a cold tap each open the exact target, on iOS and Android; a push naming another computer switches to it first; and a push without `handle` whose target is missing on the active computer opens the chat list. Evidence: Native Mobile.
 
 **A2 · Push tokens survive restarts** (`packages/gateway/src/channels/push.ts`)
 - Move token storage from the in-memory `Map` to an owner table `notification_push_tokens`. Keep the existing caps (16 per owner, 30-day TTL) as SQL: `ON CONFLICT (token) DO UPDATE`, and evict the oldest in the same transaction.
 - The route contract (`POST/DELETE /api/push/register`) does not change.
-- Done when: a token registered before a gateway restart still receives a push after it. Evidence: N/A (no UI change; reason recorded in the PR).
+- Add `handle` (the VPS's `MATRIX_HANDLE`) to the `data` of every push, so A1 can switch to the computer a push came from before A4's v1 payload exists.
+- Done when: a token registered before a gateway restart still receives a push after it, and every push's `data` carries `handle`. Evidence: N/A (no UI change; reason recorded in the PR).
 
 **A3 · One native build** (`apps/mobile/app.json`, EAS credentials)
 - Android: create a Firebase project, set `android.googleServicesFile` (or an EAS file variable, OQ-9), upload the FCM V1 service-account key with `eas credentials`, and declare `POST_NOTIFICATIONS`.
@@ -153,7 +154,7 @@ Out of scope:
 ## Behaviour
 
 End state (after Track B):
-1. **Watching the chat:** no notification. The chat updates live.
+1. **Watching the chat** (on screen in a visible, focused window): no notification. The chat updates live.
 2. **At a computer:** a banner on the surface in use only. The phone stays quiet.
 3. **Away** (3 min without input, or 1 min after the screen locks; OQ-1): approvals and questions go to the phone immediately. Replies and failures go after `replyDelaySeconds` if still unread.
 4. **Nothing open:** approvals and questions go to the phone after the 15 s grace. Replies and failures go after `replyDelaySeconds` if still unread.
@@ -175,10 +176,10 @@ The router evaluates each event once. The first matching step decides. The Relea
 | --- | --- | --- | --- |
 | 0 | Kind off in preferences; a reply or failure in a muted chat (OQ-8); a reply shorter than `minReplySeconds`; or kill switch off | `suppressed` (badge only) | A4, A6 |
 | 0b | Dedupe key already exists | Ignored | A4 |
-| 1 | A fresh, attended presence record with `viewingChatId` equal to the event's chat | `inline` | B2 |
-| 2 | One or more attended, enabled devices that can show the alert | Send `show` to the most recently active one and wait up to 5 s for an ack. `displayed` or `inline` → `delivered`. `unavailable` or timeout → next surface (at most 2 attempts). | B2 |
+| 1 | A fresh, attended presence record that is `visible` and `focused`, with `viewingChatId` equal to the event's chat. A hidden tab or an unfocused window does not count. | `inline` | B2 |
+| 2 | One or more attended, enabled devices that can show the alert and have not been tried for this event | Send `show` to the most recently active one and wait up to 5 s for an ack. `displayed` or `inline` → `delivered`. `unavailable` or timeout → the next untried surface. At most 2 banner attempts per event in total, counted from `notification_attempts` across re-checks. | B2 |
 | 3 | No surface took it, and `phone.mode != "never"` | Set `phone_send_after = now + wait`. Approvals and questions: 0 s if a fresh presence record says away (idle or locked), otherwise the fixed 15 s grace. Replies and failures: `replyDelaySeconds`. | A4, A6 |
-| 4 | The scheduler finds a due event still unresolved | Re-check: if a surface is attended now, go to step 2. Otherwise claim it as `sending` and call the transport. Success → `pushed`. Failure → retry with backoff. | A4 |
+| 4 | The scheduler finds a due event still unresolved | From B2, re-check from step 1: the owner is watching the chat now → `inline`; an attended device not yet tried, with banner attempts left → step 2. Otherwise claim it as `sending` and call the transport. Success → `pushed`. Failure → retry with backoff. A device that already failed for this event never delays the phone again. | A4, B2 |
 
 - `phone.mode = "always"` runs step 2 and pushes immediately in parallel (fan-out as an opt-in).
 - `phone.mode = "never"` stops after step 2. The event stays open for badges and the in-app attention lane.
@@ -210,6 +211,7 @@ Each client computes `attended` locally with one shared pure helper in `packages
 | Web Desktop, Web Canvas, Web Mobile | Input in the tab within `awayAfterSeconds`, visible or hidden. Also up to 15 min for a visible, focused tab on a chat with an active run. | `visibilitychange`, focus and blur, pointer and key events throttled to 1 per 5 s, `Notification.permission` |
 | Native Mobile | `AppState` is `active` | `AppState`. On `background` the app sends `attended:false` and closes the socket. |
 
+- **Watching a chat:** `viewingChatId` names the chat on screen, or null. `visible` and `focused` describe the window or tab: Electron `BrowserWindow.isVisible()` and `isFocused()`, web `document.visibilityState` and `document.hasFocus()`, Native Mobile `AppState` `active`. Only a record that is attended, visible and focused counts as watching (routing step 1), the same rule spec 123 uses for marking read.
 - **Blind spots:** web pages cannot see input in other apps, and no surface can see macOS Focus or OS Do Not Disturb. A banner hidden by Focus counts as `displayed`.
 - **Embedded hosted shell:** Electron shows the Next.js shell in a WebContentsView on the Home tab. That embed must not start the web client. Electron loads it with an `embed=electron` marker that the shell reads once at boot. Without this, Electron would show two banners.
 
@@ -265,7 +267,7 @@ export const NotificationClientFrameSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("hello"), surface: z.enum(["electron", "web", "mobile"]), deviceId: DeviceIdSchema,
              appVersion: z.string().max(40), permission: z.enum(["granted", "denied", "default"]) }).strict(),
   z.object({ type: z.literal("presence"), attended: z.boolean(), idleMs: z.number().int().min(0).max(86_400_000),
-             visible: z.boolean(), locked: z.boolean().optional(), viewingChatId: ChatIdSchema.nullable(),
+             visible: z.boolean(), focused: z.boolean(), locked: z.boolean().optional(), viewingChatId: ChatIdSchema.nullable(),
              runActiveInView: z.boolean() }).strict(),
   z.object({ type: z.literal("ack"), id: NotificationIdSchema, outcome: z.enum(["displayed", "inline", "unavailable"]) }).strict(),
   z.object({ type: z.literal("clicked"), id: NotificationIdSchema }).strict(),
@@ -346,6 +348,7 @@ CREATE TABLE IF NOT EXISTS notification_events (
                    CHECK (state IN ('open','inline','delivered','sending','pushed','resolved','expired','suppressed','failed')),
   delivered_device text,
   phone_send_after timestamptz,
+  evaluated_at     timestamptz,                  -- set when the router has run the ladder for this row
   claimed_at       timestamptz,
   push_attempts    smallint NOT NULL DEFAULT 0,
   expires_at       timestamptz NOT NULL,
@@ -353,6 +356,8 @@ CREATE TABLE IF NOT EXISTS notification_events (
   resolved_at      timestamptz,
   UNIQUE (owner_id, dedupe_key)
 );
+CREATE INDEX IF NOT EXISTS notification_events_unevaluated
+  ON notification_events (created_at) WHERE state = 'open' AND evaluated_at IS NULL;
 CREATE INDEX IF NOT EXISTS notification_events_due
   ON notification_events (phone_send_after) WHERE state IN ('open','delivered') AND phone_send_after IS NOT NULL;
 CREATE INDEX IF NOT EXISTS notification_events_open_chat
@@ -481,7 +486,7 @@ There are no inbound webhooks. Expo receipts are polled.
 
 | Recipient | Data | When |
 | --- | --- | --- |
-| Expo, then Apple or Google | Title, body, and `data` (`notificationId`, `handle`, target id) | Phone pushes (A4 on) |
+| Expo, then Apple or Google | Title, body, and `data` (`notificationId`, `handle`, target id) | Phone pushes (`handle` from A2, the v1 payload from A4) |
 | Browser push services | Ciphertext only, plus endpoint metadata | C7 |
 | OS notification centres | Title and body | Local banners (B2 on) |
 | PostHog | Counts only: `notification_routed {kind, outcome, channel}`, with no content or ids | A4 on |
@@ -539,9 +544,9 @@ Shutdown:
 | Case | Handling |
 | --- | --- |
 | Expo or relay slow or failing | `AbortSignal.timeout(10_000)`. Retry 3 times with 2 s, 8 s and 30 s backoff while before `expires_at`, then `failed`. Logged; the owner sees no error. |
-| Gateway restart during a wait | The scheduler resumes from `phone_send_after`. Stranded `open` events older than 15 s without `phone_send_after` re-run the ladder once. The dedupe key prevents a second event. |
+| Gateway restart during a wait | The scheduler resumes from `phone_send_after`. `open` events never evaluated (`evaluated_at IS NULL`) and older than 15 s run the ladder once, through the scheduler's per-tick pickup. The dedupe key prevents a second event. |
 | Crash between commit and enqueue | Accepted loss: that one event does not notify. No duplicate is possible. |
-| Router queue full (> 1,000 pending) | The newest reply and failure events are dropped, with a counter and a log. Approvals and questions are never dropped; they evict the oldest queued reply. |
+| Router queue full (> 1,000 pending) | The newest reply and failure events are dropped, with a counter and a log. An approval or question evicts the oldest queued reply. If no queued reply is left to evict, it is written straight to `notification_events` as `open` with the generic copy for its kind (as with `showPreview: false`) and `ON CONFLICT (owner_id, dedupe_key) DO NOTHING`, instead of being queued. The scheduler's per-tick pickup then runs the ladder for it. Memory stays capped at 1,000 items, and no approval or question is dropped. |
 | Concurrent resolve and push | Conditional updates. A push for a resolved row is skipped, and a resolve after a push triggers `dismiss`. |
 | Two gateway processes overlap during a restart | `FOR UPDATE SKIP LOCKED` plus conditional updates |
 | Interim false push (Track A) | The owner is at their desk in another app and does not read within the wait. Accepted until B2. Owners can raise `replyDelaySeconds` or turn replies off. |
@@ -553,7 +558,7 @@ Shutdown:
 | Approval expires unseen | The event becomes `expired`, and `resolve`/`dismiss` go out. The chat shows its existing expired state. |
 | `DeviceNotRegistered` | Before C4, the gateway deletes the token on the push ticket error. From C4, the platform disables the device from tickets or receipts. |
 | Burst of finished replies | `collapseId` per chat replaces earlier copies. Past 3 pushes per owner in 60 s, the router sends one summary ("3 replies finished") and suppresses the rest of that minute. |
-| Phone signed in to another computer | The payload carries `handle`, and the tap switches computers first (A1). |
+| Phone signed in to another computer | From A2 the payload carries `handle`, and the tap switches computers first (A1). A push without it opens the target on the active computer, or the chat list if it isn't there. |
 | Notifications blocked on a device | Mobile: no token, so no push. Computers (B2+): `hello` reports `denied`, the router skips the device, and Settings explains how to allow it. |
 | Unsigned Electron dev build after an upgrade to Electron 42 | macOS emits `failed`. The client acks `unavailable`, and the alert falls through to the phone. Documented in the desktop dev notes. |
 | Platform down (C4+) | Retries, then a direct send until C5. After C5 the phone step fails after retries. Computers are unaffected. |
@@ -563,8 +568,8 @@ Shutdown:
 
 | Resource | Limit and eviction | Release |
 | --- | --- | --- |
-| Router queue | 1,000 items with priority eviction; one worker, at most 4 concurrent evaluations | A4 |
-| Scheduler | 50 events per tick, a tick every 2 s, at most 3 push attempts per event | A4 |
+| Router queue | 1,000 items with priority eviction. Approvals and questions that do not fit go to the owner table, not memory. One worker, at most 4 concurrent evaluations. | A4 |
+| Scheduler | 50 due events per tick, a tick every 2 s, at most 3 push attempts per event. Each tick also picks up at most 50 never-evaluated `open` rows older than 15 s and runs the ladder for them once. | A4 |
 | Owner tables | Hourly sweep deletes events and attempts older than 30 days, tokens unseen for 30 days, and devices unseen for 90 days | A2, A4, B1 |
 | Mobile read marking | One in-flight request per chat, debounced 2 s | A5 |
 | Presence registry | 64 sockets per owner (oldest evicted); a 30 s sweep removes records stale for over 60 s; cleared on shutdown | B1 |
@@ -604,7 +609,10 @@ No temp files are created. Every timer is cleared on its terminal paths and on s
   - Commit `approval.resolved` first: no call.
   - Kill the scheduler between claim and send: the reclaim produces exactly one call.
   - Throw inside the router: failure telemetry still records `run.failed`.
+  - Fill the router queue with 1,000 approvals, then commit one more: it is stored, not dropped, and the per-tick pickup pushes it exactly once.
 - **B2 integration test:** a fake attended Electron socket receives one `show`, acks, and the transport is not called. With no ack, the transport is called once after 5 s.
+  - A socket that acks `unavailable` and stays attended is not tried again at the due re-check: the transport is called once.
+  - A chat selected in a hidden tab (`visible: false`) does not count as watching: the event goes to the banner step.
 - **C3 and C4 integration test:**
   - Router → relay (platform test server with a fake Expo) → one message.
   - A repeated `eventId` is a no-op.
