@@ -3,12 +3,16 @@ import { randomBytes } from "node:crypto";
 import { join } from "node:path";
 import type { TerminalRef } from "@matrix-os/contracts";
 import { z } from "zod/v4";
+import { workspaceRuntimeId } from "./user-systemd-workspace.js";
 
 /** Herdr's status words: what a program reports about itself. */
 export const TerminalAgentStatusWordSchema = z.enum(["idle", "working", "done", "blocked", "error"]);
 export type TerminalAgentStatusWord = z.infer<typeof TerminalAgentStatusWordSchema>;
 
-const SESSION_NAME = /^matrix-w-[0-9a-f]{32}$/;
+// A pane sees zellij's own session name: the logical `matrix-w-<hex>` in a plain
+// runtime, or the physical `matrix-rt_<hash>` that customer VPSes run each workspace under.
+const SESSION_NAME = /^matrix-(?:w-|rt_)[0-9a-f]{32}$/;
+const LOGICAL_SESSION_NAME = /^matrix-w-[0-9a-f]{32}$/;
 const PANE_NUMBER = /^[0-9]{1,9}$/;
 const MAX_STATUS_FILE_BYTES = 4 * 1024;
 const MAX_MESSAGE_CHARS = 200;
@@ -152,17 +156,23 @@ export function createTerminalAgentStatusIndex(options: { homePath: string; stor
       const entries: TerminalAgentStatusEntry[] = [];
       for (const { id: workspaceId } of await options.store.listWorkspaces()) {
         const workspace = await options.store.getRuntimeWorkspace(workspaceId);
-        if (!workspace || !SESSION_NAME.test(workspace.zellijSessionName)) continue;
+        if (!workspace || !LOGICAL_SESSION_NAME.test(workspace.zellijSessionName)) continue;
+        const sessionNames = [workspace.zellijSessionName, `matrix-${workspaceRuntimeId(workspace.zellijSessionName)}`];
         for (const [tabId, tab] of Object.entries(workspace.tabs)) {
           if (entries.length >= MAX_INDEXED_TABS) return entries;
           if (tab.status === "exited" || tab.status === "failed" || !tab.zellijPaneId) continue;
           const pane = tab.zellijPaneId.slice("terminal_".length);
-          let file;
-          try {
-            file = await readStatusFile(terminalPaneStatusPath(options.homePath, workspace.zellijSessionName, pane));
-          } catch (error: unknown) {
-            console.warn("[terminal-runtime] terminal status unreadable", error instanceof Error ? error.name : "unknown_error");
-            continue;
+          // The newer report wins if both the logical and physical names have one.
+          let file: z.infer<typeof StatusFileSchema> | undefined;
+          for (const sessionName of sessionNames) {
+            let candidate;
+            try {
+              candidate = await readStatusFile(terminalPaneStatusPath(options.homePath, sessionName, pane));
+            } catch (error: unknown) {
+              console.warn("[terminal-runtime] terminal status unreadable", error instanceof Error ? error.name : "unknown_error");
+              continue;
+            }
+            if (candidate && (!file || Date.parse(candidate.reportedAt) > Date.parse(file.reportedAt))) file = candidate;
           }
           if (!file) continue;
           const message = cleanMessage(file.message);

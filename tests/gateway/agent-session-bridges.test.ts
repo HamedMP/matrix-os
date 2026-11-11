@@ -395,4 +395,16 @@ describe("agent session bridge ingestion", () => {
     });
     await expect(readFile(join(root, "system", "terminal-status"), "utf8")).rejects.toThrow();
   });
+
+  it("records hook status under a customer VPS's physical session name", async () => {
+    const root = await tempRoot();
+    const store = new AgentSessionStateStore({ homePath: root });
+    const sessionName = `matrix-rt_${"d".repeat(32)}`;
+    await ingestAgentBridgePayload({
+      agent: "codex", eventName: "UserPromptSubmit", sessionName,
+      occurredAt: "2026-11-12T10:00:00.000Z", payload: {}, store, paneId: "3", homePath: root,
+    });
+    expect(JSON.parse(await readFile(join(root, "system", "terminal-status", sessionName, "terminal_3.json"), "utf8")))
+      .toMatchObject({ status: "working", source: "hook" });
+  });
 });

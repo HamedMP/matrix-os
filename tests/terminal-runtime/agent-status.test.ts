@@ -8,6 +8,7 @@ import {
   terminalPaneStatusPath,
   writeTerminalPaneStatus,
 } from "../../packages/terminal-runtime/src/agent-status.js";
+import { workspaceRuntimeId } from "../../packages/terminal-runtime/src/user-systemd-workspace.js";
 
 const roots: string[] = [];
 afterEach(async () => {
@@ -53,6 +54,19 @@ describe("terminal agent status", () => {
       reportedAt: "2026-11-11T10:00:00.000Z",
       source: "reporter",
     }]);
+  });
+
+  // Fault detected (second review of #3297): on customer VPSes zellij runs a workspace
+  // under its physical name `matrix-rt_<hash>`, so pane reports never reached the tab.
+  it("maps reports written under a workspace's physical zellij session name", async () => {
+    const homePath = await home();
+    const physical = `matrix-${workspaceRuntimeId(session)}`;
+    await writeTerminalPaneStatus({ homePath, sessionName: physical, paneId: "7", status: "working", source: "reporter" });
+    const index = createTerminalAgentStatusIndex({
+      homePath,
+      store: storeWith([{ id: tabId, zellijPaneId: "terminal_7" }]),
+    });
+    await expect(index.list()).resolves.toEqual([expect.objectContaining({ ref: { workspaceId, tabId }, status: "working" })]);
   });
 
   it("writes atomically with owner-only permissions and strips control characters", async () => {

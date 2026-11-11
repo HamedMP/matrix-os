@@ -25,11 +25,12 @@ esac
 session="${ZELLIJ_SESSION_NAME:-}"
 pane="${ZELLIJ_PANE_ID:-}"
 case "$session" in
-  matrix-w-*) ;;
+  matrix-w-*|matrix-rt_*) ;;
   *) exit 0 ;;
 esac
-# Exact identity shapes only: these become path components.
-printf '%s' "$session" | grep -Eq '^matrix-w-[0-9a-f]{32}$' || exit 0
+# Exact identity shapes only: these become path components. Customer VPSes run
+# each workspace under its physical name matrix-rt_<hash>.
+printf '%s' "$session" | grep -Eq '^matrix-(w-|rt_)[0-9a-f]{32}$' || exit 0
 printf '%s' "$pane" | grep -Eq '^[0-9]{1,9}$' || exit 0
 
 home="${MATRIX_HOME:-${HOME:-}}"

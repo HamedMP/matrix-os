@@ -31,7 +31,7 @@ export async function ingestAgentBridgePayload(options: IngestAgentBridgePayload
   // Canonical workspaces hold many tabs in one zellij session, so the
   // session-keyed store above cannot say which tab is working; the pane can.
   const status = events.map((event) => agentStatusForHookEvent(event.type)).filter((word) => word !== undefined).at(-1);
-  if (status && paneId && homePath && /^[0-9]{1,9}$/.test(paneId) && /^matrix-w-[0-9a-f]{32}$/.test(options.sessionName)) {
+  if (status && paneId && homePath && /^[0-9]{1,9}$/.test(paneId) && /^matrix-(?:w-|rt_)[0-9a-f]{32}$/.test(options.sessionName)) {
     await writeTerminalPaneStatus({ homePath, sessionName: options.sessionName, paneId, status, source: "hook" });
   }
 }

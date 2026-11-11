@@ -82,6 +82,13 @@ describe("terminal wait", () => {
     await expect(second.waiter.wait(ref, { output: "ready", seen: 0, timeoutMs: 1_000 })).resolves.toEqual({ reason: "output" });
   });
 
+  // Fault detected (second review of #3297): snapshot rows carry colour codes, so a
+  // phrase printed with a colour change between words never matched.
+  it("matches output as the terminal shows it, ignoring colour codes", async () => {
+    const { waiter } = harness({ statuses: ["idle"], screens: [["boot"], ["boot", "\x1b[32mready\x1b[0m on :3000"]] });
+    await expect(waiter.wait(ref, { output: "ready on :3000", timeoutMs: 2_000 })).resolves.toEqual({ reason: "output" });
+  });
+
   it("times out as a check-in, not a failure", async () => {
     const { waiter, elapsed } = harness({ statuses: ["working"] });
     await expect(waiter.wait(ref, { timeoutMs: 2_000 })).resolves.toEqual({ reason: "timeout", status: "working" });
