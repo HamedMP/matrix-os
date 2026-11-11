@@ -20,6 +20,7 @@ import {
 } from "@/lib/push";
 import { useActiveGateway, type GatewaySession } from "@/lib/queries/use-active-gateway";
 import {
+  chatExists,
   fetchComputers,
   fetchTerminalSessions,
   fetchThreadTerminalSession,
@@ -43,6 +44,20 @@ function isChatOnScreen(segments: readonly string[]): boolean {
 
 function warn(scope: string, err: unknown) {
   console.warn(`[mobile] ${scope}:`, err instanceof Error ? err.message : "unknown");
+}
+
+/**
+ * Whether the chat is on the computer. Only the computer's own answer that it
+ * has no such chat counts against it: when it cannot be asked, the chat opens
+ * and its screen reports the failed connection.
+ */
+async function isChatOnComputer(session: GatewaySession, chatId: string): Promise<boolean> {
+  try {
+    return await chatExists(session.token, session.gatewayUrl, chatId, TAP_LOOKUP_TIMEOUT_MS);
+  } catch (err: unknown) {
+    warn("Notification chat lookup failed", err);
+    return true;
+  }
 }
 
 /**
@@ -110,6 +125,11 @@ export function NotificationRouter({ setGateway }: { setGateway: (gateway: Gatew
         return;
       }
       if (target.type === "chat") {
+        // A push that does not name its computer may be about another one.
+        if (!(await isChatOnComputer(session, target.chatId))) {
+          showChatListFromRoot(navigation, router);
+          return;
+        }
         // Choosing the open chat again would drop the model picked for it.
         if (target.chatId !== activeChatId) selectChat(target.chatId);
         showChatScreenFromRoot(navigation, router);

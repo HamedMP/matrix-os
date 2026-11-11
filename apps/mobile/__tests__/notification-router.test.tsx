@@ -52,7 +52,9 @@ jest.mock("@/lib/queries/use-active-gateway", () => ({ useActiveGateway: () => m
 const mockFetchComputers = jest.fn();
 const mockFetchTerminalSessions = jest.fn();
 const mockFetchThreadTerminalSession = jest.fn();
+const mockChatExists = jest.fn();
 jest.mock("@/lib/requests", () => ({
+  chatExists: (...args: unknown[]) => mockChatExists(...args),
   fetchComputers: (...args: unknown[]) => mockFetchComputers(...args),
   fetchTerminalSessions: (...args: unknown[]) => mockFetchTerminalSessions(...args),
   fetchThreadTerminalSession: (...args: unknown[]) => mockFetchThreadTerminalSession(...args),
@@ -111,6 +113,7 @@ beforeEach(() => {
   notifications.getLastNotificationResponse.mockReturnValue(null);
   mockFetchTerminalSessions.mockResolvedValue([{ id: TERMINAL }]);
   mockFetchThreadTerminalSession.mockResolvedValue(TERMINAL);
+  mockChatExists.mockResolvedValue(true);
 });
 
 describe("tapping a notification while the app runs", () => {
@@ -124,6 +127,36 @@ describe("tapping a notification while the app runs", () => {
     expect(mockSelectChat.mock.invocationCallOrder[0]).toBeLessThan(mockShowChatScreen.mock.invocationCallOrder[0]);
     expect(notifications.clearLastNotificationResponse).toHaveBeenCalled();
     expect(mockShowChatList).not.toHaveBeenCalled();
+  });
+
+  it("opens the chat list when the chat is not on the computer on screen", async () => {
+    // Pushes from a computer before spec 652's A2 do not say which computer sent them.
+    mockChatExists.mockResolvedValue(false);
+    renderRouter();
+
+    tapWhileRunning(chatTap());
+
+    await waitFor(() => expect(mockShowChatList).toHaveBeenCalledWith(mockNavigation, mockRouter));
+    expect(mockChatExists).toHaveBeenCalledWith(
+      "clerk-token", "https://app.matrix-os.com/vm/alice", CHAT_ID, expect.any(Number),
+    );
+    expect(mockSelectChat).not.toHaveBeenCalled();
+    expect(mockShowChatScreen).not.toHaveBeenCalled();
+  });
+
+  it("still opens the chat when the computer cannot be asked about it", async () => {
+    // Only the computer's own answer that it has no such chat means it is elsewhere;
+    // the chat screen reports a failed connection itself.
+    const warn = jest.spyOn(console, "warn").mockImplementation(() => {});
+    mockChatExists.mockRejectedValue(new Error("Chat unavailable."));
+    renderRouter();
+
+    tapWhileRunning(chatTap());
+
+    await waitFor(() => expect(mockShowChatScreen).toHaveBeenCalled());
+    expect(mockSelectChat).toHaveBeenCalledWith(CHAT_ID);
+    expect(warn).toHaveBeenCalled();
+    warn.mockRestore();
   });
 
   it("keeps the open chat as it is when the notification is about it", async () => {
@@ -244,7 +277,7 @@ describe("a notification about a coding-agent thread", () => {
     expect(mockOpenTerminal).not.toHaveBeenCalled();
   });
 
-  it("opens the chat list when the thread cannot be read", async () => {
+  it("opens the chat list when the thread is not on the computer on screen, or cannot be read", async () => {
     const warn = jest.spyOn(console, "warn").mockImplementation(() => {});
     mockFetchThreadTerminalSession.mockRejectedValue(new Error("Thread unavailable."));
     renderRouter();
@@ -260,18 +293,25 @@ describe("a notification about a coding-agent thread", () => {
 describe("a notification from another computer", () => {
   const BOB_GATEWAY = { id: "matrix-os-cloud:preview-1:bob", url: "https://app.matrix-os.com/vm/bob?runtime=preview-1" };
 
-  it("switches to that computer, then opens the chat", async () => {
+  it.each([
+    ["spec 652's payload", () => chatTap("bob")],
+    ["a pre-router payload with the handle its gateway adds", () => tap({ category: "message", chatId: CHAT_ID, handle: "bob" })],
+  ])("switches to that computer, then opens the chat, from %s", async (_shape, push) => {
     mockFetchComputers.mockResolvedValue({ items: [ALICE, BOB], selectedSlot: null });
     mockSaveSelectedHostedComputer.mockResolvedValue(BOB_GATEWAY);
     renderRouter();
 
-    tapWhileRunning(chatTap("bob"));
+    tapWhileRunning(push());
 
     await waitFor(() => expect(mockShowChatScreen).toHaveBeenCalled());
     expect(mockSaveSelectedHostedComputer).toHaveBeenCalledWith(BOB);
     expect(setGateway).toHaveBeenCalledWith(BOB_GATEWAY);
     expect(mockInvalidateQueries).toHaveBeenCalledWith({ queryKey: ["mobile", "computers", "active", "user_1"] });
     expect(mockInvalidateQueries.mock.invocationCallOrder[0]).toBeLessThan(mockSelectChat.mock.invocationCallOrder[0]);
+    // The chat is looked up on the computer just switched to.
+    expect(mockChatExists).toHaveBeenCalledWith(
+      "clerk-token", "https://app.matrix-os.com/vm/bob?runtime=preview-1", CHAT_ID, expect.any(Number),
+    );
     expect(mockSelectChat).toHaveBeenCalledWith(CHAT_ID);
   });
 

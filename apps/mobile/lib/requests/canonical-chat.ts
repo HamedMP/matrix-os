@@ -28,7 +28,7 @@ import {
 } from "@matrix-os/contracts";
 
 import { gatewayRequestUrl } from "@/lib/requests/answers";
-import { buildGatewayRequestUrl, fetchAuthenticatedJson } from "@/lib/requests/http";
+import { buildGatewayRequestUrl, fetchAuthenticatedJson, fetchAuthenticatedResponse } from "@/lib/requests/http";
 
 const CHATS_UNAVAILABLE_ERROR = "Chats unavailable. Try again.";
 const CHAT_CREATE_ERROR = "Could not start a new chat. Try again.";
@@ -281,6 +281,34 @@ export function fetchChatDetail(
     schema: CanonicalChatDetailResponseSchema,
     errorMessage: CHAT_DETAIL_ERROR,
   });
+}
+
+/**
+ * Whether a chat is on the computer. Resolves false only when the computer
+ * answers that it has no such chat; any other failure rejects.
+ */
+export function chatExists(
+  clerkToken: string,
+  computerGatewayUrl: string,
+  chatId: string,
+  timeoutMs?: number,
+): Promise<boolean> {
+  const parsedChatId = CanonicalChatIdSchema.safeParse(chatId);
+  if (!parsedChatId.success) return Promise.reject(new Error(CHAT_DETAIL_ERROR));
+  let url: string;
+  try {
+    url = chatMessageVersionUrl(buildGatewayRequestUrl(
+      computerGatewayUrl,
+      `/api/chats/${encodeURIComponent(parsedChatId.data)}`,
+      { limit: "1" },
+    ));
+  } catch (err: unknown) {
+    return Promise.reject(err instanceof Error ? err : new Error(CHAT_DETAIL_ERROR));
+  }
+  return fetchAuthenticatedResponse(
+    { url, token: clerkToken, errorMessage: CHAT_DETAIL_ERROR, timeoutMs, expectedStatuses: [404] },
+    async (response) => response.status !== 404,
+  );
 }
 
 export async function admitChatTurn(

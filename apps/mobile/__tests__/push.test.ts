@@ -25,6 +25,15 @@ describe("parseNotificationDestination", () => {
     });
   });
 
+  it("reads the computer a pre-router push names, once its gateway adds it", () => {
+    const data = { category: "agent", threadId: THREAD_ID, type: "message", chatId: "coding-agents", handle: "alice" };
+
+    expect(parseNotificationDestination(data)).toEqual({
+      handle: "alice",
+      target: { type: "thread", threadId: THREAD_ID },
+    });
+  });
+
   it("opens the chat a pre-router push names", () => {
     expect(parseNotificationDestination({ category: "message", chatId: CHAT_ID })).toEqual({
       handle: null,
@@ -34,6 +43,7 @@ describe("parseNotificationDestination", () => {
 
   it.each([
     ["an unsafe thread id", { category: "agent", threadId: "../secret", chatId: "coding-agents" }],
+    ["an unsafe handle", { category: "message", chatId: CHAT_ID, handle: "../alice" }],
     ["no chat or thread", { category: "cron" }],
     ["nothing", {}],
     ["no data at all", undefined],

@@ -35,10 +35,12 @@ const NotificationPayloadV1Schema = z.object({
 
 // What gateways send until the notifications router: coding-agent pushes carry
 // `{ category: "agent", threadId, chatId: "coding-agents" }`, where `chatId`
-// names the push channel's own chat rather than a Matrix chat.
+// names the push channel's own chat rather than a Matrix chat. Spec 652's A2
+// adds the sending computer's `handle`; older computers leave it out.
 const PreRouterPayloadSchema = z.object({
   threadId: z.unknown().optional(),
   chatId: z.unknown().optional(),
+  handle: MatrixComputerHandleSchema.optional(),
 });
 
 const CHAT_LIST: NotificationDestination = { handle: null, target: null };
@@ -50,10 +52,11 @@ export function parseNotificationDestination(data: unknown): NotificationDestina
   }
   const payload = PreRouterPayloadSchema.safeParse(data);
   if (!payload.success) return CHAT_LIST;
+  const handle = payload.data.handle ?? null;
   const threadId = ThreadIdSchema.safeParse(payload.data.threadId);
-  if (threadId.success) return { handle: null, target: { type: "thread", threadId: threadId.data } };
+  if (threadId.success) return { handle, target: { type: "thread", threadId: threadId.data } };
   const chatId = CanonicalChatIdSchema.safeParse(payload.data.chatId);
-  return chatId.success ? { handle: null, target: { type: "chat", chatId: chatId.data } } : CHAT_LIST;
+  return chatId.success ? { handle, target: { type: "chat", chatId: chatId.data } } : CHAT_LIST;
 }
 
 /** A tap on the notification itself, rather than one of its actions or a dismissal. */

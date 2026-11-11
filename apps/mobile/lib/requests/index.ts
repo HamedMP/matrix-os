@@ -35,6 +35,7 @@ export {
   canonicalChatRequestId,
   canonicalChatTitle,
   chatActivityAt,
+  chatExists,
   createChat,
   fetchChatDetail,
   fetchChatProviderCatalog,
