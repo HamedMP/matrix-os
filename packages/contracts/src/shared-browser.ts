@@ -4,6 +4,8 @@ import { z } from "zod/v4";
 export const SHARED_BROWSER_ACTION_MAX_BYTES = 32 * 1024;
 /** Five-minute owner pause, 30-second driver action, and bounded response margin. */
 export const SHARED_BROWSER_ACTION_DEADLINE_MS = 6 * 60_000;
+/** Ten result tabs plus two working tabs, retained across runs in the shared Browser. */
+export const SHARED_BROWSER_MAX_OWNED_TABS = 12;
 
 const Reference = z.string().min(1).max(128).regex(/^[A-Za-z0-9_-]+$/);
 const Observed = { observationId: Reference, ref: Reference };
@@ -57,7 +59,7 @@ export const SharedBrowserActionResultSchema=z.object({
   success:z.boolean(),observationId:Reference.optional(),targetId:Reference.optional(),
   url:z.string().max(2048).optional(),title:z.string().max(160).optional(),content:z.string().max(32000).optional(),
   elements:z.array(z.object({ref:Reference,role:z.string().max(40),name:z.string().max(180)}).strict()).max(100).optional(),
-  tabs:z.array(z.object({targetId:Reference,title:z.string().max(160),url:z.string().max(2048)}).strict()).max(8).optional(),
+  tabs:z.array(z.object({targetId:Reference,title:z.string().max(160),url:z.string().max(2048)}).strict()).max(SHARED_BROWSER_MAX_OWNED_TABS).optional(),
   artifact:SharedBrowserArtifactSchema.optional(),
   collectionManifest:z.string().regex(/^data\/browser-artifacts\/collection-[a-f0-9-]{36}\.json$/).optional(),
   handoffRequested:z.literal(true).optional(),automation:SharedBrowserStateSchema.optional(),

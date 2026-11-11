@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { SharedBrowserActionSchema, type SharedBrowserAction, type SharedBrowserActionResult } from '@matrix-os/contracts';
+import { SHARED_BROWSER_MAX_OWNED_TABS, SharedBrowserActionSchema, type SharedBrowserAction, type SharedBrowserActionResult } from '@matrix-os/contracts';
 import { SharedBrowserError, type SharedBrowserDriver } from './broker.js';
 import { BrowserCdpMissingObjectError, BrowserCdpMissingTargetError, connectBrowserCdp, type BrowserCdpClient, type CdpConnectOptions, type CdpEvent } from './cdp-client.js';
 import { CURSOR_ACTION_FUNCTION, CLEAR_CURSOR_FUNCTION } from './cdp-cursor.js';
@@ -12,7 +12,9 @@ export function createSharedBrowserCdpDriver(options: CdpConnectOptions & { home
   let client: BrowserCdpClient | undefined, connecting: Promise<BrowserCdpClient> | undefined;
   let targetId: string | undefined, sessionId: string | undefined, observation: Observation | undefined;
   let generation = 0, detaching = false, recoveryRequired = false;
-  const owned = new Map<string, number>(); // <=8 agent-created tabs, 24h idle-ID eviction; no owner-tab scan.
+  const owned = new Map<string, number>(); // Capped shared-session tabs, 24h idle-ID eviction; no owner-tab scan.
+  let pendingTabCreations = 0;
+  const atTabLimit = () => owned.size + pendingTabCreations >= SHARED_BROWSER_MAX_OWNED_TABS;
   const paused = new Map<string, Promise<void>>(); // <=16 Fetch requests, DNS 2s + CDP 8s eviction.
   const children = new Map<string, { targetId: string; parentSession: string; type: string; newlyPaused: boolean }>(); // <=16 related sessions, detached/run-close eviction.
   const childJobs = new Set<Promise<void>>(); // <=16 bounded initializations/duplicate detaches, settlement/close eviction.
@@ -140,7 +142,7 @@ export function createSharedBrowserCdpDriver(options: CdpConnectOptions & { home
         await client!.request('Target.setAutoAttach', { autoAttach: true, waitForDebuggerOnStart: true, flatten: true }, child);
         if (detaching) return;
         if (info.type === 'page') {
-          if (owned.size >= 8) { handoffRequired = true; invalidateObservation(); return; }
+          if (atTabLimit()) { handoffRequired = true; invalidateObservation(); return; }
           owned.set(info.targetId, Date.now());
         }
         await client!.request('Runtime.runIfWaitingForDebugger', {}, child);
@@ -237,10 +239,19 @@ export function createSharedBrowserCdpDriver(options: CdpConnectOptions & { home
   }
   async function newTab(signal: AbortSignal) {
     await reconcileTargets(signal);
-    if (owned.size >= 8) throw new SharedBrowserError('browser_busy');
-    const result = await request('Target.createTarget', { url: 'about:blank', background: false }, signal, true);
-    if (typeof result.targetId !== 'string' || !/^[A-Za-z0-9_-]{1,128}$/.test(result.targetId)) throw new SharedBrowserError('browser_unavailable');
-    owned.set(result.targetId, Date.now()); await attach(result.targetId, signal);
+    if (atTabLimit()) throw new SharedBrowserError('tab_limit');
+    // Related page events can arrive before Chrome acknowledges this create.
+    pendingTabCreations++;
+    let createdTargetId: string;
+    try {
+      const result = await request('Target.createTarget', { url: 'about:blank', background: false }, signal, true);
+      if (typeof result.targetId !== 'string' || !/^[A-Za-z0-9_-]{1,128}$/.test(result.targetId)) throw new SharedBrowserError('browser_unavailable');
+      createdTargetId = result.targetId;
+      owned.set(createdTargetId, Date.now());
+    } finally {
+      pendingTabCreations--;
+    }
+    await attach(createdTargetId, signal);
   }
   async function frame(signal: AbortSignal) {
     const tree = await request('Page.getFrameTree', {}, signal);

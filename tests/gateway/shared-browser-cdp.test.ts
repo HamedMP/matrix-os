@@ -246,13 +246,13 @@ describe('shared owner Chrome CDP driver', () => {
   });
   it('reconciles closed recorded tabs on listing and releases capacity without owner scans', async () => {
     const { driver, fake, signal } = await rig();
-    for (let index = 0; index < 8; index++) await driver.execute({ action: 'tab_new' }, signal);
+    for (let index = 0; index < 12; index++) await driver.execute({ action: 'tab_new' }, signal);
     await driver.detach(); fake.closeTarget('agent-tab'); fake.closeTarget('agent-tab-2');
-    expect((await driver.execute({ action: 'tabs' }, signal)).tabs).toHaveLength(6);
-    expect(await driver.execute({ action: 'tab_new' }, signal)).toMatchObject({ success: true, targetId: 'agent-tab-9' });
+    expect((await driver.execute({ action: 'tabs' }, signal)).tabs).toHaveLength(10);
+    expect(await driver.execute({ action: 'tab_new' }, signal)).toMatchObject({ success: true, targetId: 'agent-tab-13' });
     await driver.execute({ action: 'tab_new' }, signal);
     fake.closeTarget('agent-tab-3');
-    expect(await driver.execute({ action: 'tab_new' }, signal)).toMatchObject({ success: true, targetId: 'agent-tab-11' });
+    expect(await driver.execute({ action: 'tab_new' }, signal)).toMatchObject({ success: true, targetId: 'agent-tab-15' });
     expect(fake.messages.filter(row => row.method === 'Target.getTargetInfo').every(row => /^agent-tab(?:-\d+)?$/.test(row.params.targetId))).toBe(true);
     await driver.detach();
   });
@@ -357,14 +357,71 @@ describe('shared owner Chrome CDP driver', () => {
     await expect(driver.execute({ action: 'navigate', url: fixture }, abort.signal)).rejects.toThrow();
     expect(fake.messages).toEqual([]); await driver.detach();
   });
-  it('caps live owned tabs and forgets expired identifiers without closing owner Chrome tabs', async () => {
+  it('keeps ten result tabs accessible alongside two working tabs and bounds live ownership', async () => {
     const { driver, fake, signal } = await rig(); const clock = vi.spyOn(Date, 'now').mockReturnValue(1_000_000);
-    for (let i = 0; i < 8; i++) await driver.execute({ action: 'tab_new', url: fixture }, signal);
-    await expect(driver.execute({ action: 'tab_new', url: fixture }, signal)).rejects.toMatchObject({ code: 'browser_busy' });
-    clock.mockReturnValue(1_000_000 + 24 * 60 * 60_000 + 1);
-    await expect(driver.execute({ action: 'tab_new', url: fixture }, signal)).resolves.toMatchObject({ success: true });
-    expect(fake.messages.some(packet => packet.method === 'Target.closeTarget' || packet.method === 'Browser.close')).toBe(false);
-    await driver.detach();
+    try {
+      for (let i = 0; i < 12; i++) await driver.execute({ action: 'tab_new', url: fixture }, signal);
+      const tabs = await driver.execute({ action: 'tabs' }, signal);
+      expect(new Set(tabs.tabs?.map(tab => tab.targetId)).size).toBe(12);
+      await expect(driver.execute({ action: 'tab_new', url: fixture }, signal)).rejects.toMatchObject({ code: 'tab_limit', dispatched: false });
+      expect(fake.messages.filter(packet => packet.method === 'Target.createTarget')).toHaveLength(12);
+
+      await driver.execute({ action: 'tab_switch', targetId: 'agent-tab-3' }, signal);
+      const snapshot = await driver.execute({ action: 'snapshot' }, signal);
+      expect(snapshot).toMatchObject({ success: true, targetId: 'agent-tab-3', content: 'Two invoices' });
+      await expect(driver.execute({ action: 'click', observationId: snapshot.observationId!, ref: 'r1' }, signal)).resolves.toMatchObject({ success: true });
+      await driver.detach();
+      await expect(driver.execute({ action: 'tabs' }, signal)).resolves.toEqual(tabs);
+
+      clock.mockReturnValue(1_000_000 + 24 * 60 * 60_000 + 1);
+      await expect(driver.execute({ action: 'tab_new', url: fixture }, signal)).resolves.toMatchObject({ success: true });
+      expect(fake.messages.some(packet => packet.method === 'Target.closeTarget' || packet.method === 'Browser.close')).toBe(false);
+    } finally {
+      await driver.detach();
+    }
+  });
+  it('includes related popup tabs in the same live ownership bound', async () => {
+    const { driver, fake, signal } = await rig();
+    const openPopup = (id: string) => fake.event('Target.attachedToTarget', {
+      sessionId: `session-${id}`, waitingForDebugger: true, targetInfo: { targetId: id, type: 'page', url: 'about:blank' },
+    });
+    try {
+      for (let i = 0; i < 11; i++) await driver.execute({ action: 'tab_new' }, signal);
+      openPopup('last-popup');
+      const listed = await driver.execute({ action: 'tabs' }, signal);
+      expect(listed.tabs).toHaveLength(12);
+      expect(listed.tabs?.at(-1)?.targetId).toBe('last-popup');
+      expect(fake.messages).toContainEqual(expect.objectContaining({ method: 'Runtime.runIfWaitingForDebugger', sessionId: 'session-last-popup' }));
+
+      openPopup('overflow-popup');
+      await expect(driver.execute({ action: 'snapshot' }, signal)).resolves.toMatchObject({ success: false, handoffRequested: true });
+      expect(fake.messages.some(packet => packet.method === 'Runtime.runIfWaitingForDebugger' && packet.sessionId === 'session-overflow-popup')).toBe(false);
+    } finally {
+      await driver.detach();
+    }
+  });
+  it('reserves the last owned tab while Chrome acknowledges a direct creation', async () => {
+    const { driver, fake, signal } = await rig();
+    try {
+      for (let i = 0; i < 11; i++) await driver.execute({ action: 'tab_new' }, signal);
+      fake.skip('Target.createTarget');
+      const lastTab = driver.execute({ action: 'tab_new' }, signal);
+      await vi.waitFor(() => expect(fake.messages.filter(row => row.method === 'Target.createTarget')).toHaveLength(12));
+      const create = fake.messages.at(-1);
+      fake.event('Target.attachedToTarget', {
+        sessionId: 'racing-popup-session', waitingForDebugger: true, targetInfo: { targetId: 'racing-popup', type: 'page', url: 'about:blank' },
+      });
+      await vi.waitFor(() => expect(fake.messages).toContainEqual(expect.objectContaining({ method: 'Target.setAutoAttach', sessionId: 'racing-popup-session' })));
+      fake.raw({ id: create.id, result: { targetId: 'last-direct-tab' } });
+      await expect(lastTab).resolves.toMatchObject({ success: true, targetId: 'last-direct-tab' });
+      await driver.detach();
+      const tabs = (await driver.execute({ action: 'tabs' }, signal)).tabs;
+      expect(tabs).toHaveLength(12);
+      expect(tabs?.at(-1)?.targetId).toBe('last-direct-tab');
+      expect(fake.messages.some(packet => packet.method === 'Runtime.runIfWaitingForDebugger' && packet.sessionId === 'racing-popup-session')).toBe(false);
+    } finally {
+      await driver.detach();
+    }
   });
   it('collects an observed original through the actual driver, CDP client, browser events and artifact store', async () => {
     const { driver, fake, signal, homePath } = await rig(); const original = fake.enableDownloads();
