@@ -1,4 +1,7 @@
 import {
+  createReadStream,
+} from "node:fs";
+import {
   glob,
   lstat,
   mkdir,
@@ -10,7 +13,8 @@ import {
   writeFile,
 } from "node:fs/promises";
 import { createHash, randomUUID } from "node:crypto";
-import { join, relative } from "node:path";
+import { extname, join, relative, resolve, sep } from "node:path";
+import { Readable } from "node:stream";
 
 export interface BuildStamp {
   sourceHash: string;
@@ -27,6 +31,24 @@ const MAX_ORPHAN_SWEEP_ENTRIES = 1_000;
 const MAX_ACTIVE_CAPTURES = 32;
 const INTERRUPTED_CAPTURE_RETENTION_MS = 60 * 60 * 1_000;
 const CAPTURE_DIRECTORY = /^\.capture-[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
+const CONTENT_TYPES: Readonly<Record<string, string>> = Object.freeze({
+  ".css": "text/css; charset=utf-8",
+  ".html": "text/html; charset=utf-8",
+  ".js": "text/javascript; charset=utf-8",
+  ".json": "application/json; charset=utf-8",
+  ".map": "application/json; charset=utf-8",
+  ".mjs": "text/javascript; charset=utf-8",
+  ".svg": "image/svg+xml",
+  ".wasm": "application/wasm",
+  ".webp": "image/webp",
+  ".png": "image/png",
+  ".jpg": "image/jpeg",
+  ".jpeg": "image/jpeg",
+  ".gif": "image/gif",
+  ".ico": "image/x-icon",
+  ".woff": "font/woff",
+  ".woff2": "font/woff2",
+});
 
 export interface CollaborativeBuildSnapshot {
   buildId: string;
@@ -88,6 +110,7 @@ export class ImmutableCollaborativeBuildStore {
     cleanupIntervalMs: number;
     startTimer?: boolean;
     now?: () => number;
+    isProtectedBuild?: (buildId: string) => Promise<boolean>;
   }) {
     if (!Number.isInteger(options.maxSnapshots) || options.maxSnapshots < 1
       || !Number.isFinite(options.retentionMs) || options.retentionMs < 0
@@ -279,6 +302,46 @@ export class ImmutableCollaborativeBuildStore {
     }
   }
 
+  async readAsset(buildId: string, assetPath: string): Promise<{
+    size: number;
+    contentType: string;
+    stream: ReadableStream<Uint8Array>;
+  }> {
+    const segments = assetPath.split("/");
+    if (!COLLABORATIVE_BUILD_ID.test(buildId) || assetPath.length < 1 || assetPath.length > 1_024
+      || assetPath.startsWith("/") || assetPath.includes("\\") || assetPath.includes("\0")
+      || segments.some((segment) => segment.length === 0 || segment === "." || segment === ".." || segment.startsWith("."))) {
+      throw new CollaborativeBuildSnapshotError("invalid_snapshot");
+    }
+    const snapshot = await this.resolve(buildId);
+    if (!snapshot) throw new CollaborativeBuildSnapshotError("invalid_snapshot");
+    const root = resolve(snapshot.artifactPath);
+    const file = resolve(root, ...segments);
+    if (!file.startsWith(`${root}${sep}`)) throw new CollaborativeBuildSnapshotError("invalid_snapshot");
+    let current = root;
+    for (const segment of segments) {
+      current = join(current, segment);
+      const info = await lstat(current).catch((error: unknown) => {
+        if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+          throw new CollaborativeBuildSnapshotError("invalid_snapshot");
+        }
+        throw error;
+      });
+      if (info.isSymbolicLink()) throw new CollaborativeBuildSnapshotError("invalid_snapshot");
+      if (current === file) {
+        if (!info.isFile() || info.size > MAX_SNAPSHOT_BYTES) throw new CollaborativeBuildSnapshotError("invalid_snapshot");
+        const stream = Readable.toWeb(createReadStream(file)) as ReadableStream<Uint8Array>;
+        return {
+          size: info.size,
+          contentType: CONTENT_TYPES[extname(file).toLowerCase()] ?? "application/octet-stream",
+          stream,
+        };
+      }
+      if (!info.isDirectory()) throw new CollaborativeBuildSnapshotError("invalid_snapshot");
+    }
+    throw new CollaborativeBuildSnapshotError("invalid_snapshot");
+  }
+
   async retain(buildId: string, reference: string): Promise<void> {
     if (reference.length < 1 || reference.length > 256) throw new CollaborativeBuildSnapshotError("invalid_snapshot");
     await this.withMutationLock(async () => {
@@ -316,6 +379,9 @@ export class ImmutableCollaborativeBuildStore {
         if (item.references.length > 0) continue;
         const expired = this.now() - item.lastReleasedAt >= this.options.retentionMs;
         if (!expired && excess <= 0) continue;
+        // The owner database is authoritative across restarts and share changes.
+        // Fail closed on a database error rather than deleting a live artifact.
+        if (await this.options.isProtectedBuild?.(item.buildId)) continue;
         let artifact;
         try {
           artifact = await lstat(this.artifactPath(item.buildId));

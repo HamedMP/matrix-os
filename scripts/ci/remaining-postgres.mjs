@@ -174,8 +174,9 @@ export function runRemainingPostgres(root = process.cwd(), env = process.env, ex
   const childEnv = { ...env, MATRIX_TEST_POSTGRES_URL: url, CHAT_TEST_DATABASE_URL: url };
   let failed = false, assertions = 0;
   const batches = [];
-  // Seventeen required suites exceeded 120s on hosted runners; retain bounded margin.
-  const deadline = now() + 180000;
+  // Hosted batch 2 exceeded 60s while all assertions seen before the timeout passed.
+  // Keep a bounded per-batch cap and enough total margin for all five batches.
+  const deadline = now() + 240000;
   for (let offset = 0; offset < files.length; offset += 4) {
     const selected = files.slice(offset, offset + 4), report = path.join(output, `batch-${1 + offset / 4}.json`);
     if (existsSync(report)) throw Error('Remaining PostgreSQL report already exists');
@@ -189,7 +190,7 @@ export function runRemainingPostgres(root = process.cwd(), env = process.env, ex
     }
     const processGroup = process.platform !== 'win32';
     const result = execute('pnpm', args, { cwd: root, env: childEnv, stdio: 'inherit',
-      timeout: Math.min(60000, remainingMs), killSignal: 'SIGKILL', detached: processGroup });
+      timeout: Math.min(90000, remainingMs), killSignal: 'SIGKILL', detached: processGroup });
     if (processGroup && result.error?.code === 'ETIMEDOUT' && result.pid) {
       try { process.kill(-result.pid, 'SIGKILL'); }
       catch (error) { if (error.code !== 'ESRCH') console.error('PostgreSQL batch process cleanup failed', error.code); }

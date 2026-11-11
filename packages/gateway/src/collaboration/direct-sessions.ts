@@ -232,6 +232,16 @@ export class DirectSessionService {
     return Date.parse(record.session.expiresAt) > this.now().getTime() ? { ...record.session } : null;
   }
 
+  /** Keeps organization evidence fresh while a previously authorized download is streaming. */
+  async keepEvidenceFresh(sessionId: string): Promise<CollaborationDirectSession> {
+    const record = this.live(sessionId);
+    await this.refreshEvidence(record, 5_000);
+    this.assertServing();
+    this.assertRecordLive(record);
+    if (this.live(sessionId) !== record) throw new DirectAuthError("expired", "Session is not active");
+    return { ...record.session };
+  }
+
   /** Verifies a signed request and returns the live session with fresh evidence. */
   async authenticate(input: Omit<DirectAuthorizeInput, "action">): Promise<CollaborationDirectSession> {
     const record = this.live(input.sessionId);
@@ -512,10 +522,11 @@ export class DirectSessionService {
     }
   }
 
-  private async refreshEvidence(record: SessionRecord): Promise<void> {
-    if (Date.parse(record.session.evidenceExpiresAt) > this.now().getTime()) return;
+  private async refreshEvidence(record: SessionRecord, minimumRemainingMs = 0): Promise<void> {
+    if (Date.parse(record.session.evidenceExpiresAt) > this.now().getTime() + minimumRemainingMs) return;
     try {
       const expiresAt = await this.evidenceFor(record.session.organizationId, record.session.actorId);
+      if (expiresAt <= this.now().getTime()) throw new DirectAuthError("expired", "Organization evidence expired");
       record.session = { ...record.session, evidenceExpiresAt: new Date(Math.min(expiresAt, Date.parse(record.session.expiresAt))).toISOString() };
     } catch (error: unknown) {
       this.end(record, "denied");

@@ -46,6 +46,8 @@ export interface AppInstanceDescription {
   readiness: "ready" | "blocked" | "unavailable";
   collaborationMode: "scoped" | "unavailable";
   incarnation: string;
+  /** Present only for a new exact-build collaborative binding. */
+  collaborativeBuildId?: string;
   /** Where the app's static assets live for the asset route. */
   assetNamespace: { ownerId: string; projectId: string | null };
 }
@@ -154,6 +156,36 @@ export function createAppInstanceAdapter(options: {
     if (forWrite && (context.role === "viewer" || member?.role === "viewer")) throw new ProjectAppAdapterError("forbidden");
   }
 
+  async function requireCollaborativeBinding(
+    executor: Kysely<OwnerCollaborationDatabase> | Transaction<OwnerCollaborationDatabase>,
+    context: AuthorizedCollaborationContext,
+    lock: "share" | "update" | false,
+  ) {
+    const exists = await executor.selectFrom("collaboration_app_bindings")
+      .select("scope_id").where("scope_id", "=", context.scopeId).executeTakeFirst();
+    if (!exists) return null;
+    let query = executor.selectFrom("collaboration_app_bindings as binding")
+      .innerJoin("collaboration_app_readiness as readiness", "readiness.id", "binding.readiness_id")
+      .innerJoin("collaboration_resource_catalog as catalog", "catalog.id", "binding.catalog_id")
+      .selectAll("binding")
+      .where("binding.scope_id", "=", context.scopeId)
+      .where("binding.state", "=", "active")
+      .whereRef("binding.build_id", "=", "readiness.build_id")
+      .whereRef("binding.registration_incarnation", "=", "readiness.registration_incarnation")
+      .where("readiness.status", "=", "ready")
+      .where("readiness.invalidated_at", "is", null)
+      .whereRef("readiness.catalog_id", "=", "catalog.id")
+      .whereRef("readiness.registration_incarnation", "=", "catalog.incarnation")
+      .where("catalog.deleted_at", "is", null)
+      .where("catalog.kind", "=", "app")
+      .where("catalog.id", "=", context.resourceId);
+    if (lock === "update") query = query.forUpdate("binding");
+    else if (lock === "share") query = query.forShare("binding");
+    const binding = await query.executeTakeFirst();
+    if (!binding) throw new ProjectAppAdapterError("app_unavailable");
+    return binding;
+  }
+
   async function describe(context: AuthorizedCollaborationContext, rawAppId: string): Promise<AppInstanceDescription> {
     const appId = AppIdSchema.safeParse(rawAppId);
     if (!appId.success) throw new ProjectAppAdapterError("invalid_action");
@@ -179,13 +211,15 @@ export function createAppInstanceAdapter(options: {
       const root = await standaloneRoot(current, appId.data);
       const { record } = await resolveApp(root.projectId, appId.data);
       if (root.incarnation !== record.incarnation) throw new ProjectAppAdapterError("app_unavailable");
+      const binding = await requireCollaborativeBinding(options.db, current, false);
       return {
         appId: appId.data,
         catalogId: root.id,
-        revision: root.revision,
+        revision: binding ? Number(binding.data_revision) : root.revision,
         readiness: "ready",
         collaborationMode: record.collaborationMode,
         incarnation: record.incarnation,
+        ...(binding ? { collaborativeBuildId: binding.build_id } : {}),
         assetNamespace: { ownerId: root.ownerId, projectId: root.projectId },
       };
     } catch (error: unknown) {
@@ -210,7 +244,8 @@ export function createAppInstanceAdapter(options: {
       const namespace = standaloneNamespace(current.scopeId, appId.data);
       return await options.db.transaction().execute(async (trx) => {
         await requireLiveScope(trx, current, false);
-        if (!await options.catalog.get(root.id, trx)) throw new ProjectAppAdapterError("not_found");
+        const binding = await requireCollaborativeBinding(trx, current, "share");
+        if (!binding && !await options.catalog.get(root.id, trx)) throw new ProjectAppAdapterError("not_found");
         return jsonValue(await options.bridge.execute({
           namespace, appId: appId.data, storageSchema: bridgeAppId, scopeId: current.scopeId, actorId: current.actorId,
           action: { ...parsed, app: namespace } as BridgeQueryBody, transaction: trx,
@@ -250,16 +285,31 @@ export function createAppInstanceAdapter(options: {
           if (existing.payload_hash !== payloadHash || existing.status !== "completed" || !stored.success) throw new ProjectAppAdapterError("conflict");
           return { ...stored.data, replayed: true, changed: false };
         }
-        const locked = await options.catalog.lock(trx, root.id);
-        if (locked.revision !== envelope.data.expectedRevision) throw new ProjectAppAdapterError("conflict");
+        const binding = await requireCollaborativeBinding(trx, current, "update");
+        const locked = binding ? null : await options.catalog.lock(trx, root.id);
+        const currentRevision = binding ? Number(binding.data_revision) : locked!.revision;
+        if (currentRevision !== envelope.data.expectedRevision) throw new ProjectAppAdapterError("conflict");
         const result = jsonValue(await options.bridge.execute({
           namespace, appId: appId.data, storageSchema: bridgeAppId, scopeId: current.scopeId, actorId: current.actorId,
           action: { ...parsed, app: namespace } as BridgeQueryBody, transaction: trx,
         }));
         const changed = appMutationChanged(parsed.action, result);
-        const revision = changed
-          ? (await options.catalog.bump(trx, { id: root.id, expectedRevision: locked.revision })).revision
-          : locked.revision;
+        let revision = currentRevision;
+        if (changed && binding) {
+          const updated = await trx.updateTable("collaboration_app_bindings").set({
+            data_revision: currentRevision + 1,
+            revision: Number(binding.revision) + 1,
+            updated_at: now(),
+          }).where("scope_id", "=", current.scopeId)
+            .where("revision", "=", Number(binding.revision))
+            .where("data_revision", "=", currentRevision)
+            .where("state", "=", "active")
+            .returning("data_revision").executeTakeFirst();
+          if (!updated) throw new ProjectAppAdapterError("conflict");
+          revision = Number(updated.data_revision);
+        } else if (changed) {
+          revision = (await options.catalog.bump(trx, { id: root.id, expectedRevision: locked!.revision })).revision;
+        }
         const timestamp = now();
         const replay = { result, revision };
         await trx.insertInto("collaboration_operations").values({
