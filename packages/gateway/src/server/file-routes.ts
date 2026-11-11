@@ -6,7 +6,7 @@ import {
   writeFile as writeFileAsync,
 } from "node:fs/promises";
 import { dirname, isAbsolute, join, relative } from "node:path";
-import { ProjectAgentConfigFileSchema, ProjectIdSchema } from "@matrix-os/contracts";
+import { PROJECT_SKILL_FILE_MAX_BYTES, ProjectAgentConfigFileSchema, ProjectIdSchema } from "@matrix-os/contracts";
 import { z } from "zod/v4";
 import type { Context, Hono, MiddlewareHandler } from "hono";
 import { bodyLimit } from "hono/body-limit";
@@ -41,10 +41,12 @@ import { createProjectAgentConfigFile } from "../project-agent-context.js";
 
 const ProjectConfigTouchSchema = z.strictObject({
   path: z.string().min(1).max(4096),
-  content: z.string().max(8192).optional(),
+  content: z.string().max(PROJECT_SKILL_FILE_MAX_BYTES).optional(),
   projectId: ProjectIdSchema,
   projectFile: ProjectAgentConfigFileSchema,
-});
+}).refine(({ content = "", projectFile }) => projectFile.endsWith("/SKILL.md")
+  ? Buffer.byteLength(content, "utf8") <= PROJECT_SKILL_FILE_MAX_BYTES
+  : content.length <= 8192, { path: ["content"] });
 
 export interface FileRouteDeps {
   homePath: string;

@@ -339,7 +339,7 @@ export { chatPermissionModeLabel } from "./chat/composer/permission-mode-label.j
 export { ChatModelPicker } from "./chat/composer/ChatModelPicker.js";
 export { ChatProjectContextPicker, type ChatProjectListStatus, type ChatProjectOption } from "./chat/composer/ChatProjectContextPicker.js";
 export { QueuedTurnsPanel, type QueuedTurnAction } from "./chat/composer/QueuedTurnsPanel.js";
-export { ChatSpeechInputButton } from "./speech/ChatSpeechInputButton.js";
+export { ChatSpeechInputButton, ChatSpeechQuotaStatus } from "./speech/ChatSpeechInputButton.js";
 export { ChatNewChatContent, ChatStarterCards, ChatComposerColumn } from "./chat/new-chat/ChatNewChatContent.js";
 
 export { providerCatalogObservationRetryDelay } from "./provider-observation.js";

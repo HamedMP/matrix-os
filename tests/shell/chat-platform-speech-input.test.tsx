@@ -230,8 +230,12 @@ describe("shared chat platform speech input", () => {
     render(<TestComposer onSubmit={vi.fn()} client={exhausted} />);
 
     const expiry = localDateTimeWithZone("2026-10-20T16:00:00.000Z");
-    expect(await screen.findByText(`Preview dictation: 0 of 3 requests remaining until ${expiry}.`)).toBeTruthy();
+    const status = await screen.findByText(`Preview dictation: 0 of 3 requests remaining until ${expiry}.`);
     const microphone = screen.getByRole("button", { name: "Preview dictation allowance exhausted" });
+    const toolbar = microphone.closest('[data-slot="prompt-input-toolbar"]');
+    expect(toolbar).not.toBeNull();
+    expect(toolbar?.contains(status)).toBe(false);
+    expect(toolbar?.closest(".prompt-card")?.contains(status)).toBe(true);
     expect(microphone.hasAttribute("disabled")).toBe(true);
   });
 });

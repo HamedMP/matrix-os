@@ -249,6 +249,17 @@ it("creates a new Chat in the project picked from the composer, and forgets it f
   await act(async () => hook.result.current.newChat());
   expect(hook.result.current.chatProjectId).toBeUndefined();
 });
+it("opens a project-scoped draft without creating or moving a Chat", async () => {
+  state.client.updateProject = vi.fn();
+  const hook = mount();
+  await waitFor(() => expect(hook.result.current.sessionId).toBe("chat_same"));
+  await act(async () => { await hook.result.current.newChat("proj_first"); });
+  expect(hook.result.current.sessionId).toBeUndefined();
+  expect(hook.result.current.chatProjectId).toBe("proj_first");
+  expect(state.client.create).not.toHaveBeenCalled();
+  expect(state.client.updateProject).not.toHaveBeenCalled();
+});
+
 it("moves the open Chat to a project with its revision and shows the saved project", async () => {
   const moved = detail().record;
   state.client.updateProject = vi.fn(async () => ({ ...moved, chat: { ...moved.chat, revision: 1 }, projectId: "proj_first" }));

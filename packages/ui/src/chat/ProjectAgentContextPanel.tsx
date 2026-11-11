@@ -1,21 +1,20 @@
-import { ChevronRight, FileCode, FolderOpen, Plug, Plus, SlidersHorizontal, Sparkles } from "lucide-react";
+import { ChevronRight, FileCode, FolderOpen, Plug, SlidersHorizontal, Sparkles } from "lucide-react";
 import { useId, useRef, useState } from "react";
+import { ProjectSkillActions, type ProjectSkillSourceActions } from "./ProjectSkillActions.js";
 import {
   PROJECT_AGENT_CONFIG_CREATE_ERROR,
   PROJECT_AGENT_CONTEXT_FILE_HANDOFF,
   PROJECT_AGENT_CONTEXT_MCP_HANDOFF,
   PROJECT_AGENT_CONTEXT_MCP_SCOPE,
-  PROJECT_AGENT_SKILL_NAME_ERROR,
   projectAgentConfigurationSections,
   projectAgentContextStatus,
-  projectAgentSkillTemplate,
   useProjectAgentContext,
   type ProjectAgentConfigurationSection,
   type ProjectAgentConfigurationTemplate,
   type ProjectAgentContextRead,
 } from "./project-agent-context.js";
 
-interface ProjectAgentContextPanelProps {
+interface ProjectAgentContextPanelProps extends ProjectSkillSourceActions {
   scope: string;
   projectId: string;
   read: ProjectAgentContextRead | null;
@@ -27,7 +26,7 @@ interface ProjectAgentContextPanelProps {
   onOpenMcpSettings?: () => void;
 }
 
-type ConfigurationActions = Pick<ProjectAgentContextPanelProps, "onOpenFile" | "onOpenFiles" | "filesPending" | "onOpenMcpSettings">;
+type ConfigurationActions = ProjectSkillSourceActions & Pick<ProjectAgentContextPanelProps, "onOpenFile" | "onOpenFiles" | "filesPending" | "onOpenMcpSettings">;
 
 const disclosureClass = "flex min-h-10 w-full items-center justify-between gap-2 px-3 py-2 text-left text-sm font-medium hover:bg-[var(--bg-hover,var(--accent))] focus-visible:outline-2 focus-visible:outline-[var(--accent)]";
 const actionClass = "min-h-8 max-w-full rounded-md border px-2.5 py-1 text-left text-xs font-medium hover:bg-[var(--bg-hover,var(--accent))] focus-visible:outline-2 focus-visible:outline-[var(--accent)] disabled:opacity-50";
@@ -157,12 +156,9 @@ function ProjectConfigurationSection({ open, onToggle, ...props }: Configuration
   );
 }
 
-function ProjectConfigurationSectionContent({ section, onOpenFile, onOpenFiles, filesPending, onOpenMcpSettings, onCreate }: ConfigurationSectionProps) {
+function ProjectConfigurationSectionContent({ section, onOpenFile, onOpenFiles, filesPending, onOpenMcpSettings, onCreate, loadInstalledSkills, readInstalledSkill }: ConfigurationSectionProps) {
   const { id, title, description, rows, partial, emptyMessage, setupHint, browseLabel, createFiles } = section;
-  const [addingSkill, setAddingSkill] = useState(false);
-  const [skillName, setSkillName] = useState("");
   const [createError, setCreateError] = useState<string | null>(null);
-  const showAddSkill = onCreate && id === "skills" && !addingSkill;
   const showBrowse = onOpenFiles && (id === "config" || !onCreate || partial);
 
   const create = async (template: ProjectAgentConfigurationTemplate) => {
@@ -174,46 +170,16 @@ function ProjectConfigurationSectionContent({ section, onOpenFile, onOpenFiles, 
     <>
       <div className="space-y-2 px-3 py-2.5">
         <p className="text-xs leading-relaxed" style={secondaryStyle}>{description}</p>
-        {showAddSkill || showBrowse ? (
-          <div className="flex min-w-0 flex-wrap gap-2">
-            {showAddSkill ? (
-              <button type="button" className={actionClass} style={borderStyle} disabled={filesPending} onClick={() => setAddingSkill(true)}>
-                <span className="flex items-center gap-1.5"><Plus size={13} aria-hidden className="shrink-0" />Add skill</span>
-              </button>
-            ) : null}
-            {showBrowse ? <button type="button" className={actionClass} style={borderStyle} disabled={filesPending}
-              onClick={onOpenFiles}>
-              <span className="flex items-center gap-1.5"><FolderOpen size={13} aria-hidden className="shrink-0" />{browseLabel}</span>
-            </button> : null}
-          </div>
-        ) : null}
+        {onCreate && id === "skills" ? <ProjectSkillActions filesPending={Boolean(filesPending)} onCreate={onCreate}
+          loadInstalledSkills={loadInstalledSkills} readInstalledSkill={readInstalledSkill} /> : null}
+        {showBrowse ? <button type="button" className={actionClass} style={borderStyle} disabled={filesPending}
+          onClick={onOpenFiles}>
+          <span className="flex items-center gap-1.5"><FolderOpen size={13} aria-hidden className="shrink-0" />{browseLabel}</span>
+        </button> : null}
         {partial ? <p className="text-xs" style={secondaryStyle}>Some {title} sources could not be read.</p> : null}
         {!partial && rows.length === 0 ? <p className="text-xs leading-relaxed" style={secondaryStyle}>
           {emptyMessage}{onCreate ? null : ` ${setupHint}`}
         </p> : null}
-        {onCreate && addingSkill ? <form className="space-y-2" onSubmit={event => {
-          event.preventDefault();
-          if (filesPending) return;
-          const template = projectAgentSkillTemplate(skillName);
-          if (template) void create(template);
-          else setCreateError(PROJECT_AGENT_SKILL_NAME_ERROR);
-        }}>
-          <label className="block space-y-1 text-xs">
-            <span>Skill name</span>
-            <input type="text" autoFocus value={skillName} maxLength={64} placeholder="release-review"
-              className="block min-h-8 w-full rounded-md border bg-transparent px-2.5 py-1 outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
-              style={borderStyle} disabled={filesPending}
-              onChange={event => { setSkillName(event.target.value); setCreateError(null); }} />
-          </label>
-          <div className="flex flex-wrap gap-2">
-            <button type="submit" className={actionClass} style={borderStyle} disabled={filesPending}>Create skill</button>
-            <button type="button" className={actionClass} style={borderStyle} disabled={filesPending} onClick={() => {
-              setAddingSkill(false);
-              setSkillName("");
-              setCreateError(null);
-            }}>Cancel</button>
-          </div>
-        </form> : null}
         {onCreate && createFiles.length > 0 ? <div className="flex flex-wrap gap-2">
           {createFiles.map(template => <button key={template.path} type="button" className={actionClass}
             style={borderStyle} disabled={filesPending} onClick={() => { void create(template); }}>

@@ -2,10 +2,11 @@
 
 import { ShellFileAuthority } from "@/components/file-browser/ShellFileAuthority";
 import { usePreviewWindow } from "@/hooks/usePreviewWindow";
+import { useWindowManager } from "@/hooks/useWindowManager";
 import { isEditablePreviewTab, PreviewTabContent } from "./PreviewTab";
 import { cn } from "@/lib/utils";
 import { XIcon } from "@/lib/hugeicons";
-import { useState, type KeyboardEvent } from "react";
+import { useLayoutEffect, useRef, useState, type KeyboardEvent } from "react";
 
 const MAX_DIRTY_EDITORS = 3;
 
@@ -17,6 +18,9 @@ function PreviewWindowForAuthority({ authority }: { authority: string }) {
   const allTabs = usePreviewWindow((s) => s.tabs);
   const tabs = allTabs.filter(tab => !tab.authority || tab.authority === authority);
   const activeTabId = usePreviewWindow((s) => s.activeTabId);
+  const pendingFocusTabId = usePreviewWindow((s) => s.pendingFocusTabId);
+  const foreground = useWindowManager((s) => s.getFocusedWindow()?.path === "__preview-window__");
+  const activeTabRef = useRef<HTMLDivElement>(null);
   // Drafts live in mounted editors. Do not retain a tab or block a new editor
   // based on a dirty flag from a prior preview window or authority.
   const [dirtyEditors, setDirtyEditors] = useState<Set<string>>(() => new Set());
@@ -39,6 +43,14 @@ function PreviewWindowForAuthority({ authority }: { authority: string }) {
   }
 
   const activeTab = tabs.find((t) => t.id === activeTabId) ?? tabs.at(-1);
+  const visibleTabId = activeTab?.id;
+  useLayoutEffect(() => {
+    const element = activeTabRef.current;
+    if (!foreground || !pendingFocusTabId || visibleTabId !== pendingFocusTabId || !element) return;
+    element.focus({ preventScroll: true });
+    usePreviewWindow.getState().consumeTabFocus(pendingFocusTabId);
+  }, [foreground, pendingFocusTabId, visibleTabId]);
+
   const dirtyTabs = tabs.filter(tab => dirtyEditors.has(tab.id));
   const editorLimitReached = activeTab && isEditablePreviewTab(activeTab)
     && !dirtyEditors.has(activeTab.id) && dirtyTabs.length >= MAX_DIRTY_EDITORS;
@@ -90,6 +102,7 @@ function PreviewWindowForAuthority({ authority }: { authority: string }) {
           return (
             <div
               key={tab.id}
+              ref={active ? activeTabRef : undefined}
               role="tab"
               tabIndex={active ? 0 : -1}
               aria-selected={active}

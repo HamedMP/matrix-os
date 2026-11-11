@@ -1,9 +1,13 @@
 import { useCallback, useLayoutEffect, useRef, useState } from "react";
-import { ProjectAgentConfigFileSchema } from "@matrix-os/contracts";
+import { PROJECT_SKILL_FILE_MAX_BYTES, ProjectAgentConfigFileSchema } from "@matrix-os/contracts";
 import { ProjectAgentContextPanel } from "@matrix-os/ui";
 import {
   PROJECT_AGENT_CONTEXT_OPEN_FILE_ERROR,
   PROJECT_AGENT_CONTEXT_RESPONSE_LIMIT,
+  PROJECT_INSTALLED_SKILLS_PATH,
+  PROJECT_INSTALLED_SKILLS_RESPONSE_LIMIT,
+  parseProjectInstalledSkills,
+  projectInstalledSkillFilePath,
   projectAgentContextFileLocationRequest,
   projectAgentContextFilesPath,
 } from "@matrix-os/ui/project-agent-context";
@@ -60,6 +64,32 @@ function DesktopProjectAgentContextScoped({ projectId, projectSlug, onOpenFiles,
     }
   }, [api, runtimeSlot]);
 
+  const isCurrentAuthority = (runtime: number, signal: AbortSignal) => {
+    const connection = useConnection.getState();
+    return !signal.aborted && isCurrentRuntimeGeneration(runtime) && connection.api === api
+      && connection.runtimeSlot === runtimeSlot && connection.authGeneration === authGeneration;
+  };
+  const loadInstalledSkills = async (signal: AbortSignal) => {
+    const runtime = captureRuntimeGeneration();
+    if (!api || !isCurrentAuthority(runtime, signal)) throw new Error("Skill source unavailable");
+    const result = await api.forRuntime(runtimeSlot).get<unknown>(PROJECT_INSTALLED_SKILLS_PATH, {
+      signal, cache: "no-store", maxBytes: PROJECT_INSTALLED_SKILLS_RESPONSE_LIMIT, omitErrorBody: true,
+    });
+    if (!isCurrentAuthority(runtime, signal)) throw new Error("Skill source unavailable");
+    return parseProjectInstalledSkills(result);
+  };
+  const readInstalledSkill = async (file: string, signal: AbortSignal) => {
+    const runtime = captureRuntimeGeneration();
+    const path = projectInstalledSkillFilePath(file);
+    if (!api || !path || !isCurrentAuthority(runtime, signal)) throw new Error("Skill source unavailable");
+    const blob = await api.forRuntime(runtimeSlot).getBlob(path, {
+      signal, maxBytes: PROJECT_SKILL_FILE_MAX_BYTES, omitErrorBody: true,
+    });
+    const bytes = await blob.arrayBuffer();
+    if (!isCurrentAuthority(runtime, signal)) throw new Error("Skill source unavailable");
+    return new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(bytes);
+  };
+
   const openFile = async (file: string, content?: string): Promise<boolean> => {
     if (!api || filesPending || fileRequest.current || !ProjectAgentConfigFileSchema.safeParse(file).success) return false;
     const creating = content !== undefined;
@@ -68,11 +98,7 @@ function DesktopProjectAgentContextScoped({ projectId, projectSlug, onOpenFiles,
     fileRequest.current = controller;
     setOpeningFile(true);
     setFileError(null);
-    const current = () => {
-      const connection = useConnection.getState();
-      return !controller.signal.aborted && isCurrentRuntimeGeneration(runtime) && connection.api === api
-        && connection.runtimeSlot === runtimeSlot && connection.authGeneration === authGeneration;
-    };
+    const current = () => isCurrentAuthority(runtime, controller.signal);
     try {
       if (!current()) return false;
       const client = api.forRuntime(runtimeSlot);
@@ -112,6 +138,8 @@ function DesktopProjectAgentContextScoped({ projectId, projectSlug, onOpenFiles,
     onOpenFiles={api ? onOpenFiles : undefined}
     onOpenFile={api ? file => { void openFile(file); } : undefined}
     onCreateFile={api ? openFile : undefined}
+    loadInstalledSkills={api ? loadInstalledSkills : undefined}
+    readInstalledSkill={api ? readInstalledSkill : undefined}
     filesPending={filesPending || openingFile}
     filesError={fileError}
     onOpenMcpSettings={openMcpSettings}

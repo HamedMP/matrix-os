@@ -7,6 +7,14 @@ import {
 } from "@matrix-os/contracts";
 import { useEffect, useEffectEvent, useState } from "react";
 
+export {
+  parseProjectInstalledSkills,
+  projectInstalledSkillFilePath,
+  PROJECT_INSTALLED_SKILLS_PATH,
+  PROJECT_INSTALLED_SKILLS_RESPONSE_LIMIT,
+  PROJECT_SKILL_FILE_MAX_BYTES,
+} from "./project-installed-skills.js";
+
 export const PROJECT_AGENT_CONTEXT_INTRO =
   "Primary checkout · These files declare agent context. Loading and tool availability depend on the runtime.";
 export const PROJECT_AGENT_CONTEXT_FILE_HANDOFF =
@@ -85,14 +93,7 @@ export type ProjectAgentConfigurationTemplate = { path: string; content: string 
 export const PROJECT_AGENT_SKILL_NAME_ERROR = "Use up to 64 lowercase letters or numbers, separated by hyphens.";
 export const PROJECT_AGENT_CONFIG_CREATE_ERROR = "The file could not be created. Check whether it already exists and try again.";
 
-export function projectAgentSkillTemplate(name: string): ProjectAgentConfigurationTemplate | null {
-  const slug = name.trim();
-  if (slug.length > 64 || !/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(slug)) return null;
-  return {
-    path: `.agents/skills/${slug}/SKILL.md`,
-    content: `---\nname: ${slug}\ndescription: Describe when the agent should use this skill.\n---\n\n# ${slug}\n\nAdd skill instructions here.\n`,
-  };
-}
+export type ProjectInstalledSkill = { name: string; file: string; description?: string };
 
 export interface ProjectAgentConfigurationSection {
   id: "skills" | "mcp" | "config";

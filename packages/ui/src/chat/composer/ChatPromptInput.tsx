@@ -20,6 +20,7 @@ export function ChatPromptInput({
   placeholder = "Do anything",
   ariaLabel,
   footer,
+  status,
   controls,
   trailingControls,
   attachments,
@@ -42,6 +43,8 @@ export function ChatPromptInput({
   placeholder?: string;
   ariaLabel?: string;
   footer?: ReactNode;
+  // Wrapping notices sit between the editor and the compact controls.
+  status?: ReactNode;
   attachments?: ReactNode;
   editor?: ReactNode;
   canSubmit?: boolean;
@@ -108,11 +111,12 @@ export function ChatPromptInput({
           />
         </div>
       )}
-      <div data-slot="prompt-input-toolbar" className="flex items-center justify-between gap-2 px-2.5 pb-2.5">
-        <div className="flex min-w-0 flex-1 flex-wrap items-center gap-1">
+      {status}
+      <div data-slot="prompt-input-toolbar" className="flex flex-wrap items-center justify-between gap-2 px-2.5 pb-2.5">
+        <div className="flex min-w-0 max-w-full grow flex-wrap items-center gap-1">
           {controls}
         </div>
-        <div className="flex shrink-0 flex-wrap items-center gap-1.5">
+        <div className="ml-auto flex min-w-0 max-w-full flex-wrap items-center justify-end gap-1.5">
           {trailingControls}
           {busy && onAbort && !(submitWhileBusy && submissionReady) ? (
             <ChatPromptStopButton onAbort={onAbort}/>
@@ -123,7 +127,7 @@ export function ChatPromptInput({
               data-slot="prompt-input-send"
               disabled={!submitEnabled}
               onClick={onSubmit}
-              className="flex h-8 w-8 items-center justify-center rounded-full transition-colors disabled:opacity-40"
+              className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full transition-colors disabled:opacity-40"
               style={{
                 background: submitEnabled ? "var(--composer-send-bg, var(--accent))" : "var(--composer-idle-bg, var(--bg-active))",
                 color: submitEnabled ? "var(--composer-send-fg, var(--text-on-accent))" : "var(--text-tertiary)",
