@@ -11,12 +11,16 @@ export function themeSemantics(c: ChromeColors, paletteId = 'matrix') {
   const matrixHover = paletteId === 'matrix' || paletteId === 'matrix-neon';
   const primaryHover = matrixHover ? dark ? s.green[300] : s.green[700]
     : mix(c.primary, c.primary === c.background ? c.foreground : c.background, 0.12);
+  // Surfaces status labels render on (app, surface, raised, overlay, sunken, hover, sidebar).
+  // Non-hex values such as rgba borders cannot be checked, so they are skipped.
+  const surfaces = [c.background, c.card, c.surface3, c.popover, c.surface0, c.accent, c.sidebar]
+    .filter((bg): bg is string => typeof bg === 'string' && /^#[\da-f]{6}$/i.test(bg));
   const status = (scale: typeof s.teal | typeof s.gold | typeof s.coral | typeof s.blue, textStep: 600 | 700) => {
     const fill: string = scale[dark ? 300 : 500];
     const muted = scale[dark ? 900 : 50];
     const text = scale[dark ? 200 : textStep];
-    // Text on brand tints is checked independently from solid button fills.
-    return { fill, muted, text: readable(text, [muted]), foreground: foreground(fill) };
+    // Status text is checked against its tint and every surface, independently from solid button fills.
+    return { fill, muted, text: readable(text, [muted, ...surfaces]), foreground: foreground(fill) };
   };
   const success = status(s.teal, 700);
   const warning = status(s.gold, 700);
