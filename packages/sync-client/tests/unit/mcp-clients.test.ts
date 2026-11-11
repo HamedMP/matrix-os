@@ -182,7 +182,8 @@ describe("Matrix MCP gateway client", () => {
 
     expect(fetcher.mock.calls.map(([url, init]) => [url, init?.method ?? "GET", init?.body])).toEqual([
       [`${tab}/read?runtime=review&lines=40`, "GET", undefined],
-      [`${tab}/send?runtime=review`, "POST", JSON.stringify({ text: "recheck" })],
+      // The hold stays inside hosted MCP's 50 s downstream limit.
+      [`${tab}/send?runtime=review`, "POST", JSON.stringify({ text: "recheck", maxHoldMs: 30_000 })],
       [`${tab}/keys?runtime=review`, "POST", JSON.stringify({ keys: ["down", "enter"] })],
       [`${tab}/interrupt?runtime=review`, "POST", "{}"],
     ]);

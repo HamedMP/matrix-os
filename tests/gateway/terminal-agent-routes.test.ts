@@ -75,7 +75,9 @@ describe("terminal agent routes", () => {
     const response = await hono.request(`${base}/send`, post({ text: "review x.ts", force: true }));
     expect(response.status).toBe(200);
     expect(withWorkspace).toHaveBeenCalledWith("user_owner", workspaceId, "run", expect.any(Function));
-    expect(verbs.send).toHaveBeenCalledWith({ workspaceId, tabId }, { text: "review x.ts", force: true });
+    // The request's abort signal goes along, so a held send is dropped if the caller leaves.
+    expect(verbs.send).toHaveBeenCalledWith({ workspaceId, tabId }, { text: "review x.ts", force: true, signal: expect.any(AbortSignal) });
+    expect((await hono.request(`${base}/send`, post({ text: "x", maxHoldMs: 61_000 }))).status).toBe(400);
     expect((await hono.request(`${base}/send`, post({ text: "x", extra: 1 }))).status).toBe(400);
     expect((await hono.request(`${base}/send`, post({ text: "x".repeat(8193) }))).status).toBe(400);
     expect((await hono.request(`${base}/keys`, post({ keys: Array(65).fill("enter") }))).status).toBe(400);
