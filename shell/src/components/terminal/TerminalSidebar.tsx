@@ -1,3 +1,4 @@
+import { useShellsWithAgentStatus } from "./useShellsWithAgentStatus";
 import { useCallback, useEffect, useRef, useState, type CSSProperties, type KeyboardEvent, type PointerEvent as ReactPointerEvent } from "react";
 import { deleteTerminalSession } from "./terminal-session-delete";
 import type { TerminalWorkspace } from "@matrix-os/contracts";
@@ -227,7 +228,8 @@ export function LocalTerminalSidebar({
   onDesktopSessionStateChange?: (state: { count: number; ready: boolean }) => void;
 } = {}) {
   const ctx = useTerminalAppContext();
-  const [shells, setShells] = useState<ShellSessionSummary[]>([]);
+  const [listedShells, setShells] = useState<ShellSessionSummary[]>([]);
+  const shells = useShellsWithAgentStatus(listedShells);
   const [shellsAuthoritative, setShellsAuthoritative] = useState(false);
   const [shellsStale, setShellsStale] = useState(false);
   const [shellsLoading, setShellsLoading] = useState(false);

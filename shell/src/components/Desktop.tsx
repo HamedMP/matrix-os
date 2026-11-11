@@ -63,6 +63,7 @@ import {
   type TerminalLaunchAction,
 } from "@/lib/terminal-launch";
 import { enqueueExistingProviderTerminal } from "@/lib/provider-terminal-session";
+import { TerminalAttentionNotifier } from "./terminal/TerminalAttentionNotifier";
 import {
   OPEN_PROVIDER_SETTINGS_EVENT,
   OPEN_PROVIDER_TERMINAL_EVENT,
@@ -1325,6 +1326,8 @@ export function Desktop({ launchAppPath, sharedTerminalScopeId, onOpenCommandPal
           />
 
           {desktopMode === "canvas" && <CanvasRenderer apps={apps} />}
+
+          <TerminalAttentionNotifier />
 
           {vocalMounted && (
             <VocalPanel
