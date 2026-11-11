@@ -635,6 +635,11 @@ matrix shell connect --project main --tab <tab-id-or-unique-name>
 - That command owns the review gate for stack fixes: current-head Greptile `5/5` (or an earlier-head `5/5` that `node scripts/review/review-carryover.mjs check <pr>` accepts), no unresolved human/Codex review blockers, the PR marked ready for review only after that review state, then CI monitoring.
 - Treat missing `gh stack`/`gh` auth, running outside the intended manual worktree, stale Greptile reviews that neither match the current head SHA nor pass the carry-over check, as blockers. Do not fall back to ad-hoc branch surgery or manual label churn.
 
+### Unblock tickets
+
+- To clear decisions that are waiting on an author, use `.claude/commands/unblock-tickets.md`: `/unblock-tickets [github-login | ticket-ids | pr-numbers]`.
+- It reads the live ticket, PR, CI, Greptile, and agent-terminal state, asks one multiple-choice question per waiting item, and carries out each answer. An answer authorizes only the action named in the chosen option; every merge and review gate above still applies.
+
 ### Backlog
 
 GitHub Issues at `HamedMP/matrix-os`. See `docs/agents/backlog.md`.
