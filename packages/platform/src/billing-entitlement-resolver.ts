@@ -12,6 +12,7 @@ import {
   parseBillingOverrideRecord,
   type BillingEntitlement,
 } from './billing.js';
+import { freeEntitlementForSlot } from './free-tier/free-entitlement.js';
 
 export async function resolveEffectiveBillingEntitlementForSlot(
   db: PlatformDB,
@@ -38,7 +39,7 @@ export async function resolveEffectiveBillingEntitlementForSlot(
         runtimeCatalog: loadRuntimeCatalog(env),
         now,
       })
-      : null;
+      : freeEntitlementForSlot(stripeEntitlement, runtimeSlot);
   }
   return computeEffectiveEntitlement({
     stripeEntitlement,

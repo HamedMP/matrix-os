@@ -20,6 +20,7 @@ import { mapUserMachine, type UserMachineProvisioningClass } from './database/us
 import { z } from 'zod/v4';
 import type { SubstrateKind } from '@matrix-os/contracts';
 import type {
+  BillingEntitlementPlanSlug,
   BillingEntitlementSource,
   BillingEntitlementStatus,
   MatrixBillingInterval,
@@ -1160,7 +1161,7 @@ export interface NewBillingCustomer {
 export interface BillingEntitlementRecord {
   clerkUserId: string;
   source: BillingEntitlementSource;
-  planSlug: MatrixBillingPlanSlug | 'internal';
+  planSlug: BillingEntitlementPlanSlug;
   status: BillingEntitlementStatus;
   maxRuntimeSlots: number;
   includedRuntimeSlots: number;
