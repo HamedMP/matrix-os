@@ -1,4 +1,4 @@
-import { lstat, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
+import { lstat, mkdir, mkdtemp, readdir, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -106,5 +106,18 @@ describe("terminal agent status", () => {
     expect(agentStatusForHookEvent("turn-completed")).toBe("done");
     expect(agentStatusForHookEvent("session-ended")).toBe("idle");
     expect(agentStatusForHookEvent("subtitle-updated")).toBeUndefined();
+    // A tool finishing after a permission prompt means the agent is working again.
+    expect(agentStatusForHookEvent("action-updated")).toBe("working");
+  });
+
+  // Fault detected: a failed status write leaves temporary files piling up in the owner's home.
+  it("removes its temporary file when the write itself fails", async () => {
+    const homePath = await home();
+    const dir = join(homePath, "system", "terminal-status", session);
+    await mkdir(dir, { recursive: true });
+    // A directory where the target file goes makes the final rename fail.
+    await mkdir(join(dir, "terminal_9.json"));
+    await expect(writeTerminalPaneStatus({ homePath, sessionName: session, paneId: "9", status: "idle", source: "reporter" })).rejects.toThrow();
+    expect((await readdir(dir)).filter((name) => name.endsWith(".tmp"))).toEqual([]);
   });
 });

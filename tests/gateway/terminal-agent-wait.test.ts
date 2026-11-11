@@ -73,6 +73,15 @@ describe("terminal wait", () => {
     await expect(waiter.wait(ref, { output: "ready" })).resolves.toEqual({ reason: "output" });
   });
 
+  // Fault detected: text printed between two check-ins of one long wait counts as old.
+  it("returns its output baseline on a check-in and honors it on the next request", async () => {
+    const first = harness({ statuses: ["idle"], screens: [["boot"]] });
+    await expect(first.waiter.wait(ref, { output: "ready", timeoutMs: 1_000 })).resolves.toEqual({ reason: "timeout", seen: 0 });
+    // "ready" appeared before the next request started.
+    const second = harness({ statuses: ["idle"], screens: [["boot", "ready on :3000"]] });
+    await expect(second.waiter.wait(ref, { output: "ready", seen: 0, timeoutMs: 1_000 })).resolves.toEqual({ reason: "output" });
+  });
+
   it("times out as a check-in, not a failure", async () => {
     const { waiter, elapsed } = harness({ statuses: ["working"] });
     await expect(waiter.wait(ref, { timeoutMs: 2_000 })).resolves.toEqual({ reason: "timeout", status: "working" });

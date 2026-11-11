@@ -79,18 +79,22 @@ export async function writeTerminalPaneStatus(input: {
   }));
   const temporary = join(directory, `.${randomBytes(8).toString("hex")}.tmp`);
   const handle = await open(temporary, "wx", 0o600);
+  let renamed = false;
   try {
-    await handle.writeFile(body, "utf8");
-  } finally {
-    await handle.close();
-  }
-  try {
+    try {
+      await handle.writeFile(body, "utf8");
+    } finally {
+      await handle.close();
+    }
     await rename(temporary, target);
-  } catch (error: unknown) {
-    await unlink(temporary).catch((cleanupError: unknown) => {
-      console.warn("[terminal-runtime] status temp cleanup failed", cleanupError instanceof Error ? cleanupError.name : "unknown_error");
-    });
-    throw error;
+    renamed = true;
+  } finally {
+    // Any failure after the exclusive create leaves no temporary file behind.
+    if (!renamed) {
+      await unlink(temporary).catch((cleanupError: unknown) => {
+        console.warn("[terminal-runtime] status temp cleanup failed", cleanupError instanceof Error ? cleanupError.name : "unknown_error");
+      });
+    }
   }
 }
 
@@ -101,6 +105,8 @@ export function agentStatusForHookEvent(event: string): TerminalAgentStatusWord 
     case "session-ended":
       return "idle";
     case "turn-started":
+    // A tool finished: the agent is working, including after a permission prompt was answered.
+    case "action-updated":
       return "working";
     case "attention-requested":
       return "blocked";

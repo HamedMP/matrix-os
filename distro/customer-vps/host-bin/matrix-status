@@ -46,10 +46,14 @@ fi
 # Printable text only, at most 200 characters, JSON-escaped.
 message="$(printf '%s' "$*" | LC_ALL=C tr -d '\000-\037\177' | cut -c1-200 | sed 's/\\/\\\\/g; s/"/\\"/g')"
 now="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-tmp="$dir/.terminal_$pane.$$.tmp"
+# mktemp creates the file exclusively with an unpredictable name; the trap
+# removes it on any exit before the rename.
+tmp="$(mktemp "$dir/.terminal_$pane.XXXXXXXX.tmp")"
+trap 'rm -f "$tmp"' EXIT
 if [ -n "$message" ]; then
   printf '{"version":1,"status":"%s","message":"%s","reportedAt":"%s","source":"reporter"}\n' "$word" "$message" "$now" > "$tmp"
 else
   printf '{"version":1,"status":"%s","reportedAt":"%s","source":"reporter"}\n' "$word" "$now" > "$tmp"
 fi
 mv -f "$tmp" "$dir/terminal_$pane.json"
+trap - EXIT
