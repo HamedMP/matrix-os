@@ -90,9 +90,8 @@ function FileBrowserForAuthority({ windowId, mobile = false, active, identity, g
   // (flat/neumorphic/macos-glass/win11) keeps the classic chrome below.
   const isXpExplorer = themeStyle === "winxp" && !mobile;
 
-  const openFile = (path: string, options?: Parameters<typeof openFileTab>[1]) => {
-    if (options) openFileTab(path, options);
-    else openFileTab(path);
+  const openFile = (path: string, options?: Omit<Parameters<typeof openFileTab>[1], "authority">) => {
+    openFileTab(path, { ...options, authority: identity });
     const { windows, restoreAndFocusWindow, openWindow } = useWindowManager.getState();
     const preview = windows.find((window) => window.path === "__preview-window__");
     if (preview) restoreAndFocusWindow(preview.id);
@@ -319,7 +318,7 @@ function FileBrowserForAuthority({ windowId, mobile = false, active, identity, g
   const creationMenu = !mobile && !showingTrash && !searchResults && !organizationDrivesVisible ? (
     <FileCreationMenu key={JSON.stringify([identity, currentPath])} xp={isXpExplorer}
       parentPath={currentPath} gatewayUrl={gatewayUrl} disabled={loading}
-      onFileCreated={path => openFile(path, { authority: identity, mode: "source", focus: true })} />
+      onFileCreated={path => openFile(path, { mode: "source", focus: true })} />
   ) : null;
 
   return (
@@ -390,7 +389,7 @@ function FileBrowserForAuthority({ windowId, mobile = false, active, identity, g
           {!mobile && <StatusBar />}
         </>
       )}
-      <QuickLook />
+      <QuickLook gatewayUrl={gatewayUrl} onOpenFile={openFile} />
       </FileDownloadProvider>
     </div>
   );

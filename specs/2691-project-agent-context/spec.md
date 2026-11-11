@@ -46,6 +46,14 @@ The Gateway registers the route with its project/workspace routes. Clients valid
 - Valid Codex TOML and Claude JSON declarations appear with distinct source labels. Credentials, URLs, headers, executable arguments, instruction bodies, and skill bodies never appear in the response.
 - Exact file actions reach the existing editor or preview. Creation only writes an allowlisted path in the same active project and rejects overwrites. Files and computer MCP actions reach existing surfaces where supported. Loading, empty, partial, error and retry states remain legible at narrow widths.
 - Opening a project file on Web raises Preview and places keyboard focus on the selected file tab. When switching from Canvas to Desktop, a Preview window without a previous Desktop position starts centered in the Desktop work area. An existing Desktop position is restored and adjusted only as needed to keep the editor inside the Desktop work area.
+- Opening the same file from Files, Quick Look, or Agent configuration on Web reuses its Preview tab and unsaved edits within the current account, session, and computer.
 - Verify all three Add skill actions create the expected Markdown in the selected project, preserve copied or imported content, and reject duplicates. The installed picker loads only the selected file.
+- A New skill draft survives an inventory refresh and retry. Switching the project, account, or computer discards that draft.
 - Verify the actual editor can create, modify and save a project skill, MCP declaration and instruction file. Refresh shows the new declarations only in their project. A failed read cannot be saved as an empty file, and a failed write preserves the draft.
 - Verify instruction behavior using the pinned native process and synthetic local inference, plus Gateway tests for project/worktree dispatch, retry/resume provenance and intentional suppression. Keep local runtime and release/production evidence separate.
+
+## Public documentation
+
+Deliver a separate documentation PR in `FinnaAI/matrix-os-site` under `content/docs/`.
+Update the project context guide with the Agent configuration sections, project skill selection
+in Chat, and how the selected runtime governs instruction loading and MCP availability.

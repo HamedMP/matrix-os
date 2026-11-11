@@ -16,7 +16,7 @@ export function PreviewWindow() {
 
 function PreviewWindowForAuthority({ authority }: { authority: string }) {
   const allTabs = usePreviewWindow((s) => s.tabs);
-  const tabs = allTabs.filter(tab => !tab.authority || tab.authority === authority);
+  const tabs = allTabs.filter(tab => tab.authority === authority);
   const activeTabId = usePreviewWindow((s) => s.activeTabId);
   const pendingFocusTabId = usePreviewWindow((s) => s.pendingFocusTabId);
   const foreground = useWindowManager((s) => s.getFocusedWindow()?.path === "__preview-window__");

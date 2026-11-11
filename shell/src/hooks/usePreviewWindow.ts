@@ -19,7 +19,7 @@ export interface PreviewTab {
   name: string;
   type: PreviewFileType;
   mode?: PreviewMode;
-  authority?: string;
+  authority: string;
 }
 
 const EXT_TYPE_MAP: Record<string, PreviewFileType> = {
@@ -73,7 +73,7 @@ interface PreviewWindowState {
 }
 
 interface PreviewWindowActions {
-  openFile(path: string, options?: { authority: string; mode?: PreviewMode; focus?: boolean }): void;
+  openFile(path: string, options: { authority: string; mode?: PreviewMode; focus?: boolean }): void;
   consumeTabFocus(id: string): void;
   closeTab(id: string): void;
   setActiveTab(id: string): void;
@@ -91,9 +91,8 @@ export const usePreviewWindow = create<
   pendingFocusTabId: null,
   unsavedTabs: new Set(),
 
-  openFile(path: string, options) {
+  openFile(path, { authority, mode, focus }) {
     const { tabs } = get();
-    const { authority, mode, focus } = options ?? {};
     const existing = tabs.find((t) => t.path === path && t.authority === authority);
     if (existing) {
       set({
@@ -107,7 +106,7 @@ export const usePreviewWindow = create<
     const name = path.split("/").pop() ?? path;
     const type = detectFileType(name);
     const id = crypto.randomUUID();
-    const tab: PreviewTab = { id, path, name, type, mode: mode ?? defaultMode(type), ...(authority ? { authority } : {}) };
+    const tab: PreviewTab = { id, path, name, type, mode: mode ?? defaultMode(type), authority };
 
     set((s) => ({
       tabs: [...s.tabs, tab],
