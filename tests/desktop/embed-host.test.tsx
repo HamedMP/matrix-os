@@ -1,12 +1,13 @@
 // @vitest-environment jsdom
 
-import React from "react";
+import React, { useMemo, useState } from "react";
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import EmbedHost from "../../desktop/src/renderer/src/features/embeds/EmbedHost";
 import { invoke, onEvent } from "../../desktop/src/renderer/src/lib/operator";
 import { useConnection } from "../../desktop/src/renderer/src/stores/connection";
 import { useUi } from "../../desktop/src/renderer/src/stores/ui";
+import { SurfaceChromeContext, type SurfaceChromeSpec } from "../../desktop/src/renderer/src/features/desktop-shell/SurfaceChrome";
 
 const publishing = vi.hoisted(() => ({ client: { get: vi.fn(async () => null), getConfig: vi.fn(async () => ({ data: {}, forms: [] })) } }));
 const SHARED_TARGET = {
@@ -28,6 +29,15 @@ vi.mock("../../desktop/src/renderer/src/lib/operator", () => ({
   invoke: vi.fn(),
   onEvent: vi.fn(() => () => undefined),
 }));
+
+function EmbedHostWithChrome(props: React.ComponentProps<typeof EmbedHost>) {
+  const [chrome, setChrome] = useState<SurfaceChromeSpec | null>(null);
+  const host = useMemo(() => ({ setChrome }), []);
+  return <SurfaceChromeContext.Provider value={host}>
+    <div data-testid="embed-toolbar">{chrome?.rightActions}</div>
+    <EmbedHost {...props} />
+  </SurfaceChromeContext.Provider>;
+}
 
 describe("EmbedHost", () => {
   let openResolve: ((value: { embedId: string; state: "loading" | "auth-required" }) => void) | null = null;
@@ -82,20 +92,23 @@ describe("EmbedHost", () => {
   it("closes a retained hidden app's publishing portal and releases only its own renderer overlay", async () => {
     useConnection.setState({ api: {} as NonNullable<ReturnType<typeof useConnection.getState>["api"]> });
     useUi.getState().acquireRendererOverlay(); // A separate surface owns this lease.
-    const view = render(<EmbedHost kind="app" slug="notes" active />);
+    const view = render(<EmbedHostWithChrome kind="app" slug="notes" active />);
+    expect(screen.queryByTestId("app-publishing-bar")).toBeNull();
+    expect(screen.getByTestId("embed-toolbar").contains(screen.getByRole("button", { name: "Publish app" }))).toBe(true);
     fireEvent.click(screen.getByRole("button", { name: "Publish app" }));
-    await screen.findByRole("dialog", { name: "Publish app" });
+    const dialog = await screen.findByRole("dialog", { name: "Share app" });
+    expect(screen.getByTestId("created-app-surface").contains(dialog)).toBe(true);
     expect(useUi.getState().rendererOverlayCount).toBe(2);
     // Overlay-adjusted native activity is false, but the owning surface is still visible.
-    expect(screen.getByRole("dialog", { name: "Publish app" })).toBeTruthy();
+    expect(screen.getByRole("dialog", { name: "Share app" })).toBeTruthy();
 
-    view.rerender(<EmbedHost kind="app" slug="notes" active={false} />);
+    view.rerender(<EmbedHostWithChrome kind="app" slug="notes" active={false} />);
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
     expect(useUi.getState().rendererOverlayCount).toBe(1);
-    view.rerender(<EmbedHost kind="app" slug="notes" active />);
+    view.rerender(<EmbedHostWithChrome kind="app" slug="notes" active />);
     expect(screen.queryByRole("dialog")).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "Publish app" }));
-    await screen.findByRole("dialog", { name: "Publish app" });
+    await screen.findByRole("dialog", { name: "Share app" });
     expect(useUi.getState().rendererOverlayCount).toBe(2);
     view.unmount();
     expect(useUi.getState().rendererOverlayCount).toBe(1);
