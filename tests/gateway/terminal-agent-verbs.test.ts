@@ -45,6 +45,25 @@ function harness(options: {
   return { verbs, runtime, writes, inputActivity, sleeps, time: () => now };
 }
 
+function harnessWithStatus(status: () => "working" | "blocked") {
+  let now = 1_000_000;
+  const writes: Array<{ data: string }> = [];
+  const runtime = {
+    listWorkspaces: async () => [{
+      id: workspaceId, scope: "main", canonicalSize: { cols: 120, rows: 36 }, status: "running",
+      revision: 1, createdAt: "2026-11-11T10:00:00.000Z", updatedAt: "2026-11-11T10:00:00.000Z", tabs: [tab()],
+    }],
+    getSnapshot: async () => undefined,
+    writeInput: async (_ref: unknown, data: string) => { writes.push({ data }); },
+  };
+  const inputActivity = createTerminalInputActivity({ now: () => now });
+  const verbs = createTerminalAgentVerbs({
+    runtime: runtime as never, inputActivity, agentStatus: () => status(),
+    now: () => now, sleep: async (ms) => { now += ms; },
+  });
+  return { verbs, writes, inputActivity };
+}
+
 const snapshot = {
   schemaVersion: 1,
   terminalRef: ref,
@@ -96,22 +115,20 @@ describe("terminal agent verbs: send", () => {
   it("types single-line text and presses Enter for this exact incarnation", async () => {
     const { verbs, writes } = harness();
     await expect(verbs.send(ref, { text: "focus on the first bug" })).resolves.toEqual({ sent: true, heldMs: 0 });
-    expect(writes).toEqual([
-      { data: "focus on the first bug", expectedIncarnation: incarnation },
-      { data: "\r", expectedIncarnation: incarnation },
-    ]);
+    // One write: two concurrent sends must not interleave text and Enter.
+    expect(writes).toEqual([{ data: "focus on the first bug\r", expectedIncarnation: incarnation }]);
   });
 
   it("pastes multi-line text as one bracketed paste so it is not submitted line by line", async () => {
     const { verbs, writes } = harness();
     await verbs.send(ref, { text: "line one\nline two" });
-    expect(writes.map((write) => write.data)).toEqual(["\x1b[200~line one\nline two\x1b[201~", "\r"]);
+    expect(writes.map((write) => write.data)).toEqual(["\x1b[200~line one\nline two\x1b[201~\r"]);
   });
 
   it("strips paste markers out of the text so a sender cannot end the paste early", async () => {
     const { verbs, writes } = harness();
     await verbs.send(ref, { text: "a\nb\x1b[201~\rrm -rf ~\r" });
-    expect(writes[0]?.data).toBe("\x1b[200~a\nb\nrm -rf ~\n\x1b[201~");
+    expect(writes[0]?.data).toBe("\x1b[200~a\nb\nrm -rf ~\n\x1b[201~\r");
   });
 
   // Fault detected: an automated send answers a permission prompt meant for the person.
@@ -122,6 +139,17 @@ describe("terminal agent verbs: send", () => {
     await expect(blocked.verbs.send(ref, { text: "yes", force: true })).resolves.toMatchObject({ sent: true });
   });
 
+  // Fault detected: a send held for a person's draft answers a permission prompt
+  // that appeared while it waited.
+  it("checks for a blocked agent again after waiting for a draft", async () => {
+    // Working when the send starts; the agent asks for permission during the hold.
+    let checks = 0;
+    const { verbs, writes, inputActivity } = harnessWithStatus(() => (checks++ === 0 ? "working" : "blocked"));
+    inputActivity.record(ref);
+    await expect(verbs.send(ref, { text: "yes" })).rejects.toMatchObject({ code: "blocked" });
+    expect(writes).toEqual([]);
+  });
+
   // Fault detected: an agent's message is spliced into what the person is typing.
   it("holds while a person is typing and sends after a quiet pause", async () => {
     const { verbs, writes, inputActivity, sleeps } = harness();
@@ -129,7 +157,7 @@ describe("terminal agent verbs: send", () => {
     const result = await verbs.send(ref, { text: "hello" });
     expect(result.heldMs).toBe(3_000);
     expect(sleeps.reduce((sum, ms) => sum + ms, 0)).toBe(3_000);
-    expect(writes.map((write) => write.data)).toEqual(["hello", "\r"]);
+    expect(writes.map((write) => write.data)).toEqual(["hello\r"]);
   });
 
   it("never holds longer than the draft limit even if the person keeps typing", async () => {
@@ -138,7 +166,7 @@ describe("terminal agent verbs: send", () => {
     vi.spyOn(inputActivity, "lastInputAt").mockImplementation(() => time());
     const result = await verbs.send(ref, { text: "hi" });
     expect(result.heldMs).toBe(60_000);
-    expect(writes.map((write) => write.data)).toEqual(["hi", "\r"]);
+    expect(writes.map((write) => write.data)).toEqual(["hi\r"]);
   });
 
   it("refuses to type into a finished terminal", async () => {

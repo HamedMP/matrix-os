@@ -28,7 +28,7 @@ describe("terminal named keys", () => {
   it("accepts key names case-insensitively and rejects anything else", () => {
     expect(TerminalKeyNameSchema.parse("Ctrl+C")).toBe("ctrl+c");
     expect(TerminalKeyNameSchema.parse("ENTER")).toBe("enter");
-    for (const bad of ["ctrl+1", "alt+", "hyper+a", "f13", "rm -rf", "\x1b[A", ""]) {
+    for (const bad of ["ctrl+1", "alt+", "hyper+a", "f13", "rm -rf", "\x1b[A", "", "constructor", "__proto__", "toString", "hasOwnProperty"]) {
       expect(TerminalKeyNameSchema.safeParse(bad).success, bad).toBe(false);
     }
   });

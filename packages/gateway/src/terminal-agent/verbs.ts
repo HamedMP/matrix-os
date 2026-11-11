@@ -156,8 +156,12 @@ export function createTerminalAgentVerbs(options: {
       const heldMs = await holdForDraft(ref);
       const current = await requireLiveTab(ref);
       if (current.incarnation !== tab.incarnation) throw new TerminalAgentVerbError("not_found");
-      await write(ref, current, text.includes("\n") ? `${PASTE_OPEN}${text}${PASTE_CLOSE}` : text);
-      await write(ref, current, "\r");
+      // The agent may have asked for permission while the send waited for a draft.
+      if (heldMs > 0 && !input.force && await options.agentStatus?.(ref, current) === "blocked") {
+        throw new TerminalAgentVerbError("blocked");
+      }
+      // Text and Enter in one write, so concurrent sends to a tab cannot interleave.
+      await write(ref, current, `${text.includes("\n") ? `${PASTE_OPEN}${text}${PASTE_CLOSE}` : text}\r`);
       return { sent: true, heldMs };
     },
 
