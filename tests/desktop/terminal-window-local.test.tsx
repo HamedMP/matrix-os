@@ -60,6 +60,7 @@ describe("This Computer terminals", () => {
     });
     render(<TerminalWindowApp />);
     fireEvent.click(await screen.findByRole("button", { name: "New terminal" }));
+    fireEvent.click(screen.getByRole("button", { name: "Shell" }));
     expect((await screen.findByTestId("terminal-view")).textContent).toBe("local:t7");
     expect(operator.invoke).toHaveBeenCalledWith("local-terminal:create", { cols: 100, rows: 30 });
   });
@@ -73,6 +74,7 @@ describe("This Computer terminals", () => {
     });
     render(<TerminalWindowApp />);
     fireEvent.click(await screen.findByRole("button", { name: "New terminal" }));
+    fireEvent.click(screen.getByRole("button", { name: "Shell" }));
     await waitFor(() => expect(finishCreate).toBeTypeOf("function"));
     fireEvent.click(screen.getByRole("button", { name: "zsh" }));
     expect((await screen.findByTestId("terminal-view")).textContent).toBe("local:t1");
@@ -229,6 +231,7 @@ describe("This Computer terminals", () => {
     });
     render(<TerminalWindowApp />);
     fireEvent.click(await screen.findByRole("button", { name: "New terminal" }));
+    fireEvent.click(screen.getByRole("button", { name: "Shell" }));
     expect(await screen.findByText("Couldn't start a terminal. Try again.")).toBeTruthy();
     expect(screen.getByRole("button", { name: "zsh" })).toBeTruthy();
     expect(screen.queryByTestId("terminal-view")).toBeNull();
@@ -262,8 +265,35 @@ describe("This Computer terminals", () => {
     listing = { status: "ready", terminals: [] };
     render(<TerminalWindowApp />);
     fireEvent.click(await screen.findByRole("button", { name: "New terminal" }));
+    fireEvent.click(screen.getByRole("button", { name: "Shell" }));
     expect(await screen.findByText("Too many terminals started at once. Try again in a moment.")).toBeTruthy();
     expect(screen.queryByTestId("terminal-view")).toBeNull();
+  });
+});
+
+describe("This Computer agents and names", () => {
+  // Fault detected: Electron Desktop cannot start a coding agent or name a terminal,
+  // unlike Web Desktop and Herdr's own + menu.
+  it("starts a chosen agent and renames a terminal", async () => {
+    const terminals = [{ id: "t1", title: "zsh", status: null }];
+    const operator = installOperator({
+      "local-terminal:list": () => ({ status: "ready", terminals: [...terminals] }),
+      "local-terminal:create": () => { terminals.push({ id: "t9", title: "claude", status: "working" }); return { status: "ready", id: "t9" }; },
+      "local-terminal:rename": () => { terminals[0] = { ...terminals[0]!, title: "review" }; return { ok: true }; },
+    });
+    render(<TerminalWindowApp />);
+    fireEvent.click(await screen.findByRole("button", { name: "New terminal" }));
+    fireEvent.click(screen.getByRole("button", { name: "Claude Code" }));
+    expect((await screen.findByTestId("terminal-view")).textContent).toBe("local:t9");
+    expect(operator.invoke).toHaveBeenCalledWith("local-terminal:create", { cols: 100, rows: 30, agent: "claude" });
+
+    fireEvent.click(screen.getByRole("button", { name: "Rename zsh" }));
+    const input = screen.getByRole("textbox", { name: "Terminal name" });
+    fireEvent.change(input, { target: { value: "review" } });
+    fireEvent.keyDown(input, { key: "Enter" });
+    expect(await screen.findByRole("button", { name: "review" })).toBeTruthy();
+    expect(operator.invoke).toHaveBeenCalledWith("local-terminal:rename", { id: "t1", name: "review" });
+    expect(operator.invoke.mock.calls.filter(([channel]) => channel === "local-terminal:rename")).toHaveLength(1);
   });
 });
 
