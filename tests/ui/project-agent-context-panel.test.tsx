@@ -99,6 +99,24 @@ it("opens only one configuration section at a time and can collapse it", async (
   expect(read).toHaveBeenCalledOnce();
 });
 
+it("explains why the project has no starter config files to create", async () => {
+  const onCreateFile = vi.fn();
+  const onOpenFile = vi.fn();
+  const read = vi.fn(async () => ({
+    ...empty, instructions: ["AGENTS.md", "CLAUDE.md"], configFiles: [".claude/settings.json"],
+  }));
+  render(<ProjectAgentContextPanel scope="owner" projectId="project_a" read={read}
+    onCreateFile={onCreateFile} onOpenFile={onOpenFile} />);
+  open();
+  fireEvent.click(await screen.findByRole("button", { name: "Config files" }));
+  const config = within(screen.getByRole("region", { name: "Config files" }));
+  expect(config.getByText("The starter config files already exist. Open a file to edit it.")).toBeTruthy();
+  expect(config.queryByRole("button", { name: /^Create / })).toBeNull();
+  fireEvent.click(config.getByRole("button", { name: "Open AGENTS.md" }));
+  expect(onOpenFile).toHaveBeenCalledExactlyOnceWith("AGENTS.md");
+  expect(onCreateFile).not.toHaveBeenCalled();
+});
+
 it("routes actions in each settings section to the exact declared project file", async () => {
   const read = vi.fn(async () => ({
     ...empty,

@@ -3,7 +3,7 @@ import {chatAgentComposerDraft} from "../../desktop/src/renderer/src/features/ch
 
 import React, { useState } from "react";
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { CanonicalProviderCatalog } from "@matrix-os/contracts";
 import {
   SharedChatComposer,
@@ -14,7 +14,7 @@ import {
   createCanonicalComposerSelection,
   type CanonicalComposerSelection,
 } from "../../desktop/src/renderer/src/features/chat/canonical-composer-state";
-import { insertSharedComposerTextAtSelection } from "./shared-chat-composer-test-utils";
+import { insertSharedComposerTextAtSelection, mockSharedComposerPopoverLayout } from "./shared-chat-composer-test-utils";
 import { useTabs } from "../../desktop/src/renderer/src/stores/tabs";
 import { useUi } from "../../desktop/src/renderer/src/stores/ui";
 import { useConnection } from "../../desktop/src/renderer/src/stores/connection";
@@ -236,7 +236,9 @@ function Harness({
 }
 
 describe("SharedChatComposer", () => {
-  afterEach(cleanup);
+  let restorePopoverLayout: () => void;
+  beforeEach(() => { restorePopoverLayout = mockSharedComposerPopoverLayout(); });
+  afterEach(() => { cleanup(); restorePopoverLayout(); });
 
   it("keeps the connected Preview dictation allowance outside the toolbar", async () => {
     const connection = useConnection.getState();
@@ -455,8 +457,7 @@ describe("SharedChatComposer", () => {
     render(<Harness resourceSearch={resourceSearch} initialValue="@" />);
 
     const mentionPalette = await screen.findByRole("listbox", { name: "Add" });
-    expect(mentionPalette.className).toContain("left-0");
-    expect(mentionPalette.className).toContain("right-0");
+    expect(mentionPalette.closest('[data-slot="shared-chat-composer"]')).toBeNull();
     expect(screen.getByRole("option", { name: "Attach files" })).toBeTruthy();
     expect(screen.getByRole("option", { name: /README.md/ })).toBeTruthy();
   });
@@ -504,6 +505,9 @@ describe("SharedChatComposer", () => {
   it("opens all Project Chat composer menus below the top composer", () => {
     render(<Harness menuSide="bottom" initialValue="/" />);
 
+    expect(screen.getByRole("listbox", { name: "Skills and commands" }).getAttribute("data-preferred-side"))
+      .toBe("bottom");
+
     fireEvent.click(screen.getByRole("button", { name: "Choose model and provider" }));
     expect(screen.getByRole("listbox", { name: "Models and connections" })
       .closest('[data-slot="provider-model-picker"]')?.getAttribute("data-preferred-side"))
@@ -517,9 +521,6 @@ describe("SharedChatComposer", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Permission mode" }));
     expect(screen.getByRole("menu", { name: "Permission mode options" }).getAttribute("data-preferred-side"))
-      .toBe("bottom");
-
-    expect(screen.getByRole("listbox", { name: "Skills and commands" }).getAttribute("data-preferred-side"))
       .toBe("bottom");
   });
 
