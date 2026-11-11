@@ -123,7 +123,19 @@ interface PinnedResponse { status: number; headers: Record<string, string>; text
  * requester it keeps status and headers when the body is not JSON, because
  * unauthenticated 401 responses are often plain text. Redirects are not followed.
  */
+/** One deadline covers URL validation, DNS, connect, and the full body read. */
 async function pinnedRequest(rawUrl: string, method: "GET" | "POST", body?: string): Promise<PinnedResponse | undefined> {
+  const deadline = AbortSignal.timeout(TIMEOUT_MS);
+  const expired = new Promise<undefined>((resolve) => {
+    deadline.addEventListener("abort", () => {
+      console.warn("[mcp-catalog] request deadline exceeded");
+      resolve(undefined);
+    }, { once: true });
+  });
+  return Promise.race([boundedRequest(rawUrl, method, body, deadline), expired]);
+}
+
+async function boundedRequest(rawUrl: string, method: "GET" | "POST", body: string | undefined, signal: AbortSignal): Promise<PinnedResponse | undefined> {
   let target;
   try {
     target = await validateCustomMcpUrl(rawUrl);
@@ -140,6 +152,7 @@ async function pinnedRequest(rawUrl: string, method: "GET" | "POST", body?: stri
       lookup: createPinnedCustomMcpLookup(target),
       servername: target.url.hostname,
       timeout: TIMEOUT_MS,
+      signal,
     }, (response) => {
       const status = response.statusCode ?? 0;
       const headers = Object.fromEntries(Object.entries(response.headers)

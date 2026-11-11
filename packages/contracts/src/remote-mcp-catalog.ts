@@ -10,7 +10,7 @@ import { z } from "zod/v4";
  * (Ahrefs, March 2026, via mcpmanager.ai), after removing local-only servers
  * (Playwright, Serena, filesystem, Docker, databases) that Matrix covers
  * natively. Endpoints and auth were probed on `verifiedAt`; re-run
- * `node scripts/mcp-catalog/verify-remote-mcp-catalog.mjs` to detect drift.
+ * `bun run mcp-catalog:verify` to detect drift.
  */
 
 export const REMOTE_MCP_DEPARTMENTS = [
