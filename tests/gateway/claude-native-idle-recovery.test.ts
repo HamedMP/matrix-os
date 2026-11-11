@@ -68,6 +68,9 @@ describe("private native Claude idle recovery", () => {
       expect(await load()).toEqual(state);
       expect(await load(changeModel)).toBeUndefined();
       expect(await load(changePermission)).toBeUndefined();
+      expect(await load({ ...turn, context: { version: 1, requestHash: "a".repeat(64), chats: [],
+        drives: [{ kind: "drive", organizationId: "org_company", scopeId: "00000000-0000-4000-8000-000000000001" }] },
+      })).toBeUndefined();
       expect(await load({ ...turn, owner: { ...turn.owner, ownerId: "foreign_owner" } })).toBeUndefined();
       expect(await load({ ...turn, chatId: "chat_foreign" })).toBeUndefined();
       const continued = Array.fromAsync(adapter.resume!({ ...turn, runId: "run_marked", resumeState: state }));

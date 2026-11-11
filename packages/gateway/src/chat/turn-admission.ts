@@ -135,6 +135,7 @@ export async function admitCanonicalTurn(
       repository: deps.repository, owner, chatId, adapter,
       instanceId: validated.instance.id,
       selection: validated.selection, interactionMode: effective.interactionMode, permissionMode: effective.permissionMode,
+      context: prepared?.context,
       executionRootFingerprint: resolvedRoot?.fingerprint ?? null,
       mode: "follow_up",
     });

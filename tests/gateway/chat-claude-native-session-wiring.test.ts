@@ -6,11 +6,12 @@ import { resolveClaudeSessionSource } from "../../packages/gateway/src/chat/clau
 import { bindNativeAccountMetadata } from "../../packages/gateway/src/ai-providers/native-account-metadata-binding.js";
 import { createMatrixMcpCapabilityRegistry } from "../../packages/gateway/src/chat/matrix-mcp-launch.js";
 import { createSharedBrowserBroker } from "../../packages/gateway/src/shared-browser/broker.js";
-import { CanonicalCliError, type CanonicalCliSpawn, type runCanonicalCli } from "../../packages/gateway/src/chat/cli-process.js";
+import { CanonicalCliError, type CanonicalCliSpawn } from "../../packages/gateway/src/chat/cli-process.js";
 import type { CanonicalProviderRunInput } from "../../packages/gateway/src/chat/provider-adapter.js";
+import type { ClaudeNativeSessionTurnOptions } from "../../packages/gateway/src/chat/claude-native-session.js";
 const resolveNativeProtocol = async () => ({ command: "/qualified/claude", qualified: true });
 
-type Turn = Parameters<typeof runCanonicalCli>[0] & { input: CanonicalProviderRunInput; sourceFingerprint: string; schedulingAllowed?: boolean };
+type Turn = ClaudeNativeSessionTurnOptions;
 const input: CanonicalProviderRunInput = { owner: { type: "personal", ownerId: "owner_a" }, chatId: "chat_a", turnId: "cturn_a", runId: "run_a",
   prompt: "hello", parts: [{ type: "text", text: "hello" }], selection: { instanceId: "claude_code_default", model: "haiku", options: [] },
   interactionMode: "default", permissionMode: "supervised", signal: new AbortController().signal };
@@ -300,24 +301,59 @@ describe("Claude per-phase adapter wiring", () => {
     expect(nativeSessions.runTurn).not.toHaveBeenCalled();
     expect(nativeSessions.cancel).toHaveBeenCalledExactlyOnceWith({ owner: input.owner, chatId: input.chatId, runId: "run_a" });
   });
-  it("treats an owner Steer of a scheduled phase as a new foreground continuation", async () => {
+  it.each(["ordinary", "protected", "unconfirmed close"])("steers a %s scheduled phase safely", async mode => {
+    const protectedPhase = mode !== "ordinary";
     let count = 0;
+    const history = { version: 1 as const, requestHash: "a".repeat(64), chats: [],
+      history: { chatId: input.chatId, title: "Original Chat", throughSeq: 9, text: "User: Original admitted instructions", truncated: false } };
+    const prepareSteeringContext = vi.fn(async () => history);
+    const writes: unknown[] = [];
     const nativeSessions = pool(async o => {
       count++;
-      o.onStart?.(async () => {}, () => {}, { pause() {}, resume() {} }, { ready() {} });
-      o.onStdout(frame({ type: "system", subtype: "init", session_id: "session_a" }));
+      o.onStart?.(async raw => { writes.push(JSON.parse(raw)); }, () => {}, { pause() {}, resume() {} }, { ready() {} });
+      if (count === 1 && protectedPhase) o.onProtectedSession?.("session_a");
+      const session = count === 1 || !protectedPhase ? "session_a" : "session_replacement";
+      o.onStdout(frame({ type: "system", subtype: "init", session_id: session }));
       if (count === 1) return new Promise((_resolve, reject) => o.signal.addEventListener("abort", () => reject(new CanonicalCliError("aborted")), { once: true }));
-      o.onStdout(frame({ type: "result", subtype: "success", result: "steered reply", session_id: "session_a" })); o.onSettled?.();
+      if (protectedPhase && o.requireProtectedSession) throw new Error("Protected child already closed");
+      o.onStdout(frame({ type: "result", subtype: "success", result: "steered reply", session_id: session })); o.onSettled?.();
     });
     const adapter = createClaudeChatProviderAdapter({ homePath: "/owner", spawnFn, nativeSessions, resolveNativeProtocol,
       resolveCredentialEnv: async () => ({ HOME: "/owner", ANTHROPIC_API_KEY: "key" }) });
-    const completion = collect(adapter.resume!({ ...input, nativeScheduled: { sourceRunId: "run_origin", sessionId: "session_a", promptId: "11111111-1111-4111-8111-111111111111" }, resumeState: { sessionId: "session_a" } }));
+    const onCleanupUnconfirmed = vi.fn();
+    if (mode === "unconfirmed close") nativeSessions.retireIdle.mockRejectedValueOnce(new Error("Native process cleanup unconfirmed"));
+    const completion = collect(adapter.resume!({ ...input, prepareSteeringContext, onCleanupUnconfirmed, prompt: "AUTOMATIC_SCHEDULE_MARKER",
+      nativeScheduled: { sourceRunId: "run_origin", sessionId: "session_a", promptId: "11111111-1111-4111-8111-111111111111" },
+      resumeState: { sessionId: "session_a" } }));
+    const settlement = mode === "unconfirmed close" ? expect(completion).rejects.toThrow("Native process cleanup unconfirmed") : undefined;
     await vi.waitFor(() => expect(nativeSessions.runTurn).toHaveBeenCalledOnce());
     await adapter.steer!({ owner: input.owner, chatId: input.chatId, runId: input.runId, turnId: input.turnId,
       clientRequestId: "req_steer", prompt: "owner changed direction", parts: [{ type: "text", text: "owner changed direction" }] });
+    if (settlement) {
+      await settlement;
+      expect(onCleanupUnconfirmed).toHaveBeenCalledOnce();
+      expect(nativeSessions.runTurn).toHaveBeenCalledOnce();
+      return;
+    }
     expect((await completion).at(-1)).toEqual({ type: "run.completed", outcome: "completed" });
-    expect(nativeSessions.runTurn.mock.calls[1]![0].input.nativeScheduled).toBeUndefined();
-    expect(nativeSessions.runTurn.mock.calls[1]![0].input.prompt).toBe("owner changed direction");
+    const replacement = nativeSessions.runTurn.mock.calls[1]![0];
+    expect(replacement.input).toMatchObject({ owner: input.owner, chatId: input.chatId, permissionMode: input.permissionMode });
+    expect(replacement.input.nativeScheduled).toBeUndefined();
+    expect(replacement.requireProtectedSession).toBeUndefined();
+    if (protectedPhase) {
+      expect(prepareSteeringContext).toHaveBeenCalledOnce();
+      expect(nativeSessions.retireIdle).toHaveBeenCalledExactlyOnceWith({ owner: input.owner, chatId: input.chatId });
+      expect(replacement.input.resumeState).toBeUndefined();
+      expect(replacement.args).not.toContain("--resume");
+      expect(replacement.input.prompt).toContain("Original admitted instructions");
+      expect(replacement.input.prompt).toContain("Current user request:\nowner changed direction");
+      expect(replacement.input.prompt).not.toContain("AUTOMATIC_SCHEDULE_MARKER");
+      expect(writes.at(-1)).toMatchObject({ session_id: "" });
+    } else {
+      expect(prepareSteeringContext).not.toHaveBeenCalled();
+      expect(replacement.input.prompt).toBe("owner changed direction");
+      expect(replacement.input.resumeState).toMatchObject({ sessionId: "session_a" });
+    }
   });
   it("cancels the actual owned native transport and exposes explicit binding and shutdown", async () => {
     const nativeSessions = pool(async o => new Promise((_resolve, reject) => {

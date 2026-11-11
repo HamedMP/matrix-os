@@ -1,4 +1,6 @@
 import { isDeepStrictEqual } from "node:util";
+import { boundedOperation } from "../bounded-operation.js";
+import { contextPrompt } from "./agent-context.js";
 import type { ClaudeNativeSessionPool } from "./claude-native-session.js";
 import type { NativeScheduledPhaseRequest } from "./native-scheduled-admission.js";
 import { resolveClaudeSessionSource } from "./claude-session-source.js";
@@ -118,7 +120,7 @@ export function createClaudeChatProviderAdapter(options: {
     ownerType: CanonicalProviderRunInput["owner"]["type"];
     chatId: string;
     abort: () => void;
-    steer: (prompt: string) => void;
+    steer: (prompt: string) => Promise<void>;
     submitInput: ReturnType<typeof createClaudeInputController>["submit"];
     submitApproval?: ReturnType<typeof createClaudeCustomMcpApprovalControl>["submit"];
   }>();
@@ -238,6 +240,7 @@ export function createClaudeChatProviderAdapter(options: {
     let emittedState = resumeState;
     let protectedSessionId: string | undefined;
     let steerPrompt: string | undefined;
+    let protectedSteerInput: CanonicalProviderRunInput<ClaudeChatState> | undefined;
     let cancellationRequested = false;
     const processSignal = AbortSignal.any([input.signal, processController.signal]);
     let finishInput: (() => void) | undefined;
@@ -331,8 +334,17 @@ export function createClaudeChatProviderAdapter(options: {
         if (approvalControl) return approvalControl.submit(id, decision, provenance);
         throw new Error("Approval unavailable");
       },
-      steer(prompt: string) {
+      async steer(prompt: string) {
         if (!emittedState) throw new Error("Claude Run state unavailable");
+        if (emittedState.canonicalHistoryRequired) {
+          if (!input.prepareSteeringContext || sawResult) throw new Error("Steering context unavailable");
+          const context = await boundedOperation(input.prepareSteeringContext, 5_000, processSignal);
+          if (sawResult || processSignal.aborted || activeRuns.get(input.runId) !== activeRun) throw new Error("Claude Run state unavailable");
+          protectedSteerInput = parseCanonicalProviderRunInput<ClaudeChatState>({
+            ...input, context, prompt: contextPrompt(prompt, context, { deferIntegrationGuidance: true }),
+            parts: [{ type: "text", text: prompt }], nativeScheduled: undefined, resumeState: undefined,
+          });
+        }
         steerPrompt = prompt;
         revokeApproval("steer");
         processController.abort();
@@ -535,7 +547,10 @@ export function createClaudeChatProviderAdapter(options: {
     const initialInput = () => writeControl!(`${JSON.stringify({ type: "user", session_id: resumeState?.sessionId ?? "", message: { role: "user", content: nativePrompt }, parent_tool_use_id: null })}\n`);
     const routineHook = routineExecution ? createClaudeRoutineHook({ signal: routineSignal,
       write: frame => writeControl!(frame), startInput: initialInput, fail: () => processController.abort(), execute: routineExecution.execute }) : undefined;
-    const closeRoutines = async () => { routineController.abort(); await routineHook?.close(); await routineExecution?.close(); };
+    let routineCleanup: Promise<void> | undefined;
+    const closeRoutines = () => routineCleanup ??= (async () => {
+      routineController.abort(); await routineHook?.close(); await routineExecution?.close();
+    })();
     const observeSessionState = (sessionId: string, model?: string) => {
       if (protectedSessionId && sessionId !== protectedSessionId) throw new CanonicalCliError("invalid_output");
       const canonicalHistoryRequired = protectedSessionId === sessionId ? true : undefined;
@@ -691,7 +706,7 @@ export function createClaudeChatProviderAdapter(options: {
         });
       } catch (error: unknown) {
         if (error instanceof ClaudeNativeProbeCleanupError) input.onCleanupUnconfirmed?.();
-        await cancelScheduledSource(input);
+        if (!protectedSteerInput || input.signal.aborted) await cancelScheduledSource(input);
         throw transport.signal.aborted ? new CanonicalCliError("aborted") : error;
       }
     } : runCanonicalCli;
@@ -774,6 +789,18 @@ export function createClaudeChatProviderAdapter(options: {
       }
       flushPendingDelta();
       if (steerPrompt && emittedState && !input.signal.aborted) {
+        if (protectedSteerInput) {
+          // A rejected phase can still have an unconfirmed physical close.
+          try {
+            await options.nativeSessions!.retireIdle({ owner: input.owner, chatId: input.chatId });
+            await closeRoutines();
+          } catch (error: unknown) {
+            input.onCleanupUnconfirmed?.();
+            revokeApproval();
+            await finalRevokePromise;
+            throw error;
+          }
+        }
         if (!await closeBrowser()) {
           releaseActiveRun();
           queue.push({ type: "run.completed", outcome: "failed", error: { code: "run_failed", safeMessage: "Browser cleanup could not be confirmed. Try again after restoring browser control.", retryable: true, recoveryActions: ["retry"] } });
@@ -798,13 +825,13 @@ export function createClaudeChatProviderAdapter(options: {
           }
         }
         releaseActiveRun();
-        for await (const event of execute({
+        for await (const event of execute(protectedSteerInput ?? {
           ...input,
           prompt: steerPrompt,
           nativeScheduled: undefined,
           parts: [{ type: "text", text: steerPrompt }],
           resumeState: emittedState,
-        }, emittedState, blockIds, approvalReady && cleared)) {
+        }, protectedSteerInput ? undefined : emittedState, blockIds, approvalReady && cleared)) {
           queue.push(event);
         }
         queue.finish();
@@ -917,7 +944,8 @@ export function createClaudeChatProviderAdapter(options: {
       if (!options.nativeSessions?.hasProtectedSession({ owner, chatId, sessionId: state.sessionId })) {
         return state.canonicalHistoryRequired ? undefined : state;
       }
-      if (settings.interactionMode !== previousSettings.interactionMode || settings.permissionMode !== previousSettings.permissionMode
+      if (settings.context?.drives?.length || settings.interactionMode !== previousSettings.interactionMode
+        || settings.permissionMode !== previousSettings.permissionMode
         || !isDeepStrictEqual(settings.selection, previousSettings.selection)) return undefined;
       // Even an unmarked source checkpoint may now belong to an isolated, restored child.
       return { ...state, canonicalHistoryRequired: true };
@@ -949,7 +977,7 @@ export function createClaudeChatProviderAdapter(options: {
       if (!active || active.ownerId !== input.owner.ownerId || active.ownerType !== input.owner.type || active.chatId !== input.chatId) {
         throw new Error("Claude active Run unavailable");
       }
-      active.steer(input.prompt);
+      await active.steer(input.prompt);
     },
   };
 }

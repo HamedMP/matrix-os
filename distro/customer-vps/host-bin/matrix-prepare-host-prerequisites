@@ -184,6 +184,8 @@ prepare_sites_nginx() {
 
 prepare_claude_native_recovery_helper() {
   # Predecessor updaters already call this replacement helper after bundle verification.
+  # A first rollback can leave the root-owned 0644 file behind. Its only service
+  # caller ships in the new Gateway. Subsequent updaters track the file in rollback.
   local source="$matrix_dir/bin/matrix-claude-native-recovery.py"
   local destination="${root%/}/usr/local/libexec/matrix-claude-native-recovery/launch.py"
   local directory="${destination%/*}" incoming

@@ -155,6 +155,8 @@ export interface CanonicalProviderRunInput<State = unknown> {
   continuationId?: string;
   /** An already-held native prompt. The adapter must not submit it again. */
   nativeScheduled?: NativeScheduledPhaseIdentity;
+  /** Lazily read the owner-scoped canonical prefix before closing a protected session for Steer. */
+  prepareSteeringContext?: () => Promise<import("@matrix-os/contracts").ChatRunContext>;
   signal: AbortSignal;
   /** Generator return() errors can be masked by a consumer throw; report unresolved cleanup explicitly. */
   onCleanupUnconfirmed?: () => void;
@@ -170,7 +172,7 @@ export class CanonicalProviderRunRecoveryPendingError extends Error {
   }
 }
 
-export type ChatResumeSettings = Pick<CanonicalProviderRunInput, "selection" | "interactionMode" | "permissionMode">;
+export type ChatResumeSettings = Pick<CanonicalProviderRunInput, "selection" | "interactionMode" | "permissionMode" | "context">;
 
 export interface CanonicalChatProviderAdapter<State = unknown> {
   readonly driverKind: CanonicalProviderDriverKind;
