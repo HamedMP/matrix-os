@@ -10,10 +10,19 @@ let package = Package(
         .executable(name: "MatrixSync", targets: ["MatrixSync"]),
     ],
     targets: [
+        .target(
+            name: "MatrixSyncSupport",
+            path: "Sources/MatrixSyncSupport"),
         .executableTarget(
             name: "MatrixSync",
+            dependencies: ["MatrixSyncSupport"],
             path: "Sources",
+            exclude: ["MatrixSyncSupport"],
             swiftSettings: [
                 .enableUpcomingFeature("StrictConcurrency"),
             ]),
+        .testTarget(
+            name: "MatrixSyncTests",
+            dependencies: ["MatrixSyncSupport"],
+            path: "Tests"),
     ])
