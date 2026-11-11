@@ -41,6 +41,19 @@ describe.each(MATRIX_VARIANTS)("%s %s status text contrast", (themeId, mode) => 
   });
 });
 
+describe("custom themes with conflicting surfaces", () => {
+  // A dark app with white panels: no single color meets AA on every surface, so
+  // status text must still keep AA on its own tint instead of becoming a compromise gray.
+  const vars = chromeToSemanticVars({
+    ...getThemeChrome("matrix", "dark"),
+    card: "#ffffff", popover: "#ffffff", surface3: "#ffffff", accent: "#2a2a2a",
+  }, "matrix");
+
+  it.each(STATUSES)("keeps --%s-text readable on its tint", (status) => {
+    expect(contrastRatio(vars[`--${status}-text`]!, vars[`--${status}-muted`]!)).toBeGreaterThanOrEqual(AA_SMALL_TEXT);
+  });
+});
+
 const NOW = Date.parse("2026-07-15T12:00:00.000Z");
 
 function thread(overrides: Partial<AgentThreadSummary>): AgentThreadSummary {
