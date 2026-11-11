@@ -371,3 +371,56 @@ it("retains the entered skill draft if the project create is rejected", async ()
   expect(description).toHaveProperty("value", "Inspect the changelog");
   expect(instructions).toHaveProperty("value", "Call out breaking changes.");
 });
+
+it("restores the new skill draft after a failed inventory refresh and retry", async () => {
+  vi.spyOn(console, "warn").mockImplementation(() => {});
+  let rejectRefresh!: (error: Error) => void;
+  const failedRefresh = new Promise<unknown>((_resolve, reject) => { rejectRefresh = reject; });
+  const read = vi.fn<() => Promise<unknown>>()
+    .mockImplementation(readEditableContext)
+    .mockImplementationOnce(readEditableContext)
+    .mockReturnValueOnce(failedRefresh);
+  const onCreateFile = vi.fn(async () => true);
+  render(<ProjectAgentContextPanel scope="owner" projectId="project_a" read={read} onCreateFile={onCreateFile} />);
+  open();
+  await selectSkillAction("New skill");
+  fireEvent.change(screen.getByRole("textbox", { name: "Skill name" }), { target: { value: "release-review" } });
+  fireEvent.change(screen.getByRole("textbox", { name: "Description" }), { target: { value: "Inspect the changelog" } });
+  fireEvent.change(screen.getByRole("textbox", { name: "Instructions" }), { target: { value: "Call out breaking changes." } });
+
+  fireEvent.click(screen.getByRole("button", { name: "Refresh" }));
+  expect(screen.getByText("Loading agent context…")).toBeTruthy();
+  expect(screen.queryByRole("button", { name: "Create skill" })).toBeNull();
+  await act(async () => rejectRefresh(new Error("Fixture read failure")));
+  expect(screen.getByRole("alert").textContent).toBe("Agent context could not be loaded.");
+  expect(screen.queryByRole("button", { name: "Create skill" })).toBeNull();
+  expect(onCreateFile).not.toHaveBeenCalled();
+  fireEvent.click(screen.getByRole("button", { name: "Try again" }));
+
+  expect(await screen.findByRole("textbox", { name: "Skill name" })).toHaveProperty("value", "release-review");
+  expect(screen.getByRole("textbox", { name: "Description" })).toHaveProperty("value", "Inspect the changelog");
+  expect(screen.getByRole("textbox", { name: "Instructions" })).toHaveProperty("value", "Call out breaking changes.");
+  fireEvent.click(screen.getByRole("button", { name: "Create skill" }));
+  expect(await screen.findByText("Created .agents/skills/release-review/SKILL.md.")).toBeTruthy();
+  await screen.findByRole("button", { name: "Add skill" });
+  expect(screen.queryByRole("textbox", { name: "Skill name" })).toBeNull();
+  expect(onCreateFile).toHaveBeenCalledExactlyOnceWith(".agents/skills/release-review/SKILL.md",
+    '---\nname: "release-review"\ndescription: "Inspect the changelog"\n---\n\nCall out breaking changes.\n');
+});
+
+it.each([
+  { scope: "owner:computer-a", projectId: "project_b" },
+  { scope: "owner:computer-b", projectId: "project_a" },
+])("discards the new skill draft when switching to $scope/$projectId", async next => {
+  const props = { read: readEditableContext, onCreateFile: vi.fn() };
+  const { rerender } = render(<ProjectAgentContextPanel {...props} scope="owner:computer-a" projectId="project_a" />);
+  open();
+  await selectSkillAction("New skill");
+  fireEvent.change(screen.getByRole("textbox", { name: "Skill name" }), { target: { value: "private-draft" } });
+
+  rerender(<ProjectAgentContextPanel {...props} {...next} />);
+  open();
+  await selectSkillAction("New skill");
+  expect(screen.getByRole("textbox", { name: "Skill name" })).toHaveProperty("value", "");
+  expect(props.onCreateFile).not.toHaveBeenCalled();
+});

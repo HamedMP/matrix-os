@@ -63,24 +63,23 @@ vi.mock("@/hooks/useFileBrowser", () => ({
   useFileBrowser: (selector: (value: typeof store) => unknown) => selector(store),
 }));
 
-vi.mock("@/hooks/usePreviewWindow", () => {
-  const state = { openFile: vi.fn() };
-  return {
-    usePreviewWindow: (selector: (value: typeof state) => unknown) => selector(state),
-  };
-});
+const preview = vi.hoisted(() => ({ openFile: vi.fn() }));
+vi.mock("@/hooks/usePreviewWindow", () => ({
+  usePreviewWindow: (selector: (value: typeof preview) => unknown) => selector(preview),
+}));
 
-vi.mock("@/hooks/useWindowManager", () => {
-  const state = {
-    windows: [] as unknown[],
-    focusedWindowId: "win-files" as string | null,
-    openWindow: vi.fn(),
-    focusWindow: vi.fn(),
-  };
-  return {
-    useWindowManager: (selector: (value: typeof state) => unknown) => selector(state),
-  };
-});
+const windowManager = vi.hoisted(() => ({
+  windows: [] as Array<{ id: string; path: string; minimized: boolean }>,
+  focusedWindowId: "win-files" as string | null,
+  openWindow: vi.fn(),
+  focusWindow: vi.fn(),
+  restoreAndFocusWindow: vi.fn(),
+}));
+vi.mock("@/hooks/useWindowManager", () => ({
+  useWindowManager: Object.assign((selector: (value: typeof windowManager) => unknown) => selector(windowManager), {
+    getState: () => windowManager,
+  }),
+}));
 
 vi.mock("@/hooks/useFileWatcher", () => ({
   useFileWatcher: vi.fn(),
@@ -112,6 +111,7 @@ import { FileBrowser } from "../../shell/src/components/file-browser/FileBrowser
 describe("FileBrowser Windows XP explorer", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    windowManager.windows = [];
     document.documentElement.removeAttribute("data-theme-style");
     store.currentPath = "agents";
     store.history = ["", "agents"];
@@ -166,6 +166,83 @@ describe("FileBrowser Windows XP explorer", () => {
     // Classic chrome is not rendered in XP mode
     expect(screen.queryByRole("button", { name: "Go back" })).toBeNull();
     expect(screen.queryByTestId("file-browser-content")).toBeNull();
+  });
+
+  function openCreateMenu() {
+    const trigger = screen.getByRole("button", { name: "Create", exact: true });
+    expect(trigger.textContent).toBe("");
+    fireEvent.keyDown(trigger, { key: "Enter" });
+    return screen.getByRole("menu", { name: "Create" });
+  }
+
+  it.each(["classic", "winxp"])("creates a named file through the %s toolbar menu", async (style) => {
+    if (style === "winxp") document.documentElement.setAttribute("data-theme-style", "winxp");
+    store.currentPath = "workspaces/example";
+    store.createFile.mockResolvedValueOnce({ ok: true, path: "workspaces/example/notes.md" });
+    await renderBrowser();
+
+    fireEvent.click(within(openCreateMenu()).getByRole("menuitem", { name: "New File" }));
+    const dialog = screen.getByRole("dialog", { name: "New file" });
+    expect(within(dialog).getByText("Create inside workspaces/example.")).toBeTruthy();
+    fireEvent.change(within(dialog).getByRole("textbox", { name: "File name" }), { target: { value: "notes.md" } });
+    await act(async () => fireEvent.click(within(dialog).getByRole("button", { name: "Create file" })));
+    expect(store.createFile).toHaveBeenCalledWith("notes.md", expect.objectContaining({
+      parentPath: "workspaces/example",
+      gatewayUrl: window.location.origin,
+      signal: expect.any(AbortSignal),
+    }));
+    expect(preview.openFile).toHaveBeenCalledExactlyOnceWith("workspaces/example/notes.md", {
+      authority: `user-test\0session-test\0${window.location.origin}`,
+      mode: "source",
+      focus: true,
+    });
+    expect(screen.queryByRole("dialog", { name: "New file" })).toBeNull();
+  });
+
+  it.each(["classic", "winxp"])("creates a named folder through the %s toolbar menu", async (style) => {
+    if (style === "winxp") document.documentElement.setAttribute("data-theme-style", "winxp");
+    store.currentPath = "workspaces/example";
+    store.selectedPaths = new Set(["notes.txt"]);
+    store.createFolder.mockResolvedValueOnce({ ok: true, path: "workspaces/example/Notes" });
+    await renderBrowser();
+
+    const menu = openCreateMenu();
+    expect(within(menu).getAllByRole("menuitem").map(item => item.textContent?.trim())).toEqual(["New Folder", "New File"]);
+    fireEvent.click(within(menu).getByRole("menuitem", { name: "New Folder" }));
+
+    const dialog = screen.getByRole("dialog", { name: "New folder" });
+    const name = within(dialog).getByRole("textbox", { name: "Folder name" });
+    expect(within(dialog).getByText("Create inside workspaces/example.")).toBeTruthy();
+    expect(store.createFolder).not.toHaveBeenCalled();
+    fireEvent.change(name, { target: { value: "Notes" } });
+    await act(async () => fireEvent.click(within(dialog).getByRole("button", { name: "Create folder" })));
+
+    expect(store.createFolder).toHaveBeenCalledExactlyOnceWith("Notes", expect.objectContaining({
+      parentPath: "workspaces/example",
+      gatewayUrl: window.location.origin,
+      signal: expect.any(AbortSignal),
+    }));
+    expect(preview.openFile).not.toHaveBeenCalled();
+    expect(screen.queryByRole("dialog", { name: "New folder" })).toBeNull();
+  });
+
+  it("restores the live minimized Preview after an in-flight create completes", async () => {
+    store.currentPath = "workspaces/example";
+    const createdFile = { ok: true, path: "workspaces/example/notes.md" };
+    let finishCreate!: (result: typeof createdFile) => void;
+    store.createFile.mockReturnValueOnce(new Promise(resolve => { finishCreate = resolve; }));
+    await renderBrowser();
+
+    fireEvent.click(within(openCreateMenu()).getByRole("menuitem", { name: "New File" }));
+    fireEvent.change(screen.getByRole("textbox", { name: "File name" }), { target: { value: "notes.md" } });
+    fireEvent.click(screen.getByRole("button", { name: "Create file" }));
+    expect(windowManager.openWindow).not.toHaveBeenCalled();
+    windowManager.windows = [{ id: "win-preview", path: "__preview-window__", minimized: true }];
+    await act(async () => finishCreate(createdFile));
+
+    expect(windowManager.restoreAndFocusWindow).toHaveBeenCalledExactlyOnceWith("win-preview");
+    expect(windowManager.openWindow).not.toHaveBeenCalled();
+    expect(preview.openFile).toHaveBeenCalledExactlyOnceWith(createdFile.path, expect.objectContaining({ mode: "source", focus: true }));
   });
 
   it("wires Back and Up to the same store navigation actions as the classic UI", async () => {

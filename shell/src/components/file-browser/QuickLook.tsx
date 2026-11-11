@@ -3,7 +3,6 @@
 import { useGettingStartedBlocker } from "@matrix-os/ui";
 import { useState, useEffect } from "react";
 import { useFileBrowser } from "@/hooks/useFileBrowser";
-import { usePreviewWindow } from "@/hooks/usePreviewWindow";
 import { getGatewayUrl } from "@/lib/gateway";
 import { Button } from "@/components/ui/button";
 import { FileDownloadAction } from "./FileDownloadProvider";
@@ -12,12 +11,11 @@ import { XIcon } from "@/lib/hugeicons";
 const GATEWAY_URL = getGatewayUrl();
 const QUICK_LOOK_FETCH_TIMEOUT_MS = 10_000;
 
-export function QuickLook() {
+export function QuickLook({ onOpenFile }: { onOpenFile(path: string): void }) {
   const quickLookPath = useFileBrowser((s) => s.quickLookPath);
   const entries = useFileBrowser((s) => s.entries);
   const currentPath = useFileBrowser((s) => s.currentPath);
   const setQuickLookPath = useFileBrowser((s) => s.setQuickLookPath);
-  const openFile = usePreviewWindow((s) => s.openFile);
   const [content, setContent] = useState<string | null>(null);
 
   const fullPath = quickLookPath
@@ -90,7 +88,7 @@ export function QuickLook() {
               variant="ghost"
               size="sm"
               onClick={() => {
-                openFile(fullPath);
+                onOpenFile(fullPath);
                 setQuickLookPath(null);
               }}
             >

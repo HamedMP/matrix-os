@@ -6,6 +6,7 @@ import { afterEach, expect, it, vi } from "vitest";
 import { PreviewTabContent } from "../../shell/src/components/preview-window/PreviewTab";
 import { PreviewWindow } from "../../shell/src/components/preview-window/PreviewWindow";
 import { usePreviewWindow, type PreviewTab } from "../../shell/src/hooks/usePreviewWindow";
+import { organizationDriveNavigationIdentity } from "../../shell/src/stores/organization-drive-navigation";
 
 vi.mock("../../shell/src/components/preview-window/CodeEditor", () => ({
   CodeEditor: ({ content, filename, onChange }: {
@@ -17,7 +18,8 @@ vi.mock("@clerk/nextjs", () => ({
   useAuth: () => ({ userId: "owner", sessionId: "session" }),
 }));
 
-const config: PreviewTab = { id: "config", path: "projects/example/.mcp.json", name: ".mcp.json", type: "code" };
+const authority = organizationDriveNavigationIdentity("owner", "session", window.location.origin);
+const config: PreviewTab = { id: "config", path: "projects/example/.mcp.json", name: ".mcp.json", type: "code", authority };
 
 afterEach(() => {
   cleanup();
@@ -85,7 +87,7 @@ it("does not clear the unsaved indicator for edits made while a save is pending"
 it("keeps an unsaved project config draft when switching preview tabs", async () => {
   const read = vi.fn(async (url: string) => new Response(url.includes(".mcp.json") ? "original" : "instructions"));
   vi.stubGlobal("fetch", read);
-  const instructions: PreviewTab = { id: "instructions", path: "projects/example/AGENTS.md", name: "AGENTS.md", type: "markdown", mode: "source" };
+  const instructions: PreviewTab = { id: "instructions", path: "projects/example/AGENTS.md", name: "AGENTS.md", type: "markdown", mode: "source", authority };
   usePreviewWindow.setState({ tabs: [config, instructions], activeTabId: config.id });
   render(<PreviewWindow />);
 
@@ -107,7 +109,7 @@ it("keeps all edited files accessible at the draft limit and allows media previe
   const configs = Array.from({ length: 4 }, (_, index): PreviewTab => ({
     ...config, id: String(index), name: `config-${index}.toml`, path: `projects/example/config-${index}.toml`,
   }));
-  const media: PreviewTab = { id: "pdf", path: "projects/example/manual.pdf", name: "manual.pdf", type: "pdf" };
+  const media: PreviewTab = { id: "pdf", path: "projects/example/manual.pdf", name: "manual.pdf", type: "pdf", authority };
   usePreviewWindow.setState({ tabs: [...configs, media], activeTabId: configs[0].id });
   render(<PreviewWindow />);
 
