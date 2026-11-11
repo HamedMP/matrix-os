@@ -226,7 +226,7 @@ describe("local terminal host against a scripted core", () => {
     symlinkSync(tmpdir(), join(root, "escape"));
     await expect(host.create({ cols: 100, rows: 30 }, { agent: "codex", folder: "projects/app" })).resolves.toBe("t8");
     const argv = runs[0]!.params.argv as string[];
-    expect(argv.slice(-6)).toEqual(["/bin/sh", "-c", '"$1" -lc "$2"; exec "$1" -l', "matrix-agent", "/bin/zsh", "codex --no-daemon"]);
+    expect(argv.slice(-6)).toEqual(["/bin/sh", "-c", '"$1" -l -i -c "$2"; exec "$1" -l', "matrix-agent", "/bin/zsh", "codex --no-daemon"]);
     expect(runs[0]!.params.cwd).toBe(realpathSync(join(root, "projects", "app")));
     expect(runs[0]!.params.labels).toEqual({ "matrix.agent": "codex" });
     await expect(host.create({ cols: 100, rows: 30 }, { folder: "escape" })).rejects.toThrow("not a folder in your home");

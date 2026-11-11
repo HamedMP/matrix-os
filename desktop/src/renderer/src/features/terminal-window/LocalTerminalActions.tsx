@@ -1,7 +1,9 @@
 // The "+" choices and inline rename for This Computer terminals, as in Herdr's
 // tab bar: a plain shell or one of the known coding agents.
 import { useEffect, useRef, useState, type KeyboardEvent } from "react";
+import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
 import { Plus } from "lucide-react";
+import { DESKTOP_Z_INDEX } from "../../design/layering";
 import type { LocalTerminalAgent } from "../../../../shared/local-terminals";
 
 const AGENTS: Array<{ id: LocalTerminalAgent; label: string }> = [
@@ -14,33 +16,47 @@ const AGENTS: Array<{ id: LocalTerminalAgent; label: string }> = [
 const secondaryText = { color: "var(--text-secondary, var(--color-muted-foreground))" };
 const itemClass = "flex w-full items-center gap-2 rounded-md px-2 py-1 text-left text-[12px] outline-none hover:bg-black/5 focus-visible:ring-2 focus-visible:ring-current disabled:opacity-50";
 
+/** The "+" menu, as the app's other menus: it overlays the list and closes on any outside click or Escape. */
 export function NewLocalTerminalMenu({ creating, onCreate }: {
   creating: boolean;
   onCreate(launch: { agent?: LocalTerminalAgent }): void;
 }) {
-  const [open, setOpen] = useState(false);
-  const choose = (launch: { agent?: LocalTerminalAgent }) => {
-    setOpen(false);
-    onCreate(launch);
-  };
   return (
-    <div onKeyDown={(event) => { if (event.key === "Escape") setOpen(false); }}>
-      <button type="button" disabled={creating} aria-expanded={open} aria-haspopup="true"
-        onClick={() => setOpen((shown) => !shown)} className={itemClass} style={secondaryText}>
-        <Plus size={12} aria-hidden="true" className="shrink-0" />
-        {creating ? "Starting…" : "New terminal"}
-      </button>
-      {open ? (
-        <ul aria-label="Start" className="ml-4 flex flex-col gap-0.5">
-          <li><button type="button" className={itemClass} onClick={() => choose({})}>Shell</button></li>
+    <DropdownMenu.Root>
+      <DropdownMenu.Trigger asChild>
+        <button type="button" disabled={creating} className={itemClass} style={secondaryText}>
+          <Plus size={12} aria-hidden="true" className="shrink-0" />
+          {creating ? "Starting…" : "New terminal"}
+        </button>
+      </DropdownMenu.Trigger>
+      <DropdownMenu.Portal>
+        <DropdownMenu.Content
+          aria-label="Start"
+          align="start"
+          sideOffset={4}
+          className="fade-in min-w-[180px] rounded-lg border p-1"
+          style={{ zIndex: DESKTOP_Z_INDEX.popover, background: "var(--bg-overlay)", borderColor: "var(--border-default)", boxShadow: "var(--shadow-2)" }}
+        >
+          <MenuChoice label="Shell" onSelect={() => onCreate({})} />
+          <DropdownMenu.Separator className="my-1 h-px" style={{ background: "var(--border-subtle)" }} />
           {AGENTS.map((agent) => (
-            <li key={agent.id}>
-              <button type="button" className={itemClass} onClick={() => choose({ agent: agent.id })}>{agent.label}</button>
-            </li>
+            <MenuChoice key={agent.id} label={agent.label} onSelect={() => onCreate({ agent: agent.id })} />
           ))}
-        </ul>
-      ) : null}
-    </div>
+        </DropdownMenu.Content>
+      </DropdownMenu.Portal>
+    </DropdownMenu.Root>
+  );
+}
+
+function MenuChoice({ label, onSelect }: { label: string; onSelect(): void }) {
+  return (
+    <DropdownMenu.Item
+      onSelect={onSelect}
+      className="flex cursor-default items-center gap-2 rounded-md px-2.5 py-1.5 text-[12px] outline-none data-[highlighted]:bg-[var(--bg-hover)]"
+      style={{ color: "var(--text-primary)" }}
+    >
+      {label}
+    </DropdownMenu.Item>
   );
 }
 

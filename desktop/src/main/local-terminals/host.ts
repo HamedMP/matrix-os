@@ -54,9 +54,10 @@ const AGENT_COMMANDS: Record<LocalTerminalAgent, string> = {
   opencode: "opencode",
   pi: "pi",
 };
-// Runs the agent in the user's login shell, then leaves that shell open, as
-// Herdr does. `$1` is the shell and `$2` the fixed agent command.
-const AGENT_LAUNCHER = '"$1" -lc "$2"; exec "$1" -l';
+// Runs the agent in the user's interactive login shell, so PATH entries from
+// `.zshrc` or `.bashrc` apply as in their own terminal, then leaves that shell
+// open, as Herdr does. `$1` is the shell and `$2` the fixed agent command.
+const AGENT_LAUNCHER = '"$1" -l -i -c "$2"; exec "$1" -l';
 
 export class LocalTerminalFolderError extends Error {
   constructor() { super("terminal folder is not a folder in your home"); this.name = "LocalTerminalFolderError"; }

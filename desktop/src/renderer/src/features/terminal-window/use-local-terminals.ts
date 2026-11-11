@@ -93,7 +93,7 @@ export function useLocalTerminals() {
   }, [refresh]);
 
   /** Renames a terminal; the new name shows on every client of this core. */
-  const rename = useCallback(async (id: string, name: string): Promise<void> => {
+  const rename = useCallback(async (id: string, name: string): Promise<boolean> => {
     let renamed = false;
     try {
       renamed = (await invoke("local-terminal:rename", { id, name })).ok;
@@ -102,6 +102,7 @@ export function useLocalTerminals() {
     }
     setNotice(renamed ? null : "rename-failed");
     await refresh();
+    return renamed;
   }, [refresh]);
 
   return { state, creating, notice, refresh, create, end, rename };
