@@ -47,8 +47,17 @@ export async function decideContainerWake(input: {
   if (!lookup.ok) return { kind: 'proceed', machine };
   const owner = identity.source === 'auth' && Boolean(identity.userId) && identity.userId === machine.clerkUserId;
   if (!owner) {
-    return input.substrates.resolveUpstream(machine, { path: '/' }).kind === 'upstream'
-      ? { kind: 'proceed', machine } : { kind: 'unavailable' };
+    if (input.substrates.resolveUpstream(machine, { path: '/' }).kind === 'upstream') return { kind: 'proceed', machine };
+    try {
+      const routable = await lookup.substrate.ensureRoutable?.({
+        machineId: machine.machineId, handle: machine.handle, runtimeSlot: machine.runtimeSlot, generation: machine.generation,
+      }, AbortSignal.timeout(ENSURE_RUNNING_TIMEOUT_MS)) ?? false;
+      return routable ? { kind: 'proceed', machine } : { kind: 'unavailable' };
+    } catch (error: unknown) {
+      (input.logError ?? ((message, detail) => console.error(message, detail)))(
+        '[container-wake] ensure routable failed', { cause: error instanceof Error ? error.name : 'unknown' });
+      return { kind: 'unavailable' };
+    }
   }
   let result: EnsureRunningResult;
   try {
