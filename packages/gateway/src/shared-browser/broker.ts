@@ -98,8 +98,10 @@ export function createSharedBrowserBroker(options: {
   }
   async function stopForRelatedTarget(row: Registered, targetId: string | undefined): Promise<SharedBrowserActionResult> {
     await closeRun(row.binding.runId);
+    const automation = status();
     return { success: false, targetId,
-      content: "Browser automation stopped because a related Chrome target could not be safely controlled. Continue in Chrome or start a new run on another page." };
+      ...(automation.phase === "idle" && automation.run === null ? { automation } : {}),
+      content: "Browser automation stopped because a related Chrome target could not be safely controlled. This run has ended and cannot be resumed. Continue manually in Chrome or start a new run on another page." };
   }
   const sweep=()=>{for(const row of runs.values())if(row.signal.aborted || row.expiresAt<=now())void closeRun(row.binding.runId).catch(report);};
   const timer=setInterval(sweep,15_000);timer.unref();

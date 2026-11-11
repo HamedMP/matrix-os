@@ -64,9 +64,12 @@ describe('Chrome related-session lifecycle', () => {
       const repeated = broker.execute(binding, { action: 'snapshot' }, signal);
       pending = repeated.catch(error => error);
       await vi.waitFor(() => expect(broker.status()).toMatchObject({ phase: 'idle', run: null }));
-      expect(SharedBrowserActionResultSchema.parse(await repeated)).toMatchObject({
-        success: false, targetId: 'agent-tab', content: expect.stringContaining('Browser automation stopped'),
+      const stopped = SharedBrowserActionResultSchema.parse(await repeated);
+      expect(stopped).toMatchObject({
+        success: false, targetId: 'agent-tab', automation: { phase: 'idle', run: null },
+        content: expect.stringContaining('This run has ended and cannot be resumed.'),
       });
+      expect(stopped).not.toHaveProperty('handoffRequested');
       expect(gates).toEqual([false, true, false, true]);
       expect(broker.resolveCapability(token)).toBeNull();
       await expect(broker.execute(binding, { action: 'snapshot' }, signal)).rejects.toMatchObject({ code: 'run_unavailable' });
