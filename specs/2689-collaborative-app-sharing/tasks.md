@@ -92,22 +92,22 @@
 
 ### Tests for User Story 1
 
-- [ ] T035 [P] [US1] Write failing preflight/create/get/stop contract tests for no project, role, grant, invitation, acceptance, or record-filter fields in `tests/gateway/collaborative-app-share-routes.test.ts`
-- [ ] T036 [P] [US1] Write failing real-Postgres atomicity/idempotency tests for scope, binding, owner invariant, operation, audit, event, and outbox creation in `tests/gateway/collaborative-app-share-postgres.test.ts`
-- [ ] T037 [P] [US1] Write failing platform discovery and launch tests for current members, typed app items, cursor bounds, proof-bound sessions, and outsider omission in `tests/platform/collaborative-app-discovery.test.ts`
+- [X] T035 [P] [US1] Write failing preflight/create/get/stop contract tests for no project, role, grant, invitation, acceptance, or record-filter fields in `tests/gateway/collaborative-app-share-routes.test.ts`
+- [X] T036 [P] [US1] Write failing real-Postgres atomicity/idempotency tests for scope, binding, owner invariant, operation, audit, event, and outbox creation in `tests/gateway/collaborative-app-share-postgres.test.ts`
+- [X] T037 [P] [US1] Write failing platform discovery and launch tests for current members, typed app items, cursor bounds, proof-bound sessions, and outsider omission in `tests/platform/collaborative-app-discovery.test.ts`
 - [ ] T038 [P] [US1] Write failing launch-facade security tests for session recheck, path confinement, immutable bytes, strict content types, `nosniff`, redirect rejection, stream limits, cancellation, and credential non-disclosure in `tests/platform/collaborative-app-launch-facade.test.ts`
 - [ ] T039 [P] [US1] Write failing owner/recipient common-data tests for 20 existing rows, CRUD, reload, lost-response replay, and content-free change signals in `tests/gateway/collaborative-app-two-home-postgres.test.ts`
 - [ ] T040 [P] [US1] Write failing shared-viewer transport tests proving recipients never fall back to a local same-slug app or owner credentials in `tests/ui/collaborative-app-viewer.test.tsx`
 
 ### Share lifecycle and discovery implementation
 
-- [ ] T041 [US1] Enable direct app preflight only for the current ready exact build while preserving legacy/project scope behavior in `packages/gateway/src/collaboration/standalone-resource-scope.ts`
-- [ ] T042 [US1] Atomically create/select the unique app scope and exact binding with operation, audit, event, and directory outbox writes in `packages/gateway/src/collaboration/scope-routes.ts`
-- [ ] T043 [US1] Add owner preflight/create/get/DELETE routes with confirmation binding, strict schemas, body limits, per-actor rate limits, revision predicates, replay, and safe errors in `packages/gateway/src/collaboration/collaborative-app-readiness-routes.ts`
-- [ ] T044 [US1] Project active app scopes as `current_membership` directory entries without activation or recipient rows in `packages/gateway/src/collaboration/directory-outbox.ts`
+- [X] T041 [US1] Enable direct app preflight only for the current ready exact build while preserving legacy/project scope behavior in `packages/gateway/src/collaboration/standalone-resource-scope.ts`
+- [X] T042 [US1] Atomically create/select the unique app scope and exact binding with operation, audit, event, and directory outbox writes in `packages/gateway/src/collaboration/scope-routes.ts`
+- [X] T043 [US1] Add owner preflight/create/get/DELETE routes with confirmation binding, strict schemas, body limits, per-actor rate limits, revision predicates, replay, and safe errors in `packages/gateway/src/collaboration/collaborative-app-readiness-routes.ts`
+- [X] T044 [US1] Project active app scopes as `current_membership` directory entries without activation or recipient rows in `packages/gateway/src/collaboration/directory-outbox.ts`
 - [ ] T045 [US1] Add bounded and per-actor-rate-limited current-membership shared-app discovery and exact-build launch endpoints in `packages/platform/src/collaboration/routes.ts`
-- [ ] T046 [US1] Persist and query app/build/lifecycle routing metadata only, excluding owner app records and per-recipient grants, in `packages/platform/src/collaboration/repository.ts`
-- [ ] T047 [US1] Issue proof-key-bound owner-runtime tickets only after active share, current membership, exact readiness, and host checks in `packages/platform/src/collaboration/ticket-issuer.ts`
+- [X] T046 [US1] Persist and query app/build/lifecycle routing metadata only, excluding owner app records and per-recipient grants, in `packages/platform/src/collaboration/repository.ts`
+- [X] T047 [US1] Issue proof-key-bound owner-runtime tickets only after active share, current membership, exact readiness, and host checks in `packages/platform/src/collaboration/ticket-issuer.ts`
 
 ### Owner-hosted runtime and common-data implementation
 
@@ -138,15 +138,15 @@
 
 ### Tests for User Story 3
 
-- [ ] T059 [P] [US3] Write failing authority tests for active exact share plus current membership, guest access, sharing by any member-owner, full functionality, no admin approval or Viewer/Editor mapping, and preserved legacy project roles in `tests/gateway/collaborative-app-authority.test.ts`
+- [X] T059 [P] [US3] Write failing authority tests for active exact share plus current membership, guest access, sharing by any member-owner, full functionality, no admin approval or Viewer/Editor mapping, and preserved legacy project roles in `tests/gateway/collaborative-app-authority.test.ts`
 - [ ] T060 [P] [US3] Write failing newcomer/departed/wrong-org/outsider tests across discovery, launch, asset, read, write, subscribe, resume, broadcast, and reconnect in `tests/gateway/collaborative-app-membership-revocation.test.ts`
 - [ ] T061 [P] [US3] Write failing concurrent-write and idempotency tests for revision predicates in the write statement, same-ID replay, different-payload rejection, uncertain outcome, and retained local input in `tests/gateway/collaborative-app-concurrency-postgres.test.ts`
 - [ ] T062 [P] [US3] Write failing stop/rebind tests for scope/binding CAS, auth-epoch bump, post-commit session closure, event delivery, and owner-data retention in `tests/gateway/collaborative-app-stop-postgres.test.ts`
 
 ### Implementation for User Story 3
 
-- [ ] T063 [US3] Authorize new app scopes from active exact binding plus fresh organization membership while preserving existing project/grant semantics in `packages/gateway/src/collaboration/authority.ts`
-- [ ] T064 [US3] Map every current organization member including guests to full declared app functionality, allow every member to share an app they own, and create no recipient grant, permission, activation, invitation, approval, or role rows in `packages/gateway/src/collaboration/app-instance-adapter.ts`
+- [X] T063 [US3] Authorize new app scopes from active exact binding plus fresh organization membership while preserving existing project/grant semantics in `packages/gateway/src/collaboration/authority.ts`
+- [X] T064 [US3] Map every current organization member including guests to full declared app functionality, allow every member to share an app they own, and create no recipient grant, permission, activation, invitation, approval, or role rows in `packages/gateway/src/collaboration/app-instance-adapter.ts`
 - [ ] T065 [US3] Recheck bounded organization membership with explicit timeouts and generic failures at every owner-runtime admission boundary in `packages/gateway/src/collaboration/organization-membership-client.ts`
 - [ ] T066 [US3] Enforce the global app `data_revision` predicate inside each mutation transaction and return bounded authoritative conflict metadata in `packages/gateway/src/collaboration/collaborative-app-runtime.ts`
 - [ ] T067 [US3] Reuse stable request IDs and payload hashes for replay/uncertain outcomes without duplicate owner records in `packages/gateway/src/collaboration/scoped-app-bridge.ts`

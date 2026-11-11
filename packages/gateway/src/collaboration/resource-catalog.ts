@@ -9,6 +9,7 @@ import { randomUUID } from "node:crypto";
 import { sql, type Kysely, type Transaction } from "kysely";
 import type { OwnerCollaborationDatabase } from "./database.js";
 import { isSafeCollaborationRelativePath } from "@matrix-os/contracts";
+import { publishCollaborativeAppInvalidations } from "./collaborative-app-invalidation.js";
 
 export type CatalogKind = "file" | "folder" | "app";
 const MAX_LIST = 100;
@@ -150,11 +151,12 @@ export class CollaborationResourceCatalog {
     executor: Executor,
     input: { id: string; expectedRevision: number; incarnation?: string; path?: string; parentId?: string | null },
   ): Promise<CatalogEntryRecord> {
-    if (executor === this.db) {
-      return this.db.transaction().execute((trx) => this.bump(trx, input));
+    if (!executor.isTransaction) {
+      return executor.transaction().execute((trx) => this.bump(trx, input));
     }
+    const trx = executor as Transaction<OwnerCollaborationDatabase>;
     const timestamp = this.now();
-    const row = await executor.updateTable("collaboration_resource_catalog").set({
+    const row = await trx.updateTable("collaboration_resource_catalog").set({
       revision: input.expectedRevision + 1,
       updated_at: timestamp,
       ...(input.incarnation !== undefined ? { incarnation: input.incarnation } : {}),
@@ -164,7 +166,7 @@ export class CollaborationResourceCatalog {
       .returningAll().executeTakeFirst();
     if (!row) throw new ResourceCatalogError("conflict");
     if (row.kind === "app" && input.incarnation !== undefined) {
-      await this.invalidateAppReadiness(executor, row.id, timestamp, "build_drift", input.incarnation);
+      await this.invalidateAppReadiness(trx, row.id, timestamp, "build_drift", input.incarnation);
     }
     return toRecord(row);
   }
@@ -243,10 +245,11 @@ export class CollaborationResourceCatalog {
    * bytes.
    */
   async remove(input: { id: string; expectedRevision: number; executor?: Executor }): Promise<CatalogEntryRecord> {
-    if (input.executor === undefined || input.executor === this.db) {
-      return this.db.transaction().execute((trx) => this.remove({ ...input, executor: trx }));
+    const requestedExecutor = input.executor ?? this.db;
+    if (!requestedExecutor.isTransaction) {
+      return requestedExecutor.transaction().execute((trx) => this.remove({ ...input, executor: trx }));
     }
-    const executor = input.executor ?? this.db;
+    const executor = requestedExecutor as Transaction<OwnerCollaborationDatabase>;
     const entry = await this.get(input.id, executor);
     if (!entry) throw new ResourceCatalogError("not_found");
     const timestamp = this.now();
@@ -362,7 +365,7 @@ export class CollaborationResourceCatalog {
   }
 
   private async invalidateAppReadiness(
-    executor: Executor,
+    executor: Transaction<OwnerCollaborationDatabase>,
     catalogId: string,
     timestamp: Date,
     reason: "build_drift" | "catalog_deleted",
@@ -378,7 +381,8 @@ export class CollaborationResourceCatalog {
     if (currentIncarnation !== undefined) {
       update = update.where("registration_incarnation", "!=", currentIncarnation);
     }
-    await update.execute();
+    const rows = await update.returning("id").execute();
+    await publishCollaborativeAppInvalidations(executor, rows.map((row) => row.id), timestamp);
   }
 }
 

@@ -4,7 +4,9 @@ import {
   CollaborationDiscoveryItemSchema,
   CollaborationDiscoveryResponseSchema,
   CollaborationDirectoryEventSchema,
+  CollaborationOrganizationIdSchema,
   CollaborationPageRequestSchema,
+  CollaborativeAppDirectoryResponseSchema,
 } from "@matrix-os/contracts";
 import { Hono, type Context } from "hono";
 import { bodyLimit } from "hono/body-limit";
@@ -33,6 +35,11 @@ const DiscoveryCursorSchema = z.discriminatedUnion("version", [
     after: z.object({ updatedAt: z.iso.datetime(), scopeId: z.uuid() }).strict().optional(),
   }).strict(),
 ]);
+const AppDiscoveryCursorSchema = z.object({
+  version: z.literal(1),
+  actorId: CollaborationActorIdSchema,
+  after: z.object({ updatedAt: z.iso.datetime(), scopeId: z.uuid() }).strict(),
+}).strict();
 type DiscoveryPageCursor = { phase: "indexed" | "pending"; after?: { updatedAt: string; scopeId: string } };
 
 type RouteContext = Context;
@@ -54,10 +61,15 @@ export function createPlatformCollaborationRoutes(options: {
   resolveParticipant(actorId: string): Promise<{ actorId: string; displayName: string } | null>;
   resolveInvitationIdentifier(identifier: string, organizationId: string): Promise<{ actorId: string; displayName: string } | null>;
   /**
-   * S06 / T032: the actor's current organization ids from the membership projection, used only to list
-   * organization-wide shares still pending for them. Absent means no organization inventory.
+   * S06 / T032: candidate organization ids from saved membership rows. Every candidate is checked
+   * against `isCurrentOrganizationMember` before it can contribute inventory.
    */
   listOrganizationIds?(actorId: string): Promise<readonly string[]>;
+  /**
+   * Fresh-membership authority for organization inventory. When absent, organization-wide
+   * discovery fails closed even if saved membership rows still list an organization.
+   */
+  isCurrentOrganizationMember?(input: { organizationId: string; actorId: string }): Promise<boolean>;
   now?: () => Date;
 }): Hono {
   const app = new Hono();
@@ -116,6 +128,46 @@ export function createPlatformCollaborationRoutes(options: {
 
   app.get("/api/collaboration/inbox", async (c) => listDiscovery(c, "invited", options));
   app.get("/api/collaboration/shared", async (c) => listDiscovery(c, "accepted", options));
+  app.get("/api/collaboration/shared-apps", async (c) => {
+    const actorId = await resolveValidatedActor(c, options.resolveActor);
+    if (!actorId) return safeJson(c, "Unauthorized", 401);
+    const pageRequest = CollaborationPageRequestSchema.safeParse(exactDiscoveryQuery(c));
+    if (!pageRequest.success) return safeJson(c, "Invalid request", 422);
+    const after = pageRequest.data.cursor ? decodeAppDiscoveryCursor(pageRequest.data.cursor, actorId) : undefined;
+    if (pageRequest.data.cursor && !after) return safeJson(c, "Invalid request", 422);
+    try {
+      const organizationIds = await listCurrentOrganizationIds(actorId, options);
+      const page = await options.repository.listCurrentMembershipAppsForActorPage(actorId, organizationIds, {
+        limit: pageRequest.data.limit,
+        ...(after ? { after } : {}),
+      });
+      const items = await Promise.all(page.items.map(async (entry) => {
+        const owner = await options.resolveParticipant(entry.ownerId);
+        if (!owner) throw new Error("CollaborativeAppOwnerUnavailable");
+        return {
+          scopeId: entry.scopeId,
+          runtimeId: entry.runtimeId,
+          organizationId: entry.organizationId,
+          authorityGeneration: entry.authorityGeneration,
+          appId: entry.appId,
+          catalogId: entry.catalogId,
+          readinessId: entry.readinessId,
+          registrationIncarnation: entry.registrationIncarnation,
+          buildId: entry.buildId,
+          shareRevision: String(entry.shareRevision),
+          owner,
+        };
+      }));
+      c.header("Cache-Control", "private, no-store");
+      return c.json(CollaborativeAppDirectoryResponseSchema.parse({
+        items,
+        ...(page.nextCursor ? { nextCursor: encodeAppDiscoveryCursor(actorId, page.nextCursor) } : {}),
+      }));
+    } catch (error: unknown) {
+      console.warn("[platform-collaboration] app discovery failed", error instanceof Error ? error.name : "UnknownError");
+      return safeJson(c, "Collaboration unavailable", 503);
+    }
+  });
   // The CLI receives an invitation ID as an argument. Resolve only its actor-indexed
   // scope pointer here; invitation content and acceptance stay on the owner's home.
   app.get("/api/collaboration/invitations/:invitationId/location", async (c) => {
@@ -252,7 +304,7 @@ async function readDiscoveryPage(
     }));
   let nextCursor = page.nextCursor ? encodeDiscoveryCursor(actorId, status, "indexed", page.nextCursor) : undefined;
   if (status === "invited" && !page.nextCursor && options.listOrganizationIds) {
-    const organizationIds = await options.listOrganizationIds(actorId);
+    const organizationIds = await listCurrentOrganizationIds(actorId, options);
     const remaining = limit - items.length;
     const pending = await options.repository.listOrganizationSharesForActorPage(actorId, organizationIds, {
       limit: Math.max(1, remaining),
@@ -272,6 +324,33 @@ async function readDiscoveryPage(
     }
   }
   return { items, ...(nextCursor ? { nextCursor } : {}) };
+}
+
+const MAX_ORGANIZATION_DISCOVERY_CANDIDATES = 100;
+const CURRENT_MEMBERSHIP_CHECK_CONCURRENCY = 8;
+
+async function listCurrentOrganizationIds(
+  actorId: string,
+  options: Parameters<typeof createPlatformCollaborationRoutes>[0],
+): Promise<string[]> {
+  const listOrganizationIds = options.listOrganizationIds;
+  const isCurrentOrganizationMember = options.isCurrentOrganizationMember;
+  if (!listOrganizationIds || !isCurrentOrganizationMember) return [];
+  const candidates = await listOrganizationIds(actorId);
+  const organizationIds = [...new Set(candidates.flatMap((candidate) => {
+    const parsed = CollaborationOrganizationIdSchema.safeParse(candidate);
+    return parsed.success ? [parsed.data] : [];
+  }))].slice(0, MAX_ORGANIZATION_DISCOVERY_CANDIDATES);
+  const current: string[] = [];
+  for (let index = 0; index < organizationIds.length; index += CURRENT_MEMBERSHIP_CHECK_CONCURRENCY) {
+    const batch = organizationIds.slice(index, index + CURRENT_MEMBERSHIP_CHECK_CONCURRENCY);
+    const memberships = await Promise.all(batch.map(async (organizationId) => ({
+      organizationId,
+      current: await isCurrentOrganizationMember({ organizationId, actorId }),
+    })));
+    current.push(...memberships.filter((membership) => membership.current).map((membership) => membership.organizationId));
+  }
+  return current;
 }
 
 function exactDiscoveryQuery(c: RouteContext): Record<string, string> {
@@ -309,6 +388,23 @@ function decodeDiscoveryCursor(
       console.warn("[platform-collaboration] cursor decode failed", error instanceof Error ? error.name : "UnknownError");
     }
     return null;
+  }
+}
+
+function encodeAppDiscoveryCursor(actorId: string, after: { updatedAt: string; scopeId: string }): string {
+  return Buffer.from(JSON.stringify({ version: 1, actorId, after })).toString("base64url");
+}
+
+function decodeAppDiscoveryCursor(value: string, actorId: string): { updatedAt: string; scopeId: string } | undefined {
+  if (!/^[A-Za-z0-9_-]+$/.test(value)) return undefined;
+  try {
+    const parsed = AppDiscoveryCursorSchema.safeParse(JSON.parse(Buffer.from(value, "base64url").toString("utf8")) as unknown);
+    return parsed.success && parsed.data.actorId === actorId ? parsed.data.after : undefined;
+  } catch (error: unknown) {
+    if (!(error instanceof SyntaxError)) {
+      console.warn("[platform-collaboration] app cursor decode failed", error instanceof Error ? error.name : "UnknownError");
+    }
+    return undefined;
   }
 }
 

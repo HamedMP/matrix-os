@@ -1,7 +1,11 @@
 import {
   COLLABORATION_HTTP_BODY_LIMIT,
   CollaborativeAppReadinessSchema,
+  CollaborativeAppShareSchema,
+  CollaborationIdSchema,
   CollaborationOrganizationIdSchema,
+  CollaborationRevisionSchema,
+  type CollaborativeAppShare,
   type CollaborativeAppBuildRef,
 } from "@matrix-os/contracts";
 import type { Context, Hono } from "hono";
@@ -21,6 +25,8 @@ import type {
   CollaborativeAppReadinessRecord,
   CollaborativeAppReadinessRepository,
 } from "./collaborative-app-readiness-repository.js";
+import { CollaborativeAppShareServiceError } from "./collaborative-app-share-service.js";
+import { CollaborativeAppShareRepositoryError } from "./collaborative-app-share-repository.js";
 
 const AppIdSchema = z.string().min(1).max(256).regex(/^[A-Za-z0-9_-]+$/);
 const DigestSchema = z.string().regex(/^[a-f0-9]{64}$/);
@@ -29,6 +35,40 @@ const CheckRequestSchema = z.object({
   expectedRegistrationIncarnation: DigestSchema,
   organizationId: CollaborationOrganizationIdSchema,
 }).strict();
+const SharePreflightRequestSchema = z.object({
+  organizationId: CollaborationOrganizationIdSchema,
+  expectedReadinessRevision: CollaborationRevisionSchema,
+  expectedBuildId: DigestSchema,
+}).strict();
+const ShareCreateRequestSchema = z.object({
+  organizationId: CollaborationOrganizationIdSchema,
+  clientRequestId: CollaborationIdSchema,
+  expectedResourceRevision: CollaborationRevisionSchema,
+  expectedReadinessRevision: CollaborationRevisionSchema,
+  readinessId: CollaborationIdSchema,
+  buildId: DigestSchema,
+  confirmationToken: z.string().min(16).max(8_192).regex(/^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/),
+}).strict();
+const ShareStopRequestSchema = z.object({
+  clientRequestId: CollaborationIdSchema,
+  expectedShareRevision: CollaborationRevisionSchema,
+  expectedBindingRevision: CollaborationRevisionSchema,
+}).strict();
+const SharePreflightResponseSchema = z.discriminatedUnion("eligible", [
+  z.object({
+    eligible: z.literal(true),
+    catalogId: CollaborationIdSchema,
+    resourceRevision: CollaborationRevisionSchema,
+    readinessId: CollaborationIdSchema,
+    buildId: DigestSchema,
+    confirmationToken: z.string().min(16).max(8_192),
+    existingShare: CollaborativeAppShareSchema.optional(),
+  }).strict(),
+  z.object({
+    eligible: z.literal(false),
+    reason: z.enum(["not_ready", "readiness_stale", "organization_mismatch", "already_shared", "unavailable"]),
+  }).strict(),
+]);
 
 class ReadinessRouteError extends Error {
   constructor(readonly code: "forbidden" | "not_found" | "conflict") {
@@ -54,6 +94,12 @@ export interface CollaborativeAppReadinessRouteDependencies {
   requireOrganizationMembership(actorId: string, organizationId: string): Promise<void>;
   rateLimiter?: RateLimiter;
   readRateLimiter?: RateLimiter;
+  share?: {
+    get(ownerId: string, appId: string): Promise<CollaborativeAppShare | null>;
+    preflight(ownerId: string, appId: string, input: z.infer<typeof SharePreflightRequestSchema>): Promise<unknown>;
+    create(ownerId: string, appId: string, input: z.infer<typeof ShareCreateRequestSchema>): Promise<CollaborativeAppShare>;
+    stop(ownerId: string, appId: string, input: z.infer<typeof ShareStopRequestSchema>): Promise<CollaborativeAppShare>;
+  };
 }
 
 function project(record: CollaborativeAppReadinessRecord) {
@@ -97,6 +143,22 @@ function failure(context: Context, error: unknown) {
       case "forbidden": return context.json({ error: "Forbidden", code: "forbidden" }, 403);
       case "not_found": return context.json({ error: "App not found", code: "not_found" }, 404);
       case "conflict": return context.json({ error: "App changed; refresh and try again", code: "conflict" }, 409);
+    }
+  }
+  if (error instanceof CollaborativeAppShareServiceError) {
+    switch (error.code) {
+      case "invalid": return context.json({ error: "Invalid share request", code: "invalid_request" }, 400);
+      case "not_found": return context.json({ error: "App not found", code: "not_found" }, 404);
+      case "conflict": return context.json({ error: "App changed; refresh and try again", code: "conflict" }, 409);
+      case "unavailable": break;
+    }
+  }
+  if (error instanceof CollaborativeAppShareRepositoryError) {
+    switch (error.code) {
+      case "invalid": return context.json({ error: "Invalid share request", code: "invalid_request" }, 400);
+      case "not_found": return context.json({ error: "App not found", code: "not_found" }, 404);
+      case "conflict": return context.json({ error: "App changed; refresh and try again", code: "conflict" }, 409);
+      case "unavailable": break;
     }
   }
   console.warn("[collaborative-app-readiness] request failed", error instanceof Error ? error.name : "UnknownError");
@@ -162,6 +224,64 @@ export function registerCollaborativeAppReadinessRoutes(
         artifactRef: current.artifactRef,
       });
       return context.json(project(record));
+    } catch (error: unknown) {
+      return failure(context, error);
+    }
+  });
+
+  if (!dependencies.share) return;
+  const sharePath = "/api/collaboration/apps/:appId/share";
+  routes.get(sharePath, async (context) => {
+    context.header("Cache-Control", "private, no-store");
+    try {
+      const ownerId = owner(context, dependencies.ownerId);
+      const appId = AppIdSchema.parse(context.req.param("appId"));
+      const share = await dependencies.share!.get(ownerId, appId);
+      return context.json(share === null ? null : CollaborativeAppShareSchema.parse(share));
+    } catch (error: unknown) {
+      return failure(context, error);
+    }
+  });
+  routes.post(`${sharePath}/preflight`, limit, async (context) => {
+    context.header("Cache-Control", "private, no-store");
+    try {
+      const ownerId = owner(context, dependencies.ownerId);
+      const appId = AppIdSchema.parse(context.req.param("appId"));
+      if (!limiter.check(ownerId)) return context.json({ error: "Too many share requests", code: "rate_limited" }, 429);
+      const request = SharePreflightRequestSchema.parse(await context.req.json());
+      await dependencies.requireOrganizationMembership(ownerId, request.organizationId);
+      return context.json(SharePreflightResponseSchema.parse(
+        await dependencies.share!.preflight(ownerId, appId, request),
+      ));
+    } catch (error: unknown) {
+      return failure(context, error);
+    }
+  });
+  routes.post(sharePath, limit, async (context) => {
+    context.header("Cache-Control", "private, no-store");
+    try {
+      const ownerId = owner(context, dependencies.ownerId);
+      const appId = AppIdSchema.parse(context.req.param("appId"));
+      if (!limiter.check(ownerId)) return context.json({ error: "Too many share requests", code: "rate_limited" }, 429);
+      const request = ShareCreateRequestSchema.parse(await context.req.json());
+      await dependencies.requireOrganizationMembership(ownerId, request.organizationId);
+      return context.json(CollaborativeAppShareSchema.parse(
+        await dependencies.share!.create(ownerId, appId, request),
+      ), 201);
+    } catch (error: unknown) {
+      return failure(context, error);
+    }
+  });
+  routes.delete(sharePath, limit, async (context) => {
+    context.header("Cache-Control", "private, no-store");
+    try {
+      const ownerId = owner(context, dependencies.ownerId);
+      const appId = AppIdSchema.parse(context.req.param("appId"));
+      if (!limiter.check(ownerId)) return context.json({ error: "Too many share requests", code: "rate_limited" }, 429);
+      const request = ShareStopRequestSchema.parse(await context.req.json());
+      return context.json(CollaborativeAppShareSchema.parse(
+        await dependencies.share!.stop(ownerId, appId, request),
+      ));
     } catch (error: unknown) {
       return failure(context, error);
     }

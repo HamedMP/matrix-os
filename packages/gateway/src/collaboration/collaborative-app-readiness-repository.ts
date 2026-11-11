@@ -8,6 +8,10 @@ import { sql, type Kysely, type Selectable } from "kysely";
 import { z } from "zod/v4";
 
 import type { CollaborationAppReadinessTable, OwnerCollaborationDatabase } from "./database.js";
+import {
+  publishCollaborativeAppInvalidations,
+  publishCollaborativeAppRecovery,
+} from "./collaborative-app-invalidation.js";
 
 const ArtifactRefSchema = z.string().min(1).max(4_096).refine((value) => {
   if (value.startsWith("/") || value.includes("\\") || value.includes("\0")) return false;
@@ -182,20 +186,23 @@ export class CollaborativeAppReadinessRepository {
       throw new CollaborativeAppReadinessRepositoryError("invalid");
     }
     assertTransition({ ...input, gateResults: gates.data });
-    const timestamp = this.now();
-    const row = await this.db.updateTable("collaboration_app_readiness").set({
-      status: input.status,
-      gate_results: sql`${JSON.stringify(gates.data)}::jsonb`,
-      verified_at: input.verifiedAt ?? null,
-      invalidated_at: input.invalidatedAt ?? null,
-      invalidation_reason: input.invalidationReason ?? null,
-      revision: input.expectedRevision + 1,
-      updated_at: timestamp,
-    }).where("id", "=", id.data).where("owner_id", "=", owner.data)
-      .where("revision", "=", input.expectedRevision)
-      .returningAll().executeTakeFirst();
-    if (!row) throw new CollaborativeAppReadinessRepositoryError("conflict");
-    return toRecord(row);
+    return this.db.transaction().execute(async (trx) => {
+      const timestamp = this.now();
+      const row = await trx.updateTable("collaboration_app_readiness").set({
+        status: input.status,
+        gate_results: sql`${JSON.stringify(gates.data)}::jsonb`,
+        verified_at: input.verifiedAt ?? null,
+        invalidated_at: input.invalidatedAt ?? null,
+        invalidation_reason: input.invalidationReason ?? null,
+        revision: input.expectedRevision + 1,
+        updated_at: timestamp,
+      }).where("id", "=", id.data).where("owner_id", "=", owner.data)
+        .where("revision", "=", input.expectedRevision)
+        .returningAll().executeTakeFirst();
+      if (!row) throw new CollaborativeAppReadinessRepositoryError("conflict");
+      if (row.status === "ready") await publishCollaborativeAppRecovery(trx, row, timestamp);
+      return toRecord(row);
+    });
   }
 
   async restart(input: {
@@ -263,19 +270,22 @@ export class CollaborativeAppReadinessRepository {
     if (!owner.success || !catalog.success || !build.success) {
       throw new CollaborativeAppReadinessRepositoryError("invalid");
     }
-    const timestamp = this.now();
-    const rows = await this.db.updateTable("collaboration_app_readiness").set({
-      status: "stale",
-      invalidated_at: timestamp,
-      invalidation_reason: "build_drift",
-      revision: sql`revision + 1`,
-      updated_at: timestamp,
-    }).where("owner_id", "=", owner.data)
-      .where("catalog_id", "=", catalog.data)
-      .where("build_id", "!=", build.data)
-      .where("invalidated_at", "is", null)
-      .returning("id")
-      .execute();
-    return rows.length;
+    return this.db.transaction().execute(async (trx) => {
+      const timestamp = this.now();
+      const rows = await trx.updateTable("collaboration_app_readiness").set({
+        status: "stale",
+        invalidated_at: timestamp,
+        invalidation_reason: "build_drift",
+        revision: sql`revision + 1`,
+        updated_at: timestamp,
+      }).where("owner_id", "=", owner.data)
+        .where("catalog_id", "=", catalog.data)
+        .where("build_id", "!=", build.data)
+        .where("invalidated_at", "is", null)
+        .returning("id")
+        .execute();
+      await publishCollaborativeAppInvalidations(trx, rows.map((row) => row.id), timestamp);
+      return rows.length;
+    });
   }
 }

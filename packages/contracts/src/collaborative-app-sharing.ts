@@ -105,6 +105,25 @@ export const CollaborativeAppShareSchema = z.object({
   updatedAt: z.iso.datetime(),
 }).strict();
 
+export const CollaborativeAppDirectoryItemSchema = z.object({
+  scopeId: CollaborationIdSchema,
+  runtimeId: z.string().min(1).max(128).regex(/^[A-Za-z0-9:_-]+$/),
+  organizationId: CollaborationOrganizationIdSchema,
+  authorityGeneration: z.number().int().positive(),
+  appId: AppIdSchema,
+  catalogId: CollaborationIdSchema,
+  readinessId: CollaborationIdSchema,
+  registrationIncarnation: Sha256Schema,
+  buildId: Sha256Schema,
+  shareRevision: CollaborationRevisionSchema,
+  owner: CollaborationParticipantSchema,
+}).strict();
+
+export const CollaborativeAppDirectoryResponseSchema = z.object({
+  items: z.array(CollaborativeAppDirectoryItemSchema).max(100),
+  nextCursor: z.string().min(1).max(512).optional(),
+}).strict();
+
 const SameOriginPathSchema = z.string().min(1).max(1_024).refine((value) => {
   if (!value.startsWith("/") || value.startsWith("//") || value.includes("\\") || value.includes("\0")) return false;
   const [path = ""] = value.split(/[?#]/, 1);
@@ -180,6 +199,7 @@ export const CollaborativeAppSafeErrorSchema = z.object({
 export type CollaborativeAppBuildRef = z.infer<typeof CollaborativeAppBuildRefSchema>;
 export type CollaborativeAppReadiness = z.infer<typeof CollaborativeAppReadinessSchema>;
 export type CollaborativeAppShare = z.infer<typeof CollaborativeAppShareSchema>;
+export type CollaborativeAppDirectoryItem = z.infer<typeof CollaborativeAppDirectoryItemSchema>;
 export type CollaborativeAppLaunchTarget = z.infer<typeof CollaborativeAppLaunchTargetSchema>;
 export type CollaborativeAppParticipant = z.infer<typeof CollaborativeAppParticipantSchema>;
 export type CollaborativeAppMutationRequest = z.infer<typeof CollaborativeAppMutationRequestSchema>;

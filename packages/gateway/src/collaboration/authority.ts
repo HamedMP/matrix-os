@@ -87,16 +87,11 @@ export class CollaborationAuthority {
       organizationId: membershipScope.organization_id,
       actorId: input.actorId,
     });
-    const member = await this.repository.getMember(membershipScope.id, input.actorId);
-    const legacyRole = member && member.status === "accepted" && !member.dispositionedAt
-      && !(member.expiresAt && new Date(member.expiresAt).getTime() <= this.now().getTime())
-      && (input.actorId === membershipScope.owner_id
-        || !await hasRetiredLegacyAuthority(this.repository.db, membershipScope.id))
-      ? member.role
+    const appRole = scope.kind === "app"
+      ? await this.resolveCurrentMembershipAppRole(scope, input.actorId)
       : null;
-    // Before S18 activation, legacy rows keep their old role. After activation,
-    // only direct grants can authorize non-owners, including after rollback.
-    const role = legacyRole ?? await this.resolveGrantRole(membershipScope.id, input.actorId, evidence.membershipEpoch);
+    const role = appRole
+      ?? await this.resolveLegacyOrGrantRole(membershipScope, input.actorId, evidence.membershipEpoch);
     if (!role) {
       throw new CollaborationAuthorizationError("not_found", "Current membership is required");
     }
@@ -120,6 +115,50 @@ export class CollaborationAuthority {
       authorityGeneration: Number(scope.authority_generation),
       capability: input.action,
     };
+  }
+
+  private async resolveLegacyOrGrantRole(
+    membershipScope: Selectable<CollaborationScopesTable>,
+    actorId: string,
+    membershipEpoch: string | undefined,
+  ): Promise<CollaborationRole | null> {
+    const member = await this.repository.getMember(membershipScope.id, actorId);
+    const legacyRole = member && member.status === "accepted" && !member.dispositionedAt
+      && !(member.expiresAt && new Date(member.expiresAt).getTime() <= this.now().getTime())
+      && (actorId === membershipScope.owner_id
+        || !await hasRetiredLegacyAuthority(this.repository.db, membershipScope.id))
+      ? member.role
+      : null;
+    return legacyRole ?? this.resolveGrantRole(membershipScope.id, actorId, membershipEpoch);
+  }
+
+  /** Live app sharing derives full app use from current organization membership, never recipient rows or grants. */
+  private async resolveCurrentMembershipAppRole(
+    scope: Selectable<CollaborationScopesTable>,
+    actorId: string,
+  ): Promise<CollaborationRole | null> {
+    const binding = await this.repository.db.selectFrom("collaboration_app_bindings")
+      .select("scope_id").where("scope_id", "=", scope.id).executeTakeFirst();
+    // Pre-feature standalone app shares retain their legacy role/grant authority.
+    if (!binding) return null;
+    const exact = await this.repository.db.selectFrom("collaboration_app_bindings as binding")
+      .innerJoin("collaboration_app_readiness as readiness", "readiness.id", "binding.readiness_id")
+      .innerJoin("collaboration_resource_catalog as catalog", "catalog.id", "binding.catalog_id")
+      .select("binding.scope_id")
+      .where("binding.scope_id", "=", scope.id)
+      .where("binding.state", "=", "active")
+      .whereRef("binding.build_id", "=", "readiness.build_id")
+      .whereRef("binding.registration_incarnation", "=", "readiness.registration_incarnation")
+      .where("readiness.status", "=", "ready")
+      .where("readiness.invalidated_at", "is", null)
+      .whereRef("readiness.catalog_id", "=", "catalog.id")
+      .whereRef("readiness.registration_incarnation", "=", "catalog.incarnation")
+      .where("catalog.deleted_at", "is", null)
+      .where("catalog.kind", "=", "app")
+      .where("catalog.id", "=", scope.resource_id)
+      .executeTakeFirst();
+    if (!exact) throw new CollaborationAuthorizationError("unavailable", "Collaborative app needs recheck");
+    return actorId === scope.owner_id ? "owner" : "editor";
   }
 
   /** S04: preset grants on the membership scope; contributor maps to editor, viewer to viewer. */
