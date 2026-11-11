@@ -78,15 +78,21 @@ export function createTerminalAgentRegistry(options: { homePath: string; now?: (
   async function save(agents: TerminalAgentRecord[]): Promise<void> {
     await mkdir(dirname(path), { recursive: true, mode: 0o700 });
     const temporary = `${path}.${randomBytes(8).toString("hex")}.tmp`;
+    const body = JSON.stringify(FileSchema.parse({ version: 1, agents }));
     const handle = await open(temporary, "wx", 0o600);
-    try { await handle.writeFile(JSON.stringify(FileSchema.parse({ version: 1, agents })), "utf8"); }
-    finally { await handle.close(); }
-    try { await rename(temporary, path); }
-    catch (error: unknown) {
-      await unlink(temporary).catch((cleanupError: unknown) => {
-        console.warn("[gateway] terminal agent registry temp cleanup failed", cleanupError instanceof Error ? cleanupError.name : "unknown_error");
-      });
-      throw error;
+    let renamed = false;
+    try {
+      try { await handle.writeFile(body, "utf8"); }
+      finally { await handle.close(); }
+      await rename(temporary, path);
+      renamed = true;
+    } finally {
+      // Any failure after the exclusive create leaves no temporary file behind.
+      if (!renamed) {
+        await unlink(temporary).catch((cleanupError: unknown) => {
+          console.warn("[gateway] terminal agent registry temp cleanup failed", cleanupError instanceof Error ? cleanupError.name : "unknown_error");
+        });
+      }
     }
   }
 

@@ -6,12 +6,18 @@ import { MAX_TERMINAL_LABELS, TerminalLabelKeySchema, TerminalLabelValueSchema }
 import type { TerminalAgentStatusSource } from "./status-source.js";
 import { terminalRefKey } from "./status-source.js";
 import type { TerminalTemplates } from "./templates.js";
-import { TerminalAgentVerbError, type TerminalAgentStatus, type TerminalAgentVerbs } from "./verbs.js";
+import { TERMINAL_SEND_TEXT_MAX_CHARS, TerminalAgentVerbError, type TerminalAgentStatus, type TerminalAgentVerbs } from "./verbs.js";
 
 const READY_TIMEOUT_MS = 60_000;
 const READY_POLL_MS = 500;
 const SCREEN_SETTLE_MS = 3_000;
-const MAX_FIRST_MESSAGE_CHARS = 8 * 1024;
+const MAX_FIRST_MESSAGE_CHARS = TERMINAL_SEND_TEXT_MAX_CHARS;
+// Room the `<matrix from=…>` envelope needs around a report.
+const ENVELOPE_RESERVE_CHARS = 256;
+/** The longest report a child may send, so the enveloped text still fits one send. */
+export const TERMINAL_REPORT_MAX_CHARS = TERMINAL_SEND_TEXT_MAX_CHARS - ENVELOPE_RESERVE_CHARS;
+// A record this young may belong to a tab created after the pass listed tabs.
+const PRUNE_GRACE_MS = 60_000;
 
 export interface TerminalAgentRuntime {
   listWorkspaces(): Promise<TerminalWorkspace[]>;
@@ -79,10 +85,13 @@ export function createTerminalAgents(options: {
   status: TerminalAgentStatusSource;
   registry: TerminalAgentRegistry;
   templates: TerminalTemplates;
+  /** Project admission for writes into an existing workspace (collaboration fences). */
+  admitWorkspace?: <T>(workspaceId: string, operation: () => Promise<T>) => Promise<T>;
   now?: () => number;
   sleep?: (ms: number) => Promise<void>;
 }) {
   const now = options.now ?? Date.now;
+  const admitWorkspace = options.admitWorkspace ?? (<T>(_workspaceId: string, operation: () => Promise<T>) => operation());
   const sleep = options.sleep ?? ((ms: number) => delay(ms).then(() => undefined));
 
   async function findTab(ref: TerminalRef): Promise<TerminalTab | undefined> {
@@ -150,6 +159,14 @@ export function createTerminalAgents(options: {
           parent = await resolveCaller(input.caller);
         }
       }
+      const parentTab = parent ? await findTab(parent) : undefined;
+      // Build and bound the first message before anything is started: a task that
+      // does not fit is refused instead of being cut short.
+      const task = [template?.body, input.task].filter((part): part is string => Boolean(part?.trim())).join("\n\n");
+      const wrapped = task && parent && parentTab
+        ? terminalAgentEnvelope({ tabId: parent.tabId, name: parentTab.name }, task, "matrix shell report when done or stuck")
+        : task;
+      if (wrapped.length > MAX_FIRST_MESSAGE_CHARS) throw new TerminalAgentVerbError("invalid_request");
       const workspace = await options.runtime.ensureWorkspace(input.projectId ? { projectId: input.projectId } : {});
       const command = template ? ["sh", "-lc", template.command] : input.argv;
       const tab = await options.runtime.createTab(workspace.id, {
@@ -159,7 +176,6 @@ export function createTerminalAgents(options: {
         ...(command ? { command } : {}),
       });
       const ref = { workspaceId: workspace.id, tabId: tab.id };
-      const parentTab = parent ? await findTab(parent) : undefined;
       await options.registry.upsert(ref, (current) => ({
         ...current,
         ...(tab.incarnation ? { incarnation: tab.incarnation } : {}),
@@ -168,12 +184,8 @@ export function createTerminalAgents(options: {
         outliveParent: input.outliveParent === true,
         ...(template ? { template: template.name } : {}),
       }));
-      const task = [template?.body, input.task].filter((part): part is string => Boolean(part?.trim())).join("\n\n");
-      if (!task) return { ref, tab, ...(parent ? { parent } : {}) };
-      const wrapped = parent && parentTab
-        ? terminalAgentEnvelope({ tabId: parent.tabId, name: parentTab.name }, task, "matrix shell report when done or stuck")
-        : task;
-      const firstMessage = await deliverFirstMessage(ref, wrapped.slice(0, MAX_FIRST_MESSAGE_CHARS));
+      if (!wrapped) return { ref, tab, ...(parent ? { parent } : {}) };
+      const firstMessage = await deliverFirstMessage(ref, wrapped);
       await options.registry.upsert(ref, (current) => ({ ...current, firstMessage }));
       return { ref, tab, ...(parent ? { parent } : {}), firstMessage };
     },
@@ -195,15 +207,17 @@ export function createTerminalAgents(options: {
 
     /** Send a child's report to the parent that started it, tagged with the child. */
     async reportToParent(input: { caller: TerminalCaller; text: string }): Promise<{ sent: true; parent: TerminalRef }> {
+      if (input.text.length > TERMINAL_REPORT_MAX_CHARS) throw new TerminalAgentVerbError("invalid_request");
       const child = await resolveCaller(input.caller);
       if (!child) throw new TerminalAgentVerbError("not_found");
       const record = await options.registry.get(child);
       const childTab = await findTab(child);
       if (!record?.parent || !childTab) throw new TerminalAgentVerbError("not_found");
-      await options.verbs.send(record.parent, {
+      const parent = record.parent;
+      await admitWorkspace(parent.workspaceId, () => options.verbs.send(parent, {
         text: terminalAgentEnvelope({ tabId: child.tabId, name: childTab.name }, input.text),
-      });
-      return { sent: true, parent: record.parent };
+      }));
+      return { sent: true, parent };
     },
 
     async resolveCaller(caller: TerminalCaller): Promise<TerminalRef | undefined> {
@@ -235,9 +249,10 @@ export function createTerminalAgents(options: {
           const working = [...current.values()].some((child) => child.live && (child.status === undefined || child.status === "working"));
           if (!working) return { reason: "idle" };
         } else {
-          for (const [key, child] of current) {
-            const before = initial.get(key);
-            if (!before) continue;
+          for (const [key, before] of initial) {
+            const child = current.get(key);
+            // A child whose record is gone was removed: that is its exit.
+            if (!child) return { reason: "changed", child: before.ref, exited: true };
             if (before.live && !child.live) return { reason: "changed", child: child.ref, exited: true };
             if (child.status !== before.status && child.status !== "working") {
               return { reason: "changed", child: child.ref, ...(child.status ? { status: child.status } : {}) };
@@ -254,18 +269,39 @@ export function createTerminalAgents(options: {
      * note blocked/errored/exited children to their parent, and prune dead records.
      */
     async supervise(state: Map<string, string>): Promise<void> {
-      const workspaces = await options.runtime.listWorkspaces();
-      const live = new Map<string, TerminalTab>();
-      const all = new Set<string>();
-      for (const workspace of workspaces) {
-        for (const tab of workspace.tabs) {
-          const key = terminalRefKey({ workspaceId: workspace.id, tabId: tab.id });
-          all.add(key);
-          if (tab.status !== "exited" && tab.status !== "failed") live.set(key, tab);
+      const tabKeys = async () => {
+        const live = new Map<string, TerminalTab>();
+        const all = new Set<string>();
+        for (const workspace of await options.runtime.listWorkspaces()) {
+          for (const tab of workspace.tabs) {
+            const key = terminalRefKey({ workspaceId: workspace.id, tabId: tab.id });
+            all.add(key);
+            if (tab.status !== "exited" && tab.status !== "failed") live.set(key, tab);
+          }
         }
-      }
+        return { live, all };
+      };
+      const { live, all } = await tabKeys();
       const records = await options.registry.list();
       const statuses = await options.status.list();
+      // Records kept even though their tab is gone: a note to the parent is still owed.
+      const pending = new Set<string>();
+      const note = async (record: TerminalAgentRecord, key: string, name: string, text: string) => {
+        const parent = record.parent!;
+        try {
+          await admitWorkspace(parent.workspaceId, () => options.verbs.send(parent, {
+            text: terminalAgentEnvelope({ tabId: record.ref.tabId, name }, text),
+          }));
+          return true;
+        } catch (error: unknown) {
+          // A blocked, busy or fenced parent keeps the note pending for the next pass.
+          if (!(error instanceof TerminalAgentVerbError)) {
+            console.warn("[gateway] terminal parent note failed", error instanceof Error ? error.name : "unknown_error");
+          }
+          state.delete(key);
+          return false;
+        }
+      };
       for (const record of records) {
         if (!record.parent) continue;
         const key = terminalRefKey(record.ref);
@@ -273,31 +309,35 @@ export function createTerminalAgents(options: {
         const parentKey = terminalRefKey(record.parent);
         if (!live.has(parentKey)) {
           if (childTab && !record.outliveParent) {
-            await options.runtime.terminateTab(record.ref, record.incarnation).catch((error: unknown) => {
-              console.warn("[gateway] terminal child cleanup failed", error instanceof Error ? error.name : "unknown_error");
-            });
+            await admitWorkspace(record.ref.workspaceId, () => options.runtime.terminateTab(record.ref, record.incarnation))
+              .catch((error: unknown) => {
+                console.warn("[gateway] terminal child cleanup failed", error instanceof Error ? error.name : "unknown_error");
+              });
           }
           continue;
         }
-        const word = childTab ? statuses.get(key)?.status : "exited";
+        const word = !all.has(key) ? "removed" : childTab ? statuses.get(key)?.status : "exited";
         const previous = state.get(key);
         if (word) state.set(key, word);
         if (!word || word === previous) continue;
-        if (word !== "blocked" && word !== "error" && word !== "exited") continue;
+        // A removed child that already reported its exit needs no second note.
+        if (word === "removed" && previous === "exited") continue;
+        if (word !== "blocked" && word !== "error" && word !== "exited" && word !== "removed") continue;
         const name = childTab?.name ?? record.ref.tabId;
-        const note = word === "exited" ? "exited" : word === "blocked" ? "is blocked and needs a person; read its screen" : "reported an error; read its screen";
-        await options.verbs.send(record.parent, {
-          text: terminalAgentEnvelope({ tabId: record.ref.tabId, name }, note),
-        }).catch((error: unknown) => {
-          // A blocked or busy parent keeps the note pending for the next pass.
-          state.delete(key);
-          if (!(error instanceof TerminalAgentVerbError)) {
-            console.warn("[gateway] terminal parent note failed", error instanceof Error ? error.name : "unknown_error");
-          }
-        });
+        const text = word === "exited" || word === "removed" ? "exited"
+          : word === "blocked" ? "is blocked and needs a person; read its screen" : "reported an error; read its screen";
+        if (!await note(record, key, name, text) && word === "removed") pending.add(key);
       }
-      for (const key of state.keys()) if (!all.has(key)) state.delete(key);
-      await options.registry.prune(all);
+      // List again right before pruning: a tab created during this pass keeps its record,
+      // and so does any record younger than the grace period.
+      const fresh = await tabKeys();
+      const keep = new Set([...all, ...fresh.all, ...pending]);
+      const cutoff = now() - PRUNE_GRACE_MS;
+      for (const record of await options.registry.list()) {
+        if (Date.parse(record.createdAt) > cutoff) keep.add(terminalRefKey(record.ref));
+      }
+      for (const key of state.keys()) if (!keep.has(key)) state.delete(key);
+      await options.registry.prune(keep);
     },
   };
 }

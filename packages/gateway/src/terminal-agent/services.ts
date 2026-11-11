@@ -1,5 +1,7 @@
 import type { TerminalRuntimeSocketClient } from "@matrix-os/terminal-runtime";
 import type { TerminalAgentKernelTools } from "@matrix-os/kernel";
+import type { TerminalWorkspaceProjectAdmission } from "../shell/workspace-routes.js";
+import { TerminalAgentVerbError } from "./verbs.js";
 import { createTerminalAgents, type TerminalAgents } from "./agents.js";
 import { createTerminalEventHub, type TerminalEventHub } from "./events.js";
 import { createTerminalInputActivity, type TerminalInputActivity } from "./input-activity.js";
@@ -30,14 +32,25 @@ export interface TerminalAgentServices {
 export function createTerminalAgentServices(options: {
   runtime: TerminalRuntimeSocketClient;
   homePath: string;
+  /** The terminal owner; the kernel acts as this owner and only when there is exactly one. */
+  terminalOwnerIds: readonly string[];
+  projectAdmission: TerminalWorkspaceProjectAdmission;
 }): TerminalAgentServices {
   const { runtime, homePath } = options;
+  const owners = [...new Set(options.terminalOwnerIds.map((id) => id.trim()).filter(Boolean))];
+  const ownerId = () => {
+    if (owners.length !== 1) throw new TerminalAgentVerbError("not_found");
+    return owners[0]!;
+  };
+  const admitWorkspace = async <T>(workspaceId: string, operation: () => Promise<T>): Promise<T> =>
+    options.projectAdmission.withWorkspace(ownerId(), workspaceId, "run", operation);
   const inputActivity = createTerminalInputActivity();
   const status = createTerminalAgentStatusSource({ runtime });
   const verbs = createTerminalAgentVerbs({
     runtime,
     inputActivity,
     agentStatus: async (ref) => (await status.get(ref))?.status,
+    onSent: (ref) => status.noteSent?.(ref),
   });
   const waiter = createTerminalWaiter({ runtime, status });
   const events = createTerminalEventHub({ runtime, status });
@@ -48,6 +61,7 @@ export function createTerminalAgentServices(options: {
     status,
     registry: createTerminalAgentRegistry({ homePath }),
     templates,
+    admitWorkspace,
   });
   const supervisor = startTerminalAgentSupervisor({ agents });
   const kernelTools: TerminalAgentKernelTools = {
@@ -67,11 +81,12 @@ export function createTerminalAgentServices(options: {
       }));
     },
     templates: async () => (await templates.list()).map(({ name, description }) => ({ name, description })),
-    run: (input) => agents.run({ ...input, noParent: true }),
+    // The kernel passes the same project admission as the HTTP routes.
+    run: async (input) => options.projectAdmission.withProject(ownerId(), input.projectId, "run", () => agents.run({ ...input, noParent: true })),
     read: (ref, lines) => verbs.read(ref, { lines }),
-    send: (ref, text) => verbs.send(ref, { text }),
-    keys: (ref, keys) => verbs.keys(ref, { keys }),
-    interrupt: (ref) => verbs.interrupt(ref),
+    send: (ref, text) => admitWorkspace(ref.workspaceId, () => verbs.send(ref, { text })),
+    keys: (ref, keys) => admitWorkspace(ref.workspaceId, () => verbs.keys(ref, { keys })),
+    interrupt: (ref) => admitWorkspace(ref.workspaceId, () => verbs.interrupt(ref)),
     wait: (ref, input) => waiter.wait(ref, input),
   };
   return {

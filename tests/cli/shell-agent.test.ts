@@ -149,4 +149,15 @@ describe("matrix shell agent verbs", () => {
     await run("wait", { timeout: "0", output: "ready" });
     expect(process.exitCode).toBe(124);
   });
+
+  it("carries the output baseline from one check-in to the next", async () => {
+    vi.spyOn(console, "log").mockImplementation(() => undefined);
+    const replies = [{ reason: "timeout", seen: 2 }, { reason: "output" }];
+    const calls = gateway(() => json(replies.shift()));
+    await run("wait", { timeout: "600", output: "ready" });
+    expect(calls.map((call) => JSON.parse(String(call.init?.body)))).toEqual([
+      { timeoutMs: 90_000, output: "ready" },
+      { timeoutMs: 90_000, output: "ready", seen: 2 },
+    ]);
+  });
 });
