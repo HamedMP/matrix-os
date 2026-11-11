@@ -75,10 +75,10 @@
 - [X] T028 [US2] Mount readiness routes and resolve every dependency at registration time in `packages/gateway/src/collaboration/routes.ts`
 - [X] T029 [US2] Invalidate readiness after catalog deletion/replacement and exact input drift without treating compatible runtime restart as drift in `packages/gateway/src/collaboration/resource-catalog.ts`
 - [X] T030 [US2] Block required app behavior that depends on creator credentials, connected providers, or AI funding under shared-provider policy in `packages/gateway/src/collaboration/shared-provider-readiness.ts`
-- [ ] T031 [P] [US2] Add checking, blocked, ready, stale, failed, and recheck client state with allowlisted bounded messages in `packages/ui/src/collaboration/useCollaborativeAppSharing.ts`
-- [ ] T032 [P] [US2] Add an actionable owner readiness summary that never displays raw verifier/provider/database errors in `packages/ui/src/collaboration/ReadinessSummary.tsx`
-- [ ] T033 [US2] Integrate readiness state into the owner app viewer without enabling share before a current ready certificate in `shell/src/components/AppViewer.tsx`
-- [ ] T034 [US2] Prove the independent readiness journey and record named red/green faults in `tests/gateway/collaborative-app-readiness-production-path.test.ts` and `tests/ui/collaborative-app-readiness.test.tsx`
+- [X] T031 [P] [US2] Add checking, blocked, ready, stale, failed, and recheck client state with allowlisted bounded messages in `packages/ui/src/collaboration/useCollaborativeAppSharing.ts`
+- [X] T032 [P] [US2] Add an actionable owner readiness summary that never displays raw verifier/provider/database errors in `packages/ui/src/collaboration/ReadinessSummary.tsx`
+- [X] T033 [US2] Integrate readiness state into the owner app viewer without enabling share before a current ready certificate in `shell/src/components/AppViewer.tsx`
+- [X] T034 [US2] Prove the independent readiness journey and record named red/green faults in `tests/gateway/collaborative-app-readiness-production-path.test.ts` and `tests/ui/collaborative-app-readiness.test.tsx`
 
 **Checkpoint**: User Story 2 is independently usable: an owner gets one actionable result for the current exact build, and declaration-only or drifted apps fail closed.
 

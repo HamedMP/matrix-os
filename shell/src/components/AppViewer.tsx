@@ -7,6 +7,11 @@ import { resolveAppBridgeLaunch } from "@/lib/app-bridge-launch";
 import { prepareBridgeFetchRequest, resolveBridgeFetchUrl } from "./app-viewer-bridge-request";
 import { readAppBridgeResponse, appBridgeTimeoutMs } from "./app-capability-request";
 import { AppSiteButton } from "./app-sites/AppSiteButton";
+import {
+  ReadinessSummary,
+  useCollaborativeAppSharing,
+} from "@matrix-os/ui/collaborative-app-sharing";
+import { shellApi } from "@/api/http";
 
 import { useState, useEffect, useRef } from "react";
 import { useFileWatcher } from "@/hooks/useFileWatcher";
@@ -34,6 +39,7 @@ import {
 } from "./app-viewer-helpers";
 
 const GATEWAY_URL = getGatewayUrl();
+const COLLABORATION_API = shellApi;
 const SESSION_REFRESH_DEBOUNCE_MS = 2000;
 const BRIDGE_FETCH_TIMEOUT_MS = 10_000;
 
@@ -42,6 +48,7 @@ interface AppViewerProps {
   active?: boolean;
   sessionId?: string;
   onOpenApp?: (name: string, path: string) => void;
+  onShareApp?: (appId: string) => void;
   visible?: boolean;
 }
 
@@ -113,7 +120,7 @@ export function AppViewer(props: AppViewerProps) {
   return <SandboxedAppViewer {...props} />;
 }
 
-function SandboxedAppViewer({ path, sessionId, onOpenApp, visible = true }: AppViewerProps) {
+function SandboxedAppViewer({ path, sessionId, onOpenApp, onShareApp, visible = true }: AppViewerProps) {
   const [refreshKey, setRefreshKey] = useState(0);
   const [iframeHtml, setIframeHtml] = useState<string | null>(null);
   const iframeRef = useRef<HTMLIFrameElement>(null);
@@ -395,7 +402,10 @@ function SandboxedAppViewer({ path, sessionId, onOpenApp, visible = true }: AppV
 
   return (
     <div className="flex h-full w-full flex-col">
-      {slug && visible ? <div className="flex items-center justify-end border-b px-3 py-1.5"><AppSiteButton key={slug} appSlug={slug} /></div> : null}
+      {slug && visible ? <div className="flex items-start justify-end gap-2 border-b px-3 py-1.5">
+        {onShareApp ? <CollaborativeAppReadinessControls appId={slug} buildEpoch={refreshKey} onShareApp={onShareApp} /> : null}
+        <AppSiteButton key={slug} appSlug={slug} />
+      </div> : null}
       <iframe
         ref={iframeRef}
         key={refreshKey}
@@ -407,4 +417,28 @@ function SandboxedAppViewer({ path, sessionId, onOpenApp, visible = true }: AppV
       />
     </div>
   );
+}
+
+function CollaborativeAppReadinessControls({ appId, buildEpoch, onShareApp }: {
+  appId: string;
+  buildEpoch: number;
+  onShareApp(appId: string): void;
+}) {
+  const sharing = useCollaborativeAppSharing({ appId, api: COLLABORATION_API, buildEpoch });
+  return <div className="flex items-start gap-2">
+    {sharing.readiness
+      ? <ReadinessSummary readiness={sharing.readiness} compact />
+      : <span role="status" className="py-1 text-xs text-muted-foreground">
+        {sharing.state === "loading" ? "Checking collaboration…"
+          : sharing.safeMessage ?? "Collaboration has not been checked."}
+      </span>}
+    <button
+      type="button"
+      className="rounded-md border px-2.5 py-1 text-xs font-medium disabled:cursor-not-allowed disabled:opacity-50"
+      disabled={!sharing.canShare}
+      onClick={() => { if (sharing.canShare) onShareApp(appId); }}
+    >
+      Share app
+    </button>
+  </div>;
 }

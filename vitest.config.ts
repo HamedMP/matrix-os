@@ -43,6 +43,8 @@ export default defineConfig({
     alias: {
       "@matrix-os/brand/themes": path.resolve(__dirname, "packages/brand/src/themes"),
       "@matrix-os/ui/appearance": path.resolve(__dirname, "packages/ui/src/appearance/index.ts"),
+      "@matrix-os/ui/collaborative-app-sharing": path.resolve(__dirname, "packages/ui/src/collaboration/collaborative-app-sharing.ts"),
+      "@matrix-os/ui/feature-flags": path.resolve(__dirname, "packages/ui/src/feature-flags.ts"),
       "@matrix-os/brand/boot-screen": path.resolve(__dirname, "packages/brand/src/boot-screen.ts"),
       "vitest-environment-gateway-renderer": path.resolve(__dirname, "tests/helpers/gateway-renderer-environment.ts"),
       "@": path.resolve(__dirname, "shell/src"),
