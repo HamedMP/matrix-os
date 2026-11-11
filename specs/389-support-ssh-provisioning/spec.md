@@ -26,10 +26,15 @@ two-key flow and a verified new SSH session before finalization.
 ## Error policy
 
 - Platform: a missing or invalid key throws in `buildHostConfig` before any
-  provider call. The provisioning or recovery job logs the error server-side
-  and marks the machine and job failed in one transaction with a generic
-  failure code. Clients never see the key, the validation detail or the
-  config variable name.
+  provider call for the new server. The error is logged server-side only;
+  clients never see the key, the validation detail or the config variable
+  name.
+- Provisioning: the dispatcher marks the machine and job failed in one
+  transaction with a generic failure code.
+- Recovery: no failed replacement is recorded. `recover` rolls the row back
+  in a transaction to the previous machine ID, status and server, then
+  returns a generic provider error. A snapshot recovery whose clean-image
+  fallback is rejected restores the previous machine in the same way.
 - VPS: the helper exits non-zero with a short message and `set -eu` stops
   bootstrap. Messages stay in the VPS cloud-init log and never contain key
   material.
