@@ -191,7 +191,7 @@ export function registerIpcHandlers(ipcMain: IpcMainLike, ctx: HandlerContext): 
     throw new Error("download service unavailable");
   }
   if (typeof ctx.authorizeSender !== "function" || typeof ctx.openTerminalWindow !== "function"
-    || typeof ctx.focusMainWindow !== "function") {
+    || typeof ctx.focusMainWindow !== "function" || typeof ctx.setTitlebarOverlay !== "function") {
     throw new Error("window services unavailable");
   }
   function handle<C extends InvokeChannel>(channel: C, handler: Handler<C>): void {

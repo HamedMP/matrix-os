@@ -1321,4 +1321,8 @@ describe("registerIpcHandlers sender authorization", () => {
   it("refuses to register without window services", () => {
     expect(() => makeHarness({ authorizeSender: undefined as never })).toThrow("window services unavailable");
   });
+
+  it("refuses to register without the title bar overlay service", () => {
+    expect(() => makeHarness({ setTitlebarOverlay: undefined as never })).toThrow("window services unavailable");
+  });
 });
