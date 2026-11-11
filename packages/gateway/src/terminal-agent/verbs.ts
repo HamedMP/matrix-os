@@ -7,6 +7,7 @@ import {
 } from "@matrix-os/contracts";
 import { z } from "zod/v4";
 import { encodeTerminalKeys } from "./keys.js";
+import { visibleTerminalText } from "./screen-text.js";
 import type { TerminalInputActivity } from "./input-activity.js";
 
 /** Herdr's status words, reported by agents about themselves. */
@@ -25,7 +26,7 @@ const PASTE_CLOSE = "\x1b[201~";
 // sequence can be smuggled through a paste.
 const UNSAFE_TEXT = /[\u0000-\u0008\u000b-\u001f\u007f-\u009f]/g;
 
-export type TerminalAgentVerbErrorCode = "not_found" | "finished" | "blocked" | "invalid_request";
+export type TerminalAgentVerbErrorCode = "not_found" | "finished" | "blocked" | "invalid_request" | "cancelled";
 
 export class TerminalAgentVerbError extends Error {
   constructor(readonly code: TerminalAgentVerbErrorCode) {
@@ -65,7 +66,14 @@ export interface TerminalAgentFacts {
 export interface TerminalAgentVerbs {
   get(ref: TerminalRef): Promise<TerminalAgentFacts>;
   read(ref: TerminalRef, input: { lines: number }): Promise<TerminalReadResult>;
-  send(ref: TerminalRef, input: { text: string; force?: boolean }): Promise<{ sent: true; heldMs: number }>;
+  send(ref: TerminalRef, input: {
+    text: string;
+    force?: boolean;
+    /** Most the send may wait for a person's draft; a caller with its own deadline lowers it. */
+    maxHoldMs?: number;
+    /** The caller went away: a held send is dropped instead of typed later. */
+    signal?: AbortSignal;
+  }): Promise<{ sent: true; heldMs: number }>;
   keys(ref: TerminalRef, input: { keys: string[] }): Promise<{ pressed: number }>;
   interrupt(ref: TerminalRef): Promise<{ pressed: "esc" | "ctrl+c" }>;
 }
@@ -111,14 +119,16 @@ export function createTerminalAgentVerbs(options: {
     return options.runtime.writeInput(ref, data, tab.incarnation);
   }
 
-  async function holdForDraft(ref: TerminalRef): Promise<number> {
+  async function holdForDraft(ref: TerminalRef, limitMs: number, signal?: AbortSignal): Promise<number> {
     const start = now();
     for (;;) {
+      if (signal?.aborted) throw new TerminalAgentVerbError("cancelled");
       const lastInput = options.inputActivity.lastInputAt(ref);
       const elapsed = now() - start;
-      if (lastInput === undefined || now() - lastInput >= quietMs || elapsed >= draftWaitMs) break;
-      await sleep(Math.max(1, Math.min(quietMs - (now() - lastInput), draftWaitMs - elapsed)));
+      if (lastInput === undefined || now() - lastInput >= quietMs || elapsed >= limitMs) break;
+      await sleep(Math.max(1, Math.min(quietMs - (now() - lastInput), limitMs - elapsed)));
     }
+    if (signal?.aborted) throw new TerminalAgentVerbError("cancelled");
     return now() - start;
   }
 
@@ -140,8 +150,8 @@ export function createTerminalAgentVerbs(options: {
       }
       const history = lines === 0 ? [] : parsed.data.scrollback.slice(-lines);
       return {
-        screen: parsed.data.viewport.join("\n"),
-        history: history.join("\n"),
+        screen: parsed.data.viewport.map(visibleTerminalText).join("\n"),
+        history: history.map(visibleTerminalText).join("\n"),
         lines: history.length,
         updatedAt: parsed.data.updatedAt,
       };
@@ -153,7 +163,8 @@ export function createTerminalAgentVerbs(options: {
       if (!input.force && options.agentStatus?.(ref, tab) === "blocked") {
         throw new TerminalAgentVerbError("blocked");
       }
-      const heldMs = await holdForDraft(ref);
+      const limitMs = Math.min(draftWaitMs, z.number().int().min(0).max(DEFAULT_DRAFT_WAIT_MS).parse(input.maxHoldMs ?? draftWaitMs));
+      const heldMs = await holdForDraft(ref, limitMs, input.signal);
       const current = await requireLiveTab(ref);
       if (current.incarnation !== tab.incarnation) throw new TerminalAgentVerbError("not_found");
       // The agent may have asked for permission while the send waited for a draft.

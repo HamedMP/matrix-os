@@ -111,8 +111,10 @@ export interface MatrixMcpGatewayClient {
 
 export interface McpTerminalRef { workspaceId: string; tabId: string }
 
-// A send may hold for up to 60 s while a person finishes typing in the tab.
-const TERMINAL_SEND_TIMEOUT_MS = 90_000;
+// Hosted MCP gives each downstream request 50 s, so a send asks the gateway to hold
+// for a person's draft at most 30 s and waits 45 s for the answer.
+const TERMINAL_SEND_MAX_HOLD_MS = 30_000;
+const TERMINAL_SEND_TIMEOUT_MS = 45_000;
 const terminalTabPath = (ref: McpTerminalRef) =>
   `/api/terminal/workspaces/${encodeURIComponent(ref.workspaceId)}/tabs/${encodeURIComponent(ref.tabId)}`;
 
@@ -292,7 +294,7 @@ export function createMcpGatewayClient(
     getTerminalTab: (ref) => request(terminalTabPath(ref)),
     readTerminalTab: (ref, lines) => request(`${terminalTabPath(ref)}/read`, {}, { query: { lines: String(lines) } }),
     sendTerminalTab: (ref, input) => request(`${terminalTabPath(ref)}/send`, {
-      method: "POST", body: JSON.stringify(input),
+      method: "POST", body: JSON.stringify({ ...input, maxHoldMs: TERMINAL_SEND_MAX_HOLD_MS }),
     }, { timeoutMs: TERMINAL_SEND_TIMEOUT_MS }),
     pressTerminalKeys: (ref, keys) => request(`${terminalTabPath(ref)}/keys`, {
       method: "POST", body: JSON.stringify({ keys }),

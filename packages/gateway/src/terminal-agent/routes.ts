@@ -24,6 +24,7 @@ const ReadQuerySchema = z.object({
 const SendSchema = z.object({
   text: z.string().min(1).max(TERMINAL_SEND_TEXT_MAX_CHARS),
   force: z.boolean().optional(),
+  maxHoldMs: z.number().int().min(0).max(60_000).optional(),
 }).strict();
 const KeysSchema = z.object({ keys: z.array(z.string().min(1).max(16)).min(1).max(TERMINAL_KEYS_MAX) }).strict();
 const InterruptSchema = z.object({}).strict();
@@ -88,7 +89,8 @@ export function createTerminalAgentRoutes(options: {
     try {
       const ref = refFrom(c);
       const body = SendSchema.parse(await c.req.json());
-      return await run(c, ref.workspaceId, async () => c.json(await options.verbs.send(ref, body)));
+      // A send held for a draft is dropped if the caller disconnects, never typed later.
+      return await run(c, ref.workspaceId, async () => c.json(await options.verbs.send(ref, { ...body, signal: c.req.raw.signal })));
     } catch (error) { return failure(c, error); }
   });
 
@@ -125,6 +127,7 @@ function failure(c: Context, error: unknown) {
   if (error instanceof TerminalAgentVerbError) {
     if (error.code === "blocked") return c.json({ error: "terminal_agent_blocked" }, 409);
     if (error.code === "finished") return c.json({ error: "terminal_finished" }, 409);
+    if (error.code === "cancelled") return c.json({ error: "terminal_send_cancelled" }, 409);
     if (error.code === "invalid_request") return c.json({ error: "Invalid request" }, 400);
     return c.json({ error: "Terminal operation failed" }, 404);
   }

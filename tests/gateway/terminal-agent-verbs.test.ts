@@ -207,3 +207,31 @@ describe("terminal agent verbs: get", () => {
     expect(new TerminalAgentVerbError("blocked")).toBeInstanceOf(Error);
   });
 });
+
+// Fault detected (second review of #3296): agents read escape codes instead of the
+// visible screen, and a send whose caller gave up still runs later.
+describe("terminal agent verbs: visible text and abandoned sends", () => {
+  it("reads the screen as visible text, without colour or cursor codes", async () => {
+    const { verbs } = harness({ snapshot: {
+      ...snapshot,
+      viewport: ["\x1b[32mready\x1b[0m on \x1b[1m:3000\x1b[22m", "\x1b]0;title\x07$ "],
+      scrollback: ["\x1b[2Kbuilt"],
+    } });
+    await expect(verbs.read(ref, { lines: 1 })).resolves.toMatchObject({ screen: "ready on :3000\n$ ", history: "built" });
+  });
+
+  it("does not type a held send once its caller has gone", async () => {
+    const { verbs, writes, inputActivity } = harness();
+    inputActivity.record(ref);
+    const controller = new AbortController();
+    controller.abort();
+    await expect(verbs.send(ref, { text: "deploy", signal: controller.signal })).rejects.toMatchObject({ code: "cancelled" });
+    expect(writes).toEqual([]);
+  });
+
+  it("holds for a draft no longer than the caller allows", async () => {
+    const { verbs, inputActivity, time } = harness();
+    vi.spyOn(inputActivity, "lastInputAt").mockImplementation(() => time());
+    await expect(verbs.send(ref, { text: "hi", maxHoldMs: 10_000 })).resolves.toEqual({ sent: true, heldMs: 10_000 });
+  });
+});
