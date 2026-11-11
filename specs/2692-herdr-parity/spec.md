@@ -42,7 +42,7 @@ equivalent with a deliberate difference; **later** = follow-on stack.
 | 6 | `keys` by name, encoded for the program's keyboard mode | raw bytes | gap: named-key encoder (normal + application cursor mode) | 2 |
 | 7 | `interrupt`: Esc for status-reporting agents, else Ctrl+C; reports what was observed | gap | gap | 2 |
 | 8 | Status words `idle working done blocked error` | hooks give running/waiting/finished/idle for 4 agents; per zellij session, not per tab | gap: per-tab status in Herdr words from hooks + status reporter | 3 |
-| 9 | OSC 7501 status from any program | gap; zellij drops it (spike S1) | adapt: `matrix-status` reporter + opt-in OSC tap for launched agents | 3 |
+| 9 | OSC 7501 status from any program | gap; zellij drops it (spike S1) | adapt: `matrix-status` reporter and per-pane agent hooks (layer 3); the opt-in OSC tap for raw OSC 7501 programs comes in the follow-on stack | 3 / later |
 | 10 | `wait`: until not working, exit, output match, children any/all, timeout | gap | gap | 3 |
 | 11 | `events`: snapshot, ordered facts, heartbeat, `missed` + resnapshot | polling | gap: `/ws/terminal/events` | 3 |
 | 12 | Labels `k=v`, list filter by labels | gap | gap | 4 |
@@ -56,7 +56,7 @@ equivalent with a deliberate difference; **later** = follow-on stack.
 | 20 | Agents list, pin, next/prev agent, peek a sub-agent | gap | gap | 5 |
 | 21 | Per-terminal find (screen + scrollback) | have (xterm search addon, Web) | Electron: gap | 6 |
 | 22 | `put` file beside terminal; paste image | have (paste assets, Web/CLI) | Electron local: gap | 6 |
-| 23 | `keep`: lost program becomes a shell in its folder | have for gateway restart; no shell-on-loss | gap | 4 |
+| 23 | `keep`: lost program becomes a shell in its folder | have for gateway and runtime restart; no shell-on-loss | later: needs a terminal runtime change and its own spike | — |
 | 24 | Worktree spaces nested under repo | partial (projects/worktrees exist) | later | — |
 | 25 | Remote machines (`--on`), `exec`, `file read/write/edit` | MCP `run_command`, read, upload; no edit; SSH not started | later stack (see 651 J5 and the Herdr-sessions brief) | — |
 | 26 | Layouts, themes, keys.json, JS mods, gallery | Matrix themes, apps | adapt: Matrix apps are the extension model; not ported | — |
@@ -138,12 +138,21 @@ shows the final screen until the tab is closed.
 
 ### Parent/child (layer 4)
 
-Tabs gain `parentRef?: TerminalRef`, `outliveParent: boolean`. A tab started
-with `MATRIX_TERMINAL_REF` in its environment (exported per pane at creation)
-records that tab as parent by default. Ending a parent ends non-outliving
-children. Child exit, `blocked` or `error` posts a note to the parent with
-`send` semantics, tagged `<matrix from="<tabId> <name>">…</matrix>`. A child
-report is plain `matrix shell send $MATRIX_TERMINAL_REF "…"`.
+Agent facts live beside each tab in `~/system/terminal-agents.json`, owned by
+the gateway: labels, parent, `outliveParent`, template and `firstMessage {sent,
+reason}`. The file is written atomically, capped at 1 024 records, and pruned
+to existing tabs. The public `TerminalTab` contract stays the same, so older
+Electron builds that parse it strictly keep working. `matrix shell run` started inside a
+Matrix terminal sends its pane identity (`ZELLIJ_SESSION_NAME` +
+`ZELLIJ_PANE_ID`). The runtime's `ResolvePane` maps that identity to the
+calling tab, which becomes the parent unless `--no-parent` is given. A
+supervisor pass runs every 5 s. It ends children of an ended parent unless they
+outlive it. When a child turns `blocked` or `error`, or exits, it sends the
+parent one note, tagged `<matrix from="<tabId> <name>">…</matrix>`; a note the
+parent refuses (blocked, busy) is retried on the next pass. The first message
+of a child is wrapped with `reach="matrix shell report when done or stuck"`,
+and `matrix shell report "…"` delivers the child's result to its parent.
+`matrix shell wait-children any|all` matches `hc wait --children`.
 
 ### Shell surfaces (layer 5)
 

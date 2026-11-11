@@ -1,0 +1,224 @@
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { createTerminalAgents } from "../../packages/gateway/src/terminal-agent/agents.js";
+import { createTerminalAgentRegistry } from "../../packages/gateway/src/terminal-agent/registry.js";
+import { createTerminalTemplates } from "../../packages/gateway/src/terminal-agent/templates.js";
+
+const workspaceId = "tws_0123456789abcdef0123456789abcdef";
+const parentId = "tt_0123456789abcdef0123456789abcdef";
+const session = `matrix-w-${"e".repeat(32)}`;
+const roots: string[] = [];
+afterEach(async () => {
+  await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
+});
+
+type Status = "idle" | "working" | "done" | "blocked" | "error";
+
+async function harness(options: { statusAfterStart?: Status[]; template?: string } = {}) {
+  const home = await mkdtemp(join(tmpdir(), "matrix-terminal-agents-"));
+  roots.push(home);
+  if (options.template) {
+    await mkdir(join(home, "agents", "templates"), { recursive: true });
+    await writeFile(join(home, "agents", "templates", "reviewer.md"), options.template);
+  }
+  let now = 0;
+  let counter = 0;
+  const tabs = new Map<string, Record<string, unknown>>([[parentId, {
+    id: parentId, workspaceId, name: "lead", cwd: "", status: "running", revision: 1, order: 0,
+    accessScope: "owner", createdAt: "2026-11-11T10:00:00.000Z", updatedAt: "2026-11-11T10:00:00.000Z",
+  }]]);
+  const statuses = new Map<string, Status>();
+  const statusScript = [...(options.statusAfterStart ?? [])];
+  const createdCommands: Array<string[] | undefined> = [];
+  const sends: Array<{ tabId: string; text: string }> = [];
+  const terminated: string[] = [];
+  const runtime = {
+    listWorkspaces: async () => [{
+      id: workspaceId, scope: "main", canonicalSize: { cols: 80, rows: 24 }, status: "running", revision: 1,
+      createdAt: "2026-11-11T10:00:00.000Z", updatedAt: "2026-11-11T10:00:00.000Z", tabs: [...tabs.values()],
+    }] as never,
+    ensureWorkspace: async () => ({ id: workspaceId }) as never,
+    createTab: async (_workspace: string, input: { name: string; command?: string[] }) => {
+      counter += 1;
+      const id = `tt_${String(counter).repeat(32).slice(0, 32)}`;
+      createdCommands.push(input.command);
+      const tab = {
+        id, workspaceId, name: input.name, cwd: "", status: "running", revision: 1, order: counter,
+        accessScope: "owner", createdAt: "2026-11-11T10:00:00.000Z", updatedAt: "2026-11-11T10:00:00.000Z",
+        incarnation: `ti_${"a".repeat(32)}`,
+      };
+      tabs.set(id, tab);
+      return tab as never;
+    },
+    terminateTab: async (ref: { tabId: string }) => {
+      terminated.push(ref.tabId);
+      tabs.set(ref.tabId, { ...tabs.get(ref.tabId), status: "exited", exitCode: 0 });
+    },
+    getSnapshot: async () => ({ viewport: ["> ready"] }),
+    resolvePane: async (input: { sessionName: string; paneId: string }) =>
+      input.sessionName === session && input.paneId === "3" ? { workspaceId, tabId: parentId } : null,
+  };
+  const statusSource = {
+    list: async () => new Map([...statuses].map(([tabId, status]) => [`${workspaceId}:${tabId}`, {
+      ref: { workspaceId, tabId }, status, reportedAt: "2026-11-11T10:00:00.000Z", source: "reporter" as const,
+    }])),
+    get: async (ref: { tabId: string }) => {
+      if (ref.tabId !== parentId && statusScript.length > 0) statuses.set(ref.tabId, statusScript.shift()!);
+      const status = statuses.get(ref.tabId);
+      return status ? { ref: { workspaceId, tabId: ref.tabId }, status, reportedAt: "2026-11-11T10:00:00.000Z", source: "reporter" as const } : undefined;
+    },
+  };
+  const verbs = {
+    send: vi.fn(async (ref: { tabId: string }, input: { text: string }) => {
+      sends.push({ tabId: ref.tabId, text: input.text });
+      return { sent: true as const, heldMs: 0 };
+    }),
+  };
+  const registry = createTerminalAgentRegistry({ homePath: home });
+  const agents = createTerminalAgents({
+    runtime,
+    verbs: verbs as never,
+    status: statusSource,
+    registry,
+    templates: createTerminalTemplates({ homePath: home }),
+    now: () => now,
+    sleep: async (ms) => { now += ms; },
+  });
+  return { home, agents, registry, tabs, statuses, createdCommands, sends, terminated, verbs };
+}
+
+const reviewer = `---
+name: reviewer
+description: Reviews a change read-only
+command: claude --model opus
+---
+Review only what you are asked. Read-only.
+`;
+
+// Fault detected: a delegated agent starts without its task, gets the task while
+// still booting (dropped), or cannot tell who to report to.
+describe("terminal agents: run", () => {
+  it("starts a template's command and sends its body plus the task, addressed from the parent", async () => {
+    const h = await harness({ template: reviewer, statusAfterStart: ["working", "idle"] });
+    const result = await h.agents.run({
+      name: "review", cwd: "projects/app", template: "reviewer", task: "Review src/x.ts",
+      caller: { sessionName: session, paneId: "3" },
+    });
+
+    expect(h.createdCommands).toEqual([["sh", "-lc", "claude --model opus"]]);
+    expect(result.parent).toEqual({ workspaceId, tabId: parentId });
+    expect(result.firstMessage).toEqual({ sent: true });
+    expect(h.sends).toEqual([{
+      tabId: result.ref.tabId,
+      text: `<matrix from="${parentId} lead" reach="matrix shell report when done or stuck">Review only what you are asked. Read-only.\n\nReview src/x.ts</matrix>`,
+    }]);
+    await expect(h.registry.get(result.ref)).resolves.toMatchObject({
+      parent: { workspaceId, tabId: parentId }, template: "reviewer", firstMessage: { sent: true },
+    });
+  });
+
+  it("does not send into a trust dialog and records why the task was not sent", async () => {
+    const h = await harness({ template: reviewer, statusAfterStart: ["blocked"] });
+    const result = await h.agents.run({ name: "review", cwd: "", template: "reviewer", task: "go" });
+    expect(result.firstMessage).toEqual({ sent: false, reason: "blocked" });
+    expect(h.sends).toEqual([]);
+    await expect(h.registry.get(result.ref)).resolves.toMatchObject({ firstMessage: { sent: false, reason: "blocked" } });
+  });
+
+  it("sends a plain program's task once its screen settles", async () => {
+    const h = await harness();
+    const result = await h.agents.run({ name: "fix", cwd: "", argv: ["pi"], task: "fix it", noParent: true, caller: { sessionName: session, paneId: "3" } });
+    expect(result.parent).toBeUndefined();
+    expect(result.firstMessage).toEqual({ sent: true });
+    expect(h.sends[0]?.text).toBe("fix it");
+  });
+
+  it("rejects unknown templates and an argv combined with a template", async () => {
+    const h = await harness({ template: reviewer });
+    await expect(h.agents.run({ name: "x", cwd: "", template: "nope" })).rejects.toMatchObject({ code: "not_found" });
+    await expect(h.agents.run({ name: "x", cwd: "", template: "reviewer", argv: ["sh"] })).rejects.toMatchObject({ code: "invalid_request" });
+  });
+});
+
+describe("terminal agents: labels, reports and children", () => {
+  it("sets and removes labels and persists them in the owner's home", async () => {
+    const h = await harness();
+    const ref = { workspaceId, tabId: parentId };
+    await h.agents.label(ref, { set: { role: "lead", "herdr.pinned": "1" } });
+    await expect(h.agents.label(ref, { remove: ["role"] })).resolves.toMatchObject({ labels: { "herdr.pinned": "1" } });
+    expect(JSON.parse(await readFile(join(h.home, "system", "terminal-agents.json"), "utf8"))).toMatchObject({ version: 1 });
+    await expect(h.agents.label(ref, { set: { "Bad Key": "x" } })).rejects.toThrow();
+  });
+
+  it("delivers a child's report to its parent, tagged with the child", async () => {
+    const h = await harness();
+    const child = await h.agents.run({ name: "review", cwd: "", argv: ["sh"], parent: { workspaceId, tabId: parentId } });
+    // The child reports from its own pane, which the runtime resolves to the child's tab.
+    const childPane = { sessionName: session, paneId: "9" };
+    await expect(createTerminalAgentsWithResolver(h, async () => child.ref).reportToParent({ caller: childPane, text: "2 bugs; see /tmp/f.md" }))
+      .resolves.toEqual({ sent: true, parent: { workspaceId, tabId: parentId } });
+    expect(h.sends.at(-1)).toEqual({ tabId: parentId, text: `<matrix from="${child.ref.tabId} review">2 bugs; see /tmp/f.md</matrix>` });
+  });
+
+  it("waits for any child's news and for all children to stop", async () => {
+    const h = await harness();
+    const child = await h.agents.run({ name: "review", cwd: "", argv: ["sh"], parent: { workspaceId, tabId: parentId } });
+    h.statuses.set(child.ref.tabId, "working");
+    const parent = { workspaceId, tabId: parentId };
+    await expect(h.agents.waitChildren(parent, { mode: "all", timeoutMs: 2_000 })).resolves.toEqual({ reason: "timeout" });
+    h.statuses.set(child.ref.tabId, "done");
+    await expect(h.agents.waitChildren(parent, { mode: "all", timeoutMs: 2_000 })).resolves.toEqual({ reason: "idle" });
+    await expect(h.agents.waitChildren({ workspaceId, tabId: child.ref.tabId }, { mode: "any", timeoutMs: 1_000 }))
+      .resolves.toEqual({ reason: "none" });
+  });
+});
+
+describe("terminal agents: supervision", () => {
+  // Fault detected: helpers keep running (and spending) after the agent that started them ends,
+  // or a blocked helper waits forever because nobody tells its parent.
+  it("notes a blocked child to its parent once and ends children whose parent ended", async () => {
+    const h = await harness();
+    const parent = { workspaceId, tabId: parentId };
+    const keeper = await h.agents.run({ name: "server", cwd: "", argv: ["sh"], parent, outliveParent: true });
+    const helper = await h.agents.run({ name: "review", cwd: "", argv: ["sh"], parent });
+    const state = new Map<string, string>();
+
+    h.statuses.set(helper.ref.tabId, "blocked");
+    await h.agents.supervise(state);
+    await h.agents.supervise(state);
+    expect(h.sends.filter((send) => send.tabId === parentId)).toEqual([{
+      tabId: parentId,
+      text: `<matrix from="${helper.ref.tabId} review">is blocked and needs a person; read its screen</matrix>`,
+    }]);
+
+    h.tabs.set(parentId, { ...h.tabs.get(parentId), status: "exited", exitCode: 0 });
+    await h.agents.supervise(state);
+    expect(h.terminated).toEqual([helper.ref.tabId]);
+    expect(h.terminated).not.toContain(keeper.ref.tabId);
+  });
+});
+
+function createTerminalAgentsWithResolver(
+  h: Awaited<ReturnType<typeof harness>>,
+  resolve: () => Promise<{ workspaceId: string; tabId: string }>,
+) {
+  return createTerminalAgents({
+    runtime: {
+      listWorkspaces: async () => [{
+        id: workspaceId, scope: "main", canonicalSize: { cols: 80, rows: 24 }, status: "running", revision: 1,
+        createdAt: "2026-11-11T10:00:00.000Z", updatedAt: "2026-11-11T10:00:00.000Z", tabs: [...h.tabs.values()],
+      }] as never,
+      ensureWorkspace: async () => ({ id: workspaceId }) as never,
+      createTab: async () => { throw new Error("unused"); },
+      terminateTab: async () => undefined,
+      getSnapshot: async () => ({ viewport: [] }),
+      resolvePane: resolve,
+    },
+    verbs: h.verbs as never,
+    status: { list: async () => new Map(), get: async () => undefined },
+    registry: h.registry,
+    templates: createTerminalTemplates({ homePath: h.home }),
+  });
+}

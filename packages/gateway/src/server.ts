@@ -270,6 +270,7 @@ import { createExecutionAdmissionFence } from "./execution-admission-fence.js";
 import { createManagedFeatureRestartCoordinator } from "./managed-feature-restart.js";
 import { registerTerminalWebSocketRoutes } from "./server/terminal-ws-routes.js";
 import { registerTerminalEventWebSocket } from "./terminal-agent/events-ws.js";
+import { createTerminalAgentServices } from "./terminal-agent/services.js";
 import type { GatewayConfig, ServerMessage } from "./server/types.js";
 import { registerVoiceWebSocketRoutes } from "./server/voice-ws-routes.js";
 import {
@@ -336,6 +337,7 @@ export async function createGateway(config: GatewayConfig) {
     socketPath: process.env.MATRIX_TERMINAL_RUNTIME_SOCKET ?? "/run/matrix/terminal-runtime.sock",
   });
   const terminalLiveOwnership = createTerminalLiveOwnership();
+  const terminalAgentServices = createTerminalAgentServices({ runtime: terminalWorkspaceRuntime, homePath });
   const providerLoginTerminalRegistry = createProviderLoginTerminalRegistry(terminalWorkspaceRuntime);
   const nativeProviderProfileGuard = createNativeProviderProfileGuard({ homePath, registry: providerLoginTerminalRegistry });
   const workspaceSessionRuntimeBridge = createSessionRuntimeBridge();
@@ -912,6 +914,7 @@ export async function createGateway(config: GatewayConfig) {
     fundedCredentialProvider,
     osViewTools,
     ownerAudioTranscriber: speechRuntime.ownerAudioTranscriber,
+    terminalTools: terminalAgentServices.kernelTools,
   });
 
   const { syncR2, syncPeerRegistry, syncDeps } = await initializeSyncInfrastructure(kyselyInstance);
@@ -1695,9 +1698,9 @@ export async function createGateway(config: GatewayConfig) {
   });
   retireTerminalRoutineSource = terminalLaunchRuntime.admission.fence;
   preparedTerminalLaunch = input => terminalLaunchRuntime.admission.launchPrepared(input);
-  const { shellRouteDeps, terminalWorkspaceProjectAdmission, terminalInputActivity, terminalWaiter, terminalEventHub,
+  const { shellRouteDeps, terminalWorkspaceProjectAdmission,
     chatBoundWorkspaceRouteDeps, systemActivityCandidates } = registerShellTerminalRoutes({
-    app, homePath, terminalWorkspaceRuntime, terminalRuntimeOwnerIds, managedLaunch: terminalLaunchRuntime.admission,
+    app, homePath, terminalWorkspaceRuntime, terminalRuntimeOwnerIds, managedLaunch: terminalLaunchRuntime.admission, terminalAgentServices,
     terminalWindowLayoutStore, shellPreferencesStore, chatRepository,
     canonicalChatExecutionRoots, gatewayCollaboration,
   });
@@ -1705,13 +1708,13 @@ export async function createGateway(config: GatewayConfig) {
   registerTerminalWebSocketRoutes({
     app, upgradeWebSocket, homePath, terminalWorkspaceRuntime, terminalLiveOwnership,
     workspaceSessionRuntimeBridge, terminalRuntimeOwnerIds, chatRepository,
-    terminalWorkspaceProjectAdmission, terminalInputActivity, captureTerminalEvent,
+    terminalWorkspaceProjectAdmission, terminalInputActivity: terminalAgentServices.inputActivity, captureTerminalEvent,
     getPrincipal: requireRequestPrincipal,
     logBestEffortFailure, logUnexpectedJsonParseFailure, logUnexpectedWsSendFailure,
   });
 
   registerTerminalEventWebSocket({
-    app, upgradeWebSocket, hub: terminalEventHub,
+    app, upgradeWebSocket, hub: terminalAgentServices.events,
     getPrincipal: requireRequestPrincipal,
     terminalOwnerIds: terminalRuntimeOwnerIds,
   });
@@ -1934,8 +1937,7 @@ export async function createGateway(config: GatewayConfig) {
       codingAgentWorkspaceRuntime = null;
       workspaceSessionRuntimeBridge.close();
       // Drain terminal event subscribers and waiters before the runtime client goes.
-      terminalEventHub.shutdown();
-      terminalWaiter.shutdown();
+      await terminalAgentServices.close();
       terminalLiveOwnership.close();
       await agentRuntimeServices.controller.close();
       aiProviderService.close();

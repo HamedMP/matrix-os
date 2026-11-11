@@ -19,12 +19,9 @@ import { CleanupCandidateRegistry, executeCleanupAction } from "../system-activi
 import { collectSystemActivity } from "../system-activity/collector.js";
 import { ActivityHistoryStore, AutoCleanupPolicyStore } from "../system-activity/history.js";
 import { createSystemActivityRoutes } from "../system-activity/routes.js";
-import { createTerminalInputActivity } from "../terminal-agent/input-activity.js";
 import { createTerminalAgentRoutes } from "../terminal-agent/routes.js";
-import { createTerminalAgentVerbs } from "../terminal-agent/verbs.js";
-import { createTerminalAgentStatusSource } from "../terminal-agent/status-source.js";
-import { createTerminalWaiter } from "../terminal-agent/wait.js";
-import { createTerminalEventHub } from "../terminal-agent/events.js";
+import type { TerminalAgentServices } from "../terminal-agent/services.js";
+import { createTerminalAgentOrchestrationRoutes } from "../terminal-agent/agent-routes.js";
 
 export interface ShellTerminalRouteOptions {
   app: Hono;
@@ -37,12 +34,13 @@ export interface ShellTerminalRouteOptions {
   chatRepository: ChatRepository | null;
   canonicalChatExecutionRoots: ChatExecutionRootResolver | null;
   gatewayCollaboration: GatewayCollaborationRuntime | null;
+  terminalAgentServices: TerminalAgentServices;
 }
 
 export function registerShellTerminalRoutes(options: ShellTerminalRouteOptions) {
   const { app, homePath, terminalWorkspaceRuntime, terminalRuntimeOwnerIds,
     terminalWindowLayoutStore, shellPreferencesStore, chatRepository,
-    canonicalChatExecutionRoots, gatewayCollaboration } = options;
+    canonicalChatExecutionRoots, gatewayCollaboration, terminalAgentServices } = options;
   const shellSessionCreateRateLimiter = createRateLimiter(SHELL_SESSION_CREATE_RATE_LIMIT);
   const shellCommandRunner = createShellCommandRunner({ homePath });
   const retiredShellRegistry = {
@@ -181,16 +179,18 @@ export function registerShellTerminalRoutes(options: ShellTerminalRouteOptions) 
       projectOperationAdmission: gatewayCollaboration.projectOperationAdmission,
     } : {}),
   }));
-  const terminalInputActivity = createTerminalInputActivity();
-  const terminalAgentStatus = createTerminalAgentStatusSource({ runtime: terminalWorkspaceRuntime });
-  const terminalWaiter = createTerminalWaiter({ runtime: terminalWorkspaceRuntime, status: terminalAgentStatus });
-  const terminalEventHub = createTerminalEventHub({ runtime: terminalWorkspaceRuntime, status: terminalAgentStatus });
+  const { inputActivity: terminalInputActivity, agents: terminalAgents, templates: terminalTemplates,
+    verbs: terminalAgentVerbs, waiter: terminalWaiter } = terminalAgentServices;
+  app.route("/api/terminal", createTerminalAgentOrchestrationRoutes({
+    agents: terminalAgents,
+    templates: terminalTemplates,
+    getPrincipal: (c) => requireRequestPrincipal(c),
+    getPreviewTerminalOwner: readPreviewTerminalOwner,
+    terminalOwnerIds: terminalRuntimeOwnerIds,
+    projectAdmission: terminalWorkspaceProjectAdmission,
+  }));
   app.route("/api/terminal", createTerminalAgentRoutes({
-    verbs: createTerminalAgentVerbs({
-      runtime: terminalWorkspaceRuntime,
-      inputActivity: terminalInputActivity,
-      agentStatus: async (ref) => (await terminalAgentStatus.get(ref))?.status,
-    }),
+    verbs: terminalAgentVerbs,
     waiter: terminalWaiter,
     getPrincipal: (c) => requireRequestPrincipal(c),
     getPreviewTerminalOwner: readPreviewTerminalOwner,
@@ -211,6 +211,6 @@ export function registerShellTerminalRoutes(options: ShellTerminalRouteOptions) 
       run: (input) => shellCommandRunner.run(input),
     }));
   }
-  return { shellRouteDeps, terminalWorkspaceProjectAdmission, terminalInputActivity, terminalWaiter, terminalEventHub,
+  return { shellRouteDeps, terminalWorkspaceProjectAdmission,
     chatBoundWorkspaceRouteDeps, systemActivityCandidates };
 }

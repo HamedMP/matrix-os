@@ -108,6 +108,9 @@ export interface MatrixMcpGatewayClient {
   pressTerminalKeys(ref: McpTerminalRef, keys: string[]): Promise<unknown>;
   interruptTerminalTab(ref: McpTerminalRef): Promise<unknown>;
   waitTerminalTab(ref: McpTerminalRef, input: { output?: string; timeoutMs: number }): Promise<unknown>;
+  listTerminalTemplates(): Promise<unknown>;
+  runTerminalAgent(input: Record<string, unknown>): Promise<unknown>;
+  labelTerminalTab(ref: McpTerminalRef, input: { set?: Record<string, string>; remove?: string[] }): Promise<unknown>;
 }
 
 export interface McpTerminalRef { workspaceId: string; tabId: string }
@@ -301,6 +304,14 @@ export function createMcpGatewayClient(
       method: "POST", body: JSON.stringify({ keys }),
     }),
     interruptTerminalTab: (ref) => request(`${terminalTabPath(ref)}/interrupt`, { method: "POST", body: "{}" }),
+    listTerminalTemplates: () => request("/api/terminal/templates"),
+    // A template launch waits up to 60 s for the agent before sending its first task.
+    runTerminalAgent: (input) => request("/api/terminal/agents/run", {
+      method: "POST", body: JSON.stringify(input),
+    }, { timeoutMs: TERMINAL_SEND_TIMEOUT_MS }),
+    labelTerminalTab: (ref, input) => request(`${terminalTabPath(ref)}/labels`, {
+      method: "PATCH", body: JSON.stringify(input),
+    }),
     waitTerminalTab: (ref, input) => request(`${terminalTabPath(ref)}/wait`, {
       method: "POST", body: JSON.stringify(input),
     }, { timeoutMs: input.timeoutMs + 5_000 }),
