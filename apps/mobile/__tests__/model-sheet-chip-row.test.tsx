@@ -12,7 +12,7 @@ const scrollTo = ScrollView.prototype.scrollTo as unknown as jest.Mock;
 
 function scrollsOf(rowTestID: string) {
   return scrollTo.mock.calls
-    .filter((_call, index) => (scrollTo.mock.contexts[index] as ScrollView).props.testID === rowTestID)
+    .filter((_call, index) => (scrollTo.mock.contexts[index] as { props: { testID?: string } }).props.testID === rowTestID)
     .map(([target]) => target);
 }
 

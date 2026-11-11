@@ -9,6 +9,7 @@ const billingState = vi.hoisted(() => ({
   active: true as boolean | null,
 }));
 
+vi.mock("@clerk/nextjs", () => ({ useUser: () => ({ user: { id: "user_owner" }, isLoaded: true }) }));
 vi.mock("@/hooks/useMatrixBillingAccess", () => ({
   useMatrixBillingAccess: () => ({
     active: billingState.active,
@@ -90,7 +91,7 @@ describe("Settings panel", () => {
     expect(screen.queryByRole("button", { name: "Agent" })).toBeNull();
     const nav = screen.getByRole("navigation", { name: "Settings sections" });
     expect(within(nav).getAllByRole("button").map((button) => button.textContent)).toEqual([
-      "Agents & providers", "Connect Apps", "Import chats", "Appearance", "Organization",
+      "Agents & providers", "Connect Apps", "AI usage", "Import chats", "Appearance", "Organization",
       "Identity & personality", "Billing", "System",
     ]);
     expect(screen.getByRole("button", { name: "Agents & providers" }).getAttribute("aria-current")).toBe("page");
@@ -242,4 +243,13 @@ it("pauses credit renewal immediately while closed Settings retains its exit con
   await waitFor(() => expect(screen.getByTestId("credit-refresh-scope").dataset.enabled).toBe("true"));
   view.rerender(<Settings open={false} defaultSection="agents-providers" onOpenChange={() => {}} />);
   expect(screen.getByTestId("credit-refresh-scope").dataset.enabled).toBe("false");
+});
+
+it("opens the shared AI usage panel from web Settings", async () => {
+  const { Settings } = await import("../../shell/src/components/Settings.js");
+  render(<Settings open onOpenChange={() => {}} billingActiveOverride />);
+  fireEvent.click(screen.getByRole("button", { name: "AI usage" }));
+  expect(await screen.findByRole("heading", { name: "AI usage" })).toBeTruthy();
+  expect(screen.getByRole("button",{name:"Refresh usage"})).toBeTruthy();
+  expect(screen.queryByLabelText("Choose usage files")).toBeNull();
 });

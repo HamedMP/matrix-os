@@ -12,6 +12,23 @@ export const SHARED_RUN_SELECTION_REQUIREMENTS = { interactionMode: "default", p
 
 export type SharedProviderReadiness = "ready" | "reconnect_required" | "unavailable";
 
+export type CollaborativeAppProviderRequirement = "connected_provider" | "ai_funding";
+
+/** Sharing never delegates the creator's provider sessions or Matrix-funded AI authority. */
+export function evaluateCollaborativeAppProviderSafety(input: {
+  required: readonly CollaborativeAppProviderRequirement[];
+  participantScoped: readonly CollaborativeAppProviderRequirement[];
+}) {
+  const available = new Set(input.participantScoped);
+  return input.required.some((requirement) => !available.has(requirement))
+    ? {
+        code: "provider_safety" as const,
+        status: "blocked" as const,
+        action: "This app requires owner-only services that are not available to organization participants.",
+      }
+    : { code: "provider_safety" as const, status: "passed" as const };
+}
+
 interface SharedProviderReadinessInput {
   resolveCredentialSources(): Promise<KernelCredentialSources>;
   codingProviders?: Pick<CodingAgentProviderRegistry, "listProviders">;

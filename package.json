@@ -117,7 +117,7 @@
       },
       "@react-native/jest-preset@*": {
         "dependencies": {
-          "react-native": "0.86.3",
+          "react-native": "0.88.1",
           "@babel/runtime": "^7.29.0"
         }
       },
@@ -129,7 +129,7 @@
       },
       "react-native-edge-to-edge@*": {
         "dependencies": {
-          "@expo/config-plugins": "57.0.9"
+          "@expo/config-plugins": "58.0.12"
         }
       },
       "langium@4.2.1": {

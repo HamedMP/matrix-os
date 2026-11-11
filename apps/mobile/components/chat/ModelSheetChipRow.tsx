@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, type ReactNode } from "react";
-import { ScrollView, View } from "react-native";
+import { ScrollView, View, type ScrollViewInstance } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
 
 const SCROLL_EVENT_INTERVAL_MS = 16;
@@ -26,7 +26,7 @@ interface Measured {
  * with a glide whenever another takes its place.
  */
 export function ModelSheetChipRow({ testID, chips, shownId }: ModelSheetChipRowProps) {
-  const scroll = useRef<ScrollView>(null);
+  const scroll = useRef<ScrollViewInstance>(null);
   const measured = useRef<Measured>({ width: 0, frames: {}, offset: 0 });
 
   const reveal = useCallback(() => {

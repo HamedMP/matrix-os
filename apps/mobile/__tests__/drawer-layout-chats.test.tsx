@@ -32,7 +32,10 @@ jest.mock("@/lib/canonical-chat-session-context", () => ({
 jest.mock("@/lib/queries/use-settings-system-info", () => ({
   useSettingsSystemInfo: () => mockLayout.mocks.useSettingsSystemInfo(),
 }));
-jest.mock("expo-router", () => ({ useSegments: () => mockLayout.drawer.segments }));
+jest.mock("expo-router", () => ({
+  useSegments: () => mockLayout.drawer.segments,
+  useRouter: () => ({ navigate: mockLayout.mocks.navigate, dismissTo: mockLayout.mocks.dismissTo }),
+}));
 jest.mock("expo-router/drawer", () => mockLayout.drawerModule());
 
 const { mocks, chatPages } = mockLayout;

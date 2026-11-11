@@ -25,6 +25,8 @@ import McpServersSection from "../plugins/McpServersSection";
 import SkillsSection from "../plugins/SkillsSection";
 import CronSection from "./sections/CronSection";
 import SystemSection from "./sections/SystemSection";
+import AiUsageSection from "./sections/AiUsageSection";
+import "@matrix-os/ui/ai-usage.css";
 import ChatImportSection from "./sections/ChatImportSection";
 import { useUi } from "../../stores/ui";
 import OrganizationSection from "../organization/OrganizationSection";
@@ -40,6 +42,7 @@ export type SettingsSectionId =
   | "services"
   | "mcps"
   | "skills"
+  | "ai-usage"
   | "chat-import"
   | "cli"
   | "cron"
@@ -50,6 +53,7 @@ const SECTIONS: { id: SettingsSectionId; label: string; icon: React.ReactNode; g
   { id: "services", label: "Connect Apps", icon: <Blocks size={15} />, group: "Integrations" },
   { id: "mcps", label: "MCPs", icon: <Server size={15} />, group: "Integrations" },
   { id: "skills", label: "Skills", icon: <Sparkles size={15} />, group: "Integrations" },
+  { id: "ai-usage", label: "AI usage", icon: <Sparkles size={15} />, group: "AI" },
   { id: "chat-import", label: "Import chats", icon: <Upload size={15} />, group: "Integrations" },
   { id: "cli", label: "CLI", icon: <SquareTerminal size={15} />, group: "Integrations" },
   { id: "appearance", label: "Appearance", icon: <Palette size={15} />, group: "You" },
@@ -160,6 +164,7 @@ export default function SettingsView({
           {section === "services" ? <IntegrationsSettingsSection active={active} /> : null}
           {section === "mcps" ? <McpServersSection /> : null}
           {section === "skills" ? <SkillsSection /> : null}
+          {section === "ai-usage" ? <AiUsageSection /> : null}
           {section === "chat-import" ? <ChatImportSection /> : null}
           {section === "cli" ? <CliSection /> : null}
           {section === "cron" ? <CronSection /> : null}

@@ -1,0 +1,315 @@
+import { describe, expect, it, vi } from "vitest";
+
+import {
+  APPROVED_COLLABORATIVE_APP_READINESS_GATES,
+  CollaborativeAppCapabilityVerifier,
+  CollaborativeAppReadinessEvaluator,
+} from "../../packages/gateway/src/collaboration/collaborative-app-readiness.js";
+import { CollaborativeAppReadinessRepositoryError } from "../../packages/gateway/src/collaboration/collaborative-app-readiness-repository.js";
+import { evaluateCollaborativeAppProviderSafety } from "../../packages/gateway/src/collaboration/shared-provider-readiness.js";
+
+const build = {
+  appId: "team-tracker",
+  catalogId: "50000000-0000-4000-8000-000000000001",
+  registrationIncarnation: "a".repeat(64),
+  manifestVersion: "1.0.0",
+  buildId: "b".repeat(64),
+  manifestDigest: "c".repeat(64),
+  schemaDigest: "d".repeat(64),
+  assetDigest: "e".repeat(64),
+  bridgeContractVersion: "matrix-app-bridge-v1",
+  runtimeAbi: "matrix-runtime-v1",
+};
+
+const declaration = {
+  capability: {
+    version: 1 as const,
+    storage: "owner_postgres" as const,
+    audience: "current_organization_members" as const,
+    participantIdentity: "authenticated_actor" as const,
+    mutations: "transactional_revisioned" as const,
+    updates: "content_free_signal" as const,
+    providerPolicy: "existing_authority" as const,
+  },
+  compatibility: {
+    bridgeContractVersion: build.bridgeContractVersion,
+    runtimeAbi: build.runtimeAbi,
+    schemaDigest: build.schemaDigest,
+  },
+};
+
+function checking() {
+  return {
+    id: "60000000-0000-4000-8000-000000000001",
+    ownerId: "user_owner",
+    build,
+    artifactRef: `objects/${build.buildId}`,
+    status: "checking" as const,
+    gateResults: [],
+    verifiedAt: null,
+    invalidatedAt: null,
+    invalidationReason: null,
+    verifierVersion: "collaborative-app-v1",
+    revision: 1,
+    createdAt: "2026-11-05T10:00:00.000Z",
+    updatedAt: "2026-11-05T10:00:00.000Z",
+  };
+}
+
+function repository() {
+  const initial = checking();
+  return {
+    createOrGet: vi.fn(async () => initial),
+    transition: vi.fn(async (input) => ({
+      ...initial,
+      status: input.status,
+      gateResults: input.gateResults,
+      verifiedAt: input.verifiedAt?.toISOString() ?? null,
+      revision: 2,
+    })),
+    restart: vi.fn(async (input) => ({
+      ...initial,
+      status: "checking" as const,
+      revision: input.expectedRevision + 1,
+    })),
+    get: vi.fn(async () => null),
+  };
+}
+
+const input = {
+  ownerId: "user_owner",
+  organizationId: "org_matrix_team",
+  build,
+  artifactRef: `objects/${build.buildId}`,
+  declaration,
+};
+
+const capabilityVerifier = () => new CollaborativeAppCapabilityVerifier({
+  inspect: async () => ({ sharedRead: true, revisionedWrite: true, changeSignal: true }),
+});
+
+describe("collaborative app readiness evaluator", () => {
+  it("blocks required creator credentials, connected providers, and AI funding without delegation", () => {
+    expect(evaluateCollaborativeAppProviderSafety({
+      required: ["connected_provider", "ai_funding"],
+      participantScoped: [],
+    })).toEqual({
+      code: "provider_safety",
+      status: "blocked",
+      action: "This app requires owner-only services that are not available to organization participants.",
+    });
+    expect(evaluateCollaborativeAppProviderSafety({
+      required: ["connected_provider"],
+      participantScoped: ["connected_provider"],
+    })).toEqual({ code: "provider_safety", status: "passed" });
+  });
+
+  it("qualifies the exact declared build using normal Matrix identity", async () => {
+    const records = repository();
+    const result = await new CollaborativeAppReadinessEvaluator({
+      repository: records as never,
+      verifier: capabilityVerifier(),
+      now: () => new Date("2026-11-05T11:00:00.000Z"),
+    }).check(input);
+    expect(result).toMatchObject({
+      status: "ready",
+      gateResults: APPROVED_COLLABORATIVE_APP_READINESS_GATES.map((code) => ({ code, status: "passed" })),
+    });
+    expect(result.verifiedAt).toBe("2026-11-05T11:00:00.000Z");
+    expect(records.createOrGet).toHaveBeenCalledWith(expect.objectContaining({
+      verifierVersion: "collaborative-app-capability-v1",
+    }));
+  });
+
+  it("blocks undeclared and incompatible builds with bounded owner guidance", async () => {
+    for (const candidate of [
+      { ...input, declaration: null },
+      { ...input, declaration: { ...declaration, compatibility: { ...declaration.compatibility, schemaDigest: "f".repeat(64) } } },
+      { ...input, artifactRef: `objects/${"f".repeat(64)}` },
+    ]) {
+      const result = await new CollaborativeAppReadinessEvaluator({
+        repository: repository() as never,
+        verifier: capabilityVerifier(),
+      }).check(candidate);
+      expect(result.status).toBe("blocked");
+      expect(result.gateResults.some((gate) => gate.status === "blocked")).toBe(true);
+      expect(JSON.stringify(result)).not.toContain("credential");
+    }
+  });
+
+  it.each([
+    ["bridge contract", { bridgeContractVersion: "matrix-app-bridge-v9" }],
+    ["runtime ABI", { runtimeAbi: "matrix-runtime-v9" }],
+  ])("blocks a self-consistent build that requires an unsupported host %s", async (_label, version) => {
+    const unsupportedBuild = { ...build, ...version };
+    const result = await new CollaborativeAppReadinessEvaluator({
+      repository: repository() as never,
+      verifier: capabilityVerifier(),
+    }).check({
+      ...input,
+      build: unsupportedBuild,
+      artifactRef: `objects/${unsupportedBuild.buildId}`,
+      declaration: {
+        ...declaration,
+        compatibility: { ...declaration.compatibility, ...version },
+      },
+    });
+
+    expect(result.status).toBe("blocked");
+    expect(result.gateResults).toContainEqual(expect.objectContaining({
+      code: "recipient_launch",
+      status: "blocked",
+    }));
+  });
+
+  it("issues ready only from a verifier that proves every production gate", async () => {
+    const records = repository();
+    const verify = vi.fn(async () => APPROVED_COLLABORATIVE_APP_READINESS_GATES
+      .map((code) => ({ code, status: "passed" as const })));
+    const result = await new CollaborativeAppReadinessEvaluator({
+      repository: records as never,
+      verifier: { verify },
+      now: () => new Date("2026-11-05T11:00:00.000Z"),
+    }).check(input);
+    expect(result.status).toBe("ready");
+    expect(result.verifiedAt).toBe("2026-11-05T11:00:00.000Z");
+    expect(verify).toHaveBeenCalledWith(expect.objectContaining({
+      ownerId: input.ownerId,
+      organizationId: input.organizationId,
+      build,
+    }), expect.any(AbortSignal));
+
+    const defaultClockResult = await new CollaborativeAppReadinessEvaluator({
+      repository: repository() as never,
+      verifier: { verify },
+    }).check(input);
+    expect(defaultClockResult.verifiedAt).toMatch(/^\d{4}-\d{2}-\d{2}T/);
+  });
+
+  it("maps incomplete proof and raw verifier failures to bounded failed results", async () => {
+    for (const verifier of [
+      { verify: async () => [{ code: "declaration" as const, status: "passed" as const }] },
+      { verify: async () => [
+        { code: "declaration" as const, status: "passed" as const },
+        { code: "declaration" as const, status: "passed" as const },
+      ] },
+      { verify: async () => { throw new Error("postgres password=secret"); } },
+      { verify: async () => { throw "database-secret"; } },
+    ]) {
+      const records = repository();
+      const result = await new CollaborativeAppReadinessEvaluator({ repository: records as never, verifier }).check(input);
+      expect(result).toMatchObject({
+        status: "failed",
+        gateResults: [{ code: "cleanup", status: "failed", action: "Readiness could not be verified. Try again." }],
+      });
+      expect(JSON.stringify(result)).not.toContain("postgres");
+      expect(JSON.stringify(result)).not.toContain("secret");
+    }
+  });
+
+  it("maps approved complete blocked and failed proofs without a verified timestamp", async () => {
+    for (const expectedStatus of ["blocked", "failed"] as const) {
+      const records = repository();
+      const proof = APPROVED_COLLABORATIVE_APP_READINESS_GATES.map((code) => ({
+        code,
+        status: code === "cleanup" ? expectedStatus : "passed" as const,
+        ...(code === "cleanup" ? { action: "Fix the cleanup path and recheck." } : {}),
+      }));
+      const result = await new CollaborativeAppReadinessEvaluator({
+        repository: records as never,
+        verifier: { verify: async () => proof },
+      }).check(input);
+      expect(result).toMatchObject({ status: expectedStatus, verifiedAt: null });
+    }
+  });
+
+  it("returns the concurrent winner after a CAS conflict and preserves unexpected repository failures", async () => {
+    const winner = { ...checking(), status: "blocked" as const, revision: 2, gateResults: [{
+      code: "declaration" as const,
+      status: "blocked" as const,
+      action: "A concurrent check completed first.",
+    }] };
+    const records = repository();
+    records.transition.mockRejectedValue(new CollaborativeAppReadinessRepositoryError("conflict"));
+    records.get.mockResolvedValue(winner);
+    await expect(new CollaborativeAppReadinessEvaluator({
+      repository: records as never,
+      verifier: capabilityVerifier(),
+    }).check(input)).resolves.toEqual(winner);
+
+    records.get.mockResolvedValue(null);
+    await expect(new CollaborativeAppReadinessEvaluator({
+      repository: records as never,
+      verifier: capabilityVerifier(),
+    }).check(input)).rejects.toMatchObject({ code: "conflict" });
+    records.transition.mockRejectedValue(new Error("repository unavailable"));
+    await expect(new CollaborativeAppReadinessEvaluator({
+      repository: records as never,
+      verifier: capabilityVerifier(),
+    }).check(input)).rejects.toThrow("repository unavailable");
+  });
+
+  it("replays a completed exact-build result without rerunning the verifier", async () => {
+    const records = repository();
+    records.createOrGet.mockResolvedValue({
+      ...checking(),
+      status: "blocked",
+      revision: 2,
+      gateResults: [{ code: "declaration", status: "blocked", action: "Declare collaborative capability." }],
+    });
+    const verify = vi.fn();
+    const result = await new CollaborativeAppReadinessEvaluator({
+      repository: records as never,
+      verifier: { verify },
+    }).check(input);
+    expect(result.status).toBe("blocked");
+    expect(verify).not.toHaveBeenCalled();
+    expect(records.transition).not.toHaveBeenCalled();
+  });
+
+  it.each(["stale", "failed"] as const)("restarts a %s exact-build result through one CAS winner", async (status) => {
+    const records = repository();
+    const prior = {
+      ...checking(),
+      status,
+      revision: 2,
+      gateResults: [{ code: "cleanup" as const, status: "failed" as const, action: "Try again." }],
+      ...(status === "stale" ? {
+        invalidatedAt: "2026-11-05T10:30:00.000Z",
+        invalidationReason: "build_drift" as const,
+      } : {}),
+    };
+    records.createOrGet.mockResolvedValue(prior);
+    const verify = vi.fn(async () => APPROVED_COLLABORATIVE_APP_READINESS_GATES
+      .map((code) => ({ code, status: "passed" as const })));
+
+    const result = await new CollaborativeAppReadinessEvaluator({
+      repository: records as never,
+      verifier: { approval: "approved", verify },
+    }).check(input);
+
+    expect(records.restart).toHaveBeenCalledWith({
+      id: prior.id,
+      ownerId: prior.ownerId,
+      expectedRevision: prior.revision,
+    });
+    expect(verify).toHaveBeenCalledOnce();
+    expect(result.status).toBe("ready");
+  });
+
+  it("returns the concurrent retry winner without running a second verifier", async () => {
+    const records = repository();
+    const prior = { ...checking(), status: "failed" as const, revision: 2 };
+    const winner = { ...checking(), revision: 3 };
+    records.createOrGet.mockResolvedValue(prior);
+    records.restart.mockRejectedValue(new CollaborativeAppReadinessRepositoryError("conflict"));
+    records.get.mockResolvedValue(winner);
+    const verify = vi.fn();
+
+    await expect(new CollaborativeAppReadinessEvaluator({
+      repository: records as never,
+      verifier: { approval: "approved", verify },
+    }).check(input)).resolves.toEqual(winner);
+    expect(verify).not.toHaveBeenCalled();
+  });
+});

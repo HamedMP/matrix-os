@@ -21,6 +21,8 @@ import { createShellSnapshotScope } from "@/lib/shell-snapshot-cache";
 import { createShellChatNavigationScope } from "@/lib/chat-navigation-scope";
 import { getGatewayUrl } from "@/lib/gateway";
 import { isSelfHostedRuntime, SELF_HOSTED_SHELL_USER_ID } from "@/lib/self-host-mode";
+import { NativeCollaborationActorProvider } from "@/lib/native-collaboration-identity";
+import { OwnerCollaborationParticipantProvider } from "@/lib/owner-collaboration-participant";
 
 const LAUNCHABLE_BUILT_IN_PATHS = new Set([
   "__terminal__",
@@ -53,7 +55,10 @@ function readRuntimeSlotFromLocation(): string | null {
   return new URLSearchParams(window.location.search).get("runtime");
 }
 
-type ShellHomeProps = { initialCollaborationView?: ChatCollaborationView };
+type ShellHomeProps = {
+  initialCollaborationView?: ChatCollaborationView;
+  nativeCollaborationActorId?: string | null;
+};
 
 const localAuthBypass = process.env.NEXT_PUBLIC_E2E_TEST_BYPASS === "1";
 
@@ -74,6 +79,12 @@ export function ShellHome(props: ShellHomeProps = {}) {
     );
   }
 
+  // Native Electron shared-app views authenticate at the trusted network
+  // boundary and run in a fresh partition without Clerk cookies.
+  if (props.nativeCollaborationActorId) {
+    return <ShellHomeContent {...props} userId={props.nativeCollaborationActorId} sessionId={null} />;
+  }
+
   return <ManagedShellHome {...props} />;
 }
 
@@ -88,6 +99,7 @@ function ClerkShellHome(props: ShellHomeProps) {
 
 function ShellHomeContent({
   initialCollaborationView,
+  nativeCollaborationActorId,
   userId,
   sessionId,
 }: ShellHomeProps & { userId: string | null | undefined; sessionId: string | null | undefined }) {
@@ -96,6 +108,7 @@ function ShellHomeContent({
       userId={userId}
       sessionId={sessionId}
       initialCollaborationView={initialCollaborationView}
+      nativeCollaborationActorId={nativeCollaborationActorId}
     />
   );
 }
@@ -104,6 +117,7 @@ function ShellHomeBody({
   userId,
   sessionId,
   initialCollaborationView,
+  nativeCollaborationActorId,
 }: ShellHomeProps & { userId: string | null | undefined; sessionId: string | null | undefined }) {
   const isMobile = useMobileViewport();
   // Canonical Chat captures this transport on mount. Shared navigation rewrites
@@ -168,6 +182,8 @@ function ShellHomeBody({
 
   const gettingStartedScope = JSON.stringify([cacheScope?.storageKey ?? cachePathname, sessionId, runtimeSlot]);
   return (
+    <OwnerCollaborationParticipantProvider actorId={userId ?? (localAuthBypass ? "user_e2e" : null)}>
+    <NativeCollaborationActorProvider actorId={nativeCollaborationActorId ?? null}>
     <GettingStartedVisibilityProvider scope={gettingStartedScope}>
     <GetStartedAnswersProvider scope={gettingStartedScope}>
     <ChatProvider value={chat}>
@@ -199,5 +215,7 @@ function ShellHomeBody({
     </ChatProvider>
     </GetStartedAnswersProvider>
     </GettingStartedVisibilityProvider>
+    </NativeCollaborationActorProvider>
+    </OwnerCollaborationParticipantProvider>
   );
 }

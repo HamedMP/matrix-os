@@ -6,12 +6,15 @@ import React, {
   useRef,
   useState,
 } from "react";
+import { Linking } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
 import { WebView, type WebViewMessageEvent } from "react-native-webview";
+import { resolveTerminalLink } from "@matrix-os/contracts";
 import { AnalyticsMask } from "@/lib/analytics";
 import { colors } from "@/lib/theme";
 import { FIT_ADDON_JS, XTERM_CSS, XTERM_JS } from "@/components/terminal/xterm-bundle";
 import { TAP_CURSOR_SCRIPT } from "@/components/terminal/tap-cursor-script";
+import { TERMINAL_LINK_SCRIPT } from "@/components/terminal/link-script";
 import { PendingTerminalOps } from "@/lib/terminal-pending-ops";
 
 /**
@@ -76,6 +79,30 @@ function inlineStyle(css: string): string {
   return css.replace(/<\/(style)/gi, "<\\/$1");
 }
 
+// A link tapped in the output opens in the phone's browser, under the same
+// rules as the web terminal: http(s) only, no credentials, bounded length,
+// and no look-alike provider sign-in pages.
+function openTerminalLink(raw: unknown): void {
+  if (typeof raw !== "string") return;
+  const link = resolveTerminalLink(raw);
+  if (!link) return;
+  Linking.openURL(link.url).catch((error: unknown) => {
+    console.warn("[mobile] terminal link unavailable", error instanceof Error ? error.name : "UnknownError");
+  });
+}
+
+// The terminal is one inline page; nothing may navigate it away (links arrive
+// as "link" messages instead). Android does not ask about the first load.
+function keepTerminalPage(request: { url?: string; isTopFrame?: boolean }): boolean {
+  return request.isTopFrame !== false && request.url === "about:blank";
+}
+
+// Set so react-native-webview on iOS does not load a window.open request into
+// this WebView, which would replace the terminal page.
+function refuseNewWindow(): void {
+  console.warn("[mobile] terminal page asked for a new window");
+}
+
 function buildHtml(fontScale: number): string {
   const fontSize = Math.round(13 * fontScale);
   // Dark botanical console — a proper terminal surface that reads as "code"
@@ -137,6 +164,7 @@ function buildHtml(fontScale: number): string {
 <script>${inlineScript(XTERM_JS)}</script>
 <script>${inlineScript(FIT_ADDON_JS)}</script>
 <script>${TAP_CURSOR_SCRIPT}</script>
+<script>${TERMINAL_LINK_SCRIPT}</script>
 <script>
   (function () {
     function post(msg) {
@@ -152,6 +180,7 @@ function buildHtml(fontScale: number): string {
         scrollback: 12000,
         convertEol: false,
         theme: ${JSON.stringify(theme)},
+        linkHandler: terminalLinkHandler(post),
       });
       var fit = new window.FitAddon.FitAddon();
       term.loadAddon(fit);
@@ -406,7 +435,9 @@ function buildHtml(fontScale: number): string {
 
 export const TerminalSurface = forwardRef<TerminalSurfaceHandle, TerminalSurfaceProps>(
   function TerminalSurface({ fontScale, onInput, onBinary, onKeys, onResize, onCursor }, ref) {
-    const webRef = useRef<WebView | null>(null);
+    // react-native-webview 14 defaults the class's extra-props parameter to
+    // `undefined`, which would leave every prop typed `never` through the ref.
+    const webRef = useRef<WebView<object> | null>(null);
     const readyRef = useRef(false);
     // Held for an emulator that has not booted yet; one queue per surface.
     const [pending] = useState(() => new PendingTerminalOps());
@@ -474,6 +505,7 @@ export const TerminalSurface = forwardRef<TerminalSurfaceHandle, TerminalSurface
           bottom?: number;
           where?: unknown;
           name?: unknown;
+          url?: unknown;
         };
         try {
           msg = JSON.parse(event.nativeEvent.data) as typeof msg;
@@ -508,6 +540,10 @@ export const TerminalSurface = forwardRef<TerminalSurfaceHandle, TerminalSurface
           onCursor?.(msg.bottom);
           return;
         }
+        if (msg.type === "link") {
+          openTerminalLink(msg.url);
+          return;
+        }
         if (msg.type === "fault") {
           // Only a known place and a plain error name are logged; nothing else
           // the page sends reaches the log.
@@ -529,6 +565,8 @@ export const TerminalSurface = forwardRef<TerminalSurfaceHandle, TerminalSurface
           originWhitelist={["*"]}
           source={{ html }}
           onMessage={handleMessage}
+          onShouldStartLoadWithRequest={keepTerminalPage}
+          onOpenWindow={refuseNewWindow}
           // Terminal owns scrolling; the RN side should not bounce.
           scrollEnabled
           overScrollMode="never"

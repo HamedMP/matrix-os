@@ -1,4 +1,8 @@
-import { remoteBrowserSurfaceForPath, remoteBrowserWindowSize } from "@matrix-os/contracts";
+import {
+  remoteBrowserSurfaceForPath,
+  remoteBrowserWindowSize,
+  type CollaborativeAppDirectoryItem,
+} from "@matrix-os/contracts";
 import { constrainFloatingWindow } from "@matrix-os/ui";
 import { create } from "zustand";
 import { subscribeWithSelector } from "zustand/middleware";
@@ -33,6 +37,7 @@ export interface AppWindow {
   terminalLayoutId?: string;
   terminalPersistence?: TerminalPersistence;
   sharedTerminalScopeId?: string;
+  sharedAppTarget?: CollaborativeAppDirectoryItem;
 }
 
 export interface LayoutWindow {
@@ -133,9 +138,10 @@ interface WindowManagerState {
   fullscreenWindowId: string | null;
 }
 
-interface TerminalWindowOptions {
+interface WindowOpenOptions {
   terminalPersistence?: TerminalPersistence;
   sharedTerminalScopeId?: string;
+  sharedAppTarget?: CollaborativeAppDirectoryItem;
 }
 
 interface WindowManagerActions {
@@ -143,7 +149,7 @@ interface WindowManagerActions {
     name: string,
     path: string,
     dockXOffset: number,
-    options?: TerminalWindowOptions,
+    options?: WindowOpenOptions,
   ) => void;
   openWindowExclusive: (name: string, path: string, dockXOffset: number, basePath?: string) => void;
   closeWindow: (id: string) => void;
@@ -188,7 +194,7 @@ function debouncedSave(
     if (isPreVpsBillingSetupRoute()) return;
     const gatewayUrl = getGatewayUrl();
     const layoutWindows: LayoutWindow[] = state.windows.flatMap((w) => (
-      w.terminalPersistence === "ephemeral"
+      w.terminalPersistence === "ephemeral" || w.sharedAppTarget
         ? []
         : [{
             path: w.path,
@@ -292,7 +298,7 @@ function createWindowRecord(
   path: string,
   fallbackX: number,
   fallbackY: number,
-  options: TerminalWindowOptions = {},
+  options: WindowOpenOptions = {},
 ): AppWindow {
   const storedLayout = state.closedLayouts.get(path);
   const saved = storedLayout ? normalizeRestoredLayout(path, storedLayout) : undefined;
@@ -317,6 +323,7 @@ function createWindowRecord(
     terminalLayoutId: terminalLayoutIdForPath(path, terminalPersistence, saved?.terminalLayoutId),
     ...(terminalPersistence ? { terminalPersistence } : {}),
     ...(options.sharedTerminalScopeId ? { sharedTerminalScopeId: options.sharedTerminalScopeId } : {}),
+    ...(options.sharedAppTarget ? { sharedAppTarget: options.sharedAppTarget } : {}),
   });
 }
 
@@ -373,7 +380,12 @@ export const useWindowManager = create<WindowManagerState & WindowManagerActions
           return {
             windows: zState.windows.map((w) =>
               w.id === existing.id
-                ? fitOpenedPreviewWindow({ ...w, minimized: false, zIndex: zState.nextZ })
+                ? fitOpenedPreviewWindow({
+                    ...w,
+                    minimized: false,
+                    zIndex: zState.nextZ,
+                    ...(options.sharedAppTarget ? { sharedAppTarget: options.sharedAppTarget } : {}),
+                  })
                 : w,
             ),
             nextZ: zState.nextZ + 1,
@@ -472,7 +484,7 @@ export const useWindowManager = create<WindowManagerState & WindowManagerActions
         const win = state.windows.find((w) => w.id === id);
         const newClosed = new Set(state.closedPaths);
         const newLayouts = new Map(state.closedLayouts);
-        if (win && win.terminalPersistence !== "ephemeral") {
+        if (win && win.terminalPersistence !== "ephemeral" && !win.sharedAppTarget) {
           newClosed.add(win.path);
           newLayouts.set(win.path, {
             title: win.title,

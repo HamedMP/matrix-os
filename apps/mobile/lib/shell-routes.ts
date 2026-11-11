@@ -4,7 +4,8 @@
 /** The side panel's only screen: the tabs. */
 export const TABS_ROUTE = "(tabs)";
 
-const CHATS_TAB_ROUTE = "(chats)";
+/** The Chats tab, which holds the chat screen. */
+export const CHATS_TAB_ROUTE = "(chats)";
 const CHAT_SCREEN_SEGMENTS = ["(drawer)", TABS_ROUTE, CHATS_TAB_ROUTE];
 
 /**
@@ -16,47 +17,24 @@ export function isChatScreen(segments: readonly string[]): boolean {
     && CHAT_SCREEN_SEGMENTS.every((segment, index) => segments[index] === segment);
 }
 
-// The params below go to `navigation.navigate(TABS_ROUTE, …)`, which any
-// navigator inside the side panel passes up to it. They are built on each call:
-// React Navigation marks a params object once it has acted on it, and ignores
-// the same object the next time.
+// The router's `navigate` switches to the tab that holds an href's screen and
+// pushes the screen onto that tab's stack; `dismissTo` closes what is open
+// above a screen already in the current stack.
 
 /**
- * Shows the chat screen from the side panel. The panel only opens over the
- * chat screen, so this is the screen already at the top of the Chats tab.
+ * The chat screen: the first screen of the Chats tab. Its URL is `/`, which
+ * the sign-in gate (`app/index.tsx`) also answers to, so the href names the
+ * side panel's group to reach the chat screen instead.
  */
-export function chatScreenParams() {
-  return { screen: CHATS_TAB_ROUTE, params: { screen: "index" } };
-}
+export const CHAT_SCREEN_HREF = "/(drawer)";
 
-/**
- * Shows the chat screen from another tab, closing whatever was left open
- * above it in the Chats tab. `pop` then stays on the Chats route and shows up
- * as a search param (`/?pop=true`) until the next navigation there, which is
- * why the side panel does without it.
- */
-export function chatScreenFromAnotherTabParams() {
-  return { screen: CHATS_TAB_ROUTE, params: { screen: "index", pop: true } };
-}
+/** "Shared with me", on top of the chat screen in the Chats tab. */
+export const SHARED_SCREEN_HREF = "/shared";
 
-/** Opens "Shared with me" on top of the chat screen. */
-export function sharedScreenParams() {
-  return { screen: CHATS_TAB_ROUTE, params: { screen: "shared" } };
-}
+/** Projects, on top of the chat screen in the Chats tab. */
+export const PROJECTS_SCREEN_HREF = "/projects";
 
-/**
- * Opens Projects on top of the chat screen. The folder `projects/` has no
- * layout of its own, so its screens belong to the Chats stack under the names
- * `projects/index` and `projects/[projectId]`.
- */
-export function projectsScreenParams() {
-  return { screen: CHATS_TAB_ROUTE, params: { screen: "projects/index" } };
-}
-
-/**
- * Shows the Terminal or Settings tab from another tab. Each is a single
- * screen, so naming the tab is enough.
- */
-export function tabScreenParams(tab: "terminal" | "settings") {
-  return { screen: tab };
+/** The Terminal or Settings tab. Each is a single screen. */
+export function tabScreenHref(tab: "terminal" | "settings") {
+  return `/${tab}` as const;
 }

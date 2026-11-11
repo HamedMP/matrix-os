@@ -178,6 +178,7 @@ export function createProjectAppAdapter(options: {
     context: AuthorizedCollaborationContext,
     appId: string,
     lock: "share" | "update" | false = false,
+    expectedIncarnation?: string,
   ) {
     let query = executor.selectFrom("collaboration_resource_bindings").selectAll()
       .where("project_scope_id", "=", context.scopeId)
@@ -188,16 +189,17 @@ export function createProjectAppAdapter(options: {
     const binding = await query.executeTakeFirst();
     if (!binding || binding.readiness !== "ready"
       || binding.authority_runtime_id !== context.authorityRuntimeId
-      || Number(binding.authority_generation) !== context.authorityGeneration) {
+      || Number(binding.authority_generation) !== context.authorityGeneration
+      || (expectedIncarnation !== undefined && binding.incarnation !== expectedIncarnation)) {
       throw new ProjectAppAdapterError("app_unavailable");
     }
     return binding;
   }
 
-  async function query(context: AuthorizedCollaborationContext, raw: {
+  async function queryWithRevision(context: AuthorizedCollaborationContext, raw: {
     appId: string;
     action: unknown;
-  }): Promise<unknown> {
+  }): Promise<{ result: unknown; revision: number }> {
     const appId = AppIdSchema.safeParse(raw.appId);
     if (!appId.success) throw new ProjectAppAdapterError("invalid_action");
     try {
@@ -213,8 +215,8 @@ export function createProjectAppAdapter(options: {
       const action = parseAction(raw.action, app.bridgeAppId, READ_ACTIONS);
       return await options.db.transaction().execute(async (trx) => {
         await requireCurrentProject(trx, current, false);
-        await requireBinding(trx, current, appId.data, "share");
-        return jsonValue(await options.bridge.execute({
+        const binding = await requireBinding(trx, current, appId.data, "share", app.app.incarnation);
+        const result = jsonValue(await options.bridge.execute({
           namespace: app.namespace,
           appId: appId.data,
           storageSchema: app.bridgeAppId,
@@ -223,10 +225,18 @@ export function createProjectAppAdapter(options: {
           action: { ...action, app: app.namespace } as BridgeQueryBody,
           transaction: trx,
         }));
+        return { result, revision: Number(binding.revision) };
       });
     } catch (error: unknown) {
       throw mapError(error);
     }
+  }
+
+  async function query(context: AuthorizedCollaborationContext, raw: {
+    appId: string;
+    action: unknown;
+  }): Promise<unknown> {
+    return (await queryWithRevision(context, raw)).result;
   }
 
   async function mutate(context: AuthorizedCollaborationContext, raw: unknown): Promise<{
@@ -342,5 +352,5 @@ export function createProjectAppAdapter(options: {
     }
   }
 
-  return { query, mutate };
+  return { query, queryWithRevision, mutate };
 }

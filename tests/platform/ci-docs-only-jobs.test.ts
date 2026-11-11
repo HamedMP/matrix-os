@@ -111,6 +111,33 @@ describe('CI job admission for documentation changes', () => {
     expect(evaluateJobExpression(workflow.jobs['ci-results'].name, {}, github)).toBe('CI Draft (ignored)');
   });
 
+  it.each(['opened', 'synchronize', 'reopened', 'edited'])('allocates no runner for a draft %s event', action => {
+    // Drafts never run CI, so even change detection must not wait for a hosted runner.
+    const github: GitHubFixture = { event_name: 'pull_request', ref: 'refs/pull/1/merge',
+      event: { action, pull_request: { draft: true } } };
+    const skipped = { result: 'skipped', outputs: {} };
+    expect(Boolean(evaluateJobExpression(workflow.jobs.changes.if, { redirect: skipped }, github))).toBe(false);
+    const needs = { redirect: skipped, changes: skipped, 'ci-backend': skipped };
+    for (const [id, job] of Object.entries<{ if?: string; needs?: string | string[] }>(workflow.jobs)) {
+      if (id === 'changes') continue;
+      if (job.if === undefined) {
+        // Without an explicit condition GitHub skips a job whose dependency was skipped.
+        expect([job.needs].flat(), id).toContain('changes');
+        continue;
+      }
+      expect(Boolean(evaluateJobExpression(job.if, needs, github)), id).toBe(false);
+    }
+  });
+
+  it.each([
+    ['main push', mainPush],
+    ['ready PR', { event_name: 'pull_request', ref: 'refs/pull/1/merge', event: { action: 'synchronize', pull_request: { draft: false } } }],
+    ['title edit', { event_name: 'pull_request', ref: 'refs/pull/1/merge', event: { action: 'edited', changes: { title: { from: 'old' } }, pull_request: { draft: false } } }],
+  ] satisfies Array<[string, GitHubFixture]>)('still detects changes for a %s', (_, github) => {
+    const needs = { redirect: { result: 'skipped', outputs: {} } };
+    expect(Boolean(evaluateJobExpression(workflow.jobs.changes.if, needs, github))).toBe(true);
+  });
+
   it('accepts intentional source-job skips while keeping the aggregate check', () => {
     expect(() => aggregateStatus('success')).not.toThrow();
   });

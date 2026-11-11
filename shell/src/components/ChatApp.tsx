@@ -148,6 +148,7 @@ interface ChatAppProps {
   onOpenSharedChat?: (scopeId: string) => void;
   onOpenSharedProject?: (scopeId: string) => void;
   onOpenSharedHome?: () => void;
+  onOpenSharedApp?: (target: import("@matrix-os/contracts").CollaborativeAppDirectoryItem) => void;
   filterUnreadOnly?: boolean;
   onUnreadFilterChange?: (value: boolean) => void;
   active?: boolean;
@@ -216,7 +217,7 @@ export function ChatApp(props: ChatAppProps) {
 }
 
 function ChatAppContent({
-  collaborationView, onOpenSharedChat, onOpenSharedProject, onOpenSharedHome,
+  collaborationView, onOpenSharedChat, onOpenSharedProject, onOpenSharedHome, onOpenSharedApp,
   filterUnreadOnly, onUnreadFilterChange,
   active = true, visible = true, readState, displayedThroughSeq = 0, onUpdateReadState,
   messages,
@@ -706,6 +707,7 @@ function ChatAppContent({
 
         {collaborationView ? (
           <ShellChatCollaboration view={collaborationView} onOpenChat={onOpenSharedChat} onOpenProject={onOpenSharedProject}
+            onOpenApp={onOpenSharedApp}
             onSessionMetadata={handleSharedMetadata} headerContainer={collaborationHeaderContainer} />
         ) : <>
         <BotChatPanel key={JSON.stringify([authorityKey, sessionId])} chatId={sessionId} client={agentClient} directBotId={directBotId} visible={visible} detailsContainer={botDetailsContainer}

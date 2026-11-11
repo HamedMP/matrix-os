@@ -11,6 +11,7 @@ import {
   SHELL_Z_INDEX,
 } from "../../shell/src/lib/shell-layering.js";
 import { useDesktopMode } from "../../shell/src/stores/desktop-mode.js";
+import type { CollaborativeAppDirectoryItem } from "@matrix-os/contracts";
 import { createOsViewLayoutMemory, transitionOsViewLayout } from "../../shell/src/lib/os-view-layout-memory.js";
 
 const fetchSpy = vi.fn().mockResolvedValue({ ok: true });
@@ -46,6 +47,35 @@ describe("Window Manager Store", () => {
   });
 
   describe("openWindow", () => {
+    it("deduplicates a shared app by scope while retaining the newest exact launch target", () => {
+      const target: CollaborativeAppDirectoryItem = {
+        scopeId: "10000000-0000-4000-8000-000000000001",
+        runtimeId: "vps:20000000-0000-4000-8000-000000000001",
+        organizationId: "org_matrix_team",
+        authorityGeneration: 1,
+        appId: "tracker",
+        catalogId: "30000000-0000-4000-8000-000000000001",
+        readinessId: "40000000-0000-4000-8000-000000000001",
+        registrationIncarnation: "a".repeat(64),
+        buildId: "b".repeat(64),
+        shareRevision: "1",
+        owner: { actorId: "user_owner", displayName: "Nima" },
+      };
+      const path = `__shared-app__:${target.scopeId}`;
+
+      useWindowManager.getState().openWindow("Tracker shared by Nima", path, 80, { sharedAppTarget: target });
+      useWindowManager.getState().minimizeWindow(useWindowManager.getState().windows[0].id);
+      useWindowManager.getState().openWindow("Tracker shared by Nima", path, 80, {
+        sharedAppTarget: { ...target, authorityGeneration: 2, shareRevision: "2" },
+      });
+
+      expect(useWindowManager.getState().windows).toHaveLength(1);
+      expect(useWindowManager.getState().windows[0]).toMatchObject({
+        minimized: false,
+        sharedAppTarget: { scopeId: target.scopeId, authorityGeneration: 2, shareRevision: "2" },
+      });
+    });
+
     it("creates a new window with default dimensions", () => {
       useWindowManager.getState().openWindow("Notes", "apps/notes.html", 80);
       const { windows } = useWindowManager.getState();

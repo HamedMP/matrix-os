@@ -43,6 +43,7 @@ describe("Desktop mode controls", () => {
     ));
     expect(labels).toEqual([
       "Search",
+      "Terminal window",
       "Inbox",
       "Help",
       "Support",

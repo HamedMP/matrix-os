@@ -83,7 +83,7 @@ describe("Connect Apps in Settings", () => {
     ["the Apps tab", AppsConnectAppsScreen, MOBILE_INTEGRATIONS_REDIRECT_URI],
   ])("brings a sign-in begun in %s back to where it began", async (_place, Screen, landing) => {
     noteConnectAppsSignIn(Screen === AppsConnectAppsScreen ? "settings" : "apps");
-    const openURL = jest.spyOn(Linking, "openURL").mockResolvedValue(true);
+    const openURL = jest.spyOn(Linking, "openURL").mockResolvedValue(undefined);
     mockUseComputerIntegrations.mockReturnValue({
       ...mockUseComputerIntegrations(),
       startConnection: jest.fn().mockResolvedValue("https://pipedream.example/connect"),

@@ -27,6 +27,11 @@ mac:
   extendInfo:
     NSMicrophoneUsageDescription: Matrix OS uses the microphone only when you start voice input in Chat.
   notarize: true
+  # The pinned herdr-core binary behind local terminals in the Terminal window.
+  # scripts/release/fetch-herdr-core.mjs places it before packaging.
+  extraResources:
+    - from: build/herdr
+      to: herdr
 dmg:
   title: Matrix OS
   background: build/dmg-background.png
@@ -60,6 +65,9 @@ nsis:
   uninstallDisplayName: Matrix OS
 linux:
   category: Utility
+  extraResources:
+    - from: build/herdr
+      to: herdr
   target:
     - target: AppImage
       arch: [x64]

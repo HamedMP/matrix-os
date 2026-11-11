@@ -24,7 +24,10 @@
     "./preview-pair": "./src/preview-pair.ts",
     "./preview-pair-artifact": "./src/preview-pair-artifact.ts",
     "./preview-pair-control": "./src/preview-pair-control.ts",
-    "./preview-pair-launch": "./src/preview-pair-launch.ts"
+    "./preview-pair-launch": "./src/preview-pair-launch.ts",
+    "./http-request-deadlines": "./src/http-request-deadlines.ts",
+    "./ai-usage": "./src/ai-usage/index.ts",
+    "./ai-usage/node": "./src/ai-usage/node.ts"
   },
   "imports": {
     "#inference-response-limits": "./src/inference-response-limits.ts",
@@ -75,6 +78,7 @@
     "#canonical-chat-surface": "./src/canonical-chat-surface.ts",
     "#collaboration": "./src/collaboration.ts",
     "#collaboration-capabilities": "./src/collaboration-capabilities.ts",
+    "#collaborative-app-sharing": "./src/collaborative-app-sharing.ts",
     "#collaboration-direct": "./src/collaboration-direct.ts",
     "#collaboration-execution": "./src/collaboration-execution.ts",
     "#collaboration-peer": "./src/collaboration-peer.ts",
