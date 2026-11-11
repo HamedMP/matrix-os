@@ -2,8 +2,9 @@
 // to check where a notification tap lands, whatever was open when it came.
 // The navigation calls are made from the root layout, as the app's are.
 import { act } from "@testing-library/react-native";
-import { useEffect } from "react";
-import { router, Slot, Stack, useNavigationContainerRef } from "expo-router";
+import { useEffect, type ComponentProps } from "react";
+import { router, Stack, useNavigationContainerRef, withLayoutContext } from "expo-router";
+import { DrawerActions, DrawerRouter, useNavigationBuilder } from "expo-router/react-navigation";
 import { Tabs } from "expo-router/tabs";
 import { renderRouter, type RenderRouterResult } from "expo-router/testing-library";
 
@@ -29,6 +30,16 @@ const OTHER_TERMINAL = "tws_00000000000000000000000000000002:tt_0000000000000000
 
 const root: { navigation?: RootNavigation } = {};
 
+/**
+ * The side panel's navigator without its drawing, which needs Reanimated:
+ * it keeps whether the panel is open, as the app's does.
+ */
+function SidePanelNavigator(props: Omit<ComponentProps<typeof Stack>, "children"> & { children?: React.ReactNode }) {
+  const { state, descriptors, NavigationContent } = useNavigationBuilder(DrawerRouter, props as never);
+  return <NavigationContent>{descriptors[state.routes[state.index].key].render()}</NavigationContent>;
+}
+const SidePanel = withLayoutContext(SidePanelNavigator);
+
 /** Sits beside the root stack, where the app's notification router is. */
 function RootProbe() {
   const navigation = useNavigationContainerRef();
@@ -46,7 +57,7 @@ const ROUTES = {
     </>
   ),
   index: Empty,
-  "(drawer)/_layout": () => <Slot />,
+  "(drawer)/_layout": () => <SidePanel />,
   "(drawer)/(tabs)/_layout": () => (
     <Tabs>
       {TAB_ROUTES.map((route) => <Tabs.Screen key={route} name={route} />)}
@@ -72,7 +83,12 @@ const ROUTES = {
   "settings-detail/account": Empty,
 };
 
-type State = { key?: string; index?: number; routes: { name: string; params?: object; state?: State }[] };
+type State = {
+  key?: string;
+  index?: number;
+  routes: { name: string; params?: object; state?: State }[];
+  history?: { type: string; status?: string }[];
+};
 
 let app: RenderRouterResult;
 
@@ -94,15 +110,30 @@ async function openApp(steps: string[]) {
   }
 }
 
-/** The routes of the stack, tab or slot named `name`, bottom first. */
-function screensIn(name: string): string[] {
+/** The state of the navigator named `name`, found along the focused routes. */
+function navigatorState(name: string): State | undefined {
   let state = app.getRouterState() as State | undefined;
   while (state) {
     const route = state.routes.find((candidate) => candidate.name === name);
-    if (route) return route.state?.routes.map((child) => child.name) ?? [];
+    if (route) return route.state;
     state = state.routes[state.index ?? state.routes.length - 1]?.state;
   }
-  return [];
+  return undefined;
+}
+
+/** The routes of the stack, tab or slot named `name`, bottom first. */
+function screensIn(name: string): string[] {
+  return navigatorState(name)?.routes.map((child) => child.name) ?? [];
+}
+
+function isSidePanelOpen(): boolean {
+  return navigatorState("(drawer)")?.history?.some((entry) => entry.type === "drawer" && entry.status === "open") ?? false;
+}
+
+async function openSidePanel() {
+  const key = navigatorState("(drawer)")?.key;
+  await run(() => root.navigation!.dispatch({ ...DrawerActions.openDrawer(), target: key }));
+  expect(isSidePanelOpen()).toBe(true);
 }
 
 /** The app's own root stack, bottom first. */
@@ -132,6 +163,17 @@ describe("showChatScreenFromRoot", () => {
     expect(screensIn("(chats)")).toEqual(["index"]);
   });
 
+  it.each(STARTS)("closes the side panel left open over the chat from %s", async (_start, steps) => {
+    await openApp(steps);
+    await openSidePanel();
+
+    await run(() => showChatScreenFromRoot(root.navigation!, router));
+
+    // The chat changes under an open panel otherwise, as choosing it in the panel does not.
+    expect(app.getSegments()).toEqual(CHAT_SCREEN);
+    expect(isSidePanelOpen()).toBe(false);
+  });
+
   it("never asks a navigator for a route it does not have", async () => {
     const error = jest.spyOn(console, "error");
     await openApp(["/shared", `push:/terminal-session/${TERMINAL}`]);
@@ -148,10 +190,9 @@ describe("showChatListFromRoot", () => {
   function watchSidePanel(navigation: RootNavigation) {
     const dispatch = navigation.dispatch.bind(navigation);
     const openedAt: string[][] = [];
-    // The stand-in side panel is a slot, which has no panel to open.
     const spy = jest.spyOn(navigation, "dispatch").mockImplementation((action) => {
       if ((action as { type: string }).type === "OPEN_DRAWER") openedAt.push([...app.getSegments()]);
-      else dispatch(action);
+      dispatch(action);
     });
     return { openedAt, restore: () => spy.mockRestore() };
   }
@@ -164,6 +205,7 @@ describe("showChatListFromRoot", () => {
 
     expect(app.getSegments()).toEqual(CHAT_SCREEN);
     expect(rootStack()).toEqual(["(drawer)"]);
+    expect(isSidePanelOpen()).toBe(true);
     // Asked from the chat screen, the request reaches the side panel above it;
     // asked from a screen still closing, it reaches no navigator.
     expect(sidePanel.openedAt).toEqual([CHAT_SCREEN]);

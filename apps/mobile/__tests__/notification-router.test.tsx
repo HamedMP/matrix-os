@@ -80,6 +80,7 @@ const NOTIFICATION_ID = "0b4f2f3c-6a1e-4d55-9a57-2f1d1c3b5e7a";
 
 const notifications = Notifications as jest.Mocked<typeof Notifications>;
 const setGateway = jest.fn();
+let connected = true;
 
 function tap(data: unknown, identifier = "n1", actionIdentifier = Notifications.DEFAULT_ACTION_IDENTIFIER) {
   return {
@@ -99,12 +100,24 @@ function tapWhileRunning(response: Notifications.NotificationResponse) {
   act(() => listener(response));
 }
 
+const router = () => <NotificationRouter connected={connected} setGateway={setGateway} />;
+
 function renderRouter() {
-  return render(<NotificationRouter setGateway={setGateway} />);
+  return render(router());
+}
+
+/** A promise the test settles itself, for a lookup still in flight. */
+function deferred<T>() {
+  let settle!: (value: T) => void;
+  const promise = new Promise<T>((resolve) => {
+    settle = resolve;
+  });
+  return { promise, settle };
 }
 
 beforeEach(() => {
   jest.clearAllMocks();
+  connected = true;
   mockSegments = CHAT_SCREEN;
   mockSearchParams = {};
   mockActiveChatId = null;
@@ -198,9 +211,63 @@ describe("tapping a notification while the app runs", () => {
     expect(mockShowChatScreen).not.toHaveBeenCalled();
 
     mockSegments = CHAT_SCREEN;
-    view.rerender(<NotificationRouter setGateway={setGateway} />);
+    view.rerender(router());
 
     await waitFor(() => expect(mockShowChatScreen).toHaveBeenCalledTimes(1));
+  });
+
+  it("waits for sign-in when the shell is on screen without a connection", async () => {
+    // A link can open the shell while signed out of a hosted computer; the tap
+    // is kept for after sign-in instead of spent on the chat list.
+    connected = false;
+    mockGateway.computer = null;
+    const view = renderRouter();
+
+    tapWhileRunning(chatTap());
+    await act(async () => {});
+    expect(mockShowChatList).not.toHaveBeenCalled();
+    expect(notifications.clearLastNotificationResponse).not.toHaveBeenCalled();
+
+    connected = true;
+    mockGateway.computer = ALICE;
+    view.rerender(router());
+
+    await waitFor(() => expect(mockShowChatScreen).toHaveBeenCalledTimes(1));
+    expect(mockSelectChat).toHaveBeenCalledWith(CHAT_ID);
+    expect(mockShowChatList).not.toHaveBeenCalled();
+  });
+
+  it("lets a later tap win over an earlier one still being looked up", async () => {
+    const LATER_CHAT = "chat_mobile_later";
+    const earlier = deferred<boolean>();
+    mockChatExists.mockImplementation((_token, _url, chatId) => (chatId === CHAT_ID ? earlier.promise : Promise.resolve(true)));
+    renderRouter();
+
+    tapWhileRunning(chatTap());
+    tapWhileRunning(tap({ category: "message", chatId: LATER_CHAT }, "n2"));
+    await waitFor(() => expect(mockShowChatScreen).toHaveBeenCalledTimes(1));
+    expect(mockSelectChat).toHaveBeenCalledWith(LATER_CHAT);
+
+    await act(async () => earlier.settle(true));
+    expect(mockSelectChat).toHaveBeenCalledTimes(1);
+    expect(mockShowChatScreen).toHaveBeenCalledTimes(1);
+    expect(mockShowChatList).not.toHaveBeenCalled();
+  });
+
+  it("does not switch computers for an earlier tap once a later one has opened", async () => {
+    const inventory = deferred<{ items: (typeof ALICE)[]; selectedSlot: null }>();
+    mockFetchComputers.mockReturnValue(inventory.promise);
+    renderRouter();
+
+    tapWhileRunning(chatTap("bob"));
+    tapWhileRunning(tap({ category: "message", chatId: CHAT_ID }, "n2"));
+    await waitFor(() => expect(mockShowChatScreen).toHaveBeenCalledTimes(1));
+
+    await act(async () => inventory.settle({ items: [ALICE, BOB], selectedSlot: null }));
+    expect(mockSaveSelectedHostedComputer).not.toHaveBeenCalled();
+    expect(setGateway).not.toHaveBeenCalled();
+    expect(mockShowChatScreen).toHaveBeenCalledTimes(1);
+    expect(mockShowChatList).not.toHaveBeenCalled();
   });
 });
 
@@ -213,7 +280,7 @@ describe("a notification that launched the app", () => {
     expect(mockShowChatScreen).not.toHaveBeenCalled();
 
     mockSegments = CHAT_SCREEN;
-    view.rerender(<NotificationRouter setGateway={setGateway} />);
+    view.rerender(router());
 
     await waitFor(() => expect(mockShowChatScreen).toHaveBeenCalledTimes(1));
     expect(mockSelectChat).toHaveBeenCalledWith(CHAT_ID);
@@ -228,7 +295,7 @@ describe("a notification that launched the app", () => {
     expect(mockShowChatScreen).not.toHaveBeenCalled();
 
     mockGateway.isComputerPending = false;
-    view.rerender(<NotificationRouter setGateway={setGateway} />);
+    view.rerender(router());
 
     await waitFor(() => expect(mockShowChatScreen).toHaveBeenCalledTimes(1));
   });

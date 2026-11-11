@@ -60,12 +60,18 @@ async function isChatOnComputer(session: GatewaySession, chatId: string): Promis
   }
 }
 
+interface NotificationRouterProps {
+  /** Whether the app can reach a computer: not while signed out of a hosted one. */
+  connected: boolean;
+  setGateway: (gateway: GatewayConnection) => void;
+}
+
 /**
  * Opens what a tapped notification is about, whether the tap launched the app
  * or reached it while running, and keeps notifications about the chat or
  * thread on screen from showing while the app is open.
  */
-export function NotificationRouter({ setGateway }: { setGateway: (gateway: GatewayConnection) => void }) {
+export function NotificationRouter({ connected, setGateway }: NotificationRouterProps) {
   const navigation = useNavigationContainerRef();
   const router = useRouter();
   const segments = useSegments();
@@ -101,8 +107,11 @@ export function NotificationRouter({ setGateway }: { setGateway: (gateway: Gatew
     return () => Notifications.setNotificationHandler(defaultNotificationHandler);
   }, []);
 
-  /** The computer a notification came from, switched to first when another one is on screen. */
-  const gatewayFor = useCallback(async (wanted: string | null): Promise<GatewaySession | null> => {
+  /**
+   * The computer a notification came from, switched to first when another one
+   * is on screen. A tap that is no longer the latest switches nothing.
+   */
+  const gatewayFor = useCallback(async (wanted: string | null, isLatest: () => boolean): Promise<GatewaySession | null> => {
     const session = computer ? await gatewaySession() : null;
     if (!computer || !session) return null;
     if (wanted === null || wanted === computer.handle) return session;
@@ -112,22 +121,32 @@ export function NotificationRouter({ setGateway }: { setGateway: (gateway: Gatew
     if (matches.length !== 1 || (inventory.selectedSlot ?? matches[0].runtimeSlot) !== matches[0].runtimeSlot) {
       return null;
     }
+    if (!isLatest()) return null;
     setGateway(await saveSelectedHostedComputer(matches[0]));
     await queryClient.invalidateQueries({ queryKey: mobileQueryKeys.activeComputer(userId) });
     return { token: session.token, gatewayUrl: `${HOSTED_GATEWAY_URL}${matches[0].gatewayPath}` };
   }, [computer, gatewaySession, userId, queryClient, setGateway]);
 
-  const open = useCallback(async ({ handle: wanted, target }: NotificationDestination) => {
+  /**
+   * Opens a tap's destination. Each lookup can be slow, so after every one a
+   * tap that a later tap has replaced stops without changing anything.
+   */
+  const open = useCallback(async ({ handle: wanted, target }: NotificationDestination, isLatest: () => boolean) => {
+    const showChatList = () => {
+      if (isLatest()) showChatListFromRoot(navigation, router);
+    };
     try {
-      const session = await gatewayFor(wanted);
+      const session = await gatewayFor(wanted, isLatest);
       if (!session || !target) {
-        showChatListFromRoot(navigation, router);
+        showChatList();
         return;
       }
       if (target.type === "chat") {
         // A push that does not name its computer may be about another one.
-        if (!(await isChatOnComputer(session, target.chatId))) {
-          showChatListFromRoot(navigation, router);
+        const onComputer = await isChatOnComputer(session, target.chatId);
+        if (!isLatest()) return;
+        if (!onComputer) {
+          showChatList();
           return;
         }
         // Choosing the open chat again would drop the model picked for it.
@@ -141,11 +160,12 @@ export function NotificationRouter({ setGateway }: { setGateway: (gateway: Gatew
       // A chat's own terminal is not listed: it attaches only with that chat's context.
       const listed = terminal !== null
         && (await fetchTerminalSessions(session.token, session.gatewayUrl)).some((tab) => tab.id === terminal);
+      if (!isLatest()) return;
       if (terminal !== null && listed) openTerminalFromRoot(navigation, router, terminal);
-      else showChatListFromRoot(navigation, router);
+      else showChatList();
     } catch (err: unknown) {
       warn("Notification could not be opened", err);
-      showChatListFromRoot(navigation, router);
+      showChatList();
     }
   }, [gatewayFor, navigation, router, activeChatId, selectChat]);
 
@@ -153,6 +173,8 @@ export function NotificationRouter({ setGateway }: { setGateway: (gateway: Gatew
   // from the listener and as the launch's last response.
   const pendingRef = useRef<Notifications.NotificationResponse | null>(null);
   const lastTapRef = useRef<string | null>(null);
+  // Counts the taps being opened; only the latest may still change the screen.
+  const openingRef = useRef(0);
   const [taps, countTap] = useReducer((count: number) => count + 1, 0);
 
   const receive = useCallback((response: Notifications.NotificationResponse) => {
@@ -175,7 +197,10 @@ export function NotificationRouter({ setGateway }: { setGateway: (gateway: Gatew
     return () => subscription.remove();
   }, [receive]);
 
-  const ready = segments.length > 0 && !BEFORE_SHELL.has(segments[0]) && !isComputerPending;
+  // The sign-in gate and the journey gate answer at `/`, which has no segment.
+  // A link can show the shell while signed out, so the tap also waits for a
+  // connection rather than being spent on the chat list.
+  const ready = connected && segments.length > 0 && !BEFORE_SHELL.has(segments[0]) && !isComputerPending;
 
   useEffect(() => {
     const response = pendingRef.current;
@@ -187,7 +212,11 @@ export function NotificationRouter({ setGateway }: { setGateway: (gateway: Gatew
     } catch (err: unknown) {
       warn("Launch notification not cleared", err);
     }
-    void open(parseNotificationDestination(response.notification.request.content.data));
+    const opening = ++openingRef.current;
+    void open(
+      parseNotificationDestination(response.notification.request.content.data),
+      () => opening === openingRef.current,
+    );
   }, [ready, taps, open]);
 
   return null;

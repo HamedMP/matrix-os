@@ -399,7 +399,7 @@ function GatewayShell() {
             />
           </Stack>
           <ToastHost />
-          <NotificationRouter setGateway={setGateway} />
+          <NotificationRouter connected={gateway !== null} setGateway={setGateway} />
           <OtaUpdatePrompt />
           <AnalyticsScreenTracker />
         </CanonicalChatSessionProvider>
