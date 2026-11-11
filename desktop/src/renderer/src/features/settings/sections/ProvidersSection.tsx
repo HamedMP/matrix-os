@@ -244,7 +244,7 @@ export default function ProvidersSection() {
           ) : null}
 
           {setupError ? (
-            <span className="mb-4 block text-xs" style={{ color: "var(--danger)" }}>
+            <span className="mb-4 block text-xs" style={{ color: "var(--danger-text)" }}>
               {setupError}
             </span>
           ) : null}
@@ -252,7 +252,7 @@ export default function ProvidersSection() {
           {error ? (
             <Card>
               <div className="flex items-center justify-between gap-3">
-                <span className="text-sm" style={{ color: "var(--danger)" }}>
+                <span className="text-sm" style={{ color: "var(--danger-text)" }}>
                   {error}
                 </span>
                 <Button variant="subtle" onClick={retry}>

@@ -147,7 +147,7 @@ export function ChatPromptInput({
 export function ChatPromptStopButton({ onAbort }: { onAbort():void }) {
   return <button type="button" aria-label="Stop" onClick={onAbort}
     className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full"
-    style={{ background: "var(--composer-stop-bg, var(--danger-muted))", color: "var(--danger)" }}>
+    style={{ background: "var(--composer-stop-bg, var(--danger-muted))", color: "var(--danger-text, var(--destructive-text, var(--danger)))" }}>
     <HugeiconsIcon icon={CircleStop} size={16} strokeWidth={1.5} aria-hidden />
   </button>;
 }

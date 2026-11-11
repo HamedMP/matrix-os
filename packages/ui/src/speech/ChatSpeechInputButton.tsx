@@ -49,7 +49,7 @@ export function ChatSpeechInputButton({ speech, disabled }: { speech: SpeechDraf
         <span
           role="alert"
           className="absolute bottom-[calc(100%+0.5rem)] right-0 w-max max-w-64 rounded-lg border px-2.5 py-1.5 text-xs shadow-lg"
-          style={{ borderColor: "var(--border-default)", background: "var(--bg-overlay)", color: "var(--danger)" }}
+          style={{ borderColor: "var(--border-default)", background: "var(--bg-overlay)", color: "var(--danger-text, var(--destructive-text, var(--danger)))" }}
         >
           {speech.error}
         </span>
@@ -59,7 +59,8 @@ export function ChatSpeechInputButton({ speech, disabled }: { speech: SpeechDraf
           <SpeechInputWaveform
             level={speech.inputLevel}
             sampleSequence={speech.inputLevelSequence}
-            className="mx-1 text-[var(--danger)]"
+            className="mx-1"
+            color="var(--danger-text, var(--destructive-text, var(--danger)))"
           />
           <span aria-live="polite" className="px-1 text-xs tabular-nums" style={{ color: "var(--text-tertiary)" }}>
             {Math.floor(speech.elapsedMs / 60_000)}:{String(Math.floor(speech.elapsedMs / 1_000) % 60).padStart(2, "0")}
@@ -73,7 +74,7 @@ export function ChatSpeechInputButton({ speech, disabled }: { speech: SpeechDraf
         disabled={(disabled || control.disabled) && !active}
         onClick={activate}
         className="flex h-9 w-9 items-center justify-center rounded-full outline-none hover:bg-[var(--bg-hover)] focus-visible:ring-2 focus-visible:ring-[var(--composer-focus,var(--accent))] disabled:opacity-40"
-        style={{ color: speech.phase === "recording" ? "var(--danger)" : "var(--text-secondary)" }}
+        style={{ color: speech.phase === "recording" ? "var(--danger-text, var(--destructive-text, var(--danger)))" : "var(--text-secondary)" }}
       >
         <HugeiconsIcon icon={icon} size={16} strokeWidth={1.5} aria-hidden className={spin ? "animate-spin motion-reduce:animate-none" : undefined} />
       </button>

@@ -23,18 +23,18 @@ export function diffLineKind(line: string): DiffLineKind {
 }
 
 const DIFF_LINE_STYLE: Record<DiffLineKind, { color: string; background?: string }> = {
-  add: { color: "var(--success)", background: "var(--success-muted)" },
-  del: { color: "var(--danger)", background: "var(--danger-muted)" },
+  add: { color: "var(--success-text)", background: "var(--success-muted)" },
+  del: { color: "var(--danger-text)", background: "var(--danger-muted)" },
   hunk: { color: "var(--text-tertiary)", background: "var(--bg-raised)" },
   meta: { color: "var(--text-tertiary)" },
   context: { color: "var(--text-secondary)" },
 };
 
 function statusColor(status: string): string {
-  if (status === "A") return "var(--success)";
-  if (status === "D") return "var(--danger)";
-  if (status === "R" || status === "C") return "var(--info)";
-  return "var(--warning)";
+  if (status === "A") return "var(--success-text)";
+  if (status === "D") return "var(--danger-text)";
+  if (status === "R" || status === "C") return "var(--info-text)";
+  return "var(--warning-text)";
 }
 
 export function DiffLines({ patch }: { patch: string }) {
@@ -95,8 +95,8 @@ function FileRow({ file }: { file: CommitDiffFile }) {
             "—"
           ) : (
             <>
-              <span style={{ color: "var(--success)" }}>+{file.additions ?? 0}</span>{" "}
-              <span style={{ color: "var(--danger)" }}>−{file.deletions ?? 0}</span>
+              <span style={{ color: "var(--success-text)" }}>+{file.additions ?? 0}</span>{" "}
+              <span style={{ color: "var(--danger-text)" }}>−{file.deletions ?? 0}</span>
             </>
           )}
         </span>
@@ -160,14 +160,14 @@ export default function GitCommitDetail({ commit, diff, diffStatus, diffError, o
           </div>
         ) : null}
         {diffStatus === "error" ? (
-          <div role="status" className="px-3 py-2 text-[11px]" style={{ color: "var(--danger)" }}>
+          <div role="status" className="px-3 py-2 text-[11px]" style={{ color: "var(--danger-text)" }}>
             {categoryMessage(diffError ?? "server")}
           </div>
         ) : null}
         {diffStatus === "ready" && diff ? (
           <>
             {diff.truncated ? (
-              <div role="status" className="px-3 py-1.5 text-[10px]" style={{ color: "var(--warning)" }}>
+              <div role="status" className="px-3 py-1.5 text-[10px]" style={{ color: "var(--warning-text)" }}>
                 Large commit — some files or lines were omitted.
               </div>
             ) : null}

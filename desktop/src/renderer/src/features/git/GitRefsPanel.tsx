@@ -52,7 +52,7 @@ export default function GitRefsPanel({ projectSlug }: { projectSlug: string }) {
         <div
           role="status"
           className="mt-2 rounded-lg border px-2.5 py-2 text-xs"
-          style={{ borderColor: "var(--danger)", color: "var(--danger)", background: "var(--bg-raised)" }}
+          style={{ borderColor: "var(--danger)", color: "var(--danger-text)", background: "var(--bg-raised)" }}
         >
           {categoryMessage(error)}
         </div>
