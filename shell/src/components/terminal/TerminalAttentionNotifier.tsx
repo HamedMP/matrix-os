@@ -6,7 +6,7 @@ import {
   type TerminalAttention,
   type TerminalTabFacts,
 } from "@matrix-os/ui/terminal-agents";
-import { OPEN_PROVIDER_TERMINAL_EVENT } from "@/lib/canonical-provider-setup";
+import { openTerminalSession } from "@/lib/terminal-session-open";
 import { useTerminalAgentEvents } from "@/stores/terminal-agent-events";
 import { ShellNotificationCard } from "../ShellNotificationCard";
 import { ShellNotificationPortal } from "../ShellNotificationPortal";
@@ -70,7 +70,9 @@ export function TerminalAttentionNotifier() {
 
   const dismiss = (key: string) => setAlerts((current) => current.filter((alert) => alert.key !== key));
   const open = (alert: TerminalAttention) => {
-    window.dispatchEvent(new CustomEvent(OPEN_PROVIDER_TERMINAL_EVENT, { detail: { sessionId: alert.key } }));
+    // The durable Terminal window shows it without taking it over: closing that
+    // window must not end the agent.
+    openTerminalSession(alert.key);
     dismiss(alert.key);
   };
 
