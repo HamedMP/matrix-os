@@ -244,7 +244,7 @@ It is capped at 40 tools per session.
 | `GET /.well-known/oauth-protected-resource[/mcp]` | platform | none | yes | Existing (`mcp-routes.ts`); advertises the Matrix authorization server |
 | `POST\|GET\|DELETE /mcp` | platform | Matrix OAuth bearer for the `/mcp` resource (Clerk-backed, `mcp-auth.ts`) | no | Existing endpoint; gains the Core tools. Origin allowlist, per-owner admission, `bodyLimit` |
 | Matrix OAuth authorize/token/register | platform | existing contract (spec 120) | authorize/register yes | Unchanged; this spec adds no OAuth endpoints |
-| `GET /api/mcp-catalog` | platform | Clerk session | no | Read-only catalog projection; Zod-validated `category`/`department` filters |
+| `GET /api/mcp-servers/catalog` | platform (and gateway → platform proxy) | owner session, as the other Custom MCP routes | no | Read-only projection of connectable presets; Zod-validated `category`/`department` filters. Lives under `/api/mcp-servers` so explicit-VM shells reach it through the existing VPS proxy |
 | `GET\|POST\|PATCH\|DELETE /api/mcp-servers[...]` | gateway → platform broker | owner session, or a run-scoped capability bearer | no | Existing Custom MCP routes; gain `catalogId`; registered-client entries use the Matrix-owned app |
 | `GET /api/mcp-servers/oauth/callback` | platform | single-use hashed `state` bound to owner + server + revision | yes (state-gated) | Existing callback; Matrix-owned vendor apps reuse it |
 | `POST /api/mcp-approvals/:approvalId` | gateway | owner session only, never a run or external bearer | no | Confirms an external-client write; the approval digest binds tool + args; single-use, 10-minute TTL |

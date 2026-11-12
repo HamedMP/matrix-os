@@ -11,9 +11,10 @@ describe("Canvas Custom MCP management", () => {
   });
 
   it("shows unavailable and retries without discarding the form", async () => {
-    vi.spyOn(globalThis, "fetch")
-      .mockResolvedValueOnce(Response.json({ error: "custom_mcp_unavailable" }, { status: 503 }))
-      .mockResolvedValueOnce(Response.json([]));
+    const listResponses = [Response.json({ error: "custom_mcp_unavailable" }, { status: 503 }), Response.json([])];
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => String(input).endsWith("/api/mcp-servers/catalog")
+      ? Response.json({ presets: [] })
+      : listResponses.shift()!);
     render(<CustomMcpServersPanel />);
     fireEvent.change(screen.getByLabelText("MCP server name"), { target: { value: "Research" } });
     fireEvent.change(screen.getByLabelText("MCP server URL"), { target: { value: "https://example.com/mcp" } });
