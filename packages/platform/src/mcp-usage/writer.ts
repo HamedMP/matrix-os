@@ -108,7 +108,10 @@ export function startMcpUsageMaintenance(options: { repository: McpUsageReposito
     if (stopped || running) return running;
     running = (async () => {
       try {
-        await options.repository.rollupDaily();
+        // Catch up fully (bounded) before retention may delete any raw row.
+        for (let step = 0; step < 10; step++) {
+          if ((await options.repository.rollupDaily()).caughtUp) break;
+        }
         await options.repository.sweepRetention();
       } catch (error: unknown) {
         console.error("[mcp-usage] maintenance failed", error instanceof Error ? error.message : "UnknownError");
