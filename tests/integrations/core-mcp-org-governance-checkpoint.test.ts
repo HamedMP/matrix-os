@@ -68,7 +68,7 @@ describe("Matrix Core MCP org governance checkpoint", () => {
 
   const call = (tool: string) => app.request("/api/mcp-servers/core/call", {
     method: "POST", headers: { "content-type": "application/json", "x-matrix-mcp-entry-point": "stdio" },
-    body: JSON.stringify({ service: "linear", tool, arguments: { team: "SECRET-TEAM" }, approvalGranted: false }),
+    body: JSON.stringify({ service: `linear-${connectionId.slice(0, 8)}`, tool, arguments: { team: "SECRET-TEAM" }, approvalGranted: false }),
   });
   const admin = (method: string, path: string, body?: unknown, actor = ADMIN) => app.request(path, {
     method, headers: { "x-test-actor": actor, ...(body === undefined ? {} : { "content-type": "application/json" }) },
