@@ -40,14 +40,33 @@ export function decideOrgMcpPolicy(rows: readonly OrgMcpPolicyRow[], toolName: s
   return { orgId: rows.length === 1 ? rows[0]!.organizationId : null, allowed: true };
 }
 
-export function createOrgMcpPolicy(repository: Pick<OrgMcpRepository, "policyRowsForActor">) {
+/**
+ * `membershipAvailable` is false when the platform runs without the Clerk
+ * membership projection (collaboration not configured). Saved org policy still
+ * applies: any server an organization governs, or a member block on this actor,
+ * is refused rather than allowed, because org context cannot be resolved.
+ */
+export function createOrgMcpPolicy(
+  repository: Pick<OrgMcpRepository, "policyRowsForActor" | "governingOrgWithoutMembership">,
+  options: { membershipAvailable?: boolean } = {},
+) {
+  const membershipAvailable = options.membershipAvailable ?? true;
   return {
     /** Throws on store failure; the Core tool service fails the call closed. */
     async evaluate(input: { actorId: string; serverUrl: string; toolName: string }): Promise<OrgMcpDecision> {
+      const { serverDefIds } = orgMcpServerDefIdsForUrl(input.serverUrl);
+      if (!membershipAvailable) {
+        const governing = await repository.governingOrgWithoutMembership(input.actorId, serverDefIds);
+        return governing ? { orgId: governing, allowed: false } : { orgId: null, allowed: true };
+      }
       // Non-Clerk actors (legacy machine-only callers) have no org memberships.
       if (!ClerkActorIdSchema.safeParse(input.actorId).success) return { orgId: null, allowed: true };
-      const { serverDefIds } = orgMcpServerDefIdsForUrl(input.serverUrl);
-      return decideOrgMcpPolicy(await repository.policyRowsForActor(input.actorId, serverDefIds), input.toolName);
+      const { rows, truncated } = await repository.policyRowsForActor(input.actorId, serverDefIds);
+      if (truncated) {
+        console.warn("[org-mcp] membership count above the policy cap; denying");
+        return { orgId: null, allowed: false };
+      }
+      return decideOrgMcpPolicy(rows, input.toolName);
     },
   };
 }

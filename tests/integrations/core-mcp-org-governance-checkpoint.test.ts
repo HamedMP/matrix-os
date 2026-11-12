@@ -110,6 +110,19 @@ describe("Matrix Core MCP org governance checkpoint", () => {
     ]);
   });
 
+  // Fault: PUT with only a mode silently re-allows tools the admin had blocked.
+  it("keeps a blocked tool blocked when an admin changes only the server mode", async () => {
+    const path = `/api/orgs/${ORG}/mcp/servers/mcp.linear.test`;
+    expect((await admin("PUT", path, { mode: "allow", toolOverrides: { delete_issue: "blocked" } })).status).toBe(200);
+    expect((await call("delete_issue")).status).toBe(403);
+    expect((await admin("PUT", path, { mode: "recommend" })).status).toBe(200);
+    expect((await call("delete_issue")).status).toBe(403);
+    expect((await call("list_issues")).status).toBe(200);
+    expect((await admin("PUT", path, {})).status).toBe(422);
+    expect((await admin("PUT", `/api/orgs/${ORG}/mcp/servers/other.example`, { toolOverrides: { x: "blocked" } })).status).toBe(422);
+    expect(linear.calls.map(entry => entry.tool)).toEqual(["list_issues"]);
+  });
+
   it("shows member connection metadata and call counts that match the usage rows, with no credential or payload", async () => {
     expect((await call("list_issues")).status).toBe(200);
     expect((await call("list_issues")).status).toBe(200);

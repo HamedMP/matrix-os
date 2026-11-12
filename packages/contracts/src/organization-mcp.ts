@@ -26,14 +26,19 @@ export type OrgMcpToolPolicy = z.infer<typeof OrgMcpToolPolicySchema>;
 export const ORG_MCP_MAX_TOOL_OVERRIDES = 200;
 const ToolNameSchema = z.string().min(1).max(128).regex(/^[A-Za-z0-9_.:/-]+$/);
 
+/**
+ * Partial update: omitted fields keep their saved values, so a mode change can
+ * never reset a tool policy. A new definition needs `mode`; its omitted tool
+ * fields start at "allow" with no overrides (nothing was saved to keep).
+ */
 export const OrgMcpServerPolicyInputSchema = z.object({
-  mode: OrgMcpServerModeSchema,
+  mode: OrgMcpServerModeSchema.optional(),
   /** Applies to every tool without an override. `blocked` turns the server into a tool allowlist. */
-  defaultToolPolicy: OrgMcpToolPolicySchema.default("allow"),
+  defaultToolPolicy: OrgMcpToolPolicySchema.optional(),
   toolOverrides: z.record(ToolNameSchema, OrgMcpToolPolicySchema)
     .refine(value => Object.keys(value).length <= ORG_MCP_MAX_TOOL_OVERRIDES, "Too many tool overrides")
-    .default({}),
-}).strict();
+    .optional(),
+}).strict().refine(value => Object.keys(value).length > 0, "Nothing to update");
 export type OrgMcpServerPolicyInput = z.infer<typeof OrgMcpServerPolicyInputSchema>;
 
 export const OrgMcpServerDefinitionSchema = z.object({
