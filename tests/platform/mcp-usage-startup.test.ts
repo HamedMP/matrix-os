@@ -45,10 +45,10 @@ describe("platform Matrix Core MCP composition", () => {
     const runtime = await createPlatformCoreMcp({ db, coreModule, broker: fixture.broker, approvals: fixture.db, maintenance: false, orgPolicy: orgMcp.policy });
     const core = runtime.core as coreModule.CoreToolService;
     const caller = { userId: fixture.userId, actorId: fixture.actorId, entryPoint: "stdio" as const };
-    await core.callTool(caller, { service: "linear", tool: "list_issues" });
+    await core.callTool(caller, { service: `linear-${linearId.slice(0, 8)}`, tool: "list_issues" });
     await db.insertInto("org_mcp_member_blocks").values({ organization_id: "org_acme1", actor_id: fixture.actorId,
       server_def_id: "mcp.linear.test", created_by: "user_admin" }).execute();
-    await expect(core.callTool(caller, { service: "linear", tool: "list_issues" })).rejects.toMatchObject({ code: "forbidden" });
+    await expect(core.callTool(caller, { service: `linear-${linearId.slice(0, 8)}`, tool: "list_issues" })).rejects.toMatchObject({ code: "forbidden" });
     await runtime.shutdown();
     expect(await db.selectFrom("mcp_usage_events").select(["org_id", "outcome"]).orderBy("id").execute())
       .toEqual([{ org_id: "org_acme1", outcome: "ok" }, { org_id: "org_acme1", outcome: "denied" }]);
