@@ -6,13 +6,13 @@ import type { SharedBrowserBinding } from "../../packages/gateway/src/shared-bro
 const binding: SharedBrowserBinding = { ownerId: "owner", chatId: "chat", runId: "run", harness: "codex" };
 const controls: ReturnType<typeof createBrowserApprovalControl>[] = [];
 afterEach(async () => { await Promise.all(controls.splice(0).map(control => control.close())); });
-function setup() {
+function setup(scope?: { chatId: string; expiresAt: number }, now?: () => number) {
   const authority = { reserve: vi.fn(async () => {}), activeGrant: vi.fn(async () => null),
     consumeGrant: vi.fn(async () => {}), consume: vi.fn(async () => {}), invalidateLease: vi.fn(async () => {}), cancelChallenge: vi.fn(async () => {}),
     decide: vi.fn(async (_tuple, proof) => { if (proof !== "owner-proof") throw new Error("Invalid owner proof"); return { alreadySubmitted: false, grant: undefined }; }),
     revoke: vi.fn(async () => { throw new Error("Not configured"); }),
   };
-  const control = createBrowserApprovalControl({ authority: authority as never, handle: "pv-test", runtimeSlot: "pv-test", ownerId: "owner" });
+  const control = createBrowserApprovalControl({ authority: authority as never, handle: "pv-test", runtimeSlot: "pv-test", ownerId: "owner", scope, now });
   controls.push(control);
   const events: Array<Record<string, unknown>> = [];
   const controller = new AbortController();
@@ -41,7 +41,7 @@ it("holds exact browser actions until an online-verified owner decision is consu
   expect(s.authority.consume).toHaveBeenCalledOnce();
 });
 it("does not retain lease tombstones for ordinary turns that never use Chrome", async () => {
-  const s = setup(); await s.registration.close();
+  const s = setup(); await s.registration!.close();
   expect(s.authority.invalidateLease).not.toHaveBeenCalled();
 });
 it("fences a reservation already in flight when its run closes", async () => {
@@ -49,7 +49,7 @@ it("fences a reservation already in flight when its run closes", async () => {
   s.authority.reserve.mockImplementationOnce(() => new Promise<void>(yes => { release = yes; }));
   const pending = s.control.authorizeAction({ binding, action: { action: "snapshot" }, signal: s.controller.signal }).catch(error => error);
   await vi.waitFor(() => expect(s.authority.reserve).toHaveBeenCalledOnce());
-  await s.registration.close(); release(); await pending;
+  await s.registration!.close(); release(); await pending;
   expect(s.authority.invalidateLease).toHaveBeenCalledOnce(); expect(s.events).toEqual([]);
 });
 it("cancels the exact challenge on interruption without revoking the resumable run", async () => {
@@ -83,7 +83,7 @@ it("run shutdown revokes its epoch and cancels pending decisions", async () => {
   const s = setup();
   const pending = s.control.authorizeAction({ binding, action: { action: "snapshot" }, signal: s.controller.signal }).catch(error => error);
   await vi.waitFor(() => expect(s.events).toHaveLength(1)); const request = decision(s);
-  await s.registration.close(); expect(await pending).toBeInstanceOf(Error);
+  await s.registration!.close(); expect(await pending).toBeInstanceOf(Error);
   expect(s.authority.invalidateLease).toHaveBeenCalledWith("owner", expect.any(String));
   await expect(s.control.submit(request)).rejects.toThrow();
 });
@@ -126,4 +126,35 @@ it("never releases approval if the run stops during its consumption", async () =
   s.authority.consume.mockImplementationOnce(async () => { s.controller.abort(); });
   await expect(s.control.submit(decision(s))).rejects.toThrow(); expect(await pending).toBeInstanceOf(Error);
   expect(s.events.some(event => event.type === "approval.resolved" && event.decision === "approve")).toBe(false);
+});
+
+it("requires an individual signed approval for the scoped Chat even if it has a remembered grant", async () => {
+  const expiresAt = Date.now() + 60_000;
+  const s = setup({ chatId: binding.chatId, expiresAt });
+  s.authority.activeGrant.mockResolvedValue({ id: randomUUID(), revision: 1 } as never);
+  const outside = { ...binding, chatId: "chat_other", runId: "run_other" };
+  expect(s.control.registerRun({ binding: outside, signal: s.controller.signal, publish: s.publish })).toBeUndefined();
+  await expect(s.control.authorizeAction({ binding: outside, action: { action: "snapshot" }, signal: s.controller.signal })).rejects.toThrow();
+  const pending = s.control.authorizeAction({ binding, action: { action: "snapshot" }, signal: s.controller.signal });
+  await vi.waitFor(() => expect(s.events).toHaveLength(1));
+  expect(s.events[0]).toMatchObject({ browserApproval: { expiresAt: new Date(expiresAt).toISOString() } });
+  expect(s.authority.activeGrant).not.toHaveBeenCalled();
+  expect(s.authority.consumeGrant).not.toHaveBeenCalled();
+  await expect(s.control.submit(decision(s, "allow_in_chat"))).rejects.toThrow();
+  expect(s.authority.decide).not.toHaveBeenCalled();
+  await s.control.submit(decision(s)); await pending;
+  expect(s.authority.consume).toHaveBeenCalledOnce();
+});
+
+it("does not consume a scoped approval if verification returns at the cutoff", async () => {
+  let now = Date.now();
+  const expiresAt = now + 60_000;
+  const s = setup({ chatId: binding.chatId, expiresAt }, () => now);
+  const pending = s.control.authorizeAction({ binding, action: { action: "snapshot" }, signal: s.controller.signal }).catch(error => error);
+  await vi.waitFor(() => expect(s.events).toHaveLength(1));
+  s.authority.decide.mockImplementationOnce(async () => { now = expiresAt; return { alreadySubmitted: false, grant: undefined }; });
+  await expect(s.control.submit(decision(s))).rejects.toThrow();
+  expect(await pending).toBeInstanceOf(Error);
+  expect(s.authority.consume).not.toHaveBeenCalled();
+  expect(s.control.registerRun({ binding: { ...binding, runId: "run_expired" }, signal: s.controller.signal, publish: s.publish })).toBeUndefined();
 });
