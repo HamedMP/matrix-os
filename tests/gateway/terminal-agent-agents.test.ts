@@ -328,6 +328,16 @@ describe("terminal agents: children after a send", () => {
 // Fault detected (third review of #3298): a launch outlived its caller's request, and
 // repeated child waits multiplied runtime polling without a bound.
 describe("terminal agents: launch deadline and wait limits", () => {
+  // Fault detected (fourth review of #3298): the first message's draft hold could run
+  // past the launch deadline the caller asked for.
+  it("bounds the first message's draft hold by what is left of the launch deadline", async () => {
+    const h = await harness({ template: reviewer, statusAfterStart: ["idle"] });
+    await h.agents.run({ name: "review", cwd: "", template: "reviewer", task: "go", readyTimeoutMs: 25_000 });
+    const [, input] = h.verbs.send.mock.calls[0] as unknown as [unknown, { maxHoldMs?: number }];
+    expect(input.maxHoldMs).toBeGreaterThan(0);
+    expect(input.maxHoldMs).toBeLessThanOrEqual(25_000);
+  });
+
   it("gives up on readiness at the caller's deadline and says so", async () => {
     const h = await harness({ template: reviewer, statusAfterStart: Array(200).fill("working") });
     const started = h.time();
