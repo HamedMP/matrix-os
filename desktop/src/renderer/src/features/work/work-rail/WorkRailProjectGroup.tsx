@@ -181,7 +181,7 @@ export function WorkRailProjectGroup({
             onClick={() => setLimit(shownCount + 20)}>Show more</button> : null}
           {hiddenCount <= 0 && (projectPage.cursor || legacyPage.cursor) ? <button type="button" aria-label={`Show more ${group.name} chats`}
             className="rounded-[8px] px-2.5 py-1 pl-[24px] text-left text-xs" disabled={projectPage.loading || legacyPage.loading}
-            onClick={() => { projectPage.loadMore(); legacyPage.loadMore(); }}>Show more</button> : null}
+            onClick={() => { setLimit(shownCount + 20); projectPage.loadMore(); legacyPage.loadMore(); }}>Show more</button> : null}
       </RailCollapse>
     </div>
   );
