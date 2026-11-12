@@ -711,13 +711,15 @@ export class TerminalRuntime {
           onExit: (exitCode) => {
             if (!this.attachments.has(key)) { openingExit ??= { exitCode, release: this.reservePaneClosure(key) }; return; }
             const releasePaneClosure = this.reservePaneClosure(key);
-            void disconnectAttachmentClient({
-              current: () => this.attachments.get(key) === next,
-              viewers: [...next.viewers.values()],
-              close: () => this.closeAttachment(key, true),
-            })
-              .catch((error: unknown) => { console.error("[terminal-runtime] failed to disconnect terminal client", error); })
-              .finally(releasePaneClosure);
+            void this.runWorkspaceMutation(async () => {
+              try {
+                await disconnectAttachmentClient({
+                  current: () => this.attachments.get(key) === next,
+                  viewers: [...next.viewers.values()],
+                  close: () => this.closeAttachment(key, true),
+                });
+              } finally { releasePaneClosure(); }
+            }).catch((error: unknown) => { console.error("[terminal-runtime] failed to disconnect terminal client", error); });
           },
         }), (data) => { void this.broadcast(key, data); });
         next.handle = bootstrap.handle;
