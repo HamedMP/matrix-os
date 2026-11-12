@@ -317,10 +317,14 @@ function WorkInspectorContent({
   const removeTab = (id: string) => {
     const index = tabs.findIndex((tab) => tab.id === id);
     if (index < 0) return;
-    const next = tabs.filter((tab) => tab.id !== id);
-    const safe = next.some((tab) => tab.id === FILES_TAB.id) ? next : [FILES_TAB, ...next];
-    setTabs(safe);
-    if (selectedId === id) setSelectedId(safe[Math.min(Math.max(index - 1, 0), safe.length - 1)]!.id);
+    const prior = tabs.filter((tab) => tab.id !== id);
+    const fallback = prior[Math.min(Math.max(index - 1, 0), prior.length - 1)]?.id ?? FILES_TAB.id;
+    setTabs((current) => {
+      if (!current.some((tab) => tab.id === id)) return current;
+      const next = current.filter((tab) => tab.id !== id);
+      return next.some((tab) => tab.id === FILES_TAB.id) ? next : [FILES_TAB, ...next];
+    });
+    setSelectedId((current) => current === id ? fallback : current);
   };
 
   const stopTerminalTab = async (id: string) => {
