@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import { ProjectIdSchema } from "../../packages/contracts/src/index.js";
 import {
   createTerminalEventsClient,
   EMPTY_TERMINAL_EVENTS_STATE,
@@ -171,6 +172,15 @@ describe("terminal events client", () => {
     state = reduceTerminalEvents(state, { type: "event", seq: 2, event: { kind: "created", ref: { workspaceId, tabId: tabA }, tab: fact(tabA, { agentStatus: "blocked" }) } });
     expect(state.tabs[`${workspaceId}:${tabA}`]).toMatchObject({ agentStatus: "blocked" });
     expect(Object.keys(state.tabs)).toHaveLength(10_240);
+  });
+
+  // Fault detected (eighth review of #3299): the client checked project IDs with its own
+  // rule instead of the gateway's, so the two could disagree and drop live status.
+  it("accepts every project ID the gateway accepts, using the same schema", () => {
+    const projectId = `proj_${"a".repeat(123)}`;
+    expect(ProjectIdSchema.safeParse(projectId).success).toBe(true);
+    const state = reduceTerminalEvents(EMPTY_TERMINAL_EVENTS_STATE, { type: "snapshot", seq: 1, tabs: [fact(tabA, { projectId, agentStatus: "working" })] });
+    expect(state.tabs[`${workspaceId}:${tabA}`]).toMatchObject({ projectId, agentStatus: "working" });
   });
 
   it("rejects frames with unknown fields or oversized values", () => {
