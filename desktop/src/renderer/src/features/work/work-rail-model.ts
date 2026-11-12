@@ -41,6 +41,7 @@ export function buildWorkRailSearchResults(
   records: readonly ChatNavigationRecord[],
   projects: readonly Project[],
   query: string,
+  limit = MAX_WORK_RAIL_SEARCH_RESULTS,
 ): WorkRailSearchResult[] {
   const projectByReference = new Map<string, Project>();
   for (const project of projects) {
@@ -70,7 +71,7 @@ export function buildWorkRailSearchResults(
       driverKind ? providerLabel(driverKind) : undefined,
     ].filter(Boolean).join(" · ");
     results.push({ record, ...(project ? { project } : {}), contextLabel });
-    if (results.length === MAX_WORK_RAIL_SEARCH_RESULTS) break;
+    if (results.length === limit) break;
   }
   const duplicateCounts = new Map<string, number>();
   for (const result of results) {

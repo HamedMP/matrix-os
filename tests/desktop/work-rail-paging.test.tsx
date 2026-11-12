@@ -30,3 +30,18 @@ it("loads a project's first five chats without sharing the status cursor", async
   renderHook(() => useWorkRailPage(client, { group: "project", projectId: "proj_a" }, "owner/main", 0, 5));
   await waitFor(() => expect(navigationPage).toHaveBeenCalledWith({ group: "project", projectId: "proj_a", limit: 5 }));
 });
+
+it("retains expanded rows when the navigation refreshes", async () => {
+  const record = (index: number) => ({ chat: { id: `chat_${index}` } });
+  const navigationPage = vi.fn(async (query: { cursor?: string }) => query.cursor
+    ? { items: Array.from({ length: 20 }, (_, index) => record(index + 10)), totalCount: 30 }
+    : { items: Array.from({ length: 10 }, (_, index) => record(index)), totalCount: 30, nextCursor: "next" });
+  const client = { navigationPage } as never;
+  const { result, rerender } = renderHook(({ version }) => useWorkRailPage(client, { group: "done" }, "owner/main", version, 10), { initialProps: { version: 0 } });
+  await waitFor(() => expect(result.current.rows).toHaveLength(10));
+  act(() => result.current.loadMore());
+  await waitFor(() => expect(result.current.rows).toHaveLength(30));
+  rerender({ version: 1 });
+  await waitFor(() => expect(result.current.loading).toBe(false));
+  expect(result.current.rows).toHaveLength(30);
+});

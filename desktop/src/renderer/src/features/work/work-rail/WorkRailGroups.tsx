@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import { useEffect, type ReactNode } from "react";
 import type { CollaborationProjectOverview } from "@matrix-os/contracts";
 import type { ChatNavigationRecord } from "@matrix-os/ui";
 import { AgentAvatar, filterChatsByImportSource, type BotConversationSummary, type ChatImportSourceFilterValue } from "@matrix-os/ui";
@@ -11,7 +11,7 @@ import { WorkRailSection } from "./WorkRailSection";
 
 export type WorkRailSectionKey = "pinned" | "projects" | "needsYou" | "working" | "done";
 export function WorkRailGroups({ model, activeChatId, sections, onToggle, onCreateProject, renderProject, renderChat, bots, onOpenBotChat, organizationDrives, sharedProjects, revealSharedProjectRequest,
-  client = null, scopeKey = "", navigationUpdatedAt = 0, sourceFilter = "all" }: {
+  client = null, scopeKey = "", navigationUpdatedAt = 0, sourceFilter = "all", orderRows, registerVisibleChats }: {
   model: WorkRailModel;
   activeChatId?: string;
   sections: Record<WorkRailSectionKey, boolean>;
@@ -28,6 +28,8 @@ export function WorkRailGroups({ model, activeChatId, sections, onToggle, onCrea
   scopeKey?: string;
   navigationUpdatedAt?: number;
   sourceFilter?: ChatImportSourceFilterValue;
+  orderRows?: (rows: readonly ChatNavigationRecord[]) => ChatNavigationRecord[];
+  registerVisibleChats?: (ids: readonly string[]) => void;
 }) {
   const pendingBots = bots.filter(bot => bot.pendingApprovalCount > 0);
   const pinnedPage = useWorkRailPage(client, { group: "pinned" }, scopeKey, navigationUpdatedAt, 10);
@@ -35,17 +37,19 @@ export function WorkRailGroups({ model, activeChatId, sections, onToggle, onCrea
   const workingPage = useWorkRailPage(client, { group: "working" }, scopeKey, navigationUpdatedAt, 10);
   const donePage = useWorkRailPage(client, { group: "done" }, scopeKey, navigationUpdatedAt, 10);
   const rows = (page: typeof pinnedPage, fallback: ChatNavigationRecord[]) => client?.navigationPage && (page.rows.length || !page.loading && !page.error)
-    ? filterChatsByImportSource(page.rows, sourceFilter, record => record.importSource) : fallback.slice(0, 10);
+    ? (orderRows?.(filterChatsByImportSource(page.rows, sourceFilter, record => record.importSource)) ?? filterChatsByImportSource(page.rows, sourceFilter, record => record.importSource)) : fallback.slice(0, 10);
   const pinned = rows(pinnedPage, model.pinned);
   const needsYou = rows(needsPage, model.needsYou);
   const working = rows(workingPage, model.working);
   const done = rows(donePage, model.doneDisplay);
+  const visibleIds = [...pinned, ...needsYou, ...working, ...done].map(record => record.chat.id).join("\0");
+  useEffect(() => { registerVisibleChats?.(visibleIds.split("\0").filter(Boolean)); }, [registerVisibleChats, visibleIds]);
   const count = (page: typeof pinnedPage, fallback: number) => client?.navigationPage && !page.error && (!page.loading || page.rows.length) ? page.count : fallback;
   const more = (page: typeof pinnedPage, label: string) => page.cursor ? <button type="button" aria-label={`Show more ${label} chats`}
     className="rounded-[8px] px-2.5 py-1 text-left text-xs" disabled={page.loading} onClick={page.loadMore}>Show more</button> : null;
   return <>
 
-        {pinned.length + model.pinnedProjects.length > 0 ? <WorkRailSection
+        {pinned.length + model.pinnedProjects.length > 0 || pinnedPage.cursor ? <WorkRailSection
           label="Pinned"
           count={count(pinnedPage, model.pinned.length) + model.pinnedProjects.length}
           expanded={sections.pinned}
