@@ -228,6 +228,8 @@ describe("ChatRepository", () => {
       "chat_run_steers",
       "chat_runs",
       "chat_schema_migrations",
+      "chat_side_messages",
+      "chat_side_threads",
       "chat_terminal_bindings",
       "chat_turns",
       "chat_user_state",
@@ -2745,6 +2747,68 @@ describe("ChatRepository", () => {
     await expect(repository.search(owner, "message", 20, "project_search")).resolves.toEqual([
       expect.objectContaining({ chat: expect.objectContaining({ id: projectChat.chat.id }) }),
     ]);
+  });
+
+  it("finds archived and active chats by title, with an owner-scoped lifecycle filter", async () => {
+    const archived = await repository.create(owner, {
+      id: "chat_search_archived_title",
+      clientRequestId: "req_search_archived_title",
+      title: "Constellation notes",
+    });
+    await repository.update(owner, archived.chat.id, { baseRevision: archived.chat.revision, lifecycle: "archived" });
+    const active = await repository.create(owner, {
+      id: "chat_search_active_title",
+      clientRequestId: "req_search_active_title",
+      title: "Constellation draft",
+    });
+    await repository.create(otherOwner, {
+      id: "chat_search_foreign_title",
+      clientRequestId: "req_search_foreign_title",
+      title: "Constellation private",
+    });
+
+    expect((await repository.search(owner, "Constellation", 20, undefined, "active")).map(item => item.chat.id))
+      .toEqual([active.chat.id]);
+    expect((await repository.search(owner, "Constellation", 20, undefined, "archived")).map(item => item.chat.id))
+      .toEqual([archived.chat.id]);
+  });
+
+  it("pages matching chats in stable update-time and ID order", async () => {
+    const first = await repository.create(owner, {
+      id: "chat_search_page_a", clientRequestId: "req_search_page_a", title: "Nebula one",
+    });
+    const second = await repository.create(owner, {
+      id: "chat_search_page_b", clientRequestId: "req_search_page_b", title: "Nebula two",
+    });
+    const firstPage = await repository.search(owner, "Nebula", 1);
+    expect(firstPage).toHaveLength(1);
+    const cursor = { updatedAt: firstPage[0]!.chat.updatedAt, chatId: firstPage[0]!.chat.id };
+    const secondPage = await repository.search(owner, "Nebula", 1, undefined, "active", cursor);
+    expect(secondPage).toHaveLength(1);
+    expect(new Set([firstPage[0]!.chat.id, secondPage[0]!.chat.id]))
+      .toEqual(new Set([first.chat.id, second.chat.id]));
+  });
+
+  it("archives all idle project chats atomically and reports running chats for Undo", async () => {
+    const idle = await repository.create(owner, {
+      id: "chat_project_archive_idle", clientRequestId: "req_project_archive_idle",
+      title: "Idle", projectId: "project_archive",
+    });
+    const running = await repository.create(owner, {
+      id: "chat_project_archive_running", clientRequestId: "req_project_archive_running",
+      title: "Running", projectId: "project_archive",
+    });
+    const input = message(running.chat.id);
+    const acceptedTurn = turn(running.chat.id, input);
+    await repository.admitTurn(owner, {
+      chatId: running.chat.id, baseRevision: 0, message: input,
+      turn: acceptedTurn, run: run(running.chat.id, acceptedTurn),
+    });
+    const result = await repository.archiveProjectChats(owner, "project_archive");
+    expect(result).toEqual({ archivedIds: [idle.chat.id], archived: [{ chatId: idle.chat.id, revision: idle.chat.revision + 1 }], skippedIds: [running.chat.id], archivedCount: 1, skippedCount: 1 });
+    expect((await repository.get(owner, idle.chat.id))?.chat.lifecycle).toBe("archived");
+    expect((await repository.get(owner, idle.chat.id))?.chat.archivedAt).toBeTruthy();
+    expect((await repository.get(owner, running.chat.id))?.chat.lifecycle).toBe("active");
   });
 
   it("returns the latest bounded detail page with an owner-isolated older-message cursor", async () => {

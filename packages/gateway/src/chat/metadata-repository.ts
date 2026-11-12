@@ -28,9 +28,12 @@ export async function listChats(deps: MetadataDependencies, ownerInput: ChatOwne
   }): Promise<ChatListPage> {
     const owner = validateOwner(ownerInput);
     const limit = Math.max(1, Math.min(100, Math.trunc(input.limit)));
+    const orderAt = input.lifecycle === "archived"
+      ? sql<Date>`coalesce(chats.archived_at, chats.updated_at)`
+      : sql<Date>`chats.activity_at`;
     let query = deps.kysely.selectFrom("chats").selectAll()
       .select(chatImportHarnessSql(owner, sql.ref<string>("chats.id")).as("import_harness"))
-      .select(sql<string>`to_char(activity_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"')`
+      .select(sql<string>`to_char(${orderAt} AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"')`
         .as("cursor_activity_at"))
       .where("owner_type", "=", owner.type)
       .where("owner_id", "=", owner.ownerId);
@@ -41,14 +44,11 @@ export async function listChats(deps: MetadataDependencies, ownerInput: ChatOwne
       : query.where("project_id", "=", requireSafeRef(input.projectId));
     if (input.cursor) {
       const cursorTimestamp = z.iso.datetime({ offset: true }).parse(input.cursor.activityAt);
-      const cursorAt = sql<Date>`${cursorTimestamp}::timestamptz`;
       const cursorChatId = CanonicalChatIdSchema.parse(input.cursor.chatId);
-      query = query.where(({ and, eb, or }) => or([
-        eb("activity_at", "<", cursorAt),
-        and([eb("activity_at", "=", cursorAt), eb("id", ">", cursorChatId)]),
-      ]));
+      query = query.where(sql<boolean>`(${orderAt} < ${cursorTimestamp}::timestamptz
+        OR (${orderAt} = ${cursorTimestamp}::timestamptz AND chats.id > ${cursorChatId}))`);
     }
-    const rows = await query.orderBy("activity_at", "desc").orderBy("id").limit(limit + 1).execute();
+    const rows = await query.orderBy(orderAt, "desc").orderBy("id").limit(limit + 1).execute();
     const pageRows = rows.slice(0, limit);
     const items = await Promise.all(pageRows.map((row) => deps.toPrincipalRecord(deps.kysely, owner, row, undefined, chatImportSource(row.import_harness) ?? null)));
     const last = rows.length > limit ? pageRows.at(-1) : undefined;
@@ -83,6 +83,9 @@ export async function updateChat(deps: MetadataDependencies, ownerInput: ChatOwn
         ...(input.title === undefined ? {} : { title: input.title, title_version: sql<number>`title_version + 1`, title_manual: true }),
         ...("projectId" in input ? { project_id: input.projectId ?? null } : {}),
         ...(input.lifecycle === undefined ? {} : { lifecycle: input.lifecycle }),
+        ...(input.lifecycle === undefined || input.lifecycle === current.lifecycle ? {} : {
+          archived_at: input.lifecycle === "archived" ? sql<Date>`now()` : null,
+        }),
         ...(input.currentSelection === undefined ? {} : { current_selection: jsonb(input.currentSelection) }),
         revision,
         updated_at: sql`now()`,

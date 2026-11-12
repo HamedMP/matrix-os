@@ -4,6 +4,7 @@ import {
 } from "@matrix-os/contracts";
 import {
   ChatBusyError,
+  ChatBulkArchiveLimitError,
   ChatConflictError,
   ChatNotFoundError,
   ChatProviderInstanceLockedError,
@@ -57,6 +58,10 @@ export function mapChatAgentContextError(error: ChatAgentContextError): Canonica
 }
 
 export function mapRepositoryError(error: unknown): never {
+  if (error instanceof ChatBulkArchiveLimitError) {
+    throw new CanonicalChatOrchestrationError(canonicalChatSafeError(
+      "resource_unavailable", "This project has too many chats to archive at once."), 409);
+  }
   if (error instanceof ChatAgentContextError) throw mapChatAgentContextError(error);
   if (error instanceof BotEntryError && error.code === "unavailable") {
     throw new CanonicalChatOrchestrationError(canonicalChatSafeError(

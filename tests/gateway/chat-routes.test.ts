@@ -47,8 +47,11 @@ const record: CanonicalChatRecord = {
 
 function routeService(overrides: Partial<CanonicalChatRouteService> = {}): CanonicalChatRouteService {
   return {
+    navigationPage: vi.fn(async () => ({ items: [], totalCount: 0 })),
     create: vi.fn(async () => record),
     updateProject: vi.fn(async () => record),
+    updateLifecycle: vi.fn(async () => record),
+    archiveProjectChats: vi.fn(async () => ({ archivedIds: [], archived: [], skippedIds: [], archivedCount: 0, skippedCount: 0 })),
     updateTitle: vi.fn(async () => record),
     updateLegacyTitle: vi.fn(async () => record),
     updateReadState: vi.fn(async () => record),
@@ -119,6 +122,46 @@ function acknowledge(
 }
 
 describe("canonical Chat routes", () => {
+  it("validates archive and restore requests and derives the owner", async () => {
+    const updateLifecycle = vi.fn(async () => record);
+    const app = appFor(routeService({ updateLifecycle }));
+    const request = (body: unknown) => app.request("/api/chats/chat_route_test/lifecycle", {
+      method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify(body),
+    });
+    expect((await request({ lifecycle: "archived", baseRevision: 0 })).status).toBe(200);
+    expect(updateLifecycle).toHaveBeenCalledWith(
+      { type: "personal", ownerId: "owner_1" }, "chat_route_test",
+      { lifecycle: "archived", baseRevision: 0 },
+    );
+    expect((await request({ lifecycle: "deleted", baseRevision: 0 })).status).toBe(400);
+    expect((await request({ lifecycle: "active", baseRevision: 0, ownerId: "other" })).status).toBe(400);
+  });
+
+  it("archives a bounded project ID for the authenticated owner", async () => {
+    const archiveProjectChats = vi.fn(async () => ({ archivedIds: [record.chat.id], archived: [{ chatId: record.chat.id, revision: 1 }], skippedIds: [], archivedCount: 1, skippedCount: 0 }));
+    const app = appFor(routeService({ archiveProjectChats }));
+    const result = await app.request("/api/projects/project_1/chats/archive", {
+      method: "POST", headers: { "content-type": "application/json" }, body: "{}",
+    });
+    expect(result.status).toBe(200);
+    expect(await result.json()).toEqual({ archivedIds: [record.chat.id], archived: [{ chatId: record.chat.id, revision: 1 }], skippedIds: [], archivedCount: 1, skippedCount: 0 });
+    expect(archiveProjectChats).toHaveBeenCalledWith({ type: "personal", ownerId: "owner_1" }, "project_1");
+    expect((await app.request("/api/projects/bad%20project/chats/archive", {
+      method: "POST", headers: { "content-type": "application/json" }, body: "{}",
+    })).status).toBe(400);
+  });
+
+  it("passes a bounded status page query to the authenticated navigation reader", async () => {
+    const navigationPage = vi.fn(async () => ({ items: [], totalCount: 4, nextCursor: "navcur_next" }));
+    const app = appFor(routeService({ navigationPage }));
+    const result = await app.request("/api/chat-navigation/page?group=working&limit=10");
+    expect(result.status).toBe(200);
+    expect(await result.json()).toEqual({ items: [], totalCount: 4, nextCursor: "navcur_next" });
+    expect(navigationPage).toHaveBeenCalledWith({ type: "personal", ownerId: "owner_1" }, { group: "working", limit: 10 });
+    expect((await app.request("/api/chat-navigation/page?group=project")).status).toBe(400);
+    expect((await app.request("/api/chat-navigation/page?group=done&limit=101")).status).toBe(400);
+  });
+
   it("derives personal ownership and creates a Chat through the shared service", async () => {
     const create = vi.fn(async (_owner: ChatOwner, _input: CanonicalCreateChatRequest) => record);
     const service = routeService({ create });
@@ -553,6 +596,18 @@ describe("canonical Chat routes", () => {
     expect(search).toHaveBeenCalledWith(
       { type: "personal", ownerId: "owner_1" },
       { query: "release plan", limit: 10, projectId: "project_1" },
+    );
+  });
+
+  it("passes a bounded search cursor to the service", async () => {
+    const search = vi.fn(async () => ({ items: [], nextCursor: "chatcur_next" }));
+    const app = appFor(routeService({ search }));
+    const response = await app.request("/api/chats/search?query=release&limit=20&cursor=chatcur_previous");
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({ items: [], nextCursor: "chatcur_next" });
+    expect(search).toHaveBeenCalledWith(
+      { type: "personal", ownerId: "owner_1" },
+      { query: "release", limit: 20, cursor: "chatcur_previous" },
     );
   });
 

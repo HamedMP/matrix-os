@@ -165,6 +165,7 @@ export function toChatRecord(
     titleVersion: Number(row.title_version),
     activityAt: asIso(row.activity_at),
     lifecycle: row.lifecycle,
+    ...(row.archived_at ? { archivedAt: asIso(row.archived_at) } : {}),
     attention: row.attention,
     revision: Number(row.revision),
     messageCount: Number(row.message_count),

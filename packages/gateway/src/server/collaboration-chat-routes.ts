@@ -37,10 +37,17 @@ import type { ChatRepository } from "../chat/repository.js";
 import { createDiscussionOnlyChatExecutionGuard } from "../collaboration/chat-scope.js";
 import type { GatewayCollaborationConfigurationFailure, GatewayCollaborationRuntime } from "../collaboration/wiring.js";
 import { requireRequestPrincipal } from "../request-principal.js";
+import { createSideChatRoutes } from "../chat/side-chat-routes.js";
+import { SideChatRepository } from "../chat/side-chat-repository.js";
+import { buildKernelCredentialLaunch, resolveKernelCredentialSources } from "../kernel-credentials.js";
+import { generateAppText } from "@matrix-os/kernel";
+import type { MatrixFundedCredentialProvider } from "../funded-ai-credential-manager.js";
 import { registerOwnerCollaborationRoutes } from "../startup/collaboration.js";
 
 export interface CollaborationChatRouteOptions {
   app: Hono;
+  homePath: string;
+  fundedCredentialProvider?: MatrixFundedCredentialProvider;
   browserApprovals?: BrowserApprovalControl;
   upgradeWebSocket: ReturnType<typeof createNodeWebSocket>["upgradeWebSocket"];
   canonicalChatEventStream: ReturnType<typeof createGatewayChatEventStream> | null;
@@ -96,6 +103,18 @@ export function registerCollaborationChatRoutes(options: CollaborationChatRouteO
   }));
   const localImports = registerLocalChatImports({ app, repository: chatRepository, storage: options.syncR2,
     runtimeOwnerId: options.runtimeOwnerId, runtimeSlot: options.runtimeSlot, getPrincipal: c => requireRequestPrincipal(c) });
+  app.route("/", createSideChatRoutes({
+    repository: chatRepository ? new SideChatRepository(chatRepository.kysely) : null,
+    getPrincipal: c => requireRequestPrincipal(c),
+    async generate(prompt, signal) {
+      const sources = await resolveKernelCredentialSources(options.homePath, process.env, options.fundedCredentialProvider);
+      const launch = await buildKernelCredentialLaunch(options.homePath, process.env, sources.selectedAccessSourceId,
+        options.fundedCredentialProvider, { requestClass: "interactive" });
+      if (!launch.env) throw new Error("SideChatCredentialsUnavailable");
+      return generateAppText({ prompt, model: "claude-sonnet-5", env: launch.env,
+        signal: launch.fundedRunTimeoutMs ? AbortSignal.any([signal, AbortSignal.timeout(launch.fundedRunTimeoutMs)]) : signal });
+    },
+  }));
   app.route("/", createBrowserGrantRoutes({ control: options.browserApprovals, getPrincipal: c => requireRequestPrincipal(c) }));
   app.route("/", createCanonicalChatRoutes({
     service: chatRepository

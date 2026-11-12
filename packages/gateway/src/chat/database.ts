@@ -23,6 +23,7 @@ export interface ChatsTable {
   title_manual: Generated<boolean>;
   activity_at: Timestamp;
   lifecycle: "active" | "archived";
+  archived_at: Timestamp | null;
   attention: "none" | "approval_required" | "input_required" | "failed";
   revision: ColumnType<number, number | undefined, number>;
   message_count: ColumnType<number, number | undefined, number>;
@@ -73,6 +74,26 @@ export interface ChatMessagesTable {
   parts: JsonValue;
   byte_count: number;
   search_text: string;
+  created_at: Timestamp;
+}
+
+export interface ChatSideThreadsTable {
+  id: string;
+  chat_id: string;
+  owner_type: "personal" | "organization";
+  owner_id: string;
+  active_request_id: string | null;
+  busy_until: NullableTimestamp;
+  created_at: Timestamp;
+  updated_at: Timestamp;
+}
+
+export interface ChatSideMessagesTable {
+  thread_id: string;
+  seq: number;
+  role: "user" | "assistant";
+  content: string;
+  client_request_id: string;
   created_at: Timestamp;
 }
 
@@ -279,6 +300,8 @@ export interface ChatDatabase extends ChatImportDatabase {
   chat_members: ChatMembersTable;
   chat_user_state: ChatUserStateTable;
   chat_messages: ChatMessagesTable;
+  chat_side_threads: ChatSideThreadsTable;
+  chat_side_messages: ChatSideMessagesTable;
   chat_credentials: ChatCredentialsTable;
   chat_attachments: ChatAttachmentsTable;
   chat_turns: ChatTurnsTable;
@@ -307,6 +330,7 @@ export async function bootstrapChatDatabase<Database extends ChatDatabase>(
       project_id TEXT,
       title TEXT NOT NULL,
       lifecycle TEXT NOT NULL CHECK (lifecycle IN ('active', 'archived')),
+      archived_at TIMESTAMPTZ,
       attention TEXT NOT NULL CHECK (attention IN ('none', 'approval_required', 'input_required', 'failed')),
       revision BIGINT NOT NULL DEFAULT 0,
       message_count BIGINT NOT NULL DEFAULT 0,
@@ -324,6 +348,32 @@ export async function bootstrapChatDatabase<Database extends ChatDatabase>(
       UNIQUE (owner_type, owner_id, create_request_id)
     )
   `.execute(db);
+  await sql`ALTER TABLE chats ADD COLUMN IF NOT EXISTS archived_at TIMESTAMPTZ`.execute(db);
+  await sql`
+    CREATE TABLE IF NOT EXISTS chat_side_threads (
+      id TEXT PRIMARY KEY,
+      chat_id TEXT NOT NULL UNIQUE REFERENCES chats(id) ON DELETE CASCADE,
+      owner_type TEXT NOT NULL CHECK (owner_type IN ('personal', 'organization')),
+      owner_id TEXT NOT NULL,
+      active_request_id TEXT,
+      busy_until TIMESTAMPTZ,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    )
+  `.execute(db);
+  await sql`
+    CREATE TABLE IF NOT EXISTS chat_side_messages (
+      thread_id TEXT NOT NULL REFERENCES chat_side_threads(id) ON DELETE CASCADE,
+      seq BIGINT NOT NULL,
+      role TEXT NOT NULL CHECK (role IN ('user', 'assistant')),
+      content TEXT NOT NULL,
+      client_request_id TEXT NOT NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      PRIMARY KEY (thread_id, seq),
+      UNIQUE (thread_id, client_request_id, role)
+    )
+  `.execute(db);
+  await sql`CREATE INDEX IF NOT EXISTS idx_chat_side_messages_page ON chat_side_messages(thread_id, seq)`.execute(db);
   await sql`
     CREATE TABLE IF NOT EXISTS chat_members (
       chat_id TEXT NOT NULL REFERENCES chats(id) ON DELETE CASCADE,
@@ -726,6 +776,7 @@ export async function bootstrapChatDatabase<Database extends ChatDatabase>(
   await bootstrapChatAttribution(db);
 
   await sql`CREATE INDEX IF NOT EXISTS idx_chats_owner_updated ON chats(owner_type, owner_id, lifecycle, updated_at DESC, id)`.execute(db);
+  await sql`CREATE INDEX IF NOT EXISTS idx_chats_owner_archived ON chats(owner_type, owner_id, archived_at DESC, id) WHERE lifecycle = 'archived'`.execute(db);
   await sql`CREATE INDEX IF NOT EXISTS idx_chats_owner_project ON chats(owner_type, owner_id, project_id)`.execute(db);
   await sql`CREATE INDEX IF NOT EXISTS idx_chat_messages_page ON chat_messages(chat_id, seq)`.execute(db);
   await sql`CREATE INDEX IF NOT EXISTS idx_chat_run_events_run_occurred ON chat_run_events(run_id, occurred_at, id)`.execute(db);

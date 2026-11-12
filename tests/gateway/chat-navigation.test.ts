@@ -32,6 +32,40 @@ async function seed(db: NonNullable<typeof fixture>["db"], size: number, ownerId
 for (const [label, real] of [["PostgreSQL-compatible", false], ["real PostgreSQL", true]] as const) {
   const suite = real && !process.env.MATRIX_TEST_POSTGRES_URL ? describe.skip : describe;
   suite(`${label} navigation snapshot`, () => {
+    it("pages status and project placements independently beyond the rail snapshot", async () => {
+      const { db, navigation } = await setup(real);
+      await seed(db, 1001);
+      await sql`UPDATE chats SET project_id='project_navigation' WHERE id='chat_navigation_owner_1001'`.execute(db);
+      const first = await navigation.page(owner, { group: "done", limit: 10 });
+      expect(first.items).toHaveLength(10);
+      expect(first.totalCount).toBe(1001);
+      expect(first.nextCursor).toBeTruthy();
+      const next = await navigation.page(owner, { group: "done", limit: 20, cursor: first.nextCursor });
+      expect(next.items).toHaveLength(20);
+      expect(new Set([...first.items, ...next.items].map(item => item.chat.id)).size).toBe(30);
+      const project = await navigation.page(owner, { group: "project", projectId: "project_navigation", limit: 5 });
+      expect(project.items.map(item => item.chat.id)).toEqual(["chat_navigation_owner_1001"]);
+      expect(project.totalCount).toBe(1);
+    });
+    it("pages pinned chats separately from their lifecycle status", async () => {
+      const { db, navigation } = await setup(real);
+      await seed(db, 3);
+      await sql`INSERT INTO chat_user_state(chat_id,principal_id,pinned,muted,read_through_seq,marked_unread)
+        VALUES ('chat_navigation_owner_2',${owner.ownerId},true,false,0,false)`.execute(db);
+      const pinned = await navigation.page(owner, { group: "pinned", limit: 10 });
+      const done = await navigation.page(owner, { group: "done", limit: 10 });
+      expect(pinned.items.map(item => item.chat.id)).toEqual(["chat_navigation_owner_2"]);
+      expect(done.items.map(item => item.chat.id)).toEqual(["chat_navigation_owner_1", "chat_navigation_owner_3"]);
+    });
+    it("hides archived chats from the default active navigation", async () => {
+      const { db, navigation } = await setup(real);
+      await seed(db, 2);
+      await sql`UPDATE chats SET lifecycle='archived' WHERE id='chat_navigation_owner_1'`.execute(db);
+      const active = await navigation.list(owner, { version: 1, limit: 1000 });
+      expect(active.items.map(item => item.chat.id)).toEqual(["chat_navigation_owner_2"]);
+      const archived = await navigation.list(owner, { version: 1, limit: 1000, lifecycle: "archived" });
+      expect(archived.items.map(item => item.chat.id)).toEqual(["chat_navigation_owner_1"]);
+    });
     it.each([1, 150, 1000])("uses one consistent owner-filtered statement at %i rows", async size => {
       const { db, navigation, count } = await setup(real);
       await seed(db, size);
@@ -113,9 +147,10 @@ for (const [label, real] of [["PostgreSQL-compatible", false], ["real PostgreSQL
       await sql`UPDATE chats SET collaboration='{"mode":"shared"}'::jsonb, lifecycle='archived'
         WHERE id='chat_navigation_owner_1'`.execute(db);
       const snapshot = await navigation.list(owner, { version: 1, limit: 1000 });
-      expect(snapshot.items.find(item => item.chat.id.endsWith('_1'))?.persistence).toBe('membership');
+      expect(snapshot.items.find(item => item.chat.id.endsWith('_1'))).toBeUndefined();
       expect(snapshot.items.find(item => item.chat.id.endsWith('_2'))?.persistence).toBe('personal');
       expect((await navigation.list(owner, { version: 1, limit: 1000, lifecycle: 'active' })).items).toHaveLength(1);
+      expect((await navigation.list(owner, { version: 1, limit: 1000, lifecycle: 'archived' })).items[0]?.persistence).toBe('membership');
     });
     it("explicitly truncates a bounded window without per-item classification reads", async () => {
       const { db, navigation, count } = await setup(real);
