@@ -1,5 +1,6 @@
 import { ROUTINE_CLI_EXECUTION_PATH } from "@matrix-os/contracts/routine-cli";
 import { createHmac, timingSafeEqual } from "node:crypto";
+import { isDirectLoopbackCaller, isLocalTerminalAgentRoute } from "./terminal-agent/local-token.js";
 import type { Context, MiddlewareHandler } from "hono";
 import {
   PREVIEW_TERMINAL_ACCESS_HEADER,
@@ -233,6 +234,8 @@ export function authMiddleware(
     webhookProviders?: Set<string>;
     resolveMatrixMcpCapability?: (token: string, method: string, path: string) => string | null;
     resolveMatrixMcpRunContext?: (token: string, method: string, path: string) => MatrixMcpRunContext | null;
+    /** The local terminal-agent token for calls from inside this machine's terminals. */
+    localTerminalAgentToken?: () => string | undefined;
   },
 ): MiddlewareHandler {
   const webhookProviders = options?.webhookProviders ?? new Set<string>();
@@ -398,6 +401,20 @@ export function authMiddleware(
       : isWsUpgrade && queryToken
         ? queryToken
         : null;
+
+    // Calls from inside this machine's terminals (spec 2692): owner-level, but only on
+    // the terminal-agent routes and only from a direct loopback caller.
+    const localTerminalToken = options?.localTerminalAgentToken?.();
+    if (presentedToken && localTerminalToken && timingSafeCompare(presentedToken, localTerminalToken)) {
+      const remoteAddress = (c.env as { incoming?: { socket?: { remoteAddress?: string } } } | undefined)?.incoming?.socket?.remoteAddress;
+      if (!isLocalTerminalAgentRoute(c.req.method, new URL(c.req.raw.url).pathname)
+        || !isDirectLoopbackCaller(remoteAddress, (name) => c.req.header(name))) {
+        if (!rateLimiter.check(getClientIp(c))) return tooManyRequests(c);
+        return unauthorized(c);
+      }
+      markVerifiedRuntimeBearer(c);
+      return nextWithReady(c, next);
+    }
 
     if (presentedToken) {
       const matrixMcpContext = options?.resolveMatrixMcpRunContext?.(presentedToken, c.req.method, normalizedPath);

@@ -47,6 +47,8 @@ where possible (hard limit 3000 additions / 50 files).
 - [x] T4.5 `wait-children any|all`.
 - [x] T4.6 Kernel IPC tools.
 - [ ] T4.7 Keep-as-shell on loss. Deferred to the follow-on stack: it needs a terminal runtime change (zellij command panes) and its own spike.
+- [x] T4.8 Calls from inside a terminal: `matrix` on the terminal PATH, local token, loopback route scope (found on the #3300 preview).
+- [x] T4.9 Leading global flags stay ahead of `--` (found on the #3300 preview).
 
 ## Layer 5: attention UI
 

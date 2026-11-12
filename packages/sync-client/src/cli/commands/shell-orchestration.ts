@@ -1,7 +1,6 @@
 import { defineCommand } from "citty";
-import { requireCliAuthToken } from "../auth-state.js";
 import { formatCliSuccess } from "../output.js";
-import { resolveCliProfile } from "../profiles.js";
+import { resolveTerminalAgentCliConnection } from "../local-terminal-connection.js";
 import { createShellClient } from "../shell-client.js";
 import {
   createTerminalAgentClient,
@@ -14,11 +13,10 @@ import { codedError, commonArgs, refFor, resolveTab, resolveWorkspace, writeErro
 const LABEL = /^([a-z][a-z0-9_.-]{0,62})=(.{0,256})$/s;
 
 async function clients(args: Record<string, unknown>) {
-  const profile = await resolveCliProfile(args);
-  const token = await requireCliAuthToken(profile);
+  const { gatewayUrl, token } = await resolveTerminalAgentCliConnection(args);
   return {
-    shell: createShellClient({ gatewayUrl: profile.gatewayUrl, token }),
-    agents: createTerminalAgentClient({ gatewayUrl: profile.gatewayUrl, token }),
+    shell: createShellClient({ gatewayUrl, token }),
+    agents: createTerminalAgentClient({ gatewayUrl, token }),
   };
 }
 
