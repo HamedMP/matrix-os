@@ -25,18 +25,21 @@ describe("Matrix Core MCP usage checkpoint", () => {
   let usageDb: Kysely<McpUsageDatabase>;
   let linear: FakeUpstream;
   let docs: FakeUpstream;
+  let L: string;
+  let D: string;
 
   beforeEach(async () => {
     linear = { host: "mcp.linear.test", calls: [], tools: [
       { name: "list_issues", description: "List Linear issues." },
       { name: "create_issue", description: "Create a Linear issue." },
+      { name: "flaky", description: "Reports a tool error.", result: () => ({ isError: true, content: [{ type: "text", text: "quota exceeded" }] }) },
     ] };
     docs = { host: "docs.example.test", calls: [], tools: [{ name: "search_docs", description: "Search documentation about issues." }] };
     fixture = await createCoreFixture([linear, docs]);
     usageDb = new Kysely<McpUsageDatabase>({ dialect: fixture.pglite.dialect });
     await bootstrapMcpUsageDatabase(usageDb);
-    await fixture.connect("Linear", linear.host, { list_issues: "allow", create_issue: "always_ask" });
-    await fixture.connect("Docs", docs.host, { search_docs: "allow" });
+    L = `linear-${(await fixture.connect("Linear", linear.host, { list_issues: "allow", create_issue: "always_ask", flaky: "allow" })).slice(0, 8)}`;
+    D = `docs-${(await fixture.connect("Docs", docs.host, { search_docs: "allow" })).slice(0, 8)}`;
   });
   afterEach(async () => { await fixture.close(); });
 
@@ -77,21 +80,24 @@ describe("Matrix Core MCP usage checkpoint", () => {
     try {
       await client.connect(transport);
       const services = JSON.stringify((await client.callTool({ name: "list_services" })).content);
-      expect(services).toContain('\\"service\\": \\"linear\\"');
+      expect(services).toContain(`\\"service\\": \\"${L}\\"`);
       const search = JSON.stringify((await client.callTool({ name: "search_tools", arguments: { query: "issues" } })).content);
-      expect(search).toContain("linear.list_issues");
-      expect(search).toContain("docs.search_docs");
+      expect(search).toContain(`${L}.list_issues`);
+      expect(search).toContain(`${D}.search_docs`);
 
-      const listed = await client.callTool({ name: "call_tool", arguments: { service: "linear", tool: "linear.list_issues", arguments: { team: "SECRET-TEAM" } } });
+      const listed = await client.callTool({ name: "call_tool", arguments: { service: L, tool: `${L}.list_issues`, arguments: { team: "SECRET-TEAM" } } });
       expect(listed.isError).toBeFalsy();
       expect(JSON.stringify(listed.content)).toContain("untrusted_external_content");
       expect(JSON.stringify(listed.content)).toContain("list_issues ok");
-      const searched = await client.callTool({ name: "call_tool", arguments: { service: "docs", tool: "search_docs", arguments: { q: "private words" } } });
+      const searched = await client.callTool({ name: "call_tool", arguments: { service: D, tool: "search_docs", arguments: { q: "private words" } } });
       expect(JSON.stringify(searched.content)).toContain("search_docs ok");
-      const gated = await client.callTool({ name: "call_tool", arguments: { service: "linear", tool: "create_issue", arguments: { title: "x" } } });
+      const gated = await client.callTool({ name: "call_tool", arguments: { service: L, tool: "create_issue", arguments: { title: "x" } } });
       expect(gated.isError).toBe(true);
       expect(JSON.stringify(gated.content)).toContain("requires approval");
-      expect(linear.calls.map(call => call.tool)).toEqual(["list_issues"]);
+      const failed = await client.callTool({ name: "call_tool", arguments: { service: L, tool: "flaky", arguments: {} } });
+      expect(failed.isError).toBe(true);
+      expect(JSON.stringify(failed.content)).toContain("quota exceeded");
+      expect(linear.calls.map(call => call.tool)).toEqual(["list_issues", "flaky"]);
       expect(docs.calls.map(call => call.tool)).toEqual(["search_docs"]);
 
       await writer.drain();
@@ -100,6 +106,7 @@ describe("Matrix Core MCP usage checkpoint", () => {
         ["mcp.linear.test", "list_issues", "stdio", "claude_code", "ok", fixture.actorId],
         ["docs.example.test", "search_docs", "stdio", "claude_code", "ok", fixture.actorId],
         ["mcp.linear.test", "create_issue", "stdio", "claude_code", "approval_required", fixture.actorId],
+        ["mcp.linear.test", "flaky", "stdio", "claude_code", "error", fixture.actorId],
       ]);
       expect(JSON.stringify(rows)).not.toMatch(/SECRET-TEAM|private words|list_issues ok/);
     } finally {

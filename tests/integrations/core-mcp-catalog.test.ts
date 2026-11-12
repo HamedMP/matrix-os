@@ -29,9 +29,19 @@ describe("Matrix Core MCP catalog bounds", () => {
     expect(normalizeCoreCatalog(server("s1", Array.from({ length: 500 }, (_, index) => tool(`t${index}`))), "fixture").ok).toBe(true);
   });
 
-  it("gives duplicate and unnamed services distinct ids in creation order", () => {
-    const slugs = assignCoreServiceSlugs([{ id: "a", name: "My Linear!" }, { id: "b", name: "my linear" }, { id: "c", name: "???" }]);
-    expect([...slugs.values()]).toEqual(["my-linear", "my-linear-2", "mcp"]);
+  it("binds service ids to the connection id, independent of sibling order, and lengthens only on a prefix clash", () => {
+    const a = { id: "aaaaaaaa-1111-4111-8111-111111111111", name: "My Linear!" };
+    const b = { id: "bbbbbbbb-2222-4222-8222-222222222222", name: "my linear" };
+    const c = { id: "aaaaaaaa-3333-4333-8333-333333333333", name: "???" };
+    expect([...assignCoreServiceSlugs([a, b]).values()]).toEqual(["my-linear-aaaaaaaa", "my-linear-bbbbbbbb"]);
+    expect(assignCoreServiceSlugs([b]).get(b.id)).toBe("my-linear-bbbbbbbb");
+    expect([...assignCoreServiceSlugs([a, c]).values()]).toEqual(["my-linear-aaaaaaaa1111", "mcp-aaaaaaaa3333"]);
+  });
+
+  it("omits tools whose names could restructure prompts or envelopes", () => {
+    const result = normalizeCoreCatalog(server("s1", [tool('a"b'), tool("a<b"), tool("tab\tname"), tool("ok.name-1")]), "fixture");
+    if (!result.ok) throw new Error("expected catalog");
+    expect(result.catalog.tools.map(entry => entry.name)).toEqual(["ok.name-1"]);
   });
 
   it("evicts the least recently used connection at the cap and expires entries after the TTL", () => {

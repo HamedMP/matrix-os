@@ -19,6 +19,9 @@ const MAX_QUERY_TOKENS = 16;
 const SUMMARY_CHARS = 200;
 const HIT_DESCRIPTION_CHARS = 200;
 const SERVICE_SLUG_CHARS = 48;
+const CONNECTION_SUFFIX_HEX = 8;
+/** Tool names travel into prompts and envelopes; refuse anything that could restructure them. */
+const SAFE_TOOL_NAME = /^[^\u0000-\u001f\u007f-\u009f<>"'`&\\]{1,128}$/u;
 
 export type CoreToolPolicy = CustomMcpApproval | "blocked";
 
@@ -64,20 +67,24 @@ function slugFor(name: string): string {
 }
 
 /**
- * Stable, human-readable service ids. Servers arrive in creation order, so the
- * earliest connection keeps the bare slug and later duplicates get a suffix.
+ * Service ids are bound to the immutable connection id (`<slug>-<8 hex>`), so a
+ * deleted or renamed sibling can never re-point an id at another account; a
+ * stale id simply stops resolving. The suffix only lengthens on a prefix clash.
  */
 export function assignCoreServiceSlugs(servers: readonly Pick<CustomMcpServer, "id" | "name">[]): Map<string, string> {
-  const used = new Set<string>();
+  const hexes = servers.map(server => server.id.toLowerCase().replace(/[^0-9a-f]/g, ""));
   const slugs = new Map<string, string>();
-  for (const server of servers) {
-    const base = slugFor(server.name);
-    let candidate = base;
-    for (let suffix = 2; used.has(candidate); suffix++) candidate = `${base}-${suffix}`;
-    used.add(candidate);
-    slugs.set(server.id, candidate);
-  }
+  servers.forEach((server, index) => {
+    const hex = hexes[index]!;
+    let length = CONNECTION_SUFFIX_HEX;
+    while (length < hex.length && hexes.some((other, j) => j !== index && other.startsWith(hex.slice(0, length)))) length += 4;
+    slugs.set(server.id, `${slugFor(server.name)}-${hex.slice(0, length) || "0"}`);
+  });
   return slugs;
+}
+
+export function isSafeCoreToolName(name: string): boolean {
+  return SAFE_TOOL_NAME.test(name);
 }
 
 /** Bound and normalize one server's tools; an oversized catalog is degraded, never partial. */
@@ -89,6 +96,11 @@ export function normalizeCoreCatalog(server: CustomMcpServer, service: string): 
   for (const tool of server.tools) {
     if (!tool || typeof tool.name !== "string" || tool.name.length < 1 || tool.name.length > 128) {
       return { ok: false, reason: "invalid_catalog" };
+    }
+    if (!isSafeCoreToolName(tool.name)) {
+      // Not exposed (so not callable) through Core; the rest of the server stays usable.
+      console.warn("[core-mcp] tool with unsafe name omitted from catalog", { serverId: server.id });
+      continue;
     }
     const description = truncateUtf8(typeof tool.description === "string" ? tool.description : "", CORE_MAX_DESCRIPTION_BYTES);
     let schemaText: string;

@@ -90,14 +90,22 @@ export async function callToolHandler(
       approvalGranted: false,
       ...(input.approval_receipt ? { approvalReceipt: input.approval_receipt } : {}),
     } });
-    if (!response.ok) return failure("The Matrix Core tool call was rejected.");
-    const result = await response.json() as { status?: unknown; text?: unknown };
+    if (!response.ok) {
+      const body = await response.json().catch((error: unknown) => {
+        console.warn("[core-mcp] call_tool error body unreadable:", error instanceof Error ? error.name : "UnknownError");
+        return null;
+      }) as { code?: unknown } | null;
+      return failure(body?.code === "ambiguous_tool"
+        ? "That tool name is ambiguous. Use the exact tool name returned by describe_tool."
+        : "The Matrix Core tool call was rejected.");
+    }
+    const result = await response.json() as { status?: unknown; text?: unknown; isError?: unknown };
     if (result.status === "approval_required") {
       return failure("This tool requires approval in Matrix before it can run. Ask the person to approve it; do not retry with a guessed receipt.");
     }
     if (result.status !== "ok" || typeof result.text !== "string") return failure("The Matrix Core tool returned an invalid result.");
     // The platform already wrapped this upstream output as untrusted content.
-    return text(result.text);
+    return result.isError === true ? failure(result.text) : text(result.text);
   } catch (error: unknown) {
     console.error("[core-mcp] call_tool error:", error instanceof Error ? error.message : error);
     return failure("The Matrix Core tool is temporarily unavailable.");

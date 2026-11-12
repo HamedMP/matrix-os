@@ -35,6 +35,7 @@ export interface CoreRouteOptions {
 
 function coreError(context: Context, error: unknown): Response {
   if (error instanceof CoreToolsError) {
+    if (error.code === "ambiguous") return context.json({ error: "Ambiguous tool name; use the exact name from describe_tool", code: "ambiguous_tool" }, 400);
     return error.code === "not_found"
       ? context.json({ error: "Matrix Core MCP item not found" }, 404)
       : context.json({ error: "Invalid Matrix Core MCP request" }, 400);

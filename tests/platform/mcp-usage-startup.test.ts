@@ -9,11 +9,12 @@ import { createCoreFixture, type CoreFixture, type FakeUpstream } from "../integ
 describe("platform Matrix Core MCP composition", () => {
   let fixture: CoreFixture;
   let upstream: FakeUpstream;
+  let linearId: string;
 
   beforeEach(async () => {
     upstream = { host: "mcp.linear.test", calls: [], tools: [{ name: "list_issues", description: "List issues." }] };
     fixture = await createCoreFixture([upstream]);
-    await fixture.connect("Linear", upstream.host, { list_issues: "allow" });
+    linearId = await fixture.connect("Linear", upstream.host, { list_issues: "allow" });
   });
   afterEach(async () => { await fixture.close(); });
 
@@ -21,7 +22,7 @@ describe("platform Matrix Core MCP composition", () => {
     const db = new Kysely<McpUsageDatabase>({ dialect: fixture.pglite.dialect });
     const runtime = await createPlatformCoreMcp({ db, coreModule, broker: fixture.broker, approvals: fixture.db, maintenance: false });
     const core = runtime.core as coreModule.CoreToolService;
-    await core.callTool({ userId: fixture.userId, actorId: fixture.actorId, entryPoint: "stdio" }, { service: "linear", tool: "list_issues" });
+    await core.callTool({ userId: fixture.userId, actorId: fixture.actorId, entryPoint: "stdio" }, { service: `linear-${linearId.slice(0, 8)}`, tool: "list_issues" });
     expect(await db.selectFrom("mcp_usage_events").selectAll().execute()).toEqual([]);
     await runtime.shutdown();
     await runtime.shutdown();
