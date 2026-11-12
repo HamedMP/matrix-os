@@ -3,7 +3,8 @@
  * on real files with hand-built archives at the byte level.
  */
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, mkdtempSync, readlinkSync, rmSync, utimesSync, writeFileSync } from "node:fs";
+import { spawnSync } from "node:child_process";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readlinkSync, rmSync, statSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { gzipSync } from "node:zlib";
@@ -134,6 +135,36 @@ describe("Matrix Core repo installer", () => {
     await installCoreRepo({ root, transport: transportFor([pinFor(a, bytes.get(a)!)], bytes), runSkillSync: async () => {} });
     expect(existsSync(join(root, "org_acme1", ".staging-old"))).toBe(false);
     expect(existsSync(join(root, "org_acme1", ".staging-fresh"))).toBe(true);
+  });
+
+  // Fault: a live run longer than the lock age is reclaimed, or one run releases another run's lock.
+  it("reclaims a lock only from a dead owner, renews it while running, and releases only its own", async () => {
+    const lock = join(root, ".lock");
+    mkdirSync(root, { recursive: true });
+    const transport = transportFor([], new Map());
+    const dead = spawnSync(process.execPath, ["-e", ""]).pid!;
+    writeFileSync(lock, JSON.stringify({ pid: dead, token: "dead-run" }));
+    expect(await installCoreRepo({ root, transport, runSkillSync: async () => {} })).toEqual([]);
+    expect(existsSync(lock)).toBe(false);
+
+    writeFileSync(lock, JSON.stringify({ pid: process.pid, token: "live-run" }));
+    const stale = new Date(Date.now() - 20 * 60_000);
+    utimesSync(lock, stale, stale);
+    await expect(installCoreRepo({ root, transport, runSkillSync: async () => {} })).rejects.toBeInstanceOf(CoreRepoInstallError);
+    rmSync(lock);
+
+    const a = "a".repeat(40);
+    const bytes = new Map([[a, good(a, ["deploy"])]]);
+    let renewedDuringRun = false;
+    const slowSync = async () => {
+      utimesSync(lock, stale, stale);
+      await new Promise(resolve => setTimeout(resolve, 120));
+      renewedDuringRun = Date.now() - statSync(lock).mtimeMs < 60_000;
+      writeFileSync(lock, JSON.stringify({ pid: process.pid, token: "someone-else" }));
+    };
+    await installCoreRepo({ root, transport: transportFor([pinFor(a, bytes.get(a)!)], bytes), runSkillSync: slowSync, lockHeartbeatMs: 20 });
+    expect(renewedDuringRun).toBe(true);
+    expect(JSON.parse(readFileSync(lock, "utf8")).token).toBe("someone-else");
   });
 
   it("writes hourly timer units that run `core sync`", () => {

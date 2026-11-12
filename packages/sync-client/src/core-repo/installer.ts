@@ -14,7 +14,7 @@
  * personal skills. Hooks and scripts are installed but not activated.
  */
 import { execFile } from "node:child_process";
-import { lstat, mkdir, mkdtemp, readFile, readdir, readlink, rename, rm, stat, symlink, writeFile } from "node:fs/promises";
+import { lstat, mkdir, mkdtemp, readFile, readdir, readlink, rename, rm, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { promisify } from "node:util";
 import {
@@ -25,6 +25,7 @@ import {
   type CoreRepoPin,
 } from "@matrix-os/contracts";
 import { extractCoreRepoArchive, sha256Hex } from "./archive.js";
+import { CoreRepoLockedError, acquireCoreRepoLock } from "./lock.js";
 
 const execFileAsync = promisify(execFile);
 const ORG_DIR = /^org_[A-Za-z0-9]{1,124}$/;
@@ -33,7 +34,6 @@ const META_FILE = ".matrix-core.json";
 const SKILLS_DIR = ".matrix-skills";
 const STAGING_PREFIX = ".staging-";
 const STAGING_TTL_MS = 60 * 60_000;
-const LOCK_TTL_MS = 10 * 60_000;
 const MAX_SKILLS = 500;
 const SKILL_SYNC_TIMEOUT_MS = 120_000;
 
@@ -262,20 +262,16 @@ export interface InstallOptions {
   /** Outside `$MATRIX_HOME`; one directory per org. */
   root: string;
   runSkillSync(input: SkillSyncInput): Promise<void>;
+  /** Test hook; production renews the lock every minute. */
+  lockHeartbeatMs?: number;
 }
 
 export async function installCoreRepo(options: InstallOptions): Promise<CoreRepoInstallResult[]> {
   await mkdir(options.root, { recursive: true, mode: 0o700 });
-  const lock = join(options.root, ".lock");
-  try {
-    const info = await stat(lock);
-    if (Date.now() - info.mtimeMs > LOCK_TTL_MS) await rm(lock, { force: true });
-  } catch (error: unknown) {
-    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
-  }
-  try { await writeFile(lock, String(process.pid), { flag: "wx" }); }
+  let lock: Awaited<ReturnType<typeof acquireCoreRepoLock>>;
+  try { lock = await acquireCoreRepoLock(join(options.root, ".lock"), { heartbeatMs: options.lockHeartbeatMs }); }
   catch (error: unknown) {
-    if ((error as NodeJS.ErrnoException).code === "EEXIST") throw new CoreRepoInstallError("locked");
+    if (error instanceof CoreRepoLockedError) throw new CoreRepoInstallError("locked");
     throw error;
   }
   try {
@@ -303,7 +299,7 @@ export async function installCoreRepo(options: InstallOptions): Promise<CoreRepo
     }
     return results;
   } finally {
-    await rm(lock, { force: true });
+    await lock.release();
   }
 }
 
