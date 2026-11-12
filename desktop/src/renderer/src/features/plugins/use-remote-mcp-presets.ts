@@ -7,8 +7,9 @@ import { useIntegrations } from "../integrations/integrations-store";
 export function useRemoteMcpPresets(api: ApiClient | null) {
   const connectedApps = useIntegrations((state) => state.connections);
   const availableApps = useIntegrations((state) => state.available);
-  const integrationsStatus = useIntegrations((state) => state.status);
   const refreshIntegrations = useIntegrations((state) => state.refresh);
+  // The account whose legacy connected apps the shared store currently holds for this view.
+  const [inventoryOwner, setInventoryOwner] = useState<ApiClient | null>(null);
   const [presets, setPresets] = useState<RemoteMcpPreset[]>([]);
   const [catalogState, setCatalogState] = useState<"loading" | "ready" | "error">("loading");
 
@@ -25,15 +26,24 @@ export function useRemoteMcpPresets(api: ApiClient | null) {
   }, [api]);
   // react-doctor-disable-next-line react-hooks-js/set-state-in-effect -- mount loads the external preset catalog; the same callback serves Retry.
   useEffect(() => { loadCatalog(); }, [loadCatalog]);
-  // Legacy connected apps share the inventory; load them once if Integrations has not.
+  // Legacy connected apps share the inventory. Reload them for every account or
+  // computer change, and show none until a successful load for this account.
   useEffect(() => {
-    if (api && integrationsStatus === "idle") void refreshIntegrations(api);
-  }, [api, integrationsStatus, refreshIntegrations]);
+    if (!api) return undefined;
+    let current = true;
+    void refreshIntegrations(api).then(() => {
+      if (current && useIntegrations.getState().status === "ready") setInventoryOwner(api);
+    }, (refreshError: unknown) => {
+      console.warn("[custom-mcp] connected apps load failed:", refreshError instanceof Error ? refreshError.name : typeof refreshError);
+    });
+    return () => { current = false; };
+  }, [api, refreshIntegrations]);
+  const ownedApps = inventoryOwner !== null && inventoryOwner === api ? connectedApps : [];
 
   const inventoryFor = (servers: ReadonlyArray<{ id: string; name: string; url: string; status: string }>): McpInventoryEntry[] =>
     buildMcpConnectionInventory(
       servers,
-      connectedApps.map((app) => ({ id: app.id, service: app.service, account_label: app.accountLabel, status: app.status })),
+      ownedApps.map((app) => ({ id: app.id, service: app.service, account_label: app.accountLabel, status: app.status })),
       Object.fromEntries(availableApps.map((app) => [app.id, app.name])),
     );
 
