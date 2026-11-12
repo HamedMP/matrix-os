@@ -14,6 +14,7 @@ import { dirname, join } from "node:path";
 import { z } from "zod/v4";
 import { writeUtf8FileAtomic } from "../lib/atomic-write.js";
 import { profilePath } from "../lib/profiles.js";
+import { withProfileRefreshLock } from "./remote-oauth-lock.js";
 
 const HTTP_TIMEOUT_MS = 10_000;
 const MAX_METADATA_BYTES = 64 * 1024;
@@ -80,20 +81,39 @@ export async function clearRemoteMcpTokens(profileName: string, configDir?: stri
   }
 }
 
+/** Streams at most MAX_METADATA_BYTES; cancels the body the moment it would exceed the cap. */
 async function boundedJson(response: Response): Promise<unknown> {
   const declared = Number(response.headers.get("content-length"));
-  if (declared > MAX_METADATA_BYTES) { await response.body?.cancel(); throw oauthFailed(); }
-  const bytes = new Uint8Array(await response.arrayBuffer());
-  if (bytes.byteLength > MAX_METADATA_BYTES) throw oauthFailed();
-  try { return JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes)); }
+  if (declared > MAX_METADATA_BYTES || !response.body) { await response.body?.cancel(); throw oauthFailed(); }
+  const reader = response.body.getReader();
+  const buffer = new Uint8Array(MAX_METADATA_BYTES);
+  let length = 0;
+  try {
+    for (;;) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      if (value.byteLength > MAX_METADATA_BYTES - length) {
+        await reader.cancel();
+        throw oauthFailed();
+      }
+      buffer.set(value, length);
+      length += value.byteLength;
+    }
+  } finally { reader.releaseLock(); }
+  try { return JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(buffer.subarray(0, length))); }
   catch (error: unknown) {
     if (error instanceof SyntaxError || error instanceof TypeError) throw oauthFailed();
     throw error;
   }
 }
 
+/** Parses only 2xx bodies; any other status is returned without reading its (possibly non-JSON) body. */
 async function request(fetchImpl: typeof fetch, url: string, init: RequestInit = {}): Promise<{ status: number; body: unknown }> {
   const response = await fetchImpl(trustedUrl(url).href, { ...init, redirect: "error", signal: AbortSignal.timeout(HTTP_TIMEOUT_MS) });
+  if (response.status < 200 || response.status >= 300) {
+    await response.body?.cancel();
+    return { status: response.status, body: undefined };
+  }
   return { status: response.status, body: await boundedJson(response) };
 }
 
@@ -107,8 +127,8 @@ const TokenResponse = z.object({
   expires_in: z.number().int().positive().max(366 * 24 * 3600).optional(), refresh_token: z.string().min(1).max(16_384).optional(),
 }).passthrough();
 
-/** RFC 9728 then RFC 8414 discovery; every endpoint must be https (or loopback http). */
-async function discover(fetchImpl: typeof fetch, resource: URL) {
+/** RFC 9728 then RFC 8414 (falling back to OpenID) discovery; every endpoint must be https (or loopback http). */
+export async function discoverRemoteMcpAuthorizationServer(resource: URL, fetchImpl: typeof fetch = fetch) {
   const protectedResource = await request(fetchImpl, `${resource.origin}/.well-known/oauth-protected-resource${resource.pathname}`);
   const metadata = ResourceMetadata.safeParse(protectedResource.body);
   if (protectedResource.status !== 200 || !metadata.success || metadata.data.resource !== resource.href) throw oauthFailed();
@@ -173,7 +193,7 @@ export async function loginRemoteMcp(options: {
 }): Promise<RemoteMcpTokens> {
   const fetchImpl = options.fetch ?? fetch;
   const resource = trustedUrl(options.resource);
-  const server = await discover(fetchImpl, resource);
+  const server = await discoverRemoteMcpAuthorizationServer(resource, fetchImpl);
   const state = b64url(randomBytes(32));
   const verifier = b64url(randomBytes(48));
   const callback = await loopbackCallback(state, options.timeoutMs ?? LOGIN_TIMEOUT_MS);
@@ -214,17 +234,38 @@ export async function refreshRemoteMcpTokens(tokens: RemoteMcpTokens, fetchImpl:
     tokenEndpoint: tokens.tokenEndpoint, clientId: tokens.clientId }, tokens.refreshToken);
 }
 
-/** A single-flight token source for the bridge: refreshes before expiry and on demand after a 401. */
+/**
+ * The bridge's token source: refreshes before expiry and once after a 401.
+ * Refreshes are single-flight in-process and serialized across processes by
+ * a profile lock; the saved tokens are reread under the lock and again after
+ * a failed refresh, so a token another bridge already rotated is adopted
+ * rather than spending this process's stale refresh token.
+ */
 export function createRemoteMcpTokenSource(options: { profileName: string; configDir?: string; fetch?: typeof fetch; now?: () => number }) {
   const now = options.now ?? Date.now;
   let current: RemoteMcpTokens | null = null;
   let refreshing: Promise<RemoteMcpTokens> | null = null;
+  const usable = (tokens: RemoteMcpTokens | null, stale: RemoteMcpTokens): tokens is RemoteMcpTokens =>
+    Boolean(tokens && tokens.accessToken !== stale.accessToken && tokens.expiresAt - REFRESH_MARGIN_MS > now());
+  const reread = () => loadRemoteMcpTokens(options.profileName, options.configDir);
   const refresh = (stale: RemoteMcpTokens) => refreshing ??= (async () => {
     try {
-      const next = await refreshRemoteMcpTokens(stale, options.fetch);
-      await saveRemoteMcpTokens(options.profileName, next, options.configDir);
-      current = next;
-      return next;
+      current = await withProfileRefreshLock(`${remoteMcpTokenPath(options.profileName, options.configDir)}.lock`, async () => {
+        const saved = await reread();
+        if (usable(saved, stale)) return saved;
+        const base = saved ?? stale;
+        let next: RemoteMcpTokens;
+        try { next = await refreshRemoteMcpTokens(base, options.fetch); }
+        catch (error: unknown) {
+          // A spent refresh token (invalid_grant) may mean another process already rotated it.
+          const after = await reread();
+          if (usable(after, stale)) return after;
+          throw error;
+        }
+        await saveRemoteMcpTokens(options.profileName, next, options.configDir);
+        return next;
+      });
+      return current;
     } finally { refreshing = null; }
   })();
   return {
