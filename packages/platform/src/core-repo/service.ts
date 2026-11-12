@@ -72,8 +72,14 @@ export function createCoreRepoSyncService(options: {
 
   const service = {
     sourceForOrg: (organizationId: string) => sources.get(organizationId),
-    sourceForInstallation: (installationId: number, repository: string) => options.config.sources.find(source =>
-      source.installationId === installationId && source.repository.toLowerCase() === repository.toLowerCase()),
+    /**
+     * Every configured org a push applies to: same installation, repository
+     * (case-insensitive, as GitHub treats it), and protected ref. Several orgs
+     * may share one installation and repository; each is synced.
+     */
+    sourcesForPush: (installationId: number, repository: string, ref: string) => options.config.sources.filter(source =>
+      source.installationId === installationId && source.repository.toLowerCase() === repository.toLowerCase()
+      && ref === `refs/heads/${source.ref}`),
 
     /** Null when the org has no configured repo. Concurrent calls share one run. */
     syncOrg(organizationId: string): Promise<CoreRepoSyncResult> | null {

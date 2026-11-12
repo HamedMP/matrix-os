@@ -97,3 +97,35 @@ describe("Matrix Core repo composition", () => {
     expect(await readFile("packages/platform/src/main.ts", "utf8")).toContain("if (deps.coreRepoRoutes) app.route('/', deps.coreRepoRoutes);");
   });
 });
+
+describe("Matrix Core repo webhook fan-out", () => {
+  // Fault: two orgs share one installation and repository, and a push syncs only the first configured org.
+  it("syncs every org whose installation, repository, and ref match the push", async () => {
+    const { createHmac } = await import("node:crypto");
+    const { createCoreRepoSyncService } = await import("../../packages/platform/src/core-repo/service.js");
+    const { createCoreRepoRoutes } = await import("../../packages/platform/src/core-repo/routes.js");
+    const shared = { installationId: 42, repository: "acme/matrix-core" };
+    const sources = [
+      { orgId: "org_alpha", ...shared, ref: "stable" },
+      { orgId: "org_beta", ...shared, ref: "stable" },
+      { orgId: "org_gamma", ...shared, ref: "main" },
+      { orgId: "org_delta", installationId: 7, repository: "acme/matrix-core", ref: "stable" },
+    ];
+    const synced: string[] = [];
+    const service = createCoreRepoSyncService({
+      config: { sources },
+      github: { headCommit: async (source) => { synced.push(source.orgId); throw new CoreRepoUpstreamError("ref"); }, downloadTarball: vi.fn() },
+      store: { putObject: vi.fn(), getObject: vi.fn() },
+      repository: { getPin: async () => null, recordFailure: async () => {} } as never,
+    });
+    const secret = "s".repeat(40);
+    const routes = createCoreRepoRoutes({ service, repository: { claimDelivery: async () => true } as never, webhookSecret: secret,
+      authenticateMachine: async () => null, resolveActor: async () => null });
+    const body = JSON.stringify({ ref: "refs/heads/stable", after: "a".repeat(40), installation: { id: 42 }, repository: { full_name: "ACME/matrix-core" } });
+    const response = await routes.request("/webhooks/github/core-repo", { method: "POST", body, headers: {
+      "x-github-event": "push", "x-github-delivery": "d-1", "x-hub-signature-256": `sha256=${createHmac("sha256", secret).update(body).digest("hex")}` } });
+    expect(response.status).toBe(202);
+    await vi.waitFor(() => expect([...synced].sort()).toEqual(["org_alpha", "org_beta"]));
+    await service.stop();
+  });
+});

@@ -112,17 +112,19 @@ export function createCoreRepoRoutes(options: CoreRepoRouteOptions): Hono {
     }
     const push = PushSchema.safeParse(payload);
     if (!push.success) return c.body(null, 204);
-    const source = service.sourceForInstallation(push.data.installation.id, push.data.repository.full_name);
-    if (!source || push.data.ref !== `refs/heads/${source.ref}`) return c.body(null, 204);
+    const matching = service.sourcesForPush(push.data.installation.id, push.data.repository.full_name, push.data.ref);
+    if (matching.length === 0) return c.body(null, 204);
     try {
       if (!(await repository.claimDelivery(delivery.data))) return c.body(null, 204);
     } catch (error: unknown) {
       return unavailable(c, "delivery dedupe", error);
     }
     // Acknowledge inside GitHub's 10 s window; the sync keeps the last good pin on failure.
-    void service.syncOrg(source.orgId)?.catch((error: unknown) => {
-      console.error("[core-repo] webhook sync crashed", error instanceof Error ? error.name : "UnknownError");
-    });
+    for (const source of matching) {
+      void service.syncOrg(source.orgId)?.catch((error: unknown) => {
+        console.error("[core-repo] webhook sync crashed", error instanceof Error ? error.name : "UnknownError");
+      });
+    }
     return c.json({ received: true }, 202);
   });
 
