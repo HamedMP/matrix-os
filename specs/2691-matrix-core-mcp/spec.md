@@ -183,9 +183,20 @@ It is capped at 40 tools per session.
   permission grants), and Hermes (its registered server; the run bearer
   reaches only the Core broker paths) receive the same scoped stdio server and
   run-scoped capability that Claude Code receives today. Run-scoped bearers
-  remain mandatory; there is no machine-bearer fallback. A Codex session's
-  bearer is revoked when the session stops or exits; an OpenCode bearer lives
-  exactly as long as its process.
+  remain mandatory; there is no machine-bearer fallback.
+  - **Bearer lifetime (decision).** A Codex process receives its bearer once,
+    in its spawn environment (the MCP child reads it from there), and a
+    session can outlive the 35-minute capability lifetime across many turns.
+    Reissuing per turn cannot reach the running process, so the bearer stays
+    the same for the session and is **renewed in place**: the session manager
+    extends every tracked grant whose session record is still active every
+    5 minutes, and revokes the grant when the session is stopped, observed to
+    have exited, fails to persist at start, or the manager shuts down (at most
+    128 tracked; evicting one revokes it). Only `call`/`discovery` grants are
+    renewable; Chat-call grants keep their fixed lifetime. A gateway restart
+    drops all in-memory grants, so a Codex session that survives a restart
+    loses Core access until it is restarted.
+  - An OpenCode bearer lives exactly as long as its process.
 - **CLI bridge (`matrix mcp login` / `matrix mcp bridge`).** For stdio-only
   clients. `login` runs Matrix OAuth against the profile's `<platform>/mcp`
   resource: protected-resource metadata (RFC 9728) → authorization-server

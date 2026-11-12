@@ -135,6 +135,12 @@ export function openCodeMatrixMcpConfig(scope: "call" | "discovery"): {
 
 export interface MatrixMcpRunCapability {
   token: string;
+  /**
+   * Call/discovery scopes only: extends a still-live grant by one lifetime.
+   * The bearer is fixed in a long-lived harness process env (Codex), so the
+   * owner of the run renews it instead of reissuing. False once revoked or expired.
+   */
+  renew?(): boolean;
   surface?: "preview_drive_call";
   previewDrive?: { runGrant: string; chatId: string; runId: string };
   revoke(): void;
@@ -312,7 +318,16 @@ export function createMatrixMcpCapabilityRegistry(options: {
         live: () => !closed && active.has(key) && now() < expiresAt,
       }) : undefined;
       active.set(key, { actorId: input.owner.ownerId, runId: input.runId, scope: input.scope, ...(input.driveContext ? { driveContext: true } : {}), ...(input.integrationRead === true ? { integrationRead: true } : {}), expiresAt, authority });
+      // Chat-call grants carry an authority bound to the original expiry; they are not renewable.
+      const renewable = input.scope === "call" || input.scope === "discovery";
       return { token, revoke: () => { active.delete(key); },
+        ...(renewable ? { renew: () => {
+          sweep();
+          const grant = active.get(key);
+          if (closed || !grant) return false;
+          grant.expiresAt = now() + LIFETIME_MS;
+          return true;
+        } } : {}),
         ...(authority ? { grantIntegrationTool: authority.grantIntegrationTool } : {}) };
     },
     resolve(token, method, path) {

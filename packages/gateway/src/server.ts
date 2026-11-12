@@ -344,7 +344,7 @@ export async function createGateway(config: GatewayConfig) {
   /** Spec 2691: Codex/OpenCode receive the same run-scoped Core MCP bearer Claude Code does. */
   const issueCoreMcpRunCapability = (ownerId: string, runId: string, scope: "call" | "discovery") => {
     const grant = matrixMcpCapabilities.issue({ owner: { type: "personal", ownerId }, runId, scope });
-    return grant ? { token: grant.token, scope, revoke: grant.revoke } : null;
+    return grant ? { token: grant.token, scope, revoke: grant.revoke, renew: () => grant.renew?.() ?? false } : null;
   };
   const posthogErrorTracker = installPostHogHonoErrorTracking(app, {
     service: "matrix-gateway",

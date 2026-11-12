@@ -334,6 +334,8 @@ async function releaseSessionLease(worktreeManager: WorktreeManager, session: Pi
   return true;
 }
 
+const CORE_MCP_RENEW_INTERVAL_MS = 5 * 60_000;
+
 export function createAgentSessionManager(options: {
   homePath: string;
   worktreeManager: WorktreeManager;
@@ -344,7 +346,7 @@ export function createAgentSessionManager(options: {
   resolveNativeCodexSubscription?: (ownerId: string, sessionId: string) => Promise<NativeCodexSubscriptionLaunch | undefined>;
   /** Spec 2691: run-scoped Matrix Core MCP capability for a Codex session; null launches without Core tools. */
   issueMatrixCoreMcp?: (input: { ownerId: string; sessionId: string; readOnly: boolean }) =>
-    { token: string; scope: "call" | "discovery"; revoke(): void } | null;
+    { token: string; scope: "call" | "discovery"; revoke(): void; renew(): boolean } | null;
   legacyZellij?: LegacySessionRuntime;
   now?: () => string;
   idGenerator?: () => string;
@@ -519,7 +521,7 @@ export function createAgentSessionManager(options: {
           persist: (value) => writeSession(homePath, value),
         });
         if (started.ok) {
-          if (coreMcp) trackCoreMcp(sessionId, coreMcp.revoke);
+          if (coreMcp) trackCoreMcp(sessionId, coreMcp);
           return { ok: true, status: 201, session: decorateSession(started.session) };
         }
         coreMcp?.revoke();
@@ -553,10 +555,11 @@ export function createAgentSessionManager(options: {
       }
 
       session.terminalRef = terminalRef;
-      if (coreMcp) trackCoreMcp(sessionId, coreMcp.revoke);
+      if (coreMcp) trackCoreMcp(sessionId, coreMcp);
       try {
         await writeSession(homePath, session);
       } catch (err: unknown) {
+        revokeCoreMcp(sessionId);
         await logSessionStartupFailure("session_persist", sessionId, err);
         await options.terminalRuntime.terminateTab(terminalRef!).catch((killErr: unknown) => {
           console.warn("[agent-session-manager] Runtime cleanup after session write failure failed:", killErr instanceof Error ? killErr.message : String(killErr));
@@ -575,6 +578,13 @@ export function createAgentSessionManager(options: {
   const coreMcpGrants = createCoreMcpSessionGrants();
   const trackCoreMcp = coreMcpGrants.track;
   const revokeCoreMcp = coreMcpGrants.revoke;
+  // Renew well inside the 35-minute capability lifetime; unref so it never holds the process.
+  const coreMcpRenewal = options.issueMatrixCoreMcp ? setInterval(() => {
+    void manager.renewCoreMcpSessions().catch((error: unknown) => {
+      console.warn("[agent-session-manager] Core MCP renewal failed", error instanceof Error ? error.name : "UnknownError");
+    });
+  }, CORE_MCP_RENEW_INTERVAL_MS) : null;
+  coreMcpRenewal?.unref();
 
   const manager = {
     async startSession(input: unknown): Promise<
@@ -916,8 +926,17 @@ export function createAgentSessionManager(options: {
       return { checked: sessions.length, degraded, releasedLeases, stoppedSessions };
     },
 
+    /** Keeps live sessions' Core MCP bearers valid; revokes bearers of sessions that are no longer active. */
+    async renewCoreMcpSessions(): Promise<void> {
+      await coreMcpGrants.renewLive(async sessionId => {
+        const session = await readSession(homePath, sessionId);
+        return Boolean(session && isActive(session));
+      });
+    },
+
     shutdown(): void {
       stopped = true;
+      if (coreMcpRenewal) clearInterval(coreMcpRenewal);
       coreMcpGrants.revokeAll();
       if (startupReconcileTimer !== null) clearTimeout(startupReconcileTimer);
       startupReconcileTimer = null;
