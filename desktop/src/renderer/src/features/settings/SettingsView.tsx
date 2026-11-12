@@ -22,6 +22,7 @@ import BillingSection from "./sections/BillingSection";
 import IntegrationsSettingsSection from "../integrations/IntegrationsSettingsSection";
 import CliSection from "../plugins/CliSection";
 import McpServersSection from "../plugins/McpServersSection";
+import ExternalMcpApprovalsSection from "../plugins/ExternalMcpApprovalsSection";
 import SkillsSection from "../plugins/SkillsSection";
 import CronSection from "./sections/CronSection";
 import SystemSection from "./sections/SystemSection";
@@ -162,7 +163,7 @@ export default function SettingsView({
           {section === "agents-providers" ? <AgentsProvidersAdapter automaticCreditRefreshEnabled={automaticCreditRefreshEnabled} /> : null}
           {section === "identity-personality" ? <IdentityPersonalitySection /> : null}
           {section === "services" ? <IntegrationsSettingsSection active={active} /> : null}
-          {section === "mcps" ? <McpServersSection /> : null}
+          {section === "mcps" ? <><McpServersSection /><ExternalMcpApprovalsSection /></> : null}
           {section === "skills" ? <SkillsSection /> : null}
           {section === "ai-usage" ? <AiUsageSection /> : null}
           {section === "chat-import" ? <ChatImportSection /> : null}
