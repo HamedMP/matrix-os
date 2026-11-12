@@ -3,10 +3,12 @@ import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js"
 import { describe, expect, it } from "vitest";
 
 const customDiscovery = ["list_custom_mcp_servers", "describe_custom_mcp_server"];
+const coreDiscovery = ["list_services", "search_tools", "describe_tool"];
+const coreCall = [...coreDiscovery, "call_tool", "get_approval"];
 const fullBaseline = [
   "list_integration_inventory", "list_connected_services", "describe_service",
   "connect_service", "sync_services", "call_service", "disconnect_service",
-  ...customDiscovery, "call_custom_mcp_tool", "jev_evaluate",
+  ...customDiscovery, "call_custom_mcp_tool", ...coreCall, "jev_evaluate",
   "list_chat_agent_options", "create_chat_agent",
 ];
 
@@ -32,7 +34,7 @@ describe("Matrix MCP advertises only the selected runnable surface", () => {
       expect((await client.listTools()).tools.map(tool => tool.name)).toEqual([
         "list_integration_inventory", "list_connected_services", "describe_service",
         "connect_service", "sync_services", "call_service", "disconnect_service",
-        ...customDiscovery, "call_custom_mcp_tool",
+        ...customDiscovery, "call_custom_mcp_tool", ...coreCall,
       ]);
       expect(client.getInstructions()).toContain("list_integration_inventory");
       expect(client.getInstructions()).toContain("account label");
@@ -42,7 +44,7 @@ describe("Matrix MCP advertises only the selected runnable surface", () => {
   it("custom call clients discover the broker path without unavailable integration recommendations", async () => {
     await withClient("custom-mcp-call", async client => {
       expect((await client.listTools()).tools.map(tool => tool.name)).toEqual([
-        ...customDiscovery, "call_custom_mcp_tool",
+        ...customDiscovery, "call_custom_mcp_tool", ...coreCall,
       ]);
       const instructions = client.getInstructions() ?? "";
       expect(instructions).toContain("list_custom_mcp_servers");
@@ -54,7 +56,11 @@ describe("Matrix MCP advertises only the selected runnable surface", () => {
 
   it("discovery clients cannot discover or invoke broker calls", async () => {
     await withClient("custom-mcp-discovery", async client => {
-      expect((await client.listTools()).tools.map(tool => tool.name)).toEqual(customDiscovery);
+      expect((await client.listTools()).tools.map(tool => tool.name)).toEqual([...customDiscovery, ...coreDiscovery]);
+      expect(client.getInstructions()).toContain("search_tools");
+      const core = await client.callTool({ name: "call_tool", arguments: { service: "linear", tool: "list_issues" } });
+      expect(core.isError).toBe(true);
+      expect(JSON.stringify(core)).toContain("not found");
       const instructions = client.getInstructions() ?? "";
       expect(instructions).toContain("list_custom_mcp_servers");
       expect(instructions).toContain("describe_custom_mcp_server");

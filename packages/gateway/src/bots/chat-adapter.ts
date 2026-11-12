@@ -48,6 +48,7 @@ const TOOL_LABELS: Record<string, string> = {
   "integration.describe": "Describing a connected service",
   "mcp.inventory": "Listing MCP servers",
   "mcp.describe": "Describing an MCP tool",
+  "mcp.search": "Searching MCP tools",
   "mcp.call": "Using an MCP tool",
 };
 

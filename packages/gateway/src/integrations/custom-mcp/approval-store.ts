@@ -60,6 +60,13 @@ export interface CustomMcpApprovalStore {
     userId: string; actorId: string; runId: string; generation: number;
   }): Promise<{ generation: number; invalidated: number } | null>;
   sweepCustomMcpApprovals(now: Date): Promise<number>;
+  /** Status-only read bound to owner + actor + run; never returns a receipt. */
+  readCustomMcpToolApproval(input: {
+    userId: string; actorId: string; runId: string; approvalId: string;
+  }): Promise<{
+    status: "pending" | "approved" | "denied" | "consumed" | "revoked" | "expired";
+    expiresAt: Date; serverId: string; toolName: string;
+  } | null>;
 }
 
 const MAX_ACTIVE_LEASES_PER_OWNER = 128;
@@ -299,6 +306,19 @@ export function createCustomMcpApprovalStore(
           .where("generation", "=", input.generation).returning("generation").executeTakeFirst();
         return advanced ? { generation: advanced.generation, invalidated: invalidated.length } : null;
       });
+    },
+
+    async readCustomMcpToolApproval(input) {
+      if (!validIdentity(input.actorId, input.runId)) return null;
+      const row = await db.selectFrom("custom_mcp_tool_approvals")
+        .select(["status", "expires_at", "server_id", "tool_name"])
+        .where("id", "=", input.approvalId).where("user_id", "=", input.userId)
+        .where("actor_id", "=", input.actorId).where("run_id", "=", input.runId)
+        .executeTakeFirst();
+      if (!row) return null;
+      const live = row.status === "pending" || row.status === "approved";
+      return { status: live && row.expires_at <= now() ? "expired" : row.status,
+        expiresAt: row.expires_at, serverId: row.server_id, toolName: row.tool_name };
     },
 
     async sweepCustomMcpApprovals(now) {
