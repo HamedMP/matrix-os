@@ -66,8 +66,16 @@ export function terminalAttentionChanges(
   const changes: TerminalAttention[] = [];
   for (const [key, tab] of next) {
     const before = previous.get(key);
-    if (!before || tab.state !== "live" || before.agentStatus === tab.agentStatus) continue;
+    if (tab.state !== "live") continue;
     const word = tab.agentStatus;
+    // A tab can appear already asking for the person (its status arrives with it).
+    if (!before) {
+      if (word === "blocked" || word === "error") {
+        changes.push({ key, kind: word, ref: tab.ref, name: tab.name, ...(tab.statusMessage ? { message: tab.statusMessage } : {}) });
+      }
+      continue;
+    }
+    if (before.agentStatus === tab.agentStatus) continue;
     if (word !== "blocked" && word !== "error" && word !== "done") continue;
     if (word === "done" && seen.has(key)) continue;
     changes.push({

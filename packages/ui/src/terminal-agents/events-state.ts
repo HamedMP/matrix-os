@@ -2,6 +2,8 @@ import { z } from "zod/v4";
 import { terminalFactsKey, type TerminalTabFacts } from "./attention.js";
 
 const MAX_TABS = 1_024;
+// Workspaces allow 10 000 tabs; anything beyond is not a valid stream.
+const MAX_SNAPSHOT_ENTRIES = 10_000;
 const TerminalIdSchema = z.string().regex(/^(tws|tt)_[0-9a-f]{32}$/);
 const RefSchema = z.strictObject({ workspaceId: TerminalIdSchema, tabId: TerminalIdSchema });
 const WordSchema = z.enum(["idle", "working", "done", "blocked", "error"]);
@@ -31,7 +33,8 @@ const EventSchema = z.discriminatedUnion("kind", [
 /** Every `/ws/terminal/events` server frame, checked before anything is stored. */
 export const TerminalEventsFrameSchema = z.discriminatedUnion("type", [
   // Tabs are checked one by one below: one malformed tab must not hide the others.
-  z.strictObject({ type: z.literal("snapshot"), seq: SeqSchema, tabs: z.array(z.unknown()).max(MAX_TABS) }),
+  // A larger snapshot is still read; the client keeps its live tabs within MAX_TABS.
+  z.strictObject({ type: z.literal("snapshot"), seq: SeqSchema, tabs: z.array(z.unknown()).max(MAX_SNAPSHOT_ENTRIES) }),
   z.strictObject({ type: z.literal("event"), seq: SeqSchema, event: EventSchema }),
   z.strictObject({ type: z.literal("heartbeat"), seq: SeqSchema }),
   z.strictObject({ type: z.literal("missed"), seq: SeqSchema }),
@@ -66,11 +69,11 @@ export function reduceTerminalEvents(state: TerminalEventsState, input: unknown)
   if (!parsed.success) return state;
   const frame = parsed.data;
   if (frame.type === "snapshot") {
+    const parsed = frame.tabs.map(parseTerminalTabFacts).filter((facts): facts is TerminalTabFacts => facts !== null);
+    // Live tabs first, so a long finished history never pushes out a working agent.
+    parsed.sort((left, right) => Number(left.state === "finished") - Number(right.state === "finished"));
     const tabs: Record<string, TerminalTabFacts> = {};
-    for (const raw of frame.tabs) {
-      const facts = parseTerminalTabFacts(raw);
-      if (facts) tabs[terminalFactsKey(facts.ref)] = facts;
-    }
+    for (const facts of parsed.slice(0, MAX_TABS)) tabs[terminalFactsKey(facts.ref)] = facts;
     return { connected: true, seq: frame.seq, tabs };
   }
   if (frame.type !== "event") return state;

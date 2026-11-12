@@ -13,6 +13,10 @@ import { ShellNotificationPortal } from "../ShellNotificationPortal";
 import { visibleTerminalSessions } from "./visible-terminal-sessions";
 
 const MAX_VISIBLE = 3;
+// Alerts waiting for a free slot; bounded, most recent kept.
+const MAX_PENDING = 32;
+// Blocked and errored agents need the person; they are shown before completions.
+const URGENT = (alert: TerminalAttention) => (alert.kind === "done" ? 1 : 0);
 const DONE_TIMEOUT_MS = 12_000;
 
 const COPY: Record<TerminalAttention["kind"], string> = {
@@ -52,7 +56,7 @@ export function TerminalAttentionNotifier() {
         return facts?.state === "live" && facts.agentStatus === alert.kind;
       });
       const fresh = changes.filter((change) => !stillAlerting.some((alert) => alert.key === change.key));
-      const updated = [...fresh, ...stillAlerting].slice(0, MAX_VISIBLE);
+      const updated = [...fresh, ...stillAlerting].slice(0, MAX_PENDING);
       // Unchanged alerts keep their array, so the done timeout is not restarted.
       return sameAlerts(current, updated) ? current : updated;
     });
@@ -67,6 +71,8 @@ export function TerminalAttentionNotifier() {
   }, [alerts]);
 
   if (alerts.length === 0) return null;
+  // Only the display is limited: hidden alerts wait and show when a slot frees up.
+  const visible = alerts.toSorted((left, right) => URGENT(left) - URGENT(right)).slice(0, MAX_VISIBLE);
 
   const dismiss = (key: string) => setAlerts((current) => current.filter((alert) => alert.key !== key));
   const open = (alert: TerminalAttention) => {
@@ -78,7 +84,7 @@ export function TerminalAttentionNotifier() {
 
   return (
     <ShellNotificationPortal>
-      {alerts.map((alert) => (
+      {visible.map((alert) => (
         <ShellNotificationCard
           key={alert.key}
           role={alert.kind === "done" ? "status" : "alert"}
