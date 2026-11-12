@@ -298,14 +298,24 @@ It is capped at 40 tools per session.
     202 before the sync runs; the hourly job converges on the ref head, which
     also corrects a race between two platform instances.
   - Installs live outside `$MATRIX_HOME` (`$XDG_DATA_HOME/matrix-core`, or
-    `MATRIX_CORE_ROOT`): `releases/<commit>`, an atomic `current` link, and
-    `previous` for rollback. Skills from `skills/*` and
+    `MATRIX_CORE_ROOT`): `releases/<commit>-<slug>`, an atomic `current`
+    link, and `previous` for rollback. One run at a time: the lock records the
+    owner PID and a token, is renewed while the run lives, and is reclaimed only
+    from a dead owner or after an hour without renewal. Skills from `skills/*` and
     `plugins/*/skills/*` are renamed `org-<slug>-<name>` (SKILL.md `name`
     rewritten) and linked by `sync-matrix-agent-skills.sh` in namespace mode,
     which owns only that prefix inside the org root; the default mode never
     touches `org-*`. Hooks and scripts are installed but not activated.
   - When membership ends, the next sync unlinks that org's skills and removes
-    its files. Off-VPS use needs the sync script on disk
+    its files. Removal needs confirmed loss: the pins route answers 503 when
+    an active membership cannot be verified (Clerk down, stale evidence) and
+    marks a complete answer `membership: "verified"`; a 503, network error,
+    or unverified answer never removes anything. A slug change moves skills
+    to the new `org-<slug>-` namespace. Combined skill names are capped at
+    100 characters; longer ones are reported, not installed.
+  - A push syncs every configured org sharing its installation, repository,
+    and ref. Storage keeps the current and previous pinned tarballs; older
+    ones and orphans from failed pin writes are deleted after an hour. Off-VPS use needs the sync script on disk
     (`MATRIX_SKILLS_SYNC_SCRIPT`); shipping it inside the npm CLI is a
     follow-up.
 - **Governance.** CODEOWNERS per directory, branch protection, and CI that runs
