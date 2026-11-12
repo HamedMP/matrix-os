@@ -243,8 +243,10 @@ function ImportSkillForm({ busy, onSubmit, children }: {
     <form className="space-y-2" onSubmit={submit}>
       <label className="block space-y-1 text-xs">
         <span>SKILL.md file</span>
-        <input type="file" autoFocus accept=".md,text/markdown" className={inputClass} style={borderStyle} disabled={busy}
-          onChange={event => setFile(event.target.files?.[0] ?? null)} />
+        <span className="flex min-h-8 items-center rounded-md border px-2.5 focus-within:ring-2 focus-within:ring-[var(--accent)]" style={borderStyle}>
+          <input type="file" autoFocus accept=".md,text/markdown" className="block w-full min-w-0 leading-normal outline-none" disabled={busy}
+            onChange={event => setFile(event.target.files?.[0] ?? null)} />
+        </span>
       </label>
       <p className="text-xs leading-relaxed" style={secondaryStyle}>Choose a Markdown file with a skill name, description, and instructions.</p>
       <div className="flex flex-wrap gap-2">

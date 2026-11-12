@@ -7,8 +7,9 @@ import type {
   CanonicalProviderSetupAction,
 } from "@matrix-os/contracts";
 import { ChatComposerAttachButton, ChatComposerOptionControls, ChatSpeechInputButton, ChatSpeechQuotaStatus, chatPermissionModeLabel, platformSpeechControlState, type ChatComposerOptionControl } from "@matrix-os/ui";
+import * as Popover from "@radix-ui/react-popover";
 import { Box, SquareTerminal } from "@renderer/lib/hugeicons";
-import { useEffect, useMemo, useRef, useState, type ReactNode, type Ref } from "react";
+import { useEffect, useEffectEvent, useLayoutEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from "react";
 import { PromptInput } from "./elements/prompt-input";
 import { ComposerPromptEditor, type ComposerPromptEditorHandle } from "./ComposerPromptEditor";
 import { ResourceRows } from "./ComposerResourceRows";
@@ -25,6 +26,7 @@ import {
   type SharedChatComposerSubmission,
 } from "./composer-reference-tokens";
 import { useConnectedDesktopSpeechInput } from "./DesktopSpeechInputControl";
+import { DESKTOP_Z_INDEX } from "../../design/layering";
 
 export type { ComposerReferenceToken, SharedChatComposerSubmission } from "./composer-reference-tokens";
 
@@ -44,27 +46,51 @@ function selectedOptionValue(
 function SuggestionMenu({
   label,
   menuSide,
-  menuRef,
+  anchorRef,
   children,
 }: {
   label: string;
   menuSide: "top" | "bottom";
-  menuRef?: Ref<HTMLDivElement>;
+  anchorRef: RefObject<HTMLDivElement | null>;
   children: ReactNode;
 }) {
   return (
-    <div
-      ref={menuRef}
-      role="listbox"
-      aria-label={label}
-      data-preferred-side={menuSide}
-      className={`absolute left-0 right-0 z-30 max-h-80 overflow-y-auto rounded-xl border p-2 shadow-xl ${
-        menuSide === "bottom" ? "top-[calc(100%+8px)]" : "bottom-[calc(100%+8px)]"
-      }`}
-      style={{ borderColor: "var(--border-default)", background: "var(--bg-overlay)" }}
-    >
-      {children}
-    </div>
+    <Popover.Portal>
+      <Popover.Content
+        role="listbox"
+        aria-label={label}
+        data-preferred-side={menuSide}
+        side={menuSide}
+        align="start"
+        sideOffset={8}
+        collisionPadding={8}
+        hideWhenDetached
+        onOpenAutoFocus={(event) => event.preventDefault()}
+        onCloseAutoFocus={(event) => event.preventDefault()}
+        onFocusOutside={(event) => {
+          const target = event.target;
+          const editor = target instanceof Element && target.closest('[data-slot="prompt-input-content"]');
+          if (editor && anchorRef.current?.contains(editor)) event.preventDefault();
+        }}
+        onMouseDown={(event) => {
+          // Keep the editor's selection while the pointer activates an option.
+          if (event.button === 0 && event.target instanceof Element && event.target.closest('[role="option"]')) {
+            event.preventDefault();
+          }
+        }}
+        className="matrix-chat-composer-menu overflow-y-auto rounded-xl border p-2 shadow-xl"
+        style={{
+          zIndex: DESKTOP_Z_INDEX.popover,
+          width: "var(--radix-popover-trigger-width)",
+          maxWidth: "var(--radix-popover-content-available-width)",
+          maxHeight: "min(20rem, var(--radix-popover-content-available-height))",
+          borderColor: "var(--border-default)",
+          background: "var(--bg-overlay)",
+        }}
+      >
+        {children}
+      </Popover.Content>
+    </Popover.Portal>
   );
 }
 
@@ -152,7 +178,7 @@ export function SharedChatComposer({
   speech?: { scopeKey: string; onDraft: (text: string) => void };
 }) {
   const [dismissedSuggestionKey, setDismissedSuggestionKey] = useState<string | null>(null);
-  const suggestionMenuRef = useRef<HTMLDivElement>(null);
+  const anchorRef = useRef<HTMLDivElement>(null);
   const editorRef = useRef<ComposerPromptEditorHandle>(null);
   const [cursor, setCursor] = useState(value.length);
   const speechDraft = useConnectedDesktopSpeechInput(speech);
@@ -328,20 +354,46 @@ export function SharedChatComposer({
       onChange: (permissionMode: string) => onSelectionChange({ ...selection, permissionMode }),
     },
   ] : [];
-  useEffect(() => {
-    if (!slashMenuOpen && !resourceMenuOpen) return;
-    const dismissOutside = (event: PointerEvent) => {
-      const target = event.target;
-      if (target instanceof Node && suggestionMenuRef.current?.contains(target)) return;
-      setDismissedSuggestionKey(suggestionKey);
+  const showResourceSuggestions = resourceMenuOpen && (canAttach || filteredResources.length > 0);
+  const suggestionMenuOpen = slashMenuOpen || showResourceSuggestions;
+  const suggestionSessionOpen = slashMenuOpen || resourceMenuOpen;
+  const dismissSuggestion = useEffectEvent(() => setDismissedSuggestionKey(suggestionKey));
+  useLayoutEffect(() => {
+    const anchor = anchorRef.current;
+    if (!suggestionSessionOpen || !anchor) return;
+
+    // A retained desktop surface can become inert before a pending search has rows.
+    const dismissIfInactive = () => {
+      if (anchor.closest('[inert], [hidden], [aria-hidden="true"]')) dismissSuggestion();
     };
-    document.addEventListener("pointerdown", dismissOutside);
-    return () => document.removeEventListener("pointerdown", dismissOutside);
-  }, [resourceMenuOpen, slashMenuOpen, suggestionKey]);
-  return (
-    <div className="matrix-chat-composer relative @container/chat-composer" data-slot="shared-chat-composer">
+    const observer = new MutationObserver(dismissIfInactive);
+    for (let ancestor: HTMLElement | null = anchor; ancestor; ancestor = ancestor.parentElement) {
+      observer.observe(ancestor, { attributes: true, attributeFilter: ["inert", "hidden", "aria-hidden"] });
+    }
+    dismissIfInactive();
+    return () => observer.disconnect();
+  }, [suggestionSessionOpen]);
+  const searchingWithoutMenu = Boolean(resourceSearch) && resourceMenuOpen && !suggestionMenuOpen;
+  useLayoutEffect(() => {
+    const anchor = anchorRef.current;
+    if (!searchingWithoutMenu || !anchor) return;
+
+    // While the menu has no rows, Radix has no layer to dismiss.
+    const dismissOutside = (event: Event) => {
+      if (event.target instanceof Node && !anchor.contains(event.target)) dismissSuggestion();
+    };
+    const document = anchor.ownerDocument;
+    document.addEventListener("pointerdown", dismissOutside, true);
+    document.addEventListener("focusin", dismissOutside, true);
+    return () => {
+      document.removeEventListener("pointerdown", dismissOutside, true);
+      document.removeEventListener("focusin", dismissOutside, true);
+    };
+  }, [searchingWithoutMenu]);
+  const composer = (
+    <Popover.Anchor ref={anchorRef} className="matrix-chat-composer relative @container/chat-composer" data-slot="shared-chat-composer">
       {slashMenuOpen ? (
-        <SuggestionMenu label="Skills and commands" menuSide={menuSide} menuRef={suggestionMenuRef}>
+        <SuggestionMenu label="Skills and commands" menuSide={menuSide} anchorRef={anchorRef}>
           <p className="px-2 pb-1 text-[11px] font-semibold uppercase tracking-[0.14em]" style={{ color: "var(--text-tertiary)" }}>
             Skills &amp; commands
           </p>
@@ -363,8 +415,8 @@ export function SharedChatComposer({
             </button>
           ))}
         </SuggestionMenu>
-      ) : resourceMenuOpen && (canAttach || filteredResources.length > 0) ? (
-        <SuggestionMenu label="Add" menuSide={menuSide} menuRef={suggestionMenuRef}>
+      ) : showResourceSuggestions ? (
+        <SuggestionMenu label="Add" menuSide={menuSide} anchorRef={anchorRef}>
           <p className="px-2 pb-1 text-[11px] font-semibold uppercase tracking-[0.14em]" style={{ color: "var(--text-tertiary)" }}>Add</p>
           <ResourceRows
             role="option"
@@ -451,6 +503,13 @@ export function SharedChatComposer({
           </>
         )}
       />
-    </div>
+    </Popover.Anchor>
+  );
+  return (
+    <Popover.Root open={suggestionMenuOpen} onOpenChange={(open) => {
+      if (!open) setDismissedSuggestionKey(suggestionKey);
+    }}>
+      {composer}
+    </Popover.Root>
   );
 }
