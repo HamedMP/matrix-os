@@ -391,16 +391,19 @@ export function createTerminalAgents(options: {
       const tabKeys = async () => {
         const live = new Map<string, TerminalTab>();
         const all = new Set<string>();
+        // Every listed tab's name, finished ones included: a note about an exited helper names it.
+        const names = new Map<string, string>();
         for (const workspace of await options.runtime.listWorkspaces()) {
           for (const tab of workspace.tabs) {
             const key = terminalRefKey({ workspaceId: workspace.id, tabId: tab.id });
             all.add(key);
+            names.set(key, tab.name);
             if (tab.status !== "exited" && tab.status !== "failed") live.set(key, tab);
           }
         }
-        return { live, all };
+        return { live, all, names };
       };
-      const { live, all } = await tabKeys();
+      const { live, all, names } = await tabKeys();
       const records = await options.registry.list();
       const statuses = await options.status.list();
       // Records kept even though their tab is gone: a note to the parent is still owed.
@@ -446,7 +449,7 @@ export function createTerminalAgents(options: {
         // A removed child that already reported its exit needs no second note.
         if (word === "removed" && previous === "exited") continue;
         if (word !== "blocked" && word !== "error" && word !== "exited" && word !== "removed") continue;
-        const name = childTab?.name ?? record.ref.tabId;
+        const name = childTab?.name ?? names.get(key) ?? record.ref.tabId;
         const text = word === "exited" || word === "removed" ? "exited"
           : word === "blocked" ? "is blocked and needs a person; read its screen" : "reported an error; read its screen";
         if (!await note(record, key, name, text) && word === "removed") pending.add(key);

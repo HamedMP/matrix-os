@@ -61,6 +61,10 @@ export interface TerminalWaitOutput {
   status?: string;
   exitCode?: number | null;
   child?: TerminalRef;
+  /** The helper this result names exited, or was removed. */
+  exited?: boolean;
+  /** The helper this result names sent its parent a report. */
+  reported?: boolean;
   /** How often the awaited output had appeared; passed back so one wait keeps one baseline. */
   seen?: number;
   /** Names the children's starting states on the server; passed back on the next check-in. */
@@ -176,6 +180,8 @@ export function createTerminalAgentClient(options: {
         reason: typeof payload.reason === "string" ? payload.reason : "unknown",
         ...(typeof payload.status === "string" ? { status: payload.status } : {}),
         ...(payload.child && typeof payload.child === "object" ? { child: payload.child as TerminalRef } : {}),
+        ...(payload.exited === true ? { exited: true } : {}),
+        ...(payload.reported === true ? { reported: true } : {}),
         ...(typeof payload.cursor === "string" && /^wc_[0-9a-f]{32}$/.test(payload.cursor) ? { cursor: payload.cursor } : {}),
       };
     },

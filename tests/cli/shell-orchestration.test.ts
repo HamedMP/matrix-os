@@ -120,6 +120,28 @@ describe("matrix shell orchestration", () => {
     expect(calls[0]?.body).toEqual({ caller: { sessionName: SESSION, paneId: "4" }, mode: "all", timeoutMs: 90_000 });
   });
 
+  // Fault detected (live check on the pr-3300 preview): the client dropped `reported` and
+  // `exited`, so an agent could not tell a helper's report from its exit.
+  it("says whether a helper reported or exited", async () => {
+    const logs: string[] = [];
+    vi.spyOn(console, "log").mockImplementation((line?: unknown) => logs.push(String(line)));
+    process.env.ZELLIJ_SESSION_NAME = SESSION;
+    process.env.ZELLIJ_PANE_ID = "4";
+    const child = { workspaceId: WORKSPACE_ID, tabId: TAB_ID };
+    const replies = [{ reason: "changed", child, reported: true }, { reason: "changed", child, exited: true }];
+    gateway(() => json(replies.shift()));
+    await run("wait-children", { _: ["any"] });
+    await run("wait-children", { _: ["any"] });
+    expect(logs.map((line) => JSON.parse(line).data)).toEqual([
+      { reason: "changed", child, reported: true },
+      { reason: "changed", child, exited: true },
+    ]);
+    logs.length = 0;
+    replies.push({ reason: "changed", child, reported: true });
+    await run("wait-children", { _: ["any"], json: false });
+    expect(logs).toEqual(["changed (reported)"]);
+  });
+
   it("labels and rejects malformed labels before any request", async () => {
     vi.spyOn(console, "log").mockImplementation(() => undefined);
     vi.spyOn(console, "error").mockImplementation(() => undefined);

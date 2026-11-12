@@ -181,6 +181,7 @@ export const shellWaitChildrenCommand = command(
       caller: requireCaller(), mode, totalMs: Number(rawTimeout) * 1000,
     });
     if (result.reason === "timeout") process.exitCode = 124;
-    return json ? formatCliSuccess({ ...result }) : `${result.reason}${result.status ? ` (${result.status})` : ""}`;
+    const why = result.reported ? "reported" : result.exited ? "exited" : result.status;
+    return json ? formatCliSuccess({ ...result }) : `${result.reason}${why ? ` (${why})` : ""}`;
   },
 );
