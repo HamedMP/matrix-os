@@ -34,6 +34,9 @@ export interface ChatState {
   chatChangeRevision?:number;
   /** The newest run start/end/wait changes, each tagged with its revision. */
   chatRunStatusChange?:import("@/hooks/useCanonicalChatState").ChatRunStatusChanges;
+  navigationPage?: import("@/lib/canonical-chat-client").CanonicalShellChatClient["navigationPage"];
+  searchConversations?: import("@/lib/canonical-chat-client").CanonicalShellChatClient["search"];
+  navigationUpdatedAt?: number;
   navigationClassifications?:readonly {chatId:string;classification:import("@matrix-os/contracts").CanonicalChatNavigationItem["classification"]}[];
   collaborationView?: ChatCollaborationView;
   openSharedChat?: (scopeId: string) => void;
@@ -81,6 +84,13 @@ export interface ChatState {
   renameConversation?: (id: string, title: string) => Promise<boolean>;
   /** Permanently deletes a Chat; resolves false when the server refused it. */
   deleteConversation?: (id: string) => Promise<boolean>;
+  archiveConversation?: (id: string) => Promise<{ chatId: string; revision: number } | null>;
+  restoreConversation?: (id: string, revision: number) => Promise<boolean>;
+  listArchivedConversations?: (cursor?: string) => Promise<import("@matrix-os/contracts").CanonicalChatListResponse>;
+  archiveProjectChats?: (projectId: string) => Promise<{ archived: Array<{ chatId: string; revision: number }>; archivedCount: number; skippedCount: number } | null>;
+  restoreArchivedChats?: (chats: Array<{ chatId: string; revision: number }>) => Promise<boolean>;
+  sideChatClient?: import("@matrix-os/ui").SideChatClient;
+  terminalSessionIds?: readonly string[];
   composerDraftRequest: { id: number; text: string; merge?: boolean } | null;
   /** `merge` keeps the owner's own text and adds the request below it. */
   requestComposerDraft: (text: string, options?: { merge?: boolean }) => void;

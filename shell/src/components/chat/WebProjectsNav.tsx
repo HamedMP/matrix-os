@@ -5,15 +5,17 @@ import { ChatRailOrderItem, ChatRailSection, OverflowingChatTitle, filterChatsBy
 import { ChevronRight, Folder, FolderOpen } from "lucide-react";
 import { useState, type ReactNode } from "react";
 import type { RenameableConversation } from "./ChatTitleRename";
-import { MAX_PROJECT_CHAT_ROWS, usePagedProjectChats, type FetchedProjectChat } from "./usePagedProjectChats";
+import { usePagedProjectChats, type FetchedProjectChat } from "./usePagedProjectChats";
 import { projectChats, type WebProject, type WebProjectsState } from "./web-projects";
+import { WebProjectArchiveAction } from "./WebProjectArchiveAction";
+import type { CanonicalChatNavigationPageQuery, CanonicalChatNavigationPageResponse } from "@matrix-os/contracts";
 
 // Same page size as the Electron Desktop project list.
-const PROJECT_CHAT_PAGE = 6;
+const PROJECT_CHAT_PAGE = 5;
 export type ProjectRow = { kind: "known"; chat: RenameableConversation } | { kind: "fetched"; chat: FetchedProjectChat };
 
 export function WebProjectsNav({ state, gatewayUrl, chats, listedChatIds, activeChatId, activeChatTitle, onSelectChat, onFocusProject, renderChat,
-  mobile = false, unreadOnly = false, sourceFilter = "all", searchQuery = "" }: {
+  mobile = false, unreadOnly = false, sourceFilter = "all", searchQuery = "", onArchiveProject, loadNavigationPage }: {
   state: WebProjectsState;
   gatewayUrl: string;
   chats: readonly RenameableConversation[];
@@ -29,6 +31,8 @@ export function WebProjectsNav({ state, gatewayUrl, chats, listedChatIds, active
   unreadOnly?: boolean;
   sourceFilter?: ChatImportSourceFilterValue;
   searchQuery?: string;
+  onArchiveProject?: (projectId: string, projectName: string) => Promise<boolean>;
+  loadNavigationPage?: (input: CanonicalChatNavigationPageQuery) => Promise<CanonicalChatNavigationPageResponse>;
 }) {
   const { projects, loading, error, retry } = state;
   const [groupExpanded, setGroupExpanded] = useState(true);
@@ -46,15 +50,15 @@ export function WebProjectsNav({ state, gatewayUrl, chats, listedChatIds, active
         <p>Create a project in Matrix Desktop to get started.</p>
       </div> : null}
       {projects.map(project => <WebProjectGroup key={`${state.identity}/${project.id}/${unreadOnly}/${sourceFilter}`} project={project} gatewayUrl={gatewayUrl}
-        chats={projectChats(chats, project).filter(chat => !chat.canonicalRecord?.chat.userState?.pinned)} listedChatIds={listedChatIds}
+        chats={projectChats(chats, project)} listedChatIds={listedChatIds}
         activeChatId={activeChatId} activeChatTitle={activeChatTitle} onSelectChat={onSelectChat} onFocusProject={onFocusProject}
-        renderChat={renderChat} mobile={mobile} unreadOnly={unreadOnly} sourceFilter={sourceFilter} searchQuery={searchQuery}/>)}
+        renderChat={renderChat} mobile={mobile} unreadOnly={unreadOnly} sourceFilter={sourceFilter} searchQuery={searchQuery} onArchiveProject={onArchiveProject} loadNavigationPage={loadNavigationPage}/>)}
     </ChatRailSection>
   </nav>;
 }
 
 function WebProjectGroup({ project, gatewayUrl, chats, listedChatIds, activeChatId, activeChatTitle, onSelectChat, onFocusProject, renderChat,
-  mobile, unreadOnly, sourceFilter, searchQuery }: {
+  mobile, unreadOnly, sourceFilter, searchQuery, onArchiveProject, loadNavigationPage }: {
   project: WebProject;
   gatewayUrl: string;
   chats: readonly RenameableConversation[];
@@ -68,8 +72,10 @@ function WebProjectGroup({ project, gatewayUrl, chats, listedChatIds, activeChat
   unreadOnly: boolean;
   sourceFilter: ChatImportSourceFilterValue;
   searchQuery: string;
+  onArchiveProject?: (projectId: string, projectName: string) => Promise<boolean>;
+  loadNavigationPage?: (input: CanonicalChatNavigationPageQuery) => Promise<CanonicalChatNavigationPageResponse>;
 }) {
-  const { expanded, toggleExpanded, fetched, loading, error, retry, loadMore, hasMore, capped } = usePagedProjectChats(project, gatewayUrl, unreadOnly);
+  const { expanded, toggleExpanded, fetched, loading, error, retry, loadMore, hasMore, capped } = usePagedProjectChats(project, gatewayUrl, unreadOnly, false, loadNavigationPage);
   const [limit, setLimit] = useState(PROJECT_CHAT_PAGE);
   const nowMs = useMinuteClock(expanded);
   const search = searchQuery.trim().toLowerCase();
@@ -94,13 +100,14 @@ function WebProjectGroup({ project, gatewayUrl, chats, listedChatIds, activeChat
       </button>
     </div>
     {expanded ? <div className="matrix-web-project-chats">
+      {onArchiveProject ? <WebProjectArchiveAction projectId={project.id} projectName={project.name} onArchive={onArchiveProject}/> : null}
       <ProjectChatRows rows={allRows.slice(0, shownCount)} projectId={project.id} nowMs={nowMs}
         activeChatId={activeChatId} activeChatTitle={activeChatTitle} onSelectChat={onSelectChat}
         renderChat={renderChat} mobile={mobile} />
       <ProjectChatStatus rowCount={allRows.length} loading={loading} error={error} hasMore={hasMore}
         mobile={mobile} retry={retry} filtered={unreadOnly || sourceFilter !== "all" || Boolean(search)} />
       <ProjectChatPaging projectName={project.name} hiddenCount={hiddenCount} loading={loading} error={error}
-        hasMore={hasMore} capped={capped} mobile={mobile} showMore={() => setLimit(shownCount + PROJECT_CHAT_PAGE)} loadMore={loadMore} />
+        hasMore={hasMore} capped={capped} mobile={mobile} showMore={() => setLimit(shownCount + 20)} loadMore={loadMore} />
     </div> : null}
   </div>;
 }
@@ -109,11 +116,18 @@ export function ProjectChatRows({ rows, projectId, nowMs, activeChatId, activeCh
   rows: readonly ProjectRow[]; projectId: string; nowMs: number; activeChatId?: string; activeChatTitle?: string;
   onSelectChat(chatId: string): void; renderChat(chat: RenameableConversation, nowMs: number): ReactNode; mobile: boolean;
 }) {
+  const fullConversation = (chat: FetchedProjectChat): RenameableConversation | null => chat.canonicalRecord ? {
+    id: chat.id, title: chat.title, preview: chat.title, messageCount: chat.canonicalRecord.chat.messageCount,
+    updatedAt: Date.parse(chat.canonicalRecord.chat.activityAt ?? chat.canonicalRecord.chat.updatedAt),
+    canonicalRecord: chat.canonicalRecord, readState: chat.canonicalRecord.readState,
+  } : null;
   return <>{rows.map(row => row.kind === "known"
     ? <ChatRailOrderItem key={row.chat.id} id={row.chat.id} kind="chat" group={`project:${projectId}`}>
         {renderChat(row.chat, nowMs)}
       </ChatRailOrderItem>
-    // Older Chats from paging look like every other Chat row; they only lack the row actions.
+    : fullConversation(row.chat) ? <ChatRailOrderItem key={row.chat.id} id={row.chat.id} kind="chat" group={`project:${projectId}`}>
+        {renderChat(fullConversation(row.chat)!, nowMs)}
+      </ChatRailOrderItem>
     : <div key={row.chat.id} className="matrix-web-chat-row-item" data-current={activeChatId === row.chat.id}>
         <button type="button" aria-current={activeChatId === row.chat.id ? "page" : undefined}
           className={`matrix-web-chat-row flex w-full items-center rounded-lg text-left focus-visible:outline-2 focus-visible:outline-primary ${mobile ? "py-3" : "py-2"}`}
@@ -148,6 +162,6 @@ export function ProjectChatPaging({ projectName, hiddenCount, loading, error, ha
       data-mobile={mobile || undefined} onClick={showMore}>Show more</button> : null}
     {!loading && !error && hiddenCount <= 0 && hasMore ? <button type="button" className="matrix-web-project-more"
       data-mobile={mobile || undefined} onClick={loadMore}>Load more chats</button> : null}
-    {hiddenCount <= 0 && capped ? <p className="matrix-web-project-note">Showing the newest {MAX_PROJECT_CHAT_ROWS.toLocaleString("en-US")} chats in this project.</p> : null}
+    {hiddenCount <= 0 && capped ? <p className="matrix-web-project-note">More chats can be found through search.</p> : null}
   </>;
 }
