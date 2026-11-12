@@ -26,6 +26,15 @@ describe("native Codex final launch isolation", () => {
       if (providerEventPath) expect(JSON.parse(Buffer.from(launch.args.at(-1)!, "base64").toString())).toMatchObject({ nativeSubscription: true });
     }
   });
+  it("forwards only the exact opt-in send timing flag to the isolated native runner", () => {
+    const native = { codexHome: "/tmp/owner/.codex", expectedPrincipalFingerprint: "a".repeat(64), expectedConsentRevision: 1, expectedConfigurationFingerprint: "b".repeat(64), expectedHarnessInstanceId: "codex_owner_openai_profile", expectedAccountId: "owner_codex" };
+    const launch = () => buildAgentLaunch({ ...base, providerEventPath: "/tmp/owner/events.jsonl", nativeCodexSubscription: native });
+    expect(launch().env.MATRIX_CODEX_SEND_TIMINGS).toBeUndefined();
+    vi.stubEnv("MATRIX_CODEX_SEND_TIMINGS", "true");
+    expect(launch().env.MATRIX_CODEX_SEND_TIMINGS).toBeUndefined();
+    vi.stubEnv("MATRIX_CODEX_SEND_TIMINGS", "1");
+    expect(launch().env.MATRIX_CODEX_SEND_TIMINGS).toBe("1");
+  });
   it("does not force native policy on generic key-mode Codex or other agents", () => {
     for (const agent of ["codex", "pi", "opencode"] as const) {
       const launch = buildAgentLaunch({ ...base, agent });

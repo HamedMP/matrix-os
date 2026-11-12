@@ -1,7 +1,9 @@
 import { spawn as nodeSpawn, type ChildProcessWithoutNullStreams, type SpawnOptionsWithoutStdio } from "node:child_process";
 import { z } from "zod/v4";
 import type { AgentProviderSummary } from "@matrix-os/contracts";
+import { performance } from "node:perf_hooks";
 import type { CodingModelCatalogProjection } from "./provider-catalog.js";
+import { recordCodexCatalogTiming, type CodexCatalogTimingResult } from "./send-timing.js";
 
 const MAX_RESPONSE_BYTES = 1024 * 1024;
 const MAX_MODELS = 64;
@@ -32,6 +34,11 @@ class CodexCatalogChildExitTimeoutError extends Error {
 // login or install finishing mid-outage is reflected on the next request
 // shortly after, without needing a dedicated invalidation signal.
 const DEFAULT_FAILURE_CACHE_TTL_MS = 10_000;
+// OWNER REVIEW (ENG-370): maximum age of a verified catalog that admission
+// may still use while one background lookup refreshes it. Catalog metadata
+// grants no execution authority; native `turn/start` stays the final model
+// authority, so a model withdrawn inside this window fails at turn start.
+export const CODEX_CATALOG_STALE_WINDOW_MS = 5 * 60_000;
 
 const ReferenceIdSchema = z.string().trim().min(1).max(160)
   .regex(/^[A-Za-z0-9][A-Za-z0-9_.:/-]{0,159}$/);
@@ -308,40 +315,23 @@ export function createCodexModelCatalogSource(options: {
     Math.min(options.terminateGraceMs ?? DEFAULT_TERMINATE_GRACE_MS, 5_000),
   );
   const spawnProcess = options.spawnProcess ?? (nodeSpawn as SpawnProcess);
-  type Entry = { cached: { expiresAt: number; value: CodingModelCatalogProjection } | null; failedUntil: number };
+  const staleWindowMs = Math.max(cacheTtlMs, CODEX_CATALOG_STALE_WINDOW_MS);
+  type Cached = { expiresAt: number; staleUntil: number; authority: string; value: CodingModelCatalogProjection };
+  type Entry = { cached: Cached | null; failedUntil: number };
   // Runtime metadata is owner-scoped, with bounded FIFO retention. A deleted
   // entry also fences any lookup that started before confirmed login.
   const entries = new Map<string | null, Entry>();
   let unconfirmedChildExit: Promise<void> | null = null;
   let pending: { entry: Entry; promise: Promise<CodingModelCatalogProjection> } | null = null;
 
-  const source = async (provider: AgentProviderSummary, principal?: { userId: string }): Promise<CodingModelCatalogProjection | null> => {
-    if (provider.kind !== "codex" && provider.id !== "codex") return null;
-    if (provider.availability !== "available") return null;
-    const key = principal?.userId ?? null;
-    let entry = entries.get(key);
-    if (!entry) {
-      if (entries.size >= 64) entries.delete(entries.keys().next().value!);
-      entry = { cached: null, failedUntil: 0 };
-      entries.set(key, entry);
-    }
-    const now = Date.now();
-    if (entry.cached && entry.cached.expiresAt > now) return entry.cached.value;
-    if (pending) {
-      if (pending.entry === entry) return pending.promise;
-      // Invalidation never launches a second native child over an older one.
-      // Its outcome is obsolete for this entry; read again only after reaping.
-      await pending.promise.then(() => undefined, () => undefined);
-      return source(provider, principal);
-    }
-    if (entry.failedUntil > now || unconfirmedChildExit) throw new Error("Codex model catalog unavailable");
-    const current = entry;
+  const startLookup = (key: string | null, current: Entry, authority: string): Promise<CodingModelCatalogProjection> => {
     const promise = fetchCodexModelsWithRetry({
       executable: options.executable, cwd: options.cwd, environment: options.environment,
       timeoutMs, terminateGraceMs, maxAttempts, retryDelayMs, spawnProcess,
     }).then(value => {
       if (entries.get(key) === current) {
-        current.cached = { expiresAt: Date.now() + cacheTtlMs, value };
+        const now = Date.now();
+        current.cached = { expiresAt: now + cacheTtlMs, staleUntil: now + staleWindowMs, authority, value };
         current.failedUntil = 0;
       }
       return value;
@@ -358,6 +348,56 @@ export function createCodexModelCatalogSource(options: {
     }).finally(() => { if (pending?.promise === promise) pending = null; });
     pending = { entry: current, promise };
     return promise;
+  };
+
+  type Read = { value: CodingModelCatalogProjection; result: CodexCatalogTimingResult };
+  const read = async (provider: AgentProviderSummary, principal?: { userId: string }): Promise<Read> => {
+    const key = principal?.userId ?? null;
+    let entry = entries.get(key);
+    if (!entry) {
+      if (entries.size >= 64) entries.delete(entries.keys().next().value!);
+      entry = { cached: null, failedUntil: 0 };
+      entries.set(key, entry);
+    }
+    const now = Date.now();
+    // A catalog verified under another provider auth/install state is never
+    // reused, fresh or stale. Confirmed login also deletes the entry outright.
+    const authority = `${provider.authStatus}:${provider.installStatus}`;
+    if (entry.cached && entry.cached.authority !== authority) entry.cached = null;
+    if (entry.cached && entry.cached.expiresAt > now) return { value: entry.cached.value, result: "cache_hit" };
+    if (entry.cached && entry.cached.staleUntil > now) {
+      // One native child at a time across owners: a refresh starts only when
+      // none is pending, no failure backoff applies, and no exit is unconfirmed.
+      if (!pending && entry.failedUntil <= now && !unconfirmedChildExit) {
+        startLookup(key, entry, authority).catch((error: unknown) => {
+          console.warn("[chat-providers] Codex catalog background refresh failed",
+            error instanceof Error ? error.name : "UnknownError");
+        });
+      }
+      return { value: entry.cached.value, result: "stale_hit" };
+    }
+    if (pending) {
+      if (pending.entry === entry) return { value: await pending.promise, result: "lookup_shared" };
+      // Invalidation never launches a second native child over an older one.
+      // Its outcome is obsolete for this entry; read again only after reaping.
+      await pending.promise.then(() => undefined, () => undefined);
+      return read(provider, principal);
+    }
+    if (entry.failedUntil > now || unconfirmedChildExit) throw new Error("Codex model catalog unavailable");
+    return { value: await startLookup(key, entry, authority), result: "lookup" };
+  };
+  const source = async (provider: AgentProviderSummary, principal?: { userId: string }): Promise<CodingModelCatalogProjection | null> => {
+    if (provider.kind !== "codex" && provider.id !== "codex") return null;
+    if (provider.availability !== "available") return null;
+    const startedAt = performance.now();
+    try {
+      const { value, result } = await read(provider, principal);
+      recordCodexCatalogTiming(result, performance.now() - startedAt);
+      return value;
+    } catch (error: unknown) {
+      recordCodexCatalogTiming("failed", performance.now() - startedAt);
+      throw error;
+    }
   };
   return Object.assign(source, {
     invalidate(principal?: { userId: string }): void {

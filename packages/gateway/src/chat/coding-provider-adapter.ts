@@ -29,6 +29,7 @@ import { projectCodingActivity } from "./coding-activity-projection.js";
 import { createAssistantTextStreamProjector, sanitizeAssistantText } from "./safe-activity-projection.js";
 import { createAssistantCredentialEmitter } from "./assistant-credential-emitter.js";
 import { CodingChatStateSchema, recoveryState, recoverCodingRun, type CodingChatState } from "./coding-run-recovery.js";
+import { recordCodexRunnerLink } from "./send-timing.js";
 import {
   CanonicalProviderRunEventSchema,
   parseCanonicalProviderRunInput,
@@ -541,6 +542,7 @@ export function createCanonicalCodingChatProviderAdapter(options: {
           clientRequestId: requestId,
         }));
         targetThreadId = created.snapshot.thread.id;
+        if (options.providerId === "codex") recordCodexRunnerLink(input.runId, targetThreadId);
         releaseSteerRun = registerSteerRun(input.runId, {
           ownerId: input.owner.ownerId,
           chatId: input.chatId,
@@ -601,6 +603,7 @@ export function createCanonicalCodingChatProviderAdapter(options: {
           clientRequestId: requestId,
         }));
         admittedTurnId = accepted.turnId;
+        if (options.providerId === "codex") recordCodexRunnerLink(input.runId, targetThreadId, accepted.turnId);
         releaseSteerRun = registerSteerRun(input.runId, {
           ownerId: input.owner.ownerId,
           chatId: input.chatId,
