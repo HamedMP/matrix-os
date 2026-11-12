@@ -128,12 +128,12 @@ describe("Matrix Core repo checkpoint", () => {
       "x-hub-signature-256": `sha256=${createHmac("sha256", options.secret ?? SECRET).update(body).digest("hex")}` } });
   };
   const pinned = async () => (await sql<{ commit_sha: string | null; last_failure: string | null }>`SELECT commit_sha, last_failure FROM core_repo_pins WHERE organization_id = ${ORG}`.execute(db)).rows[0];
-  const install = () => installCoreRepo({
+  const install = (targets = "claude") => installCoreRepo({
     root,
     transport: createCoreRepoHttpTransport({ baseUrl: "https://app.matrix-os.test", headers: MACHINE,
       fetchImpl: (async (url: string, init?: RequestInit) => platform.routes.request(new URL(url).pathname, init)) as typeof fetch }),
     runSkillSync: createScriptSkillSync(resolve("scripts/sync-matrix-agent-skills.sh"),
-      { PATH: process.env.PATH, HOME: home, MATRIX_HOME: home, MATRIX_SKILL_TARGETS: "claude" }),
+      { PATH: process.env.PATH, HOME: home, MATRIX_HOME: home, MATRIX_SKILL_TARGETS: targets }),
   });
   const claudeSkill = (name: string) => join(home, ".claude", "skills", name);
 
@@ -193,6 +193,19 @@ describe("Matrix Core repo checkpoint", () => {
     expect(() => lstatSync(join(root, ORG))).toThrow();
     expect(readFileSync(join(claudeSkill("deploy"), "SKILL.md"), "utf8")).toBe(skill("deploy"));
     expect(lstatSync(claudeSkill("org-acme-notes")).isDirectory()).toBe(true);
+  });
+
+  // Fault: an agent added after the first install never receives org skills, because the commit is unchanged.
+  it("links an unchanged commit into agents added since the last install", async () => {
+    head = sha("a");
+    tarballs.set(head, await tarball(work, head, { "skills/deploy/SKILL.md": skill("deploy") }));
+    expect((await push(head, "d-targets")).status).toBe(202);
+    await vi.waitFor(async () => expect((await pinned())?.commit_sha).toBe(sha("a")));
+    expect(await install("claude")).toEqual([{ orgId: ORG, status: "installed", commit: sha("a") }]);
+    const hermesSkill = join(home, ".hermes", "skills", "org-acme-deploy");
+    expect(() => lstatSync(hermesSkill)).toThrow();
+    expect(await install("claude,hermes")).toEqual([{ orgId: ORG, status: "current", commit: sha("a") }]);
+    expect(realpathSync(hermesSkill)).toBe(realpathSync(claudeSkill("org-acme-deploy")));
   });
 
   it("serves only the pinned commit to current members over the machine credential, and lets admins sync now", async () => {

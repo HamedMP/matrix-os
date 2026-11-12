@@ -238,7 +238,16 @@ async function installPin(options: InstallOptions, pin: CoreRepoPin): Promise<Co
   await sweepStaging(orgRoot, Date.now());
   const before = await currentMeta(orgRoot);
   // The slug is part of what is installed: a renamed org must move namespaces even at the same commit.
-  if (before?.commit === pin.commit && before.slug === pin.slug) return { orgId: pin.orgId, status: "current", commit: pin.commit };
+  if (before?.commit === pin.commit && before.slug === pin.slug) {
+    // Same release, but agents (targets) may have been added since: relink it. The script is idempotent.
+    try {
+      await options.runSkillSync({ source: join(orgRoot, "current", SKILLS_DIR), namespace: coreRepoSkillNamespace(pin.slug), ownedRoot: orgRoot });
+    } catch (error: unknown) {
+      warnStep("skill relink", pin.orgId, error);
+      return { orgId: pin.orgId, status: "failed", commit: pin.commit };
+    }
+    return { orgId: pin.orgId, status: "current", commit: pin.commit };
+  }
   const namespace = coreRepoSkillNamespace(pin.slug);
   const previousNamespace = before && before.slug !== pin.slug ? coreRepoSkillNamespace(before.slug) : undefined;
   const staging = await mkdtemp(join(orgRoot, STAGING_PREFIX));
