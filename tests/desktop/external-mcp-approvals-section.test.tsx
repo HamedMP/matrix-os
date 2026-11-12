@@ -17,8 +17,9 @@ describe("Electron Desktop external MCP approvals", () => {
     useConnection.setState({ api: api as never });
     render(<ExternalMcpApprovalsSection />);
     fireEvent.click(await screen.findByRole("button", { name: "Decline delete_page on notion-9f8e7d6c" }));
-    await waitFor(() => expect(api.post).toHaveBeenCalledWith(`/api/mcp-servers/core/external-approvals/${approval.approvalId}`, { decision: "decline" }));
+    await waitFor(() => expect(api.post).toHaveBeenCalledWith(`/api/mcp-servers/core/external-approvals/${approval.approvalId}`, { decision: "decline" }, { maxBytes: 256 * 1024 }));
     expect(await screen.findByText("No external writes are waiting")).toBeTruthy();
-    expect(api.get).toHaveBeenCalledWith("/api/mcp-servers/core/external-approvals");
+    // Fault: the Electron adapter buffers unbounded approval responses.
+    expect(api.get).toHaveBeenCalledWith("/api/mcp-servers/core/external-approvals", { maxBytes: 256 * 1024 });
   });
 });
