@@ -556,8 +556,8 @@ function WorkTabContent({
       closable: false,
     });
   }, [layout, showChat]);
-  const handleRailChatDeleted = useCallback((record: ChatNavigationRecord, project?: Project) => {
-    if (record.chat.id !== initialChatId) return;
+  const handleRailChatDeleted = useCallback((chatId: string, project?: Project) => {
+    if (chatId !== initialChatId) return;
     if (project) {
       showChat(layout === "narrow");
       openWorkProject(project);

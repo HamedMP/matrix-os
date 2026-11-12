@@ -12,7 +12,12 @@ export function useWorkRailPage(client: CanonicalChatClient | null, query: Pick<
   const generation = useRef(0);
   const [state, setState] = useState<State>({ key: "", rows: [], count: 0, loading: false, error: false });
   useEffect(() => {
-    if (!client?.navigationPage) return;
+    if (!client?.navigationPage) {
+      generation.current++;
+      setState(previous => previous.rows.length || previous.count || previous.cursor || previous.loading || previous.error
+        ? { key: "", rows: [], count: 0, loading: false, error: false } : previous);
+      return;
+    }
     const current = ++generation.current;
     const targetCount = state.key === key ? Math.max(initialSize, state.rows.length) : initialSize;
     setState(previous => previous.key === key ? { ...previous, loading: true, error: false }
