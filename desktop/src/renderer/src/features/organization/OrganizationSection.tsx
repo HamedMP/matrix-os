@@ -4,8 +4,9 @@ import type {
   OrganizationManagementRole,
   OrganizationManagementSummary,
 } from "@matrix-os/contracts";
+import { OrganizationMcpSettings, useOrganizationMcpClient } from "@matrix-os/ui";
 import { MoreHorizontal, Plus } from "@renderer/lib/hugeicons";
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useRef, useState, type ReactNode } from "react";
 import { Button } from "../../design/primitives";
 import { useConnection } from "../../stores/connection";
 import { useDesktopOrganizations } from "../collaboration/useDesktopOrganizations";
@@ -55,6 +56,7 @@ export function OrganizationSectionView({
   onLeave,
   onDelete,
   busy = false,
+  connections,
 }: {
   organization: OrganizationManagementSummary;
   currentActorId: string | null;
@@ -71,6 +73,8 @@ export function OrganizationSectionView({
   onLeave?: () => void;
   onDelete?: () => void;
   busy?: boolean;
+  /** Organization → Connections (spec 2691): the admin panel, or the member visibility notice. */
+  connections?: ReactNode;
 }) {
   const [leaveOpen, setLeaveOpen] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
@@ -138,6 +142,8 @@ export function OrganizationSectionView({
         )) : null}
       </section>
 
+      {connections ? <div className="mt-6">{connections}</div> : null}
+
       {admin && lastAdmin ? <section className="mt-8 rounded-xl px-4 py-3" style={{ background: "var(--bg-hover)" }}>
         <p className="text-xs" style={{ color: "var(--text-tertiary)" }}>You’re the only Admin. Make someone else an Admin before you leave.</p>
         <div className="mt-2 flex items-center gap-2">
@@ -173,6 +179,7 @@ export default function OrganizationSection() {
   const directory = useDesktopOrganizationDirectory(organization?.organizationId ?? null, organization?.role === "org:admin", refreshKey);
   const refresh = useCallback(() => setRefreshKey((current) => current + 1), []);
   const actions = useDesktopOrganizationActions(organization?.organizationId ?? null, refresh);
+  const withMcpClient = useOrganizationMcpClient(useConnection((state) => state.platformHost), organization?.organizationId ?? null);
 
   if (listing.state === "loading" || (organization && directory.state === "loading")) return <p role="status" className="text-sm" style={{ color: "var(--text-tertiary)" }}>Loading organization…</p>;
   if (listing.state === "failed" || directory.state === "failed") return <p role="alert" className="text-sm" style={{ color: "var(--danger)" }}>Organization settings are unavailable. Try again.</p>;
@@ -208,6 +215,7 @@ export default function OrganizationSection() {
         onLeave={leave}
         onDelete={deleteOrganization}
         busy={actions.busy}
+        connections={<OrganizationMcpSettings admin={organization.role === "org:admin"} organizationName={organization.name} withClient={withMcpClient} />}
       />
       <input
         ref={logoInput}

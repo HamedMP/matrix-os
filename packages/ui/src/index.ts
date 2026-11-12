@@ -37,6 +37,14 @@ export { GITHUB_DEVELOPER_DEVICE_URL } from "./integrations/GithubDeveloperSetup
 export { RemoteMcpPresetPicker, type RemoteMcpPresetPickerProps } from "./integrations/RemoteMcpPresetPicker.js";
 export { McpConnectionInventory, type McpConnectionInventoryProps } from "./integrations/McpConnectionInventory.js";
 export {
+  OrganizationConnectionsPanel,
+  OrganizationMcpSettings,
+  OrganizationMcpVisibilityNotice,
+  type WithOrganizationMcpClient,
+} from "./organization-mcp/OrganizationConnectionsPanel.js";
+export { useOrganizationMcpClient } from "./organization-mcp/use-organization-mcp-client.js";
+export { createOrganizationMcpAdminClient, createOrganizationMcpHttpApi, type OrganizationMcpAdminClient } from "./organization-mcp/client.js";
+export {
   REMOTE_MCP_DEPARTMENT_LABELS,
   buildMcpConnectionInventory,
   customMcpErrorMessage,

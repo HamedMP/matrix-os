@@ -51,6 +51,15 @@ export interface CoreToolBroker {
 export type CoreApprovalReader = Pick<CustomMcpApprovalStore, "readCustomMcpToolApproval">
   & Partial<Pick<CustomMcpApprovalStore, "registerCustomMcpRunLease">>;
 
+/**
+ * The org term of `org policy ∩ user policy ∩ run scope` (spec 2691 layer 5),
+ * read on every call so a block applies to the next call. `orgId` attributes
+ * the usage row. A throw fails the call closed.
+ */
+export interface CoreOrgPolicy {
+  evaluate(input: { actorId: string; serverUrl: string; toolName: string }): Promise<{ orgId: string | null; allowed: boolean }>;
+}
+
 export interface CoreCaller {
   userId: string;
   /** Usage identity; the broker separately binds approvals to actor + run. */
@@ -181,6 +190,7 @@ export class CoreToolService {
     broker: CoreToolBroker;
     approvals?: CoreApprovalReader;
     usage?: CoreUsageSink;
+    orgPolicy?: CoreOrgPolicy;
     cache?: CoreCatalogCache;
     now?: () => number;
   }) {
@@ -248,9 +258,10 @@ export class CoreToolService {
     const tool = resolveTool(resolved.catalog, input.service, input.tool);
     const name = tool?.name ?? input.tool;
     const started = this.now();
-    const record = (outcome: CoreUsageOutcome) => this.recordUsage(caller, resolved.server, name, outcome, started);
-    // Unknown, blocked, and not-ready tools are denied without upstream I/O.
-    if (!tool || tool.policy === "blocked") {
+    const org = await this.orgGate(caller, resolved.server, name, started);
+    const record = (outcome: CoreUsageOutcome) => this.recordUsage(org.caller, resolved.server, name, outcome, started);
+    // Unknown, blocked, org-denied, and not-ready tools are denied without upstream I/O.
+    if (!tool || tool.policy === "blocked" || !org.allowed) {
       record("denied");
       throw new CustomMcpBrokerError("forbidden");
     }
@@ -318,8 +329,26 @@ export class CoreToolService {
   }): Promise<unknown> {
     const server = await this.options.broker.describe(caller.userId, input.serverId);
     const started = this.now();
-    return this.execute(caller, server, input.tool, input,
-      (outcome) => this.recordUsage(caller, server, input.tool, outcome, started));
+    const org = await this.orgGate(caller, server, input.tool, started);
+    const record = (outcome: CoreUsageOutcome) => this.recordUsage(org.caller, server, input.tool, outcome, started);
+    if (!org.allowed) {
+      record("denied");
+      throw new CustomMcpBrokerError("forbidden");
+    }
+    return this.execute(org.caller, server, input.tool, input, record);
+  }
+
+  /** Org decision plus the caller re-labelled with the attributed org. Store failure denies the call. */
+  private async orgGate(caller: CoreCaller, server: CustomMcpServer, toolName: string, started: number): Promise<{ caller: CoreCaller; allowed: boolean }> {
+    if (!this.options.orgPolicy) return { caller, allowed: true };
+    try {
+      const decision = await this.options.orgPolicy.evaluate({ actorId: caller.actorId, serverUrl: server.url, toolName });
+      return { caller: { ...caller, orgId: decision.orgId }, allowed: decision.allowed };
+    } catch (error: unknown) {
+      console.error("[core-mcp] org policy unavailable; call refused", error instanceof Error ? error.name : "UnknownError");
+      this.recordUsage(caller, server, toolName, "error", started);
+      throw new CustomMcpBrokerError("upstream");
+    }
   }
 
   async getApproval(caller: CoreCaller, approvalId: string): Promise<CoreApprovalStatus> {

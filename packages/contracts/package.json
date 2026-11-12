@@ -86,6 +86,8 @@
     "#organization-billing": "./src/organization-billing.ts",
     "#organization-drive": "./src/organization-drive.ts",
     "#organization-management": "./src/organization-management.ts",
+    "#organization-mcp": "./src/organization-mcp.ts",
+    "#remote-mcp-catalog": "./src/remote-mcp-catalog.ts",
     "#contract-primitives": "./src/primitives.ts",
     "#custom-mcp-availability": "./src/custom-mcp-availability.ts",
     "#custom-mcp-policy": "./src/custom-mcp-policy.ts",

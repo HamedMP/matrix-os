@@ -276,6 +276,8 @@ export function createApp(deps: {
   internalCustomMcpApprovalRoutes?: Hono<any>;
   /** Spec 2691: Matrix Core tools for the external `/mcp` endpoint (set once Custom MCP starts). */
   externalCoreMcp?: ExternalCoreMcp;
+  /** Organization → Connections admin routes (spec 2691); platform-owned, never proxied to a VPS. */
+  orgMcpRoutes?: Hono<any>;
   internalSyncRoutes?: Hono<any>;
   internalFundedAiRuntimeRoutes?: Hono<any>;
   internalFundedAiRelayRoutes?: Hono<any>;
@@ -676,6 +678,7 @@ export function createApp(deps: {
   // Collaboration routes must precede personal session routing so recipients
   // without a provisioned computer reach the owner's registered authority.
   deps.collaboration?.register(app);
+  if (deps.orgMcpRoutes) app.route('/', deps.orgMcpRoutes);
 
   registerFundedHostConfigRoutes(app, { db, platformSecret, env: appEnv });
   app.shutdownBrowserApprovals = registerBrowserChatApprovalRoutes(app, { platformSecret, env: appEnv, lookup: deps.browserApprovalMachineLookup });

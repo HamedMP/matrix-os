@@ -1,15 +1,24 @@
 /**
  * Clerk organization vocabulary for V1 (S03 / T016).
  *
- * V1 uses Clerk's default roles and no custom permissions: roles carry no
- * application authority, so unknown roles are stored verbatim (bounded) and
- * deny nothing. `collaboration.aiSubmission` is projected from organization
+ * V1 uses Clerk's default roles. Unknown roles are stored verbatim (bounded)
+ * and grant nothing. Application permissions are derived from the role here,
+ * never stored: `org:admin` alone grants `org:mcp_admin` (spec 2691). `collaboration.aiSubmission` is projected from organization
  * public metadata; anything other than the literal "members" is owner-only.
  */
 import { z } from "zod/v4";
 import type { OrganizationAiSubmission } from "./database.js";
 
 export const CLERK_DEFAULT_ROLES = Object.freeze(["org:admin", "org:member"] as const);
+export type OrganizationApplicationPermission = "org:mcp_admin";
+const ROLE_PERMISSIONS: Readonly<Record<string, readonly OrganizationApplicationPermission[]>> = Object.freeze({
+  "org:admin": Object.freeze(["org:mcp_admin"] as const),
+});
+
+export function hasOrganizationPermission(role: string, permission: OrganizationApplicationPermission): boolean {
+  return Object.hasOwn(ROLE_PERMISSIONS, role) && ROLE_PERMISSIONS[role]!.includes(permission);
+}
+
 const ROLE_PATTERN = /^[A-Za-z0-9:_.-]{1,64}$/;
 const ORGANIZATION_ID_PATTERN = /^org_[A-Za-z0-9]{1,124}$/;
 const ACTOR_ID_PATTERN = /^user_[A-Za-z0-9_-]{1,123}$/;

@@ -63,6 +63,8 @@ import type { PreviewDriveIntegration } from './preview-drive-routes.js';
 import { createCustomMcpProjection } from './custom-mcp-projection.js';
 import { createPlatformCoreMcp, type GatewayCoreToolsModule } from './mcp-usage/startup.js';
 import type { ExternalCoreMcp } from './mcp-core-tools.js';
+import { createPlatformOrgMcp } from './org-mcp/startup.js';
+import { createJourneyUserResolver } from './journey-routes.js';
 import { listActivePrivatePreviewsForOwner } from './database/private-previews.js';
 import { createPrivatePreviewAccess } from './private-preview-wiring.js';
 import {
@@ -254,6 +256,7 @@ type CreatePlatformApp = (deps: {
   internalCustomMcpRoutes?: Hono<any>;
   internalCustomMcpApprovalRoutes?: Hono<any>;
   externalCoreMcp?: ExternalCoreMcp;
+  orgMcpRoutes?: Hono<any>;
   internalSyncRoutes?: Hono<any>;
   internalFundedAiRuntimeRoutes?: Hono<any>;
   internalFundedAiRelayRoutes?: Hono<any>;
@@ -506,6 +509,11 @@ async function startPlatformServerWithCleanup(
   const privatePreviewAccess = createPrivatePreviewAccess({
     env: process.env, collaboration, logError: logPlatformRouteError,
   });
+  // Spec 2691 layer 5: org governance of Matrix Core MCP (call-time policy + Organization → Connections routes).
+  const orgMcp = await createPlatformOrgMcp({ db: db.kysely as never,
+    organizations: 'organizations' in collaboration ? collaboration.organizations : undefined,
+    connectionsAvailable: process.env.CUSTOM_MCP_ENABLED === 'true',
+    resolveActor: createJourneyUserResolver({ clerkAuth, syncJwtSecret: platformJwtSecret }) });
   const slack = await bootstrapPlatformSlack({
     env: process.env, db, platformSecret, platformJwtSecret,
     clerkAuth, collaboration, customerVpsProxyDispatcher,
@@ -728,7 +736,7 @@ async function startPlatformServerWithCleanup(
     });
     // Matrix Core MCP (spec 2691): one tool service over this broker; usage rows go to platform Postgres.
     const coreMcp = await createPlatformCoreMcp({ db: db.kysely as never, coreModule: coreToolsModule, broker,
-      approvals: customDb, maintenance: backgroundWorkersEnabled });
+      approvals: customDb, maintenance: backgroundWorkersEnabled, orgPolicy: orgMcp.policy });
     let customMcpClosed = false;
     customMcpShutdown = async () => {
       if (customMcpClosed) return;
@@ -1138,6 +1146,7 @@ async function startPlatformServerWithCleanup(
     internalCustomMcpRoutes,
     internalCustomMcpApprovalRoutes,
     externalCoreMcp,
+    orgMcpRoutes: orgMcp.routes,
     internalSyncRoutes,
     internalFundedAiRuntimeRoutes,
     internalFundedAiRelayRoutes,
