@@ -135,6 +135,7 @@ export function useProjectComposer({
     /** The waiting attachments the selected model does not read. Nothing is sent while there are any. */
     unreadableAttachments: unreadable,
     attachmentNotice,
+    sendError: sendMessage.isError ? "Could not send message. Try again." : null,
     canSend,
     send,
     isSending,

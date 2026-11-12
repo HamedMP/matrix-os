@@ -1,4 +1,4 @@
-import type { CanonicalChatModelSelection } from "@matrix-os/contracts";
+import type { CanonicalChatModelSelection, CanonicalChatTurnAdmissionResponse } from "@matrix-os/contracts";
 import { useAuth } from "@clerk/clerk-expo";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 
@@ -9,6 +9,7 @@ import {
   canonicalChatTitle,
   createChat,
   fetchActiveComputer,
+  fetchChatDetail,
   mobileQueryKeys,
   removeChatAttachment,
   uploadChatAttachment,
@@ -148,7 +149,7 @@ export function useSendChatMessage() {
 
       // Uploads stay if this fails: the answer may only have been lost, and
       // the turn it admitted names them. Sending again finds them in place.
-      let admission;
+      let admission: CanonicalChatTurnAdmissionResponse;
       try {
         admission = await admitChatTurn(sendToken, gatewayUrl, targetChatId, {
           clientRequestId: turnRequestId,
@@ -162,13 +163,30 @@ export function useSendChatMessage() {
           permissionMode,
         });
       } catch (error: unknown) {
-        // Read an existing chat again: if the computer did admit the turn,
-        // its message shows up and takes the place of the one marked as not
-        // sent. Not awaited -- the failure is reported either way.
         if (chatId) {
+          // An existing chat can reconcile an admission whose answer was lost
+          // through its normal detail query.
           void queryClient.invalidateQueries({ queryKey: mobileQueryKeys.canonicalChatDetail(uid, computerKey, chatId) });
+          throw error;
         }
-        throw error;
+
+        // A new chat has no screen yet. If the answer was lost after the
+        // computer stored its first turn, read that turn before deciding the
+        // send failed. Otherwise the project composer keeps the full prompt
+        // and never opens the chat that was created for it.
+        let detail;
+        try {
+          detail = await fetchChatDetail(sendToken, gatewayUrl, targetChatId);
+        } catch (lookupError: unknown) {
+          console.warn("[mobile] new chat admission check failed", lookupError instanceof Error ? lookupError.name : "unknown");
+          throw error;
+        }
+        const turn = detail.turns.find((candidate) => candidate.clientRequestId === turnRequestId);
+        const message = detail.messages.find((candidate) => candidate.id === turn?.inputMessageId);
+        const run = detail.runs.find((candidate) => candidate.turnId === turn?.id);
+        if (!turn || !message || !run) throw error;
+        queryClient.setQueryData(mobileQueryKeys.canonicalChatDetail(uid, computerKey, targetChatId), detail);
+        admission = { record: detail.record, message, turn, run, admission: "already_accepted" };
       }
 
       if (!chatId) {

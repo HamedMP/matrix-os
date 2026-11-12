@@ -355,6 +355,29 @@ describe("project route", () => {
       expect(input().props.value).toBe("");
     });
 
+    it("opens the project chat when the admission response is lost after its first turn was stored", async () => {
+      const admissionResponse = pendingRequest<typeof admission>();
+      requests.createChat.mockResolvedValue(created);
+      requests.admitChatTurn.mockReturnValue(admissionResponse.promise);
+      await renderPortfolio();
+
+      fireEvent.changeText(input(), "Draft the case study");
+      fireEvent.press(sendButton());
+      await waitFor(() => expect(requests.admitChatTurn).toHaveBeenCalledTimes(1));
+      const requestId = requests.admitChatTurn.mock.calls[0][3].clientRequestId as string;
+      requests.fetchChatDetail.mockResolvedValue({
+        record: created,
+        turns: [{ id: "turn_1", clientRequestId: requestId, inputMessageId: "msg_1" }],
+        messages: [{ id: "msg_1" }],
+        runs: [{ id: "run_1", turnId: "turn_1" }],
+      });
+      await act(async () => admissionResponse.reject(new Error("response lost")));
+
+      await waitFor(() => expect(router.push).toHaveBeenCalledWith(projectChat("chat_new")));
+      expect(shell.bindDraftChatId).toHaveBeenCalledWith("chat_new");
+      expect(input().props.value).toBe("");
+    });
+
     it("takes nothing more while the message is on its way, and again once it could not be sent", async () => {
       const creating = pendingRequest<typeof created>();
       requests.createChat.mockReturnValue(creating.promise);
@@ -388,6 +411,22 @@ describe("project route", () => {
       expect(router.push).not.toHaveBeenCalled();
       expect(shell.setSelectionOverride).not.toHaveBeenCalled();
       expect(screen.queryByText(/upstream/)).toBeNull();
+      expect(screen.getByRole("alert").props.children).toBe("Could not send message. Try again.");
+    });
+
+    it("keeps a failed first turn ready to retry when the created chat has no admitted message", async () => {
+      requests.createChat.mockResolvedValue(created);
+      requests.admitChatTurn.mockRejectedValue(new Error("admission refused"));
+      requests.fetchChatDetail.mockResolvedValue({ record: created, turns: [], messages: [], runs: [] });
+      await renderPortfolio();
+
+      fireEvent.changeText(input(), "Draft the case study");
+      fireEvent.press(sendButton());
+
+      await waitFor(() => expect(requests.fetchChatDetail).toHaveBeenCalledWith(TOKEN, GATEWAY_URL, "chat_new"));
+      await waitFor(() => expect(screen.getByRole("alert").props.children).toBe("Could not send message. Try again."));
+      expect(input().props.value).toBe("Draft the case study");
+      expect(router.push).not.toHaveBeenCalled();
     });
 
     it("sends the same message again under the request ids of the attempt that failed", async () => {

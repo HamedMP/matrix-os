@@ -173,7 +173,7 @@ export default function ProjectRoute() {
             attachments: composer.attachments,
             room: composer.attachmentRoom,
             unreadable: composer.unreadableAttachments,
-            attachmentNotice: composer.attachmentNotice,
+            attachmentNotice: composer.attachmentNotice ?? composer.sendError,
             onAdd: composer.addAttachments,
             onRemove: composer.removeAttachment,
             draft: composer.draft,
