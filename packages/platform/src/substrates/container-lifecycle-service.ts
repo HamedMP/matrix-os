@@ -16,7 +16,7 @@ export type ContainerStatus =
   | 'provisioning' | 'stopped' | 'starting' | 'running' | 'quiescing'
   | 'failed_start' | 'needs_recovery' | 'migrating';
 
-export type ContainerFailureCode = 'start_timeout' | 'provider_unavailable' | 'busy' | 'quiesce_timeout';
+export type ContainerFailureCode = 'start_timeout' | 'provider_unavailable' | 'busy' | 'quiesce_timeout' | 'flush_failed';
 
 export const CONTAINER_START_TIMEOUT_MS = 90_000;
 /** Quiesce (at most 15 min) plus final flush (3 x 120 s), from spec.md, with a minute of margin. */
@@ -34,6 +34,16 @@ export interface ContainerBootContext {
   runtimeSlot: string;
   generation: number;
   runtimeTokenEpoch: number;
+  /** Present when this start recovers from a stop whose final flush did not land. */
+  recovery?: { lastFlushDigest: string | null; lastFlushedAt: string | null };
+}
+
+export interface ReviveTarget {
+  machineId: string;
+  clerkUserId: string;
+  handle: string;
+  unitId: string;
+  endpointHost: string;
 }
 
 export interface ContainerLifecycleDeps {
@@ -41,6 +51,11 @@ export interface ContainerLifecycleDeps {
   provider: ContainerProvider;
   /** Builds the per-unit boot data for a new generation. Runs after the generation bump, before the unit exists. */
   buildBootPayload(context: ContainerBootContext, signal: AbortSignal): Promise<string>;
+  /**
+   * Reopens a live unit left quiesced by a failed stop, so recovery keeps its
+   * disk instead of replacing it. Resolves false when the gateway did not answer.
+   */
+  reviveInPlace?(target: ReviveTarget, signal: AbortSignal): Promise<boolean>;
   now?: () => Date;
   maxConcurrentLaunches?: number;
   logError?: (message: string, detail: Record<string, string | number>) => void;
@@ -55,6 +70,9 @@ interface MachineRow {
   generation: number;
   runtime_token_epoch: number;
   substrate_ref: string | null;
+  private_address: string | null;
+  last_flush_digest: string | null;
+  last_flushed_at: Date | null;
   started_at: Date | null;
   status_changed_at: Date | null;
   failure_code: string | null;
@@ -65,6 +83,7 @@ interface MachineRow {
 export type RegisterOutcome = 'ok' | 'stale_generation' | 'not_starting' | 'unit_pending';
 export type StopOutcome = 'stopped' | 'stale_generation' | 'not_running' | 'needs_recovery';
 export type DestroyOutcome = 'destroyed' | 'stale_generation';
+export type FlushRecordOutcome = 'ok' | 'stale_generation';
 
 function failureCodeFor(error: unknown): ContainerFailureCode {
   if (error instanceof ContainerProviderError
@@ -102,7 +121,7 @@ export function createContainerLifecycleService(deps: ContainerLifecycleDeps) {
   async function load(machineId: string): Promise<MachineRow | undefined> {
     return db.executor.selectFrom('user_machines')
       .select(['machine_id', 'clerk_user_id', 'handle', 'runtime_slot', 'status', 'generation',
-        'runtime_token_epoch', 'substrate_ref', 'started_at', 'status_changed_at', 'failure_code', 'failure_at'])
+        'runtime_token_epoch', 'substrate_ref', 'private_address', 'last_flush_digest', 'last_flushed_at', 'started_at', 'status_changed_at', 'failure_code', 'failure_at'])
       .where('machine_id', '=', machineId)
       .where('substrate', '=', 'container')
       .where('deleted_at', 'is', null)
@@ -172,7 +191,19 @@ export function createContainerLifecycleService(deps: ContainerLifecycleDeps) {
       .executeTakeFirst();
   }
 
-  async function launch(row: MachineRow): Promise<void> {
+  /** A failed stop leaves its unit alive and quiesced; reopening it keeps the unflushed disk. */
+  async function revived(row: MachineRow, previous: ContainerUnit | null): Promise<boolean> {
+    if (!deps.reviveInPlace || previous?.state !== 'running' || !row.substrate_ref || !row.private_address) return false;
+    const ok = await deps.reviveInPlace({
+      machineId: row.machine_id, clerkUserId: row.clerk_user_id, handle: row.handle,
+      unitId: row.substrate_ref, endpointHost: row.private_address,
+    }, callSignal());
+    if (!ok) return false;
+    await transition(row.machine_id, ['starting'], row.generation, { status: 'running', failure_code: null, failure_at: null });
+    return true;
+  }
+
+  async function launch(row: MachineRow, recovering: boolean): Promise<void> {
     let generation = row.generation;
     try {
       const previous = row.substrate_ref ? await provider.describe(row.substrate_ref, callSignal()) : null;
@@ -181,6 +212,7 @@ export function createContainerLifecycleService(deps: ContainerLifecycleDeps) {
         await transition(row.machine_id, ['starting'], generation, { status: 'running', failure_code: null, failure_at: null });
         return;
       }
+      if (recovering && await revived(row, previous)) return;
       const next = await bumpGeneration(row.machine_id, generation);
       if (!next) return;
       generation = next.generation;
@@ -191,6 +223,9 @@ export function createContainerLifecycleService(deps: ContainerLifecycleDeps) {
         runtimeSlot: row.runtime_slot,
         generation: next.generation,
         runtimeTokenEpoch: next.runtime_token_epoch,
+        ...(recovering ? {
+          recovery: { lastFlushDigest: row.last_flush_digest, lastFlushedAt: row.last_flushed_at?.toISOString() ?? null },
+        } : {}),
       }, callSignal());
       const created = await provider.run({
         idempotencyKey: containerRunIdempotencyKey(row.machine_id, next.generation),
@@ -250,6 +285,7 @@ export function createContainerLifecycleService(deps: ContainerLifecycleDeps) {
         break;
       }
       case 'stopped':
+      case 'needs_recovery':
         break;
       default:
         return { state: 'failed', code: 'needs_recovery' };
@@ -257,10 +293,10 @@ export function createContainerLifecycleService(deps: ContainerLifecycleDeps) {
     if (launches.size + claiming >= maxLaunches || shutdownController.signal.aborted) return { state: 'busy' };
     claiming += 1;
     try {
-      const claimed = await transition(machineId, ['stopped', 'failed_start'], row.generation, {
+      const claimed = await transition(machineId, [status], row.generation, {
         status: 'starting', started_at: now(), failure_code: null, failure_at: null,
       });
-      if (claimed) track(launch({ ...row, status: 'starting' }));
+      if (claimed) track(launch({ ...row, status: 'starting' }, status === 'needs_recovery'));
     } finally {
       claiming -= 1;
     }
@@ -279,7 +315,7 @@ export function createContainerLifecycleService(deps: ContainerLifecycleDeps) {
   ): Promise<RegisterOutcome> {
     const ok = await db.executor.updateTable('user_machines')
       .set({
-        status: 'running', last_activity_at: now(),
+        status: 'running', last_activity_at: now(), status_changed_at: now(),
         ...(details.imageVersion !== undefined ? { image_version: details.imageVersion } : {}),
       })
       .where('machine_id', '=', machineId)
@@ -297,24 +333,79 @@ export function createContainerLifecycleService(deps: ContainerLifecycleDeps) {
     return row.status === 'starting' && row.substrate_ref === null ? 'unit_pending' : 'not_starting';
   }
 
-  async function stop(machineId: string, generation: number, signal: AbortSignal): Promise<StopOutcome> {
+  /** Claims a running runtime for a stop; only the caller whose compare-and-set wins proceeds. */
+  async function beginQuiesce(machineId: string, generation: number): Promise<boolean> {
+    return transition(machineId, ['running'], generation, { status: 'quiescing' });
+  }
+
+  /** Abandons a stop: the compute is still alive, so it serves again. */
+  async function cancelQuiesce(machineId: string, generation: number): Promise<boolean> {
+    return transition(machineId, ['quiescing'], generation, { status: 'running' });
+  }
+
+  async function suspendUnit(unitId: string, signal: AbortSignal): Promise<boolean> {
+    try {
+      await provider.suspend(unitId, AbortSignal.any([signal, callSignal()]));
+      return true;
+    } catch (error: unknown) {
+      logError('[container-lifecycle] suspend failed', { code: error instanceof ContainerProviderError ? error.code : 'unknown' });
+      return false;
+    }
+  }
+
+  /** Suspends a quiesced runtime whose final flush landed. */
+  async function finishStop(machineId: string, generation: number, signal: AbortSignal): Promise<StopOutcome> {
     const row = await load(machineId);
     if (!row || row.generation !== generation) return 'stale_generation';
     if (row.status === 'stopped') return 'stopped';
-    if (!row.substrate_ref || !await transition(machineId, ['running'], generation, { status: 'quiescing' })) {
-      return 'not_running';
-    }
-    try {
-      await provider.suspend(row.substrate_ref, AbortSignal.any([signal, callSignal()]));
-    } catch (error: unknown) {
-      logError('[container-lifecycle] suspend failed', { code: error instanceof ContainerProviderError ? error.code : 'unknown' });
+    if (row.status !== 'quiescing' || !row.substrate_ref) return 'not_running';
+    if (!await suspendUnit(row.substrate_ref, signal)) {
       await transition(machineId, ['quiescing'], generation, {
         status: 'needs_recovery', failure_code: 'provider_unavailable', failure_at: now().toISOString(),
       });
       return 'needs_recovery';
     }
-    await transition(machineId, ['quiescing'], generation, { status: 'stopped' });
-    return 'stopped';
+    return await transition(machineId, ['quiescing'], generation, { status: 'stopped' }) ? 'stopped' : 'stale_generation';
+  }
+
+  /**
+   * A stop that could not flush: the unit is suspended rather than terminated
+   * so a recovery start can reuse its disk, and the row says why.
+   */
+  async function recoverAfterFailedStop(
+    machineId: string,
+    generation: number,
+    code: Extract<ContainerFailureCode, 'flush_failed' | 'quiesce_timeout'>,
+    signal: AbortSignal,
+  ): Promise<boolean> {
+    const row = await load(machineId);
+    if (!row || row.generation !== generation || row.status !== 'quiescing') return false;
+    if (row.substrate_ref) await suspendUnit(row.substrate_ref, signal);
+    return transition(machineId, ['quiescing'], generation, {
+      status: 'needs_recovery', failure_code: code, failure_at: now().toISOString(),
+    });
+  }
+
+  async function stop(machineId: string, generation: number, signal: AbortSignal): Promise<StopOutcome> {
+    const row = await load(machineId);
+    if (!row || row.generation !== generation) return 'stale_generation';
+    if (row.status === 'stopped') return 'stopped';
+    if (!row.substrate_ref || !await beginQuiesce(machineId, generation)) return 'not_running';
+    return finishStop(machineId, generation, signal);
+  }
+
+  /** The last good flush for the current generation; a replaced unit's report is refused. */
+  async function recordFlush(machineId: string, generation: number, manifestDigest: string): Promise<FlushRecordOutcome> {
+    const updated = await db.executor.updateTable('user_machines')
+      .set({ last_flush_digest: manifestDigest, last_flushed_at: now() })
+      .where('machine_id', '=', machineId)
+      .where('substrate', '=', 'container')
+      .where('deleted_at', 'is', null)
+      .where('generation', '=', generation)
+      .where('status', 'in', ['running', 'quiescing', 'needs_recovery'])
+      .returning('machine_id')
+      .executeTakeFirst();
+    return updated ? 'ok' : 'stale_generation';
   }
 
   async function destroyCompute(machineId: string, generation: number, signal: AbortSignal): Promise<DestroyOutcome> {
@@ -355,6 +446,11 @@ export function createContainerLifecycleService(deps: ContainerLifecycleDeps) {
     ensureStarted,
     markComputeLost,
     markRegistered,
+    beginQuiesce,
+    cancelQuiesce,
+    finishStop,
+    recoverAfterFailedStop,
+    recordFlush,
     stop,
     destroyCompute,
     /** Resolves when every launch this process started has settled. */

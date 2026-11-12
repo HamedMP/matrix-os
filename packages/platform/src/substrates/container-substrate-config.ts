@@ -9,7 +9,9 @@ import {
   type LambdaMicrovmsApi,
   type LambdaMicrovmsProviderConfig,
 } from './container-provider.js';
+import { createContainerRuntimeClient } from './container-runtime-client.js';
 import { createContainerSubstrate } from './container-substrate.js';
+import { createActivityTracker, createIdleReaper } from './idle-reaper.js';
 import { createLambdaMicrovmsApi, createLambdaMicrovmsClient, type LambdaMicrovmsSender } from './lambda-microvms-client.js';
 import type { OnDemandRuntimeSubstrate } from './types.js';
 
@@ -34,6 +36,9 @@ const FIELDS = {
   /** Platform origin the runtime calls for registration and lifecycle reports. */
   MATRIX_CONTAINER_PLATFORM_URL: z.string().regex(/^https?:\/\/[A-Za-z0-9.-]+(:\d{1,5})?$/),
   PLATFORM_SECRET: z.string().min(32),
+  MATRIX_CONTAINER_IDLE_STOP_MINUTES: z.coerce.number().int().min(1).max(240).default(10),
+  /** Below the provider's 8 hour unit lifetime, so a session ends by stop rather than by loss. */
+  MATRIX_CONTAINER_MAX_SESSION_MINUTES: z.coerce.number().int().min(10).max(450).default(240),
 } as const;
 
 const ConfigSchema = z.object(FIELDS);
@@ -49,6 +54,7 @@ export interface ContainerSubstrateConfig {
     passwordSecret: string;
     sizeLimitBytes: number;
   };
+  idle: { idleMs: number; maxSessionMs: number };
 }
 
 export type ContainerSubstrateConfigResult =
@@ -87,6 +93,7 @@ export function loadContainerSubstrateConfig(env: NodeJS.ProcessEnv): ContainerS
         passwordSecret: c.MATRIX_CONTAINER_OWNER_DB_PASSWORD_SECRET,
         sizeLimitBytes: c.MATRIX_CONTAINER_OWNER_DB_SIZE_LIMIT_BYTES,
       },
+      idle: { idleMs: c.MATRIX_CONTAINER_IDLE_STOP_MINUTES * 60_000, maxSessionMs: c.MATRIX_CONTAINER_MAX_SESSION_MINUTES * 60_000 },
     },
   };
 }
@@ -96,6 +103,8 @@ export interface ConfiguredContainerSubstrate {
   platformSecret: string;
   lifecycle: ContainerLifecycleService;
   ownerDatabases: ContainerOwnerDatabases;
+  /** Starts the idle sweep; call once the platform database is ready. */
+  startBackgroundWork(): void;
   shutdown(): Promise<void>;
 }
 
@@ -130,9 +139,13 @@ export function createConfiguredContainerSubstrate(deps: ConfiguredContainerSubs
     sizeLimitBytes: config.ownerDatabase.sizeLimitBytes,
   });
   const provider = createLambdaMicrovmsProvider({ api: microvmsApi, config: config.provider });
+  const runtime = createContainerRuntimeClient({
+    provider, platformSecret: config.platform.secret, endpointHostSuffix: config.provider.endpointHostSuffix,
+  });
   const lifecycle = createContainerLifecycleService({
     db: deps.db,
     provider,
+    reviveInPlace: (target, signal) => runtime.resume(target, signal),
     async buildBootPayload(context, signal) {
       const database = await ownerDatabases.ensure(context.clerkUserId, context.generation, signal);
       return JSON.stringify({
@@ -155,12 +168,16 @@ export function createConfiguredContainerSubstrate(deps: ConfiguredContainerSubs
           user: database.roleName,
           password: database.password,
         },
+        ...(context.recovery ? { recovery: context.recovery } : {}),
       });
     },
   });
+  const activity = createActivityTracker({ db: deps.db });
+  const reaper = createIdleReaper({ db: deps.db, lifecycle, runtime, activity, config: config.idle });
   const substrate = createContainerSubstrate({
     lifecycle,
     provider,
+    activity,
     endpointHostSuffix: config.provider.endpointHostSuffix,
     loadMachine: machineId => getUserMachine(deps.db, machineId),
   });
@@ -169,7 +186,11 @@ export function createConfiguredContainerSubstrate(deps: ConfiguredContainerSubs
     platformSecret: config.platform.secret,
     lifecycle,
     ownerDatabases,
+    startBackgroundWork() {
+      reaper.start();
+    },
     async shutdown() {
+      await reaper.shutdown();
       await lifecycle.shutdown();
       sdkClient?.destroy();
       await pgAdmin?.close();

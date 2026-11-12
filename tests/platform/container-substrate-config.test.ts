@@ -69,7 +69,17 @@ describe('container substrate configuration', () => {
         egressNetworkConnectors: [ENV.MATRIX_CONTAINER_EGRESS_CONNECTORS],
       },
       ownerDatabase: { runtimeHost: 'owners.internal.example', runtimePort: 5432, sizeLimitBytes: 1024 ** 3 },
+      idle: { idleMs: 10 * 60_000, maxSessionMs: 4 * 60 * 60_000 },
     });
+  });
+
+  it('reads the idle stop and maximum session from minutes and bounds them', () => {
+    const result = loadContainerSubstrateConfig({ ...ENV, MATRIX_CONTAINER_IDLE_STOP_MINUTES: '20', MATRIX_CONTAINER_MAX_SESSION_MINUTES: '120' });
+    expect(result.ok && result.config.idle).toEqual({ idleMs: 20 * 60_000, maxSessionMs: 120 * 60_000 });
+    expect(loadContainerSubstrateConfig({ ...ENV, MATRIX_CONTAINER_IDLE_STOP_MINUTES: '0' }))
+      .toEqual({ ok: false, reason: 'incomplete', invalid: ['MATRIX_CONTAINER_IDLE_STOP_MINUTES'] });
+    expect(loadContainerSubstrateConfig({ ...ENV, MATRIX_CONTAINER_MAX_SESSION_MINUTES: '600' }))
+      .toEqual({ ok: false, reason: 'incomplete', invalid: ['MATRIX_CONTAINER_MAX_SESSION_MINUTES'] });
   });
 });
 
@@ -102,6 +112,20 @@ describe('container substrate registration', () => {
     expect(createClient).toHaveBeenCalledWith({ region: 'eu-west-1' });
     await configured!.shutdown();
     expect(destroy).toHaveBeenCalledTimes(1);
+  });
+
+  it('starts its background sweeps only when asked and clears them on shutdown', async () => {
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
+    try {
+      const configured = createConfiguredContainerSubstrate({ db, env: ENV, microvmsApi: fakeApi(), log })!;
+      expect(vi.getTimerCount()).toBe(0);
+      configured.startBackgroundWork();
+      expect(vi.getTimerCount()).toBe(1);
+      await configured.shutdown();
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('does not build a client when settings are incomplete', () => {

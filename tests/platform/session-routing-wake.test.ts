@@ -48,12 +48,15 @@ describe('waking a container runtime on request', () => {
   let lifecycle: ReturnType<typeof createContainerLifecycleService>;
   let platform: ReturnType<typeof createApp>;
   let fetchMock: ReturnType<typeof vi.spyOn>;
+  let observed: string[];
 
   function build(env: NodeJS.ProcessEnv = {}) {
     provider = fakeProvider();
     lifecycle = createContainerLifecycleService({ db, provider, buildBootPayload: async () => '{}' });
+    observed = [];
     const container = createContainerSubstrate({
       lifecycle, provider, endpointHostSuffix: '.on.aws', loadMachine: (machineId) => getUserMachine(db, machineId),
+      activity: { observe: (machineId) => { observed.push(machineId); } },
     });
     platform = createApp({
       db, orchestrator: stubOrchestrator(), platformSecret: 'platform-secret-123', env,
@@ -128,6 +131,20 @@ describe('waking a container runtime on request', () => {
       expect(url).toBe(`https://${ENDPOINT}/api/projects?x=1`);
       expect((init.headers as Headers).get('x-aws-proxy-auth')).toBe('platform-minted-credential');
     }
+  });
+
+  it('counts the owner\'s submitted work as activity, but not polling or another user\'s traffic', async () => {
+    await platform.request('/api/projects', { headers: OWNER_SESSION });
+    await registerStartedUnit();
+    observed = [];
+    await platform.request('/api/projects', { headers: OWNER_SESSION });
+    await platform.request('/api/presence', { method: 'POST', headers: OWNER_SESSION, body: '{}' });
+    await platform.request('/vm/freeowner/api/projects', {
+      method: 'POST', headers: { host: 'app.matrix-os.com', authorization: 'Bearer user_stranger' }, body: '{}',
+    });
+    expect(observed).toEqual([]);
+    await platform.request('/api/projects', { method: 'POST', headers: OWNER_SESSION, body: '{}' });
+    expect(observed).toEqual(['ctr-1']);
   });
 
   it('never starts compute for an unauthenticated request', async () => {

@@ -14,6 +14,11 @@ const LIST_MAX_PAGES = 50;
 const SAFE_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$/;
 const HOSTNAME = /^(?=.{1,253}$)[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+$/;
 
+/** A platform-reachable unit endpoint: a plain DNS name inside the provider's suffix. */
+export function isContainerEndpointHost(host: string | null | undefined, suffix: string): host is string {
+  return typeof host === 'string' && HOSTNAME.test(host) && suffix.startsWith('.') && host.endsWith(suffix);
+}
+
 export type ContainerProviderErrorCode =
   | 'not_found' | 'conflict' | 'throttled' | 'capacity' | 'quota_exceeded'
   | 'invalid_request' | 'access_denied' | 'unavailable' | 'timeout';
@@ -176,7 +181,7 @@ export function createLambdaMicrovmsProvider(deps: LambdaMicrovmsProviderDeps): 
   function endpointHost(raw: string | undefined): string | null {
     if (!raw) return null;
     const host = raw.replace(/^https:\/\//, '').toLowerCase();
-    return HOSTNAME.test(host) && host.endsWith(config.endpointHostSuffix) ? host : null;
+    return isContainerEndpointHost(host, config.endpointHostSuffix) ? host : null;
   }
 
   function toUnit(raw: MicrovmDescription | MicrovmItem, lifetimeSeconds?: number): ContainerUnit | null {

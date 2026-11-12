@@ -57,6 +57,8 @@ export interface RuntimeSubstrate {
    * starting or changing anything; for callers who may not wake it.
    */
   ensureRoutable?(ref: RuntimeRef, signal: AbortSignal): Promise<boolean>;
+  /** Owner activity observed at the proxy; the idle authority for on-demand runtimes. */
+  recordOwnerActivity?(machineId: string): void;
 }
 
 export interface SubstrateComputeRecord {
