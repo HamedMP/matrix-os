@@ -4,6 +4,7 @@ import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-libra
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { McpServersSection } from "../../desktop/src/renderer/src/features/plugins";
 import { useConnection } from "../../desktop/src/renderer/src/stores/connection";
+import { useIntegrations } from "../../desktop/src/renderer/src/features/integrations/integrations-store";
 import { createApiClient } from "../../desktop/src/renderer/src/lib/api";
 import type { ApiClient } from "../../desktop/src/renderer/src/lib/api";
 
@@ -240,5 +241,34 @@ describe("desktop MCP inventory account isolation", () => {
     release();
     expect(await screen.findByText(/Bob work/)).not.toBeNull();
     expect(screen.queryByText(/Alice work/)).toBeNull();
+  });
+});
+
+describe("desktop MCP inventory with competing connected-app loads", () => {
+  afterEach(() => { cleanup(); vi.restoreAllMocks(); });
+
+  // Fault: another store consumer replaces this view's load, and the apps stay hidden after it succeeds.
+  it("shows connected apps once a competing refresh for the same account succeeds", async () => {
+    const gates: Array<() => void> = [];
+    const api = makeApi();
+    vi.mocked(api.get).mockImplementation(async (path: string) => {
+      if (path === "/api/mcp-servers/catalog") return { presets: [] } as never;
+      if (path === "/api/integrations/available") return [{ id: "gmail", name: "Gmail", category: "google" }] as never;
+      if (path === "/api/integrations") {
+        await new Promise<void>((resolve) => { gates.push(resolve); });
+        return [{ id: "conn-1", service: "gmail", account_label: "Carol work", status: "active" }] as never;
+      }
+      return [] as never;
+    });
+    useConnection.setState({ status: "signed-in", handle: "carol", api: api as never });
+    render(<McpServersSection />);
+    await waitFor(() => expect(gates).toHaveLength(1));
+    // e.g. useOnboardingAppConnect refreshes the shared store while this view's load is in flight.
+    let competing!: Promise<void>;
+    act(() => { competing = useIntegrations.getState().refresh(api); });
+    await waitFor(() => expect(gates).toHaveLength(2));
+    await act(async () => { gates[0]!(); });
+    await act(async () => { gates[1]!(); await competing; });
+    expect(await screen.findByText(/Carol work/)).not.toBeNull();
   });
 });

@@ -8,8 +8,7 @@ export function useRemoteMcpPresets(api: ApiClient | null) {
   const connectedApps = useIntegrations((state) => state.connections);
   const availableApps = useIntegrations((state) => state.available);
   const refreshIntegrations = useIntegrations((state) => state.refresh);
-  // The account whose legacy connected apps the shared store currently holds for this view.
-  const [inventoryOwner, setInventoryOwner] = useState<ApiClient | null>(null);
+  const connectionsSource = useIntegrations((state) => state.connectionsSource);
   const [presets, setPresets] = useState<RemoteMcpPreset[]>([]);
   const [catalogState, setCatalogState] = useState<"loading" | "ready" | "error">("loading");
 
@@ -27,18 +26,11 @@ export function useRemoteMcpPresets(api: ApiClient | null) {
   // react-doctor-disable-next-line react-hooks-js/set-state-in-effect -- mount loads the external preset catalog; the same callback serves Retry.
   useEffect(() => { loadCatalog(); }, [loadCatalog]);
   // Legacy connected apps share the inventory. Reload them for every account or
-  // computer change, and show none until a successful load for this account.
+  // computer change; any consumer's successful load for this account counts.
   useEffect(() => {
-    if (!api) return undefined;
-    let current = true;
-    void refreshIntegrations(api).then(() => {
-      if (current && useIntegrations.getState().status === "ready") setInventoryOwner(api);
-    }, (refreshError: unknown) => {
-      console.warn("[custom-mcp] connected apps load failed:", refreshError instanceof Error ? refreshError.name : typeof refreshError);
-    });
-    return () => { current = false; };
+    if (api) void refreshIntegrations(api);
   }, [api, refreshIntegrations]);
-  const ownedApps = inventoryOwner !== null && inventoryOwner === api ? connectedApps : [];
+  const ownedApps = api !== null && connectionsSource === api ? connectedApps : [];
 
   const inventoryFor = (servers: ReadonlyArray<{ id: string; name: string; url: string; status: string }>): McpInventoryEntry[] =>
     buildMcpConnectionInventory(
