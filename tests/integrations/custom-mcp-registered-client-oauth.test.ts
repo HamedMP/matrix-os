@@ -119,6 +119,24 @@ describe("registered-client OAuth with a Matrix-owned vendor app", () => {
     expect(calls.map(call => call.fields.get("grant_type"))).toEqual(["authorization_code"]);
   });
 
+  // Fault: a saved, still-valid token keeps working after the Matrix app was removed or rotated.
+  it.each([
+    ["removed", {}],
+    ["rotated", { MCP_OAUTH_GITHUB_CLIENT_ID: "gh-client-v2", MCP_OAUTH_GITHUB_CLIENT_SECRET: "rotated" }],
+  ])("refuses a saved token once the app is %s, including tokens without expiry", async (_label, env) => {
+    request.mockImplementation(async (input: { method: string; url: string; body?: string; headers?: Record<string, string> }) => {
+      calls.push({ method: input.method, url: input.url, fields: new URLSearchParams(input.body), headers: input.headers ?? {} });
+      return { status: 200, body: { access_token: "no-expiry-access", token_type: "bearer" } };
+    });
+    const { userId, serverId } = await server(github.url);
+    const configured = manager({ MCP_OAUTH_GITHUB_CLIENT_ID: "gh-client", MCP_OAUTH_GITHUB_CLIENT_SECRET: SECRET });
+    await configured.complete(new URL(await configured.start(userId, serverId)).searchParams.get("state")!, "code");
+    const { row, value } = await credential(userId, serverId);
+    expect(value.oauth?.expiresAt).toBeUndefined();
+    await expect(configured.resolveAuthorization(userId, row)).resolves.toBe("Bearer no-expiry-access");
+    await expect(manager(env).resolveAuthorization(userId, row)).rejects.toMatchObject({ code: "action_required" });
+  });
+
   // Fault: a registered-client vendor falls back to DCR and fails with a confusing upstream error.
   it("keeps the setup-required outcome for an unconfigured registered-client vendor", async () => {
     const { userId, serverId } = await server(github.url);
