@@ -3,6 +3,10 @@ import { MANAGED_WORKERS_AI_MODELS } from "@matrix-os/contracts";
 import { mkdir, rename, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { addPortableProviderCredentials, buildPiChildEnvironment } from "./pi-process-environment.js";
+import { MATRIX_MCP_RUN_TOKEN_ENV, openCodeMatrixMcpConfig } from "../chat/matrix-mcp-launch.js";
+
+/** Server-issued run capability for the Matrix Core MCP server; never part of the config file. */
+export interface OpenCodeCoreMcpLaunch { scope: "call" | "discovery"; token: string }
 
 const THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh", "max"] as const;
 const REASONING_EFFORTS = ["none", ...THINKING_LEVELS.slice(1)] as const;
@@ -48,10 +52,18 @@ function anthropicOpenCodeBaseUrl(baseUrl: string): string {
   return prefix.endsWith("/v1") ? prefix : `${prefix}/v1`;
 }
 
+function withCoreMcp(config: Record<string, unknown>, core: { scope: "call" | "discovery" } | undefined): Record<string, unknown> {
+  if (!core) return config;
+  const matrix = openCodeMatrixMcpConfig(core.scope);
+  return { ...config, mcp: matrix.mcp,
+    permission: { ...(config.permission as Record<string, string>), ...matrix.permission } };
+}
+
 export function buildOpenCodeRunConfiguration(
   credentials: Record<string, string> | undefined,
+  core?: { scope: "call" | "discovery" },
 ): string {
-  const config = readOnlyOpenCodeConfig();
+  const config = withCoreMcp(readOnlyOpenCodeConfig(), core);
   if (isManagedWorkersCredential(credentials)) {
     const baseUrl = credentials!.OPENAI_BASE_URL!;
     return JSON.stringify({
@@ -110,12 +122,19 @@ export function prepareOpenCodeRunEnvironment(input: {
   homePath: string;
   baseEnvironment?: Record<string, string>;
   credentials?: Record<string, string>;
+  coreMcp?: OpenCodeCoreMcpLaunch;
 }): Record<string, string> {
   const env = processEnvironment(input);
+  if (input.coreMcp && !/^[a-f0-9]{64}$/.test(input.coreMcp.token)) throw new Error("Matrix Core MCP capability is invalid");
   env.OPENCODE_DISABLE_PROJECT_CONFIG = "1";
   env.OPENCODE_DISABLE_AUTOUPDATE = "1";
   env.OPENCODE_EXPERIMENTAL_DISABLE_FILEWATCHER = "1";
-  env.OPENCODE_CONFIG_CONTENT = buildOpenCodeRunConfiguration(input.credentials);
+  env.OPENCODE_CONFIG_CONTENT = buildOpenCodeRunConfiguration(input.credentials,
+    input.coreMcp ? { scope: input.coreMcp.scope } : undefined);
+  if (input.coreMcp) {
+    env[MATRIX_MCP_RUN_TOKEN_ENV] = input.coreMcp.token;
+    env.MATRIX_MCP_HARNESS = "opencode";
+  }
   return env;
 }
 

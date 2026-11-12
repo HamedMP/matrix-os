@@ -781,6 +781,11 @@ describe("agent-launcher", () => {
       "mcp__matrix-integrations__list_custom_mcp_servers",
       "mcp__matrix-integrations__describe_custom_mcp_server",
       "mcp__matrix-integrations__call_custom_mcp_tool",
+      "mcp__matrix-integrations__list_services",
+      "mcp__matrix-integrations__search_tools",
+      "mcp__matrix-integrations__describe_tool",
+      "mcp__matrix-integrations__call_tool",
+      "mcp__matrix-integrations__get_approval",
     ]);
   });
 
@@ -824,6 +829,9 @@ describe("agent-launcher", () => {
       expect(settings.permissions.allow).toEqual([
         "mcp__matrix-integrations__list_custom_mcp_servers",
         "mcp__matrix-integrations__describe_custom_mcp_server",
+        "mcp__matrix-integrations__list_services",
+        "mcp__matrix-integrations__search_tools",
+        "mcp__matrix-integrations__describe_tool",
       ]);
     }
     const directReadOnly = buildAgentLaunch({
@@ -840,6 +848,9 @@ describe("agent-launcher", () => {
       .toEqual([
         "mcp__matrix-integrations__list_custom_mcp_servers",
         "mcp__matrix-integrations__describe_custom_mcp_server",
+        "mcp__matrix-integrations__list_services",
+        "mcp__matrix-integrations__search_tools",
+        "mcp__matrix-integrations__describe_tool",
       ]);
   });
 

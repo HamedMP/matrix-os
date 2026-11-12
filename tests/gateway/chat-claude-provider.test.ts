@@ -151,7 +151,7 @@ describe("Claude canonical Chat Provider adapter", () => {
       expect(Object.keys(config.mcpServers)).toEqual(["matrix-integrations"]);
       expect(config.mcpServers["matrix-integrations"]).toEqual({
         command: "/opt/matrix/bin/matrix-integrations-mcp",
-        args: ["--require-scoped-capability", "--tool-surface=chat-call"],
+        args: ["--require-scoped-capability", "--tool-surface=chat-call", "--harness=claude_code"],
       });
       expect(options.env.MATRIX_AGENT_INTEGRATIONS_TOKEN).toMatch(/^[a-f0-9]{64}$/);
 
@@ -166,6 +166,9 @@ describe("Claude canonical Chat Provider adapter", () => {
         "mcp__matrix-integrations__describe_service",
         "mcp__matrix-integrations__list_custom_mcp_servers",
         "mcp__matrix-integrations__describe_custom_mcp_server",
+        "mcp__matrix-integrations__list_services",
+        "mcp__matrix-integrations__search_tools",
+        "mcp__matrix-integrations__describe_tool",
       ]);
       expect(args.includes("--resume")).toBe(index === 1);
     }
@@ -195,7 +198,7 @@ describe("Claude canonical Chat Provider adapter", () => {
     for (const { args, token } of seen) {
       const config = JSON.parse(args[args.indexOf("--mcp-config") + 1]!);
       expect(config.mcpServers["matrix-integrations"].args).toEqual([
-        "--require-scoped-capability", "--tool-surface=chat-discovery",
+        "--require-scoped-capability", "--tool-surface=chat-discovery", "--harness=claude_code",
       ]);
       expect(args.slice(args.indexOf("--permission-mode"), args.indexOf("--permission-mode") + 2))
         .toEqual(["--permission-mode", "plan"]);
@@ -208,6 +211,9 @@ describe("Claude canonical Chat Provider adapter", () => {
         "mcp__matrix-integrations__describe_service",
         "mcp__matrix-integrations__list_custom_mcp_servers",
         "mcp__matrix-integrations__describe_custom_mcp_server",
+        "mcp__matrix-integrations__list_services",
+        "mcp__matrix-integrations__search_tools",
+        "mcp__matrix-integrations__describe_tool",
       ]);
       expect(settings.permissions.deny).toEqual(["Edit", "Write", "NotebookEdit"]);
       expect(registry.resolve(token, "GET", "/api/mcp-servers")).toBeNull();

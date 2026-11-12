@@ -10,6 +10,8 @@ const MAX_CONFIG_BYTES = 1_048_576;
 const MATRIX_DISABLED_SKILLS = ["google-workspace", "himalaya"];
 const MATRIX_MCP_SERVER = {
   command: "/opt/matrix/bin/matrix-integrations-mcp",
+  // Usage label for Matrix Core MCP (spec 2691); argv survives Hermes env sanitization.
+  args: ["--harness=hermes"],
 };
 
 function errorCode(error) {
@@ -102,7 +104,8 @@ async function main() {
     typeof currentMcpServer !== "object" ||
     Array.isArray(currentMcpServer) ||
     currentMcpServer.command !== MATRIX_MCP_SERVER.command ||
-    Object.keys(currentMcpServer).length !== 1
+    JSON.stringify(currentMcpServer.args) !== JSON.stringify(MATRIX_MCP_SERVER.args) ||
+    Object.keys(currentMcpServer).length !== 2
   ) {
     document.setIn(["mcp_servers", "matrix-integrations"], MATRIX_MCP_SERVER);
     changed = true;
