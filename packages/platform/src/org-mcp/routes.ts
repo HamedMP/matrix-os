@@ -71,39 +71,53 @@ function decodeCursor(cursor: string): string | undefined {
   return ClerkActorIdSchema.safeParse(decoded).success ? decoded : undefined;
 }
 
+export type OrgMcpOrganizations = NonNullable<OrgMcpAdminRouteOptions["organizations"]>;
+
+/**
+ * Session actor → validated `:orgId` → dependencies (503) → current membership
+ * (404) → `org:mcp_admin` (403). Shared by every org MCP admin surface.
+ */
+export async function authorizeOrgMcpAdmin(c: Context, options: {
+  resolveActor(c: Context): Promise<string | null>;
+  organizations?: OrgMcpOrganizations;
+}): Promise<Response | { actorId: string; organizationId: string }> {
+  let actor: unknown;
+  try { actor = await options.resolveActor(c); }
+  catch (error: unknown) {
+    console.warn("[org-mcp] actor authentication failed", error instanceof Error ? error.name : "UnknownError");
+    actor = null;
+  }
+  const actorId = ClerkActorIdSchema.safeParse(actor);
+  if (!actorId.success) return safeJson(c, "Unauthorized", 401);
+  const organizationId = OrgMcpOrganizationIdSchema.safeParse(c.req.param("orgId"));
+  if (!organizationId.success) return safeJson(c, "Invalid request", 422);
+  const { organizations } = options;
+  if (!organizations) return unavailable(c, "dependency check");
+  try {
+    // Freshness first: the check may refresh the projection (e.g. record a demotion),
+    // so authorize only from the membership read after it.
+    if (!(await organizations.projection.isCurrentMember({ organizationId: organizationId.data, actorId: actorId.data }))) {
+      return safeJson(c, "Organization not found", 404);
+    }
+    const membership = await organizations.repository.getMembership({ organizationId: organizationId.data, actorId: actorId.data });
+    if (!membership || membership.state !== "active") return safeJson(c, "Organization not found", 404);
+    if (!hasOrganizationPermission(membership.role, "org:mcp_admin")) return safeJson(c, "Forbidden", 403);
+    return { actorId: actorId.data, organizationId: organizationId.data };
+  } catch (error: unknown) {
+    return unavailable(c, "admin authorization", error);
+  }
+}
+
 export function createOrgMcpAdminRoutes(options: OrgMcpAdminRouteOptions): Hono {
   const app = new Hono();
   const jsonLimit = bodyLimit({ maxSize: JSON_BODY_LIMIT, onError: (c) => safeJson(c, "Request too large", 413) });
   const blockLimit = bodyLimit({ maxSize: BLOCK_BODY_LIMIT, onError: (c) => safeJson(c, "Request too large", 413) });
   const emptyLimit = bodyLimit({ maxSize: 1, onError: (c) => safeJson(c, "Request too large", 413) });
 
-  /** Session actor → validated org → dependencies → current membership → `org:mcp_admin`. */
   async function requireAdmin(c: Context) {
-    let actor: unknown;
-    try { actor = await options.resolveActor(c); }
-    catch (error: unknown) {
-      console.warn("[org-mcp] actor authentication failed", error instanceof Error ? error.name : "UnknownError");
-      actor = null;
-    }
-    const actorId = ClerkActorIdSchema.safeParse(actor);
-    if (!actorId.success) return safeJson(c, "Unauthorized", 401);
-    const organizationId = OrgMcpOrganizationIdSchema.safeParse(c.req.param("orgId"));
-    if (!organizationId.success) return safeJson(c, "Invalid request", 422);
     const { repository, organizations } = options;
-    if (!repository || !organizations) return unavailable(c, "dependency check");
-    try {
-      // Freshness first: the check may refresh the projection (e.g. record a demotion),
-      // so authorize only from the membership read after it.
-      if (!(await organizations.projection.isCurrentMember({ organizationId: organizationId.data, actorId: actorId.data }))) {
-        return safeJson(c, "Organization not found", 404);
-      }
-      const membership = await organizations.repository.getMembership({ organizationId: organizationId.data, actorId: actorId.data });
-      if (!membership || membership.state !== "active") return safeJson(c, "Organization not found", 404);
-      if (!hasOrganizationPermission(membership.role, "org:mcp_admin")) return safeJson(c, "Forbidden", 403);
-      return { actorId: actorId.data, organizationId: organizationId.data, repository, organizations };
-    } catch (error: unknown) {
-      return unavailable(c, "admin authorization", error);
-    }
+    const admin = await authorizeOrgMcpAdmin(c, { resolveActor: options.resolveActor, organizations: repository ? organizations : undefined });
+    return admin instanceof Response ? admin : { ...admin, repository: repository!, organizations: organizations! };
   }
 
   function serverDefId(c: Context): string | null {

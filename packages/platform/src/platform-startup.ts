@@ -64,6 +64,7 @@ import { createCustomMcpProjection } from './custom-mcp-projection.js';
 import { createPlatformCoreMcp, type GatewayCoreToolsModule } from './mcp-usage/startup.js';
 import type { ExternalCoreMcp } from './mcp-core-tools.js';
 import { createPlatformOrgMcp } from './org-mcp/startup.js';
+import { createCoreRepoMachineAuthenticator, createPlatformCoreRepo } from './core-repo/startup.js';
 import { createJourneyUserResolver } from './journey-routes.js';
 import { listActivePrivatePreviewsForOwner } from './database/private-previews.js';
 import { createPrivatePreviewAccess } from './private-preview-wiring.js';
@@ -257,6 +258,7 @@ type CreatePlatformApp = (deps: {
   internalCustomMcpApprovalRoutes?: Hono<any>;
   externalCoreMcp?: ExternalCoreMcp;
   orgMcpRoutes?: Hono<any>;
+  coreRepoRoutes?: Hono<any>;
   internalSyncRoutes?: Hono<any>;
   internalFundedAiRuntimeRoutes?: Hono<any>;
   internalFundedAiRelayRoutes?: Hono<any>;
@@ -510,10 +512,12 @@ async function startPlatformServerWithCleanup(
     env: process.env, collaboration, logError: logPlatformRouteError,
   });
   // Spec 2691 layer 5: org governance of Matrix Core MCP (call-time policy + Organization → Connections routes).
+  const platformOrganizations = 'organizations' in collaboration ? collaboration.organizations : undefined;
+  const resolveSessionActor = createJourneyUserResolver({ clerkAuth, syncJwtSecret: platformJwtSecret });
   const orgMcp = await createPlatformOrgMcp({ db: db.kysely as never,
-    organizations: 'organizations' in collaboration ? collaboration.organizations : undefined,
+    organizations: platformOrganizations,
     connectionsAvailable: process.env.CUSTOM_MCP_ENABLED === 'true',
-    resolveActor: createJourneyUserResolver({ clerkAuth, syncJwtSecret: platformJwtSecret }) });
+    resolveActor: resolveSessionActor });
   const slack = await bootstrapPlatformSlack({
     env: process.env, db, platformSecret, platformJwtSecret,
     clerkAuth, collaboration, customerVpsProxyDispatcher,
@@ -850,6 +854,12 @@ async function startPlatformServerWithCleanup(
     registerCustomMcpStartupCleanup(async () => { sitesObjectStore?.destroy(); });
   }
 
+  // Spec 2691 layer 6: Matrix Core repo sync (GitHub App + webhook) and the pinned-tarball routes VPSes install from.
+  const coreRepo = await createPlatformCoreRepo({ env: process.env, db: db.kysely as never, store: customerVpsObjectStore,
+    organizations: platformOrganizations, authenticateMachine: createCoreRepoMachineAuthenticator(db, platformSecret),
+    resolveActor: resolveSessionActor, backgroundWorkers: backgroundWorkersEnabled });
+  registerCustomMcpStartupCleanup(coreRepo.shutdown);
+
   // Runtime-only candidates reuse registration/status without provider clients,
   // paid lifecycle workers, or a second machine/organization source of truth.
   let customerVpsDependencies: CustomerVpsServiceDeps | undefined;
@@ -1147,6 +1157,7 @@ async function startPlatformServerWithCleanup(
     internalCustomMcpApprovalRoutes,
     externalCoreMcp,
     orgMcpRoutes: orgMcp.routes,
+    coreRepoRoutes: coreRepo.routes,
     internalSyncRoutes,
     internalFundedAiRuntimeRoutes,
     internalFundedAiRelayRoutes,
@@ -1229,6 +1240,7 @@ async function startPlatformServerWithCleanup(
           containerProxyDispatcher.close(),
           customerVpsProxyDispatcher.close(),
           customMcpShutdown?.(),
+          coreRepo.shutdown(),
         ]);
         posthogProcessErrors.dispose();
         await shutdownPlatformApp(app);

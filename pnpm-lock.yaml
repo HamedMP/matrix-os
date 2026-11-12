@@ -1066,6 +1066,9 @@ importers:
       stripe:
         specifier: 22.5.0
         version: 22.5.0(@types/node@25.5.0)
+      tar:
+        specifier: 7.5.21
+        version: 7.5.21
       tsx:
         specifier: ^4.21.0
         version: 4.21.0
@@ -1189,6 +1192,9 @@ importers:
       pino-roll:
         specifier: ^2.1.0
         version: 2.2.0
+      tar:
+        specifier: 7.5.21
+        version: 7.5.21
       tsx:
         specifier: ^4.21.0
         version: 4.21.0
@@ -25723,7 +25729,7 @@ snapshots:
       react-refresh: 0.14.2
     optionalDependencies:
       '@babel/runtime': 7.29.2
-      expo: 58.0.23(1b97d579faa71dfb1a075b0653902b84)
+      expo: 58.0.23(794e4542f44dec5bbd1ef265eb1cc16c)
     transitivePeerDependencies:
       - '@babel/core'
       - supports-color
