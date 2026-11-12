@@ -37,6 +37,8 @@ export interface CustomMcpCredential {
     revocationEndpoint?: string;
     clientId?: string;
     clientIssuer?: string;
+    /** Catalog id of the Matrix-owned vendor app; its secret is never stored here. */
+    registeredClient?: string;
     /** Retained only in the owner/server encrypted credential envelope. */
     clientSecret?: string;
     clientSecretExpiresAt?: number;

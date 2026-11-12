@@ -5,7 +5,8 @@ import {
 } from "node:crypto";
 import { createOAuthDeadline, withinOAuthDeadline, pinnedOAuthRequest as pinnedRequest } from "./oauth-request.js";
 import { resolveCustomMcpOAuthAuthorization } from "./oauth-refresh.js";
-import { registerOAuthClient, oauthClientRequest } from "./oauth-client.js";
+import { registerOAuthClient, oauthClientRequest, type OAuthClientRegistration } from "./oauth-client.js";
+import type { RegisteredMcpOAuthClient, RegisteredMcpOAuthClients } from "./catalog-presets.js";
 import type { PlatformDb, CustomMcpServerBrokerRow } from "../../platform-db.js";
 import {
   decryptCustomMcpOAuthState,
@@ -42,6 +43,33 @@ interface OAuthTokenResponse {
   expires_in?: number;
   refresh_token?: string;
   scope?: string;
+}
+
+interface AuthorizationPlan {
+  authorizationEndpoint: string;
+  tokenEndpoint: string;
+  revocationEndpoint?: string;
+  resource: string;
+  clientIssuer: string;
+  scopes: string[];
+  client: OAuthClientRegistration;
+  /** Catalog id of the Matrix-owned app; its secret is injected per request, never stored. */
+  registeredClient?: string;
+}
+
+/** Pinned catalog endpoints: no vendor metadata is fetched for Matrix-owned apps. */
+function registeredClientPlan(client: RegisteredMcpOAuthClient, requestedScopes: readonly string[] | undefined): AuthorizationPlan {
+  const { pinned } = client;
+  return {
+    authorizationEndpoint: pinned.authorizationEndpoint,
+    tokenEndpoint: pinned.tokenEndpoint,
+    revocationEndpoint: pinned.revocationEndpoint,
+    resource: pinned.resource,
+    clientIssuer: canonicalIssuer(new URL(pinned.tokenEndpoint).origin),
+    scopes: requestedScopes ? [...requestedScopes] : [...pinned.scopes],
+    client: { clientId: client.clientId },
+    registeredClient: client.catalogId,
+  };
 }
 
 function exactStateMatch(left: string | undefined, right: string): boolean {
@@ -124,6 +152,8 @@ export class CustomMcpOAuthManager {
     now?: () => Date;
     request?: typeof pinnedRequest;
     validateUrl?: typeof validateCustomMcpUrl;
+    /** Matrix-owned vendor apps for registered-client catalog presets (platform only). */
+    registeredClients?: RegisteredMcpOAuthClients;
   }) {
     const redirect = new URL(options.redirectUri);
     if (redirect.protocol !== "https:") throw new Error("Custom MCP OAuth redirect URI must use HTTPS");
@@ -151,6 +181,7 @@ export class CustomMcpOAuthManager {
     if (existingCredential.oauth && isCustomMcpRefreshClaimActive(existingCredential.oauth, this.options.now?.() ?? new Date())) {
       throw new CustomMcpRefreshPendingError();
     }
+    const now = () => this.options.now?.() ?? new Date();
     const request = (input: Parameters<typeof pinnedRequest>[0]) => {
       signal.throwIfAborted();
       return withinOAuthDeadline((this.options.request ?? pinnedRequest)({ ...input, signal }), signal);
@@ -159,6 +190,72 @@ export class CustomMcpOAuthManager {
       signal.throwIfAborted();
       return withinOAuthDeadline((this.options.validateUrl ?? validateCustomMcpUrl)(url), signal);
     };
+    const registered = this.options.registeredClients?.forServerUrl(row.url);
+    const plan = registered
+      ? registeredClientPlan(registered, options?.scopes)
+      : await this.discoverPlan(row, existingCredential, now(), request, validateUrl, signal, options?.scopes);
+    const { client, clientIssuer, scopes } = plan;
+    const state = encryptCustomMcpOAuthState({ userId, serverId }, this.options.encryptionKey);
+    const verifier = randomBytes(64).toString("base64url");
+    const challenge = createHash("sha256").update(verifier).digest("base64url");
+    const issuedAt = now();
+    const { clientId } = client;
+    const sameIssuer = existingCredential.oauth?.clientIssuer === clientIssuer
+      && existingCredential.oauth?.registeredClient === plan.registeredClient;
+    const credential: CustomMcpCredential = {
+      oauth: {
+        ...(existingCredential.oauth?.clientIssuer && !sameIssuer ? {} : existingCredential.oauth),
+        refreshing: undefined,
+        refreshStartedAt: undefined,
+        state,
+        stateExpiresAt: new Date(issuedAt.getTime() + STATE_TTL_MS).toISOString(),
+        verifier,
+        tokenEndpoint: plan.tokenEndpoint,
+        authorizationEndpoint: plan.authorizationEndpoint,
+        resource: plan.resource,
+        revocationEndpoint: plan.revocationEndpoint,
+        registeredClient: plan.registeredClient,
+        clientId,
+        clientSecret: client.clientSecret,
+        clientSecretExpiresAt: client.clientSecretExpiresAt,
+        tokenEndpointAuthMethod: client.tokenEndpointAuthMethod,
+        clientIssuer,
+        redirectUri: this.options.redirectUri,
+        scopes,
+        grantedScopes: undefined,
+        managedWriteAccess: options?.managedWriteAccess === true,
+      },
+    } as CustomMcpCredential;
+    signal.throwIfAborted();
+    const encrypted = encryptCustomMcpCredential(credential, this.options.encryptionKey, { userId, serverId: row.id });
+    // Refresh claims/rotation preserve policy revision. Fence the exact grant
+    // snapshot too, then invalidate the old tool policy once for reconnect.
+    if (!await withinOAuthDeadline(this.options.db.updateCustomMcpCredentialsIfCurrent(
+      row.id, userId, row.revision, row.encrypted_credentials ?? null, encrypted, "auth_required", true,
+    ), signal)) throw new CustomMcpBrokerError("conflict");
+
+    const authorizationUrl = new URL(plan.authorizationEndpoint);
+    authorizationUrl.searchParams.set("response_type", "code");
+    authorizationUrl.searchParams.set("client_id", clientId);
+    authorizationUrl.searchParams.set("redirect_uri", this.options.redirectUri);
+    authorizationUrl.searchParams.set("code_challenge", challenge);
+    authorizationUrl.searchParams.set("code_challenge_method", "S256");
+    authorizationUrl.searchParams.set("state", state);
+    authorizationUrl.searchParams.set("resource", plan.resource);
+    if (scopes.length > 0) authorizationUrl.searchParams.set("scope", scopes.join(" "));
+    return authorizationUrl.href;
+  }
+
+  /** Discovery for DCR/CIMD/configured clients from vendor-advertised (validated) metadata. */
+  private async discoverPlan(
+    row: CustomMcpServerBrokerRow,
+    existingCredential: CustomMcpCredential,
+    now: Date,
+    request: (input: Parameters<typeof pinnedRequest>[0]) => ReturnType<typeof pinnedRequest>,
+    validateUrl: (url: string) => ReturnType<typeof validateCustomMcpUrl>,
+    signal: AbortSignal,
+    requestedScopes: readonly string[] | undefined,
+  ): Promise<AuthorizationPlan> {
     const resourceResponse = await request({
       method: "GET",
       url: protectedResourceMetadataUrl(row.url),
@@ -192,18 +289,14 @@ export class CustomMcpOAuthManager {
       ...(metadata.registration_endpoint ? [validateUrl(metadata.registration_endpoint)] : []),
     ]);
 
-    const state = encryptCustomMcpOAuthState({ userId, serverId }, this.options.encryptionKey);
-    const verifier = randomBytes(64).toString("base64url");
-    const challenge = createHash("sha256").update(verifier).digest("base64url");
-    const now = this.options.now?.() ?? new Date();
     // Advertising a scope is not a request to grant it. In particular PostHog
     // publishes both read and write scopes; managed presets choose least privilege.
-    const scopes = options?.scopes ? [...options.scopes] : this.options.scopes ?? resource.scopes_supported ?? metadata.scopes_supported ?? [];
+    const scopes = requestedScopes ? [...requestedScopes] : this.options.scopes ?? resource.scopes_supported ?? metadata.scopes_supported ?? [];
     if (!Array.isArray(scopes) || scopes.length > 100 || !scopes.every(scope =>
       typeof scope === "string" && scope.length > 0 && scope.length <= 256 && !/[\s\x00-\x1f\x7f]/.test(scope))) {
       throw new CustomMcpBrokerError("upstream");
     }
-    const sameIssuer = existingCredential.oauth?.clientIssuer === clientIssuer;
+    const sameIssuer = existingCredential.oauth?.clientIssuer === clientIssuer && !existingCredential.oauth?.registeredClient;
     const secretExpiry = existingCredential.oauth?.clientSecretExpiresAt;
     const secretExpired = secretExpiry !== undefined && secretExpiry !== 0 && secretExpiry <= now.getTime() / 1000;
     const existingClient = sameIssuer && !secretExpired && existingCredential.oauth?.clientId ? {
@@ -218,48 +311,15 @@ export class CustomMcpOAuthManager {
       endpoint: metadata.registration_endpoint, methods: metadata.token_endpoint_auth_methods_supported,
       redirectUri: this.options.redirectUri, signal, request,
     }));
-    const { clientId } = client;
-    const credential: CustomMcpCredential = {
-      oauth: {
-        ...(existingCredential.oauth?.clientIssuer && !sameIssuer ? {} : existingCredential.oauth),
-        refreshing: undefined,
-        refreshStartedAt: undefined,
-        state,
-        stateExpiresAt: new Date(now.getTime() + STATE_TTL_MS).toISOString(),
-        verifier,
-        tokenEndpoint: metadata.token_endpoint,
-        authorizationEndpoint: metadata.authorization_endpoint,
-        resource: resource.resource,
-        revocationEndpoint: metadata.revocation_endpoint,
-        clientId,
-        clientSecret: client.clientSecret,
-        clientSecretExpiresAt: client.clientSecretExpiresAt,
-        tokenEndpointAuthMethod: client.tokenEndpointAuthMethod,
-        clientIssuer,
-        redirectUri: this.options.redirectUri,
-        scopes,
-        grantedScopes: undefined,
-        managedWriteAccess: options?.managedWriteAccess === true,
-      },
-    } as CustomMcpCredential;
-    signal.throwIfAborted();
-    const encrypted = encryptCustomMcpCredential(credential, this.options.encryptionKey, { userId, serverId: row.id });
-    // Refresh claims/rotation preserve policy revision. Fence the exact grant
-    // snapshot too, then invalidate the old tool policy once for reconnect.
-    if (!await withinOAuthDeadline(this.options.db.updateCustomMcpCredentialsIfCurrent(
-      row.id, userId, row.revision, row.encrypted_credentials ?? null, encrypted, "auth_required", true,
-    ), signal)) throw new CustomMcpBrokerError("conflict");
-
-    const authorizationUrl = new URL(metadata.authorization_endpoint);
-    authorizationUrl.searchParams.set("response_type", "code");
-    authorizationUrl.searchParams.set("client_id", clientId);
-    authorizationUrl.searchParams.set("redirect_uri", this.options.redirectUri);
-    authorizationUrl.searchParams.set("code_challenge", challenge);
-    authorizationUrl.searchParams.set("code_challenge_method", "S256");
-    authorizationUrl.searchParams.set("state", state);
-    authorizationUrl.searchParams.set("resource", resource.resource);
-    if (scopes.length > 0) authorizationUrl.searchParams.set("scope", scopes.join(" "));
-    return authorizationUrl.href;
+    return {
+      authorizationEndpoint: metadata.authorization_endpoint,
+      tokenEndpoint: metadata.token_endpoint,
+      revocationEndpoint: metadata.revocation_endpoint,
+      resource: resource.resource,
+      clientIssuer,
+      scopes,
+      client,
+    };
   }
 
   async complete(state: string, code: string): Promise<{ serverId: string; revision?: number }> {
@@ -357,10 +417,14 @@ export class CustomMcpOAuthManager {
     if (!token) return;
     const clientId = oauth.clientId ?? this.configuredClientId;
     if (!clientId) throw new CustomMcpBrokerError("action_required");
+    const client = this.withRegisteredClient(oauth);
+    if (client?.registeredClient && oauth.revocationEndpoint !== this.options.registeredClients?.forCatalogId(client.registeredClient)?.pinned.revocationEndpoint) {
+      throw new CustomMcpBrokerError("action_required");
+    }
     const input = oauthClientRequest({
       token,
       client_id: clientId,
-    }, oauth);
+    }, client);
     const response = await (this.options.request ?? pinnedRequest)({
       method: "POST",
       url: oauth.revocationEndpoint,
@@ -369,8 +433,25 @@ export class CustomMcpOAuthManager {
     if (response.status < 200 || response.status >= 300) throw new Error("OAuth revocation failed");
   }
 
+  /**
+   * Inject the Matrix-owned app secret for a registered-client grant. The grant
+   * must still match the configured app and its pinned token endpoint; a
+   * removed or rotated app requires the owner to reconnect.
+   */
+  private withRegisteredClient(oauth: CustomMcpCredential["oauth"]): CustomMcpCredential["oauth"] {
+    if (!oauth?.registeredClient) return oauth;
+    const client = this.options.registeredClients?.forCatalogId(oauth.registeredClient);
+    if (!client || client.clientId !== oauth.clientId || oauth.tokenEndpoint !== client.pinned.tokenEndpoint
+      || oauth.clientSecret !== undefined) {
+      throw new CustomMcpBrokerError("action_required");
+    }
+    return { ...oauth, clientSecret: client.clientSecret, tokenEndpointAuthMethod: client.pinned.tokenEndpointAuthMethod };
+  }
+
   private async exchangeToken(endpoint: string, fields: Record<string, string>, oauth?: CustomMcpCredential["oauth"]): Promise<OAuthTokenResponse> {
-    const input = oauthClientRequest(fields, oauth);
+    const client = this.withRegisteredClient(oauth);
+    if (client?.registeredClient && endpoint !== client.tokenEndpoint) throw new CustomMcpBrokerError("action_required");
+    const input = oauthClientRequest(fields, client);
     const response = await (this.options.request ?? pinnedRequest)({
       method: "POST",
       url: endpoint,

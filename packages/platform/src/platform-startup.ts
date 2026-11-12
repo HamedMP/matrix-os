@@ -186,6 +186,9 @@ interface GatewayCustomMcpModules {
   approvalRoutes: {
     createCustomMcpApprovalRoutes(options: Record<string, unknown>): Hono;
   };
+  catalogPresets: {
+    RegisteredMcpOAuthClients: { fromEnv(env: NodeJS.ProcessEnv): unknown };
+  };
 }
 
 interface GatewayPlatformDbModule {
@@ -659,15 +662,18 @@ async function startPlatformServerWithCleanup(
     ].some((secret) => Boolean(secret) && secret === encryptionKeyRaw)) {
       throw new Error('MCP_CREDENTIAL_ENCRYPTION_KEY is required and must not reuse another platform secret');
     }
-    const [brokerModule, oauthModule, cryptoModule, routesModule, approvalRoutesModule, dbModule] = await Promise.all([
+    const [brokerModule, oauthModule, cryptoModule, routesModule, approvalRoutesModule, dbModule, catalogPresetsModule] = await Promise.all([
       importRuntimeModule<GatewayCustomMcpModules['broker']>('../../gateway/dist/integrations/custom-mcp/broker.js'),
       importRuntimeModule<GatewayCustomMcpModules['oauth']>('../../gateway/dist/integrations/custom-mcp/oauth.js'),
       importRuntimeModule<GatewayCustomMcpModules['crypto']>('../../gateway/dist/integrations/custom-mcp/crypto.js'),
       importRuntimeModule<GatewayCustomMcpModules['routes']>('../../gateway/dist/integrations/custom-mcp/routes.js'),
       importRuntimeModule<GatewayCustomMcpModules['approvalRoutes']>('../../gateway/dist/integrations/custom-mcp/approval-routes.js'),
       importRuntimeModule<GatewayPlatformDbModule>('../../gateway/dist/platform-db.js'),
+      importRuntimeModule<GatewayCustomMcpModules['catalogPresets']>('../../gateway/dist/integrations/custom-mcp/catalog-presets.js'),
     ]);
     const encryptionKey = cryptoModule.parseCustomMcpEncryptionKey(encryptionKeyRaw);
+    // Spec 2691: Matrix-owned vendor apps are parsed once; a missing pair hides that preset.
+    const registeredMcpOAuthClients = catalogPresetsModule.RegisteredMcpOAuthClients.fromEnv(process.env);
     const customDb = dbModule.createPlatformDb(runtimeConfig.platformDatabaseUrl);
     let customDbClosed = false;
     const closeCustomMcpDb = async () => {
@@ -697,6 +703,7 @@ async function startPlatformServerWithCleanup(
       encryptionKey,
       clientId: oauthClientId,
       redirectUri: oauthRedirectUri,
+      registeredClients: registeredMcpOAuthClients,
       ...(MATRIX_OAUTH_CLIENT_METADATA.redirect_uris.includes(oauthRedirectUri) ? { clientMetadataUrl: MATRIX_OAUTH_CLIENT_METADATA_URL } : {}),
     });
     const bokioOAuth = new BokioOAuthManager({ db: customDb, encryptionKey, credentialCrypto: cryptoModule,
@@ -736,6 +743,7 @@ async function startPlatformServerWithCleanup(
     const publicCustomMcpRoutes = routesModule.createCustomMcpRoutes({
       broker,
       oauth: managedOAuthFlow,
+      catalog: registeredMcpOAuthClients,
       resolveUserId: async (c: Context) => resolveCustomMcpUserId(
         c.get('platformUserId') as string | undefined,
         c.get('platformHandle') as string | undefined,
@@ -752,6 +760,7 @@ async function startPlatformServerWithCleanup(
     internalCustomMcpRoutes = routesModule.createCustomMcpRoutes({
       broker,
       oauth: managedOAuthFlow,
+      catalog: registeredMcpOAuthClients,
       allowToolCalls: true,
       resolveActorId: (c: Context) => c.get('internalContainerClerkUserId') as string | null,
       resolveUserId: async (c: Context) => resolveCustomMcpUserId(
