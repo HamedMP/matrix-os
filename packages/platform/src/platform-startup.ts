@@ -62,6 +62,7 @@ import { createPreviewDriveStore } from './preview-drive-store.js';
 import type { PreviewDriveIntegration } from './preview-drive-routes.js';
 import { createCustomMcpProjection } from './custom-mcp-projection.js';
 import { createPlatformCoreMcp, type GatewayCoreToolsModule } from './mcp-usage/startup.js';
+import type { ExternalCoreMcp } from './mcp-core-tools.js';
 import { listActivePrivatePreviewsForOwner } from './database/private-previews.js';
 import { createPrivatePreviewAccess } from './private-preview-wiring.js';
 import {
@@ -256,6 +257,7 @@ type CreatePlatformApp = (deps: {
   customMcpRoutes?: Hono<any>;
   internalCustomMcpRoutes?: Hono<any>;
   internalCustomMcpApprovalRoutes?: Hono<any>;
+  externalCoreMcp?: ExternalCoreMcp;
   internalSyncRoutes?: Hono<any>;
   internalFundedAiRuntimeRoutes?: Hono<any>;
   internalFundedAiRelayRoutes?: Hono<any>;
@@ -558,6 +560,7 @@ async function startPlatformServerWithCleanup(
   let customMcpRoutes: Hono | undefined;
   let internalCustomMcpRoutes: Hono | undefined;
   let internalCustomMcpApprovalRoutes: Hono | undefined;
+  let externalCoreMcp: ExternalCoreMcp | undefined;
   let customMcpSweepInterval: NodeJS.Timeout | undefined;
   let customMcpShutdown: (() => Promise<void>) | undefined;
   let managedMcpPresetBroker: ManagedMcpPresetBroker | undefined;
@@ -774,6 +777,8 @@ async function startPlatformServerWithCleanup(
       broker,
       oauth: managedOAuthFlow,
       catalog: registeredMcpOAuthClients,
+      // Spec 2691: owner-session decisions for external `/mcp` writes (never on the internal router).
+      ownerApprovals: customDb,
       resolveUserId: async (c: Context) => resolveCustomMcpUserId(
         c.get('platformUserId') as string | undefined,
         c.get('platformHandle') as string | undefined,
@@ -799,6 +804,8 @@ async function startPlatformServerWithCleanup(
         c.get('internalContainerHandle') as string | undefined,
       ),
     });
+    externalCoreMcp = { core: coreMcp.core as ExternalCoreMcp['core'],
+      resolveUserId: async (clerkUserId: string) => (await customDb.getUserByClerkId(clerkUserId))?.id ?? null };
     internalCustomMcpApprovalRoutes = approvalRoutesModule.createCustomMcpApprovalRoutes(createInternalCustomMcpApprovalRouteOptions({
       db: customDb,
       broker,
@@ -1152,6 +1159,7 @@ async function startPlatformServerWithCleanup(
     customMcpRoutes,
     internalCustomMcpRoutes,
     internalCustomMcpApprovalRoutes,
+    externalCoreMcp,
     internalSyncRoutes,
     internalFundedAiRuntimeRoutes,
     internalFundedAiRelayRoutes,

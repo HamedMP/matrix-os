@@ -11,6 +11,8 @@ import {
   resolveConnectableCatalogPreset,
 } from "./catalog-presets.js";
 import { coreCallerFromContext, registerCoreMcpRoutes } from "./core-routes.js";
+import { registerCoreOwnerApprovalRoutes } from "./core-owner-approval-routes.js";
+import type { CustomMcpExternalApprovalStore } from "./external-approval-store.js";
 import type { CoreToolService } from "./core-tools.js";
 
 const MUTATION_BODY_LIMIT = 64 * 1024;
@@ -76,6 +78,8 @@ export interface CustomMcpRoutesOptions {
   catalog?: RegisteredMcpOAuthClients;
   /** Matrix Core MCP tools; legacy server-id calls also dispatch through it for usage records. */
   core?: CoreToolService;
+  /** Owner-session router only (never the VPS-internal one): decides external-client writes. */
+  ownerApprovals?: CustomMcpExternalApprovalStore;
   now?: () => number;
 }
 
@@ -151,6 +155,10 @@ export function createCustomMcpRoutes(options: CustomMcpRoutesOptions): Hono {
   if (options.core) {
     registerCoreMcpRoutes(app, { core: options.core, requireUser, resolveActorId: options.resolveActorId,
       allowToolCalls: options.allowToolCalls });
+  }
+  if (options.ownerApprovals) {
+    registerCoreOwnerApprovalRoutes(app, { store: options.ownerApprovals, requireUser,
+      listServers: userId => options.broker.list(userId) });
   }
 
   app.get("/", async (context) => {
