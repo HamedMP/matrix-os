@@ -515,10 +515,11 @@ export function WorkRail({
     return (
       <WorkRailOrderItem key={group.id} id={group.id} kind="project" group={group.project.pinned ? "pinned-projects" : "projects"}><WorkRailProjectGroup
         group={group}
-        client={client}
-        scopeKey={authorityKey}
+        client={authorityReady ? client : null}
+        scopeKey={`${authorityKey}:${authorityEpoch}`}
         navigationUpdatedAt={navigation.updatedAt}
         sourceFilter={sourceFilter}
+        orderRows={order.orderRows}
         fresh={navigation.fresh}
         shared={sharedProjects.ownedSharedProjectIds.has(group.id)}
         moveItems={moveItems}
