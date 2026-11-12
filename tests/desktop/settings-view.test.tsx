@@ -47,7 +47,7 @@ describe("SettingsView", () => {
     expect(screen.getByRole("heading", { name: "Agents & providers" })).not.toBeNull();
     const nav = screen.getByRole("navigation", { name: "Settings sections" });
     expect(within(nav).getAllByRole("button").map((button) => button.textContent)).toEqual([
-      "Agents & providers", "AI usage", "Connect Apps", "MCPs", "Skills", "Import chats", "CLI",
+      "Agents & providers", "AI usage", "Messaging", "Connect Apps", "MCPs", "Skills", "Import chats", "CLI",
       "Appearance", "Account", "Billing", "Organization", "Identity & personality",
       "Computers", "Schedules", "System",
     ]);

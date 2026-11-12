@@ -14,23 +14,35 @@ const messages: Record<Exclude<SlackInstallResult['status'],'ready'>,string>={
   unavailable:'Unable to start installation. Please try again in a moment.',
 };
 export function SlackInstallation() {
-  const {isLoaded,isSignedIn,userId,sessionId,getToken}=useAuth();
-  const {isLoaded:organizationLoaded,organization}=useOrganization();
+  const auth=useAuth();
+  const organizationState=useOrganization();
+  const identity=[auth.userId,auth.sessionId,organizationState.organization?.id,auth.isSignedIn].join(':');
+  return <SlackInstallationForIdentity key={identity} auth={auth} organizationState={organizationState} />;
+}
+
+function SlackInstallationForIdentity({auth,organizationState}: {
+  auth: ReturnType<typeof useAuth>;
+  organizationState: ReturnType<typeof useOrganization>;
+}) {
+  const {isLoaded,isSignedIn,getToken}=auth;
+  const {isLoaded:organizationLoaded,organization}=organizationState;
   const [busy,setBusy]=useState(false);
   const [result,setResult]=useState<SlackInstallResult | null>(null);
-  const identity=[userId,sessionId,organization?.id,isSignedIn].join(':');
-  const currentIdentity=useRef(identity);
   const currentAttempt=useRef(0);
-  useEffect(()=>{currentIdentity.current=identity;setResult(null);currentAttempt.current+=1;setBusy(false);},[identity]);
   useEffect(()=>()=>{currentAttempt.current+=1;},[]);
   const install=async()=>{
     if(busy || !organization) return;
     const selectedOrganization=organization.id;
     const attempt=++currentAttempt.current;
     setBusy(true);setResult(null);
-    const next=await startSlackInstallation(selectedOrganization,window.location.origin,getToken);
-    if(attempt!==currentAttempt.current || currentIdentity.current!==identity) return;
-    setBusy(false);
+    const next=await startSlackInstallation(selectedOrganization,window.location.origin,getToken)
+      .catch((error: unknown): SlackInstallResult=>{
+        console.error('Slack installation could not start',error instanceof Error ? error.name : 'UnknownError');
+        return {status:'unavailable'};
+      }).finally(()=>{
+        if(attempt===currentAttempt.current) setBusy(false);
+      });
+    if(attempt!==currentAttempt.current) return;
     if(next.status==='ready') {window.location.assign(next.url);return;}
     setResult(next);
   };

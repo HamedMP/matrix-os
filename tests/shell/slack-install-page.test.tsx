@@ -29,6 +29,17 @@ describe('Slack installation page',()=>{
     await waitFor(()=>expect(screen.getByRole('button',{name:'Add to Slack'}).hasAttribute('disabled')).toBe(false));
     expect(screen.queryByRole('alert')).toBeNull();
   });
+  it('recovers from an unexpected installation failure without exposing its diagnostic',async()=>{
+    state.start.mockRejectedValueOnce(new Error('private credential diagnostic')).mockResolvedValueOnce({status:'forbidden'});
+    render(<SlackInstallation />);
+    fireEvent.click(screen.getByRole('button',{name:'Add to Slack'}));
+    await waitFor(()=>expect(screen.getByRole('alert').textContent).toContain('try again'));
+    expect(screen.queryByText(/private credential diagnostic/)).toBeNull();
+    expect(screen.getByRole('button',{name:'Add to Slack'}).hasAttribute('disabled')).toBe(false);
+    fireEvent.click(screen.getByRole('button',{name:'Add to Slack'}));
+    await waitFor(()=>expect(screen.getByRole('alert').textContent).toContain('administrator'));
+    expect(state.start).toHaveBeenCalledTimes(2);
+  });
   it('never shows success just because installation was started',async()=>{
     state.start.mockResolvedValue({status:'unavailable'});render(<SlackInstallation />);
     fireEvent.click(screen.getByRole('button',{name:'Add to Slack'}));
