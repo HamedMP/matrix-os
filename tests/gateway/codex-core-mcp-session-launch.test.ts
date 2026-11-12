@@ -62,3 +62,28 @@ it("revokes the Core bearer when the Codex terminal cannot start", async () => {
     expect(f.registry.resolve(tokenFrom(command), "GET", "/api/mcp-servers/core/services")).toBeNull();
   } finally { f.manager.shutdown(); f.registry.close(); }
 });
+
+it("revokes the Core bearer when a running Codex session is stopped normally", async () => {
+  // Fault: a stopped session's bearer stays usable until its 35-minute TTL.
+  const f = await fixture();
+  try {
+    expect((await f.manager.startSession({ kind: "agent", agent: "codex", ownerId: owner.ownerId, prompt: "fixture only",
+      sandbox: { enabled: true, mode: "workspace-write" } })).ok).toBe(true);
+    const token = tokenFrom(f.terminalRuntime.createTab.mock.calls[0]![1].command as string[]);
+    expect(f.registry.resolve(token, "GET", "/api/mcp-servers/core/services")).toBe(owner.ownerId);
+    expect((await f.manager.killSession("sess_core_fixture")).ok).toBe(true);
+    expect(f.terminalRuntime.terminateTab).toHaveBeenCalled();
+    expect(f.registry.resolve(token, "GET", "/api/mcp-servers/core/services")).toBeNull();
+  } finally { f.manager.shutdown(); f.registry.close(); }
+});
+
+it("revokes live Core bearers when the session manager shuts down", async () => {
+  const f = await fixture();
+  try {
+    await f.manager.startSession({ kind: "agent", agent: "codex", ownerId: owner.ownerId, prompt: "fixture only",
+      sandbox: { enabled: true, mode: "workspace-write" } });
+    const token = tokenFrom(f.terminalRuntime.createTab.mock.calls[0]![1].command as string[]);
+    f.manager.shutdown();
+    expect(f.registry.resolve(token, "GET", "/api/mcp-servers/core/services")).toBeNull();
+  } finally { f.registry.close(); }
+});
