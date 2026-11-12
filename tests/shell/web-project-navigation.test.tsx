@@ -51,7 +51,7 @@ it("archives both the project ID and legacy slug chats", async () => {
   const nav = await screen.findByRole("navigation", { name: "Projects" });
   fireEvent.click(within(nav).getByRole("button", { name: "Expand Local project chats" }));
   fireEvent.click(within(nav).getByRole("button", { name: "Archive chats in Local project" }));
-  fireEvent.click(within(nav).getByRole("button", { name: "Archive chats" }));
+  fireEvent.click(screen.getByRole("button", { name: "Archive chats" }));
   await waitFor(() => expect(archive).toHaveBeenCalledTimes(2));
   expect(archive.mock.calls.map(([reference]) => reference).sort()).toEqual(["local", "proj_local"]);
 });
@@ -131,6 +131,29 @@ it("pages a project's canonical navigation independently and retains full row ac
   act(() => result.current.loadMore());
   await waitFor(() => expect(result.current.fetched).toHaveLength(6));
   expect(load).toHaveBeenCalledWith(expect.objectContaining({ cursor: "navcur_next", limit: 20 }));
+});
+
+it("uses the projected unread flag for paged project chats", async () => {
+  const item = (id: string, unread: boolean) => ({
+    chat: { id, title: id, messageCount: 9, updatedAt: "2026-11-12T00:00:00Z" },
+    readState: { unread, readThroughSeq: 0, markedUnread: false },
+  });
+  const load = vi.fn(async () => ({ items: [item("read", false), item("unread", true)], totalCount: 2 }));
+  const { result } = renderHook(() => usePagedProjectChats({ id: "proj_france", slug: "proj_france", name: "France" }, "https://example.test", true, true, load as never));
+  await waitFor(() => expect(result.current.loading).toBe(false));
+  expect(result.current.fetched.map(chat => chat.id)).toEqual(["unread"]);
+});
+
+it("refreshes expanded project rows after a bulk archive even beyond the exclusion window", async () => {
+  let archived = false;
+  const load = vi.fn(async () => ({ items: archived ? [] : [{ chat: { id: "chat_old", title: "Old chat" } }], totalCount: archived ? 0 : 1 }));
+  const project = { id: "proj_france", slug: "proj_france", name: "France" };
+  const hook = renderHook(({ revision }) => usePagedProjectChats(project, "https://example.test", false, true, load as never, revision), { initialProps: { revision: 0 } });
+  await waitFor(() => expect(hook.result.current.fetched).toHaveLength(1));
+  archived = true;
+  hook.rerender({ revision: 1 });
+  await waitFor(() => expect(hook.result.current.fetched).toHaveLength(0));
+  expect(load).toHaveBeenCalledTimes(2);
 });
 
 it("searches committed history beyond loaded Web Desktop rail rows", async () => {
