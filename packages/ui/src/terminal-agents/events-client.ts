@@ -1,8 +1,9 @@
 import { EMPTY_TERMINAL_EVENTS_STATE, reduceTerminalEvents, type TerminalEventsState } from "./events-state.js";
 
 const PING_MS = 20_000;
-// A snapshot of every live tab plus bounded history stays well below this.
-const MAX_FRAME_CHARS = 8 * 1024 * 1024;
+// The gateway bounds each tab to about 1 KiB, and the runtime to 10 000 live tabs plus
+// 1 024 finished ones, so a snapshot stays below this.
+const MAX_FRAME_CHARS = 16 * 1024 * 1024;
 const RECONNECT_MIN_MS = 1_000;
 const RECONNECT_MAX_MS = 30_000;
 
