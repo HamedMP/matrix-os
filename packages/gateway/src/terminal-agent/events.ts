@@ -8,8 +8,19 @@ const DEFAULT_HEARTBEAT_MS = 15_000;
 const DEFAULT_STALE_MS = 60_000;
 const MAX_SUBSCRIBERS = 64;
 const MAX_BACKLOG_BYTES = 1024 * 1024;
-/** Most tabs in the stream, matching what clients keep. Live tabs always come first. */
+/**
+ * Most finished tabs a snapshot carries. Every live tab is always included (the
+ * runtime bounds how many can run); finished history fills what is left.
+ */
 export const TERMINAL_EVENTS_MAX_TABS = 1_024;
+
+/** A snapshot's tabs: all live ones, then finished history up to the cap. */
+function snapshotTabs(facts: Map<string, TerminalTabFacts>): TerminalTabFacts[] {
+  const all = [...facts.values()];
+  const live = all.filter((entry) => entry.state === "live");
+  const finished = all.filter((entry) => entry.state === "finished");
+  return [...live, ...finished.slice(0, Math.max(0, TERMINAL_EVENTS_MAX_TABS - live.length))];
+}
 
 export interface TerminalTabFacts {
   ref: TerminalRef;
@@ -57,19 +68,14 @@ export interface TerminalEventHub {
   shutdown(): void;
 }
 
-function isFinished(tab: { status: string }): boolean {
-  return tab.status === "exited" || tab.status === "failed";
-}
-
 function factsFrom(workspaces: TerminalWorkspace[], statuses: ReadonlyMap<string, {
   status: TerminalAgentStatus; message?: string; reportedAt: string;
 }>): Map<string, TerminalTabFacts> {
   const facts = new Map<string, TerminalTabFacts>();
-  // Live tabs first (the runtime bounds how many can run), then finished history up to the cap.
+  // Every owner tab, so lifecycle changes (an exit and its code) are diffed before any
+  // history is trimmed; only snapshots trim finished history.
   const ordered = workspaces.flatMap((workspace) => workspace.tabs.map((tab) => ({ workspace, tab })))
-    .filter(({ tab }) => tab.accessScope === "owner")
-    .sort((left, right) => Number(isFinished(left.tab)) - Number(isFinished(right.tab)))
-    .slice(0, TERMINAL_EVENTS_MAX_TABS);
+    .filter(({ tab }) => tab.accessScope === "owner");
   for (const { workspace, tab } of ordered) {
     const ref = { workspaceId: workspace.id, tabId: tab.id };
     const finished = tab.status === "exited" || tab.status === "failed";
@@ -198,7 +204,7 @@ export function createTerminalEventHub(options: {
       if (subscriber.needsSnapshot || subscriber.missed) {
         subscriber.needsSnapshot = false;
         subscriber.missed = false;
-        if (!deliver(subscriber, { type: "snapshot", seq: ++seq, tabs: [...next.values()] })) dead.push(subscriber);
+        if (!deliver(subscriber, { type: "snapshot", seq: ++seq, tabs: snapshotTabs(next) })) dead.push(subscriber);
         continue;
       }
       for (const frame of frames) {
