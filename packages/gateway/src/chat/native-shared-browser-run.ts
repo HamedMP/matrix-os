@@ -1,6 +1,6 @@
 import type { SharedBrowserSupervisedPolicy } from "../shared-browser/approval-policy.js";
 import { randomUUID } from "node:crypto";
-import { SharedBrowserError, type SharedBrowserBroker } from "../shared-browser/broker.js";
+import type { SharedBrowserBroker } from "../shared-browser/broker.js";
 import { sharedBrowserEndpoint } from "./shared-browser-client.js";
 
 export const NATIVE_SHARED_BROWSER_SERVER = "matrix_shared_browser";
@@ -22,8 +22,7 @@ export function openNativeSharedBrowserRun(options: {
   input.signal.throwIfAborted();
   let lease: ReturnType<SharedBrowserBroker["openRun"]>;
   try { lease = options.broker.openRun(binding, input.signal,
-      supervised ? { mode: "supervised", authorizeAction: options.authorizeAction ?? options.broker.authorizeAction
-        ?? (async () => { throw new SharedBrowserError("browser_changed"); }) } : undefined); }
+      supervised ? { mode: "supervised", authorizeAction: options.authorizeAction ?? options.broker.authorizeAction ?? null } : undefined); }
   catch (error: unknown) {
     if (supervised && !options.broker.allowsSupervisedRun(binding)) return undefined;
     console.warn("[shared-browser-native] Run admission unavailable", error instanceof Error ? error.name : "UnknownError");
