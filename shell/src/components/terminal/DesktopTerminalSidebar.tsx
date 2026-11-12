@@ -2,16 +2,9 @@
 
 import { PlusIcon, SquareTerminalIcon, Trash2Icon } from "@/lib/hugeicons";
 import { ProjectSharing } from "@/components/projects/ProjectSharing";
-import { getShellVisualStatus, SHELL_WAITING_STATUS_DOT_STYLE, type ShellSessionSummary } from "./terminal-session-state";
+import { getShellVisualStatus, TERMINAL_STATUS_LABEL, SHELL_WAITING_STATUS_DOT_STYLE, type ShellSessionSummary } from "./terminal-session-state";
 
 type ShellVisualStatus = ReturnType<typeof getShellVisualStatus>;
-const AGENT_STATUS_LABEL: Record<ShellVisualStatus, string> = {
-  running: "Working",
-  waiting: "Needs you",
-  finished: "Finished",
-  idle: "Idle",
-};
-
 /** Waiting and finished stand out; running and live idle shells keep the active stripe. */
 function statusDotColor(status: ShellVisualStatus, live: boolean): string {
   if (status === "waiting") return SHELL_WAITING_STATUS_DOT_STYLE.background;
@@ -62,7 +55,7 @@ export function DesktopTerminalSidebar({
           <span
             className="size-2.5 shrink-0 rounded-full"
             data-agent-status={visualStatus}
-            title={AGENT_STATUS_LABEL[visualStatus]}
+            title={TERMINAL_STATUS_LABEL[visualStatus]}
             style={{ background: statusDotColor(visualStatus, shell.status === "active") }}
           />
           <span className="min-w-0 flex-1 truncate text-sm">{shell.subtitle?.trim() || shell.name}</span>

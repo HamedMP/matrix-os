@@ -1,3 +1,5 @@
+export const TERMINAL_STATUS_LABEL = { running: "Working", waiting: "Needs you", finished: "Finished", idle: "Idle" } as const;
+
 export interface ShellSessionSummary {
   name: string;
   workspaceId: string;
