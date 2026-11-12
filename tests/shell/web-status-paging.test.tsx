@@ -3,7 +3,7 @@ import { act, cleanup, renderHook, waitFor } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
 import { usePagedStatusGroup } from "../../shell/src/components/chat/usePagedStatusGroup";
 import React from "react";
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import { WebChatLifecycleGroups } from "../../shell/src/components/chat/WebChatLifecycleGroups";
 
 afterEach(cleanup);
@@ -41,4 +41,20 @@ it("keeps read chats out of mobile Unread after status pages load", async () => 
   render(<WebChatLifecycleGroups conversations={[]} loadPage={loadPage as never} unreadOnly renderRow={row => <div>{row.title}</div>} />);
   expect((await screen.findAllByText("Unread chat")).length).toBeGreaterThan(0);
   expect(screen.queryByText("Read chat")).toBeNull();
+});
+
+it("keeps Pinned and Show more available when unread pinned chats are on a later page", async () => {
+  const loadPage = vi.fn(async (input: { group: string; cursor?: string }) => input.group !== "pinned"
+    ? { items: [], totalCount: 0 }
+    : input.cursor
+      ? { items: [{ chat: { id: "chat_later", title: "Later unread pinned chat", messageCount: 1,
+        updatedAt: "2026-11-12T00:00:00.000Z" }, readState: { unread: true } }], totalCount: 11 }
+      : { items: Array.from({ length: 10 }, (_, index) => ({ chat: { id: `chat_read_${index}`, title: `Read ${index}`,
+        messageCount: 1, updatedAt: "2026-11-12T00:00:00.000Z" }, readState: { unread: false } })),
+        totalCount: 11, nextCursor: "next" });
+  render(<WebChatLifecycleGroups conversations={[]} loadPage={loadPage as never} unreadOnly
+    renderRow={row => <div>{row.title}</div>} />);
+  const more = await screen.findByRole("button", { name: "Show more Pinned chats" });
+  fireEvent.click(more);
+  expect(await screen.findByText("Later unread pinned chat")).toBeTruthy();
 });
