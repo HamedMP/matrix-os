@@ -250,7 +250,8 @@ export function createCanonicalShellChatClient(options: {
     },
     async list(input = {}) {
       markChatNavigation("legacy-request");
-      const query = new URLSearchParams({ limit: String(input.limit ?? 100), scope: "global" });
+      const query = new URLSearchParams({ limit: String(input.limit ?? 100) });
+      if (input.lifecycle !== "archived") query.set("scope", "global");
       if (input.unreadOnly) query.set("unread", "true");
       if (input.cursor) query.set("cursor", input.cursor);
       if (input.lifecycle) query.set("lifecycle", input.lifecycle);
