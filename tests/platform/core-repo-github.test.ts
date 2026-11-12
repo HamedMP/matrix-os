@@ -115,7 +115,7 @@ describe("Matrix Core repo webhook fan-out", () => {
     const service = createCoreRepoSyncService({
       config: { sources },
       github: { headCommit: async (source) => { synced.push(source.orgId); throw new CoreRepoUpstreamError("ref"); }, downloadTarball: vi.fn() },
-      store: { putObject: vi.fn(), getObject: vi.fn() },
+      store: { putObject: vi.fn(), getObject: vi.fn(), deleteObject: vi.fn() },
       repository: { getPin: async () => null, recordFailure: async () => {} } as never,
     });
     const secret = "s".repeat(40);
@@ -127,5 +127,69 @@ describe("Matrix Core repo webhook fan-out", () => {
     expect(response.status).toBe(202);
     await vi.waitFor(() => expect([...synced].sort()).toEqual(["org_alpha", "org_beta"]));
     await service.stop();
+  });
+});
+
+describe("Matrix Core repo tarball retention", () => {
+  // Fault: every pushed commit's tarball stays in object storage forever, including ones whose pin write failed.
+  it("keeps only the current and previous pinned tarballs and removes orphans from failed pin writes", async () => {
+    const { KyselyPGlite } = await import("kysely-pglite");
+    const { Kysely } = await import("kysely");
+    const { bootstrapCoreRepoDatabase, createCoreRepoRepository } = await import("../../packages/platform/src/core-repo/database.js");
+    const { createCoreRepoSyncService } = await import("../../packages/platform/src/core-repo/service.js");
+    const { c: createTar } = await import("tar");
+    const { mkdtempSync, mkdirSync, writeFileSync, rmSync } = await import("node:fs");
+    const { tmpdir } = await import("node:os");
+    const { join } = await import("node:path");
+    const work = mkdtempSync(join(tmpdir(), "core-gc-"));
+    const tarball = async (commit: string) => {
+      const dir = join(work, commit);
+      mkdirSync(join(dir, "root", "skills", "x"), { recursive: true });
+      writeFileSync(join(dir, "root", "skills", "x", "SKILL.md"), `---\nname: x\n---\n${commit}\n`);
+      const chunks: Buffer[] = [];
+      for await (const chunk of createTar({ gzip: true, cwd: dir, portable: true }, ["root"])) chunks.push(Buffer.from(chunk as Buffer));
+      return Buffer.concat(chunks);
+    };
+    const db = new Kysely<never>({ dialect: (await KyselyPGlite.create()).dialect });
+    try {
+      await bootstrapCoreRepoDatabase(db as never);
+      const real = createCoreRepoRepository(db as never);
+      let failNextPin = false;
+      const repository = { ...real, pin: async (record: Parameters<typeof real.pin>[0]) => {
+        if (failNextPin) { failNextPin = false; throw new Error("connection reset"); }
+        return real.pin(record);
+      } };
+      const objects = new Map<string, Uint8Array>();
+      let head = "";
+      const service = createCoreRepoSyncService({
+        config: { sources: [source] },
+        github: { headCommit: async () => ({ commit: head, token: "t" }), downloadTarball: async (_s, commit) => tarball(commit) },
+        store: {
+          putObject: async (key, body) => { objects.set(key, body); return {}; },
+          getObject: vi.fn(),
+          deleteObject: async (key) => { objects.delete(key); },
+        },
+        repository: repository as never,
+        objectGraceMs: 0,
+      });
+      const key = (commit: string) => `core-repo/org_acme1/${commit}.tar.gz`;
+      for (const char of ["a", "b", "c"]) {
+        head = char.repeat(40);
+        expect(await service.syncOrg("org_acme1")).toMatchObject({ status: "pinned" });
+      }
+      expect([...objects.keys()].sort()).toEqual([key("b".repeat(40)), key("c".repeat(40))]);
+
+      head = "d".repeat(40);
+      failNextPin = true;
+      await expect(service.syncOrg("org_acme1")).rejects.toThrow();
+      expect(objects.has(key(head))).toBe(true);
+      head = "c".repeat(40);
+      await service.syncAll();
+      expect([...objects.keys()].sort()).toEqual([key("b".repeat(40)), key("c".repeat(40))]);
+      await service.stop();
+    } finally {
+      await db.destroy();
+      rmSync(work, { recursive: true, force: true });
+    }
   });
 });

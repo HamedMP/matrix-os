@@ -816,6 +816,8 @@ async function startPlatformServerWithCleanup(
   let customerVpsObjectStore: CustomerVpsObjectStore | undefined;
   let hostBundleObjectStore: CustomerVpsObjectStore | undefined;
   let sitesObjectStore: GatewayR2Client | undefined;
+  // The primary R2 client, typed with deleteObject for Matrix Core tarball retention.
+  let coreRepoObjectStore: GatewayR2Client | undefined;
   let primaryStorageGate: R2CapabilityGate | undefined;
   let sitesStorageGate: R2CapabilityGate | undefined;
   const storageConfig = resolvePlatformObjectStorage(process.env);
@@ -835,6 +837,7 @@ async function startPlatformServerWithCleanup(
     });
     customerVpsObjectStore = r2;
     hostBundleObjectStore = r2;
+    coreRepoObjectStore = r2;
     primaryStorageGate = createR2CapabilityGate({ storage: r2 });
   }
 
@@ -855,7 +858,7 @@ async function startPlatformServerWithCleanup(
   }
 
   // Spec 2691 layer 6: Matrix Core repo sync (GitHub App + webhook) and the pinned-tarball routes VPSes install from.
-  const coreRepo = await createPlatformCoreRepo({ env: process.env, db: db.kysely as never, store: customerVpsObjectStore,
+  const coreRepo = await createPlatformCoreRepo({ env: process.env, db: db.kysely as never, store: coreRepoObjectStore,
     organizations: platformOrganizations, authenticateMachine: createCoreRepoMachineAuthenticator(db, platformSecret),
     resolveActor: resolveSessionActor, backgroundWorkers: backgroundWorkersEnabled });
   registerCustomMcpStartupCleanup(coreRepo.shutdown);

@@ -21,7 +21,11 @@ const STORE_TIMEOUT_MS = 30_000;
 export interface CoreRepoObjectStore {
   putObject(key: string, body: Uint8Array, options?: { signal?: AbortSignal }): Promise<unknown>;
   getObject(key: string, options?: { signal?: AbortSignal }): Promise<{ body: ReadableStream | null; contentLength?: number }>;
+  deleteObject(key: string, options?: { signal?: AbortSignal }): Promise<void>;
 }
+
+/** An upload younger than this may belong to another instance's in-flight sync. */
+export const CORE_REPO_OBJECT_GRACE_MS = 60 * 60_000;
 
 export function coreRepoObjectKey(organizationId: string, commit: string): string {
   return `core-repo/${organizationId}/${commit}.tar.gz`;
@@ -38,7 +42,11 @@ export function createCoreRepoSyncService(options: {
   github: Pick<GitHubCoreRepoClient, "headCommit" | "downloadTarball">;
   store: CoreRepoObjectStore;
   repository: CoreRepoRepository;
+  objectGraceMs?: number;
+  now?: () => Date;
 }) {
+  const objectGraceMs = options.objectGraceMs ?? CORE_REPO_OBJECT_GRACE_MS;
+  const now = options.now ?? (() => new Date());
   const sources = new Map<string, CoreRepoSource>(options.config.sources.map(source => [source.orgId, source]));
   // Keyed by configured org only, so it can never exceed the source count (<= 500).
   const inflight = new Map<string, Promise<CoreRepoSyncResult>>();
@@ -64,10 +72,34 @@ export function createCoreRepoSyncService(options: {
       await inspectCoreRepoArchive(bytes);
     } catch (error: unknown) { return fail(source.orgId, failureOf(error), error); }
     try {
+      await options.repository.recordObject(source.orgId, head.commit);
       await options.store.putObject(coreRepoObjectKey(source.orgId, head.commit), bytes, { signal: AbortSignal.timeout(STORE_TIMEOUT_MS) });
     } catch (error: unknown) { return fail(source.orgId, "storage", error); }
     await options.repository.pin({ organizationId: source.orgId, commit: head.commit, sha256: sha256Hex(bytes), bytes: bytes.byteLength });
+    await collectGarbage(source.orgId);
     return { status: "pinned", commit: head.commit };
+  }
+
+  /**
+   * Deletes tarballs that are neither the current nor the previous pin,
+   * including uploads whose pin write failed. Best effort: a failed delete
+   * keeps its row and is retried by the next sweep.
+   */
+  async function collectGarbage(organizationId: string): Promise<void> {
+    let commits: string[];
+    try { commits = await options.repository.listUnreferencedObjects(organizationId, new Date(now().getTime() - objectGraceMs)); }
+    catch (error: unknown) {
+      console.warn("[core-repo] retention listing failed", error instanceof Error ? error.name : "UnknownError");
+      return;
+    }
+    for (const commit of commits) {
+      try {
+        await options.store.deleteObject(coreRepoObjectKey(organizationId, commit), { signal: AbortSignal.timeout(STORE_TIMEOUT_MS) });
+        await options.repository.forgetObject(organizationId, commit);
+      } catch (error: unknown) {
+        console.warn("[core-repo] tarball delete failed; retried next sweep", { organizationId, error: error instanceof Error ? error.name : "UnknownError" });
+      }
+    }
   }
 
   const service = {
@@ -97,6 +129,7 @@ export function createCoreRepoSyncService(options: {
         if (stopped) return;
         try { await service.syncOrg(source.orgId); }
         catch (error: unknown) { console.error("[core-repo] sync crashed", error instanceof Error ? error.name : "UnknownError"); }
+        await collectGarbage(source.orgId);
       }
       await options.repository.pruneDeliveries().catch((error: unknown) => {
         console.warn("[core-repo] delivery prune failed", error instanceof Error ? error.name : "UnknownError");

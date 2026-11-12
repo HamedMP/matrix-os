@@ -17,6 +17,14 @@ export interface CoreRepoPinsTable {
   pinned_at: ColumnType<Date | null, Date | string | null | undefined, Date | string | null>;
   last_attempt_at: Timestamp;
   last_failure: string | null;
+  previous_commit_sha: string | null;
+}
+
+/** Every tarball the sync job has started storing, so unreferenced ones can be deleted. */
+export interface CoreRepoObjectsTable {
+  organization_id: string;
+  commit_sha: string;
+  created_at: Timestamp;
 }
 
 export interface CoreRepoWebhookDeliveriesTable {
@@ -27,9 +35,10 @@ export interface CoreRepoWebhookDeliveriesTable {
 export interface CoreRepoDatabase {
   core_repo_pins: CoreRepoPinsTable;
   core_repo_webhook_deliveries: CoreRepoWebhookDeliveriesTable;
+  core_repo_objects: CoreRepoObjectsTable;
 }
 
-export const CORE_REPO_SCHEMA_REVISION = { generation: 1, fingerprint: "core-repo-pins-deliveries-v1" } as const;
+export const CORE_REPO_SCHEMA_REVISION = { generation: 2, fingerprint: "core-repo-pins-deliveries-objects-v2" } as const;
 export const CORE_REPO_FAILURES = ["token", "ref", "download", "too_large", "archive", "storage"] as const;
 export type CoreRepoFailure = typeof CORE_REPO_FAILURES[number];
 const DELIVERY_RETENTION_MS = 7 * 24 * 60 * 60_000;
@@ -54,6 +63,16 @@ async function createCoreRepoTables(db: Transaction<CoreRepoDatabase>): Promise<
     )
   `.execute(db);
   await sql`CREATE INDEX IF NOT EXISTS core_repo_webhook_deliveries_received ON core_repo_webhook_deliveries(received_at)`.execute(db);
+  // Generation 2: retention keeps the current and the previous pinned tarball.
+  await sql`ALTER TABLE core_repo_pins ADD COLUMN IF NOT EXISTS previous_commit_sha TEXT CHECK (previous_commit_sha IS NULL OR previous_commit_sha ~ '^[0-9a-f]{40}$')`.execute(db);
+  await sql`
+    CREATE TABLE IF NOT EXISTS core_repo_objects (
+      organization_id TEXT NOT NULL CHECK (char_length(organization_id) BETWEEN 5 AND 128),
+      commit_sha TEXT NOT NULL CHECK (commit_sha ~ '^[0-9a-f]{40}$'),
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      PRIMARY KEY (organization_id, commit_sha)
+    )
+  `.execute(db);
 }
 
 export async function bootstrapCoreRepoDatabase(db: Kysely<CoreRepoDatabase>): Promise<void> {
@@ -61,6 +80,7 @@ export async function bootstrapCoreRepoDatabase(db: Kysely<CoreRepoDatabase>): P
 }
 
 export interface CoreRepoPinRecord { organizationId: string; commit: string; sha256: string; bytes: number }
+export const CORE_REPO_MAX_TRACKED_OBJECTS = 100;
 
 export function createCoreRepoRepository(db: Kysely<CoreRepoDatabase>, now: () => Date = () => new Date()) {
   return {
@@ -76,13 +96,36 @@ export function createCoreRepoRepository(db: Kysely<CoreRepoDatabase>, now: () =
       return rows.map(row => ({ organizationId: row.organization_id, commit: row.commit_sha!, sha256: row.sha256!, bytes: row.bytes! }));
     },
 
-    /** Moves the pin in one statement and clears the failure. */
+    /** Moves the pin in one statement, remembers the commit it replaced, and clears the failure. */
     async pin(record: CoreRepoPinRecord): Promise<void> {
       const at = now();
       await db.insertInto("core_repo_pins").values({ organization_id: record.organizationId, commit_sha: record.commit,
-        sha256: record.sha256, bytes: record.bytes, pinned_at: at, last_attempt_at: at, last_failure: null })
+        sha256: record.sha256, bytes: record.bytes, pinned_at: at, last_attempt_at: at, last_failure: null, previous_commit_sha: null })
         .onConflict(conflict => conflict.column("organization_id").doUpdateSet({ commit_sha: record.commit, sha256: record.sha256,
-          bytes: record.bytes, pinned_at: at, last_attempt_at: at, last_failure: null })).execute();
+          bytes: record.bytes, pinned_at: at, last_attempt_at: at, last_failure: null,
+          previous_commit_sha: sql<string | null>`CASE WHEN core_repo_pins.commit_sha IS DISTINCT FROM excluded.commit_sha
+            THEN core_repo_pins.commit_sha ELSE core_repo_pins.previous_commit_sha END` })).execute();
+    },
+
+    /** Recorded before the upload, so a failed upload or pin write still leaves a row to clean up. */
+    async recordObject(organizationId: string, commit: string): Promise<void> {
+      await db.insertInto("core_repo_objects").values({ organization_id: organizationId, commit_sha: commit })
+        .onConflict(conflict => conflict.columns(["organization_id", "commit_sha"]).doNothing()).execute();
+    },
+
+    /** Stored commits that are neither the current nor the previous pin and are older than `before`. */
+    async listUnreferencedObjects(organizationId: string, before: Date): Promise<string[]> {
+      const pin = await db.selectFrom("core_repo_pins").select(["commit_sha", "previous_commit_sha"])
+        .where("organization_id", "=", organizationId).executeTakeFirst();
+      const keep = [pin?.commit_sha, pin?.previous_commit_sha].filter((value): value is string => Boolean(value));
+      let query = db.selectFrom("core_repo_objects").select("commit_sha")
+        .where("organization_id", "=", organizationId).where("created_at", "<", before);
+      if (keep.length > 0) query = query.where("commit_sha", "not in", keep);
+      return (await query.orderBy("created_at").limit(CORE_REPO_MAX_TRACKED_OBJECTS).execute()).map(row => row.commit_sha);
+    },
+
+    async forgetObject(organizationId: string, commit: string): Promise<void> {
+      await db.deleteFrom("core_repo_objects").where("organization_id", "=", organizationId).where("commit_sha", "=", commit).execute();
     },
 
     /** Records why a sync failed without touching the last good pin. */
