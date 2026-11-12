@@ -79,6 +79,7 @@ export * from "#collaboration-resources";
 export * from "#organization-billing";
 export * from "#organization-drive";
 export * from "#organization-management";
+export * from "#organization-mcp";
 export * from "#custom-mcp-policy";
 export * from "#hermes-configuration";
 export * from "#jev-hermes-route";
