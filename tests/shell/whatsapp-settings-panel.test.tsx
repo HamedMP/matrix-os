@@ -46,7 +46,9 @@ describe("WhatsApp settings", () => {
     render(<WhatsAppSettingsPanel scope="owner" load={load} />);
     await screen.findByText("Connected");
     expect(screen.getByText(/Agents & providers/)).toBeTruthy();
-    expect(screen.getByText(/New conversations use Matrix Agent/)).toBeTruthy();
+    expect(screen.getByText(/New conversations use Matrix AI Gateway/)).toBeTruthy();
+    expect(screen.getByText(/Existing conversations keep their selected agent and history/)).toBeTruthy();
+    expect(screen.queryByText(/open the Chat in Matrix to change it/)).toBeNull();
     expect(screen.getByRole("link", { name: "Open Matrix Chat" }).getAttribute("href"))
       .toBe("https://app.matrix-os.com/open?chat=chat_whatsapp");
     expect(

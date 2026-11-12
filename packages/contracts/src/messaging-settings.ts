@@ -35,7 +35,7 @@ export const WHATSAPP_GUIDE_URL = "https://matrix-os.com/docs/whatsapp";
 export const WHATSAPP_AI_GUIDANCE =
   "Your Matrix computer and AI connection must be ready. Check Agents & providers if a reply needs attention.";
 export const WHATSAPP_AGENT_GUIDANCE =
-  "New conversations use Matrix Agent. Existing conversations keep their selected agent; open the Chat in Matrix to change it.";
+  "New conversations use Matrix AI Gateway. Existing conversations keep their selected agent and history. Open Matrix if an older conversation needs attention.";
 export function whatsAppChatUrl(chatId: string, origin = "https://app.matrix-os.com", allowDevelopmentOrigin = false): string {
   return matrixChatHandoffUrl(origin, chatId, allowDevelopmentOrigin);
 }
