@@ -35,6 +35,7 @@ where possible (hard limit 3000 additions / 50 files).
 - [ ] T3.3 `matrix-osc-tap` pass-through for launched agents (moved to layer 4, with template launches that use it).
 - [x] T3.4 `wait` (status/exit/output/timeout) with bounded waiters; CLI `matrix shell wait`; MCP `wait_terminal_tab`.
 - [x] T3.5 `/ws/terminal/events` hub with snapshot, heartbeat, missed, sweep and shutdown drain; query-token allowlist.
+- [x] T3.6 Exit sweep: tabs whose held pane reports an exit become `exited` with `exit_status` (found on the #3300 preview).
 
 ## Layer 4: agents
 

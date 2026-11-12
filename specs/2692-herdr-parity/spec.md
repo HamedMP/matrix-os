@@ -125,6 +125,17 @@ looking; it becomes `idle` when a viewer acknowledges (existing
 
 Plain programs report nothing; `wait` waits for exit, as in Herdr.
 
+**Exit detection.** Zellij keeps a command tab's pane open after its program
+exits: `list-panes --json` reports `is_held: true` with `exit_status`, and no
+`pane_closed` event fires. So the runtime also sweeps `list-panes` every 2 s,
+one call per workspace that has live tabs, at most the observer cap of sessions
+per pass, and never two passes at once. A held pane's tab is marked `exited`
+with its `exit_status`, which ends `wait`, emits `finished` with the code and
+lets the supervisor tell the parent. A viewer's attachment exit and
+`pane_closed` stay the other sources; whichever is recorded first wins, because
+an ended tab is never marked again. The held pane stays open, so `read` still
+shows the final screen until the tab is closed.
+
 ### Parent/child (layer 4)
 
 Tabs gain `parentRef?: TerminalRef`, `outliveParent: boolean`. A tab started
@@ -226,6 +237,7 @@ error), `terminal_capacity_reached`. No paths, zellij output or stack traces.
 | First message not delivered | `firstMessage {sent:false, reason}` persisted; never blindly resent |
 | Event subscriber slow | Bounded queue (512); overflow → `missed` + resnapshot |
 | Partition skips WS close | Stale subscriber sweep by `lastTouched` (60 s) |
+| Program exits while no viewer is attached | Exit sweep marks the tab `exited` with `exit_status` within about 2 s |
 
 ## Resource Management
 
