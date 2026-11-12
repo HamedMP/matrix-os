@@ -23,6 +23,7 @@ import {
   createCoreRepoHttpTransport,
   createScriptSkillSync,
   installCoreRepo,
+  parseSkillTargets,
   type CoreRepoTransport,
 } from "../../core-repo/installer.js";
 
@@ -234,7 +235,8 @@ const syncCommand = defineCommand({
       }
       const { transport, profile, machine } = await transportFor(args, process.env);
       const root = coreRepoRoot();
-      const results = await installCoreRepo({ transport, root, runSkillSync: createScriptSkillSync(script) });
+      const results = await installCoreRepo({ transport, root, runSkillSync: createScriptSkillSync(script),
+        targets: parseSkillTargets(process.env.MATRIX_SKILL_TARGETS) });
       // The timer repeats this exact run: same profile, script, root, and targets (never a token).
       // A machine-credential timer re-reads the host env file each run instead of carrying the token.
       const timer = args["install-timer"] === true ? await installTimer({ ...(machine ? { machine } : profile ? { profile } : {}), env: {

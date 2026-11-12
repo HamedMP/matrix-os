@@ -49,7 +49,25 @@ export interface CoreRepoTransport {
   downloadTarball(pin: CoreRepoPin): Promise<Uint8Array>;
 }
 
-export interface SkillSyncInput { source: string; namespace: string; ownedRoot: string }
+export interface SkillSyncInput {
+  source: string;
+  namespace: string;
+  ownedRoot: string;
+  /** Agent destinations for this run (`MATRIX_SKILL_TARGETS`). */
+  targets: readonly string[];
+}
+
+/** The script's agents when `MATRIX_SKILL_TARGETS` is unset. */
+export const DEFAULT_SKILL_TARGETS: readonly string[] = ["matrix", "claude", "codex", "hermes"];
+const SKILL_TARGET = /^[a-z]{1,16}$/;
+const MAX_SKILL_TARGETS = 16;
+const TARGETS_FILE = ".matrix-core-targets.json";
+
+/** Valid, de-duplicated targets from a `MATRIX_SKILL_TARGETS`-style list. */
+export function parseSkillTargets(value: string | undefined): string[] {
+  if (value === undefined) return [...DEFAULT_SKILL_TARGETS];
+  return [...new Set(value.split(",").map(target => target.trim()).filter(target => SKILL_TARGET.test(target)))].slice(0, MAX_SKILL_TARGETS);
+}
 export type CoreRepoInstallStatus = "installed" | "current" | "removed" | "failed";
 export interface CoreRepoInstallResult {
   orgId: string;
@@ -123,7 +141,7 @@ export function createScriptSkillSync(script: string, env: NodeJS.ProcessEnv = p
   return async (input: SkillSyncInput): Promise<void> => {
     await execFileAsync("bash", [script], {
       env: { ...env, MATRIX_SKILLS_SOURCE: input.source, MATRIX_SKILL_NAMESPACE: input.namespace, MATRIX_SKILL_OWNED_ROOT: input.ownedRoot,
-        MATRIX_SKILL_TARGETS: env.MATRIX_SKILL_TARGETS ?? "matrix,claude,codex,hermes" },
+        MATRIX_SKILL_TARGETS: input.targets.join(",") },
       timeout: SKILL_SYNC_TIMEOUT_MS, maxBuffer: 1024 * 1024,
     });
   };
@@ -218,11 +236,42 @@ async function pruneReleases(orgRoot: string, keep: readonly string[]): Promise<
   }
 }
 
-/** Unlinks every skill in `namespace` that points into this org's root. */
+/** Every agent this org was ever linked into on this machine (a union across installs). */
+async function recordedTargets(orgRoot: string): Promise<string[]> {
+  try {
+    const value = JSON.parse(await readFile(join(orgRoot, TARGETS_FILE), "utf8")) as unknown;
+    return Array.isArray(value) ? value.filter((target): target is string => typeof target === "string" && SKILL_TARGET.test(target)).slice(0, MAX_SKILL_TARGETS) : [];
+  } catch (error: unknown) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT" || error instanceof SyntaxError) return [];
+    throw error;
+  }
+}
+
+function currentTargets(options: InstallOptions): string[] {
+  return parseSkillTargets((options.targets ?? DEFAULT_SKILL_TARGETS).join(","));
+}
+
+/** Recorded before linking, so a crash mid-sync still knows where to clean up. */
+async function rememberTargets(orgRoot: string, targets: readonly string[]): Promise<void> {
+  const union = [...new Set([...(await recordedTargets(orgRoot)), ...targets])].slice(0, MAX_SKILL_TARGETS);
+  const temporary = join(orgRoot, `.targets-${process.pid}-${Date.now()}`);
+  await writeFile(temporary, JSON.stringify(union), { flag: "wx" });
+  await rename(temporary, join(orgRoot, TARGETS_FILE));
+}
+
+/** Links the current release's skills into today's agents. */
+async function linkNamespace(options: InstallOptions, orgRoot: string, namespace: string): Promise<void> {
+  const targets = currentTargets(options);
+  await rememberTargets(orgRoot, targets);
+  await options.runSkillSync({ source: join(orgRoot, "current", SKILLS_DIR), namespace, ownedRoot: orgRoot, targets });
+}
+
+/** Unlinks every skill in `namespace` that points into this org's root, in every agent it was ever linked into. */
 async function unlinkNamespace(options: InstallOptions, orgRoot: string, namespace: string): Promise<void> {
+  const targets = [...new Set([...(await recordedTargets(orgRoot)), ...currentTargets(options)])];
   const empty = await mkdtemp(join(orgRoot, STAGING_PREFIX));
   try {
-    await options.runSkillSync({ source: empty, namespace, ownedRoot: orgRoot });
+    await options.runSkillSync({ source: empty, namespace, ownedRoot: orgRoot, targets });
   } finally {
     await rm(empty, { recursive: true, force: true });
   }
@@ -241,7 +290,7 @@ async function installPin(options: InstallOptions, pin: CoreRepoPin): Promise<Co
   if (before?.commit === pin.commit && before.slug === pin.slug) {
     // Same release, but agents (targets) may have been added since: relink it. The script is idempotent.
     try {
-      await options.runSkillSync({ source: join(orgRoot, "current", SKILLS_DIR), namespace: coreRepoSkillNamespace(pin.slug), ownedRoot: orgRoot });
+      await linkNamespace(options, orgRoot, coreRepoSkillNamespace(pin.slug));
     } catch (error: unknown) {
       warnStep("skill relink", pin.orgId, error);
       return { orgId: pin.orgId, status: "failed", commit: pin.commit };
@@ -272,13 +321,13 @@ async function installPin(options: InstallOptions, pin: CoreRepoPin): Promise<Co
   await pointAt(orgRoot, "current", releaseName);
   try {
     if (previousNamespace) await unlinkNamespace(options, orgRoot, previousNamespace);
-    await options.runSkillSync({ source: join(orgRoot, "current", SKILLS_DIR), namespace, ownedRoot: orgRoot });
+    await linkNamespace(options, orgRoot, namespace);
   } catch (error: unknown) {
     warnStep("skill sync; rolling back", pin.orgId, error);
     if (before) {
       await pointAt(orgRoot, "current", before.target);
       if (previousNamespace) await unlinkNamespace(options, orgRoot, namespace).catch((retry: unknown) => warnStep("new namespace unlink", pin.orgId, retry));
-      await options.runSkillSync({ source: join(orgRoot, "current", SKILLS_DIR), namespace: coreRepoSkillNamespace(before.slug), ownedRoot: orgRoot })
+      await linkNamespace(options, orgRoot, coreRepoSkillNamespace(before.slug))
         .catch((retry: unknown) => warnStep("rollback skill sync", pin.orgId, retry));
     } else {
       // No earlier release to return to: unlink whatever this attempt linked before dropping `current`.
@@ -313,6 +362,8 @@ export interface InstallOptions {
   /** Outside `$MATRIX_HOME`; one directory per org. */
   root: string;
   runSkillSync(input: SkillSyncInput): Promise<void>;
+  /** Agents to link into this run; defaults to the script's own default set. */
+  targets?: readonly string[];
   /** Test hook; production renews the lock every minute. */
   lockHeartbeatMs?: number;
 }

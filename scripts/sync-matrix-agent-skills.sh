@@ -225,10 +225,14 @@ validate_destination() {
 # Preflight every selected root before the first cleanup so invalid configuration
 # cannot partly modify skills. Agent local refresh requires the canonical builder.
 if has_target agent; then
-  builder_skill="$MATRIX_SKILLS_SOURCE/app-builder/SKILL.md"
-  if [ ! -f "$builder_skill" ] || [ -L "$builder_skill" ] || ! grep -q '^name:[[:space:]]*matrix-app-builder[[:space:]]*$' "$builder_skill"; then
-    echo "Invalid local Matrix skills source; existing Agent skills were preserved." >&2
-    exit 1
+  # The builder check proves a public Matrix pack. Namespace mode syncs an org
+  # source, which has no builder; its destination is still validated.
+  if [ -z "$MATRIX_SKILL_NAMESPACE" ]; then
+    builder_skill="$MATRIX_SKILLS_SOURCE/app-builder/SKILL.md"
+    if [ ! -f "$builder_skill" ] || [ -L "$builder_skill" ] || ! grep -q '^name:[[:space:]]*matrix-app-builder[[:space:]]*$' "$builder_skill"; then
+      echo "Invalid local Matrix skills source; existing Agent skills were preserved." >&2
+      exit 1
+    fi
   fi
   validate_destination "$MATRIX_AGENT_SKILLS_ROOT"
 fi

@@ -130,6 +130,7 @@ describe("Matrix Core repo checkpoint", () => {
   const pinned = async () => (await sql<{ commit_sha: string | null; last_failure: string | null }>`SELECT commit_sha, last_failure FROM core_repo_pins WHERE organization_id = ${ORG}`.execute(db)).rows[0];
   const install = (targets = "claude") => installCoreRepo({
     root,
+    targets: targets.split(","),
     transport: createCoreRepoHttpTransport({ baseUrl: "https://app.matrix-os.test", headers: MACHINE,
       fetchImpl: (async (url: string, init?: RequestInit) => platform.routes.request(new URL(url).pathname, init)) as typeof fetch }),
     runSkillSync: createScriptSkillSync(resolve("scripts/sync-matrix-agent-skills.sh"),
@@ -206,6 +207,33 @@ describe("Matrix Core repo checkpoint", () => {
     expect(() => lstatSync(hermesSkill)).toThrow();
     expect(await install("claude,hermes")).toEqual([{ orgId: ORG, status: "current", commit: sha("a") }]);
     expect(realpathSync(hermesSkill)).toBe(realpathSync(claudeSkill("org-acme-deploy")));
+  });
+
+  // Fault: leaving an org cleans only today's agents, so skills linked into an agent dropped since stay behind.
+  it("cleans every agent an org was ever installed into when the member leaves", async () => {
+    head = sha("a");
+    tarballs.set(head, await tarball(work, head, { "skills/deploy/SKILL.md": skill("deploy") }));
+    expect((await push(head, "d-union")).status).toBe(202);
+    await vi.waitFor(async () => expect((await pinned())?.commit_sha).toBe(sha("a")));
+    const hermesSkill = join(home, ".hermes", "skills", "org-acme-deploy");
+    expect(await install("claude,hermes")).toEqual([{ orgId: ORG, status: "installed", commit: sha("a") }]);
+    expect(lstatSync(hermesSkill).isSymbolicLink()).toBe(true);
+    expect(await install("claude")).toEqual([{ orgId: ORG, status: "current", commit: sha("a") }]);
+    await organizations.applyMembership({ organizationId: ORG, membershipId: `m_${MEMBER}`, actorId: MEMBER, role: "org:member",
+      state: "removed", sourceUpdatedAt: new Date(T.getTime() + 1_000) });
+    expect(await install("claude")).toEqual([{ orgId: ORG, status: "removed" }]);
+    expect(() => lstatSync(hermesSkill)).toThrow();
+    expect(() => lstatSync(claudeSkill("org-acme-deploy"))).toThrow();
+  });
+
+  // Fault: including the `agent` target fails every org install on the public-pack builder check.
+  it("installs org skills into the agent target", async () => {
+    head = sha("a");
+    tarballs.set(head, await tarball(work, head, { "skills/deploy/SKILL.md": skill("deploy") }));
+    expect((await push(head, "d-agent")).status).toBe(202);
+    await vi.waitFor(async () => expect((await pinned())?.commit_sha).toBe(sha("a")));
+    expect(await install("claude,agent")).toEqual([{ orgId: ORG, status: "installed", commit: sha("a") }]);
+    expect(realpathSync(join(home, ".agent", "skills", "org-acme-deploy"))).toBe(realpathSync(claudeSkill("org-acme-deploy")));
   });
 
   it("serves only the pinned commit to current members over the machine credential, and lets admins sync now", async () => {
