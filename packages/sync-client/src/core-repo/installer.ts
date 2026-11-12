@@ -59,14 +59,22 @@ export interface SkillSyncInput {
 
 /** The script's agents when `MATRIX_SKILL_TARGETS` is unset. */
 export const DEFAULT_SKILL_TARGETS: readonly string[] = ["matrix", "claude", "codex", "hermes"];
-const SKILL_TARGET = /^[a-z]{1,16}$/;
+/** The agents `sync-matrix-agent-skills.sh` knows; the script rejects anything else in namespace mode. */
+const KNOWN_SKILL_TARGETS = new Set(["matrix", "claude", "codex", "hermes", "agent"]);
 const MAX_SKILL_TARGETS = 16;
 const TARGETS_FILE = ".matrix-core-targets.json";
+const TARGETS_TEMP_PREFIX = ".targets-";
 
-/** Valid, de-duplicated targets from a `MATRIX_SKILL_TARGETS`-style list. */
+/**
+ * De-duplicated targets from a `MATRIX_SKILL_TARGETS`-style list. Unset means
+ * the defaults; an explicitly empty list means no agents. Any unknown name
+ * (including `Claude`) is an error, never silently dropped.
+ */
 export function parseSkillTargets(value: string | undefined): string[] {
   if (value === undefined) return [...DEFAULT_SKILL_TARGETS];
-  return [...new Set(value.split(",").map(target => target.trim()).filter(target => SKILL_TARGET.test(target)))].slice(0, MAX_SKILL_TARGETS);
+  const targets = value.split(",").map(target => target.trim()).filter(Boolean);
+  if (targets.length > MAX_SKILL_TARGETS || targets.some(target => !KNOWN_SKILL_TARGETS.has(target))) throw new CoreRepoInstallError("invalid_targets");
+  return [...new Set(targets)];
 }
 export type CoreRepoInstallStatus = "installed" | "current" | "removed" | "failed";
 export interface CoreRepoInstallResult {
@@ -79,7 +87,7 @@ export interface CoreRepoInstallResult {
 const MAX_REPORTED_REJECTIONS = 50;
 
 export class CoreRepoInstallError extends Error {
-  constructor(readonly code: "locked" | "pins_unavailable") {
+  constructor(readonly code: "locked" | "pins_unavailable" | "invalid_targets") {
     super(code);
     this.name = "CoreRepoInstallError";
   }
@@ -220,10 +228,13 @@ async function buildSkills(release: string, files: readonly string[], namespace:
 
 async function sweepStaging(orgRoot: string, now: number): Promise<void> {
   for (const entry of await readdir(orgRoot)) {
-    if (!entry.startsWith(STAGING_PREFIX)) continue;
+    const staging = entry.startsWith(STAGING_PREFIX);
+    if (!staging && !entry.startsWith(TARGETS_TEMP_PREFIX)) continue;
     const path = join(orgRoot, entry);
     const info = await lstat(path);
-    if (info.isDirectory() && !info.isSymbolicLink() && now - info.mtimeMs > STAGING_TTL_MS) await rm(path, { recursive: true, force: true });
+    if (info.isSymbolicLink() || now - info.mtimeMs <= STAGING_TTL_MS) continue;
+    // Staging leftovers are directories; targets temp files are regular files. Nothing else is touched.
+    if (staging ? info.isDirectory() : info.isFile()) await rm(path, { recursive: true, force: true });
   }
 }
 
@@ -240,7 +251,7 @@ async function pruneReleases(orgRoot: string, keep: readonly string[]): Promise<
 async function recordedTargets(orgRoot: string): Promise<string[]> {
   try {
     const value = JSON.parse(await readFile(join(orgRoot, TARGETS_FILE), "utf8")) as unknown;
-    return Array.isArray(value) ? value.filter((target): target is string => typeof target === "string" && SKILL_TARGET.test(target)).slice(0, MAX_SKILL_TARGETS) : [];
+    return Array.isArray(value) ? value.filter((target): target is string => typeof target === "string" && KNOWN_SKILL_TARGETS.has(target)).slice(0, MAX_SKILL_TARGETS) : [];
   } catch (error: unknown) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT" || error instanceof SyntaxError) return [];
     throw error;
@@ -248,21 +259,44 @@ async function recordedTargets(orgRoot: string): Promise<string[]> {
 }
 
 function currentTargets(options: InstallOptions): string[] {
-  return parseSkillTargets((options.targets ?? DEFAULT_SKILL_TARGETS).join(","));
+  return options.targets === undefined ? [...DEFAULT_SKILL_TARGETS] : parseSkillTargets(options.targets.join(","));
 }
 
-/** Recorded before linking, so a crash mid-sync still knows where to clean up. */
-async function rememberTargets(orgRoot: string, targets: readonly string[]): Promise<void> {
-  const union = [...new Set([...(await recordedTargets(orgRoot)), ...targets])].slice(0, MAX_SKILL_TARGETS);
-  const temporary = join(orgRoot, `.targets-${process.pid}-${Date.now()}`);
-  await writeFile(temporary, JSON.stringify(union), { flag: "wx" });
-  await rename(temporary, join(orgRoot, TARGETS_FILE));
+/** Atomic replace; the temp file is removed if the write or rename fails (stale ones are swept too). */
+async function writeTargets(orgRoot: string, targets: readonly string[]): Promise<void> {
+  const temporary = join(orgRoot, `${TARGETS_TEMP_PREFIX}${process.pid}-${Date.now()}`);
+  try {
+    await writeFile(temporary, JSON.stringify([...new Set(targets)].slice(0, MAX_SKILL_TARGETS)), { flag: "wx" });
+    await rename(temporary, join(orgRoot, TARGETS_FILE));
+  } catch (error: unknown) {
+    await rm(temporary, { force: true });
+    throw error;
+  }
 }
 
-/** Links the current release's skills into today's agents. */
+/**
+ * Links the current release's skills into today's agents. First it unlinks
+ * this namespace from recorded agents that are no longer selected (their
+ * links would otherwise outlive the releases they point at); a dropped agent
+ * leaves the record only after that unlink succeeds. The new targets are
+ * recorded before linking, so a crash mid-sync still knows where to clean up.
+ */
 async function linkNamespace(options: InstallOptions, orgRoot: string, namespace: string): Promise<void> {
   const targets = currentTargets(options);
-  await rememberTargets(orgRoot, targets);
+  let recorded = await recordedTargets(orgRoot);
+  const dropped = recorded.filter(target => !targets.includes(target));
+  if (dropped.length > 0) {
+    const empty = await mkdtemp(join(orgRoot, STAGING_PREFIX));
+    try {
+      await options.runSkillSync({ source: empty, namespace, ownedRoot: orgRoot, targets: dropped });
+      recorded = recorded.filter(target => targets.includes(target));
+    } catch (error: unknown) {
+      console.warn("[core-repo] dropped-agent unlink failed; retried next run", error instanceof Error ? error.name : "UnknownError");
+    } finally {
+      await rm(empty, { recursive: true, force: true });
+    }
+  }
+  await writeTargets(orgRoot, [...recorded, ...targets]);
   await options.runSkillSync({ source: join(orgRoot, "current", SKILLS_DIR), namespace, ownedRoot: orgRoot, targets });
 }
 
@@ -369,6 +403,8 @@ export interface InstallOptions {
 }
 
 export async function installCoreRepo(options: InstallOptions): Promise<CoreRepoInstallResult[]> {
+  // Reject an invalid agent selection before any file is touched.
+  currentTargets(options);
   await mkdir(options.root, { recursive: true, mode: 0o700 });
   let lock: Awaited<ReturnType<typeof acquireCoreRepoLock>>;
   try { lock = await acquireCoreRepoLock(join(options.root, ".lock"), { heartbeatMs: options.lockHeartbeatMs }); }

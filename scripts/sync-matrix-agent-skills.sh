@@ -40,7 +40,24 @@ esac
 MATRIX_HOME="${MATRIX_HOME:-$HOME/matrixos}"
 HERMES_HOME="${HERMES_HOME:-$HOME/.hermes}"
 MATRIX_AGENT_SKILLS_ROOT="${MATRIX_AGENT_SKILLS_ROOT:-${AGENT_HOME:-$HOME/.agent}/skills}"
-MATRIX_SKILL_TARGETS=",${MATRIX_SKILL_TARGETS:-matrix,claude,codex},"
+# Namespace mode never falls back to defaults: the variable must be set, may
+# be empty (no agents), and may only name known agents. Checked before any change.
+if [ -n "${MATRIX_SKILL_NAMESPACE:-}" ]; then
+  if [ -z "${MATRIX_SKILL_TARGETS+set}" ]; then
+    echo "Org skill targets must be set explicitly; existing skills were preserved." >&2
+    exit 1
+  fi
+  IFS=, read -r -a requested_targets <<< "$MATRIX_SKILL_TARGETS"
+  for requested_target in "${requested_targets[@]}"; do
+    case "$requested_target" in
+      matrix|claude|codex|hermes|agent) ;;
+      *) echo "Invalid org skill target; existing skills were preserved." >&2; exit 1 ;;
+    esac
+  done
+  MATRIX_SKILL_TARGETS=",$MATRIX_SKILL_TARGETS,"
+else
+  MATRIX_SKILL_TARGETS=",${MATRIX_SKILL_TARGETS:-matrix,claude,codex},"
+fi
 
 # Namespace mode (Matrix Core repo, spec 2691): manage only `org-<slug>-*`
 # entries that link into (or were copied from) MATRIX_SKILL_OWNED_ROOT. The

@@ -239,6 +239,36 @@ describe("Matrix coding-agent skill sync", () => {
     }
   });
 
+  // Fault: namespace mode falls back to the default agents for an empty or mistyped selection.
+  it("never falls back to default targets in namespace mode", () => {
+    const root = resolve(mkdirSync(join(tmpdir(), `matrix-org-targets-${Date.now()}`), { recursive: true }));
+    const orgRoot = join(root, "matrix-core", "org_acme1");
+    const source = join(orgRoot, "releases", "a", ".matrix-skills");
+    const home = join(root, "home");
+    const script = join(process.cwd(), "scripts/sync-matrix-agent-skills.sh");
+    const run = (targets: string | undefined) => {
+      const env: Record<string, string | undefined> = { ...process.env, HOME: home, MATRIX_HOME: home,
+        MATRIX_SKILLS_SOURCE: source, MATRIX_SKILL_NAMESPACE: "org-acme-", MATRIX_SKILL_OWNED_ROOT: orgRoot, MATRIX_SKILL_TARGETS: targets };
+      if (targets === undefined) delete env.MATRIX_SKILL_TARGETS;
+      return spawnSync("bash", [script], { encoding: "utf8", env: env as NodeJS.ProcessEnv });
+    };
+    try {
+      writeSkill(source, "org-acme-ok", "org-acme-ok");
+      expect(run("").status).toBe(0);
+      expect(existsSync(join(home, ".claude"))).toBe(false);
+      expect(existsSync(join(home, ".agents"))).toBe(false);
+      for (const targets of [undefined, "Claude", "claude,emacs"]) {
+        const result = run(targets);
+        expect(result.status, String(targets)).not.toBe(0);
+        expect(existsSync(join(home, ".claude")), String(targets)).toBe(false);
+      }
+      expect(run("claude").status).toBe(0);
+      expect(existsSync(join(home, ".claude", "skills", "org-acme-ok", "SKILL.md"))).toBe(true);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it("keeps manual skill installers aligned with the shipped Matrix skill pack", () => {
     const root = process.cwd();
     const shippedSkillDirs = readdirSync(join(root, "skills", "matrix"), { withFileTypes: true })

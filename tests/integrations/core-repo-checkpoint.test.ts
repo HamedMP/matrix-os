@@ -226,6 +226,27 @@ describe("Matrix Core repo checkpoint", () => {
     expect(() => lstatSync(claudeSkill("org-acme-deploy"))).toThrow();
   });
 
+  // Fault: a dropped agent keeps the org's skills from an older release after a new commit is installed and pruned.
+  it("unlinks the org from a dropped agent on the next install", async () => {
+    const hermesSkill = join(home, ".hermes", "skills", "org-acme-deploy");
+    head = sha("a");
+    tarballs.set(head, await tarball(work, head, { "skills/deploy/SKILL.md": skill("deploy") }));
+    expect((await push(head, "d-drop-a")).status).toBe(202);
+    await vi.waitFor(async () => expect((await pinned())?.commit_sha).toBe(sha("a")));
+    expect(await install("claude,hermes")).toEqual([{ orgId: ORG, status: "installed", commit: sha("a") }]);
+    expect(lstatSync(hermesSkill).isSymbolicLink()).toBe(true);
+    head = sha("b");
+    tarballs.set(head, await tarball(work, head, { "skills/deploy/SKILL.md": skill("deploy") }));
+    expect((await push(head, "d-drop-b")).status).toBe(202);
+    await vi.waitFor(async () => expect((await pinned())?.commit_sha).toBe(sha("b")));
+    expect(await install("claude")).toEqual([{ orgId: ORG, status: "installed", commit: sha("b") }]);
+    expect(() => lstatSync(hermesSkill)).toThrow();
+    expect(JSON.parse(readFileSync(join(root, ORG, ".matrix-core-targets.json"), "utf8"))).toEqual(["claude"]);
+    expect(realpathSync(claudeSkill("org-acme-deploy"))).toContain(`${sha("b")}-acme`);
+    expect(await install("claude")).toEqual([{ orgId: ORG, status: "current", commit: sha("b") }]);
+    expect(() => lstatSync(hermesSkill)).toThrow();
+  });
+
   // Fault: including the `agent` target fails every org install on the public-pack builder check.
   it("installs org skills into the agent target", async () => {
     head = sha("a");

@@ -4,7 +4,7 @@
  */
 import { createHash } from "node:crypto";
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, readlinkSync, rmSync, statSync, utimesSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, readlinkSync, symlinkSync, rmSync, statSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { gzipSync } from "node:zlib";
@@ -183,6 +183,44 @@ describe("Matrix Core repo installer", () => {
     expect(mode("setuid.sh")).toBe(0o755);
     expect(mode("notes.txt")).toBe(0o644);
     expect(mode("SKILL.md")).toBe(0o644);
+  });
+
+  // Fault: a mistyped target list (`Claude`) silently installs into the default agents.
+  it("rejects invalid target names before touching files, and treats an empty selection as no agents", async () => {
+    const { parseSkillTargets } = await import("../../packages/sync-client/src/core-repo/installer.js");
+    expect(() => parseSkillTargets("Claude")).toThrow(CoreRepoInstallError);
+    expect(() => parseSkillTargets("claude,emacs")).toThrow(CoreRepoInstallError);
+    expect(parseSkillTargets("")).toEqual([]);
+    expect(parseSkillTargets(" claude , hermes,claude")).toEqual(["claude", "hermes"]);
+    expect(parseSkillTargets(undefined)).toEqual(["matrix", "claude", "codex", "hermes"]);
+    const fresh = join(root, "never-created");
+    const listPins = vi.fn(async () => ({ pins: [], membershipVerified: true }));
+    await expect(installCoreRepo({ root: fresh, targets: ["Claude"], transport: { listPins, downloadTarball: vi.fn() }, runSkillSync: vi.fn() }))
+      .rejects.toMatchObject({ code: "invalid_targets" });
+    expect(existsSync(fresh)).toBe(false);
+    expect(listPins).not.toHaveBeenCalled();
+
+    const a = "a".repeat(40);
+    const bytes = new Map([[a, good(a, ["deploy"])]]);
+    const sync = vi.fn(async () => {});
+    await installCoreRepo({ root, targets: [], transport: transportFor([pinFor(a, bytes.get(a)!)], bytes), runSkillSync: sync });
+    expect(sync).toHaveBeenCalledWith(expect.objectContaining({ targets: [] }));
+  });
+
+  // Fault: a failed targets write leaves `.targets-*` temp files behind forever.
+  it("removes a targets temp file when its write fails, and sweeps stale ones", async () => {
+    const a = "a".repeat(40);
+    const bytes = new Map([[a, good(a, ["deploy"])]]);
+    const orgRoot = join(root, "org_acme1");
+    mkdirSync(join(orgRoot, ".matrix-core-targets.json", "blocker"), { recursive: true });
+    const old = new Date(Date.now() - 2 * 60 * 60_000);
+    writeFileSync(join(orgRoot, ".targets-stale"), "[]");
+    utimesSync(join(orgRoot, ".targets-stale"), old, old);
+    writeFileSync(join(orgRoot, ".targets-fresh"), "[]");
+    symlinkSync(join(root, "elsewhere"), join(orgRoot, ".targets-link"));
+    const results = await installCoreRepo({ root, targets: ["claude"], transport: transportFor([pinFor(a, bytes.get(a)!)], bytes), runSkillSync: async () => {} });
+    expect(results).toEqual([{ orgId: "org_acme1", status: "failed" }]);
+    expect(readdirSync(orgRoot).filter(entry => entry.startsWith(".targets-")).sort()).toEqual([".targets-fresh", ".targets-link"]);
   });
 
   // Fault: two overlapping runs (timer + manual) interleave renames.
