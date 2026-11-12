@@ -89,12 +89,14 @@ export function resolveCurrentOwnerRoute(
   if (!harness) return null;
   const parsed = KernelCredentialAccessSourceIdSchema.safeParse(source.id);
   if (harness === "claude_code" && !parsed.success) return null;
+  if (source.id === "owner_anthropic_key" && !source.credentialGeneration) return null;
   const settingsRevision = String(snapshot.revision);
   const routeGeneration = createHash("sha256").update(JSON.stringify({
     providerInstanceId,
     providerAccessSourceId,
     modelId,
     sourcePolicyVersion: source.policyVersion,
+    sourceCredentialGeneration: source.credentialGeneration ?? null,
     instanceCatalogVersion: instance.catalogVersion,
     modelCatalogVersion: model.catalogVersion,
   })).digest("hex");

@@ -1,5 +1,6 @@
 import { SCOPE_RUNTIME_HARNESS_VERSION, SCOPE_RUNTIME_PROFILE_ID } from "@matrix-os/scope-runtime/profile";
 import { CanonicalProviderCatalogSchema } from "@matrix-os/contracts";
+import type { AiProviderSnapshotV3 } from "@matrix-os/contracts";
 import { describe, expect, it, vi } from "vitest";
 import { CollaborationAuthorizationError } from "../../packages/gateway/src/collaboration/authority.js";
 import { SharedChatRunPreparationError } from "../../packages/gateway/src/chat/shared-execution-coordinator.js";
@@ -43,6 +44,38 @@ function currentRouteSnapshot(revision = 1) {
       modelId: "claude-sonnet-5",
     },
   };
+}
+
+function ownerKeyRouteSnapshot(credentialGeneration: string): AiProviderSnapshotV3 {
+  const snapshot = currentRouteSnapshot(3);
+  return {
+    ...snapshot,
+    accessSources: snapshot.accessSources.map((source) => ({
+      ...source,
+      id: "owner_anthropic_key",
+      fundingKind: "owner_api_key" as const,
+      accountLabel: null,
+      credentialGeneration,
+    })),
+    instances: snapshot.instances.map((instance) => ({
+      ...instance,
+      accessSourceId: "owner_anthropic_key",
+    })),
+    models: snapshot.models.map((model) => ({
+      ...model,
+      eligibleAccessSourceIds: ["owner_anthropic_key"],
+      dataPolicies: [{
+        accessSourceId: "owner_anthropic_key",
+        route: "owner_direct" as const,
+        disclosureKey: "owner-direct-anthropic",
+      }],
+    })),
+    active: {
+      providerInstanceId: "claude_code_default",
+      accessSourceId: "owner_anthropic_key",
+      modelId: "claude-sonnet-5",
+    },
+  } as unknown as AiProviderSnapshotV3;
 }
 
 describe("shared provider identity", () => {
@@ -150,6 +183,26 @@ describe("current owner route dispatch fence", () => {
       ...currentRouteSnapshot(3),
       active: { providerInstanceId: null, accessSourceId: null, modelId: null },
     }, admitted!, Date.parse("2026-08-29T21:00:01.000Z"))).toBe(false);
+  });
+
+  it("invalidates waiting owner-key work when the credential generation changes", () => {
+    const admitted = resolveCurrentOwnerRoute(
+      ownerKeyRouteSnapshot("10000000-0000-4000-8000-000000000001"),
+      Date.parse("2026-08-29T21:00:01.000Z"),
+    );
+    const replaced = resolveCurrentOwnerRoute(
+      ownerKeyRouteSnapshot("10000000-0000-4000-8000-000000000002"),
+      Date.parse("2026-08-29T21:00:01.000Z"),
+    );
+
+    expect(admitted).not.toBeNull();
+    expect(replaced).not.toBeNull();
+    expect(replaced?.routeGeneration).not.toBe(admitted?.routeGeneration);
+    expect(currentOwnerRouteMatches(
+      ownerKeyRouteSnapshot("10000000-0000-4000-8000-000000000002"),
+      admitted!,
+      Date.parse("2026-08-29T21:00:01.000Z"),
+    )).toBe(false);
   });
 
   it("drains shared authority only for Provider Settings mutations that can change execution routing", () => {
