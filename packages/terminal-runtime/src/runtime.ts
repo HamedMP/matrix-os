@@ -435,14 +435,10 @@ export class TerminalRuntime {
     });
   }
 
-  async renameTab(refInput: TerminalRef, input: { name: string; baseRevision: number }): Promise<TerminalTab> {
-    const ref = TerminalRefSchema.parse(refInput);
-    const workspace = await this.requireRuntimeWorkspace(ref.workspaceId);
-    const tab = workspace.tabs[ref.tabId];
-    if (!tab || tab.zellijTabId === null) throw new TerminalRuntimeError("not_found");
-    if (!this.zellij.renameTab) throw new TerminalRuntimeError("unavailable");
-    await this.zellij.renameTab(workspace.zellijSessionName, tab.zellijTabId, input.name);
-    return this.store.renameTab(ref, input);
+  renameTab(refInput: TerminalRef, input: { name: string; baseRevision: number }): Promise<TerminalTab> {
+    // The display name is owner metadata. Zellij's random internal name is the
+    // durable identity used by reconciliation and must survive a UI rename.
+    return this.store.renameTab(refInput, input);
   }
 
   reorderTabs(workspaceId: string, input: { tabIds: string[]; baseRevision: number }): Promise<TerminalWorkspace> {
