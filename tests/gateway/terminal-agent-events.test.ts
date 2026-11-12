@@ -154,6 +154,24 @@ describe("terminal event hub", () => {
     expect(tabs).toContainEqual(expect.objectContaining({ ref: { workspaceId, tabId: tabA }, agentStatus: "blocked" }));
   });
 
+  // Fault detected (fifth review of #3297): live tabs past the cap vanished, and a tab
+  // that exited behind a long history lost its exit code.
+  it("keeps all live tabs and reports exits even behind a long finished history", async () => {
+    const h = harness();
+    const finished = Array.from({ length: 1_100 }, (_, i) => tab(`tt_${i.toString(16).padStart(32, "0")}`, { status: "exited", exitCode: 0 }));
+    const live = Array.from({ length: 1_100 }, (_, i) => tab(`tt_${(i + 5_000).toString(16).padStart(32, "0")}`));
+    h.setTabs([...finished, ...live]);
+    const sub = h.subscriber();
+    await h.hub.tick();
+    const snapshot = sub.frames[0]?.type === "snapshot" ? sub.frames[0].tabs : [];
+    expect(snapshot.filter((entry) => entry.state === "live")).toHaveLength(1_100);
+    const exiting = live[0]!.id as string;
+    h.setTabs([...finished, tab(exiting, { status: "exited", exitCode: 7 }), ...live.slice(1)]);
+    await h.hub.tick();
+    const events = sub.frames.flatMap((frame) => frame.type === "event" ? [frame.event] : []);
+    expect(events).toContainEqual({ kind: "finished", ref: { workspaceId, tabId: exiting }, exitCode: 7 });
+  });
+
   it("caps subscribers", () => {
     const h = harness();
     for (let index = 0; index < 64; index += 1) h.subscriber();
