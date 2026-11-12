@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import React from "react";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { McpServersSection } from "../../desktop/src/renderer/src/features/plugins";
 import { useConnection } from "../../desktop/src/renderer/src/stores/connection";
@@ -207,5 +207,38 @@ describe("desktop Custom MCP management", () => {
       revision: 2,
       tools: [{ name: "search", enabled: true, approval: "allow" }],
     });
+  });
+});
+
+describe("desktop MCP inventory account isolation", () => {
+  afterEach(() => { cleanup(); vi.restoreAllMocks(); });
+
+  function accountApi(label: string, gate?: Promise<void>) {
+    const api = makeApi();
+    vi.mocked(api.get).mockImplementation(async (path: string) => {
+      if (path === "/api/mcp-servers/catalog") return { presets: [] } as never;
+      if (path === "/api/integrations/available") return [{ id: "gmail", name: "Gmail", category: "google" }] as never;
+      if (path === "/api/integrations") {
+        await gate;
+        return [{ id: `conn-${label}`, service: "gmail", account_label: label, status: "active" }] as never;
+      }
+      return [] as never;
+    });
+    return api;
+  }
+
+  // Fault: after an account switch the previous account's connected apps stay visible.
+  it("reloads legacy connected apps for the new account and hides the old account's rows meanwhile", async () => {
+    useConnection.setState({ status: "signed-in", handle: "alice", api: accountApi("Alice work") as never });
+    render(<McpServersSection />);
+    expect(await screen.findByText(/Alice work/)).not.toBeNull();
+
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    act(() => { useConnection.setState({ handle: "bob", api: accountApi("Bob work", gate) as never }); });
+    await waitFor(() => expect(screen.queryByText(/Alice work/)).toBeNull());
+    release();
+    expect(await screen.findByText(/Bob work/)).not.toBeNull();
+    expect(screen.queryByText(/Alice work/)).toBeNull();
   });
 });
