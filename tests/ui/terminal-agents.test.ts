@@ -44,6 +44,12 @@ describe("terminal agent attention", () => {
     expect(terminalAttentionChanges(after, after, new Set())).toEqual([]);
   });
 
+  // Fault detected (fourth review of #3299): a tab created already blocked raised nothing.
+  it("raises a tab that appears already blocked or errored", () => {
+    const next = map(fact(tabA, { agentStatus: "blocked" }), fact(tabB, { agentStatus: "done" }));
+    expect(terminalAttentionChanges(new Map(), next, new Set()).map((change) => [change.name, change.kind])).toEqual([["review", "blocked"]]);
+  });
+
   it("orders agents needs-you first, then done, working, idle", () => {
     expect(orderTerminalAgents([
       fact(tabA, { agentStatus: "idle" }), fact(tabB, { agentStatus: "blocked" }),
@@ -145,6 +151,15 @@ describe("terminal events client", () => {
     sockets[0]!.onmessage?.({ data: JSON.stringify({ type: "snapshot", seq: 2, tabs: [fact(tabB)] }) });
     sockets[0]!.onclose?.({});
     expect(states).toHaveLength(published);
+  });
+
+  // Fault detected (fourth review of #3299): a snapshot above the client's cap was
+  // rejected whole, dropping every live badge.
+  it("keeps live tabs from a snapshot larger than its cap", () => {
+    const finished = Array.from({ length: 1_100 }, (_, i) => fact(`tt_${i.toString(16).padStart(32, "0")}`, { state: "finished", exitCode: 0 }));
+    const state = reduceTerminalEvents(EMPTY_TERMINAL_EVENTS_STATE, { type: "snapshot", seq: 1, tabs: [...finished, fact(tabA, { agentStatus: "blocked" })] });
+    expect(Object.keys(state.tabs).length).toBeLessThanOrEqual(1_024);
+    expect(state.tabs[`${workspaceId}:${tabA}`]).toMatchObject({ agentStatus: "blocked" });
   });
 
   it("rejects frames with unknown fields or oversized values", () => {

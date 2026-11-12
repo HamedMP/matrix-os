@@ -50,6 +50,22 @@ describe("terminal attention notifier", () => {
     expect(screen.queryByTestId("terminal-attention")).toBeNull();
   });
 
+  // Fault detected (fourth review of #3299): three newer toasts dropped a blocked alert for good.
+  it("keeps alerts beyond the three shown and brings them back when space opens", () => {
+    const keys = ["a", "b", "c", "d"].map((letter) => `${workspaceId}:tt_${letter.repeat(32)}`);
+    const tabs = (words: Array<"working" | "blocked" | "done">) => Object.fromEntries(keys.map((tabKey, i) => [tabKey, {
+      ref: { workspaceId, tabId: tabKey.split(":")[1]! }, name: `agent ${i}`, cwd: "", state: "live" as const, agentStatus: words[i]!,
+    }]));
+    render(<TerminalAttentionNotifier />);
+    act(() => { useTerminalAgentEvents.setState({ tabs: tabs(["working", "working", "working", "working"]) }); });
+    act(() => { useTerminalAgentEvents.setState({ tabs: tabs(["blocked", "working", "working", "working"]) }); });
+    act(() => { useTerminalAgentEvents.setState({ tabs: tabs(["blocked", "blocked", "blocked", "blocked"]) }); });
+    expect(screen.getAllByTestId("terminal-attention")).toHaveLength(3);
+    fireEvent.click(screen.getByRole("button", { name: "Dismiss agent 1" }));
+    expect(screen.getAllByTestId("terminal-attention")).toHaveLength(3);
+    expect(screen.getByText("agent 0")).toBeTruthy();
+  });
+
   it("does not treat the first snapshot as news", () => {
     useTerminalAgentEvents.setState({ tabs: facts("blocked") });
     render(<TerminalAttentionNotifier />);
