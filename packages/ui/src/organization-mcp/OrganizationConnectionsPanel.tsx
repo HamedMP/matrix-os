@@ -108,9 +108,14 @@ function MemberCard({ member, snapshot, busy, mutate }: { member: OrgMcpMember; 
           const hostId = connection.serverDefIds[0];
           const blocked = connection.serverDefIds.some(id => blockedIds.has(id));
           const mode = serverModeFor(snapshot.servers, connection.serverDefIds);
+          // A block may be saved under the hostname or a catalog id; unblock removes every match.
+          const blockedMatches = connection.serverDefIds.filter(id => blockedIds.has(id));
           const toggle = () => {
             if (!hostId) return;
-            void mutate(client => blocked ? client.unblockMember(member.actorId, hostId) : client.blockMember(member.actorId, hostId));
+            void mutate(async client => {
+              if (!blocked) return client.blockMember(member.actorId, hostId);
+              await Promise.all(blockedMatches.map(id => client.unblockMember(member.actorId, id)));
+            });
           };
           return (
             <li key={connection.connectionId} className="flex flex-wrap items-center justify-between gap-2 rounded-lg bg-muted/40 px-3 py-2">
