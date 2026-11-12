@@ -1,7 +1,8 @@
 import { EMPTY_TERMINAL_EVENTS_STATE, reduceTerminalEvents, type TerminalEventsState } from "./events-state.js";
 
 const PING_MS = 20_000;
-const MAX_FRAME_CHARS = 2 * 1024 * 1024;
+// A snapshot of every live tab plus bounded history stays well below this.
+const MAX_FRAME_CHARS = 8 * 1024 * 1024;
 const RECONNECT_MIN_MS = 1_000;
 const RECONNECT_MAX_MS = 30_000;
 
