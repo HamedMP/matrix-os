@@ -321,7 +321,7 @@ function ChatAppContent({
   };
   const onSwitchConversation = (id: string) => { if (isCurrentAuthority && !isCurrentAuthority()) return; botDraftNavigation.clearNotice(); agentsNavigation?.close(); switchConversation(id); };
   const composer = useChatComposerDraft(composerScope, draftIdentity);
-  const botDraftNavigation = useWebBotDraftNavigation({client:summaryClient,scope:composerScope,sourceChatId:sessionId,newChatSequence,seed:composer.seedChatDraft,open:onSwitchConversation,
+  const botDraftNavigation = useWebBotDraftNavigation({client:summaryClient,identityKey:authorityKey ?? projectGatewayUrl,scope:composerScope,sourceChatId:sessionId,newChatSequence,seed:composer.seedChatDraft,open:onSwitchConversation,
     restore:source=>{ agentsNavigation?.close(); if(source.chatId) switchConversation(source.chatId); else {setNewChatSequence(source.sequence);setAgentDraftRequest(null);createChat();} },
   });
   const [sidebarOpen, setSidebarOpen] = useState(!mobile);
