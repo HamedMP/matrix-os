@@ -12,6 +12,7 @@ import {
   createOpenCodeCodingAgentProvider,
   type OpenCodeSpawnFn,
 } from "../../packages/gateway/src/coding-agents/opencode-provider.js";
+import { createMatrixMcpCapabilityRegistry } from "../../packages/gateway/src/chat/matrix-mcp-launch.js";
 import { createCodingHarnessCredentialResolver } from "../../packages/gateway/src/coding-agents/harness-credentials.js";
 import type { RequestPrincipal } from "../../packages/gateway/src/request-principal.js";
 import { providerSettingsCanonicalFixture } from "./provider-settings-test-support.js";
@@ -1058,5 +1059,36 @@ describe("OpenCode coding-agent provider", () => {
     } finally {
       await rm(homePath, { recursive: true, force: true });
     }
+  });
+
+  it("launches each OpenCode run with a live run-scoped Matrix Core MCP capability and revokes it afterwards", async () => {
+    // Spec 2691 checkpoint: the OpenCode launch contains the scoped Core server,
+    // and the bearer the MCP child will present resolves only while the run lives.
+    const owner = { type: "personal" as const, ownerId: "owner_user" };
+    const registry = createMatrixMcpCapabilityRegistry({ configuredOwnerId: owner.ownerId });
+    const issued: string[] = [];
+    let liveDuringRun: unknown;
+    const run = fakeSpawn([line("text", { part: { id: "part_core", type: "text", text: "done", time: { end: 1 } } })]);
+    const spawnFn: OpenCodeSpawnFn = (command, args, options) => {
+      const token = (options.env as Record<string, string>).MATRIX_AGENT_INTEGRATIONS_TOKEN!;
+      liveDuringRun = registry.resolveRunContext(token, "POST", "/api/mcp-servers/core/call");
+      return run.spawnFn(command, args, options);
+    };
+    const adapter = provider(spawnFn, {
+      issueMatrixCoreMcp: ({ runId }: { runId: string }) => {
+        issued.push(runId);
+        const grant = registry.issue({ owner, runId, scope: "call" });
+        return grant ? { token: grant.token, scope: "call" as const, revoke: grant.revoke } : null;
+      },
+    });
+    const result = await adapter.startThread({ principal, thread: thread(), request: request(), now: () => now, nextEventId: ids() });
+    expect(result.events).toContainEqual(expect.objectContaining({ type: "thread.completed", outcome: "completed" }));
+    expect(issued).toEqual([thread().id]);
+    expect(liveDuringRun).toMatchObject({ runId: thread().id, scope: "call" });
+    const env = run.calls[0]!.env;
+    expect(env.MATRIX_MCP_HARNESS).toBe("opencode");
+    expect(JSON.parse(env.OPENCODE_CONFIG_CONTENT!).mcp["matrix-integrations"].command).toContain("--harness=opencode");
+    expect(registry.resolve(env.MATRIX_AGENT_INTEGRATIONS_TOKEN!, "POST", "/api/mcp-servers/core/call")).toBeNull();
+    registry.close();
   });
 });

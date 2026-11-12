@@ -8,6 +8,7 @@ SERVER_PATH="/opt/matrix/app/packages/integrations-mcp/dist/cli.js"
 require_scoped=false
 tool_surface="full"
 surface_seen=false
+harness=""
 for arg in "$@"; do
   case "$arg" in
     --require-scoped-capability)
@@ -23,6 +24,13 @@ for arg in "$@"; do
       fi
       tool_surface="${arg#--tool-surface=}"
       surface_seen=true ;;
+    --harness=claude_code|--harness=codex|--harness=opencode|--harness=hermes|--harness=pi)
+      # A usage label only (never authority). argv survives harness env sanitization.
+      if [ -n "$harness" ]; then
+        echo "matrix-integrations-mcp: unsupported launcher arguments" >&2
+        exit 3
+      fi
+      harness="${arg#--harness=}" ;;
     *)
       echo "matrix-integrations-mcp: unsupported launcher arguments" >&2
       exit 3 ;;
@@ -102,6 +110,7 @@ if [ -n "$scoped_token" ]; then
     PATH="/opt/matrix/runtime/node/bin:/usr/local/bin:/usr/bin:/bin" \
     GATEWAY_URL="http://127.0.0.1:4000" \
     MATRIX_AGENT_INTEGRATIONS_TOKEN="$scoped_token" \
+    ${harness:+MATRIX_MCP_HARNESS="$harness"} \
     "$NODE_BIN" "$SERVER_PATH" "--tool-surface=$tool_surface"
 fi
 
@@ -138,4 +147,5 @@ exec /usr/bin/env -i \
   GATEWAY_URL="http://127.0.0.1:4000" \
   MATRIX_AUTH_TOKEN="$MATRIX_AUTH_TOKEN_VALUE" \
   MATRIX_CLERK_USER_ID="$MATRIX_CLERK_USER_ID_VALUE" \
+  ${harness:+MATRIX_MCP_HARNESS="$harness"} \
   "$NODE_BIN" "$SERVER_PATH" "--tool-surface=$tool_surface"

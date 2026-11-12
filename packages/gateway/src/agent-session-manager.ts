@@ -345,6 +345,9 @@ export function createAgentSessionManager(options: {
   backgroundRuntime?: BackgroundAgentRuntime;
   beforeProjectSessionRemove?: (input: { ownerId: string; sessionId: string; proof: object }) => Promise<void>;
   resolveNativeCodexSubscription?: (ownerId: string, sessionId: string) => Promise<NativeCodexSubscriptionLaunch | undefined>;
+  /** Spec 2691: run-scoped Matrix Core MCP capability for a Codex session; null launches without Core tools. */
+  issueMatrixCoreMcp?: (input: { ownerId: string; sessionId: string; readOnly: boolean }) =>
+    { token: string; scope: "call" | "discovery"; revoke(): void } | null;
   legacyZellij?: LegacySessionRuntime;
   now?: () => string;
   idGenerator?: () => string;
@@ -457,9 +460,14 @@ export function createAgentSessionManager(options: {
 
       const startedAt = nowIso(options.now);
       let launch;
+      let coreMcp: ReturnType<NonNullable<typeof options.issueMatrixCoreMcp>> = null;
       try {
         const browser = request.agent === "codex" ? nativeBrowserExecution(request.ownerId ?? "") : undefined;
         const routineSource = request.agent === "codex" && request.runtimePreference === "background" ? nativeCodexRoutineAdmission(request.ownerId ?? "") : undefined;
+        coreMcp = request.kind === "agent" && request.agent === "codex" && request.ownerId
+          ? options.issueMatrixCoreMcp?.({ ownerId: request.ownerId, sessionId,
+            readOnly: request.mode === "plan" || request.mode === "review" || request.sandbox?.mode === "read-only" }) ?? null
+          : null;
         launch = request.kind === "agent"
           ? options.agentLauncher.buildLaunch({
             agent: request.agent!,
@@ -477,9 +485,11 @@ export function createAgentSessionManager(options: {
                 ...(browser ? { codexBrowserAttemptId: browser.attemptId } : {}),
                 ...(routineSource ? { codexRoutinePrivate: true } : {}) }
               : {}),
+            ...(coreMcp ? { matrixCoreMcp: { scope: coreMcp.scope, token: coreMcp.token } } : {}),
           })
           : { command: "bash", args: [], cwd, env: {} };
       } catch (err: unknown) {
+        coreMcp?.revoke();
         await logSessionStartupFailure("launch_preflight", sessionId, err);
         if (leaseAcquired) {
           await releaseSessionLease(options.worktreeManager, { id: sessionId, projectSlug: request.projectSlug, worktreeId: request.worktreeId });
@@ -515,6 +525,7 @@ export function createAgentSessionManager(options: {
           persist: (value) => writeSession(homePath, value),
         });
         if (started.ok) return { ok: true, status: 201, session: decorateSession(started.session) };
+        coreMcp?.revoke();
         if (!started.retainWorkspace && leaseAcquired) await releaseSessionLease(options.worktreeManager, session);
         scheduleStartupReconciliation();
         const result = failure(503, started.retainWorkspace ? "runtime_ownership_retained" : "runtime_unavailable", "Session runtime is unavailable");
@@ -536,6 +547,7 @@ export function createAgentSessionManager(options: {
         });
         terminalRef = TerminalRefSchema.parse({ workspaceId: workspace.id, tabId: tab.id });
       } catch (err: unknown) {
+        coreMcp?.revoke();
         await logSessionStartupFailure("runtime_start", sessionId, err);
         if (leaseAcquired) {
           await releaseSessionLease(options.worktreeManager, { id: sessionId, projectSlug: request.projectSlug, worktreeId: request.worktreeId });

@@ -3,6 +3,7 @@ import { bodyLimit } from "hono/body-limit";
 import { z } from "zod/v4";
 import type { PlatformDb } from "../../platform-db.js";
 import { CustomMcpBroker, CustomMcpBrokerError } from "./broker.js";
+import { assignCoreServiceSlugs } from "./core-catalog.js";
 
 const BODY_LIMIT = 64 * 1024;
 const RunId = z.string().min(1).max(256).regex(/^[A-Za-z0-9][A-Za-z0-9_.:-]*$/);
@@ -12,10 +13,13 @@ const Generation = z.number().int().min(1).max(2_147_483_647);
 const PrepareBody = z.object({
   generation: Generation,
   nativeRequestId: z.string().min(1).max(256),
-  serverId: z.uuid(),
-  tool: z.string().min(1).max(128),
+  serverId: z.uuid().optional(),
+  // Matrix Core MCP call_tool (spec 2691) names a service slug, resolved here against the owner's servers.
+  service: z.string().min(1).max(64).regex(/^[a-z0-9][a-z0-9-]*$/).optional(),
+  tool: z.string().min(1).max(200),
   arguments: z.record(z.string(), z.unknown()).optional(),
-}).strict();
+}).strict().refine(body => (body.serverId === undefined) !== (body.service === undefined)
+  && (body.service !== undefined || body.tool.length <= 128));
 const DecisionBody = z.object({
   decision: z.enum(["approve", "decline", "cancel"]),
   chatId: z.string().min(1).max(128).optional(),
@@ -67,6 +71,16 @@ export function createCustomMcpApprovalRoutes(options: {
     return context.json({ error: "Custom MCP approval unavailable" }, 503);
   }
 
+  /** Same slug assignment as the Core tool service, so the approval binds the server the call will reach. */
+  async function coreTarget(userId: string, service: string, tool: string): Promise<{ serverId: string; toolName: string }> {
+    const slugs = assignCoreServiceSlugs(await options.broker.list(userId));
+    const serverId = [...slugs].find(([, slug]) => slug === service)?.[0];
+    if (!serverId) throw new CustomMcpBrokerError("not_found");
+    const toolName = tool.startsWith(`${service}.`) ? tool.slice(service.length + 1) : tool;
+    if (!toolName || toolName.length > 128) throw new CustomMcpBrokerError("invalid");
+    return { serverId, toolName };
+  }
+
   app.post("/runs", async (context) => {
     const identity = await principal(context);
     if (!identity) return context.json({ error: "Unauthorized" }, 401);
@@ -88,10 +102,13 @@ export function createCustomMcpApprovalRoutes(options: {
     const parsed = PrepareBody.safeParse(await body(context));
     if (!runId.success || !parsed.success) return context.json({ error: "Invalid request body" }, 400);
     try {
+      const target = parsed.data.service === undefined
+        ? { serverId: parsed.data.serverId!, toolName: parsed.data.tool }
+        : await coreTarget(identity.userId, parsed.data.service, parsed.data.tool);
       return context.json(await options.broker.prepareToolApproval({
         ...identity, runId: runId.data, generation: parsed.data.generation,
         nativeRequestId: parsed.data.nativeRequestId,
-        serverId: parsed.data.serverId, toolName: parsed.data.tool,
+        ...target,
         arguments: parsed.data.arguments,
       }));
     } catch (error) { return failed(context, error); }

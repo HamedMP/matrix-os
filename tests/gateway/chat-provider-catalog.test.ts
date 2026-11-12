@@ -338,6 +338,25 @@ describe("canonical Chat Provider catalog", () => {
       .toMatchObject({ availability: "unavailable", unavailabilityReason: "runtime_not_runnable" });
   });
 
+  it("advertises the Matrix Core MCP broker for Codex, OpenCode, and Hermes, not for Pi", async () => {
+    // Spec 2691: every native harness launch now carries the scoped Core server.
+    const service = createChatProviderCatalogService({
+      codingProviders: codingRegistry([
+        codingProvider(),
+        codingProvider({ id: "opencode", displayName: "OpenCode", kind: "opencode", supportedModes: ["default"], defaultModel: undefined, setupActions: [] }),
+        codingProvider({ id: "pi", displayName: "Pi", kind: "pi", supportedModes: ["default"], defaultModel: undefined, setupActions: [] }),
+      ]),
+      agentRuntimeSource: runtimeSource(),
+      harnessSettingsSource: harnessSettings([configuredHarness("hermes", true), configuredHarness("opencode", true), configuredHarness("pi", true), configuredHarness("codex", true)]),
+    });
+    const catalog = await service.getCatalog(principal);
+    const tools = (id: string) => catalog.instances.find(instance => instance.id === id)?.supports.tools;
+    expect(tools("codex_default")).toEqual(["custom_mcp"]);
+    expect(tools("opencode_default")).toEqual(["custom_mcp"]);
+    expect(tools("hermes_default")).toEqual(["custom_mcp"]);
+    expect(tools("pi_default")).toEqual([]);
+  });
+
   it.each([
     ["pi", "Pi work"],
     ["opencode", "OpenCode work"],
