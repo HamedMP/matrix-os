@@ -32,3 +32,13 @@ it("applies the selected source to server-paged status rows", async () => {
   expect((await screen.findAllByText("Claude chat")).length).toBeGreaterThan(0);
   expect(screen.queryByText("Codex chat")).toBeNull();
 });
+
+it("keeps read chats out of mobile Unread after status pages load", async () => {
+  const loadPage = vi.fn(async () => ({ items: [
+    { chat: { id: "chat_read", title: "Read chat", messageCount: 4, updatedAt: "2026-11-12T00:00:00.000Z" }, readState: { unread: false } },
+    { chat: { id: "chat_unread", title: "Unread chat", messageCount: 4, updatedAt: "2026-11-12T00:00:00.000Z" }, readState: { unread: true } },
+  ], totalCount: 2 }));
+  render(<WebChatLifecycleGroups conversations={[]} loadPage={loadPage as never} unreadOnly renderRow={row => <div>{row.title}</div>} />);
+  expect((await screen.findAllByText("Unread chat")).length).toBeGreaterThan(0);
+  expect(screen.queryByText("Read chat")).toBeNull();
+});

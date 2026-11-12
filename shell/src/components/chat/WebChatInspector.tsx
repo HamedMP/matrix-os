@@ -40,6 +40,8 @@ function FileTree({ gatewayUrl, onOpenFile }: { gatewayUrl: string; onOpenFile(p
     const controller = new AbortController();
     setLoading(true);
     setError(false);
+    setEntries([]);
+    setTruncated(false);
     void fetch(`${gatewayUrl}/api/files/list?path=${encodeURIComponent(path)}`, { signal: AbortSignal.any([controller.signal, AbortSignal.timeout(10_000)]) })
       .then(async response => { if (!response.ok) throw new Error("FileListUnavailable"); return FileListSchema.parse(await response.json()); })
       .then(data => {

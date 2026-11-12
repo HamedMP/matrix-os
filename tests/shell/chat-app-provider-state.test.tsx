@@ -175,6 +175,20 @@ describe("Chat canonical provider state", () => {
     expect(screen.getByRole("complementary", { name: "Chat file preview" })).toBeTruthy();
   });
 
+  it("closes a desktop file preview with its inspector", async () => {
+    vi.stubGlobal("fetch", vi.fn(async (url: string) => url.includes("/api/files/list")
+      ? Response.json({ entries: [] }) : Response.json(providerCatalog())));
+    render(<ChatApp messages={[{ id: "desktop-file", role: "user", content: "", timestamp: 1000,
+      attachments: [{ id: "desktop-attachment", kind: "file", label: "notes.txt", path: "temporary/notes.txt" }] }]}
+      sessionId="chat_desktop_file" busy={false} connected onSubmit={vi.fn()} conversations={[]}
+      onNewChat={vi.fn()} onSwitchConversation={vi.fn()}
+      sideChatClient={{ getSideChat: vi.fn(), createSideChat: vi.fn(), askSideChat: vi.fn() }} />);
+    fireEvent.click(await screen.findByRole("button", { name: "Preview notes.txt" }));
+    expect(await screen.findByRole("button", { name: "Close inspector" })).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Close inspector" }));
+    expect(screen.queryByRole("complementary", { name: "Chat file preview" })).toBeNull();
+  });
+
   it("opens Agents & providers directly from Settings even while the model catalog is pending", () => {
     vi.stubGlobal("fetch", vi.fn(() => new Promise<Response>(() => {})));
     const openSettings = vi.fn();

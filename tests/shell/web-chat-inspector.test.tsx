@@ -67,3 +67,17 @@ it("opens a folder with more than 1,000 files using a bounded visible window", a
   expect(screen.getByText("Showing the first 1,000 files.")).toBeTruthy();
   expect(screen.queryByRole("alert")).toBeNull();
 });
+
+it("does not reuse a previous folder's entries while the next folder loads", async () => {
+  let finishFolder: (response: Response) => void = () => {};
+  vi.stubGlobal("fetch", vi.fn(async (url: string) => url.includes("path=folder")
+    ? new Promise<Response>(resolve => { finishFolder = resolve; })
+    : Response.json({ entries: [{ name: "folder", type: "directory" }] })));
+  render(<WebChatInspector chatId="chat_one" gatewayUrl="http://localhost:4000" layoutKey={null} rootWidth={1200} railWidth={260}
+    filePath={null} onFilePathChange={vi.fn()} terminalSessionIds={[]}
+    sideChatClient={{ getSideChat: vi.fn(), createSideChat: vi.fn(), askSideChat: vi.fn() }} onSendToMain={vi.fn()} onClose={vi.fn()}/>);
+  fireEvent.click(await screen.findByRole("treeitem", { name: "folder" }));
+  expect(screen.queryByRole("treeitem", { name: "folder" })).toBeNull();
+  finishFolder(Response.json({ entries: [] }));
+  await waitFor(() => expect(screen.queryByRole("status", { name: /Loading files/ })).toBeNull());
+});

@@ -386,6 +386,7 @@ function ChatAppContent({
   const [renamePending, setRenamePending] = useState(false);
   // Remember Chats deleted here so a project's paged copy cannot bring them back.
   const [deletedChatIds, setDeletedChatIds] = useState<readonly string[]>([]);
+  const [projectArchiveVersion, setProjectArchiveVersion] = useState(0);
   const [archiveUndo, setArchiveUndo] = useState<{ chats: Array<{ chatId: string; revision: number }>; label: string } | null>(null);
   const [archivesOpen, setArchivesOpen] = useState(false);
   const [searchRefreshVersion, setSearchRefreshVersion] = useState(0);
@@ -412,6 +413,7 @@ function ChatAppContent({
     const skippedCount = completed.reduce((count, result) => count + result.skippedCount, 0);
     if (archived.length) {
       setDeletedChatIds(current => [...current, ...archived.map(chat => chat.chatId)].slice(-MAX_REMEMBERED_DELETIONS));
+      setProjectArchiveVersion(version => version + 1);
       setArchiveUndo({ chats: archived,
         label: `Archived ${archived.length} chats in ${projectName}${skippedCount ? `; ${skippedCount} running skipped` : ""}` });
     }
@@ -653,7 +655,7 @@ function ChatAppContent({
           const restore = chats.length === 1 ? onRestoreConversation(chats[0]!.chatId, chats[0]!.revision)
             : onRestoreArchivedChats?.(chats) ?? Promise.resolve(false);
           void restore.then(restored => {
-            if (restored) setDeletedChatIds(current => current.filter(id => !chats.some(chat => chat.chatId === id)));
+            if (restored) { setDeletedChatIds(current => current.filter(id => !chats.some(chat => chat.chatId === id))); setProjectArchiveVersion(version => version + 1); }
           });
         }}>Undo</button>
       </div> : null}
@@ -751,12 +753,12 @@ function ChatAppContent({
             </section> : focusedProject ? <FocusedWebProject key={`${webProjects.identity}/${focusedProject.id}/${unreadOnly}`} project={focusedProject} gatewayUrl={projectGatewayUrl} chats={projectChats(visibleConversations, focusedProject)}
               listedChatIds={listedChatIds} scopeKey={railOrder.scopeKey} activeChatId={sessionId} activeChatTitle={activeConversationTitle} renamedTitles={renamedTitles}
               onSelectChat={onSwitchConversation} renderRow={renderRailRow} onBack={() => setProjectFocus(null)} onOpenHome={mobile ? undefined : () => openProjectHome(focusedProject)} mobile={mobile}
-              unreadOnly={unreadOnly} sourceFilter={sourceFilter} searchQuery={searchQuery} onArchiveProject={onArchiveProjectChats ? archiveProject : undefined} loadNavigationPage={loadNavigationPage}/> : <>
-            <WebChatLifecycleGroups conversations={listedConversations} scopeKey={railOrder.scopeKey} navigationUpdatedAt={navigationUpdatedAt} loadPage={loadNavigationPage} excludedChatIds={deletedChatIds} sourceFilter={sourceFilter} attentionCount={botSummaries.conversations.filter(bot => bot.pendingApprovalCount > 0).length}
+              unreadOnly={unreadOnly} sourceFilter={sourceFilter} searchQuery={searchQuery} onArchiveProject={onArchiveProjectChats ? archiveProject : undefined} loadNavigationPage={loadNavigationPage} refreshVersion={projectArchiveVersion}/> : <>
+            <WebChatLifecycleGroups conversations={listedConversations} scopeKey={railOrder.scopeKey} navigationUpdatedAt={navigationUpdatedAt} loadPage={loadNavigationPage} excludedChatIds={deletedChatIds} unreadOnly={unreadOnly} sourceFilter={sourceFilter} attentionCount={botSummaries.conversations.filter(bot => bot.pendingApprovalCount > 0).length}
               projects={<><WebProjectsNav key={authorityKey ?? projectGatewayUrl} state={webProjects} gatewayUrl={projectGatewayUrl}
                 chats={visibleConversations} listedChatIds={listedChatIds} activeChatId={sessionId} activeChatTitle={activeConversationTitle} renamedTitles={renamedTitles}
                 onSelectChat={onSwitchConversation} onFocusProject={openProjectHome} renderChat={renderConversationRow} mobile={mobile} unreadOnly={unreadOnly}
-                sourceFilter={sourceFilter} searchQuery={searchQuery} onArchiveProject={onArchiveProjectChats ? archiveProject : undefined} loadNavigationPage={loadNavigationPage}/>
+                sourceFilter={sourceFilter} searchQuery={searchQuery} onArchiveProject={onArchiveProjectChats ? archiveProject : undefined} loadNavigationPage={loadNavigationPage} refreshVersion={projectArchiveVersion}/>
                 <OrganizationDrivesNav chats={sourceConversations} client={agentClient} onNewChat={startAgentChat} onSelectChat={onSwitchConversation} activeChatId={sessionId}/></>}
               attention={botSummaries.conversations.some(bot => bot.pendingApprovalCount > 0) ? <WebBotAttention heading={false} conversations={botSummaries.conversations} onOpen={onSwitchConversation}/> : undefined}
               renderRow={renderRailRow}/>
@@ -1019,8 +1021,8 @@ function ChatAppContent({
         rootWidth={rootWidth} railWidth={sidebarOpen ? 260 : 0} filePath={previewFile?.chatId === sessionId ? previewFile.path : null}
         onFilePathChange={path => setPreviewFile(path ? { chatId: sessionId, path } : null)} terminalSessionIds={terminalSessionIds}
         sideChatClient={sideChatClient} onSendToMain={text => { composer.setText(appendSideChatAnswer(composer.text, text)); rootRef.current?.querySelector<HTMLTextAreaElement>("[data-slot=chat-composer] textarea")?.focus(); }}
-        onClose={() => setInspectorOpen(false)} /> : null}
-      {previewFile && previewFile.chatId === sessionId && (mobile || !sideChatClient || !inspectorOpen || collaborationView)
+        onClose={() => { setInspectorOpen(false); setPreviewFile(null); }} /> : null}
+      {previewFile && previewFile.chatId === sessionId && (mobile || !sideChatClient || collaborationView)
         ? <ChatFilePanel path={previewFile.path} gatewayUrl={projectGatewayUrl} onClose={() => setPreviewFile(null)} /> : null}
       </ChatAgentsContent></BotModelRecoveryProvider>
     </div>

@@ -1,5 +1,5 @@
 import { chatImportSourceVersionUrl } from "@matrix-os/ui";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { z } from "zod/v4";
 import type { WebProject } from "./web-projects";
 import type { CanonicalChatNavigationItem, CanonicalChatNavigationPageQuery, CanonicalChatNavigationPageResponse } from "@matrix-os/contracts";
@@ -28,7 +28,7 @@ async function loadProjectChats(gatewayUrl: string, projectId: string, cursor: s
 }
 
 /** Read both immutable-id and legacy-slug chats from the owner-scoped paged API. */
-export function usePagedProjectChats(project: WebProject, gatewayUrl: string, unreadOnly: boolean, initiallyExpanded = false, loadNavigationPage?: LoadNavigationPage) {
+export function usePagedProjectChats(project: WebProject, gatewayUrl: string, unreadOnly: boolean, initiallyExpanded = false, loadNavigationPage?: LoadNavigationPage, refreshVersion = 0) {
   const initialCursors = (): PageCursors => ({ id: null, ...(project.slug === project.id ? {} : { slug: null }) });
   const [expanded, setExpanded] = useState(initiallyExpanded);
   const [fetched, setFetched] = useState<FetchedProjectChat[]>([]);
@@ -37,6 +37,17 @@ export function usePagedProjectChats(project: WebProject, gatewayUrl: string, un
   const [loading, setLoading] = useState(initiallyExpanded);
   const [error, setError] = useState(false);
   const [retryCount, setRetryCount] = useState(0);
+  const previousRefreshVersion = useRef(refreshVersion);
+  useEffect(() => {
+    if (previousRefreshVersion.current === refreshVersion) return;
+    previousRefreshVersion.current = refreshVersion;
+    setFetched([]);
+    setPageCursors(initialCursors());
+    setNextCursors({});
+    setLoading(expanded);
+    setError(false);
+    setRetryCount(value => value + 1);
+  }, [refreshVersion, expanded]);
 
   // Each project source is paged independently, and closing or changing the
   // authority aborts both reads.
@@ -50,7 +61,7 @@ export function usePagedProjectChats(project: WebProject, gatewayUrl: string, un
     void Promise.all(sources.map(async source => {
       if (loadNavigationPage) {
         const page = await loadNavigationPage({ group: "project", projectId: source.value, limit: source.cursor ? 20 : 5, ...(source.cursor ? { cursor: source.cursor } : {}) });
-        return { key: source.key, nextCursor: page.nextCursor, rows: page.items.filter(item => !unreadOnly || item.readState.markedUnread || item.readState.readThroughSeq < item.chat.messageCount).map(item => ({
+        return { key: source.key, nextCursor: page.nextCursor, rows: page.items.filter(item => !unreadOnly || item.readState.unread).map(item => ({
           id: item.chat.id, title: item.chat.title, titleVersion: item.chat.titleVersion ?? 0,
           importSource: item.importSource, canonicalRecord: item,
         })) satisfies FetchedProjectChat[] };

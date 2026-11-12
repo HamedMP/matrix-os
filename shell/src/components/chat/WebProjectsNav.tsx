@@ -24,7 +24,7 @@ export function withRenamedProjectTitles(chats: readonly FetchedProjectChat[], t
 }
 
 export function WebProjectsNav({ state, gatewayUrl, chats, listedChatIds, activeChatId, activeChatTitle, onSelectChat, onFocusProject, renderChat,
-  mobile = false, unreadOnly = false, sourceFilter = "all", searchQuery = "", renamedTitles = {}, onArchiveProject, loadNavigationPage }: {
+  mobile = false, unreadOnly = false, sourceFilter = "all", searchQuery = "", renamedTitles = {}, onArchiveProject, loadNavigationPage, refreshVersion = 0 }: {
   state: WebProjectsState;
   gatewayUrl: string;
   chats: readonly RenameableConversation[];
@@ -43,6 +43,7 @@ export function WebProjectsNav({ state, gatewayUrl, chats, listedChatIds, active
   searchQuery?: string;
   onArchiveProject?: (projectId: string, projectSlug: string, projectName: string) => Promise<boolean>;
   loadNavigationPage?: (input: CanonicalChatNavigationPageQuery) => Promise<CanonicalChatNavigationPageResponse>;
+  refreshVersion?: number;
 }) {
   const { projects, loading, error, retry } = state;
   const [groupExpanded, setGroupExpanded] = useState(true);
@@ -62,13 +63,13 @@ export function WebProjectsNav({ state, gatewayUrl, chats, listedChatIds, active
       {projects.map(project => <WebProjectGroup key={`${state.identity}/${project.id}/${unreadOnly}/${sourceFilter}`} project={project} gatewayUrl={gatewayUrl}
         chats={projectChats(chats, project)} listedChatIds={listedChatIds}
         activeChatId={activeChatId} activeChatTitle={activeChatTitle} renamedTitles={renamedTitles} onSelectChat={onSelectChat} onFocusProject={onFocusProject}
-        renderChat={renderChat} mobile={mobile} unreadOnly={unreadOnly} sourceFilter={sourceFilter} searchQuery={searchQuery} onArchiveProject={onArchiveProject} loadNavigationPage={loadNavigationPage}/>)}
+        renderChat={renderChat} mobile={mobile} unreadOnly={unreadOnly} sourceFilter={sourceFilter} searchQuery={searchQuery} onArchiveProject={onArchiveProject} loadNavigationPage={loadNavigationPage} refreshVersion={refreshVersion}/>)}
     </ChatRailSection>
   </nav>;
 }
 
 function WebProjectGroup({ project, gatewayUrl, chats, listedChatIds, activeChatId, activeChatTitle, renamedTitles, onSelectChat, onFocusProject, renderChat,
-  mobile, unreadOnly, sourceFilter, searchQuery, onArchiveProject, loadNavigationPage }: {
+  mobile, unreadOnly, sourceFilter, searchQuery, onArchiveProject, loadNavigationPage, refreshVersion }: {
   project: WebProject;
   gatewayUrl: string;
   chats: readonly RenameableConversation[];
@@ -85,8 +86,9 @@ function WebProjectGroup({ project, gatewayUrl, chats, listedChatIds, activeChat
   searchQuery: string;
   onArchiveProject?: (projectId: string, projectSlug: string, projectName: string) => Promise<boolean>;
   loadNavigationPage?: (input: CanonicalChatNavigationPageQuery) => Promise<CanonicalChatNavigationPageResponse>;
+  refreshVersion: number;
 }) {
-  const { expanded, toggleExpanded, fetched, loading, error, retry, loadMore, hasMore, capped } = usePagedProjectChats(project, gatewayUrl, unreadOnly, false, loadNavigationPage);
+  const { expanded, toggleExpanded, fetched, loading, error, retry, loadMore, hasMore, capped } = usePagedProjectChats(project, gatewayUrl, unreadOnly, false, loadNavigationPage, refreshVersion);
   const [limit, setLimit] = useState(PROJECT_CHAT_PAGE);
   const nowMs = useMinuteClock(expanded);
   const search = searchQuery.trim().toLowerCase();
