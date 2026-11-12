@@ -6,7 +6,7 @@ import type { GatewayFetcher } from "../../packages/kernel/src/tools/integration
 afterEach(() => vi.unstubAllEnvs());
 async function connect(fetcher: GatewayFetcher) { const server = createIntegrationsMcpServer({ fetcher, toolSurface: "custom-mcp-discovery-drive" }); const client = new Client({ name: "drive-fixture", version: "1" }); const [a, b] = InMemoryTransport.createLinkedPair(); await Promise.all([server.connect(b), client.connect(a)]); return { client, close: async () => { await client.close(); await server.close(); } }; }
 it("advertises read-only company tools alongside the exact existing discovery surface", async () => { const f = await connect(vi.fn()); try {
-    expect((await f.client.listTools()).tools.map(tool => tool.name)).toEqual(["search_company_drive", "read_company_drive_file", "list_custom_mcp_servers", "describe_custom_mcp_server"]);
+    expect((await f.client.listTools()).tools.map(tool => tool.name)).toEqual(["search_company_drive", "read_company_drive_file", "list_custom_mcp_servers", "describe_custom_mcp_server", "list_services", "search_tools", "describe_tool"]);
 }
 finally {
     await f.close();
