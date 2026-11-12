@@ -53,6 +53,13 @@ export function coreRepoSkillNamespace(slug: string): string {
 }
 
 /**
+ * Longest installed skill name, `org-<slug>-<name>` combined. The installer
+ * and `scripts/sync-matrix-agent-skills.sh` (namespace mode) both enforce it,
+ * and report a skill over the limit instead of skipping it silently.
+ */
+export const CORE_REPO_MAX_SKILL_NAME_LENGTH = 100;
+
+/**
  * The repo-relative path of one archive entry, with the single top-level
  * directory GitHub adds stripped, or "" for that directory itself. Throws for
  * absolute paths, `..`, control characters, backslashes, or a second root.

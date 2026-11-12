@@ -149,9 +149,9 @@ describe("Matrix Core repo checkpoint", () => {
 
     expect(await install()).toEqual([{ orgId: ORG, status: "installed", commit: sha("a") }]);
     const linked = realpathSync(claudeSkill("org-acme-deploy"));
-    expect(linked).toBe(realpathSync(join(root, ORG, "releases", sha("a"), ".matrix-skills", "org-acme-deploy")));
+    expect(linked).toBe(realpathSync(join(root, ORG, "releases", `${sha("a")}-acme`, ".matrix-skills", "org-acme-deploy")));
     expect(readFileSync(join(linked, "SKILL.md"), "utf8")).toContain("name: org-acme-deploy");
-    expect(readlinkSync(join(root, ORG, "current"))).toBe(`releases/${sha("a")}`);
+    expect(readlinkSync(join(root, ORG, "current"))).toBe(`releases/${sha("a")}-acme`);
     expect(readFileSync(join(claudeSkill("deploy"), "SKILL.md"), "utf8")).toBe(skill("deploy"));
     expect(lstatSync(claudeSkill("org-acme-notes")).isSymbolicLink()).toBe(false);
     expect(await install()).toEqual([{ orgId: ORG, status: "current", commit: sha("a") }]);
@@ -174,15 +174,15 @@ describe("Matrix Core repo checkpoint", () => {
     // A well-formed substitute: only the pinned size + sha256 can tell it apart.
     objects.set(key, await tarball(work, head, { "skills/backdoor/SKILL.md": skill("backdoor") }));
     expect(await install()).toEqual([{ orgId: ORG, status: "failed" }]);
-    expect(readlinkSync(join(root, ORG, "current"))).toBe(`releases/${sha("a")}`);
+    expect(readlinkSync(join(root, ORG, "current"))).toBe(`releases/${sha("a")}-acme`);
     expect(realpathSync(claudeSkill("org-acme-deploy"))).toBe(linked);
     expect(() => lstatSync(claudeSkill("org-acme-review"))).toThrow();
     expect(() => lstatSync(claudeSkill("org-acme-backdoor"))).toThrow();
 
     objects.set(key, good);
     expect(await install()).toEqual([{ orgId: ORG, status: "installed", commit: sha("c") }]);
-    expect(readlinkSync(join(root, ORG, "previous"))).toBe(`releases/${sha("a")}`);
-    expect(realpathSync(claudeSkill("org-acme-review"))).toContain(join(ORG, "releases", sha("c")));
+    expect(readlinkSync(join(root, ORG, "previous"))).toBe(`releases/${sha("a")}-acme`);
+    expect(realpathSync(claudeSkill("org-acme-review"))).toContain(join(ORG, "releases", `${sha("c")}-acme`));
 
     // Membership ends: org skills and files go, personal skills stay.
     await organizations.applyMembership({ organizationId: ORG, membershipId: `m_${MEMBER}`, actorId: MEMBER, role: "org:member",

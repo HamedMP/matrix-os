@@ -2,9 +2,9 @@
  * Matrix Core repo installer (spec 2691, layer 6). Installs each org's pinned
  * commit beside the user's own files, never inside `$MATRIX_HOME`:
  *
- *   <root>/<orgId>/releases/<commit>/   the repo plus `.matrix-skills/`
- *   <root>/<orgId>/current  -> releases/<commit>
- *   <root>/<orgId>/previous -> releases/<older commit>   (rollback)
+ *   <root>/<orgId>/releases/<commit>-<slug>/   the repo plus `.matrix-skills/`
+ *   <root>/<orgId>/current  -> releases/<commit>-<slug>
+ *   <root>/<orgId>/previous -> releases/<older commit>-<slug>   (rollback)
  *
  * A release is verified (size, sha256, archive rules) and fully built in a
  * staging directory, renamed into place, and only then made current with an
@@ -18,6 +18,7 @@ import { lstat, mkdir, mkdtemp, readFile, readdir, readlink, rename, rm, symlink
 import { join } from "node:path";
 import { promisify } from "node:util";
 import {
+  CORE_REPO_MAX_SKILL_NAME_LENGTH,
   CORE_REPO_MAX_TARBALL_BYTES,
   CoreRepoPinSchema,
   CoreRepoPinsResponseSchema,
@@ -50,7 +51,14 @@ export interface CoreRepoTransport {
 
 export interface SkillSyncInput { source: string; namespace: string; ownedRoot: string }
 export type CoreRepoInstallStatus = "installed" | "current" | "removed" | "failed";
-export interface CoreRepoInstallResult { orgId: string; status: CoreRepoInstallStatus; commit?: string }
+export interface CoreRepoInstallResult {
+  orgId: string;
+  status: CoreRepoInstallStatus;
+  commit?: string;
+  /** Skill directories that were not installed (invalid, duplicate, too long, or over the cap). */
+  rejectedSkills?: string[];
+}
+const MAX_REPORTED_REJECTIONS = 50;
 
 export class CoreRepoInstallError extends Error {
   constructor(readonly code: "locked" | "pins_unavailable") {
@@ -150,17 +158,29 @@ function namespacedSkill(text: string, name: string): string {
   return `---\nname: ${name}\n---\n\n${text}`;
 }
 
-/** `skills/<name>` and `plugins/<group>/skills/<name>` become `.matrix-skills/org-<slug>-<name>`. */
-async function buildSkills(release: string, files: readonly string[], namespace: string): Promise<void> {
+/**
+ * `skills/<name>` and `plugins/<group>/skills/<name>` become
+ * `.matrix-skills/org-<slug>-<name>`. Returns the skill directories it did not
+ * install, so the caller can report them.
+ */
+async function buildSkills(release: string, files: readonly string[], namespace: string): Promise<string[]> {
   const out = join(release, SKILLS_DIR);
   await mkdir(out);
   const seen = new Set<string>();
+  const rejected: string[] = [];
+  const reject = (raw: string) => {
+    if (rejected.length < MAX_REPORTED_REJECTIONS) rejected.push(raw.toLowerCase().replace(/[^a-z0-9._-]/g, "_").slice(0, 64));
+  };
   for (const path of files) {
     const match = /^(?:skills|plugins\/[^/]+\/skills)\/([^/]+)\/SKILL\.md$/.exec(path);
-    const base = match?.[1]?.toLowerCase();
-    if (!base || !SKILL_DIR.test(base) || seen.has(base) || seen.size >= MAX_SKILLS) continue;
-    seen.add(base);
+    if (!match) continue;
+    const base = match[1]!.toLowerCase();
     const name = `${namespace}${base}`;
+    if (!SKILL_DIR.test(base) || name.length > CORE_REPO_MAX_SKILL_NAME_LENGTH || seen.has(base) || seen.size >= MAX_SKILLS) {
+      reject(match[1]!);
+      continue;
+    }
+    seen.add(base);
     const sourceDir = join(release, path.slice(0, -"/SKILL.md".length));
     const target = join(out, name);
     await mkdir(target);
@@ -173,6 +193,7 @@ async function buildSkills(release: string, files: readonly string[], namespace:
       await writeFile(join(target, relative), relative === "SKILL.md" ? namespacedSkill(content.toString("utf8"), name) : content, { flag: "wx" });
     }
   }
+  return rejected;
 }
 
 async function sweepStaging(orgRoot: string, now: number): Promise<void> {
@@ -193,22 +214,39 @@ async function pruneReleases(orgRoot: string, keep: readonly string[]): Promise<
   }
 }
 
+/** Unlinks every skill in `namespace` that points into this org's root. */
+async function unlinkNamespace(options: InstallOptions, orgRoot: string, namespace: string): Promise<void> {
+  const empty = await mkdtemp(join(orgRoot, STAGING_PREFIX));
+  try {
+    await options.runSkillSync({ source: empty, namespace, ownedRoot: orgRoot });
+  } finally {
+    await rm(empty, { recursive: true, force: true });
+  }
+}
+
+function warnStep(step: string, orgId: string, error: unknown): void {
+  console.warn(`[core-repo] ${step} failed`, { orgId, error: error instanceof Error ? error.name : "UnknownError" });
+}
+
 async function installPin(options: InstallOptions, pin: CoreRepoPin): Promise<CoreRepoInstallResult> {
   const orgRoot = join(options.root, pin.orgId);
   await mkdir(join(orgRoot, "releases"), { recursive: true });
   await sweepStaging(orgRoot, Date.now());
   const before = await currentMeta(orgRoot);
-  if (before?.commit === pin.commit) return { orgId: pin.orgId, status: "current", commit: pin.commit };
+  // The slug is part of what is installed: a renamed org must move namespaces even at the same commit.
+  if (before?.commit === pin.commit && before.slug === pin.slug) return { orgId: pin.orgId, status: "current", commit: pin.commit };
   const namespace = coreRepoSkillNamespace(pin.slug);
+  const previousNamespace = before && before.slug !== pin.slug ? coreRepoSkillNamespace(before.slug) : undefined;
   const staging = await mkdtemp(join(orgRoot, STAGING_PREFIX));
-  const releaseName = `releases/${pin.commit}`;
+  const releaseName = `releases/${pin.commit}-${pin.slug}`;
+  let rejectedSkills: string[];
   try {
     const bytes = await options.transport.downloadTarball(pin);
     if (bytes.byteLength !== pin.bytes || sha256Hex(bytes) !== pin.sha256) throw new Error("CoreRepoChecksumMismatch");
     const release = join(staging, "release");
     await mkdir(release);
     const files = await extractCoreRepoArchive(bytes, release);
-    await buildSkills(release, files, namespace);
+    rejectedSkills = await buildSkills(release, files, namespace);
     await writeFile(join(release, META_FILE), JSON.stringify({ orgId: pin.orgId, slug: pin.slug, commit: pin.commit, sha256: pin.sha256 }), { flag: "wx" });
     await rm(join(orgRoot, releaseName), { recursive: true, force: true });
     await rename(release, join(orgRoot, releaseName));
@@ -220,22 +258,25 @@ async function installPin(options: InstallOptions, pin: CoreRepoPin): Promise<Co
   }
   await pointAt(orgRoot, "current", releaseName);
   try {
+    if (previousNamespace) await unlinkNamespace(options, orgRoot, previousNamespace);
     await options.runSkillSync({ source: join(orgRoot, "current", SKILLS_DIR), namespace, ownedRoot: orgRoot });
   } catch (error: unknown) {
-    console.warn("[core-repo] skill sync failed; rolling back", { orgId: pin.orgId, error: error instanceof Error ? error.name : "UnknownError" });
+    warnStep("skill sync; rolling back", pin.orgId, error);
     if (before) {
       await pointAt(orgRoot, "current", before.target);
-      await options.runSkillSync({ source: join(orgRoot, "current", SKILLS_DIR), namespace, ownedRoot: orgRoot }).catch((retry: unknown) => {
-        console.warn("[core-repo] rollback skill sync failed", retry instanceof Error ? retry.name : "UnknownError");
-      });
+      if (previousNamespace) await unlinkNamespace(options, orgRoot, namespace).catch((retry: unknown) => warnStep("new namespace unlink", pin.orgId, retry));
+      await options.runSkillSync({ source: join(orgRoot, "current", SKILLS_DIR), namespace: coreRepoSkillNamespace(before.slug), ownedRoot: orgRoot })
+        .catch((retry: unknown) => warnStep("rollback skill sync", pin.orgId, retry));
     } else {
+      // No earlier release to return to: unlink whatever this attempt linked before dropping `current`.
+      await unlinkNamespace(options, orgRoot, namespace).catch((retry: unknown) => warnStep("failed-install unlink", pin.orgId, retry));
       await rm(join(orgRoot, "current"), { force: true });
     }
     return { orgId: pin.orgId, status: "failed" };
   }
   if (before) await pointAt(orgRoot, "previous", before.target);
   await pruneReleases(orgRoot, before ? [releaseName, before.target] : [releaseName]);
-  return { orgId: pin.orgId, status: "installed", commit: pin.commit };
+  return { orgId: pin.orgId, status: "installed", commit: pin.commit, ...(rejectedSkills.length > 0 ? { rejectedSkills } : {}) };
 }
 
 /** Membership ended or the org stopped publishing: unlink its skills, then remove its files. */
@@ -243,14 +284,11 @@ async function removeOrg(options: InstallOptions, orgId: string): Promise<CoreRe
   const orgRoot = join(options.root, orgId);
   const meta = await currentMeta(orgRoot);
   if (meta) {
-    const empty = await mkdtemp(join(orgRoot, STAGING_PREFIX));
     try {
-      await options.runSkillSync({ source: empty, namespace: coreRepoSkillNamespace(meta.slug), ownedRoot: orgRoot });
+      await unlinkNamespace(options, orgRoot, coreRepoSkillNamespace(meta.slug));
     } catch (error: unknown) {
-      console.warn("[core-repo] skill removal failed; files kept", { orgId, error: error instanceof Error ? error.name : "UnknownError" });
+      warnStep("skill removal; files kept", orgId, error);
       return { orgId, status: "failed" };
-    } finally {
-      await rm(empty, { recursive: true, force: true });
     }
   }
   await rm(orgRoot, { recursive: true, force: true });

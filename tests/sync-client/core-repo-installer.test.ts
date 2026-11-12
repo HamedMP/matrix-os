@@ -4,7 +4,7 @@
  */
 import { createHash } from "node:crypto";
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readlinkSync, rmSync, statSync, utimesSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, readlinkSync, rmSync, statSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { gzipSync } from "node:zlib";
@@ -45,7 +45,7 @@ function rawTar(entries: RawEntry[]): Uint8Array {
 const skill = (name: string) => `---\nname: ${name}\n---\n# ${name}\n`;
 const good = (commit: string, skills: string[]) => rawTar([{ name: "root/", type: "5" },
   ...skills.map(name => ({ name: `root/skills/${name}/SKILL.md`, content: skill(name) }))]);
-const pinFor = (commit: string, bytes: Uint8Array) => ({ orgId: "org_acme1", slug: "acme", commit, bytes: bytes.byteLength,
+const pinFor = (commit: string, bytes: Uint8Array, slug = "acme") => ({ orgId: "org_acme1", slug, commit, bytes: bytes.byteLength,
   sha256: createHash("sha256").update(bytes).digest("hex") });
 
 describe("Matrix Core repo archive rules", () => {
@@ -90,7 +90,7 @@ describe("Matrix Core repo installer", () => {
     sync.mockRejectedValueOnce(new Error("script failed"));
     const results = await installCoreRepo({ root, transport: transportFor([pinFor(b, bytes.get(b)!)], bytes), runSkillSync: sync });
     expect(results).toEqual([{ orgId: "org_acme1", status: "failed" }]);
-    expect(readlinkSync(join(root, "org_acme1", "current"))).toBe(`releases/${a}`);
+    expect(readlinkSync(join(root, "org_acme1", "current"))).toBe(`releases/${a}-acme`);
     expect(sync).toHaveBeenLastCalledWith(expect.objectContaining({ namespace: "org-acme-", source: join(root, "org_acme1", "current", ".matrix-skills") }));
   });
 
@@ -115,6 +115,57 @@ describe("Matrix Core repo installer", () => {
     expect(await transport({ pins: [] }).listPins()).toEqual({ pins: [], membershipVerified: false });
     expect(await transport({ pins: [], membership: "verified" }).listPins()).toEqual({ pins: [], membershipVerified: true });
     await expect(transport({ error: "unavailable" }, 503).listPins()).rejects.toBeInstanceOf(CoreRepoInstallError);
+  });
+
+  type SyncCall = { source: string; namespace: string; emptySource: boolean };
+  const recordingSync = (fail: (call: SyncCall) => boolean = () => false) => {
+    const calls: SyncCall[] = [];
+    const run = vi.fn(async (input: { source: string; namespace: string }) => {
+      const call = { source: input.source, namespace: input.namespace, emptySource: readdirSync(input.source).length === 0 };
+      calls.push(call);
+      if (fail(call)) throw new Error("script failed");
+    });
+    return { calls, run };
+  };
+
+  // Fault: a failed first install leaves skills linked to a release that is no longer current.
+  it("unlinks the namespace after a failed first install", async () => {
+    const a = "a".repeat(40);
+    const bytes = new Map([[a, good(a, ["deploy"])]]);
+    const sync = recordingSync(call => !call.emptySource);
+    expect(await installCoreRepo({ root, transport: transportFor([pinFor(a, bytes.get(a)!)], bytes), runSkillSync: sync.run }))
+      .toEqual([{ orgId: "org_acme1", status: "failed" }]);
+    expect(sync.calls.map(call => [call.namespace, call.emptySource])).toEqual([["org-acme-", false], ["org-acme-", true]]);
+    expect(existsSync(join(root, "org_acme1", "current"))).toBe(false);
+  });
+
+  // Fault: an org slug change leaves the old `org-<old>-*` links behind.
+  it("moves skills to the new namespace when the org slug changes, even at the same commit", async () => {
+    const a = "a".repeat(40);
+    const bytes = new Map([[a, good(a, ["deploy"])]]);
+    const sync = recordingSync();
+    await installCoreRepo({ root, transport: transportFor([pinFor(a, bytes.get(a)!)], bytes), runSkillSync: sync.run });
+    sync.calls.length = 0;
+    expect(await installCoreRepo({ root, transport: transportFor([pinFor(a, bytes.get(a)!, "acme-co")], bytes), runSkillSync: sync.run }))
+      .toEqual([{ orgId: "org_acme1", status: "installed", commit: a }]);
+    expect(sync.calls.map(call => [call.namespace, call.emptySource])).toEqual([["org-acme-", true], ["org-acme-co-", false]]);
+    expect(readdirSync(join(root, "org_acme1", "current", ".matrix-skills"))).toEqual(["org-acme-co-deploy"]);
+    expect(await installCoreRepo({ root, transport: transportFor([pinFor(a, bytes.get(a)!, "acme-co")], bytes), runSkillSync: sync.run }))
+      .toEqual([{ orgId: "org_acme1", status: "current", commit: a }]);
+  });
+
+  // Fault: a skill whose combined name exceeds the sync script's limit silently disappears.
+  it("reports skills it cannot install instead of skipping them silently", async () => {
+    const a = "a".repeat(40);
+    const slug = "s".repeat(32);
+    const long = "x".repeat(64);
+    const bytes = new Map([[a, rawTar([{ name: "root/", type: "5" },
+      { name: `root/skills/${long}/SKILL.md`, content: skill(long) },
+      { name: "root/skills/Bad_Name/SKILL.md", content: skill("bad") },
+      { name: "root/skills/ok/SKILL.md", content: skill("ok") }])]]);
+    const [result] = await installCoreRepo({ root, transport: transportFor([pinFor(a, bytes.get(a)!, slug)], bytes), runSkillSync: async () => {} });
+    expect(result).toEqual({ orgId: "org_acme1", status: "installed", commit: a, rejectedSkills: [long, "bad_name"] });
+    expect(readdirSync(join(root, "org_acme1", "current", ".matrix-skills"))).toEqual([`org-${slug}-ok`]);
   });
 
   // Fault: two overlapping runs (timer + manual) interleave renames.

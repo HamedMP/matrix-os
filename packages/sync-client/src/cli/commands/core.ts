@@ -145,7 +145,10 @@ const syncCommand = defineCommand({
       if (json) console.log(formatCliSuccess({ results, ...(timer ? { timer } : {}) }));
       else {
         if (results.length === 0) console.log("No organization publishes a Matrix Core repo for you yet.");
-        for (const result of results) console.log(`${result.orgId}: ${result.status}${result.commit ? ` (${result.commit.slice(0, 12)})` : ""}`);
+        for (const result of results) {
+          console.log(`${result.orgId}: ${result.status}${result.commit ? ` (${result.commit.slice(0, 12)})` : ""}`);
+          if (result.rejectedSkills) console.log(`  skills not installed (invalid, duplicate, or name too long): ${result.rejectedSkills.join(", ")}`);
+        }
         if (timer) console.log(`Hourly sync installed: ${timer}`);
       }
       if (results.some(result => result.status === "failed")) process.exitCode = 1;
