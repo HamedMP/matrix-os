@@ -70,3 +70,20 @@ it("keeps a known no-effect pause refusal observable so Pi can take a fresh snap
   browser.execute.mockRejectedValueOnce(new SharedBrowserError("browser_changed", true));
   await expect(tools.dispatch(binding, request("browser_unknown"), new AbortController().signal)).rejects.toThrow();
 });
+it("returns actionable tab capacity guidance to Pi without asking the owner to resume", async () => {
+  const { tools, browser } = setup();
+  const { SharedBrowserError } = await import("../../../packages/gateway/src/shared-browser/broker.js");
+  await tools.open(binding, () => undefined);
+  browser.execute.mockRejectedValueOnce(new SharedBrowserError("tab_limit"));
+  Object.assign(browser, { status: () => ({ phase: "agent", revision: 3, run: { chatId: binding.chatId, runId: binding.runId, harness: "pi" }, needsObservation: true }) });
+  const result = await tools.dispatch(binding, BotToolRequestSchema.parse({
+    toolCallId: "browser_tab_limit", capability: "browser.action", args: { action: "tab_new" },
+  }), new AbortController().signal);
+  expect(result.ok).toBe(true);
+  if (result.ok) expect(JSON.parse(result.content[0]!.text)).toMatchObject({
+    success: false,
+    content: expect.stringMatching(/tab limit.*existing tab/i),
+    automation: { phase: "agent" },
+  });
+  expect(JSON.stringify(result)).not.toMatch(/resume/i);
+});

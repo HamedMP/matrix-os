@@ -1,6 +1,6 @@
 import { useWindowManager } from "@/hooks/useWindowManager";
 import { AppWindowResizeControls } from "../window/AppWindowResizeControls";
-import { useCallback, type CSSProperties, type PointerEvent } from "react";
+import { useCallback, useRef, type CSSProperties, type PointerEvent } from "react";
 import type { ChatState } from "@/hooks/useChatState";
 import type { AppWindow } from "@/hooks/useWindowManager";
 import type { DockConfig } from "@/stores/desktop-config";
@@ -15,6 +15,8 @@ import {
 } from "@/components/ui/card";
 import { ActivityMonitorApp } from "@/components/system-activity/ActivityMonitorApp";
 import { AppViewer } from "@/components/AppViewer";
+import { publishingAppSlugFromPath } from "@/components/app-viewer-helpers";
+import { AppSiteButton } from "@/components/app-sites/AppSiteButton";
 import { ChatApp } from "@/components/ChatApp";
 import { FileBrowser } from "@/components/file-browser/FileBrowser";
 import { PreviewWindow } from "@/components/preview-window/PreviewWindow";
@@ -101,6 +103,8 @@ export function DesktopWindow({
   const isHidden = win.minimized && !isMinimizing && !isFullscreen;
   const desktopParity = topInset > 0;
   const usesTerminalChrome = win.path.startsWith("__terminal__") && !desktopParity;
+  const publishingSlug = publishingAppSlugFromPath(win.path);
+  const windowRef = useRef<HTMLDivElement>(null);
 
   let dockTargetX = 0;
   let dockTargetY = 0;
@@ -149,7 +153,9 @@ export function DesktopWindow({
 
   return (
     <Card
+      ref={windowRef}
       data-window-id={win.id}
+      data-created-app-surface={publishingSlug ? "true" : undefined}
       className={isFullscreen
         ? "pointer-events-auto fixed inset-0 gap-0 rounded-none border-0 bg-background p-0 overflow-hidden"
         : cn(
@@ -182,11 +188,17 @@ export function DesktopWindow({
             onFullscreen={() => onToggleFullscreen(win.id)}
           />
         </div>
-        <div className="w-[78px] shrink-0" aria-hidden />
+        <div className={publishingSlug ? "w-[116px] shrink-0" : "w-[78px] shrink-0"} aria-hidden />
         <CardTitle className="flex-1 truncate text-center text-xs font-medium text-foreground">
           {win.title}
         </CardTitle>
-        <div className="w-[78px] shrink-0" aria-hidden />
+        <div className={publishingSlug ? "flex w-[116px] shrink-0 justify-end" : "w-[78px] shrink-0"}>
+          {publishingSlug && !isHidden && !isMinimizing ? (
+            <div onPointerDown={(event) => event.stopPropagation()} onDoubleClick={(event) => event.stopPropagation()}>
+              <AppSiteButton appSlug={publishingSlug} portalContainerRef={windowRef} />
+            </div>
+          ) : null}
+        </div>
       </CardHeader>
 
       <CardContent className="relative flex-1 p-0 min-h-0">
