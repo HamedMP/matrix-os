@@ -103,6 +103,7 @@ export interface OrganizationMcpSnapshot {
   servers: OrgMcpServerDefinition[];
   usage: OrgMcpUsageRow[];
   usageTruncated: boolean;
+  usageUpdatedAt: string;
   membersTruncated: boolean;
 }
 
@@ -126,7 +127,7 @@ export async function loadOrganizationMcpSnapshot(client: OrganizationMcpAdminCl
     cursor = page.nextCursor;
     pages += 1;
   }
-  return { members, servers: first.servers, usage: usage.rows, usageTruncated: usage.truncated, membersTruncated: Boolean(cursor) };
+  return { members, servers: first.servers, usage: usage.rows, usageTruncated: usage.truncated, usageUpdatedAt: usage.updatedAt, membersTruncated: Boolean(cursor) };
 }
 
 export function callsByConnectionHost(usage: readonly OrgMcpUsageRow[], actorId: string): Map<string, number> {

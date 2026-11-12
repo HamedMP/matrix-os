@@ -328,7 +328,7 @@ describe("Organization → Connections wiring (Web Desktop and Web Canvas Settin
   // Fault: the admin panel is not mounted, reads the wrong route, or members miss the visibility notice.
   it("loads the admin panel from the org MCP routes and shows members only the notice", async () => {
     const fetchMock = vi.fn(async (url: string) => new Response(JSON.stringify(url.includes("/usage?")
-      ? { rows: [], truncated: false }
+      ? { rows: [], truncated: false, updatedAt: "2026-11-12T09:30:00.000Z" }
       : { servers: [], members: [{ actorId: "user_ava", displayName: "Ava Chen", blockedServerDefIds: [], connections: [{
         connectionId: "11111111-1111-4111-8111-111111111111", name: "Linear", host: "mcp.linear.app", serverDefIds: ["mcp.linear.app", "linear"],
         status: "ready", enabled: true, connectedAt: "2026-11-01T00:00:00.000Z", lastUsedAt: null }] }] }),

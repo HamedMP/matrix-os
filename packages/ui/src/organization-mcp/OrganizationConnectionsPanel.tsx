@@ -163,6 +163,7 @@ function UsageCard({ snapshot }: { snapshot: OrganizationMcpSnapshot }) {
       {snapshot.usage.length > USAGE_PREVIEW_ROWS
         ? <Button className="mt-2" size="sm" variant="ghost" onClick={() => setShowAll(value => !value)}>{showAll ? "Show less" : `Show all ${snapshot.usage.length} rows`}</Button> : null}
       {snapshot.usageTruncated ? <p className="mt-1 text-xs" style={muted}>Only the most recent rows are shown.</p> : null}
+      <p className="mt-1 text-xs" style={muted}>{`Totals updated ${new Date(snapshot.usageUpdatedAt).toLocaleString()}`}</p>
     </div>
   );
 }

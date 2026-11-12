@@ -17,7 +17,7 @@ const page = (overrides: Record<string, unknown> = {}) => ({
   servers: [{ serverDefId: "linear", mode: "recommend", defaultToolPolicy: "allow", toolOverrides: {}, updatedAt: "2026-11-01T00:00:00.000Z" }],
   ...overrides,
 });
-const usage = { truncated: false, rows: [
+const usage = { truncated: false, updatedAt: "2026-11-12T09:30:00.000Z", rows: [
   { day: today, actorId: "user_mo", serverKey: "mcp.linear.app", toolName: "list_issues", calls: 3, failures: 1 },
   { day: today, actorId: "user_mo", serverKey: "mcp.linear.app", toolName: "get_issue", calls: 2, failures: 0 },
 ] };
@@ -49,6 +49,7 @@ describe("Organization → Connections panel", () => {
     expect(list.textContent).toContain("Recommended");
     expect(screen.queryByText("Ida Idle")).toBeNull();
     expect(screen.getByText("3 (1 failed)")).toBeTruthy();
+    expect(screen.getByText(/^Totals updated /).textContent).toBe(`Totals updated ${new Date("2026-11-12T09:30:00.000Z").toLocaleString()}`);
     const { from, to } = usageWindow(new Date());
     expect(calls).toContainEqual(["GET", `/api/orgs/org_acme1/mcp/usage?from=${from}&to=${to}`]);
   });
@@ -115,7 +116,7 @@ describe("Organization → Connections panel", () => {
   });
 
   it("shows an onboarding empty state when no member has connected a server", async () => {
-    const { withClient } = fakeApi({ connections: page({ members: [], servers: [] }), usage: { truncated: false, rows: [] } });
+    const { withClient } = fakeApi({ connections: page({ members: [], servers: [] }), usage: { truncated: false, updatedAt: "2026-11-12T09:30:00.000Z", rows: [] } });
     render(<OrganizationConnectionsPanel organizationName="Acme" withClient={withClient} />);
     expect((await screen.findByText("No member connections yet"))).toBeTruthy();
     expect(screen.getByRole("button", { name: "Refresh" })).toBeTruthy();
