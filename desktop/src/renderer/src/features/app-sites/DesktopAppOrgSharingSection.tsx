@@ -17,9 +17,10 @@ function readinessLabel(sharing: Sharing): string {
   if (sharing.state === "loading" || sharing.state === "checking") return "Checking collaboration…";
   if (sharing.state === "ready") return "Ready to share";
   if (sharing.state === "stale") return "App changed; check collaboration again";
-  if (sharing.state === "blocked") {
+  if (sharing.state === "blocked" || sharing.state === "failed") {
     return sharing.readiness?.checks.find((check) => check.status !== "passed" && check.action)?.action
-      ?? "Collaboration is blocked for this app";
+      ?? sharing.safeMessage
+      ?? (sharing.state === "failed" ? "Collaboration check failed" : "Collaboration is blocked for this app");
   }
   return sharing.safeMessage ?? "Collaboration has not been checked";
 }
@@ -100,7 +101,12 @@ export function DesktopAppOrgSharingSection({ appId, api, buildEpoch }: {
     </p>
     <OrganizationShareStatus {...{ active, sharing, organizationId, organizationStatus, listing }} />
     <OrganizationShareActions {...{ active, sharing, organizationId, sharingBusy, checking }}
-      onCheck={() => { if (organizationId) { setNotice(null); void sharing.recheck({ organizationId }); } }}
+      onCheck={() => {
+        if (!organizationId) return;
+        setNotice(null);
+        if (!sharing.shareKnown) void sharing.refreshShare();
+        void sharing.recheck({ organizationId });
+      }}
       onUpdate={(action) => { void updateShare(action); }} />
     {sharing.actionMessage ? <p role="alert">{sharing.actionMessage}</p> : null}
     {notice ? <p role="status">{notice}</p> : null}

@@ -182,6 +182,65 @@ describe("EmbedHost", () => {
     expect(gateway.post).toHaveBeenCalledWith("/api/collaboration/apps/notes/readiness/check", expect.objectContaining({ organizationId: "org_matrix" }));
   });
 
+  it("retries a failed initial share read when checking collaboration", async () => {
+    const build = {
+      appId: "notes", catalogId: "30000000-0000-4000-8000-000000000001",
+      registrationIncarnation: "a".repeat(64), manifestVersion: "1.0.0", buildId: "b".repeat(64),
+      manifestDigest: "c".repeat(64), schemaDigest: "d".repeat(64), assetDigest: "e".repeat(64),
+      bridgeContractVersion: "matrix-app-bridge-v1", runtimeAbi: "matrix-runtime-v1",
+    };
+    const readiness = {
+      readinessId: "40000000-0000-4000-8000-000000000001", build, status: "ready", revision: "2",
+      checks: [{ code: "cleanup", status: "passed" }], verifiedAt: "2026-11-11T18:00:00.000Z",
+    };
+    let shareReads = 0;
+    const gateway = {
+      get: vi.fn(async (path: string) => {
+        if (path.endsWith("/share")) {
+          if (++shareReads === 1) throw new Error("database password=private");
+          return null;
+        }
+        if (path.endsWith("/registration")) return { registrationIncarnation: build.registrationIncarnation };
+        return readiness;
+      }),
+      post: vi.fn(async () => readiness),
+      delete: vi.fn(),
+    };
+    useConnection.setState({ organizationId: "org_matrix", organizationStatus: "member",
+      api: { forRuntime: () => gateway } as unknown as NonNullable<ReturnType<typeof useConnection.getState>["api"]> });
+    render(<EmbedHostWithChrome kind="app" slug="notes" active />);
+    fireEvent.click(screen.getByRole("button", { name: "Publish app" }));
+    expect(await screen.findByText("App sharing is unavailable. Try again.")).toBeTruthy();
+    expect((screen.getByRole("button", { name: "Share with your org" }) as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.click(screen.getByRole("button", { name: "Check collaboration" }));
+    await waitFor(() => expect(shareReads).toBe(2));
+    await waitFor(() => expect((screen.getByRole("button", { name: "Share with your org" }) as HTMLButtonElement).disabled).toBe(false));
+    expect(screen.queryByText(/database password/)).toBeNull();
+  });
+
+  it("shows the corrective action from a failed readiness result", async () => {
+    const build = {
+      appId: "notes", catalogId: "30000000-0000-4000-8000-000000000001",
+      registrationIncarnation: "a".repeat(64), manifestVersion: "1.0.0", buildId: "b".repeat(64),
+      manifestDigest: "c".repeat(64), schemaDigest: "d".repeat(64), assetDigest: "e".repeat(64),
+      bridgeContractVersion: "matrix-app-bridge-v1", runtimeAbi: "matrix-runtime-v1",
+    };
+    const gateway = {
+      get: vi.fn(async (path: string) => path.endsWith("/readiness") ? {
+        readinessId: "40000000-0000-4000-8000-000000000001", build,
+        status: "failed", revision: "2", checks: [{ code: "provider_safety", status: "failed", action: "Review the provider policy." }],
+      } : null),
+      post: vi.fn(),
+      delete: vi.fn(),
+    };
+    useConnection.setState({ organizationId: "org_matrix", organizationStatus: "member",
+      api: { forRuntime: () => gateway } as unknown as NonNullable<ReturnType<typeof useConnection.getState>["api"]> });
+    render(<EmbedHostWithChrome kind="app" slug="notes" active />);
+    fireEvent.click(screen.getByRole("button", { name: "Publish app" }));
+    expect(await screen.findByText("Review the provider policy.")).toBeTruthy();
+    expect((screen.getByRole("button", { name: "Share with your org" }) as HTMLButtonElement).disabled).toBe(true);
+  });
+
   it("closes a retained hidden app's publishing portal and releases only its own renderer overlay", async () => {
     useConnection.setState({ api: { forRuntime: () => ({ get: vi.fn(async () => null) }) } as unknown as NonNullable<ReturnType<typeof useConnection.getState>["api"]> });
     useUi.getState().acquireRendererOverlay(); // A separate surface owns this lease.
