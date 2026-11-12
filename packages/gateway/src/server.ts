@@ -1123,6 +1123,7 @@ export async function createGateway(config: GatewayConfig) {
   const { channelManager, pushAdapter, codingAgentAttentionNotifications } = initializeGatewayChannels({
     homePath, configPath, dispatcher, conversations, codingAgentThreadStore,
     codingAgentNotificationPreferenceStore, finalizeWithSummary, logBestEffortFailure, channelStt: speechRuntime.channelStt,
+    pushTokens: ownerDatabaseServices?.pushTokens ?? null,
   });
 
   // Cron service -- scheduled tasks from ~/system/cron.json
@@ -1962,6 +1963,7 @@ export async function createGateway(config: GatewayConfig) {
       await codexEventBridge?.shutdown();
       codingAgentThreadStream?.shutdown();
       codingAgentAttentionNotifications?.dispose();
+      pushAdapter.dispose();
       codingAgentSessionStopReconciler.dispose();
       drainReconnectableAbortEntries(reconnectableAbortControllers);
       if (canvasCleanupTimer) clearInterval(canvasCleanupTimer);

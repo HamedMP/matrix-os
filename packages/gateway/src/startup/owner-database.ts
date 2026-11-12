@@ -32,6 +32,8 @@ import { ChatRepository } from "../chat/repository.js";
 import { createDiscussionOnlyChatExecutionGuard } from "../collaboration/chat-scope.js";
 import type { GatewayCollaborationConfig, GatewayCollaborationConfigurationFailure, GatewayCollaborationRuntime } from "../collaboration/wiring.js";
 import { MessagingKyselyRepository } from "../messages/repository.js";
+import { createPushTokenStore, type PushTokenStore } from "../notifications/push-tokens.js";
+import { bootstrapNotificationDatabase, type NotificationDatabase } from "../notifications/schema.js";
 import { registerNativeAppStorage } from "../native-app-storage.js";
 import { OsViewStateRepository } from "../os-view-state/repository.js";
 import type { createProjectManager } from "../project-manager.js";
@@ -86,6 +88,7 @@ export interface OwnerDatabaseServices extends OwnerDatabaseFallbackServices {
   chatCollaborationGuard: ReturnType<typeof createDiscussionOnlyChatExecutionGuard> | null;
   collaboration: GatewayCollaborationRuntime | null;
   messagingRepository: MessagingKyselyRepository | null;
+  pushTokens: PushTokenStore | null;
 }
 
 export interface InitializeOwnerDatabaseOptions {
@@ -120,6 +123,7 @@ export async function initializeOwnerDatabaseServices(
     canvasService: null, canvasSubscriptionHub: null, canvasCleanupTimer: null,
     chatRepository: null, chatEventStream: null, chatExecutionRoots: null,
     chatCollaborationGuard: null, collaboration: null, messagingRepository: null,
+    pushTokens: null,
   };
   let failClosedReason = options.initialFailureReason;
   const result = await bootOwnerDatabaseWithFallback({
@@ -192,6 +196,8 @@ export async function initializeOwnerDatabaseServices(
       const messagingRepository = new MessagingKyselyRepository(kysely as Kysely<any>);
       services.messagingRepository = messagingRepository;
       await messagingRepository.bootstrap();
+      await bootstrapNotificationDatabase(kysely as Kysely<NotificationDatabase>);
+      services.pushTokens = createPushTokenStore(kysely as Kysely<NotificationDatabase>);
       services.canvasSubscriptionHub = new CanvasSubscriptionHub({
         authorize: async (subscriber) => Boolean(await canvasRepository.get(
           { ownerScope: "personal", ownerId: subscriber.userId }, subscriber.canvasId,

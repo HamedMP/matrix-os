@@ -36,7 +36,7 @@ async function shutdownFixture(appAiRuntime: { close(): Promise<void> }) {
     agentRuntimeServices: { controller: service("controller") }, aiProviderService: service("providers"),
     fundedAdmission: service("funded admission"), fundedCredentialProvider: service("funded credentials"), jevRuntime: null,
     codingAgentTurnLifecycle: service("turns"), codexEventBridge: null, codingAgentThreadStream: null,
-    codingAgentAttentionNotifications: null, codingAgentSessionStopReconciler: service("reconciler"),
+    codingAgentAttentionNotifications: null, pushAdapter: service("push"), codingAgentSessionStopReconciler: service("reconciler"),
     drainReconnectableAbortEntries: vi.fn(), reconnectableAbortControllers: new Map(), canvasCleanupTimer: null, canvasSubscriptionHub: null,
     systemActivityCandidates: new Set(), channelManager: service("channels"), customMcp: service("custom MCP"),
     processManager: service("processes"), forwardTunnelHub: service("tunnels"), watcher: service("watcher"),
@@ -71,6 +71,9 @@ it("continues the actual gateway shutdown after app AI cleanup rejects", async (
     "app database.destroy", "platform database.destroy", "telemetry.shutdown", "browser lab.close", "shared browser.close", "browser approvals.close", "HTTP.close",
   ]));
   expect(shutdown.calls.indexOf("browser approvals.close")).toBeLessThan(shutdown.calls.indexOf("platform database.destroy"));
+  // The hourly push token sweep stops before the owner database closes.
+  expect(shutdown.calls.indexOf("push.dispose")).toBeGreaterThan(-1);
+  expect(shutdown.calls.indexOf("push.dispose")).toBeLessThan(shutdown.calls.indexOf("app database.destroy"));
   expect(shutdown.calls.at(-1)).toBe("HTTP.close");
   expect(shutdown.calls.slice(0, 2)).toEqual(["managed feature restart.close", "GitHub developer setup.close"]);
 });
