@@ -382,6 +382,25 @@ describe("Work Files and Terminal inspector", () => {
     await waitFor(() => expect(screen.queryByRole("tab", { name: "terminal_first" })).toBeNull());
   });
 
+  it("asks before stopping a restored terminal while session discovery is pending", () => {
+    useConnection.setState({ userId: "user_test" });
+    useCodingAgentWorkspace.setState({ status: "loading", summary: null });
+    const key = chatInspectorLayoutKey("user_test", "primary", "chat_restored");
+    useChatInspectorLayout.getState().update(key, {
+      selectedTabId: `terminal:${refKey("terminal_first")}`,
+      openTabIds: ["files", `terminal:${refKey("terminal_first")}`],
+    });
+    render(<WorkFilesInspector detail={detail("chat_restored", "terminal_first")} projects={[]} active />);
+
+    fireEvent.click(screen.getByRole("button", { name: `Close ${refKey("terminal_first")} tab` }));
+
+    expect(screen.getByText("Stop this terminal?")).toBeTruthy();
+    expect(useConnection.getState().api?.delete).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(screen.getByRole("tab", { name: refKey("terminal_first") })).toBeTruthy();
+    expect(useConnection.getState().api?.delete).not.toHaveBeenCalled();
+  });
+
   it("shows the file list alone until a preview opens and hides it for Terminal", async () => {
     render(<WorkFilesInspector detail={detail("chat_first", "terminal_first")} projects={[]} active />);
 
