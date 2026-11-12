@@ -244,6 +244,7 @@ describe('Preview VPS provisioning workflow', () => {
         ref: '${{ needs.execution_origin.outputs.trusted_ref }}',
         path: '.trusted-preview-workflow',
         'sparse-checkout': 'scripts/read-preview-runtime.sh',
+        'sparse-checkout-cone-mode': false,
         'persist-credentials': false,
       },
     });
