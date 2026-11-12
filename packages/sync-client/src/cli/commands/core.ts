@@ -9,7 +9,7 @@
  * systemd user timer (Linux) or launchd agent (macOS) that runs the same sync.
  */
 import { execFile } from "node:child_process";
-import { access, mkdir, readFile, writeFile } from "node:fs/promises";
+import { access, mkdir, open, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -81,9 +81,21 @@ function machineCredentialUnavailable(): Error {
 export async function loadCoreRepoMachineCredential(path: string): Promise<{ handle: string; token: string; platformUrl: string }> {
   let text: string;
   try {
-    const bytes = await readFile(path);
-    if (bytes.byteLength > MACHINE_ENV_MAX_BYTES) throw machineCredentialUnavailable();
-    text = bytes.toString("utf8");
+    // Read at most the cap plus one byte so an oversized file is never buffered.
+    const handle = await open(path, "r");
+    try {
+      const buffer = Buffer.alloc(MACHINE_ENV_MAX_BYTES + 1);
+      let length = 0;
+      while (length < buffer.length) {
+        const { bytesRead } = await handle.read(buffer, length, buffer.length - length, length);
+        if (bytesRead === 0) break;
+        length += bytesRead;
+      }
+      if (length > MACHINE_ENV_MAX_BYTES) throw machineCredentialUnavailable();
+      text = buffer.subarray(0, length).toString("utf8");
+    } finally {
+      await handle.close();
+    }
   } catch (error: unknown) {
     const code = (error as NodeJS.ErrnoException).code;
     if (code === "ENOENT" || code === "EACCES" || code === "machine_credential_unavailable") throw machineCredentialUnavailable();

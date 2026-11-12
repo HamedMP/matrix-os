@@ -251,6 +251,11 @@ describe("Matrix Core repo installer", () => {
     writeFileSync(hostEnv, "MATRIX_HANDLE=alice\n");
     await expect(loadCoreRepoMachineCredential(hostEnv)).rejects.toMatchObject({ code: "machine_credential_unavailable" });
     await expect(loadCoreRepoMachineCredential(join(root, "missing.env"))).rejects.toMatchObject({ code: "machine_credential_unavailable" });
+    // Fault: an oversized host env file is buffered whole before the cap is checked.
+    writeFileSync(hostEnv, `MATRIX_HANDLE=alice\nUPGRADE_TOKEN=${secret}\nPLATFORM_INTERNAL_URL=https://platform.internal\n# ${"x".repeat(70 * 1024)}\n`);
+    await expect(loadCoreRepoMachineCredential(hostEnv)).rejects.toMatchObject({ code: "machine_credential_unavailable" });
+    writeFileSync(hostEnv, `MATRIX_HANDLE=alice\nUPGRADE_TOKEN=${secret}\nPLATFORM_INTERNAL_URL=https://platform.internal\n# ${"x".repeat(60 * 1024)}\n`);
+    expect(await loadCoreRepoMachineCredential(hostEnv)).toMatchObject({ handle: "alice" });
   });
 
   // Fault: the timer runs the TS source without the tsx loader, or without the profile and settings the manual run used.
