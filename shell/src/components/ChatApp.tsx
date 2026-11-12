@@ -388,21 +388,24 @@ function ChatAppContent({
   const [deletedChatIds, setDeletedChatIds] = useState<readonly string[]>([]);
   const [projectArchiveVersion, setProjectArchiveVersion] = useState(0);
   const [archiveUndo, setArchiveUndo] = useState<{ chats: Array<{ chatId: string; revision: number }>; label: string } | null>(null);
+  const [archiveUndoPending, setArchiveUndoPending] = useState(false);
+  const [archiveUndoError, setArchiveUndoError] = useState<typeof archiveUndo>(null);
   const [archivesOpen, setArchivesOpen] = useState(false);
   const [searchRefreshVersion, setSearchRefreshVersion] = useState(0);
   const [renamedTitles, setRenamedTitles] = useState<Record<string, string>>({});
   const rememberRenamedTitle = (chatId: string, title: string) => setRenamedTitles(current =>
     Object.fromEntries([...Object.entries(current).filter(([id]) => id !== chatId), [chatId, title]].slice(-100)));
   useEffect(() => {
-    if (!archiveUndo) return;
+    if (!archiveUndo || archiveUndoPending) return;
     const timer = window.setTimeout(() => setArchiveUndo(null), 6_000);
     return () => window.clearTimeout(timer);
-  }, [archiveUndo]);
+  }, [archiveUndo, archiveUndoPending]);
   const archiveChat = async (conv: ConversationMeta) => {
     if (!onArchiveConversation) return;
     const archived = await onArchiveConversation(conv.id);
     if (!archived) return;
     setDeletedChatIds(current => [...current.slice(-(MAX_REMEMBERED_DELETIONS - 1)), conv.id]);
+    setArchiveUndoError(null);
     setArchiveUndo({ chats: [archived], label: `Archived ${conv.title || conv.preview || "New chat"}` });
   };
   const archiveProject = async (projectId: string, projectSlug: string, projectName: string) => {
@@ -414,6 +417,7 @@ function ChatAppContent({
     if (archived.length) {
       setDeletedChatIds(current => [...current, ...archived.map(chat => chat.chatId)].slice(-MAX_REMEMBERED_DELETIONS));
       setProjectArchiveVersion(version => version + 1);
+      setArchiveUndoError(null);
       setArchiveUndo({ chats: archived,
         label: `Archived ${archived.length} chats in ${projectName}${skippedCount ? `; ${skippedCount} running skipped` : ""}` });
     }
@@ -648,15 +652,26 @@ function ChatAppContent({
       }
     }}>
       {archiveUndo && onRestoreConversation ? <div role="status" className="absolute bottom-5 left-1/2 z-50 flex -translate-x-1/2 items-center gap-3 rounded-lg border border-border bg-popover px-4 py-2 text-sm text-popover-foreground shadow-lg">
-        <span>{archiveUndo.label}</span>
-        <button type="button" className="font-semibold text-primary" onClick={() => {
-          const chats = archiveUndo.chats;
-          setArchiveUndo(null);
-          const restore = chats.length === 1 ? onRestoreConversation(chats[0]!.chatId, chats[0]!.revision)
-            : onRestoreArchivedChats?.(chats) ?? Promise.resolve(false);
-          void restore.then(restored => {
-            if (restored) { setDeletedChatIds(current => current.filter(id => !chats.some(chat => chat.chatId === id))); setProjectArchiveVersion(version => version + 1); }
-          });
+        <span>{archiveUndoError === archiveUndo ? "Chats could not be restored. Try again." : archiveUndo.label}</span>
+        <button type="button" className="font-semibold text-primary" disabled={archiveUndoPending} onClick={async () => {
+          if (archiveUndoPending) return;
+          const undo = archiveUndo;
+          const chats = undo.chats;
+          setArchiveUndoPending(true);
+          setArchiveUndoError(null);
+          try {
+            const restored = chats.length === 1 ? await onRestoreConversation(chats[0]!.chatId, chats[0]!.revision)
+              : await onRestoreArchivedChats?.(chats) ?? false;
+            if (!restored) { setArchiveUndoError(undo); return; }
+            setDeletedChatIds(current => current.filter(id => !chats.some(chat => chat.chatId === id)));
+            setProjectArchiveVersion(version => version + 1);
+            setArchiveUndo(current => current === undo ? null : current);
+          } catch (error: unknown) {
+            console.warn("[chat] Archive Undo failed:", error instanceof Error ? error.name : "UnknownError");
+            setArchiveUndoError(undo);
+          } finally {
+            setArchiveUndoPending(false);
+          }
         }}>Undo</button>
       </div> : null}
       {providerSetupError && (
