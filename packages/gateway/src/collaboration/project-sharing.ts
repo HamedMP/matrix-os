@@ -264,6 +264,10 @@ export function createProjectSharingService(options: {
         payloadHash: DigestSchema,
       }).strict().parse(input);
       return options.db.transaction().execute(async (trx) => {
+        const scope = await trx.selectFrom("collaboration_scopes").selectAll()
+          .where("id", "=", parsed.scopeId).where("kind", "=", "project")
+          .where("deleted_at", "is", null).forUpdate().executeTakeFirst();
+        if (!scope) throw new ProjectSharingError("not_found");
         const replay = await trx.selectFrom("collaboration_operations").selectAll()
           .where("scope_id", "=", parsed.scopeId)
           .where("actor_id", "=", parsed.actorId)
@@ -271,15 +275,12 @@ export function createProjectSharingService(options: {
           .where("operation_kind", "=", "project.unshare")
           .executeTakeFirst();
         if (replay) {
-          if (replay.payload_hash !== parsed.payloadHash || replay.status !== "completed" || replay.result_ref === null) {
+          if (replay.payload_hash !== parsed.payloadHash
+            || replay.status !== "completed" || replay.result_ref === null) {
             throw new ProjectSharingError("conflict");
           }
           return UnshareResultSchema.parse(parseJson(replay.result_ref));
         }
-        const scope = await trx.selectFrom("collaboration_scopes").selectAll()
-          .where("id", "=", parsed.scopeId).where("kind", "=", "project")
-          .where("deleted_at", "is", null).forUpdate().executeTakeFirst();
-        if (!scope) throw new ProjectSharingError("not_found");
         const owner = await trx.selectFrom("collaboration_members").select(["role", "status"])
           .where("scope_id", "=", scope.id).where("actor_id", "=", parsed.actorId)
           .forUpdate().executeTakeFirst();
