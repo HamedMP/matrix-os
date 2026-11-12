@@ -42,6 +42,10 @@ The live capture exposed two independent failures and a metadata omission:
   billing was inactive. Regular settings now honor their requested section.
   Signup/provisioning admission remains owned by BillingGate's explicit
   `lockedSection`; no entitlement or runtime-access check changes.
+  Explicit links also carry a navigation request id so clicking the pill while
+  another Settings section is open reaches Integrations. The navigation hook
+  owns that request state; Desktop only forwards the id to Settings, keeping
+  behavior out of its large composition entrypoint.
 - The preview has no Pipedream client/project configuration. Public discovery
   correctly returns `integrations_unavailable` (503), but the absent internal
   backend previously fell through to an unrelated auth guard and returned 401

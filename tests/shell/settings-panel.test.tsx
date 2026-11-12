@@ -136,6 +136,7 @@ describe("Settings panel", () => {
       return <>
         <ShellExternalMcpApprovalsPill openSettings={navigation.openSettings} />
         <Settings open={navigation.settingsOpen} defaultSection={navigation.settingsDefaultSection}
+          navigationRequestId={navigation.settingsNavigationRequestId}
           onOpenChange={navigation.setSettingsOpen} />
       </>;
     }
@@ -145,6 +146,10 @@ describe("Settings panel", () => {
       expect(await screen.findByText("Integration settings")).toBeTruthy();
       expect(screen.getByRole("button", { name: "Connect Apps" }).getAttribute("aria-current")).toBe("page");
       expect(screen.queryByText("Billing settings settings")).toBeNull();
+      fireEvent.click(screen.getByRole("button", { name: "Appearance", exact: true }));
+      expect(screen.getByText("Appearance settings")).toBeTruthy();
+      fireEvent.click(screen.getByRole("button", { name: "1 external MCP write waiting for approval" }));
+      expect(await screen.findByText("Integration settings")).toBeTruthy();
     } finally {
       vi.unstubAllGlobals();
     }
