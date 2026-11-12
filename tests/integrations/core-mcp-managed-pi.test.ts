@@ -10,6 +10,7 @@ describe("managed Pi reaches the Matrix Core MCP through the platform transport"
   let fixture: CoreFixture;
   let upstream: FakeUpstream;
   let usage: CoreUsageRecord[];
+  let linearId: string;
 
   beforeEach(async () => {
     upstream = { host: "mcp.linear.test", calls: [], tools: [
@@ -18,7 +19,7 @@ describe("managed Pi reaches the Matrix Core MCP through the platform transport"
     ] };
     fixture = await createCoreFixture([upstream]);
     usage = [];
-    await fixture.connect("Linear", upstream.host, { list_issues: "allow", archive_issue: "blocked" });
+    linearId = await fixture.connect("Linear", upstream.host, { list_issues: "allow", archive_issue: "blocked" });
   });
   afterEach(async () => { await fixture.close(); });
 
@@ -34,7 +35,7 @@ describe("managed Pi reaches the Matrix Core MCP through the platform transport"
     const found = await client.search(fixture.actorId, { query: "issues" }, signal) as {
       results: Array<{ serverId: string; qualifiedName: string; approval: string }>; skipped: unknown[];
     };
-    expect(found.results.map(hit => [hit.qualifiedName, hit.approval])).toEqual([["linear.list_issues", "allow"]]);
+    expect(found.results.map(hit => [hit.qualifiedName, hit.approval])).toEqual([[`linear-${linearId.slice(0, 8)}.list_issues`, "allow"]]);
     await expect(client.search(fixture.actorId, { query: "issues", service: "missing" }, signal)).rejects.toThrow("MCP unavailable");
 
     const result = await client.call(fixture.actorId, { serverId: found.results[0]!.serverId, tool: "list_issues",
