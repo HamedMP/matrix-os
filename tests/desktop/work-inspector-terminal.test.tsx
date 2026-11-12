@@ -423,6 +423,26 @@ describe("Work Files and Terminal inspector", () => {
     await waitFor(() => expect(screen.queryByRole("tab", { name: "terminal_first" })).toBeNull());
   });
 
+  it("keeps tabs opened while a confirmed terminal stop is pending", async () => {
+    let finishDelete!: () => void;
+    const deletion = new Promise<void>((resolve) => { finishDelete = resolve; });
+    vi.mocked(useConnection.getState().api!.delete).mockImplementation(async () => { await deletion; return {} as never; });
+    render(<WorkFilesInspector detail={detail("chat_pending_stop", "terminal_first")} projects={[]} active />);
+    fireEvent.pointerDown(screen.getByRole("button", { name: "Add inspector tab" }), { button: 0, ctrlKey: false });
+    fireEvent.click(screen.getByRole("menuitem", { name: "Open terminal terminal_first" }));
+    fireEvent.click(screen.getByRole("button", { name: "Close terminal_first tab" }));
+    fireEvent.click(screen.getByRole("button", { name: "Stop terminal" }));
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    fireEvent.pointerDown(screen.getByRole("button", { name: "Add inspector tab" }), { button: 0, ctrlKey: false });
+    fireEvent.click(screen.getByRole("menuitem", { name: "Side chat" }));
+    expect(screen.getByRole("tab", { name: "Side chat" })).toBeTruthy();
+
+    await act(async () => finishDelete());
+
+    await waitFor(() => expect(screen.queryByRole("tab", { name: "terminal_first" })).toBeNull());
+    expect(screen.getByRole("tab", { name: "Side chat" }).getAttribute("aria-selected")).toBe("true");
+  });
+
   it("asks before stopping a restored terminal while session discovery is pending", () => {
     useConnection.setState({ userId: "user_test" });
     useCodingAgentWorkspace.setState({ status: "loading", summary: null });
