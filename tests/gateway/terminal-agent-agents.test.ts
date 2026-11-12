@@ -451,3 +451,39 @@ describe("terminal agents: reports, notes and shutdown", () => {
     await expect(wait).resolves.toMatchObject({ reason: "timeout" });
   });
 });
+
+// Fault detected (review of #3298): a failed screen read while waiting for a new
+// helper to be ready made `run` fail after the helper had started, inviting a retry
+// that would start a second copy.
+describe("terminal agents: readiness failures", () => {
+  it("returns the started helper with an unsent first message when a readiness check fails", async () => {
+    const h = await harness();
+    const failing = createTerminalAgents({
+      runtime: {
+        listWorkspaces: async () => [{
+          id: workspaceId, scope: "main", canonicalSize: { cols: 80, rows: 24 }, status: "running", revision: 1,
+          createdAt: "2026-11-11T10:00:00.000Z", updatedAt: "2026-11-11T10:00:00.000Z", tabs: [...h.tabs.values()],
+        }] as never,
+        ensureWorkspace: async () => ({ id: workspaceId }) as never,
+        createTab: async () => {
+          const tab = { id: `tt_${"9".repeat(32)}`, workspaceId, name: "fix", cwd: "", status: "running", revision: 1, order: 9,
+            accessScope: "owner", createdAt: "2026-11-11T10:00:00.000Z", updatedAt: "2026-11-11T10:00:00.000Z" };
+          h.tabs.set(tab.id, tab);
+          return tab as never;
+        },
+        terminateTab: async () => undefined,
+        getSnapshot: async () => { throw new Error("runtime socket closed"); },
+      },
+      verbs: h.verbs as never,
+      status: { list: async () => new Map(), get: async () => undefined },
+      registry: h.registry,
+      templates: createTerminalTemplates({ homePath: h.home }),
+      sleep: async () => undefined,
+    });
+    const result = await failing.run({ name: "fix", cwd: "", argv: ["pi"], task: "fix it", noParent: true });
+    expect(result.ref.tabId).toBe(`tt_${"9".repeat(32)}`);
+    expect(result.firstMessage).toEqual({ sent: false, reason: "not_ready" });
+    expect(h.sends).toEqual([]);
+    await expect(h.registry.get(result.ref)).resolves.toMatchObject({ firstMessage: { sent: false, reason: "not_ready" } });
+  });
+});
