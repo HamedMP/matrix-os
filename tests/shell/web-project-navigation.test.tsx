@@ -56,6 +56,31 @@ it("archives both the project ID and legacy slug chats", async () => {
   expect(archive.mock.calls.map(([reference]) => reference).sort()).toEqual(["local", "proj_local"]);
 });
 
+it("keeps only failed project chats in bulk Undo after a partial restore", async () => {
+  vi.stubGlobal("fetch", vi.fn(async () => Response.json({ projects: [{ id: "proj_local", slug: "local", name: "Local project" }] })));
+  const archive = vi.fn(async (reference: string) => ({ archived: [{ chatId: `chat_${reference}`, revision: 2 }], archivedCount: 1, skippedCount: 0 }));
+  const restore = vi.fn().mockResolvedValueOnce(["chat_local"]).mockResolvedValueOnce(["chat_proj_local"]);
+  const restoreSingle = vi.fn(async () => true);
+  render(<OrganizationStateProvider value={{ status: "none", organizationId: null }}><ChatApp
+    messages={[]} busy={false} connected conversations={[]} onNewChat={vi.fn()} onSwitchConversation={vi.fn()} onSubmit={vi.fn()}
+    authorityKey="user_owner/runtime/main" onArchiveProjectChats={archive}
+    onRestoreConversation={restoreSingle} onRestoreArchivedChats={restore}/></OrganizationStateProvider>);
+  const nav = await screen.findByRole("navigation", { name: "Projects" });
+  fireEvent.click(within(nav).getByRole("button", { name: "Expand Local project chats" }));
+  fireEvent.click(within(nav).getByRole("button", { name: "Archive chats in Local project" }));
+  fireEvent.click(screen.getByRole("button", { name: "Archive chats" }));
+  fireEvent.click(await screen.findByRole("button", { name: "Undo" }));
+  await waitFor(() => expect(restore).toHaveBeenCalledTimes(1));
+  expect(restore.mock.calls[0]?.[0]).toEqual(expect.arrayContaining([
+    { chatId: "chat_local", revision: 2 }, { chatId: "chat_proj_local", revision: 2 },
+  ]));
+  expect(await screen.findByText("Chats could not be restored. Try again.")).toBeTruthy();
+  fireEvent.click(screen.getByRole("button", { name: "Undo" }));
+  await waitFor(() => expect(restoreSingle).toHaveBeenCalledWith("chat_proj_local", 2));
+  expect(restore).toHaveBeenCalledTimes(1);
+  await waitFor(() => expect(screen.queryByRole("button", { name: "Undo" })).toBeNull());
+});
+
 it("updates a visible paged project title after rename without collapsing its project", async () => {
   vi.stubGlobal("fetch", vi.fn(async () => Response.json({ projects: [{ id: "proj_local", slug: "proj_local", name: "Local project" }] })));
   const loadNavigationPage = vi.fn(async () => ({ items: [{ chat: {

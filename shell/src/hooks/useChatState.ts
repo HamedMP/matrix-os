@@ -81,7 +81,7 @@ export interface ChatState {
   restoreConversation?: (id: string, revision: number) => Promise<boolean>;
   listArchivedConversations?: (cursor?: string) => Promise<import("@matrix-os/contracts").CanonicalChatListResponse>;
   archiveProjectChats?: (projectId: string) => Promise<{ archived: Array<{ chatId: string; revision: number }>; archivedCount: number; skippedCount: number } | null>;
-  restoreArchivedChats?: (chats: Array<{ chatId: string; revision: number }>) => Promise<boolean>;
+  restoreArchivedChats?: (chats: Array<{ chatId: string; revision: number }>) => Promise<readonly string[]>;
   sideChatClient?: import("@matrix-os/ui").SideChatClient;
   terminalSessionIds?: readonly string[];
   composerDraftRequest: { id: number; text: string; merge?: boolean } | null;

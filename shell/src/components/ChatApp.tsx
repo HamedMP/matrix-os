@@ -194,7 +194,7 @@ interface ChatAppProps {
   onRestoreConversation?: (id: string, revision: number) => Promise<boolean>;
   onListArchivedConversations?: (cursor?: string) => Promise<import("@matrix-os/contracts").CanonicalChatListResponse>;
   onArchiveProjectChats?: (projectId: string) => Promise<{ archived: Array<{ chatId: string; revision: number }>; archivedCount: number; skippedCount: number } | null>;
-  onRestoreArchivedChats?: (chats: Array<{ chatId: string; revision: number }>) => Promise<boolean>;
+  onRestoreArchivedChats?: (chats: Array<{ chatId: string; revision: number }>) => Promise<readonly string[]>;
   onSubmit: (
     text: string,
     files?: Array<{ name: string; type: string; data: string }>,
@@ -660,11 +660,21 @@ function ChatAppContent({
           setArchiveUndoPending(true);
           setArchiveUndoError(null);
           try {
-            const restored = chats.length === 1 ? await onRestoreConversation(chats[0]!.chatId, chats[0]!.revision)
-              : await onRestoreArchivedChats?.(chats) ?? false;
-            if (!restored) { setArchiveUndoError(undo); return; }
-            setDeletedChatIds(current => current.filter(id => !chats.some(chat => chat.chatId === id)));
-            setProjectArchiveVersion(version => version + 1);
+            const restoredIds = chats.length === 1
+              ? (await onRestoreConversation(chats[0]!.chatId, chats[0]!.revision) ? [chats[0]!.chatId] : [])
+              : await onRestoreArchivedChats?.(chats) ?? [];
+            const restoredById = Object.fromEntries(restoredIds.map(id => [id, true]));
+            if (restoredIds.length) {
+              setDeletedChatIds(current => current.filter(id => !Object.hasOwn(restoredById, id)));
+              setProjectArchiveVersion(version => version + 1);
+            }
+            const remaining = chats.filter(chat => !Object.hasOwn(restoredById, chat.chatId));
+            if (remaining.length) {
+              const retryUndo = remaining.length === chats.length ? undo : { ...undo, chats: remaining };
+              setArchiveUndo(current => current === undo ? retryUndo : current);
+              setArchiveUndoError(retryUndo);
+              return;
+            }
             setArchiveUndo(current => current === undo ? null : current);
           } catch (error: unknown) {
             console.warn("[chat] Archive Undo failed:", error instanceof Error ? error.name : "UnknownError");

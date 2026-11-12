@@ -923,17 +923,27 @@ export function useCanonicalChatState({ initialDraft, initialCollaborationView, 
     }
   }, [client, isCurrent, newChat, setRecords]);
   const restoreArchivedChats = useCallback(async (chats: Array<{ chatId: string; revision: number }>) => {
-    if (!isCurrent()) return false;
+    if (!isCurrent()) return [];
+    const restoredIds: string[] = [];
+    let failed = false;
+    for (const chat of chats) {
+      try {
+        await client.updateLifecycle(chat.chatId, { lifecycle: "active", baseRevision: chat.revision });
+        restoredIds.push(chat.chatId);
+      } catch (error: unknown) {
+        failed = true;
+        console.warn("[canonical-chat] Shell project restore failed:", error instanceof Error ? error.name : "UnknownError");
+      }
+    }
+    if (!isCurrent()) return restoredIds;
     try {
-      for (const chat of chats) await client.updateLifecycle(chat.chatId, { lifecycle: "active", baseRevision: chat.revision });
-      if (!isCurrent()) return false;
       await loadList();
-      return true;
     } catch (error: unknown) {
       console.warn("[canonical-chat] Shell project restore failed:", error instanceof Error ? error.name : "UnknownError");
-      if (isCurrent()) { await loadList(); setSafeError("Some project chats could not be restored. Try again."); }
-      return false;
+      failed = true;
     }
+    if (failed && isCurrent()) setSafeError("Some project chats could not be restored. Try again.");
+    return restoredIds;
   }, [client, isCurrent, loadList]);
 
   const updateReadState = useCallback(async (chatId: string, input: import("@matrix-os/contracts").CanonicalUpdateChatReadStateRequest) => {
