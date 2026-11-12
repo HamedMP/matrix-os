@@ -46,6 +46,7 @@ function failure(label: string, error: unknown) {
   console.warn('[mcp-core] tool failed', label, name);
   const text = code === 'not_found' ? 'That Matrix Core item was not found.'
     : code === 'forbidden' ? 'That Matrix Core tool is unavailable or needs owner approval in Matrix.'
+      : code === 'ambiguous' ? 'That tool name is ambiguous; use the exact tool name from describe_tool.'
       : code === 'invalid' ? 'That Matrix Core request was invalid.'
         : 'Matrix Core is temporarily unavailable.';
   return { isError: true, content: [{ type: 'text' as const, text }] };

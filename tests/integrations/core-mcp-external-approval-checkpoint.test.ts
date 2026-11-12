@@ -138,3 +138,18 @@ describe("external Matrix Core MCP write approvals", () => {
     }
   });
 });
+
+describe("external Matrix Core MCP error mapping", () => {
+  it("tells the client to use the exact tool name when layer 3 reports an ambiguous name", async () => {
+    // Fault: the client gets a generic outage message and cannot recover from ambiguous_tool.
+    const { CoreToolsError } = await import("../../packages/gateway/src/integrations/custom-mcp/core-tools.js");
+    const tools = new Map<string, (input: Record<string, unknown>) => Promise<{ isError?: boolean; content: Array<{ text: string }> }>>();
+    const server = { registerTool: (name: string, _config: unknown, handler: never) => { tools.set(name, handler); } };
+    const core = { callTool: async () => { throw new CoreToolsError("ambiguous"); } } as unknown as ExternalCoreToolService;
+    registerExternalCoreMcpTools(server as never, { core, userId: "owner-1", signal: new AbortController().signal,
+      principal: { userId: "user_1", clientId: "codex", expiresAt: 0 } });
+    const result = await tools.get("call_tool")!({ service: "linear-0a1b2c3d", tool: "create_issue" });
+    expect(result.isError).toBe(true);
+    expect(result.content[0]!.text).toContain("exact tool name");
+  });
+});
