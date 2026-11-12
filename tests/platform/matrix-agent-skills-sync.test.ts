@@ -1,4 +1,4 @@
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import {
   chmodSync,
   existsSync,
@@ -13,6 +13,7 @@ import {
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
+import { CORE_REPO_MAX_SKILL_NAME_LENGTH } from "../../packages/contracts/src/core-repo.js";
 
 function writeSkill(root: string, dirName: string, skillName: string): void {
   const skillDir = join(root, dirName);
@@ -183,6 +184,56 @@ describe("Matrix coding-agent skill sync", () => {
       expect(existsSync(join(skills, "org-acme-notes", "SKILL.md"))).toBe(true);
       expect(existsSync(join(skills, "matrix-app-builder", "SKILL.md"))).toBe(true);
       expect(() => run({ MATRIX_SKILLS_SOURCE: empty, MATRIX_SKILL_NAMESPACE: "../", MATRIX_SKILL_OWNED_ROOT: orgRoot })).toThrow();
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  // Fault: org `acme` deletes copied skills of org `acme-tools` (`org-acme-tools-*` matches `org-acme-*`).
+  it("owns a copied org skill only when its marker names this org root", () => {
+    const root = resolve(mkdirSync(join(tmpdir(), `matrix-org-marker-${Date.now()}`), { recursive: true }));
+    const acmeRoot = join(root, "matrix-core", "org_acme1");
+    const toolsRoot = join(root, "matrix-core", "org_tools1");
+    const home = join(root, "home");
+    const skills = join(home, ".claude", "skills");
+    const empty = join(root, "empty");
+    const script = join(process.cwd(), "scripts/sync-matrix-agent-skills.sh");
+    try {
+      mkdirSync(acmeRoot, { recursive: true });
+      mkdirSync(toolsRoot, { recursive: true });
+      mkdirSync(empty);
+      writeSkill(skills, "org-acme-tools-deploy", "org-acme-tools-deploy");
+      writeFileSync(join(skills, "org-acme-tools-deploy", ".matrix-os-managed"), `${realpathSync(toolsRoot)}\n`);
+      writeSkill(skills, "org-acme-review", "org-acme-review");
+      writeFileSync(join(skills, "org-acme-review", ".matrix-os-managed"), `${realpathSync(acmeRoot)}\n`);
+      execFileSync("bash", [script], { env: { ...process.env, HOME: home, MATRIX_HOME: home, MATRIX_SKILL_TARGETS: "claude",
+        MATRIX_SKILLS_SOURCE: empty, MATRIX_SKILL_NAMESPACE: "org-acme-", MATRIX_SKILL_OWNED_ROOT: acmeRoot }, stdio: "pipe" });
+      expect(existsSync(join(skills, "org-acme-tools-deploy", "SKILL.md"))).toBe(true);
+      expect(existsSync(join(skills, "org-acme-review"))).toBe(false);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  // Fault: an org skill over the combined name limit disappears without any report.
+  it("reports org skills whose combined name is over the limit", () => {
+    const root = resolve(mkdirSync(join(tmpdir(), `matrix-org-long-${Date.now()}`), { recursive: true }));
+    const orgRoot = join(root, "matrix-core", "org_acme1");
+    const source = join(orgRoot, "releases", "a", ".matrix-skills");
+    const home = join(root, "home");
+    const long = `org-acme-${"x".repeat(92)}`;
+    // The script and the installer enforce the same combined limit.
+    expect(long.length).toBe(CORE_REPO_MAX_SKILL_NAME_LENGTH + 1);
+    try {
+      writeSkill(source, long, long);
+      writeSkill(source, "org-acme-ok", "org-acme-ok");
+      const result = spawnSync("bash", [join(process.cwd(), "scripts/sync-matrix-agent-skills.sh")], { encoding: "utf8",
+        env: { ...process.env, HOME: home, MATRIX_HOME: home, MATRIX_SKILL_TARGETS: "claude",
+          MATRIX_SKILLS_SOURCE: source, MATRIX_SKILL_NAMESPACE: "org-acme-", MATRIX_SKILL_OWNED_ROOT: orgRoot } });
+      expect(result.status).toBe(0);
+      expect(result.stderr).toContain(`Org skill not installed (invalid name or over 100 characters): ${long}`);
+      expect(existsSync(join(home, ".claude", "skills", "org-acme-ok", "SKILL.md"))).toBe(true);
+      expect(existsSync(join(home, ".claude", "skills", long))).toBe(false);
     } finally {
       rmSync(root, { recursive: true, force: true });
     }

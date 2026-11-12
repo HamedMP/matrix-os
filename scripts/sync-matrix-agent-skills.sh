@@ -78,7 +78,9 @@ is_matrix_owned_dir() {
       case "$(realpath "$path" 2>/dev/null || true)" in "$MATRIX_SKILL_OWNED_ROOT"/*) return 0 ;; esac
       return 1
     fi
-    [ -f "$path/.matrix-os-managed" ] && return 0
+    # A copy is owned only when its marker names this exact org root: namespace
+    # `org-acme-` also matches `org-acme-tools-*`, which belongs to another org.
+    [ -f "$path/.matrix-os-managed" ] && [ "$(head -n 1 "$path/.matrix-os-managed")" = "$MATRIX_SKILL_OWNED_ROOT" ] && return 0
     return 1
   fi
   [[ "$base" == org-* ]] && return 1
@@ -136,7 +138,11 @@ link_or_copy_skill() {
   fi
 
   cp -a "$src" "$target"
-  touch "$target/.matrix-os-managed"
+  if [ -n "$MATRIX_SKILL_NAMESPACE" ]; then
+    printf '%s\n' "$MATRIX_SKILL_OWNED_ROOT" > "$target/.matrix-os-managed"
+  else
+    touch "$target/.matrix-os-managed"
+  fi
 }
 
 sync_root() {
@@ -152,7 +158,11 @@ sync_root() {
       name="matrix-$(basename "$src")"
     fi
     if [ -n "$MATRIX_SKILL_NAMESPACE" ]; then
-      [[ "$name" == "$MATRIX_SKILL_NAMESPACE"* && "$name" =~ ^[a-z0-9-]{1,100}$ ]] || continue
+      # Same combined limit as the installer (CORE_REPO_MAX_SKILL_NAME_LENGTH, `org-<slug>-<name>`).
+      if ! [[ "$name" == "$MATRIX_SKILL_NAMESPACE"* && "$name" =~ ^[a-z0-9-]{1,100}$ ]]; then
+        echo "Org skill not installed (invalid name or over 100 characters): $(printf '%s' "$name" | tr -cd 'a-zA-Z0-9._-' | cut -c1-120)" >&2
+        continue
+      fi
     fi
     link_or_copy_skill "$src" "$root" "$name"
   done
