@@ -59,11 +59,12 @@ does for users or the team.
    - Merged: `gh pr list --author <login> --state merged --search "merged:<start>..<end>" --limit 100 --json number,title,url,mergedAt,headRefName,baseRefName,body`.
    - Opened: `gh pr list --author <login> --state all --search "created:<start>..<end>" --limit 100 --json number,title,url,state,isDraft,headRefName,baseRefName,body`.
      Drop the ones already in the merged list; they belong under Shipped.
-   - Moved forward: open PRs updated that day but created before it. The
-     search needs both bounds written out, for example
-     `"updated:2026-11-11T00:00:00+01:00..2026-11-11T23:59:59+01:00 created:<2026-11-11T00:00:00+01:00"`,
+   - Moved forward: open PRs created before the day and updated at any time
+     since the day started. Leave the upper bound off, because a later comment
+     moves `updatedAt` past the day and would hide that day's work, for example
+     `"updated:>=2026-11-11T00:00:00+01:00 created:<2026-11-11T00:00:00+01:00"`,
      with `--state open --limit 100 --json number,title,url,isDraft,headRefOid,baseRefName`.
-     Keep a PR only if something real happened that day:
+     Keep a PR only if something real happened within the day itself:
      - a commit: `gh pr view <n> --json commits`, `committedDate` in range;
      - a review or score: `gh pr view <n> --json reviews` (`submittedAt` in
        range), or a Greptile summary comment updated in range;
@@ -90,15 +91,20 @@ does for users or the team.
 
 3. **Collect agent work** (when `hc` is available and the author is the current
    user): `hc ls --all`. `hc` is often only on the login-shell `PATH`; try
-   `command -v hc`, then `~/.local/bin/hc`, before treating it as unavailable. For each terminal created or active that day whose
-   worktree has no PR in step 1, read its last report (`hc read <t> --lines 40`)
-   and take one line: what it is building and where it stands. Skip helper
+   `command -v hc`, then `~/.local/bin/hc`, before treating it as unavailable. For each terminal created or active that day, find
+   its branch (`git -C <cwd> branch --show-current`) and look it up with
+   `gh pr list --head <branch> --state all`. If it has a PR that is not already
+   listed, add it under Moved forward only when step 1's checks show real
+   progress that day; otherwise leave it out. If it has no PR, read its last
+   report (`hc read <t> --lines 40`) and take one line: what it is building and
+   where it stands. Skip helper
    terminals (renames, tests, one-shot lookups) and terminals with nothing to
    report.
 
 4. **Write the update** in this order, leaving out empty sections:
    - Heading line: the day, zone, and author.
-   - **Shipped**: merged PRs.
+   - **Shipped**: merged PRs, plus Linear tickets completed that day that have
+     no matching PR (planning, research, ops), each as a ticket link.
    - **Started**: PRs opened that day and still open.
    - **Moved forward**: older open PRs with real progress, each with the one
      fact that changed (fixed review findings, rebased, CI green, waiting on X).
