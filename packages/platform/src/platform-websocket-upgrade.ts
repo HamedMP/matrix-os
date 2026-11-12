@@ -41,10 +41,12 @@ import {
   buildPlatformWebSocketUpgradeHeaders,
   classifySessionRoutedHost,
   classifyWebSocketPath,
+  getTrustedSessionRouteHost,
   getTrustedSessionRoutedWebSocketHost,
 } from './session-routing-websocket.js';
 import { resolveContainerEndpoint } from './container-endpoint.js';
 import { resolveRegisteredRuntimeEndpoint, type RegisteredRuntimeEndpoint } from './devstack-registered-runtime.js';
+import type { DevstackPublicPreviewAccess, DevstackPublicPreviewBinding } from './devstack-public-preview.js';
 import { describeError } from './platform-route-utils.js';
 import { isRejectingWebSocketUpgrade, rejectWebSocketUpgrade, type WebSocketUpgradeRejectionStatus } from './websocket-upgrade-rejection.js';
 import { shouldVerifyCustomerVpsTls } from './customer-vps-tls.js';
@@ -67,6 +69,7 @@ export interface RegisterPlatformWebSocketUpgradeHandlerOpts {
   db: PlatformDB;
   docker?: Dockerode;
   registeredRuntimeInstance?: string;
+  devstackPublicPreview?: DevstackPublicPreviewAccess;
   clerkAuth?: ClerkAuth;
   env: PlatformWebSocketEnv;
   platformSecret: string;
@@ -97,6 +100,7 @@ export function registerPlatformWebSocketUpgradeHandler(
     db,
     docker,
     registeredRuntimeInstance,
+    devstackPublicPreview,
     clerkAuth,
     env,
     platformSecret,
@@ -117,8 +121,26 @@ export function registerPlatformWebSocketUpgradeHandler(
       if (upstreamResponded) socket.destroy();
       else rejectWebSocketUpgrade(socket, status);
     };
+    const path = req.url ?? '/';
+    const trustedHost = getTrustedSessionRouteHost(
+      req.headers.host, req.headers['x-forwarded-host'], req.headers[EDGE_SECRET_HEADER], env.EDGE_ROUTER_SECRET,
+    );
+    let publicPreview: DevstackPublicPreviewBinding | undefined;
+    if (devstackPublicPreview && (devstackPublicPreview.matchesHost(trustedHost) || devstackPublicPreview.matchesHost(req.headers.host))) {
+      if (!devstackPublicPreview.matchesHost(trustedHost)) {
+        refuse(404);
+        return;
+      }
+      const access = await devstackPublicPreview.authorizeUpgrade(path, req.headers.origin, req.headers.cookie);
+      if ('status' in access) {
+        refuse(access.status);
+        return;
+      }
+      publicPreview = access.binding;
+    }
+
     // S05: control-stream upgrades authenticate the enrolled runtime themselves.
-    if (collaborationDirect && !registeredRuntimeInstance) {
+    if (!publicPreview && collaborationDirect && !registeredRuntimeInstance) {
       try {
         if (await collaborationDirect.handleUpgrade(req, socket as Socket, head)) return;
       } catch (err: unknown) {
@@ -127,27 +149,28 @@ export function registerPlatformWebSocketUpgradeHandler(
         return;
       }
     }
-    try {
-      const handledInternalGeminiLive = await handleInternalGeminiLiveProxyUpgrade({
-        req,
-        socket: socket as Socket,
-        head,
-        db,
-        platformSecret,
-        geminiApiKey: env.GEMINI_API_KEY ?? '',
-      });
-      if (handledInternalGeminiLive) return;
-    } catch (err: unknown) {
-      console.warn('[platform] internal Gemini Live proxy failed:', describeError(err));
-      app.capturePlatformEvent(MATRIX_TELEMETRY_EVENTS.PLATFORM_WS_UPSTREAM_FAILED, {
-        pathClass: 'internal-gemini-live',
-        errorKind: err instanceof Error ? err.name : typeof err,
-      });
-      refuse(503);
-      return;
+    if (!publicPreview) {
+      try {
+        const handledInternalGeminiLive = await handleInternalGeminiLiveProxyUpgrade({
+          req,
+          socket: socket as Socket,
+          head,
+          db,
+          platformSecret,
+          geminiApiKey: env.GEMINI_API_KEY ?? '',
+        });
+        if (handledInternalGeminiLive) return;
+      } catch (err: unknown) {
+        console.warn('[platform] internal Gemini Live proxy failed:', describeError(err));
+        app.capturePlatformEvent(MATRIX_TELEMETRY_EVENTS.PLATFORM_WS_UPSTREAM_FAILED, {
+          pathClass: 'internal-gemini-live',
+          errorKind: err instanceof Error ? err.name : typeof err,
+        });
+        refuse(503);
+        return;
+      }
     }
 
-    const path = req.url ?? '/';
     const host = getTrustedSessionRoutedWebSocketHost(
       req.headers.host,
       req.headers['x-forwarded-host'],
@@ -174,8 +197,11 @@ export function registerPlatformWebSocketUpgradeHandler(
       return;
     }
     const hostClass = classifySessionRoutedHost(host);
-    const explicitVmRoute = isAppDomain ? readExplicitVmWebSocketRoute(path) : null;
-    let webSocketProxyPath = explicitVmRoute
+    const explicitVmRoute = publicPreview?.route ?? (isAppDomain ? readExplicitVmWebSocketRoute(path) : null);
+    const queryStart = path.indexOf('?');
+    let webSocketProxyPath = publicPreview
+      ? publicPreview.route.upstreamPath + (queryStart === -1 ? '' : path.slice(queryStart))
+      : explicitVmRoute
       ? buildExplicitVmWebSocketUpstreamPath(path)
       : path;
     const pathClass = classifyWebSocketPath(webSocketProxyPath);
@@ -196,7 +222,7 @@ export function registerPlatformWebSocketUpgradeHandler(
     const wsToken = getWebSocketUpgradeToken(webSocketProxyPath);
     let identity: AppDomainIdentity | null;
     try {
-      identity = await resolveAppDomainIdentity({
+      identity = publicPreview?.identity ?? await resolveAppDomainIdentity({
         authHeader: req.headers.authorization as string | undefined,
         cookieHeader: req.headers.cookie,
         clerkAuth,
@@ -253,7 +279,7 @@ export function registerPlatformWebSocketUpgradeHandler(
     let registeredEntitlement: EntitlementAccessDecision | undefined;
     if (registeredRuntimeInstance) {
       try {
-        registeredEndpoint = await resolveRegisteredRuntimeEndpoint(
+        registeredEndpoint = publicPreview?.endpoint ?? await resolveRegisteredRuntimeEndpoint(
           db, registeredRuntimeInstance, identity, explicitVmRoute?.handle, requestRuntimeSlot,
         );
         if (!registeredEndpoint) {

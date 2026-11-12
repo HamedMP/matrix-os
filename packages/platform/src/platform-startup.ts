@@ -38,11 +38,15 @@ import { DevstackRunConfigError, loadDevstackPreviewConfig, loadDevstackRunConfi
 import { createDevstackRunStore, migrateDevstackRuns } from './devstack-runs/store.js';
 import { createDevstackRunRoutes } from './devstack-runs/routes.js';
 import { createDevstackPreviewRoutes } from './devstack-preview-routes.js';
+import type { DevstackBrowserMembership } from './devstack-preview-auth.js';
+import { createDevstackPreviewMembershipLookup } from './devstack-preview-membership.js';
+import { createDevstackPublicPreviewAccess, type DevstackPublicPreviewAccess } from './devstack-public-preview.js';
 import { executeDevstackRun } from './devstack-runs/execute.js';
 import { resolveRegisteredRuntimeEndpoint } from './devstack-registered-runtime.js';
 import {
   createClerkAuth,
   createClerkSessionRevoker,
+  DevstackClerkVerificationConfigError,
   resolveClerkVerificationConfig,
 } from './clerk-auth.js';
 import type { MatrixProvisioner } from './matrix-provisioning.js';
@@ -251,6 +255,7 @@ type CreatePlatformApp = (deps: {
   registeredRuntimeInstance?: string;
   devstackRunRoutes?: ReturnType<typeof createDevstackRunRoutes>;
   devstackPreviewRoutes?: ReturnType<typeof createDevstackPreviewRoutes>;
+  devstackPublicPreview?: DevstackPublicPreviewAccess;
   orchestrator: Orchestrator;
   clerkAuth?: ClerkAuth;
   matrixProvisioner?: MatrixProvisioner;
@@ -357,9 +362,11 @@ async function startPlatformServerWithCleanup(
   let devstackRunConfig;
   let devstackPreviewConfig;
   let isDevstackMember: ((actorId: string) => Promise<boolean>) | undefined;
-  const clerkVerificationConfig = resolveClerkVerificationConfig(process.env);
+  let isDevstackPreviewMember: DevstackBrowserMembership | undefined;
+  let clerkVerificationConfig: ReturnType<typeof resolveClerkVerificationConfig>;
   try {
     runtimeConfig = loadPlatformRuntimeConfig();
+    clerkVerificationConfig = resolveClerkVerificationConfig(process.env);
     devstackRunConfig = loadDevstackRunConfig(process.env.MATRIX_DEVSTACK_RUN_CONFIG, runtimeConfig.registeredRuntimeInstance);
     devstackPreviewConfig = loadDevstackPreviewConfig(process.env.MATRIX_DEVSTACK_PREVIEW_CONFIG, runtimeConfig.registeredRuntimeInstance);
     if (devstackPreviewConfig && (!process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY?.trim()
@@ -367,7 +374,15 @@ async function startPlatformServerWithCleanup(
       || !isAppDomainHost(new URL(devstackPreviewConfig.previewOrigin).host))) {
       throw new DevstackRunConfigError('preview');
     }
-    if (devstackRunConfig || devstackPreviewConfig) {
+    if (devstackPreviewConfig?.membershipSource === 'private-preview-api') {
+      const claims = clerkVerificationConfig?.requiredClaims;
+      if (claims?.issuer !== devstackPreviewConfig.issuer
+        || claims.authorizedParty !== devstackPreviewConfig.previewOrigin || platformSecret.length < 32) {
+        throw new DevstackRunConfigError('preview');
+      }
+      isDevstackPreviewMember = createDevstackPreviewMembershipLookup();
+    }
+    if (devstackRunConfig || (devstackPreviewConfig && !isDevstackPreviewMember)) {
       const organizationId = parseInternalOrganizationId(process.env.MATRIX_INTERNAL_CLERK_ORG_ID);
       const secretKey = clerkVerificationConfig?.sessionRevocationSecret;
       if (!organizationId || !secretKey?.trim() || platformSecret.length < 32) {
@@ -379,10 +394,12 @@ async function startPlatformServerWithCleanup(
       isDevstackMember = async actorId =>
         (await clerkOrganizations.listOrganizationsForActor(actorId)).includes(organizationId);
     }
+    isDevstackPreviewMember ??= isDevstackMember;
     speechConfig = loadPlatformSpeechConfig(process.env);
     if (speechConfig.enabled && platformSecret.length < 32) throw new PlatformSpeechConfigError();
   } catch (err: unknown) {
-    if (err instanceof PlatformStartupConfigError || err instanceof PlatformSpeechConfigError || err instanceof DevstackRunConfigError) {
+    if (err instanceof PlatformStartupConfigError || err instanceof PlatformSpeechConfigError
+      || err instanceof DevstackRunConfigError || err instanceof DevstackClerkVerificationConfigError) {
       console.error(`[platform] ${err.message}`);
       process.exit(1);
     }
@@ -515,6 +532,7 @@ async function startPlatformServerWithCleanup(
   if (clerkVerificationConfig) {
     const { verifyToken } = await import('@clerk/backend');
     clerkAuth = createClerkAuth({
+      ...(clerkVerificationConfig.requiredClaims ? { requiredClaims: clerkVerificationConfig.requiredClaims } : {}),
       verifyToken: async (token: string) => {
         const payload = await verifyToken(token, clerkVerificationConfig.verifyTokenOptions);
         return payload as { sub: string; [key: string]: unknown };
@@ -547,19 +565,23 @@ async function startPlatformServerWithCleanup(
     : undefined;
 
   const devstackPublishableKey = process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY;
-  const devstackPreviewRoutes = devstackPreviewConfig && clerkAuth && isDevstackMember && devstackPublishableKey
-    ? createDevstackPreviewRoutes({
+  const devstackPreviewDeps = devstackPreviewConfig && clerkAuth && isDevstackPreviewMember && devstackPublishableKey
+    ? {
         config: devstackPreviewConfig,
         clerkAuth,
-        isMember: isDevstackMember,
+        isMember: isDevstackPreviewMember,
         publishableKey: devstackPublishableKey,
         edgeRouterSecret: process.env.EDGE_ROUTER_SECRET,
-        resolve: target => resolveRegisteredRuntimeEndpoint(
+        resolve: (target: import('./devstack-runs/config.js').DevstackPreviewTarget) => resolveRegisteredRuntimeEndpoint(
           db, devstackPreviewConfig.instance,
           { source: 'auth', userId: target.owner, handle: target.handle, runtimeSlot: 'primary' },
           target.handle, 'primary',
         ),
-      })
+      }
+    : undefined;
+  const devstackPreviewRoutes = devstackPreviewDeps && createDevstackPreviewRoutes(devstackPreviewDeps);
+  const devstackPublicPreview = devstackPreviewDeps?.config.publicBrowserOnly
+    ? createDevstackPublicPreviewAccess(devstackPreviewDeps)
     : undefined;
 
   const collaboration = registeredRuntimeInstance ? undefined : await bootstrapPlatformCollaboration({
@@ -1184,6 +1206,7 @@ async function startPlatformServerWithCleanup(
     registeredRuntimeInstance,
     devstackRunRoutes,
     devstackPreviewRoutes,
+    devstackPublicPreview,
     orchestrator,
     clerkAuth,
     matrixProvisioner,
@@ -1304,6 +1327,7 @@ async function startPlatformServerWithCleanup(
     db,
     docker,
     registeredRuntimeInstance,
+    devstackPublicPreview,
     clerkAuth,
     env: appEnv,
     platformSecret,

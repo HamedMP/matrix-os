@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { readFileSync } from "node:fs";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { getGatewayUrl, getGatewayWs } from "../../shell/src/lib/gateway";
+import { gatewayAssetUrl, getGatewayUrl, getGatewayWs } from "../../shell/src/lib/gateway";
 
 describe("gateway URL resolution", () => {
   afterEach(() => {
@@ -52,6 +52,16 @@ describe("gateway URL resolution", () => {
     window.history.replaceState({}, "", "/vm/alice-shared/~runtime/alpha/canvas?runtime=beta");
     expect(getGatewayUrl()).toBe(`${window.location.origin}/vm/alice-shared/~runtime/alpha`);
     expect(getGatewayWs()).toBe(`ws://${window.location.host}/vm/alice-shared/~runtime/alpha/ws`);
+  });
+
+  it("binds gateway, WebSocket and icon URLs to the current DevStack worktree", () => {
+    for (const worktree of ["eng-123", "eng-456"]) {
+      const prefix = `/devstack/worktrees/${worktree}`;
+      window.history.replaceState({}, "", `${prefix}/?runtime=other`);
+      expect(getGatewayUrl()).toBe(`${window.location.origin}${prefix}`);
+      expect(getGatewayWs()).toBe(`ws://${window.location.host}${prefix}/ws`);
+      expect(gatewayAssetUrl("/icons/app.svg")).toBe(`${window.location.origin}${prefix}/icons/app.svg`);
+    }
   });
 
   it("does not prefix lookalike non-vm paths", () => {

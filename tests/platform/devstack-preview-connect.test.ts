@@ -163,5 +163,21 @@ describe('Stage 3 registered worktree launcher', () => {
     expect(() => loadDevstackPreviewConfig(
       JSON.stringify({ ...previewConfig, targets: [first, duplicateRoute] }), 'stage-three',
     )).toThrow(/DevStack preview/);
+    const duplicateWorktree = { ...hidden, worktree: first.worktree };
+    expect(() => loadDevstackPreviewConfig(JSON.stringify({
+      ...previewConfig, targets: [first, duplicateWorktree], publicBrowserOnly: true,
+    }), 'stage-three')).toThrow(/DevStack preview/);
+  });
+
+  it('opens a private Stage 3 selection by worktree ID with its existing VM routing', async () => {
+    const path = '/devstack/worktrees/feature-one/';
+    const { request } = fixture();
+    expect(await (await request(path)).text()).toContain(`var redirectTarget = "${path}"`);
+    expect((await request(path, 'owner')).headers.get('location')).toBe('/vm/dev-one/');
+    expect((await request(path, 'other')).status).toBe(404);
+
+    const ambiguous = fixture([first, { ...second, worktree: first.worktree }]);
+    expect((await ambiguous.request(path, 'owner')).status).toBe(404);
+    expect(ambiguous.resolve).not.toHaveBeenCalled();
   });
 });

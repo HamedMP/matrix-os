@@ -118,6 +118,7 @@ import {
 } from './container-endpoint.js';
 import { scopeExplicitVmAppSessionCookie } from './session-routing-cookie-rewrite.js';
 import { resolveRegisteredRuntimeEndpoint } from './devstack-registered-runtime.js';
+import type { DevstackPublicPreviewBinding } from './devstack-public-preview.js';
 import { isDevstackPreviewRoot, renderDevstackPreviewSignIn } from './devstack-preview-sign-in.js';
 
 export function isPlatformRuntimeShellPath(path: string): boolean {
@@ -585,7 +586,8 @@ export function createSessionRoutingMiddleware(opts: CreateSessionRoutingMiddlew
       return c.html(renderDevstackPreviewSignIn(publishableKey, scriptNonce, target));
     }
 
-    const explicitVmRoute = isAppDomain ? readExplicitVmRoute(path) : null;
+    const publicPreview = c.get('devstackPublicPreviewBinding') as DevstackPublicPreviewBinding | undefined;
+    const explicitVmRoute = publicPreview?.route ?? (isAppDomain ? readExplicitVmRoute(path) : null);
     const registeredRuntimeManager = Boolean(registeredRuntimeInstance && isAppDomain
       && (explicitVmRoute?.upstreamPath ?? path) === '/runtime');
     if (registeredRuntimeManager && c.req.method !== 'GET' && c.req.method !== 'HEAD') {
@@ -641,7 +643,7 @@ export function createSessionRoutingMiddleware(opts: CreateSessionRoutingMiddlew
       ? previewHostHandle ?? readAppDomainRouteCookie(path, cookieHeader)
       : null;
 
-    let identity = await resolveAppDomainIdentity({
+    let identity = publicPreview?.identity ?? await resolveAppDomainIdentity({
       authHeader,
       cookieHeader,
       clerkAuth,
@@ -922,9 +924,9 @@ export function createSessionRoutingMiddleware(opts: CreateSessionRoutingMiddlew
       return proxyAuthShell(c, host, { redirectToBillingOnFailure: false });
     }
 
-    const registeredEndpoint = registeredRuntimeInstance
+    const registeredEndpoint = publicPreview?.endpoint ?? (registeredRuntimeInstance
       ? await resolveRegisteredRuntimeEndpoint(db, registeredRuntimeInstance, identity, explicitVmRoute?.handle, requestRuntimeSlot)
-      : null;
+      : null);
     if (registeredRuntimeInstance && !registeredEndpoint) {
       applyNoStoreHeaders(c);
       return c.text('Matrix OS computer unavailable', 404);
@@ -1310,7 +1312,9 @@ export function createSessionRoutingMiddleware(opts: CreateSessionRoutingMiddlew
         shouldReleaseRuntimeProxyTimeout(c.req.method, upstreamPath));
 
         const responseHeaders = sanitizeProxyResponseHeaders(upstream.headers);
-        if (registeredEndpoint && explicitVmRoute) scopeExplicitVmAppSessionCookie(responseHeaders, explicitVmRoute);
+        if (registeredEndpoint && explicitVmRoute) {
+          scopeExplicitVmAppSessionCookie(responseHeaders, explicitVmRoute, publicPreview?.worktree);
+        }
         applySandboxedAppAssetCorsHeaders(responseHeaders, upstreamPath, c.req.header('origin'));
         if ((identity.source === 'static-route' || isCookieRoutedShellAsset) && isAppDomainStaticAssetPath(path)) {
           applyCookieRoutedShellAssetCacheHeaders(responseHeaders);

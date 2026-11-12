@@ -253,9 +253,9 @@ async function connectStageThree(options: CommandOptions, interactive: boolean, 
     throw cliError("devstack_action_unsupported", "Stage 3 opens a registered preview. Source updates belong to the agent's worktree.");
   }
   const { computer, worktree } = options;
-  if ((computer !== undefined || worktree !== undefined)
-    && (!stageThreeSlug.safeParse(computer).success || !stageThreeSlug.safeParse(worktree).success)) {
-    throw cliError("devstack_selection_required", "Use both --computer and --worktree with registered Stage 3 names, or omit both to choose in the browser.");
+  if ((worktree !== undefined && !stageThreeSlug.safeParse(worktree).success)
+    || (computer !== undefined && (!stageThreeSlug.safeParse(computer).success || worktree === undefined))) {
+    throw cliError("devstack_selection_required", "Use --worktree with a registered Stage 3 ID, or omit both --worktree and --computer to choose in the browser.");
   }
 
   let platformUrl = options.platform;
@@ -267,10 +267,10 @@ async function connectStageThree(options: CommandOptions, interactive: boolean, 
     }
     platformUrl = profiles[name]!.platformUrl;
   }
-  const path = computer && worktree ? `/devstack/${computer}/${worktree}` : "/devstack";
+  const path = worktree ? `/devstack/worktrees/${worktree}/` : "/devstack";
   const entryUrl = httpsOrigin(platformUrl) + path;
   if (json) {
-    console.log(formatCliSuccess({ ...(computer && worktree ? { computer, worktree } : {}), entryUrl }));
+    console.log(formatCliSuccess({ ...(computer ? { computer } : {}), ...(worktree ? { worktree } : {}), entryUrl }));
   } else {
     console.log(`Stage 3 preview entry: ${entryUrl}`);
   }
@@ -286,8 +286,8 @@ export const devstackCommand = defineCommand({
     stage: { type: "string", description: "Stage 2 local sync (default) or Stage 3 registered browser preview" },
     profile: { type: "string", description: "Stage 3 CLI profile (default: devstack)" },
     platform: { type: "string", description: "Approved Stage 3 HTTPS origin" },
-    computer: { type: "string", description: "Approved Dev Computer name" },
-    worktree: { type: "string", description: "Stage 2 local path or Stage 3 registered worktree name" },
+    computer: { type: "string", description: "Dev Computer for Stage 2 or watch. Stage 3 connect accepts this for compatibility; the worktree selects the preview." },
+    worktree: { type: "string", description: "Stage 2 local path or Stage 3 registered worktree ID" },
     open: { type: "boolean", description: "Open the connected preview in the configured browser" },
     json: { type: "boolean", description: "Print a machine-readable result" },
   },

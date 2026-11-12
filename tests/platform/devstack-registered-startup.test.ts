@@ -111,6 +111,42 @@ describe('registered DevStack production startup', () => {
     }
   });
 
+  it('wires public preview membership without a Clerk secret only with pinned verify-only claims', async () => {
+    const marker = new Error('stop before binding a listener');
+    const destroy = vi.fn(async () => {});
+    startup.createDb.mockReturnValue({ ready: Promise.resolve(), destroy });
+    const origin = 'https://devstack.matrix-os.com';
+    const issuer = 'https://clerk.matrix-os.com';
+    const actor = 'user_fixture';
+    const compose = vi.fn<StartPlatformServerOptions['createApp']>();
+    compose.mockImplementation(deps => {
+      expect(deps.devstackPreviewRoutes).toBeDefined();
+      expect(deps.devstackPublicPreview).toBeDefined();
+      expect(deps.devstackRunRoutes).toBeUndefined();
+      throw marker;
+    });
+    const override = {
+      MATRIX_APP_ORIGIN: origin,
+      MATRIX_APP_DOMAIN_HOSTS: 'devstack.matrix-os.com',
+      NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: 'pk_test_fixture',
+      CLERK_JWT_KEY: 'verify-only-fixture',
+      CLERK_JWT_ISSUER: issuer,
+      CLERK_AUTHORIZED_ORIGIN: origin,
+      MATRIX_DEVSTACK_PREVIEW_CONFIG: JSON.stringify({
+        issuer, previewOrigin: origin, publicBrowserOnly: true, membershipSource: 'private-preview-api',
+        operators: [actor],
+        targets: [{ runtime: 'hel1', worktree: 'candidate', owner: actor, handle: 'hel1-stage3', containerId: 'a'.repeat(64) }],
+      }),
+    };
+    const secret = 'fixture'.repeat(6);
+    await expect(startFixture(override, compose, secret)).rejects.toBe(marker);
+    expect(compose).toHaveBeenCalledOnce();
+    const stopped = new Error('startup rejected mismatched browser claim');
+    vi.spyOn(process, 'exit').mockImplementation(() => { throw stopped; });
+    await expect(startFixture({ ...override, CLERK_AUTHORIZED_ORIGIN: 'https://other.matrix-os.com' }, compose, secret)).rejects.toBe(stopped);
+    expect(compose).toHaveBeenCalledOnce();
+  });
+
   it('rejects an incompatible configuration before creating the Platform pool', async () => {
     const stopped = new Error('startup rejected');
     vi.spyOn(process, 'exit').mockImplementation(() => { throw stopped; });

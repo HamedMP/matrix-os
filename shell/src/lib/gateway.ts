@@ -1,25 +1,21 @@
 /**
  * Resolve the gateway URL for API calls.
- * Browser: use the current origin, plus the explicit `/vm/<handle>` prefix when
- * the shell runs under an explicit vm route (preview VPSes and multi-machine
- * switching). Root-path `/api` and `/files` calls route through the
- * shell-route cookie to the user's default machine, so an explicit-vm shell
- * that called the bare origin would silently hit the wrong computer; the
- * `/vm/<handle>` prefix makes the target machine explicit on every call.
+ * Browser: use the current origin and any explicit VM or DevStack worktree
+ * prefix. Bare `/api` and `/files` calls route through the shell-route cookie
+ * to the user's default machine.
  * Server: use GATEWAY_URL env var (direct container-internal access).
  */
 export function getGatewayUrl(): string {
   if (typeof window !== "undefined") {
-    return window.location.origin + getExplicitVmPrefix();
+    return window.location.origin + getExplicitGatewayPrefix();
   }
   return process.env.GATEWAY_URL ?? "http://localhost:4000";
 }
 
 /**
  * Resolve the gateway WebSocket URL.
- * Browser: current host through the shell proxy, with the same explicit-vm
- * prefix as getGatewayUrl (the platform maps `/vm/<handle>/ws` to the machine's
- * `/ws` upstream).
+ * Browser: current host through the shell proxy, with the same runtime prefix
+ * as getGatewayUrl. The platform maps the scoped route to `/ws` upstream.
  * Server: use direct gateway URL.
  */
 export function getGatewayWs(): string {
@@ -38,7 +34,7 @@ export function getGatewayWs(): string {
       }
     }
     const proto = window.location.protocol === "https:" ? "wss" : "ws";
-    return `${proto}://${window.location.host}${getExplicitVmPrefix()}/ws`;
+    return `${proto}://${window.location.host}${getExplicitGatewayPrefix()}/ws`;
   }
   return process.env.NEXT_PUBLIC_GATEWAY_WS ?? "ws://localhost:4000/ws";
 }
@@ -47,7 +43,7 @@ export function getGatewayWs(): string {
  * Bind a gateway-owned static asset path to the current explicit computer.
  * The gateway bootstrap intentionally returns portable root-relative paths;
  * browser consumers must add the tab-scoped gateway prefix before rendering
- * them so `/vm/<handle>` tabs never fall back to the primary computer.
+ * them so explicit runtime tabs never fall back to the primary computer.
  */
 export function gatewayAssetUrl(path: string | null | undefined): string | undefined {
   if (!path) return undefined;
@@ -55,9 +51,14 @@ export function gatewayAssetUrl(path: string | null | undefined): string | undef
   return `${getGatewayUrl()}${path}`;
 }
 
-/** The `/vm/<handle>` prefix of the current explicit vm route, or "" at the root. */
-function getExplicitVmPrefix(): string {
+export function getDevstackWorktreePrefix(pathname: string | null | undefined): string | undefined {
+  return pathname?.match(/^(\/devstack\/worktrees\/[a-z0-9](?:[a-z0-9-]{0,30}[a-z0-9])?)(?:\/|$)/)?.[1];
+}
+
+function getExplicitGatewayPrefix(): string {
   const pathname = window.location.pathname ?? "";
+  const worktree = getDevstackWorktreePrefix(pathname);
+  if (worktree) return worktree;
   const match = pathname.match(/^\/vm\/([A-Za-z0-9_-]{1,64})(?:\/|$)/);
   if (!match) return "";
   const explicitSlot = pathname.match(/^\/vm\/[^/]+\/~runtime\/([a-z0-9](?:[a-z0-9-]{0,30}[a-z0-9])?)(?:\/|$)/);

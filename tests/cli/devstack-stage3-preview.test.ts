@@ -45,11 +45,16 @@ describe('matrix devstack --stage 3', () => {
   it('links to an explicit registered Computer and worktree without passing local paths', async () => {
     const { stdout } = await run('--platform', origin, '--computer', 'dev-one', '--worktree', 'feature-one', '--json');
     expect(JSON.parse(stdout).data).toEqual({
-      computer: 'dev-one', worktree: 'feature-one', entryUrl: `${origin}/devstack/dev-one/feature-one`,
+      computer: 'dev-one', worktree: 'feature-one', entryUrl: `${origin}/devstack/worktrees/feature-one/`,
     });
     await expect(run('--platform', origin, '--worktree', '/tmp/worktree', '--json')).rejects.toMatchObject({
       code: 1, stderr: expect.stringContaining('devstack_selection_required'),
     });
+  });
+
+  it('opens the registered worktree without needing its current Computer name', async () => {
+    const { stdout } = await run('--platform', origin, '--worktree', 'feature-one', '--json');
+    expect(JSON.parse(stdout).data).toEqual({ worktree: 'feature-one', entryUrl: `${origin}/devstack/worktrees/feature-one/` });
   });
 
   it.each(['http://devstack.example.test', 'https://user:pass@devstack.example.test', 'https://devstack.example.test/path'])(

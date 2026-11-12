@@ -29,7 +29,11 @@ const configSchema = z.strictObject({
 });
 
 const previewTargetSchema = targetSchema.pick({ runtime: true, worktree: true, owner: true, handle: true, containerId: true });
-const previewConfigSchema = configSchema.extend({ targets: z.array(previewTargetSchema).min(1).max(24) });
+const previewConfigSchema = configSchema.extend({
+  targets: z.array(previewTargetSchema).min(1).max(24),
+  publicBrowserOnly: z.boolean().optional(),
+  membershipSource: z.literal('private-preview-api').optional(),
+});
 
 export type DevstackPreviewTarget = z.infer<typeof previewTargetSchema>;
 export type DevstackPreviewConfig = z.infer<typeof previewConfigSchema> & { instance: string };
@@ -68,7 +72,9 @@ export function loadDevstackPreviewConfig(raw: string | undefined, instance: str
   const { operators, targets } = config;
   // A canonical preview path serves one checkout. Never offer two selections
   // that would send the owner to the same registered runtime.
-  if (new Set(operators).size !== operators.length || new Set(targets.map(target => target.runtime)).size !== targets.length
+  if ((config.membershipSource === 'private-preview-api' && !config.publicBrowserOnly)
+    || (config.publicBrowserOnly && new Set(targets.map(target => target.worktree)).size !== targets.length)
+    || new Set(operators).size !== operators.length || new Set(targets.map(target => target.runtime)).size !== targets.length
     || new Set(targets.map(target => target.handle)).size !== targets.length
     || new Set(targets.map(target => target.containerId)).size !== targets.length
     || targets.some(target => !operators.includes(target.owner) || Object.values(target).some(value => value.includes('\n')))) {
