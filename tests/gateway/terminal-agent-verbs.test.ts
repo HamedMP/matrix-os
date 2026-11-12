@@ -275,4 +275,13 @@ describe("terminal agent verbs: visible text and abandoned sends", () => {
     vi.spyOn(inputActivity, "lastInputAt").mockImplementation(() => time());
     await expect(verbs.send(ref, { text: "hi", maxHoldMs: 10_000 })).resolves.toEqual({ sent: true, heldMs: 10_000 });
   });
+
+  // Fault detected (review of #3298): a background note typed into a person's draft
+  // once its hold ran out, or held the supervisor for a full minute.
+  it("leaves a deferrable send unsent while a person is still typing", async () => {
+    const { verbs, inputActivity, time, writes } = harness();
+    vi.spyOn(inputActivity, "lastInputAt").mockImplementation(() => time());
+    await expect(verbs.send(ref, { text: "note", maxHoldMs: 2_000, deferWhileTyping: true })).rejects.toMatchObject({ code: "cancelled" });
+    expect(writes).toEqual([]);
+  });
 });

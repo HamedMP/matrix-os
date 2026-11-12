@@ -27,6 +27,10 @@ export const TERMINAL_REPORT_MAX_CHARS = TERMINAL_SEND_TEXT_MAX_CHARS - ENVELOPE
 const SEND_TURN_GRACE_MS = 15_000;
 // A record this young may belong to a tab created after the pass listed tabs.
 const PRUNE_GRACE_MS = 60_000;
+// A note to a parent waits this long for a person's draft, then retries next pass.
+const NOTE_HOLD_MS = 2_000;
+// Report counts per child, so a report wakes `wait-children any`; oldest out past the cap.
+const MAX_REPORT_COUNTS = 4_096;
 
 export interface TerminalAgentRuntime {
   listWorkspaces(): Promise<TerminalWorkspace[]>;
@@ -71,7 +75,7 @@ export interface TerminalRunResult {
 }
 
 export type TerminalChildrenWaitResult =
-  | { reason: "changed"; child: TerminalRef; status?: TerminalAgentStatus; exited?: boolean }
+  | { reason: "changed"; child: TerminalRef; status?: TerminalAgentStatus; exited?: boolean; reported?: boolean }
   | { reason: "idle" }
   | { reason: "none" }
   /** `cursor`: names the children as this wait started, to pass back on the next check-in. */
@@ -159,12 +163,28 @@ export function createTerminalAgents(options: {
     return { sent: false, reason: "not_ready" };
   }
 
+  // Closing ends child waits and pending parent notes.
+  const closing = new AbortController();
+  const activeChildWaits = new Set<Promise<unknown>>();
+  // How many reports each child has sent; bounded, oldest first out.
+  const reportCounts = new Map<string, number>();
+  const countReport = (child: TerminalRef) => {
+    const key = terminalRefKey(child);
+    const next = (reportCounts.get(key) ?? 0) + 1;
+    reportCounts.delete(key);
+    reportCounts.set(key, next);
+    while (reportCounts.size > MAX_REPORT_COUNTS) {
+      const oldest = reportCounts.keys().next().value;
+      if (oldest === undefined) break;
+      reportCounts.delete(oldest);
+    }
+  };
   // Child waits in progress: bounded, released when each wait ends.
   const childWaits = new Map<string, number>();
   // Starting child states for waits that will check in again: bounded, oldest first out, TTL.
   const childWaitBaselines = new Map<string, {
     parentKey: string;
-    facts: Map<string, { ref: TerminalRef; status?: TerminalAgentStatus; live: boolean }>;
+    facts: Map<string, { ref: TerminalRef; status?: TerminalAgentStatus; live: boolean; reports: number }>;
     expiresAt: number;
   }>();
   let childWaitTotal = 0;
@@ -176,7 +196,7 @@ export function createTerminalAgents(options: {
     const snapshot = async () => {
       const children = await options.registry.children(parent);
       const statuses = await options.status.list();
-      const facts = new Map<string, { ref: TerminalRef; status?: TerminalAgentStatus; live: boolean }>();
+      const facts = new Map<string, { ref: TerminalRef; status?: TerminalAgentStatus; live: boolean; reports: number }>();
       for (const child of children) {
         const tab = await findTab(child.ref);
         const live = Boolean(tab && tab.status !== "exited" && tab.status !== "failed");
@@ -186,7 +206,8 @@ export function createTerminalAgents(options: {
         const previousTurn = entry !== undefined && sentAt !== undefined
           && Date.parse(entry.reportedAt) < sentAt && now() - sentAt < SEND_TURN_GRACE_MS;
         const status = previousTurn ? "working" : entry?.status;
-        facts.set(terminalRefKey(child.ref), { ref: child.ref, live, ...(status ? { status } : {}) });
+        const key = terminalRefKey(child.ref);
+        facts.set(key, { ref: child.ref, live, reports: reportCounts.get(key) ?? 0, ...(status ? { status } : {}) });
       }
       return facts;
     };
@@ -211,7 +232,7 @@ export function createTerminalAgents(options: {
       return { reason: "timeout", cursor };
     };
     for (;;) {
-      if (input.signal?.aborted) return timedOut();
+      if (input.signal?.aborted || closing.signal.aborted) return timedOut();
       const current = await snapshot();
       if (input.mode === "all") {
         // A child without status counts as working until it exits.
@@ -223,6 +244,7 @@ export function createTerminalAgents(options: {
           // A child whose record is gone was removed: that is its exit.
           if (!child) return { reason: "changed", child: before.ref, exited: true };
           if (before.live && !child.live) return { reason: "changed", child: child.ref, exited: true };
+          if (child.reports !== before.reports) return { reason: "changed", child: child.ref, reported: true };
           if (child.status !== before.status && child.status !== "working") {
             return { reason: "changed", child: child.ref, ...(child.status ? { status: child.status } : {}) };
           }
@@ -316,6 +338,7 @@ export function createTerminalAgents(options: {
       await admitWorkspace(parent.workspaceId, () => options.verbs.send(parent, {
         text: terminalAgentEnvelope({ tabId: child.tabId, name: childTab.name }, input.text),
       }));
+      countReport(child);
       return { sent: true, parent };
     },
 
@@ -334,12 +357,21 @@ export function createTerminalAgents(options: {
       }
       childWaitTotal += 1;
       childWaits.set(key, forParent + 1);
-      return waitForChildren(parent, input).finally(() => {
+      const wait = waitForChildren(parent, input).finally(() => {
         childWaitTotal -= 1;
+        activeChildWaits.delete(wait);
         const left = (childWaits.get(key) ?? 1) - 1;
         if (left <= 0) childWaits.delete(key);
         else childWaits.set(key, left);
       });
+      activeChildWaits.add(wait);
+      return wait;
+    },
+
+    /** Ends child waits (as timeouts) and pending parent notes; resolves once the waits returned. */
+    async close(): Promise<void> {
+      closing.abort();
+      await Promise.allSettled([...activeChildWaits]);
     },
 
 
@@ -370,6 +402,10 @@ export function createTerminalAgents(options: {
         try {
           await admitWorkspace(parent.workspaceId, () => options.verbs.send(parent, {
             text: terminalAgentEnvelope({ tabId: record.ref.tabId, name }, text),
+            // A person typing in the parent keeps the note pending; it never holds the pass.
+            maxHoldMs: NOTE_HOLD_MS,
+            deferWhileTyping: true,
+            signal: closing.signal,
           }));
           return true;
         } catch (error: unknown) {
