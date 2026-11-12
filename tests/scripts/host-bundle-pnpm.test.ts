@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
 import { expect, it } from "vitest";
 import { BuildOrchestrator } from "../../packages/gateway/src/app-runtime/build-orchestrator.js";
+import { safeBuildEnv } from "../../packages/gateway/src/app-runtime/safe-env.js";
 
 it("ships pinned pnpm through first install and an app-only update for gateway builds", async () => {
   const repo = process.cwd();
@@ -64,12 +65,32 @@ it("ships pinned pnpm through first install and an app-only update for gateway b
     rmSync(join(installed, "app"), { recursive: true });
     renameSync(join(update, "app"), join(installed, "app"));
 
+    // An app can declare a different packageManager. Gateway builds must use
+    // the bundled version rather than letting pnpm download that version.
+    const mismatchedApp = join(fixture, "mismatched-app");
+    mkdirSync(mismatchedApp);
+    writeFileSync(join(mismatchedApp, "package.json"), JSON.stringify({ packageManager: "pnpm@10.0.0" }));
+    process.env.PATH = buildPath;
+    const gatewayEnv = safeBuildEnv();
+    // The test runner itself is launched through pnpm; the systemd gateway is
+    // not, so remove its inherited pnpm process markers.
+    delete gatewayEnv.PNPM_PACKAGE_NAME;
+    delete gatewayEnv.npm_config_user_agent;
+    delete gatewayEnv.COREPACK_ROOT;
+    const gatewayVersion = spawnSync("sh", ["-c", "pnpm --version"], {
+      cwd: mismatchedApp,
+      env: gatewayEnv,
+      encoding: "utf8",
+      timeout: 10_000,
+    });
+    expect(gatewayVersion.status, gatewayVersion.stderr).toBe(0);
+    expect(gatewayVersion.stdout.trim()).toBe(pinned);
+
     cpSync(join(repo, "tests/fixtures/apps/hello-vite"), appDir, { recursive: true });
     const manifestPath = join(appDir, "matrix.json");
     const manifest = JSON.parse(readFileSync(manifestPath, "utf8"));
     manifest.build.install = "pnpm install --frozen-lockfile";
     writeFileSync(manifestPath, JSON.stringify(manifest));
-    process.env.PATH = buildPath;
     const result = await new BuildOrchestrator({ concurrency: 1, storeDir: join(fixture, "store") }).build("new-app", appDir);
     expect(result, existsSync(join(appDir, ".build.log")) ? readFileSync(join(appDir, ".build.log"), "utf8") : "no build log").toMatchObject({ ok: true });
     expect(existsSync(join(appDir, "dist/index.html"))).toBe(true);
