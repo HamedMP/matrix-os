@@ -24,7 +24,35 @@ Browser input is enabled only after the driver drains/detaches and the real disp
 
 The agent receives fixed DOM operations and observed references, never raw CDP endpoints, arbitrary evaluation, cookies, storage, password values or credential-page content. Chrome runs in the owner's existing private profile; owner login and password-manager use stay in the visible browser. Agent-created tabs and related page/frame targets are bounded and gated; unsupported related targets require owner handoff. Existing owner tabs are not scanned or closed.
 
+When Chrome's related-target checks cause handoff, the same run may resume that tab once and must take a fresh snapshot. If the same tab requires another related-target handoff in that run, the broker drains and detaches Chrome, releases owner input after acknowledgement, and revokes the Browser run. The tool returns a terminal failure and includes the idle state when there is no other active run. Chat agents must report verified partial progress and must not suggest Resume for that terminated run. A successful recovery returns the new snapshot without the old handoff message. Credential and download recovery retain their existing behavior. Diagnostics record only the enumerated trigger and an allowlisted target type.
+
 Request URL validation rejects private destinations and revalidates redirects. DNS validation is a preflight, **not DNS pinning**: Chrome resolves hosts itself, so DNS rebinding remains a limitation. Related-target behavior and initial network timing need actual pinned-Chrome validation. This integration does not claim whole-profile network isolation. Full-access native harnesses remain owner-controlled runtimes, not a sandbox against a malicious local operator or modified plugin.
+
+### Public-only browsing
+
+When the user requests public pages only, the first action after status may be `tab_new` with `context: "public"`. The broker binds that run to the separate driver before any browser action and never falls back to the owner context. The same owner lease, input gate, and per-action approval apply. No downloads or sign-in in this mode. Ordinary browsing still uses the owner's existing profile.
+
+The Gateway owns one separate Chrome context configured from creation to use a
+loopback proxy for HTTP and HTTPS traffic. The configuration removes Chrome's
+implicit loopback bypass and specifies a single proxy. The proxy denies cleartext
+forwarding and accepts only HTTPS CONNECT to port 443. It rejects private and
+mixed DNS results, then connects directly to a validated IP. Connections and
+deadlines are bounded and the listener closes with its context owner. This
+boundary applies to traffic Chrome sends through its configured proxy. The
+bundled Chrome service has no policy for direct WebRTC traffic, so this
+configuration does not establish general browser or OS network isolation.
+
+The driver also applies Page and iframe Fetch rules to the targets it configures.
+Only a Service Worker with the exact public context ID can continue without
+granting document or raw protocol access. An already-running iframe with the
+same context ID and a verified HTTPS URL can remain opaque to the driver. It
+receives no direct child commands or event handling and is detached through its
+parent. The proxy stays active across page and action-session lifetimes. Unknown
+targets and owner-context workers retain fail-closed behavior.
+
+An active semantic modal scopes the observation to its own text and controls, so background content cannot exhaust the reference budget first. Opening, replacing, or closing the modal invalidates references scoped to its previous state. Credential detection still runs before any modal observation or action. The private cursor uses fixed DOM nodes instead of an HTML string, so pages that enforce Trusted Types can still receive grounded actions without relaxing their policy.
+
+Public tabs remain visible after the Chat ends and after the action transport reconnects. Gateway shutdown or loss of its separate owning Chrome connection disposes only the public context, which is not an authenticated-session persistence mechanism. If Chrome confirms that the context is gone, the current action fails before dispatch. After the owner stops the run, a new public run can create a fresh context. The owner profile and its tabs remain independent. Public workflow and full/supervised acceptance require the exact installed candidate and browser surface, in addition to transport tests.
 
 ## Original document exports
 

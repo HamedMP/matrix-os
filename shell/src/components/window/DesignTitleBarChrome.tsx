@@ -1,6 +1,7 @@
 "use client";
 
 import { Maximize2, Minus } from "@/lib/hugeicons";
+import type { ReactNode } from "react";
 import { TrafficLights } from "./TrafficLights";
 import { WinXpCaptionButtons, Win11CaptionButtons } from "./DesignCaptionButtons";
 
@@ -18,6 +19,7 @@ export interface DesignTitleBarChromeProps {
   onClose: () => void;
   onMinimize: () => void;
   onMaximize: () => void;
+  rightActions?: ReactNode;
 }
 
 const win98Bevel = {
@@ -46,6 +48,7 @@ export function MacTitleBarChrome({
   onClose,
   onMinimize,
   onMaximize,
+  rightActions,
 }: DesignTitleBarChromeProps) {
   return (
     <div
@@ -68,7 +71,9 @@ export function MacTitleBarChrome({
           {title}
         </span>
       </div>
-      <div className="w-[42px] shrink-0" />
+      <div className={rightActions ? "flex min-w-[104px] shrink-0 justify-end" : "w-[42px] shrink-0"}>
+        {rightActions}
+      </div>
     </div>
   );
 }
@@ -81,6 +86,7 @@ export function Win98TitleBarChrome({
   onClose,
   onMinimize,
   onMaximize,
+  rightActions,
 }: DesignTitleBarChromeProps) {
   return (
     <div
@@ -114,6 +120,7 @@ export function Win98TitleBarChrome({
       </div>
       {/* Right: Win98 window buttons */}
       <div className="flex items-center gap-0.5 shrink-0" onDoubleClick={(e) => e.stopPropagation()}>
+        {rightActions}
         <button
           type="button"
           className="size-5 flex items-center justify-center text-foreground bg-muted hover:bg-muted/80 active:bg-muted/60"
@@ -167,6 +174,7 @@ export function MacGlassTitleBarChrome({
   onClose,
   onMinimize,
   onMaximize,
+  rightActions,
 }: DesignTitleBarChromeProps) {
   return (
     <div
@@ -195,7 +203,9 @@ export function MacGlassTitleBarChrome({
           {title}
         </span>
       </div>
-      <div className="w-[42px] shrink-0" />
+      <div className={rightActions ? "flex min-w-[104px] shrink-0 justify-end" : "w-[42px] shrink-0"}>
+        {rightActions}
+      </div>
     </div>
   );
 }
@@ -208,6 +218,7 @@ export function WinXpTitleBarChrome({
   onClose,
   onMinimize,
   onMaximize,
+  rightActions,
 }: DesignTitleBarChromeProps) {
   return (
     <div
@@ -236,6 +247,7 @@ export function WinXpTitleBarChrome({
         </span>
       </div>
       {/* Right: XP caption buttons */}
+      {rightActions}
       <WinXpCaptionButtons onClose={onClose} onMinimize={onMinimize} onMaximize={onMaximize} />
     </div>
   );
@@ -249,6 +261,7 @@ export function Win11TitleBarChrome({
   onClose,
   onMinimize,
   onMaximize,
+  rightActions,
 }: DesignTitleBarChromeProps) {
   return (
     <div
@@ -272,6 +285,7 @@ export function Win11TitleBarChrome({
         </span>
       </div>
       {/* Right: Win11 caption buttons */}
+      {rightActions}
       <Win11CaptionButtons onClose={onClose} onMinimize={onMinimize} onMaximize={onMaximize} />
     </div>
   );

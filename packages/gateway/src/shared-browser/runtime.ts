@@ -3,6 +3,7 @@ import { z } from "zod/v4";
 import { createSharedBrowserBroker, type SharedBrowserDriver } from "./broker.js";
 import { createSharedBrowserCdpDriver } from "./cdp-driver.js";
 import { writeBrowserArtifactManifest } from "./artifact-manifest.js";
+import { createPublicBrowserContextRuntime } from "./public-context-runtime.js";
 
 const Acknowledgement=z.object({humanControlAvailable:z.boolean()}).strict();
 /** Fixed owner/VPS composition. No model-supplied endpoint or owner is accepted. */
@@ -11,8 +12,10 @@ export function createSharedBrowserRuntime(options:{
   driver?:SharedBrowserDriver;fetcher?:typeof fetch;authorizeAction?:SharedBrowserSupervisedPolicy["authorizeAction"];
 }) {
   if(!options.enabled || !options.ownerId || options.ownerId!==options.clerkOwnerId)return undefined;
+  const publicContext = options.driver ? undefined : createPublicBrowserContextRuntime();
   const broker=createSharedBrowserBroker({ownerId:options.ownerId,authorizeAction:options.authorizeAction,
     driver:options.driver ?? createSharedBrowserCdpDriver({homePath:options.homePath}),
+    ...(publicContext ? { publicDriver: createSharedBrowserCdpDriver({ homePath: options.homePath, publicContext }) } : {}),
     exportArtifacts:(id,artifacts)=>writeBrowserArtifactManifest(options.homePath,id,artifacts),
     async setHumanControl(enabled){
       const response=await (options.fetcher??fetch)("http://127.0.0.1:8730/automation-input",{
@@ -27,5 +30,5 @@ export function createSharedBrowserRuntime(options:{
       if(result.humanControlAvailable!==enabled)throw new Error("Input gate unavailable");
     },
   });
-  return{broker,close:broker.close};
+  return{broker,async close(){try{await broker.close();}finally{await publicContext?.close();}}};
 }
