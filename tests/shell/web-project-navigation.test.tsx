@@ -9,9 +9,10 @@ import { usePagedProjectChats } from "../../shell/src/components/chat/usePagedPr
 import { ChatRailOrderContext } from "@matrix-os/ui";
 import type { RenameableConversation } from "../../shell/src/components/chat/ChatTitleRename";
 
-function Nav({ gatewayUrl, scopeKey, chats = [], activeChatId, onSelectChat = vi.fn() }: { gatewayUrl: string; scopeKey: string; chats?: RenameableConversation[]; activeChatId?: string; onSelectChat?: (chatId: string) => void }) {
+function Nav({ gatewayUrl, scopeKey, chats = [], activeChatId, onSelectChat = vi.fn(), renamedTitles = {}, loadNavigationPage }: { gatewayUrl: string; scopeKey: string; chats?: RenameableConversation[]; activeChatId?: string; onSelectChat?: (chatId: string) => void; renamedTitles?: Record<string, string>; loadNavigationPage?: Parameters<typeof WebProjectsNav>[0]["loadNavigationPage"] }) {
   const state = useWebProjects(gatewayUrl, scopeKey);
   return <WebProjectsNav state={state} gatewayUrl={gatewayUrl} chats={chats} listedChatIds={new Set(chats.map(chat => chat.id))} activeChatId={activeChatId} onSelectChat={onSelectChat}
+    renamedTitles={renamedTitles} loadNavigationPage={loadNavigationPage}
     renderChat={chat => <button key={chat.id} type="button">{chat.title}</button>} />;
 }
 import { OrganizationStateProvider } from "../../shell/src/lib/collaboration-organization-state";
@@ -39,6 +40,35 @@ it("loads project navigation in self-hosted Chat without a ClerkProvider", async
   vi.stubGlobal("fetch", vi.fn(async () => Response.json({ projects: [{ id: "proj_local", slug: "local", name: "Local project" }] })));
   render(<Nav gatewayUrl="https://example.test" scopeKey="self-hosted-owner/runtime/main" />);
   expect(await screen.findByRole("button", { name: "Expand Local project chats" })).toBeTruthy();
+});
+
+it("archives both the project ID and legacy slug chats", async () => {
+  vi.stubGlobal("fetch", vi.fn(async () => Response.json({ projects: [{ id: "proj_local", slug: "local", name: "Local project" }] })));
+  const archive = vi.fn(async (reference: string) => ({ archived: [{ chatId: `chat_${reference}`, revision: 2 }], archivedCount: 1, skippedCount: 0 }));
+  render(<OrganizationStateProvider value={{ status: "none", organizationId: null }}><ChatApp
+    messages={[]} busy={false} connected conversations={[]} onNewChat={vi.fn()} onSwitchConversation={vi.fn()} onSubmit={vi.fn()}
+    authorityKey="user_owner/runtime/main" onArchiveProjectChats={archive}/></OrganizationStateProvider>);
+  const nav = await screen.findByRole("navigation", { name: "Projects" });
+  fireEvent.click(within(nav).getByRole("button", { name: "Expand Local project chats" }));
+  fireEvent.click(within(nav).getByRole("button", { name: "Archive chats in Local project" }));
+  fireEvent.click(within(nav).getByRole("button", { name: "Archive chats" }));
+  await waitFor(() => expect(archive).toHaveBeenCalledTimes(2));
+  expect(archive.mock.calls.map(([reference]) => reference).sort()).toEqual(["local", "proj_local"]);
+});
+
+it("updates a visible paged project title after rename without collapsing its project", async () => {
+  vi.stubGlobal("fetch", vi.fn(async () => Response.json({ projects: [{ id: "proj_local", slug: "proj_local", name: "Local project" }] })));
+  const loadNavigationPage = vi.fn(async () => ({ items: [{ chat: {
+    id: "chat_old", title: "Old title", titleVersion: 1, revision: 1, lifecycle: "active", attention: "none", messageCount: 0,
+    createdAt: "2026-11-12T00:00:00Z", updatedAt: "2026-11-12T00:00:00Z",
+  }, readState: { readThroughSeq: 0, markedUnread: false } }], totalCount: 1 }));
+  const props = { gatewayUrl: "https://example.test", scopeKey: "owner/runtime", loadNavigationPage: loadNavigationPage as never };
+  const view = render(<Nav {...props}/>);
+  fireEvent.click(await screen.findByRole("button", { name: "Expand Local project chats" }));
+  expect(await screen.findByRole("button", { name: "Old title" })).toBeTruthy();
+  view.rerender(<Nav {...props} renamedTitles={{ chat_old: "New title" }}/>);
+  expect(screen.getByRole("button", { name: "New title" })).toBeTruthy();
+  expect(screen.getByRole("button", { name: "Collapse Local project chats" })).toBeTruthy();
 });
 
 it("renders self-hosted Chat after a conversation exists without a ClerkProvider", async () => {

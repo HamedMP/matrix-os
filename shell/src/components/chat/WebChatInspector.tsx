@@ -9,7 +9,7 @@ import { parseTerminalRefKey } from "@/components/terminal/terminal-session-id";
 import { ChatFilePanel } from "./ChatFilePanel";
 
 const FileEntrySchema = z.object({ name: z.string().min(1).max(255), type: z.enum(["file", "directory"]) }).passthrough();
-const FileListSchema = z.union([z.object({ entries: z.array(FileEntrySchema).max(1000) }).passthrough(), z.array(FileEntrySchema).max(1000)]);
+const FileListSchema = z.union([z.object({ entries: z.array(FileEntrySchema) }).passthrough(), z.array(FileEntrySchema)]);
 type FileEntry = z.infer<typeof FileEntrySchema>;
 type Tab = "files" | "terminal" | "side-chat";
 type SavedLayout = { width: number; treeHeight: number; selected: Tab };
@@ -30,6 +30,7 @@ function readLayout(key: string | null): SavedLayout {
 function FileTree({ gatewayUrl, onOpenFile }: { gatewayUrl: string; onOpenFile(path: string): void }) {
   const [path, setPath] = useState("");
   const [entries, setEntries] = useState<FileEntry[]>([]);
+  const [truncated, setTruncated] = useState(false);
   const [error, setError] = useState(false);
   const [loading, setLoading] = useState(false);
   useEffect(() => {
@@ -38,7 +39,12 @@ function FileTree({ gatewayUrl, onOpenFile }: { gatewayUrl: string; onOpenFile(p
     setError(false);
     void fetch(`${gatewayUrl}/api/files/list?path=${encodeURIComponent(path)}`, { signal: AbortSignal.any([controller.signal, AbortSignal.timeout(10_000)]) })
       .then(async response => { if (!response.ok) throw new Error("FileListUnavailable"); return FileListSchema.parse(await response.json()); })
-      .then(data => { if (!controller.signal.aborted) setEntries(Array.isArray(data) ? data : data.entries); })
+      .then(data => {
+        if (controller.signal.aborted) return;
+        const available = Array.isArray(data) ? data : data.entries;
+        setEntries(available.slice(0, 1000));
+        setTruncated(available.length > 1000);
+      })
       .catch((cause: unknown) => { if (!controller.signal.aborted) { console.warn("[chat-inspector] Files unavailable:", cause instanceof Error ? cause.name : "UnknownError"); setError(true); } })
       .finally(() => { if (!controller.signal.aborted) setLoading(false); });
     return () => controller.abort();
@@ -47,6 +53,7 @@ function FileTree({ gatewayUrl, onOpenFile }: { gatewayUrl: string; onOpenFile(p
     <button type="button" className="mb-1 block w-full truncate rounded px-2 py-1 text-left hover:bg-accent" onClick={() => setPath(path.split("/").slice(0, -1).join("/"))}>{path ? `← ${path}` : "Home"}</button>
     {loading && !entries.length ? <p role="status" className="px-2 text-xs">Loading files…</p> : null}
     {error ? <p role="alert" className="px-2 text-xs">Files could not be loaded.</p> : null}
+    {truncated ? <p className="px-2 text-xs text-muted-foreground">Showing the first 1,000 files.</p> : null}
     {entries.map(entry => {
       const fullPath = path ? `${path}/${entry.name}` : entry.name;
       return <button key={entry.name} type="button" role="treeitem" aria-label={entry.name} className="block w-full truncate rounded px-2 py-1 text-left hover:bg-accent"

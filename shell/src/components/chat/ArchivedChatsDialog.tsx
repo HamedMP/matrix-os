@@ -7,6 +7,7 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { SHELL_Z_INDEX } from "@/lib/shell-layering";
 
 type ArchivedChat = CanonicalChatListResponse["items"][number];
+const MAX_RETAINED_ARCHIVE_ROWS = 500;
 
 export function ArchivedChatsDialog({ open, onClose, list, restore, remove }: {
   open: boolean;
@@ -49,7 +50,9 @@ export function ArchivedChatsDialog({ open, onClose, list, restore, remove }: {
     setError(null);
     void list(cursor).then(page => {
       if (generation.current !== current) return;
-      setRows(current => [...current, ...page.items.filter(item => !current.some(row => row.chat.id === item.chat.id))]);
+      const retained = [...rows, ...page.items.filter(item => !rows.some(row => row.chat.id === item.chat.id))].slice(-MAX_RETAINED_ARCHIVE_ROWS);
+      setRows(retained);
+      setSelected(current => current.filter(id => retained.some(row => row.chat.id === id)));
       setCursor(page.nextCursor);
     }).catch((cause: unknown) => {
       if (generation.current !== current) return;

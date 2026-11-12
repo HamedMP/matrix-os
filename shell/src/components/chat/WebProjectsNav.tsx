@@ -13,9 +13,18 @@ import type { CanonicalChatNavigationPageQuery, CanonicalChatNavigationPageRespo
 // Same page size as the Electron Desktop project list.
 const PROJECT_CHAT_PAGE = 5;
 export type ProjectRow = { kind: "known"; chat: RenameableConversation } | { kind: "fetched"; chat: FetchedProjectChat };
+export function withRenamedProjectTitles(chats: readonly FetchedProjectChat[], titles: Readonly<Record<string, string>>): FetchedProjectChat[] {
+  return chats.map(chat => {
+    const title = titles[chat.id];
+    if (!title || title === chat.title) return chat;
+    return { ...chat, title, titleVersion: chat.titleVersion + 1,
+      ...(chat.canonicalRecord ? { canonicalRecord: { ...chat.canonicalRecord,
+        chat: { ...chat.canonicalRecord.chat, title, titleVersion: (chat.canonicalRecord.chat.titleVersion ?? 0) + 1 } } } : {}) };
+  });
+}
 
 export function WebProjectsNav({ state, gatewayUrl, chats, listedChatIds, activeChatId, activeChatTitle, onSelectChat, onFocusProject, renderChat,
-  mobile = false, unreadOnly = false, sourceFilter = "all", searchQuery = "", onArchiveProject, loadNavigationPage }: {
+  mobile = false, unreadOnly = false, sourceFilter = "all", searchQuery = "", renamedTitles = {}, onArchiveProject, loadNavigationPage }: {
   state: WebProjectsState;
   gatewayUrl: string;
   chats: readonly RenameableConversation[];
@@ -23,6 +32,7 @@ export function WebProjectsNav({ state, gatewayUrl, chats, listedChatIds, active
   listedChatIds: ReadonlySet<string>;
   activeChatId?: string;
   activeChatTitle?: string;
+  renamedTitles?: Readonly<Record<string, string>>;
   onSelectChat(chatId: string): void;
   /** Narrows the sidebar to one project, as on Electron Desktop. */
   onFocusProject(project: WebProject): void;
@@ -31,7 +41,7 @@ export function WebProjectsNav({ state, gatewayUrl, chats, listedChatIds, active
   unreadOnly?: boolean;
   sourceFilter?: ChatImportSourceFilterValue;
   searchQuery?: string;
-  onArchiveProject?: (projectId: string, projectName: string) => Promise<boolean>;
+  onArchiveProject?: (projectId: string, projectSlug: string, projectName: string) => Promise<boolean>;
   loadNavigationPage?: (input: CanonicalChatNavigationPageQuery) => Promise<CanonicalChatNavigationPageResponse>;
 }) {
   const { projects, loading, error, retry } = state;
@@ -51,13 +61,13 @@ export function WebProjectsNav({ state, gatewayUrl, chats, listedChatIds, active
       </div> : null}
       {projects.map(project => <WebProjectGroup key={`${state.identity}/${project.id}/${unreadOnly}/${sourceFilter}`} project={project} gatewayUrl={gatewayUrl}
         chats={projectChats(chats, project)} listedChatIds={listedChatIds}
-        activeChatId={activeChatId} activeChatTitle={activeChatTitle} onSelectChat={onSelectChat} onFocusProject={onFocusProject}
+        activeChatId={activeChatId} activeChatTitle={activeChatTitle} renamedTitles={renamedTitles} onSelectChat={onSelectChat} onFocusProject={onFocusProject}
         renderChat={renderChat} mobile={mobile} unreadOnly={unreadOnly} sourceFilter={sourceFilter} searchQuery={searchQuery} onArchiveProject={onArchiveProject} loadNavigationPage={loadNavigationPage}/>)}
     </ChatRailSection>
   </nav>;
 }
 
-function WebProjectGroup({ project, gatewayUrl, chats, listedChatIds, activeChatId, activeChatTitle, onSelectChat, onFocusProject, renderChat,
+function WebProjectGroup({ project, gatewayUrl, chats, listedChatIds, activeChatId, activeChatTitle, renamedTitles, onSelectChat, onFocusProject, renderChat,
   mobile, unreadOnly, sourceFilter, searchQuery, onArchiveProject, loadNavigationPage }: {
   project: WebProject;
   gatewayUrl: string;
@@ -65,6 +75,7 @@ function WebProjectGroup({ project, gatewayUrl, chats, listedChatIds, activeChat
   listedChatIds: ReadonlySet<string>;
   activeChatId?: string;
   activeChatTitle?: string;
+  renamedTitles: Readonly<Record<string, string>>;
   onSelectChat(chatId: string): void;
   onFocusProject(project: WebProject): void;
   renderChat(chat: RenameableConversation, nowMs: number): ReactNode;
@@ -72,7 +83,7 @@ function WebProjectGroup({ project, gatewayUrl, chats, listedChatIds, activeChat
   unreadOnly: boolean;
   sourceFilter: ChatImportSourceFilterValue;
   searchQuery: string;
-  onArchiveProject?: (projectId: string, projectName: string) => Promise<boolean>;
+  onArchiveProject?: (projectId: string, projectSlug: string, projectName: string) => Promise<boolean>;
   loadNavigationPage?: (input: CanonicalChatNavigationPageQuery) => Promise<CanonicalChatNavigationPageResponse>;
 }) {
   const { expanded, toggleExpanded, fetched, loading, error, retry, loadMore, hasMore, capped } = usePagedProjectChats(project, gatewayUrl, unreadOnly, false, loadNavigationPage);
@@ -80,7 +91,7 @@ function WebProjectGroup({ project, gatewayUrl, chats, listedChatIds, activeChat
   const nowMs = useMinuteClock(expanded);
   const search = searchQuery.trim().toLowerCase();
   // Paged rows only fill in older Chats; a listed (or pinned, filtered, deleted) Chat keeps its normal placement.
-  const unknownChats = filterChatsByImportSource(fetched.filter(chat => !listedChatIds.has(chat.id)
+  const unknownChats = filterChatsByImportSource(withRenamedProjectTitles(fetched, renamedTitles).filter(chat => !listedChatIds.has(chat.id)
     && (!search || chat.title.toLowerCase().includes(search))), sourceFilter, chat => chat.importSource);
   const allRows: ProjectRow[] = [...chats.map(chat => ({ kind: "known", chat } as const)),
     ...unknownChats.map(chat => ({ kind: "fetched", chat } as const))];
@@ -100,7 +111,7 @@ function WebProjectGroup({ project, gatewayUrl, chats, listedChatIds, activeChat
       </button>
     </div>
     {expanded ? <div className="matrix-web-project-chats">
-      {onArchiveProject ? <WebProjectArchiveAction projectId={project.id} projectName={project.name} onArchive={onArchiveProject}/> : null}
+      {onArchiveProject ? <WebProjectArchiveAction projectId={project.id} projectSlug={project.slug} projectName={project.name} onArchive={onArchiveProject}/> : null}
       <ProjectChatRows rows={allRows.slice(0, shownCount)} projectId={project.id} nowMs={nowMs}
         activeChatId={activeChatId} activeChatTitle={activeChatTitle} onSelectChat={onSelectChat}
         renderChat={renderChat} mobile={mobile} />
