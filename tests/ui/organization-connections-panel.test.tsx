@@ -62,6 +62,24 @@ describe("Organization → Connections panel", () => {
     await waitFor(() => expect(calls.filter(([method, path]) => method === "GET" && path.includes("/connections")).length).toBe(2));
   });
 
+  // Fault: unblock removes only the first matching id, so a block saved under the catalog id survives.
+  it("unblocks every matching block id, catalog id and hostname alike", async () => {
+    const blockedBoth = page();
+    (blockedBoth.members[0] as { blockedServerDefIds: string[] }).blockedServerDefIds = ["linear"];
+    const { withClient, calls } = fakeApi({ connections: blockedBoth });
+    render(<OrganizationConnectionsPanel organizationName="Acme" withClient={withClient} />);
+    fireEvent.click(await screen.findByRole("button", { name: "Unblock mcp.linear.app for Mo Member" }));
+    await waitFor(() => expect(calls).toContainEqual(["DELETE", "/api/orgs/org_acme1/mcp/members/user_mo/blocks/linear"]));
+    expect(calls.filter(([method]) => method === "DELETE")).toEqual([["DELETE", "/api/orgs/org_acme1/mcp/members/user_mo/blocks/linear"]]);
+  });
+
+  // Fault: a mode change sends tool fields that overwrite the saved tool policy.
+  it("sends only the mode when an admin changes a server's mode", async () => {
+    const api = { get: vi.fn(), put: vi.fn(async () => ({ ok: true })), delete: vi.fn() };
+    await createOrganizationMcpAdminClient(api, "org_acme1").setServerMode("linear", "block");
+    expect(api.put).toHaveBeenCalledWith("/api/orgs/org_acme1/mcp/servers/linear", { mode: "block" });
+  });
+
   // Fault: provider, path, or database text from a failed request reaches the admin.
   it("shows only allowlisted copy when a change fails and keeps the current view", async () => {
     const { withClient } = fakeApi({ mutation: async () => { throw new Error("pg: relation org_mcp_member_blocks does not exist at /srv/db"); } });
