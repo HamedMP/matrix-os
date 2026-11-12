@@ -24,6 +24,8 @@ export async function sweepHeldPaneExits(input: {
   listHeldPaneExits(sessionName: string): Promise<HeldPaneExit[]>;
   /** Re-checks the tab under the workspace lock; false when it changed or already ended. */
   record(ref: TerminalRef, expected: { zellijTabName: string; paneId: string }, exitCode: number): Promise<boolean>;
+  /** One workspace's failure is logged and the pass continues with the next workspace. */
+  logFailed(error: unknown): void;
 }): Promise<HeldPaneExitSweepResult> {
   const result: HeldPaneExitSweepResult = { sessions: 0, exited: 0 };
   for (const workspaceId of input.workspaceIds) {
@@ -34,14 +36,18 @@ export async function sweepHeldPaneExits(input: {
       tab.status !== "exited" && tab.status !== "failed" && tab.zellijTabId !== null && tab.zellijPaneId !== null);
     if (live.length === 0) continue;
     result.sessions += 1;
-    const exits = await input.listHeldPaneExits(workspace.zellijSessionName);
-    for (const exit of exits) {
-      const match = live.find(([, tab]) => tab.zellijTabId === exit.tabId && tab.zellijPaneId === exit.paneId);
-      if (!match) continue;
-      const [tabId, tab] = match;
-      if (await input.record({ workspaceId, tabId }, { zellijTabName: tab.zellijTabName, paneId: exit.paneId }, exit.exitCode)) {
-        result.exited += 1;
+    try {
+      const exits = await input.listHeldPaneExits(workspace.zellijSessionName);
+      for (const exit of exits) {
+        const match = live.find(([, tab]) => tab.zellijTabId === exit.tabId && tab.zellijPaneId === exit.paneId);
+        if (!match) continue;
+        const [tabId, tab] = match;
+        if (await input.record({ workspaceId, tabId }, { zellijTabName: tab.zellijTabName, paneId: exit.paneId }, exit.exitCode)) {
+          result.exited += 1;
+        }
       }
+    } catch (error) {
+      input.logFailed(error);
     }
   }
   return result;
