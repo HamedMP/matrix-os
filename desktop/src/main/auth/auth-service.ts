@@ -109,6 +109,8 @@ async function readBoundedResponseText(response: Response): Promise<string> {
 
 interface AuthServiceDeps {
   previewContext?: VerifiedDesktopPreviewContext;
+  /** Native callback for this build's channel; defaults to the stable scheme. */
+  authRedirectUri?: string;
   credentialStore: CredentialStore;
   platformHost: string;
   runtimeSelectionOrigin: string;
@@ -239,7 +241,7 @@ export class AuthService {
     this.flowFailureReason = undefined;
     let code: DeviceCodeResponse;
     try {
-      code = await requestDeviceCode({ fetchFn, baseUrl, ...(this.deps.previewContext ? { nativeRedirect: false } : {}) });
+      code = await requestDeviceCode({ fetchFn, baseUrl, ...(this.deps.previewContext ? { nativeRedirect: false } : { redirectUri: this.deps.authRedirectUri }) });
       if (this.deps.previewContext && new URL(code.verificationUri).origin !== this.deps.previewContext.browserOrigin) throw new PreviewPairAuthMismatch(this.deps.previewContext.role);
     } catch (err: unknown) {
       if (nonce !== this.flowNonce) throw new Error("Sign-in request was canceled.");

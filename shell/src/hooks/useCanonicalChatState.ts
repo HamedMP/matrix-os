@@ -14,6 +14,7 @@ import {
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   CollaborationIdSchema,
+  CollaborationRevisionSchema,
   type CanonicalChatMessagePart,
   type CanonicalChatApprovalDecision,
   type CanonicalSubmitChatInputRequest,
@@ -66,13 +67,34 @@ function conversationMeta(record: ChatNavigationRecord) {
   };
 }
 
-function collaborationViewFromPathname(pathname: string): ChatCollaborationView | null {
+function collaborationViewFromLocation(pathname: string, search = ""): ChatCollaborationView | null {
   if (pathname === "/shared" || pathname === "/shared/") return { kind: "home" };
-  const match = /^\/shared\/(chat|project)\/([^/]+)\/?$/.exec(pathname);
+  const match = /^\/shared\/(chat|project|app)\/([^/]+)\/?$/.exec(pathname);
   if (!match) return null;
   const scopeId = CollaborationIdSchema.safeParse(match[2]);
   if (!scopeId.success) return null;
-  return match[1] === "project" ? { kind: "project", scopeId: scopeId.data } : { kind: "chat", scopeId: scopeId.data };
+  return match[1] === "project" ? { kind: "project", scopeId: scopeId.data }
+    : match[1] === "app" ? sharedAppViewFromLocation(scopeId.data, search)
+    : { kind: "chat", scopeId: scopeId.data };
+}
+
+function sharedAppViewFromLocation(scopeId: string, search: string): ChatCollaborationView | null {
+  const query = new URLSearchParams(search);
+  const allowed = new Set(["expectedBuildId", "expectedShareRevision"]);
+  if ([...query.keys()].some((key) => !allowed.has(key))
+    || query.getAll("expectedBuildId").length > 1
+    || query.getAll("expectedShareRevision").length > 1) return null;
+  const expectedBuildId = query.get("expectedBuildId") ?? undefined;
+  if (expectedBuildId && !/^[a-f0-9]{64}$/.test(expectedBuildId)) return null;
+  const revisionInput = query.get("expectedShareRevision") ?? undefined;
+  const revision = revisionInput === undefined ? undefined : CollaborationRevisionSchema.safeParse(revisionInput);
+  if (revision && !revision.success) return null;
+  return {
+    kind: "app",
+    scopeId,
+    ...(expectedBuildId ? { expectedBuildId } : {}),
+    ...(revision?.success ? { expectedShareRevision: revision.data } : {}),
+  };
 }
 
 function pushShellChatPath(pathname: string): void {
@@ -195,7 +217,7 @@ export function useCanonicalChatState({ initialDraft, initialCollaborationView, 
   useEffect(() => {
     const synchronizeFromHistory = () => {
       if (!isCurrent()) return;
-      const view = collaborationViewFromPathname(window.location.pathname);
+      const view = collaborationViewFromLocation(window.location.pathname, window.location.search);
       if (view) {
         activeChatIdRef.current = undefined;
         detailRef.current = null;

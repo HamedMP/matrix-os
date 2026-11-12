@@ -128,8 +128,14 @@ describe("registerIpcHandlers", () => {
     await expect(harness.invoke("app:get-version")).resolves.toEqual({
       version: "1.4.0-canary.2",
       source: null,
+      channel: "stable",
     });
     expect(getAppVersion).toHaveBeenCalledOnce();
+  });
+
+  it("reports the build channel so prerelease builds can quiet advisory notices", async () => {
+    const harness = makeHarness({ desktopChannel: "canary" });
+    await expect(harness.invoke("app:get-version")).resolves.toMatchObject({ channel: "canary" });
   });
 
   it("captures and validates build provenance when handlers register", async () => {
@@ -137,7 +143,7 @@ describe("registerIpcHandlers", () => {
     const harness = makeHarness({ buildSource: source });
     source.commit = "c".repeat(40);
     await expect(harness.invoke("app:get-version")).resolves.toEqual({
-      version: "1.4.0-canary.2", source: { commit: "b".repeat(40), ancestors: ["a".repeat(40)] },
+      version: "1.4.0-canary.2", source: { commit: "b".repeat(40), ancestors: ["a".repeat(40)] }, channel: "stable",
     });
     expect(() => makeHarness({ buildSource: { commit: "unknown", ancestors: [] } })).toThrow();
   });
@@ -269,6 +275,37 @@ describe("registerIpcHandlers", () => {
       url: "http://127.0.0.1:3000/dashboard",
       bounds: { x: 20, y: 30, width: 640, height: 480 },
       active: false,
+    });
+  });
+
+  it("routes an exact shared-app target without owner launch fields", async () => {
+    const harness = makeHarness();
+    const target = {
+      scopeId: "10000000-0000-4000-8000-000000000001",
+      runtimeId: "runtime_owner",
+      organizationId: "org_matrix",
+      authorityGeneration: 2,
+      appId: "team-tracker",
+      catalogId: "30000000-0000-4000-8000-000000000001",
+      readinessId: "40000000-0000-4000-8000-000000000001",
+      registrationIncarnation: "a".repeat(64),
+      buildId: "b".repeat(64),
+      shareRevision: "7",
+      owner: { actorId: "user_owner", displayName: "Nima" },
+    };
+    vi.mocked(harness.ctx.embeds.open).mockResolvedValue({ embedId: "shared-1", state: "loading" });
+
+    await expect(harness.invoke("embed:open", {
+      kind: "shared-app",
+      target,
+      bounds: { x: 20, y: 30, width: 640, height: 480 },
+      active: true,
+    })).resolves.toEqual({ embedId: "shared-1", state: "loading" });
+    expect(harness.ctx.embeds.open).toHaveBeenCalledWith({
+      kind: "shared-app",
+      target,
+      bounds: { x: 20, y: 30, width: 640, height: 480 },
+      active: true,
     });
   });
 

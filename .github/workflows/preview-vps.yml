@@ -511,7 +511,7 @@ jobs:
             exit 1
           fi
 
-          fleet_machine="$(curl -fsS --max-time 30 \
+          fleet_machine="$(curl -fsS --max-time 30 --retry 3 --retry-delay 5 --retry-all-errors \
             -H "authorization: Bearer ${PLATFORM_SECRET}" \
             "${PLATFORM_PUBLIC_URL}/vps/fleet" |
             jq -c --arg h "$HANDLE" \
@@ -580,7 +580,7 @@ jobs:
             exit 1
           fi
 
-          status="$(curl -fsS --max-time 30 \
+          status="$(curl -fsS --max-time 30 --retry 3 --retry-delay 5 --retry-all-errors \
             -H "authorization: Bearer ${PLATFORM_SECRET}" \
             "${PLATFORM_PUBLIC_URL}/vps/fleet" |
             jq -r --arg h "$HANDLE" --arg id "$accepted_machine_id" \
@@ -761,7 +761,7 @@ jobs:
           deadline=$((SECONDS + PREVIEW_INSTALL_TIMEOUT_SECONDS))
           transition_repair_attempted=false
           while true; do
-            runtime="$(curl -fsS --max-time 30 \
+            runtime="$(curl -fsS --max-time 30 --retry 3 --retry-delay 5 --retry-all-errors \
               -H "authorization: Bearer ${PLATFORM_SECRET}" \
               "${PLATFORM_PUBLIC_URL}/vps/fleet" |
               jq -c --arg h "$HANDLE" \
@@ -837,7 +837,7 @@ jobs:
       - name: Activate bounded Preview AI and speech
         run: |
           set -euo pipefail
-          machine="$(curl -fsS --max-time 30 \
+          machine="$(curl -fsS --max-time 30 --retry 3 --retry-delay 5 --retry-all-errors \
             -H "authorization: Bearer ${PLATFORM_SECRET}" \
             "${PLATFORM_PUBLIC_URL}/vps/fleet" |
             jq -ce --arg h "$HANDLE" '
@@ -1075,7 +1075,7 @@ jobs:
       - name: Delete preview VPS
         run: |
           set -euo pipefail
-          machine_id="$(curl -fsS --max-time 30 \
+          machine_id="$(curl -fsS --max-time 30 --retry 3 --retry-delay 5 --retry-all-errors \
             -H "authorization: Bearer ${PLATFORM_SECRET}" \
             "${PLATFORM_PUBLIC_URL}/vps/fleet" |
             jq -r --arg h "$HANDLE" \
@@ -1131,7 +1131,7 @@ jobs:
           delete_failures=/tmp/reaper-delete-failures
           : > "$lookup_failures"
           : > "$delete_failures"
-          curl -fsS --max-time 30 \
+          curl -fsS --max-time 30 --retry 3 --retry-delay 5 --retry-all-errors \
             -H "authorization: Bearer ${PLATFORM_SECRET}" \
             "${PLATFORM_PUBLIC_URL}/vps/fleet" |
             jq -c '.machines[] | select((.handle | test("^pr-[0-9]+$")) and .status != "deleted" and .deletedAt == null)' |

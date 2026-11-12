@@ -65,6 +65,15 @@ export default function DesktopChatCollaboration({
           onOpenResource?.();
         } else setView({ kind: "project", scopeId });
       }}
+      openApp={(_scopeId, target) => {
+        openTab({
+          kind: "app",
+          title: target.appId.replaceAll(/[-_]+/g, " "),
+          icon: "app",
+          sharedAppTarget: target,
+        });
+        onOpenResource?.();
+      }}
       hideAcceptedProjects={hideAcceptedProjects} />
   </div>;
 }

@@ -228,6 +228,24 @@ describe("project collaboration app adapter", () => {
     expect(concurrent).toBe(true);
   });
 
+  it("returns project data and its revision from the same locked transaction", async () => {
+    bridge.execute = vi.fn(async () => [{ id: "row_1", title: "Snapshot" }]);
+    const owner = await authority.authorize({
+      scopeId: PROJECT_SCOPE_ID,
+      actorId: OWNER_ID,
+      action: "read",
+    });
+    const projectApps = adapter();
+    await expect(projectApps.queryWithRevision(owner, {
+      appId: APP_ID,
+      action: { app: "board", table: "cards", action: "find" },
+    })).resolves.toEqual({
+      result: [{ id: "row_1", title: "Snapshot" }],
+      revision: 2,
+    });
+    expect(bridge.execute).toHaveBeenCalledWith(expect.objectContaining({ transaction: expect.anything() }));
+  });
+
   it("rejects owner credentials and cannot route an action to another app", async () => {
     const editor = await authority.authorize({
       scopeId: PROJECT_SCOPE_ID,

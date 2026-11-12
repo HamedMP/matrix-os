@@ -1,4 +1,6 @@
 import { mkdir, mkdtemp, readFile, realpath } from "node:fs/promises";
+import { createServer } from "node:http";
+import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
@@ -375,5 +377,30 @@ describe("CanvasService", () => {
     })).rejects.toBeInstanceOf(CanvasNotFoundError);
 
     expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
+  it("does not connect preview health checks to a private address returned after the public preflight", async () => {
+    let hits = 0;
+    const trap = createServer((_req, res) => { hits += 1; res.end(); });
+    await new Promise<void>((resolve) => trap.listen(0, "127.0.0.1", resolve));
+    const port = (trap.address() as AddressInfo).port;
+    const resolvePreviewHost = vi.fn()
+      .mockResolvedValueOnce([{ address: "93.184.216.34", family: 4 }])
+      .mockResolvedValue([{ address: "127.0.0.1", family: 4 }]);
+    const service = new CanvasService(repository([record()]), { resolvePreviewHost });
+
+    try {
+      await expect(service.executeAction("user_a", "cnv_0123456789abcdef", {
+        nodeId: "node_preview",
+        type: "preview.healthCheck",
+        payload: { url: `http://rebind.example:${port}/` },
+      })).rejects.toThrow();
+    } finally {
+      trap.closeAllConnections();
+      await new Promise<void>((resolve) => trap.close(() => resolve()));
+    }
+
+    expect(resolvePreviewHost).toHaveBeenCalledTimes(2);
+    expect(hits).toBe(0);
   });
 });

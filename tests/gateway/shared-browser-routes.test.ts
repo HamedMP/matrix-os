@@ -3,7 +3,7 @@ import { Hono } from "hono";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { deriveAppSessionKey, signAppSession } from "../../packages/gateway/src/app-runtime/app-session.js";
 import { registerBrowserLabRoutes } from "../../packages/gateway/src/browser-lab/routes.js";
-import { createSharedBrowserBroker } from "../../packages/gateway/src/shared-browser/broker.js";
+import { createSharedBrowserBroker, SharedBrowserError } from "../../packages/gateway/src/shared-browser/broker.js";
 
 const cleanups:Array<()=>Promise<void>>=[];
 afterEach(async()=>{await Promise.all(cleanups.splice(0).map(close=>close()));});
@@ -36,6 +36,17 @@ describe("owner viewer and run-bound shared Chrome routes",()=>{
     expect(viewer.status).toBe(200);expect(s.broker.status().phase).toBe("agent");
     expect(s.fetcher.mock.calls.some(call=>String(call[0]).endsWith("/browser-session"))).toBe(false);
     expect(s.fetcher.mock.calls.some(call=>String(call[0]).endsWith("/browser-observe"))).toBe(true);
+  });
+  it("reports a full tab budget without claiming human takeover", async () => {
+    const s = setup();
+    s.driver.execute.mockRejectedValueOnce(new SharedBrowserError("tab_limit"));
+    const response = await s.agent({ action: "tab_new" });
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({
+      success: false,
+      content: expect.stringMatching(/tab limit.*existing tab/i),
+      automation: { phase: "agent" },
+    });
   });
   it("owner takeover and resume keep Chrome and its current presentation",async()=>{
     const s=setup();await s.agent({action:"snapshot"});

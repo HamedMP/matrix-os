@@ -30,6 +30,7 @@ import { EmbedService } from "./embeds/embed-service";
 import {
   NativeAppBridge,
   createNativeAppQueryRequester,
+  createNativeAppCollaborationRequester,
   createNativeAppGatewayRequester,
   createNativeAppAiRequester,
 } from "./embeds/native-app-bridge";
@@ -63,6 +64,8 @@ import {
 } from "./hermes/configuration-client";
 import { createNativeChatImportService } from "./files/local-chat-import";
 import { discoverLocalChats } from "./files/local-chat-discovery";
+import {registerAiUsageIpc} from "./ipc/ai-usage";
+import {createUsageSyncService} from "./usage-sync/service";
 import { registerLocalChatImportIpc } from "./ipc/local-chat-import";
 import { registerIpcHandlers } from "./ipc/handlers";
 import { fetchDesktopSupportIdentity } from "./support/support-identity-client";
@@ -77,6 +80,7 @@ import {
 } from "./platform/window-bounds";
 import { windowChromeOptions } from "./platform/window-chrome";
 import { createUpdater } from "./updates";
+import { bundledDesktopChannel } from "./update-config";
 import { createUpdateAwareBeforeQuit } from "./update-quit";
 import { safeExternalHttpUrl, safeChatgptAuthorizationUrl } from "./external-url";
 import { desktopDevHostResolverRules, resolveDesktopRendererUrl } from "./renderer-url";
@@ -86,6 +90,7 @@ import { createNativeAppOpenResolver } from "./embeds/native-app-open";
 import { installBrowserProductSessionCookie } from "./embeds/browser-product-session";
 import { createNativeAppChatNavigationBroker, registerNativeAppChatCompletionIpc } from "./embeds/native-app-chat-navigation";
 import { configureDesktopIdentity } from "./desktop-identity";
+import { isDesktopDeepLink, resolveDesktopChannelIdentity } from "../shared/channel-identity";
 import { createSenderPolicy, senderRole } from "./ipc/sender-policy";
 import { createTerminalWindowController } from "./terminal-window/controller";
 import { createTerminalBrowserWindow } from "./terminal-window/window";
@@ -108,9 +113,11 @@ import {
 const DEFAULT_PLATFORM_HOST = "https://app.matrix-os.com";
 const desktopRendererUrl = resolveDesktopRendererUrl(process.env.ELECTRON_RENDERER_URL);
 
+const channelIdentity = resolveDesktopChannelIdentity(bundledDesktopChannel());
 configureDesktopIdentity(app, {
   qaIdentity: process.env.MATRIX_DESKTOP_QA_IDENTITY,
   userDataDir: process.env.OPERATOR_USER_DATA_DIR,
+  channel: channelIdentity.channel,
 });
 if (desktopRendererUrl && desktopRendererUrl !== process.env.ELECTRON_RENDERER_URL) {
   app.commandLine.appendSwitch("host-resolver-rules", desktopDevHostResolverRules());
@@ -147,6 +154,7 @@ let planDrained = false;
 let drainingPlan = false;
 let updateCheckTimer: ReturnType<typeof setInterval> | null = null;
 let fileDownloads: ReturnType<typeof createFileDownloadService> | null = null;
+let localUsage:ReturnType<typeof registerAiUsageIpc>|null=null;
 let localChatImports:ReturnType<typeof createNativeChatImportService>|null=null;
 let nativeAppChatNavigation: ReturnType<typeof createNativeAppChatNavigationBroker> | null = null;
 let importsDrained=false;
@@ -160,13 +168,7 @@ let handleAnalyticsBeforeQuit: ((event: { preventDefault(): void }) => boolean) 
 let completePendingAnalyticsFlush: (() => void) | null = null;
 
 function isMatrixOsDeepLink(value: string): boolean {
-  try {
-    const url = new URL(value);
-    return url.protocol === "matrixos:" || url.protocol === "matrix-os:";
-  } catch (error: unknown) {
-    if (error instanceof TypeError) return false;
-    throw error;
-  }
+  return isDesktopDeepLink(value, channelIdentity);
 }
 
 function focusMainWindow(): void {
@@ -302,7 +304,7 @@ if (!gotLock) {
   void app
     .whenReady()
     .then(async () => {
-      const failedProtocolRegistrations = registerWindowsProtocolClients(app, process.platform, previewContext ?? undefined);
+      const failedProtocolRegistrations = registerWindowsProtocolClients(app, process.platform, previewContext ?? undefined, channelIdentity.deepLinkSchemes);
       if (failedProtocolRegistrations.length > 0) {
         console.warn(
           `[main] could not register Windows URL schemes: ${failedProtocolRegistrations.join(", ")}`,
@@ -333,6 +335,7 @@ if (!gotLock) {
       let invalidateAppCapabilities: (() => void) | undefined;
       const auth = new AuthService({
         ...(previewContext ? { previewContext } : {}),
+        authRedirectUri: channelIdentity.authRedirectUri,
         credentialStore,
         platformHost,
         runtimeSelectionOrigin,
@@ -347,7 +350,7 @@ if (!gotLock) {
           chatgptPlan?.resume();
           fileDownloads?.cancelAll();
           organizationDriveTransfers?.cancelAll();
-          localChatImports?.cancelAll();
+          localChatImports?.cancelAll();localUsage?.cancel();
           sendEvent("auth:changed", {
             signedIn: status.signedIn,
             ...(status.signedIn ? {
@@ -433,6 +436,9 @@ if (!gotLock) {
           && event.senderFrame === contents.mainFrame && contents.getURL() === rendererUrl;
       });
 
+      const nativeAppQuery = createNativeAppQueryRequester({
+        getGatewayOrigin: () => auth.getGatewayOrigin(), getToken: () => auth.getToken(),
+      });
       const nativeAppBridge = new NativeAppBridge({
         getSenderLifecycle: (senderId) => webContents.fromId(senderId) ?? undefined,
         resolveApp: createNativeAppOpenResolver({ getGatewayOrigin: () => auth.getGatewayOrigin(), getToken: () => auth.getToken() }),
@@ -478,9 +484,11 @@ if (!gotLock) {
             headers, origin, isCurrent, session.fromPartition("persist:app-browser-lab").cookies),
         }),
         gatewayOrigin: () => auth.getGatewayOrigin(),
-        request: createNativeAppQueryRequester({
-          getGatewayOrigin: () => auth.getGatewayOrigin(),
-          getToken: () => auth.getToken(),
+        request: nativeAppQuery,
+        collaborationRequest: createNativeAppCollaborationRequester({
+          getGatewayOrigin: () => auth.getGatewayOrigin(), getToken: () => auth.getToken(),
+          getAuthGeneration: () => auth.getStatus().authGeneration,
+          legacyRequest: nativeAppQuery,
         }),
       });
       invalidateAppCapabilities = () => nativeAppBridge.clear();
@@ -593,6 +601,13 @@ if (!gotLock) {
         const rendererUrl=desktopRendererUrl??pathToFileURL(join(__dirname,"../renderer/index.html")).toString();
         return !!contents&&!contents.isDestroyed()&&event.sender===contents&&event.senderFrame===contents.mainFrame&&contents.getURL()===rendererUrl;
       });
+      // Paired Mac sync is an operator preview (spec 651): released builds do not run it until a reviewed pairing flow exists.
+      const usageSync=!app.isPackaged||process.env.MATRIX_DESKTOP_AI_USAGE_SYNC==="1"?createUsageSyncService({home:app.getPath("home"),pairingFile:join(app.getPath("userData"),"ai-usage-sync.json"),auth}):undefined;
+      localUsage=registerAiUsageIpc(ipcMain,{home:app.getPath("home"),roots:{codexRoot:process.env.CODEX_HOME,claudeRoot:process.env.CLAUDE_CONFIG_DIR},auth,sync:usageSync,isTrusted:rawEvent=>{
+        const event=rawEvent as IpcMainInvokeEvent,contents=mainWindow?.webContents;
+        const rendererUrl=desktopRendererUrl??pathToFileURL(join(__dirname,"../renderer/index.html")).toString();
+        return !!contents&&!contents.isDestroyed()&&event.sender===contents&&event.senderFrame===contents.mainFrame&&contents.getURL()===rendererUrl;
+      }});
       const downloads = fileDownloads;
       const driveTransfers = organizationDriveTransfers;
       const packagedRendererPath = join(__dirname, "../renderer/index.html");
@@ -695,7 +710,7 @@ if (!gotLock) {
           chatgptPlan?.resume();
           downloads.cancelAll();
           driveTransfers.cancelAll();
-          localChatImports?.cancelAll();
+          localChatImports?.cancelAll();localUsage?.cancel();
           nativeAppChatNavigation?.cancelAll();
           // Switching runtime invalidates embed cookies/tokens; tear them down so
           // they re-handshake against the new slot (Integration Wiring rule).
@@ -729,6 +744,7 @@ if (!gotLock) {
         getPreviewContext: () => previewContext ? { role: previewContext.role, pr: previewContext.pr,
           sourceSha: previewContext.sourceSha, handle: previewContext.handle, organizationId: previewContext.organizationId } : null,
         getAppVersion: () => app.getVersion(),
+        desktopChannel: channelIdentity.channel,
         buildSource: readDesktopBuildSource(),
         completeAnalyticsFlush: () => {
           completePendingAnalyticsFlush?.();
@@ -893,7 +909,7 @@ if (!gotLock) {
     }
     if(!importsDrained&&localChatImports){
       event.preventDefault();
-      if(!drainingImports){drainingImports=true;void localChatImports.dispose().catch((error:unknown)=>logMainError("import cleanup failed",error)).finally(()=>{importsDrained=true;app.quit();});}
+      if(!drainingImports){drainingImports=true;void Promise.all([localChatImports.dispose(),localUsage?.dispose()]).catch((error:unknown)=>logMainError("import cleanup failed",error)).finally(()=>{importsDrained=true;app.quit();});}
       return;
     }
     if (!downloadsDrained && fileDownloads) {

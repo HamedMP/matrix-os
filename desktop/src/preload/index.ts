@@ -23,6 +23,9 @@ import {
 } from "../shared/native-app-gateway";
 
 import { APP_CAPABILITY_CHANNEL, createNativeAppCapabilityClient } from "../shared/native-app-capabilities";
+import { NATIVE_APP_COLLABORATION_CHANNEL, NATIVE_COLLABORATION_ERROR_KEY, NativeAppCollaborationError, createNativeAppCollaboration } from "../shared/native-app-collaboration";
+import { CollaborationSafeErrorCodeSchema } from "@matrix-os/contracts";
+import { CollaborativeAppParticipantSchema } from "@matrix-os/contracts";
 
 const NATIVE_APP_BRIDGE_ARG = "--matrix-app-bridge";
 
@@ -36,10 +39,34 @@ const api = createOperatorBridge(
 export type OperatorBridge = typeof api;
 
 if (process.argv.includes(NATIVE_APP_BRIDGE_ARG)) {
+  const participantArgument = process.argv.find((value) => value.startsWith("--matrix-app-participant="));
+  let ownerParticipant = null;
+  if (participantArgument && participantArgument.length < 2_048) {
+    try { ownerParticipant = CollaborativeAppParticipantSchema.parse(JSON.parse(decodeURIComponent(participantArgument.slice("--matrix-app-participant=".length)))); }
+    catch (error: unknown) { console.warn("[native-app-preload] participant unavailable", error instanceof Error ? error.name : "UnknownError"); }
+  }
   const database = createNativeAppDatabase((query: NativeAppQuery) =>
     ipcRenderer.invoke(NATIVE_APP_QUERY_CHANNEL, query));
-  contextBridge.exposeInMainWorld("MatrixOS", Object.freeze({
+  const collaboration = createNativeAppCollaboration(
+    async (request) => {
+      const result: unknown = await ipcRenderer.invoke(NATIVE_APP_COLLABORATION_CHANNEL, request);
+      if (result && typeof result === "object" && NATIVE_COLLABORATION_ERROR_KEY in result) {
+        const code = CollaborationSafeErrorCodeSchema.safeParse(result[NATIVE_COLLABORATION_ERROR_KEY]);
+        throw new NativeAppCollaborationError(code.success ? code.data : "unavailable");
+      }
+      return result;
+    }, ownerParticipant,
+    (participant) => contextBridge.executeInMainWorld({
+      func: (currentParticipant) => {
+        const api = (window as unknown as { MatrixOS?: { collaboration?: { participant: unknown } } }).MatrixOS;
+        if (api?.collaboration) api.collaboration.participant = currentParticipant;
+      },
+      args: [participant],
+    }),
+  );
+  contextBridge.exposeInMainWorld("__matrixNativeBridge", Object.freeze({
     db: database,
+    collaboration,
     ...createNativeAppCapabilityClient((input) => ipcRenderer.invoke(APP_CAPABILITY_CHANNEL, input)),
     openApp: createNativeAppOpenClient((request) => ipcRenderer.invoke(NATIVE_APP_OPEN_CHANNEL, request)),
     openChat: createNativeAppOpenChatClient((request) => ipcRenderer.invoke(NATIVE_APP_OPEN_CHAT_CHANNEL, request)),
@@ -55,6 +82,18 @@ if (process.argv.includes(NATIVE_APP_BRIDGE_ARG)) {
       integrations: createNativeAppIntegrations((request) => ipcRenderer.invoke(NATIVE_APP_GATEWAY_CHANNEL, request)),
     } : {}),
   }));
+  // Electron freezes values copied through contextBridge. Construct a public
+  // wrapper in the page world so only the participant field can track sharing.
+  contextBridge.executeInMainWorld({
+    func: (participant) => {
+      const native = (window as unknown as { __matrixNativeBridge: { collaboration: Record<string, unknown> } }).__matrixNativeBridge;
+      Object.defineProperty(window, "MatrixOS", {
+        value: Object.freeze({ ...native, collaboration: { ...native.collaboration, participant } }),
+        configurable: false, writable: false,
+      });
+    },
+    args: [ownerParticipant],
+  });
 } else {
   contextBridge.exposeInMainWorld("operator", api);
 }

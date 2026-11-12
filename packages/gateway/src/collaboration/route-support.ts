@@ -101,6 +101,7 @@ import type { CollaborationCapabilityRepository } from "./capability-repository.
 import type { CollaborationCapabilityEvaluator } from "./capability-evaluator.js";
 import type { ReadinessProbes } from "./readiness-evaluator.js";
 import type { OrganizationDriveService } from "../organization-drive/service.js";
+import type { CollaborativeAppReadinessRouteDependencies } from "./collaborative-app-readiness-routes.js";
 import {
   CollaborationRepositoryError,
   type CollaborationMemberRecord,
@@ -153,6 +154,7 @@ export interface CollaborationRouteOptions {
   resources?: CollaborationResourceServices;
   standaloneScope?: StandaloneResourceScopeService;
   organizationDrive?: OrganizationDriveService;
+  collaborativeAppReadiness?: CollaborativeAppReadinessRouteDependencies;
   resolveParticipant(actorId: string): Promise<Participant>;
   resolveInvitationIdentifier(identifier: string, organizationId: string): Promise<Participant>;
   invitationResolutionRateLimiter?: RateLimiter;

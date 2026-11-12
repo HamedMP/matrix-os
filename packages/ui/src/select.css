@@ -1,0 +1,100 @@
+@layer theme, base, components, utilities;
+@layer components {
+  /* Existing shadcn Select, shared across shells. Semantic-token fallbacks support the Electron theme and isolated previews. */
+  .matrix-select-trigger {
+    display: inline-flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    min-width: 0;
+    border: 1px solid
+      var(--input, var(--border-default, var(--matrix-border, #e5e7e5)));
+    border-radius: var(--radius-md, 6px);
+    background: transparent;
+    color: var(--foreground, var(--text-primary, inherit));
+    padding: 8px 12px;
+    font: inherit;
+    font-size: 14px;
+    line-height: 20px;
+    white-space: nowrap;
+    outline: none;
+  }
+  .matrix-select-trigger[data-size="default"] {
+    height: 36px;
+  }
+  .matrix-select-trigger[data-size="sm"] {
+    height: 32px;
+  }
+  .matrix-select-trigger:focus-visible {
+    box-shadow: 0 0 0 3px
+      color-mix(in srgb, var(--ring, var(--accent, #187b55)) 35%, transparent);
+  }
+  .matrix-select-trigger:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+  .matrix-select-trigger [data-slot="select-value"] {
+    display: block;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .matrix-select-trigger svg {
+    flex-shrink: 0;
+    pointer-events: none;
+  }
+  .matrix-select-content {
+    --matrix-select-highlight-bg: var(
+      --bg-hover,
+      var(--accent, var(--matrix-muted, #edf0ed))
+    );
+    --matrix-select-highlight-fg: var(
+      --text-primary,
+      var(--accent-foreground, var(--matrix-fg, inherit))
+    );
+    position: relative;
+    min-width: 8rem;
+    max-height: var(--radix-select-content-available-height);
+    border: 1px solid
+      var(--border, var(--border-default, var(--matrix-border, #e5e7e5)));
+    border-radius: var(--radius-md, 6px);
+    background: var(--popover, var(--bg-overlay, var(--matrix-popover, #fff)));
+    color: var(
+      --popover-foreground,
+      var(--text-primary, var(--matrix-fg, #212922))
+    );
+    box-shadow: 0 4px 16px rgb(0 0 0 / 0.14);
+    overflow: auto;
+    font-family: inherit;
+    font-size: 14px;
+    line-height: 20px;
+  }
+  .matrix-select-content [data-radix-select-viewport] {
+    padding: 4px;
+  }
+  .matrix-select-item {
+    position: relative;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 32px 6px 8px;
+    border-radius: 4px;
+    outline: none;
+    cursor: default;
+    user-select: none;
+  }
+  .matrix-select-item[data-highlighted] {
+    background: var(--matrix-select-highlight-bg);
+    color: var(--matrix-select-highlight-fg);
+  }
+  .matrix-select-item[data-disabled] {
+    opacity: 0.5;
+    pointer-events: none;
+  }
+  .matrix-select-item [data-slot="select-item-indicator"] {
+    position: absolute;
+    right: 8px;
+    display: flex;
+    align-items: center;
+  }
+}

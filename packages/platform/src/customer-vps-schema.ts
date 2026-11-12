@@ -36,7 +36,7 @@ export const PublicIPv4Schema = z.ipv4().refine((ip) => {
 }, 'publicIPv4 must be a public IPv4 address');
 export const RuntimeSlotSchema = z.string().min(1).max(32).regex(/^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/);
 export const HetznerServerTypeSchema = z.string().min(3).max(64).regex(/^[a-z0-9][a-z0-9-]*$/);
-export const HetznerLocationSchema = z.enum(['fsn1', 'nbg1', 'ash', 'hil']);
+export const HetznerLocationSchema = z.enum(['fsn1', 'nbg1', 'hel1', 'ash', 'hil']);
 
 export const ProvisionRequestSchema = z.object({
   clerkUserId: ClerkUserIdSchema,

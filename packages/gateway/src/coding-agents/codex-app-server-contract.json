@@ -1,6 +1,6 @@
 {
   "packageName": "@openai/codex",
-  "latestVerifiedVersion": "0.167.0",
+  "latestVerifiedVersion": "0.167.1",
   "experimental": true,
   "verifiedVersions": {
     "0.144.3": {
@@ -175,6 +175,12 @@
       }
     },
     "0.167.0": {
+      "schemaSha256ByTarget": {
+        "darwin-arm64": "486c7c8daa5dc7f3ab2a1fb56de5316804caf7a4210fda1dc28d3f0f4e90cfe1",
+        "linux-x64": "486c7c8daa5dc7f3ab2a1fb56de5316804caf7a4210fda1dc28d3f0f4e90cfe1"
+      }
+    },
+    "0.167.1": {
       "schemaSha256ByTarget": {
         "darwin-arm64": "486c7c8daa5dc7f3ab2a1fb56de5316804caf7a4210fda1dc28d3f0f4e90cfe1",
         "linux-x64": "486c7c8daa5dc7f3ab2a1fb56de5316804caf7a4210fda1dc28d3f0f4e90cfe1"
