@@ -936,7 +936,7 @@ export function createClaudeChatProviderAdapter(options: {
       resolveNativeProtocol: options.resolveNativeProtocol ?? resolveClaudeNativeProtocol,
       resolveSessionSource: options.resolveSessionSource ?? resolveClaudeSessionSource,
       spawnFn: options.spawnFn, matrixCustomMcp: options.matrixMcpCapabilityIssuer !== undefined,
-      sharedBrowser: options.sharedBrowser !== undefined,
+      sharedBrowser: options.sharedBrowser,
     }, input),
     parseState: (value) => ClaudeChatStateSchema.parse(value),
     serializeState: (value) => ClaudeChatStateSchema.parse(value),

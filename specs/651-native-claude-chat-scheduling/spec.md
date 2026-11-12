@@ -59,6 +59,8 @@ Closing a browser interaction or detaching a terminal leaves the owned process i
 
 The protected Linux launcher supplies only sealed job receipts and bounded committed text from the same canonical Chat. The pinned process keeps the default owner profile and working directory. Its private resume configuration excludes project-wide job inventory and disables writes to the original native transcript. It receives empty MCP at idle, then uses the existing per-phase capability checks and admission transaction on a future native callback. A later foreground phase uses the live protected process while it is qualified and compatible with that turn. After it retires, or when the model, permission, or Drive context requires a fresh process, the original canonical Chat history seeds the new session. Steering a protected run prepares that same Chat context, closes the old process, and starts with the owner's steering instruction.
 
+When reconstructing a supervised source fingerprint, use the Browser broker's current allowance for the canonical owner and Chat if the broker exposes `allowsSupervisedRun`. This selects the launch presentation only. Idle recovery never opens a Browser lease or issues a token, and a different fingerprint still blocks recovery.
+
 The implementation stacks on the exact qualified Schedule B head. Shared hotspots are the Claude adapter and canonical phase composition. No duplicate routines hook, authority widening or changes to other-provider dispatch are allowed. Public docs in the private site repository must describe the final accepted behavior and limits through a separate PR.
 
 ## Acceptance

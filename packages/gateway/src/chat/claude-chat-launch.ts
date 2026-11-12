@@ -10,11 +10,11 @@ import { z } from "zod/v4";
 import { buildAgentLaunch, type AgentLaunchSpec } from "../agent-launcher.js";
 import { boundedOperation } from "../bounded-operation.js";
 import type { KernelCredentialLaunch } from "../kernel-credentials.js";
+import type { SharedBrowserBinding, SharedBrowserBroker } from "../shared-browser/broker.js";
 import type { CanonicalCliSpawn } from "./cli-process.js";
 import type { resolveClaudeNativeProtocol } from "./claude-native-protocol.js";
 import type { resolveClaudeSessionSource } from "./claude-session-source.js";
 import { configureClaudeSharedBrowserPresentation } from "./claude-shared-browser-launch.js";
-import { supportsNativeSharedBrowser } from "./native-shared-browser-run.js";
 import type { CanonicalProviderRunInput } from "./provider-adapter.js";
 
 export const ClaudeChatStateSchema = z.object({
@@ -112,6 +112,10 @@ const RECOVERY_ENV = [
 ] as const;
 const RECOVERY_PERMISSION_MODES = ["supervised", "auto_accept_edits", "auto", "full_access"] as const;
 
+type RecoveryBrowserBroker = SharedBrowserBroker & {
+  allowsSupervisedRun?(binding: Pick<SharedBrowserBinding, "ownerId" | "chatId">): boolean;
+};
+
 /** Build and verify the private idle launch. The launcher owns the sealed resume selector. */
 export async function prepareClaudeNativeRecovery(options: {
   homePath: string;
@@ -120,7 +124,7 @@ export async function prepareClaudeNativeRecovery(options: {
   resolveSessionSource: typeof resolveClaudeSessionSource;
   spawnFn?: CanonicalCliSpawn;
   matrixCustomMcp: boolean;
-  sharedBrowser: boolean;
+  sharedBrowser?: RecoveryBrowserBroker;
 }, recovery: ClaudeNativeRecoveryLaunchInput): Promise<ClaudeNativeRecoveryLaunchPlan | null> {
   const owner = CanonicalOwnerScopeSchema.safeParse(recovery.owner);
   const run = CanonicalChatRunSchema.safeParse(recovery.run);
@@ -154,7 +158,14 @@ export async function prepareClaudeNativeRecovery(options: {
     // A nonempty value selects Claude's print transport. Its positional arguments are removed below.
     prompt: "Native scheduled Chat recovery", permissionMode: claudeChatPermissionMode(input.permissionMode, input.interactionMode),
     matrixCustomMcp: options.matrixCustomMcp, matrixCustomMcpScope: "chat_call" });
-  if (options.sharedBrowser && supportsNativeSharedBrowser(input)) configureClaudeSharedBrowserPresentation(launch);
+  // Recovery has already established a private personal Chat in default interaction mode.
+  // Older brokers offered Browser to every supervised Chat. Scoped brokers expose their current policy.
+  const browser = options.sharedBrowser;
+  if (browser && (input.permissionMode === "full_access" || (input.permissionMode === "supervised"
+    && (browser.allowsSupervisedRun === undefined
+      || browser.allowsSupervisedRun({ ownerId: owner.data.ownerId, chatId: input.chatId }))))) {
+    configureClaudeSharedBrowserPresentation(launch);
+  }
   finishClaudeChatLaunch(launch);
   const mergedEnv = claudeChatLaunchEnvironment(launch, credentialEnv);
   const env = Object.fromEntries(RECOVERY_ENV.flatMap(name => mergedEnv[name] === undefined ? [] : [[name, mergedEnv[name]!]]));

@@ -92,6 +92,38 @@ describe("Claude protected recovery launch plan", () => {
     }
   });
 
+  it.each([true, false])("reconstructs the scoped supervised Browser presentation for a completed Run (allowed: %s)", async (allowed) => {
+    const nativeSessions = pool();
+    const browser = createSharedBrowserBroker({ ownerId: input.owner.ownerId, driver: {
+      execute: async () => ({ success: true }), detach: async () => {}, invalidateObservation() {},
+    }, setHumanControl: async () => {} });
+    const scope = { ownerId: input.owner.ownerId, chatId: input.chatId };
+    const allowsSupervisedRun = vi.fn(({ ownerId, chatId }: typeof scope) =>
+      allowed && ownerId === scope.ownerId && chatId === scope.chatId);
+    const scopedBrowser = Object.assign(browser, { allowsSupervisedRun });
+    const open = vi.spyOn(scopedBrowser, "openRun");
+    const options = { homePath: "/owner", nativeSessions, resolveNativeProtocol,
+      resolveCredentialLaunch: async () => ({ env: { ANTHROPIC_API_KEY: "owner-key" } }) };
+    const foreground = createClaudeChatProviderAdapter({ ...options, sharedBrowser: allowed ? scopedBrowser : undefined });
+    const recoveryAdapter = createClaudeChatProviderAdapter({ ...options, sharedBrowser: scopedBrowser });
+    try {
+      await collect(foreground.start(input));
+      const original = nativeSessions.runTurn.mock.calls[0]![0];
+      expect(original.args.includes("--mcp-config")).toBe(allowed);
+      allowsSupervisedRun.mockClear();
+      const plan = await recoveryAdapter.prepareNativeRecovery({ owner: input.owner, run, state: { sessionId }, sessionId,
+        expectedSourceFingerprint: original.sourceFingerprint, signal: input.signal });
+      expect(plan).toMatchObject({ sourceFingerprint: original.sourceFingerprint });
+      expect(plan?.args).toEqual(original.args.filter((_arg, index, args) =>
+        args[index] !== "--mcp-config" && args[index - 1] !== "--mcp-config"));
+      expect(allowsSupervisedRun).toHaveBeenCalledExactlyOnceWith(scope);
+      expect(open).toHaveBeenCalledTimes(allowed ? 1 : 0);
+      expect(plan?.env).not.toHaveProperty("MATRIX_SHARED_BROWSER_TOKEN");
+    } finally {
+      await scopedBrowser.close();
+    }
+  });
+
   it("refuses unsupported sources before credentials or native probes, and rejects funded and unqualified launches", async () => {
     const resolveCredentialLaunch = vi.fn<NonNullable<Parameters<typeof createClaudeChatProviderAdapter>[0]["resolveCredentialLaunch"]>>(
       async () => ({ env: { ANTHROPIC_API_KEY: "owner-key" } }),

@@ -9,18 +9,13 @@ export interface NativeBrowserRunInput {
   owner: { type: string; ownerId: string }; chatId: string; runId: string;
   permissionMode: string; interactionMode: string; sharedScopeId?: string; signal: AbortSignal; onCleanupUnconfirmed?: () => void;
 }
-export function supportsNativeSharedBrowser(input: Pick<NativeBrowserRunInput,
-  "owner" | "sharedScopeId" | "permissionMode" | "interactionMode">): boolean {
-  return input.owner.type === "personal" && !input.sharedScopeId
-    && ["full_access", "supervised"].includes(input.permissionMode) && input.interactionMode === "default";
-}
 /** An execution-only lease. Never put this value in a persisted Chat or session. */
 export function openNativeSharedBrowserRun(options: {
   broker: SharedBrowserBroker; gatewayPort: number; harness: "codex" | "claude_code";
   authorizeAction?: SharedBrowserSupervisedPolicy["authorizeAction"];
 }, input: NativeBrowserRunInput) {
   sharedBrowserEndpoint(options.gatewayPort);
-  if (!supportsNativeSharedBrowser(input)) return undefined;
+  if (input.owner.type !== "personal" || input.sharedScopeId || !["full_access", "supervised"].includes(input.permissionMode) || input.interactionMode !== "default") return undefined;
   const binding = { ownerId: input.owner.ownerId, chatId: input.chatId, runId: input.runId, harness: options.harness };
   const supervised = input.permissionMode === "supervised";
   if (supervised && !options.broker.allowsSupervisedRun(binding)) return undefined;
