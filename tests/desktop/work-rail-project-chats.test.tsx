@@ -106,3 +106,26 @@ it("reveals the next project page with one Show more click", async () => {
   fireEvent.click(screen.getByRole("button", { name: "Show more Alpha chats" }));
   await waitFor(() => expect(visibleChats()).toHaveLength(25));
 });
+
+it("applies manual ordering to server-paged project chats", async () => {
+  const navigationPage = vi.fn(async () => ({ items: [chat(1), chat(2)], totalCount: 2 }));
+  const group = { id: alpha.id, slug: alpha.id, name: alpha.name, project: alpha, chats: [] };
+  render(<WorkRailProjectGroup group={group} expanded client={{ navigationPage } as never} pinning={{}} orderRows={rows => [...rows].reverse()}
+    onToggle={vi.fn()} onNewChat={vi.fn()} onDeleteProject={vi.fn()} onSelectChat={vi.fn()}
+    renamingChatId={null} renamePending={false} onRenameChat={vi.fn()}
+    onRenameCommit={vi.fn()} onRenameCancel={vi.fn()} onPinChat={vi.fn()} onDeleteChat={vi.fn()} />);
+  await waitFor(() => expect(visibleChats()).toHaveLength(2));
+  expect(visibleChats()).toEqual(["Chat 2", "Chat 1"]);
+});
+
+it("drops expanded project page titles when its navigation authority is revoked", async () => {
+  const navigationPage = vi.fn(async () => ({ items: [chat(1)], totalCount: 1 }));
+  const group = { id: alpha.id, slug: alpha.id, name: alpha.name, project: alpha, chats: [] };
+  const props = { group, expanded: true, pinning: {}, onToggle: vi.fn(), onNewChat: vi.fn(), onDeleteProject: vi.fn(), onSelectChat: vi.fn(),
+    renamingChatId: null, renamePending: false, onRenameChat: vi.fn(), onRenameCommit: vi.fn(), onRenameCancel: vi.fn(),
+    onPinChat: vi.fn(), onDeleteChat: vi.fn() };
+  const view = render(<WorkRailProjectGroup {...props} client={{ navigationPage } as never} scopeKey="owner:0" />);
+  expect(await screen.findByRole("button", { name: "Chat 1" })).toBeTruthy();
+  view.rerender(<WorkRailProjectGroup {...props} client={null} scopeKey="owner:1" />);
+  expect(screen.queryByRole("button", { name: "Chat 1" })).toBeNull();
+});

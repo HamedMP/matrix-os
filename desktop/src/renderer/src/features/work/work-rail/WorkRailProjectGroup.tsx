@@ -49,6 +49,7 @@ export function WorkRailProjectGroup({
   scopeKey = "",
   navigationUpdatedAt = 0,
   sourceFilter = "all",
+  orderRows,
 }: {
   group: WorkRailProjectGroupModel;
   fresh?:boolean;
@@ -81,6 +82,7 @@ export function WorkRailProjectGroup({
   scopeKey?: string;
   navigationUpdatedAt?: number;
   sourceFilter?: ChatImportSourceFilterValue;
+  orderRows?: (rows: readonly ChatNavigationRecord[]) => ChatNavigationRecord[];
 }) {
   const actionButtonRef = useRef<HTMLButtonElement>(null);
   const [limit, setLimit] = useState(PROJECT_CHAT_PAGE);
@@ -93,7 +95,8 @@ export function WorkRailProjectGroup({
   const uniqueRows = pageRows.filter((record, index) => pageRows.findIndex(candidate => candidate.chat.id === record.chat.id) === index);
   const activeRecord = group.chats.find(record => record.chat.id === activeChatId);
   if (activeRecord && !uniqueRows.some(record => record.chat.id === activeRecord.chat.id)) uniqueRows.push(activeRecord);
-  const chats = filterChatsByImportSource(uniqueRows, sourceFilter, record => record.importSource);
+  const filtered = filterChatsByImportSource(uniqueRows, sourceFilter, record => record.importSource);
+  const chats = orderRows?.(filtered) ?? filtered;
   // Never hide the open Chat behind Show more.
   const shownCount = Math.max(limit, chats.findIndex((record) => record.chat.id === activeChatId) + 1);
   const hiddenCount = chats.length - shownCount;
