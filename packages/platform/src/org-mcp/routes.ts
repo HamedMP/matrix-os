@@ -193,7 +193,10 @@ export function createOrgMcpAdminRoutes(options: OrgMcpAdminRouteOptions): Hono 
       const saved = await admin.repository.putServerDefinition({
         organizationId: admin.organizationId, serverDefId: id, ...policy.data, updatedBy: admin.actorId,
       });
-      return saved ? mutationResult(c) : safeJson(c, "Too many governed servers", 409);
+      if (saved === "saved") return mutationResult(c);
+      if (saved === "mode_required") return safeJson(c, "Invalid request", 422);
+      if (saved === "cap_reached") return safeJson(c, "Too many governed servers", 409);
+      return unavailable(c, "server policy update");
     } catch (error: unknown) {
       return unavailable(c, "server policy update", error);
     }

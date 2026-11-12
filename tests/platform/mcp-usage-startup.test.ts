@@ -54,8 +54,10 @@ describe("platform Matrix Core MCP composition", () => {
       .toEqual([{ org_id: "org_acme1", outcome: "ok" }, { org_id: "org_acme1", outcome: "denied" }]);
     expect(upstream.calls).toHaveLength(1);
 
+    // Without the membership projection the saved block still refuses the governed server.
     const off = await createPlatformOrgMcp({ db, connectionsAvailable: true, resolveActor: async () => null });
-    expect(off.policy).toBeUndefined();
+    await expect(off.policy.evaluate({ actorId: fixture.actorId, serverUrl: "https://mcp.linear.test/mcp", toolName: "list_issues" }))
+      .resolves.toMatchObject({ allowed: false });
   });
 
   it("drains Core usage after the broker settles and before the feature database closes", async () => {

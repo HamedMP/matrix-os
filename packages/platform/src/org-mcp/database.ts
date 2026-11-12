@@ -51,7 +51,8 @@ export interface OrgMcpDatabase extends OrganizationPlatformDatabase, McpUsageDa
 }
 
 export const ORG_MCP_SCHEMA_REVISION = { generation: 1, fingerprint: "org-mcp-definitions-blocks-v1" } as const;
-const MAX_ORGS_PER_ACTOR = 100;
+/** Above this many memberships the policy cannot be read safely in one bounded query; callers deny. */
+export const ORG_MCP_MAX_MEMBERSHIPS = 1_000;
 const MAX_SERVER_DEFINITIONS = 500;
 const MAX_CONNECTION_ROWS = 5_000;
 
@@ -91,6 +92,9 @@ export interface OrgMcpPolicyRow {
   memberBlocked: boolean;
 }
 
+export interface OrgMcpPolicyRows { rows: OrgMcpPolicyRow[]; truncated: boolean }
+export type OrgMcpPutResult = "saved" | "cap_reached" | "mode_required" | "organization_missing";
+
 export interface OrgMcpConnectionRow {
   actorId: string; connectionId: string; name: string; url: string; status: string; enabled: boolean; connectedAt: Date;
 }
@@ -113,7 +117,7 @@ export function createOrgMcpRepository(db: Kysely<OrgMcpDatabase>) {
      * member blocks that match `serverDefIds`. One statement, so a policy write
      * committed before the call starts is always visible to it.
      */
-    async policyRowsForActor(actorId: string, serverDefIds: readonly string[]): Promise<OrgMcpPolicyRow[]> {
+    async policyRowsForActor(actorId: string, serverDefIds: readonly string[]): Promise<OrgMcpPolicyRows> {
       // An unmatched sentinel keeps the membership rows (usage attribution) when nothing is governable.
       const ids = sql.join((serverDefIds.length > 0 ? serverDefIds : [""]).map(id => sql`${id}`));
       const result = await sql<{ organization_id: string; definitions: unknown; member_blocked: boolean }>`
@@ -132,13 +136,35 @@ export function createOrgMcpRepository(db: Kysely<OrgMcpDatabase>) {
         JOIN organizations o ON o.organization_id = m.organization_id AND o.lifecycle = 'active'
         WHERE m.actor_id = ${actorId} AND m.state = 'active'
         ORDER BY m.organization_id
-        LIMIT ${MAX_ORGS_PER_ACTOR}
+        LIMIT ${ORG_MCP_MAX_MEMBERSHIPS + 1}
       `.execute(db);
-      return result.rows.map(row => ({
-        organizationId: row.organization_id,
-        definitions: (Array.isArray(row.definitions) ? row.definitions : []).map(definitionFromRow),
-        memberBlocked: row.member_blocked === true,
-      }));
+      // Every membership is read; one past the cap marks the result incomplete so the caller denies.
+      return {
+        truncated: result.rows.length > ORG_MCP_MAX_MEMBERSHIPS,
+        rows: result.rows.slice(0, ORG_MCP_MAX_MEMBERSHIPS).map(row => ({
+          organizationId: row.organization_id,
+          definitions: (Array.isArray(row.definitions) ? row.definitions : []).map(definitionFromRow),
+          memberBlocked: row.member_blocked === true,
+        })),
+      };
+    },
+
+    /**
+     * Membership-free fallback: the first org (by id) that defines this server
+     * or blocks this actor on it. Used only when membership data is unavailable,
+     * so the caller can refuse governed servers instead of allowing them.
+     */
+    async governingOrgWithoutMembership(actorId: string, serverDefIds: readonly string[]): Promise<string | null> {
+      if (serverDefIds.length === 0) return null;
+      const ids = sql.join(serverDefIds.map(id => sql`${id}`));
+      const result = await sql<{ organization_id: string }>`
+        SELECT organization_id FROM (
+          SELECT organization_id FROM org_mcp_server_definitions WHERE server_def_id IN (${ids})
+          UNION
+          SELECT organization_id FROM org_mcp_member_blocks WHERE actor_id = ${actorId} AND server_def_id IN (${ids})
+        ) governing ORDER BY organization_id LIMIT 1
+      `.execute(db);
+      return result.rows[0]?.organization_id ?? null;
     },
 
     async listServerDefinitions(organizationId: string) {
@@ -147,23 +173,42 @@ export function createOrgMcpRepository(db: Kysely<OrgMcpDatabase>) {
       return rows.map(row => ({ ...definitionFromRow(row), updatedAt: new Date(row.updated_at) }));
     },
 
-    /** Idempotent single-statement upsert. Returns false when the org already holds the definition cap. */
+    /**
+     * Partial upsert. The organization row is locked first, so concurrent
+     * creates in one org serialize and the 500-definition cap cannot be
+     * overshot; an existing definition keeps every field the input omits.
+     */
     async putServerDefinition(input: {
-      organizationId: string; serverDefId: string; mode: OrgMcpServerMode; defaultToolPolicy: OrgMcpToolPolicy;
-      toolOverrides: Record<string, OrgMcpToolPolicy>; updatedBy: string;
-    }): Promise<boolean> {
-      const result = await sql`
-        INSERT INTO org_mcp_server_definitions (organization_id, server_def_id, mode, default_tool_policy, tool_overrides, updated_by, updated_at)
-        SELECT ${input.organizationId}, ${input.serverDefId}, ${input.mode}, ${input.defaultToolPolicy},
-          ${JSON.stringify(input.toolOverrides)}::jsonb, ${input.updatedBy}, now()
-        WHERE EXISTS (SELECT 1 FROM org_mcp_server_definitions WHERE organization_id = ${input.organizationId} AND server_def_id = ${input.serverDefId})
-          OR (SELECT count(*) FROM org_mcp_server_definitions WHERE organization_id = ${input.organizationId}) < ${MAX_SERVER_DEFINITIONS}
-        ON CONFLICT (organization_id, server_def_id) DO UPDATE SET
-          mode = EXCLUDED.mode, default_tool_policy = EXCLUDED.default_tool_policy,
-          tool_overrides = EXCLUDED.tool_overrides, updated_by = EXCLUDED.updated_by, updated_at = EXCLUDED.updated_at
-        RETURNING 1
-      `.execute(db);
-      return result.rows.length === 1;
+      organizationId: string; serverDefId: string; mode?: OrgMcpServerMode; defaultToolPolicy?: OrgMcpToolPolicy;
+      toolOverrides?: Record<string, OrgMcpToolPolicy>; updatedBy: string;
+    }): Promise<OrgMcpPutResult> {
+      return db.transaction().execute(async (trx) => {
+        const organization = await trx.selectFrom("organizations").select("organization_id")
+          .where("organization_id", "=", input.organizationId).forUpdate().executeTakeFirst();
+        if (!organization) return "organization_missing";
+        const existing = await trx.selectFrom("org_mcp_server_definitions").select("server_def_id")
+          .where("organization_id", "=", input.organizationId).where("server_def_id", "=", input.serverDefId)
+          .forUpdate().executeTakeFirst();
+        if (existing) {
+          await trx.updateTable("org_mcp_server_definitions").set({
+            ...(input.mode ? { mode: input.mode } : {}),
+            ...(input.defaultToolPolicy ? { default_tool_policy: input.defaultToolPolicy } : {}),
+            ...(input.toolOverrides ? { tool_overrides: JSON.stringify(input.toolOverrides) } : {}),
+            updated_by: input.updatedBy, updated_at: new Date(),
+          }).where("organization_id", "=", input.organizationId).where("server_def_id", "=", input.serverDefId).execute();
+          return "saved";
+        }
+        if (!input.mode) return "mode_required";
+        const count = await trx.selectFrom("org_mcp_server_definitions").select(eb => eb.fn.countAll<number>().as("count"))
+          .where("organization_id", "=", input.organizationId).executeTakeFirstOrThrow();
+        if (Number(count.count) >= MAX_SERVER_DEFINITIONS) return "cap_reached";
+        await trx.insertInto("org_mcp_server_definitions").values({
+          organization_id: input.organizationId, server_def_id: input.serverDefId, mode: input.mode,
+          default_tool_policy: input.defaultToolPolicy ?? "allow",
+          tool_overrides: JSON.stringify(input.toolOverrides ?? {}), updated_by: input.updatedBy,
+        }).execute();
+        return "saved";
+      });
     },
 
     async deleteServerDefinition(organizationId: string, serverDefId: string): Promise<void> {
