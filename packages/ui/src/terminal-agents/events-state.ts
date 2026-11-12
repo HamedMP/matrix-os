@@ -1,3 +1,4 @@
+import { ProjectIdSchema, SafeDisplayStringSchema, TerminalTabIdSchema, TerminalWorkspaceIdSchema } from "@matrix-os/contracts";
 import { z } from "zod/v4";
 import { terminalFactsKey, type TerminalTabFacts } from "./attention.js";
 
@@ -6,17 +7,17 @@ import { terminalFactsKey, type TerminalTabFacts } from "./attention.js";
 const MAX_TABS = 10_240;
 // Beyond twice the cap a snapshot is not a valid stream.
 const MAX_SNAPSHOT_ENTRIES = 2 * MAX_TABS;
-const TerminalIdSchema = z.string().regex(/^(tws|tt)_[0-9a-f]{32}$/);
-const RefSchema = z.strictObject({ workspaceId: TerminalIdSchema, tabId: TerminalIdSchema });
+// The gateway's own schemas, so both ends accept exactly the same values.
+const RefSchema = z.strictObject({ workspaceId: TerminalWorkspaceIdSchema, tabId: TerminalTabIdSchema });
 const WordSchema = z.enum(["idle", "working", "done", "blocked", "error"]);
 const SeqSchema = z.number().int().min(0).max(Number.MAX_SAFE_INTEGER);
 
 /** One tab's facts as the gateway sends them; bounded, unknown fields rejected. */
 const TabFactsSchema = z.strictObject({
   ref: RefSchema,
-  name: z.string().max(128),
+  name: SafeDisplayStringSchema,
   cwd: z.string().max(4096),
-  projectId: z.string().min(1).max(128).optional(),
+  projectId: ProjectIdSchema.optional(),
   state: z.enum(["live", "finished"]),
   exitCode: z.number().int().nullable().optional(),
   agentStatus: WordSchema.optional(),
@@ -29,7 +30,7 @@ const EventSchema = z.discriminatedUnion("kind", [
   z.strictObject({ kind: z.literal("removed"), ref: RefSchema }),
   z.strictObject({ kind: z.literal("finished"), ref: RefSchema, exitCode: z.number().int().nullable() }),
   z.strictObject({ kind: z.literal("status"), ref: RefSchema, status: WordSchema.nullable(), message: z.string().max(200).optional() }),
-  z.strictObject({ kind: z.literal("title"), ref: RefSchema, name: z.string().max(128) }),
+  z.strictObject({ kind: z.literal("title"), ref: RefSchema, name: SafeDisplayStringSchema }),
 ]);
 
 /** Every `/ws/terminal/events` server frame, checked before anything is stored. */
