@@ -84,6 +84,7 @@ describe("Matrix Core MCP usage records", () => {
     await repository().rollupDaily();
     const first = (await daily()).map(entry => [String(entry.day), entry.tool_name, entry.outcome, entry.call_count, Number(entry.total_latency_ms), entry.max_latency_ms]);
     expect(first.map(([day, ...rest]) => [new Date(day as string).toISOString().slice(0, 10), ...rest])).toEqual([
+      ["2026-11-01", "list_issues", "ok", 1, 40, 40],
       ["2026-11-11", "list_issues", "ok", 1, 7, 7],
       ["2026-11-12", "list_issues", "error", 1, 5, 5],
       ["2026-11-12", "list_issues", "ok", 2, 40, 30],
@@ -94,7 +95,7 @@ describe("Matrix Core MCP usage records", () => {
     expect([ok?.call_count, Number(ok?.total_latency_ms), ok?.max_latency_ms]).toEqual([3, 100, 60]);
   });
 
-  it("keeps raw rows 30 days and aggregates 13 months", async () => {
+  it("keeps raw rows 30 days and aggregates 13 months once those days are rolled up", async () => {
     await repository().insertEvents([row({ occurredAt: new Date("2026-10-12T14:00:00.000Z") }), row({ occurredAt: new Date("2026-10-14T00:00:00.000Z") })]);
     await db.insertInto("mcp_usage_daily").values([
       { day: "2025-10-11", org_id: "", actor_id: "a", connection_id: "c", server_key: "s", tool_name: "old", entry_point: "stdio",
@@ -102,9 +103,41 @@ describe("Matrix Core MCP usage records", () => {
       { day: "2025-10-12", org_id: "", actor_id: "a", connection_id: "c", server_key: "s", tool_name: "kept", entry_point: "stdio",
         harness: "", outcome: "ok", call_count: 1, total_latency_ms: 1, max_latency_ms: 1, updated_at: NOW },
     ]).execute();
+    await expect(repository().rollupDaily()).resolves.toMatchObject({ caughtUp: true });
     await expect(repository().sweepRetention()).resolves.toEqual({ events: 1, daily: 1 });
     expect((await events()).map(event => event.occurred_at.toISOString())).toEqual(["2026-10-14T00:00:00.000Z"]);
-    expect((await daily()).map(entry => entry.tool_name)).toEqual(["kept"]);
+    expect((await daily()).map(entry => entry.tool_name)).toEqual(["list_issues", "list_issues", "kept"].sort());
+  });
+
+  it("catches up days missed while rollup was not running, in bounded steps", async () => {
+    await repository().insertEvents([row({ occurredAt: new Date("2026-11-08T10:00:00.000Z") })]);
+    clock = new Date("2026-11-08T12:00:00.000Z");
+    await repository().rollupDaily();
+    // The worker is down for four days while rows keep arriving.
+    await repository().insertEvents([
+      row({ occurredAt: new Date("2026-11-09T09:00:00.000Z") }), row({ occurredAt: new Date("2026-11-10T09:00:00.000Z") }),
+      row({ occurredAt: new Date("2026-11-12T09:00:00.000Z") }),
+    ]);
+    clock = NOW;
+    await expect(repository().rollupDaily()).resolves.toMatchObject({ caughtUp: true });
+    const days = (await daily()).map(entry => new Date(String(entry.day)).toISOString().slice(0, 10));
+    expect(days).toEqual(["2026-11-08", "2026-11-09", "2026-11-10", "2026-11-12"]);
+
+    await repository().insertEvents([row({ occurredAt: new Date("2026-08-01T09:00:00.000Z"), toolName: "ancient" })]);
+    await db.deleteFrom("mcp_usage_rollup_state").execute();
+    await expect(repository().rollupDaily()).resolves.toMatchObject({ caughtUp: false });
+    await expect(repository().rollupDaily()).resolves.toMatchObject({ caughtUp: false });
+    await expect(repository().rollupDaily()).resolves.toMatchObject({ caughtUp: true });
+    expect((await daily()).some(entry => entry.tool_name === "ancient")).toBe(true);
+  });
+
+  it("never deletes raw rows for days the rollup has not finished", async () => {
+    await repository().insertEvents([row({ occurredAt: new Date("2026-09-01T09:00:00.000Z"), toolName: "unrolled" })]);
+    await expect(repository().sweepRetention()).resolves.toEqual({ events: 0, daily: 0 });
+    expect((await events()).map(event => event.tool_name)).toEqual(["unrolled"]);
+    await repository().rollupDaily();
+    await expect(repository().sweepRetention()).resolves.toMatchObject({ events: 1 });
+    expect((await daily()).map(entry => entry.tool_name)).toEqual(["unrolled"]);
   });
 
   it("runs rollup then retention from the hourly maintenance loop and awaits it on stop", async () => {
