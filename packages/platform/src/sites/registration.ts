@@ -8,6 +8,7 @@ import { createSiteManagementRoutes } from './management-routes.js';
 import { createSitePublicRoutes } from './public-routes.js';
 import { createSiteSubmissionTransport } from './submission-transport.js';
 import type { SiteTelemetryCapture } from './telemetry.js';
+import type { ClerkAuth } from '../clerk-auth.js';
 export interface SiteEmailReadiness {
     edgeExchange: boolean;
     clerkInline: boolean;
@@ -35,14 +36,22 @@ export function registerSiteRoutes(app: Hono<any>, options: {
     env?: NodeJS.ProcessEnv;
     captureEvent?: SiteTelemetryCapture;
     emailReadiness?: SiteEmailReadiness;
+    clerkAuth?: ClerkAuth;
 }) {
     if (!app || !options?.db || !options.platformSecret)
         throw new Error('Sites registration requires application, database, and platform secret');
     const emailCapability = () => readSiteEmailCapability(options.db, options.env ?? process.env,
         options.emailReadiness ?? { edgeExchange: false, clerkInline: false, lifecycleWebhook: false, mailDelivery: false });
-    const service = createSitesService({ ...options, emailCapability });
+    const env = options.env ?? process.env;
+    const service = createSitesService({ ...options, emailCapability,
+        emailSessionSecret: env.ACCOUNT_DELETION_SECRET });
     app.route('/internal/containers/:handle/sites', createSiteManagementRoutes({ ...options, service }));
+    const email = options.clerkAuth && env.CLERK_SECRET_KEY && env.ACCOUNT_DELETION_SECRET
+        ? { db: options.db, enabled: emailCapability, secret: env.ACCOUNT_DELETION_SECRET,
+            clerkSecretKey: env.CLERK_SECRET_KEY, publishableKey: env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY,
+            verify: options.clerkAuth.verify }
+        : undefined;
     app.route('/public/sites', createSitePublicRoutes({ service, edgeSecret: options.edgeSecret,
         edgePreviousSecret: options.edgePreviousSecret, submit: createSiteSubmissionTransport(options),
-        captureEvent: options.captureEvent }));
+        captureEvent: options.captureEvent, email }));
 }

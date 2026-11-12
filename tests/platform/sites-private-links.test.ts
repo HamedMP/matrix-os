@@ -33,6 +33,12 @@ async function publishedPrivateSite() {
 }
 
 describe('private Matrix.page access links', () => {
+  it('refuses to publish email mode while the backend capability is disabled', async () => {
+    const { siteId } = await publishedPrivateSite();
+    const service = createSitesService({ db: db.db, env: { NODE_ENV: 'test' } });
+    await expect(service.patch(owner, { accessMode: 'private_email', baseRevision: 1 })).rejects.toMatchObject({ code: 'unavailable' });
+    expect((await service.resolve(siteId))?.accessMode).toBe('private_link');
+  });
   it('loads and caches an immutable sealed frame through the production site service', async () => {
     const objects = new Map<string, Uint8Array>();
     const getObject = vi.fn(async (key: string) => {

@@ -21,6 +21,7 @@ import {
 import { packagePrivateSiteHtml } from './private-package.js';
 import { MATRIX_TELEMETRY_EVENTS } from '@matrix-os/observability';
 import { emitSiteTelemetry, type SiteTelemetryCapture } from './telemetry.js';
+import { authorizeEmailViewerSession } from './email-viewer-sessions.js';
 type Storage = Omit<CustomerVpsObjectStore, 'getObject'> & {
     getObject(key: string, options?: { signal?: AbortSignal }): Promise<{ body: unknown; etag?: string; contentLength?: number }>;
     deleteObject?(key: string, options?: {
@@ -65,6 +66,7 @@ export function createSitesService(options: {
     env?: NodeJS.ProcessEnv;
     captureEvent?: SiteTelemetryCapture;
     emailCapability?: () => Promise<boolean>;
+    emailSessionSecret?: string;
 }) {
     const { db, storage } = options;
     const captureEvent = options.captureEvent;
@@ -110,6 +112,8 @@ export function createSitesService(options: {
         if (!parsed.success)
             throw new SiteError('invalid_request');
         const request = parsed.data;
+        if (request.accessMode === 'private_email' && !await options.emailCapability?.())
+            throw new SiteError('unavailable');
         const version = randomUUID();
         const uploaded: string[] = [];
         let activationCompleted = false;
@@ -219,6 +223,8 @@ export function createSitesService(options: {
         if (!parsed.success)
             throw new SiteError('invalid_request');
         const request = parsed.data;
+        if (request.accessMode === 'private_email' && !await options.emailCapability?.())
+            throw new SiteError('unavailable');
         let previousAccessMode: SiteRecord['accessMode'] | undefined;
         const result = await mutate(owner, request.baseRevision, async (trx, row) => {
             previousAccessMode = row.access_mode;
@@ -275,7 +281,7 @@ export function createSitesService(options: {
         if (!storage)
             throw new SiteError('unavailable');
         const site = await resolve(reference);
-        if (!site || site.accessMode !== 'private_link' || site.activeVersion !== version)
+        if (!site || site.accessMode === 'public' || site.activeVersion !== version)
             throw new SiteError('not_found');
         const cacheKey = `${site.id}:${version}:${path}`;
         const cached = privateFrames.get(cacheKey);
@@ -326,6 +332,11 @@ export function createSitesService(options: {
             if (!locked || locked.status !== 'published')
                 throw new SiteError('not_found');
             const projected = await project(trx, locked, options.emailCapability);
+            if (projected.accessMode === 'private_email') {
+                if (!options.emailSessionSecret || !await options.emailCapability?.()
+                    || !await authorizeEmailViewerSession(trx, projected.id, cookieHeader, options.emailSessionSecret))
+                    throw new SiteError('not_found');
+            }
             if (projected.accessMode === 'private_link') {
                 const credential = readSiteViewerCookie(cookieHeader, projected.id);
                 const link = credential ? await trx.executor.selectFrom('public_site_access_links').selectAll()
@@ -341,6 +352,7 @@ export function createSitesService(options: {
         readCredential: typeof readSiteViewerCookie, scoped = db) {
         const site = await resolve(reference, scoped);
         if (!site || site.accessMode === 'public') return site;
+        if (site.accessMode !== 'private_link') return null;
         const credential = readCredential(cookieHeader, site.id);
         if (!credential) return null;
         const row = await scoped.executor.selectFrom('public_site_access_links').selectAll()

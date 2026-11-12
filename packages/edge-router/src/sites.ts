@@ -7,6 +7,8 @@ const read = new RegExp(`^/${reference}(?:/frame|/assets/[0-9a-f-]{36}/[A-Za-z0-
 const write = new RegExp(`^/${reference}/(?:forms/[a-z][a-z0-9_]{0,63}|access/claim)$`);
 const blocked = new Set(['api', 'public', 'assets', 'frame', 'forms', 'preview', 'admin', 'auth', 'health', 'robots', 'favicon', 'index', 'sites', 'www']);
 const siteIdPattern = '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}';
+const emailExchange = new RegExp(`^/${siteIdPattern}/access/email$`, 'i');
+const emailSignOut = new RegExp(`^/${siteIdPattern}/access/email/sign-out$`, 'i');
 const viewerCookie = new RegExp(`^__Secure-matrix_site_viewer_([a-f0-9]{32})=${siteIdPattern}\\.[A-Za-z0-9_-]{43}$`, 'i');
 const viewerSetCookie = new RegExp(`^__Secure-matrix_site_viewer_([a-f0-9]{32})=${siteIdPattern}\\.[A-Za-z0-9_-]{43}; Path=\/(${siteIdPattern}); HttpOnly; Secure; SameSite=Lax; Max-Age=2592000$`, 'i');
 const viewerClearCookie = new RegExp(`^__Secure-matrix_site_viewer_([a-f0-9]{32})=; Path=\/(${siteIdPattern}); HttpOnly; Secure; SameSite=Lax; Max-Age=0$`, 'i');
@@ -39,8 +41,11 @@ async function handleSiteRequest(request: Request, env: SitesWorkerEnv): Promise
         if (url.pathname === '/' && (request.method === 'GET' || request.method === 'HEAD'))
             return new Response(null, { status: 302, headers: { Location: 'https://matrix-os.com', 'Cache-Control': 'no-store' } });
         const edgeHealth = request.method === 'GET' && url.pathname === '/_edge-health';
-        const valid = edgeHealth || (request.method === 'GET' ? read.test(url.pathname) : request.method === 'POST' && write.test(url.pathname));
+        const emailAuth = request.method === 'POST' && (emailExchange.test(url.pathname) || emailSignOut.test(url.pathname));
+        const valid = edgeHealth || (request.method === 'GET' ? read.test(url.pathname) : request.method === 'POST' && (write.test(url.pathname) || emailAuth));
         if (!valid || blocked.has(url.pathname.split('/')[1]!))
+            return new Response('Site unavailable', { status: 404 });
+        if (url.origin !== 'https://matrix.page')
             return new Response('Site unavailable', { status: 404 });
         if ([...url.searchParams.keys()].some(key => ['access', 'token', 'linkid', 'session'].includes(key.toLowerCase())))
             return new Response('Site unavailable', { status: 400 });
@@ -59,18 +64,24 @@ async function handleSiteRequest(request: Request, env: SitesWorkerEnv): Promise
         if (url.search && request.method !== 'GET')
             return new Response('Site unavailable', { status: 400 });
         const claim = request.method === 'POST' && url.pathname.endsWith('/access/claim');
-        if (claim && request.headers.get('origin') !== url.origin)
+        if ((claim || emailAuth) && request.headers.get('origin') !== url.origin)
+            return new Response('Site unavailable', { status: 404 });
+        const bearer = emailAuth ? request.headers.get('authorization') : null;
+        if (bearer && (bearer.length > 8192 || !/^Bearer [A-Za-z0-9._-]{1,8185}$/.test(bearer)))
+            return new Response('Site unavailable', { status: 400 });
+        if (emailExchange.test(url.pathname) && !bearer)
             return new Response('Site unavailable', { status: 404 });
         const headers = new Headers({ 'x-matrix-sites-edge': env.SITES_EDGE_SECRET, 'x-matrix-sites-source': request.headers.get('cf-connecting-ip') ?? 'unknown' });
         if (request.method === 'POST')
             headers.set('content-type', 'application/json');
-        if (claim)
+        if (claim || emailAuth)
             headers.set('x-matrix-sites-origin', 'same-origin');
+        if (bearer) headers.set('authorization', bearer);
         const targetSiteId = pathSiteId(url.pathname);
         const safeCookies = forwardedViewerCookies(request.headers.get('cookie'), targetSiteId);
         if (safeCookies.invalid)
             return new Response('Site unavailable', { status: 400 });
-        if (safeCookies.value)
+        if (safeCookies.value && !emailExchange.test(url.pathname))
             headers.set('cookie', safeCookies.value);
         let body: Uint8Array | undefined;
         if (request.method === 'POST') {
@@ -85,7 +96,7 @@ async function handleSiteRequest(request: Request, env: SitesWorkerEnv): Promise
                     if (chunk.done)
                         break;
                     size += chunk.value.length;
-                    if (size > (claim ? 2048 : 17 * 1024)) {
+                    if (size > (claim || emailAuth ? 2048 : 17 * 1024)) {
                         await reader.cancel();
                         return new Response('Invalid submission', { status: 413 });
                     }
