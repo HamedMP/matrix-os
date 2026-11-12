@@ -87,11 +87,18 @@ Webflow, Airtable, ClickUp, monday.com, Box, PayPal. Salesforce's hosted MCP is
 still beta and does not publish OAuth metadata, so it is left out until it can
 be verified.
 
-**Auth modes.** `oauth_dcr` connects with no vendor-side setup.
-`oauth_registered_client` needs a Matrix-owned OAuth app, or an app the org
-admin provides (GitHub, Slack, HubSpot, Google Workspace, Asana, Box). These
-need the org-provided client support described under Architecture before
-they work for org-owned apps.
+**Auth modes.** `oauth_dcr` and `none` entries are catalog-only: the vendor
+registers Matrix's client on the fly (or needs no auth), so no vendor-side
+setup is required. Most of the catalog (Linear, Notion, Atlassian, Figma,
+Stripe, Sentry, Supabase, lemlist, and others) is in this group.
+`oauth_registered_client` entries (GitHub, Slack, HubSpot, Asana, Box) use
+**one Matrix-owned OAuth app per vendor** (decision 2026-11-12, option a).
+Every user connects through that app; orgs do not bring their own app in this
+stack. Google Workspace (Drive, Gmail, Calendar) is **deferred** because of
+Google's restricted-scope verification; those entries stay in the contract
+but are hidden from the connect flow. A registered-client entry is shown only
+when its Matrix app is configured on the platform, so a missing secret never
+renders a Connect button that fails.
 
 **Drift.** `bun run mcp-catalog:verify [id ...]` probes every endpoint and
 compares its live registration mode to the catalog. Its first run corrected
@@ -107,8 +114,8 @@ catalog. It makes network calls, so it is a maintenance tool, not a CI gate.
 
 1. **Connect any MCP.** In Settings → Integrations, a user picks a preset
    (Linear, Slack, HubSpot, Lemlist, …) or pastes any remote MCP URL. Matrix
-   discovers the auth method. For OAuth it runs DCR (or uses an admin-provided
-   client) and completes the redirect. The connection then appears in that
+   discovers the auth method. For OAuth it runs DCR (or uses the Matrix-owned
+   vendor app) and completes the redirect. The connection then appears in that
    user's inventory. Web Canvas, Web Desktop, and Electron Desktop use the same
    flow.
 2. **Use it natively in Matrix.** Every Matrix harness (Matrix AI/Pi, Claude
@@ -147,11 +154,25 @@ It is capped at 40 tools per session.
 
 ## Architecture
 
-- **One broker, three entry points.** (a) The stdio
+- **One broker, three entry points.** The broker code lives in
+  `packages/gateway/src/integrations/custom-mcp/` but is instantiated **only in
+  the platform process** (`platform-startup.ts`), which holds the encryption
+  key and makes every upstream call. Entry points: (a) the stdio
   `matrix-integrations-mcp` for harnesses on the VPS; (b) the gateway-native
   tools for managed Pi; (c) the platform `/mcp` HTTP endpoint for external
-  clients. All three call the same broker and policy code; none duplicates
-  authorization.
+  clients. (a) and (b) reach the platform broker through the existing
+  VPS → platform internal proxy with a run-scoped capability; (c) calls it
+  in-process. None duplicates authorization.
+- **Matrix-owned OAuth apps.** One app per registered-client vendor. Client
+  ids and secrets come from platform env/secret manager
+  (`MCP_OAUTH_<VENDOR>_CLIENT_ID` / `_CLIENT_SECRET`), are validated at
+  startup (missing → that entry is unavailable, not an error), and never reach
+  a VPS, a client response, or a log. All vendors share the existing callback
+  `https://app.matrix-os.com/api/mcp-servers/oauth/callback`. The catalog
+  entry pins the vendor's authorization and token endpoints and minimum
+  scopes, so a hostile `resource_metadata` cannot redirect the code exchange
+  to another host. Each vendor app's review status (Slack directory, HubSpot
+  marketplace, GitHub App vs OAuth App) is tracked in the ENG ticket.
 - **Credentials.** Upstream tokens stay in platform Postgres envelopes
   (AES-256-GCM, owner + server AAD). They never reach the VPS, the harness,
   the model, or the external client. External clients hold only a Matrix
@@ -162,15 +183,23 @@ It is capped at 40 tools per session.
   run-scoped capability that Claude Code receives today. Run-scoped bearers
   remain mandatory; there is no machine-bearer fallback.
 - **Org scope.** New ownership dimension: a connection belongs to a person.
-  An org may *govern* a server definition (allow/block/recommend, optional
-  admin-provided OAuth client, default tool policy). Effective permission is
-  `org policy ∩ user policy ∩ run scope`. Org roles gain one application
-  permission, `org:mcp_admin`, granted to Clerk `org:admin`.
+  An org may *govern* a server definition (allow/block/recommend and
+  a default tool policy). Effective permission is
+  `org policy ∩ user policy ∩ run scope`, evaluated at call time (a policy
+  change applies to the next call, not to one already in flight). Org roles
+  gain one application permission, `org:mcp_admin`, granted to Clerk
+  `org:admin`. An admin "revoke" **blocks** that member's use of the server in
+  org context; it never reads, moves, or deletes the member's personal
+  credential (constitution I). Only the member deletes their connection.
 - **Usage records.** Each broker call writes a content-free usage row:
   org, actor, connection, server, tool, entry point, harness, outcome,
-  latency, timestamp. It records no arguments or results. Rows are rolled up
-  hourly into daily aggregates. Raw rows are kept for 30 days; aggregates for
-  13 months.
+  latency, timestamp. It records no arguments or results. Writes are
+  off the call path: a bounded in-process queue (cap 10,000 rows, flushed
+  every 5 s in batches) drops and counts rows on overflow instead of blocking
+  or failing the call. Rows are rolled up hourly into daily aggregates with
+  `INSERT … ON CONFLICT DO UPDATE` so a rerun is idempotent. Raw rows are kept
+  for 30 days; aggregates for 13 months. Members are told in Settings that
+  their org admin can see connection metadata and call counts.
 
 ## Matrix Core repo (skills, hooks, scripts, brain)
 
@@ -186,8 +215,11 @@ It is capped at 40 tools per session.
     AGENTS.md
   ```
 - **Inside Matrix.** A platform-owned sync job checks the repo hourly (and on
-  a webhook). It records the commit, and each member VPS pulls the pinned
-  commit. The existing `sync-matrix-agent-skills.sh` then installs into the
+  a webhook) using a GitHub App installation token held only by the
+  platform. It records the commit and stores a tarball plus sha256. Each
+  member VPS downloads the pinned tarball from the platform internal route
+  with its existing machine credential (never a GitHub token), verifies the
+  sha256, and caps size (50 MB) and file count. The existing `sync-matrix-agent-skills.sh` then installs into the
   Matrix, Claude, Codex, and Hermes discovery paths. Org skills are namespaced
   (`org-<slug>-…`). They never overwrite personal skills and never touch
   protected `$MATRIX_HOME` user paths.
@@ -213,13 +245,17 @@ It is capped at 40 tools per session.
 | `POST\|GET\|DELETE /mcp` | platform | Matrix OAuth bearer for the `/mcp` resource (Clerk-backed, `mcp-auth.ts`) | no | Existing endpoint; gains the Core tools. Origin allowlist, per-owner admission, `bodyLimit` |
 | Matrix OAuth authorize/token/register | platform | existing contract (spec 120) | authorize/register yes | Unchanged; this spec adds no OAuth endpoints |
 | `GET /api/mcp-catalog` | platform | Clerk session | no | Read-only catalog projection; Zod-validated `category`/`department` filters |
-| `GET\|POST\|PATCH\|DELETE /api/mcp-servers[...]` | gateway → platform broker | owner session, or a run-scoped capability bearer | no | Existing Custom MCP routes; gain `catalogId` and an optional `orgClientId` |
-| `GET /api/mcp-servers/oauth/callback` | platform | single-use hashed `state` bound to owner + server + revision | yes (state-gated) | Existing callback; org-provided clients reuse it |
-| `POST /api/mcp-approvals/:approvalId` | gateway | owner session only, never a run or external bearer | no | Confirms an external-client write; the approval digest binds tool + args |
+| `GET\|POST\|PATCH\|DELETE /api/mcp-servers[...]` | gateway → platform broker | owner session, or a run-scoped capability bearer | no | Existing Custom MCP routes; gain `catalogId`; registered-client entries use the Matrix-owned app |
+| `GET /api/mcp-servers/oauth/callback` | platform | single-use hashed `state` bound to owner + server + revision | yes (state-gated) | Existing callback; Matrix-owned vendor apps reuse it |
+| `POST /api/mcp-approvals/:approvalId` | gateway | owner session only, never a run or external bearer | no | Confirms an external-client write; the approval digest binds tool + args; single-use, 10-minute TTL |
+| `get_approval(approvalId)` Core MCP tool | platform `/mcp` | the same Matrix OAuth bearer that created the approval | no | How an external client polls a `pending_approval`; another bearer gets `not_found` |
 | `GET /api/orgs/:orgId/mcp/connections` | platform | Clerk session + `org:mcp_admin` | no | Member connection metadata only; cursor + limit validated |
-| `GET /api/orgs/:orgId/mcp/usage` | platform | Clerk session + `org:mcp_admin` | no | Daily aggregates; bounded date range |
-| `PUT\|DELETE /api/orgs/:orgId/mcp/servers/:serverDefId` | platform | Clerk session + `org:mcp_admin` | no | Allow/block/recommend and org OAuth client; secrets write-only |
-| `POST /api/orgs/:orgId/core-repo/sync` | platform | GitHub webhook HMAC, or `org:mcp_admin` | webhook only | Triggers repo sync; payload is ignored beyond the ref |
+| `GET /api/orgs/:orgId/mcp/usage` | platform | Clerk session + `org:mcp_admin` | no | Daily aggregates; bounded date range (≤ 400 days) |
+| `PUT\|DELETE /api/orgs/:orgId/mcp/servers/:serverDefId` | platform | Clerk session + `org:mcp_admin` | no | Allow/block/recommend and default tool policy |
+| `PUT\|DELETE /api/orgs/:orgId/mcp/members/:memberId/blocks/:serverDefId` | platform | Clerk session + `org:mcp_admin` | no | Blocks or unblocks one member's use of a server in org context |
+| `POST /api/orgs/:orgId/core-repo/sync` | platform | Clerk session + `org:mcp_admin` | no | Manual "sync now" |
+| `POST /webhooks/github/core-repo` | platform | GitHub App webhook HMAC-SHA256 (`timingSafeEqual` on raw body), delivery-id dedupe | yes (signed) | Push to `stable` only; maps installation → org; any other event is 204 |
+| `GET /internal/core-repo/:orgId/:commit.tar.gz` | platform | existing VPS machine credential; member of `orgId` | no | Pinned tarball for the VPS installer |
 
 Every path parameter (`orgId`, `serverDefId`, `approvalId`) is validated
 with Zod at the route boundary. Unknown or misconfigured dependencies return
@@ -256,8 +292,16 @@ a generic 503, never a 404.
   a reconnect CTA, and admins see the status.
 - Tool-catalog cache: an LRU per connection (cap 500 connections per process,
   10-minute TTL), invalidated on revision change.
-- Per-actor rate limits are shared by all three entry points. The `/mcp`
-  concurrency and admission budgets already in `mcp-routes.ts` apply.
+- Upstream size caps: tool list ≤ 500 tools and 512 KB per server, tool
+  description ≤ 2 KB, call result ≤ 1 MB (truncated with a marker).
+- Per-actor rate limits are enforced in the platform broker, so all three
+  entry points share them: an in-memory per-instance limiter (capped map, LRU)
+  plus a Postgres daily call quota updated in the same statement that checks
+  it. The `/mcp` concurrency and admission budgets already in `mcp-routes.ts`
+  apply.
+- Concurrent connects: two tabs connecting the same server race on the
+  existing revisioned row (`WHERE revision = :base`); the loser gets
+  `conflict` and refreshes.
 - Repo sync: a failed fetch keeps the last good commit. VPS installs are
   atomic (stage, then rename) and keep the previous commit for rollback.
 - Shutdown: drain in-flight broker calls and close Postgres resources through
@@ -265,17 +309,28 @@ a generic 503, never a 404.
 
 ## Delivery stack (about 5 PRs, one shared ticket)
 
+Each layer names its integration checkpoint: a test that runs the real
+producer and consumer together, not only unit tests.
+
 1. Spec, the verified preset catalog contract, and its drift verifier (this
-   layer). Then the connection model: catalog presets in the Custom MCP
-   create flow, org-provided OAuth clients, and Pipedream behind the same
-   inventory.
-2. Core tool surface (progressive discovery) in the broker, plus usage records.
-3. Harness parity: Codex, OpenCode, and Hermes get the Core MCP; Pi tool names
-   aligned.
-4. External `/mcp` integration tools, external approvals, and `matrix mcp`
-   stdio bridge.
-5. Org governance and admin dashboard (connections, usage), plus the Matrix
-   Core repo sync job and `matrix core sync` CLI.
+   layer). Checkpoint: every catalog URL passes the real broker URL validator.
+2. Connect flow: catalog presets in Settings → Integrations (Web Canvas, Web
+   Desktop, Electron Desktop), "paste any MCP URL" kept, Matrix-owned OAuth
+   apps for registered-client vendors, Pipedream services shown in the same
+   inventory. Checkpoint: platform routes + broker + a fake OAuth/MCP server
+   complete preset connect, DCR connect, and registered-client connect.
+3. Core tool surface (progressive discovery) in the broker, plus usage
+   records. Checkpoint: `search_tools` → `call_tool` against two fake
+   upstreams writes exactly one content-free usage row per call.
+4. Harness parity and external clients: Codex, OpenCode, and Hermes get the
+   Core MCP; the external `/mcp` gains the Core tools and external write
+   approvals; `matrix mcp` stdio bridge. Checkpoint: each harness launch
+   config contains the scoped server; an external write stays pending until
+   the owner approves.
+5. Org governance and admin dashboard (connections, usage, blocks), plus the
+   Matrix Core repo sync job and `matrix core sync` CLI. Checkpoint: a member
+   block denies the next call; a signed webhook pins a commit that a VPS
+   installs atomically.
 
 Public docs (required by the constitution's documentation-driven rule): a
 separate PR in `FinnaAI/matrix-os-site` under `content/docs/` ships with
@@ -302,8 +357,11 @@ external writes; the org admin view; and setting up the Matrix Core repo.
 
 ## Risks and open questions
 
-- Some vendor MCPs reject DCR and need an admin-registered OAuth client
-  (org-provided client config covers this).
+- Some vendor MCPs reject DCR. Matrix-owned apps cover them; a vendor app
+  still in review limits installs (Slack and HubSpot cap unlisted apps), so
+  those presets may launch as "beta".
+- Org-provided OAuth apps (bring your own app) are deferred to a follow-on
+  stack; the catalog field and broker client config leave room for it.
 - External write approvals add latency; some clients handle `pending_approval`
   poorly. Flat-mode `allow` policies are the escape hatch.
 - Hooks distributed org-wide execute code on employee machines; this needs
