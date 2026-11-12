@@ -105,6 +105,26 @@ export const CanonicalUpdateChatProjectRequestSchema = z.object({
   projectId: canonicalReferenceId(160).nullable(),
 }).strict();
 
+export const CanonicalUpdateChatLifecycleRequestSchema = z.object({
+  baseRevision: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER),
+  lifecycle: z.enum(["active", "archived"]),
+}).strict();
+export type CanonicalUpdateChatLifecycleRequest = z.infer<typeof CanonicalUpdateChatLifecycleRequestSchema>;
+
+export const CanonicalSideChatTurnRequestSchema = z.object({
+  clientRequestId: CanonicalChatRequestIdSchema,
+  text: z.string().trim().min(1).max(8_000),
+}).strict();
+export const CanonicalSideChatSnapshotSchema = z.object({
+  threadId: z.string().regex(/^side_[a-f0-9]{32}$/).nullable(),
+  messages: z.array(z.object({
+    seq: z.number().int().min(1), role: z.enum(["user", "assistant"]),
+    content: z.string().max(64_000), createdAt: IsoTimestampSchema,
+  }).strict()).max(200),
+}).strict();
+export type CanonicalSideChatTurnRequest = z.infer<typeof CanonicalSideChatTurnRequestSchema>;
+export type CanonicalSideChatSnapshot = z.infer<typeof CanonicalSideChatSnapshotSchema>;
+
 export const CanonicalUpdateChatTitleRequestSchema = z.object({
   expectedTitleVersion: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER),
   title: z.string().trim().min(1).max(160),

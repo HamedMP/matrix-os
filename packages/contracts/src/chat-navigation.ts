@@ -10,7 +10,7 @@ export const CHAT_NAVIGATION_MAX_BYTES = 2 * 1024 * 1024;
 /** This is a display projection, never a full Chat or an authorization token. */
 export const CanonicalChatNavigationItemSchema = z.object({
   chat: CanonicalChatSchema.pick({ id: true, title: true, titleVersion: true, activityAt: true,
-    lifecycle: true, attention: true, revision: true, messageCount: true, userState: true,
+    lifecycle: true, archivedAt: true, attention: true, revision: true, messageCount: true, userState: true,
     createdAt: true, updatedAt: true }),
   importSource: CanonicalChatImportSourceSchema.optional(),
   projectId: canonicalReferenceId(160).optional(),
@@ -38,6 +38,19 @@ export const CanonicalChatNavigationQuerySchema = z.object({
   limit: z.coerce.number().int().min(1).max(CHAT_NAVIGATION_MAX_ITEMS).default(CHAT_NAVIGATION_MAX_ITEMS),
   lifecycle: z.enum(["active", "archived"]).optional(),
 }).strict();
+export const CanonicalChatNavigationPageQuerySchema = z.object({
+  group: z.enum(["pinned", "needsYou", "working", "done", "project"]),
+  projectId: canonicalReferenceId(160).optional(),
+  limit: z.coerce.number().int().min(1).max(100).default(20),
+  cursor: z.string().regex(/^navcur_[A-Za-z0-9_-]+$/).max(512).optional(),
+}).strict().refine(input => (input.group === "project") === Boolean(input.projectId));
+export const CanonicalChatNavigationPageResponseSchema = z.object({
+  items: z.array(CanonicalChatNavigationItemSchema).max(100),
+  totalCount: z.number().int().nonnegative(),
+  nextCursor: z.string().regex(/^navcur_[A-Za-z0-9_-]+$/).max(512).optional(),
+}).strict();
+export type CanonicalChatNavigationPageQuery = z.infer<typeof CanonicalChatNavigationPageQuerySchema>;
+export type CanonicalChatNavigationPageResponse = z.infer<typeof CanonicalChatNavigationPageResponseSchema>;
 export type CanonicalChatNavigationItem = z.infer<typeof CanonicalChatNavigationItemSchema>;
 export type CanonicalChatNavigationResponse = z.infer<typeof CanonicalChatNavigationResponseSchema>;
 export type CanonicalChatNavigationQuery = z.infer<typeof CanonicalChatNavigationQuerySchema>;
