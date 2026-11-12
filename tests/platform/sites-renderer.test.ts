@@ -1,8 +1,40 @@
 import { expect, it, vi } from 'vitest';
 import { JSDOM } from 'jsdom';
-import { APP_CSP, PRIVATE_APP_CSP, siteAccessGate, siteFrame, sitePage } from '../../packages/platform/src/sites/renderer.js';
+import { APP_CSP, PRIVATE_APP_CSP, siteAccessGate, siteEmailGate, siteFrame, sitePage } from '../../packages/platform/src/sites/renderer.js';
 import type { SiteRecord } from '@matrix-os/contracts';
 const site: SiteRecord = { id: 'a2fd72d0-0926-49d5-b45f-bbfb167e50d2', appSlug: 'launch', title: '<script>bad()</script>', description: '', slug: null, url: 'https://matrix.page/a2fd72d0-0926-49d5-b45f-bbfb167e50d2', revision: 1, status: 'published', accessMode: 'public', activeVersion: 'cd0a12e9-18a0-4b4e-9a10-269eb5697d4f', versions: [], config: { data: {}, forms: [] } };
+it('keeps the email Clerk component and exchange on the exact canonical app URL with a separate gate CSP', () => {
+ const gate=siteEmailGate(site.id,'pk_test_existing_matrix_instance');
+ expect(gate.html).toContain(`https://matrix.page/${site.id}`);
+ expect(gate.html).toContain("canonical+'/access/email'");
+ expect(gate.html).toContain('clerk.matrix-os.com');
+ expect(gate.html).toContain('mountSignIn');
+ expect(gate.html).toContain('mountSignUp');
+ expect(gate.html).toContain('session.getToken');
+ expect(gate.html).not.toMatch(/app\.matrix-os\.com|api\/auth\/app-session|billing|onboarding|provision-runtime/);
+ expect(gate.csp).toContain('clerk.matrix-os.com');
+ expect(APP_CSP).not.toContain('clerk.matrix-os.com');
+ expect(PRIVATE_APP_CSP).not.toContain('clerk.matrix-os.com');
+ expect(gate.html).not.toContain(site.title);
+});
+it('reuses an existing Matrix Clerk session and exchanges only at that app URL', async () => {
+ const exchange=vi.fn(async(_url:unknown,_init?:RequestInit)=>new Response('{}',{status:404}));
+ const mount=vi.fn();
+ const clerk={load:vi.fn(async()=>{}),addListener:vi.fn(),session:{id:'sess_existing',getToken:vi.fn(async()=> 'signed.clerk.token')},mountSignIn:mount,mountSignUp:vi.fn()};
+ const dom=new JSDOM(siteEmailGate(site.id,'pk_test_existing_matrix_instance').html,{url:site.url,runScripts:'dangerously',beforeParse(window){
+  Object.defineProperty(window,'Clerk',{value:clerk});
+  Object.defineProperty(window,'AbortSignal',{value:AbortSignal});
+  Object.defineProperty(window,'fetch',{value:exchange});
+ }});
+ try{
+  await vi.waitFor(()=>expect(exchange).toHaveBeenCalledOnce());
+  expect(exchange.mock.calls[0]?.[0]).toBe(`${site.url}/access/email`);
+  expect(exchange.mock.calls[0]?.[1]).toMatchObject({method:'POST',body:'{}',credentials:'same-origin',redirect:'error'});
+  expect(exchange.mock.calls[0]?.[1]?.headers).toMatchObject({Authorization:'Bearer signed.clerk.token'});
+  expect(mount).not.toHaveBeenCalled();
+  expect(dom.window.document.querySelector('.error')?.textContent).toContain('does not have access');
+ }finally{dom.window.close()}
+});
 it('claims the current fragment when a fresh one-time link replaces a failed link in the same tab', async () => {
  const firstId='11111111-1111-4111-8111-111111111111', secondId='22222222-2222-4222-8222-222222222222';
  const firstToken='a'.repeat(43), secondToken='b'.repeat(43), bodies:string[]=[];

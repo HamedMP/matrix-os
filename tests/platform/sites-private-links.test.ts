@@ -47,6 +47,12 @@ function memoryStorage() {
 }
 
 describe('private Matrix.page access links', () => {
+  it('refuses to publish email mode while the backend capability is disabled', async () => {
+    const { siteId } = await publishedPrivateSite();
+    const service = createSitesService({ db: db.db, env: { NODE_ENV: 'test' } });
+    await expect(service.patch(owner, { accessMode: 'private_email', baseRevision: 1 })).rejects.toMatchObject({ code: 'unavailable' });
+    expect((await service.resolve(siteId))?.accessMode).toBe('private_link');
+  });
   it('republishes a legacy one-time-link site and serves its sealed frame from the production cache', async () => {
     await publishedPrivateSite();
     const { storage, getObject } = memoryStorage();
