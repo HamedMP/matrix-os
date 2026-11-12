@@ -10,6 +10,8 @@ import {
   listConnectableCatalogPresets,
   resolveConnectableCatalogPreset,
 } from "./catalog-presets.js";
+import { coreCallerFromContext, registerCoreMcpRoutes } from "./core-routes.js";
+import type { CoreToolService } from "./core-tools.js";
 
 const MUTATION_BODY_LIMIT = 64 * 1024;
 const UUID = z.uuid();
@@ -72,6 +74,8 @@ export interface CustomMcpRoutesOptions {
   allowToolCalls?: boolean;
   /** Matrix-owned OAuth apps; without it only DCR and no-auth presets are offered. */
   catalog?: RegisteredMcpOAuthClients;
+  /** Matrix Core MCP tools; legacy server-id calls also dispatch through it for usage records. */
+  core?: CoreToolService;
   now?: () => number;
 }
 
@@ -141,6 +145,12 @@ export function createCustomMcpRoutes(options: CustomMcpRoutesOptions): Hono {
     }
     const parsed = CreateSchema.safeParse(body);
     return parsed.success ? parsed.data : undefined;
+  }
+
+  // Registered before "/:id" routes so "/core/*" never reaches server-id handlers.
+  if (options.core) {
+    registerCoreMcpRoutes(app, { core: options.core, requireUser, resolveActorId: options.resolveActorId,
+      allowToolCalls: options.allowToolCalls });
   }
 
   app.get("/", async (context) => {
@@ -288,6 +298,7 @@ export function createCustomMcpRoutes(options: CustomMcpRoutesOptions): Hono {
   });
 
   if (options.allowToolCalls) {
+    const core = options.core;
     app.post("/:id/call", bodyLimit({ maxSize: MUTATION_BODY_LIMIT }), async (context) => {
       const userId = await requireUser(context, true);
       if (typeof userId !== "string") return userId;
@@ -310,14 +321,25 @@ export function createCustomMcpRoutes(options: CustomMcpRoutesOptions): Hono {
       }
       if (!parsed.success) return context.json({ error: "Invalid request body" }, 400);
       if (context.req.header("accept") === MCP_TOOL_STREAM_TYPE) {
-        return toolProgressResponse(context.req.raw.signal, (onProgress, signal) => options.broker.callSelectedTool({
-          userId, serverId: parsedId.data, toolName: parsed.data.tool, arguments: parsed.data.arguments,
-          approvalGranted: parsed.data.approvalGranted, approvalReceipt: parsed.data.approvalReceipt,
-          actorId: options.resolveActorId?.(context) ?? undefined, runId: context.req.header("x-matrix-mcp-run-id"),
-          onProgress, signal,
-        }));
+        return toolProgressResponse(context.req.raw.signal, (onProgress, signal) => core
+          ? core.dispatch(coreCallerFromContext(context, userId, options.resolveActorId?.(context)), {
+            serverId: parsedId.data, tool: parsed.data.tool, arguments: parsed.data.arguments,
+            approvalReceipt: parsed.data.approvalReceipt, onProgress, signal,
+          })
+          : options.broker.callSelectedTool({
+            userId, serverId: parsedId.data, toolName: parsed.data.tool, arguments: parsed.data.arguments,
+            approvalGranted: parsed.data.approvalGranted, approvalReceipt: parsed.data.approvalReceipt,
+            actorId: options.resolveActorId?.(context) ?? undefined, runId: context.req.header("x-matrix-mcp-run-id"),
+            onProgress, signal,
+          }));
       }
       try {
+        if (core) {
+          return context.json(await core.dispatch(coreCallerFromContext(context, userId, options.resolveActorId?.(context)), {
+            serverId: parsedId.data, tool: parsed.data.tool, arguments: parsed.data.arguments,
+            approvalReceipt: parsed.data.approvalReceipt, signal: context.req.raw.signal,
+          }));
+        }
         return context.json(await options.broker.callSelectedTool({
           userId,
           serverId: parsedId.data,
