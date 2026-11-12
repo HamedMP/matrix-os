@@ -159,14 +159,14 @@ export async function waitChildrenUntil(
 ) {
   const now = input.now ?? Date.now;
   const deadline = now() + input.totalMs;
-  let baseline: unknown[] | undefined;
+  let cursor: string | undefined;
   for (;;) {
     const remaining = Math.max(0, deadline - now());
     const result = await agents.waitChildren({
       caller: input.caller, mode: input.mode, timeoutMs: Math.min(remaining, TERMINAL_WAIT_REQUEST_MAX_MS),
-      ...(baseline ? { baseline } : {}),
+      ...(cursor ? { cursor } : {}),
     });
-    baseline = result.baseline ?? baseline;
+    cursor = result.cursor ?? cursor;
     if (result.reason !== "timeout" || deadline - now() <= 0) return result;
   }
 }

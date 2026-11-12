@@ -1,3 +1,4 @@
+import { randomBytes } from "node:crypto";
 import { setTimeout as delay } from "node:timers/promises";
 import { TerminalRefSchema, type TerminalRef, type TerminalTab, type TerminalWorkspace } from "@matrix-os/contracts";
 import { z } from "zod/v4";
@@ -13,6 +14,8 @@ const READY_TIMEOUT_MS = 60_000;
 // Child waits each poll the registry and runtime; bound them like single-tab waits.
 const MAX_CHILD_WAITS = 64;
 const MAX_CHILD_WAITS_PER_PARENT = 4;
+const MAX_CHILD_WAIT_BASELINES = 256;
+const CHILD_WAIT_BASELINE_TTL_MS = 10 * 60_000;
 const READY_POLL_MS = 500;
 const SCREEN_SETTLE_MS = 3_000;
 const MAX_FIRST_MESSAGE_CHARS = TERMINAL_SEND_TEXT_MAX_CHARS;
@@ -71,10 +74,8 @@ export type TerminalChildrenWaitResult =
   | { reason: "changed"; child: TerminalRef; status?: TerminalAgentStatus; exited?: boolean }
   | { reason: "idle" }
   | { reason: "none" }
-  /** `baseline`: the children as the wait started, to pass back on the next check-in. */
-  | { reason: "timeout"; baseline?: TerminalChildFact[] };
-
-export interface TerminalChildFact { ref: TerminalRef; live: boolean; status?: TerminalAgentStatus }
+  /** `cursor`: names the children as this wait started, to pass back on the next check-in. */
+  | { reason: "timeout"; cursor?: string };
 
 function sanitizeTag(value: string): string {
   return value.replace(/[^A-Za-z0-9 _.:-]/g, "").slice(0, 80);
@@ -160,10 +161,16 @@ export function createTerminalAgents(options: {
 
   // Child waits in progress: bounded, released when each wait ends.
   const childWaits = new Map<string, number>();
+  // Starting child states for waits that will check in again: bounded, oldest first out, TTL.
+  const childWaitBaselines = new Map<string, {
+    parentKey: string;
+    facts: Map<string, { ref: TerminalRef; status?: TerminalAgentStatus; live: boolean }>;
+    expiresAt: number;
+  }>();
   let childWaitTotal = 0;
 
   async function waitForChildren(parent: TerminalRef, input: {
-    mode: "any" | "all"; timeoutMs: number; signal?: AbortSignal; baseline?: TerminalChildFact[];
+    mode: "any" | "all"; timeoutMs: number; signal?: AbortSignal; cursor?: string;
   }): Promise<TerminalChildrenWaitResult> {
     const deadline = now() + input.timeoutMs;
     const snapshot = async () => {
@@ -185,11 +192,24 @@ export function createTerminalAgents(options: {
     };
     // A follow-up check-in continues from the caller's baseline, so news that arrived
     // between two requests is still news.
-    const initial = input.baseline
-      ? new Map(input.baseline.map((fact) => [terminalRefKey(fact.ref), fact]))
+    const parentKey = terminalRefKey(parent);
+    const remembered = input.cursor ? childWaitBaselines.get(input.cursor) : undefined;
+    const initial = remembered && remembered.parentKey === parentKey && remembered.expiresAt > now()
+      ? remembered.facts
       : await snapshot();
     if (initial.size === 0) return { reason: "none" };
-    const timedOut = (): TerminalChildrenWaitResult => ({ reason: "timeout", baseline: [...initial.values()] });
+    const timedOut = (): TerminalChildrenWaitResult => {
+      // Keep the starting states server-side, under a short cursor, so a check-in's
+      // request stays small however many children there are.
+      const cursor = input.cursor && remembered ? input.cursor : `wc_${randomBytes(16).toString("hex")}`;
+      childWaitBaselines.delete(cursor);
+      childWaitBaselines.set(cursor, { parentKey, facts: initial, expiresAt: now() + CHILD_WAIT_BASELINE_TTL_MS });
+      for (const [key, entry] of childWaitBaselines) {
+        if (childWaitBaselines.size <= MAX_CHILD_WAIT_BASELINES && entry.expiresAt > now()) break;
+        childWaitBaselines.delete(key);
+      }
+      return { reason: "timeout", cursor };
+    };
     for (;;) {
       if (input.signal?.aborted) return timedOut();
       const current = await snapshot();
@@ -296,7 +316,7 @@ export function createTerminalAgents(options: {
 
     /** Herdr's `wait --children any|all` for one parent. */
     waitChildren(parent: TerminalRef, input: {
-      mode: "any" | "all"; timeoutMs: number; signal?: AbortSignal; baseline?: TerminalChildFact[];
+      mode: "any" | "all"; timeoutMs: number; signal?: AbortSignal; cursor?: string;
     }): Promise<TerminalChildrenWaitResult> {
       const key = terminalRefKey(parent);
       const forParent = childWaits.get(key) ?? 0;
