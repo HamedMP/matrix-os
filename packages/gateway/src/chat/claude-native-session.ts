@@ -195,11 +195,14 @@ export function createClaudeNativeSessionPool(options: PoolOptions = {}) {
         && options.protocolQualified === true && !!(this.recoveredAdmission ?? handler) && this.control.qualified
         && (this.phase ? this.phase.options.schedulingAllowed !== false : this.lastSchedulingAllowed) && privateNativeChat(input);
     }
-    recoveryCheckpoint(allowWakeup = false): ClaudeNativeRecoveryInput | undefined {
-      if (this.stopped || this.phase || this.pendingPrompt || (this.scheduledCommandId && !allowWakeup)
+    recoveryCheckpoint(liveOccurrence = false): ClaudeNativeRecoveryInput | undefined {
+      if (this.stopped || this.phase || this.pendingPrompt || (this.scheduledCommandId && !liveOccurrence)
         || !this.eligible() || !this.sessionId || Date.now() >= this.deadline) return;
-      const jobs = this.jobs.verifiedSnapshot();
-      if (!jobs.length || jobs.length !== this.jobs.size || jobs.some(job => !job.recurring)) return;
+      const verified = this.jobs.verifiedSnapshot();
+      if (verified.length !== this.jobs.size) return;
+      // One-shot receipts can authorize a live callback, but cannot recreate a job after restart.
+      const jobs = liveOccurrence ? verified : verified.filter(job => job.recurring);
+      if (!jobs.length) return;
       return { ownerId: this.lastInput.owner.ownerId, chatId: this.lastInput.chatId, sourceRunId: this.lastInput.runId,
         sourceFingerprint: this.fingerprint, sessionId: this.sessionId, deadlineAt: new Date(this.deadline).toISOString(), jobs };
     }

@@ -107,6 +107,57 @@ describe("private native Claude idle recovery", () => {
     }
   });
 
+  it.each(["recurring", "one-shot", "shutdown"] as const)("separates live native occurrences from restart inventory (%s)", async action => {
+    const f = fixture();
+    const adapter = createClaudeChatProviderAdapter({
+      homePath: "/owner", nativeSessions: f.pool,
+      resolveNativeProtocol: async () => ({ command: "/qualified/claude", qualified: true }),
+      resolveSessionSource: async () => ({ fingerprint: "source_a", schedulingAllowed: true }),
+      resolveCredentialEnv: async () => ({ HOME: "/owner", ANTHROPIC_API_KEY: "test-key" }),
+    });
+    const recurring = { ...job, assistantUuid: "09f23651-fd98-4642-8b79-6dc2e5688c8e",
+      receiptUuid: "40c465b2-37e0-4eb4-b51d-d8bef1c69a1b" };
+    const tool = { cron: "1 0 1 1 *", prompt: "Run a private one-shot", recurring: false };
+    const oneShot = { id: "abcdef02", cron: tool.cron, recurring: false,
+      promptSha256: createHash("sha256").update(tool.prompt).digest("hex"),
+      assistantUuid: "09f23651-fd98-4642-8b79-6dc2e5688c8f", receiptUuid: "40c465b2-37e0-4eb4-b51d-d8bef1c69a1c" };
+    try {
+      await f.pool.restoreIdle({ ...f.restore, evidence: [recurring] });
+      const events = Array.fromAsync(adapter.resume!({ ...input("run_followup"), resumeState: {
+        sessionId: f.restore.sessionId, canonicalHistoryRequired: true,
+      } }));
+      await vi.waitFor(() => expect(f.child.frames.some(frame => frame.response?.request_id === "request_foreground_1")).toBe(true));
+      f.child.emitFrame({ type: "assistant", uuid: oneShot.assistantUuid, message: { id: "msg_one_shot", content: [
+        { type: "tool_use", id: "toolu_once", name: "CronCreate", input: tool },
+      ] } });
+      f.child.toolHook("CronCreate", "toolu_once", tool);
+      await ready();
+      f.child.emitFrame({ type: "user", uuid: oneShot.receiptUuid,
+        tool_use_result: { id: oneShot.id, recurring: false, durable: false, nextFireAt: Date.now() + 1_000 },
+        message: { content: [{ type: "tool_result", tool_use_id: "toolu_once", content: "Scheduled one-shot job abcdef02." }] },
+      });
+      f.child.result();
+      expect((await events).at(-1)).toEqual({ type: "run.completed", outcome: "completed" });
+      if (action === "shutdown") {
+        const handoff = vi.fn(async () => {});
+        await f.pool.close(handoff);
+        expect(handoff).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ jobs: [recurring] }));
+        return;
+      }
+      const duePrompt = action === "one-shot" ? tool.prompt : prompt;
+      const dueJob = action === "one-shot" ? oneShot : recurring;
+      f.child.prompt("due", tickId, duePrompt);
+      await ready();
+      expect(f.admitRecoveredPhase).toHaveBeenCalledExactlyOnceWith(
+        expect.objectContaining({ sourceRunId: "run_followup", promptId: tickId, prompt: duePrompt }),
+        expect.objectContaining({ id: dueJob.id, recurring: dueJob.recurring }),
+        expect.objectContaining({ jobs: [recurring, oneShot] }),
+      );
+    } finally {
+      await f.pool.close();
+    }
+  });
+
   it.each([true, false])("blocks only a matching due callback during qualification (initialize ACK observed: %s)", async initialized => {
     const f = fixture();
     f.child.autoMcpAck = false;

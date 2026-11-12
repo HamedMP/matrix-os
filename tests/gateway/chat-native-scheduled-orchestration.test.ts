@@ -81,6 +81,13 @@ describe("native scheduled phase orchestration", () => {
     const launch = spawnProtected.mock.calls[0]![0];
     expect(launch.transcript.toString()).toContain("Create my schedule.");
     expect(launch.transcript.toString()).toContain(request.prompt);
+    const oneShot = { id: "abcdef02", cron: "* * * * *", recurring: false,
+      promptSha256: createHash("sha256").update("One-shot follow-up").digest("hex"),
+      assistantUuid: "09f23651-fd98-4642-8b79-6dc2e5688c8f", receiptUuid: "40c465b2-37e0-4eb4-b51d-d8bef1c69a1c" };
+    const mixed = { ...claimed, jobs: [...checkpoint.jobs, oneShot] };
+    await expect(host.revalidate(mixed, signal)).resolves.toBe(true);
+    await expect(host.prepare(mixed, signal)).resolves.toBeNull();
+    await expect(host.checkpointAfterClose(mixed, signal)).resolves.toBe(false);
     getCatalog.mockResolvedValueOnce(catalog(false));
     await expect(host.revalidate(checkpoint, signal)).resolves.toBe(false);
     prepareNativeRecovery.mockResolvedValueOnce({ command: "/bin/claude", cwd: "/owner", args: [],

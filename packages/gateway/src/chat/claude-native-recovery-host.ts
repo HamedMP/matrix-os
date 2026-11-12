@@ -23,7 +23,10 @@ export function createClaudeNativeRecoveryHost(options: Pick<NativeScheduledAdmi
 }): ClaudeNativeRecoveryHost {
   async function resolve(checkpoint: ClaudeNativeRecoveryInput, signal: AbortSignal, includeHistory: boolean) {
     if (checkpoint.ownerId !== options.ownerId || signal.aborted || Date.parse(checkpoint.deadlineAt) <= Date.now()
-      || !checkpoint.jobs.length || checkpoint.jobs.some(job => !job.recurring || !job.replay)) return null;
+      || !checkpoint.jobs.length) return null;
+    // A live one-shot has receipt evidence but no reusable transcript. Building
+    // a restart transcript still requires replay evidence for every recurring job.
+    if (checkpoint.jobs.some(job => job.recurring ? !job.replay : includeHistory || job.replay !== undefined)) return null;
     const owner = { type: "personal" as const, ownerId: options.ownerId };
     const sourceIdentity = { sourceRunId: checkpoint.sourceRunId, sessionId: checkpoint.sessionId };
     const { assertPersonalExecutionAllowed } = options;

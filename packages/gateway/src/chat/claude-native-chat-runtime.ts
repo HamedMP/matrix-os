@@ -33,7 +33,9 @@ const sameScope = (a: ClaudeNativeRecoveryInput, b: ClaudeNativeRecoveryInput) =
   a.ownerId === b.ownerId && a.chatId === b.chatId && a.sessionId === b.sessionId
     && a.sourceFingerprint === b.sourceFingerprint && a.deadlineAt === b.deadlineAt;
 const currentCheckpoint = (value: ClaudeNativeRecoveryInput) =>
-  Date.parse(value.deadlineAt) > Date.now() && value.jobs.length > 0 && value.jobs.every(job => job.recurring);
+  Date.parse(value.deadlineAt) > Date.now() && value.jobs.length > 0;
+const restartCheckpoint = (value: ClaudeNativeRecoveryInput) =>
+  currentCheckpoint(value) && value.jobs.every(job => job.recurring);
 function recoveryCheckpoint({ ownerId, chatId, sessionId, sourceRunId, sourceFingerprint, deadlineAt, jobs }: ClaudeNativeRecoveryInput) {
   return { ownerId, chatId, sessionId, sourceRunId, sourceFingerprint, deadlineAt, jobs };
 }
@@ -64,7 +66,7 @@ export function createGatewayClaudeChatRuntime(options: Omit<Parameters<typeof c
     if (shutdown.signal.aborted || !receipt || !checkpoint || !sameScope(claimed, receipt) || !sameScope(receipt, checkpoint)
       || !currentCheckpoint(checkpoint) || request.owner.type !== "personal" || request.owner.ownerId !== receipt.ownerId
       || request.chatId !== receipt.chatId || request.sessionId !== receipt.sessionId || request.sourceRunId !== checkpoint.sourceRunId
-      || !job.recurring || createHash("sha256").update(request.prompt).digest("hex") !== job.promptSha256
+      || createHash("sha256").update(request.prompt).digest("hex") !== job.promptSha256
       || !checkpoint.jobs.some(item => item.id === job.id && item.promptSha256 === job.promptSha256
         && item.cron === job.cron && item.recurring === job.recurring)) throw unavailable();
     const signal = hostSignal(shutdown.signal);
@@ -84,7 +86,7 @@ export function createGatewayClaudeChatRuntime(options: Omit<Parameters<typeof c
   }
 
   async function restore(config: ClaudeNativeRecoveryOptions, released: ClaudeNativeRecoveryReceipt) {
-    if (released.ownerId !== config.ownerId || released.status !== "released" || !currentCheckpoint(released)) return;
+    if (released.ownerId !== config.ownerId || released.status !== "released" || !restartCheckpoint(released)) return;
     const claimed = await config.store.claim(released);
     if (!claimed || claimed.status !== "active" || claimed.generation !== released.generation + 1
       || !isDeepStrictEqual(recoveryCheckpoint(claimed), recoveryCheckpoint(released))) return;
@@ -134,7 +136,7 @@ export function createGatewayClaudeChatRuntime(options: Omit<Parameters<typeof c
 
   async function releaseAfterClose(checkpoint: ClaudeNativeRecoveryInput) {
     const config = recovery;
-    if (!config || checkpoint.ownerId !== config.ownerId || !currentCheckpoint(checkpoint)) return;
+    if (!config || checkpoint.ownerId !== config.ownerId || !restartCheckpoint(checkpoint)) return;
     const known = active.get(checkpoint.chatId);
     // Same-session refresh requires its exact claim. A distinct session is checked against the latest source by the store.
     const prior = known?.sessionId === checkpoint.sessionId ? known : undefined;

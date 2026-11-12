@@ -157,6 +157,23 @@ describe("gateway protected Claude native recovery", () => {
     }));
   });
 
+  it("fences a correlated one-shot occurrence only in the live recovered child", async () => {
+    const f = recoveryFixture();
+    await f.start();
+    const oneShotPrompt = "A one-shot task from the recovered Chat";
+    const oneShot = { ...job, id: "abcdef02", recurring: false,
+      promptSha256: createHash("sha256").update(oneShotPrompt).digest("hex") };
+    const checkpoint = { ...f.checkpoint, jobs: [job, oneShot] };
+    const request = { ...f.request, prompt: oneShotPrompt };
+    await expect(f.restored().admitRecoveredPhase(request, oneShot, f.checkpoint)).rejects.toThrow();
+    await f.restored().admitRecoveredPhase(request, oneShot, checkpoint);
+    expect(f.host.revalidate).toHaveBeenCalledExactlyOnceWith(checkpoint, expect.any(AbortSignal));
+    expect(f.store.saveActive).toHaveBeenCalledExactlyOnceWith(checkpoint, 3);
+    expect(f.admitNativeScheduledPhase).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({
+      recovery: expect.objectContaining({ generation: 4, jobId: oneShot.id, promptSha256: oneShot.promptSha256 }),
+    }));
+  });
+
   it("rejects foreign, changed, and unchecked callbacks", async () => {
     const f = recoveryFixture();
     await f.start();
