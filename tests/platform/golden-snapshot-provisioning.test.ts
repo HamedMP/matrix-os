@@ -37,6 +37,8 @@ import { CustomerVpsError } from '../../packages/platform/src/customer-vps-error
 import { hashRegistrationToken } from '../../packages/platform/src/customer-vps-auth.js';
 import { createMockCustomerVpsSystemStore, createMockHetznerClient } from './customer-vps-fixtures.js';
 import { normalizePreviewTestProviderImageId } from '../../packages/platform/src/golden-snapshot-preview-test.js';
+import { SUPPORT_PUBLIC_KEY_FIXTURE } from './support-public-key-fixture.js';
+import { loadCustomerVpsCloudInitTemplate } from '../../packages/platform/src/customer-vps-cloud-init.js';
 
 const compatibility = {
   provider: 'hetzner' as const, architecture: 'x86' as const, region: 'eu-central', baseImage: 'ubuntu-24.04',
@@ -147,7 +149,7 @@ describe('golden snapshot provisioning activation', () => {
     const service = createCustomerVpsService({
       db,
       config: loadCustomerVpsConfig({
-        PLATFORM_SECRET: 'platform-secret',
+        PLATFORM_SECRET: 'platform-secret', MATRIX_SUPPORT_SSH_PUBLIC_KEY: SUPPORT_PUBLIC_KEY_FIXTURE,
         CUSTOMER_VPS_IMAGE_VERSION: 'stable',
         MATRIX_HOST_BUNDLE_URL: 'https://bundles.example/system-bundles/stable/matrix-host-bundle.tar.gz',
         S3_ACCESS_KEY_ID: 'access-key',
@@ -237,7 +239,7 @@ describe('golden snapshot provisioning activation', () => {
     const service = createCustomerVpsService({
       db,
       config: loadCustomerVpsConfig({
-        PLATFORM_SECRET: 'platform-secret',
+        PLATFORM_SECRET: 'platform-secret', MATRIX_SUPPORT_SSH_PUBLIC_KEY: SUPPORT_PUBLIC_KEY_FIXTURE,
         CUSTOMER_VPS_IMAGE_VERSION: 'stable',
         MATRIX_HOST_BUNDLE_URL: 'https://bundles.example/system-bundles/stable/matrix-host-bundle.tar.gz',
         S3_ACCESS_KEY_ID: 'access-key',
@@ -289,7 +291,7 @@ describe('golden snapshot provisioning activation', () => {
     const service = createCustomerVpsService({
       db,
       config: loadCustomerVpsConfig({
-        PLATFORM_SECRET: 'platform-secret',
+        PLATFORM_SECRET: 'platform-secret', MATRIX_SUPPORT_SSH_PUBLIC_KEY: SUPPORT_PUBLIC_KEY_FIXTURE,
         CUSTOMER_VPS_IMAGE_VERSION: 'stable',
         MATRIX_HOST_BUNDLE_URL: hostBundleUrl,
         S3_ACCESS_KEY_ID: 'access-key',
@@ -317,7 +319,7 @@ describe('golden snapshot provisioning activation', () => {
     const service = createCustomerVpsService({
       db,
       config: loadCustomerVpsConfig({
-        PLATFORM_SECRET: 'platform-secret',
+        PLATFORM_SECRET: 'platform-secret', MATRIX_SUPPORT_SSH_PUBLIC_KEY: SUPPORT_PUBLIC_KEY_FIXTURE,
         CUSTOMER_VPS_IMAGE_VERSION: 'v2',
         MATRIX_HOST_BUNDLE_URL: 'https://bundles.example/system-bundles/v2/matrix-host-bundle.tar.gz',
         S3_ACCESS_KEY_ID: 'access-key',
@@ -351,7 +353,7 @@ describe('golden snapshot provisioning activation', () => {
     const service = createCustomerVpsService({
       db,
       config: loadCustomerVpsConfig({
-        PLATFORM_SECRET: 'platform-secret',
+        PLATFORM_SECRET: 'platform-secret', MATRIX_SUPPORT_SSH_PUBLIC_KEY: SUPPORT_PUBLIC_KEY_FIXTURE,
         CUSTOMER_VPS_IMAGE_VERSION: 'v2',
         MATRIX_HOST_BUNDLE_URL: 'https://bundles.example/system-bundles/v2/matrix-host-bundle.tar.gz',
         S3_ACCESS_KEY_ID: 'access-key',
@@ -405,7 +407,7 @@ describe('golden snapshot provisioning activation', () => {
     const service = createCustomerVpsService({
       db,
       config: loadCustomerVpsConfig({
-        PLATFORM_SECRET: 'platform-secret',
+        PLATFORM_SECRET: 'platform-secret', MATRIX_SUPPORT_SSH_PUBLIC_KEY: SUPPORT_PUBLIC_KEY_FIXTURE,
         CUSTOMER_VPS_IMAGE_VERSION: 'v2',
         MATRIX_HOST_BUNDLE_URL: 'https://bundles.example/system-bundles/v2/matrix-host-bundle.tar.gz',
         S3_ACCESS_KEY_ID: 'access-key',
@@ -573,7 +575,7 @@ describe('golden snapshot provisioning activation', () => {
     };
     const deleteServer = vi.fn().mockResolvedValue(undefined);
     const customerConfig = loadCustomerVpsConfig({
-      PLATFORM_SECRET: 'platform-secret', CUSTOMER_VPS_IMAGE_VERSION: 'v2',
+      PLATFORM_SECRET: 'platform-secret', MATRIX_SUPPORT_SSH_PUBLIC_KEY: SUPPORT_PUBLIC_KEY_FIXTURE, CUSTOMER_VPS_IMAGE_VERSION: 'v2',
       MATRIX_HOST_BUNDLE_URL: 'https://bundles.example/system-bundles/v2/matrix-host-bundle.tar.gz',
       GOLDEN_SNAPSHOTS_ENABLED: 'true', GOLDEN_SNAPSHOT_ROLLOUT_PERCENT: '100',
       GOLDEN_SNAPSHOT_REGION: 'eu-central', HETZNER_SERVER_TYPE: 'cpx22',
@@ -658,7 +660,7 @@ describe('golden snapshot provisioning activation', () => {
     const service = createCustomerVpsService({
       db,
       config: loadCustomerVpsConfig({
-        PLATFORM_SECRET: 'platform-secret', CUSTOMER_VPS_IMAGE_VERSION: 'v2',
+        PLATFORM_SECRET: 'platform-secret', MATRIX_SUPPORT_SSH_PUBLIC_KEY: SUPPORT_PUBLIC_KEY_FIXTURE, CUSTOMER_VPS_IMAGE_VERSION: 'v2',
         MATRIX_HOST_BUNDLE_URL: 'https://bundles.example/system-bundles/v2/matrix-host-bundle.tar.gz',
         S3_ACCESS_KEY_ID: 'access-key', S3_SECRET_ACCESS_KEY: 'secret-key', S3_ENDPOINT: 'https://r2.example',
         GOLDEN_SNAPSHOTS_ENABLED: 'true',
@@ -691,7 +693,7 @@ describe('golden snapshot provisioning activation', () => {
     const service = createCustomerVpsService({
       db,
       config: loadCustomerVpsConfig({
-        PLATFORM_SECRET: 'platform-secret', CUSTOMER_VPS_IMAGE_VERSION: 'v2',
+        PLATFORM_SECRET: 'platform-secret', MATRIX_SUPPORT_SSH_PUBLIC_KEY: SUPPORT_PUBLIC_KEY_FIXTURE, CUSTOMER_VPS_IMAGE_VERSION: 'v2',
         MATRIX_HOST_BUNDLE_URL: 'https://bundles.example/system-bundles/v2/matrix-host-bundle.tar.gz',
         S3_ACCESS_KEY_ID: 'access-key', S3_SECRET_ACCESS_KEY: 'secret-key', S3_ENDPOINT: 'https://r2.example',
         GOLDEN_SNAPSHOTS_ENABLED: 'true', GOLDEN_SNAPSHOT_ROLLOUT_PERCENT: '100',
@@ -745,7 +747,7 @@ describe('golden snapshot provisioning activation', () => {
     const service = createCustomerVpsService({
       db,
       config: loadCustomerVpsConfig({
-        PLATFORM_SECRET: 'platform-secret', CUSTOMER_VPS_IMAGE_VERSION: 'v2',
+        PLATFORM_SECRET: 'platform-secret', MATRIX_SUPPORT_SSH_PUBLIC_KEY: SUPPORT_PUBLIC_KEY_FIXTURE, CUSTOMER_VPS_IMAGE_VERSION: 'v2',
         MATRIX_HOST_BUNDLE_URL: 'https://bundles.example/system-bundles/v2/matrix-host-bundle.tar.gz',
         S3_ACCESS_KEY_ID: 'access-key', S3_SECRET_ACCESS_KEY: 'secret-key', S3_ENDPOINT: 'https://r2.example',
         GOLDEN_SNAPSHOTS_ENABLED: 'true', GOLDEN_SNAPSHOT_ROLLOUT_PERCENT: '100',
@@ -827,7 +829,7 @@ describe('golden snapshot provisioning activation', () => {
     const service = createCustomerVpsService({
       db,
       config: loadCustomerVpsConfig({
-        PLATFORM_SECRET: 'platform-secret', CUSTOMER_VPS_IMAGE_VERSION: 'v2',
+        PLATFORM_SECRET: 'platform-secret', MATRIX_SUPPORT_SSH_PUBLIC_KEY: SUPPORT_PUBLIC_KEY_FIXTURE, CUSTOMER_VPS_IMAGE_VERSION: 'v2',
         MATRIX_HOST_BUNDLE_URL: 'https://bundles.example/system-bundles/v2/matrix-host-bundle.tar.gz',
         S3_ACCESS_KEY_ID: 'access-key', S3_SECRET_ACCESS_KEY: 'secret-key', S3_ENDPOINT: 'https://r2.example',
         GOLDEN_SNAPSHOTS_ENABLED: 'true',
@@ -867,7 +869,7 @@ describe('golden snapshot provisioning activation', () => {
       }).where('machine_id', '=', machineId).execute();
     });
     const customerConfig = loadCustomerVpsConfig({
-      PLATFORM_SECRET: 'platform-secret', CUSTOMER_VPS_IMAGE_VERSION: 'v2',
+      PLATFORM_SECRET: 'platform-secret', MATRIX_SUPPORT_SSH_PUBLIC_KEY: SUPPORT_PUBLIC_KEY_FIXTURE, CUSTOMER_VPS_IMAGE_VERSION: 'v2',
       MATRIX_HOST_BUNDLE_URL: 'https://bundles.example/system-bundles/v2/matrix-host-bundle.tar.gz',
       S3_ACCESS_KEY_ID: 'access-key', S3_SECRET_ACCESS_KEY: 'secret-key', S3_ENDPOINT: 'https://r2.example',
     });
@@ -1056,7 +1058,7 @@ describe('golden snapshot provisioning activation', () => {
       provisionedAt: '2026-07-03T00:02:00.000Z',
     });
     const customerConfig = loadCustomerVpsConfig({
-      PLATFORM_SECRET: 'platform-secret', CUSTOMER_VPS_IMAGE_VERSION: 'v2',
+      PLATFORM_SECRET: 'platform-secret', MATRIX_SUPPORT_SSH_PUBLIC_KEY: SUPPORT_PUBLIC_KEY_FIXTURE, CUSTOMER_VPS_IMAGE_VERSION: 'v2',
       MATRIX_HOST_BUNDLE_URL: 'https://bundles.example/system-bundles/v2/matrix-host-bundle.tar.gz',
       GOLDEN_SNAPSHOTS_ENABLED: 'true', GOLDEN_SNAPSHOT_ROLLOUT_PERCENT: '100',
       GOLDEN_SNAPSHOT_REGION: 'eu-central', HETZNER_SERVER_TYPE: 'cpx22',
@@ -1101,7 +1103,7 @@ describe('golden snapshot provisioning activation', () => {
       getAction,
     });
     const customerConfig = loadCustomerVpsConfig({
-      PLATFORM_SECRET: 'platform-secret', CUSTOMER_VPS_IMAGE_VERSION: 'v2',
+      PLATFORM_SECRET: 'platform-secret', MATRIX_SUPPORT_SSH_PUBLIC_KEY: SUPPORT_PUBLIC_KEY_FIXTURE, CUSTOMER_VPS_IMAGE_VERSION: 'v2',
       MATRIX_HOST_BUNDLE_URL: 'https://bundles.example/system-bundles/v2/matrix-host-bundle.tar.gz',
       GOLDEN_SNAPSHOTS_ENABLED: 'true', GOLDEN_SNAPSHOT_ROLLOUT_PERCENT: '100',
       GOLDEN_SNAPSHOT_REGION: 'eu-central', HETZNER_SERVER_TYPE: 'cpx22',
@@ -1165,7 +1167,7 @@ describe('golden snapshot provisioning activation', () => {
     const service = createCustomerVpsService({
       db,
       config: loadCustomerVpsConfig({
-        PLATFORM_SECRET: 'platform-secret', CUSTOMER_VPS_IMAGE_VERSION: 'v2',
+        PLATFORM_SECRET: 'platform-secret', MATRIX_SUPPORT_SSH_PUBLIC_KEY: SUPPORT_PUBLIC_KEY_FIXTURE, CUSTOMER_VPS_IMAGE_VERSION: 'v2',
         MATRIX_HOST_BUNDLE_URL: 'https://bundles.example/system-bundles/v2/matrix-host-bundle.tar.gz',
         GOLDEN_SNAPSHOTS_ENABLED: 'true', GOLDEN_SNAPSHOT_ROLLOUT_PERCENT: '100',
         GOLDEN_SNAPSHOT_REGION: 'eu-central', HETZNER_SERVER_TYPE: 'cpx22',
@@ -1203,7 +1205,7 @@ describe('golden snapshot provisioning activation', () => {
       .mockRejectedValueOnce(new CustomerVpsError(500, 'snapshot_clone_rejected', 'Provisioning provider unavailable'))
       .mockResolvedValueOnce({ id: 123459, status: 'running', publicIPv4: '203.0.113.13' });
     const customerConfig = loadCustomerVpsConfig({
-      PLATFORM_SECRET: 'platform-secret', CUSTOMER_VPS_IMAGE_VERSION: 'v2',
+      PLATFORM_SECRET: 'platform-secret', MATRIX_SUPPORT_SSH_PUBLIC_KEY: SUPPORT_PUBLIC_KEY_FIXTURE, CUSTOMER_VPS_IMAGE_VERSION: 'v2',
       MATRIX_HOST_BUNDLE_URL: 'https://bundles.example/system-bundles/v2/matrix-host-bundle.tar.gz',
       GOLDEN_SNAPSHOTS_ENABLED: 'true', GOLDEN_SNAPSHOT_ROLLOUT_PERCENT: '100',
       GOLDEN_SNAPSHOT_REGION: 'eu-central', HETZNER_SERVER_TYPE: 'cpx22', HETZNER_LOCATION: 'nbg1',
@@ -1233,7 +1235,7 @@ describe('golden snapshot provisioning activation', () => {
       labels: { machine_id: machineId, snapshot_id: '10000000-0000-4000-8000-000000000002' },
     };
     const customerConfig = loadCustomerVpsConfig({
-      PLATFORM_SECRET: 'platform-secret', CUSTOMER_VPS_IMAGE_VERSION: 'v2',
+      PLATFORM_SECRET: 'platform-secret', MATRIX_SUPPORT_SSH_PUBLIC_KEY: SUPPORT_PUBLIC_KEY_FIXTURE, CUSTOMER_VPS_IMAGE_VERSION: 'v2',
       MATRIX_HOST_BUNDLE_URL: 'https://bundles.example/system-bundles/v2/matrix-host-bundle.tar.gz',
       GOLDEN_SNAPSHOTS_ENABLED: 'true', GOLDEN_SNAPSHOT_ROLLOUT_PERCENT: '100',
       GOLDEN_SNAPSHOT_REGION: 'eu-central', HETZNER_SERVER_TYPE: 'cpx22',
@@ -1289,7 +1291,7 @@ describe('golden snapshot provisioning activation', () => {
       labels: { machine_id: machineId, snapshot_id: '10000000-0000-4000-8000-000000000002' },
     };
     const customerConfig = loadCustomerVpsConfig({
-      PLATFORM_SECRET: 'platform-secret', CUSTOMER_VPS_IMAGE_VERSION: 'v2',
+      PLATFORM_SECRET: 'platform-secret', MATRIX_SUPPORT_SSH_PUBLIC_KEY: SUPPORT_PUBLIC_KEY_FIXTURE, CUSTOMER_VPS_IMAGE_VERSION: 'v2',
       MATRIX_HOST_BUNDLE_URL: 'https://bundles.example/system-bundles/v2/matrix-host-bundle.tar.gz',
       GOLDEN_SNAPSHOTS_ENABLED: 'true', GOLDEN_SNAPSHOT_ROLLOUT_PERCENT: '100',
       GOLDEN_SNAPSHOT_REGION: 'eu-central', HETZNER_SERVER_TYPE: 'cpx22',
@@ -1321,7 +1323,7 @@ describe('golden snapshot provisioning activation', () => {
       .mockResolvedValueOnce({ id: 123456, status: 'running', publicIPv4: '203.0.113.10' });
     const hetzner = createMockHetznerClient({ createServer });
     const customerConfig = loadCustomerVpsConfig({
-      PLATFORM_SECRET: 'platform-secret', CUSTOMER_VPS_IMAGE_VERSION: 'v2',
+      PLATFORM_SECRET: 'platform-secret', MATRIX_SUPPORT_SSH_PUBLIC_KEY: SUPPORT_PUBLIC_KEY_FIXTURE, CUSTOMER_VPS_IMAGE_VERSION: 'v2',
       MATRIX_HOST_BUNDLE_URL: 'https://bundles.example/system-bundles/v2/matrix-host-bundle.tar.gz',
       GOLDEN_SNAPSHOTS_ENABLED: 'true', GOLDEN_SNAPSHOT_ROLLOUT_PERCENT: '100',
       GOLDEN_SNAPSHOT_REGION: 'eu-central', HETZNER_SERVER_TYPE: 'cpx22',
@@ -1329,6 +1331,7 @@ describe('golden snapshot provisioning activation', () => {
     });
     const service = createCustomerVpsService({
       db, config: customerConfig, hetzner, systemStore: createMockCustomerVpsSystemStore(),
+      cloudInitTemplate: await loadCustomerVpsCloudInitTemplate(),
       machineIdFactory: () => '30000000-0000-4000-8000-000000000003',
       provisioningJobIdFactory: () => '50000000-0000-4000-8000-000000000003',
       now: () => new Date('2026-07-03T00:20:00.000Z'),
@@ -1340,6 +1343,9 @@ describe('golden snapshot provisioning activation', () => {
     const snapshotUserData = createServer.mock.calls[0]![0].userData;
     const fallbackUserData = createServer.mock.calls[1]![0].userData;
     expect(snapshotUserData).toContain('MATRIX_IMAGE_SOURCE=snapshot');
+    // Snapshot clones receive per-VPS user_data, so the key is never baked into the image.
+    expect(snapshotUserData).toContain(`- path: /etc/matrix/support/public-key\n    content: |\n      ${SUPPORT_PUBLIC_KEY_FIXTURE}\n`);
+    expect(snapshotUserData).toContain('/usr/local/libexec/matrix-support-access install');
     expect(fallbackUserData).toContain('MATRIX_IMAGE_SOURCE=clean_image');
     expect(fallbackUserData).toContain('MATRIX_SNAPSHOT_SOURCE_VERSION=');
     expect(fallbackUserData).not.toContain('MATRIX_IMAGE_SOURCE=snapshot');
@@ -1363,7 +1369,7 @@ describe('golden snapshot provisioning activation', () => {
     const service = createCustomerVpsService({
       db,
       config: loadCustomerVpsConfig({
-        PLATFORM_SECRET: 'platform-secret', CUSTOMER_VPS_IMAGE_VERSION: 'v2',
+        PLATFORM_SECRET: 'platform-secret', MATRIX_SUPPORT_SSH_PUBLIC_KEY: SUPPORT_PUBLIC_KEY_FIXTURE, CUSTOMER_VPS_IMAGE_VERSION: 'v2',
         MATRIX_HOST_BUNDLE_URL: 'https://bundles.example/system-bundles/v2/matrix-host-bundle.tar.gz',
         GOLDEN_SNAPSHOTS_ENABLED: 'true', GOLDEN_SNAPSHOT_ROLLOUT_PERCENT: '100',
         GOLDEN_SNAPSHOT_REGION: 'eu-central', HETZNER_SERVER_TYPE: 'cpx22',
@@ -1409,7 +1415,7 @@ describe('golden snapshot provisioning activation', () => {
     let lookupCount = 0;
     const createServer = vi.fn().mockRejectedValue(new Error('provider response lost'));
     const customerConfig = loadCustomerVpsConfig({
-      PLATFORM_SECRET: 'platform-secret', CUSTOMER_VPS_IMAGE_VERSION: 'v2',
+      PLATFORM_SECRET: 'platform-secret', MATRIX_SUPPORT_SSH_PUBLIC_KEY: SUPPORT_PUBLIC_KEY_FIXTURE, CUSTOMER_VPS_IMAGE_VERSION: 'v2',
       MATRIX_HOST_BUNDLE_URL: 'https://bundles.example/system-bundles/v2/matrix-host-bundle.tar.gz',
       GOLDEN_SNAPSHOTS_ENABLED: 'true', GOLDEN_SNAPSHOT_ROLLOUT_PERCENT: '100',
       GOLDEN_SNAPSHOT_REGION: 'eu-central', HETZNER_SERVER_TYPE: 'cpx22',
@@ -1466,7 +1472,7 @@ describe('golden snapshot provisioning activation', () => {
     const service = createCustomerVpsService({
       db,
       config: loadCustomerVpsConfig({
-        PLATFORM_SECRET: 'platform-secret', CUSTOMER_VPS_IMAGE_VERSION: 'v2',
+        PLATFORM_SECRET: 'platform-secret', MATRIX_SUPPORT_SSH_PUBLIC_KEY: SUPPORT_PUBLIC_KEY_FIXTURE, CUSTOMER_VPS_IMAGE_VERSION: 'v2',
         MATRIX_HOST_BUNDLE_URL: 'https://bundles.example/system-bundles/v2/matrix-host-bundle.tar.gz',
         GOLDEN_SNAPSHOTS_ENABLED: 'true', GOLDEN_SNAPSHOT_ROLLOUT_PERCENT: '100',
         GOLDEN_SNAPSHOT_REGION: 'eu-central', HETZNER_SERVER_TYPE: 'cpx22',

@@ -12,6 +12,8 @@ export interface CustomerVpsConfig {
   serverType: string;
   image: string;
   sshKeyName?: string;
+  /** Separate operator key used only for the matrix-support guest account. */
+  supportPublicKey?: string;
   imageVersion: string;
   hostBundleUrl: string;
   hostBundleUrlOverride?: boolean;
@@ -110,6 +112,7 @@ export function loadCustomerVpsConfig(env: NodeJS.ProcessEnv = process.env): Cus
     serverType: env.HETZNER_SERVER_TYPE ?? 'cpx22',
     image: env.HETZNER_IMAGE ?? 'ubuntu-24.04',
     sshKeyName: env.HETZNER_SSH_KEY_NAME || undefined,
+    supportPublicKey: env.MATRIX_SUPPORT_SSH_PUBLIC_KEY || undefined,
     imageVersion,
     hostBundleUrl:
       env.MATRIX_HOST_BUNDLE_URL ??

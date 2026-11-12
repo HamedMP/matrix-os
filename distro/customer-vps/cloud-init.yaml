@@ -13,6 +13,9 @@ users:
       - docker
 
 write_files:
+  - path: /etc/matrix/support/public-key
+    content: |
+      {{supportPublicKey}}
   - path: /etc/profile.d/matrix-runtime.sh
     owner: root:root
     permissions: "0644"
@@ -446,18 +449,15 @@ write_files:
 runcmd:
   - |
     set -eu
-    # Reset clone identity.
     rm -f /var/lib/matrix/golden-snapshot-sanitized
     systemd-machine-id-setup
     ssh-keygen -A
-    # Snapshot disables Docker.
     . /opt/matrix/env/host.env
     if [ "${MATRIX_IMAGE_SOURCE:-clean_image}" = "snapshot" ]; then
       systemctl enable --now docker.service containerd.service
     fi
   - |
     set -eu
-    # Clear password expiry for sudo/PAM.
     chage -d "$(date +%Y-%m-%d)" -M -1 -E -1 root || true
     chage -d "$(date +%Y-%m-%d)" -M -1 -E -1 matrix || true
   - |
@@ -468,7 +468,6 @@ runcmd:
       printf 'matrix-host-timing phase=%s elapsed_seconds=%s image_source=%s\n' \
         "$1" "$((phase_now - bootstrap_started_at))" "${MATRIX_IMAGE_SOURCE:-clean_image}"
     }
-    # Swap updates use matrix-ensure-swap.
     (
       SWAP_GB=8
       free_gb=$(( $(df -k --output=avail / | tail -1) / 1024 / 1024 ))
@@ -675,6 +674,8 @@ runcmd:
         chmod 0644 "/opt/matrix/bin/$name"
       fi
     done
+    chmod 700 /etc/matrix/support
+    /usr/local/libexec/matrix-support-access install
     for optional_bin in matrix-register-vps matrix-integrations matrix-integrations-mcp matrix-register-integrations-mcp matrix-hermes-dashboard matrix-install-openclaw matrix-openclaw-gateway matrix-agent-runtime-control matrix-install-linux-tools matrix-install-developer-tools matrix-messaging-health matrix-messaging-backup matrix-messaging-restore; do
       if [ -e "/opt/matrix/bin/${optional_bin}" ]; then
         chmod 0750 "/opt/matrix/bin/${optional_bin}"
@@ -695,7 +696,6 @@ runcmd:
     ln -sf /etc/nginx/sites-available/matrix /etc/nginx/sites-enabled/matrix
     nginx -t
 
-    # Legacy bundles need inline Postgres startup.
     if [ -f /opt/matrix/bin/matrix-postgres-start ] && [ ! -L /opt/matrix/bin/matrix-postgres-start ] && [ -f /etc/systemd/system/matrix-postgres.service ]; then
       chmod 0750 /opt/matrix/bin/matrix-postgres-start
       install -d -o root -g root -m 0755 /usr/local/libexec
