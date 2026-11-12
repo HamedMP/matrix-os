@@ -42,9 +42,9 @@ export function useLocalTerminals() {
   useEffect(() => {
     setAlternateTerminalSockets({ prefix: LOCAL_TERMINAL_SESSION_PREFIX, create: createLocalTerminalSocket });
     void refresh();
-    // Titles and program-reported status change without user action; poll
-    // while the window is visible, and stop when it is not.
-    const timer = setInterval(() => { if (document.visibilityState === "visible") void refresh(); }, STATUS_POLL_MS);
+    // Keep observing while hidden too: a completion must be noticed while
+    // the person is away, not after refocusing the terminal.
+    const timer = setInterval(() => { void refresh(); }, STATUS_POLL_MS);
     return () => {
       clearInterval(timer);
       generation.current += 1;

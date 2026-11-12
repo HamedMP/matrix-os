@@ -11,6 +11,7 @@ import { useTerminalMachines, type TerminalMachinesState } from "./use-terminal-
 import { useComputerTerminals, type ActiveTerminal, type ComputerTerminalsState } from "./use-computer-terminals";
 import { localSessionName, useLocalTerminals, type LocalTerminalsNotice, type LocalTerminalsState } from "./use-local-terminals";
 import type { LocalTerminal, LocalTerminalAgent } from "../../../../shared/local-terminals";
+import { LocalTerminalAttention } from "./LocalTerminalAttention";
 import { LocalTerminalRenameInput, NewLocalTerminalMenu } from "./LocalTerminalActions";
 
 const AVAILABILITY_LABEL: Record<MatrixComputer["availability"], string> = {
@@ -25,7 +26,7 @@ const AVAILABILITY_COLOR: Record<MatrixComputer["availability"], string> = {
 };
 
 // Status is whatever the program in the terminal reported about itself.
-const LOCAL_STATUS_LABEL = { working: "Working", done: "Done", blocked: "Needs you", error: "Error" } as const;
+const LOCAL_STATUS_LABEL = { working: "Working", done: "Finished", blocked: "Needs you", error: "Needs you" } as const;
 const LOCAL_STATUS_COLOR = {
   working: "var(--text-secondary, var(--color-muted-foreground))",
   done: "var(--color-success)",
@@ -441,6 +442,7 @@ export default function TerminalWindowApp() {
 
   return (
     <div className="ph-no-capture flex h-screen w-screen flex-col" style={{ background: "var(--bg-app)", color: "var(--text-primary, var(--color-foreground))" }}>
+      <LocalTerminalAttention state={view.local.state} activeId={view.localActive} onOpen={view.openLocal} />
       <header className="titlebar-drag flex shrink-0 items-center justify-center border-b text-[12px] font-medium"
         style={{ height: "var(--titlebar-height)", borderColor: "var(--border-subtle)", background: "var(--bg-sunken)" }}>
         {windowTitle(view)}
