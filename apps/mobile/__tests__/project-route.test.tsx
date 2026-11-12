@@ -433,6 +433,7 @@ describe("project route", () => {
       requests.createChat.mockResolvedValue(created);
       requests.admitChatTurn.mockRejectedValueOnce(new Error("upstream said no"));
       requests.admitChatTurn.mockResolvedValueOnce(admission);
+      requests.fetchChatDetail.mockResolvedValue({ record: created, turns: [], messages: [], runs: [] });
       await renderPortfolio();
       fireEvent.changeText(input(), "Draft the case study");
 
