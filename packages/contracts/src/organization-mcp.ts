@@ -24,6 +24,8 @@ export type OrgMcpServerMode = z.infer<typeof OrgMcpServerModeSchema>;
 export const OrgMcpToolPolicySchema = z.enum(["allow", "blocked"]);
 export type OrgMcpToolPolicy = z.infer<typeof OrgMcpToolPolicySchema>;
 export const ORG_MCP_MAX_TOOL_OVERRIDES = 200;
+/** Per member and organization; enforced when a block is written and by the connections response. */
+export const ORG_MCP_MAX_MEMBER_BLOCKS = 500;
 const ToolNameSchema = z.string().min(1).max(128).regex(/^[A-Za-z0-9_.:/-]+$/);
 
 /**
@@ -73,7 +75,7 @@ export const OrgMcpMemberSchema = z.object({
   displayName: z.string().min(1).max(200),
   emailAddress: z.email().max(320).optional(),
   connections: z.array(OrgMcpMemberConnectionSchema).max(100),
-  blockedServerDefIds: z.array(OrgMcpServerDefIdSchema).max(500),
+  blockedServerDefIds: z.array(OrgMcpServerDefIdSchema).max(ORG_MCP_MAX_MEMBER_BLOCKS),
 }).strict();
 export type OrgMcpMember = z.infer<typeof OrgMcpMemberSchema>;
 
@@ -114,6 +116,8 @@ export type OrgMcpUsageRow = z.infer<typeof OrgMcpUsageRowSchema>;
 export const OrgMcpUsageResponseSchema = z.object({
   rows: z.array(OrgMcpUsageRowSchema).max(ORG_MCP_USAGE_MAX_ROWS),
   truncated: z.boolean(),
+  /** When these totals were read; they include calls not yet in the hourly rollup. */
+  updatedAt: z.iso.datetime(),
 }).strict();
 export type OrgMcpUsageResponse = z.infer<typeof OrgMcpUsageResponseSchema>;
 
