@@ -140,11 +140,13 @@ export function useCanonicalChatRouteController({
 
   const loadDetail = useCallback(async (
     chatId: string,
-    options: { background?: boolean } = {},
+    options: { background?: boolean; onRead?: (detail: CanonicalChatDetailResponse) => void } = {},
   ) => {
     const sequence = ++detailRequestSequence.current;
     try {
       let loaded = await client.getDetail(chatId, { limit: 200 });
+      // A superseded read may still prove admission without replacing newer UI state.
+      options.onRead?.(loaded);
       if (sequence !== detailRequestSequence.current) return null;
       const current = detailRef.current;
       if (current?.record.chat.id === loaded.record.chat.id
@@ -644,9 +646,12 @@ export function useCanonicalChatRouteController({
     } catch (error: unknown) {
       console.warn("[canonical-chat] queue failed:", diagnosticErrorKind(error));
       if (!isCurrentScope() || activeChatIdRef.current !== current.record.chat.id) return null;
-      const loaded = await loadDetail(current.record.chat.id);
+      let recoveredAdmission = false;
+      const loaded = await loadDetail(current.record.chat.id, {
+        onRead: (snapshot) => { recoveredAdmission = hasQueuedChatAdmission(snapshot, current.record.chat.id, request); },
+      });
       if (!isCurrentScope() || activeChatIdRef.current !== current.record.chat.id) return null;
-      if (hasQueuedChatAdmission(loaded ?? detailRef.current, current.record.chat.id, request)) {
+      if (recoveredAdmission || hasQueuedChatAdmission(loaded ?? detailRef.current, current.record.chat.id, request)) {
         onAccepted?.();
         setError(null);
         return null;

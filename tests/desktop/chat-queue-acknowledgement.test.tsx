@@ -3,8 +3,45 @@ import { act, cleanup, renderHook, waitFor } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
 import { useCanonicalChatRouteController } from "@desktop/renderer/src/features/chat/use-canonical-chat-route-controller";
 import { canonicalChatRecord, createCanonicalChatWorkspaceClient, snapshot } from "./canonical-chat-workspace-test-utils";
+import type { CanonicalChatEventConsumer, CanonicalChatInvalidation } from "@desktop/renderer/src/lib/canonical-chat-client";
 
 afterEach(() => { cleanup(); vi.restoreAllMocks(); });
+
+it("acknowledges a saved queue receipt when a newer refresh supersedes recovery publication", async () => {
+  vi.spyOn(console, "warn").mockImplementation(() => undefined);
+  const client = createCanonicalChatWorkspaceClient();
+  let emit!: (event: CanonicalChatInvalidation) => void;
+  const eventSource: CanonicalChatEventConsumer = { subscribe(listener) { emit = listener; return { dispose() {} }; } };
+  const { result } = renderHook(() => useCanonicalChatRouteController({ client, projectId: "matrix-os",
+    initialChatId: canonicalChatRecord.chat.id, active: true, eventSource }));
+  await waitFor(() => expect(result.current.detail?.record.chat.id).toBe(canonicalChatRecord.chat.id));
+  const initial = result.current.detail!;
+  const request = { clientRequestId: "req_overlapping_queue_read", parts: [{ type: "text" as const, text: "Saved follow-up" }],
+    selection: { instanceId: "codex_fixture", model: "gpt-5.6-sol" }, interactionMode: "default", permissionMode: "full_access" };
+  const receipt = { ...initial, queuedTurns: [{ ...request, id: "qturn_overlapping_read", chatId: canonicalChatRecord.chat.id,
+    position: 1, createdAt: "2026-09-10T00:00:00.000Z", updatedAt: "2026-09-10T00:00:00.000Z" }] };
+  let finishRecovery!: (detail: typeof receipt) => void;
+  let finishNewer!: (detail: typeof initial) => void;
+  const readCount = vi.mocked(client.getDetail).mock.calls.length;
+  vi.mocked(client.getDetail)
+    .mockReturnValueOnce(new Promise(resolve => { finishRecovery = resolve; }))
+    .mockReturnValueOnce(new Promise(resolve => { finishNewer = resolve; }));
+  vi.mocked(client.queueTurn).mockRejectedValue(new Error("ReplyLost"));
+  const onAccepted = vi.fn();
+  let pending!: Promise<unknown>;
+  act(() => { pending = result.current.queueTurn(request, onAccepted); });
+  await waitFor(() => expect(client.getDetail).toHaveBeenCalledTimes(readCount + 1));
+  act(() => emit({ type: "chat.changed", chatId: canonicalChatRecord.chat.id, eventType: "queue.updated", cursor: 1, revision: initial.record.chat.revision + 1 }));
+  await waitFor(() => expect(client.getDetail).toHaveBeenCalledTimes(readCount + 2));
+  await act(async () => { finishRecovery(receipt); await pending; });
+  expect(onAccepted).toHaveBeenCalledOnce();
+  expect(result.current.error).toBeNull();
+  expect(result.current.detail).toBe(initial);
+  const newer = { ...initial, record: { ...initial.record, chat: { ...initial.record.chat, revision: initial.record.chat.revision + 3 } } };
+  await act(async () => finishNewer(newer));
+  expect(result.current.detail?.record.chat.revision).toBe(newer.record.chat.revision);
+  expect(onAccepted).toHaveBeenCalledOnce();
+});
 
 it.each(["queued", "promoted", "different_request", "different_chat", "different_payload", "incomplete_promotion"])(
   "acknowledges a lost queue reply only with this request's durable receipt (%s)", async (state) => {
