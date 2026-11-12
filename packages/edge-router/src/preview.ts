@@ -1,4 +1,5 @@
 import { buildEdgeResponseInit } from './index.js';
+import { redirectPreviewLocation } from './slack-pilot.js';
 
 const PREVIEW_HOST = /^pr-([1-9][0-9]{0,8})\.preview\.matrix-os\.com$/;
 const PREVIEW_BODY_LIMIT = 10 * 1024 * 1024;
@@ -8,6 +9,29 @@ const STREAMING_PATH = /(?:^|\/)api\/(?:chats\/events|files\/media)$/;
 export interface PreviewEdgeEnv {
   PREVIEW_PLATFORM_ORIGIN?: string;
   PREVIEW_EDGE_MASTER_SECRET?: string;
+  /** Owner-approved legacy identity exception; never enables the wildcard Preview route. */
+  PREVIEW_LEGACY_PUBLIC_ORIGIN?: string;
+  PREVIEW_LEGACY_NOT_AFTER?: string;
+  PREVIEW_LEGACY_EDGE_SECRET?: string;
+}
+
+function legacyConfiguration(env: PreviewEdgeEnv): { publicOrigin: string; prNumber: string; secret: string } | null {
+  try {
+    const url = new URL(env.PREVIEW_LEGACY_PUBLIC_ORIGIN ?? '');
+    const prNumber = /^pr-([1-9][0-9]{0,8})-preview\.matrix-os\.com$/.exec(url.hostname)?.[1];
+    const expiry = env.PREVIEW_LEGACY_NOT_AFTER ?? '';
+    const remaining = Date.parse(expiry) - Date.now();
+    const secret = env.PREVIEW_LEGACY_EDGE_SECRET ?? '';
+    if (!prNumber || url.protocol !== 'https:' || url.username || url.password || url.port
+      || url.pathname !== '/' || url.search || url.hash
+      || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{3})?Z$/.test(expiry)
+      || !Number.isFinite(remaining) || remaining <= 0 || remaining > 4 * 60 * 60 * 1000
+      || !/^[\x21-\x7e]{32,256}$/.test(secret)) return null;
+    return { publicOrigin: url.origin, prNumber, secret };
+  } catch (error: unknown) {
+    if (error instanceof TypeError) return null;
+    throw error;
+  }
 }
 
 export function classifyPreviewHost(host: string): { prNumber: string } | null {
@@ -84,18 +108,34 @@ async function boundedBody(request: Request): Promise<ArrayBuffer | null> {
 
 export async function handlePreviewRequest(request: Request, env: PreviewEdgeEnv): Promise<Response> {
   const url = new URL(request.url);
-  const preview = classifyPreviewHost(url.hostname);
+  const legacyConfigured = [env.PREVIEW_LEGACY_PUBLIC_ORIGIN, env.PREVIEW_LEGACY_NOT_AFTER,
+    env.PREVIEW_LEGACY_EDGE_SECRET].some(value => value !== undefined);
+  const legacy = legacyConfigured ? legacyConfiguration(env) : null;
+  if (legacyConfigured && !legacy) return unavailable();
+  const preview = legacy ? (url.origin === legacy.publicOrigin ? { prNumber: legacy.prNumber } : null)
+    : classifyPreviewHost(url.hostname);
   if (!preview) return new Response('Not found', { status: 404, headers: { 'cache-control': 'no-store' } });
   const vmRoute = /^\/vm\/([^/]+)/.exec(url.pathname);
   if (vmRoute && vmRoute[1] !== `pr-${preview.prNumber}`) {
     return new Response('Not found', { status: 404, headers: { 'cache-control': 'no-store' } });
   }
+  if (legacy) {
+    const runtime = /^\/vm\/[^/]+\/~runtime\/([^/]+)/.exec(url.pathname)?.[1];
+    if ((runtime && runtime !== `pr-${preview.prNumber}`)
+      || url.searchParams.getAll('runtime').some(value => value !== `pr-${preview.prNumber}`)) {
+      return new Response('Not found', { status: 404, headers: { 'cache-control': 'no-store' } });
+    }
+  }
   if (url.protocol !== 'https:') return unavailable();
+  if (legacy && !['GET', 'HEAD', 'OPTIONS'].includes(request.method) && request.headers.has('cookie')
+    && request.headers.get('origin') !== legacy.publicOrigin) {
+    return new Response('Forbidden', { status: 403, headers: { 'cache-control': 'no-store' } });
+  }
 
   const origin = taggedPreviewOrigin(env.PREVIEW_PLATFORM_ORIGIN, preview.prNumber);
   const masterSecret = env.PREVIEW_EDGE_MASTER_SECRET?.trim();
-  if (!origin || !masterSecret || masterSecret.length < 32) return unavailable();
-  const secret = await previewEdgeSecret(masterSecret, preview.prNumber);
+  if (!origin || (!legacy && (!masterSecret || masterSecret.length < 32))) return unavailable();
+  const secret = legacy?.secret ?? await previewEdgeSecret(masterSecret!, preview.prNumber);
 
   let body: ArrayBuffer | null;
   try {
@@ -108,6 +148,11 @@ export async function handlePreviewRequest(request: Request, env: PreviewEdgeEnv
   }
 
   const headers = new Headers(request.headers);
+  if (legacy) {
+    for (const name of [...headers.keys()]) {
+      if (name.startsWith('x-platform-') || name.startsWith('x-forwarded-') || name.startsWith('x-matrix-')) headers.delete(name);
+    }
+  }
   for (const name of ['host', 'x-forwarded-host', 'x-forwarded-proto', 'x-forwarded-for', 'x-matrix-edge-secret']) {
     headers.delete(name);
   }
@@ -148,6 +193,8 @@ export async function handlePreviewRequest(request: Request, env: PreviewEdgeEnv
   }
 
   const responseHeaders = new Headers(response.headers);
+  const location = responseHeaders.get('location');
+  if (legacy && location) responseHeaders.set('location', redirectPreviewLocation(location, origin, legacy.publicOrigin));
   responseHeaders.set('cache-control', 'no-store');
   responseHeaders.set('cdn-cache-control', 'no-store');
   responseHeaders.set('cloudflare-cdn-cache-control', 'no-store');
