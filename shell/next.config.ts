@@ -1,7 +1,14 @@
 import { createRequire } from "node:module";
 import { resolve } from "node:path";
-import { isPrivatePreviewHandle } from "@matrix-os/contracts/private-preview";
 import type { NextConfig } from "next";
+
+const requireFromShell = createRequire(import.meta.url);
+
+function isPrivatePreviewHandle(handle: string): boolean {
+  // Host bundles include the source file but strip shell/node_modules.
+  const contract = requireFromShell("../packages/contracts/src/private-preview.ts") as typeof import("../packages/contracts/src/private-preview");
+  return contract.isPrivatePreviewHandle(handle);
+}
 
 const gatewayUrl = process.env.GATEWAY_URL ?? "http://localhost:4000";
 const platformShellAssetPrefix = process.env.MATRIX_PLATFORM_AUTH_SHELL === "1"
@@ -90,7 +97,7 @@ const nextConfig: NextConfig = {
     if (dev === false && isServer === false && !platformShellAssetPrefix) {
       config.output.publicPath = "auto";
       // Keep fonts and other media relative to the emitted stylesheet URL.
-      const extractionLoader = createRequire(import.meta.url).resolve("next/dist/compiled/mini-css-extract-plugin/loader");
+      const extractionLoader = requireFromShell.resolve("next/dist/compiled/mini-css-extract-plugin/loader");
       setRelativeCssAssetPaths(config.module?.rules ?? [], extractionLoader);
     }
     return config;
