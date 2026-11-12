@@ -203,7 +203,8 @@ describe("Matrix Core repo pins membership evidence", () => {
       organizations: {
         repository: {
           getMembership: vi.fn(), listMembers: vi.fn(),
-          listOrganizationsForActor: async () => [{ organization: { organizationId: ORG_ID, slug: "acme", lifecycle: "active" }, membership: { state: membershipState } }],
+          listOrganizationsForActorPage: async () => ({ complete: true,
+            organizations: [{ organization: { organizationId: ORG_ID, slug: "acme", lifecycle: "active" }, membership: { state: membershipState } }] }),
         },
         projection: { isCurrentMember: async () => current },
       } as never,
@@ -221,5 +222,41 @@ describe("Matrix Core repo pins membership evidence", () => {
   it("reports verified membership when every listed org is confirmed", async () => {
     expect(await (await pinsWith("removed", false)).json()).toEqual({ pins: [], membership: "verified" });
     expect(await (await pinsWith("active", true)).json()).toEqual({ pins: [], membership: "verified" });
+  });
+});
+
+describe("Matrix Core repo pins beyond one membership page", () => {
+  // Fault: a member of more than 100 orgs gets a "verified" answer that omits orgs past the page cap, and loses their skills.
+  it("never reports verified membership from a truncated organization list", async () => {
+    const { KyselyPGlite } = await import("kysely-pglite");
+    const { Kysely } = await import("kysely");
+    const { bootstrapPlatformOrganizationDatabase } = await import("../../packages/platform/src/organizations/database.js");
+    const { PlatformOrganizationRepository } = await import("../../packages/platform/src/organizations/repository.js");
+    const { createCoreRepoRoutes } = await import("../../packages/platform/src/core-repo/routes.js");
+    const db = new Kysely<never>({ dialect: (await KyselyPGlite.create()).dialect });
+    try {
+      await bootstrapPlatformOrganizationDatabase(db as never);
+      const organizations = new PlatformOrganizationRepository(db as never);
+      const at = new Date("2026-11-01T00:00:00.000Z");
+      const request = async () => {
+        const routes = createCoreRepoRoutes({
+          repository: { listPins: async () => [] } as never,
+          organizations: { repository: organizations, projection: { isCurrentMember: async () => true } } as never,
+          authenticateMachine: async () => "user_member", resolveActor: async () => null,
+        });
+        return routes.request("/internal/core-repo/pins", { headers: { "x-matrix-handle": "member-vps", authorization: "Bearer machine-token-0123456789" } });
+      };
+      for (let index = 0; index < 101; index += 1) {
+        const organizationId = `org_many${String(index).padStart(3, "0")}`;
+        await organizations.applyOrganization({ organizationId, name: `Org ${index}`, slug: `org-${index}`, aiSubmission: "owner_only", sourceUpdatedAt: at });
+        await organizations.applyMembership({ organizationId, membershipId: `m_${index}`, actorId: "user_member", role: "org:member", state: "active", sourceUpdatedAt: at });
+        if (index === 99) expect(await (await request()).json()).toEqual({ pins: [], membership: "verified" });
+      }
+      const response = await request();
+      expect(response.status).toBe(200);
+      expect(await response.json()).toEqual({ pins: [] });
+    } finally {
+      await db.destroy();
+    }
   });
 });

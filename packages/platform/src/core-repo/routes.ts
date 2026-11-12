@@ -48,10 +48,14 @@ export interface CoreRepoRouteOptions {
   webhookSecret?: string;
   organizations?: OrgMcpOrganizations & {
     repository: OrgMcpOrganizations["repository"] & {
-      listOrganizationsForActor(actorId: string): Promise<Array<{
-        organization: { organizationId: string; slug: string; lifecycle: string };
-        membership: { state: string };
-      }>>;
+      /** One bounded page; `complete` is false when the actor has more memberships than it holds. */
+      listOrganizationsForActorPage(actorId: string): Promise<{
+        organizations: Array<{
+          organization: { organizationId: string; slug: string; lifecycle: string };
+          membership: { state: string };
+        }>;
+        complete: boolean;
+      }>;
     };
   };
   /** Clerk user id of the running primary machine behind this credential, or null. */
@@ -150,8 +154,8 @@ export function createCoreRepoRoutes(options: CoreRepoRouteOptions): Hono {
     const { repository, organizations } = options;
     if (!repository || !organizations) return unavailable(c, "pins");
     try {
-      const memberships = (await organizations.repository.listOrganizationsForActor(actorId))
-        .filter(entry => entry.organization.lifecycle === "active");
+      const page = await organizations.repository.listOrganizationsForActorPage(actorId);
+      const memberships = page.organizations.filter(entry => entry.organization.lifecycle === "active");
       const current = [];
       for (const entry of memberships) {
         if (await organizations.projection.isCurrentMember({ organizationId: entry.organization.organizationId, actorId })) {
@@ -168,7 +172,9 @@ export function createCoreRepoRoutes(options: CoreRepoRouteOptions): Hono {
       c.header("Cache-Control", "private, no-store");
       return c.json(CoreRepoPinsResponseSchema.parse({ pins: pins.map(pin => ({
         orgId: pin.organizationId, slug: slugs.get(pin.organizationId)!, commit: pin.commit, sha256: pin.sha256, bytes: pin.bytes,
-      })), membership: "verified" }));
+      })),
+      // A truncated list cannot prove an absent org is gone: install what is listed, remove nothing.
+      ...(page.complete ? { membership: "verified" as const } : {}) }));
     } catch (error: unknown) {
       return unavailable(c, "pins", error);
     }
