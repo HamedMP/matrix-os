@@ -56,7 +56,7 @@ const store = vi.hoisted(() => ({
   createFile: vi.fn(),
   toggleFavorite: vi.fn(),
   requestView: vi.fn(),
-  consumeViewRequest: vi.fn(),
+  consumeViewRequest: vi.fn(() => true),
 }));
 
 vi.mock("@/hooks/useFileBrowser", () => ({

@@ -343,3 +343,5 @@ export { ChatSpeechInputButton } from "./speech/ChatSpeechInputButton.js";
 export { ChatNewChatContent, ChatStarterCards, ChatComposerColumn } from "./chat/new-chat/ChatNewChatContent.js";
 
 export { providerCatalogObservationRetryDelay } from "./provider-observation.js";
+
+export { ProjectAgentContextPanel } from "./chat/ProjectAgentContextPanel.js";

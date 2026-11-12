@@ -1,19 +1,34 @@
 "use client";
 
-import { usePreviewWindow } from "@/hooks/usePreviewWindow";
-import { PreviewTabContent } from "./PreviewTab";
+import { ShellFileAuthority } from "@/components/file-browser/ShellFileAuthority";
+import { MAX_DIRTY_PREVIEW_EDITORS, usePreviewWindow } from "@/hooks/usePreviewWindow";
+import { isEditablePreviewTab, PreviewTabContent } from "./PreviewTab";
 import { cn } from "@/lib/utils";
 import { XIcon } from "@/lib/hugeicons";
-import { type KeyboardEvent } from "react";
+import { useLayoutEffect, type KeyboardEvent } from "react";
 
 export function PreviewWindow() {
-  const tabs = usePreviewWindow((s) => s.tabs);
+  return <ShellFileAuthority>{authority => <PreviewWindowForAuthority key={authority} authority={authority} />}</ShellFileAuthority>;
+}
+
+function PreviewWindowForAuthority({ authority }: { authority: string }) {
+  const allTabs = usePreviewWindow((s) => s.tabs);
+  const tabs = allTabs.filter(tab => !tab.authority || tab.authority === authority);
   const activeTabId = usePreviewWindow((s) => s.activeTabId);
-  const unsavedTabs = usePreviewWindow((s) => s.unsavedTabs);
+  const draftAuthority = usePreviewWindow((s) => s.draftAuthority);
+  const drafts = usePreviewWindow((s) => s.drafts);
+  const dirtyEditors = new Set(draftAuthority === authority ? drafts.map(draft => draft.tabId) : []);
   const setActiveTab = usePreviewWindow((s) => s.setActiveTab);
   const closeTab = usePreviewWindow((s) => s.closeTab);
 
-  const activeTab = tabs.find((t) => t.id === activeTabId);
+  useLayoutEffect(() => {
+    usePreviewWindow.getState().setDraftAuthority(authority);
+  }, [authority]);
+
+  const activeTab = tabs.find((t) => t.id === activeTabId) ?? tabs.at(-1);
+  const dirtyTabs = tabs.filter(tab => dirtyEditors.has(tab.id));
+  const editorLimitReached = activeTab && isEditablePreviewTab(activeTab)
+    && !dirtyEditors.has(activeTab.id) && dirtyTabs.length >= MAX_DIRTY_PREVIEW_EDITORS;
 
   if (tabs.length === 0) {
     return (
@@ -32,7 +47,7 @@ export function PreviewWindow() {
     <div className="flex flex-col h-full">
       <div className="flex items-center border-b overflow-x-auto shrink-0" role="tablist">
         {tabs.map((tab, i) => {
-          const active = tab.id === activeTabId;
+          const active = tab.id === activeTab?.id;
           const handleTabKeyDown = (e: KeyboardEvent<HTMLDivElement>) => {
             if (e.target !== e.currentTarget) return;
 
@@ -76,7 +91,7 @@ export function PreviewWindow() {
               }}
               onKeyDown={handleTabKeyDown}
             >
-              {unsavedTabs.has(tab.id) && (
+              {dirtyEditors.has(tab.id) && (
                 <span className="size-1.5 rounded-full bg-amber-400 shrink-0" />
               )}
               <span className="truncate max-w-32">{tab.name}</span>
@@ -96,7 +111,16 @@ export function PreviewWindow() {
       </div>
 
       <div className="flex-1 min-h-0">
-        {activeTab && <PreviewTabContent tab={activeTab} />}
+        {editorLimitReached && (
+          <p role="status" className="flex h-full items-center justify-center p-3 text-sm text-muted-foreground">
+            Save or close an edited file to open another editor.
+          </p>
+        )}
+        {tabs.filter(tab => dirtyEditors.has(tab.id) || (!editorLimitReached && tab.id === activeTab?.id)).map(tab => (
+          <div key={tab.id} hidden={tab.id !== activeTab?.id} className="h-full">
+            <PreviewTabContent tab={tab} authority={authority} />
+          </div>
+        ))}
       </div>
     </div>
   );

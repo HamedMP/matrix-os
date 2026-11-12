@@ -3,6 +3,7 @@ import { FolderOpen, MessageSquare, PencilEditIcon } from "@renderer/lib/hugeico
 import type { ChatNavigationRecord } from "@matrix-os/ui";
 import { resolveCanonicalChatAttention } from "@matrix-os/ui";
 import type { CanonicalChatClient, CanonicalChatEventSource } from "../../lib/canonical-chat-client";
+import { DesktopProjectAgentContext } from "./DesktopProjectAgentContext";
 import { useProjectLandingChats } from "./use-project-landing-chats";
 import type { Project } from "../../stores/board";
 import { ProjectEditDialog } from "../work/work-rail/ProjectActionDialogs";
@@ -40,6 +41,8 @@ export function ProjectLanding({ project, children, showMetadata = true, records
           <span className="text-[12px] leading-[18px]" style={{ color: "var(--text-tertiary)" }}>Browse project files</span>
         </button>
       </div>
+      <DesktopProjectAgentContext projectId={project.id}
+        projectSlug={project.slug} filesPending={actions.pending} onOpenFiles={() => actions.showInFiles(true)} />
       {chats.length ? <div aria-label={`${project.name} chats`} className="mt-3 grid grid-cols-1 gap-3 @min-[34rem]/project-landing:grid-cols-2">
         {chats.map(record => <button key={record.chat.id} type="button" aria-label={`Open ${record.chat.title}`} disabled={!onSelectChat}
           className="rounded-xl border p-3 text-left outline-none transition-colors hover:bg-[var(--bg-hover)] focus-visible:ring-2 focus-visible:ring-[var(--accent)] disabled:opacity-50"

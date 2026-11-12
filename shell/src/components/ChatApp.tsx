@@ -589,6 +589,7 @@ function ChatAppContent({
 
           <div className="px-2 pb-3">
             {focusedProject ? <FocusedWebProject key={`${webProjects.identity}/${focusedProject.id}/${unreadOnly}`} project={focusedProject} gatewayUrl={projectGatewayUrl} chats={projectChats(visibleConversations, focusedProject)}
+              projectIdentity={webProjects.identity} isCurrentAuthority={isCurrentAuthority}
               listedChatIds={listedChatIds} scopeKey={railOrder.scopeKey} activeChatId={sessionId} activeChatTitle={activeConversationTitle}
               onSelectChat={onSwitchConversation} renderRow={renderRailRow} onBack={() => setFocusedProjectId(null)} mobile={mobile}
               unreadOnly={unreadOnly} sourceFilter={sourceFilter} searchQuery={searchQuery}/> : <>
