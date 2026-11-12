@@ -1451,8 +1451,8 @@ describe('platform billing routes', () => {
     expect(stripe.createCheckoutSession).not.toHaveBeenCalled();
   });
 
-  it.each(['region_fsn1', 'region_nbg1'])(
-    'accepts new checkout requests for German region %s',
+  it.each(['region_fsn1', 'region_nbg1', 'region_hel1'])(
+    'accepts new checkout requests for EU region %s',
     async (regionSlug) => {
       const app = createApp();
 

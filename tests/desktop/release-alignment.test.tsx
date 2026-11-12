@@ -71,4 +71,43 @@ describe("released Desktop and cloud content alignment", () => {
     expect(await screen.findByRole("dialog", { name: "Update Matrix OS" })).toBeTruthy();
     expect(await screen.findByRole("button", { name: "Update" })).toBeTruthy();
   });
+
+  function stubCanaryDesktop() {
+    const invoke = vi.fn(async (channel: string) => {
+      if (channel === "app:get-version") return {
+        version: "0.1.24-canary.20261111120000", channel: "canary",
+        source: { commit: desktopCommit, ancestors: [cloudCommit] },
+      };
+      if (channel === "update:check") return { status: "up-to-date", channel: "canary" };
+      return { ok: true };
+    });
+    vi.stubGlobal("operator", { invoke });
+    return invoke;
+  }
+
+  it("keeps Canary quiet on a computer running an older stable or dev host bundle", async () => {
+    const invoke = stubCanaryDesktop();
+    const get = vi.fn(async (path: string) => path === "/api/system/update"
+      ? { channel: "stable", latest: { version: "v2026.09.10-1205" }, updateAvailable: true }
+      : info);
+    const api = { get, forRuntime() { return this; } } as unknown as ApiClient;
+    useConnection.setState({ api });
+    render(<RuntimeCompatibilityGate><div>Workspace</div></RuntimeCompatibilityGate>);
+    await vi.waitFor(() => expect(invoke).toHaveBeenCalledWith("app:get-version", {}));
+    await vi.waitFor(() => expect(get).toHaveBeenCalledWith("/api/system/info", expect.anything()));
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(screen.queryByRole("dialog", { name: "Update Matrix OS" })).toBeNull();
+    expect(screen.getByText("Workspace")).toBeTruthy();
+  });
+
+  it("still opens recovery on Canary when the computer cannot speak its protocol", async () => {
+    stubCanaryDesktop();
+    const get = vi.fn(async (path: string) => path === "/api/system/update"
+      ? { channel: "stable", latest: { version: "v2026.09.10-1205" }, updateAvailable: true }
+      : { ...info, runtimeCompatibility: { schemaVersion: 1, minDesktopProtocol: 2, maxDesktopProtocol: 2 } });
+    const api = { get, forRuntime() { return this; } } as unknown as ApiClient;
+    useConnection.setState({ api });
+    render(<RuntimeCompatibilityGate><div>Workspace</div></RuntimeCompatibilityGate>);
+    expect(await screen.findByRole("dialog", { name: "Update Matrix OS" })).toBeTruthy();
+  });
 });

@@ -136,8 +136,8 @@ describe("pinned herdr-core", () => {
 
     const workflow = readFileSync(join(root, ".github/workflows/desktop-build.yml"), "utf8");
     for (const [fetchStep, packageStep] of [
-      ["fetch-herdr-core.mjs --platform darwin --arch ${{ matrix.arch }}", "electron-builder.yml --mac --${{ matrix.arch }}"],
-      ["fetch-herdr-core.mjs --platform linux --arch x64", "electron-builder.yml --linux AppImage --x64"],
+      ["fetch-herdr-core.mjs --platform darwin --arch ${{ matrix.arch }}", '--config "$DESKTOP_BUILDER_CONFIG" --mac --${{ matrix.arch }}'],
+      ["fetch-herdr-core.mjs --platform linux --arch x64", '--config "$DESKTOP_BUILDER_CONFIG" --linux AppImage --x64'],
     ] as const) {
       expect(workflow.indexOf(fetchStep), fetchStep).toBeGreaterThan(-1);
       expect(workflow.indexOf(fetchStep)).toBeLessThan(workflow.indexOf(packageStep));

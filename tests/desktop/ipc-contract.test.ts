@@ -86,10 +86,12 @@ describe("IPC contract", () => {
     const channel = INVOKE_CHANNELS["app:get-version"];
 
     expect(channel.request.safeParse({}).success).toBe(true);
-    expect(channel.response.safeParse({ version: "1.4.0-canary.2", source: null }).success).toBe(true);
-    expect(channel.response.safeParse({ version: "1.4.0", source: { commit: "a".repeat(40), ancestors: [] } }).success).toBe(true);
-    expect(channel.response.safeParse({ version: "1.4.0", source: { commit: "unknown", ancestors: [] } }).success).toBe(false);
-    expect(channel.response.safeParse({ version: "x".repeat(129), source: null }).success).toBe(false);
+    expect(channel.response.safeParse({ version: "1.4.0-canary.2", source: null, channel: "canary" }).success).toBe(true);
+    expect(channel.response.safeParse({ version: "1.4.0", source: { commit: "a".repeat(40), ancestors: [] }, channel: "stable" }).success).toBe(true);
+    expect(channel.response.safeParse({ version: "1.4.0", source: { commit: "unknown", ancestors: [] }, channel: "stable" }).success).toBe(false);
+    expect(channel.response.safeParse({ version: "x".repeat(129), source: null, channel: "stable" }).success).toBe(false);
+    expect(channel.response.safeParse({ version: "1.4.0", source: null }).success).toBe(false);
+    expect(channel.response.safeParse({ version: "1.4.0", source: null, channel: "nightly" }).success).toBe(false);
   });
 
   it("exposes bounded authenticated identity fields without credentials", () => {

@@ -6,6 +6,8 @@ build/
 desktop/build/*
 !desktop/build/dmg-background.png
 !desktop/build/dmg-background@2x.png
+!desktop/build/icon-canary.icns
+!desktop/build/icon-canary.png
 .next/
 *.tsbuildinfo
 .build-stamp
@@ -125,6 +127,8 @@ skills-lock.json
 !.agents/skills/worktree-pr-monitor/**
 !.agents/skills/matrix-handoff/
 !.agents/skills/matrix-handoff/**
+!.agents/skills/unblock-tickets/
+!.agents/skills/unblock-tickets/**
 # Team-only macOS demo recorder; never part of the shipped skills/matrix pack
 !.agents/skills/product-demo-video/
 !.agents/skills/product-demo-video/**
