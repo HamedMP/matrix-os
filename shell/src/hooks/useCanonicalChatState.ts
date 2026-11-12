@@ -878,6 +878,65 @@ export function useCanonicalChatState({ initialDraft, initialCollaborationView, 
     }
   }, [client, setRecords, newChat, isCurrent]);
 
+  const archiveConversation = useCallback(async (chatId: string) => {
+    if (!isCurrent()) return null;
+    const current = recordsRef.current.find((item) => item.chat.id === chatId);
+    if (!current || current.activeRun) return null;
+    try {
+      const updated = await client.updateLifecycle(chatId, { lifecycle: "archived", baseRevision: current.chat.revision });
+      if (!isCurrent()) return null;
+      setRecords((existing) => existing.filter((record) => record.chat.id !== chatId));
+      if (activeChatIdRef.current === chatId) await newChat();
+      return { chatId, revision: updated.chat.revision };
+    } catch (error: unknown) {
+      console.warn("[canonical-chat] Shell archive failed:", error instanceof Error ? error.name : "UnknownError");
+      if (isCurrent()) setSafeError("The Chat could not be archived. Try again.");
+      return null;
+    }
+  }, [client, setRecords, newChat, isCurrent]);
+
+  const restoreConversation = useCallback(async (chatId: string, revision: number) => {
+    if (!isCurrent()) return false;
+    try {
+      await client.updateLifecycle(chatId, { lifecycle: "active", baseRevision: revision });
+      if (!isCurrent()) return false;
+      await loadList();
+      return true;
+    } catch (error: unknown) {
+      console.warn("[canonical-chat] Shell restore failed:", error instanceof Error ? error.name : "UnknownError");
+      if (isCurrent()) setSafeError("The Chat could not be restored. Try again.");
+      return false;
+    }
+  }, [client, loadList, isCurrent]);
+  const listArchivedConversations = useCallback((cursor?: string) => client.list({ lifecycle: "archived", limit: 50, ...(cursor ? { cursor } : {}) }), [client]);
+  const archiveProjectChats = useCallback(async (projectId: string) => {
+    if (!isCurrent()) return null;
+    try {
+      const result = await client.archiveProjectChats(projectId);
+      if (!isCurrent()) return null;
+      setRecords(current => current.filter(record => !result.archivedIds.includes(record.chat.id)));
+      if (activeChatIdRef.current && result.archivedIds.includes(activeChatIdRef.current)) await newChat();
+      return result;
+    } catch (error: unknown) {
+      console.warn("[canonical-chat] Shell project archive failed:", error instanceof Error ? error.name : "UnknownError");
+      if (isCurrent()) setSafeError("Project chats could not be archived. Try again.");
+      return null;
+    }
+  }, [client, isCurrent, newChat, setRecords]);
+  const restoreArchivedChats = useCallback(async (chats: Array<{ chatId: string; revision: number }>) => {
+    if (!isCurrent()) return false;
+    try {
+      for (const chat of chats) await client.updateLifecycle(chat.chatId, { lifecycle: "active", baseRevision: chat.revision });
+      if (!isCurrent()) return false;
+      await loadList();
+      return true;
+    } catch (error: unknown) {
+      console.warn("[canonical-chat] Shell project restore failed:", error instanceof Error ? error.name : "UnknownError");
+      if (isCurrent()) { await loadList(); setSafeError("Some project chats could not be restored. Try again."); }
+      return false;
+    }
+  }, [client, isCurrent, loadList]);
+
   const updateReadState = useCallback(async (chatId: string, input: import("@matrix-os/contracts").CanonicalUpdateChatReadStateRequest) => {
     if (!isCurrent()) return false;
     try {
@@ -933,6 +992,8 @@ export function useCanonicalChatState({ initialDraft, initialCollaborationView, 
     connected,
     queue: [],
     agentClient: authority.agentClient,
+    sideChatClient: client,
+    terminalSessionIds: selectedDetail?.terminalSessionIds ?? [],
     browserPermissions: client.browserPermissions,
     agentSummaryClient: authority.summaryClient,
     authorityKey: navigationIdentity,
@@ -954,10 +1015,18 @@ export function useCanonicalChatState({ initialDraft, initialCollaborationView, 
     boundProviderInstanceId: selectedDetail?.record.providerBinding?.instanceId,
     conversations: records.map(conversationMeta),
     navigationFresh:navigation.fresh,
+    navigationPage: client.navigationPage,
+    searchConversations: client.search,
+    navigationUpdatedAt: navigation.updatedAt,
     navigationClassifications: unreadNavigation.items.map(item=>({chatId:item.chat.id,classification:item.classification})),
     activeConversationTitle: activeRecord?.chat.title,
     renameConversation,
     deleteConversation,
+    archiveConversation,
+    restoreConversation,
+    listArchivedConversations,
+    archiveProjectChats,
+    restoreArchivedChats,
     composerDraftRequest: sameAuthority && previousComposerIdentity.current === composerIdentity ? composerDraftRequest : null,
     requestComposerDraft: (text, options) => {
       if (isCurrent()) setComposerDraftRequest({ id: ++composerDraftSequence.current, text, ...(options?.merge ? { merge: true } : {}) });

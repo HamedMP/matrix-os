@@ -320,7 +320,7 @@ describe("canonical shell Chat client", () => {
 it("opts navigation into immutable import source projection", async () => {
   const fetchFn = vi.fn(async () => Response.json({ version: 1, items: [], truncated: false }));
   await createCanonicalShellChatClient({ gatewayUrl: "https://matrix.test", fetchFn }).navigation!();
-  expect(fetchFn).toHaveBeenCalledWith("https://matrix.test/api/chat-navigation?version=1&limit=1000", expect.objectContaining({ headers: { "X-Matrix-Chat-Import-Source": "1" } }));
+  expect(fetchFn).toHaveBeenCalledWith("https://matrix.test/api/chat-navigation?version=1&limit=100", expect.objectContaining({ headers: { "X-Matrix-Chat-Import-Source": "1" } }));
 });
 
 it("preserves the separate owner browser intent in canonical approval submissions", async () => {

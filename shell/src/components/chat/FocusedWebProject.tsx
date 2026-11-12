@@ -8,10 +8,12 @@ import { usePagedProjectChats } from "./usePagedProjectChats";
 import { WebChatLifecycleGroups } from "./WebChatLifecycleGroups";
 import { ProjectChatPaging, ProjectChatRows, ProjectChatStatus } from "./WebProjectsNav";
 import type { WebProject } from "./web-projects";
+import { WebProjectArchiveAction } from "./WebProjectArchiveAction";
+import type { CanonicalChatNavigationPageQuery, CanonicalChatNavigationPageResponse } from "@matrix-os/contracts";
 
 /** Sidebar narrowed to one project, as on Electron Desktop: its chats by lifecycle, older chats below, and a way back. */
 export function FocusedWebProject({ project, gatewayUrl, chats, listedChatIds, scopeKey, activeChatId, activeChatTitle,
-  onSelectChat, renderRow, onBack, onOpenHome, mobile, unreadOnly, sourceFilter, searchQuery }: {
+  onSelectChat, renderRow, onBack, onOpenHome, mobile, unreadOnly, sourceFilter, searchQuery, onArchiveProject, loadNavigationPage }: {
   project: WebProject;
   gatewayUrl: string;
   /** The project's chats from navigation, pinned ones included. */
@@ -28,8 +30,10 @@ export function FocusedWebProject({ project, gatewayUrl, chats, listedChatIds, s
   unreadOnly: boolean;
   sourceFilter: ChatImportSourceFilterValue;
   searchQuery: string;
+  onArchiveProject?: (projectId: string, projectName: string) => Promise<boolean>;
+  loadNavigationPage?: (input: CanonicalChatNavigationPageQuery) => Promise<CanonicalChatNavigationPageResponse>;
 }) {
-  const { fetched, loading, error, retry, loadMore, hasMore, capped } = usePagedProjectChats(project, gatewayUrl, unreadOnly, true);
+  const { fetched, loading, error, retry, loadMore, hasMore, capped } = usePagedProjectChats(project, gatewayUrl, unreadOnly, true, loadNavigationPage);
   const [olderExpanded, setOlderExpanded] = useState(true);
   const nowMs = useMinuteClock(true);
   const search = searchQuery.trim().toLowerCase();
@@ -50,6 +54,7 @@ export function FocusedWebProject({ project, gatewayUrl, chats, listedChatIds, s
         </button>
       ) : <h2 title={project.name}>{project.name}</h2>}
     </div>
+    {onArchiveProject ? <WebProjectArchiveAction projectId={project.id} projectName={project.name} onArchive={onArchiveProject}/> : null}
     {empty ? <>
       <ProjectChatStatus rowCount={0} loading={loading} error={error} hasMore={hasMore} mobile={mobile} retry={retry}
         filtered={unreadOnly || sourceFilter !== "all" || Boolean(search)} />
@@ -61,7 +66,7 @@ export function FocusedWebProject({ project, gatewayUrl, chats, listedChatIds, s
     {older.length > 0 || (!empty && (error || hasMore || capped)) ? <ChatRailSection label="Older chats" count={older.length}
       expanded={olderExpanded} onExpandedChange={setOlderExpanded}>
       <ProjectChatRows rows={older.map(chat => ({ kind: "fetched", chat } as const))} projectId={project.id} nowMs={nowMs}
-        activeChatId={activeChatId} activeChatTitle={activeChatTitle} onSelectChat={onSelectChat} renderChat={() => null} mobile={mobile} />
+        activeChatId={activeChatId} activeChatTitle={activeChatTitle} onSelectChat={onSelectChat} renderChat={chat => renderRow(chat)} mobile={mobile} />
       {error ? <ProjectChatStatus rowCount={older.length} loading={false} error mobile={mobile} retry={retry} hasMore={hasMore} filtered={false} /> : null}
       <ProjectChatPaging projectName={project.name} hiddenCount={0} loading={loading} error={error} hasMore={hasMore} capped={capped}
         mobile={mobile} showMore={() => {}} loadMore={loadMore} />

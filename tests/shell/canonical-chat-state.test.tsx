@@ -235,6 +235,27 @@ describe("canonical shell Chat state", () => {
     expect(result.current.conversations.map((conversation) => conversation.id)).toEqual(["chat_a"]);
   });
 
+  it("archives a Chat with its current revision and offers a restore operation", async () => {
+    const lifecycleRequests: Array<{ lifecycle: string; baseRevision: number }> = [];
+    stubLegacyChatFetch(vi.fn(async (url: string, init?: RequestInit) => {
+      if (url.includes("/api/chats?") && init?.method === undefined) return Response.json({ items: [record("chat_a", "Archive me")] });
+      if (url.includes("/api/chats/chat_a?") && init?.method === undefined) return Response.json(detail("chat_a", "Archive me"));
+      if (url.includes("/api/chats/chat_a/lifecycle?") && init?.method === "PATCH") {
+        const body = JSON.parse(String(init.body)) as { lifecycle: "active" | "archived"; baseRevision: number };
+        lifecycleRequests.push(body);
+        return Response.json({ ...record("chat_a", "Archive me", body.baseRevision + 1), chat: {
+          ...record("chat_a", "Archive me", body.baseRevision + 1).chat, lifecycle: body.lifecycle,
+        } });
+      }
+      throw new Error(`Unexpected request: ${url}`);
+    }));
+    const { result } = renderHook(() => useCanonicalChatState());
+    await waitFor(() => expect(result.current.conversations).toHaveLength(1));
+    await act(async () => { await expect(result.current.archiveConversation?.("chat_a")).resolves.toEqual({ chatId: "chat_a", revision: 1 }); });
+    expect(lifecycleRequests).toEqual([{ lifecycle: "archived", baseRevision: 0 }]);
+    expect(result.current.conversations).toHaveLength(0);
+  });
+
   it("does not let an older rename response regress a newer canonical refresh", async () => {
     let resolveRename!: (response: Response) => void;
     const renameResponse = new Promise<Response>((resolve) => { resolveRename = resolve; });

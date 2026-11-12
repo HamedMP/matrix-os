@@ -64,6 +64,49 @@ it("finds an existing personal project and opens its chat from the Web Chat rail
   expect(request.mock.calls.filter(([url]) => url.includes("/api/workspace/projects"))).toHaveLength(2);
 });
 
+it("pages a project's canonical navigation independently and retains full row actions", async () => {
+  const project = { id: "proj_france", slug: "proj_france", name: "France" };
+  const item = (index: number) => ({
+    chat: { id: `chat_${index}`, title: `Chat ${index}`, revision: 1, lifecycle: "active", attention: "none", messageCount: 1,
+      createdAt: "2026-11-12T00:00:00Z", updatedAt: "2026-11-12T00:00:00Z", activityAt: "2026-11-12T00:00:00Z" },
+    projectId: project.id, readState: { readThroughSeq: 0, markedUnread: false }, classification: "done", persistence: "durable",
+  });
+  const load = vi.fn(async (query: { cursor?: string }) => query.cursor
+    ? { items: [item(6)], totalCount: 6 }
+    : { items: [1, 2, 3, 4, 5].map(item), totalCount: 6, nextCursor: "navcur_next" });
+  const { result } = renderHook(() => usePagedProjectChats(project as never, "https://example.test", false, true, load as never));
+  await waitFor(() => expect(result.current.fetched).toHaveLength(5));
+  expect(load).toHaveBeenCalledWith(expect.objectContaining({ group: "project", projectId: project.id, limit: 5 }));
+  expect(result.current.fetched[0]?.canonicalRecord?.chat.id).toBe("chat_1");
+  act(() => result.current.loadMore());
+  await waitFor(() => expect(result.current.fetched).toHaveLength(6));
+  expect(load).toHaveBeenCalledWith(expect.objectContaining({ cursor: "navcur_next", limit: 20 }));
+});
+
+it("searches committed history beyond loaded Web Desktop rail rows", async () => {
+  vi.stubGlobal("fetch", vi.fn(async () => Response.json({ projects: [], nextCursor: null })));
+  const searchConversations = vi.fn().mockResolvedValueOnce({ items: [{ chat: {
+    id: "chat_older", title: "Older planning chat", messageCount: 1,
+    activityAt: "2026-11-12T00:00:00Z", updatedAt: "2026-11-12T00:00:00Z",
+  } }], nextCursor: "chatcur_more" }).mockResolvedValueOnce({ items: [{ chat: {
+    id: "chat_oldest", title: "Oldest planning chat", messageCount: 1,
+    activityAt: "2026-11-11T00:00:00Z", updatedAt: "2026-11-11T00:00:00Z",
+  } }] });
+  const open = vi.fn();
+  render(<OrganizationStateProvider value={{ status: "none", organizationId: null }}><ChatApp
+    messages={[]} busy={false} connected conversations={[]} sessionId="chat_current"
+    onNewChat={vi.fn()} onSwitchConversation={open} onSubmit={vi.fn()} authorityKey="user_owner/runtime/main"
+    searchConversations={searchConversations as never}/></OrganizationStateProvider>);
+  fireEvent.change(screen.getByRole("textbox", { name: "Search chats" }), { target: { value: "planning" } });
+  fireEvent.click(await screen.findByRole("button", { name: "Older planning chat" }));
+  fireEvent.click(within(screen.getByRole("region", { name: "Chat search results" })).getByRole("button", { name: "Show more" }));
+  fireEvent.click(await screen.findByRole("button", { name: "Oldest planning chat" }));
+  expect(searchConversations).toHaveBeenCalledWith("planning", { lifecycle: "active", limit: 50 });
+  expect(searchConversations).toHaveBeenCalledWith("planning", { lifecycle: "active", limit: 50, cursor: "chatcur_more" });
+  expect(open).toHaveBeenCalledWith("chat_older");
+  expect(open).toHaveBeenCalledWith("chat_oldest");
+});
+
 it("keeps the owner's projects visible when the account is also an organization member", async () => {
   vi.stubGlobal("fetch", vi.fn(async () => Response.json({ projects: [{ id: "proj_personal", slug: "personal", name: "Personal plan" }] })));
   render(<OrganizationStateProvider value={{ status: "member", organizationId: "org_team" }}><ChatApp
@@ -169,18 +212,18 @@ function renderChatApp(conversations: RenameableConversation[], sessionId?: stri
     sessionId={sessionId} onNewChat={vi.fn()} onSwitchConversation={vi.fn()} onSubmit={vi.fn()} authorityKey="user_owner/runtime/main" /></OrganizationStateProvider>);
 }
 
-it("lists a project Chat under its Project only, as on Electron Desktop", async () => {
+it("lists a project Chat under its Project and status group", async () => {
   renderChatApp([projectConversation(1), { id: "chat_loose", title: "Loose chat", preview: "", messageCount: 1, updatedAt: 1 }]);
   const projectsNav = await screen.findByRole("navigation", { name: "Projects" });
-  await waitFor(() => expect(screen.queryAllByRole("button", { name: "Chat 1" })).toHaveLength(0));
+  await waitFor(() => expect(screen.queryAllByRole("button", { name: "Chat 1" })).toHaveLength(1));
   fireEvent.click(await within(projectsNav).findByRole("button", { name: "Expand France chats" }));
   expect(within(projectsNav).getAllByRole("button", { name: "Chat 1" })).toHaveLength(1);
-  expect(screen.getAllByRole("button", { name: "Chat 1" })).toHaveLength(1);
+  expect(screen.getAllByRole("button", { name: "Chat 1" })).toHaveLength(2);
   expect(within(projectsNav).queryByRole("button", { name: "Loose chat" })).toBeNull();
   expect(screen.getByRole("button", { name: "Loose chat" })).toBeTruthy();
 });
 
-it("shows project Chats six at a time, with start times and the open Chat always visible", async () => {
+it("shows project Chats five at a time, with start times and the open Chat always visible", async () => {
   renderChatApp(Array.from({ length: 14 }, (_, index) => projectConversation(index + 1)), "chat_10");
   const projectsNav = await screen.findByRole("navigation", { name: "Projects" });
   fireEvent.click(await within(projectsNav).findByRole("button", { name: "Expand France chats" }));
@@ -290,7 +333,7 @@ it("applies the Chat source filter to older project rows", async () => {
   expect(within(nav).queryByRole("button", { name: "Imported chat" })).toBeNull();
 });
 
-it("keeps pinned project chats in Pinned instead of moving them into Projects", async () => {
+it("keeps pinned project chats in Pinned and their Project", async () => {
   vi.stubGlobal("ResizeObserver", class { observe() {} unobserve() {} disconnect() {} });
   // The project page also returns the pinned Chat, as the gateway does.
   vi.stubGlobal("fetch", vi.fn(async (url: string) => url.includes("/api/workspace/projects")
@@ -304,8 +347,7 @@ it("keeps pinned project chats in Pinned instead of moving them into Projects", 
     authorityKey="owner/main" /></OrganizationStateProvider>);
   const nav = await screen.findByRole("navigation", { name: "Projects" });
   fireEvent.click(await within(nav).findByRole("button", { name: "Expand France chats" }));
-  expect(await within(nav).findByText("No chats in this project yet.")).toBeTruthy();
-  expect(within(nav).queryByRole("button", { name: "Chat 1" })).toBeNull();
+  expect(await within(nav).findByRole("button", { name: "Chat 1" })).toBeTruthy();
   expect(within(screen.getByRole("region", { name: "Pinned" })).getByRole("button", { name: "Chat 1" })).toBeTruthy();
 });
 
@@ -517,7 +559,7 @@ it("lays out projects like the other rail sections and older chats like ordinary
   expect(older.closest(".matrix-web-project-chats")).toBeTruthy();
 });
 
-it("stops keeping older project chats at 1,000 rows", async () => {
+it("continues paging older project chats beyond 1,000 rows", async () => {
   let page = 0;
   const request = vi.fn(async (url: string) => {
     // Every page is full and claims more, as a very large project would.
@@ -533,8 +575,8 @@ it("stops keeping older project chats at 1,000 rows", async () => {
     act(() => result.current.loadMore());
   }
   await waitFor(() => expect(result.current.loading).toBe(false));
-  expect(result.current.fetched).toHaveLength(1_000);
-  expect(result.current.capped).toBe(true);
-  expect(result.current.hasMore).toBe(false);
-  expect(request).toHaveBeenCalledTimes(10);
+  expect(result.current.fetched.length).toBeGreaterThan(1_000);
+  expect(result.current.capped).toBe(false);
+  expect(result.current.hasMore).toBe(true);
+  expect(request).toHaveBeenCalledTimes(22);
 });

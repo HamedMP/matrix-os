@@ -24,11 +24,11 @@ vi.mock("../../shell/src/components/preview-window/CodeEditor", () => ({
     content: string; filename: string; onChange(value: string): void;
   }) => <textarea aria-label={filename} value={content} onChange={e => onChange(e.target.value)} />,
 }));
-// Every fetched Chat is already listed, and paging has reached its cap.
+// Every fetched Chat is already listed after the last page.
 vi.mock("../../shell/src/components/chat/usePagedProjectChats", async original => ({
   ...await original<typeof import("../../shell/src/components/chat/usePagedProjectChats")>(),
   usePagedProjectChats: () => ({ expanded: true, toggleExpanded: vi.fn(), fetched: [{ id: "chat_1", title: "Chat 1", titleVersion: 0 }],
-    loading: false, error: false, retry: vi.fn(), loadMore: vi.fn(), hasMore: false, capped: true }),
+    loading: false, error: false, retry: vi.fn(), loadMore: vi.fn(), hasMore: false, capped: false }),
 }));
 
 afterEach(() => {
@@ -339,10 +339,10 @@ it("discards a pending project folder from a prior session and opens Home", asyn
   expect(fetch.mock.calls).toEqual([[expect.stringMatching(/\/api\/files\/list\?path=$/), expect.anything()]]);
 });
 
-it("keeps the paging-limit notice when every capped row is already listed", () => {
+it("does not show a stale paging-limit notice after the last page", () => {
   const chat = { id: "chat_1", title: "Chat 1", preview: "", messageCount: 1, updatedAt: 1 } as RenameableConversation;
   render(<FocusedWebProject project={{ id: "proj_france", slug: "france", name: "France" }} gatewayUrl="https://example.test" chats={[chat]}
     listedChatIds={new Set(["chat_1"])} onSelectChat={vi.fn()} renderRow={item => <p key={item.id}>{item.title}</p>} onBack={vi.fn()}
     mobile={false} unreadOnly={false} sourceFilter="all" searchQuery="" />);
-  expect(screen.getByText("Showing the newest 1,000 chats in this project.")).toBeTruthy();
+  expect(screen.queryByText(/Showing the newest/)).toBeNull();
 });
