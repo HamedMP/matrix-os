@@ -7,6 +7,9 @@ import { useTheme } from "@/hooks/useTheme";
 import { TerminalPane } from "@/components/terminal/TerminalPane";
 import { parseTerminalRefKey } from "@/components/terminal/terminal-session-id";
 import { ChatFilePanel } from "./ChatFilePanel";
+import { Button } from "@/components/ui/button";
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { SHELL_Z_INDEX } from "@/lib/shell-layering";
 
 const FileEntrySchema = z.object({ name: z.string().min(1).max(255), type: z.enum(["file", "directory"]) }).passthrough();
 const FileListSchema = z.union([z.object({ entries: z.array(FileEntrySchema) }).passthrough(), z.array(FileEntrySchema)]);
@@ -77,7 +80,7 @@ export function WebChatInspector({ chatId, gatewayUrl, layoutKey, rootWidth, rai
   onClose(): void;
 }) {
   const [layout, setLayout] = useState(() => readLayout(layoutKey));
-  const [terminalRef, setTerminalRef] = useState<string | null>(() => terminalSessionIds[0] ?? null);
+  const [terminalRef, setTerminalRef] = useState<string | null>(null);
   const [stoppedRef, setStoppedRef] = useState<string | null>(null);
   const [terminalPending, setTerminalPending] = useState(false);
   const [terminalError, setTerminalError] = useState(false);
@@ -86,7 +89,28 @@ export function WebChatInspector({ chatId, gatewayUrl, layoutKey, rootWidth, rai
   const theme = useTheme();
   useEffect(() => { setLayout(readLayout(layoutKey)); }, [layoutKey]);
   useEffect(() => { if (layoutKey) { try { localStorage.setItem(layoutKey, JSON.stringify(layout)); } catch (error: unknown) { console.warn("[chat-inspector] Layout save unavailable:", error instanceof Error ? error.name : "UnknownError"); } } }, [layoutKey, layout]);
-  useEffect(() => { if (!terminalRef && terminalSessionIds[0] && terminalSessionIds[0] !== stoppedRef) setTerminalRef(terminalSessionIds[0]); }, [terminalRef, terminalSessionIds, stoppedRef]);
+  const savedTerminalRefs = terminalSessionIds.join("\0");
+  useEffect(() => {
+    const controller = new AbortController();
+    setTerminalRef(null);
+    if (!savedTerminalRefs) return () => controller.abort();
+    void fetch(`${gatewayUrl}/api/terminal/workspaces`, { signal: AbortSignal.any([controller.signal, AbortSignal.timeout(10_000)]) })
+      .then(async response => {
+        if (!response.ok) throw new Error("TerminalUnavailable");
+        return z.object({ workspaces: z.array(z.object({ id: z.string().max(128), tabs: z.array(z.object({ id: z.string().max(128) }).passthrough()).max(10_000) }).passthrough()).max(100) }).parse(await response.json());
+      })
+      .then(({ workspaces }) => {
+        if (controller.signal.aborted) return;
+        const live = new Set(workspaces.flatMap(workspace => workspace.tabs.map(tab => `${workspace.id}:${tab.id}`)));
+        setTerminalRef(savedTerminalRefs.split("\0").find(ref => ref !== stoppedRef && parseTerminalRefKey(ref) && live.has(ref)) ?? null);
+      })
+      .catch((cause: unknown) => {
+        if (controller.signal.aborted) return;
+        console.warn("[chat-inspector] Terminal references unavailable:", cause instanceof Error ? cause.name : "UnknownError");
+        setTerminalError(true);
+      });
+    return () => controller.abort();
+  }, [chatId, gatewayUrl, savedTerminalRefs, stoppedRef]);
   useEffect(() => { if (filePath) setLayout(current => ({ ...current, selected: "files" })); }, [filePath]);
   const overlay = rootWidth > 0 && rootWidth - railWidth < 600;
   const maxWidth = Math.max(240, Math.min(820, rootWidth - railWidth - 360));
@@ -156,7 +180,7 @@ export function WebChatInspector({ chatId, gatewayUrl, layoutKey, rootWidth, rai
     target.addEventListener("pointermove", move);
     target.addEventListener("pointerup", end);
   };
-  return <aside ref={panelRef} aria-label="Chat inspector" className={`${overlay ? "absolute inset-y-0 right-0 z-30" : "relative shrink-0"} flex min-h-0 flex-col border-l bg-background shadow-lg`}
+  return <><aside ref={panelRef} aria-label="Chat inspector" className={`${overlay ? "absolute inset-y-0 right-0 z-30" : "relative shrink-0"} flex min-h-0 flex-col border-l bg-background shadow-lg`}
     style={{ width: overlay ? Math.min(layout.width, rootWidth) : width }}>
     {!overlay ? <div role="separator" aria-label="Resize Chat inspector" aria-orientation="vertical" aria-valuemin={240} aria-valuemax={maxWidth} aria-valuenow={Math.round(width)} tabIndex={0}
       className="absolute -left-1 inset-y-0 z-20 w-2 cursor-col-resize" onPointerDown={resize} onDoubleClick={() => setLayout(current => ({ ...current, width: 400 }))}
@@ -181,11 +205,13 @@ export function WebChatInspector({ chatId, gatewayUrl, layoutKey, rootWidth, rai
         : <div className="p-3 text-sm"><p>No terminal is open for this chat.</p><button type="button" className="mt-2 rounded border px-3 py-1" disabled={terminalPending} onClick={() => { void createTerminal(); }}>New terminal</button></div>}
       {terminalError ? <p role="alert" className="px-3 text-xs text-destructive">The terminal could not be updated. Try again.</p> : null}
     </div> : null}
-    {closeTerminalConfirm ? <div role="alertdialog" aria-label="Stop this terminal?" className="absolute inset-0 z-40 grid place-items-center bg-background/90 p-4">
-      <div className="rounded-lg border bg-background p-4 text-sm shadow-lg"><p>Closing this tab stops its terminal session.</p><div className="mt-3 flex gap-3">
-        <button type="button" disabled={terminalPending} onClick={() => setCloseTerminalConfirm(false)}>Cancel</button>
-        <button type="button" disabled={terminalPending} className="font-semibold text-destructive" onClick={() => { void stopTerminal(); }}>Stop terminal</button>
-      </div></div>
-    </div> : null}
-  </aside>;
+  </aside>
+  <Dialog open={closeTerminalConfirm} onOpenChange={open => { if (!open && !terminalPending) setCloseTerminalConfirm(false); }}>
+    <DialogContent role="alertdialog" aria-label="Stop this terminal?" showCloseButton={false} className="sm:max-w-[400px]"
+      style={{ zIndex: SHELL_Z_INDEX.appDialog }} overlayStyle={{ zIndex: SHELL_Z_INDEX.appDialog }}>
+      <DialogHeader><DialogTitle>Stop this terminal?</DialogTitle><DialogDescription>Closing this tab stops its terminal session.</DialogDescription></DialogHeader>
+      <DialogFooter><Button type="button" variant="ghost" disabled={terminalPending} onClick={() => setCloseTerminalConfirm(false)}>Cancel</Button>
+        <Button type="button" variant="destructive" disabled={terminalPending} onClick={() => { void stopTerminal(); }}>Stop terminal</Button></DialogFooter>
+    </DialogContent>
+  </Dialog></>;
 }
