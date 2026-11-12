@@ -125,6 +125,19 @@ describe("Work Files and Terminal inspector", () => {
     await waitFor(() => expect(screen.queryByRole("tab", { name: "Terminal" })).toBeNull());
     expect(useChatInspectorLayout.getState().get(key)?.openTabIds).toEqual(["files"]);
   });
+  it("removes a saved chat-bound terminal when discovery finds no live session", async () => {
+    useConnection.setState({ userId: "user_test" });
+    useCodingAgentWorkspace.setState({ status: "ready", summary: summary([]) });
+    const id = `terminal:${refKey("terminal_missing")}`;
+    const key = chatInspectorLayoutKey("user_test", "primary", "chat_bound_stale");
+    useChatInspectorLayout.getState().update(key, { selectedTabId: id, openTabIds: ["files", id] });
+
+    render(<WorkFilesInspector detail={detail("chat_bound_stale", "terminal_missing")} projects={[]} active />);
+
+    await waitFor(() => expect(screen.queryByRole("tab", { name: refKey("terminal_missing") })).toBeNull());
+    expect(useChatInspectorLayout.getState().get(key)?.openTabIds).toEqual(["files"]);
+    expect(useConnection.getState().api?.delete).not.toHaveBeenCalled();
+  });
   it("opens a message file in the matching Chat inspector and reveals the panel", async () => {
     const reveal = vi.fn();
     const { chatDetail, project } = projectDetail("chat_message");

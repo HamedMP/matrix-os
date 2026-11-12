@@ -209,17 +209,21 @@ function WorkInspectorContent({
   });
   const [selectedId, setSelectedId] = useState(() => initialTerminalTab?.id ??
     (tabs.some(tab => tab.id === savedLayout?.selectedTabId) ? savedLayout!.selectedTabId : FILES_TAB.id));
-  const knownSessionIds = sessions.map(session => session.id).join("\0");
+  const knownSessionIds = sessions.filter(session => session.attachable).map(session => session.id).join("\0");
   useEffect(() => {
     if (!summary) return;
     const known = new Set(knownSessionIds.split("\0").filter(Boolean));
+    if (terminalCloseTarget && !known.has(terminalCloseTarget.slice("terminal:".length))) {
+      setTerminalCloseTarget(null);
+    }
+    if (selectedId.startsWith("terminal:") && !known.has(selectedId.slice("terminal:".length))) {
+      setSelectedId(FILES_TAB.id);
+    }
     setTabs(current => {
       const next = current.filter(tab => tab.kind !== "terminal" || known.has(tab.sessionId));
-      if (next.length === current.length) return current;
-      if (!next.some(tab => tab.id === selectedId)) setSelectedId(FILES_TAB.id);
-      return next;
+      return next.length === current.length ? current : next;
     });
-  }, [summary, knownSessionIds, selectedId]);
+  }, [summary, knownSessionIds, selectedId, terminalCloseTarget]);
   useEffect(() => {
     if (!layoutKey) return;
     useChatInspectorLayout.getState().update(layoutKey, {
@@ -323,6 +327,7 @@ function WorkInspectorContent({
     if (!tab || tab.kind !== "terminal") return;
     const session = sessions.find((candidate) => candidate.id === tab.sessionId);
     if (!session) { removeTab(id); return; }
+    if (summary && !session.attachable) { removeTab(id); setTerminalCloseTarget(null); return; }
     if (!api || closingSessionIds.includes(tab.sessionId)) return;
     setTerminalCloseError(false);
     setClosingSessionIds((current) => [...current, tab.sessionId]);
@@ -348,7 +353,7 @@ function WorkInspectorContent({
     const tab = tabs.find(candidate => candidate.id === id);
     if (!tab || tab.kind !== "terminal") return;
     const session = sessions.find(candidate => candidate.id === tab.sessionId);
-    if (!session) { removeTab(id); return; }
+    if (!session || (summary && !session.attachable)) { removeTab(id); return; }
     setTerminalCloseTarget(id);
   };
 
