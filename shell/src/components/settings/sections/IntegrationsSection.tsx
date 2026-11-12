@@ -13,6 +13,8 @@ import type { IntegrationCatalogItem } from "@matrix-os/contracts/integration-ma
 import { ConnectedIntegrationAccounts } from "./ConnectedIntegrationAccounts";
 import { GithubDeveloperIntegration } from "./GithubDeveloperIntegration";
 import { CustomMcpServersPanel } from "./CustomMcpServersPanel";
+import { ExternalMcpApprovalsPanel } from "@matrix-os/ui";
+import { shellExternalMcpApprovals } from "@/lib/external-mcp-approvals";
 
 const GATEWAY = getGatewayUrl();
 
@@ -427,6 +429,7 @@ export function IntegrationsSection({ active = true, onOpenGithubDisconnectTermi
                 rowPresentation={service => service.id === GITHUB_DEVELOPER_SERVICE_ID ? developer : undefined}
                 onConnect={id => { if (id !== GITHUB_DEVELOPER_SERVICE_ID) void handleConnect(id); }} />
               {!loading ? <CustomMcpServersPanel connectedApps={connected} appNames={Object.fromEntries(available.map(service => [service.id, service.name]))} /> : null}
+              {!loading ? <div className="border-t border-border/60 pt-8"><ExternalMcpApprovalsPanel transport={shellExternalMcpApprovals} /></div> : null}
             </>
           );
         }}
