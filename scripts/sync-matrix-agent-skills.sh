@@ -42,6 +42,20 @@ HERMES_HOME="${HERMES_HOME:-$HOME/.hermes}"
 MATRIX_AGENT_SKILLS_ROOT="${MATRIX_AGENT_SKILLS_ROOT:-${AGENT_HOME:-$HOME/.agent}/skills}"
 MATRIX_SKILL_TARGETS=",${MATRIX_SKILL_TARGETS:-matrix,claude,codex},"
 
+# Namespace mode (Matrix Core repo, spec 2691): manage only `org-<slug>-*`
+# entries that link into (or were copied from) MATRIX_SKILL_OWNED_ROOT. The
+# default mode never treats `org-*` entries as its own.
+MATRIX_SKILL_NAMESPACE="${MATRIX_SKILL_NAMESPACE:-}"
+MATRIX_SKILL_OWNED_ROOT="${MATRIX_SKILL_OWNED_ROOT:-}"
+if [ -n "$MATRIX_SKILL_NAMESPACE" ]; then
+  if ! [[ "$MATRIX_SKILL_NAMESPACE" =~ ^org-[a-z0-9]([a-z0-9-]{0,30}[a-z0-9])?-$ ]] \
+    || [ -z "$MATRIX_SKILL_OWNED_ROOT" ] || [ ! -d "$MATRIX_SKILL_OWNED_ROOT" ]; then
+    echo "Invalid org skill namespace; existing skills were preserved." >&2
+    exit 1
+  fi
+  MATRIX_SKILL_OWNED_ROOT="$(cd -P "$MATRIX_SKILL_OWNED_ROOT" && pwd)"
+fi
+
 has_target() {
   case "$MATRIX_SKILL_TARGETS" in
     *,"$1",*) return 0 ;;
@@ -54,7 +68,20 @@ skill_name() {
 }
 
 is_matrix_owned_dir() {
-  local path="$1"
+  local path="$1" base
+  base="$(basename "$path")"
+  if [ -n "$MATRIX_SKILL_NAMESPACE" ]; then
+    [[ "$base" == "$MATRIX_SKILL_NAMESPACE"* ]] || return 1
+    if [ -L "$path" ]; then
+      # A link into a pruned release dangles; its recorded target still proves ownership.
+      case "$(readlink "$path")" in "$MATRIX_SKILL_OWNED_ROOT"/*) return 0 ;; esac
+      case "$(realpath "$path" 2>/dev/null || true)" in "$MATRIX_SKILL_OWNED_ROOT"/*) return 0 ;; esac
+      return 1
+    fi
+    [ -f "$path/.matrix-os-managed" ] && return 0
+    return 1
+  fi
+  [[ "$base" == org-* ]] && return 1
   if [ -L "$path" ]; then
     local resolved expected_name
     resolved="$(realpath "$path" 2>/dev/null || true)"
@@ -123,6 +150,9 @@ sync_root() {
     name="$(skill_name "$src")"
     if [ -z "$name" ]; then
       name="matrix-$(basename "$src")"
+    fi
+    if [ -n "$MATRIX_SKILL_NAMESPACE" ]; then
+      [[ "$name" == "$MATRIX_SKILL_NAMESPACE"* && "$name" =~ ^[a-z0-9-]{1,100}$ ]] || continue
     fi
     link_or_copy_skill "$src" "$root" "$name"
   done

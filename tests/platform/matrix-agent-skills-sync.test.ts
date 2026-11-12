@@ -149,6 +149,45 @@ describe("Matrix coding-agent skill sync", () => {
     }
   });
 
+  // Fault: the gateway-start (default) sync deletes org skills, or namespace mode touches personal or public skills.
+  it("keeps org-namespaced skills separate from the Matrix pack and from personal skills", () => {
+    const root = resolve(mkdirSync(join(tmpdir(), `matrix-org-skills-${Date.now()}`), { recursive: true }));
+    const source = join(root, "skills", "matrix");
+    const orgRoot = join(root, "matrix-core", "org_acme1");
+    const orgSkills = join(orgRoot, "releases", "a", ".matrix-skills");
+    const home = join(root, "home");
+    const script = join(process.cwd(), "scripts/sync-matrix-agent-skills.sh");
+    const run = (env: Record<string, string>) => execFileSync("bash", [script], {
+      env: { ...process.env, HOME: home, MATRIX_HOME: home, MATRIX_SKILL_TARGETS: "claude", ...env }, stdio: "pipe" });
+    const skills = join(home, ".claude", "skills");
+    try {
+      writeSkill(source, "app-builder", "matrix-app-builder");
+      writeSkill(orgSkills, "org-acme-deploy", "org-acme-deploy");
+      writeSkill(orgSkills, "sneaky", "matrix-app-builder");
+      writeSkill(skills, "org-acme-notes", "org-acme-notes");
+      // What namespace mode's copy fallback leaves where symlinks are unavailable.
+      writeSkill(skills, "org-other-copied", "org-other-copied");
+      writeFileSync(join(skills, "org-other-copied", ".matrix-os-managed"), "");
+      run({ MATRIX_SKILLS_SOURCE: orgSkills, MATRIX_SKILL_NAMESPACE: "org-acme-", MATRIX_SKILL_OWNED_ROOT: orgRoot });
+      run({ MATRIX_SKILLS_SOURCE: source });
+      expect(existsSync(join(skills, "org-other-copied", "SKILL.md"))).toBe(true);
+      expect(realpathSync(join(skills, "org-acme-deploy"))).toBe(realpathSync(join(orgSkills, "org-acme-deploy")));
+      expect(realpathSync(join(skills, "matrix-app-builder"))).toBe(realpathSync(join(source, "app-builder")));
+      expect(lstatSync(join(skills, "org-acme-notes")).isSymbolicLink()).toBe(false);
+
+      // An empty org source unlinks only that org's own entries.
+      const empty = join(root, "empty");
+      mkdirSync(empty);
+      run({ MATRIX_SKILLS_SOURCE: empty, MATRIX_SKILL_NAMESPACE: "org-acme-", MATRIX_SKILL_OWNED_ROOT: orgRoot });
+      expect(existsSync(join(skills, "org-acme-deploy"))).toBe(false);
+      expect(existsSync(join(skills, "org-acme-notes", "SKILL.md"))).toBe(true);
+      expect(existsSync(join(skills, "matrix-app-builder", "SKILL.md"))).toBe(true);
+      expect(() => run({ MATRIX_SKILLS_SOURCE: empty, MATRIX_SKILL_NAMESPACE: "../", MATRIX_SKILL_OWNED_ROOT: orgRoot })).toThrow();
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it("keeps manual skill installers aligned with the shipped Matrix skill pack", () => {
     const root = process.cwd();
     const shippedSkillDirs = readdirSync(join(root, "skills", "matrix"), { withFileTypes: true })
