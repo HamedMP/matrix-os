@@ -216,3 +216,35 @@ describe("provider terminal session handoff", () => {
     expect(sessionStorage.getItem("matrix:provider-terminal-session-queue")).toBe("[]");
   });
 });
+
+// Fault detected (review of #3299): Open on an agent alert never selected the tab once
+// the workspace list held more than 256 tabs (finished history included) or 64 KiB.
+describe("handing off a known tab when the list is too big to read", () => {
+  const many = Array.from({ length: 300 }, (_, index) => tab(`tt_${index.toString(16).padStart(32, "0")}`, `t${index}`, "exited"));
+
+  it("looks the requested tab up on its own and selects it", async () => {
+    const fetcher = vi.fn(async (input: RequestInfo | URL) => String(input).endsWith("/api/terminal/workspaces")
+      ? Response.json(workspaceResponse([...many, tab(PROVIDER_TAB_ID, "agent", "running")]))
+      : Response.json({ tab: { id: PROVIDER_TAB_ID, workspaceId: WORKSPACE_ID, status: "running" }, state: "live" }));
+    enqueueExistingTerminalRef(providerRef, "window-a");
+
+    await expect(drainExistingTerminalSessionQueue("window-a", { fetcher })).resolves.toEqual([providerRef]);
+    expect(fetcher).toHaveBeenCalledWith(
+      `${window.location.origin}/api/terminal/workspaces/${WORKSPACE_ID}/tabs/${PROVIDER_TAB_ID}`,
+      expect.objectContaining({ cache: "no-store", signal: expect.any(AbortSignal) }),
+    );
+    expect(hasQueuedExistingTerminalSession("window-a")).toBe(false);
+  });
+
+  it("drops a requested tab that has finished or is gone, and keeps it on a failed lookup", async () => {
+    const list = () => Response.json(workspaceResponse(many));
+    enqueueExistingTerminalRef(providerRef, "window-a");
+    const failing = vi.fn(async (input: RequestInfo | URL) => String(input).endsWith("/workspaces") ? list() : new Response("", { status: 503 }));
+    await expect(drainExistingTerminalSessionQueue("window-a", { fetcher: failing })).resolves.toEqual([]);
+    expect(hasQueuedExistingTerminalSession("window-a")).toBe(true);
+
+    const gone = vi.fn(async (input: RequestInfo | URL) => String(input).endsWith("/workspaces") ? list() : new Response("", { status: 404 }));
+    await expect(drainExistingTerminalSessionQueue("window-a", { fetcher: gone })).resolves.toEqual([]);
+    expect(hasQueuedExistingTerminalSession("window-a")).toBe(false);
+  });
+});

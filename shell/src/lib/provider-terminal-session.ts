@@ -5,6 +5,7 @@ const QUEUE_KEY = "matrix:provider-terminal-session-queue";
 const QUEUE_LIMIT = 8;
 const QUEUE_TTL_MS = 10 * 60_000;
 const RESPONSE_LIMIT_BYTES = 64 * 1024;
+const TAB_RESPONSE_LIMIT_BYTES = 16 * 1024;
 const TARGET_ID_PATTERN = /^[A-Za-z0-9:_-]{1,128}$/;
 const SESSION_NAME_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,63}$/;
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -134,15 +135,11 @@ function emptyActiveSessionIndex(): ActiveSessionIndex {
   return { byName: new Map(), terminalRefs: new Set(), authoritative: false };
 }
 
-async function listActiveSessions(fetcher: Fetcher): Promise<ActiveSessionIndex> {
-  const response = await fetcher(`${getGatewayUrl()}/api/terminal/workspaces`, {
-    cache: "no-store",
-    headers: { Accept: "application/json" },
-    signal: AbortSignal.timeout(10_000),
-  });
+/** A successful response's JSON, read up to `limit` bytes; undefined when unreadable or too big. */
+async function readBoundedJson(response: Response, limit: number): Promise<unknown> {
   const declaredLength = Number(response.headers.get("content-length"));
-  if (!response.ok || (Number.isFinite(declaredLength) && declaredLength > RESPONSE_LIMIT_BYTES)) return emptyActiveSessionIndex();
-  if (!response.body) return emptyActiveSessionIndex();
+  if (!response.ok || (Number.isFinite(declaredLength) && declaredLength > limit)) return undefined;
+  if (!response.body) return undefined;
   const reader = response.body.getReader();
   const chunks: Uint8Array[] = [];
   let total = 0;
@@ -150,9 +147,9 @@ async function listActiveSessions(fetcher: Fetcher): Promise<ActiveSessionIndex>
     const { done, value } = await reader.read();
     if (done) break;
     total += value.byteLength;
-    if (total > RESPONSE_LIMIT_BYTES) {
+    if (total > limit) {
       await reader.cancel();
-      return emptyActiveSessionIndex();
+      return undefined;
     }
     chunks.push(value);
   }
@@ -162,13 +159,42 @@ async function listActiveSessions(fetcher: Fetcher): Promise<ActiveSessionIndex>
     bytes.set(chunk, offset);
     offset += chunk.byteLength;
   }
-  let value: unknown;
   try {
-    value = JSON.parse(new TextDecoder().decode(bytes));
+    return JSON.parse(new TextDecoder().decode(bytes));
   } catch (error) {
     console.warn("[provider-settings] Invalid terminal session response:", error instanceof Error ? error.name : typeof error);
-    return emptyActiveSessionIndex();
+    return undefined;
   }
+}
+
+/**
+ * One known tab, looked up on its own: used when the workspace list is too big to
+ * read (finished history counts toward its limits). "gone" when it ended or vanished.
+ */
+async function lookUpTerminalRef(fetcher: Fetcher, terminalRef: string): Promise<"live" | "gone" | "unknown"> {
+  const [workspaceId, tabId] = terminalRef.split(":");
+  if (!workspaceId || !tabId || !WORKSPACE_ID_PATTERN.test(workspaceId) || !TAB_ID_PATTERN.test(tabId)) return "gone";
+  const response = await fetcher(`${getGatewayUrl()}/api/terminal/workspaces/${workspaceId}/tabs/${tabId}`, {
+    cache: "no-store",
+    headers: { Accept: "application/json" },
+    signal: AbortSignal.timeout(10_000),
+  });
+  if (response.status === 404) return "gone";
+  const value = await readBoundedJson(response, TAB_RESPONSE_LIMIT_BYTES);
+  if (!value || typeof value !== "object") return "unknown";
+  const facts = value as { tab?: { id?: unknown; status?: unknown }; state?: unknown };
+  if (facts.tab?.id !== tabId || (facts.state !== "live" && facts.state !== "finished")) return "unknown";
+  return facts.state === "live" && typeof facts.tab.status === "string" && ACTIVE_TAB_STATUSES.has(facts.tab.status) ? "live" : "gone";
+}
+
+async function listActiveSessions(fetcher: Fetcher): Promise<ActiveSessionIndex> {
+  const response = await fetcher(`${getGatewayUrl()}/api/terminal/workspaces`, {
+    cache: "no-store",
+    headers: { Accept: "application/json" },
+    signal: AbortSignal.timeout(10_000),
+  });
+  const value = await readBoundedJson(response, RESPONSE_LIMIT_BYTES);
+  if (value === undefined) return emptyActiveSessionIndex();
   if (!value || typeof value !== "object" || !Array.isArray((value as { workspaces?: unknown }).workspaces)) return emptyActiveSessionIndex();
   const workspaces = (value as { workspaces: unknown[] }).workspaces;
   if (workspaces.length > 256) return emptyActiveSessionIndex();
@@ -213,6 +239,13 @@ export async function drainExistingTerminalSessionQueue(
     const settledEntries = new Set<QueuedSession>();
     const acceptedRefs = new Set<string>();
     for (const entry of matched) {
+      if (entry.terminalRef && !active.authoritative) {
+        // The list was too big or unreadable: ask about this one tab instead.
+        const found = await lookUpTerminalRef(options.fetcher ?? fetch, entry.terminalRef);
+        if (found !== "unknown") settledEntries.add(entry);
+        if (found === "live") acceptedRefs.add(entry.terminalRef);
+        continue;
+      }
       const ref = entry.terminalRef
         ? active.terminalRefs.has(entry.terminalRef) ? entry.terminalRef : undefined
         : active.byName.get(entry.sessionId ?? "") ?? undefined;
