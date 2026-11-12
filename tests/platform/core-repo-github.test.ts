@@ -269,29 +269,97 @@ describe("Matrix Core repo pins beyond one membership page", () => {
 });
 
 describe("Matrix Core repo retention claims", () => {
-  // Fault: a sweep deletes the tarball of a commit another instance has just re-pinned (for example a rollback).
-  it("claims only rows still unreferenced and untouched, in one statement", async () => {
+  const C = (char: string) => char.repeat(40);
+  async function setup() {
     const { KyselyPGlite } = await import("kysely-pglite");
     const { Kysely, sql } = await import("kysely");
     const { bootstrapCoreRepoDatabase, createCoreRepoRepository } = await import("../../packages/platform/src/core-repo/database.js");
+    const { createCoreRepoSyncService } = await import("../../packages/platform/src/core-repo/service.js");
     const db = new Kysely<never>({ dialect: (await KyselyPGlite.create()).dialect });
+    await bootstrapCoreRepoDatabase(db as never);
+    let clock = new Date("2026-11-12T12:00:00.000Z");
+    const now = () => clock;
+    const repository = createCoreRepoRepository(db as never, now);
+    const objects = new Map<string, Uint8Array>();
+    const key = (commit: string) => `core-repo/org_acme1/${commit}.tar.gz`;
+    const pin = (commit: string) => repository.pin({ organizationId: "org_acme1", commit, sha256: "f".repeat(64), bytes: 1 });
+    const age = (commit: string, minutes: number) => sql`UPDATE core_repo_objects SET updated_at = ${new Date(clock.getTime() - minutes * 60_000)} WHERE commit_sha = ${commit}`.execute(db);
+    const rows = async () => (await sql<{ commit_sha: string }>`SELECT commit_sha FROM core_repo_objects ORDER BY commit_sha`.execute(db)).rows.map(row => row.commit_sha);
+    const service = (repo: typeof repository = repository) => createCoreRepoSyncService({
+      config: { sources: [source] },
+      github: { headCommit: async () => ({ commit: C("a"), token: "t" }), downloadTarball: vi.fn() },
+      store: { putObject: vi.fn(), getObject: vi.fn(), headObject: async (k) => ({ exists: objects.has(k) }),
+        deleteObject: async (k) => { objects.delete(k); } },
+      repository: repo, now,
+    });
+    return { db, repository, objects, key, pin, age, rows, service, advance: (minutes: number) => { clock = new Date(clock.getTime() + minutes * 60_000); } };
+  }
+
+  // Fault: a sweep deletes the tarball of a commit another instance has just re-pinned (for example a rollback).
+  it("claims only rows still unreferenced and untouched, and keeps claimed rows until the object is gone", async () => {
+    const t = await setup();
     try {
-      await bootstrapCoreRepoDatabase(db as never);
-      const repository = createCoreRepoRepository(db as never);
-      const pin = (char: string) => repository.pin({ organizationId: "org_acme1", commit: char.repeat(40), sha256: "f".repeat(64), bytes: 1 });
-      for (const char of ["a", "b", "c", "d"]) await repository.recordObject("org_acme1", char.repeat(40));
-      await sql`UPDATE core_repo_objects SET updated_at = now() - interval '2 hours'`.execute(db);
+      for (const char of ["a", "b", "c", "d"]) await t.repository.recordObject("org_acme1", C(char));
+      for (const char of ["a", "b", "c", "d"]) await t.age(C(char), 120);
       // a is pinned after the rows aged: the pin write itself must refresh its row.
-      await pin("b");
-      await pin("a");
-      await sql`UPDATE core_repo_objects SET updated_at = now() - interval '2 hours' WHERE commit_sha <> ${"a".repeat(40)}`.execute(db);
-      const grace = new Date(Date.now() - 60 * 60_000);
-      expect(await repository.claimUnreferencedObjects("org_acme1", grace)).toEqual(["c".repeat(40), "d".repeat(40)].sort());
-      const left = await sql<{ commit_sha: string }>`SELECT commit_sha FROM core_repo_objects ORDER BY commit_sha`.execute(db);
-      expect(left.rows.map(row => row.commit_sha)).toEqual(["a".repeat(40), "b".repeat(40)]);
-      expect(await repository.claimUnreferencedObjects("org_acme1", grace)).toEqual([]);
+      await t.pin(C("b"));
+      await t.pin(C("a"));
+      await t.age(C("b"), 120);
+      const grace = new Date(Date.parse("2026-11-12T11:00:00.000Z"));
+      expect((await t.repository.claimUnreferencedObjects("org_acme1", grace)).map(claim => claim.commit)).toEqual([C("c"), C("d")]);
+      expect(await t.rows()).toEqual([C("a"), C("b"), C("c"), C("d")]);
+      expect(await t.repository.claimUnreferencedObjects("org_acme1", grace)).toEqual([]);
     } finally {
-      await db.destroy();
+      await t.db.destroy();
+    }
+  });
+
+  // Fault: a crash between the claim and the object delete orphans the tarball for good.
+  it("lets a later sweep finish a claim abandoned by a crash, once the claim expires", async () => {
+    const t = await setup();
+    try {
+      await t.pin(C("a"));
+      t.objects.set(t.key(C("a")), new Uint8Array(1));
+      await t.repository.recordObject("org_acme1", C("c"));
+      t.objects.set(t.key(C("c")), new Uint8Array(1));
+      t.advance(120);
+      // The crash: c is claimed, and neither its object nor its row is deleted.
+      expect((await t.repository.claimUnreferencedObjects("org_acme1", new Date(Date.parse("2026-11-12T13:00:00.000Z")))).map(claim => claim.commit)).toEqual([C("c")]);
+      t.advance(5);
+      const sweeper = t.service();
+      await sweeper.syncAll();
+      expect(t.objects.has(t.key(C("c")))).toBe(true);
+      t.advance(11);
+      await sweeper.syncAll();
+      expect(t.objects.has(t.key(C("c")))).toBe(false);
+      expect(await t.rows()).toEqual([C("a")]);
+      expect(t.objects.has(t.key(C("a")))).toBe(true);
+      await sweeper.stop();
+    } finally {
+      await t.db.destroy();
+    }
+  });
+
+  it("does not delete a claimed commit that is re-pinned before its object is deleted", async () => {
+    const t = await setup();
+    try {
+      await t.pin(C("a"));
+      t.objects.set(t.key(C("a")), new Uint8Array(1));
+      await t.repository.recordObject("org_acme1", C("c"));
+      t.objects.set(t.key(C("c")), new Uint8Array(1));
+      t.advance(120);
+      const racing = { ...t.repository, claimUnreferencedObjects: async (...args: Parameters<typeof t.repository.claimUnreferencedObjects>) => {
+        const claims = await t.repository.claimUnreferencedObjects(...args);
+        await t.pin(C("c")); // another instance rolls back to c after the claim
+        return claims;
+      } };
+      const sweeper = t.service(racing);
+      await sweeper.syncAll();
+      expect(t.objects.has(t.key(C("c")))).toBe(true);
+      expect(await t.rows()).toEqual([C("a"), C("c")]);
+      await sweeper.stop();
+    } finally {
+      await t.db.destroy();
     }
   });
 });

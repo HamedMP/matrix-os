@@ -85,24 +85,25 @@ export function createCoreRepoSyncService(options: {
   /**
    * Deletes tarballs that are neither the current nor the previous pin,
    * including uploads whose pin write failed. Best effort: a failed delete
-   * restores its row and is retried by the next sweep.
+   * keeps its claim and is retried once the claim expires.
    */
   async function collectGarbage(organizationId: string): Promise<void> {
-    let commits: string[];
-    // The row is claimed (deleted) first; the object goes only after that, so a re-pin that refreshed the row is never touched.
-    try { commits = await options.repository.claimUnreferencedObjects(organizationId, new Date(now().getTime() - objectGraceMs)); }
+    let claims: Awaited<ReturnType<CoreRepoRepository["claimUnreferencedObjects"]>>;
+    // Claim, delete the object, then drop the row only if the claim still owns it.
+    // A crash or failed delete leaves the claim; a later sweep retakes it after its TTL.
+    try { claims = await options.repository.claimUnreferencedObjects(organizationId, new Date(now().getTime() - objectGraceMs)); }
     catch (error: unknown) {
       console.warn("[core-repo] retention claim failed", error instanceof Error ? error.name : "UnknownError");
       return;
     }
-    for (const commit of commits) {
+    for (const claim of claims) {
       try {
-        await options.store.deleteObject(coreRepoObjectKey(organizationId, commit), { signal: AbortSignal.timeout(STORE_TIMEOUT_MS) });
+        // A re-pin or re-upload after the claim clears it; then the object stays.
+        if (!(await options.repository.holdsObjectClaim(organizationId, claim))) continue;
+        await options.store.deleteObject(coreRepoObjectKey(organizationId, claim.commit), { signal: AbortSignal.timeout(STORE_TIMEOUT_MS) });
+        await options.repository.forgetClaimedObject(organizationId, claim);
       } catch (error: unknown) {
-        console.warn("[core-repo] tarball delete failed; retried next sweep", { organizationId, error: error instanceof Error ? error.name : "UnknownError" });
-        await options.repository.recordObject(organizationId, commit).catch((retry: unknown) => {
-          console.warn("[core-repo] retention row restore failed", retry instanceof Error ? retry.name : "UnknownError");
-        });
+        console.warn("[core-repo] tarball delete failed; claim kept for a later sweep", { organizationId, error: error instanceof Error ? error.name : "UnknownError" });
       }
     }
   }
