@@ -138,7 +138,8 @@ export function createTerminalAgents(options: {
       const settled = current.trim() !== "" && now() - screenSince >= SCREEN_SETTLE_MS;
       if (status === "idle" || status === "done" || (status === undefined && settled)) {
         try {
-          await options.verbs.send(ref, { text });
+          // The send's wait for a person's draft must also fit inside the launch deadline.
+          await options.verbs.send(ref, { text, maxHoldMs: Math.max(0, readyTimeoutMs - (now() - started)) });
           return { sent: true };
         } catch (error: unknown) {
           if (error instanceof TerminalAgentVerbError) {
