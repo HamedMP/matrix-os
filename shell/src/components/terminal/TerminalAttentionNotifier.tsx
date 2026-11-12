@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import {
+  retainTerminalAttention,
   terminalAttentionChanges,
   type TerminalAttention,
   type TerminalTabFacts,
@@ -27,7 +28,8 @@ const COPY: Record<TerminalAttention["kind"], string> = {
 
 function sameAlerts(left: TerminalAttention[], right: TerminalAttention[]): boolean {
   return left.length === right.length
-    && left.every((alert, index) => alert.key === right[index]!.key && alert.kind === right[index]!.kind && alert.message === right[index]!.message);
+    && left.every((alert, index) => alert.key === right[index]!.key && alert.kind === right[index]!.kind
+      && alert.name === right[index]!.name && alert.message === right[index]!.message);
 }
 
 /**
@@ -57,20 +59,14 @@ export function TerminalAttentionNotifier() {
     if (!before) {
       // A fresh baseline: keep only alerts this snapshot still supports.
       setAlerts((current) => {
-        const kept = current.filter((alert) => {
-          const facts = next.get(alert.key);
-          return facts?.state === "live" && facts.agentStatus === alert.kind;
-        });
-        return kept.length === current.length ? current : kept;
+        const kept = retainTerminalAttention(current, next);
+        return sameAlerts(current, kept) ? current : kept;
       });
       return;
     }
     const changes = terminalAttentionChanges(before, next, visibleTerminalSessions());
     setAlerts((current) => {
-      const stillAlerting = current.filter((alert) => {
-        const facts = next.get(alert.key);
-        return facts?.state === "live" && facts.agentStatus === alert.kind;
-      });
+      const stillAlerting = retainTerminalAttention(current, next);
       const fresh = changes.filter((change) => !stillAlerting.some((alert) => alert.key === change.key));
       const updated = [...fresh, ...stillAlerting].slice(0, MAX_PENDING);
       // Unchanged alerts keep their array, so the done timeout is not restarted.
