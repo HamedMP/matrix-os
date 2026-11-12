@@ -2,7 +2,12 @@ import { z } from 'zod/v4';
 import { getUserMachine, type PlatformDB } from '../db.js';
 import { buildPlatformContainerRuntimeToken } from '../platform-token.js';
 import { createPgOwnerClusterAdmin } from './container-owner-cluster-admin.js';
-import { createContainerOwnerDatabases, type ContainerOwnerDatabases, type OwnerClusterAdmin } from './container-owner-database.js';
+import {
+  createContainerOwnerDatabases,
+  createOwnerDatabaseSizeSweeper,
+  type ContainerOwnerDatabases,
+  type OwnerClusterAdmin,
+} from './container-owner-database.js';
 import {
   CONTAINER_QUIESCE_TIMEOUT_MS,
   createContainerLifecycleService,
@@ -39,7 +44,8 @@ const FIELDS = {
   MATRIX_CONTAINER_OWNER_DB_RUNTIME_HOST: z.string().regex(/^[A-Za-z0-9.-]{1,253}$/),
   MATRIX_CONTAINER_OWNER_DB_RUNTIME_PORT: port(5432),
   MATRIX_CONTAINER_OWNER_DB_PASSWORD_SECRET: z.string().min(32),
-  MATRIX_CONTAINER_OWNER_DB_SIZE_LIMIT_BYTES: z.coerce.number().int().positive().default(1024 ** 3),
+  MATRIX_CONTAINER_OWNER_DB_SIZE_LIMIT_BYTES: z.coerce.number().int().positive().default(500 * 1000 ** 2),
+  MATRIX_CONTAINER_OWNER_DB_CONNECTION_LIMIT: z.coerce.number().int().min(1).max(20).default(5),
   /** Platform origin the runtime calls for registration and lifecycle reports. */
   MATRIX_CONTAINER_PLATFORM_URL: z.string().regex(/^https?:\/\/[A-Za-z0-9.-]+(:\d{1,5})?$/),
   PLATFORM_SECRET: z.string().min(32),
@@ -64,6 +70,7 @@ export interface ContainerSubstrateConfig {
     runtimePort: number;
     passwordSecret: string;
     sizeLimitBytes: number;
+    connectionLimit: number;
   };
   idle: { idleMs: number; maxSessionMs: number };
 }
@@ -104,6 +111,7 @@ export function loadContainerSubstrateConfig(env: NodeJS.ProcessEnv): ContainerS
         runtimePort: c.MATRIX_CONTAINER_OWNER_DB_RUNTIME_PORT,
         passwordSecret: c.MATRIX_CONTAINER_OWNER_DB_PASSWORD_SECRET,
         sizeLimitBytes: c.MATRIX_CONTAINER_OWNER_DB_SIZE_LIMIT_BYTES,
+        connectionLimit: c.MATRIX_CONTAINER_OWNER_DB_CONNECTION_LIMIT,
       },
       idle: { idleMs: c.MATRIX_CONTAINER_IDLE_STOP_MINUTES * 60_000, maxSessionMs: c.MATRIX_CONTAINER_MAX_SESSION_MINUTES * 60_000 },
     },
@@ -151,7 +159,9 @@ export function createConfiguredContainerSubstrate(deps: ConfiguredContainerSubs
     admin: deps.ownerClusterAdmin ?? pgAdmin!,
     passwordSecret: config.ownerDatabase.passwordSecret,
     sizeLimitBytes: config.ownerDatabase.sizeLimitBytes,
+    connectionLimit: config.ownerDatabase.connectionLimit,
   });
+  const sizeSweeper = createOwnerDatabaseSizeSweeper({ db: deps.db, ownerDatabases });
   const provider = createLambdaMicrovmsProvider({ api: microvmsApi, config: config.provider });
   const runtime = createContainerRuntimeClient({
     provider, platformSecret: config.platform.secret, endpointHostSuffix: config.provider.endpointHostSuffix,
@@ -209,9 +219,11 @@ export function createConfiguredContainerSubstrate(deps: ConfiguredContainerSubs
     startBackgroundWork() {
       reaper.start();
       reconciler.start();
+      sizeSweeper.start();
     },
     async shutdown() {
       activity.stopPeriodicFlush();
+      await sizeSweeper.shutdown();
       await reconciler.shutdown();
       await reaper.shutdown();
       await lifecycle.shutdown();

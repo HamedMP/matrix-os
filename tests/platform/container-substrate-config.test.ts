@@ -68,7 +68,7 @@ describe('container substrate configuration', () => {
         gatewayPort: 4000, endpointTokenMinutes: 30, endpointHostSuffix: '.on.aws',
         egressNetworkConnectors: [ENV.MATRIX_CONTAINER_EGRESS_CONNECTORS],
       },
-      ownerDatabase: { runtimeHost: 'owners.internal.example', runtimePort: 5432, sizeLimitBytes: 1024 ** 3 },
+      ownerDatabase: { runtimeHost: 'owners.internal.example', runtimePort: 5432, sizeLimitBytes: 500 * 1000 ** 2, connectionLimit: 5 },
       idle: { idleMs: 10 * 60_000, maxSessionMs: 4 * 60 * 60_000 },
     });
     expect(result.ok && result.config.provider.suspendedDurationSeconds).toBe(28_800);
@@ -138,7 +138,7 @@ describe('container substrate registration', () => {
       const configured = createConfiguredContainerSubstrate({ db, env: ENV, microvmsApi: fakeApi(), log })!;
       expect(vi.getTimerCount()).toBe(0);
       configured.startBackgroundWork();
-      expect(vi.getTimerCount()).toBe(2);
+      expect(vi.getTimerCount()).toBe(3);
       await configured.shutdown();
       expect(vi.getTimerCount()).toBe(0);
     } finally {
