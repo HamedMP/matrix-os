@@ -400,6 +400,7 @@ function ChatAppContent({
   const [deletedChatIds, setDeletedChatIds] = useState<readonly string[]>([]);
   const [archiveUndo, setArchiveUndo] = useState<{ chats: Array<{ chatId: string; revision: number }>; label: string } | null>(null);
   const [archivesOpen, setArchivesOpen] = useState(false);
+  const [searchRefreshVersion, setSearchRefreshVersion] = useState(0);
   useEffect(() => {
     if (!archiveUndo) return;
     const timer = window.setTimeout(() => setArchiveUndo(null), 6_000);
@@ -534,7 +535,7 @@ function ChatAppContent({
   const railOrder = useWebChatRailOrder(ordinaryConversations,agentClient);
   const orderedConversations = mobile ? ordinaryConversations : railOrder.chats;
   const trimmedSearch = searchQuery.trim();
-  const searchKey = JSON.stringify([authorityKey, projectGatewayUrl, trimmedSearch]);
+  const searchKey = JSON.stringify([authorityKey, projectGatewayUrl, trimmedSearch, searchRefreshVersion]);
   const [serverSearch, setServerSearch] = useState<{ key: string; rows: SearchConversationMeta[]; loading: boolean; error: boolean; nextCursor?: string; loadingMore?: boolean; loadMoreError?: boolean }>({ key: "", rows: [], loading: false, error: false });
   useEffect(() => {
     if (!trimmedSearch || !searchConversations) return;
@@ -599,7 +600,7 @@ function ChatAppContent({
       if (!onRenameConversation || renamePending) return;
       setRenamePending(true);
       void onRenameConversation(conv.id, title).then((saved) => {
-        if (saved) setEditingChat(null);
+        if (saved) { setEditingChat(null); setSearchRefreshVersion(version => version + 1); }
       }).catch((error: unknown) => {
         console.warn("[chat] Rename failed:", error instanceof Error ? error.name : "UnknownError");
       }).finally(() => setRenamePending(false));
@@ -768,7 +769,7 @@ function ChatAppContent({
               listedChatIds={listedChatIds} scopeKey={railOrder.scopeKey} activeChatId={sessionId} activeChatTitle={activeConversationTitle}
               onSelectChat={onSwitchConversation} renderRow={renderRailRow} onBack={() => setProjectFocus(null)} onOpenHome={mobile ? undefined : () => openProjectHome(focusedProject)} mobile={mobile}
               unreadOnly={unreadOnly} sourceFilter={sourceFilter} searchQuery={searchQuery} onArchiveProject={onArchiveProjectChats ? archiveProject : undefined} loadNavigationPage={loadNavigationPage}/> : <>
-            <WebChatLifecycleGroups conversations={listedConversations} scopeKey={railOrder.scopeKey} navigationUpdatedAt={navigationUpdatedAt} loadPage={loadNavigationPage} excludedChatIds={deletedChatIds} attentionCount={botSummaries.conversations.filter(bot => bot.pendingApprovalCount > 0).length}
+            <WebChatLifecycleGroups conversations={listedConversations} scopeKey={railOrder.scopeKey} navigationUpdatedAt={navigationUpdatedAt} loadPage={loadNavigationPage} excludedChatIds={deletedChatIds} sourceFilter={sourceFilter} attentionCount={botSummaries.conversations.filter(bot => bot.pendingApprovalCount > 0).length}
               projects={<><WebProjectsNav key={authorityKey ?? projectGatewayUrl} state={webProjects} gatewayUrl={projectGatewayUrl}
                 chats={visibleConversations} listedChatIds={listedChatIds} activeChatId={sessionId} activeChatTitle={activeConversationTitle}
                 onSelectChat={onSwitchConversation} onFocusProject={openProjectHome} renderChat={renderConversationRow} mobile={mobile} unreadOnly={unreadOnly}
@@ -788,7 +789,11 @@ function ChatAppContent({
         </ScrollArea>
         <DeleteChatDialog {...deleteChat.dialog} />
         {onListArchivedConversations && onRestoreConversation && onDeleteConversation ? <ArchivedChatsDialog open={archivesOpen} onClose={() => setArchivesOpen(false)}
-          list={onListArchivedConversations} restore={onRestoreConversation} remove={onDeleteConversation}/> : null}
+          list={onListArchivedConversations} restore={async (chatId, revision) => {
+            const restored = await onRestoreConversation(chatId, revision);
+            if (restored) { setDeletedChatIds(current => current.filter(id => id !== chatId)); setSearchRefreshVersion(version => version + 1); }
+            return restored;
+          }} remove={onDeleteConversation}/> : null}
       </aside></ChatRailOrderContext.Provider>
 
       {/* Main content */}
@@ -828,7 +833,7 @@ function ChatAppContent({
                       if (!sessionId || !onRenameConversation || renamePending) return;
                       setRenamePending(true);
                       void onRenameConversation(sessionId, title).then((saved) => {
-                        if (saved) setEditingChat(null);
+                        if (saved) { setEditingChat(null); setSearchRefreshVersion(version => version + 1); }
                       }).catch((error: unknown) => {
                         console.warn("[chat] Rename failed:", error instanceof Error ? error.name : "UnknownError");
                       }).finally(() => setRenamePending(false));
@@ -1043,6 +1048,8 @@ function ChatAppContent({
         onFilePathChange={path => setPreviewFile(path ? { chatId: sessionId, path } : null)} terminalSessionIds={terminalSessionIds}
         sideChatClient={sideChatClient} onSendToMain={text => { composer.setText(text); rootRef.current?.querySelector<HTMLTextAreaElement>("[data-slot=chat-composer] textarea")?.focus(); }}
         onClose={() => setInspectorOpen(false)} /> : null}
+      {previewFile && previewFile.chatId === sessionId && (mobile || !sideChatClient || !inspectorOpen || collaborationView)
+        ? <ChatFilePanel path={previewFile.path} gatewayUrl={projectGatewayUrl} onClose={() => setPreviewFile(null)} /> : null}
       </ChatAgentsContent></BotModelRecoveryProvider>
     </div>
   );
