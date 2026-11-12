@@ -468,7 +468,7 @@ export async function createSharedAiRuntime(options: {
     const catalog = await options.providerCatalog.getCatalog({ userId: ownerId, source: "jwt" });
     const validated = validateChatProviderSelection({
       catalog,
-      selection: currentSelection,
+      selection: catalogChatSelectionForOwnerAuthority(decision, currentSelection),
       requirements: SHARED_RUN_SELECTION_REQUIREMENTS,
     });
     if (!validated.ok || (validated.instance.driverKind !== driverKind
@@ -836,6 +836,21 @@ export function canonicalChatSelectionForOwnerAuthority(
     : selection === null
       ? null
       : CanonicalChatModelSelectionSchema.parse({ ...selection, model: decision.modelId });
+}
+
+/**
+ * Standalone Chats retain their immutable shared-run binding, whose instance
+ * ID identifies the isolated adapter rather than a provider-catalog entry.
+ * Translate only the catalog lookup; the caller still returns and persists the
+ * original binding selection.
+ */
+export function catalogChatSelectionForOwnerAuthority(
+  decision: SharedRunOwnerSourceDecision,
+  selection: CanonicalChatModelSelection,
+): CanonicalChatModelSelection {
+  return decision.authorityKind === "standalone_policy"
+    ? executableChatSelectionForOwnerRoute(decision)
+    : selection;
 }
 
 export function sharedDispatchFenceMatches(

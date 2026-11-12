@@ -11,6 +11,7 @@ import {
   createSharedAiApprovalReconciler,
   createSharedAiCancellationDispatcher,
   createSharedChatSandboxManifest,
+  catalogChatSelectionForOwnerAuthority,
   canonicalChatSelectionForOwnerAuthority,
   executableChatSelectionForOwnerRoute,
   recoverSharedAiQueue,
@@ -98,6 +99,32 @@ describe("current owner route dispatch fence", () => {
       model: "claude-sonnet-5",
     });
     expect(canonicalChatSelectionForOwnerAuthority(standalonePolicy, null)).toBeNull();
+  });
+
+  it("validates a standalone Claude binding through its executable catalog instance without rewriting it", () => {
+    const providerRoute = resolveCurrentOwnerRoute(
+      currentRouteSnapshot(3),
+      Date.parse("2026-08-29T21:00:01.000Z"),
+    );
+    expect(providerRoute).not.toBeNull();
+    const standalonePolicy = {
+      ...providerRoute!,
+      authorityKind: "standalone_policy" as const,
+      providerInstanceId: "claude_shared",
+    };
+    const boundSelection = canonicalChatSelectionForOwnerAuthority(standalonePolicy, {
+      instanceId: "claude_shared",
+      model: "claude-opus-5",
+    });
+
+    expect(boundSelection).toEqual({
+      instanceId: "claude_shared",
+      model: "claude-sonnet-5",
+    });
+    expect(catalogChatSelectionForOwnerAuthority(standalonePolicy, boundSelection!)).toEqual({
+      instanceId: "claude_code_default",
+      model: "claude-sonnet-5",
+    });
   });
 
   it("keeps cosmetic Settings revisions as provenance without changing execution authority", () => {
