@@ -1,9 +1,10 @@
-import { McpServerDiagnostics } from "@matrix-os/ui";
+import { McpConnectionInventory, McpServerDiagnostics, RemoteMcpPresetPicker, customMcpErrorMessage } from "@matrix-os/ui";
 import { Server } from "@renderer/lib/hugeicons";
 import { CUSTOM_MCP_UNAVAILABLE, CUSTOM_MCP_UNAVAILABLE_MESSAGE, rebaseCustomMcpPolicy } from "@matrix-os/contracts";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { AppError } from "../../../../shared/app-error";
 import { useConnection } from "../../stores/connection";
+import { useRemoteMcpPresets } from "./use-remote-mcp-presets";
 
 type AuthMode = "none" | "oauth" | "bearer" | "api_key";
 interface Tool { name: string; description: string; inputSchema: unknown; approval: "always_ask" | "allow"; enabled: boolean }
@@ -13,9 +14,17 @@ function findMcpServer(servers: McpServer[], serverId: string): McpServer | unde
   return servers.find((server) => server.id === serverId);
 }
 
+function presetErrorMessage(error: unknown): string {
+  return error instanceof AppError
+    ? customMcpErrorMessage(error.httpStatus ?? 0, { code: error.detail })
+    : "The MCP operation failed. Check the server status and try again.";
+}
+
 export function McpServersSection() {
   const api = useConnection((state) => state.api);
   const [servers, setServers] = useState<McpServer[]>([]);
+  const { presets, catalogState, loadCatalog, inventoryFor } = useRemoteMcpPresets(api);
+  const [connectingPreset, setConnectingPreset] = useState<string | null>(null);
   const serversRef = useRef<McpServer[]>([]);
   const saveGenerationsRef = useRef<Record<string, number>>({});
   const saveWorkersRef = useRef<Partial<Record<string, Promise<void>>>>({});
@@ -55,6 +64,23 @@ export function McpServersSection() {
     });
   }, [load]);
   useEffect(() => { retryLoad(); }, [retryLoad]);
+  async function connectPreset(presetId: string) {
+    if (!api) return;
+    setBusy(true); setConnectingPreset(presetId); setError(null);
+    try {
+      const created = await api.post<McpServer>("/api/mcp-servers", { catalogId: presetId });
+      if (created.authMode === "oauth") {
+        const connected = await api.post<{ url: string }>(`/api/mcp-servers/${created.id}/connect`, {});
+        window.open(connected.url, "_blank", "noopener,noreferrer");
+      }
+      await load();
+    } catch (connectError: unknown) {
+      console.warn("[custom-mcp] preset connect failed:", connectError instanceof AppError ? connectError.httpStatus : connectError instanceof Error ? connectError.name : typeof connectError);
+      setError(presetErrorMessage(connectError));
+    } finally {
+      setBusy(false); setConnectingPreset(null);
+    }
+  }
 
   async function run(operation: () => Promise<unknown>) {
     if (!api) return;
@@ -186,7 +212,10 @@ export function McpServersSection() {
     ) : null}
     {loading ? <p role="status" className="text-sm" style={{ color: "var(--text-tertiary)" }}>Loading MCP servers…</p> : null}
     <fieldset disabled={!loaded || loading || !api || diagnosing} className="min-w-0 space-y-5">
+    <RemoteMcpPresetPicker presets={presets} state={catalogState} connectedUrls={servers.map((server) => server.url)}
+      connectingId={connectingPreset} disabled={busy} onConnect={(presetId) => { void connectPreset(presetId); }} onRetry={loadCatalog} />
     <div className="grid grid-cols-2 gap-2 rounded-xl border p-4" style={{ borderColor: "var(--border-subtle)", background: "var(--bg-surface)" }}>
+      <p className="col-span-2 text-sm font-medium" style={{ color: "var(--text-primary)" }}>Paste any MCP server URL</p>
       <input aria-label="MCP server name" value={name} onChange={(event) => setName(event.target.value)} placeholder="Server name" className="rounded-lg border bg-transparent px-3 py-2 text-sm" />
       <input aria-label="MCP server URL" value={url} onChange={(event) => setUrl(event.target.value)} placeholder="https://example.com/mcp" maxLength={2048} className="rounded-lg border bg-transparent px-3 py-2 text-sm" />
       <select aria-label="Authentication mode" value={authMode} onChange={(event) => setAuthMode(event.target.value as AuthMode)} className="rounded-lg border bg-transparent px-3 py-2 text-sm"><option value="oauth">MCP OAuth</option><option value="none">No authentication</option><option value="bearer">Bearer token</option><option value="api_key">X-API-Key</option></select>
@@ -194,16 +223,25 @@ export function McpServersSection() {
       <button type="button" disabled={!api || busy || !name.trim() || !url.trim()} onClick={add} className="rounded-lg bg-blue-600 px-3 py-2 text-sm text-white disabled:opacity-50">Add MCP server</button>
     </div>
     {!api ? <p className="text-sm" style={{ color: "var(--text-tertiary)" }}>Connect a Matrix computer to manage MCP servers.</p> : null}
-    {api && loaded && servers.length === 0 && !error ? <div className="rounded-xl border border-dashed p-6 text-center" style={{ borderColor: "var(--border-subtle)", background: "var(--bg-surface)" }}><p className="text-sm font-medium" style={{ color: "var(--text-primary)" }}>No personal MCP servers yet</p><p className="mt-1 text-sm" style={{ color: "var(--text-tertiary)" }}>Add a remote HTTPS server above to discover and approve its tools.</p></div> : null}
-    <div className="space-y-3">{servers.map((server) => <article key={server.id} className="rounded-xl border p-4" style={{ borderColor: "var(--border-subtle)", background: "var(--bg-surface)" }}>
-      <div className="flex items-center justify-between gap-3"><div><p className="text-sm font-medium">{server.name}</p><p className="text-xs" style={{ color: "var(--text-tertiary)" }}>{server.status} · {server.authMode} · revision {server.revision}</p></div><div className="flex gap-2">
-        {server.authMode === "oauth" && server.status === "auth_required" ? <button type="button" className="text-xs underline" onClick={() => run(async () => { const result = await api!.post<{ url: string }>(`/api/mcp-servers/${server.id}/connect`, {}); window.open(result.url, "_blank", "noopener,noreferrer"); })}>Authorize</button> : null}
-        <button type="button" className="text-xs text-red-400 underline" onClick={() => run(() => api!.delete(`/api/mcp-servers/${server.id}`))}>Remove</button>
-      </div></div>
+    {api && loaded && !error ? <McpConnectionInventory
+      entries={inventoryFor(servers)}
+      renderActions={(entry) => {
+        const server = findMcpServer(servers, entry.id);
+        if (!server) return null;
+        return <>
+          {server.authMode === "oauth" && server.status === "auth_required" ? <button type="button" className="text-xs underline" onClick={() => run(async () => { const result = await api!.post<{ url: string }>(`/api/mcp-servers/${server.id}/connect`, {}); window.open(result.url, "_blank", "noopener,noreferrer"); })}>Authorize</button> : null}
+          <button type="button" className="text-xs text-red-400 underline" onClick={() => run(() => api!.delete(`/api/mcp-servers/${server.id}`))}>Remove</button>
+        </>;
+      }}
+      renderDetails={(entry) => {
+        const server = findMcpServer(servers, entry.id);
+        if (!server) return null;
+        return <>
       <McpServerDiagnostics disabled={busy || !api} onPendingChange={setDiagnosing} onDiscovered={load}
         request={(action) => api!.post(`/api/mcp-servers/${server.id}/${action}`, {}, { timeoutMs: 30_000 })} />
       {server.tools.length ? <div className="mt-3 space-y-2">{server.tools.map((tool) => <div key={tool.name} className="flex items-center gap-3 text-xs"><label className="flex items-center gap-2"><input type="checkbox" checked={tool.enabled} onChange={(event) => queuePolicyUpdate(server.id, (current) => ({ ...current, tools: current.tools.map((candidate) => candidate.name === tool.name ? { ...candidate, enabled: event.target.checked } : candidate) }))} />{tool.name}</label>{tool.description ? <span className="min-w-0 flex-1 truncate" title={tool.description} style={{ color: "var(--text-tertiary)" }}>{tool.description}</span> : null}<select aria-label={`${tool.name} approval`} value={tool.approval} onChange={(event) => queuePolicyUpdate(server.id, (current) => ({ ...current, tools: current.tools.map((candidate) => candidate.name === tool.name ? { ...candidate, approval: event.target.value as Tool["approval"] } : candidate) }))} className="rounded border bg-transparent px-2 py-1"><option value="always_ask">Always ask</option><option value="allow">Allow</option></select></div>)}<button type="button" disabled={!server.tools.some((tool) => tool.enabled)} onClick={() => queuePolicyUpdate(server.id, (current) => ({ ...current, enabled: !current.enabled }))} className="rounded border px-3 py-1 text-xs disabled:opacity-50">{server.enabled ? "Disable" : "Enable"}</button></div> : null}
-    </article>)}</div>
+        </>;
+      }} /> : null}
     </fieldset>
   </div>;
 }

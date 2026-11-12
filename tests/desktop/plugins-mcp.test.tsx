@@ -7,10 +7,19 @@ import { useConnection } from "../../desktop/src/renderer/src/stores/connection"
 import { createApiClient } from "../../desktop/src/renderer/src/lib/api";
 import type { ApiClient } from "../../desktop/src/renderer/src/lib/api";
 
+/** The section also reads the preset catalog and legacy connected apps; route those away from the server-list sequence. */
+function routeServerList(api: ApiClient, ...lists: unknown[]) {
+  vi.mocked(api.get).mockImplementation(async (path: string) => {
+    if (path === "/api/mcp-servers/catalog") return { presets: [] } as never;
+    if (path !== "/api/mcp-servers") return [] as never;
+    return (lists.length > 1 ? lists.shift() : lists[0]) as never;
+  });
+}
+
 function makeApi() {
   return {
     baseUrl: "https://app.matrix-os.com",
-    get: vi.fn(async () => []),
+    get: vi.fn(async (path: string) => path === "/api/mcp-servers/catalog" ? { presets: [] } : []),
     post: vi.fn(async () => ({
       id: "6bc45f4b-cf18-43ac-a424-c199a43511f4",
       name: "Research",
@@ -36,9 +45,13 @@ describe("desktop Custom MCP management", () => {
 
   it("keeps the session and form values while unavailable, then recovers on retry", async () => {
     const onUnauthorized = vi.fn();
-    const fetchFn = vi.fn()
-      .mockResolvedValueOnce(Response.json({ error: "custom_mcp_unavailable" }, { status: 503 }))
-      .mockResolvedValueOnce(Response.json([]));
+    const listResponses = [Response.json({ error: "custom_mcp_unavailable" }, { status: 503 }), Response.json([])];
+    const fetchFn = vi.fn(async (input: unknown) => {
+      const path = new URL(String(input)).pathname;
+      if (path.endsWith("/api/mcp-servers/catalog")) return Response.json({ presets: [] });
+      if (path.endsWith("/api/mcp-servers")) return listResponses.shift()!;
+      return Response.json([]);
+    });
     const api = createApiClient({ baseUrl: "https://app.matrix-os.com", getRuntimeSlot: () => "primary", fetchFn, onUnauthorized });
     useConnection.setState({ api });
     render(<McpServersSection />);
@@ -57,7 +70,7 @@ describe("desktop Custom MCP management", () => {
   it("loads the platform-brokered list and renders the add flow", async () => {
     render(<McpServersSection />);
     expect(screen.getByRole("button", { name: "Add MCP server" })).not.toBeNull();
-    expect(await screen.findByText("No personal MCP servers yet")).not.toBeNull();
+    expect(await screen.findByText("No connections yet")).not.toBeNull();
     await waitFor(() => expect(useConnection.getState().api!.get).toHaveBeenCalledWith("/api/mcp-servers"));
   });
 
@@ -101,7 +114,7 @@ describe("desktop Custom MCP management", () => {
       ],
     };
     const api = makeApi();
-    vi.mocked(api.get).mockResolvedValue([server] as never);
+    routeServerList(api, [server]);
     vi.mocked(api.patch).mockImplementation(async (_path, body) => {
       if (revision === 1) await firstPatchGate;
       revision += 1;
@@ -138,9 +151,7 @@ describe("desktop Custom MCP management", () => {
     };
     const authoritative = { ...server, revision: 2 };
     const api = makeApi();
-    vi.mocked(api.get)
-      .mockResolvedValueOnce([server] as never)
-      .mockResolvedValueOnce([authoritative] as never);
+    routeServerList(api, [server], [authoritative]);
     vi.mocked(api.patch)
       .mockRejectedValueOnce(new Error("revision conflict"))
       .mockImplementationOnce(async (_path, body) => ({ ...authoritative, ...(body as object), revision: 3 }) as never);
@@ -173,9 +184,7 @@ describe("desktop Custom MCP management", () => {
     };
     const authoritative = { ...server, revision: 2 };
     const api = makeApi();
-    vi.mocked(api.get)
-      .mockResolvedValueOnce([server] as never)
-      .mockResolvedValueOnce([authoritative] as never);
+    routeServerList(api, [server], [authoritative]);
     vi.mocked(api.patch).mockImplementation(async (_path, body) => {
       const attempt = vi.mocked(api.patch).mock.calls.length;
       if (attempt === 1) throw new Error("revision conflict");
