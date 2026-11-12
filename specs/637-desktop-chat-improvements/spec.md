@@ -44,5 +44,6 @@ The chat routes mount inside the authenticated Gateway app; navigation paging us
 ## Verification
 
 - Red/green production-boundary tests cover owner isolation, revision conflicts, active runs, bulk skip/Undo, search beyond 1,000 chats, independent paging, duplicate placements, read-only side-chat policy, and terminal close.
+- Publish the separate public documentation PR in `FinnaAI/matrix-os-site` under `content/docs/`, covering archive, search, and Side chat instructions: [site PR #354](https://github.com/FinnaAI/matrix-os-site/pull/354).
 - Validate exact build in live Electron and Web Desktop at normal and narrow widths in light and dark themes. Attach distinct captures for both surfaces to each affected PR and Slack `#tech`, with exact commit/build and fixture limitations.
 - CI and Greptile must pass before merge. Product/design/engineering owners should review the substantial behavior and visual changes.
