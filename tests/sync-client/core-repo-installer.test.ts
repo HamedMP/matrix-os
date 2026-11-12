@@ -235,6 +235,24 @@ describe("Matrix Core repo installer", () => {
     expect(JSON.parse(readFileSync(lock, "utf8")).token).toBe("someone-else");
   });
 
+  // Fault: a timer installed with the VPS machine credential cannot load it at run time and falls back to CLI login.
+  it("schedules machine-credential runs to reload the protected host env file, with no secret in the unit", async () => {
+    const { loadCoreRepoMachineCredential } = await import("../../packages/sync-client/src/cli/commands/core.js");
+    const secret = "platform-verification-token-0123456789";
+    const linux = coreSyncTimerFiles({ platform: "linux", home: "/home/matrix", node: "/usr/bin/node", launcher: "/opt/matrix/bin/matrix.mjs",
+      machine: true, env: { MATRIX_CORE_ROOT: "/home/matrix/.local/share/matrix-core" } });
+    expect(linux[0]!.content).toContain('ExecStart="/usr/bin/node" "/opt/matrix/bin/matrix.mjs" "core" "sync" "--machine"');
+    expect(linux[0]!.content).not.toContain("--profile");
+    expect(JSON.stringify(linux)).not.toMatch(new RegExp(`${secret}|UPGRADE_TOKEN|Bearer`));
+
+    const hostEnv = join(root, "host.env");
+    writeFileSync(hostEnv, `# managed\nMATRIX_HANDLE=alice\nMATRIX_FUNDED_AI_ENABLED=1\nPLATFORM_INTERNAL_URL="https://platform.internal"\nUPGRADE_TOKEN='${secret}'\n`);
+    expect(await loadCoreRepoMachineCredential(hostEnv)).toEqual({ handle: "alice", token: secret, platformUrl: "https://platform.internal" });
+    writeFileSync(hostEnv, "MATRIX_HANDLE=alice\n");
+    await expect(loadCoreRepoMachineCredential(hostEnv)).rejects.toMatchObject({ code: "machine_credential_unavailable" });
+    await expect(loadCoreRepoMachineCredential(join(root, "missing.env"))).rejects.toMatchObject({ code: "machine_credential_unavailable" });
+  });
+
   // Fault: the timer runs the TS source without the tsx loader, or without the profile and settings the manual run used.
   it("writes hourly timer units that run the published launcher with the same profile and settings", async () => {
     const { resolveCoreSyncLauncher } = await import("../../packages/sync-client/src/cli/commands/core.js");
