@@ -390,3 +390,16 @@ describe("terminal agents: registry capacity and child baselines", () => {
       .resolves.toEqual({ reason: "none" });
   });
 });
+
+// Fault detected (seventh review of #3298): a launch whose agent record could not be
+// saved left the helper running with no parent or cleanup.
+describe("terminal agents: failed registration", () => {
+  it("ends the new tab and reports the failure when its record cannot be saved", async () => {
+    const h = await harness();
+    vi.spyOn(h.registry, "upsert").mockRejectedValueOnce(new Error("disk full"));
+    await expect(h.agents.run({ name: "review", cwd: "", argv: ["sh"], parent: { workspaceId, tabId: parentId } }))
+      .rejects.toThrow("disk full");
+    expect(h.terminated).toHaveLength(1);
+    expect(h.createdCommands).toHaveLength(1);
+  });
+});
