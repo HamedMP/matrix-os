@@ -94,6 +94,27 @@ describe("WhatsApp general Matrix agent client", () => {
     await expect(client.start(input)).rejects.toMatchObject({ code: "unavailable" });
     expect(calls.some((call) => call.url.endsWith("/turns"))).toBe(false);
   });
+  it.each([true, false])("uses only Matrix AI Gateway for a fresh Chat even when another Matrix Pi account is ready (Gateway ready: %s)", async (gatewayReady) => {
+    const matrix = catalog("matrix_pi", "system_agent");
+    const gatewaySelection = { ...selection, instanceId: "matrix_pi_default" };
+    const ownKey = { ...matrix.instances[0]!, id: "matrix_pi_personal",
+      defaultSelection: { ...selection, instanceId: "matrix_pi_personal" } };
+    const { defaultSelection: _default, ...gatewayBase } = matrix.instances[0]!;
+    const gateway = { ...gatewayBase, id: "matrix_pi_default",
+      ...(gatewayReady ? { defaultSelection: gatewaySelection } : {}),
+      availability: gatewayReady ? "available" : "unavailable" };
+    const fresh = detail();
+    const { currentSelection: _saved, ...chat } = fresh.record.chat;
+    const { client, calls } = fixture({ detail: { ...fresh, record: { chat } },
+      catalog: { ...matrix, instances: [ownKey, gateway] } });
+    if (gatewayReady) {
+      await client.start(input);
+      expect(calls.find((call) => call.url.endsWith("/turns"))?.body?.selection).toEqual(gatewaySelection);
+    } else {
+      await expect(client.start(input)).rejects.toMatchObject({ code: "unavailable" });
+      expect(calls.some((call) => call.url.endsWith("/turns"))).toBe(false);
+    }
+  });
   it("keeps a bound unavailable Matrix Pi route closed even when another general agent is ready", async () => {
     const matrixPi = catalog("matrix_pi", "system_agent");
     const { defaultSelection: _default, ...instance } = matrixPi.instances[0]!;
@@ -303,9 +324,12 @@ describe("WhatsApp general Matrix agent client", () => {
   it("uses a ready default selection for a Chat without a saved model", async () => {
     const response = detail();
     const { currentSelection: _saved, ...chat } = response.record.chat;
-    const { client, calls } = fixture({ detail: { ...response, record: { chat } }, catalog: catalog("matrix_pi", "system_agent") });
+    const matrix = catalog("matrix_pi", "system_agent");
+    const gatewaySelection = { ...selection, instanceId: "matrix_pi_default" };
+    matrix.instances[0] = { ...matrix.instances[0]!, id: "matrix_pi_default", defaultSelection: gatewaySelection };
+    const { client, calls } = fixture({ detail: { ...response, record: { chat } }, catalog: matrix });
     await client.start(input);
-    expect(calls.find((call) => call.url.endsWith("/turns"))?.body?.selection).toEqual(selection);
+    expect(calls.find((call) => call.url.endsWith("/turns"))?.body?.selection).toEqual(gatewaySelection);
   });
   it("does not replay an existing turn whose first run is absent", async () => {
     const initial = fixture();

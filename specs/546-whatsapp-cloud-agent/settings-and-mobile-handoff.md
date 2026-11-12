@@ -8,11 +8,16 @@ owner's current WhatsApp consent, separately from the main computer's AI
 readiness. It never claims an AI account is ready based on a messaging link.
 Web Mobile uses a full-screen Settings list with Back navigation.
 
-New, unbound WhatsApp Chats use the Matrix-owned Pi agent from the live catalog.
-Its exact owner-authorized account or funded access source must be ready; an
-unavailable Matrix route does not silently fall back to Hermes. Existing saved
+New, unbound WhatsApp Chats use Matrix AI Gateway's `matrix_pi_default` system
+agent from the live catalog. Its funded route and model must be ready; an
+unavailable Gateway route does not silently fall back to Hermes or another
+Matrix Pi account. Existing saved
 agent selections, immutable provider bindings and in-flight admission receipts
-remain authoritative. Owners can change an ordinary Chat's selection in Matrix.
+remain authoritative. A provider binding cannot be rewritten in place. An
+explicitly authorized migration creates a fresh owner Chat with the Gateway
+selection and rebinds the same WhatsApp connection through the existing
+transactional compare-and-swap path only while its queue is idle. The previous
+Chat and history remain intact; other customers are not migrated implicitly.
 
 A failed WhatsApp run sends one link to its private Matrix Chat. The link opens
 Native Mobile on an installed iOS build with the association entitlement; the

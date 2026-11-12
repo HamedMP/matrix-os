@@ -6,6 +6,7 @@ import {
   CanonicalChatDetailResponseSchema, CanonicalChatTurnAdmissionResponseSchema,
   CanonicalCreateChatRequestSchema, CanonicalCreateChatTurnRequestSchema,
   CanonicalProviderCatalogSchema,
+  MATRIX_PI_CHAT_INSTANCE_ID,
   type CanonicalChatDetailResponse, type CanonicalChatRecord,
   type CanonicalProviderCatalog, type CanonicalChatModelSelection,
 } from "@matrix-os/contracts";
@@ -75,9 +76,11 @@ function selectRoute(catalog: CanonicalProviderCatalog, record: CanonicalChatRec
     && instance.availability === "available" && instance.connectionState !== "unavailable"
     && instance.connectionState !== "credit_required" && instance.supports.rootChat
     && instance.workspaceRequirement !== "project_required" && instance.supports.worktrees !== "required"
-    // A fresh WhatsApp Chat uses the Matrix-owned agent. Existing owner choices
+    // A fresh WhatsApp Chat uses Matrix AI Gateway. Existing owner choices
     // and immutable provider bindings remain authoritative for their Chat.
-    && (binding === undefined ? instance.driverKind === "matrix_pi" : binding === instance.id)
+    && (binding === undefined
+      ? instance.driverKind === "matrix_pi" && instance.id === MATRIX_PI_CHAT_INSTANCE_ID
+      : binding === instance.id)
   ));
   for (const instance of candidates) {
     const permissionMode = ["supervised", "read_only", "default", ...(allowFullAccess ? ["full_access"] : [])]
