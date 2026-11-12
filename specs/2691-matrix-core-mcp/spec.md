@@ -390,9 +390,24 @@ a generic 503, never a 404.
     (`MATRIX_AUTH_TOKEN` + `x-platform-user-id`), so any local process holding
     that bearer could self-approve. Explicit-VM shells call the platform route
     on the app origin instead.
-  - **Deferred.** Chat/notification UI for these approvals; `always_ask`
+  - **Deferred.** Mobile approval UI (see the owner approval screen below); `always_ask`
     calls from Codex, OpenCode, and Hermes runs still return
     `approval_required` (only Claude Code has a run-time approval hook).
+- **Owner approval screen (layer 7).** Settings → Integrations lists pending
+  external writes on Web Canvas, Web Desktop (shared shell Settings), and
+  Electron Desktop (MCP servers section), with Approve and Decline; the view
+  reloads only after the server confirms. The shell notification stack shows a
+  pill while any are pending, polling every 30 s (never under 15 s), paused
+  while the tab is hidden and refreshed when it returns. Each row shows
+  service, tool, request time, and expiry only: the owner route never returns
+  tool arguments or the client's name, so the screen does not invent them
+  (rows say "External MCP client"). Exposing a redacted argument summary or
+  the registered client name would be a contract change in the owner route.
+  Deferred: Native Mobile and Web Mobile approvals and an Electron Desktop
+  notification pill. Mobile needs its own push/notification path and
+  approval UI in `apps/mobile`, validated on a device, and is larger than
+  this layer; until then an external write from a phone-only owner waits
+  for a Web or Electron session and expires after 10 minutes.
 
 ## Failure modes and resources
 
