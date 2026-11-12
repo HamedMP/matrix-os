@@ -6,6 +6,7 @@ import { MANAGED_WORKERS_AI_MODEL_IDS, type AiProviderReadiness } from "@matrix-
 import { AiProviderService } from "../../packages/gateway/src/ai-providers/service.js";
 import { managedPiChatInstances } from "../../packages/gateway/src/chat/managed-chat-catalog.js";
 import { resolveManagedPiRoute } from "../../packages/gateway/src/bots/route-resolver.js";
+import { applyCanonicalComposerPreference, createCanonicalComposerSelection } from "../../packages/ui/src/canonical-composer-selection.js";
 import { deriveCanonicalProviderChoices } from "../../packages/ui/src/canonical-provider-choice.js";
 import { chatPickerModelAvailabilityLabel, deriveChatPickerModelRows } from "../../packages/ui/src/chat-picker-entries.js";
 
@@ -27,11 +28,17 @@ async function observe(readiness: AiProviderReadiness, readyIds: string[], polic
 const fresh: AiProviderReadiness = { state: "ready", checkedAt: now.toISOString(),
   staleAfter: new Date(+now + 30_000).toISOString(), action: "none", safeReason: null };
 
-it("offers full GLM and DeepSeek V4.1 as independent selections while keeping GLM Flash as default", async () => {
+it("defaults to DeepSeek V4.1 Flash for new managed Chats and preserves explicit full GLM selections", async () => {
   const ids = [glmFlash, glmFull, deepSeekV41];
   const snapshot = await observe(fresh, ids, ids);
   const instance = managedPiChatInstances(snapshot, +now)[0]!;
-  expect(instance.defaultSelection?.model).toBe(glmFlash);
+  expect(instance.defaultSelection?.model).toBe(deepSeekV41);
+  const catalog = { revision: "test", drivers: [], instances: [{ ...instance, catalogRevision: "test" }] };
+  const selection = createCanonicalComposerSelection(catalog);
+  expect(selection?.model).toBe(deepSeekV41);
+  expect(applyCanonicalComposerPreference(catalog, selection!, {
+    model: glmFull, options: [], permissionMode: "supervised",
+  }).model).toBe(glmFull);
   expect(instance.models).toEqual(expect.arrayContaining([
     expect.objectContaining({ id: glmFull, displayName: "GLM 5.3", availability: "available", supportsVision: false }),
     expect.objectContaining({ id: deepSeekV41, displayName: "DeepSeek V4.1 Flash", availability: "available", supportsVision: true }),
@@ -40,6 +47,13 @@ it("offers full GLM and DeepSeek V4.1 as independent selections while keeping GL
     .toMatchObject({ modelId: glmFull, input: ["text"] });
   expect(resolveManagedPiRoute(snapshot, { instanceId: instance.id, model: deepSeekV41 }, +now).route)
     .toMatchObject({ modelId: deepSeekV41, input: ["text", "image"] });
+});
+
+it("uses the ready full GLM model when the preferred DeepSeek route is unavailable", async () => {
+  const snapshot = await observe(fresh, [glmFull], [glmFull, deepSeekV41]);
+  const instance = managedPiChatInstances(snapshot, +now)[0]!;
+  expect(instance.defaultSelection?.model).toBe(glmFull);
+  expect(instance.models).toContainEqual(expect.objectContaining({ id: deepSeekV41, availability: "unavailable" }));
 });
 
 it("retains a policy-authorized unready Anthropic peer without borrowing Workers health or owner-key inventory", async () => {

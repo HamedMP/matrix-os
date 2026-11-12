@@ -109,9 +109,10 @@ settlement apply to either model.
 
 Preview acceptance verifies the exact selected model, stream completion,
 tool calls, supported image input, and a matching ledger debit at the model's
-reviewed rates. Compare observed quality and cost before selecting the default
-for the GLM 5.3 Flash retirement. The default selection and model retirement
-are separate rollout decisions.
+reviewed rates. DeepSeek V4.1 Flash is the preferred default for new managed
+Chats after Preview acceptance. When it is unavailable, the catalog uses its
+existing order of ready models. Explicit model selections, including full
+GLM 5.3, remain in place.
 
 [Cloudflare model and pricing evidence](https://developers.cloudflare.com/workers-ai/models/deepseek-v4.1-flash-1017/)
 
