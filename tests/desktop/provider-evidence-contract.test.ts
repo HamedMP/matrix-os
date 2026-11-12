@@ -2,6 +2,7 @@ import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "no
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { expect, it } from "vitest";
+import { parse } from "yaml";
 import { createEvidenceDirectory } from "../e2e/desktop/fixtures/evidence-directory";
 import { paintedContrast } from "../e2e/desktop/fixtures/contrast-pixels";
 
@@ -41,12 +42,19 @@ it("CI runs all provider Settings regressions and retains their captures at the 
 });
 it("installs the Chromium revision used by shell-scoped Settings tests before general E2E", () => {
   const ci = readFileSync(new URL("../../.github/workflows/ci.yml", import.meta.url), "utf8");
-  const e2e = ci.slice(ci.indexOf("  e2e:"));
-  const setup = e2e.slice(0, e2e.indexOf("- name: Run E2E tests"));
+  const steps = parse(ci).jobs.e2e.steps as { name?: string; run?: string }[];
+  const testIndex = steps.findIndex(step => step.name === "Run E2E tests");
+  expect(testIndex).toBeGreaterThan(-1);
   // Settings contrast resolves @playwright/test from shell, while terminal tests
   // use mcp-browser's separately locked Playwright. Both revisions are required.
-  expect(setup).toContain("pnpm --filter shell exec playwright install --with-deps chromium");
-  expect(setup).toContain("pnpm --filter @matrix-os/mcp-browser exec playwright install --with-deps chromium");
+  // select-runner.test.ts executes these commands for both runner environments;
+  // this contract preserves installation order without requiring apt on the pool.
+  for (const scope of ["shell", "@matrix-os/mcp-browser"]) {
+    const installIndex = steps.findIndex(step => step.run?.includes(`pnpm --filter ${scope} exec playwright install`));
+    expect(installIndex).toBeGreaterThan(-1);
+    expect(installIndex).toBeLessThan(testIndex);
+    expect(steps[installIndex].run).toMatch(/playwright install[^\n]*\bchromium\s*$/m);
+  }
 });
 it("measures complete disabled group opacity without claiming disabled WCAG conformance", () => {
   const opaque = [{ background: [0, 0, 0, 1], opacity: 1 }];

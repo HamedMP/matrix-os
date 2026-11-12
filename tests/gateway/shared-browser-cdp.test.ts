@@ -1,87 +1,15 @@
-import { EventEmitter } from 'node:events';
-import { mkdtemp, rm, writeFile, readFile } from 'node:fs/promises';
+import { mkdtemp, rm, readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createSharedBrowserCdpDriver } from '../../packages/gateway/src/shared-browser/cdp-driver.js';
+import { chrome, rig } from '../helpers/shared-browser-cdp.js';
 import { connectBrowserCdp } from '../../packages/gateway/src/shared-browser/cdp-client.js';
 import { validateBrowserUrl } from '../../packages/gateway/src/shared-browser/url-policy.js';
 
 const fixture = 'http://127.0.0.1:8730/invoices';
 const homes: string[] = [];
 afterEach(async () => { vi.restoreAllMocks(); await Promise.all(homes.splice(0).map(home => rm(home, { recursive: true, force: true }))); });
-function chrome() {
-  let url = 'about:blank', handoff = false, snapshotId = '', skip = '', created = 0, downloadPath = '', downloads = false, navigationError = false, missingCursor = false, globalPrimaryAttachEvent = false;
-  const missing = new Set<string>();
-  let lookupError: { code: number; message: string } | undefined;
-  let cursorError = { code: -32000, message: "Could not find object with given id" };
-  let recoveryError = false;
-  const original = Buffer.from('%PDF-1.4\noriginal CDP invoice fixture\n%%EOF');
-  const messages: any[] = [];
-  class Socket extends EventEmitter {
-    readyState = 1;
-    constructor() { super(); queueMicrotask(() => this.emit('open')); }
-    send(data: string) {
-      const packet = JSON.parse(data); messages.push(packet);
-      if (packet.method === skip) return;
-      if (['Target.getTargetInfo', 'Target.attachToTarget'].includes(packet.method) && (missing.has(packet.params.targetId) || lookupError)) {
-        queueMicrotask(() => this.emit('message', Buffer.from(JSON.stringify({ id: packet.id, error: lookupError ?? { code: -32602, message: 'No target with given id found' } }))));
-        return;
-      }
-      if (missingCursor && packet.method === 'Runtime.callFunctionOn' && packet.params.functionDeclaration.startsWith('function MATRIX_CLEAR_CURSOR')) {
-        queueMicrotask(() => this.emit('message', Buffer.from(JSON.stringify({ id: packet.id, error: cursorError }))));
-        return;
-      }
-      if (recoveryError && packet.method === 'Runtime.evaluate' && packet.params.expression.includes('MATRIX_CLEAR_CURSOR')) {
-        queueMicrotask(() => this.emit('message', Buffer.from(JSON.stringify({ id: packet.id, error: { code: -32000, message: 'private recovery failure' } }))));
-        return;
-      }
-      if (packet.method === 'Browser.setDownloadBehavior') downloadPath = packet.params.downloadPath ?? '';
-      let result: any = {};
-      if (packet.method === 'Target.createTarget') result = { targetId: ++created === 1 ? 'agent-tab' : `agent-tab-${created}` };
-      if (packet.method === 'Target.attachToTarget') result = { sessionId: 'agent-session' };
-      if (packet.method === 'Target.getTargetInfo') result = { targetInfo: { targetId: packet.params.targetId, type: 'page', url, title: 'Invoices' } };
-      if (packet.method === 'Page.navigate') { url = packet.params.url; result = navigationError ? { errorText: 'net::ERR_CONNECTION_REFUSED' } : { frameId: 'agent-frame' }; }
-      if (packet.method === 'Page.getFrameTree') result = { frameTree: { frame: { id: 'agent-frame', url } } };
-      if (packet.method === 'Page.createIsolatedWorld') result = { executionContextId: 9 };
-      if (packet.method === 'Runtime.evaluate') result = packet.params.expression.includes('MATRIX_CLEAR_CURSOR') ? {result:{value:{ok:true}}} : { result: { objectId: 'document-handle' } };
-      if (packet.method === 'Runtime.callFunctionOn') {
-        const args = packet.params.arguments.map((entry: any) => entry.value);
-        if (packet.params.functionDeclaration.includes('MATRIX_SNAPSHOT')) {
-          snapshotId = args[0]; result = { result: { value: handoff ? { handoff: true } : { content: 'Two invoices', title: 'Invoices', elements: [{ ref: 'r1', role: 'link', name: 'Original invoice' }] } } };
-        } else result = { result: { value: { ok: true, href: fixture + '/original.pdf', observation: snapshotId } } };
-      }
-      const shouldDownload = downloads && downloadPath && packet.method === 'Runtime.callFunctionOn' && packet.params.arguments[2]?.value === 'click';
-      queueMicrotask(async () => {
-        if (globalPrimaryAttachEvent && packet.method === 'Target.attachToTarget') {
-          this.emit('message', Buffer.from(JSON.stringify({ method: 'Target.attachedToTarget', params: {
-            sessionId: result.sessionId, waitingForDebugger: false,
-            targetInfo: { targetId: packet.params.targetId, type: 'page', url },
-          } })));
-        }
-        if (packet.method === 'Target.detachFromTarget') this.emit('message', Buffer.from(JSON.stringify({ method: 'Target.detachedFromTarget', params: { sessionId: packet.params.sessionId } })));
-        if (shouldDownload) {
-          await writeFile(join(downloadPath, 'cdp-invoice-guid'), original);
-          this.emit('message', Buffer.from(JSON.stringify({ method: 'Browser.downloadWillBegin', params: { frameId: 'agent-frame', guid: 'cdp-invoice-guid', url: fixture + '/original.pdf' } })));
-          this.emit('message', Buffer.from(JSON.stringify({ method: 'Browser.downloadProgress', params: { guid: 'cdp-invoice-guid', receivedBytes: original.length, totalBytes: original.length, state: 'completed' } })));
-        }
-        this.emit('message', Buffer.from(JSON.stringify({ id: packet.id, result })));
-      });
-    }
-    close() { this.readyState = 3; this.emit('close'); }
-  }
-  let socket: Socket;
-  const fetcher = vi.fn(async () => Response.json({ webSocketDebuggerUrl: 'ws://127.0.0.1:9222/devtools/browser/test-123' }));
-  return { messages, fetcher, socketFactory: () => (socket = new Socket()), raw: (value: unknown) => socket.emit('message', Buffer.from(typeof value === 'string' ? value : JSON.stringify(value))), event: (method: string, params = {}, sessionId = 'agent-session') => socket.emit('message', Buffer.from(JSON.stringify({ method, params, sessionId }))),
-    emitPrimaryAttachBeforeAck() { globalPrimaryAttachEvent = true; },
-    setUrl(value: string) { url = value; }, setHandoff(value: boolean) { handoff = value; }, skip(value: string) { skip = value; }, enableDownloads() { downloads = true; return original; },
-    closeTarget(id: string) { missing.add(id); }, failLookup(error?: { code: number; message: string }) { lookupError = error; }, failNavigation() { navigationError = true; }, failCursor(error?: { code: number; message: string }) { missingCursor = true; if (error) cursorError = error; }, failCursorRecovery() { recoveryError = true; }, disconnect() { socket.close(); } };
-}
-async function rig(commandTimeoutMs?:number) {
-  const homePath = await mkdtemp(join(tmpdir(), 'shared-cdp-')); homes.push(homePath);
-  const fake = chrome(); const driver = createSharedBrowserCdpDriver({ homePath, ...fake, commandTimeoutMs });
-  return { driver, fake, homePath, signal: new AbortController().signal };
-}
 describe('shared owner Chrome CDP driver', () => {
   it('rejects depth, node and string budget violations before notifying CDP listeners', async () => {
     let deep: unknown = 'leaf';
@@ -318,13 +246,13 @@ describe('shared owner Chrome CDP driver', () => {
   });
   it('reconciles closed recorded tabs on listing and releases capacity without owner scans', async () => {
     const { driver, fake, signal } = await rig();
-    for (let index = 0; index < 8; index++) await driver.execute({ action: 'tab_new' }, signal);
+    for (let index = 0; index < 12; index++) await driver.execute({ action: 'tab_new' }, signal);
     await driver.detach(); fake.closeTarget('agent-tab'); fake.closeTarget('agent-tab-2');
-    expect((await driver.execute({ action: 'tabs' }, signal)).tabs).toHaveLength(6);
-    expect(await driver.execute({ action: 'tab_new' }, signal)).toMatchObject({ success: true, targetId: 'agent-tab-9' });
+    expect((await driver.execute({ action: 'tabs' }, signal)).tabs).toHaveLength(10);
+    expect(await driver.execute({ action: 'tab_new' }, signal)).toMatchObject({ success: true, targetId: 'agent-tab-13' });
     await driver.execute({ action: 'tab_new' }, signal);
     fake.closeTarget('agent-tab-3');
-    expect(await driver.execute({ action: 'tab_new' }, signal)).toMatchObject({ success: true, targetId: 'agent-tab-11' });
+    expect(await driver.execute({ action: 'tab_new' }, signal)).toMatchObject({ success: true, targetId: 'agent-tab-15' });
     expect(fake.messages.filter(row => row.method === 'Target.getTargetInfo').every(row => /^agent-tab(?:-\d+)?$/.test(row.params.targetId))).toBe(true);
     await driver.detach();
   });
@@ -429,14 +357,71 @@ describe('shared owner Chrome CDP driver', () => {
     await expect(driver.execute({ action: 'navigate', url: fixture }, abort.signal)).rejects.toThrow();
     expect(fake.messages).toEqual([]); await driver.detach();
   });
-  it('caps live owned tabs and forgets expired identifiers without closing owner Chrome tabs', async () => {
+  it('keeps ten result tabs accessible alongside two working tabs and bounds live ownership', async () => {
     const { driver, fake, signal } = await rig(); const clock = vi.spyOn(Date, 'now').mockReturnValue(1_000_000);
-    for (let i = 0; i < 8; i++) await driver.execute({ action: 'tab_new', url: fixture }, signal);
-    await expect(driver.execute({ action: 'tab_new', url: fixture }, signal)).rejects.toMatchObject({ code: 'browser_busy' });
-    clock.mockReturnValue(1_000_000 + 24 * 60 * 60_000 + 1);
-    await expect(driver.execute({ action: 'tab_new', url: fixture }, signal)).resolves.toMatchObject({ success: true });
-    expect(fake.messages.some(packet => packet.method === 'Target.closeTarget' || packet.method === 'Browser.close')).toBe(false);
-    await driver.detach();
+    try {
+      for (let i = 0; i < 12; i++) await driver.execute({ action: 'tab_new', url: fixture }, signal);
+      const tabs = await driver.execute({ action: 'tabs' }, signal);
+      expect(new Set(tabs.tabs?.map(tab => tab.targetId)).size).toBe(12);
+      await expect(driver.execute({ action: 'tab_new', url: fixture }, signal)).rejects.toMatchObject({ code: 'tab_limit', dispatched: false });
+      expect(fake.messages.filter(packet => packet.method === 'Target.createTarget')).toHaveLength(12);
+
+      await driver.execute({ action: 'tab_switch', targetId: 'agent-tab-3' }, signal);
+      const snapshot = await driver.execute({ action: 'snapshot' }, signal);
+      expect(snapshot).toMatchObject({ success: true, targetId: 'agent-tab-3', content: 'Two invoices' });
+      await expect(driver.execute({ action: 'click', observationId: snapshot.observationId!, ref: 'r1' }, signal)).resolves.toMatchObject({ success: true });
+      await driver.detach();
+      await expect(driver.execute({ action: 'tabs' }, signal)).resolves.toEqual(tabs);
+
+      clock.mockReturnValue(1_000_000 + 24 * 60 * 60_000 + 1);
+      await expect(driver.execute({ action: 'tab_new', url: fixture }, signal)).resolves.toMatchObject({ success: true });
+      expect(fake.messages.some(packet => packet.method === 'Target.closeTarget' || packet.method === 'Browser.close')).toBe(false);
+    } finally {
+      await driver.detach();
+    }
+  });
+  it('includes related popup tabs in the same live ownership bound', async () => {
+    const { driver, fake, signal } = await rig();
+    const openPopup = (id: string) => fake.event('Target.attachedToTarget', {
+      sessionId: `session-${id}`, waitingForDebugger: true, targetInfo: { targetId: id, type: 'page', url: 'about:blank' },
+    });
+    try {
+      for (let i = 0; i < 11; i++) await driver.execute({ action: 'tab_new' }, signal);
+      openPopup('last-popup');
+      const listed = await driver.execute({ action: 'tabs' }, signal);
+      expect(listed.tabs).toHaveLength(12);
+      expect(listed.tabs?.at(-1)?.targetId).toBe('last-popup');
+      expect(fake.messages).toContainEqual(expect.objectContaining({ method: 'Runtime.runIfWaitingForDebugger', sessionId: 'session-last-popup' }));
+
+      openPopup('overflow-popup');
+      await expect(driver.execute({ action: 'snapshot' }, signal)).resolves.toMatchObject({ success: false, handoffRequested: true });
+      expect(fake.messages.some(packet => packet.method === 'Runtime.runIfWaitingForDebugger' && packet.sessionId === 'session-overflow-popup')).toBe(false);
+    } finally {
+      await driver.detach();
+    }
+  });
+  it('reserves the last owned tab while Chrome acknowledges a direct creation', async () => {
+    const { driver, fake, signal } = await rig();
+    try {
+      for (let i = 0; i < 11; i++) await driver.execute({ action: 'tab_new' }, signal);
+      fake.skip('Target.createTarget');
+      const lastTab = driver.execute({ action: 'tab_new' }, signal);
+      await vi.waitFor(() => expect(fake.messages.filter(row => row.method === 'Target.createTarget')).toHaveLength(12));
+      const create = fake.messages.at(-1);
+      fake.event('Target.attachedToTarget', {
+        sessionId: 'racing-popup-session', waitingForDebugger: true, targetInfo: { targetId: 'racing-popup', type: 'page', url: 'about:blank' },
+      });
+      await vi.waitFor(() => expect(fake.messages).toContainEqual(expect.objectContaining({ method: 'Target.setAutoAttach', sessionId: 'racing-popup-session' })));
+      fake.raw({ id: create.id, result: { targetId: 'last-direct-tab' } });
+      await expect(lastTab).resolves.toMatchObject({ success: true, targetId: 'last-direct-tab' });
+      await driver.detach();
+      const tabs = (await driver.execute({ action: 'tabs' }, signal)).tabs;
+      expect(tabs).toHaveLength(12);
+      expect(tabs?.at(-1)?.targetId).toBe('last-direct-tab');
+      expect(fake.messages.some(packet => packet.method === 'Runtime.runIfWaitingForDebugger' && packet.sessionId === 'racing-popup-session')).toBe(false);
+    } finally {
+      await driver.detach();
+    }
   });
   it('collects an observed original through the actual driver, CDP client, browser events and artifact store', async () => {
     const { driver, fake, signal, homePath } = await rig(); const original = fake.enableDownloads();

@@ -6,7 +6,6 @@ import { BrowserLabView } from "./BrowserLabView";
 import { resolveAppBridgeLaunch } from "@/lib/app-bridge-launch";
 import { prepareBridgeFetchRequest, resolveBridgeFetchUrl } from "./app-viewer-bridge-request";
 import { readAppBridgeResponse, appBridgeTimeoutMs } from "./app-capability-request";
-import { AppSiteButton } from "./app-sites/AppSiteButton";
 import {
   CollaborativeAppShareButton,
   ReadinessSummary,
@@ -228,6 +227,7 @@ function SandboxedAppViewer({ path, sessionId, onOpenApp, onShareApp, visible = 
   const { send, subscribe } = useSocket();
   const browserOrigin = useBrowserOrigin();
   const ownerParticipant = useOwnerCollaborationParticipant();
+  const collaborationOrganization = useCollaborationOrganization();
   // react-doctor-disable-next-line react-doctor/no-event-handler -- pure derived value computed from the `path` prop during render, not a DOM event handler or effect-driven side effect.
   const appName = appIdentityFromPath(path);
   const slug = extractSlug(path);
@@ -553,8 +553,8 @@ function SandboxedAppViewer({ path, sessionId, onOpenApp, onShareApp, visible = 
   }
 
   return (
-    <div className="flex h-full w-full flex-col">
-      {slug && visible ? <div className="flex items-start justify-end gap-2 border-b px-3 py-1.5">
+    <div className="relative isolate flex h-full w-full flex-col overflow-hidden">
+      {slug && visible && (onShareApp || (collaborationOrganization.status === "member" && collaborationOrganization.organizationId)) ? <div className="flex items-start justify-end gap-2 border-b px-3 py-1.5">
         {onShareApp ? <CollaborativeAppReadinessControls appId={slug} buildEpoch={refreshKey} onShareApp={onShareApp} />
           : <OwnerCollaborativeAppSharingControls appId={slug} buildEpoch={refreshKey} onShareChanged={async () => {
             const participant = await ownerCollaborationRef.current?.refreshShare() ?? ownerParticipant;
@@ -564,7 +564,6 @@ function SandboxedAppViewer({ path, sessionId, onOpenApp, onShareApp, visible = 
               console.warn("[app-viewer] owner collaboration context update unavailable", error instanceof Error ? error.name : "UnknownError");
             }
           }} />}
-        <AppSiteButton key={slug} appSlug={slug} />
       </div> : null}
       <iframe
         ref={iframeRef}

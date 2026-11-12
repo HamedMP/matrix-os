@@ -112,7 +112,8 @@ describe("desktop packaging", () => {
       join(root, "desktop/electron-builder.windows.mjs"),
       "utf8",
     );
-    expect(releaseConfig).toContain('extends: "./electron-builder.yml"');
+    expect(releaseConfig).toContain('"./electron-builder.yml"');
+    expect(releaseConfig).toContain('"./electron-builder.canary.mjs"');
     expect(releaseConfig).toContain("resolveWindowsSigningConfig(process.env)");
   });
 

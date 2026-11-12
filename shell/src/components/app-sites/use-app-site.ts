@@ -65,6 +65,9 @@ export function useAppSite(appSlug: string, client: SiteClient) {
     reloadPublication: () => action(signal => client.get(appSlug, signal), site => patch({ site, conflict: false, submissions: null, pageCursor: null }), "Publication refreshed. Your draft details were kept. Review deployment before publishing."),
     // Only a confirmed owner mutation replaces local metadata and review state.
     setSite: (site: SiteRecord | null) => setView(current => ({ ...current, site, conflict: false, metadataEpoch: current.metadataEpoch + 1 })),
+    // Invite-link setup updates the authoritative publication without replacing
+    // the mounted share panel that holds the one-time secret returned once.
+    syncSite: (site: SiteRecord) => setView(current => ({ ...current, site, conflict: false })),
     loadSubmissions: (cursor: string | null = null) => action(signal => client.submissions(appSlug, cursor, signal), page => patch({ submissions: page, pageCursor: cursor })),
     removeSubmission: (id: string) => action(async signal => {
       await client.deleteSubmission(appSlug, id, signal);

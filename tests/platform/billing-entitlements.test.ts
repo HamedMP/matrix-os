@@ -84,6 +84,9 @@ describe('platform billing entitlements', () => {
       ['region_nbg1', 'starter', 'cpx22'],
       ['region_nbg1', 'builder', 'cpx42'],
       ['region_nbg1', 'max', 'cpx52'],
+      ['region_hel1', 'starter', 'cpx22'],
+      ['region_hel1', 'builder', 'cpx42'],
+      ['region_hel1', 'max', 'cpx52'],
       ['region_ash', 'starter', 'cpx21'],
       ['region_ash', 'builder', 'cpx31'],
       ['region_ash', 'max', 'cpx41'],
@@ -170,6 +173,7 @@ describe('platform billing entitlements', () => {
     expect(projected.allowedSelections).toEqual([
       { planSlug: 'matrix_builder', regionSlug: 'region_fsn1' },
       { planSlug: 'matrix_builder', regionSlug: 'region_nbg1' },
+      { planSlug: 'matrix_builder', regionSlug: 'region_hel1' },
     ]);
     expect(projected.allowedPlanSlugs).toEqual(['matrix_builder']);
   });
