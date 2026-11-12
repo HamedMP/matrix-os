@@ -138,6 +138,22 @@ describe("terminal event hub", () => {
     expect(() => h.subscriber()).toThrow();
   });
 
+  // Fault detected (fourth review of #3299): a long terminal history made the snapshot
+  // too large for the client, which then lost every live badge.
+  it("keeps every live tab and bounds finished history in the stream", async () => {
+    const h = harness();
+    const finished = Array.from({ length: 1_500 }, (_, i) => tab(`tt_${i.toString(16).padStart(32, "0")}`, { status: "exited", exitCode: 0 }));
+    h.setTabs([...finished, tab(tabA)]);
+    h.setStatus(tabA, "blocked");
+    const sub = h.subscriber();
+    await h.hub.tick();
+    const snapshot = sub.frames[0];
+    expect(snapshot?.type).toBe("snapshot");
+    const tabs = snapshot?.type === "snapshot" ? snapshot.tabs : [];
+    expect(tabs.length).toBeLessThanOrEqual(1_024);
+    expect(tabs).toContainEqual(expect.objectContaining({ ref: { workspaceId, tabId: tabA }, agentStatus: "blocked" }));
+  });
+
   it("caps subscribers", () => {
     const h = harness();
     for (let index = 0; index < 64; index += 1) h.subscriber();

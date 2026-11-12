@@ -8,6 +8,8 @@ const DEFAULT_HEARTBEAT_MS = 15_000;
 const DEFAULT_STALE_MS = 60_000;
 const MAX_SUBSCRIBERS = 64;
 const MAX_BACKLOG_BYTES = 1024 * 1024;
+/** Most tabs in the stream, matching what clients keep. Live tabs always come first. */
+export const TERMINAL_EVENTS_MAX_TABS = 1_024;
 
 export interface TerminalTabFacts {
   ref: TerminalRef;
@@ -55,27 +57,33 @@ export interface TerminalEventHub {
   shutdown(): void;
 }
 
+function isFinished(tab: { status: string }): boolean {
+  return tab.status === "exited" || tab.status === "failed";
+}
+
 function factsFrom(workspaces: TerminalWorkspace[], statuses: ReadonlyMap<string, {
   status: TerminalAgentStatus; message?: string; reportedAt: string;
 }>): Map<string, TerminalTabFacts> {
   const facts = new Map<string, TerminalTabFacts>();
-  for (const workspace of workspaces) {
-    for (const tab of workspace.tabs) {
-      if (tab.accessScope !== "owner") continue;
-      const ref = { workspaceId: workspace.id, tabId: tab.id };
-      const finished = tab.status === "exited" || tab.status === "failed";
-      const status = finished ? undefined : statuses.get(terminalRefKey(ref));
-      facts.set(terminalRefKey(ref), {
-        ref,
-        name: tab.name,
-        cwd: tab.cwd,
-        ...(workspace.scope === "project" ? { projectId: workspace.projectId } : {}),
-        state: finished ? "finished" : "live",
-        ...(finished ? { exitCode: tab.exitCode ?? null } : {}),
-        ...(status ? { agentStatus: status.status, statusAt: status.reportedAt } : {}),
-        ...(status?.message ? { statusMessage: status.message } : {}),
-      });
-    }
+  // Live tabs first (the runtime bounds how many can run), then finished history up to the cap.
+  const ordered = workspaces.flatMap((workspace) => workspace.tabs.map((tab) => ({ workspace, tab })))
+    .filter(({ tab }) => tab.accessScope === "owner")
+    .sort((left, right) => Number(isFinished(left.tab)) - Number(isFinished(right.tab)))
+    .slice(0, TERMINAL_EVENTS_MAX_TABS);
+  for (const { workspace, tab } of ordered) {
+    const ref = { workspaceId: workspace.id, tabId: tab.id };
+    const finished = tab.status === "exited" || tab.status === "failed";
+    const status = finished ? undefined : statuses.get(terminalRefKey(ref));
+    facts.set(terminalRefKey(ref), {
+      ref,
+      name: tab.name,
+      cwd: tab.cwd,
+      ...(workspace.scope === "project" ? { projectId: workspace.projectId } : {}),
+      state: finished ? "finished" : "live",
+      ...(finished ? { exitCode: tab.exitCode ?? null } : {}),
+      ...(status ? { agentStatus: status.status, statusAt: status.reportedAt } : {}),
+      ...(status?.message ? { statusMessage: status.message } : {}),
+    });
   }
   return facts;
 }
