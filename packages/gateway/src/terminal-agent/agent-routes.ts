@@ -45,11 +45,7 @@ const WaitChildrenSchema = z.object({
   caller: TerminalCallerSchema.optional(),
   mode: z.enum(["any", "all"]),
   timeoutMs: z.number().int().min(0).max(TERMINAL_WAIT_MAX_MS).optional(),
-  baseline: z.array(z.object({
-    ref: TerminalRefSchema,
-    live: z.boolean(),
-    status: z.enum(["idle", "working", "done", "blocked", "error"]).optional(),
-  }).strict()).max(256).optional(),
+  cursor: z.string().regex(/^wc_[0-9a-f]{32}$/).optional(),
 }).strict().refine((input) => Boolean(input.parent) !== Boolean(input.caller), { message: "Give parent or caller" });
 
 /** Agent orchestration routes under `/api/terminal`: run, labels, reports, children, templates. */
@@ -114,7 +110,7 @@ export function createTerminalAgentOrchestrationRoutes(options: {
         mode: body.mode,
         timeoutMs: body.timeoutMs ?? 60_000,
         signal: c.req.raw.signal,
-        ...(body.baseline ? { baseline: body.baseline } : {}),
+        ...(body.cursor ? { cursor: body.cursor } : {}),
       }));
     } catch (error) { return failure(c, error); }
   });

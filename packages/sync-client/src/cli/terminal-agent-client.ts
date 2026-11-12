@@ -26,7 +26,7 @@ export interface TerminalAgentClient {
   run(input: Record<string, unknown>): Promise<Record<string, unknown>>;
   label(ref: TerminalRef, input: { set?: Record<string, string>; remove?: string[] }): Promise<Record<string, unknown>>;
   report(input: { caller: TerminalCaller; text: string }): Promise<Record<string, unknown>>;
-  waitChildren(input: { caller: TerminalCaller; mode: "any" | "all"; timeoutMs: number; baseline?: unknown[] }): Promise<TerminalWaitOutput>;
+  waitChildren(input: { caller: TerminalCaller; mode: "any" | "all"; timeoutMs: number; cursor?: string }): Promise<TerminalWaitOutput>;
 }
 
 export interface TerminalCaller { sessionName: string; paneId: string }
@@ -63,8 +63,8 @@ export interface TerminalWaitOutput {
   child?: TerminalRef;
   /** How often the awaited output had appeared; passed back so one wait keeps one baseline. */
   seen?: number;
-  /** The children as a wait-children request started; passed back on the next check-in. */
-  baseline?: unknown[];
+  /** Names the children's starting states on the server; passed back on the next check-in. */
+  cursor?: string;
 }
 
 export const TERMINAL_WAIT_REQUEST_MAX_MS = 90_000;
@@ -170,13 +170,13 @@ export function createTerminalAgentClient(options: {
     async waitChildren(input) {
       const timeoutMs = Math.min(Math.max(0, Math.floor(input.timeoutMs)), TERMINAL_WAIT_REQUEST_MAX_MS);
       const payload = await request("/api/terminal/agents/wait-children", {
-        method: "POST", body: { caller: input.caller, mode: input.mode, timeoutMs, ...(input.baseline ? { baseline: input.baseline } : {}) },
+        method: "POST", body: { caller: input.caller, mode: input.mode, timeoutMs, ...(input.cursor ? { cursor: input.cursor } : {}) },
       }, timeoutMs + 15_000);
       return {
         reason: typeof payload.reason === "string" ? payload.reason : "unknown",
         ...(typeof payload.status === "string" ? { status: payload.status } : {}),
         ...(payload.child && typeof payload.child === "object" ? { child: payload.child as TerminalRef } : {}),
-        ...(Array.isArray(payload.baseline) ? { baseline: payload.baseline.slice(0, 256) } : {}),
+        ...(typeof payload.cursor === "string" && /^wc_[0-9a-f]{32}$/.test(payload.cursor) ? { cursor: payload.cursor } : {}),
       };
     },
     async interrupt(ref) {

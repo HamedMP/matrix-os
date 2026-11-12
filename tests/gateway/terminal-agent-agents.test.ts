@@ -379,11 +379,14 @@ describe("terminal agents: registry capacity and child baselines", () => {
     const child = await h.agents.run({ name: "review", cwd: "", argv: ["sh"], parent });
     h.statuses.set(child.ref.tabId, "working");
     const first = await h.agents.waitChildren(parent, { mode: "any", timeoutMs: 0 });
-    expect(first).toMatchObject({ reason: "timeout", baseline: [{ ref: child.ref, live: true, status: "working" }] });
+    expect(first).toMatchObject({ reason: "timeout", cursor: expect.stringMatching(/^wc_[0-9a-f]{32}$/) });
     // The child finishes between the two requests.
     h.statuses.set(child.ref.tabId, "done");
-    const baseline = first.reason === "timeout" ? first.baseline : undefined;
-    await expect(h.agents.waitChildren(parent, { mode: "any", timeoutMs: 0, ...(baseline ? { baseline } : {}) }))
+    const cursor = first.reason === "timeout" ? first.cursor : undefined;
+    await expect(h.agents.waitChildren(parent, { mode: "any", timeoutMs: 0, ...(cursor ? { cursor } : {}) }))
       .resolves.toEqual({ reason: "changed", child: child.ref, status: "done" });
+    // A cursor only describes its own parent's children.
+    await expect(h.agents.waitChildren({ workspaceId, tabId: child.ref.tabId }, { mode: "any", timeoutMs: 0, ...(cursor ? { cursor } : {}) }))
+      .resolves.toEqual({ reason: "none" });
   });
 });
