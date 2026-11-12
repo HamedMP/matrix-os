@@ -177,7 +177,7 @@ export function WorkRail({
   const [deleteChatError, setDeleteChatError] = useState<string | null>(null);
   const [archivePendingId, setArchivePendingId] = useState<string | null>(null);
   const [archiveError, setArchiveError] = useState<string | null>(null);
-  const [archiveUndo, setArchiveUndo] = useState<{ chats: Array<{ chatId: string; revision: number }>; label: string } | null>(null);
+  const [archiveUndo, setArchiveUndo] = useState<{ chats: Array<{ chatId: string; revision: number }>; label: string; projectId?: string } | null>(null);
   const [archiveProjectTarget, setArchiveProjectTarget] = useState<Project | null>(null);
   const [bulkArchivePending, setBulkArchivePending] = useState(false);
   const [bulkArchiveError, setBulkArchiveError] = useState<string | null>(null);
@@ -438,14 +438,24 @@ export function WorkRail({
     setBulkArchivePending(true);
     setBulkArchiveError(null);
     try {
-      const result = await client.archiveProjectChats(project.id ?? project.slug);
+      const references = [...new Set([project.id, project.slug].filter((reference): reference is string => Boolean(reference)))];
+      const results = await Promise.allSettled(references.map(reference => client.archiveProjectChats(reference)));
       if (!isCurrentAuthority(scope)) return;
-      setRecords(current => current.filter(record => !result.archivedIds.includes(record.chat.id)));
-      if (activeChatId && result.archivedIds.includes(activeChatId)) onChatDeleted?.(activeChatId, project);
-      if (result.archivedCount) setArchiveUndo({ chats: result.archived,
-        label: `Archived ${result.archivedCount} chats in ${project.name}${result.skippedCount ? `; ${result.skippedCount} running skipped` : ""}` });
-      else if (result.skippedCount) setArchiveError(`${result.skippedCount} running chats were skipped.`);
-      setArchiveProjectTarget(null);
+      const completed = results.flatMap(result => result.status === "fulfilled" ? [result.value] : []);
+      const archived = [...new Map(completed.flatMap(result => result.archived).map(chat => [chat.chatId, chat])).values()];
+      const archivedIds = new Set(archived.map(chat => chat.chatId));
+      const skippedCount = completed.reduce((count, result) => count + result.skippedCount, 0);
+      setRecords(current => current.filter(record => !archivedIds.has(record.chat.id)));
+      if (activeChatId && archivedIds.has(activeChatId)) onChatDeleted?.(activeChatId, project);
+      if (archived.length) setArchiveUndo(current => {
+        const chats = [...new Map([...(current && current.projectId === project.id ? current.chats : []), ...archived]
+          .map(chat => [chat.chatId, chat])).values()];
+        return { chats, projectId: project.id,
+          label: `Archived ${chats.length} chats in ${project.name}${skippedCount ? `; ${skippedCount} running skipped` : ""}` };
+      });
+      else if (skippedCount) setArchiveError(`${skippedCount} running chats were skipped.`);
+      if (completed.length === results.length) setArchiveProjectTarget(null);
+      else setBulkArchiveError("Some project chats could not be archived. Retry or use Undo for archived chats.");
       void navigation.store?.refresh();
     } catch (error: unknown) {
       console.warn("[work] Project archive failed:", error instanceof Error ? error.name : "UnknownError");
