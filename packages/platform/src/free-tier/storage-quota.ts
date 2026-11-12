@@ -62,8 +62,10 @@ export interface StorageQuotaDeps {
 }
 
 const MAX_KEY_LENGTH = 1024;
-const RECONCILE_BATCH = 50;
-const HEAD_TIMEOUT_MS = 10_000;
+const RECONCILE_BATCH = 20;
+const HEAD_TIMEOUT_MS = 5_000;
+/** A refused write waits at most this long for reconciliation before its refusal stands. */
+const RECONCILE_BUDGET_MS = 15_000;
 
 type Executor = PlatformDB['executor'];
 
@@ -170,9 +172,13 @@ export function createStorageQuota(deps: StorageQuotaDeps) {
       .where('clerk_user_id', '=', ownerId).where('pending_until', 'is not', null)
       .where('pending_until', '<', now()).orderBy('pending_until').limit(RECONCILE_BATCH).execute();
     let settled = 0;
+    const budget = AbortSignal.timeout(RECONCILE_BUDGET_MS);
     for (const row of expired) {
+      if (budget.aborted) break;
       try {
-        const head = await deps.headObject(row.object_key, { signal: AbortSignal.timeout(HEAD_TIMEOUT_MS) });
+        const head = await deps.headObject(row.object_key, {
+          signal: AbortSignal.any([budget, AbortSignal.timeout(HEAD_TIMEOUT_MS)]),
+        });
         if (head.exists && (head.contentLength === undefined || !Number.isSafeInteger(head.contentLength))) continue;
         await settle(ownerId, row.object_key, row.reservation_id, head.exists ? head.contentLength! : null);
         settled += 1;
