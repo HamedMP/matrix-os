@@ -36,6 +36,8 @@ export {
 export { GITHUB_DEVELOPER_DEVICE_URL } from "./integrations/GithubDeveloperSetupDialog.js";
 export { RemoteMcpPresetPicker, type RemoteMcpPresetPickerProps } from "./integrations/RemoteMcpPresetPicker.js";
 export { McpConnectionInventory, type McpConnectionInventoryProps } from "./integrations/McpConnectionInventory.js";
+export { ExternalMcpApprovalsIndicator, ExternalMcpApprovalsPanel } from "./integrations/external-mcp-approvals.js";
+export { createExternalMcpApprovalsFetchTransport, type ExternalMcpApprovalsTransport } from "./integrations/external-mcp-approvals-client.js";
 export {
   OrganizationConnectionsPanel,
   OrganizationMcpSettings,
