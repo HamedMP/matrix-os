@@ -51,7 +51,7 @@ describe("Chat collaboration sharing", () => {
     expect(api.get).toHaveBeenCalledWith(`/api/collaboration/shared-apps/${appScopeId}`);
   });
 
-  it("lists current-organization app shares separately and opens the exact scope", async () => {
+  it("keeps app discovery out of Chat because shared apps belong in the launcher", async () => {
     const appScopeId = "10000000-0000-4000-8000-000000000099";
     const app = {
       scopeId: appScopeId,
@@ -76,14 +76,10 @@ describe("Chat collaboration sharing", () => {
     const openApp = vi.fn();
     render(<ChatCollaboration view={{ kind: "home" }} api={api} actorId="user_member" openApp={openApp} />);
 
-    expect(await screen.findByText("Team tracker")).toBeVisible();
-    expect(screen.getByText("App · shared by Nima")).toBeVisible();
-    fireEvent.click(screen.getByRole("button", { name: "Open app" }));
-    expect(openApp).toHaveBeenCalledWith(appScopeId, app);
-    fireEvent.click(screen.getByRole("button", { name: "Load more shared apps" }));
-    await waitFor(() => expect(api.get).toHaveBeenCalledWith(
-      "/api/collaboration/shared-apps?limit=50&cursor=next-app-page",
-    ));
+    await waitFor(() => expect(api.get).toHaveBeenCalledWith("/api/collaboration/shared"));
+    expect(screen.queryByText("Team tracker")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Open app" })).toBeNull();
+    expect(api.get.mock.calls.some(([path]) => path.startsWith("/api/collaboration/shared-apps"))).toBe(false);
   });
 
   it("recovers when browser history replaces stale pins for the same shared app scope", async () => {

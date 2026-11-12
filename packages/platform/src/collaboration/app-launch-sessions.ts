@@ -1,4 +1,7 @@
 import { randomUUID } from "node:crypto";
+import type { Kysely } from "kysely";
+import type { CollaborationPlatformDatabase } from "./database.js";
+import { CollaborativeAppLaunchRepository } from "./app-launch-repository.js";
 
 const DEFAULT_TTL_MS = 4 * 60_000;
 const DEFAULT_SWEEP_MS = 30_000;
@@ -52,6 +55,7 @@ export class CollaborativeAppLaunchError extends Error {
 }
 
 export class CollaborativeAppLaunchSessions {
+  private readonly persistence: CollaborativeAppLaunchRepository | undefined;
   private readonly sessions = new Map<string, LaunchRecord>();
   private readonly requests = new Map<string, string>();
   private readonly pending = new Map<string, PendingLaunch>();
@@ -64,8 +68,10 @@ export class CollaborativeAppLaunchSessions {
   private readonly timer: ReturnType<typeof setInterval> | undefined;
   private closed = false;
   private closing: Promise<void> | null = null;
+  private sweepInFlight: Promise<number> | null = null;
 
   constructor(private readonly options: {
+    db?: Kysely<CollaborationPlatformDatabase>;
     open(identity: CollaborativeAppLaunchIdentity): Promise<CollaborativeAppLaunchUpstream>;
     ttlMs?: number;
     sweepIntervalMs?: number;
@@ -76,6 +82,7 @@ export class CollaborativeAppLaunchSessions {
     createId?: () => string;
     startTimer?: boolean;
   }) {
+    this.persistence = options.db ? new CollaborativeAppLaunchRepository(options.db) : undefined;
     this.ttlMs = options.ttlMs ?? DEFAULT_TTL_MS;
     this.maxSessions = options.maxSessions ?? DEFAULT_MAX_SESSIONS;
     this.maxPerActor = options.maxPerActor ?? DEFAULT_MAX_PER_ACTOR;
@@ -84,7 +91,11 @@ export class CollaborativeAppLaunchSessions {
     this.createId = options.createId ?? randomUUID;
     if (![this.ttlMs, this.maxSessions, this.maxPerActor, this.maxResponseBytes]
       .every((value) => Number.isSafeInteger(value) && value > 0)) throw new CollaborativeAppLaunchError("invalid");
-    this.timer = options.startTimer === false ? undefined : setInterval(() => { void this.sweep(); }, options.sweepIntervalMs ?? DEFAULT_SWEEP_MS);
+    this.timer = options.startTimer === false ? undefined : setInterval(() => {
+      void this.sweep().catch((error: unknown) => {
+        console.warn("[collaborative-app-launch] expiry cleanup failed", error instanceof Error ? error.name : "UnknownError");
+      });
+    }, options.sweepIntervalMs ?? DEFAULT_SWEEP_MS);
     this.timer?.unref?.();
   }
 
@@ -96,6 +107,12 @@ export class CollaborativeAppLaunchSessions {
     await this.sweep();
     if (this.closed) throw new CollaborativeAppLaunchError("unavailable");
     const requestKey = `${input.actorId}\0${input.clientRequestId}`;
+    const cachedId = this.requests.get(requestKey);
+    if (this.persistence && cachedId
+      && !await this.persistence.get(cachedId, input.scopeId, input.actorId, this.now())) {
+      const cached = this.sessions.get(cachedId);
+      if (cached) await this.evict(cached);
+    }
     const replayId = this.requests.get(requestKey);
     if (replayId) {
       const replay = this.sessions.get(replayId);
@@ -151,7 +168,7 @@ export class CollaborativeAppLaunchSessions {
       throw new CollaborativeAppLaunchError("unavailable");
     }
     const timestamp = this.now();
-    const record: LaunchRecord = {
+    let record: LaunchRecord = {
       ...input,
       launchId: this.createId(),
       createdAt: timestamp,
@@ -159,6 +176,18 @@ export class CollaborativeAppLaunchSessions {
       lastTouched: timestamp,
       upstream,
     };
+    if (this.persistence) {
+      try {
+        const persisted = await this.persistence.save({
+          launchId: record.launchId, clientRequestId: record.clientRequestId, identity: {
+            actorId: input.actorId, scopeId: input.scopeId, organizationId: input.organizationId,
+            runtimeId: input.runtimeId, authorityGeneration: input.authorityGeneration,
+            appId: input.appId, catalogId: input.catalogId, buildId: input.buildId, shareRevision: input.shareRevision,
+          }, createdAt: record.createdAt, expiresAt: record.expiresAt,
+        }, { maxSessions: this.maxSessions, maxPerActor: this.maxPerActor }, this.now());
+        record = { ...record, launchId: persisted.launchId, createdAt: persisted.createdAt, expiresAt: persisted.expiresAt };
+      } catch (error: unknown) { await this.closeUpstream(upstream); throw error; }
+    }
     this.sessions.set(record.launchId, record);
     this.requests.set(requestKey, record.launchId);
     return { launchId: record.launchId, expiresAt: new Date(record.expiresAt).toISOString() };
@@ -170,6 +199,20 @@ export class CollaborativeAppLaunchSessions {
     return { actorId: record.actorId, scopeId: record.scopeId, organizationId: record.organizationId,
       runtimeId: record.runtimeId, authorityGeneration: record.authorityGeneration, appId: record.appId,
       catalogId: record.catalogId, buildId: record.buildId, shareRevision: record.shareRevision };
+  }
+
+  async resolve(launchId: string, actorId: string, scopeId: string): Promise<CollaborativeAppLaunchIdentity | null> {
+    if (this.closed) return null;
+    return this.persistence
+      ? (await this.persistence.get(launchId, scopeId, actorId, this.now()))?.identity ?? null
+      : this.describe(launchId, actorId, scopeId);
+  }
+
+  async resolveAssetCapability(launchId: string, scopeId: string): Promise<CollaborativeAppLaunchIdentity | null> {
+    if (this.closed) return null;
+    return this.persistence
+      ? (await this.persistence.get(launchId, scopeId, null, this.now()))?.identity ?? null
+      : this.describeAssetCapability(launchId, scopeId);
   }
 
   /** A random launch id is a short-lived capability for immutable module bytes only. */
@@ -187,6 +230,13 @@ export class CollaborativeAppLaunchSessions {
       || input.assetPath.includes("\\") || input.assetPath.includes("\0")
       || segments.some((segment) => !segment || segment === "." || segment === ".." || segment.startsWith("."))) {
       throw new CollaborativeAppLaunchError("invalid");
+    }
+    if (this.persistence) {
+      const persisted = await this.persistence.get(input.launchId, input.scopeId, input.actorId, this.now());
+      if (!persisted) throw new CollaborativeAppLaunchError("not_found");
+      if (!this.sessions.has(input.launchId)) {
+        await this.create({ ...persisted.identity, clientRequestId: persisted.clientRequestId });
+      }
     }
     const record = this.sessions.get(input.launchId);
     if (!record || record.actorId !== input.actorId || record.scopeId !== input.scopeId || record.expiresAt <= this.now()) {
@@ -234,17 +284,29 @@ export class CollaborativeAppLaunchSessions {
   }
 
   async revokeScope(scopeId: string): Promise<void> {
+    await this.persistence?.revoke(scopeId);
     await Promise.all([...this.sessions.values()].filter((record) => record.scopeId === scopeId).map((record) => this.evict(record)));
   }
 
   async revokeActor(scopeId: string, actorId: string): Promise<void> {
+    await this.persistence?.revoke(scopeId, actorId);
     await Promise.all([...this.sessions.values()]
       .filter((record) => record.scopeId === scopeId && record.actorId === actorId)
       .map((record) => this.evict(record)));
   }
 
-  async sweep(): Promise<number> {
+  sweep(): Promise<number> {
+    if (this.sweepInFlight) return this.sweepInFlight;
+    const pending = this.performSweep().finally(() => {
+      if (this.sweepInFlight === pending) this.sweepInFlight = null;
+    });
+    this.sweepInFlight = pending;
+    return pending;
+  }
+
+  private async performSweep(): Promise<number> {
     const cutoff = this.now();
+    await this.persistence?.sweep(cutoff);
     const expired = [...this.sessions.values()].filter((record) => record.expiresAt <= cutoff);
     await Promise.all(expired.map((record) => this.evict(record)));
     return expired.length;
@@ -255,7 +317,10 @@ export class CollaborativeAppLaunchSessions {
     this.closed = true;
     if (this.timer) clearInterval(this.timer);
     this.closing = (async () => {
-      await Promise.allSettled([...this.pending.values()].map((record) => record.result));
+      await Promise.allSettled([
+        ...[...this.pending.values()].map((record) => record.result),
+        ...(this.sweepInFlight ? [this.sweepInFlight] : []),
+      ]);
       await Promise.all([...this.sessions.values()].map((record) => this.evict(record)));
     })();
     return this.closing;

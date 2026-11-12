@@ -1,6 +1,7 @@
 "use client";
 
 import { useGettingStartedBlocker } from "@matrix-os/ui";
+import { SharedAppDirectoryNotice } from "@matrix-os/ui/collaborative-app-sharing";
 import { useEffect, useEffectEvent, useState, useRef } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { appsQueryOptions } from "@/api/apps";
@@ -13,18 +14,14 @@ import { AppTile } from "./AppTile";
 import { useThemeStyle } from "./window/useThemeStyle";
 import { Launchpad } from "./launchpad/Launchpad";
 import { isOsViewDestinationPath } from "@/lib/web-desktop-app-launch";
+import { openSharedLauncherApp, useSharedLauncherApps } from "@/hooks/useSharedLauncherApps";
+import type { AppEntry } from "@/hooks/useWindowManager";
 import {
   XIcon,
   Loader2Icon,
   CheckCircle2Icon,
 } from "@/lib/hugeicons";
 import { osViewIconUrlForApp, type OsViewDesktopAddResult, type OsViewDesktopBounds } from "@matrix-os/contracts";
-
-interface AppEntry {
-  name: string;
-  path: string;
-  iconUrl?: string;
-}
 
 interface MissionControlProps {
   open: boolean;
@@ -61,6 +58,7 @@ export function MissionControl({
 }: MissionControlProps) {
   const { provision } = useTaskBoard();
   const themeStyle = useThemeStyle();
+  const shared = useSharedLauncherApps(open);
   const [mounted, setMounted] = useState(false);
   const [visible, setVisible] = useState(false);
   const closingRef = useRef(false);
@@ -113,10 +111,13 @@ export function MissionControl({
 
   if (!mounted) return null;
 
-  const launcherApps = apps.some((app) => app.path === CREATE_APP.path)
-    ? apps
-    : [CREATE_APP, ...apps];
+  const allApps = [...apps, ...shared.apps];
+  const launcherApps = allApps.some((app) => app.path === CREATE_APP.path)
+    ? allApps
+    : [CREATE_APP, ...allApps];
   const openLauncherApp = (name: string, path: string) => {
+    const sharedApp = shared.apps.find((app) => app.path === path);
+    if (sharedApp && openSharedLauncherApp(sharedApp)) return;
     if (path === CREATE_APP.path) onCreateApp();
     else onOpenApp(name, path);
   };
@@ -126,7 +127,7 @@ export function MissionControl({
   // renderers; pinning and ordering belong to Settings, not the OS launcher.
   if (nativePresentation || themeStyle === "macos-glass") {
     return (
-      <Launchpad apps={launcherApps} visible={visible} onOpenApp={openLauncherApp} onClose={onClose} onAddToDesktop={onAddToDesktop} />
+      <Launchpad apps={launcherApps} visible={visible} onOpenApp={openLauncherApp} onClose={onClose} onAddToDesktop={onAddToDesktop} sharedDirectory={shared} />
     );
   }
 
@@ -192,6 +193,7 @@ export function MissionControl({
           </div>
         )}
 
+        <SharedAppDirectoryNotice unavailable={shared.unavailable} onRetry={shared.retry} />
         <LauncherGrid
           apps={launcherApps}
           openWindows={openWindows}
@@ -292,8 +294,9 @@ function LauncherGrid({
       >
         <AppTile
           name={app.name}
+          shared={!!app.sharedAppTarget}
           createApp={app.path === CREATE_APP.path}
-          onAddToDesktop={!isOsViewDestination && app.path !== CREATE_APP.path && onAddToDesktop
+          onAddToDesktop={!app.sharedAppTarget && !isOsViewDestination && app.path !== CREATE_APP.path && onAddToDesktop
             ? () => void addToDesktop(app)
             : undefined}
           isOpen={openWindows.has(app.path)}
@@ -302,11 +305,11 @@ function LauncherGrid({
             onClose();
           }}
           pinned={!isOsViewDestination && pinnedApps.includes(app.path)}
-          onTogglePin={isOsViewDestination ? undefined : () => onTogglePin(app.path)}
+          onTogglePin={isOsViewDestination || app.sharedAppTarget ? undefined : () => onTogglePin(app.path)}
           iconUrl={osViewIconUrlForApp(app, getGatewayUrl())}
-          onRegenerateIcon={isOsViewDestination ? undefined : () => onRegenerateIcon(slug)}
-          onRename={!isOsViewDestination && onRenameApp ? (newName) => onRenameApp(slug, newName) : undefined}
-          onRemoveFromCanvas={!isOsViewDestination && onRemoveFromCanvas ? () => onRemoveFromCanvas(app.path) : undefined}
+          onRegenerateIcon={isOsViewDestination || app.sharedAppTarget ? undefined : () => onRegenerateIcon(slug)}
+          onRename={!app.sharedAppTarget && !isOsViewDestination && onRenameApp ? (newName) => onRenameApp(slug, newName) : undefined}
+          onRemoveFromCanvas={!app.sharedAppTarget && !isOsViewDestination && onRemoveFromCanvas ? () => onRemoveFromCanvas(app.path) : undefined}
         />
       </div>
     );

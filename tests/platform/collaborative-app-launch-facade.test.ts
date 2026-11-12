@@ -60,10 +60,12 @@ describe("collaborative app authenticated launch facade", () => {
     ));
     close.mockResolvedValue(undefined);
     upstream = { request, close };
+    let launchSequence = 0;
     sessions = new CollaborativeAppLaunchSessions({
+      db: fixture.collaborationDb,
       open: async () => upstream,
       now: () => currentTime,
-      createId: () => launchId,
+      createId: () => `30000000-0000-4000-8000-${String(++launchSequence).padStart(12, "0")}`,
       startTimer: false,
       maxSessions: 2,
       maxPerActor: 2,
@@ -104,6 +106,39 @@ describe("collaborative app authenticated launch facade", () => {
     await sessions.close();
     await destroyPlatformCollaborationTestDatabase(fixture);
     vi.restoreAllMocks();
+  });
+
+  it("serves a launched app when HTML and module requests reach another platform instance", async () => {
+    const launched = await routes.request(`/api/collaboration/shared-apps/${scopeId}/launch`, {
+      method: "POST", headers: { "content-type": "application/json", "x-test-actor": actorId },
+      body: JSON.stringify({ clientRequestId: requestId, expectedShareRevision: "1", expectedBuildId: app.buildId }),
+    });
+    expect(launched.status).toBe(201);
+    const launch = await launched.json() as { entryUrl: string };
+    const secondSessions = new CollaborativeAppLaunchSessions({
+      db: fixture.collaborationDb, open: async () => upstream, now: () => currentTime, startTimer: false,
+    });
+    const second = createPlatformCollaborationRoutes({
+      repository, launchSessions: secondSessions,
+      resolveActor: async (context) => context.req.header("x-test-actor") ?? null,
+      authenticateRuntime: async () => null,
+      resolveParticipant: async (id) => ({ actorId: id, displayName: "Member" }),
+      resolveInvitationIdentifier: async () => null,
+      isCurrentOrganizationMember: async () => currentMembership,
+    });
+    try {
+      const html = await second.request(launch.entryUrl, { headers: { "x-test-actor": actorId } });
+      expect(html.status).toBe(200);
+      expect(await html.text()).toContain("MatrixOS.collaboration");
+      await sessions.close();
+      const asset = await second.request(launch.entryUrl.replace("index.html", "assets/main.js"), {
+        headers: { origin: "null" },
+      });
+      expect(asset.status).toBe(200);
+      currentMembership = false;
+      expect((await second.request(launch.entryUrl, { headers: { "x-test-actor": actorId } })).status).toBe(404);
+      expect(await secondSessions.resolve(launchId, actorId, scopeId)).toBeNull();
+    } finally { await secondSessions.close(); }
   });
 
   it("creates an idempotent path-bound launch and serves safe immutable bytes without a browser credential", async () => {
@@ -237,7 +272,7 @@ describe("collaborative app authenticated launch facade", () => {
     expect(close).toHaveBeenCalledTimes(1);
 
     request.mockResolvedValueOnce(new Response(null, { status: 302, headers: { location: "https://owner.invalid/secret" } }));
-    await sessions.create({ ...identity, clientRequestId: "40000000-0000-4000-8000-000000000002" });
+    const { launchId } = await sessions.create({ ...identity, clientRequestId: "40000000-0000-4000-8000-000000000002" });
     await expect(sessions.request({ launchId, actorId, scopeId, assetPath: "index.html" }))
       .rejects.toMatchObject({ code: "unavailable" });
     request.mockResolvedValueOnce(new Response("secret", { headers: { "content-type": "text/x-private" } }));

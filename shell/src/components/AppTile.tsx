@@ -1,4 +1,5 @@
 "use client";
+import { SharedAppBadge } from "@matrix-os/ui/collaborative-app-sharing";
 import { PinIcon, PlusIcon, RefreshCwIcon, PencilIcon, EyeOffIcon } from "@/lib/hugeicons";
 import { useIconWithFallback } from "@/hooks/useIconWithFallback";
 import {
@@ -11,6 +12,7 @@ import {
 
 interface AppTileProps {
   name: string;
+  shared?: boolean;
   isOpen: boolean;
   onClick: () => void;
   pinned?: boolean;
@@ -23,7 +25,7 @@ interface AppTileProps {
   onAddToDesktop?: () => void;
 }
 
-export function AppTile({ name, isOpen, onClick, pinned, onTogglePin, iconUrl, onRegenerateIcon, onRename, onRemoveFromCanvas, createApp = false, onAddToDesktop }: AppTileProps) {
+export function AppTile({ name, shared, isOpen, onClick, pinned, onTogglePin, iconUrl, onRegenerateIcon, onRename, onRemoveFromCanvas, createApp = false, onAddToDesktop }: AppTileProps) {
   const initial = name.charAt(0).toUpperCase();
   const { showImage, onError: onImgError } = useIconWithFallback(iconUrl);
 
@@ -36,6 +38,7 @@ export function AppTile({ name, isOpen, onClick, pinned, onTogglePin, iconUrl, o
       className="relative flex flex-col items-center gap-1.5 p-1.5 rounded-xl hover:bg-accent/50 transition-colors group"
     >
       <div className="relative">
+        {shared ? <SharedAppBadge /> : null}
         <div
           data-app-icon
           className={`flex size-24 items-center justify-center rounded-[22px] shadow-sm text-2xl font-semibold transition-all overflow-hidden ${

@@ -1,4 +1,5 @@
 "use client";
+import { SharedAppBadge, SharedAppDirectoryNotice } from "@matrix-os/ui/collaborative-app-sharing";
 
 import { useEffect, useRef, useState } from "react";
 import {
@@ -70,12 +71,14 @@ export function Launchpad({
   onOpenApp,
   onClose,
   onAddToDesktop,
+  sharedDirectory,
 }: {
   apps: AppEntry[];
   visible: boolean;
   onOpenApp: (name: string, path: string) => void;
   onClose: () => void;
   onAddToDesktop?: (path: string, bounds?: OsViewDesktopBounds) => Promise<OsViewDesktopAddResult>;
+  sharedDirectory?: { unavailable: boolean; retry(): void };
 }) {
   // Keep the registry's stable order, flattened from the classic sections.
   const groups = groupLauncherApps(apps);
@@ -178,6 +181,7 @@ export function Launchpad({
           if (e.target === e.currentTarget) onClose();
         }}
       >
+        {sharedDirectory ? <SharedAppDirectoryNotice unavailable={sharedDirectory.unavailable} onRetry={sharedDirectory.retry} /> : null}
         <div className="launchpad-search-row">
           <div className="launchpad-search">
             <SearchIcon className="launchpad-search-icon" aria-hidden />
@@ -222,7 +226,7 @@ export function Launchpad({
                   key={app.path}
                   app={app}
                   onLaunch={() => launch(app)}
-                  onContextMenu={isOsViewDestinationPath(app.path) ? undefined : (event) => {
+                  onContextMenu={app.sharedAppTarget || isOsViewDestinationPath(app.path) ? undefined : (event) => {
                     if (placementPending) return;
                     const point = clampOsViewContextMenuPoint(
                       { x: event.clientX, y: event.clientY },
@@ -311,6 +315,8 @@ function LaunchpadTile({ app, onLaunch, onContextMenu }: { app: AppEntry; onLaun
   const useFixedIcon = BuiltInIcon && builtInAppearance?.iconSource === "fixed";
   return (
     <button type="button" aria-label={app.name} data-launchpad-tile className="launchpad-tile" onClick={onLaunch} onContextMenu={onContextMenu ? (event) => { event.preventDefault(); onContextMenu(event); } : undefined}>
+      <span className="relative inline-flex">
+      {app.sharedAppTarget ? <SharedAppBadge /> : null}
       <span className="launchpad-icon">
         {showImage && bundledIcon ? (
           <img src={bundledIcon} alt="" draggable={false} onError={onError} />
@@ -357,6 +363,7 @@ function LaunchpadTile({ app, onLaunch, onContextMenu }: { app: AppEntry; onLaun
             {app.name.charAt(0).toUpperCase()}
           </span>
         )}
+      </span>
       </span>
       <span className="launchpad-label">{app.name}</span>
     </button>

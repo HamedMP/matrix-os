@@ -88,6 +88,7 @@ export async function createPlatformCollaboration(options: {
     ? (input: { organizationId: string; actorId: string }) => organizations.projection.isCurrentMember(input)
     : undefined;
   const launchSessions = options.direct ? new CollaborativeAppLaunchSessions({
+    db: options.db,
     open: createCollaborativeAppLaunchUpstreamFactory({
       issuer: options.direct.issuer,
       relay: options.direct.relay,
