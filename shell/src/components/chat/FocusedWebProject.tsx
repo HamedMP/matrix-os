@@ -6,17 +6,14 @@ import { useState, type ReactNode } from "react";
 import type { RenameableConversation } from "./ChatTitleRename";
 import { usePagedProjectChats } from "./usePagedProjectChats";
 import { WebChatLifecycleGroups } from "./WebChatLifecycleGroups";
-import { WebProjectAgentContext } from "./WebProjectAgentContext";
 import { ProjectChatPaging, ProjectChatRows, ProjectChatStatus } from "./WebProjectsNav";
 import type { WebProject } from "./web-projects";
 
 /** Sidebar narrowed to one project, as on Electron Desktop: its chats by lifecycle, older chats below, and a way back. */
 export function FocusedWebProject({ project, gatewayUrl, chats, listedChatIds, scopeKey, activeChatId, activeChatTitle,
-  onSelectChat, renderRow, onBack, mobile, unreadOnly, sourceFilter, searchQuery, projectIdentity, isCurrentAuthority }: {
+  onSelectChat, renderRow, onBack, onOpenHome, mobile, unreadOnly, sourceFilter, searchQuery }: {
   project: WebProject;
   gatewayUrl: string;
-  projectIdentity?: string;
-  isCurrentAuthority?: () => boolean;
   /** The project's chats from navigation, pinned ones included. */
   chats: readonly RenameableConversation[];
   listedChatIds: ReadonlySet<string>;
@@ -26,6 +23,7 @@ export function FocusedWebProject({ project, gatewayUrl, chats, listedChatIds, s
   onSelectChat(chatId: string): void;
   renderRow(chat: RenameableConversation): ReactNode;
   onBack(): void;
+  onOpenHome?: () => void;
   mobile: boolean;
   unreadOnly: boolean;
   sourceFilter: ChatImportSourceFilterValue;
@@ -44,11 +42,14 @@ export function FocusedWebProject({ project, gatewayUrl, chats, listedChatIds, s
       <button type="button" aria-label="Back to all chats" title="Back to all chats" className="matrix-web-project-back" onClick={onBack}>
         <ChevronLeft aria-hidden="true" size={15} />
       </button>
-      <h2 title={project.name}>{project.name}</h2>
+      {onOpenHome ? (
+        <button type="button" title={project.name} aria-label={`Open ${project.name} project home`}
+          className="min-w-0 flex-1 truncate rounded-md px-1.5 py-1 text-left text-sm font-semibold text-foreground hover:bg-[var(--bg-hover)] focus-visible:outline-2 focus-visible:outline-[var(--accent)]"
+          onClick={onOpenHome}>
+          {project.name}
+        </button>
+      ) : <h2 title={project.name}>{project.name}</h2>}
     </div>
-    {!mobile && <WebProjectAgentContext key={JSON.stringify([projectIdentity, gatewayUrl, project.id])}
-      gatewayUrl={gatewayUrl} identity={projectIdentity ?? gatewayUrl} project={project}
-      isCurrentAuthority={isCurrentAuthority} />}
     {empty ? <>
       <ProjectChatStatus rowCount={0} loading={loading} error={error} hasMore={hasMore} mobile={mobile} retry={retry}
         filtered={unreadOnly || sourceFilter !== "all" || Boolean(search)} />

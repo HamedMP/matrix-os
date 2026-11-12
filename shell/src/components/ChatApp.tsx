@@ -11,7 +11,7 @@ import type { BrowserPermissionClient } from "@matrix-os/ui";
 import type { BrowserPermissionChoice } from "@matrix-os/contracts";
 import type { ChatAgentDraftRequest, ChatCollaborationView, StartAgentChat } from "@matrix-os/ui";
 
-import { ChatNewChatContent, useChatReadState, CanonicalChatInputForm, SupervisedToolApprovalBar } from "@matrix-os/ui";
+import { ChatComposerColumn, ChatNewChatContent, useChatReadState, CanonicalChatInputForm, SupervisedToolApprovalBar } from "@matrix-os/ui";
 import type { CanonicalChatInputView, CanonicalSubmitChatInputRequest } from "@matrix-os/contracts";
 import { supervisedToolApproval, supervisedToolRetryDraft } from "@matrix-os/contracts";
 
@@ -29,7 +29,8 @@ import { ChatSharing } from "./chat/ChatSharing";
 import { OrganizationDrivesNav } from "./chat/OrganizationDrivesNav";
 import { WebProjectsNav } from "./chat/WebProjectsNav";
 import { FocusedWebProject } from "./chat/FocusedWebProject";
-import { projectChats, useWebProjects } from "./chat/web-projects";
+import { WebProjectHome } from "./chat/WebProjectHome";
+import { projectChats, useWebProjects, type WebProject } from "./chat/web-projects";
 import { getGatewayUrl } from "@/lib/gateway";
 import { SharedWithMeNav } from "./chat/SharedWithMeNav";
 import { ShellChatCollaboration } from "./chat/ShellChatCollaboration";
@@ -162,7 +163,7 @@ interface ChatAppProps {
   onAbortCurrent?: () => void;
   connected: boolean;
   conversations: ConversationMeta[];
-  onNewChat: () => void;
+  onNewChat: (projectId?: string) => void;
   onSwitchConversation: (id: string) => void;
   activeConversationTitle?: string;
   onRenameConversation?: (id: string, title: string) => Promise<boolean>;
@@ -248,8 +249,12 @@ function ChatAppContent({
   const projectGatewayUrl = gatewayUrl ?? mountedGatewayUrl;
   const webProjects = useWebProjects(projectGatewayUrl, authorityKey ?? projectGatewayUrl);
   // As on Electron Desktop, selecting a project narrows the sidebar to it; a project that disappears ends focus.
-  const [focusedProjectId, setFocusedProjectId] = useState<string | null>(null);
-  const focusedProject = webProjects.projects.find(project => project.id === focusedProjectId);
+  const [projectFocus, setProjectFocus] = useState<{ identity: string; id: string } | null>(null);
+  const focusedProject = projectFocus?.identity === webProjects.identity
+    ? webProjects.projects.find(project => project.id === projectFocus.id)
+    : undefined;
+  const projectHome = !mobile && !sessionId && !collaborationView && focusedProject
+    && (!onSetChatProject || chatProjectId === focusedProject.id) ? focusedProject : undefined;
   const agentsNavigation = useChatAgentsNavigation();
   useCloseAgentsOnDraftRequest(composerDraftRequest?.id);
   const summaryClient = agentSummaryClient ?? agentClient;
@@ -263,13 +268,19 @@ function ChatAppContent({
   const [agentDraftRequest, setAgentDraftRequest] = useState<(ChatAgentDraftRequest & { ownerIdentity: unknown }) | null>(null);
   if (agentDraftRequest && agentDraftRequest.ownerIdentity !== draftIdentity) setAgentDraftRequest(null);
   const composerScope = sessionId ?? `new:${newChatSequence}`;
-  const onNewChat = () => {
+  const startNewChat = (projectId?: string) => {
     if (isCurrentAuthority && !isCurrentAuthority()) return;
     botDraftNavigation.clearNotice();
     agentsNavigation?.close();
     setNewChatSequence((sequence) => sequence + 1);
     setAgentDraftRequest(null);
-    createChat();
+    createChat(projectId);
+  };
+  const onNewChat = () => startNewChat(mobile ? undefined : focusedProject?.id);
+  const openProjectHome = (project: WebProject) => {
+    if (isCurrentAuthority && !isCurrentAuthority()) return;
+    setProjectFocus({ identity: webProjects.identity, id: project.id });
+    if (!mobile && projectHome?.id !== project.id) startNewChat(project.id);
   };
   const onSwitchConversation = (id: string) => { if (isCurrentAuthority && !isCurrentAuthority()) return; botDraftNavigation.clearNotice(); agentsNavigation?.close(); switchConversation(id); };
   const composer = useChatComposerDraft(composerScope, draftIdentity);
@@ -589,14 +600,13 @@ function ChatAppContent({
 
           <div className="px-2 pb-3">
             {focusedProject ? <FocusedWebProject key={`${webProjects.identity}/${focusedProject.id}/${unreadOnly}`} project={focusedProject} gatewayUrl={projectGatewayUrl} chats={projectChats(visibleConversations, focusedProject)}
-              projectIdentity={webProjects.identity} isCurrentAuthority={isCurrentAuthority}
               listedChatIds={listedChatIds} scopeKey={railOrder.scopeKey} activeChatId={sessionId} activeChatTitle={activeConversationTitle}
-              onSelectChat={onSwitchConversation} renderRow={renderRailRow} onBack={() => setFocusedProjectId(null)} mobile={mobile}
+              onSelectChat={onSwitchConversation} renderRow={renderRailRow} onBack={() => setProjectFocus(null)} onOpenHome={mobile ? undefined : () => openProjectHome(focusedProject)} mobile={mobile}
               unreadOnly={unreadOnly} sourceFilter={sourceFilter} searchQuery={searchQuery}/> : <>
             <WebChatLifecycleGroups conversations={listedConversations} scopeKey={railOrder.scopeKey} attentionCount={botSummaries.conversations.filter(bot => bot.pendingApprovalCount > 0).length}
               projects={<><WebProjectsNav key={authorityKey ?? projectGatewayUrl} state={webProjects} gatewayUrl={projectGatewayUrl}
                 chats={visibleConversations} listedChatIds={listedChatIds} activeChatId={sessionId} activeChatTitle={activeConversationTitle}
-                onSelectChat={onSwitchConversation} onFocusProject={project => setFocusedProjectId(project.id)} renderChat={renderConversationRow} mobile={mobile} unreadOnly={unreadOnly}
+                onSelectChat={onSwitchConversation} onFocusProject={openProjectHome} renderChat={renderConversationRow} mobile={mobile} unreadOnly={unreadOnly}
                 sourceFilter={sourceFilter} searchQuery={searchQuery}/>
                 <OrganizationDrivesNav chats={sourceConversations} client={agentClient} onNewChat={startAgentChat} onSelectChat={onSwitchConversation} activeChatId={sessionId}/></>}
               attention={botSummaries.conversations.some(bot => bot.pendingApprovalCount > 0) ? <WebBotAttention heading={false} conversations={botSummaries.conversations} onOpen={onSwitchConversation}/> : undefined}
@@ -713,6 +723,8 @@ function ChatAppContent({
             onComposerDraftConsumed={consumeDraftRequest}
             providerReady={providerReady}
             attachmentsEnabled={!botIdentityUnknown && attachmentPolicy.enabled}
+            projectHome={projectHome ? <WebProjectHome project={projectHome} identity={webProjects.identity}
+              gatewayUrl={projectGatewayUrl} isCurrentAuthority={isCurrentAuthority} /> : undefined}
           /></>
         ) : (
           <div className="flex flex-1 flex-col min-h-0">
@@ -867,6 +879,7 @@ function EmptyState({
   onComposerDraftConsumed,
   providerReady,
   attachmentsEnabled,
+  projectHome,
 }: {
   composerProps: Pick<React.ComponentProps<typeof ChatInput>, "leadingControls" | "toolbarControls" | "queue" | "composer" | "agentClient" | "scope" | "permissionMode" | "driveContextEnabled" | "botContext" | "botControls" | "botConsentResources" | "botRequiresFullAccess" | "onOpenBotMention" | "slashInstance" | "slashCatalogLoading" | "attachmentPolicy">;
   onSubmit: React.ComponentProps<typeof ChatInput>["onSubmit"];
@@ -876,27 +889,36 @@ function EmptyState({
   onComposerDraftConsumed?: (id: number) => void;
   providerReady: boolean;
   attachmentsEnabled: boolean;
+  projectHome?: React.ReactNode;
 }) {
+  const layout = mobile ? "narrow" : "wide";
+  const input = (
+    <ChatInput
+      key={`composer:${composerProps.scope}`} {...composerProps}
+      connected={connected && providerReady}
+      busy={false}
+      onSubmit={onSubmit}
+      autoFocus={!mobile && !projectHome}
+      placeholder="How can I help you today?"
+      draftRequest={composerDraftRequest}
+      onDraftConsumed={onComposerDraftConsumed}
+      unavailablePlaceholder={!providerReady ? "Write or dictate a draft — connect a harness to send" : undefined}
+      attachmentsEnabled={attachmentsEnabled}
+    />
+  );
+  if (projectHome) {
+    return <div className="flex min-h-0 flex-1 flex-col overflow-y-auto">
+      {projectHome}
+      <ChatComposerColumn layout={layout}>{input}</ChatComposerColumn>
+    </div>;
+  }
   return (
     <ChatNewChatContent
       logo={<span aria-hidden="true" data-testid="chat-welcome-matrix-logo" className="block" style={NEW_CHAT_LOGO_STYLE} />}
-      layout={mobile ? "narrow" : "wide"}
+      layout={layout}
       wrapHero={(children) => <ChatProviderOnboarding>{children}</ChatProviderOnboarding>}
       onSelect={(prompt) => composerProps.composer.setText(prompt)}
-      composer={(
-        <ChatInput
-          key={`composer:${composerProps.scope}`} {...composerProps}
-          connected={connected && providerReady}
-          busy={false}
-          onSubmit={onSubmit}
-          autoFocus={!mobile}
-          placeholder="How can I help you today?"
-          draftRequest={composerDraftRequest}
-          onDraftConsumed={onComposerDraftConsumed}
-          unavailablePlaceholder={!providerReady ? "Write or dictate a draft — connect a harness to send" : undefined}
-          attachmentsEnabled={attachmentsEnabled}
-        />
-      )}
+      composer={input}
     />
   );
 }

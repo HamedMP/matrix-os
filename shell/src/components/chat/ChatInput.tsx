@@ -8,6 +8,7 @@ import {
   ChatComposerAttachButton,
   ChatPromptInput,
   ChatSpeechInputButton,
+  ChatSpeechQuotaStatus,
   usePlatformSpeechDraft,
   type ChatAgentDraftRequest,
   type PlatformSpeechCaptureAdapter,
@@ -294,6 +295,7 @@ export function ChatInput({
               {leadingControls}
             </>
           )}
+          status={<ChatSpeechQuotaStatus speech={speech} />}
           trailingControls={(
             <>
               <ChatSpeechInputButton speech={speech} disabled={busy && !mayQueue} />

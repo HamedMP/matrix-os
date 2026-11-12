@@ -22,6 +22,10 @@ const projects = [
 
 const releaseSkillPath = ".agents/skills/release-check/SKILL.md";
 const newSkillPath = ".agents/skills/migration-notes/SKILL.md";
+const copiedSkillPath = ".agents/skills/installed-release/SKILL.md";
+const installedSkill = "---\nname: installed-release\ndescription: Installed release checklist.\n---\n\nReview release notes.\n";
+const importedSkillPath = ".agents/skills/imported-release/SKILL.md";
+const importedSkill = "---\r\nname: imported-release\r\ndescription: Imported release checklist.\r\n---\r\n\r\nVerify the changelog.\r\n";
 const mcpPath = ".mcp.json";
 const instructionPath = "CLAUDE.md";
 const atlasRoot = "projects/atlas/";
@@ -51,6 +55,7 @@ describe.skipIf(!built)("Electron Desktop project agent context", () => {
   let projectListRequests = 0;
   let filesLocationRequests = 0;
   const exactFiles: string[] = [];
+  const sourceReads: string[] = [];
   const createRequests: { file: string; content: string }[] = [];
   const saveRequests: string[] = [];
   const mcpMutations: string[] = [];
@@ -98,6 +103,24 @@ describe.skipIf(!built)("Electron Desktop project agent context", () => {
         json({ projects });
         return;
       }
+      if (req.method === "GET" && path === "/api/settings/skills") {
+        json([
+          { name: "installed-release", file: copiedSkillPath, description: "Installed release checklist.", enabled: true },
+          { name: "unrelated", file: ".agents/skills/unrelated/SKILL.md", description: "Unrelated skill.", enabled: true },
+        ]);
+        return;
+      }
+      const sourcePath = searchParams.get("path");
+      if (req.method === "GET" && path === "/api/files/blob" && sourcePath?.startsWith(".agents/skills/")) {
+        sourceReads.push(sourcePath);
+        if (sourcePath !== copiedSkillPath) {
+          res.writeHead(404).end();
+          return;
+        }
+        res.writeHead(200, { "content-type": "text/plain" });
+        res.end(installedSkill);
+        return;
+      }
       if (req.method === "GET" && path === "/api/projects/atlas/files-location") {
         const file = searchParams.get("file");
         if (file) {
@@ -125,7 +148,7 @@ describe.skipIf(!built)("Electron Desktop project agent context", () => {
           const body = JSON.parse(payload) as Record<string, unknown>;
           const file = body.projectFile;
           if (body.projectId !== projects[0].id || typeof file !== "string"
-            || ![newSkillPath, mcpPath, instructionPath].includes(file)
+            || ![newSkillPath, copiedSkillPath, importedSkillPath, mcpPath, instructionPath].includes(file)
             || body.path !== `${atlasRoot}${file}` || typeof body.content !== "string") {
             res.writeHead(400).end();
             return;
@@ -313,18 +336,50 @@ describe.skipIf(!built)("Electron Desktop project agent context", () => {
 
       await returnTo(skills);
       await sections.getByRole("button", { name: "Add skill", exact: true }).click();
+      if (evidence) await page.screenshot({ path: join(evidence, "electron-add-skill-options.png") });
+      await sections.getByRole("button", { name: "New skill", exact: true }).click();
       await sections.getByLabel("Skill name").fill("migration-notes");
+      await sections.getByLabel("Description").fill("Record migrations.");
+      await sections.getByLabel("Instructions").fill("Draft the rollback step.");
+      if (evidence) await page.screenshot({ path: join(evidence, "electron-new-project-skill.png") });
       await sections.getByRole("button", { name: "Create skill", exact: true }).click();
-      await expect.poll(() => createRequests[0]?.content).toContain("name: migration-notes");
+      await expect.poll(() => createRequests[0]).toEqual({
+        file: newSkillPath,
+        content: '---\nname: "migration-notes"\ndescription: "Record migrations."\n---\n\nDraft the rollback step.\n',
+      });
       await saveEdit(newSkillPath, "---\nname: migration-notes\ndescription: Record migrations.\n---\n\nDocument the rollback step.\n",
         "electron-project-skill-save.png");
       await returnTo(skills);
       await refreshInventory();
       await sections.getByRole("button", { name: `Open ${newSkillPath}`, exact: true }).waitFor();
 
+      await sections.getByRole("button", { name: "Add skill", exact: true }).click();
+      await sections.getByRole("button", { name: "Choose installed skill", exact: true }).click();
+      const search = sections.getByRole("searchbox", { name: "Search installed skills" });
+      await search.fill("release");
+      expect(await sections.getByRole("radio", { name: /unrelated/ }).count()).toBe(0);
+      await sections.getByRole("radio", { name: /installed-release/ }).check();
+      expect(sourceReads).toEqual([]);
+      if (evidence) await page.screenshot({ path: join(evidence, "electron-choose-installed-skill.png") });
+      await sections.getByRole("button", { name: "Copy to project", exact: true }).click();
+      await expect.poll(() => createRequests[1]).toEqual({ file: copiedSkillPath, content: installedSkill });
+      expect(sourceReads).toEqual([copiedSkillPath]);
+      await page.getByRole("button", { name: `Save ${atlasRoot}${copiedSkillPath}`, exact: true }).waitFor();
+
+      await returnTo(skills);
+      await sections.getByRole("button", { name: "Add skill", exact: true }).click();
+      await sections.getByRole("button", { name: "Import SKILL.md", exact: true }).click();
+      await sections.getByLabel("SKILL.md file").setInputFiles({
+        name: "SKILL.md", mimeType: "text/markdown", buffer: Buffer.from(importedSkill),
+      });
+      if (evidence) await page.screenshot({ path: join(evidence, "electron-import-project-skill.png") });
+      await sections.getByRole("button", { name: "Import skill", exact: true }).click();
+      await expect.poll(() => createRequests[2]).toEqual({ file: importedSkillPath, content: importedSkill });
+      await page.getByRole("button", { name: `Save ${atlasRoot}${importedSkillPath}`, exact: true }).waitFor();
+
       await returnTo(mcp);
       await sections.getByRole("button", { name: "Create .mcp.json", exact: true }).click();
-      await expect.poll(() => createRequests[1]).toEqual({ file: mcpPath, content: '{"mcpServers":{}}\n' });
+      await expect.poll(() => createRequests[3]).toEqual({ file: mcpPath, content: '{"mcpServers":{}}\n' });
       await saveEdit(mcpPath, '{"mcpServers":{"fixture-docs":{"url":"https://example.invalid/mcp"}}}',
         "electron-project-mcp-save.png");
       await returnTo(mcp);
@@ -338,14 +393,14 @@ describe.skipIf(!built)("Electron Desktop project agent context", () => {
 
       await returnTo(configFiles);
       await sections.getByRole("button", { name: "Create CLAUDE.md", exact: true }).click();
-      await expect.poll(() => createRequests[2]).toEqual({ file: instructionPath, content: "# Project instructions\n" });
+      await expect.poll(() => createRequests[4]).toEqual({ file: instructionPath, content: "# Project instructions\n" });
       await saveEdit(instructionPath, "# Atlas project instructions\n\nReview the changelog before a release.\n",
         "electron-project-instructions-save.png");
       await returnTo(configFiles);
       await refreshInventory();
       await sections.getByRole("button", { name: "Open CLAUDE.md", exact: true }).waitFor();
 
-      expect(createRequests.map(({ file }) => file)).toEqual([newSkillPath, mcpPath, instructionPath]);
+      expect(createRequests.map(({ file }) => file)).toEqual([newSkillPath, copiedSkillPath, importedSkillPath, mcpPath, instructionPath]);
       expect(saveRequests).toEqual([newSkillPath, mcpPath, instructionPath]);
       expect(mcpMutations).toEqual([]);
     }
@@ -354,7 +409,9 @@ describe.skipIf(!built)("Electron Desktop project agent context", () => {
     await page.getByRole("button", { name: "Agent configuration", exact: true }).click();
     await page.getByText("harbor-check", { exact: true }).waitFor();
     if (!liveInventory) {
-      expect(await sections.getByText("migration-notes", { exact: true }).count()).toBe(0);
+      for (const name of ["migration-notes", "installed-release", "imported-release"]) {
+        expect(await sections.getByText(name, { exact: true }).count()).toBe(0);
+      }
       await mcp.click();
       await sections.getByRole("region", { name: "MCP", exact: true }).waitFor();
       for (const name of ["issue-tracker", "fixture-docs"]) {

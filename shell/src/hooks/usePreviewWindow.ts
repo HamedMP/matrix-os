@@ -85,6 +85,7 @@ function defaultMode(type: PreviewFileType): PreviewMode | undefined {
 interface PreviewWindowState {
   tabs: PreviewTab[];
   activeTabId: string | null;
+  pendingFocusTabId: string | null;
   unsavedTabs: Set<string>;
   draftAuthority: string | null;
   drafts: PreviewDraft[];
@@ -92,7 +93,8 @@ interface PreviewWindowState {
 }
 
 interface PreviewWindowActions {
-  openFile(path: string, options?: { authority: string; mode?: PreviewMode }): void;
+  openFile(path: string, options?: { authority: string; mode?: PreviewMode; focus?: boolean }): void;
+  consumeTabFocus(id: string): void;
   closeTab(id: string): void;
   setActiveTab(id: string): void;
   setMode(id: string, mode: PreviewMode): void;
@@ -109,6 +111,7 @@ export const usePreviewWindow = create<
 >()((set, get) => ({
   tabs: [],
   activeTabId: null,
+  pendingFocusTabId: null,
   unsavedTabs: new Set(),
   draftAuthority: null,
   drafts: [],
@@ -116,10 +119,14 @@ export const usePreviewWindow = create<
 
   openFile(path: string, options) {
     const { tabs } = get();
-    const { authority, mode } = options ?? {};
+    const { authority, mode, focus } = options ?? {};
     const existing = tabs.find((t) => t.path === path && t.authority === authority);
     if (existing) {
-      set({ activeTabId: existing.id, tabs: mode ? tabs.map(tab => tab.id === existing.id ? { ...tab, mode } : tab) : tabs });
+      set({
+        activeTabId: existing.id,
+        pendingFocusTabId: focus ? existing.id : null,
+        tabs: mode ? tabs.map(tab => tab.id === existing.id ? { ...tab, mode } : tab) : tabs,
+      });
       return;
     }
 
@@ -131,7 +138,12 @@ export const usePreviewWindow = create<
     set((s) => ({
       tabs: [...s.tabs, tab],
       activeTabId: id,
+      pendingFocusTabId: focus ? id : null,
     }));
+  },
+
+  consumeTabFocus(id: string) {
+    if (get().pendingFocusTabId === id) set({ pendingFocusTabId: null });
   },
 
   closeTab(id: string) {
@@ -159,6 +171,7 @@ export const usePreviewWindow = create<
       return {
         tabs: newTabs,
         activeTabId: newActiveId,
+        pendingFocusTabId: s.pendingFocusTabId === id ? null : s.pendingFocusTabId,
         unsavedTabs: newUnsaved,
         drafts: s.drafts.filter(draft => draft.tabId !== id),
         lastSavedTabId: s.lastSavedTabId === id ? null : s.lastSavedTabId,
@@ -167,7 +180,7 @@ export const usePreviewWindow = create<
   },
 
   setActiveTab(id: string) {
-    set({ activeTabId: id });
+    set({ activeTabId: id, pendingFocusTabId: null });
   },
 
   setMode(id: string, mode: PreviewMode) {

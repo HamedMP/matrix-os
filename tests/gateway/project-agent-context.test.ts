@@ -219,6 +219,24 @@ describe("project agent context", () => {
     expect(await readdir(join(foreign.localPath, ".codex"))).toEqual([]);
   });
 
+  it("rejects a skill over the UTF-8 byte limit before checking project access", async () => {
+    const app = new Hono();
+    registerFileRoutes(app, { homePath });
+    const request = (content: string) => app.request("/api/files/touch", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        path: "checkouts/alpha/.agents/skills/release/SKILL.md",
+        projectId: "proj_alpha",
+        projectFile: ".agents/skills/release/SKILL.md",
+        content,
+      }),
+    });
+    const exact = "甲".repeat(21_845) + "a";
+    expect((await request(exact)).status).toBe(503);
+    expect((await request(exact + "a")).status).toBe(400);
+  });
+
   onLinux("refuses scoped creation when the pinned checkout is replaced before writing", async () => {
     const { project, executionRoots } = setup();
     const active = await project("alpha");
