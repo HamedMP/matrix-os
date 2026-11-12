@@ -9,6 +9,9 @@ const API_TIMEOUT_MS = 10_000;
 
 export function buildGatewayUrl(baseUrl: string, path: string, runtimeSlot: string): string {
   const base = baseUrl.replace(/\/$/, "");
+  // Owner approval decisions for external MCP writes exist only on the platform
+  // session route (spec 2691), never on a VPS, so no computer selector applies.
+  if (/^\/api\/mcp-servers\/core\/external-approvals(?:\/[0-9a-f-]{36})?$/.test(path)) return `${base}${path}`;
   // The platform serves /api/mcp-servers itself, so a runtime query cannot
   // select the isolated broker for a PR Preview computer. Target its VPS route.
   if (/^pr-[1-9][0-9]{0,8}$/.test(runtimeSlot)

@@ -35,8 +35,7 @@ import { VocalPanel } from "./VocalPanel";
 import { gatewayAssetUrl, getGatewayUrl } from "@/lib/gateway";
 import { RuntimeIdentityBanner } from "./RuntimeIdentityBanner";
 import { ShellNotificationStack } from "./ShellNotificationStack";
-import { ExternalMcpApprovalsIndicator } from "@matrix-os/ui";
-import { shellExternalMcpApprovals } from "@/lib/external-mcp-approvals";
+import { ShellExternalMcpApprovalsPill } from "./ShellExternalMcpApprovalsPill";
 import { DesktopOnboardingWidget } from "./onboarding-widget/DesktopOnboardingWidget";
 import { useGettingStartedDestination } from "./onboarding/use-getting-started-destination";
 import { ShellGetStartedGate } from "./get-started/ShellGetStartedGate";
@@ -873,7 +872,7 @@ export function Desktop({ launchAppPath, sharedTerminalScopeId, onOpenCommandPal
       <ShellNotificationStack>
         <RuntimeIdentityBanner />
         <ConnectionIndicator />
-        <ExternalMcpApprovalsIndicator transport={shellExternalMcpApprovals} onOpen={() => openSettings("integrations")} />
+        <ShellExternalMcpApprovalsPill openSettings={openSettings} />
       </ShellNotificationStack>
       {desktopMode !== "desktop" && (isWindowsDesign ? (
         <WindowsTaskbar
