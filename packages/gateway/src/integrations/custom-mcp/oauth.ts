@@ -404,6 +404,7 @@ export class CustomMcpOAuthManager {
   async resolveAuthorization(userId: string, row: CustomMcpServerBrokerRow): Promise<string | undefined> {
     return resolveCustomMcpOAuthAuthorization({ db: this.options.db, encryptionKey: this.options.encryptionKey,
       userId, row, now: this.options.now?.() ?? new Date(), configuredClientId: this.configuredClientId,
+      assertClient: oauth => { this.withRegisteredClient(oauth); },
       exchangeToken: (endpoint, fields, oauth) => this.exchangeToken(endpoint, fields, oauth) });
   }
 
