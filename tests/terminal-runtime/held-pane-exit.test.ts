@@ -44,22 +44,29 @@ class HeldPaneZellij implements ZellijRuntimeAdapter {
     return { write: async () => undefined, resize: async () => undefined, close: async () => undefined };
   }
 
+  subscribeCalls = 0;
+  observerCloses = 0;
+  readonly failingSessions = new Set<string>();
+
   async subscribeWorkspace(): Promise<ZellijObserver> {
-    return { closed: false, close: async () => undefined };
+    this.subscribeCalls += 1;
+    const observer = { closed: false, close: async () => { observer.closed = true; this.observerCloses += 1; } };
+    return observer;
   }
 
   async listHeldPaneExits(sessionName: string) {
     this.listCalls += 1;
+    if (this.failingSessions.has(sessionName)) throw new Error("session unavailable");
     return this.exits.get(sessionName) ?? [];
   }
 }
 
-async function setup() {
+async function setup(options: { maxObservers?: number } = {}) {
   const homePath = await mkdtemp(join(tmpdir(), "matrix-held-pane-"));
   homes.push(homePath);
   const store = new TerminalWorkspaceStore({ homePath });
   const zellij = new HeldPaneZellij();
-  const runtime = new TerminalRuntime({ store, zellij });
+  const runtime = new TerminalRuntime({ store, zellij, ...options });
   const workspace = await runtime.ensureWorkspace({ projectId: "app" });
   const tab = await runtime.createTab(workspace.id, { name: "tests", cwd: "", command: ["bun", "test"] });
   const ref = { workspaceId: workspace.id, tabId: tab.id };
@@ -101,6 +108,44 @@ describe("exits of programs whose pane zellij keeps open", () => {
 
     expect(zellij.listCalls).toBe(0);
     await expect(store.getTab(ref)).resolves.toMatchObject({ status: "exited", exitCode: 0 });
+    await runtime.shutdown();
+  });
+});
+
+// Fault detected (review of #3297): one workspace whose zellij session stayed
+// unavailable stopped every pass, so other workspaces' exits were never recorded.
+describe("held-pane exits across workspaces", () => {
+  it("records other workspaces' exits when one session cannot be read", async () => {
+    const { store, zellij, runtime, ref, runtimeTab, session } = await setup();
+    const other = await runtime.ensureWorkspace({ projectId: "docs" });
+    const otherTab = await runtime.createTab(other.id, { name: "build", cwd: "", command: ["make"] });
+    const otherRuntime = (await store.getRuntimeWorkspace(other.id))!;
+    const otherRef = { workspaceId: other.id, tabId: otherTab.id };
+    // Fail whichever session the sweep reads first.
+    const [first] = await store.listWorkspaces();
+    const firstSession = first!.id === ref.workspaceId ? session : otherRuntime.zellijSessionName;
+    zellij.failingSessions.add(firstSession);
+    zellij.exits.set(session, [{ tabId: runtimeTab.zellijTabId!, paneId: runtimeTab.zellijPaneId!, exitCode: 4 }]);
+    const otherPane = otherRuntime.tabs[otherTab.id]!;
+    zellij.exits.set(otherRuntime.zellijSessionName, [{ tabId: otherPane.zellijTabId!, paneId: otherPane.zellijPaneId!, exitCode: 5 }]);
+
+    await expect(runtime.sweepHeldPaneExits()).resolves.toMatchObject({ exited: 1 });
+
+    const recorded = firstSession === session ? otherRef : ref;
+    await expect(store.getTab(recorded)).resolves.toMatchObject({ status: "exited" });
+    await runtime.shutdown();
+  });
+
+  // Fault detected (review of #3297): recording an exit kept the workspace observer,
+  // so finished projects held observer slots until new terminals failed with capacity.
+  it("releases the observer of a workspace whose last command finished", async () => {
+    const { zellij, runtime, runtimeTab, session } = await setup({ maxObservers: 1 });
+    zellij.exits.set(session, [{ tabId: runtimeTab.zellijTabId!, paneId: runtimeTab.zellijPaneId!, exitCode: 0 }]);
+
+    await runtime.sweepHeldPaneExits();
+
+    const next = await runtime.ensureWorkspace({ projectId: "next" });
+    await expect(runtime.createTab(next.id, { name: "shell", cwd: "" })).resolves.toMatchObject({ status: "running" });
     await runtime.shutdown();
   });
 });

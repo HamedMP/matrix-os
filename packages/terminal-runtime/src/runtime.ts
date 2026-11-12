@@ -830,8 +830,13 @@ export class TerminalRuntime {
         const key = refKey(ref);
         if (this.attachments.has(key)) await this.handleAttachmentExit(key, exitCode);
         else await this.store.markTabExited(ref, exitCode);
+        // As on pane close: a workspace with no live tab left releases its observer slot.
+        await this.restartObserver(ref.workspaceId);
         return true;
       }),
+      logFailed: (error) => {
+        console.warn("[terminal-runtime] held-pane exit check failed", error instanceof Error ? error.name : "unknown_error");
+      },
     });
   }
 
