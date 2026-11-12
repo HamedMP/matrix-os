@@ -42,7 +42,7 @@ export function WebChatLifecycleGroups({ conversations, projects, attention, att
       ? filterChatsByImportSource(page!.rows.filter(row => !excludedChatIds?.includes(row.id) && (!unreadOnly || row.readState?.unread)), sourceFilter, row => row.canonicalRecord?.importSource)
       : loadPage ? groups[key].slice(0, 10) : groups[key];
     const count = page && loadPage && !page.loading && !page.error ? page.count : groups[key].length;
-    return rows.length || extra || key !== "pinned" ? <ChatRailSection key={key} label={label}
+    return rows.length || extra || key !== "pinned" || Boolean(page?.cursor && loadPage) ? <ChatRailSection key={key} label={label}
     count={count + (key === "needsYou" ? attentionCount : 0)} attention={key === "needsYou"} expanded={current.expanded[key]}
     onExpandedChange={expanded => setState(value => value.scopeKey === scopeKey ? {...value, expanded: {...value.expanded, [key]: expanded}} : value)}>
     {rows.map(item => <Fragment key={item.id}>{renderRow(item)}</Fragment>)}{extra}
