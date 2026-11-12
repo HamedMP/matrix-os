@@ -2,13 +2,16 @@ import { mkdir, readFile, rename, open, unlink } from "node:fs/promises";
 import { randomBytes } from "node:crypto";
 import { dirname, join } from "node:path";
 import { TerminalRefSchema, type TerminalRef } from "@matrix-os/contracts";
+import { TerminalRuntimeError } from "@matrix-os/terminal-runtime";
 import { z } from "zod/v4";
 import { terminalRefKey } from "./status-source.js";
 
 export const MAX_TERMINAL_LABELS = 32;
 export const TerminalLabelKeySchema = z.string().regex(/^[a-z][a-z0-9_.-]{0,62}$/);
 export const TerminalLabelValueSchema = z.string().max(256).regex(/^[^\u0000-\u001f\u007f]*$/);
-const MAX_AGENTS = 1_024;
+// Records exist only for tabs that exist (pruning removes the rest), and the runtime
+// allows at most 10 000 tabs, so a full registry means something is wrong.
+const MAX_AGENTS = 10_240;
 
 const FirstMessageSchema = z.object({
   sent: z.boolean(),
@@ -128,9 +131,10 @@ export function createTerminalAgentRegistry(options: { homePath: string; now?: (
         const next = AgentRecordSchema.parse(update(structuredClone(current)));
         if (Object.keys(next.labels).length > MAX_TERMINAL_LABELS) throw new z.ZodError([{ code: "custom", path: ["labels"], message: "Too many labels" }]);
         if (index >= 0) agents[index] = next;
-        else agents.push(next);
-        // Oldest records go first when the cap is reached; live tabs re-register on use.
-        while (agents.length > MAX_AGENTS) agents.shift();
+        else if (agents.length >= MAX_AGENTS) {
+          // Never evict silently: an evicted live helper would lose its parent and labels.
+          throw new TerminalRuntimeError("capacity");
+        } else agents.push(next);
         await save(agents);
         return next;
       });
