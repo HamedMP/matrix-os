@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { createCustomMcpRoutes } from "../../packages/gateway/src/integrations/custom-mcp/routes.js";
 import type { CustomMcpBroker } from "../../packages/gateway/src/integrations/custom-mcp/broker.js";
+import { RegisteredMcpOAuthClients } from "../../packages/gateway/src/integrations/custom-mcp/catalog-presets.js";
 
 function broker() {
   return {
@@ -84,5 +85,60 @@ describe("Custom MCP HTTP boundary", () => {
     const response = await app.request("/5f03d43b-bbc4-47f0-97d2-a281cf15c4c3/call", { method: "POST" });
     expect(response.status).toBe(404);
     expect(service.callSelectedTool).not.toHaveBeenCalled();
+  });
+});
+
+describe("Custom MCP catalog presets at the HTTP boundary", () => {
+  const catalog = RegisteredMcpOAuthClients.fromEnv({ MCP_OAUTH_GITHUB_CLIENT_ID: "gh", MCP_OAUTH_GITHUB_CLIENT_SECRET: "gh-secret-value" });
+  const json = (body: unknown) => ({ method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
+
+  it("lists connectable presets for a signed-in owner with validated filters", async () => {
+    const app = createCustomMcpRoutes({ broker: broker(), resolveUserId: async () => "owner", catalog });
+    const response = await app.request("/catalog?department=engineering");
+    expect(response.status).toBe(200);
+    const body = await response.json() as { presets: Array<{ id: string; departments: string[] }> };
+    expect(body.presets.map(preset => preset.id)).toEqual(expect.arrayContaining(["github", "linear"]));
+    expect(body.presets.every(preset => preset.departments.includes("engineering"))).toBe(true);
+    expect(JSON.stringify(body)).not.toContain("gh-secret-value");
+    expect((await app.request("/catalog?department=legal")).status).toBe(400);
+    expect((await app.request("/catalog?category=Bad-Category")).status).toBe(400);
+    expect((await app.request("/catalog?limit=5")).status).toBe(400);
+  });
+
+  it("requires an owner session for the catalog", async () => {
+    const app = createCustomMcpRoutes({ broker: broker(), resolveUserId: async () => null, catalog });
+    expect((await app.request("/catalog")).status).toBe(401);
+  });
+
+  // Fault: a preset connect is created with a URL or auth mode the catalog did not pin.
+  it("pre-fills URL, auth mode, and name from a connectable catalog id", async () => {
+    const service = broker();
+    vi.mocked(service.create).mockResolvedValue({ id: "created" } as never);
+    const app = createCustomMcpRoutes({ broker: service, resolveUserId: async () => "owner", catalog });
+    expect((await app.request("/", json({ catalogId: "github" }))).status).toBe(201);
+    expect((await app.request("/", json({ catalogId: "context7", name: "Docs" }))).status).toBe(201);
+    expect(service.create).toHaveBeenNthCalledWith(1, "owner", { name: "GitHub", url: "https://api.githubcopilot.com/mcp/", authMode: "oauth" });
+    expect(service.create).toHaveBeenNthCalledWith(2, "owner", { name: "Docs", url: "https://mcp.context7.com/mcp", authMode: "none" });
+  });
+
+  it("rejects hidden, unknown, or overridden catalog presets without calling the broker", async () => {
+    const service = broker();
+    const app = createCustomMcpRoutes({ broker: service, resolveUserId: async () => "owner", catalog });
+    for (const body of [
+      { catalogId: "slack" }, { catalogId: "gmail" }, { catalogId: "nope" }, { catalogId: "__proto__" },
+      { catalogId: "linear", url: "https://attacker.example/mcp" }, { catalogId: "linear", authMode: "none" },
+    ]) {
+      const response = await app.request("/", json(body));
+      expect(response.status, JSON.stringify(body)).toBe(400);
+      expect(await response.json()).toEqual({ error: "Invalid request body" });
+    }
+    expect(service.create).not.toHaveBeenCalled();
+  });
+
+  it("keeps arbitrary HTTPS MCP URLs connectable", async () => {
+    const service = broker();
+    vi.mocked(service.create).mockResolvedValue({ id: "created" } as never);
+    const app = createCustomMcpRoutes({ broker: service, resolveUserId: async () => "owner", catalog });
+    expect((await app.request("/", json({ name: "Acme", url: "https://mcp.acme.tools/mcp", authMode: "oauth" }))).status).toBe(201);
   });
 });

@@ -52,6 +52,16 @@ describe("remote MCP catalog verifier", () => {
     await expect(evaluateRegistration(github, 401, undefined, withDcr)).resolves.toMatchObject({ kind: "failed", reason: "dcr_now_available" });
   });
 
+  // Fault: a vendor moves its token endpoint and the pinned Matrix app silently breaks.
+  it("fails a registered-client entry whose live endpoints differ from the pinned ones", async () => {
+    const pinned = github.registeredOAuth!;
+    const live = (overrides: Record<string, string>) => async (url: string) => url.includes("authorization-server")
+      ? { authorization_endpoint: pinned.authorizationEndpoint, token_endpoint: pinned.tokenEndpoint, ...overrides } : undefined;
+    await expect(evaluateRegistration(github, 401, undefined, live({}))).resolves.toMatchObject({ kind: "verified", dcr: false });
+    await expect(evaluateRegistration(github, 401, undefined, live({ token_endpoint: "https://github.example/token" })))
+      .resolves.toMatchObject({ kind: "failed", reason: "pinned_endpoint_drift" });
+  });
+
   it("follows the advertised resource metadata to its authorization server", async () => {
     const seen: string[] = [];
     const getJson = async (url: string) => {

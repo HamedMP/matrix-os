@@ -426,7 +426,7 @@ export function IntegrationsSection({ active = true, onOpenGithubDisconnectTermi
               <IntegrationMarketplace services={services} connectedIds={connectedIds} connectingId={connecting}
                 rowPresentation={service => service.id === GITHUB_DEVELOPER_SERVICE_ID ? developer : undefined}
                 onConnect={id => { if (id !== GITHUB_DEVELOPER_SERVICE_ID) void handleConnect(id); }} />
-              {!loading ? <CustomMcpServersPanel /> : null}
+              {!loading ? <CustomMcpServersPanel connectedApps={connected} appNames={Object.fromEntries(available.map(service => [service.id, service.name]))} /> : null}
             </>
           );
         }}
