@@ -40,3 +40,14 @@ it("asks before stopping an active terminal and keeps it running when canceled",
   expect(screen.queryByText("Connected terminal")).toBeNull();
   expect(screen.getByRole("button", { name: "New terminal" })).toBeTruthy();
 });
+
+it("opens a folder with more than 1,000 files using a bounded visible window", async () => {
+  vi.stubGlobal("fetch", vi.fn(async () => Response.json({ entries: Array.from({ length: 1002 }, (_, index) => ({ name: `file_${index}`, type: "file" })) })));
+  render(<WebChatInspector chatId="chat_one" gatewayUrl="http://localhost:4000" layoutKey={null} rootWidth={1200} railWidth={260}
+    filePath={null} onFilePathChange={vi.fn()} terminalSessionIds={[]}
+    sideChatClient={{ getSideChat: vi.fn(), createSideChat: vi.fn(), askSideChat: vi.fn() }} onSendToMain={vi.fn()} onClose={vi.fn()}/>);
+  expect(await screen.findByRole("treeitem", { name: "file_0" })).toBeTruthy();
+  expect(screen.getAllByRole("treeitem")).toHaveLength(1000);
+  expect(screen.getByText("Showing the first 1,000 files.")).toBeTruthy();
+  expect(screen.queryByRole("alert")).toBeNull();
+});

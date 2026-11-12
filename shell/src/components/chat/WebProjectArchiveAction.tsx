@@ -2,10 +2,11 @@
 
 import { useState } from "react";
 
-export function WebProjectArchiveAction({ projectId, projectName, onArchive }: {
+export function WebProjectArchiveAction({ projectId, projectSlug, projectName, onArchive }: {
   projectId: string;
+  projectSlug: string;
   projectName: string;
-  onArchive(projectId: string, projectName: string): Promise<boolean>;
+  onArchive(projectId: string, projectSlug: string, projectName: string): Promise<boolean>;
 }) {
   const [confirm, setConfirm] = useState(false);
   const [pending, setPending] = useState(false);
@@ -20,7 +21,7 @@ export function WebProjectArchiveAction({ projectId, projectName, onArchive }: {
           <button type="button" disabled={pending} className="font-semibold text-primary" onClick={() => {
             setPending(true);
             setError(false);
-            void onArchive(projectId, projectName).then(done => { if (done) setConfirm(false); else setError(true); })
+            void onArchive(projectId, projectSlug, projectName).then(done => { if (done) setConfirm(false); else setError(true); })
               .catch((cause: unknown) => { console.warn("[web-projects] Archive failed:", cause instanceof Error ? cause.name : "UnknownError"); setError(true); })
               .finally(() => setPending(false));
           }}>Archive chats</button>

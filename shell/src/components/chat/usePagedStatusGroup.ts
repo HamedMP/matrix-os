@@ -7,6 +7,7 @@ import type { RenameableConversation } from "./ChatTitleRename";
 type Group = "pinned" | "needsYou" | "working" | "done";
 type LoadPage = (input: CanonicalChatNavigationPageQuery) => Promise<CanonicalChatNavigationPageResponse>;
 type PageState = { key: string; rows: RenameableConversation[]; count: number; cursor?: string; loading: boolean; error: boolean };
+const MAX_RETAINED_STATUS_ROWS = 500;
 
 function conversation(item: CanonicalChatNavigationPageResponse["items"][number]): RenameableConversation {
   return {
@@ -44,7 +45,7 @@ export function usePagedStatusGroup(group: Group, loadPage?: LoadPage, scopeKey?
         cursor = page.nextCursor;
       } while (cursor && rows.length < targetCount);
       if (generation.current !== current) return;
-      setState({ key, rows, count, cursor, loading: false, error: false });
+      setState({ key, rows: rows.slice(-MAX_RETAINED_STATUS_ROWS), count, cursor, loading: false, error: false });
     })().catch((error: unknown) => {
       if (generation.current !== current) return;
       console.warn("[chat-navigation] Status page unavailable:", error instanceof Error ? error.name : "UnknownError");
@@ -64,7 +65,7 @@ export function usePagedStatusGroup(group: Group, loadPage?: LoadPage, scopeKey?
         for (const row of page.items.map(conversation)) {
           if (!previous.rows.some(item => item.id === row.id) && !additions.some(item => item.id === row.id)) additions.push(row);
         }
-        return { ...previous, rows: [...previous.rows, ...additions], count: page.totalCount, cursor: page.nextCursor, loading: false };
+        return { ...previous, rows: [...previous.rows, ...additions].slice(-MAX_RETAINED_STATUS_ROWS), count: page.totalCount, cursor: page.nextCursor, loading: false };
       });
     }).catch((error: unknown) => {
       if (generation.current !== current) return;

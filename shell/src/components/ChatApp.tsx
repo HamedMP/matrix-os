@@ -26,6 +26,7 @@ import { ChatContextReceipt } from "@matrix-os/ui";
 import { ChatRunContextSchema, type CanonicalChatQueuedTurn } from "@matrix-os/contracts";
 import { ChatInput } from "./chat/ChatInput";
 import { useChatComposerDraft } from "./chat/useChatComposerDraft";
+import { appendSideChatAnswer } from "./chat/side-chat-draft";
 import { BotModelRecoveryProvider, BotModelFailureNotice, useDirectBotBinding, useBotExecution, BotBindingStatus, BotDraftRecoveryPanel, useBotConversationSummaries, BotChatPanel, BotComposerControls, ChatAgentsRailSection, ChatAgentsWorkspace, ChatAgentsContent, createAgentProviderCatalogSource, useChatAgentsNavigation, useCloseAgentsOnDraftRequest, type ChatAgentClient } from "@matrix-os/ui";
 import type { ChatSubmitOptions } from "@/hooks/useChatState";
 import { ChatSharing } from "./chat/ChatSharing";
@@ -388,6 +389,9 @@ function ChatAppContent({
   const [archiveUndo, setArchiveUndo] = useState<{ chats: Array<{ chatId: string; revision: number }>; label: string } | null>(null);
   const [archivesOpen, setArchivesOpen] = useState(false);
   const [searchRefreshVersion, setSearchRefreshVersion] = useState(0);
+  const [renamedTitles, setRenamedTitles] = useState<Record<string, string>>({});
+  const rememberRenamedTitle = (chatId: string, title: string) => setRenamedTitles(current =>
+    Object.fromEntries([...Object.entries(current).filter(([id]) => id !== chatId), [chatId, title]].slice(-100)));
   useEffect(() => {
     if (!archiveUndo) return;
     const timer = window.setTimeout(() => setArchiveUndo(null), 6_000);
@@ -400,14 +404,18 @@ function ChatAppContent({
     setDeletedChatIds(current => [...current.slice(-(MAX_REMEMBERED_DELETIONS - 1)), conv.id]);
     setArchiveUndo({ chats: [archived], label: `Archived ${conv.title || conv.preview || "New chat"}` });
   };
-  const archiveProject = async (projectId: string, projectName: string) => {
+  const archiveProject = async (projectId: string, projectSlug: string, projectName: string) => {
     if (!onArchiveProjectChats) return false;
-    const result = await onArchiveProjectChats(projectId);
-    if (!result) return false;
-    setDeletedChatIds(current => [...current, ...result.archived.map(chat => chat.chatId)].slice(-MAX_REMEMBERED_DELETIONS));
-    if (result.archivedCount) setArchiveUndo({ chats: result.archived,
-      label: `Archived ${result.archivedCount} chats in ${projectName}${result.skippedCount ? `; ${result.skippedCount} running skipped` : ""}` });
-    return true;
+    const results = await Promise.allSettled([...new Set([projectId, projectSlug])].map(reference => onArchiveProjectChats(reference)));
+    const completed = results.flatMap(result => result.status === "fulfilled" && result.value ? [result.value] : []);
+    const archived = [...new Map(completed.flatMap(result => result.archived).map(chat => [chat.chatId, chat])).values()];
+    const skippedCount = completed.reduce((count, result) => count + result.skippedCount, 0);
+    if (archived.length) {
+      setDeletedChatIds(current => [...current, ...archived.map(chat => chat.chatId)].slice(-MAX_REMEMBERED_DELETIONS));
+      setArchiveUndo({ chats: archived,
+        label: `Archived ${archived.length} chats in ${projectName}${skippedCount ? `; ${skippedCount} running skipped` : ""}` });
+    }
+    return completed.length === results.length;
   };
   const deleteChat = useDeleteChatDialog(onDeleteConversation ? async (chatId: string) => {
     const deleted = await onDeleteConversation(chatId);
@@ -536,7 +544,7 @@ function ChatAppContent({
       setServerSearch(state => {
         if (state.key !== searchKey) return state;
         const ids = new Set(state.rows.map(row => row.id));
-        return { ...state, rows: [...state.rows, ...page.items.map(searchConversationRow).filter(row => !ids.has(row.id))],
+        return { ...state, rows: [...state.rows, ...page.items.map(searchConversationRow).filter(row => !ids.has(row.id))].slice(-500),
           nextCursor: page.nextCursor, loadingMore: false };
       });
     }).catch((cause: unknown) => {
@@ -575,7 +583,7 @@ function ChatAppContent({
       if (!onRenameConversation || renamePending) return;
       setRenamePending(true);
       void onRenameConversation(conv.id, title).then((saved) => {
-        if (saved) { setEditingChat(null); setSearchRefreshVersion(version => version + 1); }
+        if (saved) { setEditingChat(null); rememberRenamedTitle(conv.id, title); setSearchRefreshVersion(version => version + 1); }
       }).catch((error: unknown) => {
         console.warn("[chat] Rename failed:", error instanceof Error ? error.name : "UnknownError");
       }).finally(() => setRenamePending(false));
@@ -741,12 +749,12 @@ function ChatAppContent({
                 {serverSearch.loadMoreError ? <p role="alert">Could not load more results. Try again.</p> : null}
               </> : null}
             </section> : focusedProject ? <FocusedWebProject key={`${webProjects.identity}/${focusedProject.id}/${unreadOnly}`} project={focusedProject} gatewayUrl={projectGatewayUrl} chats={projectChats(visibleConversations, focusedProject)}
-              listedChatIds={listedChatIds} scopeKey={railOrder.scopeKey} activeChatId={sessionId} activeChatTitle={activeConversationTitle}
+              listedChatIds={listedChatIds} scopeKey={railOrder.scopeKey} activeChatId={sessionId} activeChatTitle={activeConversationTitle} renamedTitles={renamedTitles}
               onSelectChat={onSwitchConversation} renderRow={renderRailRow} onBack={() => setProjectFocus(null)} onOpenHome={mobile ? undefined : () => openProjectHome(focusedProject)} mobile={mobile}
               unreadOnly={unreadOnly} sourceFilter={sourceFilter} searchQuery={searchQuery} onArchiveProject={onArchiveProjectChats ? archiveProject : undefined} loadNavigationPage={loadNavigationPage}/> : <>
             <WebChatLifecycleGroups conversations={listedConversations} scopeKey={railOrder.scopeKey} navigationUpdatedAt={navigationUpdatedAt} loadPage={loadNavigationPage} excludedChatIds={deletedChatIds} sourceFilter={sourceFilter} attentionCount={botSummaries.conversations.filter(bot => bot.pendingApprovalCount > 0).length}
               projects={<><WebProjectsNav key={authorityKey ?? projectGatewayUrl} state={webProjects} gatewayUrl={projectGatewayUrl}
-                chats={visibleConversations} listedChatIds={listedChatIds} activeChatId={sessionId} activeChatTitle={activeConversationTitle}
+                chats={visibleConversations} listedChatIds={listedChatIds} activeChatId={sessionId} activeChatTitle={activeConversationTitle} renamedTitles={renamedTitles}
                 onSelectChat={onSwitchConversation} onFocusProject={openProjectHome} renderChat={renderConversationRow} mobile={mobile} unreadOnly={unreadOnly}
                 sourceFilter={sourceFilter} searchQuery={searchQuery} onArchiveProject={onArchiveProjectChats ? archiveProject : undefined} loadNavigationPage={loadNavigationPage}/>
                 <OrganizationDrivesNav chats={sourceConversations} client={agentClient} onNewChat={startAgentChat} onSelectChat={onSwitchConversation} activeChatId={sessionId}/></>}
@@ -808,7 +816,7 @@ function ChatAppContent({
                       if (!sessionId || !onRenameConversation || renamePending) return;
                       setRenamePending(true);
                       void onRenameConversation(sessionId, title).then((saved) => {
-                        if (saved) { setEditingChat(null); setSearchRefreshVersion(version => version + 1); }
+                        if (saved) { setEditingChat(null); rememberRenamedTitle(sessionId, title); setSearchRefreshVersion(version => version + 1); }
                       }).catch((error: unknown) => {
                         console.warn("[chat] Rename failed:", error instanceof Error ? error.name : "UnknownError");
                       }).finally(() => setRenamePending(false));
@@ -1010,7 +1018,7 @@ function ChatAppContent({
         chatId={sessionId} gatewayUrl={projectGatewayUrl} layoutKey={authorityKey ? `matrix-chat-inspector:${JSON.stringify([authorityKey, projectGatewayUrl, sessionId])}` : null}
         rootWidth={rootWidth} railWidth={sidebarOpen ? 260 : 0} filePath={previewFile?.chatId === sessionId ? previewFile.path : null}
         onFilePathChange={path => setPreviewFile(path ? { chatId: sessionId, path } : null)} terminalSessionIds={terminalSessionIds}
-        sideChatClient={sideChatClient} onSendToMain={text => { composer.setText(text); rootRef.current?.querySelector<HTMLTextAreaElement>("[data-slot=chat-composer] textarea")?.focus(); }}
+        sideChatClient={sideChatClient} onSendToMain={text => { composer.setText(appendSideChatAnswer(composer.text, text)); rootRef.current?.querySelector<HTMLTextAreaElement>("[data-slot=chat-composer] textarea")?.focus(); }}
         onClose={() => setInspectorOpen(false)} /> : null}
       {previewFile && previewFile.chatId === sessionId && (mobile || !sideChatClient || !inspectorOpen || collaborationView)
         ? <ChatFilePanel path={previewFile.path} gatewayUrl={projectGatewayUrl} onClose={() => setPreviewFile(null)} /> : null}
