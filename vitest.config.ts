@@ -56,6 +56,7 @@ export default defineConfig({
       "@matrix-os/contracts/command-preview-policy": path.resolve(__dirname, "packages/contracts/src/command-preview-policy.mjs"),
       "@matrix-os/contracts/integration-marketplace": path.resolve(__dirname, "packages/contracts/src/integration-marketplace.ts"),
       "@matrix-os/contracts/managed-integrations": path.resolve(__dirname, "packages/contracts/src/managed-integrations.ts"),
+      "@matrix-os/contracts/remote-mcp-catalog": path.resolve(__dirname, "packages/contracts/src/remote-mcp-catalog.ts"),
       "@matrix-os/contracts/bokio-integration": path.resolve(__dirname, "packages/contracts/src/bokio-integration.ts"),
       "@matrix-os/contracts/data-imports": path.resolve(__dirname, "packages/contracts/src/data-imports.ts"),
       "@matrix-os/contracts/http-request-deadlines": path.resolve(__dirname, "packages/contracts/src/http-request-deadlines.ts"),
