@@ -281,6 +281,33 @@ It is capped at 40 tools per session.
   - Codex and other agents: `matrix core sync --install-timer` installs an
     hourly launchd/systemd timer.
   - Any MCP client: `list_skills` / `get_skill`.
+- **Layer 6 decisions.**
+  - Config is platform env: `MATRIX_CORE_REPO_GITHUB_APP_ID`,
+    `MATRIX_CORE_REPO_GITHUB_APP_PRIVATE_KEY`,
+    `MATRIX_CORE_REPO_GITHUB_WEBHOOK_SECRET`, and `MATRIX_CORE_REPO_SOURCES`
+    (`[{orgId, installationId, repository, ref?}]`, ref defaults to
+    `stable`). Anything missing or invalid turns the feature off (503).
+    The org ↔ installation mapping is operator-reviewed; self-serve binding
+    needs a GitHub user check and is deferred.
+  - The platform validates every tarball with the same rules as the
+    installer (one shared module): one top-level folder; regular files and
+    directories only; no links, `..`, or absolute paths; ≤ 5,000 entries,
+    10 MB per file, 200 MB unpacked, 50 MB compressed. A failing push records
+    a coarse reason and keeps the last good pin.
+  - Webhook deliveries are claimed once (7-day dedupe) and acknowledged with
+    202 before the sync runs; the hourly job converges on the ref head, which
+    also corrects a race between two platform instances.
+  - Installs live outside `$MATRIX_HOME` (`$XDG_DATA_HOME/matrix-core`, or
+    `MATRIX_CORE_ROOT`): `releases/<commit>`, an atomic `current` link, and
+    `previous` for rollback. Skills from `skills/*` and
+    `plugins/*/skills/*` are renamed `org-<slug>-<name>` (SKILL.md `name`
+    rewritten) and linked by `sync-matrix-agent-skills.sh` in namespace mode,
+    which owns only that prefix inside the org root; the default mode never
+    touches `org-*`. Hooks and scripts are installed but not activated.
+  - When membership ends, the next sync unlinks that org's skills and removes
+    its files. Off-VPS use needs the sync script on disk
+    (`MATRIX_SKILLS_SYNC_SCRIPT`); shipping it inside the npm CLI is a
+    follow-up.
 - **Governance.** CODEOWNERS per directory, branch protection, and CI that runs
   `claude plugin validate` plus a secret scan. Hooks and scripts execute on
   employee machines, so they come from a protected ref (`stable`) and are
@@ -307,7 +334,8 @@ It is capped at 40 tools per session.
 | `PUT\|DELETE /api/orgs/:orgId/mcp/members/:memberId/blocks/:serverDefId` | platform | Clerk session + `org:mcp_admin` | no | Blocks or unblocks one member's use of a server in org context |
 | `POST /api/orgs/:orgId/core-repo/sync` | platform | Clerk session + `org:mcp_admin` | no | Manual "sync now" |
 | `POST /webhooks/github/core-repo` | platform | GitHub App webhook HMAC-SHA256 (`timingSafeEqual` on raw body), delivery-id dedupe | yes (signed) | Push to `stable` only; maps installation → org; any other event is 204 |
-| `GET /internal/core-repo/:orgId/:commit.tar.gz` | platform | existing VPS machine credential; member of `orgId` | no | Pinned tarball for the VPS installer |
+| `GET /internal/core-repo/:orgId/:commit.tar.gz` | platform | existing VPS machine credential (or CLI session); current member of `orgId` | no | Only the currently pinned commit; any other commit is 404 |
+| `GET /internal/core-repo/pins` | platform | VPS machine credential (`x-matrix-handle` + platform verification token), or the CLI platform session off-VPS | no | The caller's current orgs' pinned commit, sha256, size, and skill slug |
 
 Every path parameter (`orgId`, `serverDefId`, `approvalId`) is validated
 with Zod at the route boundary. Unknown or misconfigured dependencies return
