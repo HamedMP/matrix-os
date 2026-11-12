@@ -3,7 +3,7 @@ import { bodyLimit } from "hono/body-limit";
 import { z } from "zod/v4";
 import type { PlatformDb } from "../../platform-db.js";
 import { CustomMcpBroker, CustomMcpBrokerError } from "./broker.js";
-import { assignCoreServiceSlugs } from "./core-catalog.js";
+import { CoreToolsError, resolveCoreCallTarget } from "./core-tools.js";
 
 const BODY_LIMIT = 64 * 1024;
 const RunId = z.string().min(1).max(256).regex(/^[A-Za-z0-9][A-Za-z0-9_.:-]*$/);
@@ -71,14 +71,13 @@ export function createCustomMcpApprovalRoutes(options: {
     return context.json({ error: "Custom MCP approval unavailable" }, 503);
   }
 
-  /** Same slug assignment as the Core tool service, so the approval binds the server the call will reach. */
+  /** Same resolver as Core call_tool (ambiguity check included), so the approval binds the tool that will run. */
   async function coreTarget(userId: string, service: string, tool: string): Promise<{ serverId: string; toolName: string }> {
-    const slugs = assignCoreServiceSlugs(await options.broker.list(userId));
-    const serverId = [...slugs].find(([, slug]) => slug === service)?.[0];
-    if (!serverId) throw new CustomMcpBrokerError("not_found");
-    const toolName = tool.startsWith(`${service}.`) ? tool.slice(service.length + 1) : tool;
-    if (!toolName || toolName.length > 128) throw new CustomMcpBrokerError("invalid");
-    return { serverId, toolName };
+    try { return resolveCoreCallTarget(await options.broker.list(userId), service, tool); }
+    catch (error: unknown) {
+      if (error instanceof CoreToolsError) throw new CustomMcpBrokerError(error.code === "not_found" ? "not_found" : "invalid");
+      throw error;
+    }
   }
 
   app.post("/runs", async (context) => {
