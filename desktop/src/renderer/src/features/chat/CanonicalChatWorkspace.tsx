@@ -270,7 +270,7 @@ function CanonicalChatWorkspaceContent({
   const sideDraftRequest = sideDraft?.pending;
   useEffect(() => {
     if (!active || !sideDraftRequest || sideDraftRequest.chatId !== routedComposerChatId) return;
-    setDraft(sideDraftRequest.text);
+    setDraft(current => current.trim() ? `${current}\n\n${sideDraftRequest.text}` : sideDraftRequest.text);
     setLocalComposerFocusRequestId(value => value + 1);
     sideDraft?.consume(sideDraftRequest.id);
   }, [active, routedComposerChatId, setDraft, sideDraftRequest, sideDraft]);
